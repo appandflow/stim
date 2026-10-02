@@ -44,7 +44,7 @@ struct BuildSection: View {
   private func card(_ platform: String) -> some View {
     let entry = checks.entry(workspace: env.path, platform: platform)
     let building = running.flatMap { $0.platform == platform ? $0 : nil }
-    return VStack(alignment: .leading, spacing: Space.sm) {
+    return VStack(alignment: .leading, spacing: Space.lg) {
       HStack(spacing: Space.sm) {
         PlatformGlyph(platform: platform, size: 12, color: building == nil ? Palette.text : Palette.primary)
         Text(building == nil ? platformName(platform) : "Building \(platformName(platform))")
@@ -52,7 +52,7 @@ struct BuildSection: View {
           .lineLimit(1)
         if let building { BuildOutcomeBadge(build: building) }
         Spacer()
-        if building == nil { buttons(platform, entry: entry) }
+        if building == nil { runButton(platform) }
       }
       if let host = building?.remote(at: Date())?.host {
         Label("on \(host)", systemImage: "desktopcomputer").foregroundStyle(Palette.secondary).lineLimit(1)
@@ -60,15 +60,27 @@ struct BuildSection: View {
       if let building {
         RunningBuildDetail(cli: cli, env: env, build: building)
       } else {
-        lastBuild(platform)
-        if running != nil {
-          Text("Next build: checked after the running build").foregroundStyle(Palette.tertiary)
-        } else {
-          nextBuild(entry)
+        VStack(alignment: .leading, spacing: Space.sm) {
+          Text("Last build").font(.stim(.footnote, weight: .semibold)).foregroundStyle(Palette.secondary)
+          lastBuild(platform)
+        }
+        Divider().overlay(Palette.border)
+        VStack(alignment: .leading, spacing: Space.sm) {
+          HStack {
+            Text("Next build").font(.stim(.footnote, weight: .semibold)).foregroundStyle(Palette.secondary)
+            Spacer(minLength: Space.sm)
+            checkButton(platform, entry: entry)
+          }
+          if running != nil {
+            Text("Checked after the running build").foregroundStyle(Palette.tertiary)
+          } else {
+            nextBuild(entry)
+          }
         }
       }
       let history = env.builds?.builds(for: platform) ?? []
       if !history.isEmpty {
+        Divider().overlay(Palette.border)
         BuildHistoryList(entries: history, workspace: env.path)
       }
     }
@@ -78,7 +90,7 @@ struct BuildSection: View {
       RoundedRectangle(cornerRadius: Radius.control).fill(building == nil ? Palette.surface : Palette.primary.opacity(0.06)))
   }
 
-  @ViewBuilder private func buttons(_ platform: String, entry: BuildPlanChecks.Entry?) -> some View {
+  @ViewBuilder private func checkButton(_ platform: String, entry: BuildPlanChecks.Entry?) -> some View {
     Button {
       checks.check(workspace: env.path, builds: [platform: buildKey(platform)], force: true)
     } label: {
@@ -88,13 +100,16 @@ struct BuildSection: View {
     .fixedSize()
     .disabled(running != nil || entry?.state == .checking || actions.active(for: env.path) != nil)
     .help("stim \(platform) --plan: predict the next build from the fingerprint and caches, without building")
+  }
+
+  @ViewBuilder private func runButton(_ platform: String) -> some View {
     let failed = env.lastBuilds?.build(for: platform)?.status == "failed"
     Button {
       actions.runApp(env, platform: platform)
     } label: {
       Label(failed ? "Rebuild" : "Run", systemImage: "play.fill")
     }
-    .buttonStyle(.stim(.primary))
+    .buttonStyle(.stim(.primary, .regular))
     .fixedSize()
     .disabled(running != nil || actions.active(for: env.path) != nil)
     .help("stim \(platform) with no options: the default slot and configuration; builds if needed, installs and launches")
@@ -103,11 +118,18 @@ struct BuildSection: View {
   @ViewBuilder private func lastBuild(_ platform: String) -> some View {
     if let last = env.lastBuilds?.build(for: platform) {
       TimelineView(.periodic(from: .now, by: 30)) { context in
-        Text(
-          "Last: \(last.summary)\(last.endedAt.map { " \u{00B7} \(Format.age(context.date.timeIntervalSince($0)))" } ?? "")"
-        )
-        .foregroundStyle(last.status == "ok" ? Palette.secondary : Palette.error)
-        .help(last.fingerprint.map { "Fingerprint \($0)" } ?? "")
+        VStack(alignment: .leading, spacing: Space.xs) {
+          Text(last.summary)
+            .font(.stim(.callout, weight: .semibold))
+            .foregroundStyle(last.status == "ok" ? Palette.text : Palette.error)
+            .fixedSize(horizontal: false, vertical: true)
+            .help(last.fingerprint.map { "Fingerprint \($0)" } ?? "")
+          if let endedAt = last.endedAt {
+            Text(Format.age(context.date.timeIntervalSince(endedAt)))
+              .font(.stim(.footnote))
+              .foregroundStyle(Palette.tertiary)
+          }
+        }
       }
       OffloadFallbackLine(build: last)
       if let diagnostics = last.diagnostics, !diagnostics.isEmpty {
@@ -125,7 +147,8 @@ struct BuildSection: View {
   private func checkedAt(_ date: Date?) -> some View {
     if let date {
       TimelineView(.periodic(from: .now, by: 30)) { context in
-        Text("Checked \(Format.age(context.date.timeIntervalSince(date)))").foregroundStyle(Palette.tertiary)
+        Text("Checked \(Format.age(context.date.timeIntervalSince(date)))")
+          .font(.stim(.footnote)).foregroundStyle(Palette.tertiary)
       }
     }
   }
@@ -140,7 +163,9 @@ struct BuildSection: View {
       }
     case .done(.plan(let plan)):
       VStack(alignment: .leading, spacing: Space.xxs) {
-        Text("Next build: \(plan.nextBuild)")
+        Text(plan.nextBuild)
+          .font(.stim(.callout, weight: .semibold))
+          .fixedSize(horizontal: false, vertical: true)
           .foregroundStyle(plan.refusal != nil || plan.cacheHit == .none ? Palette.warning : Palette.success)
           .help(plan.detail ?? "")
         checkedAt(entry?.checkedAt)
@@ -161,7 +186,7 @@ struct BuildSection: View {
     case .failed(let message):
       Text(message).foregroundStyle(Palette.error)
     case nil:
-      EmptyView()
+      Text("Not checked yet").foregroundStyle(Palette.tertiary)
     }
   }
 }
@@ -282,25 +307,29 @@ struct BuildHistoryRow: View {
               .foregroundStyle(entry.result == "succeeded" ? Palette.secondary : color)
               .lineLimit(1)
             Spacer(minLength: 4)
-            Text(
-              [
-                entry.build.durationMs.map { Format.elapsed(ms: $0) },
-                entry.build.endedAt.map { Format.age(now.timeIntervalSince($0)) },
-              ]
-              .compactMap { $0 }.joined(separator: " \u{00B7} ")
-            )
-            .foregroundStyle(Palette.tertiary)
-            .fixedSize()
+            Text(entry.build.durationMs.map { Format.elapsed(ms: $0) } ?? "")
+              .foregroundStyle(Palette.tertiary)
+              .font(.stim(.footnote))
+              .monospacedDigit()
+              .fixedSize()
             Image(systemName: expanded ? "chevron.down" : "chevron.right").foregroundStyle(Palette.tertiary)
           }
-          if let detail = entry.detail {
-            Text(detail).foregroundStyle(Palette.tertiary).lineLimit(1).padding(.leading, Space.lg)
+          if entry.result == "failed", let code = entry.build.errorCode {
+            Text(code).font(.stim(.caption, mono: true)).foregroundStyle(Palette.error)
+              .padding(.leading, Space.lg)
+          }
+          if let endedAt = entry.build.endedAt {
+            Text(Format.age(now.timeIntervalSince(endedAt)))
+              .font(.stim(.caption)).foregroundStyle(Palette.tertiary).padding(.leading, Space.lg)
           }
         }
       }
       .buttonStyle(.hoverRow(outset: Space.xs))
       if expanded {
-        VStack(alignment: .leading, spacing: Space.xs) {
+        VStack(alignment: .leading, spacing: Space.sm) {
+          if let detail = entry.detail {
+            Text(detail).foregroundStyle(Palette.secondary).textSelection(.enabled)
+          }
           let facts = [entry.configuration, entry.build.fingerprint.map { "fingerprint \($0.prefix(8))" }]
             .compactMap { $0 }
           if !facts.isEmpty {
@@ -317,7 +346,10 @@ struct BuildHistoryRow: View {
             MissReasonButton(reason: reason, help: "Why this build missed the cache")
           }
         }
+        .font(.stim(.footnote))
+        .fixedSize(horizontal: false, vertical: true)
         .padding(.leading, Space.lg)
+        .padding(.vertical, Space.xs)
       }
     }
   }
@@ -402,13 +434,14 @@ struct MissReasonButton: View {
       shown.toggle()
     } label: {
       HStack(spacing: Space.xs) {
-        Text("Why: \(reason.summary)").multilineTextAlignment(.leading).fixedSize(horizontal: false, vertical: true)
+        Text("Cache miss details")
         Image(systemName: "info.circle")
       }
       .foregroundStyle(Palette.warning)
     }
     .buttonStyle(.hoverRow(outset: Space.xs))
-    .help(help)
+    .accessibilityLabel("Cache miss details: \(reason.summary)")
+    .help("\(help)\n\(reason.summary)")
     .popover(isPresented: $shown, arrowEdge: .bottom) {
       VStack(alignment: .leading, spacing: Space.md) {
         Text(reason.summary).font(.stim(.body, weight: .semibold)).textSelection(.enabled)

@@ -122,9 +122,11 @@ this order:
   targets"), the elapsed time over the estimate, a bar with a segment per
   phase sized by the reference run, the phase checklist, why the cache missed
   and the last lines of build output (`stim logs --source build`). Otherwise
-  it shows the last build with its compiler errors and miss reason, the next
-  build from `stim <platform> --plan --json`, **Check** and **Run**. Each card
-  lists its recent builds.
+  it separates **Last build**, with its compiler errors, from **Next build**,
+  predicted by `stim <platform> --plan --json`. **Check** refreshes the next
+  plan; **Run** starts the app. **Cache miss details** opens the full reason
+  and changed sources. Recent-build rows show outcome, duration and age;
+  expanding a row reveals its reason, phase timings and diagnostics.
 - **Resources**: CPU (100% is one core) and memory with charts over the last
   10 minutes the app sampled while on screen, every process that counts
   toward the workspace (simulators and emulators, Chrome, Metro, builds) and
@@ -354,7 +356,10 @@ workspaces`. A cache row runs `stim gc --delete --cache <name or directory>`
   and starts unchecked. **Free** previews a selection that is one gc run (`stim
 gc --json`, with its `--cache` scope) in the activity sheet, whose **Delete**
   runs the same scope with `--delete`. A selection of several commands lists
-  them in a confirmation first and then runs them in order.
+  them in a confirmation first and then runs them in order. When no items are
+  selected, **Free space** is muted and a **Select items to free space** hint
+  appears above the checklist. Running activities show progress in the current
+  step row; the header shows only finished or failed outcomes.
 - **Projects**: workspaces and linked worktrees that `stim worktree warm` has
   not set up (**Not warmed**), grouped by repository and ranked by total. A
   repository with several worktrees expands into them. Each worktree shows its

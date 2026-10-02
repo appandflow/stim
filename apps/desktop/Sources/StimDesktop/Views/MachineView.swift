@@ -232,9 +232,13 @@ struct MachineView: View {
         .buttonStyle(.stim())
       } else {
         Button(bytes > 0 ? "Free \(Format.fileSize(bytes))\u{2026}" : "Free space\u{2026}") { free(commands) }
-          .buttonStyle(.stim(.primary))
+          .buttonStyle(.stim(commands.isEmpty ? .secondary : .primary))
+          .saturation(commands.isEmpty ? 0 : 1)
           .disabled(commands.isEmpty)
-          .help(commands.map { "stim " + $0.arguments.joined(separator: " ") }.joined(separator: "\n"))
+          .help(
+            commands.isEmpty
+              ? "Select items to free space."
+              : commands.map { "stim " + $0.arguments.joined(separator: " ") }.joined(separator: "\n"))
       }
     } content: { shown in
       if gc.report == nil {
@@ -244,6 +248,11 @@ struct MachineView: View {
         Text("stim gc found nothing to free.").foregroundStyle(Palette.tertiary)
       } else {
         if let error = gc.error, !gc.running { gcFailed(error) }
+        if commands.isEmpty, actions.active(for: ActionCenter.machineKey) == nil {
+          Text("Select items to free space.")
+            .font(.stim(.footnote, weight: .medium))
+            .foregroundStyle(Palette.secondary)
+        }
         Text(
           "Rows marked stim gc are freed together by one stim gc --delete, which also frees the worktree and build outputs rows. Free previews or confirms its commands first."
         )

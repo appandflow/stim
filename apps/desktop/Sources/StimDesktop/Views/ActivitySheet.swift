@@ -332,11 +332,6 @@ struct ActivitySheet: View {
         Image(systemName: code == 0 ? "checkmark.circle.fill" : "xmark.octagon.fill")
         Text(code == 0 ? "Done" : "Failed")
       }
-    } else {
-      Pill(tone: .brand) {
-        ProgressView().controlSize(.mini)
-        Text("Running")
-      }
     }
   }
 
