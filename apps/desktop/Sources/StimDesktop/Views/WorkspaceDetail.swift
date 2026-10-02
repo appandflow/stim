@@ -245,7 +245,7 @@ struct WorkspaceDetail: View {
           Color.clear.contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .help("Open \(device.label) to take it over or replay what it recorded")
+        .help("Open \(device.label) to control it or replay what it recorded")
         .accessibilityLabel("Open \(device.label)")
       }
       .frame(width: tile.showsStoppedBar ? min(DeviceTile.stoppedMaximumWidth, cardWidth) : cardWidth)
