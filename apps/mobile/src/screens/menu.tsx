@@ -72,10 +72,22 @@ export function Menu({ onClose }: { onClose: () => void }) {
     <View
       style={[
         styles.screen,
-        { paddingTop: insets.top + theme.space.lg, paddingBottom: insets.bottom + theme.space.md },
+        {
+          paddingTop: insets.top + theme.space.lg,
+          paddingBottom: insets.bottom + theme.space.md,
+          paddingLeft: insets.left,
+          paddingRight: insets.right,
+        },
       ]}
     >
-      <ScrollView contentContainerStyle={styles.content}>
+      <ScrollView
+        style={styles.scroll}
+        contentContainerStyle={styles.content}
+        contentInsetAdjustmentBehavior="never"
+        automaticallyAdjustContentInsets={false}
+        alwaysBounceHorizontal={false}
+        directionalLockEnabled
+      >
         <Image
           source={WORDMARK}
           tintColor={theme.colors.text}
@@ -255,8 +267,9 @@ function NavRow({
 }
 
 const styles = StyleSheet.create((theme) => ({
-  screen: { flex: 1 },
-  content: { paddingHorizontal: theme.space.lg, paddingBottom: theme.space.xl },
+  screen: { flex: 1, minWidth: 0 },
+  scroll: { flex: 1, width: '100%' },
+  content: { width: '100%', paddingHorizontal: theme.space.lg, paddingBottom: theme.space.xl },
   wordmark: {
     width: 88,
     height: 42,
@@ -285,13 +298,13 @@ const styles = StyleSheet.create((theme) => ({
     borderRadius: theme.radius.card,
     borderCurve: 'continuous',
   },
-  grow: { flex: 1 },
+  grow: { flex: 1, minWidth: 0 },
   footer: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: theme.space.md,
-    paddingHorizontal: theme.space.xl,
-    paddingTop: theme.space.lg,
+    paddingHorizontal: theme.space.lg,
+    paddingTop: theme.space.md,
   },
   footerLeft: {
     flex: 1,
