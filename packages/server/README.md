@@ -117,7 +117,9 @@ A connection must send `hello` within 5 seconds. Five failed attempts from the
 same peer within a minute block new connections from it for up to a minute.
 
 Paired devices live in `$STIM_HOME/server/devices.json`. Revoking a device
-closes its open connections.
+closes its open connections. The server checks registrations on file changes
+and once a second, so a missed filesystem notification cannot leave a revoked
+connection authorized.
 
 ## Scopes
 
@@ -128,7 +130,8 @@ the pairing code came from `stim-server pair --control`. On the Mac,
 `--read` takes it away. Nothing a client sends changes its own capabilities.
 The server checks the device's capabilities in `devices.json` on every action
 and control session, and ends a device's control sessions when it loses
-`control`, so taking control away applies to open connections at once. `hello` reports
+`control`, so taking control away applies to open connections on the next
+registration check. `hello` reports
 the capabilities and actions of the connection's device when it connects; a
 connection sees a new grant after it reconnects.
 

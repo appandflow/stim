@@ -106,6 +106,9 @@ stim ios`}
 3. To use the phone app, open **Stim > Settings > Phones**, turn on **Serve to
    phones** and choose **Pair a Phone…**.
 
+Revoking a paired phone closes its active connections on the next pairing
+check. The server checks pairings on changes and once a second.
+
 ![The Pair a Phone sheet with a QR code to scan with the phone app](/img/desktop/pair.webp)
 
 Stim prints `Open in Stim Desktop: stim-desktop://workspace?path=...` when it
