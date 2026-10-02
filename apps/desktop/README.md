@@ -118,8 +118,9 @@ Clicking it opens a popover with the branch, its upstream, the pull request's
 title, checks and review, and **Open on GitHub**. The "..." menu at the end of
 the line holds the workspace actions.
 
-The inspector, toggled from the toolbar, holds the workspace's details, in
-this order:
+The inspector, toggled from the toolbar, floats over the workspace in narrow
+windows with its background reaching the top edge behind the toolbar controls.
+It holds the workspace's details, in this order:
 
 - **Build**: one card per platform. While a build runs, its card shows the
   phase or the build tool's step with its counts ("Compiling 45 of 180
