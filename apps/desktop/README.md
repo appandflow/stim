@@ -51,7 +51,7 @@ in the workspace directory:
   touches them.
 
 Click the toolbar's CPU, memory or disk figure for its details. Each popover
-includes **Open Machines** to see the local machine's resources and cleanup.
+includes **Open Machines** to open the Machines page.
 CPU covers live workspace processes; memory covers the whole Mac.
 
 **All devices**, **Notifications** and **Machines** stay pinned at the top of
