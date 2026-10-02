@@ -102,6 +102,9 @@ function SceneCard({ children, permanent, gap }: { children: ReactNode; permanen
   const corners = useAnimatedStyle(() => ({
     borderRadius: permanent ? 0 : interpolate(progress.value, [0, 0.02], [0, DISPLAY_RADIUS], 'clamp'),
   }));
+  const fade = useAnimatedStyle(() => ({
+    opacity: permanent ? 1 : interpolate(progress.value, [0, 1], [1, 0.45], 'clamp'),
+  }));
   return (
     <Animated.View
       style={[
@@ -112,6 +115,7 @@ function SceneCard({ children, permanent, gap }: { children: ReactNode; permanen
           transition: permanent && !reducedMotion ? `marginLeft ${PANE_TRANSITION}` : 'none',
         },
         corners,
+        fade,
       ]}
     >
       <Animated.View style={[styles.clip, { backgroundColor: theme.colors.background }, corners]}>
