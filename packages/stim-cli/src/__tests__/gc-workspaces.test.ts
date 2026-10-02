@@ -1574,6 +1574,7 @@ test('gc --delete keeps a just-merged worktree for the grace period, then remove
     findExecutable: () => null,
   });
 
+  const freshActivityAt = statSync(join(workspaceDir(worktrees.fresh!), 'state.json')).mtimeMs;
   const { payload } = await gcJson({ delete: true });
   const byPath = Object.fromEntries(payload.sections.linkedWorktrees.map((w: { path: string }) => [w.path, w]));
   expect(byPath[worktrees.fresh!]).toMatchObject({
@@ -1582,7 +1583,7 @@ test('gc --delete keeps a just-merged worktree for the grace period, then remove
     reason: 'recent-activity',
     eligibleAt: expect.any(String),
   });
-  expect(Date.parse(byPath[worktrees.fresh!].eligibleAt) - Date.now()).toBeGreaterThan(119 * 60_000);
+  expect(byPath[worktrees.fresh!].eligibleAt).toBe(new Date(freshActivityAt + 120 * 60_000).toISOString());
   expect(byPath[worktrees.landed!]).toMatchObject({ willRemove: false, reason: 'recent-activity' });
   expect(byPath[worktrees.landed!].detail).toMatch(
     /^recent activity: merged into origin\/main \S+ ago; removable after /,
