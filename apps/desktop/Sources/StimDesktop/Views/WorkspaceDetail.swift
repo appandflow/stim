@@ -211,13 +211,15 @@ struct WorkspaceDetail: View {
       .overlay(
         RoundedRectangle(cornerRadius: Radius.card).strokeBorder(Palette.border, style: StrokeStyle(lineWidth: 1, dash: [4, 3])))
     } else {
-      EmptyState(
-        title: "No devices",
-        message: stage.label == .stopped
-          ? "Nothing is running. Ask your agent to run the app."
-          : "No device in this workspace yet. Run stim ios or stim android.",
-        showsPrompts: true
-      )
+      VStack(spacing: Space.lg) {
+        NoDeviceArt()
+        Text("No devices").font(.stim(.headline))
+        Text("Run stim ios or stim android to launch your app.")
+          .foregroundStyle(Palette.secondary)
+          .multilineTextAlignment(.center)
+      }
+      .padding(Space.huge)
+      .frame(maxWidth: .infinity, maxHeight: .infinity)
       .id(env.path)
     }
   }

@@ -72,6 +72,9 @@ additional rows scroll vertically. Screens keep their aspect ratio and a
 900-point height cap. Small previews use a 6-point inner inset, while the canvas
 keeps 20 points of outer padding.
 
+An empty workspace shows a purple device floating above a round plinth and a
+short launch hint. Reduce Motion stops the illustration's animation.
+
 Closing the window leaves Stim Desktop running, so notifications and the phone
 server keep working. Click the Dock icon to reopen the window, or press
 Command-Q to quit. Command-1, Command-2 and Command-3 open All devices,
