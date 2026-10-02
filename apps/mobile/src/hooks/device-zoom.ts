@@ -150,9 +150,9 @@ export function useDeviceZoom(
         }),
       );
     } else {
-      to.set(withTiming(target, { duration: reduced ? 0 : RETARGET_MS }));
+      to.set(landed ? withTiming(target, { duration: reduced ? 0 : RETARGET_MS }) : target);
     }
-  }, [stage, offset, aspect, origin, reduced, from, to, progress]);
+  }, [stage, offset, aspect, origin, reduced, from, to, progress, landed]);
 
   const pop = useCallback(() => router.back(), []);
   const close = useCallback(() => {

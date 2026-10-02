@@ -223,6 +223,7 @@ export function DeviceView({
   const [typed, setTyped] = useState('');
   const [moving, setMoving] = useState<DevicePosture | null>(null);
   const [barBottom, setBarBottom] = useState(0);
+  const [bannerHeight, setBannerHeight] = useState(0);
   const [barSides, setBarSides] = useState<[number, number]>([0, 0]);
   const { height: keyboardHeight, shown: keyboardShown } = useKeyboardHeight();
   const typingBarShown = typing && keyboardShown;
@@ -493,7 +494,10 @@ export function DeviceView({
                 <View style={table ? { height: table.start - insets.top } : styles.root}>
                   <View style={{ height: barBottom + headerGap }} />
                   {sideBySide || table ? null : readOnlyBanner}
-                  <View style={book && { width: book.start - insets.left }}>
+                  <View
+                    style={book && { width: book.start - insets.left }}
+                    onLayout={(event) => setBannerHeight(event.nativeEvent.layout.height)}
+                  >
                     <Banner
                       control={control.state}
                       canTakeOver={control.allowed === true && !replaying}
@@ -516,7 +520,13 @@ export function DeviceView({
                   <View style={sideBySide ? styles.row : styles.root}>
                     <View
                       ref={stage}
-                      style={[styles.stage, book && { flex: 0, width: book.start - insets.left }]}
+                      style={[
+                        styles.stage,
+                        book && { flex: 0, width: book.start - insets.left },
+                        table && {
+                          maxHeight: Math.max(0, table.start - insets.top - barBottom - headerGap - bannerHeight),
+                        },
+                      ]}
                       onLayout={barBottom > 0 ? zoom.measure : undefined}
                       collapsable={false}
                     >
@@ -565,7 +575,10 @@ export function DeviceView({
           </Animated.View>
           {streams ? (
             <GestureDetector gesture={screenGesture}>
-              <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
+              <View
+                style={[StyleSheet.absoluteFill, table && { bottom: rootHeight - table.start }]}
+                pointerEvents="box-none"
+              >
                 <Animated.View style={[styles.flying, zoom.screenStyle, lift]}>
                   <DeviceScreen
                     stream={stream}
