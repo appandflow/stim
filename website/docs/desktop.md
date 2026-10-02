@@ -81,7 +81,11 @@ Workspace device cards fill the available width up to 640 points and wrap into
 centered rows. Each complete card, including its header, fits the canvas height;
 additional rows scroll vertically. Screens keep their aspect ratio and a
 900-point height cap. Small previews use a 6-point inner inset, while the canvas
-keeps 20 points of outer padding.
+keeps 20 points of outer padding. Stopped devices use compact, consistently sized
+cards up to 420 points wide. **Boot** runs the device's platform and slot through
+Stim, building and launching when needed; the button is disabled while the workspace
+has an action running. Unowned and physical devices have no Boot button. Closed web
+cards offer **Open** instead. Clicking the rest of the card opens the viewer.
 
 An empty workspace shows a purple device floating above a round plinth and a
 short launch hint. Reduce Motion stops the illustration's animation.

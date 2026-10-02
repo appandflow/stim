@@ -182,7 +182,6 @@ struct WorkspaceDetail: View {
           FlowLayout(spacing: Space.xl, lineSpacing: Space.xl, topAligned: true, centered: true) {
             ForEach(devices) { device in
               tile(device, focused: device.id == focused?.id, cardWidth: cardWidth, cardHeight: cardHeight)
-                .frame(width: cardWidth)
             }
           }
           .padding(Space.xxl)
@@ -225,7 +224,7 @@ struct WorkspaceDetail: View {
   }
 
   private func tile(_ device: DeviceRef, focused: Bool, cardWidth: CGFloat, cardHeight: CGFloat) -> some View {
-    DeviceTile(
+    let tile = DeviceTile(
       device: device, screenHeight: 900, workspace: env.path,
       build: env.runningBuild(for: device),
       usage: device.isRunning ? env.usage(of: device, machine: machine) : nil,
@@ -235,17 +234,21 @@ struct WorkspaceDetail: View {
       maxWidth: cardWidth, maxCardHeight: cardHeight,
       showsScreen: viewing?.id != device.id
     )
-    .overlay {
-      Button {
-        focusedID = device.id
-        viewing = ViewedDevice(id: device.id)
-      } label: {
-        Color.clear.contentShape(Rectangle())
+    return
+      tile
+      .allowsHitTesting(tile.showsStoppedBar)
+      .background {
+        Button {
+          focusedID = device.id
+          viewing = ViewedDevice(id: device.id)
+        } label: {
+          Color.clear.contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help("Open \(device.label) to take it over or replay what it recorded")
+        .accessibilityLabel("Open \(device.label)")
       }
-      .buttonStyle(.plain)
-      .help("Open \(device.label) to take it over or replay what it recorded")
-      .accessibilityLabel("Open \(device.label)")
-    }
+      .frame(width: tile.showsStoppedBar ? min(DeviceTile.stoppedMaximumWidth, cardWidth) : cardWidth)
   }
 
   /// Shows the agent source of `slot` in the logs drawer, scrolled to `at` when given.

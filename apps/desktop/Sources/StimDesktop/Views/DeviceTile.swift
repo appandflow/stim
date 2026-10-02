@@ -52,6 +52,7 @@ struct DeviceTile: View {
     return !viewer && small ? Space.sm : Space.lg
   }
   static let minimumWidth: CGFloat = 240
+  static let stoppedMaximumWidth: CGFloat = 420
   static let buttonStripWidth: CGFloat = 44
 
   var body: some View {
@@ -144,7 +145,9 @@ struct DeviceTile: View {
         RoundedRectangle(cornerRadius: Radius.card).strokeBorder(Palette.accent.opacity(0.45), lineWidth: 1.5)
       }
     }
-    .frame(width: min(maxWidth ?? width, width))
+    .frame(
+      width: showsStoppedBar ? min(maxWidth ?? Self.stoppedMaximumWidth, Self.stoppedMaximumWidth) : min(maxWidth ?? width, width)
+    )
   }
 
   private var header: some View {
@@ -296,7 +299,7 @@ struct DeviceTile: View {
     .allowsHitTesting(false)
   }
 
-  private var showsStoppedBar: Bool {
+  var showsStoppedBar: Bool {
     if case .remote = device { return false }
     if isPhysical, workspace != nil { return false }
     return !device.isRunning && build == nil && !["Booting", "unknown"].contains(device.state)
@@ -305,23 +308,28 @@ struct DeviceTile: View {
   private func stoppedBar(_ run: StimCommand?) -> some View {
     HStack(spacing: Space.md) {
       Text(
-        device.platform == "web"
-          ? "Closed. Run stim web to open the page again."
-          : run.map { "Not running. Run stim \($0.arguments.joined(separator: " ")) to boot it and install the app." }
-            ?? (isPhysical ? "Not connected." : "Shut down. Stim does not boot a device it does not own.")
+        viewer
+          ? (device.platform == "web"
+            ? "Closed. Run stim web to open the page again."
+            : run.map { "Not running. Run stim \($0.arguments.joined(separator: " ")) to boot it and install the app." }
+              ?? (isPhysical ? "Not connected." : "Shut down. Stim does not boot a device it does not own."))
+          : (device.platform == "web" ? "Closed." : run == nil ? "Shut down. Not owned by Stim." : "Shut down.")
       )
       .font(.stim(.callout))
       .foregroundStyle(Palette.secondary)
       .fixedSize(horizontal: false, vertical: true)
       Spacer(minLength: 0)
-      if viewer, let run {
-        Button("Run") { actions.run(device.platform == "web" ? "Open web" : "Run \(device.slot)", run) }
-          .buttonStyle(.stim())
-          .fixedSize()
-          .disabled(actions.active(for: run.cwd) != nil)
-          .help(run.displayLine())
+      if let run {
+        Button(viewer ? "Run" : device.platform == "web" ? "Open" : "Boot") {
+          actions.run(device.platform == "web" ? "Open web" : "Run \(device.slot)", run)
+        }
+        .buttonStyle(.stim())
+        .fixedSize()
+        .disabled(actions.active(for: run.cwd) != nil)
+        .help(run.displayLine())
       }
     }
+    .frame(minHeight: viewer ? nil : 24)
     .padding(Space.lg)
   }
 
