@@ -114,6 +114,7 @@ Explicit machine project/repository overrides keep their existing precedence.
 | `metro.tunnel`                | Remote tunnel mode: `auto`, `off`, `expo`, `cloudflared`, or `ngrok` |
 | `metro.ngrokUrl`              | Existing ngrok URL                                                   |
 | `metro.publicUrl`             | Existing public Metro URL                                            |
+| `metro.port`                  | This workspace's Metro port, reserved instead of one Stim picks      |
 | `metro.warmupUrl.ios`         | Bundle URL `stim ios` prefetches to warm Metro                       |
 | `metro.warmupUrl.android`     | Bundle URL `stim android` prefetches to warm Metro                   |
 | `metro.idleStopMinutes`       | Minutes of no use before the dev server stops; `0` never, default 60 |
@@ -511,6 +512,7 @@ recordings are otherwise cleaned up.
 | `STIM_POOL_IOS_PARKED_MAX`            | Maximum parked simulators                                                                                   |
 | `STIM_GC_WORKTREE_GRACE_MINUTES`      | Minutes `gc --delete` waits after a worktree's last activity or merge; overrides `gc.worktreeGraceMinutes`  |
 | `STIM_METRO_PUBLIC_URL`               | Public Metro URL for remote use                                                                             |
+| `STIM_METRO_PORT`                     | This workspace's Metro port, reserved instead of one Stim picks; overrides `metro.port`                     |
 | `STIM_ANDROID_CAS_TOOLCHAIN`          | Absolute path to the [Android CAS toolchain manifest](./build-optimizations.md#experimental-android-cas)    |
 | `STIM_NO_UPDATE_CHECK`                | Set to disable the daily check for a newer Stim release in `stim guide`                                     |
 | `STIM_RECORDING`                      | `0` or `false` stops `stim-server` recording device screens; overrides `recording.enabled`                  |

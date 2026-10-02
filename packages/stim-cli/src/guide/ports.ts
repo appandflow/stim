@@ -14,7 +14,8 @@ If Stim is not installed globally, replace stim with npx stim.
 get <label> allocates on first use and prints only the number to stdout.
 Repeated calls reuse it, even while a server is listening. Labels start with
 a letter and contain up to 64 letters, digits, underscores, or hyphens.
-metro is reserved; use stim start and stim stop for managed Metro.
+metro is reserved; use stim start and stim stop for managed Metro, and
+metro.port or STIM_METRO_PORT to choose its number (guide settings).
 
 New allocations scan TCP ports 8900-8999. They skip registry reservations
 and existing listeners, announcing occupied ports and upward retries on

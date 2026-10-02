@@ -104,7 +104,12 @@ export async function reserveMetroPort(
   projectPath: string,
   probe: (port: number) => Promise<boolean> = isMetroRunning,
   isFree: (port: number) => Promise<boolean> = isPortFree,
+  pinned: number | null = null,
 ): Promise<number> {
+  if (pinned !== null) {
+    if (claimMetroPort(projectPath, pinned) !== null) return pinned;
+    throw new Error(`metro.port ${pinned} is already reserved by another workspace's Metro or named port.`);
+  }
   for (let attempt = 0; attempt < RESERVE_ATTEMPTS; attempt++) {
     const port = await allocatePort(projectPath, probe, isFree);
     const claimed = claimMetroPort(projectPath, port);

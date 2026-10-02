@@ -1006,7 +1006,9 @@ captured"  (in metro.ndjson, bare RN)
   -- \`guide settings\` names the type each key takes), an invalid
   Metro tunnel setting, an invalid android.dataPartitionSizeGb value, an unsafe
   android.avdConfig key or fragment, a malformed ios.signingIdentity,
-  ios.signingIdentitySha1 or ios.lanHost value, \`--device\` with an empty
+  ios.signingIdentitySha1 or ios.lanHost value, a metro.port or
+  STIM_METRO_PORT that another workspace reserves or another process holds,
+  \`--device\` with an empty
   serial or UDID, \`--device\` together with \`--remote\`, \`ios --runtime\`
   on a remote run (\`--remote\` or ios.remote; the remote backend picks the
   iOS version), \`ios --device-type\` on the proxy backend or with an

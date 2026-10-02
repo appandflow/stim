@@ -31,6 +31,7 @@ import {
   settingsLayers,
   tunnelModeSetting,
   metroIdleStopMinutesSetting,
+  metroPortSetting,
   deviceIdleShutdownMinutesSetting,
   unknownSettingKeys,
 } from '../workspace/settings.ts';
@@ -105,6 +106,15 @@ test('readCommittedSettings returns empty for missing or malformed files', () =>
   expect(readCommittedSettings(tmpHome)).toEqual({});
   writeFileSync(join(tmpHome, '.stim.json'), '{ not json');
   expect(readCommittedSettings(tmpHome)).toEqual({});
+});
+
+test('metroPortSetting prefers STIM_METRO_PORT to the workspace layer and refuses a port below 1024', () => {
+  upsertProject(tmpHome, {});
+  expect(metroPortSetting(tmpHome, {})).toEqual({ port: null, error: null });
+  setProjectSetting(tmpHome, 'metro.port', 25062);
+  expect(metroPortSetting(tmpHome, {})).toEqual({ port: 25062, error: null });
+  expect(metroPortSetting(tmpHome, { STIM_METRO_PORT: '25072' })).toEqual({ port: 25072, error: null });
+  expect(metroPortSetting(tmpHome, { STIM_METRO_PORT: '80' }).error).toMatch(/^Invalid STIM_METRO_PORT value "80"\./);
 });
 
 test('resolveSettings orders project over repo over committed', () => {
@@ -409,6 +419,7 @@ const SHAPE_CASES: Record<string, { valid: unknown; invalid: unknown; expected: 
   'devices.idleShutdownMinutes': { valid: 30, invalid: 1.5, expected: 'a whole number, 0 or more' },
   'metro.ngrokUrl': { valid: 'https://a.ngrok.app', invalid: {}, expected: 'a string' },
   'metro.publicUrl': { valid: 'https://metro.example', invalid: false, expected: 'a string' },
+  'metro.port': { valid: 25062, invalid: '25062', expected: 'a whole number from 1024 through 65535' },
   'web.url': { valid: 'http://localhost:{port:web}/', invalid: 8080, expected: 'a string' },
   'web.ignoreCertificateErrors': { valid: true, invalid: 'yes', expected: 'true or false' },
   'web.viewport': { valid: 'phone', invalid: 'tablet', expected: 'one of: desktop, phone' },

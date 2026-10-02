@@ -40,7 +40,13 @@ import {
 import { getProject, upsertProject } from '../workspace/config.ts';
 import { workspaceDir, workspaceLogsDir } from '../workspace/paths.ts';
 import { detectIsExpo, findCommandWorkspace, isPackageResolvable } from '../workspace/project.ts';
-import { resolveSettings, SETTING_SHAPE_REMEDY, settingShapeErrors, webSettings } from '../workspace/settings.ts';
+import {
+  metroPortSetting,
+  resolveSettings,
+  SETTING_SHAPE_REMEDY,
+  settingShapeErrors,
+  webSettings,
+} from '../workspace/settings.ts';
 import { readWorkspaceState, recordWorkspaceUse } from '../workspace/workspace-state.ts';
 import { gitCommonDir, repoRoot } from '../workspace/worktree.ts';
 import { ensureWorkspaceStorageSafely, sleep } from './native-runtime.ts';
@@ -205,7 +211,8 @@ export async function runWeb({
   }
 
   let metroPort = getProject(root)?.metroPort ?? null;
-  if (usesMetro && metroPort === null) metroPort = await reserveMetroPort(root);
+  if (usesMetro && metroPort === null)
+    metroPort = await reserveMetroPort(root, undefined, undefined, metroPortSetting(root).port);
   const metro = usesMetro && metroPort !== null ? await resolveProjectMetro(metroPort, root) : null;
   const supervisor = resolveSupervisorTarget({
     state: readWorkspaceState(root)?.supervisor,

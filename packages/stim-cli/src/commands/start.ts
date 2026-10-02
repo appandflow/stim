@@ -35,6 +35,7 @@ import {
   ngrokUrlSetting,
   deviceIdleShutdownMinutesSetting,
   metroIdleStopMinutesSetting,
+  metroPortSetting,
   metroTunnelSettingError,
   remoteAndroidSetting,
   cacheProviderSettingError,
@@ -519,7 +520,7 @@ export async function startDevServer(
 
       const logsDir = workspaceLogsDir(root);
       const logFile = supervisorLogFile(root);
-      const port = await resolvePort(root, note);
+      const port = await resolvePort(root, note, fail);
       let publicOrigin = remote ? publicUrl : null;
       let resolution = await resolveProjectMetro(port, root);
       let supervisor = liveSupervisor({ state: readWorkspaceState(root), project: getProject(root), port });
@@ -1102,10 +1103,28 @@ export async function startDevServer(
   }
 }
 
-async function resolvePort(root: string, note: (line: string) => void): Promise<number> {
+async function resolvePort(
+  root: string,
+  note: (line: string) => void,
+  fail: (refusal: StartRefusalArgs) => never,
+): Promise<number> {
+  const setting = metroPortSetting(root);
+  if (setting.error) fail({ code: 'STIM_BAD_ARG', message: setting.error, remedy: SETTING_SHAPE_REMEDY });
+  const pinned = setting.port;
+  const reservePinned = async () => {
+    try {
+      return await reserveMetroPort(root, undefined, undefined, pinned);
+    } catch (error) {
+      return fail({
+        code: 'STIM_BAD_ARG',
+        message: (error as Error).message,
+        remedy: 'Give each workspace its own metro.port, in the workspace layer or the environment.',
+      });
+    }
+  };
   const project = getProject(root);
   const recorded = project?.metroPort;
-  if (!recorded) return await reserveMetroPort(root);
+  if (!recorded || (pinned !== null && recorded !== pinned)) return await reservePinned();
   const supervisor = resolveSupervisorTarget({
     state: readWorkspaceState(root)?.supervisor,
     record: project.supervisor,
@@ -1114,6 +1133,13 @@ async function resolvePort(root: string, note: (line: string) => void): Promise<
   if (supervisor.status !== 'none' && supervisor.status !== 'stale') return recorded;
   const held = await resolveProjectMetro(recorded, root);
   if (!held.notOurs) return recorded;
+  if (pinned !== null) {
+    fail({
+      code: 'STIM_BAD_ARG',
+      message: `Port ${pinned} is held by something else (${held.notOurs}), and metro.port pins this workspace's Metro to it.`,
+      remedy: 'Stop the process on that port, or set another metro.port.',
+    });
+  }
   const fresh = await reserveMetroPort(root);
   if (fresh !== recorded) {
     note(chalk.yellow(`Port ${recorded} is held by something else (${held.notOurs}).`));
