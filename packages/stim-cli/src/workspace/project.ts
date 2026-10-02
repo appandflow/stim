@@ -1,6 +1,8 @@
 import { existsSync, readFileSync, realpathSync } from 'fs';
 import { basename, join, dirname, resolve } from 'path';
 import { type ProjectRecord, loadConfig, findEnclosingWorktreeRoot, getProject, isPathPrefix } from './config.ts';
+import { findProjectRoot } from '@stim-cli/core/state';
+export { findProjectRoot } from '@stim-cli/core/state';
 import { repoRoot } from './worktree.ts';
 
 interface PackageJson {
@@ -105,21 +107,6 @@ export function resolveRegisteredProject(arg?: string | null): ResolveResult {
     found: null,
     error: `No registered project matches "${arg}". See \`stim status\` for the list.`,
   };
-}
-
-export function findProjectRoot(startDir: string): string | null {
-  let dir: string;
-  try {
-    dir = realpathSync(resolve(startDir));
-  } catch {
-    dir = resolve(startDir);
-  }
-  while (true) {
-    if (existsSync(join(dir, 'package.json'))) return dir;
-    const parent = dirname(dir);
-    if (parent === dir) return null;
-    dir = parent;
-  }
 }
 
 export function findServerWorkspace(startDir: string): { root: string; from: string | null } | null {

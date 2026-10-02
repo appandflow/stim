@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -84,3 +84,19 @@ execFileSync(process.execPath, ['packages/stim-cli/dist/cli.mjs', '--help'], {
   cwd: repositoryRoot,
   stdio: 'pipe',
 });
+
+const statsHome = mkdtempSync(join(tmpdir(), 'stim-stats-runtime-'));
+try {
+  writeFileSync(join(statsHome, 'stats.json'), JSON.stringify({ version: 1, machine: { ios: { runs: 3, hits: 2 } } }));
+  const options = { cwd: statsHome, env: { ...process.env, STIM_HOME: statsHome }, encoding: 'utf8' };
+  const report = execFileSync(process.execPath, [join(repositoryRoot, 'packages/server/dist/stats-read.mjs')], options);
+  const cli = execFileSync(
+    process.execPath,
+    [join(repositoryRoot, 'packages/stim-cli/dist/cli.mjs'), 'stats', '--json'],
+    options,
+  );
+  assert.deepEqual(JSON.parse(report), JSON.parse(cli));
+  assert.equal(JSON.parse(report).machine.ios.runs, 3);
+} finally {
+  rmSync(statsHome, { recursive: true, force: true });
+}

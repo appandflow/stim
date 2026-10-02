@@ -134,3 +134,7 @@ export function easSessionLedgerLock(root: string = easMachineStateRoot()): stri
 export function deviceViewersDir(): string {
   return join(configDir(), 'viewers');
 }
+
+export function statsFile(): string {
+  return join(configDir(), 'stats.json');
+}

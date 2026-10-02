@@ -8,7 +8,6 @@ import type { CommandOutcome } from './stim-command.ts';
  * inventory from the payload.
  */
 const GC_DRY_RUN = ['gc', '--json'];
-const STATS = ['stats', '--json'];
 const DOCTOR = ['doctor', '--json', '--platform', 'ios'];
 
 const MACHINE_DETAILS_TTL_MS = 60_000;
@@ -153,9 +152,10 @@ export function buildClients(records: AuditRecord[], now: number): BuildClientSu
 export async function loadMachineDetails(
   run: (args: string[], cwd?: string) => Promise<CommandOutcome>,
   audit: () => Promise<AuditRecord[]>,
+  readStats: () => Promise<CommandOutcome>,
 ): Promise<Omit<MachineDetails, 'buildMachines'>> {
   const measuredAt = new Date().toISOString();
-  const [gc, stats, records] = await Promise.all([run(GC_DRY_RUN), run(STATS), audit()]);
+  const [gc, stats, records] = await Promise.all([run(GC_DRY_RUN), readStats(), audit()]);
   const gcPart = part(gc, 'stim gc');
   const statsPart = part(stats, 'stim stats');
   return {

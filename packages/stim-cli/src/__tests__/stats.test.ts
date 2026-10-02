@@ -1,5 +1,17 @@
 import assert from 'node:assert';
-import { existsSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { runStats as runServerStats } from '../../../server/src/stats.ts';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  symlinkSync,
+  readFileSync,
+  readdirSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Command } from 'commander';
@@ -339,19 +351,27 @@ describe('build placements', () => {
     expect(record.placements?.some((each) => each.reason === 'old')).toBe(false);
   });
 
-  test('today counts only the local calendar day, while totals keep everything', () => {
-    let record = updateStats(
-      emptyStats(),
-      run({ placement: { decision: 'offloaded', machine: 'mini', reason: 'busy', buildMs: 100_000 } }),
-      T0,
-    );
-    record = updateStats(record, run({ placement: here }), T1);
-    const summary = offloadSummary(record, T1);
-
-    expect(summary.today).toEqual({ here: 1, offloaded: 0, fellBack: 0 });
-    expect(summary.machines.mini?.today.offloaded).toBe(0);
-    expect(summary.machines.mini?.total.offloaded).toBe(1);
-    expect(summary.placements[0]?.decision).toBe('here');
+  test('today follows local midnight, with signed savings and lifetime totals', () => {
+    const previous = process.env.TZ;
+    process.env.TZ = 'America/Toronto';
+    try {
+      const yesterday = Date.parse('2026-09-02T03:59:00Z');
+      const today = Date.parse('2026-09-02T04:01:00Z');
+      let record = updateStats(emptyStats(), run({ coldBuildMs: 50_000, placement: here }), yesterday);
+      record = updateStats(
+        record,
+        run({ placement: { decision: 'offloaded', machine: 'mini', reason: 'busy', buildMs: 100_000 } }),
+        today,
+      );
+      const summary = offloadSummary(record, today);
+      expect(summary.today).toEqual({ here: 0, offloaded: 1, fellBack: 0 });
+      expect(summary.machines.mini?.today).toMatchObject({ offloaded: 1, savedMs: -50_000 });
+      expect(summary.machines.mini?.total).toMatchObject({ offloaded: 1, savedMs: -50_000 });
+      expect(summary.placements.map((entry) => entry.decision)).toEqual(['offloaded', 'here']);
+    } finally {
+      if (previous === undefined) delete process.env.TZ;
+      else process.env.TZ = previous;
+    }
   });
 
   test('a file written before placements, or with malformed ones, still reads', () => {
@@ -716,4 +736,47 @@ describe('stim stats', () => {
     expect(plain).toContain('build placement');
     expect(plain.some((line) => line.includes('here: load 0.6/core, 1 build here'))).toBe(true);
   });
+});
+
+test('CLI and the server read child agree for a real monorepo worktree and its symlink', async () => {
+  resetExecutor();
+  const git = (args: string[]) => execFileSync('git', ['-C', root, ...args], { stdio: 'pipe' });
+  git(['init']);
+  const app = join(root, 'apps', 'example');
+  mkdirSync(app, { recursive: true });
+  writeFileSync(join(app, 'package.json'), '{}');
+  git(['add', '.']);
+  git([
+    '-c',
+    'user.name=Stats test',
+    '-c',
+    'user.email=stats@example.invalid',
+    '-c',
+    'commit.gpgsign=false',
+    'commit',
+    '-m',
+    'fixture',
+  ]);
+  const worktree = join(tmpHome, 'worktree');
+  git(['worktree', 'add', '--detach', worktree]);
+  const alias = join(tmpHome, 'alias');
+  symlinkSync(join(worktree, 'apps', 'example'), alias, process.platform === 'win32' ? 'junction' : 'dir');
+  const record = updateStats(emptyStats(), run({ projectKey: app, coldBuildMs: 1200 }), T0);
+  writeFileSync(statsFile(), JSON.stringify(record));
+  for (const cwd of [app, join(worktree, 'apps', 'example'), alias]) {
+    const cli = inDir(cwd, () => runStats(['--json']));
+    const child = runServerStats({ ...process.env }, cwd, { timeoutMs: 10_000, maxOutputBytes: 1024 * 1024 });
+    try {
+      const outcome = await child.outcome;
+      assert(outcome.ok);
+      expect(JSON.parse(outcome.stdout)).toEqual(JSON.parse(cli.out[0]!));
+      expect(JSON.parse(outcome.stdout).project).toMatchObject({
+        key: app,
+        ios: { lastColdBuildMs: 1200 },
+        android: null,
+      });
+    } finally {
+      await child.cancel();
+    }
+  }
 });

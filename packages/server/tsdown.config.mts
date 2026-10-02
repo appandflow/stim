@@ -7,6 +7,7 @@ export default defineConfig({
   entry: {
     'stim-server': 'bin/stim-server.ts',
     protocol: 'src/protocol.ts',
+    'stats-read': 'src/stats-read.ts',
   },
   format: 'esm',
   dts: true,
