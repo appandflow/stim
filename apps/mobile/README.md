@@ -455,8 +455,10 @@ viewer takes a tabletop layout: the title and the device screen above the
 fold, and the read-only banner, the Control toolbars, the replay controls and
 the agent actions below it. It takes that layout only while
 `react-native-hinges` reports the hinge partly open, and the fold's position
-comes from the reserved regions. Every control stays available in every
-posture.
+comes from the reserved regions. The hinge readings need the same iOS SDK
+27.1 and runtime requirements as the fold readings, or Android WindowManager
+support. Without both readings, the viewer keeps its default layout. Every
+control stays available in every posture.
 
 With **Control** on, the server starts a control session (`control.begin`)
 and holds a `stim device lock` lease on the device, so agents see it as
