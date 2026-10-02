@@ -144,6 +144,10 @@ button needs the bundled app, and because it uses private iOS interfaces, a
 new iOS runtime can break it. **Rotate left** and **Rotate right** work in
 folded, half-open and unfolded postures. Apps keep their supported
 orientations, and the Duo home screen stays portrait.
+When the Desktop viewer is open and the installed devicectl supports hinge
+observation, its preset selection follows changes made by other controllers.
+Arbitrary angles leave all presets unselected. Older tools retain the posture
+Desktop last requested.
 
 ## Multiple devices with slots
 

@@ -545,8 +545,13 @@ the angle through the simulator's vendor-defined HID service
 (`com.apple.coredevice.feature.remote.hid.vendordefined`), which iOS needs to
 swap panels; the path is adapted from
 [Siniulator](https://github.com/kmagiera/Siniulator) under its MIT licence.
-The lit panel cannot tell Half open from Unfolded, so the selected button and
-the posture chip show the open posture Stim Desktop last set. On a
+While its viewer is open, Desktop observes the Duo hinge through
+`devicectl device motion hinge-angle`, so preset selection follows changes
+made by another controller. Arbitrary angles leave all presets unselected.
+Tools or devices without hinge observation retain the last requested posture.
+The observer consumes valid samples twice a second at most, uses one bounded
+process, and stops it when the viewer closes. Its parser depends on the human
+output of devicectl 651.13.4; unfamiliar output keeps the existing behavior. On a
 CoreSimulator without that service the column shows **Fold / Unfold** instead,
 which runs the bundled `sim-fold` helper inside the simulator with `xcrun
 simctl spawn` to toggle SpringBoard's private display tool service; it appears

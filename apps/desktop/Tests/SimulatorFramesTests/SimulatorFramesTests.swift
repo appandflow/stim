@@ -82,3 +82,30 @@ import Testing
     #expect(zip(angles, angles.dropFirst()).allSatisfy { $0 <= $1 })
   }
 }
+
+@Suite struct SimulatorHingeAngleTests {
+  @Test func readsTheValidAngleRatherThanTheMechanicalAngle() {
+    let sample =
+      "\u{2022} +0.500s : Angle: 73.2\u{00B0} Mech: 71.8\u{00B0} Velocity:+0.0\u{00B0}/s AngleValid:Y VelocityValid:N Range:0-180\u{00B0}"
+    #expect(SimulatorHingeAngle.parse(sample) == 73.2)
+    #expect(SimulatorHingeAngle.parse("\u{1B}[38;5;46m" + sample + "\u{1B}[0m") == 73.2)
+  }
+
+  @Test func ignoresUnavailableInvalidAndUnrecognizedSamples() {
+    for sample in [
+      "Hinge angle monitoring started. 55 seconds remaining:",
+      "Angle: 73.2\u{00B0} AngleValid:N",
+      "Angle: nan\u{00B0} AngleValid:Y",
+      "Angle: inf\u{00B0} AngleValid:Y",
+      "Angle: -1.0\u{00B0} AngleValid:Y",
+      "Angle: 181.0\u{00B0} AngleValid:Y",
+      "Angle: 73.2 AngleValid:Y",
+      "Angle: AngleValid:Y",
+      "Mech: 73.2\u{00B0} AngleValid:Y",
+      "Angle: 73.2\u{00B0} AngleValid:Yunknown",
+    ] {
+      #expect(SimulatorHingeAngle.parse(sample) == nil)
+    }
+  }
+
+}

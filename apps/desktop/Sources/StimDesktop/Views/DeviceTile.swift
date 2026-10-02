@@ -35,6 +35,7 @@ struct DeviceTile: View {
   @State private var lit: [UInt32: Bool] = [:]
   @State private var folding = false
   @State private var hingeAvailable = false
+  @State private var observedHingeAngle: Double?
   @State private var postureTarget: DuoPosture?
   @State private var rotateFailed = false
   @State private var foldError: String?
@@ -262,6 +263,23 @@ struct DeviceTile: View {
         try? await Task.sleep(for: .seconds(10))
       }
     }
+    .task(id: hingeAvailable ? dualSimulatorUDID : nil) {
+      observedHingeAngle = nil
+      guard hingeAvailable, let udid = dualSimulatorUDID else { return }
+      while !Task.isCancelled {
+        let started = ContinuousClock.now
+        var received = false
+        for await angle in SimulatorHingeAngle.angles(udid: udid) {
+          observedHingeAngle = angle
+          received = true
+        }
+        guard !Task.isCancelled, received else {
+          observedHingeAngle = nil
+          return
+        }
+        try? await Task.sleep(for: max(.zero, .seconds(60) - started.duration(to: .now)))
+      }
+    }
     .background(Palette.surface, in: RoundedRectangle(cornerRadius: Radius.card))
     .overlay(RoundedRectangle(cornerRadius: Radius.card).strokeBorder(Palette.border))
   }
@@ -390,8 +408,8 @@ struct DeviceTile: View {
       postureTarget = target
       foldError = nil
       Task {
-        let from = duoPosture ?? SimulatorPosture.lastPosture(udid: udid) ?? .closed
-        foldError = await SimulatorPosture.move(udid: udid, from: from.hingeAngle, to: target)
+        let from = observedHingeAngle ?? (duoPosture ?? SimulatorPosture.lastPosture(udid: udid) ?? .closed).hingeAngle
+        foldError = await SimulatorPosture.move(udid: udid, from: from, to: target)
         if foldError == nil {
           try? await Task.sleep(for: .seconds(3))
           if let posture, (posture == "Folded") != target.isFolded {
@@ -418,10 +436,11 @@ struct DeviceTile: View {
     return sim.udid
   }
 
-  /// The iPhone Duo's posture: folded when the cover is lit, else the open posture Stim Desktop last set, since the
-  /// lit panel is the same at 120 and 180 degrees.
   private var duoPosture: DuoPosture? {
     guard let posture, case .ios(_, let sim) = device else { return nil }
+    if let observedHingeAngle {
+      return DuoPosture.allCases.first { $0.hingeAngle == observedHingeAngle.rounded() }
+    }
     if posture == "Folded" { return .closed }
     return SimulatorPosture.lastPosture(udid: sim.udid) == .halfOpen ? .halfOpen : .open
   }
