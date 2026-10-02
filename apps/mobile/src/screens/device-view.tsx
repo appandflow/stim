@@ -75,6 +75,7 @@ const MOVE_INTERVAL_MS = 16;
 const DATA_SAVER_FPS = 10;
 const DATA_SAVER_MAX_EDGE = 640;
 const TYPING_BAR_HEIGHT = 56;
+const MIN_TARGET = 44;
 const ROTATE_WAIT_MS = 2500;
 const ROTATE_NOTE_MS = 4000;
 const ROTATE_NOTE_SCREEN_READER_MS = 16_000;
@@ -631,7 +632,7 @@ export function DeviceView({
                   zoom.close();
                 }}
                 accessibilityLabel={t`Close`}
-                hitSlop={10}
+                style={styles.barButton}
               >
                 <Icon name="xmark" size={22} color={theme.media.text} />
               </Touch>
@@ -796,7 +797,7 @@ export function DeviceView({
               onBlur={() => setTyping(false)}
               accessibilityLabel={t`Type on the device`}
             />
-            <Touch onPress={() => keyboard.current?.blur()} hitSlop={8}>
+            <Touch onPress={() => keyboard.current?.blur()} style={styles.typingDone}>
               <Text weight="semibold" tone="brand">
                 <Trans>Done</Trans>
               </Text>
@@ -845,7 +846,6 @@ function Banner({
           defaultOpacity={readOnly ? theme.opacity.disabled : 1}
           accessibilityHint={readOnly ? readOnlyReason() : undefined}
           style={styles.bannerButton}
-          hitSlop={6}
         >
           <Text weight="semibold" tone="brand" style={readOnly && styles.mutedAction}>
             <Trans>Take over</Trans>
@@ -893,7 +893,6 @@ function ToolButton({ label, onPress, disabled }: { label: string; onPress: () =
       defaultOpacity={disabled ? theme.opacity.disabled : 1}
       accessibilityState={{ disabled }}
       style={styles.tool}
-      hitSlop={4}
     >
       <Text weight="medium" style={styles.mediaText}>
         {label}
@@ -995,7 +994,13 @@ const styles = StyleSheet.create((theme) => ({
   bannerText: { flex: 1 },
   bannerBody: { flex: 1, gap: theme.space.xs },
   bannerActions: { flexDirection: 'row', gap: theme.space.xxl, paddingTop: theme.space.xs },
-  bannerButton: { paddingHorizontal: theme.space.xs },
+  bannerButton: {
+    minWidth: MIN_TARGET,
+    minHeight: MIN_TARGET,
+    paddingHorizontal: theme.space.xs,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   mutedAction: { color: theme.media.textTertiary },
   toolbar: {
     flexDirection: 'row',
@@ -1014,10 +1019,26 @@ const styles = StyleSheet.create((theme) => ({
     paddingVertical: theme.space.sm,
   },
   tool: {
+    minWidth: MIN_TARGET,
+    minHeight: MIN_TARGET,
     paddingHorizontal: theme.space.lg,
     paddingVertical: theme.space.sm,
+    alignItems: 'center',
+    justifyContent: 'center',
     borderRadius: theme.radius.round,
     backgroundColor: theme.media.fill,
+  },
+  barButton: {
+    width: MIN_TARGET,
+    height: MIN_TARGET,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  typingDone: {
+    minWidth: MIN_TARGET,
+    minHeight: MIN_TARGET,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   control: (on: boolean) => ({
     flexDirection: 'row',
