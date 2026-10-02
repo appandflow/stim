@@ -50,3 +50,4 @@ patchedDependencies:
   expo-image@58.0.6: patches/expo-image@58.0.6.patch
   react-native-mmkv@4.3.2: patches/react-native-mmkv@4.3.2.patch
   react-native-nitro-modules@0.37.1: patches/react-native-nitro-modules@0.37.1.patch
+  react-native-transformer-text-input@0.4.2: patches/react-native-transformer-text-input@0.4.2.patch
