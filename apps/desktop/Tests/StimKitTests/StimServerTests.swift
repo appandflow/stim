@@ -95,4 +95,24 @@ import Testing
     ).devices
     #expect(devices.filter(\.isPhone).map(\.id) == ["a2", "a3"])
   }
+
+  @Test func separatesDeviceHostRequestsFromBuildRequestsAndPhones() throws {
+    let devices = try StimServerCLI.decoder.decode(
+      PairedDeviceList.self,
+      from: Data(
+        #"""
+        {"devices":[
+          {"id":"legacy","name":"Build Mac","identity":{"kind":"tailnet","nodeId":"n1"},"pairedAt":"2026-09-25T05:00:00Z","capabilities":[],"pendingUntil":"2026-09-25T05:15:00Z"},
+          {"id":"build","name":"Build Mac","identity":{"kind":"tailnet","nodeId":"n1"},"pairedAt":"2026-09-25T05:00:00Z","capabilities":[],"requestedCapability":"build","pendingUntil":"2026-09-25T05:15:00Z"},
+          {"id":"host-pending","name":"Device Mac","identity":{"kind":"tailnet","nodeId":"n2"},"pairedAt":"2026-09-25T05:00:00Z","capabilities":[],"requestedCapability":"device-host","pendingUntil":"2026-09-25T05:15:00Z"},
+          {"id":"host-approved","name":"Device Mac","identity":{"kind":"tailnet","nodeId":"n2"},"pairedAt":"2026-09-25T05:00:00Z","capabilities":["device-host"],"requestedCapability":"device-host"},
+          {"id":"phone","name":"Phone","identity":{"kind":"tailnet","nodeId":"n3"},"pairedAt":"2026-09-25T05:00:00Z","capabilities":["read"]}
+        ]}
+        """#.utf8)
+    ).devices
+    #expect(devices.filter(\.isBuildClient).map(\.id) == ["legacy", "build"])
+    #expect(devices.filter(\.isDeviceHostClient).map(\.id) == ["host-pending", "host-approved"])
+    #expect(devices.filter(\.isPhone).map(\.id) == ["phone"])
+    #expect(!devices.contains { $0.canControl })
+  }
 }

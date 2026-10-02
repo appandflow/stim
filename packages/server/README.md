@@ -16,11 +16,11 @@ The design is in
 stim-server [--port <n>]          # serve paired clients, port 7787 by default
 stim-server pair [--port <n>] [--control]
                                   # print a single-use pairing payload
-stim-server devices [list]        # list paired devices, build clients and build requests
-stim-server devices grant <id> --control|--read|--build
+stim-server devices [list]        # list paired devices, approved clients and access requests
+stim-server devices grant <id> --control|--read|--build|--device-host
                                   # let a paired device run actions, or only read;
-                                  # --build approves a Mac's request to build here
-stim-server devices revoke <id>   # revoke a paired device or build client, or deny a request
+                                  # --build approves builds; --device-host approves device hosting
+stim-server devices revoke <id>   # revoke a paired device or client, or deny a request
 stim-server log                   # list the actions paired devices ran
 stim-server service install|status|uninstall
                                   # run stim-server as a macOS LaunchAgent, see below
@@ -32,8 +32,10 @@ serving command: see [Run as a service](#run-as-a-service).
 `pair --json` prints `{ "qr": <payload>, "expiresAt": "<ISO time>" }`, and
 `devices --json` prints `{ "devices": [...] }` with each device's `id`, `name`,
 `identity`, `pairedAt`, `lastSeenAt` and `capabilities`, never its token hash,
-followed by the [build clients](#build-access); a pending build request also
-carries `pendingUntil`.
+followed by the [build clients](#build-access) and [device-host clients](#device-host-approval).
+New client records carry `requestedCapability` (`build` or `device-host`),
+including after approval. Pending records also carry `pendingUntil`; a legacy
+pending record without `requestedCapability` is a build request.
 `log --json` prints `{ "actions": [...] }`, the records described under
 [Actions](#actions).
 
@@ -173,6 +175,36 @@ never grants it.
 `$STIM_HOME/server/build-clients.json`, apart from `devices.json`, so a
 `stim-server` release without `build` never reads them and refuses their
 tokens.
+
+## Device-host approval
+
+Device hosting has a separate `device-host` capability. This release provides
+request, approval and revocation only; it does not reserve or run a hosted
+simulator or emulator, choose a device host automatically, or relay Metro and
+screens. Those runtime flows remain tracked in [#2266](https://github.com/appandflow/stim/issues/2266).
+
+A client on the tailnet sends `hello` with
+`auth: { "request": "device-host", "deviceName": "Laptop" }`. As with a build
+request, the server returns a token and pending approval, then closes the
+connection. It binds the token to the peer's tailnet node. Requests expire
+after 15 minutes; each node keeps only its newest pending request of this kind,
+and at most eight device-host requests can be pending. Build requests have a
+separate limit. The same name validation and failed-attempt limit apply.
+
+On the hosting Mac, inspect `stim-server devices`, then approve the matching
+request with `stim-server devices grant <id> --device-host`, or use **Allow**
+in Stim Desktop. Approve only an expected request: it authorizes that Mac to
+use session-owned device hosting when the runtime flow is available. **Deny**
+or `stim-server devices revoke <id>` removes it; revocation also closes its
+open authenticated connections. The local-process trust boundary described in
+[Build access](#build-access) applies here too.
+
+Hosting clients live in `$STIM_HOME/server/device-host-clients.json`, separate
+from phone pairings and build clients. A hosting token grants no `read`,
+`control` or `build` access, including access to unrelated workspaces. Existing
+read, control and build tokens cannot gain hosting through `devices grant`.
+Loopback requests and `pair --device-host` are refused. An approved hosting
+client can authenticate, but no hosted-session methods are available yet.
 
 ## Run as a service
 

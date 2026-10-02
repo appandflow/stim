@@ -33,6 +33,7 @@ import {
   grantDevice,
   PAIRING_TTL_MS,
   readBuildClients,
+  readDeviceHostClients,
   readDevices,
   revokeDevice,
 } from '../src/registry.ts';
@@ -526,9 +527,9 @@ describe('pairing', () => {
   );
 });
 
-describe('build access', () => {
+describe.each(['build', 'device-host'] as const)('%s access', (capability) => {
   const requestBuild = (client: Client) =>
-    client.request('hello', { protocol: 1, client: CLIENT, auth: { request: 'build', deviceName: 'Laptop' } });
+    client.request('hello', { protocol: 1, client: CLIENT, auth: { request: capability, deviceName: 'Laptop' } });
   const helloWith = (client: Client, deviceToken: string) =>
     client.request('hello', { protocol: 1, client: CLIENT, auth: { deviceToken } });
 
@@ -548,13 +549,20 @@ describe('build access', () => {
       expect(await waiting.closed).toBe(4401);
     }
 
-    expect(grantDevice(device.id, ['build'])).toBe('granted');
+    expect(grantDevice(device.id, [capability])).toBe('granted');
     const approved = await connect(port, '100.64.0.2');
     expect(await helloWith(approved, deviceToken!)).toMatchObject({
-      result: { capabilities: ['build'], actions: [] },
+      result: { capabilities: [capability], actions: [] },
     });
     for (const method of ['status.subscribe', 'machine.get', 'notifications.list', 'stats.get', 'machine.details']) {
       expect(await approved.request(method)).toMatchObject({ error: { code: 'forbidden' } });
+    }
+
+    if (capability === 'device-host') {
+      expect(await approved.request('build.offer')).toMatchObject({ error: { code: 'forbidden' } });
+      expect(await approved.request('control.begin', { workspace: '/unrelated', slot: 'ios' })).toMatchObject({
+        error: { code: 'forbidden' },
+      });
     }
 
     const elsewhere = await connect(port, '100.64.0.3');
@@ -564,7 +572,7 @@ describe('build access', () => {
     expect(await approved.closed).toBe(4401);
   });
 
-  test.skipIf(!fakeTailscale)('counts each build request toward the failed-attempt limit', async () => {
+  test.skipIf(!fakeTailscale)('counts each approval request toward the failed-attempt limit', async () => {
     const port = await start({ maxAuthFailures: 2 });
     const opened = await Promise.all([1, 2, 3].map(() => connect(port, '100.64.0.3')));
     for (const socket of opened.slice(0, 2)) await requestBuild(socket);
@@ -572,11 +580,11 @@ describe('build access', () => {
     await expect(connect(port, '100.64.0.3')).rejects.toThrow('HTTP 429');
   });
 
-  it('refuses build access to a connection from this Mac', async () => {
+  it('refuses requested access to a connection from this Mac', async () => {
     const port = await start();
     const local = await connect(port);
     expect(await requestBuild(local)).toMatchObject({ error: { code: 'forbidden' } });
-    expect(readBuildClients()).toEqual([]);
+    expect([...readBuildClients(), ...readDeviceHostClients()]).toEqual([]);
   });
 });
 

@@ -46,6 +46,8 @@ final class ServerController: ObservableObject {
   /// Build clients, and Macs waiting for approval to build here, newest first.
   var buildClients: [PairedDevice] { devices.filter(\.isBuildClient) }
 
+  var deviceHostClients: [PairedDevice] { devices.filter(\.isDeviceHostClient) }
+
   var phones: [PairedDevice] { devices.filter(\.isPhone) }
 
   var isRunning: Bool {
@@ -205,11 +207,16 @@ final class ServerController: ObservableObject {
     control ? ["read", "control"] : ["read"]
   }
 
-  /// Approves a Mac's pending request to build here.
-  func allowBuild(_ device: PairedDevice) {
+  func allowMachine(_ device: PairedDevice) {
     Task {
       let cli = await cli()
-      switch await Result.awaiting({ try await cli.grantBuild(device.id) }) {
+      switch await Result.awaiting({
+        if device.isDeviceHostClient {
+          try await cli.grantDeviceHost(device.id)
+        } else {
+          try await cli.grantBuild(device.id)
+        }
+      }) {
       case .success: changeError = nil
       case .failure(let error): changeError = error.localizedDescription
       }

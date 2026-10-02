@@ -541,3 +541,17 @@ output. An install that fails with `INSTALL_FAILED_INSUFFICIENT_STORAGE` gets
 the same cleanup and retries. Simulators use the Mac's disk, so iOS has no such
 check. AVDs created before Stim recorded their creation configuration are
 deleted when removed.
+
+## Paired Mac hosting approval
+
+Device-host approval is separate from build offloading and phone control.
+Stim Desktop can show and approve an expected `device-host` request from
+another Mac on your tailnet. The server command is
+`stim-server devices grant <id> --device-host`; inspect `stim-server devices`
+first, or deny a request with `stim-server devices revoke <id>`.
+
+This currently establishes permission only. It does not run a hosted simulator
+or emulator, automatically choose a device host, or change where `stim ios`
+and `stim android` run. The hosted runtime is tracked in
+[#2266](https://github.com/appandflow/stim/issues/2266). Hosting approval does
+not grant access to unrelated workspaces, phone control or build offloading.
