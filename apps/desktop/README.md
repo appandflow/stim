@@ -550,6 +550,9 @@ swap panels; the path is adapted from
 While its viewer is open, Desktop observes the Duo hinge through
 `devicectl device motion hinge-angle`, so preset selection follows changes
 made by another controller. Arbitrary angles leave all presets unselected.
+With a valid observed angle below 180 degrees, the active inner display projects
+its two halves around the hinge. Touches and drags map back to the display
+pixels. The cover, unknown angle and fully open display stay flat.
 Tools or devices without hinge observation retain the last requested posture.
 The observer consumes valid samples twice a second at most, uses one bounded
 process, and stops it when the viewer closes. Its parser depends on the human

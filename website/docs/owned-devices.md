@@ -150,6 +150,10 @@ Arbitrary angles leave all presets unselected. Older tools retain the posture
 Desktop last requested. **Hinge angle** opens a slider from 0 to 180 degrees
 while **Control** is on; release it to apply the selected angle. Selecting the
 current preset does nothing.
+When its observed angle is below 180 degrees, the Desktop viewer projects the
+active inner display around its hinge. Taps and drags follow the projected
+screen. The cover and fully open display stay flat; without angle observation,
+the inner display also stays flat.
 
 ## Multiple devices with slots
 

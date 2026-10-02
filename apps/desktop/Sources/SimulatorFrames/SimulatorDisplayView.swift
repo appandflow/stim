@@ -10,7 +10,8 @@ import SwiftUI
 /// and keys go to the simulator. `onPixelSizeChange` receives the frame's
 /// pixel size as displayed, after rotation. `onLitChange`, when set, receives
 /// whether the display shows anything; the panel of an iPhone Duo that the
-/// posture turned off is all black.
+/// posture turned off is all black. `hingeAngle`, in degrees, projects the
+/// active inner Duo display; callers leave it nil for cover or unknown panels.
 public struct SimulatorDisplayView: NSViewRepresentable {
   public var udid: String
   public var screenID: UInt32
@@ -18,11 +19,12 @@ public struct SimulatorDisplayView: NSViewRepresentable {
   public var onPixelSizeChange: (CGSize) -> Void
   public var onLitChange: ((Bool) -> Void)?
   public var buttons: SimulatorButtons?
+  public var hingeAngle: Double?
 
   public init(
     udid: String, screenID: UInt32 = 1, interactive: Bool = false,
     onPixelSizeChange: @escaping (CGSize) -> Void = { _ in }, onLitChange: ((Bool) -> Void)? = nil,
-    buttons: SimulatorButtons? = nil
+    buttons: SimulatorButtons? = nil, hingeAngle: Double? = nil
   ) {
     self.udid = udid
     self.screenID = screenID
@@ -30,6 +32,7 @@ public struct SimulatorDisplayView: NSViewRepresentable {
     self.onPixelSizeChange = onPixelSizeChange
     self.onLitChange = onLitChange
     self.buttons = buttons
+    self.hingeAngle = hingeAngle
   }
 
   public func makeNSView(context: Context) -> SimulatorDisplayNSView {
@@ -38,6 +41,7 @@ public struct SimulatorDisplayView: NSViewRepresentable {
     view.onLitChange = onLitChange
     view.attach(udid: udid, screenID: screenID)
     view.setInteractive(interactive)
+    view.hingeAngle = hingeAngle
     buttons?.view = view
     return view
   }
@@ -47,6 +51,7 @@ public struct SimulatorDisplayView: NSViewRepresentable {
     view.onLitChange = onLitChange
     view.attach(udid: udid, screenID: screenID)
     view.setInteractive(interactive)
+    view.hingeAngle = hingeAngle
     buttons?.view = view
   }
 
@@ -88,6 +93,17 @@ public final class SimulatorDisplayNSView: NSView {
   private var hid: SimulatorHID?
   private var touchPoint: CGPoint?
   private let surfaceLayer = CALayer()
+  private let foldedScreen = DuoFoldRenderer()
+  private var surface: IOSurface?
+  var hingeAngle: Double? {
+    didSet { needsLayout = true }
+  }
+  private var foldProjection: DuoFoldProjection? {
+    guard let hingeAngle, hingeAngle < 180, let axis = DuoFoldProjection.axis(orientation: orientation),
+      let size = displayedScreenSize
+    else { return nil }
+    return DuoFoldProjection(size: size, angle: hingeAngle, axis: axis)
+  }
   private var orientation: UInt32 = 1
   private var reportedSize: CGSize?
 
@@ -98,6 +114,7 @@ public final class SimulatorDisplayNSView: NSView {
     surfaceLayer.contentsGravity = .resizeAspect
     surfaceLayer.minificationFilter = .trilinear
     layer?.addSublayer(surfaceLayer)
+    layer?.addSublayer(foldedScreen.layer)
   }
 
   required init?(coder: NSCoder) { nil }
@@ -124,7 +141,9 @@ public final class SimulatorDisplayNSView: NSView {
       display.unregisterPropertiesCallback(callbackID)
     }
     display = nil
+    surface = nil
     surfaceLayer.contents = nil
+    foldedScreen.show(nil)
     reportedSize = nil
     reportedLit = nil
     litTimer?.invalidate()
@@ -159,9 +178,14 @@ public final class SimulatorDisplayNSView: NSView {
 
   private func showSurface() {
     guard let display else { return }
-    let surface = display.framebufferSurface
+    showSurface(display.framebufferSurface, orientation: display.screenProperties?.uiOrientation ?? 1)
+  }
+
+  func showSurface(_ surface: IOSurface?, orientation: UInt32) {
+    self.surface = surface
     surfaceLayer.contents = surface
-    orientation = display.screenProperties?.uiOrientation ?? 1
+    foldedScreen.show(surface)
+    self.orientation = orientation
     needsLayout = true
     reportLit()
     guard let displayed = displayedScreenSize, displayed != reportedSize else { return }
@@ -173,7 +197,7 @@ public final class SimulatorDisplayNSView: NSView {
   private var isQuarterTurn: Bool { orientation == 3 || orientation == 4 }
 
   private var displayedScreenSize: CGSize? {
-    guard let surface = display?.framebufferSurface else { return nil }
+    guard let surface else { return nil }
     return isQuarterTurn
       ? CGSize(width: surface.height, height: surface.width)
       : CGSize(width: surface.width, height: surface.height)
@@ -198,6 +222,10 @@ public final class SimulatorDisplayNSView: NSView {
       size: isQuarterTurn ? CGSize(width: bounds.height, height: bounds.width) : bounds.size)
     surfaceLayer.position = CGPoint(x: bounds.midX, y: bounds.midY)
     surfaceLayer.setAffineTransform(CGAffineTransform(rotationAngle: rotation))
+    let projection = foldProjection
+    surfaceLayer.isHidden = projection != nil
+    foldedScreen.layer.isHidden = projection == nil
+    if let projection { foldedScreen.layout(projection, in: bounds, orientation: orientation) }
     CATransaction.commit()
   }
 
@@ -219,6 +247,7 @@ public final class SimulatorDisplayNSView: NSView {
     // CALayer keeps drawing its cached copy of an IOSurface until told the
     // contents changed; the method is QuartzCore SPI, not public API.
     _ = surfaceLayer.perform(NSSelectorFromString("setContentsChanged"))
+    foldedScreen.redraw()
     reportLit()
   }
 
@@ -229,7 +258,7 @@ public final class SimulatorDisplayNSView: NSView {
   }
 
   private func reportLit() {
-    guard onLitChange != nil, let surface = display?.framebufferSurface else { return }
+    guard onLitChange != nil, let surface else { return }
     let lit = !isBlack(surface)
     guard lit != reportedLit else { return }
     reportedLit = lit
@@ -267,9 +296,13 @@ public final class SimulatorDisplayNSView: NSView {
   }
 
   private func screenPoint(_ event: NSEvent, clamped: Bool) -> CGPoint? {
+    screenPoint(convert(event.locationInWindow, from: nil), clamped: clamped)
+  }
+
+  func screenPoint(_ point: CGPoint, clamped: Bool) -> CGPoint? {
     guard let screenSize = displayedScreenSize else { return nil }
-    return normalizedScreenPoint(
-      convert(event.locationInWindow, from: nil), viewSize: bounds.size, screenSize: screenSize, clamped: clamped)
+    if let projection = foldProjection { return projection.screenPoint(point, in: bounds, clamped: clamped) }
+    return normalizedScreenPoint(point, viewSize: bounds.size, screenSize: screenSize, clamped: clamped)
   }
 
   private func touch(_ phase: TouchPhase, at point: CGPoint) {
@@ -310,11 +343,26 @@ public final class SimulatorDisplayNSView: NSView {
       guard touchPoint == nil, let point = screenPoint(event, clamped: false) else { return }
       touch(.down, at: point)
     } else if let last = touchPoint, let screenSize = displayedScreenSize {
-      let fitted = fittedScreenSize(viewSize: bounds.size, screenSize: screenSize)
-      guard fitted.width > 0, fitted.height > 0 else { return }
-      let point = CGPoint(
-        x: min(max(last.x + event.scrollingDeltaX / fitted.width, 0), 1),
-        y: min(max(last.y + event.scrollingDeltaY / fitted.height, 0), 1))
+      let point: CGPoint
+      if let projection = foldProjection {
+        let location = projection.viewPoint(
+          CGPoint(
+            x: last.x * screenSize.width,
+            y: (1 - last.y) * screenSize.height), in: bounds)
+        guard
+          let projected = projection.screenPoint(
+            CGPoint(
+              x: location.x + event.scrollingDeltaX,
+              y: location.y - event.scrollingDeltaY), in: bounds, clamped: true)
+        else { return }
+        point = projected
+      } else {
+        let fitted = fittedScreenSize(viewSize: bounds.size, screenSize: screenSize)
+        guard fitted.width > 0, fitted.height > 0 else { return }
+        point = CGPoint(
+          x: min(max(last.x + event.scrollingDeltaX / fitted.width, 0), 1),
+          y: min(max(last.y + event.scrollingDeltaY / fitted.height, 0), 1))
+      }
       let ended = event.phase.contains(.ended) || event.phase.contains(.cancelled)
       touch(ended ? .up : .move, at: point)
     }
