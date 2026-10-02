@@ -163,7 +163,6 @@
         "src/design/**",
         "src/lib/about.ts",
         "src/lib/agent-prompts.ts",
-        "src/lib/oversight.ts",
         "src/screens/gallery.tsx",
         "src/components/icon.tsx",
         "src/components/agent-icon.tsx",

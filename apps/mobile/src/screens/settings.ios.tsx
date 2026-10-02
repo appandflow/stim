@@ -26,7 +26,7 @@ import { useHomeFilters } from '@/hooks/home-filters';
 import { useMacs } from '@/hooks/machines';
 import { useNotificationPrefs } from '@/hooks/notifications';
 import { NOTIFY_CATEGORIES, type NotifyLevel } from '@/lib/notifications';
-import type { OversightCategory } from '@/lib/oversight';
+import type { OversightCategory } from '@stim-cli/core/oversight';
 import { useRecordingSetting } from '@/hooks/recording-setting';
 import { useSettings } from '@/hooks/settings';
 import { pairingScope, type StimConnection } from '@/lib/connection';

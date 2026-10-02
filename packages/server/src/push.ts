@@ -12,7 +12,7 @@ import {
   type OversightPullRequest,
   type OversightState,
   type OversightTarget,
-} from './oversight.ts';
+} from '@stim-cli/core/oversight';
 import type {
   MachineVolume,
   MemoryPressure,

@@ -19,7 +19,8 @@
     "format:check": "oxfmt --check .",
     "intl:extract": "lingui extract --clean",
     "intl:compile": "lingui compile",
-    "intl:check": "pnpm run intl:extract && pnpm run intl:compile && git diff --exit-code -- locales"
+    "intl:check": "pnpm run intl:extract && pnpm run intl:compile && git diff --exit-code -- locales",
+    "eas-build-post-install": "pnpm --filter @stim-cli/core run build"
   },
   "dependencies": {
     "@expo/ui": "~58.0.7",
@@ -28,6 +29,7 @@
     "@lingui/core": "5.9.5",
     "@lingui/react": "5.9.5",
     "@sentry/react-native": "8.28.0",
+    "@stim-cli/core": "workspace:^",
     "expo": "~58.0.0-preview.7",
     "expo-camera": "~58.0.3",
     "expo-clipboard": "~58.0.1",
@@ -70,6 +72,7 @@
     "@types/jest": "^29.5.14",
     "@types/react": "~19.3.0",
     "@types/ws": "^8.18.1",
+    "babel-jest": "29.7.0",
     "babel-preset-expo": "~58.0.4",
     "eslint-plugin-expo": "^1.2.0",
     "eslint-plugin-lingui": "0.16.0",
@@ -95,6 +98,16 @@
       "/node_modules/",
       "/mock-server/"
     ],
+    "transform": {
+      "\\.mjs$": [
+        "babel-jest",
+        {
+          "presets": [
+            "babel-preset-expo"
+          ]
+        }
+      ]
+    },
     "transformIgnorePatterns": [
       "/node_modules/(?!(.pnpm|react-native|@react-native|@react-native-community|expo|@expo|@expo-google-fonts|react-navigation|@react-navigation|@sentry|native-base|standard-navigation))",
       "/node_modules/react-native-reanimated/plugin/",

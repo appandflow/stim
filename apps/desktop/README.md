@@ -766,7 +766,7 @@ in Settings** opens **Build Machines**; the page itself changes nothing.
 ## Notifications
 
 Stim Desktop notifies with the phone app's oversight rules
-(`packages/server/src/oversight.ts`, ported to `StimKit/Oversight.swift`), run
+(`packages/core/oversight.ts`, ported to `StimKit/Oversight.swift`), run
 on each `stim status --watch --json` payload and every 30 seconds: **Work
 started** (a workspace begins warming, or an agent starts driving a device),
 **Agent looks stuck** (a driven workspace with no agent activity for the stuck

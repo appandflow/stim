@@ -1,6 +1,6 @@
 import Foundation
 
-/// The notification rules for a human who oversees agents, ported from `packages/server/src/oversight.ts`.
+/// The notification rules for a human who oversees agents, ported from `packages/core/oversight.ts`.
 /// `OversightTests` replays the runs `packages/server/__tests__/oversight.test.ts` records in
 /// `Fixtures/oversight-vectors.json`, so the two fail until they agree.
 public enum OversightCategory: String, Codable, CaseIterable, Hashable, Sendable {

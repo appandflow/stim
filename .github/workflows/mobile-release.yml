@@ -60,7 +60,10 @@ jobs:
           install: false
 
       - name: Install before any secret is loaded
-        run: pnpm install --frozen-lockfile --filter stim-mobile
+        run: pnpm install --frozen-lockfile --filter stim-mobile... --filter stim-monorepo
+
+      - name: Build the shared notification rules
+        run: pnpm --filter @stim-cli/core run build
 
       - name: The app boots in the tests before anything is published
         if: inputs.mode != 'rollback' && inputs.mode != 'republish'

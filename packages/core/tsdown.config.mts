@@ -6,6 +6,7 @@ export default defineConfig({
     'ownership-claim': 'ownership-claim.ts',
     'process-identity': 'process-identity.ts',
     state: 'state/index.ts',
+    oversight: 'oversight.ts',
   },
   format: 'esm',
   dts: true,

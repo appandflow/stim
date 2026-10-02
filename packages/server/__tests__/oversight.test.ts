@@ -10,7 +10,7 @@ import {
   type OversightPrefs,
   type OversightState,
   type OversightStatus,
-} from '../src/oversight.ts';
+} from '@stim-cli/core/oversight';
 
 const T0 = Date.parse('2026-09-26T12:00:00Z');
 const MIN = 60_000;

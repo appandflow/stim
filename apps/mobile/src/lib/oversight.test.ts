@@ -1,6 +1,6 @@
 import fixture from '../../../desktop/Tests/StimKitTests/Fixtures/needs-attention-vectors.json';
 
-import { needsAttention, type NeedsAttentionInput, type NeedsAttentionItem } from '@/lib/oversight';
+import { needsAttention, type NeedsAttentionInput, type NeedsAttentionItem } from '@stim-cli/core/oversight';
 
 const vectors = fixture as unknown as {
   cases: {

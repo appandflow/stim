@@ -29,6 +29,7 @@ const entrypoints = [
   ['@stim-cli/core/process-identity', 'captureProcessIdentity'],
   ['@stim-cli/core/ownership-claim', 'tryAcquireClaim'],
   ['@stim-cli/core/state', 'loadConfig'],
+  ['@stim-cli/core/oversight', 'oversee'],
   ['@stim-cli/cache', 'loadCacheProvider'],
   ['@stim-cli/expo-build-cache', 'cacheRoot'],
   ['@stim-cli/metro', 'sharedCacheStores'],

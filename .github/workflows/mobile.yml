@@ -6,6 +6,7 @@ on:
     branches: [main]
     paths:
       - 'apps/mobile/**'
+      - 'packages/core/**'
       - 'apps/desktop/Tests/StimKitTests/Fixtures/log-entries-vectors.json'
       - '.github/workflows/mobile.yml'
       - 'knip.json'
@@ -15,6 +16,7 @@ on:
   pull_request:
     paths:
       - 'apps/mobile/**'
+      - 'packages/core/**'
       - 'apps/desktop/Tests/StimKitTests/Fixtures/log-entries-vectors.json'
       - '.github/workflows/mobile.yml'
       - 'knip.json'
@@ -41,7 +43,8 @@ jobs:
         with:
           install: 'false'
           build: 'false'
-      - run: pnpm install --frozen-lockfile --filter stim-mobile
+      - run: pnpm install --frozen-lockfile --filter stim-mobile... --filter stim-monorepo
+      - run: pnpm --filter @stim-cli/core run build
       - run: pnpm run format:check
       - run: pnpm run lint
       - run: pnpm run intl:check
