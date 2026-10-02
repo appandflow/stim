@@ -13,7 +13,7 @@ import {
   type PushEvent,
   type QuietHours,
 } from './protocol.ts';
-import { DEFAULT_STUCK_MINUTES } from './oversight.ts';
+import { DEFAULT_STUCK_MINUTES } from '@stim-cli/core/oversight';
 
 export const PAIRING_TTL_MS: number = 5 * 60_000;
 

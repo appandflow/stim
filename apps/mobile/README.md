@@ -560,8 +560,8 @@ one that opens home. The app asks for notification permission when you first
 turn them on, never at launch; when it is refused, the switch stays off and
 the app offers the system settings.
 
-The app and `stim-server` run the same rules, `src/lib/oversight.ts`, a copy of
-`packages/server/src/oversight.ts` that a server test keeps identical.
+The app and `stim-server` import the same notification rules from
+`@stim-cli/core/oversight`. Notification delivery and preferences stay in the app.
 
 When notifications can arrive:
 
@@ -664,9 +664,9 @@ and `stim logs --json` payload types the app reads. It is a copy of the types
 - The copy describes what the app accepts from any paired Mac, including one
   running an older `stim-server`. Fields that older servers omit, such as
   `issues` or `home`, are optional here and required in the server's types.
-- Both packages export their types from `dist`, so importing them would make
-  the app's typecheck, tests, Metro and EAS builds depend on building the
-  workspace packages first.
+- The protocol copy stays independent of the server package build. The app
+  imports shared notification rules from the isolated `@stim-cli/core/oversight`
+  entry instead of the Node-only core root or state entries.
 
 `packages/server/__tests__/mobile-protocol.test.ts` keeps the copy honest: the
 root `pnpm run typecheck` fails when the app would send params the server
@@ -683,13 +683,17 @@ installs the app with the published packages, from the one `pnpm-lock.yaml`.
 
 ```bash
 pnpm install
+pnpm --filter @stim-cli/core run build
 cd apps/mobile
 stim start
 stim ios          # or: stim android
 pnpm run mock-server
 ```
 
-To install only the app, run `pnpm install --filter stim-mobile` from the root.
+To install the app and its build prerequisites, run
+`pnpm install --filter stim-mobile... --filter stim-monorepo` from the root,
+then `pnpm --filter @stim-cli/core run build`. Rebuild core after changing the
+shared rules. Mobile CI and the EAS post-install hook build it before bundling.
 
 A checkout that installed the app with npm before it joined the workspace has an
 `apps/mobile/node_modules` pnpm does not clean up. Delete it once, then run
@@ -1063,8 +1067,8 @@ did; sizes follow the messages' language, so they read `3.3 GB` in any region. H
 formatjs polyfills with English plural rules only; each installs only when the
 API is missing. Hermes on iOS also rounds half to even and ignores
 `style: 'unit'`, so sizes round with `toFixed` and carry their unit in the
-message. `lib/oversight.ts` stays unlocalized, byte for byte the same as
-`packages/server`'s.
+message. The shared `@stim-cli/core/oversight` rules stay unlocalized; the
+app localizes their notifications in `src/lib/notifications.ts`.
 
 The `lingui/no-unlocalized-strings` lint rule, through oxlint's `jsPlugins`,
 fails on an unmarked string anywhere in `src`. It skips single lowercase words,
@@ -1073,8 +1077,7 @@ and it skips strings that start with `stim `, `stim-server `, `cd ` or `at `
 (commands and stack frames), and a string assigned to a `SCREAMING_CASE`
 constant, for a value sent to the server. It is off for tests, for `src/design` and
 `src/lib/agent-prompts.ts`, which Stim Desktop's generator imports without the
-Lingui macros, for `src/lib/oversight.ts`, which
-stays byte for byte the same as `packages/server`'s, and for the components
+Lingui macros, and for the components
 that hold SVG paths.
 
 ## Checks

@@ -2,7 +2,7 @@ import { t } from '@lingui/core/macro';
 
 import type { HomeView } from '@/hooks/home-filters';
 import type { NotifyLevel, QuietHours } from '@/lib/notifications';
-import type { OversightCategory } from '@/lib/oversight';
+import type { OversightCategory } from '@stim-cli/core/oversight';
 import type { Appearance, VideoQuality } from '@/hooks/settings';
 
 export interface Option<T extends string> {

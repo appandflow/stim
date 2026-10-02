@@ -815,7 +815,7 @@ the events the device chose:
 - `control`: another client took over a device this phone controls, or an
   agent started driving it. It opens the device viewer.
 - `attention`: something only a person can fix, from the needs-attention rule
-  (`needsAttention` in `src/oversight.ts`): a port held by another app, a
+  (`needsAttention` in `@stim-cli/core/oversight`): a port held by another app, a
   supervisor or owned Chrome Stim cannot verify, an owned AVD it could not
   check, a failed run with a signing or provisioning error code, a physical
   device lease that expired, or an EAS session running for 30 minutes with no
@@ -883,9 +883,9 @@ and every event of a phone that sends no `levels`, is silent. A summary push is
 silent only when every notification it sums up is. An older server ignores
 `levels` and alerts for every event but `started`.
 
-The rules live in `src/oversight.ts`, a pure module the phone app keeps an
-identical copy of (`apps/mobile/src/lib/oversight.ts`) for its local
-notifications; `__tests__/oversight-agreement.test.ts` fails when they differ.
+The server and phone import the same pure rules from `@stim-cli/core/oversight`.
+`__tests__/oversight-agreement.test.ts` checks their categories, workspace names
+and needs-attention vectors. Notification delivery remains local to each.
 
 ## Notification history
 

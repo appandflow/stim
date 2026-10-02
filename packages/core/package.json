@@ -36,6 +36,11 @@
       "types": "./dist/state.d.mts",
       "module-sync": "./dist/state.mjs",
       "default": "./dist/state.mjs"
+    },
+    "./oversight": {
+      "types": "./dist/oversight.d.mts",
+      "module-sync": "./dist/oversight.mjs",
+      "default": "./dist/oversight.mjs"
     }
   },
   "scripts": {

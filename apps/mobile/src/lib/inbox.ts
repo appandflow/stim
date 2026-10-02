@@ -2,7 +2,7 @@ import { t } from '@lingui/core/macro';
 
 import { formatDateTime } from '@/intl/format';
 import type { NotificationData } from '@/lib/notifications';
-import type { OversightCategory } from '@/lib/oversight';
+import type { OversightCategory } from '@stim-cli/core/oversight';
 import type { NotificationEntry, NotificationsListResult } from '@/protocol/types';
 
 /** One Mac's notification history as this phone holds it: newest first, for the Mac's current `log`. */

@@ -35,4 +35,9 @@ registry and its JSON Schema, the created-device and EAS session ledger readers,
 NDJSON log records and queries, and the status and settings payload types. The
 CLI owns every write to that state. The cache packages do not import it.
 
+`@stim-cli/core/oversight` holds the pure notification and needs-attention rules
+shared by stim-server and the phone. It imports no Node APIs; mobile consumers
+import this subpath without loading the Node-only root or state entry points.
+Build core before typechecking, testing or bundling the phone app.
+
 The npm scope remains `@stim-cli` until the `@stim` scope is available.

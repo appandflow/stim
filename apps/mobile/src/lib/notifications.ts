@@ -9,7 +9,7 @@ import {
   type OversightCategory,
   type OversightNotification,
   type OversightState,
-} from '@/lib/oversight';
+} from '@stim-cli/core/oversight';
 import type { DevicePlatform } from '@/protocol/types';
 
 export const NOTIFY_CATEGORIES: readonly OversightCategory[] = OVERSIGHT_CATEGORIES;

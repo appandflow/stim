@@ -30,7 +30,7 @@ import {
   type ServerMessage,
   type TouchPhase,
 } from './protocol.ts';
-import { oversightTitle } from './oversight.ts';
+import { oversightTitle } from '@stim-cli/core/oversight';
 import type { ControlConflict } from './push.ts';
 import type { PairedDevice } from './registry.ts';
 import { Pending, runStim, terminate, type CommandLimits } from './stim-command.ts';

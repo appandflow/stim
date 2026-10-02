@@ -17,7 +17,7 @@ import { useNow } from '@/hooks/use-now';
 import { formatDuration } from '@/intl/format';
 import { byDay, itemData, type InboxFilters, type InboxItem } from '@/lib/inbox';
 import { NOTIFY_CATEGORIES, notificationRoute } from '@/lib/notifications';
-import type { OversightCategory } from '@/lib/oversight';
+import type { OversightCategory } from '@stim-cli/core/oversight';
 import { notifyCategoryLabel } from '@/lib/settings-options';
 
 const SLIDERS_ICON = require('@/assets/icons/sliders.png');

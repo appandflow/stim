@@ -66,7 +66,7 @@ import {
   type VideoCodec,
 } from './protocol.ts';
 import { worktreePullRequests } from 'stim/pull-requests';
-import { DEFAULT_STUCK_MINUTES } from './oversight.ts';
+import { DEFAULT_STUCK_MINUTES } from '@stim-cli/core/oversight';
 import { NotificationLog, notificationLogFile, publicEntry } from './notification-log.ts';
 import { EXPO_PUSH_API, PushNotifier, type PushLimits, type PushNotifierOptions } from './push.ts';
 import {
