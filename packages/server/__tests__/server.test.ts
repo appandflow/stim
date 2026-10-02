@@ -309,8 +309,17 @@ function connect(port: number, peer?: string): Promise<Client> {
   clients.push(socket);
   const inbox: ServerMessage[] = [];
   const waiting: ((message: ServerMessage) => void)[] = [];
+  const replies = new Map<number, (message: ServerMessage) => void>();
   socket.on('message', (data, isBinary) => {
     const message = (isBinary ? { binary: data } : JSON.parse(data.toString())) as ServerMessage;
+    if ('id' in message && typeof message.id === 'number') {
+      const reply = replies.get(message.id);
+      if (reply) {
+        replies.delete(message.id);
+        reply(message);
+        return;
+      }
+    }
     const waiter = waiting.shift();
     if (waiter) waiter(message);
     else inbox.push(message);
@@ -319,10 +328,11 @@ function connect(port: number, peer?: string): Promise<Client> {
   const next = () =>
     inbox.length ? Promise.resolve(inbox.shift()!) : new Promise<ServerMessage>((resolve) => waiting.push(resolve));
   let id = 0;
-  const request = (method: string, params?: unknown) => {
-    socket.send(JSON.stringify({ id: ++id, method, params }));
-    return next();
-  };
+  const request = (method: string, params?: unknown) =>
+    new Promise<ServerMessage>((resolve) => {
+      replies.set(++id, resolve);
+      socket.send(JSON.stringify({ id, method, params }));
+    });
   return new Promise((resolve, reject) => {
     socket.once('open', () => resolve({ socket, next, closed, request }));
     socket.once('unexpected-response', (_request, response) => reject(new Error(`HTTP ${response.statusCode}`)));
@@ -1051,6 +1061,27 @@ describe('offloaded builds', () => {
       await eventually(() => !running(daemon));
     });
   });
+});
+
+test('matches RPC replies without consuming progress events', async () => {
+  const sockets = new WebSocketServer({ port: 0 });
+  await new Promise((resolve) => sockets.once('listening', resolve));
+  const event = { event: 'build.progress', phase: 'build', msg: 'compiling', job: 'job-1' };
+  sockets.on('connection', (socket) =>
+    socket.on('message', (data) => {
+      const { id } = JSON.parse(data.toString());
+      socket.send(JSON.stringify(event));
+      socket.send(JSON.stringify({ id, result: {} }));
+    }),
+  );
+  const client = await connect((sockets.address() as { port: number }).port);
+  try {
+    expect(await client.request('build.cancel', { job: 'job-1' })).toEqual({ id: 1, result: {} });
+    expect(await client.next()).toEqual(event);
+  } finally {
+    client.socket.terminate();
+    await new Promise<void>((resolve) => sockets.close(() => resolve()));
+  }
 });
 
 describe('health', () => {
