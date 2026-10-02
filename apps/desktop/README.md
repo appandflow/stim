@@ -216,11 +216,13 @@ its environment, each with a Copy button.
 Each action opens an activity sheet. While the command runs, the sheet shows a
 spinner and its latest progress line; only the CLI's progress labels (`stim
 guide lifecycle progress`) count as progress. When it finishes, the sheet
-confirms it in one line and closes itself. A failure stays open with the CLI's
+confirms it in one line and stays open until closed. A failure shows the CLI's
 message and remedy. Cleanups run `stim gc --delete --json` or `stim gc --idle
 --json`, and the sheet summarizes the payload's `results`: what was freed and
 deleted, then what gc left alone and what failed, each with its reason. It
-stays open until closed. The command and the raw output are under **Details**.
+stays open until closed. **Command output** is collapsed by default and contains
+the command and raw output, both while running and after completion. Launch
+progress says **Launching app** or **Verifying launch** instead of showing a bundle ID.
 Closing the sheet leaves the command running. The sidebar footer's Operations
 item (in the toolbar while the sidebar is hidden) shows a spinner and a count
 while commands run and a red dot when a finished one failed and was not

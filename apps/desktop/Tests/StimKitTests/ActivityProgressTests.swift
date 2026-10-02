@@ -8,6 +8,16 @@ final class ActivityProgressTests: XCTestCase {
     XCTAssertEqual(steps, [ProgressStep(label: "port", fact: "released 8084", duration: nil, state: .done)])
   }
 
+  func testLaunchStatusNamesTheActionWithoutReplacingTheRawFact() {
+    let steps = ActivityProgress.parse([
+      "  launch      com.appandflow.stim (13.8s)",
+      "  verify      bundle loaded, process alive, stable for 3s (9.3s total)",
+    ])
+    XCTAssertEqual(steps.map(\.statusText), ["Launching app", "Verifying launch"])
+    XCTAssertEqual(steps[0].fact, "com.appandflow.stim")
+    XCTAssertEqual(steps[1].fact, "bundle loaded, process alive, stable for 3s")
+  }
+
   func testExtractsTrailingDuration() {
     let steps = ActivityProgress.parse(["  fingerprint a3f9b1.. hit (2s)"])
     XCTAssertEqual(steps.count, 1)

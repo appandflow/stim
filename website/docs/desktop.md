@@ -111,6 +111,11 @@ layout uses `react-native-hinges` posture readings and the reserved fold geometr
 without both, the default layout remains. The same iOS SDK/runtime and Android
 WindowManager requirements apply.
 
+Actions open a sheet with progress and one completion or failure status. The sheet
+stays open until you close it. Expand **Command output** to see the command and
+raw output during or after a run; it is collapsed by default. Launch progress
+uses **Launching app** and **Verifying launch** labels.
+
 Closing the window leaves Stim Desktop running, so notifications and the phone
 server keep working. Click the Dock icon to reopen the window, or press
 Command-Q to quit. Command-1, Command-2 and Command-3 open All devices,
