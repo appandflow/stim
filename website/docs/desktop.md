@@ -94,6 +94,10 @@ Stim, building and launching when needed; the button is disabled while the works
 has an action running. Unowned and physical devices have no Boot button. Closed web
 cards offer **Open** instead. Clicking the rest of the card opens the viewer.
 
+On the All devices and project wall, active workspaces without running or building
+devices use compact cards labelled **No running devices**, with Metro status,
+warnings and error links. CPU and RAM stay on the workspace page.
+
 An empty workspace shows a purple device floating above a round plinth and a
 short launch hint. Reduce Motion stops the illustration's animation.
 

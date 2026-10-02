@@ -197,7 +197,9 @@ the list, and the app remembers it; a sheet too narrow for the list and a
 Escape releases a device that is taken over, and otherwise closes the viewer;
 closing it releases the device too. While the viewer is open, the device's
 tile stops streaming and says "Open in the viewer". Tiles on the All devices
-wall are previews too; clicking one opens its workspace.
+wall are previews too; clicking one opens its workspace. Active workspaces without
+running or building devices use compact cards with Metro status, warnings and
+positive-error log links; CPU and RAM stay on the workspace page.
 
 The logs are hidden by default. The toolbar's logs button, which carries the
 error count while they are hidden, or **Show logs** in the inspector opens
