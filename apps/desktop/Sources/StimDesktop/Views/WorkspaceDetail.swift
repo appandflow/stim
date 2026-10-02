@@ -30,6 +30,7 @@ struct WorkspaceDetail: View {
   static let minimumInspectorWidth: CGFloat = 280
   static let maximumInspectorWidth: CGFloat = 420
   private static let minimumContentWidth: CGFloat = 440
+  private static let maximumCardWidth: CGFloat = 640
 
   var body: some View {
     let devices = env.orderedDevices
@@ -175,14 +176,11 @@ struct WorkspaceDetail: View {
         if devices.isEmpty {
           emptyCanvas.frame(maxWidth: .infinity).padding(Space.xxxl)
         } else {
-          let screenHeight = canvasScreenHeight(
-            aspects: devices.map(\.canvasAspect),
-            canvas: CGSize(width: geo.size.width - Space.xxl * 2, height: geo.size.height - Space.xxl * 2),
-            spacing: Space.xl, chrome: 100, padding: 24, minimumWidth: DeviceTile.minimumWidth, minimum: 260,
-            maximum: 900)
+          let availableWidth = max(0, geo.size.width - Space.xxl * 2)
+          let cardWidth = min(Self.maximumCardWidth, availableWidth)
           FlowLayout(spacing: Space.xl, lineSpacing: Space.xl, topAligned: true, centered: true) {
             ForEach(devices) { device in
-              tile(device, focused: device.id == focused?.id, screenHeight: screenHeight)
+              tile(device, focused: device.id == focused?.id, cardWidth: cardWidth)
             }
           }
           .padding(Space.xxl)
@@ -222,14 +220,15 @@ struct WorkspaceDetail: View {
     }
   }
 
-  private func tile(_ device: DeviceRef, focused: Bool, screenHeight: CGFloat) -> some View {
+  private func tile(_ device: DeviceRef, focused: Bool, cardWidth: CGFloat) -> some View {
     DeviceTile(
-      device: device, screenHeight: screenHeight, workspace: env.path,
+      device: device, screenHeight: 900, workspace: env.path,
       build: env.runningBuild(for: device),
       usage: device.isRunning ? env.usage(of: device, machine: machine) : nil,
       presence: env.appPresence(device),
       showsCovers: true,
       focused: focused,
+      maxWidth: cardWidth,
       showsScreen: viewing?.id != device.id
     )
     .overlay {
@@ -259,17 +258,4 @@ struct WorkspaceDetail: View {
 
 struct ViewedDevice: Identifiable {
   var id: String
-}
-
-extension DeviceRef {
-  var canvasAspect: CGFloat {
-    if !isRunning { return 0.52 }
-    if case .remote = self { return 0.6 }
-    switch formFactor {
-    case .phone: return 0.52
-    case .tablet: return 0.78
-    case .dual: return 1.4
-    case .desktop: return 1.6
-    }
-  }
 }

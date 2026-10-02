@@ -23,7 +23,7 @@ struct DeviceTile: View {
   /// The device viewer's canvas: only the screen, with the device's buttons beside it, and Run on a stopped device.
   /// A tile without it is a preview card with no controls.
   var viewer = false
-  /// The widest the viewer can draw the screen; it shrinks below `screenHeight` to fit.
+  /// The card's width, or the viewer's screen width limit; the screen shrinks below `screenHeight` to fit.
   var maxWidth: CGFloat? = nil
   /// False while the device's viewer is open, so the tile does not stream a second copy of its screen.
   var showsScreen = true
@@ -137,7 +137,7 @@ struct DeviceTile: View {
         RoundedRectangle(cornerRadius: Radius.card).strokeBorder(Palette.accent.opacity(0.45), lineWidth: 1.5)
       }
     }
-    .frame(width: width)
+    .frame(width: maxWidth ?? width)
   }
 
   private var header: some View {
