@@ -49,7 +49,7 @@ struct IconButton: View {
       }
       .padding(.horizontal, badge == nil ? 0 : Space.sm)
     }
-    .buttonStyle(.icon(tint: tint))
+    .nativeIconStyle(tint: tint)
     .help(help)
     .accessibilityLabel(
       label ?? String(help.prefix { $0 != "\n" }).components(separatedBy: " \u{2014} ")[0])
