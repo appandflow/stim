@@ -159,7 +159,12 @@ running shows "Waiting for the iOS build" over its frame with the phase, a
 thin bar and the elapsed time over the estimate. One whose app process is gone
 shows **App not running**, and one whose platform never built here and last
 failed shows **No app installed** over its frame instead. A workspace that is
-warming with no device yet shows a warming placeholder.
+warming with no device yet shows a warming placeholder. Stopped-device cards use a
+compact 420-point maximum width, centered and wrapping with the available space.
+Their **Boot** button runs the device's platform and slot through Stim, building,
+installing and launching the app if needed. It is disabled while a workspace action
+runs; unowned and physical devices have no Boot action. A closed web card offers
+**Open** instead. Clicking the rest of a card still opens the device viewer.
 
 Clicking a tile opens the **device viewer**, a sheet as large as the main
 window allows, with a minimum of 560 by 480 points. One toolbar names the
