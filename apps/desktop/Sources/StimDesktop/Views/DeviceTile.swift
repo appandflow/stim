@@ -36,6 +36,9 @@ struct DeviceTile: View {
   @State private var folding = false
   @State private var hingeAvailable = false
   @State private var observedHingeAngle: Double?
+  @State private var hingeEditing = false
+  @State private var showsHingeAngle = false
+  @State private var hingeAngle = 180.0
   @State private var postureTarget: DuoPosture?
   @State private var rotateFailed = false
   @State private var foldError: String?
@@ -115,6 +118,9 @@ struct DeviceTile: View {
         }
         try? await Task.sleep(for: max(.zero, .seconds(60) - started.duration(to: .now)))
       }
+    }
+    .onChange(of: observedHingeAngle) { _, angle in
+      if !hingeEditing, let angle { hingeAngle = angle }
     }
   }
 
@@ -273,6 +279,7 @@ struct DeviceTile: View {
         if hingeAvailable {
           Rectangle().fill(Palette.border).frame(width: 16, height: 1)
           ForEach(DuoPosture.allCases, id: \.self) { postureButton($0, udid: sim.udid) }
+          hingeAngleControl(udid: sim.udid)
         } else if SimulatorFold.isAvailable {
           foldButton(udid: sim.udid)
         }
@@ -407,13 +414,15 @@ struct DeviceTile: View {
     let selected = duoPosture == target
     let failed = foldError != nil && postureTarget == target
     return Button(target.label, systemImage: failed ? "exclamationmark.triangle" : target.systemImage) {
+      guard !selected else { return }
       folding = true
       postureTarget = target
       foldError = nil
       Task {
-        let from = observedHingeAngle ?? (duoPosture ?? SimulatorPosture.lastPosture(udid: udid) ?? .closed).hingeAngle
+        let from = currentHingeAngle
         foldError = await SimulatorPosture.move(udid: udid, from: from, to: target)
         if foldError == nil {
+          hingeAngle = target.hingeAngle
           try? await Task.sleep(for: .seconds(3))
           if let posture, (posture == "Folded") != target.isFolded {
             foldError = "The hinge moved, but the simulator did not switch screens."
@@ -434,6 +443,42 @@ struct DeviceTile: View {
     .accessibilityAddTraits(selected ? .isSelected : [])
   }
 
+  private func hingeAngleControl(udid: String) -> some View {
+    Button("Hinge angle", systemImage: "angle") {
+      hingeEditing = false
+      hingeAngle = currentHingeAngle
+      showsHingeAngle = true
+    }
+    .labelStyle(.iconOnly)
+    .buttonStyle(.stim())
+    .help("Set the simulated hinge angle")
+    .popover(isPresented: $showsHingeAngle) {
+      VStack(alignment: .leading, spacing: Space.md) {
+        Text("Hinge angle: \(Int(hingeAngle))\u{00B0}").monospacedDigit()
+        Slider(value: $hingeAngle, in: 0...180, step: 1) { editing in
+          hingeEditing = editing
+          guard !editing else { return }
+          let target = hingeAngle
+          let from = currentHingeAngle
+          guard target != from else { return }
+          folding = true
+          postureTarget = nil
+          foldError = nil
+          Task {
+            foldError = await SimulatorPosture.move(udid: udid, from: from, to: target)
+            folding = false
+          }
+        }
+        .disabled(folding)
+        .accessibilityLabel("Hinge angle")
+        .accessibilityValue("\(Int(hingeAngle)) degrees")
+        if let foldError { Text(foldError).foregroundStyle(Palette.warning) }
+      }
+      .frame(width: 220)
+      .padding(Space.lg)
+    }
+  }
+
   private var dualSimulatorUDID: String? {
     guard viewer, !replaying, device.isRunning, !device.isPhysical, device.formFactor == .dual,
       screenIDs.count > 1, case .ios(_, let sim) = device
@@ -441,13 +486,19 @@ struct DeviceTile: View {
     return sim.udid
   }
 
+  private var currentHingeAngle: Double {
+    if let observedHingeAngle { return observedHingeAngle }
+    guard case .ios(_, let sim) = device else { return 180 }
+    return SimulatorPosture.estimatedAngle(udid: sim.udid, folded: posture.map { $0 == "Folded" })
+  }
+
   private var duoPosture: DuoPosture? {
-    guard let posture, case .ios(_, let sim) = device else { return nil }
+    guard let posture, case .ios = device else { return nil }
     if let observedHingeAngle {
       return DuoPosture.allCases.first { $0.hingeAngle == observedHingeAngle.rounded() }
     }
-    if posture == "Folded" { return .closed }
-    return SimulatorPosture.lastPosture(udid: sim.udid) == .halfOpen ? .halfOpen : .open
+    let preset = DuoPosture.allCases.first { $0.hingeAngle == currentHingeAngle }
+    return preset?.isFolded == (posture == "Folded") ? preset : nil
   }
 
   private func postureMenu(serial: String, current: EmulatorPosture) -> some View {
