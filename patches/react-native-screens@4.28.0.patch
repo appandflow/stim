@@ -1,0 +1,74 @@
+diff --git a/lib/commonjs/components/DebugContainer.js b/lib/commonjs/components/DebugContainer.js
+index 40b72f8c6ae52fd143d0196c31911cb2d0f8b5c8..15cf010bc376f82b964caa8ca56be5a84f9b4af1 100644
+--- a/lib/commonjs/components/DebugContainer.js
++++ b/lib/commonjs/components/DebugContainer.js
+@@ -33,12 +33,13 @@ if (process.env.NODE_ENV !== 'production') {
+       style,
+       ...rest
+     } = props;
++    const rootTag = React.useContext(_reactNative.RootTagContext);
+     const content = /*#__PURE__*/React.createElement(_ScreenContentWrapper.default, _extends({
+       style: [style, contentStyle]
+     }, rest));
+     if (_reactNative.Platform.OS === 'ios' && stackPresentation !== 'push' && stackPresentation !== 'formSheet') {
+       // This is necessary for LogBox
+-      return /*#__PURE__*/React.createElement(_AppContainer.default, null, content);
++      return /*#__PURE__*/React.createElement(_AppContainer.default, { rootTag }, content);
+     }
+     return content;
+   };
+diff --git a/lib/module/components/DebugContainer.js b/lib/module/components/DebugContainer.js
+index 8e5e8a61008d21638000249cd98ff5d840d00a90..77332f6d1a157ae1307e293416feb035a848ad0f 100644
+--- a/lib/module/components/DebugContainer.js
++++ b/lib/module/components/DebugContainer.js
+@@ -1,6 +1,6 @@
+ function _extends() { return _extends = Object.assign ? Object.assign.bind() : function (n) { for (var e = 1; e < arguments.length; e++) { var t = arguments[e]; for (var r in t) ({}).hasOwnProperty.call(t, r) && (n[r] = t[r]); } return n; }, _extends.apply(null, arguments); }
+ import * as React from 'react';
+-import { Platform } from 'react-native';
++import { Platform, RootTagContext } from 'react-native';
+ // @ts-expect-error importing private component
+ 
+ import AppContainer from 'react-native/Libraries/ReactNative/AppContainer';
+@@ -27,12 +27,13 @@ if (process.env.NODE_ENV !== 'production') {
+       style,
+       ...rest
+     } = props;
++    const rootTag = React.useContext(RootTagContext);
+     const content = /*#__PURE__*/React.createElement(ScreenContentWrapper, _extends({
+       style: [style, contentStyle]
+     }, rest));
+     if (Platform.OS === 'ios' && stackPresentation !== 'push' && stackPresentation !== 'formSheet') {
+       // This is necessary for LogBox
+-      return /*#__PURE__*/React.createElement(AppContainer, null, content);
++      return /*#__PURE__*/React.createElement(AppContainer, { rootTag }, content);
+     }
+     return content;
+   };
+diff --git a/src/components/DebugContainer.tsx b/src/components/DebugContainer.tsx
+index c96adea9f76946e79c63c96a9ee4e0dc20a25489..312f64435599e50d135dbb6be212cc9ae2adf00b 100644
+--- a/src/components/DebugContainer.tsx
++++ b/src/components/DebugContainer.tsx
+@@ -1,5 +1,5 @@
+ import * as React from 'react';
+-import { Platform, StyleProp, ViewStyle, type ViewProps } from 'react-native';
++import { Platform, RootTagContext, StyleProp, ViewStyle, type ViewProps } from 'react-native';
+ // @ts-expect-error importing private component
+ 
+ import AppContainer from 'react-native/Libraries/ReactNative/AppContainer';
+@@ -28,6 +28,7 @@ let DebugContainer: React.FC<ContainerProps> = ({
+ if (process.env.NODE_ENV !== 'production') {
+   DebugContainer = (props: ContainerProps) => {
+     const { contentStyle, stackPresentation, style, ...rest } = props;
++    const rootTag = React.useContext(RootTagContext);
+ 
+     const content = (
+       <ScreenContentWrapper style={[style, contentStyle]} {...rest} />
+@@ -39,7 +40,7 @@ if (process.env.NODE_ENV !== 'production') {
+       stackPresentation !== 'formSheet'
+     ) {
+       // This is necessary for LogBox
+-      return <AppContainer>{content}</AppContainer>;
++      return <AppContainer rootTag={rootTag}>{content}</AppContainer>;
+     }
+ 
+     return content;
