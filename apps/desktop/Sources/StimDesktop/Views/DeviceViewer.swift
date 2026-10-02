@@ -58,7 +58,7 @@ struct DeviceViewer: View {
             Spacer()
             Button("Close", systemImage: "xmark", action: close)
               .labelStyle(.iconOnly)
-              .buttonStyle(.stim(.plain))
+              .nativeIconStyle()
               .help("Close (Escape)")
           }
           .padding(.horizontal, Space.xl)
