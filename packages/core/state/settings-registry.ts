@@ -218,6 +218,13 @@ export const SETTINGS: readonly SettingDefinition[] = [
   { key: 'metro.ngrokUrl', type: STRING, scopes: PROJECT, description: 'Stable ngrok URL for the managed tunnel' },
   { key: 'metro.publicUrl', type: STRING, scopes: PROJECT, description: 'Existing public Metro URL' },
   {
+    key: 'metro.port',
+    type: { kind: 'number', integer: true, minimum: 1024, maximum: 65535 },
+    scopes: PROJECT,
+    env: 'STIM_METRO_PORT',
+    description: "This workspace's Metro port, reserved instead of one Stim picks",
+  },
+  {
     key: 'metro.warmupUrl.ios',
     type: { kind: 'bundle-url' },
     scopes: PROJECT,

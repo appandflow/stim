@@ -261,6 +261,15 @@ ${ANDROID_AVD_CONFIG_HELP.map((line) => `                          ${line}`).joi
                         did not create it, so a Metro request through it is
                         still gated the same way a managed tunnel's is. Set it
                         before Expo start so the manifest advertises it.
+  metro.port            this workspace's Metro port, 1024-65535;
+                        STIM_METRO_PORT overrides it. Stim reserves this
+                        number instead of picking one from 8082 up, for a
+                        workspace whose tools already expect a port. A
+                        committed value suits a single checkout; give each
+                        worktree its own in the workspace layer or the
+                        environment. start refuses with STIM_BAD_ARG when
+                        another workspace reserves it or another process
+                        holds it.
   metro.warmupUrl       optional object with per-platform bundle URLs:
   metro.warmupUrl.ios
   metro.warmupUrl.android

@@ -80,7 +80,9 @@ IDEMPOTENT
   A healthy dev server on the reserved port is a no-op: \`start\` prints the
   facts with alreadyRunning: true and starts nothing. A foreign process holding
   the reserved port moves the RESERVATION instead, so the project is never
-  stranded on a port it can never use.
+  stranded on a port it can never use. A port pinned with metro.port or
+  STIM_METRO_PORT never moves: \`start\` refuses with STIM_BAD_ARG and names
+  the holder.
 
 WHAT THE SUPERVISOR IS
   One detached process per workspace. There is no machine-wide daemon, nothing

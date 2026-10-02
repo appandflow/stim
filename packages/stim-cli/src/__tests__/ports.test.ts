@@ -207,6 +207,15 @@ test('reserveMetroPort records the port it hands back', async () => {
   expect(rec.metroPort).toBe(8082);
 });
 
+test('reserveMetroPort records a pinned port and refuses one another workspace reserved', async () => {
+  upsertProject('/a', { bundleId: 'a', androidPackage: 'a', isExpo: false });
+  upsertProject('/b', { bundleId: 'b', androidPackage: 'b', isExpo: false });
+  expect(await reserveMetroPort('/a', async () => false, allFree, 25062)).toBe(25062);
+  expect(getProject('/a')?.metroPort).toBe(25062);
+  await expect(reserveMetroPort('/b', async () => false, allFree, 25062)).rejects.toThrow(/already reserved/);
+  expect(getProject('/b')?.metroPort).toBeFalsy();
+});
+
 test('allocatePort does not reuse a reclaimable port that is now occupied', async () => {
   upsertProject('/a', { bundleId: 'a', androidPackage: 'a', isExpo: false });
   claimMetroPort('/a', 8082);
