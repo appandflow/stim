@@ -571,28 +571,30 @@ struct RunOutput: View {
 
   var body: some View {
     VStack(alignment: .leading, spacing: Space.sm) {
-      ScrollViewReader { proxy in
-        ScrollView {
-          VStack(alignment: .leading, spacing: 0) {
-            ForEach(Array(run.logLines.suffix(400).enumerated()), id: \.offset) { index, line in
-              Text(line.text.isEmpty ? " " : line.text)
-                .font(.stim(.caption, mono: true))
-                .foregroundStyle(Media.textSecondary)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .id(index)
+      if !run.logLines.isEmpty {
+        ScrollViewReader { proxy in
+          ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+              ForEach(Array(run.logLines.suffix(400).enumerated()), id: \.offset) { index, line in
+                Text(line.text.isEmpty ? " " : line.text)
+                  .font(.stim(.caption, mono: true))
+                  .foregroundStyle(Media.textSecondary)
+                  .frame(maxWidth: .infinity, alignment: .leading)
+                  .id(index)
+              }
             }
+            .padding(Space.md)
+            .textSelection(.enabled)
           }
-          .padding(Space.md)
-          .textSelection(.enabled)
+          .frame(maxWidth: .infinity)
+          .frame(height: 100)
+          .background(RoundedRectangle(cornerRadius: Radius.control).fill(Media.screen))
+          .onChange(of: run.logLines.count, initial: true) {
+            proxy.scrollTo(min(run.logLines.count, 400) - 1, anchor: .bottom)
+          }
         }
-        .frame(maxWidth: .infinity)
-        .frame(height: 100)
-        .background(RoundedRectangle(cornerRadius: Radius.control).fill(Media.screen))
-        .onChange(of: run.logLines.count) {
-          proxy.scrollTo(min(run.logLines.count, 400) - 1, anchor: .bottom)
-        }
+        .accessibilityLabel("Command output")
       }
-      .accessibilityLabel("Command output")
       result
     }
   }

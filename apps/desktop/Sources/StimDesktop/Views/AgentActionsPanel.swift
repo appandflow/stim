@@ -259,7 +259,7 @@ private struct AgentActionRow: View {
       }
     }
     .buttonStyle(.hoverRow(radius: 0, selected: current || expanded))
-    .help(recorded ? "Replay from just before this action" : "The replay did not record this action")
+    .help(recorded ? "Replay from just before this action" : "")
     .accessibilityElement(children: .ignore)
     .accessibilityLabel(
       [time, action.record.command, action.failed ? "failed" : nil, action.record.msg].compactMap { $0 }.joined(separator: ", ")

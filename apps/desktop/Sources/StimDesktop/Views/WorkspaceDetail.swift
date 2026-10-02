@@ -178,9 +178,11 @@ struct WorkspaceDetail: View {
         } else {
           let availableWidth = max(0, geo.size.width - Space.xxl * 2)
           let cardWidth = min(Self.maximumCardWidth, availableWidth)
+          let cardHeight = max(0, geo.size.height - Space.xxl * 2)
           FlowLayout(spacing: Space.xl, lineSpacing: Space.xl, topAligned: true, centered: true) {
             ForEach(devices) { device in
-              tile(device, focused: device.id == focused?.id, cardWidth: cardWidth)
+              tile(device, focused: device.id == focused?.id, cardWidth: cardWidth, cardHeight: cardHeight)
+                .frame(width: cardWidth)
             }
           }
           .padding(Space.xxl)
@@ -209,18 +211,20 @@ struct WorkspaceDetail: View {
       .overlay(
         RoundedRectangle(cornerRadius: Radius.card).strokeBorder(Palette.border, style: StrokeStyle(lineWidth: 1, dash: [4, 3])))
     } else {
-      EmptyState(
-        title: "No devices",
-        message: stage.label == .stopped
-          ? "Nothing is running. Ask your agent to run the app."
-          : "No device in this workspace yet. Run stim ios or stim android.",
-        showsPrompts: true
-      )
+      VStack(spacing: Space.lg) {
+        NoDeviceArt()
+        Text("No devices").font(.stim(.headline))
+        Text("Run stim ios or stim android to launch your app.")
+          .foregroundStyle(Palette.secondary)
+          .multilineTextAlignment(.center)
+      }
+      .padding(Space.huge)
+      .frame(maxWidth: .infinity, maxHeight: .infinity)
       .id(env.path)
     }
   }
 
-  private func tile(_ device: DeviceRef, focused: Bool, cardWidth: CGFloat) -> some View {
+  private func tile(_ device: DeviceRef, focused: Bool, cardWidth: CGFloat, cardHeight: CGFloat) -> some View {
     DeviceTile(
       device: device, screenHeight: 900, workspace: env.path,
       build: env.runningBuild(for: device),
@@ -228,7 +232,7 @@ struct WorkspaceDetail: View {
       presence: env.appPresence(device),
       showsCovers: true,
       focused: focused,
-      maxWidth: cardWidth,
+      maxWidth: cardWidth, maxCardHeight: cardHeight,
       showsScreen: viewing?.id != device.id
     )
     .overlay {

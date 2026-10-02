@@ -74,8 +74,9 @@ the options hide every row, the list says so and offers **Show all** or
 keys move through the menu, Return picks, and Right and Left open and close a
 submenu.
 
-When **All devices** or a project has nothing running, or a workspace that is
-not warming has no device, the page shows three example prompts for a coding agent, picked at
+When a workspace that is not warming has no device, a small purple device
+illustration and a launch hint appear. Its animation stops under Reduce Motion.
+When **All devices** or a project has nothing running, the page shows three example prompts for a coding agent, picked at
 random from the phone app's list each time the page appears, with a **Copy**
 button that reads **Copied** once the prompt is on the clipboard.
 
@@ -138,8 +139,10 @@ Below the line, the devices take the rest of the page: every device of the
 workspace at once, in the order above, each with its live frame. The frames
 fill the available width up to 640 points per card. Each row is centered and
 wraps when another full-width card plus spacing would not fit. Screens keep
-their aspect ratios, with a 900-point height cap, and the canvas scrolls
-vertically. A tile is a preview: the device's name and state, its activity, its
+their aspect ratios, with a 900-point height cap. Each card, including its
+header, fits the canvas height; additional rows scroll vertically. Small
+preview screens use a 6-point inner inset; the canvas keeps its 20-point
+outer padding. A tile is a preview: the device's name and state, its activity, its
 CPU, memory and disk (from the machine owner matched by slot and kind, and the
 device's `disk`) and its screen, which takes no input. A device whose build is
 running shows "Waiting for the iOS build" over its frame with the phase, a

@@ -2,6 +2,68 @@ import Lottie
 import StimKit
 import SwiftUI
 
+struct NoDeviceArt: View {
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
+  @Environment(\.colorScheme) private var colorScheme
+  @State private var floating = false
+  @State private var spinning = false
+
+  private var outline: Color { colorScheme == .dark ? Palette.accent : Palette.brand }
+  private var lavender: Color {
+    Color(light: 0xDDD3FFFF, dark: 0x210092FF, lightHighContrast: 0xDDD3FFFF, darkHighContrast: 0x210092FF)
+  }
+
+  var body: some View {
+    ZStack {
+      Canvas { context, _ in
+        let base = Path {
+          $0.move(to: CGPoint(x: 30, y: 118))
+          $0.addLine(to: CGPoint(x: 30, y: 129))
+          $0.addCurve(to: CGPoint(x: 110, y: 165), control1: CGPoint(x: 30, y: 148.88), control2: CGPoint(x: 65.82, y: 165))
+          $0.addCurve(to: CGPoint(x: 190, y: 129), control1: CGPoint(x: 154.18, y: 165), control2: CGPoint(x: 190, y: 148.88))
+          $0.addLine(to: CGPoint(x: 190, y: 118))
+          $0.closeSubpath()
+        }
+        context.fill(base, with: .color(Palette.brand))
+        context.stroke(base, with: .color(outline), lineWidth: 1)
+        let top = Path(ellipseIn: CGRect(x: 30, y: 82, width: 160, height: 72))
+        context.fill(top, with: .color(lavender))
+        context.stroke(top, with: .color(outline), lineWidth: 1)
+        let slot = Path(ellipseIn: CGRect(x: 49, y: 91, width: 122, height: 54))
+        context.stroke(slot, with: .color(outline), style: StrokeStyle(lineWidth: 1, dash: [4, 4]))
+      }
+      Canvas { context, _ in
+        let perspective = CGAffineTransform(a: 1, b: 0.52, c: 0, d: 1, tx: 85, ty: 15)
+        let device = Path(roundedRect: CGRect(x: 0, y: 0, width: 50, height: 64), cornerRadius: 4).applying(perspective)
+        context.fill(device, with: .color(Palette.background))
+        context.stroke(device, with: .color(outline), lineWidth: 1.5)
+        let screen = Path(roundedRect: CGRect(x: 5, y: 10, width: 40, height: 42), cornerRadius: 2).applying(perspective)
+        context.fill(screen, with: .color(lavender))
+        context.stroke(screen, with: .color(outline), lineWidth: 1)
+        let marks = Path {
+          $0.move(to: CGPoint(x: 19, y: 5))
+          $0.addLine(to: CGPoint(x: 31, y: 5))
+          $0.move(to: CGPoint(x: 18, y: 59))
+          $0.addLine(to: CGPoint(x: 32, y: 59))
+        }
+        context.stroke(marks.applying(perspective), with: .color(outline), style: StrokeStyle(lineWidth: 1, lineCap: .round))
+      }
+      .rotation3DEffect(.degrees(spinning ? 360 : 0), axis: (x: 0, y: 1, z: 0), perspective: 0.45)
+      .offset(y: floating ? -4 : 0)
+    }
+    .frame(width: 220, height: 166)
+    .accessibilityHidden(true)
+    .task(id: reduceMotion) {
+      withAnimation(reduceMotion ? nil : .easeInOut(duration: 3).repeatForever(autoreverses: true)) {
+        floating = !reduceMotion
+      }
+      withAnimation(reduceMotion ? nil : .linear(duration: 12).repeatForever(autoreverses: false)) {
+        spinning = !reduceMotion
+      }
+    }
+  }
+}
+
 /// The artwork at the top of each setup guide screen: the Stim jar for the welcome and the summary, and small
 /// vector scenes in the brand colors for the others. Every motion stops under Reduce Motion.
 struct SetupIllustration: View {

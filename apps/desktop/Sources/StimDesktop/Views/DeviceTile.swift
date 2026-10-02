@@ -23,8 +23,9 @@ struct DeviceTile: View {
   /// The device viewer's canvas: only the screen, with the device's buttons beside it, and Run on a stopped device.
   /// A tile without it is a preview card with no controls.
   var viewer = false
-  /// The card's width, or the viewer's screen width limit; the screen shrinks below `screenHeight` to fit.
+  /// The card's maximum width, or the viewer's screen width limit; the screen shrinks below `screenHeight` to fit.
   var maxWidth: CGFloat? = nil
+  var maxCardHeight: CGFloat? = nil
   /// False while the device's viewer is open, so the tile does not stream a second copy of its screen.
   var showsScreen = true
   /// A physical device's stream stopped taking input.
@@ -40,11 +41,16 @@ struct DeviceTile: View {
   @State private var emulatorPosture: EmulatorPosture?
   @State private var postureFailed = false
   @State private var replaySize: CGSize?
+  @State private var headerHeight: CGFloat = 0
   @State private var simulatorButtons = SimulatorButtons()
   @State private var emulatorButtons = EmulatorButtons()
   @EnvironmentObject private var actions: ActionCenter
 
-  private let screenPadding: CGFloat = 12
+  private var screenPadding: CGFloat {
+    let height = min(screenHeight, maxCardHeight.map { max(0, $0 - headerHeight - 1) } ?? screenHeight)
+    let small = height <= TileSize.small.screenHeight || maxWidth.map { $0 <= Self.minimumWidth } == true
+    return !viewer && small ? Space.sm : Space.lg
+  }
   static let minimumWidth: CGFloat = 240
   static let buttonStripWidth: CGFloat = 44
 
@@ -106,6 +112,7 @@ struct DeviceTile: View {
         header
           .padding(.horizontal, Space.lg)
           .padding(.vertical, Space.md)
+          .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { headerHeight = $0 }
         Rectangle().fill(Palette.border).frame(height: 1)
         if replaying, let replay {
           ReplayScreen(controller: replay) { replaySize = $0 }
@@ -137,7 +144,7 @@ struct DeviceTile: View {
         RoundedRectangle(cornerRadius: Radius.card).strokeBorder(Palette.accent.opacity(0.45), lineWidth: 1.5)
       }
     }
-    .frame(width: maxWidth ?? width)
+    .frame(width: min(maxWidth ?? width, width))
   }
 
   private var header: some View {
@@ -487,6 +494,7 @@ struct DeviceTile: View {
   }
 
   private var fittedHeight: CGFloat {
+    let screenHeight = min(screenHeight, maxCardHeight.map { max(0, $0 - headerHeight - 1) } ?? screenHeight)
     guard let maxWidth else { return screenHeight }
     if replaying, let size = replaySize, size.width > 0, size.height > 0 {
       return min(screenHeight, (maxWidth - screenPadding * 2) * size.height / size.width + screenPadding * 2)
