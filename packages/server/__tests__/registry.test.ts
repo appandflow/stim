@@ -9,8 +9,11 @@ import {
   grantDevice,
   MAX_BUILD_REQUESTS,
   readBuildClients,
+  readDeviceHostClients,
   readDevices,
   requestBuildAccess,
+  requestDeviceHostAccess,
+  revokeDevice,
   spendPairingToken,
   type PeerIdentity,
 } from '../src/registry.ts';
@@ -29,8 +32,8 @@ afterEach(() => {
 
 const node = (nodeId: string): PeerIdentity => ({ kind: 'tailnet', nodeId, nodeName: `${nodeId}.ts.net`, user: 'u' });
 
-function request(nodeId: string, now = Date.now()) {
-  const outcome = requestBuildAccess('Laptop', node(nodeId), now);
+function request(nodeId: string, now = Date.now(), capability: 'build' | 'device-host' = 'build') {
+  const outcome = (capability === 'build' ? requestBuildAccess : requestDeviceHostAccess)('Laptop', node(nodeId), now);
   if (!outcome.ok) throw new Error(outcome.reason);
   return { id: outcome.device.id, token: outcome.deviceToken! };
 }
@@ -78,5 +81,62 @@ describe('build clients', () => {
     expect(grantDevice(id, ['read', 'build'])).toBe('build-mismatch');
     expect(readDevices()[0]!.capabilities).toEqual(['read']);
     expect(readBuildClients()[0]).toMatchObject({ capabilities: [], pendingUntil: expect.any(String) });
+  });
+});
+
+describe('device-host clients', () => {
+  it('keeps approvals separate from build and pairing permissions and pins the token to its node', () => {
+    const phone = spendPairingToken(createPairingToken().token, 'Phone', node('phone'));
+    if (!phone.ok) throw new Error(phone.reason);
+    const build = request('host');
+    const host = request('host', Date.now(), 'device-host');
+    expect(readDeviceHostClients()).toEqual([
+      expect.objectContaining({ id: host.id, requestedCapability: 'device-host', capabilities: [] }),
+    ]);
+    expect(readBuildClients().map((client) => client.id)).toEqual([build.id]);
+    expect(readDevices().map((client) => client.id)).toEqual([phone.device.id]);
+    expect(authenticateDevice(host.token, node('host'))).toEqual({ ok: false, reason: 'approval-pending' });
+    expect(grantDevice(phone.device.id, ['device-host'])).toBe('device-host-mismatch');
+    expect(grantDevice(build.id, ['device-host'])).toBe('build-mismatch');
+    for (const capabilities of [['build'], ['read'], ['control'], ['device-host', 'read']] as const) {
+      expect(grantDevice(host.id, [...capabilities])).toBe('device-host-mismatch');
+    }
+    expect(grantDevice(host.id, ['device-host'])).toBe('granted');
+    expect(authenticateDevice(host.token, node('elsewhere'))).toEqual({ ok: false, reason: 'node-mismatch' });
+    expect(authenticateDevice(host.token, { kind: 'local' })).toEqual({ ok: false, reason: 'node-mismatch' });
+    expect(authenticateDevice(host.token, node('host'))).toMatchObject({
+      ok: true,
+      device: { capabilities: ['device-host'], requestedCapability: 'device-host', lastSeenAt: expect.any(String) },
+    });
+    expect(readDeviceHostClients()[0]).not.toHaveProperty('pendingUntil');
+    expect(revokeDevice(host.id)).toBe(true);
+    expect(authenticateDevice(host.token, node('host'))).toEqual({ ok: false, reason: 'device-unknown' });
+    expect(readBuildClients().map((client) => client.id)).toEqual([build.id]);
+  });
+
+  it("refuses local and forged names, replaces only this node's host request, and expires unapproved tokens", () => {
+    const now = Date.now();
+    expect(requestDeviceHostAccess('Host', { kind: 'local' }, now)).toEqual({
+      ok: false,
+      reason: 'device-host-needs-tailnet',
+    });
+    expect(requestDeviceHostAccess('Host\nApproved', node('host'), now)).toEqual({
+      ok: false,
+      reason: 'bad-device-name',
+    });
+    const build = request('host', now);
+    const replaced = request('host', now, 'device-host');
+    const current = request('host', now, 'device-host');
+    expect(authenticateDevice(replaced.token, node('host'), now)).toEqual({ ok: false, reason: 'device-unknown' });
+    expect(readBuildClients(now).map((client) => client.id)).toEqual([build.id]);
+    for (let i = 1; i < MAX_BUILD_REQUESTS; i++) request(`host${i}`, now, 'device-host');
+    expect(requestDeviceHostAccess('Full', node('full'), now)).toEqual({
+      ok: false,
+      reason: 'device-host-requests-full',
+    });
+    const later = now + BUILD_REQUEST_TTL_MS + 1;
+    expect(authenticateDevice(current.token, node('host'), later)).toEqual({ ok: false, reason: 'device-unknown' });
+    expect(grantDevice(current.id, ['device-host'], later)).toBe('unknown');
+    expect(readDeviceHostClients(later)).toEqual([]);
   });
 });

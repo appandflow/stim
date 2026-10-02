@@ -732,6 +732,12 @@ seen, an **Allow control** checkbox, which runs `stim-server devices grant <id>
 approved one shows **Can build** and **Revoke**. See
 [Build machines](#build-machines).
 
+**Device hosting approvals** lists a separate permission for a tailnet Mac to
+host simulator or emulator sessions here. **Review...** opens the request;
+**Allow** runs `stim-server devices grant <id> --device-host`, and **Deny** or
+**Revoke** removes it. It grants no read, control or build access. Hosted
+sessions are not available yet; an approval does not start a device.
+
 When the server reports that Tailscale is not running, the tab shows the
 steps: `tailscale up`, restart the server (a button when the app started it),
 then run the `tailscale serve` command the tab shows next. The server reports the

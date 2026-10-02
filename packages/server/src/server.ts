@@ -76,8 +76,10 @@ import {
   parseQuietHours,
   pushEvents,
   readBuildClients,
+  readDeviceHostClients,
   readDevices,
   requestBuildAccess,
+  requestDeviceHostAccess,
   setDevicePush,
   serverDir,
   spendPairingToken,
@@ -238,15 +240,23 @@ const AUTH_REFUSALS: Record<Exclude<AuthOutcome, { ok: true }>['reason'], Protoc
   'node-mismatch': { code: 'unauthorized', message: 'This device token was paired from a different tailnet node.' },
   'approval-pending': {
     code: 'approval-pending',
-    message: 'This Mac has not approved building here yet. On it, run `stim-server devices` to find the request.',
+    message: 'This Mac has not approved this request yet. On it, run `stim-server devices` to find the request.',
   },
   'build-needs-tailnet': {
     code: 'forbidden',
     message: 'Build access is granted only to another Mac on the tailnet, not to a connection from this Mac.',
   },
+  'device-host-needs-tailnet': {
+    code: 'forbidden',
+    message: 'Device hosting is granted only to another Mac on the tailnet, not to a connection from this Mac.',
+  },
+  'device-host-requests-full': {
+    code: 'limit-exceeded',
+    message: 'This Mac has too many pending device-host requests. Try again after they are approved or lapse.',
+  },
   'bad-device-name': {
     code: 'bad-request',
-    message: 'A Mac asking to build here needs a one-line name of at most 64 characters.',
+    message: 'A Mac requesting access needs a one-line name of at most 64 characters.',
   },
   'build-requests-full': {
     code: 'limit-exceeded',
@@ -552,7 +562,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   let revocationCheck: NodeJS.Timeout | null = null;
   let checkedRegistry: string | null = null;
   const checkRevocations = () => {
-    const devices = [...readDevices(), ...readBuildClients()];
+    const devices = [...readDevices(), ...readBuildClients(), ...readDeviceHostClients()];
     const registry = JSON.stringify(devices);
     if (registry === checkedRegistry) return;
     checkedRegistry = registry;
@@ -632,7 +642,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       const deviceName = typeof auth.deviceName === 'string' ? auth.deviceName.trim() : '';
       if (typeof auth.pairingToken === 'string' && deviceName) {
         outcome = spendPairingToken(auth.pairingToken, deviceName, identity);
-      } else if (auth.request === 'build' && deviceName) {
+      } else if ((auth.request === 'build' || auth.request === 'device-host') && deviceName) {
         if (limiter.blocked(limitKey)) {
           return refuse(
             id,
@@ -641,7 +651,10 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
             CLOSE_UNAUTHORIZED,
           );
         }
-        outcome = requestBuildAccess(deviceName, identity);
+        outcome =
+          auth.request === 'build'
+            ? requestBuildAccess(deviceName, identity)
+            : requestDeviceHostAccess(deviceName, identity);
       } else if (typeof auth.deviceToken === 'string') {
         outcome = authenticateDevice(auth.deviceToken, identity);
       } else {
@@ -1533,7 +1546,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         return buildMethod(id, message.method, message.params, device);
       }
       if (!device.capabilities.includes('read')) {
-        return error(id, 'forbidden', `${message.method} needs read access, which build access does not include.`);
+        return error(id, 'forbidden', `${message.method} needs read access, which this connection does not have.`);
       }
       if (message.method === 'status.subscribe') return subscribeStatus(id);
       if (message.method === 'logs.subscribe') return subscribeLogs(id, message.params);

@@ -19,6 +19,7 @@ import {
   createPairingToken,
   grantDevice,
   readBuildClients,
+  readDeviceHostClients,
   readDevices,
   revokeDevice,
   type PairedDevice,
@@ -50,11 +51,12 @@ const USAGE = `Usage:
                                     print a single-use pairing payload for the QR code;
                                     --control lets the paired device run actions
   stim-server devices [list] [--json]
-                                    list paired devices, build clients and build requests
-  stim-server devices grant <id> --control|--read|--build
+                                    list paired devices, approved clients and access requests
+  stim-server devices grant <id> --control|--read|--build|--device-host
                                     let a paired device run actions, or only read;
-                                    --build approves a Mac's request to build here
-  stim-server devices revoke <id>   revoke a paired device or build client, or deny a request
+                                    --build approves a Mac's request to build here;
+                                    --device-host approves its device-host request
+  stim-server devices revoke <id>   revoke a paired device or client, or deny a request
   stim-server log [--json]          list the actions paired devices ran`;
 
 const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as { version: string };
@@ -152,12 +154,13 @@ async function serve(port: number, extraEnv: string[], pathPrepend: string[]): P
   process.on('SIGHUP', shutdown);
 }
 
-type Scope = 'read' | 'control' | 'build';
+type Scope = 'read' | 'control' | 'build' | 'device-host';
 
 const SCOPE_TEXT: Record<Scope, string> = {
   read: 'only read',
   control: 'run actions',
   build: 'run its project code on this Mac to build',
+  'device-host': 'request session-owned device hosting on this Mac',
 };
 
 async function pair(port: number, json: boolean, control: boolean): Promise<void> {
@@ -188,18 +191,25 @@ function describe(device: PairedDevice): string {
       ? 'this Mac'
       : `${device.identity.nodeName || device.identity.nodeId}${device.identity.user ? ` (${device.identity.user})` : ''}`;
   if (device.pendingUntil !== undefined) {
-    return `${device.id}  ${device.name}  pending build  from ${from}  requested ${device.pairedAt}  lapses ${device.pendingUntil}`;
+    return `${device.id}  ${device.name}  pending ${device.requestedCapability ?? 'build'}  from ${from}  requested ${device.pairedAt}  lapses ${device.pendingUntil}`;
   }
-  const scope = device.capabilities.includes('build')
-    ? 'build'
-    : device.capabilities.includes('control')
-      ? 'control'
-      : 'read';
+  const scope = device.capabilities.includes('device-host')
+    ? 'device-host'
+    : device.capabilities.includes('build')
+      ? 'build'
+      : device.capabilities.includes('control')
+        ? 'control'
+        : 'read';
   return `${device.id}  ${device.name}  ${scope}  from ${from}  paired ${device.pairedAt}  last seen ${device.lastSeenAt ?? 'never'}`;
 }
 
-function scopeFlag(values: { read?: boolean; control?: boolean; build?: boolean }): Scope | null | 'many' {
-  const set = (['read', 'control', 'build'] as const).filter((scope) => values[scope] === true);
+function scopeFlag(values: {
+  read?: boolean;
+  control?: boolean;
+  build?: boolean;
+  'device-host'?: boolean;
+}): Scope | null | 'many' {
+  const set = (['read', 'control', 'build', 'device-host'] as const).filter((scope) => values[scope] === true);
   if (set.length > 1) return 'many';
   return set[0] ?? null;
 }
@@ -255,6 +265,7 @@ async function main(): Promise<void> {
       control: { type: 'boolean' },
       read: { type: 'boolean' },
       build: { type: 'boolean' },
+      'device-host': { type: 'boolean' },
       label: { type: 'string' },
       serve: { type: 'boolean' },
       env: { type: 'string', multiple: true },
@@ -285,6 +296,7 @@ async function main(): Promise<void> {
   const grant = command === 'devices' && sub === 'grant';
   if (values.read && !grant) fail(`--read applies only to \`devices grant\`.\n${USAGE}`);
   if (values.build && !grant) fail(`--build applies only to \`devices grant\`.\n${USAGE}`);
+  if (values['device-host'] && !grant) fail(`--device-host applies only to \`devices grant\`.\n${USAGE}`);
   if (values.control && !grant && command !== 'pair') {
     fail(`--control applies only to \`pair\` and \`devices grant\`.\n${USAGE}`);
   }
@@ -292,19 +304,21 @@ async function main(): Promise<void> {
   const scope = scopeFlag(values);
   if (command === 'pair' && sub === undefined) return pair(port, values.json === true, values.control === true);
   if (grant && arg !== undefined && rest.length === 0) {
-    if (scope === null || scope === 'many') fail('devices grant takes exactly one of --control, --read or --build.');
-    const capabilities = scope === 'build' ? (['build'] as const) : capabilitiesFor(scope === 'control');
+    if (scope === null || scope === 'many')
+      fail('devices grant takes exactly one of --control, --read, --build or --device-host.');
+    const capabilities = scope === 'build' || scope === 'device-host' ? [scope] : capabilitiesFor(scope === 'control');
     const outcome = grantDevice(arg, [...capabilities]);
     if (outcome === 'unknown') {
       fail(
-        `no paired device ${arg}, and no pending build request with that id (requests lapse after 15 minutes). Run \`stim-server devices\` to list them.`,
+        `no paired device ${arg}, and no pending access request with that id (requests lapse after 15 minutes). Run \`stim-server devices\` to list them.`,
       );
     }
-    if (outcome === 'build-mismatch') {
+    if (outcome === 'build-mismatch' || outcome === 'device-host-mismatch') {
+      const requested = outcome === 'build-mismatch' ? 'build' : 'device-host';
       fail(
-        scope === 'build'
-          ? `${arg} is a paired device, not a Mac that asked to build here.`
-          : `${arg} is a build client; it takes only --build. Revoke it with \`stim-server devices revoke ${arg}\`.`,
+        scope === requested
+          ? `${arg} is a paired device, not a Mac that asked for ${requested} access.`
+          : `${arg} is a ${requested} client; it takes only --${requested}. Revoke it with \`stim-server devices revoke ${arg}\`.`,
       );
     }
     console.log(`${arg} can now ${SCOPE_TEXT[scope]}.`);
@@ -324,17 +338,20 @@ async function main(): Promise<void> {
     return;
   }
   if (command === 'devices' && (sub === undefined || sub === 'list') && arg === undefined) {
-    const devices = [...readDevices(), ...readBuildClients()];
+    const devices = [...readDevices(), ...readBuildClients(), ...readDeviceHostClients()];
     if (values.json) {
-      const listed = devices.map(({ id, name, identity, pairedAt, lastSeenAt, capabilities, pendingUntil }) => ({
-        id,
-        name,
-        identity,
-        pairedAt,
-        lastSeenAt,
-        capabilities,
-        ...(pendingUntil ? { pendingUntil } : {}),
-      }));
+      const listed = devices.map(
+        ({ id, name, identity, pairedAt, lastSeenAt, capabilities, pendingUntil, requestedCapability }) => ({
+          id,
+          name,
+          identity,
+          pairedAt,
+          lastSeenAt,
+          capabilities,
+          ...(pendingUntil ? { pendingUntil } : {}),
+          ...(requestedCapability ? { requestedCapability } : {}),
+        }),
+      );
       return void console.log(JSON.stringify({ devices: listed }));
     }
     if (!devices.length) console.log('No paired devices.');

@@ -2,7 +2,13 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { chmodSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createPairingToken, readDevices, requestBuildAccess, spendPairingToken } from '../src/registry.ts';
+import {
+  createPairingToken,
+  readDevices,
+  requestBuildAccess,
+  requestDeviceHostAccess,
+  spendPairingToken,
+} from '../src/registry.ts';
 
 const BIN = join(import.meta.dirname, '..', 'bin', 'stim-server.ts');
 
@@ -118,7 +124,7 @@ describe('control', () => {
   });
 });
 
-describe('build', () => {
+describe.each(['build', 'device-host'] as const)('%s approval', (capability) => {
   function plain(...args: string[]) {
     return spawnSync(process.execPath, [BIN, ...args], {
       env: { ...process.env, STIM_HOME: home, PATH: '' },
@@ -126,29 +132,44 @@ describe('build', () => {
     });
   }
 
-  it('grants build only by approving a request, never through pair', () => {
-    const result = plain('pair', '--build', '--port', '17787');
+  it('grants access only by approving a request, never through pair', () => {
+    const result = plain('pair', `--${capability}`, '--port', '17787');
     expect(result.status).toBe(1);
-    expect(result.stderr).toContain('--build applies only to `devices grant`');
+    expect(result.stderr).toContain(`--${capability} applies only to \`devices grant\``);
     expect(readdirSync(home)).not.toContain('server');
   });
 
-  it('lists a pending build request and approves it only with --build', () => {
-    const request = requestBuildAccess('Laptop', { kind: 'tailnet', nodeId: 'nL', nodeName: 'laptop', user: 'u' });
+  it('lists a pending request and approves it only with its requested capability', () => {
+    const request = (capability === 'build' ? requestBuildAccess : requestDeviceHostAccess)('Laptop', {
+      kind: 'tailnet',
+      nodeId: 'nL',
+      nodeName: 'laptop',
+      user: 'u',
+    });
     if (!request.ok) throw new Error(request.reason);
     const { id } = request.device;
-    expect(plain('devices').stdout).toContain(`${id}  Laptop  pending build  from laptop (u)`);
-    expect(plain('devices', 'grant', id, '--control').stderr).toContain('takes only --build');
-    expect(plain('devices', 'grant', id, '--build', '--read').status).toBe(1);
-    expect(plain('devices', 'grant', id, '--build').status).toBe(0);
+    expect(run('devices', '--json')).toMatchObject({
+      devices: [{ id, capabilities: [], requestedCapability: capability, pendingUntil: expect.any(String) }],
+    });
+    expect(plain('devices').stdout).toContain(`${id}  Laptop  pending ${capability}  from laptop (u)`);
+    expect(plain('devices', 'grant', id, '--control').stderr).toContain(`takes only --${capability}`);
+    expect(plain('devices', 'grant', id, `--${capability}`, '--read').status).toBe(1);
+    expect(plain('devices', 'grant', id, `--${capability}`).status).toBe(0);
     const { devices } = run('devices', '--json') as { devices: Record<string, unknown>[] };
-    expect(devices).toEqual([expect.objectContaining({ id, capabilities: ['build'] })]);
+    expect(devices).toEqual([
+      expect.objectContaining({ id, capabilities: [capability], requestedCapability: capability }),
+    ]);
     expect(devices[0]).not.toHaveProperty('pendingUntil');
 
-    const denied = requestBuildAccess('Other', { kind: 'tailnet', nodeId: 'nO', nodeName: 'other', user: 'u' });
+    const denied = (capability === 'build' ? requestBuildAccess : requestDeviceHostAccess)('Other', {
+      kind: 'tailnet',
+      nodeId: 'nO',
+      nodeName: 'other',
+      user: 'u',
+    });
     if (!denied.ok) throw new Error(denied.reason);
     expect(plain('devices', 'revoke', denied.device.id).status).toBe(0);
-    expect(plain('devices', 'grant', denied.device.id, '--build').status).toBe(1);
+    expect(plain('devices', 'grant', denied.device.id, `--${capability}`).status).toBe(1);
   });
 });
 

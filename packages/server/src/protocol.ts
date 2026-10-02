@@ -7,8 +7,9 @@ export const PROTOCOL_SCHEMA_FILE = 'protocol.schema.json';
 /**
  * `read` serves state. `control` also runs {@link ACTIONS}; only the Mac grants it. `build` lets another Mac run
  * project code here to build for it; it never comes with `read` or `control`, and only the Mac approves it.
+ * `device-host` is separate explicit hosting approval; it grants no other capability or hosted runtime method.
  */
-export const CAPABILITIES = ['read', 'control', 'build'] as const;
+export const CAPABILITIES = ['read', 'control', 'build', 'device-host'] as const;
 
 export type Capability = (typeof CAPABILITIES)[number];
 
@@ -130,10 +131,16 @@ export interface BuildRequestAuth {
   deviceName: string;
 }
 
+/** Requests explicit device hosting approval; grants no read, control or build access. */
+export interface DeviceHostRequestAuth {
+  request: 'device-host';
+  deviceName: string;
+}
+
 export interface HelloParams {
   protocol: number;
   client: { name: string; version: string };
-  auth: PairingAuth | DeviceAuth | BuildRequestAuth;
+  auth: PairingAuth | DeviceAuth | BuildRequestAuth | DeviceHostRequestAuth;
 }
 
 export interface HelloResult {
@@ -149,9 +156,9 @@ export interface HelloResult {
   actions: ActionName[];
   /** The paired device this connection authenticated as, as `stim-server devices` lists it. */
   device: { id: string; name: string };
-  /** Present only when the hello spent a pairing token or requested build access. The server keeps only its hash. */
+  /** Present only when the hello spent a pairing token or requested build or device-host access. The server keeps only its hash. */
   deviceToken?: string;
-  /** Present only on a build request, which the server then closes; the request lapses at `expiresAt`. */
+  /** Present only on a build or device-host request, which the server then closes; the request lapses at `expiresAt`. */
   approval?: { state: 'pending'; expiresAt: string };
 }
 
@@ -1125,7 +1132,10 @@ export function protocolJsonSchema(): JsonSchema {
                 type: 'object',
                 required: ['request', 'deviceName'],
                 additionalProperties: false,
-                properties: { request: { const: 'build' }, deviceName: { type: 'string', minLength: 1 } },
+                properties: {
+                  request: { enum: ['build', 'device-host'] },
+                  deviceName: { type: 'string', minLength: 1 },
+                },
               },
             ],
           },

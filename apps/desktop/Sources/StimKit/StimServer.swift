@@ -100,14 +100,23 @@ public struct PairedDevice: Decodable, Equatable, Identifiable, Sendable {
   public var pairedAt: Date
   public var lastSeenAt: Date?
   public var capabilities: [String]
-  /// When a Mac's request to build here lapses; set only while it waits for approval.
+  public var requestedCapability: String?
+  /// When a Mac's request lapses; set only while it waits for approval.
   public var pendingUntil: Date?
 
   /// Whether the device may run actions and drive devices, not only read.
   public var canControl: Bool { capabilities.contains("control") }
 
   /// A Mac that asked to build here or may build here, rather than a phone or app that reads.
-  public var isBuildClient: Bool { pendingUntil != nil || capabilities.contains("build") }
+  public var isBuildClient: Bool {
+    requestedCapability == "build" || capabilities.contains("build")
+      || (pendingUntil != nil && requestedCapability == nil)
+  }
+
+  /// A Mac that asked to run hosted devices here or may run them here.
+  public var isDeviceHostClient: Bool {
+    requestedCapability == "device-host" || capabilities.contains("device-host")
+  }
 
   /// The name the release Stim Desktop pairs under.
   public static let desktopName = "Stim Desktop"
@@ -121,7 +130,7 @@ public struct PairedDevice: Decodable, Equatable, Identifiable, Sendable {
   }
 
   /// A paired phone or app that reads and may control, as the Phones list shows it.
-  public var isPhone: Bool { !isBuildClient && !isDesktopClient }
+  public var isPhone: Bool { !isBuildClient && !isDeviceHostClient && !isDesktopClient }
 
   /// The tailnet node the device paired from, or this Mac for a loopback pairing.
   public var node: String {
@@ -198,6 +207,11 @@ public struct StimServerCLI: Sendable {
   /// Approves a Mac's request to build here.
   public func grantBuild(_ id: String) async throws {
     _ = try await run(["devices", "grant", id, "--build"])
+  }
+
+  /// Approves a Mac's request to run hosted devices here.
+  public func grantDeviceHost(_ id: String) async throws {
+    _ = try await run(["devices", "grant", id, "--device-host"])
   }
 
   public func revoke(_ id: String) async throws {

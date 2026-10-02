@@ -83,6 +83,24 @@ struct PhonesView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
       }
 
+      Section {
+        if server.deviceHostClients.isEmpty {
+          Text("No device hosting approvals.").foregroundStyle(Palette.secondary)
+        }
+        ForEach(server.deviceHostClients) { device in
+          BuildClientRow(device: device, review: { BuildRequestPrompt.present(id: device.id) }) { revoking = device }
+        }
+      } header: {
+        Text("Device hosting approvals")
+      } footer: {
+        Text(
+          "Allow approves another Mac for hosted simulator and emulator sessions. Hosted sessions are not available yet. Approval does not grant build access or read/control access to unrelated workspaces or devices. Requests lapse after 15 minutes."
+        )
+        .foregroundStyle(Palette.tertiary)
+        .multilineTextAlignment(.leading)
+        .frame(maxWidth: .infinity, alignment: .leading)
+      }
+
       Section("stim-server executable") {
         HStack {
           TextField("stim-server on the login shell's PATH", text: $executable)
@@ -117,11 +135,13 @@ struct PhonesView: View {
       Button(device.pendingUntil == nil ? "Revoke" : "Deny", role: .destructive) { server.revoke(device) }
     } message: { device in
       Text(
-        device.pendingUntil != nil
-          ? "That Mac cannot build here unless it asks again."
-          : device.isBuildClient
-            ? "That Mac can no longer build here and must ask again."
-            : "The phone disconnects and must pair again to reconnect.")
+        device.isDeviceHostClient
+          ? "That Mac's device hosting approval is removed. It must ask again."
+          : device.pendingUntil != nil
+            ? "That Mac cannot build here unless it asks again."
+            : device.isBuildClient
+              ? "That Mac can no longer build here and must ask again."
+              : "The phone disconnects and must pair again to reconnect.")
     }
   }
 
@@ -333,7 +353,7 @@ private struct BuildClientRow: View {
           if device.pendingUntil != nil {
             Pill("Waiting for you", tone: .warning, size: .small)
           } else {
-            Pill("Can build", tone: .success, size: .small)
+            Pill(device.isDeviceHostClient ? "Approved for devices" : "Can build", tone: .success, size: .small)
           }
         }
         Text(verbatim: "\(device.id) \u{00B7} \(device.node)").font(.stim(.caption, mono: true))
@@ -355,7 +375,7 @@ private struct BuildClientRow: View {
 
   private var detail: String {
     if let until = device.pendingUntil { return "Lapses \(until.formatted(.relative(presentation: .named)))" }
-    guard let at = device.lastSeenAt else { return "Never built" }
+    guard let at = device.lastSeenAt else { return device.isDeviceHostClient ? "Never connected" : "Never built" }
     return "Seen \(at.formatted(.relative(presentation: .named)))"
   }
 }
