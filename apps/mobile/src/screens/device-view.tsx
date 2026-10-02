@@ -542,7 +542,9 @@ export function DeviceView({
                     toolbars
                   )}
                 </View>
-                {overlayControls ? null : replayBar}
+                {overlayControls || !replayBar ? null : (
+                  <View style={book && { width: book.start - insets.left }}>{replayBar}</View>
+                )}
                 {book ? null : agentFeed}
               </View>
             </View>
