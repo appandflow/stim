@@ -339,10 +339,6 @@ msgstr "{minutesLeft} min left"
 msgid "{model} · {slot}"
 msgstr "{model} · {slot}"
 
-#: src/components/attention-strip.tsx
-msgid "{more} more"
-msgstr "{more} more"
-
 #: src/lib/workspace-view.ts
 msgid "{msg} · {elapsed} ago"
 msgstr "{msg} · {elapsed} ago"
@@ -1609,10 +1605,6 @@ msgstr "Enter the pairing token Stim Desktop shows."
 msgid "Error"
 msgstr "Error"
 
-#: src/components/attention-strip.tsx
-msgid "Error: {title} on {macName}, {detail}"
-msgstr "Error: {title} on {macName}, {detail}"
-
 #: src/screens/logs.tsx
 msgid "Errors"
 msgstr "Errors"
@@ -2455,10 +2447,6 @@ msgstr "Not on the tailnet"
 msgid "Not paired"
 msgstr "Not paired"
 
-#: src/lib/attention.ts
-msgid "Not paired: pair again"
-msgstr "Not paired: pair again"
-
 #: src/components/device-tile.tsx
 msgid "Not running · {deviceState}"
 msgstr "Not running · {deviceState}"
@@ -2497,8 +2485,6 @@ msgid "nothing yet"
 msgstr "nothing yet"
 
 #: src/app/(home)/_layout.tsx
-#: src/components/attention-strip.tsx
-#: src/components/attention-strip.tsx
 #: src/screens/menu.tsx
 #: src/screens/settings.ios.tsx
 #: src/screens/settings.tsx
@@ -2508,10 +2494,6 @@ msgstr "Notifications"
 #: src/hooks/notifications.tsx
 msgid "Notifications are off for Stim"
 msgstr "Notifications are off for Stim"
-
-#: src/components/attention-strip.tsx
-msgid "Notifications, {unread} unread"
-msgstr "Notifications, {unread} unread"
 
 #: src/screens/settings.ios.tsx
 #: src/screens/settings.tsx
@@ -2547,15 +2529,10 @@ msgstr "off"
 msgid "Off"
 msgstr "Off"
 
-#: src/lib/attention.ts
 #: src/lib/home-list.ts
 #: src/lib/home-list.ts
 msgid "Offline"
 msgstr "Offline"
-
-#: src/lib/attention.ts
-msgid "Offline · last seen {ago} ago"
-msgstr "Offline · last seen {ago} ago"
 
 #: src/components/mac-chip.tsx
 msgid "Offline · retrying in {seconds}s"
@@ -2903,14 +2880,6 @@ msgstr "Recording timeline"
 msgid "Recordings"
 msgstr "Recordings"
 
-#: src/lib/attention.ts
-msgid "Refused the connection: needs an update"
-msgstr "Refused the connection: needs an update"
-
-#: src/lib/attention.ts
-msgid "Refused the connection: pair again"
-msgstr "Refused the connection: pair again"
-
 #: src/lib/home.ts
 msgid "Refuses to run"
 msgstr "Refuses to run"
@@ -3145,7 +3114,6 @@ msgstr "Show all {count} {title}"
 msgid "Show errors"
 msgstr "Show errors"
 
-#: src/components/attention-strip.tsx
 #: src/lib/sections.ts
 msgid "Show fewer"
 msgstr "Show fewer"
@@ -3727,10 +3695,6 @@ msgstr "Warming the workspace"
 #: src/screens/logs.tsx
 msgid "Warning"
 msgstr "Warning"
-
-#: src/components/attention-strip.tsx
-msgid "Warning: {title} on {macName}, {detail}"
-msgstr "Warning: {title} on {macName}, {detail}"
 
 #: src/screens/logs.tsx
 msgid "Warnings"
