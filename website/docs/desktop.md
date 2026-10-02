@@ -69,7 +69,8 @@ performance traces. Every release is listed under
 Workspace device cards fill the available width up to 640 points and wrap into
 centered rows. Each complete card, including its header, fits the canvas height;
 additional rows scroll vertically. Screens keep their aspect ratio and a
-900-point height cap.
+900-point height cap. Small previews use a 6-point inner inset, while the canvas
+keeps 20 points of outer padding.
 
 Closing the window leaves Stim Desktop running, so notifications and the phone
 server keep working. Click the Dock icon to reopen the window, or press

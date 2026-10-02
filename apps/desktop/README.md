@@ -139,7 +139,9 @@ workspace at once, in the order above, each with its live frame. The frames
 fill the available width up to 640 points per card. Each row is centered and
 wraps when another full-width card plus spacing would not fit. Screens keep
 their aspect ratios, with a 900-point height cap. Each card, including its
-header, fits the canvas height; additional rows scroll vertically. A tile is a preview: the device's name and state, its activity, its
+header, fits the canvas height; additional rows scroll vertically. Small
+preview screens use a 6-point inner inset; the canvas keeps its 20-point
+outer padding. A tile is a preview: the device's name and state, its activity, its
 CPU, memory and disk (from the machine owner matched by slot and kind, and the
 device's `disk`) and its screen, which takes no input. A device whose build is
 running shows "Waiting for the iOS build" over its frame with the phase, a

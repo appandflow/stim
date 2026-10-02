@@ -46,7 +46,11 @@ struct DeviceTile: View {
   @State private var emulatorButtons = EmulatorButtons()
   @EnvironmentObject private var actions: ActionCenter
 
-  private let screenPadding: CGFloat = 12
+  private var screenPadding: CGFloat {
+    let height = min(screenHeight, maxCardHeight.map { max(0, $0 - headerHeight - 1) } ?? screenHeight)
+    let small = height <= TileSize.small.screenHeight || maxWidth.map { $0 <= Self.minimumWidth } == true
+    return !viewer && small ? Space.sm : Space.lg
+  }
   static let minimumWidth: CGFloat = 240
   static let buttonStripWidth: CGFloat = 44
 
