@@ -5893,7 +5893,7 @@ describe('run statistics', () => {
     expect(runs).toHaveLength(1);
     expect(runs[0]?.run).toEqual({
       platform: 'android',
-      projectKey: realpathSync(root),
+      projectKey: realpathSync.native(root),
       failed: false,
       cacheHit: false,
       waitedForBuild: false,
