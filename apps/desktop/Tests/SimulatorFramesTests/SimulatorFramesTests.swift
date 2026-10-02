@@ -32,6 +32,13 @@ import Testing
     #expect(deviceOrientation(interface: 4) == 3)
     #expect(deviceOrientation(interface: 3) == 4)
   }
+
+  @Test func startsFromTheDuoProvidersOrientationOnItsInnerPanel() {
+    #expect(deviceOrientation(interface: 3, innerPanel: true) == 1)
+    #expect(deviceOrientation(interface: 2, innerPanel: true) == 4)
+    #expect(deviceOrientation(interface: 4, innerPanel: true) == 2)
+    #expect(deviceOrientation(interface: 1, innerPanel: true) == 3)
+  }
 }
 
 @Suite struct KeyUsageTests {

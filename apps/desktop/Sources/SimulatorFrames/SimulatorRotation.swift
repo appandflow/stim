@@ -3,18 +3,29 @@ import Foundation
 
 /// Turns a booted simulator a quarter turn, as Simulator.app's Rotate Left and
 /// Rotate Right do. Returns false when the simulator cannot be reached.
+/// A CoreSimulator lookup and input activation can block; call this off the main thread.
 public enum SimulatorRotation {
+  private static let lock = NSLock()
   private static var sent: [String: UInt32] = [:]
 
   public static func rotate(udid: String, clockwise: Bool) -> Bool {
+    lock.lock()
+    defer { lock.unlock() }
     guard let device = CoreSimulator.device(udid: udid) else { return false }
+    let displays = CoreSimulator.displays(udid: udid).filter { $0.screenProperties?.screenType == 0 }
+    let duo = displays.count > 1
+    let display = duo ? displays.first { $0.framebufferSurface.map { !isBlack($0) } ?? false } : displays.first
     let current =
       sent[udid]
       ?? deviceOrientation(
-        interface: CoreSimulator.displays(udid: udid).first?
-          .screenProperties?.uiOrientation ?? 1)
+        interface: display?.screenProperties?.uiOrientation ?? 1,
+        innerPanel: duo && display?.screenProperties?.screenID == displays.last?.screenProperties?.screenID)
     let next = quarterTurn(from: current, clockwise: clockwise)
-    guard send(orientation: next, to: device) else { return false }
+    if duo {
+      guard SimulatorPosture.orient(udid: udid, orientation: next) else { return false }
+    } else {
+      guard send(orientation: next, to: device) else { return false }
+    }
     sent[udid] = next
     return true
   }
@@ -50,13 +61,16 @@ public enum SimulatorRotation {
 }
 
 /// The UIDeviceOrientation that shows a UIInterfaceOrientation upright.
-func deviceOrientation(interface: UInt32) -> UInt32 {
+/// The Duo inner panel is natively a quarter turn from its cover panel.
+func deviceOrientation(interface: UInt32, innerPanel: Bool = false) -> UInt32 {
+  let orientation: UInt32
   switch interface {
-  case 3: return 4
-  case 4: return 3
-  case 2: return 2
-  default: return 1
+  case 3: orientation = 4
+  case 4: orientation = 3
+  case 2: orientation = 2
+  default: orientation = 1
   }
+  return innerPanel ? quarterTurn(from: orientation, clockwise: false) : orientation
 }
 
 /// The UIDeviceOrientation a quarter turn from `orientation`.

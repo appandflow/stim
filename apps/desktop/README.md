@@ -506,7 +506,9 @@ hardware buttons and rotation: **Home** and **Lock** on a simulator, sent
 through the simulator's HID service; **Home**, **Back**, **Apps** and **Lock**
 on an emulator, sent with gRPC `sendKey` (Lock, and every button on an emulator
 without a hardware keyboard, with `adb shell input keyevent`); then **Rotate
-left** and **Rotate right**. The hardware buttons press only while the device
+left** and **Rotate right**. An iPhone Duo rotates through its Virtualization
+provider in each posture. Apps keep their supported orientations, and its home
+screen stays portrait. The hardware buttons press only while the device
 is taken over; rotation works at any time.
 
 A simulator with more than one display, such as the iPhone Duo, shows every

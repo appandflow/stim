@@ -7,6 +7,7 @@ EmulatorFrames/ScreenshotStream.swift
 EmulatorFrames/InputMessages.swift
 EmulatorFrames/EmulatorInput.swift
 SimulatorFrames/SimulatorRotation.swift
+SimulatorFrames/SimulatorPosture.swift
 EmulatorFrames/EmulatorRotation.swift
 EmulatorFrames/EmulatorPosture.swift
 WebFrames/DevToolsClient.swift

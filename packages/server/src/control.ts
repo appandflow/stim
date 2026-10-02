@@ -125,12 +125,6 @@ export function parseInput(
     return { code: 'bad-request', message: 'A physical device rotates and folds only in hand.' };
   }
   if (method === 'input.rotate') {
-    if (platform === 'ios' && postures.length) {
-      return {
-        code: 'bad-request',
-        message: 'An iPhone Duo does not rotate: its simulator keeps the orientation its posture sets.',
-      };
-    }
     const { direction } = params;
     if (!ROTATE_DIRECTIONS.includes(direction as RotateDirection)) {
       return { code: 'bad-request', message: 'input.rotate needs direction left or right.' };
