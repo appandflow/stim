@@ -62,6 +62,7 @@ function SmallCard({
   const columns = useContext(CardColumns);
   return (
     <Card
+      key={columns}
       onPress={onPress}
       accessibilityLabel={accessibilityLabel}
       accessibilityHint={accessibilityHint}
