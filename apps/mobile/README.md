@@ -444,8 +444,10 @@ half open, the viewer splits at the fold: the device screen and its replay
 controls on the leading side, and the read-only banner, the Control toolbars
 and the agent actions on the other. The title, the control banner and the
 replay chips stay on the leading side. The viewer reads the fold from
-`react-native-reserved-regions`, which needs iOS 27.1 or Android with
-WindowManager fold support; elsewhere the layout is unchanged. The safe area
+`react-native-reserved-regions`, which needs a build compiled with iOS SDK 27.1
+or newer and an iOS 27.1 or newer runtime, or Android with WindowManager fold
+support. Older iOS SDK builds receive no fold divisions and keep the default
+layout. The safe area
 insets already keep it clear of the Dynamic Island and camera cutouts.
 
 With **Control** on, the server starts a control session (`control.begin`)
