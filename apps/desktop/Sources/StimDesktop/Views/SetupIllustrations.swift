@@ -8,13 +8,14 @@ struct SetupIllustration: View {
   var step: SetupStep
   var complete = false
   var stimVersion: String?
+  var installer: PackageManager
 
   var body: some View {
     Group {
       switch step {
       case .welcome: JarArt(showsCheck: false)
       case .done: JarArt(showsCheck: complete)
-      case .cli: TerminalArt(version: stimVersion)
+      case .cli: TerminalArt(version: stimVersion, installer: installer).id(installer)
       case .skill: SkillArt()
       case .notifications: NotificationArt()
       case .check: DoctorArt()
@@ -104,8 +105,13 @@ private struct JarArt: View {
 
 private struct TerminalArt: View {
   var version: String?
+  var installer: PackageManager
   private var lines: [String] {
-    ["$ npm install --global stim", "added 1 package", "$ stim --version", version ?? "1.0.0"]
+    let command = installer.installCommand("stim", cwd: "")
+    return [
+      "$ \(([command.program] + command.arguments).joined(separator: " "))", "added 1 package", "$ stim --version",
+      version ?? "1.0.0",
+    ]
   }
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
   @State private var typed = 0

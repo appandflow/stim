@@ -27,7 +27,7 @@ struct SetupGuideView: View {
           ScrollView {
             VStack(alignment: .leading, spacing: Space.xl) {
               SetupIllustration(
-                step: step, complete: setup.isComplete, stimVersion: installedVersion)
+                step: step, complete: setup.isComplete, stimVersion: installedVersion, installer: onboarding.installer)
               content
               Color.clear.frame(height: 0).id(Self.end)
             }
