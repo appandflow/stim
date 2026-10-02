@@ -537,10 +537,9 @@ provider in each posture. Apps keep their supported orientations, and its home
 screen stays portrait. Hardware buttons, rotation and posture controls are
 available only while **Control** is on.
 
-A simulator with more than one display, such as the iPhone Duo, shows every
-display side by side, and touches go to the display you click. Only the
-display the posture lights shows content; the other stays black. **Folded**,
-**Half open** and **Unfolded** in the column move the simulated hinge to 0,
+The iPhone Duo frame fits the display its posture lights, and touches go to
+that display. Until the active display is known, both displays appear side by
+side. **Folded**, **Half open** and **Unfolded** in the column move the simulated hinge to 0,
 120 or 180 degrees, as the posture buttons in Xcode's Device Hub do. They sweep
 the angle through the simulator's vendor-defined HID service
 (`com.apple.coredevice.feature.remote.hid.vendordefined`), which iOS needs to

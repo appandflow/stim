@@ -71,7 +71,10 @@ public final class SimulatorButtons {
 public final class SimulatorDisplayNSView: NSView {
   var onPixelSizeChange: (CGSize) -> Void = { _ in }
   var onLitChange: ((Bool) -> Void)? {
-    didSet { watchLit() }
+    didSet {
+      watchLit()
+      if oldValue == nil, onLitChange != nil { reportLit() }
+    }
   }
   private var reportedLit: Bool?
   private var litTimer: Timer?

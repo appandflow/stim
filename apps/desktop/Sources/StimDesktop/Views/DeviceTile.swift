@@ -469,9 +469,14 @@ struct DeviceTile: View {
     pixelSizes[screenID].map { $0.width * $0.height }
   }
 
+  private var displayedScreenIDs: [UInt32] {
+    let litIDs = screenIDs.filter { lit[$0] == true }
+    return litIDs.count == 1 ? litIDs : screenIDs
+  }
+
   private func screenHeight(_ screenID: UInt32) -> CGFloat {
     let full = fittedHeight - screenPadding * 2
-    return screenIDs.count > 1 && screenID != mainScreenID ? full * 0.3 : full
+    return displayedScreenIDs.count > 1 && screenID != mainScreenID ? full * 0.3 : full
   }
 
   private func screenWidth(_ screenID: UInt32) -> CGFloat? {
@@ -485,9 +490,9 @@ struct DeviceTile: View {
   }
 
   private var width: CGFloat {
-    let widths = screenIDs.compactMap(screenWidth)
-    if widths.count == screenIDs.count {
-      return max(Self.minimumWidth, widths.reduce(0, +) + screenPadding * CGFloat(screenIDs.count + 1))
+    let widths = displayedScreenIDs.compactMap(screenWidth)
+    if widths.count == displayedScreenIDs.count {
+      return max(Self.minimumWidth, widths.reduce(0, +) + screenPadding * CGFloat(displayedScreenIDs.count + 1))
     }
     if case .remote = device { return max(360, fittedHeight * 0.6) }
     switch device.formFactor {
@@ -504,12 +509,12 @@ struct DeviceTile: View {
     if replaying, let size = replaySize, size.width > 0, size.height > 0 {
       return min(screenHeight, (maxWidth - screenPadding * 2) * size.height / size.width + screenPadding * 2)
     }
-    let ratios = screenIDs.compactMap { screenID -> CGFloat? in
+    let ratios = displayedScreenIDs.compactMap { screenID -> CGFloat? in
       guard let size = pixelSizes[screenID], size.height > 0 else { return nil }
-      return size.width / size.height * (screenIDs.count > 1 && screenID != mainScreenID ? 0.3 : 1)
+      return size.width / size.height * (displayedScreenIDs.count > 1 && screenID != mainScreenID ? 0.3 : 1)
     }
-    if ratios.count == screenIDs.count, !ratios.isEmpty {
-      let room = maxWidth - screenPadding * CGFloat(screenIDs.count + 1)
+    if ratios.count == displayedScreenIDs.count, !ratios.isEmpty {
+      let room = maxWidth - screenPadding * CGFloat(displayedScreenIDs.count + 1)
       return min(screenHeight, room / ratios.reduce(0, +) + screenPadding * 2)
     }
     if case .remote = device { return min(screenHeight, maxWidth / 0.6) }
@@ -539,16 +544,20 @@ struct DeviceTile: View {
   @ViewBuilder private var screen: some View {
     switch device {
     case .ios(_, let sim) where device.isRunning && !sim.physical:
-      HStack(alignment: .bottom, spacing: screenPadding) {
+      HStack(alignment: .bottom, spacing: displayedScreenIDs.count > 1 ? screenPadding : 0) {
         ForEach(screenIDs, id: \.self) { screenID in
           SimulatorDisplayView(
-            udid: sim.udid, screenID: screenID, interactive: interactive,
+            udid: sim.udid, screenID: screenID, interactive: interactive && displayedScreenIDs.contains(screenID),
             onPixelSizeChange: { pixelSizes[screenID] = $0 },
             onLitChange: screenIDs.count > 1 ? { lit[screenID] = $0 } : nil,
             buttons: screenID == mainScreenID ? simulatorButtons : nil
           )
-          .frame(width: screenWidth(screenID), height: screenHeight(screenID))
-          .opacity(screenID == mainScreenID ? 1 : 0.4)
+          .frame(
+            width: displayedScreenIDs.contains(screenID) ? screenWidth(screenID) : 0,
+            height: displayedScreenIDs.contains(screenID) ? screenHeight(screenID) : 0
+          )
+          .opacity(displayedScreenIDs.contains(screenID) ? 1 : 0)
+          .accessibilityHidden(!displayedScreenIDs.contains(screenID))
         }
       }
       .padding(screenPadding)

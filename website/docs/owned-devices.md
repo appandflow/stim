@@ -137,9 +137,9 @@ stim settings set iosSimulatorApp xcode
 stim settings set androidEmulatorApp emulator
 ```
 
-An iPhone Duo simulator shows both of its screens side by side, and the
-unlit one stays black. While **Control** is on, its tile has a **Fold /
-Unfold** button that sweeps the simulated hinge to the other posture. The
+An iPhone Duo simulator shows its active screen, with the frame fitted to
+that screen. Both screens appear side by side until the active screen is
+known. While **Control** is on, its tile has a **Fold / Unfold** button that sweeps the simulated hinge to the other posture. The
 button needs the bundled app, and because it uses private iOS interfaces, a
 new iOS runtime can break it. **Rotate left** and **Rotate right** work in
 folded, half-open and unfolded postures. Apps keep their supported
