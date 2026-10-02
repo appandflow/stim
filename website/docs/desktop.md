@@ -98,6 +98,11 @@ On the All devices and project wall, active workspaces without running or buildi
 devices use compact cards labelled **No running devices**, with Metro status,
 warnings and error links. CPU and RAM stay on the workspace page.
 
+Run, Reload app and Stop from the workspace or sidebar menus keep you on the
+workspace page. Open **Last output** or **Operations** for command details,
+including failed runs. Click the **Recent builds** label or chevron to expand
+the build history.
+
 An empty workspace shows a purple device floating above a round plinth and a
 short launch hint. Reduce Motion stops the illustration's animation.
 

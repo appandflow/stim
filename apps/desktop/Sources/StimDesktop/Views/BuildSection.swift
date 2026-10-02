@@ -266,17 +266,32 @@ private struct BuildHistoryList: View {
   @State private var expanded = false
 
   var body: some View {
-    DisclosureGroup(isExpanded: $expanded) {
-      TimelineView(.periodic(from: .now, by: 30)) { context in
-        VStack(alignment: .leading, spacing: Space.xxs) {
-          ForEach(entries, id: \.self) { entry in
-            BuildHistoryRow(entry: entry, workspace: workspace, now: context.date)
-          }
+    VStack(alignment: .leading, spacing: Space.xs) {
+      Button {
+        expanded.toggle()
+      } label: {
+        HStack(spacing: Space.sm) {
+          Image(systemName: expanded ? "chevron.down" : "chevron.right")
+            .font(.system(size: 11, weight: .semibold))
+            .foregroundStyle(Palette.tertiary)
+            .frame(width: 12)
+          Text("Recent builds (\(entries.count))").foregroundStyle(Palette.secondary)
+          Spacer(minLength: 0)
         }
-        .padding(.top, Space.xs)
+        .contentShape(Rectangle())
       }
-    } label: {
-      Text("Recent builds (\(entries.count))").foregroundStyle(Palette.secondary)
+      .buttonStyle(.hoverRow())
+      .accessibilityValue(expanded ? "Expanded" : "Collapsed")
+      if expanded {
+        TimelineView(.periodic(from: .now, by: 30)) { context in
+          VStack(alignment: .leading, spacing: Space.xxs) {
+            ForEach(entries, id: \.self) { entry in
+              BuildHistoryRow(entry: entry, workspace: workspace, now: context.date)
+            }
+          }
+          .padding(.top, Space.xs)
+        }
+      }
     }
   }
 }

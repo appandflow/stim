@@ -267,6 +267,7 @@ struct PlatformGlyph: View {
     Group {
       if platform == "ios" {
         Image(systemName: "apple.logo").font(.system(size: size * 0.95, weight: .medium)).foregroundStyle(color)
+          .offset(y: -1)
       } else {
         AndroidHead().fill(color, style: FillStyle(eoFill: true)).frame(width: size * 1.1, height: size * 0.93)
       }
