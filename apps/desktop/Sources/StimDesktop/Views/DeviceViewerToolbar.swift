@@ -181,7 +181,7 @@ struct DeviceViewerToolbar: View {
           .help("Release control so an agent can drive this device again (Escape).")
           .accessibilityLabel("Release control")
       } else {
-        Button("Control", systemImage: "hand.raised") { takenOver = true }
+        Button("Control", systemImage: "cursorarrow.rays") { takenOver = true }
           .nativeControlStyle()
           .fixedSize()
           .disabled(replaying)

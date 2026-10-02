@@ -211,7 +211,7 @@ struct DeviceTile: View {
         .layoutPriority(1)
         Spacer(minLength: 8)
         if let viewerAction {
-          Label(viewerAction, systemImage: viewerAction == "Control" ? "hand.raised" : "arrow.up.right")
+          Label(viewerAction, systemImage: viewerAction == "Control" ? "cursorarrow.rays" : "arrow.up.right")
             .font(.stim(.callout, weight: .semibold))
             .foregroundStyle(Palette.primary)
             .accessibilityHidden(true)
