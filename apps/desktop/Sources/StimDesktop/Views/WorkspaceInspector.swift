@@ -117,9 +117,6 @@ struct ResourcesSection: View {
             : history.memoryMb(env.path),
           minimumPeak: 1024)
       }
-      if let window {
-        Text(window).font(.stim(.caption)).foregroundStyle(Palette.tertiary)
-      }
       if !rows.isEmpty {
         ProcessRowsTable(rows: rows)
       }
@@ -127,11 +124,6 @@ struct ResourcesSection: View {
         DiskCard(breakdown: disk)
       }
     }
-  }
-
-  private var window: String? {
-    guard let span = history.span(env.path), span >= 60 else { return nil }
-    return "Last \(Format.duration(span)), sampled while Stim Desktop is on screen"
   }
 
   private func chart(_ icon: String, _ title: String, _ value: String, values: [Double], minimumPeak: Double)
