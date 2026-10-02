@@ -6627,7 +6627,7 @@ describe('run statistics', () => {
     expect(runs).toHaveLength(1);
     expect(runs[0]?.run).toEqual({
       platform: 'ios',
-      projectKey: root,
+      projectKey: realpathSync.native(root),
       failed: false,
       cacheHit: false,
       waitedForBuild: false,
@@ -7186,7 +7186,7 @@ describe('--plan', () => {
       recordRunStats(
         {
           platform: 'ios',
-          projectKey: root,
+          projectKey: realpathSync.native(root),
           failed: false,
           cacheHit: outcome === 'hit' ? 'local' : false,
           waitedForBuild: false,

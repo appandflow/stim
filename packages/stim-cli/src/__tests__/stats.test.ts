@@ -1,5 +1,5 @@
 import assert from 'node:assert';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, execSync } from 'node:child_process';
 import { runStats as runServerStats } from '../../../server/src/stats.ts';
 import {
   existsSync,
@@ -42,7 +42,7 @@ let root: string;
 beforeEach(() => {
   tmpHome = mkdtempSync(join(tmpdir(), 'stim-test-'));
   process.env.STIM_HOME = tmpHome;
-  root = realpathSync(mkdtempSync(join(tmpdir(), 'stim-ws-')));
+  root = realpathSync.native(mkdtempSync(join(tmpdir(), 'stim-ws-')));
   writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'fixture' }));
   setExecutor({
     run: () => '',
@@ -448,7 +448,8 @@ describe('the stats file', () => {
   });
 
   test('the project key is the app path in the source checkout, canonical', () => {
-    const repo = realpathSync(mkdtempSync(join(tmpdir(), 'stim-repo-')));
+    const repo = join(realpathSync.native(tmpHome), 'repo');
+    mkdirSync(repo);
     const worktree = join(repo, 'worktrees', 'agent-1');
 
     expect(
@@ -456,6 +457,19 @@ describe('the stats file', () => {
     ).toBe(join(repo, 'apps', 'mobile'));
     expect(statsProjectKey({ root, commonDir: null, repoRoot: null })).toBe(root);
     expect(statsProjectKey({ root, commonDir: join(repo, 'bare.git'), repoRoot: repo })).toBe(root);
+
+    mkdirSync(join(worktree, 'apps', 'mobile'), { recursive: true });
+    const alias = join(repo, 'alias');
+    symlinkSync(worktree, alias, process.platform === 'win32' ? 'junction' : 'dir');
+    const key = statsProjectKey({
+      root: join(alias, 'apps', 'mobile'),
+      commonDir: join(repo, '.git'),
+      repoRoot: worktree,
+    });
+    expect(key).toBe(join(repo, 'apps', 'mobile'));
+    recordRunStats(run({ projectKey: key, coldBuildMs: 1200 }), T0);
+    expect(readRunEstimates({ projectKey: join(repo, 'apps', 'mobile'), platform: 'ios' }).coldBuildMs).toBe(1200);
+    expect(Object.keys(readStats().record!.projects)).toEqual([key]);
 
     rmSync(repo, { recursive: true, force: true });
   });
@@ -766,18 +780,41 @@ test('CLI and the server read child agree for a real monorepo worktree and its s
   symlinkSync(join(worktree, 'apps', 'example'), alias, process.platform === 'win32' ? 'junction' : 'dir');
   const record = updateStats(emptyStats(), run({ projectKey: app, coldBuildMs: 1200 }), T0);
   writeFileSync(statsFile(), JSON.stringify(record));
-  for (const [cwd, repository] of [
+  const inputs: [string, string][] = [
     [app, root],
     [join(worktree, 'apps', 'example'), worktree],
     [alias, worktree],
-  ] as const) {
+  ];
+  if (process.platform === 'win32') {
+    const shortInputs = inputs.map(([path, repository]): [string, string] => {
+      const short = execSync('for %I in ("%STIM_STATS_TEST_PATH%") do @echo %~sI', {
+        encoding: 'utf8',
+        shell: 'cmd.exe',
+        env: { ...process.env, STIM_STATS_TEST_PATH: path },
+      }).trim();
+      assert.notStrictEqual(
+        short.toLowerCase(),
+        path.toLowerCase(),
+        'Windows stats regression requires an actual 8.3 alias',
+      );
+      assert.strictEqual(realpathSync.native(short), realpathSync.native(path));
+      return [short, repository];
+    });
+    inputs.push(...shortInputs);
+  }
+  for (const [cwd, repository] of inputs) {
     const gitPath = (args: string[]) =>
       git(['rev-parse', ...args], cwd)
         .toString()
         .trim()
         .replaceAll('/', sep);
-    expect(gitPath(['--path-format=absolute', '--git-common-dir'])).toBe(join(root, '.git'));
-    expect(gitPath(['--show-toplevel'])).toBe(repository);
+    const commonDir = gitPath(['--path-format=absolute', '--git-common-dir']);
+    const repoRoot = gitPath(['--show-toplevel']);
+    const operands = JSON.stringify({ root: cwd, commonDir, repoRoot });
+    if (process.platform === 'win32') console.info(`Windows stats operands: ${operands}`);
+    assert.strictEqual(realpathSync.native(commonDir), join(root, '.git'), operands);
+    assert.strictEqual(realpathSync.native(repoRoot), repository, operands);
+    assert.strictEqual(statsProjectKey({ root: cwd, commonDir, repoRoot }), app, operands);
     const cli = inDir(cwd, () => runStats(['--json']));
     const child = runServerStats({ ...process.env }, cwd, { timeoutMs: 10_000, maxOutputBytes: 1024 * 1024 });
     try {

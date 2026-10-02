@@ -1698,11 +1698,12 @@ describe('stats.get and settings.get', () => {
   it('preserves seeded stats, rejects unregistered paths, and never repairs unreadable versions', async () => {
     writeFileSync(join(workspace, 'package.json'), '{}');
     const file = join(process.env.STIM_HOME!, 'stats.json');
+    const projectKey = realpathSync.native(workspace);
     const content = JSON.stringify({
       version: 1,
       machine: { ios: { runs: '3', hits: 2 } },
       projects: {
-        [workspace]: { android: { runs: 1, lastColdBuildMs: 1234 } },
+        [projectKey]: { android: { runs: 1, lastColdBuildMs: 1234 } },
       },
     });
     writeFileSync(file, content);
@@ -1711,7 +1712,7 @@ describe('stats.get and settings.get', () => {
     expect(await client.request('stats.get', { workspace })).toMatchObject({
       result: {
         version: 1,
-        project: { key: workspace, ios: null, android: { runs: 1, lastColdBuildMs: 1234 } },
+        project: { key: projectKey, ios: null, android: { runs: 1, lastColdBuildMs: 1234 } },
         machine: { ios: { runs: 3, hits: 2 }, android: null },
       },
     });
@@ -1726,7 +1727,7 @@ describe('stats.get and settings.get', () => {
       writeFileSync(file, text);
       expect(await client.request('stats.get', { workspace })).toMatchObject({
         result: {
-          project: { key: workspace, ios: null, android: null },
+          project: { key: projectKey, ios: null, android: null },
           machine: { ios: null, android: null },
         },
       });
