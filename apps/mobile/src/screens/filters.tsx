@@ -13,6 +13,7 @@ import { Text } from '@/components/text';
 import { Toggle } from '@/components/toggle';
 import { useHomeFilters } from '@/hooks/home-filters';
 import { useMacs } from '@/hooks/machines';
+import { hapticFeedback } from '@/lib/haptics';
 import { mergeWorkspaces, projectNames, type ActivityFilter } from '@/lib/home';
 
 const toggled = (list: string[], value: string) =>
@@ -41,32 +42,55 @@ export function Filters() {
             key={value}
             label={label}
             on={filters.activity === value}
-            onPress={() => update({ activity: value })}
+            onPress={() => {
+              if (filters.activity !== value) hapticFeedback('selection');
+              update({ activity: value });
+            }}
           />
         ))}
       </Group>
       {connections.length > 1 ? (
         <Group title={t`Machines`}>
-          <Toggle label={t`All`} on={selectedMacs.length === 0} onPress={() => update({ macs: [] })} />
+          <Toggle
+            label={t`All`}
+            on={selectedMacs.length === 0}
+            onPress={() => {
+              if (selectedMacs.length > 0) hapticFeedback('selection');
+              update({ macs: [] });
+            }}
+          />
           {connections.map((c) => (
             <Toggle
               key={c.mac.id}
               label={c.mac.name}
               on={selectedMacs.includes(c.mac.id)}
-              onPress={() => update({ macs: toggled(selectedMacs, c.mac.id) })}
+              onPress={() => {
+                hapticFeedback('selection');
+                update({ macs: toggled(selectedMacs, c.mac.id) });
+              }}
             />
           ))}
         </Group>
       ) : null}
       {projects.length > 1 ? (
         <Group title={t`Projects`}>
-          <Toggle label={t`All`} on={filters.projects.length === 0} onPress={() => update({ projects: [] })} />
+          <Toggle
+            label={t`All`}
+            on={filters.projects.length === 0}
+            onPress={() => {
+              if (filters.projects.length > 0) hapticFeedback('selection');
+              update({ projects: [] });
+            }}
+          />
           {projects.map((project) => (
             <Toggle
               key={project}
               label={project}
               on={filters.projects.includes(project)}
-              onPress={() => update({ projects: toggled(filters.projects, project) })}
+              onPress={() => {
+                hapticFeedback('selection');
+                update({ projects: toggled(filters.projects, project) });
+              }}
             />
           ))}
         </Group>

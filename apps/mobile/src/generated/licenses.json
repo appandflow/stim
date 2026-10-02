@@ -316,6 +316,13 @@
    "text": 2
   },
   {
+   "name": "expo-haptics",
+   "version": "58.0.4",
+   "license": "MIT",
+   "url": "https://github.com/expo/expo",
+   "text": 2
+  },
+  {
    "name": "expo-image",
    "version": "58.0.6",
    "license": "MIT",

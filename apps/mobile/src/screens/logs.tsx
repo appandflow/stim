@@ -39,6 +39,7 @@ import {
   type LogFilterState,
   type Severity,
 } from '@/lib/logs';
+import { hapticFeedback } from '@/lib/haptics';
 import { workspaceTitleAt } from '@/lib/workspace-names';
 import type { Theme } from '@/design/theme';
 import type { EnvironmentState, LogRecord } from '@/protocol/types';
@@ -418,7 +419,12 @@ const LogRow = memo(function LogRow({
       {expanded ? (
         <View style={styles.actions}>
           <Touch
-            onPress={() => void Clipboard.setStringAsync(copyText(view)).then(() => setCopied(true))}
+            onPress={() =>
+              void Clipboard.setStringAsync(copyText(view)).then(() => {
+                hapticFeedback('success');
+                setCopied(true);
+              })
+            }
             accessibilityLabel={t`Copy message and location`}
             style={styles.action}
           >

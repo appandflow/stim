@@ -4,9 +4,12 @@ import { fireEvent, render } from '@testing-library/react-native';
 
 import '@/design/unistyles';
 
+import { hapticFeedback } from '@/lib/haptics';
+
 import { Menu } from './menu';
 
 let mockPathname = '/';
+let mockView = 'workspaces';
 const mockPush = jest.fn();
 const mockReplace = jest.fn();
 const mockSetView = jest.fn();
@@ -15,7 +18,8 @@ jest.mock('expo-router', () => ({
   usePathname: () => mockPathname,
   useRouter: () => ({ push: mockPush, replace: mockReplace }),
 }));
-jest.mock('@/hooks/home-filters', () => ({ useHomeFilters: () => ({ view: 'workspaces', setView: mockSetView }) }));
+jest.mock('@/lib/haptics', () => ({ hapticFeedback: jest.fn() }));
+jest.mock('@/hooks/home-filters', () => ({ useHomeFilters: () => ({ view: mockView, setView: mockSetView }) }));
 jest.mock('@/hooks/inbox', () => ({ useInbox: () => ({ supported: true, unread: 0 }) }));
 jest.mock('@/hooks/machines', () => ({ useMacs: () => ({ connections: [] }) }));
 jest.mock('@/hooks/recents', () => ({ useRecents: () => ({ recents: [] }) }));
@@ -40,6 +44,7 @@ jest.mock('@/components/button', () => ({
 
 beforeEach(() => {
   mockPathname = '/';
+  mockView = 'workspaces';
   jest.clearAllMocks();
 });
 
@@ -75,4 +80,33 @@ it('keeps the current primary route mounted when selecting it again', async () =
   await fireEvent.press(screen.getByLabelText('Devices'));
   expect(mockSetView).toHaveBeenCalledWith('devices');
   expect(mockReplace).not.toHaveBeenCalled();
+});
+
+it('keeps rendering and reselecting the current primary section silent', async () => {
+  const onClose = jest.fn();
+  const screen = await render(<Menu onClose={onClose} />);
+  expect(hapticFeedback).not.toHaveBeenCalled();
+  await fireEvent.press(screen.getByText('Workspaces'));
+  expect(hapticFeedback).not.toHaveBeenCalled();
+  expect(mockSetView).toHaveBeenCalledWith('workspaces');
+  expect(onClose).toHaveBeenCalledTimes(1);
+  await fireEvent.press(screen.getByText('Devices'));
+  expect(hapticFeedback).toHaveBeenCalledTimes(1);
+  expect(hapticFeedback).toHaveBeenLastCalledWith('selection');
+  expect(mockSetView).toHaveBeenLastCalledWith('devices');
+  mockView = 'devices';
+  await screen.rerender(<Menu onClose={onClose} />);
+  await fireEvent.press(screen.getByText('Devices'));
+  expect(hapticFeedback).toHaveBeenCalledTimes(1);
+});
+
+it('marks changing to Notifications but not reselecting it or incoming rerenders', async () => {
+  const screen = await render(<Menu onClose={() => {}} />);
+  await fireEvent.press(screen.getByText('Notifications'));
+  expect(mockReplace).toHaveBeenCalledWith('/inbox');
+  expect(hapticFeedback).toHaveBeenCalledTimes(1);
+  mockPathname = '/inbox';
+  await screen.rerender(<Menu onClose={() => {}} />);
+  await fireEvent.press(screen.getByText('Notifications'));
+  expect(hapticFeedback).toHaveBeenCalledTimes(1);
 });

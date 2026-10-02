@@ -1,6 +1,6 @@
 import { t } from '@lingui/core/macro';
 import { useIsFocused } from 'expo-router';
-import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { BackHandler, Platform, useWindowDimensions, type ViewStyle } from 'react-native';
 import { Drawer, useDrawerProgress } from 'react-native-drawer-layout';
 import Animated, {
@@ -14,6 +14,7 @@ import { ReservedRegionsProvider, useReservedRegions } from 'react-native-reserv
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import { useLargeText } from '@/hooks/large-text';
+import { hapticFeedback } from '@/lib/haptics';
 import { sidebarOf } from '@/lib/sidebar';
 import { Menu } from '@/screens/menu';
 
@@ -44,7 +45,12 @@ function DrawerContent({ children, layout }: { children: ReactNode; layout: { wi
   const sidebar = sidebarOf(useReservedRegions(), layout.width, layout.height);
   const permanent = sidebar !== null;
   const reducedMotion = useReducedMotion();
-  const value = useMemo(() => ({ open: () => setOpen(true), permanent }), [permanent]);
+  const openMenu = useCallback(() => {
+    if (permanent || !focused || open) return;
+    hapticFeedback('menu');
+    setOpen(true);
+  }, [open, permanent, focused]);
+  const value = useMemo(() => ({ open: openMenu, permanent }), [openMenu, permanent]);
   const drawerStyle: ViewStyle & CSSTransitionProperties = {
     width: (permanent ? sidebar?.width : undefined) ?? (large ? '95%' : '80%'),
     backgroundColor: theme.colors.sidebar,
@@ -65,9 +71,7 @@ function DrawerContent({ children, layout }: { children: ReactNode; layout: { wi
       <Drawer
         open={permanent || open}
         layout={layout}
-        onOpen={() => {
-          if (!permanent) setOpen(true);
-        }}
+        onOpen={openMenu}
         onClose={() => {
           if (!permanent) setOpen(false);
         }}
