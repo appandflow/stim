@@ -98,6 +98,8 @@ struct RootView: View {
           }
           ToolbarItem(id: summaryItemID, placement: .navigation) {
             MachineSummary(store: store, metrics: metrics, gc: gc, width: summaryWidth) { selection = .machine }
+              .frame(width: showsWorkspace && inspector == .overlay ? max(0, summaryWidth) : nil, alignment: .leading)
+              .clipped()
           }
           if showsWorkspace {
             ToolbarItem(placement: .primaryAction) { Spacer() }
@@ -232,13 +234,14 @@ struct RootView: View {
   private var summaryWidth: CGFloat {
     detailWidth - (columnVisibility == .detailOnly ? 200 : 80) - (showsWorkspace ? 88 : 0)
       - (showsWorkspace && inspector == .column
-        ? WorkspaceDetail.clampedInspectorWidth(inspectorWidth, detailWidth: detailWidth) + 1 : 0)
+        ? WorkspaceDetail.clampedInspectorWidth(inspectorWidth, detailWidth: detailWidth) + 1
+        : showsWorkspace && inspector == .overlay ? WorkspaceDetail.inspectorWidth : 0)
   }
 
   /// NSToolbar measures an item when it is inserted or the window resizes, not when a SwiftUI item grows, so the
   /// summary is reinserted whenever the room it gets changes.
   private var summaryItemID: String {
-    "machine-summary-\(showsWorkspace)-\(showsWorkspace && inspector == .column)"
+    "machine-summary-\(showsWorkspace)-\(showsWorkspace && inspector == .column)-\(showsWorkspace && inspector == .overlay)"
   }
 
   private func restoreLastProject() {
