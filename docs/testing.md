@@ -35,6 +35,22 @@ pnpm run test:compat engine-ios-device.compat.test.ts
 `pnpm run test:runtime` checks the built packages at their published runtime floor.
 The native app workflows remain separate; see [RELEASE.md](../RELEASE.md).
 
+## CI scheduling
+
+Pull requests retain Linux full unit and CLI/cache E2E checks, mobile tests,
+and strict Desktop Swift build/tests plus the frames helper. The Windows PR
+lane builds and typechecks the packages, then runs the existing executor,
+detached launcher, log command, cache provider and build-lock suites. These
+include real Windows subprocesses and filesystem/cache operations. The full
+`test:e2e` command also contains Unix shell fixtures and is not the Windows
+smoke lane.
+
+CI runs the complete Windows unit suite nightly at 06:00 UTC and on manual
+dispatch. The npm Release workflow requires that same suite before publication.
+Desktop release packaging runs nightly at 05:00 UTC and on manual Desktop
+dispatch; the production Desktop release workflow still builds and packages
+its candidate. Scheduled validation never publishes a release.
+
 ## Fixture isolation
 
 Real listeners use port zero and obtain the assigned port only after the

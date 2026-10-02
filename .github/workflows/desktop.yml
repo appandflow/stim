@@ -2,6 +2,8 @@ name: Desktop
 
 on:
   workflow_dispatch:
+  schedule:
+    - cron: '0 5 * * *'
   push:
     branches: [main]
     paths:
@@ -21,7 +23,7 @@ on:
       - '.github/workflows/desktop-release.yml'
 
 concurrency:
-  group: desktop-${{ github.ref }}
+  group: desktop-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -59,4 +61,5 @@ jobs:
               ../../packages/server/helper/main.swift ../../packages/server/helper/VideoEncoder.swift \
               ../../packages/server/helper/PhoneSource.swift
       - name: Package an ad-hoc release build
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
         run: scripts/release.sh 0.0.0
