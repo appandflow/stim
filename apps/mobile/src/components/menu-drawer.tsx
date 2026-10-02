@@ -1,5 +1,5 @@
 import { t } from '@lingui/core/macro';
-import { usePathname } from 'expo-router';
+import { useIsFocused } from 'expo-router';
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { BackHandler, Platform, useWindowDimensions, type ViewStyle } from 'react-native';
 import { Drawer, useDrawerProgress } from 'react-native-drawer-layout';
@@ -26,33 +26,23 @@ export function useMenuDrawer() {
   return useContext(MenuDrawerContext);
 }
 
-export function MenuDrawer({ children, homeVisible }: { children: ReactNode; homeVisible: boolean }) {
+export function MenuDrawer({ children }: { children: ReactNode }) {
   const window = useWindowDimensions();
   const [layout, setLayout] = useState({ width: window.width, height: window.height });
   return (
     <ReservedRegionsProvider style={styles.root} onLayout={({ nativeEvent }) => setLayout(nativeEvent.layout)}>
-      <DrawerContent layout={layout} homeVisible={homeVisible}>
-        {children}
-      </DrawerContent>
+      <DrawerContent layout={layout}>{children}</DrawerContent>
     </ReservedRegionsProvider>
   );
 }
 
-function DrawerContent({
-  children,
-  layout,
-  homeVisible,
-}: {
-  children: ReactNode;
-  layout: { width: number; height: number };
-  homeVisible: boolean;
-}) {
+function DrawerContent({ children, layout }: { children: ReactNode; layout: { width: number; height: number } }) {
   const { theme } = useUnistyles();
   const large = useLargeText();
-  const pathname = usePathname();
+  const focused = useIsFocused();
   const [open, setOpen] = useState(false);
   const sidebar = sidebarOf(useReservedRegions(), layout.width, layout.height);
-  const permanent = homeVisible && sidebar !== null;
+  const permanent = sidebar !== null;
   const reducedMotion = useReducedMotion();
   const value = useMemo(() => ({ open: () => setOpen(true), permanent }), [permanent]);
   const drawerStyle: ViewStyle & CSSTransitionProperties = {
@@ -62,27 +52,27 @@ function DrawerContent({
   };
 
   useEffect(() => {
-    if (permanent || !open || pathname !== '/') return;
+    if (permanent || !open || !focused) return;
     const sub = BackHandler.addEventListener('hardwareBackPress', () => {
       setOpen(false);
       return true;
     });
     return () => sub.remove();
-  }, [open, permanent, pathname]);
+  }, [open, permanent, focused]);
 
   return (
     <MenuDrawerContext.Provider value={value}>
       <Drawer
-        open={permanent || (pathname === '/' && open)}
+        open={permanent || open}
         layout={layout}
         onOpen={() => {
-          if (!permanent && pathname === '/') setOpen(true);
+          if (!permanent) setOpen(true);
         }}
         onClose={() => {
-          if (!permanent && pathname === '/') setOpen(false);
+          if (!permanent) setOpen(false);
         }}
         drawerType={permanent ? 'permanent' : 'back'}
-        swipeEnabled={!permanent && pathname === '/'}
+        swipeEnabled={!permanent && focused}
         style={{ backgroundColor: theme.colors.sidebar }}
         drawerStyle={drawerStyle}
         overlayStyle={styles.overlay}

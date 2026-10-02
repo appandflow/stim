@@ -2,16 +2,16 @@ import 'react-native-unistyles/mocks';
 
 import { fireEvent, render } from '@testing-library/react-native';
 import { useEffect } from 'react';
-import { Pressable, Text } from 'react-native';
+import { BackHandler, Pressable, Text } from 'react-native';
 
 import '@/design/unistyles';
 
 import { MenuDrawer, useMenuDrawer } from './menu-drawer';
 
-let mockPathname = '/';
+let mockFocused = true;
 let mounts = 0;
 
-jest.mock('expo-router', () => ({ usePathname: () => mockPathname }));
+jest.mock('expo-router', () => ({ useIsFocused: () => mockFocused }));
 jest.mock('react-native-reserved-regions', () => {
   const { View } = jest.requireActual<typeof import('react-native')>('react-native');
   return {
@@ -74,7 +74,7 @@ function Content() {
 }
 
 beforeEach(() => {
-  mockPathname = '/';
+  mockFocused = true;
   mounts = 0;
 });
 
@@ -84,7 +84,7 @@ function layout(screen: Awaited<ReturnType<typeof render>>, width: number, heigh
 
 it('keeps a closed compact drawer closed after rotating through a permanent sidebar', async () => {
   const screen = await render(
-    <MenuDrawer homeVisible={mockPathname === '/'}>
+    <MenuDrawer>
       <Content />
     </MenuDrawer>,
   );
@@ -99,7 +99,7 @@ it('keeps a closed compact drawer closed after rotating through a permanent side
 
 it('restores an open compact drawer after rotating through a permanent sidebar', async () => {
   const screen = await render(
-    <MenuDrawer homeVisible={mockPathname === '/'}>
+    <MenuDrawer>
       <Content />
     </MenuDrawer>,
   );
@@ -111,48 +111,48 @@ it('restores an open compact drawer after rotating through a permanent sidebar',
   expect(screen.getByText('back:open')).toBeTruthy();
 });
 
-it('uses the full screen for a detail route and restores the main sidebar on back', async () => {
-  const screen = await render(
-    <MenuDrawer homeVisible={mockPathname === '/'}>
-      <Content />
-    </MenuDrawer>,
-  );
-  await layout(screen, 951, 669);
-  expect(screen.getByText('permanent:open')).toBeTruthy();
-  mockPathname = '/mac/m1/workspace';
-  await screen.rerender(
-    <MenuDrawer homeVisible={mockPathname === '/'}>
-      <Content />
-    </MenuDrawer>,
-  );
-  expect(screen.getByText('back:closed')).toBeTruthy();
-  mockPathname = '/';
-  await screen.rerender(
-    <MenuDrawer homeVisible={mockPathname === '/'}>
-      <Content />
-    </MenuDrawer>,
-  );
-  expect(screen.getByText('permanent:open')).toBeTruthy();
-  expect(mounts).toBe(1);
-});
-
-it('keeps the home sidebar behind sheets while leaving a detail background compact', async () => {
-  const content = (homeVisible: boolean) => (
-    <MenuDrawer homeVisible={homeVisible}>
+it('keeps the retained home split while a detail or sheet is active and during Back', async () => {
+  const content = () => (
+    <MenuDrawer>
       <Content />
     </MenuDrawer>
   );
-  const screen = await render(content(true));
+  const screen = await render(content());
   await layout(screen, 951, 669);
-  for (const pathname of ['/filters', '/mac/m1', '/']) {
-    mockPathname = pathname;
-    await screen.rerender(content(true));
+  for (const focused of [false, true]) {
+    mockFocused = focused;
+    await screen.rerender(content());
     expect(screen.getByText('permanent:open')).toBeTruthy();
   }
-  for (const pathname of ['/mac/m1/workspace', '/mac/m1/build', '/mac/m1/workspace']) {
-    mockPathname = pathname;
-    await screen.rerender(content(false));
-    expect(screen.getByText('back:closed')).toBeTruthy();
-  }
   expect(mounts).toBe(1);
+});
+
+it('retains an open compact drawer behind an overlay without intercepting its Back', async () => {
+  const remove = jest.fn();
+  const back = jest.spyOn(BackHandler, 'addEventListener').mockReturnValue({ remove });
+  try {
+    const content = () => (
+      <MenuDrawer>
+        <Content />
+      </MenuDrawer>
+    );
+    const screen = await render(content());
+    await layout(screen, 466, 678);
+    await fireEvent.press(screen.getByTestId('open'));
+    expect(screen.getByText('back:open')).toBeTruthy();
+    expect(back).toHaveBeenCalledTimes(1);
+    mockFocused = false;
+    await screen.rerender(content());
+    expect(screen.getByText('back:open')).toBeTruthy();
+    expect(remove).toHaveBeenCalledTimes(1);
+    mockFocused = true;
+    await screen.rerender(content());
+    expect(screen.getByText('back:open')).toBeTruthy();
+    expect(back).toHaveBeenCalledTimes(2);
+    expect(mounts).toBe(1);
+    await fireEvent.press(screen.getByTestId('dismiss'));
+    expect(screen.getByText('back:closed')).toBeTruthy();
+  } finally {
+    back.mockRestore();
+  }
 });
