@@ -51,3 +51,4 @@ patchedDependencies:
   react-native-mmkv@4.3.2: patches/react-native-mmkv@4.3.2.patch
   react-native-nitro-modules@0.37.1: patches/react-native-nitro-modules@0.37.1.patch
   react-native-transformer-text-input@0.4.2: patches/react-native-transformer-text-input@0.4.2.patch
+  react-native-screens@4.28.0: patches/react-native-screens@4.28.0.patch
