@@ -95,20 +95,22 @@ export function Home() {
     <>
       <Stack.Screen
         options={{
-          headerTitle: () =>
-            view === 'workspaces' ? (
-              menu.permanent ? null : (
-                <Image
-                  source={WORDMARK}
-                  tintColor={theme.colors.primary}
-                  style={styles.wordmark}
-                  contentFit="contain"
-                  accessibilityLabel={t`Stim`}
-                />
-              )
-            ) : (
-              <HeaderTitle title={view === 'devices' ? t`Devices` : t`Machines`} subtitle="" />
-            ),
+          orientation: Platform.OS === 'ios' && Platform.isPad ? undefined : menu.permanent ? 'default' : 'portrait_up',
+          headerTitle:
+            view === 'workspaces' && menu.permanent
+              ? ''
+              : () =>
+                  view === 'workspaces' ? (
+                    <Image
+                      source={WORDMARK}
+                      tintColor={theme.colors.primary}
+                      style={styles.wordmark}
+                      contentFit="contain"
+                      accessibilityLabel={t`Stim`}
+                    />
+                  ) : (
+                    <HeaderTitle title={view === 'devices' ? t`Devices` : t`Machines`} subtitle="" />
+                  ),
         }}
       />
       {menu.permanent ? null : (
