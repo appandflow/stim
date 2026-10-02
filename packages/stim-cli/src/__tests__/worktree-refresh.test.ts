@@ -32,7 +32,7 @@ import {
   mainCheckoutRefusal,
   podsPlan,
 } from '../workspace/worktree-refresh.ts';
-import { goneClaimOwner, makeExitingChild, plantClaim } from './_factories.ts';
+import { goneClaimOwner, makeChildProcess, makeExitingChild, plantClaim } from './_factories.ts';
 
 vi.mock('../devices/stim-desktop.ts', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../devices/stim-desktop.ts')>();
@@ -42,6 +42,7 @@ vi.mock('../devices/stim-desktop.ts', async (importOriginal) => {
 let base: string;
 let root: string;
 let target: string;
+const pendingWarms: Promise<unknown>[] = [];
 
 function git(cwd: string, ...args: string[]): string {
   return execFileSync('git', ['-C', cwd, ...args], { encoding: 'utf-8', timeout: 15_000 }).trim();
@@ -57,23 +58,27 @@ function commit(dir: string, message: string): void {
   git(dir, 'commit', '-qm', message);
 }
 
-async function runWarm(cwd: string, ...args: string[]) {
-  const stdout: string[] = [];
-  const stderr: string[] = [];
-  const log = vi.spyOn(console, 'log').mockImplementation((value) => stdout.push(String(value)));
-  const error = vi.spyOn(console, 'error').mockImplementation((value) => stderr.push(String(value)));
-  const previous = process.cwd();
-  try {
-    process.chdir(cwd);
-    const command = new Command();
-    registerWarm(command);
-    await command.parseAsync(['warm', ...args], { from: 'user' });
-    return { stdout, stderr: stderr.join('\n'), code: process.exitCode || 0 };
-  } finally {
-    process.chdir(previous);
-    log.mockRestore();
-    error.mockRestore();
-  }
+function runWarm(cwd: string, ...args: string[]) {
+  const warm = (async () => {
+    const stdout: string[] = [];
+    const stderr: string[] = [];
+    const log = vi.spyOn(console, 'log').mockImplementation((value) => stdout.push(String(value)));
+    const error = vi.spyOn(console, 'error').mockImplementation((value) => stderr.push(String(value)));
+    const previous = process.cwd();
+    try {
+      process.chdir(cwd);
+      const command = new Command();
+      registerWarm(command);
+      await command.parseAsync(['warm', ...args], { from: 'user' });
+      return { stdout, stderr: stderr.join('\n'), code: process.exitCode || 0 };
+    } finally {
+      process.chdir(previous);
+      log.mockRestore();
+      error.mockRestore();
+    }
+  })();
+  pendingWarms.push(warm);
+  return warm;
 }
 
 beforeEach(() => {
@@ -96,13 +101,16 @@ beforeEach(() => {
   git(root, 'worktree', 'add', '-qb', 'linked', target);
 }, 30_000);
 
-afterEach(() => {
+async function cleanupFixture() {
+  while (pendingWarms.length) await Promise.allSettled(pendingWarms.splice(0));
   vi.restoreAllMocks();
   resetExecutor();
   process.exitCode = 0;
   delete process.env.STIM_HOME;
   rmSync(base, { recursive: true, force: true });
-});
+}
+
+afterEach(cleanupFixture, 0);
 
 function fallBehind(files: Record<string, string>, message = 'upstream'): string {
   for (const [rel, value] of Object.entries(files)) write(root, rel, value);
@@ -542,6 +550,70 @@ test.each(['.', 'apps/mobile'])(
   },
   30_000,
 );
+
+test('fixture cleanup waits for an in-flight refresh before resetting its state', async () => {
+  write(root, 'pnpm-lock.yaml', 'lock v1\n');
+  commit(root, 'lockfile');
+  git(root, 'push', '-q', 'origin', 'main');
+  mkdirSync(join(root, 'node_modules'), { recursive: true });
+  fallBehind({ 'pnpm-lock.yaml': 'lock v2\n' }, 'bump lockfile');
+  write(root, '.env', 'main env');
+  const previous = process.cwd();
+  const home = process.env.STIM_HOME;
+  const child = makeChildProcess();
+  const real = getExecutor();
+  let installerStarted!: () => void;
+  const started = new Promise<void>((resolve) => {
+    installerStarted = resolve;
+  });
+  const executor = {
+    ...real,
+    spawn: () => {
+      installerStarted();
+      return child;
+    },
+  };
+  setExecutor(executor);
+  const warm = runWarm(target, '--refresh');
+  await started;
+  const cleanup = cleanupFixture();
+  let cleaned = false;
+  void cleanup.then(
+    () => {
+      cleaned = true;
+      return undefined;
+    },
+    () => {
+      cleaned = true;
+      return undefined;
+    },
+  );
+  try {
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(cleaned).toBe(false);
+    expect(process.cwd()).toBe(target);
+    expect(process.env.STIM_HOME).toBe(home);
+    expect(getExecutor()).toBe(executor);
+    expect(vi.isMockFunction(console.error)).toBe(true);
+    expect(existsSync(base)).toBe(true);
+    expect(existsSync(join(target, '.env'))).toBe(false);
+  } finally {
+    child.stderr?.emit('data', Buffer.from('ERR_PNPM_OUTDATED_LOCKFILE\n'));
+    child.emit('exit', 1, null);
+    child.emit('close', 1, null);
+    await Promise.allSettled([warm, cleanup]);
+  }
+  const result = await warm;
+  expect(result.code).toBe(1);
+  expect(result.stderr).toContain('ERR_PNPM_OUTDATED_LOCKFILE');
+  expect(result.stderr).toContain('failed: STIM_DEPS_FAILED');
+  await cleanup;
+  expect(process.cwd()).toBe(previous);
+  expect(getExecutor()).toBe(real);
+  expect(process.env.STIM_HOME).toBeUndefined();
+  expect(process.exitCode).toBe(0);
+  expect(existsSync(base)).toBe(false);
+}, 30_000);
 
 test('a failed install refuses with the code the build path uses and does not copy', async () => {
   write(root, 'pnpm-lock.yaml', 'lock v1\n');
