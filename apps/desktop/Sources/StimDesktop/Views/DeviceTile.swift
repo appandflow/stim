@@ -337,7 +337,8 @@ struct DeviceTile: View {
     Button {
       Task {
         switch device {
-        case .ios(_, let sim): rotateFailed = !SimulatorRotation.rotate(udid: sim.udid, clockwise: clockwise)
+        case .ios(_, let sim):
+          rotateFailed = !(await Task.detached { SimulatorRotation.rotate(udid: sim.udid, clockwise: clockwise) }.value)
         case .android(_, let avd):
           guard let serial = avd.serial else { return }
           rotateFailed = !(await EmulatorRotation.rotate(serial: serial, clockwise: clockwise))

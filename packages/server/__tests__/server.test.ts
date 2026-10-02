@@ -3078,7 +3078,7 @@ describe('frames.subscribe', () => {
       const { session, postures } = (begun as { result: { session: string; postures: string[] } }).result;
       expect(postures).toEqual(['folded', 'unfolded']);
       expect(await client.request('input.rotate', { session, direction: 'left' })).toMatchObject({
-        error: { code: 'bad-request', message: expect.stringContaining('iPhone Duo does not rotate') },
+        result: {},
       });
       expect(await client.request('input.posture', { session, posture: 'unfolded' })).toMatchObject({
         error: { code: 'action-failed' },
@@ -3106,6 +3106,7 @@ describe('frames.subscribe', () => {
       viewer.socket.close();
       await until(() => helperRuns().length > 0);
       expect(helperRuns().flatMap((run) => run.configs.filter((line) => 'input' in line))).toEqual([
+        { input: 'rotate', direction: 'left' },
         { input: 'touch', phase: 'down', x: 0.25, y: 0.75, display: 1 },
         { input: 'touch', phase: 'up', x: 0.25, y: 0.75, display: 0 },
       ]);

@@ -993,8 +993,9 @@ sends reaches any other device.
   Return, `\t` Tab and `\b` Delete. `input.button` takes `home` or `lock`,
   and on Android also `back` or `app-switch`. `input.rotate` takes
   `direction` (`left` or `right`) and turns the device a quarter turn. An
-  iPhone Duo refuses it with `bad-request`: its iOS 27.1 runtime receives the
-  orientation event but keeps the orientation its posture sets.
+  iPhone Duo rotates through its Virtualization provider in folded, half-open
+  and unfolded postures. Apps keep their supported orientations, and its home
+  screen stays portrait, as on other iPhones.
   `input.posture` takes one of the session's `postures`. A web page takes
   only `back`, its history back, and refuses rotation and posture. Each answers `{}` once the input
   is handed to the device: when it goes through the helper, that is when the

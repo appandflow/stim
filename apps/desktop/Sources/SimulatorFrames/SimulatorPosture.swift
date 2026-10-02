@@ -1,4 +1,4 @@
-// The hinge path, spring and hinge report below are adapted from Siniulator
+// The hinge path, spring and vendor reports below are adapted from Siniulator
 // (github.com/kmagiera/Siniulator, Sources/Siniulator/DuoMotion.swift and
 // Sources/Siniulator/Input.swift), under this licence:
 //
@@ -205,6 +205,22 @@ public enum SimulatorPosture {
     guard hid.isConnected else { return "The simulator's input connection closed. Try again." }
     remember(posture, udid: udid)
     return nil
+  }
+
+  // The Virtualization provider overwrites ordinary Duo rotation events; its enum follows
+  // https://github.com/kmagiera/Siniulator/blob/e181521a32595c2e537e1ee6c359aae254dbfed3/Sources/Siniulator/Input.swift#L115-L146
+  static func orient(udid: String, orientation: UInt32) -> Bool {
+    guard let hid = connection(udid: udid) else { return false }
+    while !hid.isReady, hid.isConnected { Thread.sleep(forTimeInterval: 0.05) }
+    guard hid.isConnected else { return false }
+    let values = ["portrait", "pud", "landscape-left", "landscape-right"]
+    let event: NSDictionary = [
+      "provider": "com.apple.Virtualization.VirtualMachines", "source": "orientation-picker-control", "type": "enum",
+      "value": values[Int(orientation) - 1],
+    ]
+    guard let report = IOCFSerialize(event, CFOptionFlags(kIOCFSerializeToBinary)) as Data? else { return false }
+    hid.vendorDefined(report)
+    return hid.isConnected
   }
 
   private static func remember(_ posture: DuoPosture, udid: String) {

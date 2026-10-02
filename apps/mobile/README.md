@@ -445,8 +445,8 @@ Return and Delete included), **Home**, **Lock**, and on Android **Back** and
 **Apps**. While the keyboard is open, a bar above it shows what you typed
 since the last Return, with **Done** to close it, and the screen keeps its
 size and moves up until its bottom meets that bar, stopping below the title.
-It continues with **Rotate left** and **Rotate right**, except on an iPhone
-Duo, whose simulator keeps the orientation its posture sets. When the device
+It continues with **Rotate left** and **Rotate right**, except that
+mobile hides both on an iPhone Duo. When the device
 has a hinge, posture buttons follow: **Fold** or **Unfold** on an iPhone Duo,
 whichever its latest frame or video shows it is not, and **Fold**, **Half
 open** and **Unfold** on a foldable emulator. On an unfolded Duo, touches go

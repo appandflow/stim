@@ -141,7 +141,9 @@ An iPhone Duo simulator shows both of its screens side by side, and the
 unlit one stays black. While **Take over** is on, its tile has a **Fold /
 Unfold** button that sweeps the simulated hinge to the other posture. The
 button needs the bundled app, and because it uses private iOS interfaces, a
-new iOS runtime can break it.
+new iOS runtime can break it. **Rotate left** and **Rotate right** work in
+folded, half-open and unfolded postures. Apps keep their supported
+orientations, and the Duo home screen stays portrait.
 
 ## Multiple devices with slots
 
