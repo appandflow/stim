@@ -67,7 +67,7 @@ struct RootView: View {
       Sidebar(
         store: store, autopilot: autopilot, onboarding: onboarding, actions: actions, selection: $selection, openLogs: showLogs
       )
-      .frame(minWidth: 220, idealWidth: 272, maxWidth: 360)
+      .frame(minWidth: 220, idealWidth: 272, maxWidth: .infinity)
       .navigationSplitViewColumnWidth(min: 220, ideal: 272, max: 360)
       .onGeometryChange(for: CGFloat.self) {
         $0.size.width
