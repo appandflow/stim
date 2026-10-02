@@ -44,6 +44,7 @@ export function Menu({ onClose }: { onClose: () => void }) {
   const show = (next: HomeView) => {
     setView(next);
     onClose();
+    if (pathname !== '/') router.replace('/');
   };
   const recentRows = recents.flatMap((recent) => {
     const connection = connections.find((c) => c.mac.id === recent.macId);
@@ -119,10 +120,13 @@ export function Menu({ onClose }: { onClose: () => void }) {
             title={t`Notifications`}
             count={inbox.unread}
             selected={pathname === '/inbox'}
-            onPress={() => go('/inbox')}
+            onPress={() => {
+              onClose();
+              if (pathname !== '/inbox') router.replace('/inbox');
+            }}
           />
         ) : null}
-        <NavRow icon="plus" title={t`Pair a machine`} selected={false} onPress={() => go('/pair')} />
+        <NavRow icon="plus" title={t`Pair a machine`} selected={false} onPress={() => router.push('/pair')} />
         {update.ready ? (
           <NavRow
             icon="arrow.clockwise"
@@ -172,7 +176,7 @@ export function Menu({ onClose }: { onClose: () => void }) {
         <Touch
           onPress={() =>
             status.macId
-              ? go({ pathname: '/mac/[id]', params: { id: status.macId } })
+              ? router.push({ pathname: '/mac/[id]', params: { id: status.macId } })
               : Platform.OS === 'android'
                 ? setAboutOpen(true)
                 : router.push('/about')

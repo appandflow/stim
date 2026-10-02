@@ -2139,6 +2139,7 @@ msgid "Memory budget"
 msgstr "Memory budget"
 
 #: src/screens/home.tsx
+#: src/screens/inbox.tsx
 msgid "Menu"
 msgstr "Menu"
 
@@ -2495,7 +2496,7 @@ msgstr "Nothing Stim tracks is using CPU or memory."
 msgid "nothing yet"
 msgstr "nothing yet"
 
-#: src/app/_layout.tsx
+#: src/app/(home)/_layout.tsx
 #: src/components/attention-strip.tsx
 #: src/components/attention-strip.tsx
 #: src/screens/menu.tsx
@@ -3253,6 +3254,7 @@ msgid "Status"
 msgstr "Status"
 
 #: src/app/_layout.tsx
+#: src/app/(home)/_layout.tsx
 #: src/lib/notifications.ts
 #: src/screens/about.tsx
 #: src/screens/home.tsx

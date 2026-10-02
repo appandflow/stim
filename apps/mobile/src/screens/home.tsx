@@ -95,7 +95,6 @@ export function Home() {
     <>
       <Stack.Screen
         options={{
-          orientation: Platform.OS === 'ios' && Platform.isPad ? undefined : menu.permanent ? 'default' : 'portrait_up',
           headerTitle:
             view === 'workspaces' && menu.permanent
               ? ''
@@ -315,7 +314,7 @@ function HomeAttention({ now, onOpen }: { now: number; onOpen: (item: HomeAttent
     <AttentionStrip
       items={items}
       onOpen={onOpen}
-      notifications={inbox.supported ? { unread: inbox.unread, onOpen: () => router.push('/inbox') } : undefined}
+      notifications={inbox.supported ? { unread: inbox.unread, onOpen: () => router.replace('/inbox') } : undefined}
     />
   );
 }

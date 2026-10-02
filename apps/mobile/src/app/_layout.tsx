@@ -6,13 +6,13 @@ import { DarkTheme, DefaultTheme, Stack, ThemeProvider, type ErrorBoundaryProps 
 import * as SplashScreen from 'expo-splash-screen';
 import { NavigationBar } from 'expo-navigation-bar';
 import { StatusBar } from 'expo-status-bar';
-import { useEffect, type ComponentProps } from 'react';
+import { useEffect } from 'react';
 import { Platform, View } from 'react-native';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { Button } from '@/components/button';
 import { EmptyState } from '@/components/empty-state';
-import { MenuDrawer } from '@/components/menu-drawer';
 import { SplashOverlay } from '@/components/splash-overlay';
 import { useForegroundUpdateCheck } from '@/hooks/app-update';
 import { DevPairing } from '@/hooks/dev-pairing';
@@ -22,7 +22,6 @@ import { MacsProvider } from '@/hooks/machines';
 import { NotificationsProvider } from '@/hooks/notifications';
 import { RecentsProvider } from '@/hooks/recents';
 import { SettingsProvider } from '@/hooks/settings';
-import { homeIsVisible } from '@/lib/sidebar';
 
 SplashScreen.preventAutoHideAsync().catch(() => {});
 /** expo-splash-screen fades the Android splash out over `duration` after `hide()`, over the overlay's animation. */
@@ -46,24 +45,13 @@ function RootErrorBoundary({ error, retry }: ErrorBoundaryProps) {
 
 export const ErrorBoundary = Sentry.wrapExpoRouterErrorBoundary(RootErrorBoundary);
 
-const drawerLayout: NonNullable<ComponentProps<typeof Stack>['layout']> = ({ state, descriptors, children }) => (
-  <MenuDrawer
-    homeVisible={homeIsVisible(
-      state.routes.slice(0, state.index + 1).map((route) => ({
-        name: route.name,
-        presentation: descriptors[route.key].options.presentation,
-      })),
-    )}
-  >
-    {children}
-  </MenuDrawer>
-);
-
 export default function RootLayout() {
   return (
     <I18nProvider i18n={i18n}>
       <SettingsProvider>
-        <RootLayoutContent />
+        <GestureHandlerRootView style={styles.root}>
+          <RootLayoutContent />
+        </GestureHandlerRootView>
       </SettingsProvider>
     </I18nProvider>
   );
@@ -107,7 +95,6 @@ function RootLayoutContent() {
             <HomeFiltersProvider>
               <RecentsProvider>
                 <Stack
-                  layout={drawerLayout}
                   screenOptions={{
                     orientation: phoneOrientation('portrait_up'),
                     headerTintColor: colors.primary,
@@ -121,7 +108,10 @@ function RootLayoutContent() {
                         : undefined,
                   }}
                 >
-                  <Stack.Screen name="index" options={{ title: t`Stim` }} />
+                  <Stack.Screen
+                    name="(home)"
+                    options={{ title: t`Stim`, headerShown: false, orientation: phoneOrientation('default') }}
+                  />
                   <Stack.Screen name="filters" options={sheet([0.6, 1])} />
                   <Stack.Screen name="about" options={sheet(Platform.OS === 'ios' ? 'fitToContents' : [0.65, 1])} />
                   <Stack.Screen
@@ -138,7 +128,6 @@ function RootLayoutContent() {
                   />
                   <Stack.Screen name="licenses" options={{ title: t`Open source licenses` }} />
                   <Stack.Screen name="license" options={{ title: '' }} />
-                  <Stack.Screen name="inbox" options={{ title: t`Notifications` }} />
                   <Stack.Screen
                     name="pair"
                     options={{ title: t`Pair a machine`, presentation: 'modal', ...opaqueHeader }}
@@ -176,5 +165,6 @@ function RootLayoutContent() {
 }
 
 const styles = StyleSheet.create((theme) => ({
+  root: { flex: 1 },
   error: { flex: 1, backgroundColor: theme.colors.background },
 }));

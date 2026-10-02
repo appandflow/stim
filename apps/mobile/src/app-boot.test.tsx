@@ -250,3 +250,27 @@ it("clears the previous release's derived data, keeps the pairing, and renders t
   const state = JSON.parse(mockStore('stim.notifications').get('state')!) as Record<string, { workspaces?: object }>;
   expect(state[`status:${MAC_ID}`]?.workspaces).toBeDefined();
 }, 60_000);
+
+it('opens a workspace directly without relying on Home to provide the gesture root', async () => {
+  jest.restoreAllMocks();
+  mockStores.clear();
+  (globalThis as { WebSocket?: unknown }).WebSocket = FakeSocket;
+  seedPreviousInstall();
+  const activate = launchInactive();
+  const errors: string[] = [];
+  const consoleError = jest
+    .spyOn(console, 'error')
+    .mockImplementation((...args) => void errors.push(args.map(String).join(' ')));
+  const path = statusFixture.payload.environments[0]!.path;
+
+  await renderRouter('./src/app', { initialUrl: `/mac/${MAC_ID}/workspace?path=${encodeURIComponent(path)}` });
+  await act(() => jest.advanceTimersByTimeAsync(1000));
+  await act(async () => {
+    activate();
+    await jest.advanceTimersByTimeAsync(1000);
+  });
+  consoleError.mockRestore();
+
+  expect(errors).toEqual([]);
+  expect(screen.getByText('Work')).toBeTruthy();
+}, 60_000);

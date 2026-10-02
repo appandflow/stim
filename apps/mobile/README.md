@@ -11,9 +11,12 @@ panels, leaving the division clear. Detail screens and the device viewer
 use the whole window. The narrow cover screen uses the menu drawer, retaining
 its open or closed state when rotating through a wide layout. Each pane
 uses its own safe area. Pane widths transition when the fold changes;
-Reduce Motion disables that transition. Bottom sheets keep the home split
-layout behind them; a sheet opened from a detail screen keeps that screen
-full width.
+Reduce Motion disables that transition. The home scene keeps its split behind
+pushed details and bottom sheets, so Back reveals the existing split. Notifications
+uses the same content pane and sidebar as Workspaces, Devices and Machines. Opening
+Pair or another overlay retains an open compact drawer beneath it. Choosing primary
+content closes the compact drawer. A sheet opened from a detail screen keeps that
+screen full width.
 Duo fold detection requires a build made with the iOS 27.1 SDK and an iOS
 27.1 runtime.
 
