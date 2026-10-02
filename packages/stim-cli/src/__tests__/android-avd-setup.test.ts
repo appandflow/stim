@@ -16,6 +16,7 @@ import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { prepareOwnedAvd } from '../engine/android-avd-setup.ts';
 import { deleteProjectDevices } from '../commands/gc/devices.ts';
 import { acquireAvdClaim } from '../devices/avd-claim.ts';
+import { createOwnedAvd } from '../devices/android.ts';
 import { processGroupAlive, readClaimSet, releaseClaim } from '@stim-cli/core/ownership-claim';
 import { teardownOwnedAvd } from '../devices/teardown.ts';
 import { makeExitingChild } from './_factories.ts';
@@ -37,6 +38,7 @@ const envKeys = [
   'ANDROID_SDK_HOME',
   'ANDROID_USER_HOME',
   'ANDROID_EMULATOR_HOME',
+  'XDG_CONFIG_HOME',
 ];
 
 function createFiles(): void {
@@ -381,6 +383,19 @@ test.each([false, true])(
     releaseClaim(acquireAvdClaim(avdName));
   },
 );
+
+test('avdmanager creates the AVD where the emulator reads it, not under XDG_CONFIG_HOME', async () => {
+  delete process.env.ANDROID_AVD_HOME;
+  process.env.XDG_CONFIG_HOME = join(home, '.config');
+  let env: NodeJS.ProcessEnv | undefined;
+  await createOwnedAvd('setup', {
+    spawn: (_file, _args, options) => {
+      env = options?.env;
+      return makeExitingChild();
+    },
+  });
+  expect(env?.ANDROID_AVD_HOME).toBe(join(home, '.android', 'avd'));
+});
 
 test.each(['throw', 'error'])('a spawn %s releases the claim and retains the incomplete reservation', async (kind) => {
   setExecutor({
