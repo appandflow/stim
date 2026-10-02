@@ -149,7 +149,11 @@ gc --json` dry run and `stim stats --json`, which the server refreshes at
   type, without moving the cursor. The device token
   the server issues is kept in the phone's secure storage (Keychain on iOS,
   Keystore on Android) and never shown.
-- **Workspace**: under the title, four small cards in a 2x2 grid open more:
+- **Workspace**: under the title, four small cards open more. They use one row
+  when the content pane can fit four readable cards, a 2x2 grid on compact
+  panes, and one column with large text. Device cards below fill the pane up
+  to 640 points wide and stay centered; additional columns appear only when
+  another full-width card fits:
   - **Status**: the stage in its color, **Running** ("up 42m", red with the
     error count or a closed app), **Building**, **Build failed** (when the
     newest build of either platform failed, with the platform and when),

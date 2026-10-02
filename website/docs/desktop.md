@@ -53,6 +53,10 @@ performance traces. Every release is listed under
 - **Phones.** Pair the Stim phone app, and watch a leased phone from the
   desktop: Android can be controlled, an iPhone over USB is view only. Needs
   **Serve to phones**.
+- **Tablet phone-app layout.** Workspace summary cards use one row when the
+  content pane has room for all four, and wrap on smaller panes. Device cards
+  stay centered, fill available width up to 640 points, and form extra columns
+  only when full-width cards fit.
 - **Notifications and cleanup.** Alerts for stuck agents and builds that keep failing, and
   automatic removal of worktrees after their pull request merges. The **Needs
   you** category lists only what agents cannot handle, such as a doctor
