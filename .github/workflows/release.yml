@@ -20,7 +20,11 @@ permissions:
   contents: read
 
 jobs:
+  windows-full:
+    uses: ./.github/workflows/windows-full.yml
+
   publish:
+    needs: windows-full
     runs-on: ubuntu-latest
     environment: release
     permissions:
