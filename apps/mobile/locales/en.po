@@ -193,6 +193,7 @@ msgstr "{failing} failing"
 msgid "{frameLabel} · end"
 msgstr "{frameLabel} · end"
 
+#: src/lib/needs-attention.test.ts
 #: src/lib/needs-attention.ts
 msgid "{free} free, below Stim's floor"
 msgstr "{free} free, below Stim's floor"
@@ -205,6 +206,7 @@ msgstr "{freeGb} GB free"
 #: src/intl/format.ts
 #: src/intl/format.ts
 #: src/lib/home.ts
+#: src/lib/needs-attention.test.ts
 msgid "{gb} GB"
 msgstr "{gb} GB"
 
@@ -3052,6 +3054,7 @@ msgstr "Runtimes and system images"
 msgid "Safe to free now"
 msgstr "Safe to free now"
 
+#: src/lib/needs-attention.test.ts
 #: src/lib/needs-attention.ts
 msgid "Same {language} error {count}x at {file}:{line}"
 msgstr "Same {language} error {count}x at {file}:{line}"

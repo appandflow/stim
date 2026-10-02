@@ -8,6 +8,7 @@ import {
   needsAttention,
   OVERSIGHT_CATEGORIES,
   oversightTitle,
+  type AttentionMessage,
   type NeedsAttentionInput,
 } from '@stim-cli/core/oversight';
 import { PUSH_EVENTS } from '../src/protocol.ts';
@@ -37,5 +38,25 @@ describe('shared notification rules', () => {
       .filter(({ input, items }) => !isDeepStrictEqual(needsAttention({ ...input, now: Date.parse(input.now) }), items))
       .map(({ name }) => name);
     expect(differing).toEqual([]);
+  });
+
+  it('lets a formatter change bodies without changing selected items, remedies or ordering', () => {
+    const messages: AttentionMessage[] = [];
+    for (const { input, items } of vectors.cases) {
+      const formatted = needsAttention({ ...input, now: Date.parse(input.now) } as NeedsAttentionInput, (message) => {
+        messages.push(message);
+        return 'localized';
+      });
+      expect(formatted).toEqual(items.map((item) => Object.assign({}, item, { body: 'localized' })));
+    }
+    expect(messages).toContainEqual({
+      kind: 'diagnostic-loop',
+      platform: 'ios',
+      count: 3,
+      file: 'AppDelegate.swift',
+      line: 71,
+      language: 'Swift',
+    });
+    expect(messages).toContainEqual(expect.objectContaining({ kind: 'stuck', minutes: 20, green: 'ios' }));
   });
 });
