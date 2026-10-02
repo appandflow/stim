@@ -8,6 +8,14 @@ from an older `stim`).
 
 It reads Stim state only through `stim status --watch --json`, `stim status --json`, `stim stats --json`,
 `stim logs --json`, `stim settings --json`, `stim ios|android --plan --json`, `stim doctor --json`, and the `stim gc --json` dry run, and never reads or writes `$STIM_HOME`.
+Project stats and build-machine placements use fresh `stats.get` requests when the existing loopback
+server session is open, allows reads, and serves the same canonical Stim home as the CLI. Otherwise they use
+the CLI; reading stats never starts the server or changes **Serve to phones**. An RPC failure is shown without
+retrying through the CLI. Cancelling a stats refresh stops waiting and ignores its late reply, keeping device
+viewing connected. The server job can continue until it finishes or reaches its existing limits (normally
+60 seconds), occupying a request slot until then. The shared connection accepts complete WebSocket messages
+up to 16 MiB, including the JSON envelope; an oversized stats response fails the read without a CLI retry.
+
 Device replay and a leased physical device's screen, which only stim-server serves, come from the stim-server the
 Phones tab runs or found, over loopback; see [Replay](#replay) and [Physical devices](#physical-devices). Its
 actions run the `stim` executable with an argument list, never a shell string,
@@ -763,7 +771,8 @@ load per core, cores, offloaded builds running and free disk from its offer,
 and the builds it ran for this Mac today and in total, their average time, the
 time they saved against this project's last build here (an estimate), and the
 fallbacks. Below are its latest placements. The counts and placements come from
-`stim stats --json` run in the home directory. **Pair or remove build machines
+fresh `stats.get` requests through the matching local server session, or `stim stats --json` run in the
+home directory when that session is unavailable. **Pair or remove build machines
 in Settings** opens **Build Machines**; the page itself changes nothing.
 
 ## Notifications

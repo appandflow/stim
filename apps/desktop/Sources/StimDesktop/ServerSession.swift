@@ -74,6 +74,13 @@ struct LocalServerCredential: Codable, Equatable {
 
   var isOpen: Bool { client?.isOpen == true }
 
+  var statsConnection: (client: ServerClient, home: String)? {
+    guard let client, case .running(let health, _) = controller.state,
+      key == "\(controller.port) \(health.stimHome) \(health.version)"
+    else { return nil }
+    return (client, health.stimHome)
+  }
+
   var link: ServerLink {
     guard client != nil else {
       switch controller.state {
