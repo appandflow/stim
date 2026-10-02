@@ -5,6 +5,11 @@ the Stim server on a Mac (`stim-server`, from the `@stim-cli/server` package)
 and shows what Stim Desktop shows. A phone the Mac grants control can also
 reload and stop a workspace:
 
+On supported iOS and Android phones, haptics mark opening the compact menu,
+changing primary sections or custom filters, and successfully copying diagnostics
+or a log entry. Re-selecting the current section or filter, scrolling and live
+updates stay silent. System settings and hardware can suppress feedback.
+
 On wide iPad and Duo windows, the main screen shows its navigation menu
 in the leading third. A book fold places the menu and content on opposite
 panels, leaving the division clear. Detail screens and the device viewer

@@ -19,6 +19,7 @@ import { useInbox } from '@/hooks/inbox';
 import { useMacs } from '@/hooks/machines';
 import { useRecents } from '@/hooks/recents';
 import { drawerStatus, type DrawerMachine } from '@/lib/drawer-status';
+import { hapticFeedback } from '@/lib/haptics';
 import { machineStats } from '@/lib/home';
 import { workspaceTitleAt } from '@/lib/workspace-names';
 import { isShownLive } from '@/lib/workspaces';
@@ -42,6 +43,7 @@ export function Menu({ onClose }: { onClose: () => void }) {
     router.push(href);
   };
   const show = (next: HomeView) => {
+    if (pathname !== '/' || view !== next) hapticFeedback('selection');
     setView(next);
     onClose();
     if (pathname !== '/') router.replace('/');
@@ -121,6 +123,7 @@ export function Menu({ onClose }: { onClose: () => void }) {
             count={inbox.unread}
             selected={pathname === '/inbox'}
             onPress={() => {
+              if (pathname !== '/inbox') hapticFeedback('selection');
               onClose();
               if (pathname !== '/inbox') router.replace('/inbox');
             }}

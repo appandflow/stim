@@ -6,10 +6,14 @@ import { BackHandler, Pressable, Text } from 'react-native';
 
 import '@/design/unistyles';
 
+import { hapticFeedback } from '@/lib/haptics';
+
 import { MenuDrawer, useMenuDrawer } from './menu-drawer';
 
 let mockFocused = true;
 let mounts = 0;
+
+jest.mock('@/lib/haptics', () => ({ hapticFeedback: jest.fn() }));
 
 jest.mock('expo-router', () => ({ useIsFocused: () => mockFocused }));
 jest.mock('react-native-reserved-regions', () => {
@@ -53,6 +57,7 @@ jest.mock('react-native-drawer-layout', () => {
         <View>
           <Text>{`${drawerType}:${open ? 'open' : 'closed'}`}</Text>
           <Pressable testID="dismiss" onPress={onClose} />
+          <Pressable testID="swipe-open" onPress={onOpen} />
           {children}
         </View>
       );
@@ -76,6 +81,7 @@ function Content() {
 beforeEach(() => {
   mockFocused = true;
   mounts = 0;
+  jest.mocked(hapticFeedback).mockClear();
 });
 
 function layout(screen: Awaited<ReturnType<typeof render>>, width: number, height: number) {
@@ -155,4 +161,25 @@ it('retains an open compact drawer behind an overlay without intercepting its Ba
   } finally {
     back.mockRestore();
   }
+});
+
+it('marks only an actual compact menu opening, including a swipe', async () => {
+  const screen = await render(
+    <MenuDrawer>
+      <Content />
+    </MenuDrawer>,
+  );
+  await layout(screen, 466, 678);
+  expect(hapticFeedback).not.toHaveBeenCalled();
+  await fireEvent.press(screen.getByTestId('open'));
+  expect(hapticFeedback).toHaveBeenCalledTimes(1);
+  expect(hapticFeedback).toHaveBeenLastCalledWith('menu');
+  await fireEvent.press(screen.getByTestId('open'));
+  expect(hapticFeedback).toHaveBeenCalledTimes(1);
+  await layout(screen, 951, 669);
+  await layout(screen, 466, 678);
+  expect(hapticFeedback).toHaveBeenCalledTimes(1);
+  await fireEvent.press(screen.getByTestId('dismiss'));
+  await fireEvent.press(screen.getByTestId('swipe-open'));
+  expect(hapticFeedback).toHaveBeenCalledTimes(2);
 });
