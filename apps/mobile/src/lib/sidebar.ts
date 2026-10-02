@@ -9,3 +9,7 @@ export function sidebarOf(regions: readonly ReservedRegion[], width: number, hei
   }
   return width >= 640 && height >= 600 ? { width: width / 3, gap: 0 } : null;
 }
+
+export function homeIsVisible(routes: readonly { name: string; presentation?: string }[]) {
+  return routes.findLast((route) => route.presentation !== 'formSheet')?.name === 'index';
+}

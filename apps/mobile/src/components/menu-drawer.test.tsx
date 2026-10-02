@@ -84,7 +84,7 @@ function layout(screen: Awaited<ReturnType<typeof render>>, width: number, heigh
 
 it('keeps a closed compact drawer closed after rotating through a permanent sidebar', async () => {
   const screen = await render(
-    <MenuDrawer>
+    <MenuDrawer homeVisible={mockPathname === '/'}>
       <Content />
     </MenuDrawer>,
   );
@@ -99,7 +99,7 @@ it('keeps a closed compact drawer closed after rotating through a permanent side
 
 it('restores an open compact drawer after rotating through a permanent sidebar', async () => {
   const screen = await render(
-    <MenuDrawer>
+    <MenuDrawer homeVisible={mockPathname === '/'}>
       <Content />
     </MenuDrawer>,
   );
@@ -113,7 +113,7 @@ it('restores an open compact drawer after rotating through a permanent sidebar',
 
 it('uses the full screen for a detail route and restores the main sidebar on back', async () => {
   const screen = await render(
-    <MenuDrawer>
+    <MenuDrawer homeVisible={mockPathname === '/'}>
       <Content />
     </MenuDrawer>,
   );
@@ -121,17 +121,38 @@ it('uses the full screen for a detail route and restores the main sidebar on bac
   expect(screen.getByText('permanent:open')).toBeTruthy();
   mockPathname = '/mac/m1/workspace';
   await screen.rerender(
-    <MenuDrawer>
+    <MenuDrawer homeVisible={mockPathname === '/'}>
       <Content />
     </MenuDrawer>,
   );
   expect(screen.getByText('back:closed')).toBeTruthy();
   mockPathname = '/';
   await screen.rerender(
-    <MenuDrawer>
+    <MenuDrawer homeVisible={mockPathname === '/'}>
       <Content />
     </MenuDrawer>,
   );
   expect(screen.getByText('permanent:open')).toBeTruthy();
+  expect(mounts).toBe(1);
+});
+
+it('keeps the home sidebar behind sheets while leaving a detail background compact', async () => {
+  const content = (homeVisible: boolean) => (
+    <MenuDrawer homeVisible={homeVisible}>
+      <Content />
+    </MenuDrawer>
+  );
+  const screen = await render(content(true));
+  await layout(screen, 951, 669);
+  for (const pathname of ['/filters', '/mac/m1', '/']) {
+    mockPathname = pathname;
+    await screen.rerender(content(true));
+    expect(screen.getByText('permanent:open')).toBeTruthy();
+  }
+  for (const pathname of ['/mac/m1/workspace', '/mac/m1/build', '/mac/m1/workspace']) {
+    mockPathname = pathname;
+    await screen.rerender(content(false));
+    expect(screen.getByText('back:closed')).toBeTruthy();
+  }
   expect(mounts).toBe(1);
 });

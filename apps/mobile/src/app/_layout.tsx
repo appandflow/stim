@@ -6,7 +6,7 @@ import { DarkTheme, DefaultTheme, Stack, ThemeProvider, type ErrorBoundaryProps 
 import * as SplashScreen from 'expo-splash-screen';
 import { NavigationBar } from 'expo-navigation-bar';
 import { StatusBar } from 'expo-status-bar';
-import { useEffect } from 'react';
+import { useEffect, type ComponentProps } from 'react';
 import { Platform, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
@@ -22,6 +22,7 @@ import { MacsProvider } from '@/hooks/machines';
 import { NotificationsProvider } from '@/hooks/notifications';
 import { RecentsProvider } from '@/hooks/recents';
 import { SettingsProvider } from '@/hooks/settings';
+import { homeIsVisible } from '@/lib/sidebar';
 
 SplashScreen.preventAutoHideAsync().catch(() => {});
 /** expo-splash-screen fades the Android splash out over `duration` after `hide()`, over the overlay's animation. */
@@ -44,6 +45,19 @@ function RootErrorBoundary({ error, retry }: ErrorBoundaryProps) {
 }
 
 export const ErrorBoundary = Sentry.wrapExpoRouterErrorBoundary(RootErrorBoundary);
+
+const drawerLayout: NonNullable<ComponentProps<typeof Stack>['layout']> = ({ state, descriptors, children }) => (
+  <MenuDrawer
+    homeVisible={homeIsVisible(
+      state.routes.slice(0, state.index + 1).map((route) => ({
+        name: route.name,
+        presentation: descriptors[route.key].options.presentation,
+      })),
+    )}
+  >
+    {children}
+  </MenuDrawer>
+);
 
 export default function RootLayout() {
   return (
@@ -92,67 +106,66 @@ function RootLayoutContent() {
           <NotificationsProvider>
             <HomeFiltersProvider>
               <RecentsProvider>
-                <MenuDrawer>
-                  <Stack
-                    screenOptions={{
-                      orientation: phoneOrientation('portrait_up'),
-                      headerTintColor: colors.primary,
-                      headerTitleStyle: { color: colors.text },
-                      headerBackButtonDisplayMode: 'minimal',
-                      headerShadowVisible: false,
-                      headerTransparent: Platform.OS === 'ios',
-                      headerBlurEffect:
-                        Platform.OS === 'ios' && parseInt(String(Platform.Version), 10) < 26
-                          ? 'systemMaterial'
-                          : undefined,
+                <Stack
+                  layout={drawerLayout}
+                  screenOptions={{
+                    orientation: phoneOrientation('portrait_up'),
+                    headerTintColor: colors.primary,
+                    headerTitleStyle: { color: colors.text },
+                    headerBackButtonDisplayMode: 'minimal',
+                    headerShadowVisible: false,
+                    headerTransparent: Platform.OS === 'ios',
+                    headerBlurEffect:
+                      Platform.OS === 'ios' && parseInt(String(Platform.Version), 10) < 26
+                        ? 'systemMaterial'
+                        : undefined,
+                  }}
+                >
+                  <Stack.Screen name="index" options={{ title: t`Stim` }} />
+                  <Stack.Screen name="filters" options={sheet([0.6, 1])} />
+                  <Stack.Screen name="about" options={sheet(Platform.OS === 'ios' ? 'fitToContents' : [0.65, 1])} />
+                  <Stack.Screen
+                    name="settings"
+                    options={{
+                      title: t`Settings`,
+                      ...(Platform.OS === 'android'
+                        ? {
+                            contentStyle: { backgroundColor: colors.grouped },
+                            headerStyle: { backgroundColor: colors.grouped },
+                          }
+                        : null),
                     }}
-                  >
-                    <Stack.Screen name="index" options={{ title: t`Stim` }} />
-                    <Stack.Screen name="filters" options={sheet([0.6, 1])} />
-                    <Stack.Screen name="about" options={sheet(Platform.OS === 'ios' ? 'fitToContents' : [0.65, 1])} />
-                    <Stack.Screen
-                      name="settings"
-                      options={{
-                        title: t`Settings`,
-                        ...(Platform.OS === 'android'
-                          ? {
-                              contentStyle: { backgroundColor: colors.grouped },
-                              headerStyle: { backgroundColor: colors.grouped },
-                            }
-                          : null),
-                      }}
-                    />
-                    <Stack.Screen name="licenses" options={{ title: t`Open source licenses` }} />
-                    <Stack.Screen name="license" options={{ title: '' }} />
-                    <Stack.Screen name="inbox" options={{ title: t`Notifications` }} />
-                    <Stack.Screen
-                      name="pair"
-                      options={{ title: t`Pair a machine`, presentation: 'modal', ...opaqueHeader }}
-                    />
-                    <Stack.Screen
-                      name="rename"
-                      options={{ title: t`Rename machine`, presentation: 'modal', ...opaqueHeader }}
-                    />
-                    <Stack.Screen name="mac/[id]/index" options={sheet([0.75, 1])} />
-                    <Stack.Screen name="mac/[id]/workspace" options={{ title: t`Workspace` }} />
-                    <Stack.Screen name="mac/[id]/logs" options={{ title: t`Logs`, ...opaqueHeader }} />
-                    <Stack.Screen
-                      name="mac/[id]/device"
-                      options={{
-                        headerShown: false,
-                        orientation: phoneOrientation('default'),
-                        presentation: 'transparentModal',
-                        animation: 'none',
-                        gestureEnabled: false,
-                        contentStyle: { backgroundColor: 'transparent' },
-                      }}
-                    />
-                    <Stack.Screen name="mac/[id]/build" options={sheet([0.75, 1])} />
-                    <Stack.Screen name="mac/[id]/resources" options={sheet([0.75, 1])} />
-                    <Stack.Screen name="mac/[id]/agent" options={sheet([0.75, 1])} />
-                    <Stack.Screen name="mac/[id]/work" options={sheet([0.65, 1])} />
-                  </Stack>
-                </MenuDrawer>
+                  />
+                  <Stack.Screen name="licenses" options={{ title: t`Open source licenses` }} />
+                  <Stack.Screen name="license" options={{ title: '' }} />
+                  <Stack.Screen name="inbox" options={{ title: t`Notifications` }} />
+                  <Stack.Screen
+                    name="pair"
+                    options={{ title: t`Pair a machine`, presentation: 'modal', ...opaqueHeader }}
+                  />
+                  <Stack.Screen
+                    name="rename"
+                    options={{ title: t`Rename machine`, presentation: 'modal', ...opaqueHeader }}
+                  />
+                  <Stack.Screen name="mac/[id]/index" options={sheet([0.75, 1])} />
+                  <Stack.Screen name="mac/[id]/workspace" options={{ title: t`Workspace` }} />
+                  <Stack.Screen name="mac/[id]/logs" options={{ title: t`Logs`, ...opaqueHeader }} />
+                  <Stack.Screen
+                    name="mac/[id]/device"
+                    options={{
+                      headerShown: false,
+                      orientation: phoneOrientation('default'),
+                      presentation: 'transparentModal',
+                      animation: 'none',
+                      gestureEnabled: false,
+                      contentStyle: { backgroundColor: 'transparent' },
+                    }}
+                  />
+                  <Stack.Screen name="mac/[id]/build" options={sheet([0.75, 1])} />
+                  <Stack.Screen name="mac/[id]/resources" options={sheet([0.75, 1])} />
+                  <Stack.Screen name="mac/[id]/agent" options={sheet([0.75, 1])} />
+                  <Stack.Screen name="mac/[id]/work" options={sheet([0.65, 1])} />
+                </Stack>
               </RecentsProvider>
             </HomeFiltersProvider>
           </NotificationsProvider>
