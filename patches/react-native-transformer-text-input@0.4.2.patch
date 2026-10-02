@@ -1,0 +1,34 @@
+diff --git a/android/src/main/jni/CMakeLists.txt b/android/src/main/jni/CMakeLists.txt
+index 9556e21f71bfb236c7bc31bb69193c32109ad211..ade756478f013b649bcbfbd75afef8ca7933adc5 100644
+--- a/android/src/main/jni/CMakeLists.txt
++++ b/android/src/main/jni/CMakeLists.txt
+@@ -76,27 +76,14 @@
+   "${REACT_NATIVE_WORKLETS_DIR}/android/src/main/cpp"
+ )
+ 
+-if(${CMAKE_BUILD_TYPE} MATCHES "Debug")
+-  set(BUILD_TYPE "debug")
+-else()
+-  set(BUILD_TYPE "release")
+-endif()
++find_package(react-native-worklets CONFIG REQUIRED)
+ 
+-add_library(worklets SHARED IMPORTED)
+-
+-set_target_properties(
+-  worklets
+-  PROPERTIES
+-    IMPORTED_LOCATION
+-    "${REACT_NATIVE_WORKLETS_DIR}/android/build/intermediates/cmake/${BUILD_TYPE}/obj/${ANDROID_ABI}/libworklets.so"
+-)
+-
+ target_link_libraries(
+   ${LIB_TARGET_NAME}
+   fbjni
+   jsi
+   reactnative
+-  worklets
++  react-native-worklets::worklets
+ )
+ 
+ target_include_directories(
