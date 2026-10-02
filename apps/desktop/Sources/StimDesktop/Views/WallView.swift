@@ -27,14 +27,15 @@ struct WallView: View {
       .id(project?.id)
     } else {
       ScrollView {
-        VStack(alignment: .leading, spacing: Space.huge) {
+        VStack(alignment: .leading, spacing: Space.xl) {
           if let project {
             Text(store.title(of: project)).font(.stim(.title))
           }
           ForEach(live) { env in
+            let devices = env.devices.filter { $0.isRunning || env.runningBuild(for: $0) != nil }
             VStack(alignment: .leading, spacing: Space.lg) {
               WorkspaceHeader(
-                env: env, project: store.project(of: env), usage: metrics.usage[env.path],
+                env: env, project: store.project(of: env), usage: metrics.usage[env.path], compact: devices.isEmpty,
                 openLogs: { openLogs(env.path) }
               )
               .onTapGesture { selection = .environment(env.path) }
@@ -47,19 +48,38 @@ struct WallView: View {
               .accessibilityLabel(env.names.title)
               .accessibilityAddTraits(.isButton)
               .accessibilityAction { selection = .environment(env.path) }
-              ScrollView(.horizontal, showsIndicators: false) {
-                HStack(alignment: .top, spacing: Space.xl) {
-                  ForEach(env.devices.filter { $0.isRunning || env.runningBuild(for: $0) != nil }) { device in
-                    Button {
-                      selection = .environment(env.path)
-                    } label: {
-                      DeviceTile(
-                        device: device, screenHeight: tileSize.screenHeight, workspace: env.path,
-                        build: env.runningBuild(for: device))
+              if devices.isEmpty {
+                Label("No running devices", systemImage: "iphone.gen3")
+                  .font(.stim(.callout))
+                  .foregroundStyle(Palette.secondary)
+                  .labelStyle(.titleAndIcon)
+              } else {
+                ScrollView(.horizontal, showsIndicators: false) {
+                  HStack(alignment: .top, spacing: Space.xl) {
+                    ForEach(devices) { device in
+                      Button {
+                        selection = .environment(env.path)
+                      } label: {
+                        DeviceTile(
+                          device: device, screenHeight: tileSize.screenHeight, workspace: env.path,
+                          build: env.runningBuild(for: device))
+                      }
+                      .buttonStyle(.plain)
                     }
-                    .buttonStyle(.plain)
                   }
                 }
+              }
+            }
+            .padding(devices.isEmpty ? Space.xl : 0)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background {
+              if devices.isEmpty {
+                RoundedRectangle(cornerRadius: Radius.card).fill(Palette.surface)
+              }
+            }
+            .overlay {
+              if devices.isEmpty {
+                RoundedRectangle(cornerRadius: Radius.card).strokeBorder(Palette.border)
               }
             }
           }
@@ -74,6 +94,7 @@ struct WorkspaceHeader: View {
   var env: Workspace
   var project: Project
   var usage: UsageHistory?
+  var compact = false
   var openLogs: () -> Void
 
   var body: some View {
@@ -133,7 +154,7 @@ struct WorkspaceHeader: View {
         Pill(tone: .warning) { Text("supervisor unhealthy") }
           .help("stim status reports this workspace's dev server supervisor as unhealthy")
       }
-      if let cpu = usage?.latest.cpuPercent, let usage {
+      if !compact, let cpu = usage?.latest.cpuPercent, let usage {
         Pill {
           Sparkline(values: usage.cpu, minimumPeak: 100).frame(width: 34, height: 12)
           Text("CPU")
@@ -141,17 +162,17 @@ struct WorkspaceHeader: View {
         }
         .help("CPU of the workspace's processes, simulators and emulators, as a percent of one core")
       }
-      if let usage, usage.isFootprint {
+      if !compact, let usage, usage.isFootprint {
         Pill {
           Sparkline(values: usage.memory, minimumPeak: 1_073_741_824).frame(width: 34, height: 12)
           Text("RAM")
           Text(Format.memory(usage.memoryBytes)).font(.stim(.caption, mono: true))
         }
         .help("Memory the workspace's processes, simulators and emulators use, as Activity Monitor counts it")
-      } else if let mb = env.memoryMb, mb > 0 {
+      } else if !compact, let mb = env.memoryMb, mb > 0 {
         MemoryPill(mb: mb, source: env.memorySource)
       }
-      if let errors = env.logs?.errorsSinceMarker {
+      if let errors = env.logs?.errorsSinceMarker, !compact || errors > 0 {
         Button(action: openLogs) {
           Pill(tone: errors > 0 ? .error : .neutral) { Text(countLabel(errors, "error")) }
         }
