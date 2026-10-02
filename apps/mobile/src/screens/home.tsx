@@ -8,7 +8,6 @@ import { ActivityIndicator, Platform, View, type ListViewToken } from 'react-nat
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
-import { AttentionStrip } from '@/components/attention-strip';
 import { Button } from '@/components/button';
 import { Card } from '@/components/card';
 import { DeviceGridTile } from '@/components/device-grid-tile';
@@ -24,11 +23,9 @@ import { useMenuDrawer } from '@/components/menu-drawer';
 import { WorkspaceRow } from '@/components/workspace-row';
 import { useHomeFilters } from '@/hooks/home-filters';
 import { useInbox } from '@/hooks/inbox';
-import { toAttentionMachine, useMacs, usePairedMacs, useWorkspaceItems } from '@/hooks/machines';
-import { useNotificationPrefs } from '@/hooks/notifications';
+import { useMacs, usePairedMacs, useWorkspaceItems } from '@/hooks/machines';
 import { useNow } from '@/hooks/use-now';
 import { AGENT_PROMPTS, pickPrompts } from '@/lib/agent-prompts';
-import { homeAttention, type HomeAttentionItem } from '@/lib/attention';
 import {
   filtersActive,
   filterWorkspaces,
@@ -168,11 +165,6 @@ export function Home() {
     );
   }
 
-  const openAttention = ({ target }: HomeAttentionItem) => {
-    if (target.kind === 'machine') router.push({ pathname: '/mac/[id]', params: { id: target.macId } });
-    else router.push({ pathname: '/mac/[id]/workspace', params: { id: target.macId, path: target.path } });
-  };
-
   const listHeader = (
     <View>
       <View style={styles.sectionHeader}>
@@ -192,7 +184,6 @@ export function Home() {
           />
         ))}
       </ScrollView>
-      {view === 'workspaces' ? <HomeAttention now={now} onOpen={openAttention} /> : null}
     </View>
   );
 
@@ -298,24 +289,6 @@ function RepoHeader({ section }: { section: HomeSection }) {
         {counts}
       </Text>
     </View>
-  );
-}
-
-function HomeAttention({ now, onOpen }: { now: number; onOpen: (item: HomeAttentionItem) => void }) {
-  const router = useRouter();
-  const inbox = useInbox();
-  const { connections } = useMacs();
-  const { prefs } = useNotificationPrefs();
-  const items = useMemo(
-    () => homeAttention(connections.map(toAttentionMachine), now, prefs.stuckMinutes),
-    [connections, now, prefs.stuckMinutes],
-  );
-  return (
-    <AttentionStrip
-      items={items}
-      onOpen={onOpen}
-      notifications={inbox.supported ? { unread: inbox.unread, onOpen: () => router.replace('/inbox') } : undefined}
-    />
   );
 }
 
