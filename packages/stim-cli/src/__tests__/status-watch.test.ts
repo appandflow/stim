@@ -4,11 +4,27 @@ import { PassThrough } from 'node:stream';
 import { appendFileSync, chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { agentSessionsCacheFile } from '@stim-cli/core/state';
 import { saveConfig } from '../workspace/config.ts';
 import { makeConfig } from './_factories.ts';
 import { ensureWorkspaceStorage, workspaceLogsDir } from '../workspace/paths.ts';
 import { resetExecutor, setExecutor } from '../exec.ts';
 import { createRefreshScheduler, statusChange, watchStatusSources, type RefreshKind } from '../status-watch.ts';
+
+const watchListeners = vi.hoisted(() => new Map<string, (event: string, name: string | null) => void>());
+
+vi.mock('node:fs', async (importOriginal) => {
+  const fs = await importOriginal<typeof import('node:fs')>();
+  return {
+    ...fs,
+    watch: (path: string, listener: (event: string, name: string | null) => void) => {
+      const watcher = fs.watch(path, () => {});
+      watchListeners.set(path, listener);
+      watcher.once('close', () => watchListeners.delete(path));
+      return watcher;
+    },
+  };
+});
 
 describe('createRefreshScheduler', () => {
   beforeEach(() => {
@@ -144,6 +160,9 @@ test('a log append or build detail needs only a log refresh; other state changes
 test('the simulator poller shares its last readable listing until it ages out or Stim state changes', async () => {
   vi.useFakeTimers({ toFake: ['setTimeout', 'setInterval', 'Date'] });
   const home = mkdtempSync(join(tmpdir(), 'stim-watch-sims-'));
+  vi.stubEnv('STIM_HOME', home);
+  vi.stubEnv('HOME', home);
+  vi.stubEnv('USERPROFILE', home);
   const listing = (state: string) =>
     JSON.stringify({
       devices: {
@@ -175,11 +194,8 @@ test('the simulator poller shares its last readable listing until it ages out or
     await vi.advanceTimersByTimeAsync(5000);
     expect(sources.simulatorListing()).toBe(listing('Booted'));
 
-    const deadline = performance.now() + 5000;
-    while (sources.simulatorListing() !== null && performance.now() < deadline) {
-      writeFileSync(join(home, 'config.json'), '{}');
-      await new Promise((resolve) => setImmediate(resolve));
-    }
+    writeFileSync(join(home, 'config.json'), '{}');
+    watchListeners.get(home)!('change', 'config.json');
     expect(sources.simulatorListing()).toBe(null);
     await vi.advanceTimersByTimeAsync(5000);
     expect(sources.simulatorListing()).toBe(listing('Booted'));
@@ -192,6 +208,7 @@ test('the simulator poller shares its last readable listing until it ages out or
     resetExecutor();
     vi.useRealTimers();
     rmSync(home, { recursive: true, force: true });
+    vi.unstubAllEnvs();
   }
 });
 
@@ -219,23 +236,34 @@ describe('stim status --watch --json', () => {
   const cli = join(import.meta.dirname, '..', '..', 'bin', 'cli.ts');
 
   function watchEnv() {
-    return { STIM_HOME: process.env.STIM_HOME, ANDROID_HOME: join(root, 'sdk'), PATH: join(root, 'bin'), HOME: root };
+    return {
+      STIM_HOME: process.env.STIM_HOME,
+      ANDROID_HOME: join(root, 'sdk'),
+      PATH: join(root, 'bin'),
+      HOME: root,
+      USERPROFILE: root,
+    };
   }
 
-  function startWatch() {
+  function startWatch(controlledWatch = false) {
+    if (controlledWatch) {
+      writeFileSync(agentSessionsCacheFile(), JSON.stringify({ discoveredAt: new Date().toISOString(), sessions: [] }));
+    }
     const androidHome = join(root, 'sdk');
     mkdirSync(join(androidHome, 'platform-tools'), { recursive: true });
     const adb = join(androidHome, 'platform-tools', 'adb');
     const adbPid = join(root, 'adb.pid');
     writeFileSync(
       adb,
-      `#!/bin/sh\nif [ "$1" = track-devices ]; then echo $$ > '${adbPid}'; printf 0000; exec /bin/sleep 600; fi\n`,
+      `#!/bin/sh\nif [ "$1" = track-devices ]; then echo $$ > '${adbPid}'; ${controlledWatch ? '' : 'printf 0000;'} exec /bin/sleep 600; fi\n`,
     );
     chmodSync(adb, 0o755);
-    const proc = spawn(process.execPath, [cli, 'status', '--watch', '--json'], {
+    const preload = new URL('./_status-watch-preload.mjs', import.meta.url).href;
+    const args = [...(controlledWatch ? ['--import', preload] : []), cli, 'status', '--watch', '--json'];
+    const proc = spawn(process.execPath, args, {
       cwd: root,
       env: watchEnv(),
-      stdio: ['ignore', 'pipe', 'ignore'],
+      stdio: controlledWatch ? ['ignore', 'pipe', 'ignore', 'ipc'] : ['ignore', 'pipe', 'ignore'],
     });
     child = proc;
     const lines: string[] = [];
@@ -268,40 +296,55 @@ describe('stim status --watch --json', () => {
   }
 
   test('prints one line per change and suppresses identical payloads', async () => {
-    const { lines } = startWatch();
+    const { proc, lines } = startWatch(true);
     await until(() => lines.length === 1);
     expect(JSON.parse(lines[0]!).environments).toEqual([]);
 
     const config = makeConfig({ projects: { [join(root, 'app')]: { label: 'watched', platforms: {} } } });
     saveConfig(config);
+    proc.send({ path: process.env.STIM_HOME, name: 'config.json' });
     await until(() => lines.length === 2);
     expect(JSON.parse(lines[1]!).environments.map((env: { path: string }) => env.path)).toEqual([join(root, 'app')]);
 
     saveConfig(config);
+    proc.send({ path: process.env.STIM_HOME, name: 'config.json' });
     await new Promise((resolve) => setTimeout(resolve, 1500));
     expect(lines).toHaveLength(2);
   }, 30_000);
 
-  test('a log append waits for the log interval, then refreshes the error count', async () => {
-    const app = join(root, 'app');
-    saveConfig(makeConfig({ projects: { [app]: { label: 'watched', platforms: {} } } }));
-    ensureWorkspaceStorage(app);
-    mkdirSync(workspaceLogsDir(app), { recursive: true });
-    const log = join(workspaceLogsDir(app), 'metro.ndjson');
-    const record = (ts: number, level: string) => `${JSON.stringify({ ts, src: 'metro', level, msg: 'm' })}\n`;
-    writeFileSync(log, record(1, 'info'));
-    const errors = (line: string) => JSON.parse(line).environments[0].logs.errorsSinceMarker;
-    const { lines } = startWatch();
-    await until(() => lines.length === 1);
-    expect(errors(lines[0]!)).toBe(0);
-    await new Promise((resolve) => setTimeout(resolve, 1000));
-
-    appendFileSync(log, record(2, 'error'));
-    await new Promise((resolve) => setTimeout(resolve, 1500));
-    expect(lines).toHaveLength(1);
-    await until(() => lines.length === 2, 20_000);
-    expect(errors(lines[1]!)).toBe(1);
-  }, 40_000);
+  test.each([
+    { source: 'a filesystem event', notify: true },
+    { source: 'the fallback after a lost filesystem event', notify: false },
+  ])(
+    'a log append refreshes the error count through $source',
+    async ({ notify }) => {
+      const app = join(root, 'app');
+      saveConfig(makeConfig({ projects: { [app]: { label: 'watched', platforms: {} } } }));
+      ensureWorkspaceStorage(app);
+      mkdirSync(workspaceLogsDir(app), { recursive: true });
+      const log = join(workspaceLogsDir(app), 'metro.ndjson');
+      const record = (ts: number, level: string) => `${JSON.stringify({ ts, src: 'metro', level, msg: 'm' })}\n`;
+      writeFileSync(log, record(1, 'info'));
+      const errors = (line: string) => JSON.parse(line).environments[0].logs.errorsSinceMarker;
+      const { proc, lines } = startWatch(true);
+      await until(() => lines.length === 1);
+      expect(errors(lines[0]!)).toBe(0);
+      const changed = new Promise<void>((resolve) => {
+        const onData = () => {
+          if (lines.length < 2) return;
+          proc.stdout!.off('data', onData);
+          resolve();
+        };
+        proc.stdout!.on('data', onData);
+      });
+      appendFileSync(log, record(2, 'error'));
+      if (notify) proc.send({ path: workspaceLogsDir(app), name: 'metro.ndjson' });
+      await (notify ? until(() => lines.length === 2, 20_000) : changed);
+      expect(lines).toHaveLength(2);
+      expect(errors(lines[1]!)).toBe(1);
+    },
+    40_000,
+  );
 
   test.skipIf(process.platform !== 'darwin')(
     'machine usage refreshes on the light interval with no state change; skipped off macOS, where no simulator runs',
