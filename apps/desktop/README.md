@@ -208,8 +208,9 @@ running or building devices use compact cards with Metro status, warnings and
 positive-error log links; CPU and RAM stay on the workspace page.
 
 On macOS 26 and later, sidebar controls and device viewer buttons use native
-Liquid Glass, and Settings uses grouped native tabs. Older macOS versions keep
-their existing button and tab styles.
+Liquid Glass when built with Xcode 26 or later, and Settings uses grouped native
+tabs. Older Xcode builds keep the existing button styles. Older macOS versions
+keep their existing button and tab styles.
 
 The logs are hidden by default. The toolbar's logs button, which carries the
 error count while they are hidden, or **Show logs** in the inspector opens
