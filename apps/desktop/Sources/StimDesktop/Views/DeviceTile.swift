@@ -88,6 +88,34 @@ struct DeviceTile: View {
         }
       }
     }
+    .task(id: dualSimulatorUDID) {
+      hingeAvailable = false
+      guard let udid = dualSimulatorUDID else { return }
+      while !Task.isCancelled {
+        let available = await Task.detached { SimulatorPosture.isAvailable(udid: udid) }.value
+        guard !Task.isCancelled else { return }
+        hingeAvailable = available
+        if hingeAvailable { return }
+        try? await Task.sleep(for: .seconds(10))
+      }
+    }
+    .task(id: hingeAvailable ? dualSimulatorUDID : nil) {
+      observedHingeAngle = nil
+      guard hingeAvailable, let udid = dualSimulatorUDID else { return }
+      while !Task.isCancelled {
+        let started = ContinuousClock.now
+        var received = false
+        for await angle in SimulatorHingeAngle.angles(udid: udid) {
+          observedHingeAngle = angle
+          received = true
+        }
+        guard !Task.isCancelled, received else {
+          observedHingeAngle = nil
+          return
+        }
+        try? await Task.sleep(for: max(.zero, .seconds(60) - started.duration(to: .now)))
+      }
+    }
   }
 
   private var frameColor: Color {
@@ -255,31 +283,6 @@ struct DeviceTile: View {
     }
     .padding(Space.sm)
     .frame(width: Self.buttonStripWidth)
-    .task(id: dualSimulatorUDID) {
-      guard let udid = dualSimulatorUDID else { return }
-      while !Task.isCancelled {
-        hingeAvailable = await Task.detached { SimulatorPosture.isAvailable(udid: udid) }.value
-        if hingeAvailable { return }
-        try? await Task.sleep(for: .seconds(10))
-      }
-    }
-    .task(id: hingeAvailable ? dualSimulatorUDID : nil) {
-      observedHingeAngle = nil
-      guard hingeAvailable, let udid = dualSimulatorUDID else { return }
-      while !Task.isCancelled {
-        let started = ContinuousClock.now
-        var received = false
-        for await angle in SimulatorHingeAngle.angles(udid: udid) {
-          observedHingeAngle = angle
-          received = true
-        }
-        guard !Task.isCancelled, received else {
-          observedHingeAngle = nil
-          return
-        }
-        try? await Task.sleep(for: max(.zero, .seconds(60) - started.duration(to: .now)))
-      }
-    }
     .background(Palette.surface, in: RoundedRectangle(cornerRadius: Radius.card))
     .overlay(RoundedRectangle(cornerRadius: Radius.card).strokeBorder(Palette.border))
   }
@@ -432,7 +435,9 @@ struct DeviceTile: View {
   }
 
   private var dualSimulatorUDID: String? {
-    guard device.formFactor == .dual, screenIDs.count > 1, case .ios(_, let sim) = device else { return nil }
+    guard viewer, !replaying, device.isRunning, !device.isPhysical, device.formFactor == .dual,
+      screenIDs.count > 1, case .ios(_, let sim) = device
+    else { return nil }
     return sim.udid
   }
 
