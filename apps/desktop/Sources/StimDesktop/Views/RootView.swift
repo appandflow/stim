@@ -21,6 +21,7 @@ struct RootView: View {
   private let onboarding: Onboarding
   private let storage: StorageStore
   private let planChecks: BuildPlanChecks
+  private let statsReader: StatsReader
   @State private var selection: SidebarItem? = .wall
   @State private var restoredProject = false
   @AppStorage(AppPreferences.Key.defaultView) private var defaultView = DefaultView.allDevices
@@ -48,7 +49,7 @@ struct RootView: View {
   init(
     cli: Task<StimCLI, Never>, store: StatusStore, actions: ActionCenter, autopilot: AutopilotRunner,
     onboarding: Onboarding, gc: GcReportStore, buildMachines: BuildMachinesModel, metrics: MetricsStore,
-    storage: StorageStore, planChecks: BuildPlanChecks
+    storage: StorageStore, planChecks: BuildPlanChecks, statsReader: StatsReader
   ) {
     self.buildMachines = buildMachines
     self.cli = cli
@@ -60,6 +61,7 @@ struct RootView: View {
     self.metrics = metrics
     self.storage = storage
     self.planChecks = planChecks
+    self.statsReader = statsReader
   }
 
   var body: some View {
@@ -379,7 +381,7 @@ struct RootView: View {
     case .environment(let path):
       if let env = store.payload?.environments.first(where: { $0.path == path }) {
         WorkspaceDetailHost(
-          cli: cli, env: env, metrics: metrics, machine: store.payload?.machine,
+          statsReader: statsReader, cli: cli, env: env, metrics: metrics, machine: store.payload?.machine,
           reportsBundles: store.payload?.environments.contains { $0.metro?.bundle != nil } ?? false,
           inspector: inspector, inspectorWidth: $inspectorWidth, focusedID: $focusedDeviceID, logQuery: $logQuery)
       } else {
@@ -402,6 +404,7 @@ struct RootView: View {
 }
 
 private struct WorkspaceDetailHost: View {
+  var statsReader: StatsReader
   var cli: Task<StimCLI, Never>
   var env: Workspace
   var metrics: MetricsStore
@@ -414,7 +417,8 @@ private struct WorkspaceDetailHost: View {
 
   var body: some View {
     WorkspaceDetail(
-      cli: cli, env: env, usage: metrics.usage[env.path], machine: machine, reportsBundles: reportsBundles,
+      cli: cli, statsReader: statsReader, env: env, usage: metrics.usage[env.path], machine: machine,
+      reportsBundles: reportsBundles,
       history: metrics.owners, inspector: inspector, inspectorWidth: $inspectorWidth, focusedID: $focusedID,
       logQuery: $logQuery)
   }

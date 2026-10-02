@@ -133,6 +133,7 @@ struct StimDesktopApp: App {
   private let gc: GcReportStore
   private let machineSettings: MachineSettingsStore
   private let buildMachines: BuildMachinesModel
+  private let statsReader: StatsReader
   private let metrics: MetricsStore
   private let storage: StorageStore
   private let planChecks: BuildPlanChecks
@@ -155,6 +156,8 @@ struct StimDesktopApp: App {
     self.cli = cli
     ServerController.shared.configure(environment: environment)
     BuildRequestNotifier.shared.start()
+    let statsReader = StatsReader(cli: cli) { ServerSession.shared.statsConnection }
+    self.statsReader = statsReader
     _ = ServerSession.shared
     let store = StatusStore(cli: cli)
     self.store = store
@@ -182,7 +185,7 @@ struct StimDesktopApp: App {
     }
     let machineSettings = MachineSettingsStore(cli: cli)
     self.machineSettings = machineSettings
-    self.buildMachines = BuildMachinesModel(cli: cli, settings: machineSettings)
+    self.buildMachines = BuildMachinesModel(cli: cli, settings: machineSettings, statsReader: statsReader)
     let autopilot = AutopilotRunner(
       status: store, actions: actions, gc: gc, disks: disks, settings: machineSettings, cli: cli)
     self.autopilot = autopilot
@@ -202,7 +205,7 @@ struct StimDesktopApp: App {
     Window("Stim", id: "main") {
       RootView(
         cli: cli, store: store, actions: actions, autopilot: autopilot, onboarding: onboarding, gc: gc,
-        buildMachines: buildMachines, metrics: metrics, storage: storage, planChecks: planChecks
+        buildMachines: buildMachines, metrics: metrics, storage: storage, planChecks: planChecks, statsReader: statsReader
       )
       .frame(minWidth: 700, minHeight: 720)
       .onAppear { notifier.start() }

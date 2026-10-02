@@ -4,6 +4,7 @@ import SwiftUI
 
 struct WorkspaceDetail: View {
   var cli: Task<StimCLI, Never>
+  var statsReader: StatsReader
   var env: Workspace
   var usage: UsageHistory?
   var machine: MachineUsage?
@@ -73,9 +74,8 @@ struct WorkspaceDetail: View {
     .onQuitRequested { viewing = nil }
     .task(id: "\(env.path)|\(env.finishedRunsStamp)") {
       let path = env.path
-      let cli = await cli.value
       if stats?.path == path { try? await Task.sleep(for: .seconds(1)) }
-      let result = await Result.awaiting { try await cli.stats(workspace: path) }
+      let result = await Result.awaiting { try await statsReader.project(workspace: path) }
       guard !Task.isCancelled else { return }
       var fetched = Fetched<ProjectStats>()
       fetched.record(result)

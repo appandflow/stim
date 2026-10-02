@@ -731,4 +731,163 @@ private let target = ReplayTarget(workspace: "/work/app", platform: "ios", slot:
     #expect(client.state == .refused(ServerError(code: "unauthorized", message: "unauthorized")))
     #expect(transports[0].closed && scheduler.work.isEmpty)
   }
+
+  private func openConnection(capabilities: [String] = ["read"], state: String = "open") async throws -> (
+    ServerClient, FakeTransport
+  ) {
+    var transport: FakeTransport?
+    let client = ServerClient(
+      endpoint: URL(string: "ws://127.0.0.1:7787")!, clientName: "Stats test", clientVersion: "1",
+      auth: { .device(token: "test-token") },
+      transport: { _, onEvent in
+        let next = FakeTransport(onEvent: onEvent)
+        transport = next
+        return next
+      })
+    client.start()
+    await settle()
+    let socket = try #require(transport)
+    guard case .object(var fields) = hello else { fatalError("Invalid test hello") }
+    fields["capabilities"] = .array(capabilities.map(JSONValue.string))
+    if state == "refused" {
+      socket.refuse("hello", code: "unauthorized")
+    } else if state != "connecting" {
+      socket.answer("hello", .object(fields))
+    }
+    await settle()
+    return (client, socket)
+  }
+
+  @Test func cancellingARequestKeepsOtherRequestsSubscriptionsAndControlConnected() async throws {
+    let (client, socket) = try await openConnection()
+    defer { client.stop() }
+    var events: [String] = []
+    var controlEnded: [String] = []
+    let removeObserver = client.observeControlEnded { controlEnded.append($0.reason) }
+    defer { removeObserver() }
+    let unsubscribe = client.subscribe(
+      "frames.subscribe", params: { [:] }, onSubscribed: { _ in },
+      onEvent: { events.append($0.name) }, onVideo: { _ in })
+    defer { unsubscribe() }
+    await settle()
+    socket.answer("frames.subscribe", .object(["subscription": .string("frames")]))
+    await settle()
+    let cancelled = Task { try await client.request("stats.get", [:]) }
+    let other = Task { try await client.request("machine.get", [:]) }
+    await settle()
+    let cancelledID = try #require(socket.sent.last { $0["method"] == .string("stats.get") }?["id"])
+    cancelled.cancel()
+    await #expect(throws: CancellationError.self) { try await cancelled.value }
+    socket.reply(["id": cancelledID, "result": .number(99)])
+    socket.answer("machine.get", .number(42))
+    #expect(try await other.value == .number(42))
+    socket.reply(["event": .string("status"), "subscription": .string("frames")])
+    #expect(events == ["status"])
+    #expect(controlEnded.isEmpty && client.isOpen && !socket.closed)
+    socket.reply(["event": .string("control-ended"), "session": .string("control"), "reason": .string("released")])
+    #expect(controlEnded == ["released"])
+  }
+
+  @Test func aCancelledRequestDoesNotSendAndReplyCancellationRacesSettleOnce() async throws {
+    let (client, socket) = try await openConnection()
+    defer { client.stop() }
+    let cancelled = Task { try await client.request("stats.get", [:]) }
+    cancelled.cancel()
+    await #expect(throws: CancellationError.self) { try await cancelled.value }
+    #expect(!socket.sent.contains { $0["method"] == .string("stats.get") })
+    let answered = Task { try await client.request("stats.get", [:]) }
+    await settle()
+    socket.answer("stats.get", .number(1))
+    answered.cancel()
+    #expect(try await answered.value == .number(1))
+    await settle()
+    socket.answer("stats.get", .number(2))
+    let disconnected = Task { try await client.request("stats.get", [:]) }
+    await settle()
+    disconnected.cancel()
+    socket.onEvent(.closed("test disconnect"))
+    let result = await Result.awaiting { try await disconnected.value }
+    switch result {
+    case .success: Issue.record("A disconnected request unexpectedly succeeded")
+    case .failure(let error):
+      #expect(error is CancellationError || (error as? ServerError)?.code == "connection-lost")
+    }
+    await settle()
+  }
+
+  private let statsJSON =
+    #"{"version":1,"project":{"ios":{"runs":3,"failed":1,"hits":1,"misses":1},"android":null},"offload":{"today":{"here":1,"offloaded":0,"fellBack":0},"machines":{"mini":{"today":{"offloaded":0,"offloadedMs":0,"savedMs":0,"fallbacks":0},"total":{"offloaded":1,"offloadedMs":2000,"savedMs":-500,"fallbacks":0}}},"placements":[]}}"#
+
+  private func statsCLI(in directory: URL) throws -> StimCLI {
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    let executable = directory.appendingPathComponent("stim")
+    let script = """
+      #!/bin/sh
+      printf '%s|%s\\n' "$PWD" "$*" >> "$STIM_HOME/calls"
+      printf '%s\\n' '\(statsJSON)'
+      """
+    try Data(script.utf8).write(to: executable)
+    try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: executable.path)
+    return StimCLI(environment: ["PATH": "/usr/bin:/bin", "STIM_HOME": directory.path], override: executable.path)
+  }
+
+  @Test func statsUseTheMatchingHomeSessionAndDoNotRetryRPCFailuresThroughCLI() async throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent("stats-\(UUID().uuidString)")
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let cli = try statsCLI(in: directory)
+    let alias = directory.appendingPathComponent("alias")
+    try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: directory)
+    let (client, socket) = try await openConnection()
+    defer { client.stop() }
+    let reader = StatsReader(cli: Task { cli }) { (client, alias.path) }
+    let payload = try JSONDecoder().decode(JSONValue.self, from: Data(statsJSON.utf8))
+    let project = Task { try await reader.project(workspace: directory.path) }
+    await settle()
+    #expect(socket.sent.last?["params"] == .object(["workspace": .string(directory.path)]))
+    socket.answer("stats.get", payload)
+    let result = try await project.value
+    #expect(result.project?.ios?.runs == 3 && result.project?.ios?.hitRate == 0.5 && result.project?.android == nil)
+    let machine = Task { try await reader.machine() }
+    await settle()
+    #expect(socket.sent.last?["params"] == .object([:]))
+    socket.answer("stats.get", payload)
+    #expect(try await machine.value.offload?.machines["mini"]?.total.savedMs == -500)
+    let failed = Task { try await reader.project(workspace: directory.path) }
+    await settle()
+    socket.refuse("stats.get", code: "unknown-workspace")
+    let error = await #expect(throws: ServerError.self) { try await failed.value }
+    #expect(error?.code == "unknown-workspace")
+    let cancelled = Task { try await reader.project(workspace: directory.path) }
+    await settle()
+    cancelled.cancel()
+    await #expect(throws: CancellationError.self) { try await cancelled.value }
+    let dropped = Task { try await reader.machine() }
+    await settle()
+    socket.onEvent(.closed("Receive limit exceeded"))
+    let droppedError = await #expect(throws: ServerError.self) { try await dropped.value }
+    #expect(droppedError?.code == "connection-lost")
+    #expect(!FileManager.default.fileExists(atPath: directory.appendingPathComponent("calls").path))
+  }
+
+  @Test(arguments: ["off", "connecting", "refused", "no-read", "wrong-home"])
+  func statsRetainCLIAvailabilityBeforeAnEligibleRPCExists(_ state: String) async throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent("stats-\(UUID().uuidString)")
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let cli = try statsCLI(in: directory)
+    let (client, socket) = try await openConnection(
+      capabilities: state == "no-read" ? ["build"] : ["read"], state: state)
+    defer { client.stop() }
+    let reader = StatsReader(cli: Task { cli }) {
+      state == "off" ? nil : (client, state == "wrong-home" ? directory.appendingPathComponent("other").path : directory.path)
+    }
+    let project = try await reader.project(workspace: directory.path)
+    let machine = try await reader.machine()
+    #expect(project.project?.ios?.runs == 3)
+    #expect(machine.offload?.machines["mini"]?.total.savedMs == -500)
+    let calls = try String(contentsOf: directory.appendingPathComponent("calls"), encoding: .utf8)
+    #expect(calls.components(separatedBy: "stats --json").count == 3)
+    #expect(calls.contains(NSHomeDirectory()))
+    #expect(!socket.sent.contains { $0["method"] == .string("stats.get") })
+  }
+
 }

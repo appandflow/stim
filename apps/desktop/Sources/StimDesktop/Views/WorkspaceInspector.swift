@@ -34,7 +34,7 @@ struct Inspector: View {
           VStack(alignment: .leading, spacing: Space.md) {
             SectionLabel(title: "Build cache \u{00B7} project")
             if let error = stats.error {
-              Label("stim stats --json failed: \(error)", systemImage: "exclamationmark.triangle")
+              Label("Could not load stats: \(error)", systemImage: "exclamationmark.triangle")
                 .foregroundStyle(Palette.warning)
                 .textSelection(.enabled)
             }

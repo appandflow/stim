@@ -138,9 +138,13 @@ public typealias ServerScheduler = @MainActor (TimeInterval, @escaping @MainActo
     state = .idle
   }
 
+  /// Cancellation ends only this local await and ignores a late reply, keeping shared subscriptions connected.
+  /// The protocol has no request cancellation: sent work continues until completion or its server limit
+  /// (60 seconds for stats), and can occupy a request slot until then.
   public func request(_ method: String, _ params: [String: JSONValue]) async throws -> JSONValue {
+    try Task.checkCancellation()
     guard isOpen, let transport else { throw ServerError(code: "not-connected", message: "Not connected to stim-server.") }
-    return try await send(on: transport, method, params)
+    return try await send(on: transport, method, params, cancellable: true)
   }
 
   /// `onSubscribed` runs each time the server accepts the subscription, before the events it then sends; `params`
@@ -254,16 +258,26 @@ public typealias ServerScheduler = @MainActor (TimeInterval, @escaping @MainActo
     }
   }
 
-  private func send(on transport: ServerTransport, _ method: String, _ params: [String: JSONValue]) async throws
+  private func send(
+    on transport: ServerTransport, _ method: String, _ params: [String: JSONValue], cancellable: Bool = false
+  ) async throws
     -> JSONValue
   {
     let id = nextID
     nextID += 1
     let message: JSONValue = .object(["id": .number(Double(id)), "method": .string(method), "params": .object(params)])
     let text = String(decoding: try JSONEncoder().encode(message), as: UTF8.self)
-    return try await withCheckedThrowingContinuation { continuation in
-      pending[id] = continuation
-      transport.send(text)
+    return try await withTaskCancellationHandler {
+      if cancellable { try Task.checkCancellation() }
+      return try await withCheckedThrowingContinuation { continuation in
+        pending[id] = continuation
+        transport.send(text)
+      }
+    } onCancel: {
+      guard cancellable else { return }
+      Task { @MainActor [weak self] in
+        self?.pending.removeValue(forKey: id)?.resume(throwing: CancellationError())
+      }
     }
   }
 
