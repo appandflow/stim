@@ -66,6 +66,11 @@ performance traces. Every release is listed under
 
 ![The Machine page: free disk split by category, and a checklist of what Stim can free](/img/desktop/machine.webp)
 
+Workspace device cards fill the available width up to 640 points and wrap into
+centered rows. Each complete card, including its header, fits the canvas height;
+additional rows scroll vertically. Screens keep their aspect ratio and a
+900-point height cap.
+
 Closing the window leaves Stim Desktop running, so notifications and the phone
 server keep working. Click the Dock icon to reopen the window, or press
 Command-Q to quit. Command-1, Command-2 and Command-3 open All devices,
