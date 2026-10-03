@@ -1,4 +1,6 @@
 import { colorsHighContrast, type ColorToken } from '@/design/tokens';
+import { highContrastThemes } from '@/design/theme';
+import { toneColor } from '@/design/tone';
 
 type Mode = 'light' | 'dark';
 
@@ -23,6 +25,13 @@ const tones: ColorToken[] = ['success', 'warning', 'error', 'info'];
 describe.each<Mode>(['light', 'dark'])('Increase Contrast palette, %s', (mode) => {
   const palette = colorsHighContrast[mode];
   const surface = (name: ColorToken) => channels(palette[name]);
+
+  it('keeps returned brand text at 7:1 on every surface', () => {
+    const foreground = channels(toneColor(highContrastThemes[mode], 'brand'));
+    for (const name of surfaces) {
+      expect(ratio(foreground, surface(name))).toBeGreaterThanOrEqual(7);
+    }
+  });
 
   it('keeps text and tone colors at 7:1 on every surface and on their own tints', () => {
     for (const token of [...textTokens, ...tones]) {

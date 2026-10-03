@@ -94,7 +94,18 @@ describe('selectCaches', () => {
 
 describe('a cache-scoped report', () => {
   test('carries the scope and inspects nothing else', async () => {
+    const run = vi.fn<(...args: unknown[]) => string>(() => '');
+    setExecutor({
+      run,
+      runQuiet: run,
+      runFile: run,
+      runFileQuiet: run,
+      runFileAsync: async (...args: unknown[]) => run(...args),
+      spawn: run,
+      findExecutable: () => null,
+    });
     const report = await collectGcReport({ cache: 'compilation cache' });
+    expect(run.mock.calls.flat(2).join(' ')).not.toMatch(/\b(simctl|avdmanager|adb|emulator)\b/);
     expect(report.cacheScope).toBe('compilation cache');
     expect(report.deadProjects).toEqual([]);
     expect(report.orphanedDevices).toEqual([]);

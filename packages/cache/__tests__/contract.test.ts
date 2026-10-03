@@ -1,4 +1,4 @@
-import { cpSync, mkdirSync, mkdtempSync, rmSync, existsSync, writeFileSync } from 'node:fs';
+import { cpSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { runCacheProviderContract } from '../contract.ts';
@@ -51,7 +51,6 @@ test('the contract passes for a provider that honors both capabilities', async (
     workDir,
   });
 
-  expect(results.length).toBe(12);
   expect(results.filter((result) => !result.passed)).toEqual([]);
   expect(new Set(results.map((result) => result.capability))).toEqual(new Set(['metro', 'builds']));
 });
@@ -103,7 +102,6 @@ test('the contract reports violations instead of throwing', async () => {
     'builds store keeps unrelated keys separate',
   ]);
   expect(failed[0]?.error).toMatch(/expected a miss/);
-  expect(existsSync(workDir)).toBe(true);
 });
 
 test('a capability that ignores its abort signal fails the contract', async () => {

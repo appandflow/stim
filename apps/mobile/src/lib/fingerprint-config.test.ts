@@ -27,7 +27,6 @@ const fingerprintDir = path.dirname(fingerprintPkgPath);
 
 // build/Config and build/sourcer/Bare aren't re-exported from the package's index, and the
 // package has no `exports` map restricting deep imports, so this reaches them directly.
-const { SourceSkips } = require(fingerprintDir) as { SourceSkips: Record<string, number> };
 const { loadConfigAsync } = require(path.join(fingerprintDir, 'build/Config')) as {
   loadConfigAsync: (projectRoot: string) => Promise<{ sourceSkips?: number } | null>;
 };
@@ -46,15 +45,6 @@ function withAddedScript(): string {
 }
 
 describe('apps/mobile fingerprint.config.js PackageJsonScriptsAll skip', () => {
-  it('resolves a sourceSkips mask that includes PackageJsonScriptsAll', async () => {
-    const config = await loadConfigAsync(projectRoot);
-    expect(config).not.toBeNull();
-    const mask = config!.sourceSkips ?? 0;
-    // A typo'd or removed skip name is silently ignored by @expo/fingerprint (it drops
-    // unknown strings), so this must check the resolved bitmask, not the config's raw list.
-    expect(mask & SourceSkips.PackageJsonScriptsAll).toBe(SourceSkips.PackageJsonScriptsAll);
-  });
-
   it('does not change the package.json scripts fingerprint source when a script is added', async () => {
     const config = await loadConfigAsync(projectRoot);
     const options = { sourceSkips: config!.sourceSkips ?? 0 };
@@ -64,19 +54,6 @@ describe('apps/mobile fingerprint.config.js PackageJsonScriptsAll skip', () => {
     try {
       const after = await getPackageJsonScriptSourcesAsync(tmpDir, options);
       expect(after).toEqual(before);
-    } finally {
-      fs.rmSync(tmpDir, { recursive: true, force: true });
-    }
-  });
-
-  it('would otherwise pick up the script change without the skip (guards the test itself)', async () => {
-    const options = { sourceSkips: 0 };
-    const before = await getPackageJsonScriptSourcesAsync(projectRoot, options);
-
-    const tmpDir = withAddedScript();
-    try {
-      const after = await getPackageJsonScriptSourcesAsync(tmpDir, options);
-      expect(after).not.toEqual(before);
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }

@@ -99,6 +99,14 @@ examples into regex assertions; documentation edits do not need matching tests
 unless they change one of those contracts. Narrow source scans for documented
 identifiers are allowed; they do not replace tests of the behavior behind them.
 
+During test cleanup, classify individual candidates as DELETE, REWRITE, or KEEP.
+Keep or rewrite one only with an independent requirement, a concrete failure,
+and a stable behavioral seam; default to deletion when those are missing.
+Treat search matches as leads, not verdicts. Remove unused test support, keep
+production behavior and test configuration unchanged, and record dispositions
+and validation. Use screenshots for appearance review unless an approved
+contract requires automated visual coverage.
+
 Use a direct call or re-export when a wrapper only forwards the same arguments
 and result. Keep helpers that own policy, coordinate effects, or remove meaningful
 duplication. Do not extract a helper or export an internal function solely to

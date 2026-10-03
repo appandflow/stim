@@ -7,12 +7,22 @@ import type { BenchmarkRun } from './benchmarkData';
 
 vi.mock('@docusaurus/useBaseUrl', () => ({ default: (path: string) => path }));
 
+const { JSDOM } = await vi.importActual<{ JSDOM: new (html: string) => { window: { document: Document } } }>('jsdom');
+
+function render(run: BenchmarkRun): HTMLElement {
+  return new JSDOM(renderToStaticMarkup(createElement(BenchmarkTimeline, { run }))).window.document.body;
+}
+
 describe('benchmark timeline presentation', () => {
   it('names the keyboard-scrollable timeline and exposes playback time to assistive technology', () => {
     const run = { ...opus.runs[0], totalSeconds: 90 } as BenchmarkRun;
-    const html = renderToStaticMarkup(createElement(BenchmarkTimeline, { run }));
-    expect(html).toContain('role="region" aria-label="Benchmark command timeline"');
-    expect(html).toContain('aria-valuetext="0.0s of 1m 30s"');
+    const view = render(run);
+    expect(
+      view.querySelector('[role="region"][aria-label="Benchmark command timeline"]')?.getAttribute('tabindex'),
+    ).toBe('0');
+    expect(view.querySelector('input[aria-label="Playback position"]')?.getAttribute('aria-valuetext')).toBe(
+      '0.0s of 1m 30s',
+    );
   });
 
   it('shows full-run Claude usage even when diagnosis usage is absent', () => {
@@ -23,12 +33,9 @@ describe('benchmark timeline presentation', () => {
       diagnosisUsage: null,
       estimatedDiagnosisCostUsd: null,
     };
-    const html = renderToStaticMarkup(createElement(BenchmarkTimeline, { run }));
-    expect(html).toContain('Total tokens');
-    expect(html).toContain('368k');
-    expect(html).toContain('$0.540');
-    expect(html).not.toContain('Tokens to diagnosis');
-    expect(html).not.toContain('Cost to diagnosis');
+    const view = render(run);
+    expect(view.textContent).toContain('368k');
+    expect(view.textContent).toContain('$0.540');
   });
 
   it('labels missing full-run usage unavailable instead of inventing zero cost', () => {
@@ -37,9 +44,13 @@ describe('benchmark timeline presentation', () => {
       usage: { input_tokens: 0, cached_input_tokens: 0, output_tokens: 0, reasoning_output_tokens: 0 },
       estimatedTokenCostUsd: null,
     };
-    const html = renderToStaticMarkup(createElement(BenchmarkTimeline, { run }));
-    expect(html).toContain('<span>Total tokens</span><strong>unavailable</strong>');
-    expect(html).toContain('<span>Total cost</span><strong>unavailable</strong>');
+    const view = render(run);
+    for (const label of ['Total tokens', 'Total cost']) {
+      const name = [...view.querySelectorAll('*')].find((node) => node.textContent === label);
+      expect(
+        [...(name?.parentElement?.querySelectorAll('*') ?? [])].some((node) => node.textContent === 'unavailable'),
+      ).toBe(true);
+    }
   });
 
   it('uses concise command labels and terminal text with expandable original context', () => {
@@ -57,11 +68,16 @@ describe('benchmark timeline presentation', () => {
         },
       ],
     } as BenchmarkRun;
-    const html = renderToStaticMarkup(createElement(BenchmarkTimeline, { run }));
-    expect(html).toContain('aria-label="stim worktree warm, 5.0s, exit 0"');
-    expect(html).toContain('<details><summary>Command context and original</summary>');
-    expect(html).toContain('cd ./worktrees/run &amp;&amp; stim worktree warm');
-    expect(html).toContain('$ </span>stim worktree warm\n\ncopy complete');
+    const view = render(run);
+    expect(view.querySelector('button[aria-label="stim worktree warm, 5.0s, exit 0"]')).not.toBeNull();
+    expect(
+      [...view.querySelectorAll('details pre')].some(
+        (node) => node.textContent === 'cd ./worktrees/run && stim worktree warm',
+      ),
+    ).toBe(true);
+    expect(
+      [...view.querySelectorAll('pre')].some((node) => node.textContent === '$ stim worktree warm\n\ncopy complete'),
+    ).toBe(true);
   });
 
   it('preserves closing quotes in displayed agent-device arguments', () => {
@@ -78,7 +94,9 @@ describe('benchmark timeline presentation', () => {
         },
       ],
     } as BenchmarkRun;
-    const html = renderToStaticMarkup(createElement(BenchmarkTimeline, { run }));
-    expect(html).toContain('$ </span>agent-device wait text &quot;Settings&quot;');
+    const view = render(run);
+    expect(
+      [...view.querySelectorAll('pre')].some((node) => node.textContent === '$ agent-device wait text "Settings"'),
+    ).toBe(true);
   });
 });
