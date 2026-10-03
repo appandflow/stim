@@ -20,7 +20,6 @@ struct AgentActionsPanel: View {
   @State private var filter = AgentFilter.all
   @State private var selected: Int?
   @State private var shown = Shown()
-  @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
   /// What the list shows of the replay: the action on screen and the actions it recorded, kept apart from the range
   /// so a span growing while live redraws the list only when an action's recorded state changes.
@@ -123,33 +122,38 @@ struct AgentActionsPanel: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     } else {
       ScrollViewReader { proxy in
-        ScrollView {
-          VStack(alignment: .leading, spacing: 0) {
-            ForEach(list.rows, id: \.id) { row in
+        List {
+          ForEach(list.rows, id: \.id) { row in
+            VStack(alignment: .leading, spacing: 0) {
               switch row {
-              case .gap(let ms, _):
-                gapRow(ms)
+              case .gap(let ms, _): gapRow(ms)
               case .action(let action):
                 AgentActionRow(
                   action: action, current: action.key == shown.current, expanded: action.key == selected,
                   recorded: shown.recorded.contains(action.key)
                 ) { select(action) }
-                .id(action.key)
               }
             }
+            .id(row.id)
+            .listRowInsets(EdgeInsets())
+            .listRowSeparator(.hidden)
+            .listRowBackground(Color.clear)
           }
-          .padding(.vertical, Space.xs)
         }
+        .listStyle(.plain)
+        .scrollContentBackground(.hidden)
+        .contentMargins(.horizontal, 0, for: .scrollContent)
+        .contentMargins(.vertical, Space.xs, for: .scrollContent)
         .onChange(of: shown.current) { _, key in
           if selected != key { selected = nil }
-          guard let key else { return }
-          if reduceMotion {
-            proxy.scrollTo(key, anchor: .center)
-          } else {
-            withAnimation { proxy.scrollTo(key, anchor: .center) }
-          }
         }
-        .onAppear { if let current = shown.current { proxy.scrollTo(current, anchor: .center) } }
+        .task(id: shown.current) { [key = shown.current] in
+          await withCheckedContinuation { continuation in
+            DispatchQueue.main.async { continuation.resume() }
+          }
+          guard !Task.isCancelled, let key else { return }
+          proxy.scrollTo("action-\(key)", anchor: shown.live ? .bottom : nil)
+        }
       }
       .focusable()
       .focused(focused)
