@@ -154,10 +154,6 @@ msgstr "{days}d ago"
 msgid "{done} of {total} {unit}"
 msgstr "{done} of {total} {unit}"
 
-#: src/screens/device-view.tsx
-msgid "{driverName} is driving it. Your touches and keys can interfere with its work."
-msgstr "{driverName} is driving it. Your touches and keys can interfere with its work."
-
 #: src/screens/mac-status.tsx
 msgid "{duration} saved"
 msgstr "{duration} saved"
@@ -856,10 +852,6 @@ msgstr "Android Emulator"
 msgid "Android platform missing"
 msgstr "Android platform missing"
 
-#: src/screens/device-view.tsx
-msgid "Another client"
-msgstr "Another client"
-
 #: src/lib/machine-report.ts
 msgid "Another Stim home"
 msgstr "Another Stim home"
@@ -1119,7 +1111,6 @@ msgid "Can control"
 msgstr "Can control"
 
 #: src/hooks/app-update.ts
-#: src/screens/device-view.tsx
 #: src/screens/mac-list.tsx
 #: src/screens/workspace-detail.tsx
 #: src/screens/workspace-detail.tsx
@@ -3392,13 +3383,8 @@ msgid "Tailscale is off"
 msgstr "Tailscale is off"
 
 #: src/screens/device-view.tsx
-#: src/screens/device-view.tsx
 msgid "Take over"
 msgstr "Take over"
-
-#: src/screens/device-view.tsx
-msgid "Take over this device?"
-msgstr "Take over this device?"
 
 #: src/screens/home.tsx
 msgid "Tap a prompt to copy it for your coding agent."
