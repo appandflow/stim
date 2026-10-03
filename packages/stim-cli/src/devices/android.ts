@@ -275,7 +275,10 @@ export async function createOwnedAvd(
   recordCreatedDevice('android', avdName);
   const tool = androidToolPath('avdmanager');
   const args = ['create', 'avd', '-n', avdName, '-k', pick.pkg, '--device', deviceProfile];
-  const child = spawn(tool, args, { detached: true, stdio: ['pipe', 'pipe', 'pipe'] });
+  // avdmanager (cmdline-tools 19.0) writes to $XDG_CONFIG_HOME/.android/avd when XDG_CONFIG_HOME is set, but
+  // emulator 37.1 and ownedAvdDirectory read ~/.android/avd.
+  const env = process.env.ANDROID_AVD_HOME ? process.env : { ...process.env, ANDROID_AVD_HOME: avdStorageRoots()[0] };
+  const child = spawn(tool, args, { detached: true, stdio: ['pipe', 'pipe', 'pipe'], env });
   let stderr = '';
   child.stdout?.on('data', () => {});
   child.stderr?.on('data', (chunk) => {
