@@ -900,7 +900,9 @@ title, body, time and the same call to action. Clicking a row, a card's action
 or a macOS notification opens the target and marks the row read. An Off category
 is listed as **Muted**, and an Alert held by quiet hours as **Quiet hours**, as
 in the phone app's inbox. The page filters by category and by workspace (or the
-machine), and **Mark all read** and **Clear** act on what the filters show. The
+machine). It initially shows 50 matching notifications; **Show older notifications**
+adds the next 50. Changing a filter returns to the first batch. **Mark all read**
+and **Clear** apply to every matching notification, including unloaded rows. The
 history keeps the last 200 notifications from the last 7 days in
 `notifications.json` in Stim Desktop's Application Support folder.
 
