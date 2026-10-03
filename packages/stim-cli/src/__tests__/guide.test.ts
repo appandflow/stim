@@ -127,15 +127,6 @@ test('a sectioned topic prints its preamble and an index of every section', () =
   }
 });
 
-test('an index row carries the word count of the section body it names', () => {
-  const index = renderSectionIndex('errors');
-  assert(index);
-  const body = renderSection('errors', 'STIM_BUILD_WAIT_TIMEOUT');
-  assert(body);
-  const words = body.slice(body.indexOf('STIM_BUILD_WAIT_TIMEOUT')).trim().split(/\s+/).length;
-  expect(index).toMatch(new RegExp(`STIM_BUILD_WAIT_TIMEOUT\\s+${words}w {2}`));
-});
-
 test('the errors index keeps the configured group separators and preambles', () => {
   const index = renderTopic('errors');
   const groups = Object.values(TOPICS.errors?.sections ?? {}).filter((section) => section.separator);
@@ -568,11 +559,6 @@ test('the guide names every path Stim ignores by default', () => {
     const bare = path.replace(/^\*\*\//, '').replace(/\/\*\*$/, '');
     expect(lifecycle).toContain(bare);
   }
-});
-
-test('the package exposes only the stim binary', () => {
-  const packageJson = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf-8'));
-  expect(packageJson.bin).toEqual({ stim: 'dist/cli.mjs' });
 });
 
 test('the reload payload guide distinguishes dispatch from observed completion', () => {

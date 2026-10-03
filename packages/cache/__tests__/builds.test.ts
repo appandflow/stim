@@ -3,9 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   BUILD_RESOLVE_TIMEOUT_ENV,
-  BUILD_RESOLVE_TIMEOUT_MS,
   BUILD_UPLOAD_TIMEOUT_ENV,
-  BUILD_UPLOAD_TIMEOUT_MS,
   buildResolveTimeoutMs,
   buildUploadTimeoutMs,
   resolveTieredBuild,
@@ -50,11 +48,6 @@ function capability(overrides: Partial<BuildCacheCapability> = {}) {
   };
   return { cap, calls, inputs };
 }
-
-test('the pinned build timeouts stay put', () => {
-  expect(BUILD_RESOLVE_TIMEOUT_MS).toBe(30_000);
-  expect(BUILD_UPLOAD_TIMEOUT_MS).toBe(60_000);
-});
 
 test('a local hit does not call the provider', async () => {
   const local = capability({ resolve: () => '/cache/android/key/app.apk' });
@@ -302,11 +295,11 @@ test('a Metro-only provider adds no build tier', async () => {
 });
 
 test('the build budgets accept an environment override', () => {
-  expect(buildResolveTimeoutMs({})).toBe(BUILD_RESOLVE_TIMEOUT_MS);
-  expect(buildUploadTimeoutMs({})).toBe(BUILD_UPLOAD_TIMEOUT_MS);
+  expect(buildResolveTimeoutMs({})).toBe(30_000);
+  expect(buildUploadTimeoutMs({})).toBe(60_000);
   expect(buildResolveTimeoutMs({ [BUILD_RESOLVE_TIMEOUT_ENV]: '1500' })).toBe(1500);
   expect(buildUploadTimeoutMs({ [BUILD_UPLOAD_TIMEOUT_ENV]: '1500' })).toBe(1500);
-  expect(buildUploadTimeoutMs({ [BUILD_UPLOAD_TIMEOUT_ENV]: '-1' })).toBe(BUILD_UPLOAD_TIMEOUT_MS);
+  expect(buildUploadTimeoutMs({ [BUILD_UPLOAD_TIMEOUT_ENV]: '-1' })).toBe(60_000);
 });
 
 test('the destination is only prepared when a provider is about to be asked', async () => {

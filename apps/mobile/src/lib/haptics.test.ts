@@ -23,35 +23,24 @@ jest.mock('expo-haptics', () => ({
 beforeEach(() => jest.clearAllMocks());
 afterEach(() => jest.restoreAllMocks());
 
-it('uses Android native interaction feedback rather than vibrator effects', () => {
-  jest.replaceProperty(Platform, 'OS', 'android');
-  jest.spyOn(Platform, 'Version', 'get').mockReturnValue(34);
-  hapticFeedback('menu');
-  hapticFeedback('selection');
-  hapticFeedback('success');
-  expect(Haptics.performAndroidHapticsAsync).toHaveBeenNthCalledWith(1, Haptics.AndroidHaptics.Gesture_Start);
-  expect(Haptics.performAndroidHapticsAsync).toHaveBeenNthCalledWith(2, Haptics.AndroidHaptics.Segment_Tick);
-  expect(Haptics.performAndroidHapticsAsync).toHaveBeenNthCalledWith(3, Haptics.AndroidHaptics.Confirm);
-  expect(Haptics.impactAsync).not.toHaveBeenCalled();
-  expect(Haptics.selectionAsync).not.toHaveBeenCalled();
-  expect(Haptics.notificationAsync).not.toHaveBeenCalled();
-});
-
-it.each([24, 33])('does not request nonexistent native constants on Android API %i', (api) => {
+it.each([
+  [24, Haptics.AndroidHaptics.Context_Click, Haptics.AndroidHaptics.Keyboard_Tap, Haptics.AndroidHaptics.Virtual_Key],
+  [29, Haptics.AndroidHaptics.Context_Click, Haptics.AndroidHaptics.Keyboard_Tap, Haptics.AndroidHaptics.Virtual_Key],
+  [30, Haptics.AndroidHaptics.Gesture_Start, Haptics.AndroidHaptics.Keyboard_Tap, Haptics.AndroidHaptics.Confirm],
+  [33, Haptics.AndroidHaptics.Gesture_Start, Haptics.AndroidHaptics.Keyboard_Tap, Haptics.AndroidHaptics.Confirm],
+  [34, Haptics.AndroidHaptics.Gesture_Start, Haptics.AndroidHaptics.Segment_Tick, Haptics.AndroidHaptics.Confirm],
+] as const)('uses supported native feedback on Android API %i', (api, menu, selection, success) => {
   jest.replaceProperty(Platform, 'OS', 'android');
   jest.spyOn(Platform, 'Version', 'get').mockReturnValue(api);
   hapticFeedback('menu');
   hapticFeedback('selection');
   hapticFeedback('success');
-  expect(Haptics.performAndroidHapticsAsync).toHaveBeenNthCalledWith(
-    1,
-    api >= 30 ? Haptics.AndroidHaptics.Gesture_Start : Haptics.AndroidHaptics.Context_Click,
-  );
-  expect(Haptics.performAndroidHapticsAsync).toHaveBeenNthCalledWith(2, Haptics.AndroidHaptics.Keyboard_Tap);
-  expect(Haptics.performAndroidHapticsAsync).toHaveBeenNthCalledWith(
-    3,
-    api >= 30 ? Haptics.AndroidHaptics.Confirm : Haptics.AndroidHaptics.Virtual_Key,
-  );
+  expect(Haptics.performAndroidHapticsAsync).toHaveBeenNthCalledWith(1, menu);
+  expect(Haptics.performAndroidHapticsAsync).toHaveBeenNthCalledWith(2, selection);
+  expect(Haptics.performAndroidHapticsAsync).toHaveBeenNthCalledWith(3, success);
+  expect(Haptics.impactAsync).not.toHaveBeenCalled();
+  expect(Haptics.selectionAsync).not.toHaveBeenCalled();
+  expect(Haptics.notificationAsync).not.toHaveBeenCalled();
 });
 
 it('uses light opening, selection and result feedback on iOS', () => {

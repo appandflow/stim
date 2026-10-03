@@ -81,10 +81,12 @@ validation, never a compatibility pass.
 
 ## Tests and abstractions
 
-Before adding a test, name the concrete failure it catches. Assert observable
-results at the narrowest useful boundary: parser output, state transitions,
-ownership decisions, emitted payloads, or real command behavior. Check existing
-coverage first; extend a relevant case instead of repeating it in another suite.
+Before adding a test, name the independent requirement or bug and the concrete
+failure it catches. Its expected result must be able to disagree with the
+implementation. Assert observable results at the lowest stable boundary that
+provides confidence: parser output, state transitions, ownership decisions,
+emitted payloads, or real command behavior. Check existing coverage first;
+extend a relevant case instead of repeating it at another layer.
 
 Do not add tests that only check a constant, a pass-through call, import spelling,
 or implementation source text. A mock returning the expected result does not
@@ -100,12 +102,21 @@ unless they change one of those contracts. Narrow source scans for documented
 identifiers are allowed; they do not replace tests of the behavior behind them.
 
 During test cleanup, classify individual candidates as DELETE, REWRITE, or KEEP.
-Keep or rewrite one only with an independent requirement, a concrete failure,
-and a stable behavioral seam; default to deletion when those are missing.
+Default suspect tests to DELETE. Adding a test or choosing KEEP or REWRITE
+requires evidence for all six:
+an independent requirement, a recognizable user/caller failure, an expectation
+independent of the implementation, a stable behavioral seam, survival through
+internal refactors and incidental copy/layout changes, and the lowest stable
+seam without redundant nearby or higher-layer coverage. Rewriting is an
+exception for a real contract that would otherwise be lost; do not invent a
+requirement to preserve a test.
 Treat search matches as leads, not verdicts. Remove unused test support, keep
 production behavior and test configuration unchanged, and record dispositions
-and validation. Use screenshots for appearance review unless an approved
-contract requires automated visual coverage.
+and validation. Mock echoes, private call shapes, inventory counts, generated
+markup and incidental prose or geometry do not meet this bar. Keep explicitly
+required guide contracts and device input/frame-routing geometry; justify the
+specific contract instead of exempting the whole suite. Use screenshots for
+appearance review unless an approved contract requires automated visual coverage.
 
 Use a direct call or re-export when a wrapper only forwards the same arguments
 and result. Keep helpers that own policy, coordinate effects, or remove meaningful

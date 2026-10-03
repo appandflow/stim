@@ -1,3 +1,6 @@
+import { processColor } from 'react-native';
+
+import { withAlpha } from '@/design/color';
 import { colorsHighContrast, type ColorToken } from '@/design/tokens';
 import { highContrastThemes } from '@/design/theme';
 import { toneColor } from '@/design/tone';
@@ -38,7 +41,10 @@ describe.each<Mode>(['light', 'dark'])('Increase Contrast palette, %s', (mode) =
       for (const name of surfaces) {
         expect(ratio(surface(token), surface(name))).toBeGreaterThanOrEqual(7);
         if (tones.includes(token)) {
-          const tint = over(surface(token), surface(name), 0.16);
+          const native = processColor(withAlpha(palette[token], highContrastThemes[mode].opacity.tint));
+          expect(typeof native).toBe('number');
+          const rgba = native as number;
+          const tint = over([(rgba >>> 16) & 255, (rgba >>> 8) & 255, rgba & 255], surface(name), (rgba >>> 24) / 255);
           expect(ratio(surface(token), tint)).toBeGreaterThanOrEqual(7);
         }
       }

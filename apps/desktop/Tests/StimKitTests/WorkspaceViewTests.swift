@@ -51,41 +51,6 @@ private let booted = #"{"name":"stim-w (iPhone 18 27.0)","udid":"SIM-1","owned":
     #expect(env.stage(now: now) == WorkspaceStage(label: .running, tone: .success, subtitle: "up 42m"))
   }
 
-  @Test func namesEachStageWithItsSubtitle() throws {
-    #expect(
-      try workspace(#""supervisor":{"startedAt":"\#(iso(42 * 60))","healthy":true}"#).stage(now: now)
-        == WorkspaceStage(label: .running, tone: .success, subtitle: "up 42m"))
-    #expect(
-      try workspace(#""build":\#(runningBuild())"#).stage(now: now)
-        == WorkspaceStage(label: .building, tone: .brand, subtitle: "iOS \u{00B7} started 1m ago"))
-    #expect(
-      try workspace(#""lastBuilds":{"ios":\#(lastBuild(status: "failed", finishedAgo: 180))}"#).stage(now: now)
-        == WorkspaceStage(label: .buildFailed, tone: .error, subtitle: "iOS \u{00B7} 3m ago"))
-    #expect(
-      try workspace(#""live":false,"phase":"warming","warmStep":"refresh","phaseSince":"\#(iso(120))""#)
-        .stage(now: now) == WorkspaceStage(label: .warming, tone: .warning, subtitle: "installing dependencies \u{00B7} 2m"))
-    #expect(
-      try workspace(#""live":false,"phase":"ready","phaseSince":"\#(iso(48 * 60))""#).stage(now: now)
-        == WorkspaceStage(label: .ready, tone: .success, subtitle: "warmed 48m ago"))
-    #expect(
-      try workspace(
-        #""live":false,"phase":"idle","metro":{"port":8084,"running":false,"lastStop":{"reason":"idle","at":"\#(iso(7200))"}}"#
-      ).stage(now: now) == WorkspaceStage(label: .stopped, tone: .tertiary, subtitle: "2h ago"))
-  }
-
-  @Test func turnsARunningWorkspaceRedForLogErrorsOrAClosedApp() throws {
-    let crashed = try workspace(
-      #""logs":{"dir":"","errorsSinceMarker":3},"ios":\#(booted),"app":{"id":"a","state":"stopped"}}"#)
-    #expect(
-      crashed.stage(now: now) == WorkspaceStage(label: .running, tone: .error, subtitle: "3 errors \u{00B7} iOS app closed"))
-  }
-
-  @Test func readsTheNewestBuildSoAnOlderFailureDoesNotMaskANewerSuccess() throws {
-    let env = try workspace(
-      #""lastBuilds":{"ios":\#(lastBuild(status: "failed", startedAgo: 3600)),"android":\#(lastBuild("android", startedAgo: 300))}"#
-    )
-    #expect(env.stage(now: now).label == .running)
-  }
 }
 
 @Suite struct AppPresenceTests {
@@ -99,23 +64,6 @@ private let booted = #"{"name":"stim-w (iPhone 18 27.0)","udid":"SIM-1","owned":
 
   private func entry(_ result: String) -> String {
     String(lastBuild().dropLast()) + #","result":"\#(result)","slot":"default","phases":{}}"#
-  }
-
-  @Test func saysNoAppOnlyWhenTheLatestBuildFailedAndNoneEverSucceeded() throws {
-    let stopped = #"\#(booted),"app":{"id":"a","state":"stopped"}}"#
-    let failed = #""lastBuilds":{"ios":\#(lastBuild(status: "failed"))}"#
-    let never = try workspace(#""ios":\#(stopped),\#(failed),"builds":{"ios":[\#(entry("failed"))]}"#)
-    #expect(never.appPresence(never.devices[0]) == AppPresence.none)
-    let once = try workspace(
-      #""ios":\#(stopped),\#(failed),"builds":{"ios":[\#(entry("failed")),\#(entry("succeeded"))]}"#)
-    #expect(once.appPresence(once.devices[0]) == .closed)
-  }
-
-  @Test func assumesAPlatformWithNoHistoryBuiltBefore() throws {
-    let env = try workspace(
-      #""ios":\#(booted),"app":{"id":"a","state":"stopped"}},"lastBuilds":{"ios":\#(lastBuild(status: "failed"))},"builds":{"android":[]}"#
-    )
-    #expect(env.appPresence(env.devices[0]) == .closed)
   }
 
   @Test func doesNotGuessFromAMissingAppWhichStatusOmitsWithoutABundleID() throws {
@@ -181,31 +129,7 @@ private let booted = #"{"name":"stim-w (iPhone 18 27.0)","udid":"SIM-1","owned":
   @Test func addsTheWorktreeAndBuildFoldersForDisk() throws {
     let env = try workspace(#""disk":{"worktreeBytes":1900000000,"nodeModulesBytes":900000000,"buildBytes":300000000}"#)
     #expect(env.usage(machine: nil).diskBytes == 2.2e9)
-  }
-
-  @Test func splitsNodeModulesOutOfTheWorktreeSoTheDiskPartsAddUpToTheTotal() throws {
-    let env = try workspace(#""disk":{"worktreeBytes":1720000000,"nodeModulesBytes":1530000000,"buildBytes":19200000}"#)
-    let breakdown = try #require(env.diskBreakdown)
-    #expect(breakdown.parts.map(\.kind) == [.nodeModules, .worktree, .build])
-    #expect(breakdown.parts.map(breakdown.label(of:)) == ["node_modules", "Rest of worktree", "Build output"])
-    #expect(breakdown.total == env.diskBytes)
-  }
-
-  @Test func namesTheWholeWorktreeWhenNodeModulesIsUnmeasuredAndOmitsAnUnmeasuredBuild() throws {
-    let env = try workspace(#""disk":{"worktreeBytes":500000000}"#)
-    let breakdown = try #require(env.diskBreakdown)
-    #expect(breakdown.parts.map(breakdown.label(of:)) == ["Worktree"])
-    #expect(try workspace(#""disk":{"measuredAt":"x"}"#).diskBreakdown == nil)
-  }
-
-  @Test func keepsTheDiskPartsSummingToTheTotalWhenNodeModulesFillsOrExceedsTheWorktree() throws {
-    let whole = try #require(
-      try workspace(#""disk":{"worktreeBytes":900,"nodeModulesBytes":900,"buildBytes":0}"#).diskBreakdown)
-    #expect(whole.parts.map(\.kind) == [.nodeModules])
-    let over = try workspace(#""disk":{"worktreeBytes":900,"nodeModulesBytes":950,"buildBytes":100}"#)
-    let breakdown = try #require(over.diskBreakdown)
-    #expect(breakdown.parts.map(\.kind) == [.worktree, .build])
-    #expect(breakdown.total == over.diskBytes)
+    #expect(try #require(env.diskBreakdown).total == 2.2e9)
   }
 
   @Test func keepsTenMinutesOfEachWorkspaceAndDropsOneThatStopped() {
@@ -259,50 +183,6 @@ private let booted = #"{"name":"stim-w (iPhone 18 27.0)","udid":"SIM-1","owned":
     #expect(steps[4].expectedMs == 8000)
   }
 
-  @Test func foldsTheShortPreparePhasesIntoOneBarSegment() throws {
-    var early = try build()
-    early.phase = "cache-lookup"
-    early.phaseStartedAt = iso(0)
-    #expect(
-      barSteps(early.phaseSteps(history: history, now: now)).map(\.phase) == [
-        "prepare", "prebuild", "pods", "compile", "install",
-      ])
-    #expect(barSteps(early.phaseSteps(history: history, now: now)).first?.state == .current)
-    var lookup = try build()
-    lookup.phase = "cache-lookup"
-    lookup.phaseStartedAt = iso(0)
-    lookup.expectedPhaseMs = 1000
-    let prepare = barSteps(lookup.phaseSteps(history: history, now: now))[0]
-    #expect(prepare.expectedMs == 3000)
-    #expect(prepare.fraction == 2000.0 / 3000.0)
-  }
-
-  @Test func givesTheDeviceWaitItsOwnBarSegment() throws {
-    let withDevice = try JSONDecoder().decode(
-      [BuildHistoryEntry].self,
-      from: Data(
-        ("[" + String(lastBuild(cacheHit: "false").dropLast())
-          + #","result":"succeeded","slot":"default","phases":{"prepare":2000,"device":500,"compile":94000,"install":8000}}]"#)
-          .utf8))
-    var waiting = try build()
-    waiting.phase = "device"
-    waiting.phaseStartedAt = iso(0)
-    let bar = barSteps(waiting.phaseSteps(history: withDevice, now: now))
-    #expect(bar.map(\.phase) == ["prepare", "compile", "device", "install"])
-    #expect(bar.map(\.state) == [.done, .done, .current, .pending])
-  }
-
-  @Test func namesPhasesOnlyWhenThereIsMoreThanOne() throws {
-    var fresh = try build()
-    fresh.phase = "prepare"
-    fresh.phaseStartedAt = iso(0)
-    let steps = fresh.phaseSteps(history: [], now: now)
-    #expect(steps.map(\.phase) == ["prepare"])
-    #expect(!namesPhases(steps))
-    #expect(!namesPhases(barSteps(steps)))
-    #expect(namesPhases(try build().phaseSteps(history: history, now: now)))
-  }
-
   @Test func movesTheCompilePhaseByTheBuildToolCountsOnlyWhenTheyAreAheadOfTheTimeEstimate() throws {
     let detail = #","detail":{"step":"compile","unit":"targets","done":45,"total":180}"#
     let counted = try build(detail)
@@ -326,97 +206,42 @@ private let booted = #"{"name":"stim-w (iPhone 18 27.0)","udid":"SIM-1","owned":
     planned.phaseStartedAt = iso(1)
     planned.outcome = "hit"
     planned.expectedPhaseMs = 2000
-    let bar = barSteps(planned.phaseSteps(history: [], now: now))
-    #expect(bar.map(\.phase) == ["prepare", "device", "install"])
-    #expect(bar.map(\.state) == [.current, .pending, .pending])
     #expect(
       planned.phaseSteps(history: history, now: now).map(\.phase) == ["prepare", "cache-lookup", "device", "install", "launch"])
   }
 }
 
-@Suite struct BarFillsTests {
-  func step(_ phase: String, _ state: PhaseStep.State, _ expectedMs: Double, _ fraction: Double) -> PhaseStep {
-    PhaseStep(phase: phase, state: state, elapsedMs: nil, expectedMs: expectedMs, fraction: fraction)
+@Suite struct BarFillsStateTests {
+  func current(_ fraction: Double) -> PhaseStep {
+    PhaseStep(phase: "compile", state: .current, elapsedMs: nil, expectedMs: 1000, fraction: fraction)
   }
 
-  @Test func fillsDoneSegmentsPartOfTheCurrentOneAndNoneOfThePendingOnes() {
-    let fills = barFills(
-      [step("prepare", .done, 4000, 1), step("compile", .current, 8000, 0.5), step("install", .pending, 8000, 0)],
-      key: "fills-plain")
-    #expect(fills == [1, 0.5, 0])
-    #expect(barFills([], key: "fills-empty") == [])
+  @Test func remembersProgressWithinABuildWithoutCarryingItIntoAnotherBuild() {
+    let first = barFills([current(0.8)], key: "prune-progress")[0]
+    #expect(barFills([current(0.2)], key: "prune-progress")[0] >= first)
+    #expect(barFills([current(0.2)], key: "prune-other-build")[0] < first)
   }
 
-  @Test func neverFillsAPendingSegmentWhenNoPhaseIsCurrent() {
-    let key = "fills-no-current"
-    _ = barFills([step("prepare", .done, 4000, 1), step("install", .current, 6000, 0.9)], key: key)
-    #expect(barFills([step("prepare", .done, 4000, 1), step("install", .pending, 6000, 0)], key: key) == [1, 0])
-  }
-
-  @Test func keepsWhatItDrewForTheSameBuildWhenThePlanChangesUpToTheEndOfTheCurrentSegment() {
-    let key = "fills-replan"
-    let round = { (fills: [Double]) in fills.map { ($0 * 100).rounded() / 100 } }
-    #expect(barFills([step("prepare", .current, 4000, 0.9), step("install", .pending, 6000, 0)], key: key) == [0.9, 0])
-    #expect(round(barFills([step("prepare", .current, 4000, 0.2), step("install", .pending, 6000, 0)], key: key)) == [0.9, 0])
-    let coldPlan = [
-      step("prepare", .done, 4000, 1), step("pods", .current, 10_000, 0.02), step("compile", .pending, 60_000, 0),
-      step("install", .pending, 6000, 0),
-    ]
-    #expect(round(barFills(coldPlan, key: key)) == [1, 0.95, 0, 0])
-    #expect(abs(barFills(coldPlan, key: "fills-other-build")[1] - 0.02) < 1e-5)
-  }
-}
-
-@Suite struct BundleLineTests {
-  func env(_ bundle: String?) throws -> Workspace {
-    try workspace(#""metro":{"port":8084,"running":true,"pid":1\#(bundle.map { #","bundle":\#($0)"# } ?? "")}"#)
-  }
-
-  @Test func showsBundlingTheLastBundleOrThatNoneRanYet() throws {
-    #expect(
-      try env(#"{"bundling":true,"percent":62.4}"#).bundleLine(now: now, reportsBundles: true)?.text == "Bundling \u{00B7} 62%")
-    #expect(
-      try env(#"{"bundling":false,"last":{"platform":"ios","status":"ok","durationMs":1800,"finishedAt":"\#(iso(12))"}}"#)
-        .bundleLine(now: now, reportsBundles: true)?.text == "Bundled in 1.8s \u{00B7} 12s ago")
-    #expect(try env(nil).bundleLine(now: now, reportsBundles: true)?.text == "Not bundled yet")
-    #expect(try env(nil).bundleLine(now: now, reportsBundles: false) == nil)
+  @Test func doesNotCreditAPendingPhaseWithRememberedProgress() {
+    _ = barFills([current(0.8)], key: "prune-pending")
+    let pending = PhaseStep(phase: "compile", state: .pending, elapsedMs: nil, expectedMs: 1000, fraction: 0)
+    #expect(barFills([pending], key: "prune-pending")[0] == 0)
   }
 }
 
 @Suite struct GitChipTests {
-  func worktree(_ git: String = "", pullRequest: String? = nil) throws -> WorktreeInfo {
-    var fields: [String: Any] = ["changed": 0, "untracked": 0, "upstream": "origin/x", "ahead": 0, "behind": 0]
-    let patch = try JSONSerialization.jsonObject(with: Data("{\(git.drop { $0 == "," })}".utf8)) as! [String: Any]
-    fields.merge(patch) { _, new in new }
-    var object: [String: Any] = ["path": "/w", "git": fields]
-    if let pullRequest {
-      object["pullRequest"] = try JSONSerialization.jsonObject(with: Data(pullRequest.utf8), options: .fragmentsAllowed)
-    }
-    return try JSONDecoder().decode(WorktreeInfo.self, from: JSONSerialization.data(withJSONObject: object))
-  }
-
-  @Test func showsGitDetailsOnlyWhenThereAreSome() throws {
-    #expect(try GitChip(worktree(#","ahead":2,"changed":2,"untracked":1"#))?.parts.map(\.text) == ["\u{2191}2", "3 changed"])
-    #expect(try GitChip(worktree(#","mergedInto":"main""#))?.parts.map(\.text) == ["merged into main"])
-    #expect(try GitChip(worktree(#","upstream":null,"ahead":null,"behind":null"#))?.parts.map(\.text) == ["no upstream"])
-    #expect(try GitChip(worktree())?.parts == [])
+  @Test func omitsTheChipWhenStatusHasNoGitData() {
     #expect(GitChip(WorktreeInfo(path: "/w")) == nil)
   }
 
-  @Test func coloursThePullRequestByStateWithOneCIMarkForTheWorstCheck() throws {
-    let pr =
-      #"{"number":1695,"url":"https://github.com/o/r/pull/1695","title":"t","state":"open","checks":{"passing":12,"failing":1,"pending":2}}"#
-    let open = try GitChip(worktree(pullRequest: pr))
-    #expect(open?.pullRequest?.text == "PR #1695")
-    #expect(open?.pullRequest?.tone == .success)
-    #expect(open?.pullRequest?.checks == .failing)
-    #expect(open?.label == "Pull request 1695, open, checks failing")
-    let merged = try GitChip(
-      worktree(#","mergedInto":"main""#, pullRequest: pr.replacingOccurrences(of: "\"open\"", with: "\"merged\"")))
-    #expect(merged?.pullRequest?.tone == .brand)
-    #expect(merged?.parts == [])
-    #expect(try GitChip(worktree())?.label == "Branch, up to date")
-    #expect(try GitChip(worktree(pullRequest: "null"))?.pullRequest == nil)
+  @Test func doesNotInventAPullRequestForAnExplicitNull() throws {
+    let worktree = try JSONDecoder().decode(
+      WorktreeInfo.self,
+      from: Data(
+        #"{"path":"/w","git":{"changed":0,"untracked":0,"upstream":"origin/x","ahead":0,"behind":0},"pullRequest":null}"#
+          .utf8))
+    let chip = try #require(GitChip(worktree))
+    #expect(chip.pullRequest == nil)
   }
 }
 
@@ -518,15 +343,8 @@ private let booted = #"{"name":"stim-w (iPhone 18 27.0)","udid":"SIM-1","owned":
       var chip: Chip
     }
 
-    struct ChecksCase: Decodable {
-      var name: String
-      var checks: PullRequestFacts.Checks?
-      var summary: String?
-    }
-
     struct Step: Decodable, Equatable {
       var phase: String
-      var name: String
       var state: String
       var elapsedMs: Double?
       var expectedMs: Double?
@@ -538,8 +356,6 @@ private let booted = #"{"name":"stim-w (iPhone 18 27.0)","udid":"SIM-1","owned":
       var build: Build
       var history: [BuildHistoryEntry]
       var steps: [Step]
-      var bars: [Step]
-      var namesPhases: Bool
     }
 
     struct BadgeCase: Decodable {
@@ -573,7 +389,6 @@ private let booted = #"{"name":"stim-w (iPhone 18 27.0)","udid":"SIM-1","owned":
 
     struct DiskPart: Decodable, Equatable {
       var kind: String
-      var label: String
       var bytes: Double
     }
 
@@ -587,7 +402,6 @@ private let booted = #"{"name":"stim-w (iPhone 18 27.0)","udid":"SIM-1","owned":
     var stage: [StageCase]
     var gitChip: [ChipCase]
     var appPresence: [PresenceCase]
-    var checksSummary: [ChecksCase]
     var phases: [PhaseCase]
     var activity: Activity
     var bundleLine: [BundleCase]
@@ -640,26 +454,16 @@ private let booted = #"{"name":"stim-w (iPhone 18 27.0)","udid":"SIM-1","owned":
     #expect(c.workspace.appPresence(device).map { $0 == .none ? "none" : "closed" } == c.presence)
   }
 
-  @Test(arguments: vectors.checksSummary.map(\.name))
-  func summarizesChecksAsThePhoneDoes(name: String) throws {
-    let c = try #require(Self.vectors.checksSummary.first { $0.name == name })
-    #expect(GitChip.checksSummary(c.checks) == c.summary)
-  }
-
   @Test(arguments: vectors.phases.map(\.name))
   func stepsThroughPhasesAsThePhoneDoes(name: String) throws {
     let c = try #require(Self.vectors.phases.first { $0.name == name })
     let steps = c.build.phaseSteps(history: c.history, now: Self.now)
-    func plain(_ steps: [PhaseStep], elapsed: Bool) -> [Vectors.Step] {
-      steps.map {
-        Vectors.Step(
-          phase: $0.phase, name: PhaseStep.name($0.phase), state: String(describing: $0.state),
-          elapsedMs: elapsed ? $0.elapsedMs : nil, expectedMs: $0.expectedMs, fraction: $0.fraction)
-      }
+    let actual = steps.map {
+      Vectors.Step(
+        phase: $0.phase, state: String(describing: $0.state),
+        elapsedMs: $0.elapsedMs, expectedMs: $0.expectedMs, fraction: $0.fraction)
     }
-    expectClose(plain(steps, elapsed: true), c.steps)
-    expectClose(plain(barSteps(steps), elapsed: false), c.bars)
-    #expect(namesPhases(steps) == c.namesPhases)
+    expectClose(actual, c.steps)
   }
 
   @Test(arguments: vectors.activity.badge.map(\.name))
@@ -686,7 +490,7 @@ private let booted = #"{"name":"stim-w (iPhone 18 27.0)","udid":"SIM-1","owned":
     let c = try #require(Self.vectors.diskParts.first { $0.name == name })
     let breakdown = c.workspace.diskBreakdown
     let parts = breakdown.map { b in
-      b.parts.map { Vectors.DiskPart(kind: $0.kind.rawValue, label: b.label(of: $0), bytes: $0.bytes) }
+      b.parts.map { Vectors.DiskPart(kind: $0.kind.rawValue, bytes: $0.bytes) }
     }
     #expect(parts == c.parts)
   }
@@ -695,7 +499,7 @@ private let booted = #"{"name":"stim-w (iPhone 18 27.0)","udid":"SIM-1","owned":
 private func expectClose(_ actual: [WorkspaceViewVectorTests.Vectors.Step], _ expected: [WorkspaceViewVectorTests.Vectors.Step]) {
   #expect(actual.count == expected.count)
   for (a, e) in zip(actual, expected) {
-    #expect(a.phase == e.phase && a.name == e.name && a.state == e.state)
+    #expect(a.phase == e.phase && a.state == e.state)
     #expect(a.elapsedMs == e.elapsedMs && a.expectedMs == e.expectedMs)
     #expect(a.fraction == nil ? e.fraction == nil : abs(a.fraction! - (e.fraction ?? .infinity)) < 1e-9)
   }
