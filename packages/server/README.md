@@ -265,6 +265,7 @@ The same reserve/attach/stop methods accept `platform: "android"` with optional
 and `deviceProfile` (an installed avdmanager profile). iOS selectors refuse on
 Android requests. The image must match the host architecture. Omitted selectors
 use Stim's existing compatible installed-image and default-profile choice.
+The worker process needs an Android SDK and a JDK that `avdmanager` can use.
 
 ```json
 {

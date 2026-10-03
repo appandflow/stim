@@ -7,6 +7,8 @@ import { tmpdir } from 'node:os';
 import { deviceHostArea, deviceHostRoot, readHostedSessions } from '@stim-cli/core/state';
 import { processGroupAlive, readClaimSet } from '@stim-cli/core/ownership-claim';
 import { DeviceHost } from '../src/device-host.ts';
+import { protocolJsonSchema } from '../src/protocol.ts';
+import { Ajv2020 } from 'ajv/dist/2020.js';
 
 const WORKER = `
 import { spawn } from 'node:child_process';
@@ -112,6 +114,8 @@ test('rejects malformed client identities and selectors before reserving a worke
     { slot: '__proto__' },
     { slot: '../other' },
     { platform: 'web' },
+    { platform: ['ios'] },
+    { platform: ['android'] },
     { platform: 'android', deviceType: 'iPhone' },
     { attempt: '../other' },
     { deviceType: 42 },
@@ -412,6 +416,21 @@ test.each(['stop', 'revoke'])(
 );
 
 test('Android reservations keep distinct ports and platform slots, reconnect without recreation and refuse iOS app routes', async () => {
+  const validator = new Ajv2020({ strict: false, validateFormats: false });
+  validator.addSchema(protocolJsonSchema(), 'protocol');
+  const acceptsRequest = validator.compile({ $ref: 'protocol#/$defs/ClientRequest' });
+  const acceptsSession = validator.compile({ $ref: 'protocol#/$defs/HostedDeviceSession' });
+  const androidRequest = {
+    ...request,
+    platform: 'android',
+    attempt: 'android',
+    systemImage: 'system-images;android-30;google_apis;arm64-v8a',
+    deviceProfile: 'pixel_6',
+  };
+  expect(acceptsRequest({ id: 1, method: 'device-host.reserve', params: androidRequest })).toBe(true);
+  expect(acceptsRequest({ id: 1, method: 'device-host.reserve', params: { ...androidRequest, runtime: '27.0' } })).toBe(
+    false,
+  );
   await host.close();
   host = new DeviceHost({
     worker: join(home, 'worker.mjs'),
@@ -419,18 +438,20 @@ test('Android reservations keep distinct ports and platform slots, reconnect wit
     allowed: (client) => allowed.has(client),
   });
   const ios = reserve();
-  const android = reserve({ platform: 'android', attempt: 'android' });
+  const android = reserve(androidRequest);
   const second = reserve({ platform: 'android', slot: 'second', attempt: 'android-second' });
   expect(android.consolePort).toBe(5554);
   expect(second.consolePort).toBe(5556);
-  await state(ios.id, 'ready');
-  await state(android.id, 'ready');
+  expect(acceptsSession(ios)).toBe(true);
+  expect(acceptsSession(android)).toBe(true);
+  expect(acceptsSession(await state(ios.id, 'ready'))).toBe(true);
+  expect(acceptsSession(await state(android.id, 'ready'))).toBe(true);
   await state(second.id, 'ready');
   expect(host.attach('client', { session: android.id })).toHaveProperty(
     'result.device.avdName',
     `stim-hosted-${android.id}`,
   );
-  expect(reserve({ platform: 'android', attempt: 'android' }).id).toBe(android.id);
+  expect(reserve(androidRequest).id).toBe(android.id);
   expect(
     host.appOffer('client', {
       session: android.id,

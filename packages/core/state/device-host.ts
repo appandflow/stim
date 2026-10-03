@@ -114,7 +114,7 @@ export function hostedDeviceId(device: HostedDevice): string {
 }
 
 export function parseHostedRequest(value: unknown): HostedDeviceRequest | null {
-  if (!isJsonObject(value) || !['ios', 'android'].includes(String(value.platform))) return null;
+  if (!isJsonObject(value) || (value.platform !== 'ios' && value.platform !== 'android')) return null;
   if (
     typeof value.workspace !== 'string' ||
     !value.workspace ||
