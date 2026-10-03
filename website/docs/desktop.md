@@ -45,7 +45,8 @@ performance traces. Every release is listed under
   Settings > Phones**.
 - **Logs.** Separate Metro and App / native inspector sections open the same
   viewer with their source filters selected. Filters remain editable; repeated
-  errors are grouped.
+  errors are grouped. **Build output > Readable** simplifies Xcode output; **Raw** restores
+  every line. Copying and record details retain the original output.
 - **Builds.** Structured progress, a resolved Hit/Miss badge beside an actual Cache lookup,
   the reason for a miss, and a prediction of the next build. **Build logs** opens
   all retained raw output for that run, filtered by platform, slot and timestamps.

@@ -61,6 +61,7 @@ cp "$website/src/css/fonts/InterVariable.woff2" "$website/src/css/fonts/JetBrain
   "$website/static/img/branding/wordmark.svg" "$website/static/img/branding/agent-claude.svg" \
   "$website/static/img/branding/agent-codex.svg" "$website/static/img/branding/agent-cursor.svg" \
   "$app/Contents/Resources/"
+cp Support/xcbeautify-LICENSE.txt Support/XMLCoder-LICENSE.txt "$app/Contents/Resources/"
 xcrun -sdk iphonesimulator clang -fobjc-arc -arch arm64 -arch x86_64 -mios-simulator-version-min=18.0 \
   -framework Foundation Support/SimFold/main.m -o "$app/Contents/Resources/sim-fold" \
   -Wl,-sectcreate,__TEXT,__entitlements,Support/SimFold/entitlements.plist

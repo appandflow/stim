@@ -70,7 +70,7 @@ struct LogsView: View {
 
   private var selectedRow: LogsModel.Row? {
     guard selection.count == 1, let row = selection.first, row < model.rows.count else { return nil }
-    return model.rows[row]
+    return model.rawRow(for: model.rows[row])
   }
 
   private var filterBar: some View {
@@ -102,6 +102,12 @@ struct LogsView: View {
         .buttonStyle(.hoverRow())
         .help("Clear the build time and platform filter")
       }
+      MenuPill(
+        label: "Build output",
+        selection: $model.readableBuildLogs,
+        options: [MenuPillOption(value: true, title: "Readable"), MenuPillOption(value: false, title: "Raw")],
+        isActive: !model.readableBuildLogs
+      )
       Rectangle().fill(Palette.border).frame(width: 1, height: 18)
       if !slots.isEmpty {
         MenuPill(
@@ -195,8 +201,11 @@ struct LogsView: View {
   }
 
   private func copy() {
-    let rows = selection.isEmpty ? IndexSet(model.rows.indices) : selection
-    let text = rows.filter { $0 < model.rows.count }.map { model.rows[$0].entry.plainText }.joined(separator: "\n")
+    let entries =
+      selection.isEmpty
+      ? model.rawRows.map(\.entry)
+      : selection.filter { $0 < model.rows.count }.map { model.rows[$0].entry }
+    let text = entries.map(\.plainText).joined(separator: "\n")
     NSPasteboard.general.clearContents()
     NSPasteboard.general.setString(text, forType: .string)
   }
