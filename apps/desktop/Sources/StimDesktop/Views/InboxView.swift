@@ -9,13 +9,19 @@ struct InboxView: View {
   @EnvironmentObject private var actions: ActionCenter
   @State private var filter = InboxFilter()
   @State private var confirmsClear = false
+  @State private var visibleCount = 50
   @State private var fixing: (title: String, command: StimCommand)?
 
   var body: some View {
     let days = inbox.inbox.days(filter)
+    let entries = days.flatMap(\.entries)
+    let visibleIDs = Set(entries.prefix(visibleCount).map(\.id))
+    let visibleDays = days.map { day in
+      (day: day.day, entries: day.entries.filter { visibleIDs.contains($0.id) })
+    }.filter { !$0.entries.isEmpty }
     let titles = inbox.inbox.displayTitles
     ScrollView {
-      LazyVStack(alignment: .leading, spacing: Space.xxl) {
+      VStack(alignment: .leading, spacing: Space.xxl) {
         header(empty: days.isEmpty)
         if days.isEmpty {
           EmptyState(
@@ -27,11 +33,11 @@ struct InboxView: View {
           .frame(maxWidth: .infinity)
           .padding(.top, Space.huge)
         }
-        ForEach(days, id: \.day) { day in
+        ForEach(visibleDays, id: \.day) { day in
           VStack(alignment: .leading, spacing: Space.md) {
             Text(Self.dayTitle(day.day)).font(.stim(.headline))
             Card {
-              LazyVStack(spacing: 0) {
+              VStack(spacing: 0) {
                 ForEach(Array(day.entries.enumerated()), id: \.element.id) { index, entry in
                   if index > 0 { Rectangle().fill(Palette.border).frame(height: 1) }
                   InboxRow(
@@ -43,10 +49,16 @@ struct InboxView: View {
             }
           }
         }
+        if visibleCount < entries.count {
+          Button("Show older notifications") { visibleCount += 50 }
+            .buttonStyle(.stim())
+            .frame(maxWidth: .infinity)
+        }
       }
       .padding(Space.xxxl)
       .frame(maxWidth: .infinity, alignment: .leading)
     }
+    .onChange(of: filter) { _, _ in visibleCount = 50 }
     .confirmationDialog(
       "Run stim doctor --fix?", isPresented: Binding(get: { fixing != nil }, set: { if !$0 { fixing = nil } }),
       titleVisibility: .visible, presenting: fixing

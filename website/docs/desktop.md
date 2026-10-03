@@ -91,7 +91,10 @@ performance traces. Every release is listed under
   you** category lists only what agents cannot handle, such as a doctor
   finding, a signing failure or an expired device lease, with **Run**, **Copy
   command**, **Fix**, **Open logs** or **Show in Finder** on its row in
-  **Notifications**. It is Silent by default.
+  **Notifications**. It is Silent by default. The inbox starts with 50 matching
+  notifications; **Show older notifications** loads another 50. Changing a filter
+  returns to the first batch. **Mark all read** and **Clear** apply to all matching
+  notifications, including rows that have not been loaded.
 
 ![A device viewer: the simulator screen with the agent's recent actions, including two that failed](/img/desktop/viewer.webp)
 
