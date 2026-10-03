@@ -514,6 +514,7 @@ export class DeviceHost {
     if (record.state === 'stopped') return;
     const owned = this.acquire(record);
     if (owned.stopping) return;
+    void this.closeMetro(owned).catch((error: unknown) => this.failed(record.id, error));
     this.change(record.id, (current) => {
       current.state = 'stopping';
     });
@@ -606,13 +607,19 @@ export class DeviceHost {
         }
       }
     } catch (error) {
-      for (const owned of this.owned.values()) owned.run?.cancel();
+      for (const owned of this.owned.values()) {
+        owned.run?.cancel();
+        void this.closeMetro(owned).catch((closeError: unknown) => {
+          process.stderr.write(`Hosted Metro close failed: ${(closeError as Error).message}\n`);
+        });
+      }
       process.stderr.write(`Hosted device revocation could not read its journal: ${(error as Error).message}\n`);
     }
   }
 
   async close(): Promise<void> {
     this.closed = true;
+    await Promise.all([...this.owned.values()].map((owned) => this.closeMetro(owned)));
     try {
       for (const record of readHostedSessions()) {
         if (!this.owned.has(record.id)) continue;

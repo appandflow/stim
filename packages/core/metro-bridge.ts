@@ -101,6 +101,7 @@ export function createMetroBridge({
     const upstream = connect({ host: peer, port: gatewayPort, timeout: 5000 });
     track(upstream);
     upstream.once('timeout', () => upstream.destroy());
+    upstream.once('close', () => socket.destroy());
     upstream.once('connect', () => {
       upstream.setTimeout(0);
       upstream.write(prefix);

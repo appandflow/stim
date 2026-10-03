@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync, renameSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync, renameSync, chmodSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
@@ -141,6 +141,52 @@ test('keeps HTTP and WebSocket Metro on the owned session port across reconnect 
     await new Promise<void>((resolve) => metro.close(() => resolve()));
   }
 });
+
+for (const ending of ['revocation', 'server close', 'revocation with an unwritable journal']) {
+  test.skipIf(ending === 'revocation with an unwritable journal' && process.platform === 'win32')(
+    `closes known Metro traffic on ${ending} when journal reconciliation fails and retains its device claim`,
+    async () => {
+      const first = reserve();
+      await state(first.id, 'ready');
+      const metro = createServer((_request, response) => response.end('private workspace bundle'));
+      await new Promise<void>((resolve) => metro.listen(0, '127.0.0.1', resolve));
+      const secret = 'a'.repeat(64);
+      const gateway = createMetroGateway({
+        metroPort: (metro.address() as AddressInfo).port,
+        peer: '127.0.0.1',
+        secret,
+      });
+      await new Promise<void>((resolve) => gateway.server.listen(0, '127.0.0.1', resolve));
+      const journal = join(deviceHostRoot(), 'sessions.json');
+      const original = readFileSync(journal, 'utf8');
+      try {
+        const opened = await host.metroOpen(
+          'client',
+          { session: first.id, gatewayPort: (gateway.server.address() as AddressInfo).port, secret },
+          '127.0.0.1',
+        );
+        if ('error' in opened) throw new Error(opened.error.message);
+        const url = `http://127.0.0.1:${opened.result.port}/index.bundle`;
+        expect(await (await fetch(url)).text()).toBe('private workspace bundle');
+        if (ending === 'revocation with an unwritable journal') chmodSync(deviceHostRoot(), 0o500);
+        else writeFileSync(journal, '{}');
+        if (ending !== 'server close') {
+          allowed.delete('client');
+          host.revoke();
+        } else await host.close();
+        await vi.waitFor(async () => expect(fetch(url)).rejects.toThrow('fetch failed'));
+        expect(readClaimSet(join(deviceHostRoot(), `${first.id}.claims`)).live).toHaveLength(1);
+        expect(existsSync(join(deviceHostArea(first.id), 'home', 'stopped'))).toBe(false);
+      } finally {
+        chmodSync(deviceHostRoot(), 0o700);
+        writeFileSync(journal, original);
+        await gateway.close();
+        metro.closeAllConnections();
+        await new Promise<void>((resolve) => metro.close(() => resolve()));
+      }
+    },
+  );
+}
 
 test('reserves once across reconnect and attempt replay, isolates clients, and stops only the owned session', async () => {
   const first = reserve();
