@@ -5,15 +5,7 @@ import StimKit
 @MainActor
 enum SimulatorFrameArtwork {
   static func load(udid: String) -> DeviceFrameArtwork? {
-    guard let device = CoreSimulator.device(udid: udid),
-      let type = property("deviceType", on: device) as? NSObject,
-      let identifier = property("identifier", on: type) as? String
-    else { return nil }
-    let root = URL(fileURLWithPath: "/Library/Developer/CoreSimulator/Profiles/DeviceTypes")
-    guard let types = try? FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil),
-      let bundle = types.first(where: { Bundle(url: $0)?.bundleIdentifier == identifier })
-    else { return nil }
-    let resources = bundle.appendingPathComponent("Contents/Resources")
+    guard let resources = resources(udid: udid) else { return nil }
     let profile = plist(resources.appendingPathComponent("profile.plist"))
     let capabilities = plist(resources.appendingPathComponent("capabilities.plist"))["capabilities"] as? [String: Any]
     guard let displays = capabilities?["displays"] as? [[String: Any]] else { return nil }
@@ -69,6 +61,18 @@ enum SimulatorFrameArtwork {
         for (image, rect) in buttons { draw(image, in: rect) }
         drawEdges(pieces, in: body)
       })
+  }
+
+  static func resources(udid: String) -> URL? {
+    guard let device = CoreSimulator.device(udid: udid),
+      let type = property("deviceType", on: device) as? NSObject,
+      let identifier = property("identifier", on: type) as? String
+    else { return nil }
+    let root = URL(fileURLWithPath: "/Library/Developer/CoreSimulator/Profiles/DeviceTypes")
+    guard let types = try? FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil),
+      let bundle = types.first(where: { Bundle(url: $0)?.bundleIdentifier == identifier })
+    else { return nil }
+    return bundle.appendingPathComponent("Contents/Resources")
   }
 
   private static func property(_ name: String, on object: NSObject) -> Any? {
