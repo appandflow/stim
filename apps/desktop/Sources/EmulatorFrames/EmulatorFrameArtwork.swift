@@ -66,9 +66,7 @@ enum EmulatorFrameArtwork {
   static func load(avdName: String) -> DeviceFrameArtwork? {
     let environment = ProcessInfo.processInfo.environment
     let home = FileManager.default.homeDirectoryForCurrentUser
-    let avdRoot =
-      environment["ANDROID_AVD_HOME"].map { URL(fileURLWithPath: $0) }
-      ?? home.appendingPathComponent(".android/avd")
+    let avdRoot = URL(fileURLWithPath: StoragePaths(home: home.path, environment: environment).avds)
     let ini = values(avdRoot.appendingPathComponent(avdName).appendingPathExtension("ini"))
     guard let path = ini["path"] else { return nil }
     let config = values(URL(fileURLWithPath: path).appendingPathComponent("config.ini"))
