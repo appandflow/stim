@@ -19,7 +19,9 @@ import {
   deviceHostRoot,
   getConcurrencyLimits,
   isJsonObject,
-  parseHostedDevice,
+  parseHostedPlatformDevice,
+  hostedDeviceId,
+  loadConfig,
   parseHostedRequest,
   readHostedDevice,
   readHostedSessions,
@@ -133,7 +135,10 @@ export class DeviceHost {
       return refused('forbidden', 'Current device-host approval is required.');
     const request = parseHostedRequest(params);
     if (!request)
-      return refused('bad-request', 'reserve needs an iOS workspace, slot, attempt and valid optional selectors.');
+      return refused(
+        'bad-request',
+        'reserve needs an iOS or Android workspace, slot, attempt and valid optional selectors.',
+      );
     let start: HostedDeviceSession | null = null;
     try {
       const result = this.transaction((records) => {
@@ -146,6 +151,7 @@ export class DeviceHost {
           (record) =>
             record.client === client &&
             record.workspace === request.workspace &&
+            record.platform === request.platform &&
             record.slot === request.slot &&
             record.state !== 'stopped',
         );
@@ -161,6 +167,7 @@ export class DeviceHost {
           state: 'preparing',
           device: null,
           createdAt: new Date().toISOString(),
+          ...(request.platform === 'android' ? { consolePort: reserveAndroidPort(records) } : {}),
         };
         this.acquire(record);
         records.push(record);
@@ -222,6 +229,7 @@ export class DeviceHost {
       throw new Error('App requests need a session and app attempt.');
     const record = readHostedSessions().find((each) => each.client === client && each.id === params.session);
     if (!record) throw new Error('This client has no such hosted session.');
+    if (record.platform !== 'ios') throw new Error('Hosted app delivery currently supports iOS sessions only.');
     return record;
   }
 
@@ -334,7 +342,9 @@ export class DeviceHost {
         outcome.settled &&
         isJsonObject(value) &&
         value.state === 'installed' &&
-        parseHostedDevice(value.device)?.udid === record.device?.udid &&
+        parseHostedPlatformDevice(value.device, record.platform) !== null &&
+        record.device !== null &&
+        hostedDeviceId(parseHostedPlatformDevice(value.device, record.platform)!) === hostedDeviceId(record.device) &&
         (value.launched === true || value.launched === 'unverified');
       const app = changeHostedApp(record.id, attempt, (current) => {
         current.state = installed ? 'installed' : 'unknown';
@@ -377,11 +387,12 @@ export class DeviceHost {
     const outcome = await run.done;
     if (owned.stopping) return;
     const value = outcome.value;
-    const device = isJsonObject(value) ? parseHostedDevice(value.device) : null;
+    const device = isJsonObject(value) ? parseHostedPlatformDevice(value.device, record.platform) : null;
     if (outcome.settled && isJsonObject(value) && value.state === 'ready' && device) {
       const home = join(deviceHostArea(record.id), 'home');
-      assertHostedDeviceLedger(home, device.udid);
-      if (readHostedDevice(home).udid !== device.udid)
+      assertSessionDevice(record, device);
+      assertHostedDeviceLedger(home, hostedDeviceId(device), record.platform);
+      if (hostedDeviceId(readHostedDevice(home, record.platform)) !== hostedDeviceId(device))
         throw new Error('The worker result does not match its persisted device.');
     }
     this.change(record.id, (current) => {
@@ -444,8 +455,9 @@ export class DeviceHost {
         return;
       }
     }
-    const device = readHostedDevice(home);
-    if (record.device && record.device.udid !== device.udid)
+    const device = readHostedDevice(home, record.platform);
+    assertSessionDevice(record, device);
+    if (record.device && hostedDeviceId(record.device) !== hostedDeviceId(device))
       throw new Error('The device record no longer matches this session.');
     this.change(record.id, (current) => {
       current.device = device;
@@ -458,7 +470,8 @@ export class DeviceHost {
       outcome.settled &&
       isJsonObject(outcome.value) &&
       outcome.value.state === 'stopped' &&
-      parseHostedDevice(outcome.value.device)?.udid === device.udid;
+      parseHostedPlatformDevice(outcome.value.device, record.platform) !== null &&
+      hostedDeviceId(parseHostedPlatformDevice(outcome.value.device, record.platform)!) === hostedDeviceId(device);
     this.change(record.id, (current) => {
       current.state = stopped ? 'stopped' : 'unknown';
       if (stopped) delete current.notice;
@@ -640,7 +653,17 @@ export class DeviceHost {
       try {
         setClaimChild(owned.claim, identity);
         child.stdin?.end(
-          JSON.stringify({ mode, deviceType: record.deviceType, runtime: record.runtime, session: record.id, attempt }),
+          JSON.stringify({
+            mode,
+            platform: record.platform,
+            deviceType: record.deviceType,
+            runtime: record.runtime,
+            systemImage: record.systemImage,
+            deviceProfile: record.deviceProfile,
+            consolePort: record.consolePort,
+            session: record.id,
+            attempt,
+          }),
         );
       } catch (error) {
         notice = (error as Error).message;
@@ -657,6 +680,34 @@ function sameRequest(a: HostedDeviceRequest, b: HostedDeviceRequest): boolean {
     a.slot === b.slot &&
     a.platform === b.platform &&
     a.deviceType === b.deviceType &&
-    a.runtime === b.runtime
+    a.runtime === b.runtime &&
+    a.systemImage === b.systemImage &&
+    a.deviceProfile === b.deviceProfile
   );
+}
+
+function reserveAndroidPort(records: HostedDeviceSession[]): number {
+  const ports = new Set(
+    records
+      .filter((record) => record.platform === 'android' && record.state !== 'stopped')
+      .map((record) => record.consolePort),
+  );
+  for (const project of Object.values(loadConfig()?.projects ?? {})) {
+    for (const platforms of [project.platforms, ...Object.values(project.deviceSlots ?? {})]) {
+      if (typeof platforms?.android?.consolePort === 'number') ports.add(platforms.android.consolePort);
+    }
+  }
+  for (let port = 5554; port <= 5584; port += 2) if (!ports.has(port)) return port;
+  throw new Error('All supported hosted Android console ports are reserved. Attach or stop an existing session.');
+}
+
+function assertSessionDevice(record: HostedDeviceSession, device: NonNullable<HostedDeviceSession['device']>): void {
+  if (
+    record.platform === 'android' &&
+    (!('avdName' in device) ||
+      device.consolePort !== record.consolePort ||
+      device.avdName !== `stim-hosted-${record.id}`)
+  ) {
+    throw new Error('The Android worker device does not match its reserved session and console port.');
+  }
 }
