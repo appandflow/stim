@@ -180,10 +180,10 @@ tokens.
 
 Device hosting has a separate `device-host` capability. An approved client can
 reserve, boot, reconnect to and stop its own iOS simulator or Android emulator
-through the protocol. It can deliver a compatible iOS app bundle and install and
-launch it.
+through the protocol. It can deliver a compatible iOS app bundle or Android APK
+and install and launch it.
 Metro and screen/control relays, automatic placement and
-Android app delivery/viewing remain tracked in [#2266](https://github.com/appandflow/stim/issues/2266).
+Android viewing remain tracked in [#2266](https://github.com/appandflow/stim/issues/2266).
 
 A client on the tailnet sends `hello` with
 `auth: { "request": "device-host", "deviceName": "Laptop" }`. As with a build
@@ -196,7 +196,7 @@ separate limit. The same name validation and failed-attempt limit apply.
 On the hosting Mac, inspect `stim-server devices`, then approve the matching
 request with `stim-server devices grant <id> --device-host`, or use **Allow**
 in Stim Desktop. Approve only an expected request: it authorizes that Mac to
-reserve session-owned simulators or emulators and run native iOS app code. **Deny**
+reserve session-owned simulators or emulators and run native app code. **Deny**
 or `stim-server devices revoke <id>` removes it; revocation also closes its
 open authenticated connections. The local-process trust boundary described in
 [Build access](#build-access) applies here too.
@@ -295,9 +295,8 @@ its exact AVD name and running ABI before reporting ready. Creation remains
 inside the worker's claimed process group. The worker opens no emulator viewer.
 Stop and revocation use centralized teardown only for its private ledger's exact
 AVD. They shut down and retain its AVD data and record; unknown native outcomes
-retain the reservation and require explicit reconciliation. Android app delivery
-and screen/input routing remain follow-ups in #2266. Android sessions refuse the
-iOS app-delivery routes.
+retain the reservation and require explicit reconciliation. Android screen/input
+routing and Metro remain follow-ups in #2266.
 
 ### Hosted iOS app delivery
 
@@ -342,7 +341,28 @@ artifact retention and session reuse/retirement remain under
 [#2266](https://github.com/appandflow/stim/issues/2266) and
 [#2348](https://github.com/appandflow/stim/issues/2348).
 This is a protocol API for approved clients; automatic CLI placement, Metro,
-view/control and Android remain in [#2266](https://github.com/appandflow/stim/issues/2266).
+view/control remain in [#2266](https://github.com/appandflow/stim/issues/2266).
+
+### Hosted Android app delivery
+
+Android sessions use the same app offer/chunk/launch/attach methods, with
+`bundleId` naming the expected Android package. Their manifest has exactly one
+`file` entry named `App.apk`, with the APK's byte size and SHA-256. Upload the
+manifest first, then the APK through the same resumable 32 KiB chunks.
+
+The worker verifies both digests, inspects the APK's package identity, minimum
+SDK and native library ABIs with installed Android build-tools, and rechecks the
+private ledger, exact running AVD and ABI before installation and launch. It
+resolves adb from that SDK even when the worker PATH does not include it. A
+signature or installation conflict refuses; hosting does not uninstall an
+existing app to resolve it.
+
+Release launch reports `true` only after observing a live package process.
+Development launch remains `unverified`; this driver launches the activity but
+does not wire an Android Metro bridge. Replaying an installed app attempt does
+not install or launch again. Owner loss, stop, revocation and uncertain outcomes
+retain the same reconciliation rules as iOS. Android viewing, Metro and client
+placement remain under [#2266](https://github.com/appandflow/stim/issues/2266).
 
 ## Run as a service
 

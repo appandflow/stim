@@ -48,7 +48,7 @@ export function parseHostedAppOffer(value: unknown): HostedAppOffer | null {
     !/^[a-f0-9-]{36}$/.test(value.session) ||
     !hostedAppAttempt(value.attempt) ||
     typeof value.bundleId !== 'string' ||
-    !/^[a-zA-Z0-9][a-zA-Z0-9.-]{0,254}$/.test(value.bundleId) ||
+    !/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,254}$/.test(value.bundleId) ||
     (value.mode !== 'development' && value.mode !== 'release') ||
     !isJsonObject(value.manifest) ||
     typeof value.manifest.sha256 !== 'string' ||
@@ -107,7 +107,11 @@ export function parseHostedAppManifest(value: unknown): HostedAppFile[] | null {
       ancestor = posix.dirname(ancestor);
     }
   }
-  if (!files.some((file) => file.path === 'Info.plist' && file.kind === 'file')) return null;
+  if (
+    !files.some((file) => file.path === 'Info.plist' && file.kind === 'file') &&
+    !(files.length === 1 && files[0]?.path === 'App.apk' && files[0].kind === 'file')
+  )
+    return null;
   files.sort((a, b) => a.path.localeCompare(b.path));
   return files;
 }
