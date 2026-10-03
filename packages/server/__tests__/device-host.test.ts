@@ -1,5 +1,7 @@
 import { mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync, renameSync } from 'node:fs';
 import { createHash } from 'node:crypto';
+import { execFile } from 'node:child_process';
+import { pathToFileURL } from 'node:url';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { deviceHostArea, deviceHostRoot, readHostedSessions } from '@stim-cli/core/state';
@@ -262,6 +264,64 @@ async function uploadManifest(app: ReturnType<typeof appOffer>) {
   });
   expect(result).toHaveProperty('result.offset', app.manifest.length);
 }
+
+test('refuses app mutations after the real session owner disappears until explicit stop reconciles it', async () => {
+  const module = pathToFileURL(join(import.meta.dirname, '..', 'src', 'device-host.ts')).href;
+  const source = `
+    import {DeviceHost} from ${JSON.stringify(module)};
+    import {createHash} from 'node:crypto';
+    const host=new DeviceHost({worker:${JSON.stringify(join(home, 'worker.mjs'))},env:process.env,allowed:()=>true});
+    const reserved=host.reserve('client',${JSON.stringify(request)});
+    if('error' in reserved) throw new Error(reserved.error.message);
+    const session=reserved.result.id;
+    while(host.attach('client',{session}).result?.state!=='ready') await new Promise(resolve=>setTimeout(resolve,10));
+    const content=Buffer.from('retained app bytes');
+    const hash=bytes=>createHash('sha256').update(bytes).digest('hex');
+    const manifest=Buffer.from(JSON.stringify([{path:'Info.plist',kind:'file',size:content.length,sha256:hash(content)}]));
+    const app={session,attempt:'retained-app',bundleId:'dev.stim.fixture',mode:'release',manifest:{size:manifest.length,sha256:hash(manifest)}};
+    for(const result of [host.appOffer('client',app),
+      await host.appChunk('client',{...app,sha256:hash(manifest),offset:0,data:manifest.toString('base64')}),
+      await host.appChunk('client',{...app,sha256:hash(content),offset:0,data:content.toString('base64')})])
+      if('error' in result) throw new Error(result.error.message);
+    process.stdout.write(JSON.stringify({session,app,sha256:hash(content),data:content.toString('base64')}));
+    process.exit(0);
+  `;
+  const output = await new Promise<string>((resolve, reject) => {
+    execFile(
+      process.execPath,
+      ['--experimental-strip-types', '--input-type=module', '-e', source],
+      { env: process.env, timeout: 5000 },
+      (error, stdout) => (error ? reject(error) : resolve(stdout)),
+    );
+  });
+  const retained = JSON.parse(output) as {
+    session: string;
+    app: ReturnType<typeof appOffer>['params'];
+    sha256: string;
+    data: string;
+  };
+  expect(readClaimSet(join(deviceHostRoot(), `${retained.session}.claims`)).live).toEqual([]);
+  expect(host.attach('client', { session: retained.session })).toHaveProperty('result.state', 'unknown');
+  expect(host.appOffer('client', retained.app)).toHaveProperty(
+    'error.message',
+    expect.stringContaining('Explicit stop'),
+  );
+  expect(host.appOffer('client', { ...retained.app, attempt: 'replacement' })).toHaveProperty(
+    'error.message',
+    expect.stringContaining('Explicit stop'),
+  );
+  expect(
+    await host.appChunk('client', { ...retained.app, sha256: retained.sha256, offset: 0, data: retained.data }),
+  ).toHaveProperty('error.message', expect.stringContaining('Explicit stop'));
+  expect(host.appLaunch('client', retained.app)).toHaveProperty(
+    'error.message',
+    expect.stringContaining('Explicit stop'),
+  );
+  expect(readHostedSessions()[0]?.appAttempt).toBe('retained-app');
+  expect(existsSync(join(deviceHostArea(retained.session), 'home', 'installed'))).toBe(false);
+  expect(host.stop('client', { session: retained.session })).toHaveProperty('result.state', 'stopping');
+  await state(retained.session, 'stopped');
+});
 
 test('resumes verified app bytes and reconciles a lost install reply without another native launch', async () => {
   const first = reserve();

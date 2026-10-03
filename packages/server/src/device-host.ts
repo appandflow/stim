@@ -235,7 +235,10 @@ export class DeviceHost {
       );
     try {
       const record = this.appSession(client, offer);
-      if (record.state !== 'ready' || this.closed) throw new Error('Only a ready hosted session accepts an app.');
+      if (record.state !== 'ready' || this.closed || !this.owned.has(record.id))
+        throw new Error(
+          'Only a ready session attached to this server accepts an app. Explicit stop must reconcile a lost owner.',
+        );
       const owned = this.acquire(record);
       if (owned.stopping || (owned.installing && owned.installing.attempt !== offer.attempt))
         throw new Error('This hosted session already has a native operation in progress.');
@@ -259,7 +262,10 @@ export class DeviceHost {
     if (!this.options.allowed(client)) return refused('forbidden', 'Current device-host approval is required.');
     try {
       const record = this.appSession(client, params);
-      if (record.state !== 'ready' || this.closed) throw new Error('Only a ready hosted session receives an app.');
+      if (record.state !== 'ready' || this.closed || !this.owned.has(record.id))
+        throw new Error(
+          'Only a ready session attached to this server receives an app. Explicit stop must reconcile a lost owner.',
+        );
       const owned = this.acquire(record);
       if (owned.stopping) throw new Error('This hosted session is stopping.');
       const attempt = (params as { attempt: string }).attempt;
@@ -290,7 +296,10 @@ export class DeviceHost {
     if (!this.options.allowed(client)) return refused('forbidden', 'Current device-host approval is required.');
     try {
       const record = this.appSession(client, params);
-      if (record.state !== 'ready' || this.closed) throw new Error('Only a ready hosted session can install an app.');
+      if (record.state !== 'ready' || this.closed || !this.owned.has(record.id))
+        throw new Error(
+          'Only a ready session attached to this server can install an app. Explicit stop must reconcile a lost owner.',
+        );
       const owned = this.acquire(record);
       const app = readHostedApp(record.id, (params as { attempt: string }).attempt);
       if (app.state !== 'receiving') return this.appAttach(client, params);

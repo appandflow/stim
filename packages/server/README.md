@@ -259,6 +259,11 @@ protocol slice does not change `stim ios` placement.
 
 ### Hosted iOS app delivery
 
+App offers, chunks and launches require a ready session held by this server.
+After its owner disappears, session attach reports `unknown`; app operations
+refuse until explicit stop reconciles the retained session. A ready journal
+entry alone does not authorize another native operation.
+
 Send `device-host.app.offer` with the ready session, a new opaque app `attempt`,
 the expected `bundleId`, `mode: "development"|"release"`, and
 `manifest: {"sha256":"<digest>","size":<bytes>}`. The manifest is a UTF-8 JSON
