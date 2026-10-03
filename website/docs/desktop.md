@@ -43,6 +43,12 @@ performance traces. Every release is listed under
 - **Replay.** Scrub back through a device's recent screen, with agent actions
   and errors marked on the timeline. Needs **Serve to phones** in **Stim >
   Settings > Phones**.
+- **Simulator options.** While **Control** is on for a running local iOS
+  simulator, change appearance, text size, contrast, motion, transparency and
+  button borders in its options popover. Values come from the selected device;
+  **Refresh** reads changes made elsewhere. Unsupported options say
+  **Unavailable**. Requires Xcode's simulator appearance API; audio, location,
+  VoiceOver, color filters and Liquid Glass options are not included.
 - **Logs.** Separate Metro and App / native inspector sections open the same
   viewer with their source filters selected. Filters remain editable; repeated
   errors are grouped. **Build output > Readable** simplifies Xcode output; **Raw** restores

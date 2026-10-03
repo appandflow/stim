@@ -573,6 +573,17 @@ provider in each posture. Apps keep their supported orientations, and its home
 screen stays portrait. Hardware buttons, rotation and posture controls are
 available only while **Control** is on.
 
+**Simulator options** in that column reads the selected iOS simulator's
+appearance, text size and accessibility settings from Xcode. Change light/dark,
+text size, Larger accessibility sizes, Increase contrast, Reduce motion,
+Reduce transparency or Show button borders. Each change reads the device back;
+**Refresh** picks up changes made elsewhere. Unsupported fields read
+**Unavailable**. The panel is available only on a running local simulator while
+**Control** is on, outside replay; it closes when control is released. These are
+the simulator's settings, not Desktop preferences. This requires an Xcode whose
+`devicectl device info|settings appearance` supports that simulator. Audio,
+location, VoiceOver, color filters and Liquid Glass controls are not included.
+
 The iPhone Duo frame fits the display its posture lights, and touches go to
 that display. Until the active display is known, both displays appear side by
 side. **Folded**, **Half open** and **Unfolded** in the column move the simulated hinge to 0,
