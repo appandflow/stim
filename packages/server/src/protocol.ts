@@ -1188,10 +1188,13 @@ export function protocolJsonSchema(): JsonSchema {
           client: { type: 'string' },
           workspace: { type: 'string' },
           slot: { type: 'string' },
-          platform: { const: 'ios' },
+          platform: { enum: ['ios', 'android'] },
           attempt: { type: 'string' },
           deviceType: { type: 'string' },
           runtime: { type: 'string' },
+          systemImage: { type: 'string' },
+          deviceProfile: { type: 'string' },
+          consolePort: { type: 'integer', minimum: 5554, maximum: 5584, multipleOf: 2 },
           state: { enum: ['preparing', 'ready', 'stopping', 'stopped', 'unknown'] },
           device: {
             anyOf: [
@@ -1208,6 +1211,19 @@ export function protocolJsonSchema(): JsonSchema {
                   deviceType: { type: 'string' },
                   runtime: { type: 'string' },
                   architecture: { enum: ['arm64', 'x86_64'] },
+                },
+              },
+              {
+                type: 'object',
+                required: ['avdName', 'serial', 'consolePort', 'systemImage', 'deviceProfile', 'architecture'],
+                additionalProperties: false,
+                properties: {
+                  avdName: { type: 'string' },
+                  serial: { type: 'string' },
+                  consolePort: { type: 'integer', minimum: 5554, maximum: 5584, multipleOf: 2 },
+                  systemImage: { type: 'string' },
+                  deviceProfile: { type: 'string' },
+                  architecture: { enum: ['arm64-v8a', 'x86_64'] },
                 },
               },
             ],
@@ -1629,11 +1645,23 @@ export function protocolJsonSchema(): JsonSchema {
             properties: {
               workspace: { type: 'string', minLength: 1, maxLength: 4096 },
               slot: { type: 'string', pattern: '^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$' },
-              platform: { const: 'ios' },
+              platform: { enum: ['ios', 'android'] },
               attempt: { type: 'string', pattern: '^[a-zA-Z0-9_-]{1,128}$' },
               deviceType: { type: 'string', minLength: 1, maxLength: 256 },
               runtime: { type: 'string', minLength: 1, maxLength: 256 },
+              systemImage: { type: 'string', minLength: 1, maxLength: 256 },
+              deviceProfile: { type: 'string', minLength: 1, maxLength: 256 },
             },
+            oneOf: [
+              {
+                properties: { platform: { const: 'ios' } },
+                not: { anyOf: [{ required: ['systemImage'] }, { required: ['deviceProfile'] }] },
+              },
+              {
+                properties: { platform: { const: 'android' } },
+                not: { anyOf: [{ required: ['deviceType'] }, { required: ['runtime'] }] },
+              },
+            ],
           }),
           request('device-host.attach', {
             oneOf: [

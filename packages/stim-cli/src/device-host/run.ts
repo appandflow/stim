@@ -1,5 +1,6 @@
 import { hostedAppAttempt, isJsonObject } from '@stim-cli/core/state';
 import { runHostedDevice } from './worker.ts';
+import { runHostedAndroidDevice } from './android.ts';
 
 async function main(): Promise<void> {
   const chunks: Buffer[] = [];
@@ -14,7 +15,7 @@ async function main(): Promise<void> {
     throw new Error('Invalid hosted worker request.');
   if (process.platform !== 'darwin') {
     process.stdout.write(
-      `${JSON.stringify({ state: input.mode === 'prepare' ? 'stopped' : 'unknown', device: null, notice: 'Hosted iOS sessions require a Mac.' })}\n`,
+      `${JSON.stringify({ state: input.mode === 'prepare' ? 'stopped' : 'unknown', device: null, notice: 'Hosted device sessions require a Mac.' })}\n`,
     );
     return;
   }
@@ -23,14 +24,22 @@ async function main(): Promise<void> {
     (typeof input.session !== 'string' || !/^[a-f0-9-]{36}$/.test(input.session) || !hostedAppAttempt(input.attempt))
   )
     throw new Error('Invalid hosted app request.');
-  const result = await runHostedDevice(
-    input.mode as 'prepare' | 'stop' | 'install',
-    {
-      ...(typeof input.deviceType === 'string' ? { deviceType: input.deviceType } : {}),
-      ...(typeof input.runtime === 'string' ? { runtime: input.runtime } : {}),
-    },
-    input.mode === 'install' ? { session: input.session as string, attempt: input.attempt as string } : undefined,
-  );
+  const result =
+    input.platform === 'android'
+      ? await runHostedAndroidDevice(input.mode as 'prepare' | 'stop' | 'install', {
+          session: typeof input.session === 'string' ? input.session : '',
+          consolePort: input.consolePort,
+          ...(typeof input.systemImage === 'string' ? { systemImage: input.systemImage } : {}),
+          ...(typeof input.deviceProfile === 'string' ? { deviceProfile: input.deviceProfile } : {}),
+        })
+      : await runHostedDevice(
+          input.mode as 'prepare' | 'stop' | 'install',
+          {
+            ...(typeof input.deviceType === 'string' ? { deviceType: input.deviceType } : {}),
+            ...(typeof input.runtime === 'string' ? { runtime: input.runtime } : {}),
+          },
+          input.mode === 'install' ? { session: input.session as string, attempt: input.attempt as string } : undefined,
+        );
   process.stdout.write(`${JSON.stringify(result)}\n`);
 }
 main().catch((error: unknown) => {

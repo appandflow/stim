@@ -124,6 +124,9 @@ importers:
       '@types/node':
         specifier: 26.3.0
         version: 26.3.0
+      ajv:
+        specifier: 8.20.0
+        version: 8.20.0
       knip:
         specifier: ^6.32.2
         version: 6.32.2

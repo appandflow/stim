@@ -567,12 +567,22 @@ explicit stop and approval revocation touch only that session's owned simulator.
 Hosted reservations are atomic with each other; ordinary local device producers
 do not participate, so this is not a machine-wide hard capacity guarantee.
 
+The worker also accepts an Android reservation with optional installed
+`systemImage` and `deviceProfile` selectors. It gives that opaque session a
+unique owned AVD and a journal-reserved console port, verifies the exact running
+AVD and ABI, and reconnects to that same record. Explicit stop and revocation
+shut down only that ledger-owned AVD and retain its data. Ports are coordinated
+among hosted sessions; ordinary local producers can still race a reservation.
+Android app delivery and screen/input routing remain follow-ups in #2266; Android
+sessions refuse the iOS app-delivery routes. The protocol details are in the
+[hosted Android session protocol](https://github.com/appandflow/stim/blob/main/packages/server/README.md#hosted-android-session-protocol).
+
 Development launches remain `unverified` until a Metro bridge proves a bundle
 request. Release launches report success only after positive native process
 evidence; absent evidence remains `unverified`.
 
 Metro and screen/control relays, automatic placement and
-Android hosting remain in [#2266](https://github.com/appandflow/stim/issues/2266).
+Android app delivery/viewing remain in [#2266](https://github.com/appandflow/stim/issues/2266).
 This protocol slice does not change where `stim ios` or `stim android` runs.
 Hosting approval grants no access to unrelated
 workspaces, phone control or build offloading.
