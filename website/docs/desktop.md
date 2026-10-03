@@ -43,10 +43,13 @@ performance traces. Every release is listed under
 - **Replay.** Scrub back through a device's recent screen, with agent actions
   and errors marked on the timeline. Needs **Serve to phones** in **Stim >
   Settings > Phones**.
-- **Logs.** Metro, app and device logs in one place, with repeated errors
-  grouped.
-- **Builds.** Progress, the reason for a cache miss, and a prediction of the
-  next build. Run iOS or Android from a menu.
+- **Logs.** Separate Metro and App / native inspector sections open the same
+  viewer with their source filters selected. Filters remain editable; repeated
+  errors are grouped.
+- **Builds.** Structured progress, a resolved Hit/Miss badge beside an actual Cache lookup,
+  the reason for a miss, and a prediction of the next build. **Build logs** opens
+  all retained raw output for that run, filtered by platform, slot and timestamps.
+  Clear the Build run chip to return to generic logs. Run iOS or Android from a menu.
 - **Machines.** Select **This Mac** for local disk, memory and cleanup, or a
   configured build machine for its readiness, capacity and build history.
   Click the toolbar's CPU, memory or disk figure for details; **Open Machines**

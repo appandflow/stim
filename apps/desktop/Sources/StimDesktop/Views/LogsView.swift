@@ -14,12 +14,14 @@ struct LogsView: View {
 
   private var slots: [String] {
     var seen = Set<String>()
-    return env.devices.map(\.slot).filter { seen.insert($0).inserted }
+    return (env.devices.map(\.slot) + [query.slot].compactMap { $0 }).filter { seen.insert($0).inserted }
   }
 
   private var effectiveQuery: LogQuery {
     var query = query
-    if let slot = query.slot, !slots.contains(slot) { query.slot = nil }
+    if let run = query.buildRun {
+      query.buildRun = run.bounded(history: env.builds?.builds(for: run.platform) ?? [], active: env.build)
+    }
     return query
   }
 
@@ -87,6 +89,18 @@ struct LogsView: View {
         .buttonStyle(.hoverRow())
         .accessibilityAddTraits(on ? .isSelected : [])
         .help(Self.help(source))
+      }
+      if query.buildRun != nil {
+        Button {
+          query.buildRun = nil
+        } label: {
+          ToggleChip(on: true, tone: .brand) {
+            Text("Build run")
+            Image(systemName: "xmark")
+          }
+        }
+        .buttonStyle(.hoverRow())
+        .help("Clear the build time and platform filter")
       }
       Rectangle().fill(Palette.border).frame(width: 1, height: 18)
       if !slots.isEmpty {
@@ -161,7 +175,8 @@ struct LogsView: View {
       }
       Text(
         countLabel(model.count, "record")
-          + (model.count >= LogsModel.limit * 9 / 10 ? " (oldest dropped past \(LogsModel.limit.formatted()))" : "")
+          + (effectiveQuery.buildRun == nil && model.count >= LogsModel.limit * 9 / 10
+            ? " (oldest dropped past \(LogsModel.limit.formatted()))" : "")
       )
       .foregroundStyle(Palette.tertiary)
       Spacer()

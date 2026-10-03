@@ -125,8 +125,11 @@ It holds the workspace's details, in this order:
 - **Build**: one card per platform. While a build runs, its card shows the
   phase or the build tool's step with its counts ("Compiling 45 of 180
   targets"), the elapsed time over the estimate, a bar with a segment per
-  phase sized by the reference run, the phase checklist, why the cache missed
-  and the last lines of build output (`stim logs --source build`). Otherwise
+  phase sized by the reference run, the phase checklist, and why the cache missed.
+  A resolved Hit/Miss badge sits beside Cache lookup when the CLI reports an actual lookup result.
+  Runs that skip lookup and older CLI versions do not show that badge. **Build logs** opens the
+  full retained raw output for the running or most recent build in the existing
+  viewer, filtered by platform, slot and run timestamps. Otherwise
   it separates **Last build**, with its compiler errors, from **Next build**,
   predicted by `stim <platform> --plan --json`. **Check** refreshes the next
   plan; **Run** starts the app. **Cache miss details** opens the full reason
@@ -139,9 +142,11 @@ It holds the workspace's details, in this order:
   `machine` section, or the app's own process sample when that section has
   none for the workspace; disk is the worktree plus Stim's build folder from
   `disk`.
-- **Metro & logs**: Metro's port with a health dot, the error count since the
-  last marker, the bundle line from `metro.bundle` ("Bundling · 62%",
-  "Bundled in 1.8s · 12s ago", "Bundle failed") and **Show logs**.
+- **Metro**: Metro's port with a health dot, the bundle line from `metro.bundle`
+  ("Bundling · 62%", "Bundled in 1.8s · 12s ago", "Bundle failed") and
+  **Show logs**, preselected to Metro output.
+- **App / native logs**: **Show logs** opens app runtime and device output.
+  All log shortcuts use the same viewer; its filters remain editable.
 - **Agents**: the coding-agent sessions associated with the workspace, from
   `agents` and `endedAgents`, earliest started first and without times, so the
   list stays put as processes start and stop.
@@ -260,12 +265,12 @@ which prints a payload each time the state changes, and the toolbar shows
 doubles from 1 to 30 seconds. A `stim` without `--watch` makes the app run
 `stim status --json` every 10 seconds instead.
 
-A running build's progress bar carries its cache outcome: "Cache hit" or "Cold
-build" once the run has reached install or prebuild, pods or compile, and
-"Likely cache hit" or "Likely cold" before that and while it waits for its
-device, when `stim status` may report the outcome of the project's previous
-run. Its tooltip names how many runs the time
-estimate comes from. The workspace inspector's **Build** section shows each
+A running build's progress bar carries its resolved cache outcome: "Cache hit"
+or "Cold build" / "Cache miss". Historical outcome estimates do not appear as
+results. The inspector shows a Hit/Miss badge beside Cache lookup and its
+current miss reason, including the recheck after prebuild or pods when needed.
+The progress tooltip names how many runs the time estimate comes from. The
+workspace inspector's **Build** section shows each
 platform's last build from `lastBuilds` (local cache, remote cache, compiled,
 or failed, with its duration and age). A compiled build shows why it missed
 the cache from `missReason`; clicking it opens a popover with the changed
@@ -503,7 +508,14 @@ out. The Agent source needs a `stim` that has it; an older one refuses
 Changing a filter or the workspace restarts the command; hiding the logs or
 quitting the app terminates it.
 
-The list keeps the newest 50,000 records and drops the oldest past that. It
+The generic list keeps the newest 50,000 records and drops the oldest past that.
+**Build logs** omits the tail limit and keeps all retained records of the selected
+run, including raw compiler commands. Its **Build run** chip clears the run's
+platform/time scope; the generic tail and viewer cap then apply again. An older
+CLI's records without slot or platform tags stay visible; concurrent legacy runs
+can overlap because those tags cannot identify them. A known finish closes the
+run; an interrupted run stops before the next recorded run in its own slot.
+Without either boundary its time scope remains open. It
 follows new records until you scroll up, and **Jump to latest** resumes. Each
 row shows a record's first line; select one to read its whole message and
 stack. Command-C or **Copy** copies the selected records, or every loaded

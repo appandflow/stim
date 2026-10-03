@@ -760,7 +760,11 @@ test('the facts topic lists every field of a running build', () => {
       startedAt: at,
       phase: 'compile',
       phaseStartedAt: at,
-      phases: [{ phase: 'compile', startedAt: at }],
+      phases: [
+        { phase: 'cache-lookup', startedAt: at },
+        { phase: 'compile', startedAt: at },
+      ],
+      outcome: 'cold',
       claim: { root: '/r', path: '', claimId: 'c', pid: 1 },
     },
     { state: 'running', history: undefined },

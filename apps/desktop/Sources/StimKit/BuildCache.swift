@@ -249,11 +249,10 @@ extension Build {
   public var outcomeLabel: String? {
     guard let outcome else { return nil }
     let settled = outcomeKnown ?? !["prepare", "cache-lookup", "wait", "device"].contains(phase)
-    switch (outcome, settled) {
-    case ("hit", true): return "Cache hit"
-    case ("hit", false): return "Likely cache hit"
-    case ("cold", true): return missReason == nil ? "Cold build" : "Cache miss"
-    case ("cold", false): return "Likely cold"
+    guard settled else { return nil }
+    switch outcome {
+    case "hit": return "Cache hit"
+    case "cold": return missReason == nil ? "Cold build" : "Cache miss"
     default: return nil
     }
   }

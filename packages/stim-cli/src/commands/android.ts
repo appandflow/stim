@@ -711,7 +711,10 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
   }
   const logsDir = workspaceLogsDir(root);
   const buildLog = join(logsDir, `build-${deviceSlotFileKey('android', slot)}.ndjson`);
-  const writer = tapBuildLog(createWriter(buildLog, { truncate: true, fields: { slot } }), progress);
+  const writer = tapBuildLog(
+    createWriter(buildLog, { truncate: true, fields: { platform: PLATFORM, slot } }),
+    progress,
+  );
 
   const record: AndroidRecord = {
     fingerprint: null,
