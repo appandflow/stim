@@ -50,7 +50,7 @@ export async function installHostedAndroidApp(
     killSignal: 'SIGKILL',
   });
   const identity = /^package:\s+name='([^']+)'/m.exec(badging)?.[1];
-  const minimum = /^sdkVersion:'(\d+)'\s*$/m.exec(badging)?.[1];
+  const minimum = /^(?:sdkVersion|minSdkVersion):'(\d+)'\s*$/m.exec(badging)?.[1];
   const api = /^system-images;android-(\d+);/.exec(device.systemImage)?.[1];
   if (identity !== record.bundleId || !minimum || !api || Number(minimum) > Number(api))
     throw new Error('The APK package identity or minimum SDK is incompatible with the hosted emulator.');

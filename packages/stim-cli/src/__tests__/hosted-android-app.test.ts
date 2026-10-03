@@ -10,12 +10,10 @@ const native = vi.hoisted(() => ({
   runQuiet: vi.fn<(command: string) => string>(),
 }));
 vi.mock('../exec.ts', () => ({ getExecutor: () => native }));
-vi.mock('../commands/android/support.ts', () => ({
-  findAapt: () => ({ path: '/fixture/aapt', tool: 'aapt', version: '36' }),
-}));
 let root: string;
 let home: string;
 let area: string;
+let aapt: string;
 let launched: boolean;
 let badging: string;
 let running: string;
@@ -42,6 +40,10 @@ beforeEach(() => {
   const sdk = join(root, 'sdk');
   mkdirSync(join(sdk, 'platform-tools'), { recursive: true });
   writeFileSync(join(sdk, 'platform-tools', sdkAdbName), 'fixture');
+  const tools = join(sdk, 'build-tools', '36.0.0');
+  mkdirSync(tools, { recursive: true });
+  aapt = join(tools, process.platform === 'win32' ? 'aapt.exe' : 'aapt');
+  writeFileSync(aapt, 'fixture');
   vi.stubEnv('ANDROID_HOME', sdk);
   writeFileSync(join(home, 'hosted-device.json'), JSON.stringify(device));
   writeFileSync(
@@ -55,7 +57,7 @@ beforeEach(() => {
   native.runQuiet.mockReset();
   native.runQuiet.mockImplementation((command) => (command.includes('emu avd name') ? running + '\nOK' : 'arm64-v8a'));
   native.runFile.mockImplementation((file, args = []) => {
-    if (file === '/fixture/aapt') return badging;
+    if (file === aapt) return badging;
     if (args.includes('getprop')) return 'arm64-v8a';
     if (args.includes('resolve-activity')) return packageName + '/.MainActivity';
     if (args.includes('start')) launched = true;
@@ -93,16 +95,25 @@ function receipt(mode = 'release') {
 const effects = () =>
   native.runFile.mock.calls.filter(([, args]) => args?.includes('install') || args?.includes('start'));
 
-test('verifies bytes and package metadata, drives the exact AVD and proves a release process', async () => {
-  receipt();
-  expect(await installHostedAndroidApp(home, session, 'app', device)).toBe(true);
-  expect(readFileSync(join(area, 'App.apk'), 'utf8')).toBe('verified APK fixture');
-  expect(effects().map(([, args]) => args?.slice(0, 2))).toEqual([
-    ['-s', device.serial],
-    ['-s', device.serial],
-  ]);
-  expect(effects().map(([file]) => file)).toEqual(Array(2).fill(join(root, 'sdk', 'platform-tools', sdkAdbName)));
-});
+test.each(['aapt', 'aapt2'])(
+  'verifies %s metadata, drives the exact AVD and proves a release process',
+  async (tool) => {
+    if (tool === 'aapt2') {
+      rmSync(aapt);
+      aapt = join(root, 'sdk', 'build-tools', '36.0.0', process.platform === 'win32' ? 'aapt2.exe' : 'aapt2');
+      writeFileSync(aapt, 'fixture');
+      badging = badging.replace('sdkVersion', 'minSdkVersion');
+    }
+    receipt();
+    expect(await installHostedAndroidApp(home, session, 'app', device)).toBe(true);
+    expect(readFileSync(join(area, 'App.apk'), 'utf8')).toBe('verified APK fixture');
+    expect(effects().map(([, args]) => args?.slice(0, 2))).toEqual([
+      ['-s', device.serial],
+      ['-s', device.serial],
+    ]);
+    expect(effects().map(([file]) => file)).toEqual(Array(2).fill(join(root, 'sdk', 'platform-tools', sdkAdbName)));
+  },
+);
 
 test('development launch remains unverified despite a live native process', async () => {
   receipt('development');
@@ -132,7 +143,7 @@ test('a reused serial refuses effects before install and rechecks before launch'
   expect(effects()).toEqual([]);
   running = device.avdName;
   native.runFile.mockImplementation((file, args = []) => {
-    if (file === '/fixture/aapt') return badging;
+    if (file === aapt) return badging;
     if (args.includes('getprop')) return 'arm64-v8a';
     if (args.includes('install')) running = 'foreign';
     return '';
