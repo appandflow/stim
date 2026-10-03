@@ -4,6 +4,13 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { compiledHelper } from '@stim-cli/core';
+import {
+  clearClaimChild,
+  markClaimChildPending,
+  setClaimChild,
+  type ClaimHandle,
+} from '@stim-cli/core/ownership-claim';
+import { captureProcessIdentity } from '@stim-cli/core/process-identity';
 import type { Device, Frame, FrameListener, Posture } from './frames.ts';
 import { FRAME_EDGE, FRAME_FPS } from './protocol.ts';
 import { serverDir } from './registry.ts';
@@ -195,6 +202,7 @@ export class HelperSource {
   private posture: Posture | undefined;
   private readonly lingerMs: number;
   private lingerTimer: NodeJS.Timeout | null = null;
+  private readonly claim: ClaimHandle | undefined;
 
   constructor(
     helper: string,
@@ -203,10 +211,13 @@ export class HelperSource {
     ended: (stopped: Promise<void>) => void,
     lingerMs: number,
     lit?: (display: number) => Posture | undefined,
+    claim?: ClaimHandle,
   ) {
     this.ended = ended;
     this.lingerMs = lingerMs;
     this.lit = lit;
+    this.claim = claim;
+    if (claim) markClaimChildPending(claim);
     this.child = spawn(helper, helperArgs(device, env), { env, stdio: ['pipe', 'pipe', 'pipe'] });
     this.child.stdin!.on('error', () => {});
     this.child.stderr!.setEncoding('utf8');
@@ -219,10 +230,23 @@ export class HelperSource {
       const detail = this.notice ?? this.stderr.trim();
       this.fail(`stim-frames exited (${signal ?? `code ${code}`})${detail ? `: ${detail}` : ''}`);
     });
+    if (claim) {
+      try {
+        const identity = this.child.pid ? captureProcessIdentity(this.child.pid) : null;
+        if (!identity?.ok) throw new Error('Hosted capture child identity could not be established.');
+        setClaimChild(claim, { pid: this.child.pid!, processToken: identity.token });
+      } catch (error) {
+        queueMicrotask(() => this.fail((error as Error).message));
+      }
+    }
   }
 
   /** A null `hint` keeps the helper running for input without asking for frames. */
   add(listener: FrameListener, hint: FrameHint | null): () => void {
+    if (this.stopped) {
+      queueMicrotask(() => listener.failed('The capture helper is stopping; reconnect and retry.'));
+      return () => {};
+    }
     if (this.lingerTimer) clearTimeout(this.lingerTimer);
     this.lingerTimer = null;
     this.listeners.set(listener, hint);
@@ -237,6 +261,10 @@ export class HelperSource {
     };
   }
 
+  get active(): boolean {
+    return !this.stopped;
+  }
+
   stop(): Promise<void> {
     if (this.stopped) return Promise.resolve();
     this.stopped = true;
@@ -244,7 +272,9 @@ export class HelperSource {
     if (this.lingerTimer) clearTimeout(this.lingerTimer);
     this.listeners.clear();
     this.child.stdin!.end();
-    const stopped = terminate(this.child);
+    const stopped = terminate(this.child).then(() => {
+      return this.claim ? clearClaimChild(this.claim) : undefined;
+    });
     this.ended(stopped);
     return stopped;
   }

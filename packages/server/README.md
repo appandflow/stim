@@ -180,9 +180,9 @@ tokens.
 
 Device hosting has a separate `device-host` capability. An approved client can
 reserve, boot, reconnect to and stop its own iOS simulator through the protocol.
-It can deliver a compatible app bundle to that simulator and install and launch it.
-Metro and screen/control relays, automatic placement and
-Android hosting remain tracked in [#2266](https://github.com/appandflow/stim/issues/2266).
+It can deliver, install and launch a compatible app bundle, stream the simulator
+and control it. The hosted app connects back to Metro on the client Mac.
+Automatic CLI placement, client view/control relays and Android hosting remain in [#2266](https://github.com/appandflow/stim/issues/2266).
 
 A client on the tailnet sends `hello` with
 `auth: { "request": "device-host", "deviceName": "Laptop" }`. As with a build
@@ -336,8 +336,53 @@ placement still needs to check that contract before selecting hosted Metro.
 Bare React Native uses the worker `RCT_jsLocation`. Bridge readiness and
 manifest requests are not launch proof; development remains `unverified` until
 the workspace observes the app's own bundle delivery.
-This is a protocol API for approved clients; automatic CLI placement, Metro,
-view/control and Android remain in [#2266](https://github.com/appandflow/stim/issues/2266).
+This is a protocol API for approved clients; automatic CLI placement,
+client view/control relays and Android remain in [#2266](https://github.com/appandflow/stim/issues/2266).
+
+### Hosted iOS view and input
+
+An approved hosting client can subscribe to its ready session's exact owned
+simulator without access to the worker's registered workspaces:
+
+```json
+{
+  "id": 8,
+  "method": "device-host.frames.subscribe",
+  "params": { "session": "<hosted-session-id>", "fps": 5, "maxEdge": 1280 }
+}
+```
+
+The result contains a subscription ID. JPEG delivery uses the existing `frame`
+events; `video: ["h264"]` selects the existing H.264 binary stream and its
+backpressure/keyframe rules. `device-host.frames.keyframe` and
+`device-host.unsubscribe` take that subscription ID as `params.subscription`.
+Hosted capture requires the compiled `stim-frames` helper and does not support
+replay or screenshot fallback.
+
+Start control with `device-host.control.begin` and
+`{"session":"<hosted-session-id>"}`. Its result returns a connection-bound
+control session ID and `lease: null`: the hosted lifetime claim protects this
+private device. Only one controller can drive the device; `takeOver: true`
+replaces the previous controller. Use the returned control ID with
+`device-host.input.touch|text|button|rotate|posture`, using the same parameters
+as ordinary input. Touch coordinates range from 0 to 1 on the streamed display.
+End it with `device-host.control.end` and `{"session":"<control-id>"}`.
+
+The worker derives the workspace, slot and UDID from its owned session; callers
+cannot select arbitrary worker devices. Every begin and input rechecks session
+ownership and current approval. Hosting approval grants neither ordinary
+`frames.subscribe` nor ordinary `control.begin` access. Disconnecting releases
+that connection's capture and input; reconnect to the same hosted session and
+subscribe again.
+
+Installation, stop, revocation and server close end capture and input before
+native work reuses the session claim. In-flight native input settles before
+teardown even after disconnect or takeover; a timeout waits for its child to
+terminate. Known capture closes even if the journal
+is unreadable or unwritable; unresolved native state and claims remain retained.
+An unknown or lost owner requires explicit stop before replacement. This worker
+protocol does not add CLI placement or a local viewer relay; those remain in
+[#2266](https://github.com/appandflow/stim/issues/2266).
 
 ## Run as a service
 

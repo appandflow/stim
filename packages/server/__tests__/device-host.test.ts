@@ -11,6 +11,11 @@ import { tmpdir } from 'node:os';
 import { deviceHostArea, deviceHostRoot, readHostedSessions } from '@stim-cli/core/state';
 import { processGroupAlive, readClaimSet } from '@stim-cli/core/ownership-claim';
 import { DeviceHost } from '../src/device-host.ts';
+import { HostedViews } from '../src/hosted-view.ts';
+import { ControlHub } from '../src/control.ts';
+import { FramePool } from '../src/frames.ts';
+import { FeedPool } from '../src/feed.ts';
+import type { ServerMessage } from '../src/protocol.ts';
 
 const WORKER = `
 import { spawn } from 'node:child_process';
@@ -187,6 +192,182 @@ for (const ending of ['revocation', 'server close', 'revocation with an unwritab
     },
   );
 }
+describe.skipIf(process.platform === 'win32')('hosted capture journal failures', () => {
+  test.each(['revocation', 'server close', 'unwritable revocation'])(
+    'closes actual capture and input on %s and retains unresolved native ownership',
+    async (ending) => {
+      const first = reserve();
+      await state(first.id, 'ready');
+      const helper = join(home, 'capture-helper');
+      writeFileSync(
+        helper,
+        `#!${process.execPath}
+const header=Buffer.alloc(9);header.writeUInt32BE(6);header[4]=1;header.writeUInt16BE(1,5);header.writeUInt16BE(1,7);
+process.stdout.write(Buffer.concat([header,Buffer.from('x')]));
+process.stdin.resume();process.on('SIGTERM',()=>{});setInterval(()=>{},1000);
+`,
+      );
+      chmodSync(helper, 0o755);
+      const frames = new FramePool(process.env);
+      const feeds = new FeedPool(join(home, 'unused-cli.mjs'), process.env);
+      const sent: ServerMessage[] = [];
+      const control = new ControlHub({
+        env: process.env,
+        stimCli: join(home, 'unused-cli.mjs'),
+        feeds,
+        frames,
+        statusFeed: { args: ['status', '--watch', '--json'], cwd: home, keep: 1, label: 'unused status' },
+        audit: () => {},
+        lockLimits: { timeoutMs: 1000, maxOutputBytes: 1024 },
+        idleMs: 60_000,
+        renewMs: 60_000,
+        leaseFor: '1m',
+        foldHelper: async () => helper,
+        foldTimeoutMs: 1000,
+        conflict: () => {},
+      });
+      const views = new HostedViews(host, control, process.env, () => helper);
+      const failed: string[] = [];
+      let firstFrame!: () => void;
+      const captured = new Promise<void>((resolve) => (firstFrame = resolve));
+      views.subscribe(
+        'client',
+        first.id,
+        { frame: () => firstFrame(), delayed: () => {}, failed: (message) => failed.push(message) },
+        { fps: 5, maxEdge: 480 },
+      );
+      await captured;
+      const owner = { device: { id: 'client', name: 'Client' }, send: (message: ServerMessage) => sent.push(message) };
+      const begun = await views.begin('client', first.id, owner, false, () => true);
+      if ('code' in begun) throw new Error(begun.message);
+      const claims = join(deviceHostRoot(), `${first.id}.claims`);
+      const capture = readClaimSet(claims).live[0]!.child;
+      expect(capture).not.toBeNull();
+      const journal = join(deviceHostRoot(), 'sessions.json');
+      const original = readFileSync(journal, 'utf8');
+      try {
+        if (ending === 'unwritable revocation') chmodSync(deviceHostRoot(), 0o500);
+        else writeFileSync(journal, '{}');
+        if (ending === 'server close') await host.close();
+        else {
+          allowed.delete('client');
+          host.revoke();
+        }
+        await vi.waitFor(() => expect(readClaimSet(claims).live[0]!.child).toBeNull(), { timeout: 3000 });
+        expect(readClaimSet(claims).live).toHaveLength(1);
+        expect(existsSync(join(deviceHostArea(first.id), 'home', 'stopped'))).toBe(false);
+        expect(await control.input(owner, begun.session, { input: 'touch', phase: 'down', x: 0, y: 1 })).toMatchObject({
+          code: 'unknown-session',
+        });
+        expect(failed).toHaveLength(1);
+        expect(sent).toEqual(
+          expect.arrayContaining([expect.objectContaining({ event: 'control-ended', session: begun.session })]),
+        );
+      } finally {
+        chmodSync(deviceHostRoot(), 0o700);
+        writeFileSync(journal, original);
+        await control.close();
+        await frames.close();
+        await feeds.close();
+      }
+    },
+  );
+});
+
+test.each(['disconnect', 'takeover', 'timeout'])(
+  'awaits the exact active fold before hosted device teardown after %s',
+  { skip: process.platform === 'win32' },
+  async (ending) => {
+    const started = join(home, 'fold-started');
+    const finished = join(home, 'fold-finished');
+    const release = join(home, 'fold-release');
+    const tool = join(home, 'xcrun');
+    writeFileSync(
+      tool,
+      `#!${process.execPath}
+const fs=require('node:fs');
+fs.writeFileSync(${JSON.stringify(started)},String(process.pid));
+${ending === 'timeout' ? "process.on('SIGTERM',()=>{});setInterval(()=>{},1000);" : `const timer=setInterval(()=>{if(fs.existsSync(${JSON.stringify(release)})){clearInterval(timer);fs.writeFileSync(${JSON.stringify(finished)},'');}},10);`}
+`,
+    );
+    chmodSync(tool, 0o755);
+    const env = { ...process.env, PATH: `${home}:${process.env.PATH}` };
+    const frames = new FramePool(env);
+    const feeds = new FeedPool(join(home, 'unused-cli.mjs'), env);
+    vi.spyOn(frames, 'control').mockReturnValue({ send: () => {}, keys: () => true, detach: () => {} });
+    vi.spyOn(frames, 'litPosture').mockReturnValue('folded');
+    vi.spyOn(frames, 'folded').mockImplementation(() => {});
+    const control = new ControlHub({
+      env,
+      stimCli: join(home, 'unused-cli.mjs'),
+      feeds,
+      frames,
+      statusFeed: { args: [], cwd: home, keep: 1, label: 'unused hosted status' },
+      audit: () => {},
+      lockLimits: { timeoutMs: 1000, maxOutputBytes: 1024 },
+      idleMs: 60_000,
+      renewMs: 60_000,
+      leaseFor: '1m',
+      foldHelper: async () => join(home, 'sim-fold'),
+      foldTimeoutMs: ending === 'timeout' ? 500 : 5000,
+      conflict: () => {},
+    });
+    const device = { platform: 'ios' as const, udid: 'owned-duo', foldable: true };
+    const target = { workspace: '/client/worktree', platform: 'ios' as const };
+    const owner = { device: { id: 'client', name: 'Client' }, send: () => {} };
+    const begun = await control.beginHosted(owner, target, home, device, frames, () => true);
+    if ('code' in begun) throw new Error(begun.message);
+    const input = control.input(owner, begun.session, { input: 'posture', posture: 'unfolded' });
+    const alive = (pid: number) => {
+      try {
+        process.kill(pid, 0);
+        return true;
+      } catch {
+        return false;
+      }
+    };
+    try {
+      await vi.waitFor(() => expect(existsSync(started)).toBe(true));
+      const pid = Number(readFileSync(started, 'utf8'));
+      if (ending === 'takeover') {
+        const replacement = { device: { id: 'client', name: 'Replacement' }, send: () => {} };
+        const taken = await control.beginHosted(
+          replacement,
+          { ...target, takeOver: true },
+          home,
+          device,
+          frames,
+          () => true,
+        );
+        if ('code' in taken) throw new Error(taken.message);
+      } else control.endFor(owner, null, 'The client disconnected.');
+      let ended = false;
+      let waited = true;
+      const teardown = control.endDevice(device, 'The hosted device is stopping.').then(() => (ended = true));
+      if (ending !== 'timeout') {
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        waited = !ended;
+        writeFileSync(release, '');
+      }
+      const result = await input;
+      await teardown;
+      expect(waited).toBe(true);
+      expect(result?.code ?? null).toBe(ending === 'timeout' ? 'action-failed' : null);
+      expect(ending === 'timeout' || existsSync(finished)).toBe(true);
+      expect(alive(pid)).toBe(false);
+    } finally {
+      writeFileSync(release, '');
+      await input;
+      await control.close();
+      const pid = existsSync(started) ? Number(readFileSync(started, 'utf8')) : null;
+      if (pid !== null && alive(pid)) process.kill(pid, 'SIGKILL');
+      await vi.waitFor(() => expect(pid === null || !alive(pid)).toBe(true));
+      vi.restoreAllMocks();
+      await frames.close();
+      await feeds.close();
+    }
+  },
+);
 
 test('reserves once across reconnect and attempt replay, isolates clients, and stops only the owned session', async () => {
   const first = reserve();
@@ -404,6 +585,7 @@ test('refuses app mutations after the real session owner disappears until explic
   };
   expect(readClaimSet(join(deviceHostRoot(), `${retained.session}.claims`)).live).toEqual([]);
   expect(host.attach('client', { session: retained.session })).toHaveProperty('result.state', 'unknown');
+  expect(() => host.viewTarget('client', retained.session)).toThrow('Explicit stop');
   expect(host.appOffer('client', retained.app)).toHaveProperty(
     'error.message',
     expect.stringContaining('Explicit stop'),
