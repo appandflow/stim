@@ -417,7 +417,7 @@ the same viewer, streamed from the page's DevTools screencast as H.264 through
 types into the page; the toolbar has **Keyboard** and **Back** (the page's
 history back) only, since a page has no home, lock, rotation or hinge. A web
 session holds no `stim device lock` lease; a browser tool attached to the
-page, such as Playwright MCP, shows as its driver, and Control asks before
+page, such as Playwright MCP, shows as its driver, and Control explicitly
 taking over from it. Reload in the workspace menu reloads the page with
 `stim reload web`.
 
@@ -451,13 +451,12 @@ simulator or emulator instead, so while connected to one the tile asks for a
 
 The viewer is the one screen on a phone that turns to landscape with the
 phone; every other screen stays portrait. In landscape the title stays on
-top, and the Control toolbars and the read-only banner move to a column right
-of the screen. Turning the phone does not restart the stream, and
+top, and the Control toolbar stays below the screen. Turning the phone does not restart the stream, and
 touches keep landing where they are drawn once the screen settles into its new
 size. The phone does not turn by itself when the device is landscape. On iPad
 every screen follows the iPad's orientation; Android tablets follow the phone
 rules. On a read-only pairing in landscape, dragging down does not close the
-viewer, so the column can scroll.
+viewer.
 
 On a foldable folded like a book, such as an iPhone Duo or a Pixel Fold
 half open, the viewer splits at the fold: the device screen and its replay
@@ -484,17 +483,17 @@ With **Control** on, the server starts a control session (`control.begin`)
 and holds a `stim device lock` lease on the device, so agents see it as
 driven. Touches on the frame go to the device as a touch that follows your
 finger: a tap, a drag or swipe, or a long press. The toolbar under the screen
-is one row that scrolls sideways in portrait. It has **Keyboard**,
+is a compact icon bar that scrolls sideways when needed in either orientation.
+Each button has a spoken label and a 44-point touch target. It has **Keyboard**,
 which opens the phone's keyboard and types what you type (printable ASCII;
 Return and Delete included), **Home**, **Lock**, and on Android **Back** and
 **Apps**. While the keyboard is open, a bar above it shows what you typed
 since the last Return, with **Done** to close it, and the screen keeps its
 size and moves up until its bottom meets that bar, stopping below the title.
-It continues with **Rotate left** and **Rotate right**, except that
-mobile hides both on an iPhone Duo. When the device
-has a hinge, posture buttons follow: **Fold** or **Unfold** on an iPhone Duo,
-whichever its latest frame or video shows it is not, and **Fold**, **Half
-open** and **Unfold** on a foldable emulator. On an unfolded Duo, touches go
+It continues with **Rotate left** and **Rotate right** for simulators and
+emulators, including iPhone Duo. Physical devices turn only in hand. When the device
+has a hinge, posture buttons follow: **Fold**, **Half open** and **Unfold**, as supported by that device. The current
+posture is selected and disabled. On an unfolded Duo, touches go
 to the inner panel the screen shows. The session ends when you turn
 Control off, leave the view, lose the connection, or after 5 minutes without
 input; the banner says why.
@@ -507,12 +506,11 @@ did not apply.
 
 When status reports the device driven by something else, such as
 agent-device, a `stim device lock`, or another phone, a small chip with a
-cursor icon next to the model names it. **Control** then asks for confirmation before it
-takes over, and starts control anyway; the Mac records the takeover in its
+cursor icon next to the model names it. **Control** takes over immediately on that explicit tap; the Mac records the takeover in its
 action log. The chip stays while you have control, because that driver can
 still send input to the device. When the server refuses
 Control because of a driver that status did not show yet, a banner gives its reason
-with **Take over**, which asks the same confirmation.
+with **Take over**, which also starts control immediately when tapped.
 
 ## Actions
 
