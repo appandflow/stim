@@ -6,6 +6,8 @@ import {
   hostedConsolePort,
   readHostedDevice,
   type HostedAndroidDevice,
+  type HostedAndroidChoice,
+  type HostedDeviceSelectors,
 } from '@stim-cli/core/state';
 import { getExecutor } from '../exec.ts';
 import { readHostMemoryPressure } from '../host-memory.ts';
@@ -32,6 +34,20 @@ function portIsOccupied(port: number): boolean {
   return [...devices.emulators, ...devices.unhealthy].some((device) => device.consolePort === port);
 }
 
+export function selectHostedAndroidDevice(request: HostedDeviceSelectors): HostedAndroidChoice {
+  if (readHostMemoryPressure(getExecutor()) !== 'normal')
+    throw new Error('Host memory pressure is unknown or elevated.');
+  const image = pickDefaultSystemImage(listInstalledSystemImages(), { systemImage: request.systemImage });
+  if (!image || image.arch !== hostSystemImageArch()) throw new Error('No compatible installed Android image.');
+  const profile = request.deviceProfile ?? DEFAULT_AVD_DEVICE_PROFILE;
+  if (!listAvdDeviceProfiles().includes(profile)) throw new Error('The Android device profile is not installed.');
+  return {
+    systemImage: image.pkg,
+    deviceProfile: profile,
+    architecture: image.arch as HostedAndroidChoice['architecture'],
+  };
+}
+
 /** Runs only in the private worker home; a caller cannot select or tear down an existing AVD. */
 export async function runHostedAndroidDevice(
   mode: 'prepare' | 'stop' | 'install',
@@ -48,12 +64,7 @@ export async function runHostedAndroidDevice(
       if (creationStarted) throw new Error('Attach or stop the existing hosted Android session.');
       if (!/^[a-f0-9-]{36}$/.test(request.session) || !hostedConsolePort(request.consolePort))
         throw new Error('Hosted Android prepare needs its server-selected session and console port.');
-      if (readHostMemoryPressure(getExecutor()) !== 'normal')
-        throw new Error('Host memory pressure is unknown or elevated.');
-      const image = pickDefaultSystemImage(listInstalledSystemImages(), { systemImage: request.systemImage });
-      if (!image || image.arch !== hostSystemImageArch()) throw new Error('No compatible installed Android image.');
-      const profile = request.deviceProfile ?? DEFAULT_AVD_DEVICE_PROFILE;
-      if (!listAvdDeviceProfiles().includes(profile)) throw new Error('The Android device profile is not installed.');
+      const choice = selectHostedAndroidDevice(request);
       const avdName = ownedAvdName(`hosted-${request.session}`);
       if (listAvds({ timeoutMs: 5000 }).includes(avdName) || portIsOccupied(request.consolePort))
         throw new Error('The hosted AVD name or selected console port is already in use.');
@@ -61,14 +72,12 @@ export async function runHostedAndroidDevice(
         avdName,
         serial: `emulator-${request.consolePort}`,
         consolePort: request.consolePort,
-        systemImage: image.pkg,
-        deviceProfile: profile,
-        architecture: image.arch as HostedAndroidDevice['architecture'],
+        ...choice,
       };
       creationStarted = true;
       await createOwnedAvd(`hosted-${request.session}`, {
-        systemImage: image.pkg,
-        deviceProfile: profile,
+        systemImage: choice.systemImage,
+        deviceProfile: choice.deviceProfile,
         spawn: (file, args, options) => {
           assertHostedDeviceLedger(home, avdName, 'android');
           withDirLock(join(home, 'hosted-device.lock'), () => {

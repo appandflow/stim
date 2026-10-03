@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { withDirLock } from '@stim-cli/core';
 import {
   clearClaimChild,
@@ -25,6 +25,8 @@ import {
   parseHostedRequest,
   readHostedDevice,
   readHostedSessions,
+  parseHostedOfferRequest,
+  parseHostedNativeOffer,
   hostedAppAttempt,
   parseHostedAppOffer,
   readHostedApp,
@@ -32,6 +34,7 @@ import {
   type HostedAppRecord,
   type HostedDeviceRequest,
   type HostedDeviceSession,
+  type HostedDeviceOffer,
 } from '@stim-cli/core/state';
 import { writeJson } from './registry.ts';
 import type { Methods, ProtocolError } from './protocol.ts';
@@ -39,6 +42,7 @@ import { appDelivery, offerHostedApp, chunkHostedApp, changeHostedApp } from './
 
 export interface DeviceHostLimits {
   prepareMs: number;
+  offerMs: number;
   stopMs: number;
   killGraceMs: number;
 }
@@ -66,6 +70,7 @@ const refused = (code: ProtocolError['code'], message: string): { error: Protoco
 export class DeviceHost {
   private readonly owned = new Map<string, OwnedSession>();
   private readonly revoked = new Set<string>();
+  private readonly probes = new Map<WorkerRun, string>();
   private closed = false;
   private readonly limits: DeviceHostLimits;
 
@@ -83,7 +88,7 @@ export class DeviceHost {
     limits?: Partial<DeviceHostLimits>;
   }) {
     this.options = options;
-    this.limits = { prepareMs: 5 * 60_000, stopMs: 90_000, killGraceMs: 5000, ...options.limits };
+    this.limits = { prepareMs: 5 * 60_000, offerMs: 30_000, stopMs: 90_000, killGraceMs: 5000, ...options.limits };
   }
 
   private transaction<T>(fn: (records: HostedDeviceSession[]) => T): T {
@@ -128,6 +133,59 @@ export class DeviceHost {
     const owned = { claim: attempt.acquired };
     this.owned.set(record.id, owned);
     return owned;
+  }
+
+  async offer(client: string, params: unknown): Promise<AppAnswer<HostedDeviceOffer>> {
+    if (this.closed || !this.options.allowed(client))
+      return refused('forbidden', 'Current device-host approval is required.');
+    const request = parseHostedOfferRequest(params);
+    if (!request) return refused('bad-request', 'offer needs a platform and valid optional selectors.');
+    try {
+      readHostedSessions();
+      const probe = this.runWorker({
+        cwd: dirname(this.options.worker),
+        env: this.options.env,
+        input: { mode: 'offer', ...request },
+        timeoutMs: this.limits.offerMs,
+        maxOutputBytes: 32_768,
+      });
+      this.probes.set(probe, client);
+      let result: Awaited<WorkerRun['done']>;
+      try {
+        result = await probe.done;
+      } finally {
+        this.probes.delete(probe);
+      }
+      if (this.closed || !this.options.allowed(client))
+        return refused('forbidden', 'Current device-host approval is required.');
+      if (!result.settled || result.notice) throw new Error(result.notice ?? 'Hosted offer worker did not settle.');
+      const native = parseHostedNativeOffer(result.value);
+      if (!native || native.platform !== request.platform) throw new Error('Invalid native hosted offer.');
+      const records = readHostedSessions();
+      const running = records.filter((record) => record.state !== 'stopped').length;
+      const max = getConcurrencyLimits({ env: this.options.env }).maxDevices;
+      let declined =
+        native.declined ??
+        (native.resources.memoryPressure !== 'normal' ? 'Host memory pressure is unknown or elevated.' : null);
+      if (max > 0 && running >= max)
+        declined = 'All configured hosted device reservations are occupied, including unresolved sessions.';
+      if (request.platform === 'android') {
+        try {
+          reserveAndroidPort(records);
+        } catch (error) {
+          declined = (error as Error).message;
+        }
+      }
+      return {
+        result: {
+          ...native,
+          declined,
+          capacity: { running, max, available: max > 0 ? Math.max(0, max - running) : null },
+        },
+      };
+    } catch (error) {
+      return refused('action-failed', (error as Error).message);
+    }
   }
 
   reserve(client: string, params: unknown): Answer {
@@ -501,6 +559,7 @@ export class DeviceHost {
   }
 
   revoke(): void {
+    for (const [probe, client] of this.probes) if (!this.options.allowed(client)) probe.cancel();
     try {
       for (const record of readHostedSessions()) {
         if (record.state === 'stopped' || this.options.allowed(record.client) || this.revoked.has(record.id)) continue;
@@ -519,6 +578,7 @@ export class DeviceHost {
 
   async close(): Promise<void> {
     this.closed = true;
+    for (const probe of this.probes.keys()) probe.cancel();
     try {
       for (const record of readHostedSessions()) {
         if (!this.owned.has(record.id)) continue;
@@ -532,6 +592,7 @@ export class DeviceHost {
       for (const owned of this.owned.values()) owned.run?.cancel();
     }
     await Promise.all([...this.owned.values()].map((owned) => owned.stopping ?? owned.run?.done));
+    await Promise.all([...this.probes.keys()].map((probe) => probe.done));
   }
 
   private run(
@@ -542,17 +603,45 @@ export class DeviceHost {
   ): WorkerRun {
     const home = join(deviceHostArea(record.id), 'home');
     mkdirSync(home, { recursive: true, mode: 0o700 });
-    markClaimChildPending(owned.claim);
+    return this.runWorker({
+      cwd: home,
+      env: { ...this.options.env, STIM_HOME: home },
+      input: {
+        mode,
+        platform: record.platform,
+        deviceType: record.deviceType,
+        runtime: record.runtime,
+        systemImage: record.systemImage,
+        deviceProfile: record.deviceProfile,
+        consolePort: record.consolePort,
+        session: record.id,
+        attempt,
+      },
+      claim: owned.claim,
+      timeoutMs: mode === 'stop' ? this.limits.stopMs : this.limits.prepareMs,
+      maxOutputBytes: 16_384,
+    });
+  }
+
+  private runWorker(options: {
+    cwd: string;
+    env: NodeJS.ProcessEnv;
+    input: object;
+    claim?: ClaimHandle;
+    timeoutMs: number;
+    maxOutputBytes: number;
+  }): WorkerRun {
+    if (options.claim) markClaimChildPending(options.claim);
     let child: ChildProcess;
     try {
       child = spawn(process.execPath, [this.options.worker], {
-        cwd: home,
-        env: { ...this.options.env, STIM_HOME: home },
+        cwd: options.cwd,
+        env: options.env,
         detached: true,
         stdio: ['pipe', 'pipe', 'pipe'],
       });
     } catch (error) {
-      clearClaimChild(owned.claim);
+      if (options.claim) clearClaimChild(options.claim);
       throw error;
     }
     let identity: ProcessRecord | null = null;
@@ -578,7 +667,7 @@ export class DeviceHost {
       clearTimeout(finishTimer);
       clearTimeout(groupTimer);
       const settled = closed && (!child.pid || !processGroupAlive(child.pid));
-      if (settled) clearClaimChild(owned.claim);
+      if (settled && options.claim) clearClaimChild(options.claim);
       let value: unknown = null;
       try {
         value = JSON.parse(Buffer.concat(output).toString('utf8'));
@@ -619,9 +708,9 @@ export class DeviceHost {
         groupTimer = setTimeout(finishGroup, 25);
       }
     };
-    const timer = setTimeout(cancel, mode === 'stop' ? this.limits.stopMs : this.limits.prepareMs);
+    const timer = setTimeout(cancel, options.timeoutMs);
     child.stdout?.on('data', (chunk: Buffer) => {
-      if (outputBytes + chunk.length > 16384) {
+      if (outputBytes + chunk.length > options.maxOutputBytes) {
         notice = 'Hosted worker output exceeded its bound.';
         cancel();
       } else {
@@ -651,20 +740,8 @@ export class DeviceHost {
     } else {
       identity = { pid: child.pid, processToken: captured.token };
       try {
-        setClaimChild(owned.claim, identity);
-        child.stdin?.end(
-          JSON.stringify({
-            mode,
-            platform: record.platform,
-            deviceType: record.deviceType,
-            runtime: record.runtime,
-            systemImage: record.systemImage,
-            deviceProfile: record.deviceProfile,
-            consolePort: record.consolePort,
-            session: record.id,
-            attempt,
-          }),
-        );
+        if (options.claim) setClaimChild(options.claim, identity);
+        child.stdin?.end(JSON.stringify(options.input));
       } catch (error) {
         notice = (error as Error).message;
         cancel();

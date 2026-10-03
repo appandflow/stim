@@ -1,6 +1,7 @@
-import { hostedAppAttempt, isJsonObject } from '@stim-cli/core/state';
+import { hostedAppAttempt, isJsonObject, parseHostedOfferRequest } from '@stim-cli/core/state';
 import { runHostedDevice } from './worker.ts';
 import { runHostedAndroidDevice } from './android.ts';
+import { inspectHostedDevice } from './offer.ts';
 
 async function main(): Promise<void> {
   const chunks: Buffer[] = [];
@@ -11,8 +12,14 @@ async function main(): Promise<void> {
     chunks.push(chunk as Buffer);
   }
   const input: unknown = JSON.parse(Buffer.concat(chunks).toString('utf8'));
-  if (!isJsonObject(input) || !['prepare', 'stop', 'install'].includes(String(input.mode)))
+  if (!isJsonObject(input) || !['prepare', 'stop', 'install', 'offer'].includes(String(input.mode)))
     throw new Error('Invalid hosted worker request.');
+  if (input.mode === 'offer') {
+    const request = parseHostedOfferRequest(input);
+    if (!request) throw new Error('Invalid hosted offer selectors.');
+    process.stdout.write(`${JSON.stringify(inspectHostedDevice(request))}\n`);
+    return;
+  }
   if (process.platform !== 'darwin') {
     process.stdout.write(
       `${JSON.stringify({ state: input.mode === 'prepare' ? 'stopped' : 'unknown', device: null, notice: 'Hosted device sessions require a Mac.' })}\n`,
