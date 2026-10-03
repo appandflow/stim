@@ -123,10 +123,14 @@ view. Frames rotate with the display, preserve its aspect ratio and input
 coordinates, and do not require Control. Apple frames use installed DeviceKit
 chrome. Android frames use the AVD's configured skin or matching hardware profile
 artwork in `/Applications/Android Studio.app`, with matching screen dimensions.
-Missing artwork and unsupported skin layouts stay frameless; foldables, physical
-and remote devices, web pages and replay do too. Stim does not bundle the artwork.
-Duo's genuine folded housing and mobile frames are not included in this desktop
-slice.
+Missing artwork and unsupported skin layouts stay frameless; Android foldables,
+physical and remote devices, web pages and replay do too. For a local iPhone Duo,
+an installed Xcode with DeviceKit's V68 model and a valid observed hinge angle
+enables genuine hardware that follows the hinge and rotation, with input mapped
+to the posed active screen. Without that model, the viewer stays frameless.
+Desktop snapshots the departing panel before its own posture controls change the
+hinge; external handoffs can leave that panel blank or retain an older snapshot.
+Stim does not bundle the artwork. Mobile frame delivery is not included.
 
 On the All devices and project wall, active workspaces without running or building
 devices use compact cards labelled **No running devices**, with Metro status,
