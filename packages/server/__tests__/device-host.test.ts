@@ -1,5 +1,5 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync, renameSync } from 'node:fs';
-import { createHash } from 'node:crypto';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync, renameSync, mkdirSync } from 'node:fs';
+import { createHash, randomUUID } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import { join } from 'node:path';
@@ -14,6 +14,15 @@ const WORKER = `
 import { spawn } from 'node:child_process';
 import { writeFileSync, readFileSync, appendFileSync } from 'node:fs';
 import { join } from 'node:path';
+if(process.argv[2] === 'offer') {
+  const request=JSON.parse(process.argv[3]);
+  writeFileSync(join(process.env.STIM_HOME,'probe-entered'),'yes');
+  if(request.deviceType === 'delayed') await new Promise(resolve=>setTimeout(resolve,150));
+  const declined=request.deviceType==='unavailable'?'SDK unavailable':request.deviceType==='empty-reason'?'':null;
+  const choice=request.platform==='ios' ? {deviceTypeId:'iphone',runtimeId:'ios',deviceType:'iPhone',runtime:'27.1',architecture:'arm64',udid:'not-a-device'} : {systemImage:'system-images;android-30;google_apis;arm64-v8a',deviceProfile:'pixel_6',architecture:'arm64-v8a'};
+  process.stdout.write(JSON.stringify({platform:request.platform,choice:declined?null:choice,declined,resources:{cpus:4,loadPerCore:0.5,memoryFreeBytes:1000,memoryPressure:'normal',workerDiskFreeBytes:null}}));
+  process.exit(0);
+}
 const chunks = [];
 for await (const chunk of process.stdin) chunks.push(chunk);
 const input = JSON.parse(Buffer.concat(chunks));
@@ -467,4 +476,93 @@ test('Android reservations keep distinct ports and platform slots, reconnect wit
   expect(readClaimSet(join(deviceHostRoot(), `${android.id}.claims`)).live).toEqual([]);
   expect(host.attach('client', { session: ios.id })).toHaveProperty('result.state', 'ready');
   expect(reserve({ platform: 'android', attempt: 'replacement' }).consolePort).toBe(5554);
+});
+
+test('offers schema-compatible SDK choices without creating a journal, claim, or worker area', async () => {
+  const validator = new Ajv2020({ strict: false, validateFormats: false });
+  validator.addSchema(protocolJsonSchema(), 'protocol');
+  const acceptsRequest = validator.compile({ $ref: 'protocol#/$defs/ClientRequest' });
+  const acceptsOffer = validator.compile({ $ref: 'protocol#/$defs/HostedDeviceOffer' });
+  for (const platform of ['ios', 'android']) {
+    const params = { platform };
+    expect(acceptsRequest({ id: 1, method: 'device-host.offer', params })).toBe(true);
+    const answer = await host.offer('client', params);
+    if ('error' in answer) throw new Error(answer.error.message);
+    expect(answer.result.capacity).toEqual({ running: 0, max: 1, available: 1 });
+    expect(answer.result.declined).toBeNull();
+    expect(acceptsOffer(answer.result)).toBe(true);
+    expect(answer.result.choice).not.toHaveProperty('udid');
+    expect(acceptsOffer({ ...answer.result, platform: platform === 'ios' ? 'android' : 'ios' })).toBe(false);
+  }
+  expect(await host.offer('client', { platform: 'ios', deviceType: 'empty-reason' })).toHaveProperty(
+    'error.code',
+    'action-failed',
+  );
+  expect(existsSync(deviceHostRoot())).toBe(false);
+  expect(existsSync(join(home, 'device-host'))).toBe(false);
+  const params = { platform: 'android', runtime: '27' };
+  expect(acceptsRequest({ id: 1, method: 'device-host.offer', params })).toBe(false);
+  rmSync(join(home, 'probe-entered'));
+  expect(await host.offer('client', params)).toHaveProperty('error.code', 'bad-request');
+  expect(await host.offer('foreign', { platform: 'ios' })).toHaveProperty('error.code', 'forbidden');
+  expect(existsSync(join(home, 'probe-entered'))).toBe(false);
+});
+
+test('offer capacity counts unresolved sessions and preserves SDK failures as declined choices', async () => {
+  const lost = reserve({ deviceType: 'lost' });
+  await state(lost.id, 'unknown');
+  const before = readFileSync(join(deviceHostRoot(), 'sessions.json'), 'utf8');
+  expect(await host.offer('client', { platform: 'android' })).toMatchObject({
+    result: { capacity: { running: 1, max: 1, available: 0 }, declined: expect.stringContaining('unresolved') },
+  });
+  expect(readFileSync(join(deviceHostRoot(), 'sessions.json'), 'utf8')).toBe(before);
+  host.stop('client', { session: lost.id });
+  await state(lost.id, 'stopped');
+  expect(await host.offer('client', { platform: 'ios', deviceType: 'unavailable' })).toMatchObject({
+    result: { choice: null, declined: 'SDK unavailable', capacity: { running: 0, available: 1 } },
+  });
+  const stopped = readFileSync(join(deviceHostRoot(), 'sessions.json'), 'utf8');
+  writeFileSync(join(deviceHostRoot(), 'sessions.json'), '{}');
+  rmSync(join(home, 'probe-entered'));
+  expect(await host.offer('client', { platform: 'ios' })).toHaveProperty('error.code', 'action-failed');
+  expect(existsSync(join(home, 'probe-entered'))).toBe(false);
+  writeFileSync(join(deviceHostRoot(), 'sessions.json'), stopped);
+});
+
+test.each(['revoke', 'close'])('does not publish an offer after %s during an actual pending query', async (action) => {
+  const pending = host.offer('client', { platform: 'ios', deviceType: 'delayed' });
+  await vi.waitFor(() => expect(existsSync(join(home, 'probe-entered'))).toBe(true));
+  if (action === 'revoke') {
+    allowed.delete('client');
+    host.revoke();
+  } else await host.close();
+  expect(await pending).toHaveProperty('error.code', 'forbidden');
+  expect(existsSync(deviceHostRoot())).toBe(false);
+});
+
+test('an uncapped offer still declines exhausted Android journal ports without changing the reservations', async () => {
+  await host.close();
+  host = new DeviceHost({
+    worker: join(home, 'worker.mjs'),
+    env: { ...process.env, STIM_MAX_DEVICES: '0' },
+    allowed: () => true,
+  });
+  mkdirSync(deviceHostRoot(), { recursive: true });
+  const sessions = Array.from({ length: 16 }, (_, index) => ({
+    ...request,
+    platform: 'android',
+    attempt: `occupied-${index}`,
+    id: randomUUID(),
+    client: 'other',
+    state: 'unknown',
+    device: null,
+    consolePort: 5554 + index * 2,
+    createdAt: new Date().toISOString(),
+  }));
+  const journal = JSON.stringify({ version: 1, sessions });
+  writeFileSync(join(deviceHostRoot(), 'sessions.json'), journal);
+  expect(await host.offer('client', { platform: 'android' })).toMatchObject({
+    result: { capacity: { running: 16, max: 0, available: null }, declined: expect.stringContaining('console ports') },
+  });
+  expect(readFileSync(join(deviceHostRoot(), 'sessions.json'), 'utf8')).toBe(journal);
 });

@@ -1,6 +1,8 @@
 import type {
   BuildPlanPayload,
   HostedDeviceRequest,
+  HostedDeviceOfferRequest,
+  HostedDeviceOffer,
   HostedDeviceSession,
   HostedAppOffer,
   HostedAppDelivery,
@@ -67,6 +69,7 @@ export const METHODS = [
   'build.cancel',
   'build.artifact',
   'build.attach',
+  'device-host.offer',
   'device-host.reserve',
   'device-host.attach',
   'device-host.stop',
@@ -86,8 +89,9 @@ export const BUILD_METHODS = [
   'build.attach',
 ] as const;
 
-/** Methods restricted to explicitly approved device-host clients and their own sessions. */
+/** Methods restricted to explicitly approved device-host clients. */
 export const DEVICE_HOST_METHODS = [
+  'device-host.offer',
   'device-host.reserve',
   'device-host.attach',
   'device-host.stop',
@@ -890,6 +894,7 @@ export interface NotificationsListResult {
 }
 
 export interface Methods {
+  'device-host.offer': { params: HostedDeviceOfferRequest; result: HostedDeviceOffer };
   'device-host.reserve': { params: HostedDeviceRequest; result: HostedDeviceSession };
   'device-host.attach': { params: { session: string } | { attempt: string }; result: HostedDeviceSession };
   'device-host.stop': { params: { session: string }; result: HostedDeviceSession };
@@ -1178,6 +1183,83 @@ export function protocolJsonSchema(): JsonSchema {
         required: ['offset'],
         additionalProperties: false,
         properties: { offset: { type: 'integer', minimum: 0 } },
+      },
+      HostedDeviceOffer: {
+        type: 'object',
+        required: ['platform', 'choice', 'resources', 'declined', 'capacity'],
+        additionalProperties: false,
+        properties: {
+          platform: { enum: ['ios', 'android'] },
+          choice: {},
+          declined: { type: ['string', 'null'], minLength: 1 },
+          resources: {
+            type: 'object',
+            required: ['cpus', 'loadPerCore', 'memoryFreeBytes', 'memoryPressure', 'workerDiskFreeBytes'],
+            additionalProperties: false,
+            properties: {
+              cpus: { type: 'integer', minimum: 1 },
+              loadPerCore: { type: 'number', minimum: 0 },
+              memoryFreeBytes: { type: 'number', minimum: 0 },
+              memoryPressure: { enum: ['normal', 'warning', 'critical', null] },
+              workerDiskFreeBytes: { type: ['number', 'null'], minimum: 0 },
+            },
+          },
+          capacity: {
+            type: 'object',
+            required: ['running', 'max', 'available'],
+            additionalProperties: false,
+            properties: {
+              running: { type: 'integer', minimum: 0 },
+              max: { type: 'integer', minimum: 0 },
+              available: { type: ['integer', 'null'], minimum: 0 },
+            },
+          },
+        },
+        not: { properties: { choice: { type: 'null' }, declined: { type: 'null' } } },
+        oneOf: [
+          {
+            properties: {
+              platform: { const: 'ios' },
+              choice: {
+                anyOf: [
+                  { type: 'null' },
+                  {
+                    type: 'object',
+                    required: ['deviceTypeId', 'runtimeId', 'deviceType', 'runtime', 'architecture'],
+                    additionalProperties: false,
+                    properties: {
+                      deviceTypeId: { type: 'string' },
+                      runtimeId: { type: 'string' },
+                      deviceType: { type: 'string' },
+                      runtime: { type: 'string' },
+                      architecture: { enum: ['arm64', 'x86_64'] },
+                    },
+                  },
+                ],
+              },
+            },
+          },
+          {
+            properties: {
+              platform: { const: 'android' },
+              choice: {
+                anyOf: [
+                  { type: 'null' },
+                  {
+                    type: 'object',
+                    required: ['systemImage', 'deviceProfile', 'architecture'],
+                    additionalProperties: false,
+                    properties: {
+                      systemImage: { type: 'string' },
+                      deviceProfile: { type: 'string' },
+                      architecture: { enum: ['arm64-v8a', 'x86_64'] },
+                    },
+                  },
+                ],
+              },
+            },
+          },
+        ],
       },
       HostedDeviceSession: {
         type: 'object',
@@ -1638,6 +1720,28 @@ export function protocolJsonSchema(): JsonSchema {
       },
       ClientRequest: {
         oneOf: [
+          request('device-host.offer', {
+            type: 'object',
+            required: ['platform'],
+            additionalProperties: false,
+            properties: {
+              platform: { enum: ['ios', 'android'] },
+              deviceType: { type: 'string', minLength: 1, maxLength: 256 },
+              runtime: { type: 'string', minLength: 1, maxLength: 256 },
+              systemImage: { type: 'string', minLength: 1, maxLength: 256 },
+              deviceProfile: { type: 'string', minLength: 1, maxLength: 256 },
+            },
+            oneOf: [
+              {
+                properties: { platform: { const: 'ios' } },
+                not: { anyOf: [{ required: ['systemImage'] }, { required: ['deviceProfile'] }] },
+              },
+              {
+                properties: { platform: { const: 'android' } },
+                not: { anyOf: [{ required: ['deviceType'] }, { required: ['runtime'] }] },
+              },
+            ],
+          }),
           request('device-host.reserve', {
             type: 'object',
             required: ['workspace', 'slot', 'platform', 'attempt'],
@@ -1932,6 +2036,7 @@ export function protocolJsonSchema(): JsonSchema {
               id: requestId,
               result: {
                 anyOf: [
+                  { $ref: '#/$defs/HostedDeviceOffer' },
                   { $ref: '#/$defs/HostedDeviceSession' },
                   { $ref: '#/$defs/HostedAppDelivery' },
                   { $ref: '#/$defs/HostedAppOfferResult' },

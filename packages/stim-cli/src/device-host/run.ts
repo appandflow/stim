@@ -1,8 +1,17 @@
-import { hostedAppAttempt, isJsonObject } from '@stim-cli/core/state';
+import { hostedAppAttempt, isJsonObject, parseHostedOfferRequest } from '@stim-cli/core/state';
 import { runHostedDevice } from './worker.ts';
 import { runHostedAndroidDevice } from './android.ts';
+import { inspectHostedDevice } from './offer.ts';
 
 async function main(): Promise<void> {
+  if (process.argv[2] === 'offer') {
+    const raw = process.argv[3];
+    if (!raw || raw.length > 8192) throw new Error('Invalid hosted offer request.');
+    const request = parseHostedOfferRequest(JSON.parse(raw));
+    if (!request) throw new Error('Invalid hosted offer selectors.');
+    process.stdout.write(`${JSON.stringify(inspectHostedDevice(request))}\n`);
+    return;
+  }
   const chunks: Buffer[] = [];
   let bytes = 0;
   for await (const chunk of process.stdin) {

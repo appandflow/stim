@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { withDirLock } from '@stim-cli/core';
 import {
   clearClaimChild,
@@ -25,6 +25,8 @@ import {
   parseHostedRequest,
   readHostedDevice,
   readHostedSessions,
+  parseHostedOfferRequest,
+  parseHostedNativeOffer,
   hostedAppAttempt,
   parseHostedAppOffer,
   readHostedApp,
@@ -32,10 +34,12 @@ import {
   type HostedAppRecord,
   type HostedDeviceRequest,
   type HostedDeviceSession,
+  type HostedDeviceOffer,
 } from '@stim-cli/core/state';
 import { writeJson } from './registry.ts';
 import type { Methods, ProtocolError } from './protocol.ts';
 import { appDelivery, offerHostedApp, chunkHostedApp, changeHostedApp } from './hosted-app.ts';
+import { Pending, runNodeCommand } from './stim-command.ts';
 
 export interface DeviceHostLimits {
   prepareMs: number;
@@ -66,6 +70,7 @@ const refused = (code: ProtocolError['code'], message: string): { error: Protoco
 export class DeviceHost {
   private readonly owned = new Map<string, OwnedSession>();
   private readonly revoked = new Set<string>();
+  private readonly probes = new Pending();
   private closed = false;
   private readonly limits: DeviceHostLimits;
 
@@ -128,6 +133,54 @@ export class DeviceHost {
     const owned = { claim: attempt.acquired };
     this.owned.set(record.id, owned);
     return owned;
+  }
+
+  async offer(client: string, params: unknown): Promise<AppAnswer<HostedDeviceOffer>> {
+    if (this.closed || !this.options.allowed(client))
+      return refused('forbidden', 'Current device-host approval is required.');
+    const request = parseHostedOfferRequest(params);
+    if (!request) return refused('bad-request', 'offer needs a platform and valid optional selectors.');
+    try {
+      readHostedSessions();
+      const probe = runNodeCommand(
+        this.options.worker,
+        this.options.env,
+        ['offer', JSON.stringify(request)],
+        dirname(this.options.worker),
+        { timeoutMs: 30_000, maxOutputBytes: 32_768 },
+        'hosted device offer',
+      );
+      const result = await this.probes.track(probe.outcome);
+      if (this.closed || !this.options.allowed(client))
+        return refused('forbidden', 'Current device-host approval is required.');
+      if (!result.ok) throw new Error(result.message);
+      const native = parseHostedNativeOffer(JSON.parse(result.stdout));
+      if (!native || native.platform !== request.platform) throw new Error('Invalid native hosted offer.');
+      const records = readHostedSessions();
+      const running = records.filter((record) => record.state !== 'stopped').length;
+      const max = getConcurrencyLimits({ env: this.options.env }).maxDevices;
+      let declined =
+        native.declined ??
+        (native.resources.memoryPressure !== 'normal' ? 'Host memory pressure is unknown or elevated.' : null);
+      if (max > 0 && running >= max)
+        declined = 'All configured hosted device reservations are occupied, including unresolved sessions.';
+      if (request.platform === 'android') {
+        try {
+          reserveAndroidPort(records);
+        } catch (error) {
+          declined = (error as Error).message;
+        }
+      }
+      return {
+        result: {
+          ...native,
+          declined,
+          capacity: { running, max, available: max > 0 ? Math.max(0, max - running) : null },
+        },
+      };
+    } catch (error) {
+      return refused('action-failed', (error as Error).message);
+    }
   }
 
   reserve(client: string, params: unknown): Answer {
@@ -532,6 +585,7 @@ export class DeviceHost {
       for (const owned of this.owned.values()) owned.run?.cancel();
     }
     await Promise.all([...this.owned.values()].map((owned) => owned.stopping ?? owned.run?.done));
+    await this.probes.settled();
   }
 
   private run(

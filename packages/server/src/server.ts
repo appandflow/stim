@@ -1557,19 +1557,21 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         if (!device.capabilities.includes('device-host'))
           return error(id, 'forbidden', 'Explicit device-host approval is required.');
         const answer =
-          message.method === 'device-host.reserve'
-            ? hostedDevices.reserve(device.id, message.params)
-            : message.method === 'device-host.attach'
-              ? hostedDevices.attach(device.id, message.params)
-              : message.method === 'device-host.stop'
-                ? hostedDevices.stop(device.id, message.params)
-                : message.method === 'device-host.app.offer'
-                  ? hostedDevices.appOffer(device.id, message.params)
-                  : message.method === 'device-host.app.chunk'
-                    ? await hostedDevices.appChunk(device.id, message.params)
-                    : message.method === 'device-host.app.launch'
-                      ? hostedDevices.appLaunch(device.id, message.params)
-                      : hostedDevices.appAttach(device.id, message.params);
+          message.method === 'device-host.offer'
+            ? await hostedDevices.offer(device.id, message.params)
+            : message.method === 'device-host.reserve'
+              ? hostedDevices.reserve(device.id, message.params)
+              : message.method === 'device-host.attach'
+                ? hostedDevices.attach(device.id, message.params)
+                : message.method === 'device-host.stop'
+                  ? hostedDevices.stop(device.id, message.params)
+                  : message.method === 'device-host.app.offer'
+                    ? hostedDevices.appOffer(device.id, message.params)
+                    : message.method === 'device-host.app.chunk'
+                      ? await hostedDevices.appChunk(device.id, message.params)
+                      : message.method === 'device-host.app.launch'
+                        ? hostedDevices.appLaunch(device.id, message.params)
+                        : hostedDevices.appAttach(device.id, message.params);
         return send(socket, 'error' in answer ? { id, error: answer.error } : { id, result: answer.result });
       }
       if ((BUILD_METHODS as readonly string[]).includes(message.method)) {

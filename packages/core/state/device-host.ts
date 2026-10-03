@@ -17,13 +17,16 @@ export interface HostedIosDevice extends HostedIosChoice {
   name: string;
 }
 
-export interface HostedAndroidDevice {
-  avdName: string;
-  serial: string;
-  consolePort: number;
+export interface HostedAndroidChoice {
   systemImage: string;
   deviceProfile: string;
   architecture: 'arm64-v8a' | 'x86_64';
+}
+
+export interface HostedAndroidDevice extends HostedAndroidChoice {
+  avdName: string;
+  serial: string;
+  consolePort: number;
 }
 
 export type HostedDevice = HostedIosDevice | HostedAndroidDevice;
@@ -35,10 +38,30 @@ export interface HostedDeviceSelectors {
   deviceProfile?: string;
 }
 
-export interface HostedDeviceRequest extends HostedDeviceSelectors {
+export interface HostedDeviceOfferRequest extends HostedDeviceSelectors {
+  platform: HostedDevicePlatform;
+}
+
+export type HostedNativeOffer = {
+  resources: {
+    cpus: number;
+    /** Five-minute system load divided by available CPU count. */
+    loadPerCore: number;
+    memoryFreeBytes: number;
+    memoryPressure: 'normal' | 'warning' | 'critical' | null;
+    /** Available bytes on the Stim home volume, not necessarily the Android AVD volume. */
+    workerDiskFreeBytes: number | null;
+  };
+  declined: string | null;
+} & ({ platform: 'ios'; choice: HostedIosChoice | null } | { platform: 'android'; choice: HostedAndroidChoice | null });
+
+export type HostedDeviceOffer = HostedNativeOffer & {
+  capacity: { running: number; max: number; available: number | null };
+};
+
+export interface HostedDeviceRequest extends HostedDeviceOfferRequest {
   workspace: string;
   slot: string;
-  platform: HostedDevicePlatform;
   attempt: string;
 }
 
@@ -129,6 +152,12 @@ export function parseHostedRequest(value: unknown): HostedDeviceRequest | null {
   )
     return null;
   if (typeof value.attempt !== 'string' || !/^[a-zA-Z0-9_-]{1,128}$/.test(value.attempt)) return null;
+  const selectors = parseHostedOfferRequest(value);
+  return selectors ? { workspace: value.workspace, slot: value.slot, attempt: value.attempt, ...selectors } : null;
+}
+
+export function parseHostedOfferRequest(value: unknown): HostedDeviceOfferRequest | null {
+  if (!isJsonObject(value) || (value.platform !== 'ios' && value.platform !== 'android')) return null;
   if (
     ['deviceType', 'runtime', 'systemImage', 'deviceProfile'].some(
       (key) =>
@@ -144,15 +173,79 @@ export function parseHostedRequest(value: unknown): HostedDeviceRequest | null {
   )
     return null;
   return {
-    workspace: value.workspace,
-    slot: value.slot,
     platform: value.platform as HostedDevicePlatform,
-    attempt: value.attempt,
     ...(typeof value.deviceType === 'string' ? { deviceType: value.deviceType } : {}),
     ...(typeof value.runtime === 'string' ? { runtime: value.runtime } : {}),
     ...(typeof value.systemImage === 'string' ? { systemImage: value.systemImage } : {}),
     ...(typeof value.deviceProfile === 'string' ? { deviceProfile: value.deviceProfile } : {}),
   };
+}
+
+export function parseHostedNativeOffer(value: unknown): HostedNativeOffer | null {
+  if (!isJsonObject(value) || !isJsonObject(value.resources)) return null;
+  const { resources } = value;
+  if (
+    (value.platform !== 'ios' && value.platform !== 'android') ||
+    (value.declined !== null &&
+      (typeof value.declined !== 'string' || !value.declined || value.declined.length > 4000)) ||
+    !Number.isInteger(resources.cpus) ||
+    Number(resources.cpus) < 1 ||
+    ['loadPerCore', 'memoryFreeBytes'].some(
+      (key) => typeof resources[key] !== 'number' || !Number.isFinite(resources[key]) || resources[key] < 0,
+    ) ||
+    (resources.workerDiskFreeBytes !== null &&
+      (typeof resources.workerDiskFreeBytes !== 'number' ||
+        !Number.isFinite(resources.workerDiskFreeBytes) ||
+        resources.workerDiskFreeBytes < 0)) ||
+    (resources.memoryPressure !== null &&
+      resources.memoryPressure !== 'normal' &&
+      resources.memoryPressure !== 'warning' &&
+      resources.memoryPressure !== 'critical')
+  )
+    return null;
+  let choice: HostedIosChoice | HostedAndroidChoice | null = null;
+  if (value.choice !== null) {
+    if (value.platform === 'ios') {
+      const parsed = parseHostedChoice(value.choice);
+      if (!parsed) return null;
+      choice = {
+        deviceType: parsed.deviceType,
+        runtime: parsed.runtime,
+        deviceTypeId: parsed.deviceTypeId,
+        runtimeId: parsed.runtimeId,
+        architecture: parsed.architecture,
+      };
+    } else {
+      const selected = value.choice;
+      if (
+        !isJsonObject(selected) ||
+        typeof selected.systemImage !== 'string' ||
+        !/^system-images;android-\d+;[^;\s]+;(arm64-v8a|x86_64)$/.test(selected.systemImage) ||
+        typeof selected.deviceProfile !== 'string' ||
+        !selected.deviceProfile ||
+        (selected.architecture !== 'arm64-v8a' && selected.architecture !== 'x86_64') ||
+        !selected.systemImage.endsWith(`;${selected.architecture}`)
+      )
+        return null;
+      choice = {
+        systemImage: selected.systemImage,
+        deviceProfile: selected.deviceProfile,
+        architecture: selected.architecture,
+      };
+    }
+  } else if (!value.declined) return null;
+  return {
+    platform: value.platform,
+    choice,
+    declined: value.declined,
+    resources: {
+      cpus: resources.cpus,
+      loadPerCore: resources.loadPerCore,
+      memoryFreeBytes: resources.memoryFreeBytes,
+      memoryPressure: resources.memoryPressure,
+      workerDiskFreeBytes: resources.workerDiskFreeBytes,
+    },
+  } as HostedNativeOffer;
 }
 
 /** A missing established journal or malformed record is a refusal, never an empty reservation set. */
