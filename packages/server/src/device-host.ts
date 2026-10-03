@@ -62,6 +62,7 @@ interface OwnedSession {
     port?: number;
     closing?: boolean;
   };
+  viewer?: { close: () => Promise<void> };
 }
 
 type Answer = { result: HostedDeviceSession } | { error: ProtocolError };
@@ -320,6 +321,47 @@ export class DeviceHost {
     if (owned.metro === metro) delete owned.metro;
   }
 
+  viewTarget(
+    client: string,
+    session: string,
+  ): {
+    session: HostedDeviceSession;
+    home: string;
+    claim: ClaimHandle;
+  } {
+    if (this.closed || !this.options.allowed(client)) throw new Error('Current device-host approval is required.');
+    const record = readHostedSessions().find((each) => each.client === client && each.id === session);
+    const owned = this.owned.get(session);
+    if (!record || record.state !== 'ready' || !record.device || !owned)
+      throw new Error(
+        'Only a ready session attached to this server can be viewed. Explicit stop must reconcile a lost owner.',
+      );
+    if (owned.stopping || owned.installing) throw new Error('This hosted session has a native operation in progress.');
+    const home = join(deviceHostArea(record.id), 'home');
+    assertHostedDeviceLedger(home, record.device.udid);
+    if (readHostedDevice(home).udid !== record.device.udid)
+      throw new Error('The device record no longer matches this session.');
+    return { session: { ...record }, home, claim: owned.claim };
+  }
+
+  bindView(client: string, session: string, close: () => Promise<void>): () => void {
+    this.viewTarget(client, session);
+    const owned = this.owned.get(session)!;
+    if (owned.viewer) throw new Error('This hosted session already has a viewer pool.');
+    const viewer = { close };
+    owned.viewer = viewer;
+    return () => {
+      if (owned.viewer === viewer) delete owned.viewer;
+    };
+  }
+
+  private async closeView(owned: OwnedSession): Promise<void> {
+    const viewer = owned.viewer;
+    if (!viewer) return;
+    await viewer.close();
+    if (owned.viewer === viewer) delete owned.viewer;
+  }
+
   private appSession(client: string, params: unknown): HostedDeviceSession {
     if (!isJsonObject(params) || typeof params.session !== 'string' || !hostedAppAttempt(params.attempt))
       throw new Error('App requests need a session and app attempt.');
@@ -428,6 +470,8 @@ export class DeviceHost {
 
   private async install(record: HostedDeviceSession, owned: OwnedSession, attempt: string): Promise<void> {
     try {
+      await this.closeView(owned);
+      if (owned.stopping || this.closed || !this.options.allowed(record.client)) return;
       const run = this.run(record, owned, 'install', attempt);
       owned.run = run;
       const outcome = await run.done;
@@ -515,6 +559,7 @@ export class DeviceHost {
     const owned = this.acquire(record);
     if (owned.stopping) return;
     void this.closeMetro(owned).catch((error: unknown) => this.failed(record.id, error));
+    void this.closeView(owned).catch((error: unknown) => this.failed(record.id, error));
     this.change(record.id, (current) => {
       current.state = 'stopping';
     });
@@ -529,6 +574,7 @@ export class DeviceHost {
     const home = join(deviceHostArea(record.id), 'home');
     owned.run?.cancel();
     await this.closeMetro(owned);
+    await this.closeView(owned);
     if (owned.run) {
       owned.run.cancel();
       const outcome = await owned.run.done;
@@ -612,6 +658,9 @@ export class DeviceHost {
         void this.closeMetro(owned).catch((closeError: unknown) => {
           process.stderr.write(`Hosted Metro close failed: ${(closeError as Error).message}\n`);
         });
+        void this.closeView(owned).catch((closeError: unknown) => {
+          process.stderr.write(`Hosted view close failed: ${(closeError as Error).message}\n`);
+        });
       }
       process.stderr.write(`Hosted device revocation could not read its journal: ${(error as Error).message}\n`);
     }
@@ -620,6 +669,7 @@ export class DeviceHost {
   async close(): Promise<void> {
     this.closed = true;
     await Promise.all([...this.owned.values()].map((owned) => this.closeMetro(owned)));
+    await Promise.all([...this.owned.values()].map((owned) => this.closeView(owned)));
     try {
       for (const record of readHostedSessions()) {
         if (!this.owned.has(record.id)) continue;

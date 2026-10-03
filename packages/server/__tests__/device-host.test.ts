@@ -11,6 +11,11 @@ import { tmpdir } from 'node:os';
 import { deviceHostArea, deviceHostRoot, readHostedSessions } from '@stim-cli/core/state';
 import { processGroupAlive, readClaimSet } from '@stim-cli/core/ownership-claim';
 import { DeviceHost } from '../src/device-host.ts';
+import { HostedViews } from '../src/hosted-view.ts';
+import { ControlHub } from '../src/control.ts';
+import { FramePool } from '../src/frames.ts';
+import { FeedPool } from '../src/feed.ts';
+import type { ServerMessage } from '../src/protocol.ts';
 
 const WORKER = `
 import { spawn } from 'node:child_process';
@@ -187,6 +192,87 @@ for (const ending of ['revocation', 'server close', 'revocation with an unwritab
     },
   );
 }
+describe.skipIf(process.platform === 'win32')('hosted capture journal failures', () => {
+  test.each(['revocation', 'server close', 'unwritable revocation'])(
+    'closes actual capture and input on %s and retains unresolved native ownership',
+    async (ending) => {
+      const first = reserve();
+      await state(first.id, 'ready');
+      const helper = join(home, 'capture-helper');
+      writeFileSync(
+        helper,
+        `#!${process.execPath}
+const header=Buffer.alloc(9);header.writeUInt32BE(6);header[4]=1;header.writeUInt16BE(1,5);header.writeUInt16BE(1,7);
+process.stdout.write(Buffer.concat([header,Buffer.from('x')]));
+process.stdin.resume();process.on('SIGTERM',()=>{});setInterval(()=>{},1000);
+`,
+      );
+      chmodSync(helper, 0o755);
+      const frames = new FramePool(process.env);
+      const feeds = new FeedPool(join(home, 'unused-cli.mjs'), process.env);
+      const sent: ServerMessage[] = [];
+      const control = new ControlHub({
+        env: process.env,
+        stimCli: join(home, 'unused-cli.mjs'),
+        feeds,
+        frames,
+        statusFeed: { args: ['status', '--watch', '--json'], cwd: home, keep: 1, label: 'unused status' },
+        audit: () => {},
+        lockLimits: { timeoutMs: 1000, maxOutputBytes: 1024 },
+        idleMs: 60_000,
+        renewMs: 60_000,
+        leaseFor: '1m',
+        foldHelper: async () => helper,
+        foldTimeoutMs: 1000,
+        conflict: () => {},
+      });
+      const views = new HostedViews(host, control, process.env, () => helper);
+      const failed: string[] = [];
+      let firstFrame!: () => void;
+      const captured = new Promise<void>((resolve) => (firstFrame = resolve));
+      views.subscribe(
+        'client',
+        first.id,
+        { frame: () => firstFrame(), delayed: () => {}, failed: (message) => failed.push(message) },
+        { fps: 5, maxEdge: 480 },
+      );
+      await captured;
+      const owner = { device: { id: 'client', name: 'Client' }, send: (message: ServerMessage) => sent.push(message) };
+      const begun = await views.begin('client', first.id, owner, false, () => true);
+      if ('code' in begun) throw new Error(begun.message);
+      const claims = join(deviceHostRoot(), `${first.id}.claims`);
+      const capture = readClaimSet(claims).live[0]!.child;
+      expect(capture).not.toBeNull();
+      const journal = join(deviceHostRoot(), 'sessions.json');
+      const original = readFileSync(journal, 'utf8');
+      try {
+        if (ending === 'unwritable revocation') chmodSync(deviceHostRoot(), 0o500);
+        else writeFileSync(journal, '{}');
+        if (ending === 'server close') await host.close();
+        else {
+          allowed.delete('client');
+          host.revoke();
+        }
+        await vi.waitFor(() => expect(readClaimSet(claims).live[0]!.child).toBeNull(), { timeout: 3000 });
+        expect(readClaimSet(claims).live).toHaveLength(1);
+        expect(existsSync(join(deviceHostArea(first.id), 'home', 'stopped'))).toBe(false);
+        expect(await control.input(owner, begun.session, { input: 'touch', phase: 'down', x: 0, y: 1 })).toMatchObject({
+          code: 'unknown-session',
+        });
+        expect(failed).toHaveLength(1);
+        expect(sent).toEqual(
+          expect.arrayContaining([expect.objectContaining({ event: 'control-ended', session: begun.session })]),
+        );
+      } finally {
+        chmodSync(deviceHostRoot(), 0o700);
+        writeFileSync(journal, original);
+        await control.close();
+        await frames.close();
+        await feeds.close();
+      }
+    },
+  );
+});
 
 test('reserves once across reconnect and attempt replay, isolates clients, and stops only the owned session', async () => {
   const first = reserve();
@@ -404,6 +490,7 @@ test('refuses app mutations after the real session owner disappears until explic
   };
   expect(readClaimSet(join(deviceHostRoot(), `${retained.session}.claims`)).live).toEqual([]);
   expect(host.attach('client', { session: retained.session })).toHaveProperty('result.state', 'unknown');
+  expect(() => host.viewTarget('client', retained.session)).toThrow('Explicit stop');
   expect(host.appOffer('client', retained.app)).toHaveProperty(
     'error.message',
     expect.stringContaining('Explicit stop'),

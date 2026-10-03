@@ -21,6 +21,7 @@ import {
   readStatsReport,
   readHostedSessions,
   deviceHostArea,
+  deviceHostRoot,
   buildSlotPath,
   machineCapacity,
   readViewedDevices,
@@ -2776,6 +2777,160 @@ describe('frames.subscribe', () => {
       .filter((run) => run.tool === 'stim-frames')
       .map((run) => run as unknown as HelperRun);
   }
+
+  test.skipIf(!fakeTailscale)(
+    'streams and controls only the hosting client session and closes its capture before native stop',
+    async () => {
+      const captureHelper = fakeHelper();
+      writeFileSync(
+        captureHelper,
+        readFileSync(captureHelper, 'utf8')
+          .replace("process.on('SIGTERM', () => process.exit(0));", "process.on('SIGTERM', () => {});")
+          .replace("process.stdin.on('end', () => process.exit(0));", "process.stdin.on('end', () => {});")
+          .replace('run.configs.push(line);', 'run.configs.push(line); record();'),
+      );
+      const port = await startWithTools(
+        { FAKE_STIM_PAYLOADS: statusWith({ ios: OWNED_SIM }) },
+        undefined,
+        captureHelper,
+      );
+      writeFileSync(
+        join(root, 'device-host-worker.mjs'),
+        `
+        import { writeFileSync, readFileSync, existsSync } from 'node:fs';
+        import { join } from 'node:path';
+        const chunks=[]; for await(const chunk of process.stdin) chunks.push(chunk);
+        const input=JSON.parse(Buffer.concat(chunks));
+        const device={udid:'12345678-1234-1234-1234-123456789abc',name:'stim-hosted',deviceTypeId:'iphone',runtimeId:'ios',deviceType:'iPhone',runtime:'27.1',architecture:'arm64'};
+        const home=process.env.STIM_HOME;
+        if(input.mode==='prepare') {
+          writeFileSync(join(home,'hosted-device.json'),JSON.stringify(device));
+          writeFileSync(join(home,'created-devices.json'),JSON.stringify({version:1,ios:[device.udid],android:[],web:[]}));
+        } else {
+          const file=process.env.FAKE_TOOL_CALLS+'.started';
+          const pids=existsSync(file)?readFileSync(file,'utf8').trim().split(/\\s+/).filter(Boolean).map(Number):[];
+          if(pids.some(pid=>{try{process.kill(pid,0);return true;}catch{return false;}})) {
+            process.stdout.write(JSON.stringify({state:'unknown',device,notice:'capture still running'}));
+            process.exit(0);
+          }
+        }
+        process.stdout.write(JSON.stringify({state:input.mode==='prepare'?'ready':'stopped',device}));
+      `,
+      );
+      const pending = requestDeviceHostAccess('Hosting client', {
+        kind: 'tailnet',
+        nodeId: 'nPhoneA',
+        nodeName: 'phone',
+        user: 'u',
+      });
+      if (!pending.ok) throw new Error(pending.reason);
+      grantDevice(pending.device.id, ['device-host']);
+      const open = async () => {
+        const client = await connect(port, '100.64.0.2');
+        await client.request('hello', { protocol: 1, client: CLIENT, auth: { deviceToken: pending.deviceToken } });
+        return client;
+      };
+      const first = await open();
+      const reserved = await first.request('device-host.reserve', {
+        workspace: '/client/not-worker-registered',
+        slot: 'phone',
+        platform: 'ios',
+        attempt: 'hosted-view',
+      });
+      if (!('result' in reserved)) throw new Error(JSON.stringify(reserved));
+      const session = (reserved.result as { id: string }).id;
+      await vi.waitFor(async () =>
+        expect(await first.request('device-host.attach', { session })).toHaveProperty('result.state', 'ready'),
+      );
+      expect(await first.request('frames.subscribe', { workspace, platform: 'ios' })).toHaveProperty(
+        'error.code',
+        'forbidden',
+      );
+      expect(await first.request('device-host.frames.subscribe', { session, at: 1 })).toHaveProperty(
+        'error.code',
+        'bad-request',
+      );
+      expect(await first.request('device-host.frames.subscribe', { session, fps: 5 })).toHaveProperty(
+        'result.subscription',
+        's1',
+      );
+      expect(await first.next()).toMatchObject({ event: 'frame', subscription: 's1', platform: 'ios', slot: 'phone' });
+      expect(await first.request('device-host.frames.subscribe', { session, video: ['h264'] })).toMatchObject({
+        result: { subscription: 's2', video: 'h264' },
+      });
+      let streamed = await first.next();
+      while (!('binary' in streamed)) streamed = await first.next();
+      expect(await first.request('device-host.frames.keyframe', { subscription: 's2' })).toHaveProperty('result');
+      expect(await first.request('device-host.unsubscribe', { subscription: 's2' })).toHaveProperty('result');
+      const claimRoot = join(deviceHostRoot(), `${session}.claims`);
+      const helper = readClaimSet(claimRoot).live[0]!.child;
+      expect(helper).not.toBeNull();
+      expect(alive(helper!.pid)).toBe(true);
+      const began = await first.request('device-host.control.begin', { session });
+      if (!('result' in began)) throw new Error(JSON.stringify(began));
+      const controlSession = (began.result as { session: string }).session;
+      expect(began).toHaveProperty('result.lease', null);
+      expect(
+        await first.request('device-host.input.touch', { session: controlSession, phase: 'down', x: 0, y: 1 }),
+      ).toHaveProperty('result');
+      expect(
+        await first.request('device-host.input.touch', { session: controlSession, phase: 'up', x: 0, y: 1 }),
+      ).toHaveProperty('result');
+      const sameClient = await open();
+      expect(await sameClient.request('device-host.control.begin', { session })).toHaveProperty(
+        'error.code',
+        'device-busy',
+      );
+      expect(
+        await sameClient.request('device-host.input.touch', { session: controlSession, phase: 'down', x: 1, y: 0 }),
+      ).toHaveProperty('error.code', 'unknown-session');
+      const other = requestDeviceHostAccess('Other client', {
+        kind: 'tailnet',
+        nodeId: 'nPhoneB',
+        nodeName: 'other',
+        user: 'u',
+      });
+      if (!other.ok) throw new Error(other.reason);
+      grantDevice(other.device.id, ['device-host']);
+      const foreign = await connect(port, '100.64.0.3');
+      await foreign.request('hello', { protocol: 1, client: CLIENT, auth: { deviceToken: other.deviceToken } });
+      expect(await foreign.request('device-host.frames.subscribe', { session })).toHaveProperty(
+        'error.code',
+        'action-failed',
+      );
+      first.socket.close();
+      await first.closed;
+      await until(() => !alive(helper!.pid));
+      expect(await sameClient.request('device-host.attach', { session })).toHaveProperty('result.state', 'ready');
+      expect(await sameClient.request('device-host.frames.subscribe', { session })).toHaveProperty(
+        'result.subscription',
+        's1',
+      );
+      expect(await sameClient.next()).toMatchObject({ event: 'frame', subscription: 's1', slot: 'phone' });
+      const replacement = readClaimSet(claimRoot).live[0]!.child;
+      expect(replacement!.pid).not.toBe(helper!.pid);
+      expect(await sameClient.request('device-host.stop', { session })).toHaveProperty('result.state', 'stopping');
+      await vi.waitFor(
+        async () =>
+          expect(await sameClient.request('device-host.attach', { session })).toHaveProperty('result.state', 'stopped'),
+        { timeout: 4000 },
+      );
+      expect(alive(replacement!.pid)).toBe(false);
+      expect(readClaimSet(claimRoot).live).toEqual([]);
+      const captures = [...new Map(helperRuns().map((run) => [run.pid, run])).values()];
+      expect(captures.map((run) => run.args)).toEqual([
+        ['ios', '12345678-1234-1234-1234-123456789abc'],
+        ['ios', '12345678-1234-1234-1234-123456789abc'],
+      ]);
+      expect(captures[0]!.configs).toEqual(
+        expect.arrayContaining([
+          { input: 'touch', phase: 'down', x: 0, y: 1, display: 0 },
+          { input: 'touch', phase: 'up', x: 0, y: 1, display: 0 },
+        ]),
+      );
+    },
+    10_000,
+  );
 
   test.skipIf(!fakeTailscale)(
     'streams helper frames at the rate each subscriber asks for and stops the helper with the last one',
