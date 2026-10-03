@@ -571,7 +571,15 @@ Development launches remain `unverified` until a Metro bridge proves a bundle
 request. Release launches report success only after positive native process
 evidence; absent evidence remains `unverified`.
 
-Metro and screen/control relays, automatic placement and
+The [private Metro protocol](https://github.com/appandflow/stim/blob/main/packages/server/README.md#private-hosted-metro)
+routes the hosted app through worker loopback to its client's verified Metro
+over the tailnet. The client gateway accepts only the pinned worker and a
+session secret. Reconnect keeps the worker port while its session owner lives;
+stop and revocation close the streams. No public tunnel or Funnel is needed.
+Expo development clients need the forwarded-origin manifest contract described
+in that protocol; older client/CLI versions are not covered by this slice.
+
+Screen/control relays, automatic placement and
 Android hosting remain in [#2266](https://github.com/appandflow/stim/issues/2266).
 This protocol slice does not change where `stim ios` or `stim android` runs.
 Hosting approval grants no access to unrelated

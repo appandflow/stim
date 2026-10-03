@@ -1,7 +1,11 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync, renameSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync, renameSync, chmodSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
+import { createServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
+import { WebSocket, WebSocketServer } from 'ws';
+import { createMetroGateway } from '@stim-cli/core';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { deviceHostArea, deviceHostRoot, readHostedSessions } from '@stim-cli/core/state';
@@ -84,6 +88,104 @@ async function state(id: string, wanted: string) {
     timeout: 5000,
   });
   return readHostedSessions().find((record) => record.id === id)!;
+}
+
+test('keeps HTTP and WebSocket Metro on the owned session port across reconnect and closes it on revocation', async () => {
+  const first = reserve();
+  await state(first.id, 'ready');
+  const metro = createServer((_request, response) => response.end('workspace bundle'));
+  const messages = new WebSocketServer({ server: metro });
+  messages.on('connection', (socket) => socket.on('message', (message) => socket.send(message)));
+  await new Promise<void>((resolve) => metro.listen(0, '127.0.0.1', resolve));
+  const secret = 'a'.repeat(64);
+  const gateway = createMetroGateway({ metroPort: (metro.address() as AddressInfo).port, peer: '127.0.0.1', secret });
+  await new Promise<void>((resolve) => gateway.server.listen(0, '127.0.0.1', resolve));
+  const params = { session: first.id, gatewayPort: (gateway.server.address() as AddressInfo).port, secret };
+  let client: WebSocket | undefined;
+  try {
+    expect(await host.metroOpen('other', params, '127.0.0.1')).toHaveProperty('error');
+    expect(await host.metroOpen('client', params, null)).toHaveProperty('error.code', 'bad-request');
+    const opened = await host.metroOpen('client', params, '127.0.0.1');
+    if ('error' in opened) throw new Error(opened.error.message);
+    const port = opened.result.port;
+    expect(await (await fetch(`http://127.0.0.1:${port}/index.bundle`)).text()).toBe('workspace bundle');
+    expect(await host.metroOpen('client', params, '127.0.0.1')).toHaveProperty('result.port', port);
+    expect(await host.metroOpen('client', { ...params, secret: 'b'.repeat(64) }, '127.0.0.1')).toHaveProperty('error');
+    expect(await host.metroClose('other', params)).toHaveProperty('error.code', 'unknown-session');
+    expect(await host.metroClose('client', params)).toHaveProperty('result.port', null);
+    await expect(fetch(`http://127.0.0.1:${port}/status`)).rejects.toThrow('fetch failed');
+    expect(await host.metroOpen('client', params, '127.0.0.1')).toHaveProperty('result.port', port);
+    client = new WebSocket(`ws://127.0.0.1:${port}/message`);
+    await new Promise<void>((resolve, reject) => {
+      client!.once('open', resolve);
+      client!.once('error', reject);
+    });
+    const packet = JSON.stringify({ version: 2, method: 'reload' });
+    const echo = new Promise<string>((resolve) => client!.once('message', (message) => resolve(message.toString())));
+    client.send(packet);
+    expect(await echo).toBe(packet);
+    const closed = new Promise<void>((resolve) => client!.once('close', () => resolve()));
+    allowed.delete('client');
+    host.revoke();
+    await closed;
+    await state(first.id, 'stopped');
+    await expect(fetch(`http://127.0.0.1:${port}/status`)).rejects.toThrow('fetch failed');
+    expect(await (await fetch(`http://127.0.0.1:${(metro.address() as AddressInfo).port}/status`)).text()).toBe(
+      'workspace bundle',
+    );
+  } finally {
+    client?.terminate();
+    await gateway.close();
+    messages.close();
+    metro.closeAllConnections();
+    await new Promise<void>((resolve) => metro.close(() => resolve()));
+  }
+});
+
+for (const ending of ['revocation', 'server close', 'revocation with an unwritable journal']) {
+  test.skipIf(ending === 'revocation with an unwritable journal' && process.platform === 'win32')(
+    `closes known Metro traffic on ${ending} when journal reconciliation fails and retains its device claim`,
+    async () => {
+      const first = reserve();
+      await state(first.id, 'ready');
+      const metro = createServer((_request, response) => response.end('private workspace bundle'));
+      await new Promise<void>((resolve) => metro.listen(0, '127.0.0.1', resolve));
+      const secret = 'a'.repeat(64);
+      const gateway = createMetroGateway({
+        metroPort: (metro.address() as AddressInfo).port,
+        peer: '127.0.0.1',
+        secret,
+      });
+      await new Promise<void>((resolve) => gateway.server.listen(0, '127.0.0.1', resolve));
+      const journal = join(deviceHostRoot(), 'sessions.json');
+      const original = readFileSync(journal, 'utf8');
+      try {
+        const opened = await host.metroOpen(
+          'client',
+          { session: first.id, gatewayPort: (gateway.server.address() as AddressInfo).port, secret },
+          '127.0.0.1',
+        );
+        if ('error' in opened) throw new Error(opened.error.message);
+        const url = `http://127.0.0.1:${opened.result.port}/index.bundle`;
+        expect(await (await fetch(url)).text()).toBe('private workspace bundle');
+        if (ending === 'revocation with an unwritable journal') chmodSync(deviceHostRoot(), 0o500);
+        else writeFileSync(journal, '{}');
+        if (ending !== 'server close') {
+          allowed.delete('client');
+          host.revoke();
+        } else await host.close();
+        await vi.waitFor(async () => expect(fetch(url)).rejects.toThrow('fetch failed'));
+        expect(readClaimSet(join(deviceHostRoot(), `${first.id}.claims`)).live).toHaveLength(1);
+        expect(existsSync(join(deviceHostArea(first.id), 'home', 'stopped'))).toBe(false);
+      } finally {
+        chmodSync(deviceHostRoot(), 0o700);
+        writeFileSync(journal, original);
+        await gateway.close();
+        metro.closeAllConnections();
+        await new Promise<void>((resolve) => metro.close(() => resolve()));
+      }
+    },
+  );
 }
 
 test('reserves once across reconnect and attempt replay, isolates clients, and stops only the owned session', async () => {

@@ -286,12 +286,13 @@ After every digest is verified, call `device-host.app.launch` with
 `{session, attempt}`. Poll `device-host.app.attach` for `installed` or `unknown`.
 Reconnect to the same app attempt to reconcile a lost launch reply; replay
 does not install or launch twice. Session attach includes the latest
-`appAttempt`. The worker verifies the plist identity and simulator metadata,
+`appAttempt`. Development offers may include `devClientScheme` for an Expo
+development client; the attempt cannot change that scheme. The worker verifies the plist identity and simulator metadata,
 the executable's Mach-O platform, architecture and minimum OS, then rechecks
 the exact private device ledger before install and launch.
 
-Development launch reports `launched: "unverified"`: this slice has no Metro
-bridge. Release launch reports `true` only after observing a live native app
+Development launch reports `launched: "unverified"`: a bridge or native process
+alone does not prove bundle delivery. Release launch reports `true` only after observing a live native app
 process; absent evidence remains `"unverified"`. Stop and approval revocation
 cancel an in-flight install before shutting down the owned simulator. Uncertain
 native outcomes retain the session as `unknown`; explicitly stop it before
@@ -299,6 +300,42 @@ retrying. Receipts and artifacts remain in the server-chosen session area;
 artifact retention and session reuse/retirement remain under
 [#2266](https://github.com/appandflow/stim/issues/2266) and
 [#2348](https://github.com/appandflow/stim/issues/2348).
+
+### Private hosted Metro
+
+The client keeps its verified workspace Metro on loopback. It creates a
+`createMetroGateway` from `@stim-cli/core`, binds it only to its own Tailscale
+address, and supplies the pinned worker's literal tailnet address, local Metro
+port and a fresh 32-byte secret encoded as 64 lowercase hex characters. The
+gateway accepts only that worker address and authenticates each connection
+before forwarding to the fixed local Metro port. It never targets a client
+supplied URL. Close the gateway when its session ends.
+
+Call `device-host.metro.open` with `{session, gatewayPort, secret}` on the
+approved hosted connection. The server connects only to that connection's
+authenticated tailnet peer and returns `{port}` for the worker's loopback
+endpoint. Development installation uses that port for `RCT_jsLocation` and,
+when offered, the Expo development-client deep link. HTTP and WebSocket bytes
+stream over WireGuard with socket backpressure; no public tunnel, Funnel or
+Tailscale serve configuration change is needed. The 64 KiB server message
+limit remains unchanged.
+
+Replaying the same open request keeps the port. Client disconnection leaves
+the bridge available for the same session while its server owner lives. Call
+`device-host.metro.close` to replace a gateway, then reopen on the same port;
+an occupied port refuses rather than sending the app to another listener.
+Closing a bridge interrupts its active streams. Stop, revocation and server
+shutdown close its sockets before device shutdown. After a server owner
+disappears, the retained session requires explicit stop, as app delivery does.
+
+Expo dev-launcher and CLI versions that send and honor the `Forwarded` header
+resolve relative manifest URLs against the worker origin. Older versions may
+embed the client's local port instead; this slice does not rewrite manifests
+or claim that those versions work through a different worker port. Client
+placement still needs to check that contract before selecting hosted Metro.
+Bare React Native uses the worker `RCT_jsLocation`. Bridge readiness and
+manifest requests are not launch proof; development remains `unverified` until
+the workspace observes the app's own bundle delivery.
 This is a protocol API for approved clients; automatic CLI placement, Metro,
 view/control and Android remain in [#2266](https://github.com/appandflow/stim/issues/2266).
 

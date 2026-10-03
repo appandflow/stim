@@ -649,6 +649,15 @@ describe('hosted device sessions', () => {
         'ready',
       );
       expect(await next.request('stats.get')).toHaveProperty('error.code', 'forbidden');
+      expect(
+        await next.request('device-host.metro.open', { session: id, gatewayPort: 0, secret: 'bad' }),
+      ).toHaveProperty('error.code', 'bad-request');
+      const metro = { session: id, gatewayPort: 65530, secret: 'a'.repeat(64) };
+      const opened = await next.request('device-host.metro.open', metro);
+      const metroPort = (opened as { result: { port: number } }).result.port;
+      expect(metroPort).toBeGreaterThan(0);
+      expect(readHostedSessions()[0]?.metroPort).toBe(metroPort);
+
       const content = Buffer.alloc(40000, 65);
       const digest = createHash('sha256').update(content).digest('hex');
       const files = ['Info.plist', ...Array.from({ length: 700 }, (_, index) => `Assets/resource-${index}`)].map(
@@ -701,9 +710,15 @@ describe('hosted device sessions', () => {
         'unverified',
       );
       expect(readFileSync(join(deviceHostArea(id), 'home', 'installs'), 'utf8')).toBe('socket-app\n');
+      expect(await reattached.request('device-host.metro.open', metro)).toHaveProperty('result.port', metroPort);
+      expect(await reattached.request('device-host.metro.close', { session: id })).toHaveProperty('result.port', null);
+      await expect(fetch(`http://127.0.0.1:${metroPort}/status`)).rejects.toThrow('fetch failed');
+      expect(await reattached.request('device-host.metro.open', metro)).toHaveProperty('result.port', metroPort);
+
       expect(revokeDevice(pending.device.id)).toBe(true);
       expect(await reattached.closed).toBe(4401);
       await vi.waitFor(() => expect(readHostedSessions()[0]?.state).toBe('stopped'));
+      await expect(fetch(`http://127.0.0.1:${metroPort}/status`)).rejects.toThrow('fetch failed');
     },
   );
 });
