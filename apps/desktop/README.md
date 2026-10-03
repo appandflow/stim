@@ -190,6 +190,19 @@ device sits on a plain canvas, as large as it fits, with its hardware,
 rotation and posture controls grouped below it. The groups wrap when space is
 tight, and the replay bar (see [Replay](#replay)) runs across the bottom.
 
+**Show device frame** adds the matching installed hardware artwork to a live local
+simulator or emulator. The screen keeps its aspect ratio and input coordinates;
+the frame turns with the display. **Hide device frame** returns to the default
+frameless view. The button is available without taking Control.
+
+Apple frames come from installed DeviceKit chrome and the simulator's actual
+device-type profile. Android frames use the AVD's configured `skin.path`, or its
+exact hardware profile's artwork in `/Applications/Android Studio.app`; the skin's
+screen dimensions must match the AVD. Missing artwork, unsupported skin layouts,
+foldables, physical or remote devices, web pages and replay stay frameless. Stim
+ships no Apple or Android artwork. Duo's genuine folded housing and mobile asset
+delivery are not included in this desktop slice.
+
 On the right, 360 points wide, the **agent actions** list what agents did on
 the device (`stim logs --source agent`), oldest first, with filter chips (All,
 Failed and the two most used commands) and a divider for a pause of more than
