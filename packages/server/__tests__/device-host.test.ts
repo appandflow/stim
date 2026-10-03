@@ -6,6 +6,7 @@ import { processGroupAlive, readClaimSet } from '@stim-cli/core/ownership-claim'
 import { DeviceHost } from '../src/device-host.ts';
 
 const WORKER = `
+import { spawn } from 'node:child_process';
 import { writeFileSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 const chunks = [];
@@ -16,11 +17,20 @@ const device = {udid:'12345678-1234-1234-1234-123456789abc',name:'stim-hosted',d
 const out = value => process.stdout.write(JSON.stringify(value));
 if(input.mode === 'prepare') {
   writeFileSync(join(home,'entered'),String(process.pid));
-  if(input.deviceType === 'refused') { out({state:'stopped',device:null,notice:'inventory unavailable'}); }
+  if(input.deviceType === 'refused' || input.deviceType === 'delayed-refusal') {
+    if(input.deviceType === 'delayed-refusal') await new Promise(resolve=>setTimeout(resolve,150));
+    out({state:'stopped',device:null,notice:'inventory unavailable'});
+  }
   else {
     writeFileSync(join(home,'hosted-device.json'),JSON.stringify(device));
     writeFileSync(join(home,'created-devices.json'),JSON.stringify({version:1,ios:[device.udid],android:[],web:[]}));
-    if(input.deviceType === 'hang') { process.on('SIGTERM',()=>{}); setInterval(()=>{},1000); }
+    if(input.deviceType === 'descendant') {
+      spawn(process.execPath,['--input-type=module','-e',
+        "import {writeFileSync} from 'node:fs'; process.on('SIGTERM',()=>{}); writeFileSync(process.env.STIM_HOME+'/descendant',String(process.pid)); setInterval(()=>{},1000);"
+      ],{stdio:'ignore'});
+      setInterval(()=>{},1000);
+    }
+    else if(input.deviceType === 'hang') { process.on('SIGTERM',()=>{}); setInterval(()=>{},1000); }
     else if(input.deviceType === 'lost') { process.exitCode=1; }
     else out({state:'ready',device});
   }
@@ -128,6 +138,41 @@ test('keeps the server responsive and bounds cancellation of a TERM-resistant ac
   host.stop('client', { session: first.id });
   await state(first.id, 'stopped');
   expect(processGroupAlive(pid)).toBe(false);
+});
+
+test.each(['stop', 'revoke'])('releases a preflight refusal when %s precedes its close callback', async (action) => {
+  const first = reserve({ deviceType: 'delayed-refusal' });
+  const area = join(deviceHostArea(first.id), 'home');
+  await vi.waitFor(() => expect(existsSync(join(area, 'entered'))).toBe(true));
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 400);
+  if (action === 'stop') host.stop('client', { session: first.id });
+  else {
+    allowed.delete('client');
+    host.revoke();
+  }
+  const declined = await state(first.id, 'stopped');
+  expect(declined.device).toBeNull();
+  expect(declined.notice).toBe('inventory unavailable');
+  expect(existsSync(join(area, 'stopped'))).toBe(false);
+  expect(readClaimSet(join(deviceHostRoot(), `${first.id}.claims`)).live).toEqual([]);
+  expect(host.reserve('other', { ...request, attempt: 'next' })).toHaveProperty('result.state', 'preparing');
+});
+
+test('terminates a TERM-resistant descendant after the worker leader exits before releasing its claim', async () => {
+  const first = reserve({ deviceType: 'descendant' });
+  const area = join(deviceHostArea(first.id), 'home');
+  await vi.waitFor(() => expect(existsSync(join(area, 'descendant'))).toBe(true));
+  const leader = Number(readFileSync(join(area, 'entered'), 'utf8'));
+  const descendant = Number(readFileSync(join(area, 'descendant'), 'utf8'));
+  try {
+    host.stop('client', { session: first.id });
+    await state(first.id, 'stopped');
+    expect(processGroupAlive(leader)).toBe(false);
+    expect(() => process.kill(descendant, 0)).toThrow('ESRCH');
+    expect(readClaimSet(join(deviceHostRoot(), `${first.id}.claims`)).live).toEqual([]);
+  } finally {
+    if (processGroupAlive(leader)) process.kill(-leader, 'SIGKILL');
+  }
 });
 
 test('revocation stops a live owned device and rejects subsequent client methods', async () => {

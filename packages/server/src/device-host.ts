@@ -260,12 +260,30 @@ export class DeviceHost {
   }
 
   private async finishStop(record: HostedDeviceSession, owned: OwnedSession): Promise<void> {
+    const home = join(deviceHostArea(record.id), 'home');
     if (owned.run) {
       owned.run.cancel();
-      if (!(await owned.run.done).settled)
+      const outcome = await owned.run.done;
+      const value = outcome.value;
+      if (!outcome.settled)
         throw new Error('The prior worker group is unresolved. Its claim and device were retained.');
+      if (
+        isJsonObject(value) &&
+        value.state === 'stopped' &&
+        value.device === null &&
+        !existsSync(join(home, 'hosted-device.json')) &&
+        !existsSync(join(home, 'created-devices.json'))
+      ) {
+        this.change(record.id, (current) => {
+          current.state = 'stopped';
+          current.device = null;
+          if (typeof value.notice === 'string') current.notice = value.notice;
+          else delete current.notice;
+        });
+        this.release(record.id, owned);
+        return;
+      }
     }
-    const home = join(deviceHostArea(record.id), 'home');
     const device = readHostedDevice(home);
     if (record.device && record.device.udid !== device.udid)
       throw new Error('The device record no longer matches this session.');
@@ -366,18 +384,21 @@ export class DeviceHost {
     let notice: string | undefined;
     let finished = false;
     let cancelling = false;
+    let closed = false;
     let killTimer: NodeJS.Timeout | undefined;
     let finishTimer: NodeJS.Timeout | undefined;
+    let groupTimer: NodeJS.Timeout | undefined;
     let settle!: (result: { value: unknown; settled: boolean; notice?: string }) => void;
     const done = new Promise<{ value: unknown; settled: boolean; notice?: string }>((resolve) => {
       settle = resolve;
     });
-    const finish = (closed: boolean) => {
+    const finish = () => {
       if (finished) return;
       finished = true;
       clearTimeout(timer);
       clearTimeout(killTimer);
       clearTimeout(finishTimer);
+      clearTimeout(groupTimer);
       const settled = closed && (!child.pid || !processGroupAlive(child.pid));
       if (settled) clearClaimChild(owned.claim);
       let value: unknown = null;
@@ -395,7 +416,11 @@ export class DeviceHost {
       settle({ value, settled, ...(notice ? { notice } : {}) });
     };
     const signal = (name: NodeJS.Signals) => {
-      if (!child.pid || !identity || inspectProcessIdentity(identity) !== 'same') return;
+      if (!child.pid || !identity) return;
+      const status = inspectProcessIdentity(identity);
+      // POSIX Process ID Reuse keeps the leader's PID reserved while its process group survives.
+      // https://pubs.opengroup.org/onlinepubs/009696699/basedefs/xbd_chap04.html#tag_04_12
+      if (status !== 'same' && status !== 'gone') return;
       try {
         process.kill(-child.pid, name);
       } catch {}
@@ -406,7 +431,15 @@ export class DeviceHost {
       notice ??= 'Hosted worker was cancelled or exceeded its deadline.';
       signal('SIGTERM');
       killTimer = setTimeout(() => signal('SIGKILL'), this.limits.killGraceMs);
-      finishTimer = setTimeout(() => finish(false), this.limits.killGraceMs * 2);
+      finishTimer = setTimeout(finish, this.limits.killGraceMs * 2);
+    };
+    const finishGroup = () => {
+      if (finished) return;
+      if (!child.pid || !processGroupAlive(child.pid)) finish();
+      else {
+        cancel();
+        groupTimer = setTimeout(finishGroup, 25);
+      }
     };
     const timer = setTimeout(cancel, mode === 'prepare' ? this.limits.prepareMs : this.limits.stopMs);
     child.stdout?.on('data', (chunk: Buffer) => {
@@ -424,11 +457,13 @@ export class DeviceHost {
     child.stdin?.on('error', () => cancel());
     child.once('error', (error) => {
       notice = error.message;
-      finish(true);
+      closed = true;
+      finishGroup();
     });
     child.once('close', (code) => {
       if (code !== 0) notice ??= stderr.trim() || `Hosted worker exited ${code}.`;
-      finish(true);
+      closed = true;
+      finishGroup();
     });
     const captured = child.pid === undefined ? null : captureProcessIdentity(child.pid);
     if (!captured?.ok || child.pid === undefined) {
