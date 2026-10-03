@@ -20,11 +20,14 @@ public struct SimulatorDisplayView: NSViewRepresentable {
   public var onLitChange: ((Bool) -> Void)?
   public var buttons: SimulatorButtons?
   public var hingeAngle: Double?
+  public var showsDeviceFrame: Bool
+  public var onFrameSizeChange: ((CGSize?) -> Void)?
 
   public init(
     udid: String, screenID: UInt32 = 1, interactive: Bool = false,
     onPixelSizeChange: @escaping (CGSize) -> Void = { _ in }, onLitChange: ((Bool) -> Void)? = nil,
-    buttons: SimulatorButtons? = nil, hingeAngle: Double? = nil
+    buttons: SimulatorButtons? = nil, hingeAngle: Double? = nil, showsDeviceFrame: Bool = false,
+    onFrameSizeChange: ((CGSize?) -> Void)? = nil
   ) {
     self.udid = udid
     self.screenID = screenID
@@ -33,20 +36,45 @@ public struct SimulatorDisplayView: NSViewRepresentable {
     self.onLitChange = onLitChange
     self.buttons = buttons
     self.hingeAngle = hingeAngle
+    self.showsDeviceFrame = showsDeviceFrame
+    self.onFrameSizeChange = onFrameSizeChange
   }
 
-  public func makeNSView(context: Context) -> SimulatorDisplayNSView {
+  public final class Coordinator {
+    var identity: String?
+  }
+
+  public func makeCoordinator() -> Coordinator { Coordinator() }
+
+  public func makeNSView(context: Context) -> DeviceFrameNSView {
     let view = SimulatorDisplayNSView()
+    let canvas = DeviceFrameNSView(screen: view)
+    canvas.onFrameSizeChange = onFrameSizeChange ?? { _ in }
+    let frameIdentity = showsDeviceFrame || onFrameSizeChange != nil ? udid : nil
+    context.coordinator.identity = frameIdentity
+    canvas.artwork = frameIdentity == nil ? nil : SimulatorFrameArtwork.load(udid: udid)
+    canvas.showsFrame = showsDeviceFrame
+    view.onOrientationChange = { [weak canvas] orientation in
+      canvas?.quarterTurns = orientation == 3 ? 1 : orientation == 4 ? 3 : orientation == 2 ? 2 : 0
+    }
     view.onPixelSizeChange = onPixelSizeChange
     view.onLitChange = onLitChange
     view.attach(udid: udid, screenID: screenID)
     view.setInteractive(interactive)
     view.hingeAngle = hingeAngle
     buttons?.view = view
-    return view
+    return canvas
   }
 
-  public func updateNSView(_ view: SimulatorDisplayNSView, context: Context) {
+  public func updateNSView(_ canvas: DeviceFrameNSView, context: Context) {
+    guard let view = canvas.screen as? SimulatorDisplayNSView else { return }
+    canvas.onFrameSizeChange = onFrameSizeChange ?? { _ in }
+    let frameIdentity = showsDeviceFrame || onFrameSizeChange != nil ? udid : nil
+    if context.coordinator.identity != frameIdentity {
+      context.coordinator.identity = frameIdentity
+      canvas.artwork = frameIdentity == nil ? nil : SimulatorFrameArtwork.load(udid: udid)
+    }
+    canvas.showsFrame = showsDeviceFrame
     view.onPixelSizeChange = onPixelSizeChange
     view.onLitChange = onLitChange
     view.attach(udid: udid, screenID: screenID)
@@ -55,8 +83,8 @@ public struct SimulatorDisplayView: NSViewRepresentable {
     buttons?.view = view
   }
 
-  public static func dismantleNSView(_ view: SimulatorDisplayNSView, coordinator: ()) {
-    view.detach()
+  public static func dismantleNSView(_ canvas: DeviceFrameNSView, coordinator: Coordinator) {
+    (canvas.screen as? SimulatorDisplayNSView)?.detach()
   }
 }
 
@@ -75,6 +103,7 @@ public final class SimulatorButtons {
 
 public final class SimulatorDisplayNSView: NSView {
   var onPixelSizeChange: (CGSize) -> Void = { _ in }
+  var onOrientationChange: (UInt32) -> Void = { _ in }
   var onLitChange: ((Bool) -> Void)? {
     didSet {
       watchLit()
@@ -186,6 +215,7 @@ public final class SimulatorDisplayNSView: NSView {
     surfaceLayer.contents = surface
     foldedScreen.show(surface)
     self.orientation = orientation
+    onOrientationChange(orientation)
     needsLayout = true
     reportLit()
     guard let displayed = displayedScreenSize, displayed != reportedSize else { return }
