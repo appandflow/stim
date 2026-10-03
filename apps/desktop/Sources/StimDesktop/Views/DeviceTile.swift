@@ -21,7 +21,7 @@ struct DeviceTile: View {
   var showsCovers = false
   var focused = false
   var viewerAction: String? = nil
-  /// The device viewer's canvas: only the screen, with the device's buttons beside it, and Run on a stopped device.
+  /// The device viewer's canvas: only the screen, with the device's buttons below it, and Run on a stopped device.
   /// A tile without it is a preview card with no controls.
   var viewer = false
   /// The card's maximum width, or the viewer's screen width limit; the screen shrinks below `screenHeight` to fit.
@@ -48,6 +48,7 @@ struct DeviceTile: View {
   @State private var postureFailed = false
   @State private var replaySize: CGSize?
   @State private var headerHeight: CGFloat = 0
+  @State private var controlsHeight: CGFloat = 44
   @State private var simulatorButtons = SimulatorButtons()
   @State private var emulatorButtons = EmulatorButtons()
   @EnvironmentObject private var actions: ActionCenter
@@ -59,14 +60,13 @@ struct DeviceTile: View {
   }
   static let minimumWidth: CGFloat = 240
   static let stoppedMaximumWidth: CGFloat = 420
-  static let buttonStripWidth: CGFloat = 44
 
   var body: some View {
     if viewer { canvas } else { card }
   }
 
   private var canvas: some View {
-    HStack(alignment: .center, spacing: Space.lg) {
+    VStack(spacing: Space.lg) {
       if let workspace, showsStoppedBar, !replaying {
         stoppedBar(runCommand(for: device, cwd: workspace))
           .frame(maxWidth: 420)
@@ -89,7 +89,7 @@ struct DeviceTile: View {
         .clipShape(RoundedRectangle(cornerRadius: Radius.card))
         .overlay { RoundedRectangle(cornerRadius: Radius.card).strokeBorder(frameColor, lineWidth: frameWidth) }
         if interactive, Self.hasButtons(device) {
-          buttonStrip
+          buttonBar
         }
       }
     }
@@ -137,7 +137,7 @@ struct DeviceTile: View {
     return interactive ? 2 : 1
   }
 
-  /// Whether the viewer draws the button column beside the device's screen.
+  /// Whether the viewer offers hardware controls below the device's screen.
   static func hasButtons(_ device: DeviceRef) -> Bool {
     switch device {
     case .ios, .android: return device.isRunning && !device.isPhysical
@@ -267,58 +267,73 @@ struct DeviceTile: View {
     }
   }
 
-  private var buttonStrip: some View {
-    VStack(spacing: Space.sm) {
-      switch device {
-      case .ios:
-        hardwareButton("Home", systemImage: "circle") { simulatorButtons.press(.home) }
-        hardwareButton("Lock", systemImage: "lock") { simulatorButtons.press(.lock) }
-      case .android:
-        hardwareButton("Home", systemImage: "circle") { emulatorButtons.press(.home) }
-        hardwareButton("Back", systemImage: "chevron.backward") { emulatorButtons.press(.back) }
-        hardwareButton("Apps", systemImage: "square.on.square") { emulatorButtons.press(.apps) }
-        hardwareButton("Lock", systemImage: "lock") { emulatorButtons.press(.lock) }
-      case .web, .remote:
-        EmptyView()
+  private var buttonBar: some View {
+    FlowLayout(spacing: Space.sm, lineSpacing: Space.sm, centered: true) {
+      controlGroup {
+        switch device {
+        case .ios:
+          hardwareButton("Home", systemImage: "circle") { simulatorButtons.press(.home) }
+          hardwareButton("Lock", systemImage: "lock") { simulatorButtons.press(.lock) }
+        case .android:
+          hardwareButton("Home", systemImage: "circle") { emulatorButtons.press(.home) }
+          hardwareButton("Back", systemImage: "chevron.backward") { emulatorButtons.press(.back) }
+          hardwareButton("Apps", systemImage: "square.on.square") { emulatorButtons.press(.apps) }
+          hardwareButton("Lock", systemImage: "lock") { emulatorButtons.press(.lock) }
+        case .web, .remote:
+          EmptyView()
+        }
       }
-      Rectangle().fill(Palette.border).frame(width: 16, height: 1)
-      rotateButton(clockwise: false)
-      rotateButton(clockwise: true)
+      controlGroup {
+        rotateButton(clockwise: false)
+        rotateButton(clockwise: true)
+      }
       if device.formFactor == .dual, screenIDs.count > 1, case .ios(_, let sim) = device {
         if hingeAvailable {
-          Rectangle().fill(Palette.border).frame(width: 16, height: 1)
-          ForEach(DuoPosture.allCases, id: \.self) { postureButton($0, udid: sim.udid) }
-          hingeAngleControl(udid: sim.udid)
+          controlGroup {
+            ForEach(DuoPosture.allCases, id: \.self) { postureButton($0, udid: sim.udid) }
+            hingeAngleControl(udid: sim.udid)
+          }
         } else if SimulatorFold.isAvailable {
-          foldButton(udid: sim.udid)
+          controlGroup { foldButton(udid: sim.udid) }
         }
       }
       if let emulatorPosture, case .android(_, let avd) = device, let serial = avd.serial {
-        postureMenu(serial: serial, current: emulatorPosture)
+        controlGroup { postureMenu(serial: serial, current: emulatorPosture) }
       }
       if let udid = simulatorOptionsUDID {
-        Rectangle().fill(Palette.border).frame(width: 16, height: 1)
-        Button("Simulator options", systemImage: "slider.horizontal.3") { showsSimulatorOptions = true }
-          .labelStyle(.iconOnly)
-          .nativeIconStyle()
-          .help("Appearance and accessibility settings for this simulator")
-          .popover(isPresented: $showsSimulatorOptions) {
-            SimulatorOptionsView(udid: udid, canControl: simulatorOptionsUDID == udid)
-              .id(udid)
-          }
+        controlGroup {
+          Button("Simulator options", systemImage: "slider.horizontal.3") { showsSimulatorOptions = true }
+            .labelStyle(.iconOnly)
+            .buttonStyle(DeviceControlButtonStyle())
+            .help("Appearance and accessibility settings for this simulator")
+            .popover(isPresented: $showsSimulatorOptions) {
+              SimulatorOptionsView(udid: udid, canControl: simulatorOptionsUDID == udid)
+                .id(udid)
+            }
+        }
       }
     }
-    .font(.stim(.footnote, weight: .medium))
-    .padding(Space.sm)
-    .frame(width: Self.buttonStripWidth)
-    .background(Palette.surface, in: RoundedRectangle(cornerRadius: Radius.card))
-    .overlay(RoundedRectangle(cornerRadius: Radius.card).strokeBorder(Palette.border))
+    .frame(width: maxWidth)
+    .onGeometryChange(for: CGFloat.self, of: { $0.size.height }, action: { controlsHeight = $0 })
+  }
+
+  @ViewBuilder private func controlGroup<Content: View>(@ViewBuilder content: () -> Content) -> some View {
+    let group = HStack(spacing: Space.xxs, content: content).padding(Space.xs)
+    #if compiler(>=6.2)
+      if #available(macOS 26, *) {
+        group.glassEffect(.regular, in: Capsule())
+      } else {
+        group.background(Palette.surface, in: Capsule()).overlay(Capsule().strokeBorder(Palette.border))
+      }
+    #else
+      group.background(Palette.surface, in: Capsule()).overlay(Capsule().strokeBorder(Palette.border))
+    #endif
   }
 
   private func hardwareButton(_ title: String, systemImage: String, action: @escaping () -> Void) -> some View {
     Button(title, systemImage: systemImage, action: action)
       .labelStyle(.iconOnly)
-      .nativeIconStyle()
+      .buttonStyle(DeviceControlButtonStyle())
       .disabled(!interactive)
       .help(interactive ? "Press the device's \(title) button" : "Take over the device to press its \(title) button")
       .accessibilityLabel("Press \(title)")
@@ -409,7 +424,7 @@ struct DeviceTile: View {
     } label: {
       Image(systemName: clockwise ? "rotate.right" : "rotate.left")
     }
-    .nativeIconStyle()
+    .buttonStyle(DeviceControlButtonStyle())
     .help(rotateFailed ? "The last rotation did not reach the device." : clockwise ? "Rotate right" : "Rotate left")
     .accessibilityLabel(clockwise ? "Rotate right" : "Rotate left")
   }
@@ -425,7 +440,7 @@ struct DeviceTile: View {
       }
     }
     .labelStyle(.iconOnly)
-    .nativeIconStyle()
+    .buttonStyle(DeviceControlButtonStyle())
     .disabled(folding)
     .help(
       foldError.map { "\(title): \($0)" } ?? "\(title): sweeps the hinge to the other posture, which lights the other screen.")
@@ -453,7 +468,7 @@ struct DeviceTile: View {
       }
     }
     .labelStyle(.iconOnly)
-    .nativeIconStyle(active: selected)
+    .buttonStyle(DeviceControlButtonStyle(active: selected))
     .disabled(folding)
     .help(
       failed
@@ -471,7 +486,7 @@ struct DeviceTile: View {
       showsHingeAngle = true
     }
     .labelStyle(.iconOnly)
-    .nativeIconStyle()
+    .buttonStyle(DeviceControlButtonStyle())
     .help("Set the simulated hinge angle")
     .popover(isPresented: $showsHingeAngle) {
       VStack(alignment: .leading, spacing: Space.md) {
@@ -546,7 +561,7 @@ struct DeviceTile: View {
     }
     .menuStyle(.button)
     .menuIndicator(.hidden)
-    .nativeIconStyle()
+    .buttonStyle(DeviceControlButtonStyle())
     .fixedSize()
     .help(postureFailed ? "The last posture change did not reach the emulator." : "Posture: moves the emulator's hinge.")
     .accessibilityLabel(postureFailed ? "Posture failed, retry" : "Posture")
@@ -605,7 +620,8 @@ struct DeviceTile: View {
   }
 
   private var fittedHeight: CGFloat {
-    let screenHeight = min(screenHeight, maxCardHeight.map { max(0, $0 - headerHeight - 1) } ?? screenHeight)
+    let availableHeight = screenHeight - (viewer && interactive && Self.hasButtons(device) ? controlsHeight + Space.lg : 0)
+    let screenHeight = min(availableHeight, maxCardHeight.map { max(0, $0 - headerHeight - 1) } ?? availableHeight)
     guard let maxWidth else { return screenHeight }
     if replaying, let size = replaySize, size.width > 0, size.height > 0 {
       return min(screenHeight, (maxWidth - screenPadding * 2) * size.height / size.width + screenPadding * 2)
@@ -720,6 +736,21 @@ struct DeviceTile: View {
 
   private func placeholder(_ text: String) -> some View {
     ScreenMessage(text: text)
+  }
+}
+
+private struct DeviceControlButtonStyle: ButtonStyle {
+  var active = false
+  @Environment(\.isEnabled) private var isEnabled
+
+  func makeBody(configuration: Configuration) -> some View {
+    configuration.label
+      .font(.system(size: 16, weight: .regular))
+      .foregroundStyle(Palette.text)
+      .frame(width: 32, height: 32)
+      .background(Palette.text.opacity(active ? Opacity.pressed : 0), in: Capsule())
+      .hoverHighlight(radius: Radius.round)
+      .opacity(isEnabled ? (configuration.isPressed ? 0.7 : 1) : Opacity.disabled)
   }
 }
 

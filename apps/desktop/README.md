@@ -185,9 +185,9 @@ they fit. On its right are **Run** when the app is not running, **Control**
 (see [Control a device](#control-a-device)), and **Stop** (a simulator,
 emulator or remote session; a web page has Open in browser, Reload and Close;
 a physical device has none), then the agent actions toggle and Close. The
-device sits on a plain canvas, as large as it fits, with its buttons in a
-column beside it, and the replay bar (see [Replay](#replay)) runs across the
-bottom.
+device sits on a plain canvas, as large as it fits, with its hardware,
+rotation and posture controls grouped below it. The groups wrap when space is
+tight, and the replay bar (see [Replay](#replay)) runs across the bottom.
 
 On the right, 360 points wide, the **agent actions** list what agents did on
 the device (`stim logs --source agent`), oldest first, with filter chips (All,
@@ -563,7 +563,7 @@ trackpad scrolls as one-finger drags, and your keys. Turn it off before an agent
 drives the device again. Command-key shortcuts stay with the app's menus, and a
 mouse wheel without precise deltas does not scroll.
 
-While **Control** is on, a column beside the screen of a running simulator or emulator has its
+While **Control** is on, groups below the screen of a running simulator or emulator have its
 hardware buttons and rotation: **Home** and **Lock** on a simulator, sent
 through the simulator's HID service; **Home**, **Back**, **Apps** and **Lock**
 on an emulator, sent with gRPC `sendKey` (Lock, and every button on an emulator
@@ -573,7 +573,7 @@ provider in each posture. Apps keep their supported orientations, and its home
 screen stays portrait. Hardware buttons, rotation and posture controls are
 available only while **Control** is on.
 
-**Simulator options** in that column reads the selected iOS simulator's
+**Simulator options** below the screen reads the selected iOS simulator's
 appearance, text size and accessibility settings from Xcode. Change light/dark,
 text size, Larger accessibility sizes, Increase contrast, Reduce motion,
 Reduce transparency or Show button borders. Each change reads the device back;
@@ -586,7 +586,7 @@ location, VoiceOver, color filters and Liquid Glass controls are not included.
 
 The iPhone Duo frame fits the display its posture lights, and touches go to
 that display. Until the active display is known, both displays appear side by
-side. **Folded**, **Half open** and **Unfolded** in the column move the simulated hinge to 0,
+side. **Folded**, **Half open** and **Unfolded** below the screen move the simulated hinge to 0,
 120 or 180 degrees, as the posture buttons in Xcode's Device Hub do. Selecting
 the current preset does nothing. **Hinge angle** opens a slider for any angle
 from 0 to 180 degrees; releasing it applies the selected angle. The controls sweep
@@ -604,7 +604,7 @@ Tools or devices without hinge observation retain the last requested posture.
 The observer consumes valid samples twice a second at most, uses one bounded
 process, and stops it when the viewer closes. Its parser depends on the human
 output of devicectl 651.13.4; unfamiliar output keeps the existing behavior. On a
-CoreSimulator without that service the column shows **Fold / Unfold** instead,
+CoreSimulator without that service the controls show **Fold / Unfold** instead,
 which runs the bundled `sim-fold` helper inside the simulator with `xcrun
 simctl spawn` to toggle SpringBoard's private display tool service; it appears
 only in the bundled app, and an iOS release can break it.
@@ -612,7 +612,7 @@ only in the bundled app, and an iOS release can break it.
 An Android emulator with a hinge, such as one Stim created with
 `--device-profile pixel_fold`, shows its posture as a chip: **Folded**,
 **Half open** or **Unfolded**, read from the emulator's gRPC POSTURE physical
-model. The **Posture** menu in the button column moves the hinge with the
+model. The **Posture** menu below the screen moves the hinge with the
 gRPC `setPosture` call. Folded, the emulator streams only the outer display,
 so the viewer takes that display's shape and touches address its pixels.
 

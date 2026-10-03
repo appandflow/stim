@@ -39,7 +39,8 @@ performance traces. Every release is listed under
   request status.
 - **Watch and take over a device.** Open a device to see its screen large,
   take it over with your mouse and keyboard, and read what the agent did
-  and when.
+  and when. Hardware, rotation and posture controls sit in groups below the
+  screen, wrapping when space is tight.
 - **Replay.** Scrub back through a device's recent screen, with agent actions
   and errors marked on the timeline. Needs **Serve to phones** in **Stim >
   Settings > Phones**.

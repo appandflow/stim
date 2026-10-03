@@ -17,7 +17,7 @@ struct SimulatorOptionsView: View {
         if busy { ProgressView().controlSize(.small) }
         Button("Refresh", systemImage: "arrow.clockwise") { load() }
           .labelStyle(.iconOnly)
-          .nativeControlStyle()
+          .nativeIconStyle()
           .disabled(busy || !canControl)
       }
       if let appearance {
