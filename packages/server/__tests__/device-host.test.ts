@@ -11,21 +11,25 @@ import { protocolJsonSchema } from '../src/protocol.ts';
 import { Ajv2020 } from 'ajv/dist/2020.js';
 
 const WORKER = `
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { writeFileSync, readFileSync, appendFileSync } from 'node:fs';
 import { join } from 'node:path';
-if(process.argv[2] === 'offer') {
-  const request=JSON.parse(process.argv[3]);
-  writeFileSync(join(process.env.STIM_HOME,'probe-entered'),'yes');
+const chunks = [];
+for await (const chunk of process.stdin) chunks.push(chunk);
+const input = JSON.parse(Buffer.concat(chunks));
+if(input.mode === 'offer') {
+  const request=input;
+  writeFileSync(join(process.env.STIM_HOME,'probe-entered'),String(process.pid));
   if(request.deviceType === 'delayed') await new Promise(resolve=>setTimeout(resolve,150));
+  if(request.deviceType === 'sdk-hang') spawnSync(process.execPath,['--input-type=module','-e',
+    "import {writeFileSync} from 'node:fs'; process.on('SIGTERM',()=>{}); writeFileSync(process.env.STIM_HOME+'/probe-descendant',String(process.pid)); setInterval(()=>{},1000);"
+  ],{stdio:'ignore'});
+
   const declined=request.deviceType==='unavailable'?'SDK unavailable':request.deviceType==='empty-reason'?'':null;
   const choice=request.platform==='ios' ? {deviceTypeId:'iphone',runtimeId:'ios',deviceType:'iPhone',runtime:'27.1',architecture:'arm64',udid:'not-a-device'} : {systemImage:'system-images;android-30;google_apis;arm64-v8a',deviceProfile:'pixel_6',architecture:'arm64-v8a'};
   process.stdout.write(JSON.stringify({platform:request.platform,choice:declined?null:choice,declined,resources:{cpus:4,loadPerCore:0.5,memoryFreeBytes:1000,memoryPressure:'normal',workerDiskFreeBytes:null}}));
   process.exit(0);
 }
-const chunks = [];
-for await (const chunk of process.stdin) chunks.push(chunk);
-const input = JSON.parse(Buffer.concat(chunks));
 const home = process.env.STIM_HOME;
 const iosDevice = {udid:'12345678-1234-1234-1234-123456789abc',name:'stim-hosted',deviceTypeId:'iphone',runtimeId:'ios',deviceType:'iPhone',runtime:'27.1',architecture:'arm64'};
 const device = input.platform === 'android' ? {avdName:'stim-hosted-'+input.session,serial:'emulator-'+input.consolePort,consolePort:input.consolePort,systemImage:'system-images;android-30;google_apis;arm64-v8a',deviceProfile:'pixel_6',architecture:'arm64-v8a'} : iosDevice;
@@ -566,3 +570,35 @@ test('an uncapped offer still declines exhausted Android journal ports without c
   });
   expect(readFileSync(join(deviceHostRoot(), 'sessions.json'), 'utf8')).toBe(journal);
 });
+
+test.each(['deadline', 'revoke', 'close'])(
+  'terminates synchronous SDK descendants when an offer ends by %s',
+  { skip: process.platform === 'win32' },
+  async (action) => {
+    await host.close();
+    host = new DeviceHost({
+      worker: join(home, 'worker.mjs'),
+      env: process.env,
+      allowed: (client) => allowed.has(client),
+      limits: { offerMs: action === 'deadline' ? 1000 : 5000, killGraceMs: 100 },
+    });
+    const pending = host.offer('client', { platform: 'ios', deviceType: 'sdk-hang' });
+    await vi.waitFor(() => expect(existsSync(join(home, 'probe-descendant'))).toBe(true));
+    const leader = Number(readFileSync(join(home, 'probe-entered'), 'utf8'));
+    const descendant = Number(readFileSync(join(home, 'probe-descendant'), 'utf8'));
+    try {
+      if (action === 'revoke') {
+        allowed.delete('client');
+        host.revoke();
+      }
+      if (action === 'close') await host.close();
+      expect(await pending).toHaveProperty('error.code', action === 'deadline' ? 'action-failed' : 'forbidden');
+      await host.close();
+      expect(processGroupAlive(leader)).toBe(false);
+      expect(() => process.kill(descendant, 0)).toThrow('ESRCH');
+      expect(existsSync(deviceHostRoot())).toBe(false);
+    } finally {
+      if (processGroupAlive(leader)) process.kill(-leader, 'SIGKILL');
+    }
+  },
+);

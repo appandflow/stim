@@ -617,12 +617,13 @@ describe('hosted device sessions', () => {
         `
       import { writeFileSync, appendFileSync } from 'node:fs';
       import { join } from 'node:path';
-      if(process.argv[2]==='offer') {
+      const chunks=[]; for await (const chunk of process.stdin) chunks.push(chunk);
+      const input=JSON.parse(Buffer.concat(chunks));
+      if(input.mode==='offer') {
         process.stdout.write(JSON.stringify({platform:'ios',choice:{deviceTypeId:'iphone',runtimeId:'ios',deviceType:'iPhone',runtime:'27.1',architecture:'arm64'},declined:null,resources:{cpus:4,loadPerCore:0.5,memoryFreeBytes:1000,memoryPressure:'normal',workerDiskFreeBytes:null}}));
         process.exit(0);
       }
-      const chunks=[]; for await (const chunk of process.stdin) chunks.push(chunk);
-      const input=JSON.parse(Buffer.concat(chunks));
+
       const device={udid:'12345678-1234-1234-1234-123456789abc',name:'stim-hosted',deviceTypeId:'iphone',runtimeId:'ios',deviceType:'iPhone',runtime:'27.1',architecture:'arm64'};
       writeFileSync(join(process.env.STIM_HOME,'hosted-device.json'),JSON.stringify(device));
       writeFileSync(join(process.env.STIM_HOME,'created-devices.json'),JSON.stringify({version:1,ios:[device.udid],android:[],web:[]}));
