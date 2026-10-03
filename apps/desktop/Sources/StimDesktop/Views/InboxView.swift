@@ -15,7 +15,7 @@ struct InboxView: View {
     let days = inbox.inbox.days(filter)
     let titles = inbox.inbox.displayTitles
     ScrollView {
-      VStack(alignment: .leading, spacing: Space.xxl) {
+      LazyVStack(alignment: .leading, spacing: Space.xxl) {
         header(empty: days.isEmpty)
         if days.isEmpty {
           EmptyState(
@@ -31,7 +31,7 @@ struct InboxView: View {
           VStack(alignment: .leading, spacing: Space.md) {
             Text(Self.dayTitle(day.day)).font(.stim(.headline))
             Card {
-              VStack(spacing: 0) {
+              LazyVStack(spacing: 0) {
                 ForEach(Array(day.entries.enumerated()), id: \.element.id) { index, entry in
                   if index > 0 { Rectangle().fill(Palette.border).frame(height: 1) }
                   InboxRow(
