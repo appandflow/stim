@@ -134,7 +134,8 @@ It holds the workspace's details, in this order:
   predicted by `stim <platform> --plan --json`. **Check** refreshes the next
   plan; **Run** starts the app. **Cache miss details** opens the full reason
   and changed sources. Recent-build rows show outcome, duration and age;
-  expanding a row reveals its reason, phase timings and diagnostics.
+  expanding a row reveals its reason, phase timings and diagnostics. Disclosure
+  content and chevrons animate unless Reduce Motion is enabled.
 - **Resources**: CPU (100% is one core) and memory with charts over the last
   10 minutes the app sampled while on screen, every process that counts
   toward the workspace (simulators and emulators, Chrome, Metro, builds) and

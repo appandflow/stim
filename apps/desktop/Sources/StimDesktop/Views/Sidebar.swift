@@ -11,6 +11,7 @@ struct Sidebar: View {
   @Binding var selection: SidebarItem?
   var openLogs: (String) -> Void
   @AppStorage(AppPreferences.Key.expandedProjects) private var expandedProjects = Data()
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
   let prefs = SidebarPreferences()
 
   var body: some View {
@@ -125,7 +126,9 @@ struct Sidebar: View {
       set: { expanded in
         var updated = choices
         updated[root] = expanded
-        expandedProjects = (try? JSONEncoder().encode(updated)) ?? expandedProjects
+        withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.2)) {
+          expandedProjects = (try? JSONEncoder().encode(updated)) ?? expandedProjects
+        }
       })
   }
 }

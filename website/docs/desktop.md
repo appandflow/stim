@@ -121,7 +121,8 @@ warnings and error links. CPU and RAM stay on the workspace page.
 Run, Reload app and Stop from the workspace or sidebar menus keep you on the
 workspace page. Open **Last output** or **Operations** for command details,
 including failed runs. Click the **Recent builds** label or chevron to expand
-the build history.
+the build history. Disclosure content and chevrons animate unless Reduce Motion
+is enabled.
 
 An empty workspace shows a purple device floating above a round plinth and a
 short launch hint. Reduce Motion stops the illustration's animation.
