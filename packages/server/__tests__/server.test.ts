@@ -19,6 +19,7 @@ import { join } from 'node:path';
 import { WebSocket, WebSocketServer } from 'ws';
 import {
   readStatsReport,
+  readHostedSessions,
   buildSlotPath,
   machineCapacity,
   readViewedDevices,
@@ -34,6 +35,7 @@ import {
   PAIRING_TTL_MS,
   readBuildClients,
   readDeviceHostClients,
+  requestDeviceHostAccess,
   readDevices,
   revokeDevice,
 } from '../src/registry.ts';
@@ -596,6 +598,60 @@ describe.each(['build', 'device-host'] as const)('%s access', (capability) => {
     expect(await requestBuild(local)).toMatchObject({ error: { code: 'forbidden' } });
     expect([...readBuildClients(), ...readDeviceHostClients()]).toEqual([]);
   });
+});
+
+describe('hosted device sessions', () => {
+  test.skipIf(!fakeTailscale)(
+    'reserves through the socket, reconnects to the same session and stops it on revocation',
+    async () => {
+      const port = await start();
+      writeFileSync(
+        join(root, 'device-host-worker.mjs'),
+        `
+      import { writeFileSync } from 'node:fs';
+      import { join } from 'node:path';
+      const chunks=[]; for await (const chunk of process.stdin) chunks.push(chunk);
+      const input=JSON.parse(Buffer.concat(chunks));
+      const device={udid:'12345678-1234-1234-1234-123456789abc',name:'stim-hosted',deviceTypeId:'iphone',runtimeId:'ios',deviceType:'iPhone',runtime:'27.1',architecture:'arm64'};
+      writeFileSync(join(process.env.STIM_HOME,'hosted-device.json'),JSON.stringify(device));
+      writeFileSync(join(process.env.STIM_HOME,'created-devices.json'),JSON.stringify({version:1,ios:[device.udid],android:[],web:[]}));
+      process.stdout.write(JSON.stringify({state:input.mode==='prepare'?'ready':'stopped',device}));
+    `,
+      );
+      const pending = requestDeviceHostAccess('Client', {
+        kind: 'tailnet',
+        nodeId: 'nPhoneA',
+        nodeName: 'phone',
+        user: 'u',
+      });
+      if (!pending.ok) throw new Error(pending.reason);
+      expect(grantDevice(pending.device.id, ['device-host'])).toBe('granted');
+      const first = await connect(port, '100.64.0.2');
+      const hello = await first.request('hello', {
+        protocol: 1,
+        client: CLIENT,
+        auth: { deviceToken: pending.deviceToken },
+      });
+      expect(hello).toHaveProperty('result.capabilities', ['device-host']);
+      const params = { workspace: '/client/app', slot: 'default', platform: 'ios', attempt: 'socket-attempt' };
+      const reserved = await first.request('device-host.reserve', params);
+      expect(reserved).toHaveProperty('result.state', 'preparing');
+      const id = (reserved as { result: { id: string } }).result.id;
+      first.socket.close();
+      await vi.waitFor(() => expect(readHostedSessions()[0]?.state).toBe('ready'));
+      const next = await connect(port, '100.64.0.2');
+      await next.request('hello', { protocol: 1, client: CLIENT, auth: { deviceToken: pending.deviceToken } });
+      expect(await next.request('device-host.reserve', params)).toHaveProperty('result.id', id);
+      expect(await next.request('device-host.attach', { attempt: 'socket-attempt' })).toHaveProperty(
+        'result.state',
+        'ready',
+      );
+      expect(await next.request('stats.get')).toHaveProperty('error.code', 'forbidden');
+      expect(revokeDevice(pending.device.id)).toBe(true);
+      expect(await next.closed).toBe(4401);
+      await vi.waitFor(() => expect(readHostedSessions()[0]?.state).toBe('stopped'));
+    },
+  );
 });
 
 describe('offloaded builds', () => {

@@ -178,10 +178,10 @@ tokens.
 
 ## Device-host approval
 
-Device hosting has a separate `device-host` capability. This release provides
-request, approval and revocation only; it does not reserve or run a hosted
-simulator or emulator, choose a device host automatically, or relay Metro and
-screens. Those runtime flows remain tracked in [#2266](https://github.com/appandflow/stim/issues/2266).
+Device hosting has a separate `device-host` capability. An approved client can
+reserve, boot, reconnect to and stop its own iOS simulator through the protocol.
+Artifact installation, Metro and screen/control relays, automatic placement and
+Android hosting remain tracked in [#2266](https://github.com/appandflow/stim/issues/2266).
 
 A client on the tailnet sends `hello` with
 `auth: { "request": "device-host", "deviceName": "Laptop" }`. As with a build
@@ -194,7 +194,7 @@ separate limit. The same name validation and failed-attempt limit apply.
 On the hosting Mac, inspect `stim-server devices`, then approve the matching
 request with `stim-server devices grant <id> --device-host`, or use **Allow**
 in Stim Desktop. Approve only an expected request: it authorizes that Mac to
-use session-owned device hosting when the runtime flow is available. **Deny**
+reserve session-owned iOS simulators. **Deny**
 or `stim-server devices revoke <id>` removes it; revocation also closes its
 open authenticated connections. The local-process trust boundary described in
 [Build access](#build-access) applies here too.
@@ -203,8 +203,59 @@ Hosting clients live in `$STIM_HOME/server/device-host-clients.json`, separate
 from phone pairings and build clients. A hosting token grants no `read`,
 `control` or `build` access, including access to unrelated workspaces. Existing
 read, control and build tokens cannot gain hosting through `devices grant`.
-Loopback requests and `pair --device-host` are refused. An approved hosting
-client can authenticate, but no hosted-session methods are available yet.
+Loopback requests and `pair --device-host` are refused.
+
+### Hosted iOS session protocol
+
+An approved client sends `device-host.reserve` with an opaque attempt ID and
+its workspace/slot identity:
+
+```json
+{
+  "id": 1,
+  "method": "device-host.reserve",
+  "params": {
+    "workspace": "/client/app",
+    "slot": "default",
+    "platform": "ios",
+    "attempt": "run-1",
+    "deviceType": "iPhone 17 Pro",
+    "runtime": "27.0"
+  }
+}
+```
+
+Omit `deviceType` and `runtime` to use the worker's installed defaults. The
+response names an opaque session and its `preparing`, `ready`, `stopping`,
+`stopped` or `unknown` state. Native work runs in a separate bounded child, so
+the connection remains available. Poll `device-host.attach` with
+`{"session":"<id>"}` or `{"attempt":"run-1"}`; a ready session includes the
+exact simulator, runtime and architecture selected on the worker.
+
+After a lost reply or connection, replay the same reserve request or attach to
+its attempt. That resolves the same session; a changed request with that attempt
+is refused. Another attempt cannot replace an occupied workspace/slot. The
+client never supplies a worker filesystem path or another client's session.
+`device-host.stop` with `{"session":"<id>"}` shuts down only its recorded,
+ledger-owned simulator. Poll attach for completion. A new attempt may reserve
+after the previous one is confirmed stopped. Stopped device records remain for
+ownership and reconciliation; stop does not delete the simulator.
+
+The worker persists the journal under `$STIM_HOME/server/device-host-sessions/`
+and chooses an isolated worker home under `$STIM_HOME/device-host/sessions/`.
+An uncertain create, child exit, journal or shutdown outcome retains the slot
+as `unknown`. Explicit stop can reconcile a complete record after a server
+restart; a live or unverifiable owner is refused. Missing ownership records
+need operator investigation, never a replacement inferred from a simulator name.
+Revoking this client's approval stops its sessions without granting access to
+the worker's other devices.
+
+`concurrency.maxDevices` bounds hosted reservations atomically, including
+unresolved sessions. Ordinary local producers do not join that reservation
+transaction, so this is not a machine-wide hard capacity guarantee. Unknown
+inventory or elevated/unknown memory pressure refuses native creation. This
+protocol slice does not change `stim ios` placement or provide a runnable remote
+app yet.
 
 ## Run as a service
 

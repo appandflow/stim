@@ -257,6 +257,18 @@ outside it moves to its own issue and pull request.
   which stim-server and the builds it runs own, and the build slot
   stim-server takes under `build-slots/` for each offloaded build it runs,
   through core's `tryAcquireBuildSlotClaim`.
+- **Hosted devices.** `device-host` approval is separate from read, control and
+  build. The server owns its opaque session journal under
+  `server/device-host-sessions/`; core owns the readers. A hosted native worker
+  uses a server-chosen private home under `device-host/sessions/` and the CLI's
+  existing created-device ledger, ownership checks and centralized teardown.
+  Keep a child-aware ownership claim across native work and a claim for the
+  session lifetime. Serialize hosted admission, including unresolved sessions;
+  ordinary local producers do not participate, so it is not a machine-wide hard
+  capacity guarantee. Reconnect to the recorded attempt/session after a lost
+  reply. Unknown creation, journal, owner or shutdown state refuses replacement;
+  never identify a device by name or guess an empty inventory. Stop and
+  revocation touch only that client's recorded owned device.
 
 ## Comment policy
 

@@ -550,8 +550,16 @@ another Mac on your tailnet. The server command is
 `stim-server devices grant <id> --device-host`; inspect `stim-server devices`
 first, or deny a request with `stim-server devices revoke <id>`.
 
-This currently establishes permission only. It does not run a hosted simulator
-or emulator, automatically choose a device host, or change where `stim ios`
-and `stim android` run. The hosted runtime is tracked in
-[#2266](https://github.com/appandflow/stim/issues/2266). Hosting approval does
-not grant access to unrelated workspaces, phone control or build offloading.
+An approved client can reserve, boot, reconnect to and stop its own iOS simulator
+through the [hosted session protocol](https://github.com/appandflow/stim/blob/main/packages/server/README.md#hosted-ios-session-protocol).
+Replaying an attempt resolves the same session after a lost reply. Unknown
+creation or shutdown outcomes retain the reservation until exact reconciliation;
+explicit stop and approval revocation touch only that session's owned simulator.
+Hosted reservations are atomic with each other; ordinary local device producers
+do not participate, so this is not a machine-wide hard capacity guarantee.
+
+Artifact delivery, Metro and screen/control relays, automatic placement and
+Android hosting remain in [#2266](https://github.com/appandflow/stim/issues/2266).
+This protocol slice does not change where `stim ios` or `stim android` runs or
+provide a runnable remote app yet. Hosting approval grants no access to unrelated
+workspaces, phone control or build offloading.

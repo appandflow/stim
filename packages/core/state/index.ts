@@ -18,3 +18,4 @@ export * from './stim-build.ts';
 export * from './workspace-state.ts';
 export * from './viewers.ts';
 export * from './stats.ts';
+export * from './device-host.ts';

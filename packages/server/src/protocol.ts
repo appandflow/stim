@@ -1,4 +1,10 @@
-import type { BuildPlanPayload, NdjsonRecord, StatusPayload } from '@stim-cli/core/state';
+import type {
+  BuildPlanPayload,
+  HostedDeviceRequest,
+  HostedDeviceSession,
+  NdjsonRecord,
+  StatusPayload,
+} from '@stim-cli/core/state';
 
 export const PROTOCOL_VERSION = 1;
 
@@ -7,7 +13,7 @@ export const PROTOCOL_SCHEMA_FILE = 'protocol.schema.json';
 /**
  * `read` serves state. `control` also runs {@link ACTIONS}; only the Mac grants it. `build` lets another Mac run
  * project code here to build for it; it never comes with `read` or `control`, and only the Mac approves it.
- * `device-host` is separate explicit hosting approval; it grants no other capability or hosted runtime method.
+ * `device-host` is separate explicit hosting approval; it grants no other capability and authorizes only its own hosted sessions.
  */
 export const CAPABILITIES = ['read', 'control', 'build', 'device-host'] as const;
 
@@ -59,6 +65,9 @@ export const METHODS = [
   'build.cancel',
   'build.artifact',
   'build.attach',
+  'device-host.reserve',
+  'device-host.attach',
+  'device-host.stop',
 ] as const;
 
 /** The methods a connection with the `build` capability may call; they need `build`, not `read`. */
@@ -70,6 +79,9 @@ export const BUILD_METHODS = [
   'build.artifact',
   'build.attach',
 ] as const;
+
+/** Methods restricted to explicitly approved device-host clients and their own sessions. */
+export const DEVICE_HOST_METHODS = ['device-host.reserve', 'device-host.attach', 'device-host.stop'] as const;
 
 export type Method = (typeof METHODS)[number];
 
@@ -864,6 +876,9 @@ export interface NotificationsListResult {
 }
 
 export interface Methods {
+  'device-host.reserve': { params: HostedDeviceRequest; result: HostedDeviceSession };
+  'device-host.attach': { params: { session: string } | { attempt: string }; result: HostedDeviceSession };
+  'device-host.stop': { params: { session: string }; result: HostedDeviceSession };
   hello: { params: HelloParams; result: HelloResult };
   'status.subscribe': { params?: Record<string, never>; result: SubscribeResult };
   'logs.query': { params: LogFilter; result: LogsQueryResult };
@@ -1103,6 +1118,43 @@ export function protocolJsonSchema(): JsonSchema {
     'x-stim-protocol': PROTOCOL_VERSION,
     $defs: {
       ProtocolError: protocolError,
+      HostedDeviceSession: {
+        type: 'object',
+        required: ['id', 'client', 'workspace', 'slot', 'platform', 'attempt', 'state', 'device', 'createdAt'],
+        additionalProperties: false,
+        properties: {
+          id: { type: 'string' },
+          client: { type: 'string' },
+          workspace: { type: 'string' },
+          slot: { type: 'string' },
+          platform: { const: 'ios' },
+          attempt: { type: 'string' },
+          deviceType: { type: 'string' },
+          runtime: { type: 'string' },
+          state: { enum: ['preparing', 'ready', 'stopping', 'stopped', 'unknown'] },
+          device: {
+            anyOf: [
+              { type: 'null' },
+              {
+                type: 'object',
+                required: ['udid', 'name', 'deviceTypeId', 'runtimeId', 'deviceType', 'runtime', 'architecture'],
+                additionalProperties: false,
+                properties: {
+                  udid: { type: 'string' },
+                  name: { type: 'string' },
+                  deviceTypeId: { type: 'string' },
+                  runtimeId: { type: 'string' },
+                  deviceType: { type: 'string' },
+                  runtime: { type: 'string' },
+                  architecture: { enum: ['arm64', 'x86_64'] },
+                },
+              },
+            ],
+          },
+          createdAt: { type: 'string' },
+          notice: { type: 'string' },
+        },
+      },
       HelloParams: {
         type: 'object',
         required: ['protocol', 'client', 'auth'],
@@ -1508,6 +1560,36 @@ export function protocolJsonSchema(): JsonSchema {
       },
       ClientRequest: {
         oneOf: [
+          request('device-host.reserve', {
+            type: 'object',
+            required: ['workspace', 'slot', 'platform', 'attempt'],
+            additionalProperties: false,
+            properties: {
+              workspace: { type: 'string', minLength: 1, maxLength: 4096 },
+              slot: { type: 'string', pattern: '^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$' },
+              platform: { const: 'ios' },
+              attempt: { type: 'string', pattern: '^[a-zA-Z0-9_-]{1,128}$' },
+              deviceType: { type: 'string', minLength: 1, maxLength: 256 },
+              runtime: { type: 'string', minLength: 1, maxLength: 256 },
+            },
+          }),
+          request('device-host.attach', {
+            oneOf: [
+              {
+                type: 'object',
+                required: ['session'],
+                additionalProperties: false,
+                properties: { session: { type: 'string' } },
+              },
+              {
+                type: 'object',
+                required: ['attempt'],
+                additionalProperties: false,
+                properties: { attempt: { type: 'string' } },
+              },
+            ],
+          }),
+          request('device-host.stop', session({})),
           request('hello', { $ref: '#/$defs/HelloParams' }),
           request('status.subscribe'),
           request('logs.query', { $ref: '#/$defs/LogFilter' }),
@@ -1729,6 +1811,7 @@ export function protocolJsonSchema(): JsonSchema {
               id: requestId,
               result: {
                 anyOf: [
+                  { $ref: '#/$defs/HostedDeviceSession' },
                   { $ref: '#/$defs/HelloResult' },
                   { $ref: '#/$defs/ControlBeginResult' },
                   { $ref: '#/$defs/ActionResult' },

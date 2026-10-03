@@ -11,6 +11,7 @@ export default defineConfig({
     'supervisor-run': 'src/supervisor/run.ts',
     'collector-run': 'src/collector/run.ts',
     'web-run': 'src/web/run.ts',
+    'device-host-worker': 'src/device-host/run.ts',
     'offload-worker': 'src/offload/worker.ts',
   },
   format: 'esm',
