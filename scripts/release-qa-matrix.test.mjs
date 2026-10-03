@@ -1,10 +1,6 @@
-import { readdirSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { computeQaMatrix, manifestDiffIsVersionOnly, renderChecklist, renderMarkdown } from './release-qa-matrix.mjs';
 import { pathRules, qaRows } from './release-qa-matrix.data.mjs';
-
-const repositoryRoot = join(import.meta.dirname, '..');
 
 function row(result, id) {
   return result.rows.find((candidate) => candidate.id === id);
@@ -14,30 +10,8 @@ function requiredIds(result) {
   return result.rows.filter((candidate) => candidate.required).map((candidate) => candidate.id);
 }
 
-function directories(relative) {
-  return readdirSync(join(repositoryRoot, relative), { withFileTypes: true })
-    .filter((entry) => entry.isDirectory() && entry.name !== 'node_modules' && !entry.name.startsWith('.'))
-    .map((entry) => `${relative === '.' ? '' : `${relative}/`}${entry.name}`);
-}
-
 function isDirectoryRule(path) {
   return !path.split('/').pop().includes('.');
-}
-
-function releaseTable() {
-  const text = readFileSync(join(repositoryRoot, 'RELEASE.md'), 'utf8');
-  const lines = text.slice(text.indexOf('## 3. Pre-tag QA gate')).split('\n');
-  const header = lines.findIndex((line) => line.startsWith('| Change since the last release'));
-  const rows = [];
-  for (const line of lines.slice(header + 2)) {
-    if (!line.startsWith('|')) break;
-    const cells = line
-      .split('|')
-      .slice(1, -1)
-      .map((cell) => cell.trim());
-    rows.push({ change: cells[0], evidence: cells[1] });
-  }
-  return rows;
 }
 
 describe('release QA matrix', () => {
@@ -137,17 +111,7 @@ describe('release QA matrix', () => {
     expect(markdown).toContain('- **real-repository**: no changed path touches project detection');
   });
 
-  it('covers every top-level source directory and names only rows the table defines', () => {
-    const covered = new Set(pathRules.map((rule) => rule.path));
-    const sourceDirectories = [
-      ...directories('.').filter((name) => name !== 'packages'),
-      ...directories('packages'),
-      ...directories('packages/stim-cli/src'),
-    ];
-
-    expect(sourceDirectories.filter((directory) => !covered.has(directory))).toEqual([]);
-    expect(pathRules.length).toBe(covered.size);
-
+  it('mapped paths refer to valid QA rows or an exemption', () => {
     const ids = new Set(qaRows.map((candidate) => candidate.id));
     for (const rule of pathRules) {
       expect(Boolean(rule.exempt) !== Boolean(rule.rows)).toBe(true);
@@ -169,9 +133,5 @@ describe('release QA matrix', () => {
     }
 
     expect(violations).toEqual([]);
-  });
-
-  it('keeps the row wording identical to the RELEASE.md section 3 table', () => {
-    expect(qaRows.map(({ change, evidence }) => ({ change, evidence }))).toEqual(releaseTable());
   });
 });

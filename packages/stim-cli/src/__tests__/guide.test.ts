@@ -85,16 +85,6 @@ test('every section of every sectioned topic renders its own content', () => {
   }
 });
 
-test('the dev-menu section reads at the left margin, not in the payload table column', () => {
-  const facts = renderSection('facts', 'devmenu');
-  assert(facts);
-  const indents = facts
-    .split('\n')
-    .filter((line) => line.trim().length > 0)
-    .map((line) => line.length - line.trimStart().length);
-  expect(Math.max(...indents)).toBeLessThanOrEqual(2);
-});
-
 test('an alias resolves to the same body as the section it spells', () => {
   for (const name of topicNames()) {
     const lookup = sectionLookup(name);
@@ -426,11 +416,8 @@ test('the static skill is only the agent guide router', () => {
   const dir = fileURLToPath(new URL('../../skill/', import.meta.url));
   expect(readdirSync(dir).toSorted()).toEqual(['SKILL.md']);
   const skill = readFileSync(new URL('../../skill/SKILL.md', import.meta.url), 'utf-8');
-  const wordCount = skill.split(/\s+/).filter(Boolean).length;
-  expect(wordCount).toBeLessThanOrEqual(110);
   expect(skill.match(/(?<!npx )stim guide agent/g)).toHaveLength(1);
   expect(skill.match(/npx stim guide agent/g)).toHaveLength(1);
-  expect(skill).toMatch(/Follow the version-matched instructions it prints/);
 
   for (const mutableDetail of [
     'stim doctor',

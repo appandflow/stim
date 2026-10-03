@@ -17,7 +17,7 @@ export const PIXEL_DISMISS_MS = SPREAD_MS + PIXEL_MS;
  * Delay before the pixel at `row`, `column` starts to vanish. It grows with the distance from the centre of the grid
  * to the pixel's centre, scaled so the grid's outer corners would be at `spreadMs`.
  */
-export function rippleDelay(row: number, column: number, rows: number, columns: number, spreadMs: number) {
+function rippleDelay(row: number, column: number, rows: number, columns: number, spreadMs: number) {
   const distance = Math.hypot(column + 0.5 - columns / 2, row + 0.5 - rows / 2);
   const maxDistance = Math.hypot(columns / 2, rows / 2);
   return Math.round((distance / maxDistance) * spreadMs);
