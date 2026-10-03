@@ -211,7 +211,7 @@ struct DeviceTile: View {
         .layoutPriority(1)
         Spacer(minLength: 8)
         if let viewerAction {
-          Label(viewerAction, systemImage: viewerAction == "Control" ? "hand.raised" : "arrow.up.right")
+          Label(viewerAction, systemImage: viewerAction == "Control" ? "cursorarrow.rays" : "arrow.up.right")
             .font(.stim(.callout, weight: .semibold))
             .foregroundStyle(Palette.primary)
             .accessibilityHidden(true)
@@ -295,6 +295,7 @@ struct DeviceTile: View {
         postureMenu(serial: serial, current: emulatorPosture)
       }
     }
+    .font(.stim(.footnote, weight: .medium))
     .padding(Space.sm)
     .frame(width: Self.buttonStripWidth)
     .background(Palette.surface, in: RoundedRectangle(cornerRadius: Radius.card))
@@ -304,7 +305,7 @@ struct DeviceTile: View {
   private func hardwareButton(_ title: String, systemImage: String, action: @escaping () -> Void) -> some View {
     Button(title, systemImage: systemImage, action: action)
       .labelStyle(.iconOnly)
-      .nativeControlStyle()
+      .nativeIconStyle()
       .disabled(!interactive)
       .help(interactive ? "Press the device's \(title) button" : "Take over the device to press its \(title) button")
       .accessibilityLabel("Press \(title)")
@@ -395,7 +396,7 @@ struct DeviceTile: View {
     } label: {
       Image(systemName: clockwise ? "rotate.right" : "rotate.left")
     }
-    .nativeControlStyle()
+    .nativeIconStyle()
     .help(rotateFailed ? "The last rotation did not reach the device." : clockwise ? "Rotate right" : "Rotate left")
     .accessibilityLabel(clockwise ? "Rotate right" : "Rotate left")
   }
@@ -411,7 +412,7 @@ struct DeviceTile: View {
       }
     }
     .labelStyle(.iconOnly)
-    .nativeControlStyle()
+    .nativeIconStyle()
     .disabled(folding)
     .help(
       foldError.map { "\(title): \($0)" } ?? "\(title): sweeps the hinge to the other posture, which lights the other screen.")
@@ -439,7 +440,7 @@ struct DeviceTile: View {
       }
     }
     .labelStyle(.iconOnly)
-    .nativeControlStyle(selected ? .primary : .secondary)
+    .nativeIconStyle(active: selected)
     .disabled(folding)
     .help(
       failed
@@ -457,7 +458,7 @@ struct DeviceTile: View {
       showsHingeAngle = true
     }
     .labelStyle(.iconOnly)
-    .nativeControlStyle()
+    .nativeIconStyle()
     .help("Set the simulated hinge angle")
     .popover(isPresented: $showsHingeAngle) {
       VStack(alignment: .leading, spacing: Space.md) {
@@ -527,7 +528,7 @@ struct DeviceTile: View {
     }
     .menuStyle(.button)
     .menuIndicator(.hidden)
-    .nativeControlStyle()
+    .nativeIconStyle()
     .fixedSize()
     .help(postureFailed ? "The last posture change did not reach the emulator." : "Posture: moves the emulator's hinge.")
     .accessibilityLabel(postureFailed ? "Posture failed, retry" : "Posture")

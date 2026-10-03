@@ -98,6 +98,8 @@ struct RootView: View {
           }
           ToolbarItem(id: summaryItemID, placement: .navigation) {
             MachineSummary(store: store, metrics: metrics, gc: gc, width: summaryWidth) { selection = .machine }
+              .frame(width: showsWorkspace && inspector == .overlay ? max(0, summaryWidth) : nil, alignment: .leading)
+              .clipped()
           }
           if showsWorkspace {
             ToolbarItem(placement: .primaryAction) { Spacer() }
@@ -232,13 +234,14 @@ struct RootView: View {
   private var summaryWidth: CGFloat {
     detailWidth - (columnVisibility == .detailOnly ? 200 : 80) - (showsWorkspace ? 88 : 0)
       - (showsWorkspace && inspector == .column
-        ? WorkspaceDetail.clampedInspectorWidth(inspectorWidth, detailWidth: detailWidth) + 1 : 0)
+        ? WorkspaceDetail.clampedInspectorWidth(inspectorWidth, detailWidth: detailWidth) + 1
+        : showsWorkspace && inspector == .overlay ? WorkspaceDetail.inspectorWidth : 0)
   }
 
   /// NSToolbar measures an item when it is inserted or the window resizes, not when a SwiftUI item grows, so the
   /// summary is reinserted whenever the room it gets changes.
   private var summaryItemID: String {
-    "machine-summary-\(showsWorkspace)-\(showsWorkspace && inspector == .column)"
+    "machine-summary-\(showsWorkspace)-\(showsWorkspace && inspector == .column)-\(showsWorkspace && inspector == .overlay)"
   }
 
   private func restoreLastProject() {
@@ -675,6 +678,8 @@ struct InspectorToggleButton: View {
     Button(action: action) {
       Label(isShown ? "Hide Inspector" : "Show Inspector", systemImage: "sidebar.right")
     }
+    .nativeIconStyle(active: isShown)
+    .accessibilityAddTraits(isShown ? .isSelected : [])
     .help(isShown ? "Hide the inspector" : "Show the inspector")
   }
 }
@@ -689,6 +694,8 @@ struct LogsToggleButton: View {
     Button(action: action) {
       Label(isShown ? "Hide Logs" : "Show Logs", systemImage: "text.alignleft")
     }
+    .nativeIconStyle(active: isShown)
+    .accessibilityAddTraits(isShown ? .isSelected : [])
     .overlay(alignment: .topTrailing) {
       if errors > 0, !isShown {
         Text(errors > 99 ? "99+" : String(errors))
