@@ -80,7 +80,6 @@ struct RootView: View {
       detail
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Palette.background)
-        .toolbarBackdrop(showsWorkspace ? .clear : Palette.background)
         .overlay(alignment: .bottom) { onboardingPopup }
         .overlay(alignment: .topTrailing) { ToastStack(center: toasts) }
         .overlay(alignment: .bottomLeading) { NoticeStack(center: notices) }
@@ -456,7 +455,7 @@ struct MachineSummary: View {
   }
 
   private func row(showsMemory: Bool, showsBar: Bool, showsReclaimable: Bool) -> some View {
-    HStack(spacing: Space.xl) {
+    HStack(spacing: Space.md) {
       if let error = store.error {
         Label(abbreviatingHome(error), systemImage: "exclamationmark.triangle.fill").foregroundStyle(Palette.warning)
           .lineLimit(1)
@@ -474,8 +473,9 @@ struct MachineSummary: View {
             showsCPU.toggle()
           } label: {
             statItem(icon: "cpu", value: formatPercent(cpu * 100), tone: UsageThresholds.cpu(fraction: cpu))
+              .padding(Space.sm)
           }
-          .buttonStyle(.hoverRow(outset: Space.sm))
+          .buttonStyle(.hoverRow(radius: Radius.round))
           .accessibilityLabel("CPU details")
           .accessibilityValue(formatPercent(cpu * 100))
           .help("CPU of every live workspace's processes, simulators and emulators, as a percent of this Mac's cores")
@@ -495,8 +495,9 @@ struct MachineSummary: View {
                   .frame(width: 50)
               }
             }
+            .padding(Space.sm)
           }
-          .buttonStyle(.hoverRow(outset: Space.sm))
+          .buttonStyle(.hoverRow(radius: Radius.round))
           .accessibilityLabel("Memory details")
           .accessibilityValue(Format.memoryPair(usedBytes: memory.usedBytes, totalBytes: memory.totalBytes))
           .popover(isPresented: $showsMemoryDetails, arrowEdge: .bottom) { memoryPopover }
@@ -517,8 +518,9 @@ struct MachineSummary: View {
               Text("\u{00B7} \(Format.fileSize(reclaimable.bytes)) reclaimable").foregroundStyle(Palette.primary)
             }
           }
+          .padding(Space.sm)
         }
-        .buttonStyle(.hoverRow(outset: Space.sm))
+        .buttonStyle(.hoverRow(radius: Radius.round))
         .accessibilityLabel("Disk details")
         .accessibilityValue("\(Format.fileSize(lowest.freeBytes)) free")
         .help("Free space on the fullest volume holding the repositories, Stim home or simulators, without purgeable space")
@@ -535,7 +537,7 @@ struct MachineSummary: View {
         }
       }
     }
-    .padding(.horizontal, Space.md)
+    .padding(.horizontal, Space.lg)
   }
 
   private var cpuPopover: some View {
@@ -678,7 +680,8 @@ struct InspectorToggleButton: View {
     Button(action: action) {
       Label(isShown ? "Hide Inspector" : "Show Inspector", systemImage: "sidebar.right")
     }
-    .nativeIconStyle(active: isShown)
+    .buttonStyle(.icon(active: isShown))
+    .labelStyle(.iconOnly)
     .accessibilityAddTraits(isShown ? .isSelected : [])
     .help(isShown ? "Hide the inspector" : "Show the inspector")
   }
@@ -694,7 +697,8 @@ struct LogsToggleButton: View {
     Button(action: action) {
       Label(isShown ? "Hide Logs" : "Show Logs", systemImage: "text.alignleft")
     }
-    .nativeIconStyle(active: isShown)
+    .buttonStyle(.icon(active: isShown))
+    .labelStyle(.iconOnly)
     .accessibilityAddTraits(isShown ? .isSelected : [])
     .overlay(alignment: .topTrailing) {
       if errors > 0, !isShown {

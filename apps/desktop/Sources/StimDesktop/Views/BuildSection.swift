@@ -277,31 +277,32 @@ private struct BuildHistoryList: View {
   @State private var expanded = false
 
   var body: some View {
-    VStack(alignment: .leading, spacing: Space.xs) {
+    AnimatedDisclosure(isExpanded: expanded) {
       Button {
         expanded.toggle()
       } label: {
         HStack(spacing: Space.sm) {
-          Image(systemName: expanded ? "chevron.down" : "chevron.right")
+          Image(systemName: "chevron.right")
             .font(.system(size: 11, weight: .semibold))
             .foregroundStyle(Palette.tertiary)
+            .rotationEffect(.degrees(expanded ? 90 : 0))
             .frame(width: 12)
           Text("Recent builds (\(entries.count))").foregroundStyle(Palette.secondary)
           Spacer(minLength: 0)
         }
+        .padding(.vertical, Space.sm)
         .contentShape(Rectangle())
       }
       .buttonStyle(.hoverRow())
       .accessibilityValue(expanded ? "Expanded" : "Collapsed")
-      if expanded {
-        TimelineView(.periodic(from: .now, by: 30)) { context in
-          VStack(alignment: .leading, spacing: Space.xxs) {
-            ForEach(entries, id: \.self) { entry in
-              BuildHistoryRow(entry: entry, workspace: workspace, now: context.date)
-            }
+    } content: {
+      TimelineView(.periodic(from: .now, by: 30)) { context in
+        VStack(alignment: .leading, spacing: Space.xxs) {
+          ForEach(entries, id: \.self) { entry in
+            BuildHistoryRow(entry: entry, workspace: workspace, now: context.date)
           }
-          .padding(.top, Space.xs)
         }
+        .padding(.top, Space.xs)
       }
     }
   }
@@ -322,7 +323,7 @@ struct BuildHistoryRow: View {
   }
 
   var body: some View {
-    VStack(alignment: .leading, spacing: Space.xs) {
+    AnimatedDisclosure(isExpanded: expanded) {
       Button {
         expanded.toggle()
       } label: {
@@ -338,7 +339,8 @@ struct BuildHistoryRow: View {
               .font(.stim(.footnote))
               .monospacedDigit()
               .fixedSize()
-            Image(systemName: expanded ? "chevron.down" : "chevron.right").foregroundStyle(Palette.tertiary)
+            Image(systemName: "chevron.right").foregroundStyle(Palette.tertiary)
+              .rotationEffect(.degrees(expanded ? 90 : 0))
           }
           if entry.result == "failed", let code = entry.build.errorCode {
             Text(code).font(.stim(.caption, mono: true)).foregroundStyle(Palette.error)
@@ -351,32 +353,31 @@ struct BuildHistoryRow: View {
         }
       }
       .buttonStyle(.hoverRow(outset: Space.xs))
-      if expanded {
-        VStack(alignment: .leading, spacing: Space.sm) {
-          if let detail = entry.detail {
-            Text(detail).foregroundStyle(Palette.secondary).textSelection(.enabled)
-          }
-          let facts = [entry.configuration, entry.build.fingerprint.map { "fingerprint \($0.prefix(8))" }]
-            .compactMap { $0 }
-          if !facts.isEmpty {
-            Text(facts.joined(separator: " \u{00B7} ")).foregroundStyle(Palette.tertiary)
-          }
-          if let phases = entry.phaseLine {
-            Text(phases).foregroundStyle(Palette.tertiary)
-          }
-          OffloadFallbackLine(build: entry.build)
-          if let diagnostics = entry.build.diagnostics, !diagnostics.isEmpty {
-            BuildDiagnosticsView(diagnostics: diagnostics, workspace: workspace)
-          }
-          if let reason = entry.build.missReason {
-            MissReasonButton(reason: reason, help: "Why this build missed the cache")
-          }
+    } content: {
+      VStack(alignment: .leading, spacing: Space.sm) {
+        if let detail = entry.detail {
+          Text(detail).foregroundStyle(Palette.secondary).textSelection(.enabled)
         }
-        .font(.stim(.footnote))
-        .fixedSize(horizontal: false, vertical: true)
-        .padding(.leading, Space.lg)
-        .padding(.vertical, Space.xs)
+        let facts = [entry.configuration, entry.build.fingerprint.map { "fingerprint \($0.prefix(8))" }]
+          .compactMap { $0 }
+        if !facts.isEmpty {
+          Text(facts.joined(separator: " \u{00B7} ")).foregroundStyle(Palette.tertiary)
+        }
+        if let phases = entry.phaseLine {
+          Text(phases).foregroundStyle(Palette.tertiary)
+        }
+        OffloadFallbackLine(build: entry.build)
+        if let diagnostics = entry.build.diagnostics, !diagnostics.isEmpty {
+          BuildDiagnosticsView(diagnostics: diagnostics, workspace: workspace)
+        }
+        if let reason = entry.build.missReason {
+          MissReasonButton(reason: reason, help: "Why this build missed the cache")
+        }
       }
+      .font(.stim(.footnote))
+      .fixedSize(horizontal: false, vertical: true)
+      .padding(.leading, Space.lg)
+      .padding(.vertical, Space.xs)
     }
   }
 }

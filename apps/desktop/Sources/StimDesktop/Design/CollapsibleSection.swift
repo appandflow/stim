@@ -29,7 +29,7 @@ struct CollapsibleSection<Item, Accessory: View, Content: View>: View {
   }
 
   var body: some View {
-    VStack(alignment: .leading, spacing: Space.md) {
+    AnimatedDisclosure(isExpanded: !collapsed) {
       HStack(alignment: .firstTextBaseline, spacing: Space.md) {
         Button {
           collapsed.toggle()
@@ -43,6 +43,7 @@ struct CollapsibleSection<Item, Accessory: View, Content: View>: View {
             Text(title).font(.stim(.headline))
             Text("\(items.count)").foregroundStyle(Palette.tertiary)
           }
+          .padding(.vertical, Space.sm)
         }
         .buttonStyle(.hoverRow(outset: Space.xs))
         .help(collapsed ? "Expand \(title)" : "Collapse \(title)")
@@ -50,16 +51,15 @@ struct CollapsibleSection<Item, Accessory: View, Content: View>: View {
         .accessibilityValue(collapsed ? "Collapsed" : "Expanded")
         accessory
       }
-      if !collapsed {
-        content(showsAll || !capped ? items[...] : items.prefix(Self.limit))
-        if capped, items.count > Self.limit {
-          Button(showsAll ? "Show fewer" : "Show all \(items.count)") { showsAll.toggle() }
-            .buttonStyle(.hoverRow(outset: Space.xs))
-            .foregroundStyle(Palette.primary)
-            .help(showsAll ? "Show only the first \(Self.limit)" : "Show all \(items.count) rows")
-            .accessibilityLabel(
-              showsAll ? "Show only the first \(Self.limit) in \(title)" : "Show all \(items.count) in \(title)")
-        }
+    } content: {
+      content(showsAll || !capped ? items[...] : items.prefix(Self.limit))
+      if capped, items.count > Self.limit {
+        Button(showsAll ? "Show fewer" : "Show all \(items.count)") { showsAll.toggle() }
+          .buttonStyle(.hoverRow(outset: Space.xs))
+          .foregroundStyle(Palette.primary)
+          .help(showsAll ? "Show only the first \(Self.limit)" : "Show all \(items.count) rows")
+          .accessibilityLabel(
+            showsAll ? "Show only the first \(Self.limit) in \(title)" : "Show all \(items.count) in \(title)")
       }
     }
   }

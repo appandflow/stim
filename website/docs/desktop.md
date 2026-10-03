@@ -39,7 +39,8 @@ performance traces. Every release is listed under
   request status.
 - **Watch and take over a device.** Open a device to see its screen large,
   take it over with your mouse and keyboard, and read what the agent did
-  and when.
+  and when. Hardware, rotation and posture controls sit in groups below the
+  screen, wrapping when space is tight.
 - **Replay.** Scrub back through a device's recent screen, with agent actions
   and errors marked on the timeline. Needs **Serve to phones** in **Stim >
   Settings > Phones**.
@@ -123,7 +124,8 @@ warnings and error links. CPU and RAM stay on the workspace page.
 Run, Reload app and Stop from the workspace or sidebar menus keep you on the
 workspace page. Open **Last output** or **Operations** for command details,
 including failed runs. Click the **Recent builds** label or chevron to expand
-the build history.
+the build history. Disclosure content and chevrons animate unless Reduce Motion
+is enabled.
 
 An empty workspace shows a purple device floating above a round plinth and a
 short launch hint. Reduce Motion stops the illustration's animation.

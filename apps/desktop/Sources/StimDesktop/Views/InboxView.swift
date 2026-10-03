@@ -77,7 +77,7 @@ struct InboxView: View {
 
   private func header(empty: Bool) -> some View {
     ViewThatFits(in: .horizontal) {
-      HStack(alignment: .firstTextBaseline, spacing: Space.md) {
+      HStack(spacing: Space.md) {
         title
         Spacer()
         filters(empty: empty)

@@ -47,7 +47,6 @@ struct IconButton: View {
         Image(systemName: systemImage).font(.system(size: 12, weight: .medium))
         if let badge { Text(badge).textStyle(.caption2, weight: .medium) }
       }
-      .padding(.horizontal, badge == nil ? 0 : Space.sm)
     }
     .nativeIconStyle(tint: tint)
     .help(help)

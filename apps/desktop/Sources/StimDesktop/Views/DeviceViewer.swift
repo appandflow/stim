@@ -3,10 +3,6 @@ import StimKit
 import StimStores
 import SwiftUI
 
-/// One device of a workspace, large, as a session replay lays it out: one toolbar, the device on a plain canvas with
-/// its buttons beside it, the replay bar across the bottom, and the agent's actions on the right. Escape releases a
-/// device that is taken over, and otherwise closes the viewer. A command it starts shows its activity sheet over the
-/// viewer, since the window under the viewer cannot present another sheet.
 struct DeviceViewer: View {
   var cli: Task<StimCLI, Never>
   var env: Workspace
@@ -151,7 +147,6 @@ struct DeviceViewer: View {
     GeometryReader { geo in
       let padding = Space.xxl
       let interactive = device.isRunning && takenOver && !replaying
-      let strip = interactive && DeviceTile.hasButtons(device) ? DeviceTile.buttonStripWidth + Space.lg : 0
       DeviceTile(
         device: device, screenHeight: max(160, geo.size.height - padding * 2),
         interactive: interactive, workspace: env.path,
@@ -160,7 +155,7 @@ struct DeviceViewer: View {
         presence: env.appPresence(device),
         showsCovers: true,
         viewer: true,
-        maxWidth: max(DeviceTile.minimumWidth, geo.size.width - padding * 2 - strip),
+        maxWidth: max(DeviceTile.minimumWidth, geo.size.width - padding * 2),
         onControlLost: { takenOver = false }
       )
       .frame(width: geo.size.width, height: geo.size.height)
