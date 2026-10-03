@@ -258,8 +258,9 @@ outside it moves to its own issue and pull request.
   stim-server takes under `build-slots/` for each offloaded build it runs,
   through core's `tryAcquireBuildSlotClaim`.
 - **Hosted devices.** `device-host` approval is separate from read, control and
-  build. The server owns its opaque session journal under
-  `server/device-host-sessions/`; core owns the readers. A hosted native worker
+  build, and permits the client's native app code in its own hosted simulator.
+  The server owns its opaque journal under `server/device-host-sessions/` and
+  app receipts under `device-host/sessions/<id>/apps/`; core owns the readers. A hosted native worker
   uses a server-chosen private home under `device-host/sessions/` and the CLI's
   existing created-device ledger, ownership checks and centralized teardown.
   Keep a child-aware ownership claim across native work and a claim for the
@@ -269,6 +270,13 @@ outside it moves to its own issue and pull request.
   reply. Unknown creation, journal, owner or shutdown state refuses replacement;
   never identify a device by name or guess an empty inventory. Stop and
   revocation touch only that client's recorded owned device.
+  App transfer uses bounded digest chunks, including the manifest itself. The
+  worker validates content, contained links, simulator platform, architecture
+  and minimum OS before installing on the exact ledger-owned device. Hold the
+  session's child claim across installation and launch, and reconcile a repeated
+  app attempt without launching it again. Development launch remains unverified
+  until the client's Metro bridge provides bundle evidence; a release launch
+  needs positive native process evidence for true.
 
 ## Comment policy
 

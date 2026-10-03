@@ -549,17 +549,30 @@ Stim Desktop can show and approve an expected `device-host` request from
 another Mac on your tailnet. The server command is
 `stim-server devices grant <id> --device-host`; inspect `stim-server devices`
 first, or deny a request with `stim-server devices revoke <id>`.
+Hosting approval permits that client's native app code to run in its own
+hosted simulators. Approve only an expected client.
 
 An approved client can reserve, boot, reconnect to and stop its own iOS simulator
 through the [hosted session protocol](https://github.com/appandflow/stim/blob/main/packages/server/README.md#hosted-ios-session-protocol).
+It can also transfer a digest-verified simulator `.app` bundle and install and
+launch it through the [app delivery protocol](https://github.com/appandflow/stim/blob/main/packages/server/README.md#hosted-ios-app-delivery).
+The worker checks the expected bundle identity, simulator platform, executable
+architecture and minimum OS. Bundle links must stay inside the app. Uploads
+resume at recorded byte offsets; replaying a completed app attempt returns its
+result without launching twice. Stop and revocation cancel installation before
+shutting down that exact owned simulator.
 Replaying an attempt resolves the same session after a lost reply. Unknown
 creation or shutdown outcomes retain the reservation until exact reconciliation;
 explicit stop and approval revocation touch only that session's owned simulator.
 Hosted reservations are atomic with each other; ordinary local device producers
 do not participate, so this is not a machine-wide hard capacity guarantee.
 
-Artifact delivery, Metro and screen/control relays, automatic placement and
+Development launches remain `unverified` until a Metro bridge proves a bundle
+request. Release launches report success only after positive native process
+evidence; absent evidence remains `unverified`.
+
+Metro and screen/control relays, automatic placement and
 Android hosting remain in [#2266](https://github.com/appandflow/stim/issues/2266).
-This protocol slice does not change where `stim ios` or `stim android` runs or
-provide a runnable remote app yet. Hosting approval grants no access to unrelated
+This protocol slice does not change where `stim ios` or `stim android` runs.
+Hosting approval grants no access to unrelated
 workspaces, phone control or build offloading.

@@ -12,11 +12,13 @@ import { getExecutor } from '../exec.ts';
 import { readHostMemoryPressure } from '../host-memory.ts';
 import { bootIosSim, createOwnedIosSim, listAllIosSims, resolveIosCreation } from '../devices/ios.ts';
 import { teardownOwnedIosSim } from '../devices/teardown.ts';
+import { installHostedApp } from './app.ts';
 
 export type HostedWorkerResult = {
-  state: 'ready' | 'stopped' | 'unknown';
+  state: 'ready' | 'stopped' | 'installed' | 'unknown';
   device: HostedIosDevice | null;
   notice?: string;
+  launched?: true | 'unverified';
 };
 
 function inventory(): ReturnType<typeof listAllIosSims> {
@@ -41,8 +43,9 @@ function choice(selectors: HostedDeviceSelectors): HostedIosChoice {
 
 /** Called only in the private server-owned worker home; native effects use Stim's existing ownership and teardown. */
 export async function runHostedDevice(
-  mode: 'prepare' | 'stop',
+  mode: 'prepare' | 'stop' | 'install',
   selectors: HostedDeviceSelectors,
+  app?: { session: string; attempt: string },
 ): Promise<HostedWorkerResult> {
   const home = process.env.STIM_HOME;
   if (!home) throw new Error('Hosted workers require their isolated STIM_HOME.');
@@ -71,6 +74,12 @@ export async function runHostedDevice(
     device = readHostedDevice(home);
     assertHostedDeviceLedger(home, device.udid);
     const current = inventory().find((sim) => sim.udid === device!.udid);
+    if (mode === 'install') {
+      if (!app || current?.state !== 'Booted')
+        throw new Error('Hosted app installation requires its booted owned simulator.');
+      const launched = await installHostedApp(home, app.session, app.attempt, device);
+      return { state: 'installed', device, launched };
+    }
     if (!current) return { state: 'stopped', device };
     const outcome = teardownOwnedIosSim(device.udid);
     if (outcome.status !== 'torn-down' && outcome.status !== 'missing')

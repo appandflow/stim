@@ -1,4 +1,4 @@
-import { isJsonObject } from '@stim-cli/core/state';
+import { hostedAppAttempt, isJsonObject } from '@stim-cli/core/state';
 import { runHostedDevice } from './worker.ts';
 
 async function main(): Promise<void> {
@@ -10,7 +10,7 @@ async function main(): Promise<void> {
     chunks.push(chunk as Buffer);
   }
   const input: unknown = JSON.parse(Buffer.concat(chunks).toString('utf8'));
-  if (!isJsonObject(input) || !['prepare', 'stop'].includes(String(input.mode)))
+  if (!isJsonObject(input) || !['prepare', 'stop', 'install'].includes(String(input.mode)))
     throw new Error('Invalid hosted worker request.');
   if (process.platform !== 'darwin') {
     process.stdout.write(
@@ -18,10 +18,19 @@ async function main(): Promise<void> {
     );
     return;
   }
-  const result = await runHostedDevice(input.mode as 'prepare' | 'stop', {
-    ...(typeof input.deviceType === 'string' ? { deviceType: input.deviceType } : {}),
-    ...(typeof input.runtime === 'string' ? { runtime: input.runtime } : {}),
-  });
+  if (
+    input.mode === 'install' &&
+    (typeof input.session !== 'string' || !/^[a-f0-9-]{36}$/.test(input.session) || !hostedAppAttempt(input.attempt))
+  )
+    throw new Error('Invalid hosted app request.');
+  const result = await runHostedDevice(
+    input.mode as 'prepare' | 'stop' | 'install',
+    {
+      ...(typeof input.deviceType === 'string' ? { deviceType: input.deviceType } : {}),
+      ...(typeof input.runtime === 'string' ? { runtime: input.runtime } : {}),
+    },
+    input.mode === 'install' ? { session: input.session as string, attempt: input.attempt as string } : undefined,
+  );
   process.stdout.write(`${JSON.stringify(result)}\n`);
 }
 main().catch((error: unknown) => {

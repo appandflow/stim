@@ -19,3 +19,4 @@ export * from './workspace-state.ts';
 export * from './viewers.ts';
 export * from './stats.ts';
 export * from './device-host.ts';
+export * from './hosted-app.ts';

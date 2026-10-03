@@ -20,6 +20,7 @@ import { WebSocket, WebSocketServer } from 'ws';
 import {
   readStatsReport,
   readHostedSessions,
+  deviceHostArea,
   buildSlotPath,
   machineCapacity,
   readViewedDevices,
@@ -608,14 +609,15 @@ describe('hosted device sessions', () => {
       writeFileSync(
         join(root, 'device-host-worker.mjs'),
         `
-      import { writeFileSync } from 'node:fs';
+      import { writeFileSync, appendFileSync } from 'node:fs';
       import { join } from 'node:path';
       const chunks=[]; for await (const chunk of process.stdin) chunks.push(chunk);
       const input=JSON.parse(Buffer.concat(chunks));
       const device={udid:'12345678-1234-1234-1234-123456789abc',name:'stim-hosted',deviceTypeId:'iphone',runtimeId:'ios',deviceType:'iPhone',runtime:'27.1',architecture:'arm64'};
       writeFileSync(join(process.env.STIM_HOME,'hosted-device.json'),JSON.stringify(device));
       writeFileSync(join(process.env.STIM_HOME,'created-devices.json'),JSON.stringify({version:1,ios:[device.udid],android:[],web:[]}));
-      process.stdout.write(JSON.stringify({state:input.mode==='prepare'?'ready':'stopped',device}));
+      if(input.mode==='install') appendFileSync(join(process.env.STIM_HOME,'installs'),input.attempt+'\\n');
+      process.stdout.write(JSON.stringify({state:input.mode==='prepare'?'ready':input.mode==='install'?'installed':'stopped',device,...(input.mode==='install'?{launched:'unverified'}:{})}));
     `,
       );
       const pending = requestDeviceHostAccess('Client', {
@@ -647,8 +649,60 @@ describe('hosted device sessions', () => {
         'ready',
       );
       expect(await next.request('stats.get')).toHaveProperty('error.code', 'forbidden');
+      const content = Buffer.alloc(40000, 65);
+      const digest = createHash('sha256').update(content).digest('hex');
+      const files = ['Info.plist', ...Array.from({ length: 700 }, (_, index) => `Assets/resource-${index}`)].map(
+        (path) => ({ path, kind: 'file', size: content.length, sha256: digest }),
+      );
+      const manifest = Buffer.from(JSON.stringify(files));
+      expect(manifest.length).toBeGreaterThan(65536);
+      const app = {
+        session: id,
+        attempt: 'socket-app',
+        bundleId: 'dev.stim.fixture',
+        mode: 'development',
+        manifest: { sha256: createHash('sha256').update(manifest).digest('hex'), size: manifest.length },
+      };
+      expect(await next.request('device-host.app.offer', app)).toHaveProperty(
+        'result.missing.0.sha256',
+        app.manifest.sha256,
+      );
+      for (const [sha256, bytes] of [
+        [app.manifest.sha256, manifest],
+        [digest, content],
+      ] as const) {
+        for (let offset = 0; offset < bytes.length; offset += 32768) {
+          const data = bytes.subarray(offset, offset + 32768);
+          expect(
+            await next.request('device-host.app.chunk', {
+              session: id,
+              attempt: app.attempt,
+              sha256,
+              offset,
+              data: data.toString('base64'),
+            }),
+          ).toHaveProperty('result.offset', offset + data.length);
+        }
+      }
+      expect(await next.request('device-host.app.launch', { session: id, attempt: app.attempt })).toHaveProperty(
+        'result.state',
+        'installing',
+      );
+      next.socket.close();
+      const reattached = await connect(port, '100.64.0.2');
+      await reattached.request('hello', { protocol: 1, client: CLIENT, auth: { deviceToken: pending.deviceToken } });
+      await vi.waitFor(async () =>
+        expect(
+          await reattached.request('device-host.app.attach', { session: id, attempt: app.attempt }),
+        ).toHaveProperty('result.state', 'installed'),
+      );
+      expect(await reattached.request('device-host.app.launch', { session: id, attempt: app.attempt })).toHaveProperty(
+        'result.launched',
+        'unverified',
+      );
+      expect(readFileSync(join(deviceHostArea(id), 'home', 'installs'), 'utf8')).toBe('socket-app\n');
       expect(revokeDevice(pending.device.id)).toBe(true);
-      expect(await next.closed).toBe(4401);
+      expect(await reattached.closed).toBe(4401);
       await vi.waitFor(() => expect(readHostedSessions()[0]?.state).toBe('stopped'));
     },
   );
