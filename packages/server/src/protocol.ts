@@ -74,6 +74,8 @@ export const METHODS = [
   'device-host.app.chunk',
   'device-host.app.launch',
   'device-host.app.attach',
+  'device-host.metro.open',
+  'device-host.metro.close',
 ] as const;
 
 /** The methods a connection with the `build` capability may call; they need `build`, not `read`. */
@@ -95,6 +97,8 @@ export const DEVICE_HOST_METHODS = [
   'device-host.app.chunk',
   'device-host.app.launch',
   'device-host.app.attach',
+  'device-host.metro.open',
+  'device-host.metro.close',
 ] as const;
 
 export type Method = (typeof METHODS)[number];
@@ -903,6 +907,11 @@ export interface Methods {
   };
   'device-host.app.launch': { params: { session: string; attempt: string }; result: HostedAppDelivery };
   'device-host.app.attach': { params: { session: string; attempt: string }; result: HostedAppDelivery };
+  'device-host.metro.open': {
+    params: { session: string; gatewayPort: number; secret: string };
+    result: { port: number };
+  };
+  'device-host.metro.close': { params: { session: string }; result: { port: null } };
   hello: { params: HelloParams; result: HelloResult };
   'status.subscribe': { params?: Record<string, never>; result: SubscribeResult };
   'logs.query': { params: LogFilter; result: LogsQueryResult };
@@ -1151,6 +1160,7 @@ export function protocolJsonSchema(): JsonSchema {
           attempt: { type: 'string' },
           bundleId: { type: 'string' },
           mode: { enum: ['development', 'release'] },
+          devClientScheme: { type: 'string', pattern: '^[a-zA-Z][a-zA-Z0-9+.-]{0,127}$' },
           state: { enum: ['receiving', 'installing', 'installed', 'unknown'] },
           launched: { enum: [true, 'unverified', null] },
           notice: { type: 'string' },
@@ -1178,6 +1188,12 @@ export function protocolJsonSchema(): JsonSchema {
         required: ['offset'],
         additionalProperties: false,
         properties: { offset: { type: 'integer', minimum: 0 } },
+      },
+      HostedMetroResult: {
+        type: 'object',
+        required: ['port'],
+        additionalProperties: false,
+        properties: { port: { type: ['integer', 'null'], minimum: 1, maximum: 65535 } },
       },
       HostedDeviceSession: {
         type: 'object',
@@ -1215,6 +1231,7 @@ export function protocolJsonSchema(): JsonSchema {
           createdAt: { type: 'string' },
           notice: { type: 'string' },
           appAttempt: { type: 'string' },
+          metroPort: { type: 'integer', minimum: 1, maximum: 65535 },
         },
       },
       HelloParams: {
@@ -1659,6 +1676,7 @@ export function protocolJsonSchema(): JsonSchema {
                 attempt: { type: 'string', pattern: '^[a-zA-Z0-9_-]{1,128}$' },
                 bundleId: { type: 'string' },
                 mode: { enum: ['development', 'release'] },
+                devClientScheme: { type: 'string', pattern: '^[a-zA-Z][a-zA-Z0-9+.-]{0,127}$' },
                 manifest: {
                   type: 'object',
                   required: ['sha256', 'size'],
@@ -1683,6 +1701,17 @@ export function protocolJsonSchema(): JsonSchema {
           ),
           request('device-host.app.launch', session({ attempt: { type: 'string' } }, ['attempt'])),
           request('device-host.app.attach', session({ attempt: { type: 'string' } }, ['attempt'])),
+          request(
+            'device-host.metro.open',
+            session(
+              {
+                gatewayPort: { type: 'integer', minimum: 1, maximum: 65535 },
+                secret: { type: 'string', pattern: '^[a-f0-9]{64}$' },
+              },
+              ['gatewayPort', 'secret'],
+            ),
+          ),
+          request('device-host.metro.close', session({})),
           request('hello', { $ref: '#/$defs/HelloParams' }),
           request('status.subscribe'),
           request('logs.query', { $ref: '#/$defs/LogFilter' }),
@@ -1906,6 +1935,7 @@ export function protocolJsonSchema(): JsonSchema {
                 anyOf: [
                   { $ref: '#/$defs/HostedDeviceSession' },
                   { $ref: '#/$defs/HostedAppDelivery' },
+                  { $ref: '#/$defs/HostedMetroResult' },
                   { $ref: '#/$defs/HostedAppOfferResult' },
                   { $ref: '#/$defs/HostedAppChunkResult' },
                   { $ref: '#/$defs/HelloResult' },

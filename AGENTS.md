@@ -270,6 +270,11 @@ outside it moves to its own issue and pull request.
   reply. Unknown creation, journal, owner or shutdown state refuses replacement;
   never identify a device by name or guess an empty inventory. Stop and
   revocation touch only that client's recorded owned device.
+  A session's Metro endpoint listens only on worker loopback and reaches only the
+  authenticated client's peer address. The client gateway listens only on its own
+  tailnet address, pins the worker peer, requires a fresh secret and forwards only
+  to its verified loopback Metro. Stop and revocation close the bridge and active
+  streams. Keep the recorded worker port on reconnect; refuse an occupied port.
   App transfer uses bounded digest chunks, including the manifest itself. The
   worker validates content, contained links, simulator platform, architecture
   and minimum OS before installing on the exact ledger-owned device. Hold the

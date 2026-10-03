@@ -45,7 +45,7 @@ function choice(selectors: HostedDeviceSelectors): HostedIosChoice {
 export async function runHostedDevice(
   mode: 'prepare' | 'stop' | 'install',
   selectors: HostedDeviceSelectors,
-  app?: { session: string; attempt: string },
+  app?: { session: string; attempt: string; metroPort?: number },
 ): Promise<HostedWorkerResult> {
   const home = process.env.STIM_HOME;
   if (!home) throw new Error('Hosted workers require their isolated STIM_HOME.');
@@ -77,7 +77,7 @@ export async function runHostedDevice(
     if (mode === 'install') {
       if (!app || current?.state !== 'Booted')
         throw new Error('Hosted app installation requires its booted owned simulator.');
-      const launched = await installHostedApp(home, app.session, app.attempt, device);
+      const launched = await installHostedApp(home, app.session, app.attempt, device, app.metroPort);
       return { state: 'installed', device, launched };
     }
     if (!current) return { state: 'stopped', device };

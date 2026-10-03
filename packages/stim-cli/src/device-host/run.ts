@@ -23,13 +23,27 @@ async function main(): Promise<void> {
     (typeof input.session !== 'string' || !/^[a-f0-9-]{36}$/.test(input.session) || !hostedAppAttempt(input.attempt))
   )
     throw new Error('Invalid hosted app request.');
+  if (
+    input.metroPort !== undefined &&
+    (typeof input.metroPort !== 'number' ||
+      !Number.isInteger(input.metroPort) ||
+      input.metroPort < 1 ||
+      input.metroPort > 65535)
+  )
+    throw new Error('Invalid hosted Metro port.');
   const result = await runHostedDevice(
     input.mode as 'prepare' | 'stop' | 'install',
     {
       ...(typeof input.deviceType === 'string' ? { deviceType: input.deviceType } : {}),
       ...(typeof input.runtime === 'string' ? { runtime: input.runtime } : {}),
     },
-    input.mode === 'install' ? { session: input.session as string, attempt: input.attempt as string } : undefined,
+    input.mode === 'install'
+      ? {
+          session: input.session as string,
+          attempt: input.attempt as string,
+          ...(typeof input.metroPort === 'number' ? { metroPort: input.metroPort } : {}),
+        }
+      : undefined,
   );
   process.stdout.write(`${JSON.stringify(result)}\n`);
 }

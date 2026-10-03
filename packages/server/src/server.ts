@@ -1569,7 +1569,11 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
                     ? await hostedDevices.appChunk(device.id, message.params)
                     : message.method === 'device-host.app.launch'
                       ? hostedDevices.appLaunch(device.id, message.params)
-                      : hostedDevices.appAttach(device.id, message.params);
+                      : message.method === 'device-host.app.attach'
+                        ? hostedDevices.appAttach(device.id, message.params)
+                        : message.method === 'device-host.metro.open'
+                          ? await hostedDevices.metroOpen(device.id, message.params, peer)
+                          : await hostedDevices.metroClose(device.id, message.params);
         return send(socket, 'error' in answer ? { id, error: answer.error } : { id, result: answer.result });
       }
       if ((BUILD_METHODS as readonly string[]).includes(message.method)) {
