@@ -544,7 +544,12 @@ deleted when removed.
 
 ## Paired Mac hosting approval
 
-Device-host approval is separate from build offloading and phone control.
+Device-host approval is separate from build offloading and phone control. On the
+client Mac, set `hosting.machines` to the expected tailnet names, then run
+`stim doctor --fix` in an app directory to request approval. Doctor stores a
+separate private, node-pinned credential and reports its state under
+`deviceHosts` in JSON. This setup does not yet place CLI sessions remotely.
+See [machine settings](/docs/settings#machine-settings).
 Stim Desktop can show and approve an expected `device-host` request from
 another Mac on your tailnet. The server command is
 `stim-server devices grant <id> --device-host`; inspect `stim-server devices`

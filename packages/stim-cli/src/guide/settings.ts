@@ -503,6 +503,29 @@ test suites and the end-to-end harness use one -- and a scoped config must not
 leave simulators on the machine it cannot account for. A redirected home that
 wants a pool says so with the variable.
 
+HOSTING MACHINES ARE MACHINE-LEVEL
+\`hosting.machines\` names Macs that may host owned simulator sessions,
+by MagicDNS name with an optional serve port (default 7443). Name each node
+and port once. This is separate from build offloading:
+
+  stim settings set hosting.machines '["janics-mac-mini"]'
+  stim doctor --fix
+
+Only \`doctor --fix\` asks for device-host access. A person on that Mac
+approves the printed id with \`stim-server devices grant <id> --device-host\`.
+Hosting grants include no read, control or build capability.
+$STIM_HOME/device-host-machines.json stores a private token and pinned tailnet
+node. Doctor never prints the token; it reports each machine under deviceHosts
+in JSON. Stim sends tokens only to the pinned node's own tailnet address,
+with its MagicDNS name for TLS and Host routing. A changed node refuses
+access, and uncertain replies or unreadable credentials preserve the pin.
+\`doctor --fix\` forgets entries removed from hosting.machines; remove a
+replaced machine, run it, then re-add the name to request a new approval.
+A definite revoked or lapsed request can be requested again with --fix.
+An in-progress approval inspection reports busy rather than replacing its
+pending token. This configures approval only; \`ios\` and \`android\` do
+not yet place sessions on these machines.
+
 BUILD MACHINES ARE MACHINE-LEVEL
 \`offload.machines\` lists the Macs on the tailnet that may build for this one,
 by MagicDNS name, each optionally with the port of its \`tailscale serve\`
