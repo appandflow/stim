@@ -508,6 +508,11 @@ out. The Agent source needs a `stim` that has it; an older one refuses
 Changing a filter or the workspace restarts the command; hiding the logs or
 quitting the app terminates it.
 
+**Build output > Readable** formats Xcode output with xcbeautify and hides
+compiler invocation noise. **Raw** shows every original line. Diagnostic
+source and caret lines remain visible; record details and copying always use
+the original output. Changing this display mode does not restart the log command.
+
 The generic list keeps the newest 50,000 records and drops the oldest past that.
 **Build logs** omits the tail limit and keeps all retained records of the selected
 run, including raw compiler commands. Its **Build run** chip clears the run's
