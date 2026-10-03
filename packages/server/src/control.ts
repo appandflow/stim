@@ -225,16 +225,20 @@ function runQuietly(
   return new Promise((resolve, reject) => {
     const child = spawn(file, args, { env, stdio: ['ignore', 'ignore', 'pipe'] });
     let stderr = '';
+    let timedOut = false;
     const finish = (code: number | null) => {
       clearTimeout(timer);
+      if (timedOut) return;
       if (code === 0) resolve();
       else reject(new Error(`${label} failed (code ${code}): ${stderr.trim()}`));
     };
     const timer = setTimeout(() => {
       child.stderr.destroy();
       if (child.exitCode !== null || child.signalCode !== null) return finish(child.exitCode);
-      void terminate(child);
-      reject(new Error(`${label} did not finish within ${timeoutMs / 1000} s.`));
+      timedOut = true;
+      void terminate(child).then(() => {
+        return reject(new Error(`${label} did not finish within ${timeoutMs / 1000} s.`));
+      });
     }, timeoutMs);
     child.stderr.setEncoding('utf8');
     child.stderr.on('data', (chunk: string) => (stderr = (stderr + chunk).slice(-500)));
@@ -359,7 +363,7 @@ export class ControlHub {
   private readonly byDevice = new Map<string, Session>();
   private readonly ownLeases = new Set<string>();
   private readonly starting = new Set<string>();
-  private readonly folding = new Set<string>();
+  private readonly folding = new Map<string, Promise<void>>();
   private readonly pending = new Pending();
   private closing = false;
   private next = 1;
@@ -607,8 +611,16 @@ export class ControlHub {
       return Promise.resolve({ code: 'unknown-session', message });
     }
     if (command.input === 'posture' && session.device.platform === 'ios') {
-      const folded = this.fold(session, session.device.udid, command.posture);
-      session.adb = folded.then(() => undefined);
+      const udid = session.device.udid;
+      if (this.folding.has(udid))
+        return Promise.resolve({ code: 'device-busy', message: 'The device is still folding.' });
+      const folded = this.fold(session, udid, command.posture);
+      const settled = folded.then(() => {
+        this.folding.delete(udid);
+        return undefined;
+      });
+      this.folding.set(udid, settled);
+      session.adb = settled;
       return folded;
     }
     if (
@@ -649,13 +661,11 @@ export class ControlHub {
    * other one.
    */
   private async fold(session: Session, udid: string, posture: DevicePosture): Promise<Refusal | null> {
-    if (this.folding.has(udid)) return { code: 'device-busy', message: 'The device is still folding.' };
     const current = session.frames.litPosture(session.device);
     if (!current) {
       return { code: 'action-failed', message: 'Subscribe to frames of this device to learn its posture first.' };
     }
     if (current === posture) return null;
-    this.folding.add(udid);
     try {
       const helper = await this.options.foldHelper();
       if (session.ended) return null;
@@ -672,8 +682,6 @@ export class ControlHub {
       return null;
     } catch (cause) {
       return { code: 'action-failed', message: (cause as Error).message };
-    } finally {
-      this.folding.delete(udid);
     }
   }
 
@@ -692,9 +700,11 @@ export class ControlHub {
 
   async endDevice(device: Device, message: string): Promise<void> {
     const session = this.byDevice.get(deviceKey(device));
-    if (!session) return;
-    await this.end(session, 'device-gone', message);
-    await session.adb;
+    if (session) {
+      await this.end(session, 'device-gone', message);
+      await session.adb;
+    }
+    if (device.platform === 'ios') await this.folding.get(device.udid);
   }
 
   async close(): Promise<void> {

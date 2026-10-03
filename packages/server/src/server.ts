@@ -587,7 +587,8 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     builds.abandonDetached((client) => paired.get(client)?.capabilities.includes('build') ?? false);
     void builds.sweepDaemons();
     for (const [socket, controller] of controllers) {
-      if (!paired.get(controller.device.id)?.capabilities.includes('control')) {
+      const capabilities = paired.get(controller.device.id)?.capabilities;
+      if (!capabilities?.includes('control') && !capabilities?.includes('device-host')) {
         control.endFor(controller, 'forbidden', 'This device can no longer control devices.');
         controllers.delete(socket);
       }

@@ -376,7 +376,9 @@ that connection's capture and input; reconnect to the same hosted session and
 subscribe again.
 
 Installation, stop, revocation and server close end capture and input before
-native work reuses the session claim. Known capture closes even if the journal
+native work reuses the session claim. In-flight native input settles before
+teardown even after disconnect or takeover; a timeout waits for its child to
+terminate. Known capture closes even if the journal
 is unreadable or unwritable; unresolved native state and claims remain retained.
 An unknown or lost owner requires explicit stop before replacement. This worker
 protocol does not add CLI placement or a local viewer relay; those remain in

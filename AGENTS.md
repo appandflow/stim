@@ -285,7 +285,8 @@ outside it moves to its own issue and pull request.
   Hosted view and input resolve only a ready session's exact private ledger-owned
   iOS device while this server holds its session claim. Track the capture helper
   as that claim's child, and close capture and control before installation or
-  native teardown. Revocation and server close end known transports even when
+  native teardown. Wait for native input still running after disconnect or
+  takeover, including termination of timed-out children. Revocation and server close end known transports even when
   the journal cannot be read or written; retain unresolved native claims.
   Hosting approval never widens ordinary workspace read or phone control.
 

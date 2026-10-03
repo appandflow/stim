@@ -2831,6 +2831,13 @@ describe('frames.subscribe', () => {
         return client;
       };
       const first = await open();
+      const observerIdentity = await pair(port);
+      const observer = await connect(port);
+      await observer.request('hello', {
+        protocol: 1,
+        client: CLIENT,
+        auth: { deviceToken: observerIdentity.token },
+      });
       const reserved = await first.request('device-host.reserve', {
         workspace: '/client/not-worker-registered',
         slot: 'phone',
@@ -2898,6 +2905,11 @@ describe('frames.subscribe', () => {
         'error.code',
         'action-failed',
       );
+      revokeDevice(observerIdentity.id);
+      await observer.closed;
+      expect(
+        await first.request('device-host.input.touch', { session: controlSession, phase: 'move', x: 0.5, y: 0.5 }),
+      ).toHaveProperty('result');
       first.socket.close();
       await first.closed;
       await until(() => !alive(helper!.pid));
