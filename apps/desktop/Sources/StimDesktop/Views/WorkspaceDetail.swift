@@ -46,7 +46,6 @@ struct WorkspaceDetail: View {
         inspectorPanel
           .frame(width: Self.clampedInspectorWidth(inspectorWidth, detailWidth: width))
           .background(Palette.sidebar)
-          .toolbarBackdrop(Palette.sidebar)
       }
     }
     .onGeometryChange(for: CGFloat.self) {
@@ -59,7 +58,6 @@ struct WorkspaceDetail: View {
         inspectorPanel
           .frame(width: Self.inspectorWidth)
           .background(Palette.sidebar)
-          .toolbarBackdrop(Palette.sidebar)
           .overlay(alignment: .leading) {
             Rectangle().fill(Palette.border).frame(width: 1).ignoresSafeArea(edges: .top)
           }

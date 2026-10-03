@@ -119,7 +119,7 @@ title, checks and review, and **Open on GitHub**. The "..." menu at the end of
 the line holds the workspace actions.
 
 The inspector, toggled from the toolbar, floats over the workspace in narrow
-windows with its background reaching the top edge behind the toolbar controls.
+windows. Its content scrolls behind the glass toolbar controls.
 It holds the workspace's details, in this order:
 
 - **Build**: one card per platform. While a build runs, its card shows the
