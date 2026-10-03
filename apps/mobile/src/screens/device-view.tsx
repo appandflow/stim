@@ -205,7 +205,7 @@ export function DeviceView({
     zoomKey({ macId: mac?.id ?? '', workspace, platform, slot, physical }),
     aspectOf(source),
     platform === 'web' ? 1.6 : platform === 'ios' ? 0.46 : 0.45,
-    !controlling && !((sideBySide || table) && readOnly) && !screenZoom.zoomed && !scrubbing,
+    !controlling && !((landscape || book || table) && readOnly) && !screenZoom.zoomed && !scrubbing,
     root,
     stage,
     screenZoom.lens,

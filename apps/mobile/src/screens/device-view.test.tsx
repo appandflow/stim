@@ -1,7 +1,7 @@
 import 'react-native-unistyles/mocks';
 
 import { fireEvent, render } from '@testing-library/react-native';
-import { Alert } from 'react-native';
+import { Alert, Dimensions } from 'react-native';
 import { I18nProvider } from '@lingui/react';
 import { i18n } from '@lingui/core';
 
@@ -11,7 +11,9 @@ import { DeviceView } from './device-view';
 
 const mockBegin = jest.fn();
 const mockRotate = jest.fn();
+const mockZoom = jest.fn();
 let mockControlling = true;
+let mockAllowed = true;
 let mockPhysical = false;
 const mockDriver = { state: 'driven', driver: { tool: 'agent-device', pid: 1, since: '2026-10-01' }, basis: [] };
 
@@ -62,7 +64,7 @@ jest.mock('@/hooks/machines', () => ({
 }));
 jest.mock('@/hooks/device-control', () => ({
   useDeviceControl: () => ({
-    allowed: true,
+    allowed: mockAllowed,
     state: mockControlling
       ? { kind: 'on', session: 'c1', leaseSince: null, postures: ['folded', 'half-open', 'unfolded'] }
       : { kind: 'busy', message: 'Driven by another client' },
@@ -80,15 +82,18 @@ jest.mock('@/hooks/auto-hide', () => ({ useAutoHide: () => ({ shown: true, hide:
 jest.mock('@/hooks/screen-reader', () => ({ useAnnounce: () => {}, useScreenReaderEnabled: () => false }));
 jest.mock('@/hooks/device-zoom', () => ({
   zoomKey: () => 'fixture',
-  useDeviceZoom: () => ({
-    landed: true,
-    screenRect: null,
-    snapshot: null,
-    screenSize: { width: 400, height: 800 },
-    pan: {},
-    fadeStyle: {},
-    screenStyle: {},
-  }),
+  useDeviceZoom: (...args: unknown[]) => {
+    mockZoom(...args);
+    return {
+      landed: true,
+      screenRect: null,
+      snapshot: null,
+      screenSize: { width: 400, height: 800 },
+      pan: {},
+      fadeStyle: {},
+      screenStyle: {},
+    };
+  },
 }));
 jest.mock('@/hooks/screen-zoom', () => ({
   useScreenZoom: () => ({ gesture: {}, zoomed: false, lens: { scale: { get: () => 1 } } }),
@@ -112,8 +117,27 @@ jest.mock('@/components/pill', () => ({ Pill: () => null }));
 
 beforeEach(() => {
   mockControlling = true;
+  mockAllowed = true;
   mockPhysical = false;
   jest.clearAllMocks();
+});
+
+it('keeps dismissal dragging disabled for a read-only flat landscape viewer', async () => {
+  mockControlling = false;
+  mockAllowed = false;
+  const previous = Dimensions.get('window');
+  Dimensions.set({ window: { ...previous, width: 800, height: 400 } });
+  try {
+    const screen = await render(
+      <I18nProvider i18n={i18n}>
+        <DeviceView workspace="/fixture" platform="ios" slot="default" />
+      </I18nProvider>,
+    );
+    expect(mockZoom.mock.calls.at(-1)?.[3]).toBe(false);
+    await screen.unmount();
+  } finally {
+    Dimensions.set({ window: previous });
+  }
 });
 
 it('lets a Duo control session rotate in both directions while advertising postures', async () => {
