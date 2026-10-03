@@ -10,20 +10,40 @@ struct Inspector: View {
   var usage: UsageHistory?
   var history: OwnerHistory
   var reportsBundles: Bool
-  var showsLogs: Bool
-  var toggleLogs: () -> Void
+  var openLogs: (LogQuery) -> Void
 
   private var agentSessions: [AgentSession] { AgentSession.associated(agents: env.agents, endedAgents: env.endedAgents) }
 
   var body: some View {
     ScrollView {
       VStack(alignment: .leading, spacing: Space.xxxl) {
-        BuildSection(cli: cli, env: env)
+        BuildSection(cli: cli, env: env, openLogs: openLogs)
           .id(env.path)
 
         ResourcesSection(env: env, machine: machine, history: history, sampled: usage)
 
-        MetroLogsSection(env: env, reportsBundles: reportsBundles, showsLogs: showsLogs, toggleLogs: toggleLogs)
+        MetroLogsSection(
+          env: env, reportsBundles: reportsBundles,
+          openLogs: {
+            var query = LogQuery()
+            query.sources = [.metro]
+            openLogs(query)
+          })
+
+        VStack(alignment: .leading, spacing: Space.md) {
+          HStack {
+            SectionLabel(title: "App / native logs")
+            Spacer(minLength: Space.sm)
+            Button("Show logs") {
+              var query = LogQuery()
+              query.sources = [.client, .device]
+              openLogs(query)
+            }
+            .buttonStyle(.stim())
+            .fixedSize()
+          }
+          Text("App runtime and device output").foregroundStyle(Palette.secondary)
+        }
 
         if !agentSessions.isEmpty {
           AgentSessionsSection(agents: agentSessions)
@@ -187,30 +207,21 @@ private struct DiskCard: View {
   }
 }
 
-/// Metro's port and health, the error count, the latest bundle, and the button that shows or hides the logs.
+/// Metro's port, health, latest bundle and logs.
 struct MetroLogsSection: View {
   var env: Workspace
   var reportsBundles: Bool
-  var showsLogs: Bool
-  var toggleLogs: () -> Void
+  var openLogs: () -> Void
 
   var body: some View {
-    let errors = env.logs?.errorsSinceMarker ?? 0
     VStack(alignment: .leading, spacing: Space.md) {
       HStack {
-        SectionLabel(title: "Metro & logs")
+        SectionLabel(title: "Metro")
         Spacer(minLength: Space.sm)
-        Button(action: toggleLogs) {
-          HStack(spacing: Space.xs) {
-            Text(showsLogs ? "Hide logs" : "Show logs")
-            if errors > 0, !showsLogs {
-              Pill(String(errors), tone: .error, size: .small)
-            }
-          }
-        }
-        .buttonStyle(.stim())
-        .fixedSize()
-        .help(showsLogs ? "Hide the logs below the devices" : "Show the workspace's logs below the devices")
+        Button("Show logs", action: openLogs)
+          .buttonStyle(.stim())
+          .fixedSize()
+          .help("Open Metro logs in the workspace log viewer")
       }
       if let metro = env.metro, let health = env.metroHealth {
         HStack(spacing: Space.sm) {
@@ -224,13 +235,6 @@ struct MetroLogsSection: View {
         .help(env.supervisor.map { "\($0.mode ?? "supervisor") \u{00B7} \(health.rawValue)" } ?? "Metro \(health.rawValue)")
       } else {
         Text("No dev server").foregroundStyle(Palette.tertiary)
-      }
-      if let count = env.logs?.errorsSinceMarker {
-        HStack(spacing: Space.sm) {
-          StatusDot(color: count > 0 ? Palette.error : Palette.border)
-          Text(countLabel(count, "error")).foregroundStyle(count > 0 ? Palette.error : Palette.secondary)
-        }
-        .help("Errors in the workspace's logs since the last marker")
       }
       TimelineView(.periodic(from: .now, by: 15)) { context in
         if let bundle = env.bundleLine(now: context.date, reportsBundles: reportsBundles) {

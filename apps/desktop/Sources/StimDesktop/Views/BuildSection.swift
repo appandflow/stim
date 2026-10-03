@@ -8,6 +8,7 @@ import SwiftUI
 struct BuildSection: View {
   var cli: Task<StimCLI, Never>
   var env: Workspace
+  var openLogs: (LogQuery) -> Void
   @EnvironmentObject private var checks: BuildPlanChecks
   @EnvironmentObject private var actions: ActionCenter
 
@@ -50,15 +51,20 @@ struct BuildSection: View {
         Text(building == nil ? platformName(platform) : "Building \(platformName(platform))")
           .font(.stim(.callout, weight: .semibold))
           .lineLimit(1)
-        if let building { BuildOutcomeBadge(build: building) }
         Spacer()
+        if let query = buildLogs(platform, running: building) {
+          Button("Build logs") { openLogs(query) }
+            .buttonStyle(.stim())
+            .fixedSize()
+            .help("Open this build's full retained raw output")
+        }
         if building == nil { runButton(platform) }
       }
       if let host = building?.remote(at: Date())?.host {
         Label("on \(host)", systemImage: "desktopcomputer").foregroundStyle(Palette.secondary).lineLimit(1)
       }
       if let building {
-        RunningBuildDetail(cli: cli, env: env, build: building)
+        RunningBuildDetail(env: env, build: building)
       } else {
         VStack(alignment: .leading, spacing: Space.sm) {
           Text("Last build").font(.stim(.footnote, weight: .semibold)).foregroundStyle(Palette.secondary)
@@ -88,6 +94,14 @@ struct BuildSection: View {
     .frame(maxWidth: .infinity, alignment: .leading)
     .background(
       RoundedRectangle(cornerRadius: Radius.control).fill(building == nil ? Palette.surface : Palette.primary.opacity(0.06)))
+  }
+
+  private func buildLogs(_ platform: String, running: Build?) -> LogQuery? {
+    if let running {
+      return .build(platform: platform, slot: running.slot, startedAt: running.startedAt)
+    }
+    guard let entry = env.builds?.builds(for: platform).first else { return nil }
+    return .build(platform: platform, slot: entry.slot, startedAt: entry.build.startedAt, finishedAt: entry.build.finishedAt)
   }
 
   @ViewBuilder private func checkButton(_ platform: String, entry: BuildPlanChecks.Entry?) -> some View {
@@ -212,12 +226,10 @@ extension EnvironmentValues {
 }
 
 /// A running build: the phase and its counts, elapsed over the estimate, the phase bar and checklist, why the
-/// cache missed, and the latest output.
+/// cache missed.
 private struct RunningBuildDetail: View {
-  var cli: Task<StimCLI, Never>
   var env: Workspace
   var build: Build
-  @StateObject private var output = BuildOutputModel()
 
   var body: some View {
     TimelineView(.buildSeconds(build)) { context in
@@ -235,27 +247,26 @@ private struct RunningBuildDetail: View {
             .monospacedDigit()
         }
         PhaseBar(steps: barSteps(steps), key: build.key)
-        if namesPhases(steps) {
-          PhaseChecklist(steps: steps)
+        if namesPhases(steps) || build.cacheLookupOutcome != nil {
+          PhaseChecklist(steps: steps, build: build)
         }
       }
       .accessibilityElement(children: .combine)
     }
-    .task(id: "\(env.path)|\(build.slot)|\(build.startedAt)") {
-      await output.follow(cli: cli, workspace: env.path, build: build, limit: 6)
-    }
-    .onDisappear { output.stop() }
     if build.phase == "wait", let holder = build.waitingOn {
       WaitingOnButton(path: holder.path, current: env.path)
     }
+    if build.phase == "compile", let line = build.detail?.line {
+      Text(line).font(.stim(.footnote)).foregroundStyle(Palette.secondary)
+        .fixedSize(horizontal: false, vertical: true)
+    }
     if let miss = build.missReason {
+      Text(miss.summary).font(.stim(.footnote)).foregroundStyle(Palette.secondary)
+        .fixedSize(horizontal: false, vertical: true)
       MissReasonButton(reason: miss, help: "Why this build missed the cache")
       if let note = build.recheckNote {
         Text(note).font(.stim(.footnote)).foregroundStyle(Palette.tertiary)
       }
-    }
-    if !output.lines.isEmpty {
-      BuildOutputTail(lines: output.lines)
     }
   }
 }

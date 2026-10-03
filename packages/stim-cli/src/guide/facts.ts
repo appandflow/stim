@@ -1167,7 +1167,7 @@ RULES
   run that holds this workspace's native-run.lock:
 
   build   { platform, slot, state, phase, startedAt, phaseStartedAt,
-            outcome, outcomeKnown, expectedMs, expectedPhaseMs, basis,
+            outcome, outcomeKnown, cacheLookupOutcome?, expectedMs, expectedPhaseMs, basis,
             plannedPhases, missReason?, missProvisional?, detail?, placement,
             waitingOn? }
 
@@ -1189,15 +1189,17 @@ RULES
                    --eas-profile run has no cache lookup, so its outcome
                    stays the project's most recent one until install.
   startedAt        when the run started; phaseStartedAt when its phase did
-  outcome          "cold" once the first cache lookup missed and the run
-                   will prebuild or install pods, or once it reached
-                   prebuild, pods or compile; "hit" once it reached device
-                   after the cache lookup, or install, without them, or
-                   once the lookup repeated after prebuild or pods hit.
-                   Before that, the outcome of this project's most recent
-                   run.
+  outcome          "cold" after the local/provider lookups resolve a miss;
+                   "hit" after a cached artifact is ready to reuse, including
+                   a shared-build hit or a recheck after prebuild or pods.
+                   A later recheck can replace the first lookup's outcome.
+                   Before resolution, the outcome of this project's most
+                   recent run.
   outcomeKnown     true once outcome is this run's own, false while it is
                    the project's most recent one
+  cacheLookupOutcome  "hit" or "miss" once an actual cache lookup resolves;
+                   absent before resolution and on runs that skip lookup,
+                   such as --eas-profile
   expectedMs       the median duration of this project's last successful
                    runs with that outcome on that platform, or null with
                    no history. The run estimates twice: when it starts,

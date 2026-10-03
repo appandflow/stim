@@ -917,7 +917,7 @@ and an estimate of the time left:
 ```
 
 In `--json`, each environment carries `build`: `null`, or
-`{ platform, slot, state, phase, startedAt, phaseStartedAt, outcome, outcomeKnown, expectedMs, expectedPhaseMs, basis, plannedPhases }`.
+`{ platform, slot, state, phase, startedAt, phaseStartedAt, outcome, outcomeKnown, cacheLookupOutcome?, expectedMs, expectedPhaseMs, basis, plannedPhases }`.
 `phase` is one of `prepare`, `cache-lookup`, `wait`, `prebuild`, `pods`,
 `compile`, `device`, `install` and `launch`. Creating, adopting or booting the
 owned simulator or emulator before the cache lookup counts as `prepare`.
@@ -926,11 +926,13 @@ boot, adoption cleanup, or a physical device's lease and connection check); a
 boot that finishes during the build adds no `device` time. `state` is `running` while the run's
 `native-run.lock` claim is live, `stale` when that run was killed (the next run
 replaces the record), and `unknown` when the claim cannot be read. `outcome` is
-`cold` once the first cache lookup misses and the run will prebuild or install
-pods, or once it reaches prebuild, pods or compile, and `hit` once it reaches
-`device` after the cache lookup, or install, without them, or once the lookup
-repeated after prebuild or pods hits; before that it follows the project's
-most recent run, and `outcomeKnown` is `false`. `expectedMs` and `expectedPhaseMs` are
+`cold` after the local/provider lookups resolve a miss, and `hit` after a cached
+artifact is ready to reuse, including a shared-build hit or a recheck after
+prebuild or pods. A later recheck can replace the first lookup's outcome.
+Before resolution it follows the project's most recent run and `outcomeKnown`
+is `false`. `cacheLookupOutcome` is `hit` or `miss` after an actual lookup resolves;
+it is absent before resolution and on runs that skip lookup, such as `--eas-profile`.
+`expectedMs` and `expectedPhaseMs` are
 medians of this project's last successful runs with that outcome, and `basis`
 counts the runs behind `expectedMs`. Both are `null` until the project has such
 a run. `plannedPhases` lists, in order, the phases at least half of those runs

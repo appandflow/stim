@@ -36,6 +36,8 @@ export interface BuildReport {
   outcome: RunOutcomeKind | null;
   /** Whether `outcome` is this run's own; before its cache lookup resolves it is the project's latest outcome. */
   outcomeKnown: boolean;
+  /** The resolved lookup result; absent before resolution and when the run skips cache lookup. */
+  cacheLookupOutcome?: 'hit' | 'miss';
   expectedMs: number | null;
   expectedPhaseMs: number | null;
   basis: number;

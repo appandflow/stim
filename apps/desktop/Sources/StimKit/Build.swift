@@ -11,6 +11,8 @@ public struct Build: Decodable, Hashable, Sendable {
   public var outcome: String?
   /// Whether `outcome` is this run's own rather than the project's latest; nil from an older stim.
   public var outcomeKnown: Bool?
+  /// The resolved lookup result; nil before resolution, when lookup is skipped, or from an older stim.
+  public var cacheLookupOutcome: String?
   public var expectedMs: Double?
   public var expectedPhaseMs: Double?
   public var basis: Int

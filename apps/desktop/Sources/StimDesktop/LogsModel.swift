@@ -2,8 +2,8 @@ import Combine
 import Foundation
 import StimKit
 
-/// The entries of one running `stim logs --follow` query, capped at `limit`
-/// records with the oldest dropped first.
+/// The entries of one running `stim logs --follow` query. Generic queries keep the newest `limit` records;
+/// a scoped build keeps its full retained output.
 @MainActor
 final class LogsModel: ObservableObject {
   static let limit = 50_000
@@ -118,7 +118,7 @@ final class LogsModel: ObservableObject {
       rows.removeSubrange(from...)
       rows += list.entries[from...].map(row)
       onChange?(.updated(from: from, replaced: replaced))
-      if list.records.count > Self.limit {
+      if following?.buildRun == nil, list.records.count > Self.limit {
         let dropped = list.dropOldest(list.records.count - Self.limit + Self.limit / 10)
         let lines = rows[..<dropped].reduce(0) { $0 + $1.lines }
         rows.removeFirst(dropped)

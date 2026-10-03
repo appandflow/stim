@@ -110,14 +110,14 @@ import Testing
     #expect(refused.detail == nil)
   }
 
-  @Test func marksTheRunningOutcomeLikelyUntilTheRunReachesACacheDecidingPhase() throws {
+  @Test func hidesHistoricalOutcomesUntilTheRunKnowsItsCacheResult() throws {
     var build = try decode(
       Build.self,
       """
       {"platform":"ios","slot":"default","state":"running","phase":"cache-lookup","startedAt":"2026-09-25T12:00:00Z",
        "phaseStartedAt":"2026-09-25T12:00:01Z","outcome":"cold","expectedMs":null,"expectedPhaseMs":null,"basis":0}
       """)
-    #expect(build.outcomeLabel == "Likely cold")
+    #expect(build.outcomeLabel == nil && build.cacheLookupOutcome == nil)
     build.phase = "compile"
     #expect(build.outcomeLabel == "Cold build")
     build.outcome = "hit"
@@ -128,9 +128,9 @@ import Testing
     build.outcome = "hit"
     build.phase = "device"
     build.outcomeKnown = false
-    #expect(build.outcomeLabel == "Likely cache hit")
+    #expect(build.outcomeLabel == nil)
     build.outcomeKnown = true
-    #expect(build.outcomeLabel == "Cache hit")
+    #expect(build.outcomeLabel == "Cache hit" && build.cacheLookupOutcome == nil)
   }
 
   @Test func showsAMissBeforePodsAsACacheMissAndNotesTheRecheck() throws {
@@ -138,12 +138,12 @@ import Testing
       Build.self,
       """
       {"platform":"ios","slot":"default","state":"running","phase":"pods","startedAt":"2026-09-25T12:00:00Z",
-       "phaseStartedAt":"2026-09-25T12:00:01Z","outcome":"cold","outcomeKnown":true,"expectedMs":null,
+       "phaseStartedAt":"2026-09-25T12:00:01Z","outcome":"cold","outcomeKnown":true,"cacheLookupOutcome":"miss","expectedMs":null,
        "expectedPhaseMs":null,"basis":0,"missProvisional":true,
        "missReason":{"kind":"changed","summary":"native dependency added: expo-clipboard","changes":[],
                      "changeCount":1,"baseline":null,"rekeyedBy":[]}}
       """)
-    #expect(build.outcomeLabel == "Cache miss")
+    #expect(build.outcomeLabel == "Cache miss" && build.cacheLookupOutcome == "miss")
     #expect(build.recheckNote == "Checks the cache again after pods")
     var compiling = build
     compiling.phase = "compile"

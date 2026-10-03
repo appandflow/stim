@@ -89,6 +89,35 @@ import Testing
     #expect(query.arguments == ["logs", "--json", "--follow", "--tail", "5000", "--errors"])
   }
 
+  @Test func anInterruptedBuildStopsBeforeTheNextRecordedRunInItsOwnSlot() throws {
+    var query = try #require(LogQuery.build(platform: "ios", slot: "ipad", startedAt: "2026-10-02T12:00:00Z"))
+    let history = try JSONDecoder().decode(
+      [BuildHistoryEntry].self,
+      from: Data(
+        """
+        [{"platform":"ios","status":"ok","cacheHit":"local","startedAt":"2026-10-02T12:00:10Z",
+          "finishedAt":"2026-10-02T12:00:11Z","result":"succeeded","slot":"iphone","phases":{}},
+         {"platform":"ios","status":"ok","cacheHit":false,"startedAt":"2026-10-02T12:00:20Z",
+          "finishedAt":"2026-10-02T12:00:30Z","result":"succeeded","slot":"ipad","phases":{}}]
+        """.utf8))
+    query.buildRun = query.buildRun?.bounded(history: history, active: nil)
+    let start = try #require(query.buildRun).startedAt.timeIntervalSince1970 * 1000
+    func record(_ offset: Double) throws -> LogRecord {
+      try #require(LogRecord.parse("{\"ts\":\(start + offset),\"src\":\"build\",\"level\":\"debug\",\"msg\":\"raw\"}"))
+    }
+    #expect(query.includes(try record(19_999)))
+    #expect(!query.includes(try record(20_000)))
+    let active = try JSONDecoder().decode(
+      Build.self,
+      from: Data(
+        """
+        {"platform":"ios","slot":"ipad","state":"running","phase":"prepare","startedAt":"2026-10-02T12:00:15Z",
+         "phaseStartedAt":"2026-10-02T12:00:15Z","outcome":null,"expectedMs":null,"expectedPhaseMs":null,"basis":0}
+        """.utf8))
+    query.buildRun = query.buildRun?.bounded(history: history, active: active)
+    #expect(!query.includes(try record(15_000)))
+  }
+
   @Test func passesEveryFilter() {
     var query = LogQuery()
     query.sources = [.build, .metro]
@@ -102,6 +131,36 @@ import Testing
         "warn", "--grep", "Bundl(ed|ing)",
       ])
   }
+
+  @Test func buildOutputReadsTheWholeRunAndRejectsOtherRunsAndPlatforms() throws {
+    var query = try #require(
+      LogQuery.build(
+        platform: "ios", slot: "ipad", startedAt: "2026-10-02T12:00:00.000Z",
+        finishedAt: "2026-10-02T12:00:10.000Z"))
+    #expect(query.arguments == ["logs", "--json", "--follow", "--source", "build"])
+    let start = try #require(query.buildRun).startedAt.timeIntervalSince1970 * 1000
+    func record(_ offset: Double, platform: String, slot: String = "ipad") throws -> LogRecord {
+      try #require(
+        LogRecord.parse(
+          "{\"ts\":\(start + offset),\"src\":\"build\",\"level\":\"debug\",\"msg\":\"raw compiler flags\",\"platform\":\"\(platform)\",\"slot\":\"\(slot)\"}"
+        ))
+    }
+    #expect(query.includes(try record(0, platform: "ios")))
+    #expect(query.includes(try record(10_000, platform: "ios")))
+    #expect(!query.includes(try record(-1, platform: "ios")))
+    #expect(!query.includes(try record(10_001, platform: "ios")))
+    #expect(!query.includes(try record(1, platform: "android")))
+    #expect(!query.includes(try record(1, platform: "ios", slot: "iphone")))
+    let legacy = try #require(
+      LogRecord.parse(
+        "{\"ts\":\(start + 1),\"src\":\"build\",\"level\":\"debug\",\"msg\":\"raw legacy compiler flags\"}"))
+    #expect(query.includes(legacy))
+    query.buildRun = nil
+    #expect(query.arguments.contains("--slot"))
+    #expect(query.arguments.contains("--tail"))
+    #expect(query.includes(try record(-1, platform: "android")))
+  }
+
 }
 
 @MainActor

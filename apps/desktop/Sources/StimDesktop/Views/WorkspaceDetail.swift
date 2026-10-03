@@ -169,7 +169,12 @@ struct WorkspaceDetail: View {
     Inspector(
       cli: cli, env: env, stats: stats.flatMap { $0.path == env.path ? $0.fetched : nil } ?? Fetched(),
       machine: machine, usage: usage, history: history,
-      reportsBundles: reportsBundles, showsLogs: showsLogs, toggleLogs: { showsLogs.toggle() }
+      reportsBundles: reportsBundles,
+      openLogs: { query in
+        logQuery = query
+        logMoment = nil
+        showsLogs = true
+      }
     )
     .frame(maxHeight: .infinity)
   }
@@ -262,6 +267,7 @@ struct WorkspaceDetail: View {
 
   /// Shows the agent source of `slot` in the logs drawer, scrolled to `at` when given.
   private func revealAgentActions(slot: String, at: Double?) {
+    logQuery = LogQuery()
     logQuery.sources = [.agent]
     logQuery.slot = slot
     logQuery.minimumLevel = .debug
