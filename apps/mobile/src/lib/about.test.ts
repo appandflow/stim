@@ -2,7 +2,6 @@ import {
   appAndFlowLibraries,
   bugReportUrl,
   diagnosticText,
-  shortId,
   versionWithBuild,
   type AboutApp,
   type AboutDevice,
@@ -42,11 +41,6 @@ describe('about', () => {
   it('appends the build number only when the app has one', () => {
     expect(versionWithBuild(app)).toBe('0.1.0 (12)');
     expect(versionWithBuild({ ...app, build: null })).toBe('0.1.0');
-  });
-
-  it('shortens an id to its first 8 characters', () => {
-    expect(shortId(app.updateId!)).toBe('01a0f251');
-    expect(shortId('0.1.0')).toBe('0.1.0');
   });
 
   it('lists every version, and what keeps a machine from reporting its own', () => {

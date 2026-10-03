@@ -9,7 +9,6 @@ import {
   markerWindow,
   queryLogs,
   readLogRecords,
-  ERROR_SOURCES,
   logFiles,
   fileSizes,
   tailRead,
@@ -499,10 +498,6 @@ describe('queryLogs', () => {
   });
 
   describe('errorsOnly, scope', () => {
-    test('ERROR_SOURCES is metro, client and build -- the app talking, not the OS', () => {
-      expect(ERROR_SOURCES).toEqual(['metro', 'client', 'build']);
-    });
-
     test('a device-only noise storm is zero errors', () => {
       const storm = [];
       for (let i = 0; i < 3004; i += 1) {

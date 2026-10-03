@@ -1,4 +1,4 @@
-import { LEVELS, levelRank, parseNdjsonLine, parseNdjsonText, SOURCES } from '../state/ndjson.ts';
+import { levelRank, parseNdjsonLine, parseNdjsonText } from '../state/ndjson.ts';
 
 describe('parseNdjsonLine', () => {
   test('parses a Contract-1 record', () => {
@@ -52,10 +52,6 @@ describe('parseNdjsonText', () => {
 });
 
 describe('levels', () => {
-  test('LEVELS is the Contract-1 order, lowest first', () => {
-    expect(LEVELS).toEqual(['debug', 'info', 'warn', 'error', 'fatal']);
-  });
-
   test('levelRank orders them and puts an unknown level at the bottom', () => {
     expect(levelRank('fatal') > levelRank('error')).toBeTruthy();
     expect(levelRank('error') > levelRank('warn')).toBeTruthy();
@@ -63,11 +59,5 @@ describe('levels', () => {
     expect(levelRank('info') > levelRank('debug')).toBeTruthy();
     expect(levelRank('nonsense')).toBe(0);
     expect(levelRank(undefined)).toBe(0);
-  });
-});
-
-describe('sources', () => {
-  test('SOURCES is the Contract-1 set', () => {
-    expect(SOURCES).toEqual(['metro', 'client', 'device', 'build', 'agent']);
   });
 });

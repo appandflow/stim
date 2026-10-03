@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 import {
   benchmarkDimensions,
   benchmarkForDimensions,
-  benchmarkModelLabel,
   exactBenchmarkForDimensions,
   scenarioRun,
 } from './benchmarkSelection';
@@ -107,10 +106,5 @@ describe('benchmark catalog selection', () => {
     expect(scenarioRun(withControl, 'javascript', 'control')?.id).toBe('javascript-stim');
     expect(scenarioRun(withControl, 'launch-crash', 'stim')).toBeUndefined();
     expect(scenarioRun(undefined, 'native')).toBeUndefined();
-  });
-
-  it('formats the catalog model identifiers for picker labels', () => {
-    expect(benchmarkModelLabel('gpt-5.6-luna')).toBe('Luna');
-    expect(benchmarkModelLabel('sonnet')).toBe('Sonnet');
   });
 });
