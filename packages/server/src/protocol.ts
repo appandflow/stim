@@ -2,6 +2,8 @@ import type {
   BuildPlanPayload,
   HostedDeviceRequest,
   HostedDeviceSession,
+  HostedAppOffer,
+  HostedAppDelivery,
   NdjsonRecord,
   StatusPayload,
 } from '@stim-cli/core/state';
@@ -13,7 +15,7 @@ export const PROTOCOL_SCHEMA_FILE = 'protocol.schema.json';
 /**
  * `read` serves state. `control` also runs {@link ACTIONS}; only the Mac grants it. `build` lets another Mac run
  * project code here to build for it; it never comes with `read` or `control`, and only the Mac approves it.
- * `device-host` is separate explicit hosting approval; it grants no other capability and authorizes only its own hosted sessions.
+ * `device-host` permits a client's native app code in its own hosted sessions, and grants no other capability.
  */
 export const CAPABILITIES = ['read', 'control', 'build', 'device-host'] as const;
 
@@ -68,6 +70,10 @@ export const METHODS = [
   'device-host.reserve',
   'device-host.attach',
   'device-host.stop',
+  'device-host.app.offer',
+  'device-host.app.chunk',
+  'device-host.app.launch',
+  'device-host.app.attach',
 ] as const;
 
 /** The methods a connection with the `build` capability may call; they need `build`, not `read`. */
@@ -81,7 +87,15 @@ export const BUILD_METHODS = [
 ] as const;
 
 /** Methods restricted to explicitly approved device-host clients and their own sessions. */
-export const DEVICE_HOST_METHODS = ['device-host.reserve', 'device-host.attach', 'device-host.stop'] as const;
+export const DEVICE_HOST_METHODS = [
+  'device-host.reserve',
+  'device-host.attach',
+  'device-host.stop',
+  'device-host.app.offer',
+  'device-host.app.chunk',
+  'device-host.app.launch',
+  'device-host.app.attach',
+] as const;
 
 export type Method = (typeof METHODS)[number];
 
@@ -879,6 +893,16 @@ export interface Methods {
   'device-host.reserve': { params: HostedDeviceRequest; result: HostedDeviceSession };
   'device-host.attach': { params: { session: string } | { attempt: string }; result: HostedDeviceSession };
   'device-host.stop': { params: { session: string }; result: HostedDeviceSession };
+  'device-host.app.offer': {
+    params: HostedAppOffer;
+    result: { delivery: HostedAppDelivery; missing: { sha256: string; size: number; offset: number }[] };
+  };
+  'device-host.app.chunk': {
+    params: { session: string; attempt: string; sha256: string; offset: number; data: string };
+    result: { offset: number };
+  };
+  'device-host.app.launch': { params: { session: string; attempt: string }; result: HostedAppDelivery };
+  'device-host.app.attach': { params: { session: string; attempt: string }; result: HostedAppDelivery };
   hello: { params: HelloParams; result: HelloResult };
   'status.subscribe': { params?: Record<string, never>; result: SubscribeResult };
   'logs.query': { params: LogFilter; result: LogsQueryResult };
@@ -1118,6 +1142,43 @@ export function protocolJsonSchema(): JsonSchema {
     'x-stim-protocol': PROTOCOL_VERSION,
     $defs: {
       ProtocolError: protocolError,
+      HostedAppDelivery: {
+        type: 'object',
+        required: ['session', 'attempt', 'bundleId', 'mode', 'state', 'launched'],
+        additionalProperties: false,
+        properties: {
+          session: { type: 'string' },
+          attempt: { type: 'string' },
+          bundleId: { type: 'string' },
+          mode: { enum: ['development', 'release'] },
+          state: { enum: ['receiving', 'installing', 'installed', 'unknown'] },
+          launched: { enum: [true, 'unverified', null] },
+          notice: { type: 'string' },
+        },
+      },
+      HostedAppOfferResult: {
+        type: 'object',
+        required: ['delivery', 'missing'],
+        additionalProperties: false,
+        properties: {
+          delivery: { $ref: '#/$defs/HostedAppDelivery' },
+          missing: {
+            type: 'array',
+            items: {
+              type: 'object',
+              required: ['sha256', 'size', 'offset'],
+              additionalProperties: false,
+              properties: { sha256, size: { type: 'integer', minimum: 0 }, offset: { type: 'integer', minimum: 0 } },
+            },
+          },
+        },
+      },
+      HostedAppChunkResult: {
+        type: 'object',
+        required: ['offset'],
+        additionalProperties: false,
+        properties: { offset: { type: 'integer', minimum: 0 } },
+      },
       HostedDeviceSession: {
         type: 'object',
         required: ['id', 'client', 'workspace', 'slot', 'platform', 'attempt', 'state', 'device', 'createdAt'],
@@ -1153,6 +1214,7 @@ export function protocolJsonSchema(): JsonSchema {
           },
           createdAt: { type: 'string' },
           notice: { type: 'string' },
+          appAttempt: { type: 'string' },
         },
       },
       HelloParams: {
@@ -1590,6 +1652,37 @@ export function protocolJsonSchema(): JsonSchema {
             ],
           }),
           request('device-host.stop', session({})),
+          request(
+            'device-host.app.offer',
+            session(
+              {
+                attempt: { type: 'string', pattern: '^[a-zA-Z0-9_-]{1,128}$' },
+                bundleId: { type: 'string' },
+                mode: { enum: ['development', 'release'] },
+                manifest: {
+                  type: 'object',
+                  required: ['sha256', 'size'],
+                  additionalProperties: false,
+                  properties: { sha256, size: { type: 'integer', minimum: 1, maximum: 8 * 1024 ** 2 } },
+                },
+              },
+              ['attempt', 'bundleId', 'mode', 'manifest'],
+            ),
+          ),
+          request(
+            'device-host.app.chunk',
+            session(
+              {
+                attempt: { type: 'string' },
+                sha256,
+                offset: { type: 'integer', minimum: 0 },
+                data: { type: 'string', maxLength: 43692 },
+              },
+              ['attempt', 'sha256', 'offset', 'data'],
+            ),
+          ),
+          request('device-host.app.launch', session({ attempt: { type: 'string' } }, ['attempt'])),
+          request('device-host.app.attach', session({ attempt: { type: 'string' } }, ['attempt'])),
           request('hello', { $ref: '#/$defs/HelloParams' }),
           request('status.subscribe'),
           request('logs.query', { $ref: '#/$defs/LogFilter' }),
@@ -1812,6 +1905,9 @@ export function protocolJsonSchema(): JsonSchema {
               result: {
                 anyOf: [
                   { $ref: '#/$defs/HostedDeviceSession' },
+                  { $ref: '#/$defs/HostedAppDelivery' },
+                  { $ref: '#/$defs/HostedAppOfferResult' },
+                  { $ref: '#/$defs/HostedAppChunkResult' },
                   { $ref: '#/$defs/HelloResult' },
                   { $ref: '#/$defs/ControlBeginResult' },
                   { $ref: '#/$defs/ActionResult' },

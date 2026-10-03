@@ -180,7 +180,8 @@ tokens.
 
 Device hosting has a separate `device-host` capability. An approved client can
 reserve, boot, reconnect to and stop its own iOS simulator through the protocol.
-Artifact installation, Metro and screen/control relays, automatic placement and
+It can deliver a compatible app bundle to that simulator and install and launch it.
+Metro and screen/control relays, automatic placement and
 Android hosting remain tracked in [#2266](https://github.com/appandflow/stim/issues/2266).
 
 A client on the tailnet sends `hello` with
@@ -194,7 +195,7 @@ separate limit. The same name validation and failed-attempt limit apply.
 On the hosting Mac, inspect `stim-server devices`, then approve the matching
 request with `stim-server devices grant <id> --device-host`, or use **Allow**
 in Stim Desktop. Approve only an expected request: it authorizes that Mac to
-reserve session-owned iOS simulators. **Deny**
+reserve session-owned iOS simulators and run its native app code in them. **Deny**
 or `stim-server devices revoke <id>` removes it; revocation also closes its
 open authenticated connections. The local-process trust boundary described in
 [Build access](#build-access) applies here too.
@@ -254,8 +255,47 @@ the worker's other devices.
 unresolved sessions. Ordinary local producers do not join that reservation
 transaction, so this is not a machine-wide hard capacity guarantee. Unknown
 inventory or elevated/unknown memory pressure refuses native creation. This
-protocol slice does not change `stim ios` placement or provide a runnable remote
-app yet.
+protocol slice does not change `stim ios` placement.
+
+### Hosted iOS app delivery
+
+Send `device-host.app.offer` with the ready session, a new opaque app `attempt`,
+the expected `bundleId`, `mode: "development"|"release"`, and
+`manifest: {"sha256":"<digest>","size":<bytes>}`. The manifest is a UTF-8 JSON
+array of `{path, kind, size, sha256}` entries, where `kind` is `file`, `exec` or
+`link`. Paths are relative to the `.app` root. A link's content is its relative
+target; it must resolve inside the bundle. No entry may sit below a file or
+link. Duplicate paths, including Unicode/case aliases, are refused.
+
+An offer returns `{delivery, missing}`. Upload each missing digest with
+`device-host.app.chunk` and `{session, attempt, sha256, offset, data}`; `data` is
+base64 for at most 32 KiB of raw bytes. The reply names the next byte `offset`.
+Replay of the same bytes is safe after a lost reply. Re-offer to learn received
+offsets. Upload the manifest first, then re-offer for its missing file content.
+The manifest is limited to 8 MiB and 20,000 entries, with at most 1 GiB per file,
+1 KiB per link, and 4 GiB of declared bundle content. An app attempt cannot
+change its identity, mode or manifest. Complete a receiving attempt or stop the
+session before starting another transfer.
+
+After every digest is verified, call `device-host.app.launch` with
+`{session, attempt}`. Poll `device-host.app.attach` for `installed` or `unknown`.
+Reconnect to the same app attempt to reconcile a lost launch reply; replay
+does not install or launch twice. Session attach includes the latest
+`appAttempt`. The worker verifies the plist identity and simulator metadata,
+the executable's Mach-O platform, architecture and minimum OS, then rechecks
+the exact private device ledger before install and launch.
+
+Development launch reports `launched: "unverified"`: this slice has no Metro
+bridge. Release launch reports `true` only after observing a live native app
+process; absent evidence remains `"unverified"`. Stop and approval revocation
+cancel an in-flight install before shutting down the owned simulator. Uncertain
+native outcomes retain the session as `unknown`; explicitly stop it before
+retrying. Receipts and artifacts remain in the server-chosen session area;
+artifact retention and session reuse/retirement remain under
+[#2266](https://github.com/appandflow/stim/issues/2266) and
+[#2348](https://github.com/appandflow/stim/issues/2348).
+This is a protocol API for approved clients; automatic CLI placement, Metro,
+view/control and Android remain in [#2266](https://github.com/appandflow/stim/issues/2266).
 
 ## Run as a service
 

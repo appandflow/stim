@@ -23,11 +23,17 @@ import {
   parseHostedRequest,
   readHostedDevice,
   readHostedSessions,
+  hostedAppAttempt,
+  parseHostedAppOffer,
+  readHostedApp,
+  type HostedAppDelivery,
+  type HostedAppRecord,
   type HostedDeviceRequest,
   type HostedDeviceSession,
 } from '@stim-cli/core/state';
 import { writeJson } from './registry.ts';
-import type { ProtocolError } from './protocol.ts';
+import type { Methods, ProtocolError } from './protocol.ts';
+import { appDelivery, offerHostedApp, chunkHostedApp, changeHostedApp } from './hosted-app.ts';
 
 export interface DeviceHostLimits {
   prepareMs: number;
@@ -44,10 +50,15 @@ interface OwnedSession {
   claim: ClaimHandle;
   run?: WorkerRun;
   stopping?: Promise<void>;
+  installing?: { attempt: string; done: Promise<void> };
+  app?: HostedAppRecord;
 }
 
 type Answer = { result: HostedDeviceSession } | { error: ProtocolError };
-const refused = (code: ProtocolError['code'], message: string): Answer => ({ error: { code, message } });
+type AppAnswer<T> = { result: T } | { error: ProtocolError };
+const refused = (code: ProtocolError['code'], message: string): { error: ProtocolError } => ({
+  error: { code, message },
+});
 
 /** Owns hosted reservations, not build jobs or viewer connections. Native work runs in the packaged CLI child. */
 export class DeviceHost {
@@ -206,6 +217,146 @@ export class DeviceHost {
     }
   }
 
+  private appSession(client: string, params: unknown): HostedDeviceSession {
+    if (!isJsonObject(params) || typeof params.session !== 'string' || !hostedAppAttempt(params.attempt))
+      throw new Error('App requests need a session and app attempt.');
+    const record = readHostedSessions().find((each) => each.client === client && each.id === params.session);
+    if (!record) throw new Error('This client has no such hosted session.');
+    return record;
+  }
+
+  appOffer(client: string, params: unknown): AppAnswer<Methods['device-host.app.offer']['result']> {
+    if (!this.options.allowed(client)) return refused('forbidden', 'Current device-host approval is required.');
+    const offer = parseHostedAppOffer(params);
+    if (!offer)
+      return refused(
+        'bad-request',
+        'App offers need a bounded normalized bundle manifest, bundleId and development or release mode.',
+      );
+    try {
+      const record = this.appSession(client, offer);
+      if (record.state !== 'ready' || this.closed) throw new Error('Only a ready hosted session accepts an app.');
+      const owned = this.acquire(record);
+      if (owned.stopping || (owned.installing && owned.installing.attempt !== offer.attempt))
+        throw new Error('This hosted session already has a native operation in progress.');
+      if (
+        record.appAttempt &&
+        record.appAttempt !== offer.attempt &&
+        readHostedApp(record.id, record.appAttempt).state === 'receiving'
+      )
+        throw new Error('Complete the current app transfer or stop this hosted session before offering another app.');
+      const result = offerHostedApp(offer);
+      this.change(record.id, (current) => {
+        current.appAttempt = offer.attempt;
+      });
+      return { result };
+    } catch (error) {
+      return refused('action-failed', (error as Error).message);
+    }
+  }
+
+  async appChunk(client: string, params: unknown): Promise<AppAnswer<{ offset: number }>> {
+    if (!this.options.allowed(client)) return refused('forbidden', 'Current device-host approval is required.');
+    try {
+      const record = this.appSession(client, params);
+      if (record.state !== 'ready' || this.closed) throw new Error('Only a ready hosted session receives an app.');
+      const owned = this.acquire(record);
+      if (owned.stopping) throw new Error('This hosted session is stopping.');
+      const attempt = (params as { attempt: string }).attempt;
+      if (owned.app?.attempt !== attempt || !owned.app.files.length) owned.app = readHostedApp(record.id, attempt);
+      return { result: await chunkHostedApp(owned.app, params) };
+    } catch (error) {
+      return refused('action-failed', (error as Error).message);
+    }
+  }
+
+  appAttach(client: string, params: unknown): AppAnswer<HostedAppDelivery> {
+    if (!this.options.allowed(client)) return refused('forbidden', 'Current device-host approval is required.');
+    try {
+      const record = this.appSession(client, params);
+      const app = readHostedApp(record.id, (params as { attempt: string }).attempt);
+      const result = appDelivery(app);
+      if (app.state === 'installing' && this.owned.get(record.id)?.installing?.attempt !== app.attempt) {
+        result.state = 'unknown';
+        result.notice = 'The install owner is unavailable. Stop this hosted session before retrying.';
+      }
+      return { result };
+    } catch (error) {
+      return refused('action-failed', (error as Error).message);
+    }
+  }
+
+  appLaunch(client: string, params: unknown): AppAnswer<HostedAppDelivery> {
+    if (!this.options.allowed(client)) return refused('forbidden', 'Current device-host approval is required.');
+    try {
+      const record = this.appSession(client, params);
+      if (record.state !== 'ready' || this.closed) throw new Error('Only a ready hosted session can install an app.');
+      const owned = this.acquire(record);
+      const app = readHostedApp(record.id, (params as { attempt: string }).attempt);
+      if (app.state !== 'receiving') return this.appAttach(client, params);
+      if (owned.stopping || owned.installing)
+        throw new Error('This hosted session already has a native operation in progress.');
+      if (offerHostedApp(app).missing.length) throw new Error('The app manifest still has missing content.');
+      const result = appDelivery(
+        changeHostedApp(record.id, app.attempt, (current) => {
+          current.state = 'installing';
+        }),
+      );
+      const done = this.install(record, owned, app.attempt).finally(() => {
+        delete owned.installing;
+      });
+      owned.installing = { attempt: app.attempt, done };
+      return { result };
+    } catch (error) {
+      return refused('action-failed', (error as Error).message);
+    }
+  }
+
+  private async install(record: HostedDeviceSession, owned: OwnedSession, attempt: string): Promise<void> {
+    try {
+      const run = this.run(record, owned, 'install', attempt);
+      owned.run = run;
+      const outcome = await run.done;
+      const value = outcome.value;
+      const installed =
+        !owned.stopping &&
+        this.options.allowed(record.client) &&
+        !outcome.notice &&
+        outcome.settled &&
+        isJsonObject(value) &&
+        value.state === 'installed' &&
+        parseHostedDevice(value.device)?.udid === record.device?.udid &&
+        (value.launched === true || value.launched === 'unverified');
+      const app = changeHostedApp(record.id, attempt, (current) => {
+        current.state = installed ? 'installed' : 'unknown';
+        current.launched = installed ? (value as { launched: HostedAppDelivery['launched'] }).launched : null;
+        if (installed) delete current.notice;
+        else
+          current.notice =
+            outcome.notice ??
+            (isJsonObject(value) && typeof value.notice === 'string'
+              ? value.notice
+              : 'The install or launch outcome is unresolved; stop this hosted session before retrying.');
+      });
+      if (!installed && !owned.stopping)
+        this.change(record.id, (current) => {
+          current.state = 'unknown';
+          current.notice = app.notice;
+        });
+    } catch (error) {
+      if (!owned.stopping) this.failed(record.id, error);
+      try {
+        changeHostedApp(record.id, attempt, (current) => {
+          current.state = 'unknown';
+          current.launched = null;
+          current.notice = (error as Error).message;
+        });
+      } catch (journalError) {
+        process.stderr.write(`Hosted app ${record.id} remains unresolved: ${(journalError as Error).message}\n`);
+      }
+    }
+  }
+
   private async prepare(record: HostedDeviceSession): Promise<void> {
     const owned = this.owned.get(record.id)!;
     if (!this.options.allowed(record.client) || this.closed) {
@@ -361,7 +512,12 @@ export class DeviceHost {
     await Promise.all([...this.owned.values()].map((owned) => owned.stopping ?? owned.run?.done));
   }
 
-  private run(record: HostedDeviceSession, owned: OwnedSession, mode: 'prepare' | 'stop'): WorkerRun {
+  private run(
+    record: HostedDeviceSession,
+    owned: OwnedSession,
+    mode: 'prepare' | 'stop' | 'install',
+    attempt?: string,
+  ): WorkerRun {
     const home = join(deviceHostArea(record.id), 'home');
     mkdirSync(home, { recursive: true, mode: 0o700 });
     markClaimChildPending(owned.claim);
@@ -441,7 +597,7 @@ export class DeviceHost {
         groupTimer = setTimeout(finishGroup, 25);
       }
     };
-    const timer = setTimeout(cancel, mode === 'prepare' ? this.limits.prepareMs : this.limits.stopMs);
+    const timer = setTimeout(cancel, mode === 'stop' ? this.limits.stopMs : this.limits.prepareMs);
     child.stdout?.on('data', (chunk: Buffer) => {
       if (outputBytes + chunk.length > 16384) {
         notice = 'Hosted worker output exceeded its bound.';
@@ -474,7 +630,9 @@ export class DeviceHost {
       identity = { pid: child.pid, processToken: captured.token };
       try {
         setClaimChild(owned.claim, identity);
-        child.stdin?.end(JSON.stringify({ mode, deviceType: record.deviceType, runtime: record.runtime }));
+        child.stdin?.end(
+          JSON.stringify({ mode, deviceType: record.deviceType, runtime: record.runtime, session: record.id, attempt }),
+        );
       } catch (error) {
         notice = (error as Error).message;
         cancel();

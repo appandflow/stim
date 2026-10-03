@@ -1,4 +1,5 @@
 import { mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync, renameSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { deviceHostArea, deviceHostRoot, readHostedSessions } from '@stim-cli/core/state';
@@ -7,7 +8,7 @@ import { DeviceHost } from '../src/device-host.ts';
 
 const WORKER = `
 import { spawn } from 'node:child_process';
-import { writeFileSync, readFileSync } from 'node:fs';
+import { writeFileSync, readFileSync, appendFileSync } from 'node:fs';
 import { join } from 'node:path';
 const chunks = [];
 for await (const chunk of process.stdin) chunks.push(chunk);
@@ -34,6 +35,12 @@ if(input.mode === 'prepare') {
     else if(input.deviceType === 'lost') { process.exitCode=1; }
     else out({state:'ready',device});
   }
+} else if(input.mode === 'install') {
+  appendFileSync(join(home,'installed'),input.attempt+'\\n');
+  const stored=JSON.parse(readFileSync(join(home,'hosted-device.json'),'utf8'));
+  const app=JSON.parse(readFileSync(join(home,'..','apps',input.attempt,'receipt.json'),'utf8'));
+  if(input.deviceType === 'install-hang') { process.on('SIGTERM',()=>{}); setInterval(()=>{},1000); }
+  else out({state:'installed',device:stored,launched:app.mode === 'release' ? true : 'unverified'});
 } else {
   writeFileSync(join(home,'stopped'),String(process.pid));
   const stored=JSON.parse(readFileSync(join(home,'hosted-device.json'),'utf8'));
@@ -225,3 +232,119 @@ test('a lost journal directory cannot admit another device while a worker area r
   expect(host.attach('client', { session: first.id })).toHaveProperty('error.code', 'action-failed');
   renameSync(backup, deviceHostRoot());
 });
+
+function appOffer(session: string, attempt = 'app-first') {
+  const content = Buffer.from('independent content for upload replay');
+  const sha256 = createHash('sha256').update(content).digest('hex');
+  const files = [{ path: 'Info.plist', kind: 'file', size: content.length, sha256 }];
+  const manifest = Buffer.from(JSON.stringify(files));
+  return {
+    content,
+    sha256,
+    manifest,
+    params: {
+      session,
+      attempt,
+      bundleId: 'dev.stim.fixture',
+      mode: 'release',
+      manifest: { size: manifest.length, sha256: createHash('sha256').update(manifest).digest('hex') },
+    },
+  };
+}
+
+async function uploadManifest(app: ReturnType<typeof appOffer>) {
+  const result = await host.appChunk('client', {
+    session: app.params.session,
+    attempt: app.params.attempt,
+    sha256: app.params.manifest.sha256,
+    offset: 0,
+    data: app.manifest.toString('base64'),
+  });
+  expect(result).toHaveProperty('result.offset', app.manifest.length);
+}
+
+test('resumes verified app bytes and reconciles a lost install reply without another native launch', async () => {
+  const first = reserve();
+  await state(first.id, 'ready');
+  const app = appOffer(first.id);
+  const { content, params, sha256 } = app;
+  expect(host.appOffer('other', params)).toHaveProperty('error');
+  expect(host.appOffer('client', params)).toHaveProperty('result.missing.0.offset', 0);
+  expect(host.appLaunch('client', params)).toHaveProperty('error');
+  expect(host.appOffer('client', { ...params, attempt: 'second-transfer' })).toHaveProperty('error');
+  await uploadManifest(app);
+  const firstChunk = {
+    session: first.id,
+    attempt: params.attempt,
+    sha256,
+    offset: 0,
+    data: content.subarray(0, 10).toString('base64'),
+  };
+  expect(await host.appChunk('client', firstChunk)).toHaveProperty('result.offset', 10);
+  expect(await host.appChunk('client', firstChunk)).toHaveProperty('result.offset', 10);
+  expect(await host.appChunk('client', { ...firstChunk, data: Buffer.alloc(10).toString('base64') })).toHaveProperty(
+    'error',
+  );
+  expect(host.appOffer('client', params)).toHaveProperty('result.missing.0.offset', 10);
+  expect(
+    await host.appChunk('client', { ...firstChunk, offset: 10, data: content.subarray(10).toString('base64') }),
+  ).toHaveProperty('result.offset', content.length);
+  expect(host.appOffer('client', params)).toHaveProperty('result.missing', []);
+  expect(host.appOffer('client', { ...params, bundleId: 'different.app' })).toHaveProperty('error');
+  expect(host.appLaunch('client', params)).toHaveProperty('result.state', 'installing');
+  await vi.waitFor(() => expect(host.appAttach('client', params)).toHaveProperty('result.state', 'installed'));
+  expect(host.appLaunch('client', params)).toHaveProperty('result.launched', true);
+  expect(readFileSync(join(deviceHostArea(first.id), 'home', 'installed'), 'utf8')).toBe('app-first\n');
+  expect(host.attach('client', { session: first.id })).toHaveProperty('result.appAttempt', params.attempt);
+});
+
+test('discards digest-mismatched app bytes and leaves native installation unstarted', async () => {
+  const first = reserve();
+  await state(first.id, 'ready');
+  const app = appOffer(first.id);
+  const { content, params, sha256 } = app;
+  host.appOffer('client', params);
+  await uploadManifest(app);
+  expect(
+    await host.appChunk('client', {
+      session: first.id,
+      attempt: params.attempt,
+      sha256,
+      offset: 0,
+      data: Buffer.alloc(content.length).toString('base64'),
+    }),
+  ).toHaveProperty('error');
+  expect(host.appOffer('client', params)).toHaveProperty('result.missing.0.offset', 0);
+  expect(host.appLaunch('client', params)).toHaveProperty('error');
+  expect(existsSync(join(deviceHostArea(first.id), 'home', 'installed'))).toBe(false);
+});
+
+test.each(['stop', 'revoke'])(
+  '%s cancels an actual app worker before shutting down its exact device',
+  async (action) => {
+    const first = reserve({ deviceType: 'install-hang' });
+    await state(first.id, 'ready');
+    const app = appOffer(first.id);
+    const { content, params, sha256 } = app;
+    host.appOffer('client', params);
+    await uploadManifest(app);
+    await host.appChunk('client', {
+      session: first.id,
+      attempt: params.attempt,
+      sha256,
+      offset: 0,
+      data: content.toString('base64'),
+    });
+    host.appLaunch('client', params);
+    await vi.waitFor(() => expect(existsSync(join(deviceHostArea(first.id), 'home', 'installed'))).toBe(true));
+    if (action === 'stop') host.stop('client', { session: first.id });
+    else {
+      allowed.delete('client');
+      host.revoke();
+    }
+    await state(first.id, 'stopped');
+    allowed.add('client');
+    expect(host.appAttach('client', params)).toHaveProperty('result.state', 'unknown');
+    expect(readClaimSet(join(deviceHostRoot(), `${first.id}.claims`)).live).toEqual([]);
+  },
+);
