@@ -579,7 +579,7 @@ stop and revocation close the streams. No public tunnel or Funnel is needed.
 Expo development clients need the forwarded-origin manifest contract described
 in that protocol; older client/CLI versions are not covered by this slice.
 
-Screen/control relays, automatic placement and
+Client screen/control relays, automatic placement and
 Android hosting remain in [#2266](https://github.com/appandflow/stim/issues/2266).
 This protocol slice does not change where `stim ios` or `stim android` runs.
 Hosting approval grants no access to unrelated

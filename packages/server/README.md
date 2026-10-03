@@ -180,9 +180,9 @@ tokens.
 
 Device hosting has a separate `device-host` capability. An approved client can
 reserve, boot, reconnect to and stop its own iOS simulator through the protocol.
-It can deliver a compatible app bundle to that simulator and install and launch it.
-Metro and screen/control relays, automatic placement and
-Android hosting remain tracked in [#2266](https://github.com/appandflow/stim/issues/2266).
+It can deliver, install and launch a compatible app bundle, stream the simulator
+and control it. The hosted app connects back to Metro on the client Mac.
+Automatic CLI placement, client view/control relays and Android hosting remain in [#2266](https://github.com/appandflow/stim/issues/2266).
 
 A client on the tailnet sends `hello` with
 `auth: { "request": "device-host", "deviceName": "Laptop" }`. As with a build
@@ -336,7 +336,7 @@ placement still needs to check that contract before selecting hosted Metro.
 Bare React Native uses the worker `RCT_jsLocation`. Bridge readiness and
 manifest requests are not launch proof; development remains `unverified` until
 the workspace observes the app's own bundle delivery.
-This is a protocol API for approved clients; automatic CLI placement, Metro,
+This is a protocol API for approved clients; automatic CLI placement,
 client view/control relays and Android remain in [#2266](https://github.com/appandflow/stim/issues/2266).
 
 ### Hosted iOS view and input
