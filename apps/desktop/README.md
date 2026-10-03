@@ -614,6 +614,14 @@ the simulator's settings, not Desktop preferences. This requires an Xcode whose
 `devicectl device info|settings appearance` supports that simulator. Audio,
 location, VoiceOver, color filters and Liquid Glass controls are not included.
 
+The panel's **Development** section offers **Slow animations** and **Shake**
+on supported iOS simulators. Slow animations changes UIKit's animation speed
+in the guest, leaving Desktop's live stream and input speed unchanged. Its
+switch reads the simulator's current state, confirms each change by reading it
+back, and has its own refresh button. Shake sends the simulator's shake event;
+the foreground app decides how to handle it. These controls share the panel's
+Control and replay gates. They do not change Android animation settings.
+
 The iPhone Duo frame fits the display its posture lights, and touches go to
 that display. Until the active display is known, both displays appear side by
 side. **Folded**, **Half open** and **Unfolded** below the screen move the simulated hinge to 0,

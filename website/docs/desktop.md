@@ -50,6 +50,10 @@ performance traces. Every release is listed under
   **Refresh** reads changes made elsewhere. Unsupported options say
   **Unavailable**. Requires Xcode's simulator appearance API; audio, location,
   VoiceOver, color filters and Liquid Glass options are not included.
+  Its **Development** section also offers **Slow animations** and **Shake**
+  where CoreSimulator supports them. Slow animations changes guest UIKit
+  animation speed and reads the setting back; Shake sends a shake event to the
+  foreground app. Android animation settings are unchanged.
 - **Logs.** Separate Metro and App / native inspector sections open the same
   viewer with their source filters selected. Filters remain editable; repeated
   errors are grouped. **Build output > Readable** simplifies Xcode output; **Raw** restores
