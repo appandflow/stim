@@ -39,6 +39,7 @@ struct DeviceTile: View {
   @State private var observedHingeAngle: Double?
   @State private var hingeEditing = false
   @State private var showsHingeAngle = false
+  @State private var showsSimulatorOptions = false
   @State private var hingeAngle = 180.0
   @State private var postureTarget: DuoPosture?
   @State private var rotateFailed = false
@@ -123,6 +124,7 @@ struct DeviceTile: View {
     .onChange(of: observedHingeAngle) { _, angle in
       if !hingeEditing, let angle { hingeAngle = angle }
     }
+    .onChange(of: simulatorOptionsUDID) { _, _ in showsSimulatorOptions = false }
   }
 
   private var frameColor: Color {
@@ -293,6 +295,17 @@ struct DeviceTile: View {
       }
       if let emulatorPosture, case .android(_, let avd) = device, let serial = avd.serial {
         postureMenu(serial: serial, current: emulatorPosture)
+      }
+      if let udid = simulatorOptionsUDID {
+        Rectangle().fill(Palette.border).frame(width: 16, height: 1)
+        Button("Simulator options", systemImage: "slider.horizontal.3") { showsSimulatorOptions = true }
+          .labelStyle(.iconOnly)
+          .nativeIconStyle()
+          .help("Appearance and accessibility settings for this simulator")
+          .popover(isPresented: $showsSimulatorOptions) {
+            SimulatorOptionsView(udid: udid, canControl: simulatorOptionsUDID == udid)
+              .id(udid)
+          }
       }
     }
     .font(.stim(.footnote, weight: .medium))
@@ -491,6 +504,11 @@ struct DeviceTile: View {
     guard viewer, !replaying, device.isRunning, !device.isPhysical, device.formFactor == .dual,
       screenIDs.count > 1, case .ios(_, let sim) = device
     else { return nil }
+    return sim.udid
+  }
+
+  private var simulatorOptionsUDID: String? {
+    guard viewer, interactive, !replaying, device.isRunning, case .ios(_, let sim) = device, !sim.physical else { return nil }
     return sim.udid
   }
 
