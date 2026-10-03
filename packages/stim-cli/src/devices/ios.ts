@@ -244,12 +244,14 @@ export async function bootIosSim(
     timeoutMs = IOS_BOOT_TIMEOUT_MS,
     attemptMs = BOOTSTATUS_ATTEMPT_MS,
     simulatorApp,
+    openViewer = true,
     label = udid,
     out = () => {},
   }: {
     timeoutMs?: number;
     attemptMs?: number;
     simulatorApp?: IosSimulatorApp;
+    openViewer?: boolean;
     label?: string;
     out?: (message: string) => void;
   } = {},
@@ -341,7 +343,7 @@ export async function bootIosSim(
   } finally {
     clearInterval(monitor);
   }
-  viewer.open(udid);
+  if (openViewer) viewer.open(udid);
 }
 
 export function shutdownIosSim(udid: string): void {

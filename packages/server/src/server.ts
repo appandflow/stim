@@ -14,6 +14,7 @@ import {
   type StatusPayload,
 } from '@stim-cli/core/state';
 import { actionArgs, actionOutcome, appendAudit, loadAudit, parseAction, type AuditRecord } from './actions.ts';
+import { DeviceHost, type DeviceHostLimits } from './device-host.ts';
 import { BuildHost, type BuildLimits, type BuildSession } from './build.ts';
 import { ControlHub, parseControlBegin, parseInput, SLOT_NAME, type Controller } from './control.ts';
 import { Recorder, type RecordLimits } from './recorder.ts';
@@ -42,6 +43,7 @@ import { UsageRecorder } from './usage-history.ts';
 import {
   ACTIONS,
   BUILD_METHODS,
+  DEVICE_HOST_METHODS,
   FEATURES,
   MAX_INPUT_TEXT,
   FRAME_EDGE,
@@ -143,6 +145,7 @@ export interface ServerOptions {
   pushLimits?: Partial<PushLimits>;
   /** How many offloaded builds run, and for how long; tests shorten them. */
   buildLimits?: Partial<BuildLimits>;
+  deviceHostLimits?: Partial<DeviceHostLimits>;
   /** Looks up the worktrees' pull requests; tests replace GitHub. */
   pullRequests?: PushNotifierOptions['pullRequests'];
 }
@@ -500,6 +503,13 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   const controllers = new Map<WebSocket, Controller>();
   const controlLimits: ControlLimits = { ...CONTROL_LIMITS, ...options.controlLimits };
   const adbEmulators = options.env[ADB_EMULATORS_SWITCH] === '1';
+  const hostedDevices = new DeviceHost({
+    worker: join(dirname(options.stimCli), 'device-host-worker.mjs'),
+    env: options.env,
+    limits: options.deviceHostLimits,
+    allowed: (client) =>
+      readDeviceHostClients().some((entry) => entry.id === client && entry.capabilities.includes('device-host')),
+  });
   const builds = new BuildHost({
     worker: join(dirname(options.stimCli), 'offload-worker.mjs'),
     env: options.env,
@@ -571,6 +581,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     for (const [socket, device] of sessions) {
       if (!paired.has(device.id)) socket.close(CLOSE_UNAUTHORIZED, 'device revoked');
     }
+    hostedDevices.revoke();
     builds.abandonDetached((client) => paired.get(client)?.capabilities.includes('build') ?? false);
     void builds.sweepDaemons();
     for (const [socket, controller] of controllers) {
@@ -1542,6 +1553,17 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       }
       if (message.method === 'hello') return hello(id, message.params);
       if (!device) return refuse(id, 'unauthorized', 'Send hello first.', CLOSE_UNAUTHORIZED);
+      if ((DEVICE_HOST_METHODS as readonly string[]).includes(message.method)) {
+        if (!device.capabilities.includes('device-host'))
+          return error(id, 'forbidden', 'Explicit device-host approval is required.');
+        const answer =
+          message.method === 'device-host.reserve'
+            ? hostedDevices.reserve(device.id, message.params)
+            : message.method === 'device-host.attach'
+              ? hostedDevices.attach(device.id, message.params)
+              : hostedDevices.stop(device.id, message.params);
+        return send(socket, 'error' in answer ? { id, error: answer.error } : { id, result: answer.result });
+      }
       if ((BUILD_METHODS as readonly string[]).includes(message.method)) {
         return buildMethod(id, message.method, message.params, device);
       }
@@ -1727,6 +1749,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     for (const client of wss.clients) client.terminate();
     await control.close();
     await builds.close();
+    await hostedDevices.close();
     recorder?.close();
     await Promise.all([frames.close(), feeds.close(), ...[...running].map((cancel) => cancel()), cancelling.settled()]);
     wss.close();
