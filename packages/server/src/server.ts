@@ -97,6 +97,15 @@ import type { TailscaleMonitor, TailscaleSnapshot } from './tailscale-monitor.ts
 import { DEFAULT_VIDEO_LIMITS, videoPacket, VideoGate, type AccessUnit } from './video.ts';
 import { DeviceViewers } from './viewers.ts';
 
+const INPUT_METHODS = [
+  'input.touch',
+  'input.text',
+  'input.button',
+  'input.rotate',
+  'input.posture',
+  'input.simulator',
+] as const;
+
 export interface ServerOptions {
   name: string;
   hosts: string[];
@@ -538,6 +547,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     renewMs: controlLimits.renewMs,
     leaseFor: controlLimits.leaseFor,
     foldHelper,
+    frameHelper,
     foldTimeoutMs: controlLimits.foldTimeoutMs,
     conflict: (deviceId, conflict) => push.control(deviceId, conflict),
     adbEmulators,
@@ -771,7 +781,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
 
     async function input(
       id: RequestId,
-      method: 'input.touch' | 'input.text' | 'input.button' | 'input.rotate' | 'input.posture',
+      method: (typeof INPUT_METHODS)[number],
       params: unknown,
       session: PairedDevice,
     ): Promise<void> {
@@ -794,14 +804,14 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       }
       const { shapeChangesPerSecond } = controlLimits;
       if (
-        (sent.input === 'rotate' || sent.input === 'posture') &&
+        (sent.input === 'rotate' || sent.input === 'posture' || sent.input === 'simulator') &&
         !take(shapeChanges, 1, shapeChangesPerSecond, shapeChangesPerSecond)
       ) {
         return error(id, 'limit-exceeded', `A connection can rotate or fold ${shapeChangesPerSecond} times a second.`);
       }
       const refused = await control.input(owner, parsed.value.session, parsed.value.command);
-      if (refused) return error(id, refused.code, refused.message);
-      send(socket, { id, result: {} });
+      if (refused && 'code' in refused) return error(id, refused.code, refused.message);
+      send(socket, { id, result: refused ?? {} });
     }
 
     function workspaceDir(id: RequestId, workspace: unknown, required: boolean): string | null {
@@ -1649,15 +1659,9 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         }
         return send(socket, { id, result: {} });
       }
-      if (
-        message.method === 'input.touch' ||
-        message.method === 'input.text' ||
-        message.method === 'input.button' ||
-        message.method === 'input.rotate' ||
-        message.method === 'input.posture'
-      ) {
-        const method = message.method;
-        void input(id, method, message.params, device);
+      const inputMethod = INPUT_METHODS.find((method) => method === message.method);
+      if (inputMethod) {
+        void input(id, inputMethod, message.params, device);
         return;
       }
       if (message.method === 'push.register') return registerPush(id, message.params, device);
