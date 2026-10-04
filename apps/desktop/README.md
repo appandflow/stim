@@ -199,9 +199,11 @@ Apple frames come from installed DeviceKit chrome and the simulator's actual
 device-type profile. Android frames use the AVD's configured `skin.path`, or its
 exact hardware profile's artwork in `/Applications/Android Studio.app`; the skin's
 screen dimensions must match the AVD. Missing artwork, unsupported skin layouts,
-foldables, physical or remote devices, web pages and replay stay frameless. Stim
-ships no Apple or Android artwork. Duo's genuine folded housing and mobile asset
-delivery are not included in this desktop slice.
+Android foldables, physical or remote devices, web pages and replay stay frameless.
+For a local iPhone Duo, an installed Xcode containing DeviceKit's V68 model and a
+valid observed hinge angle enable genuine posed hardware around its live panels.
+Missing model data retains the frameless view. Stim ships no Apple or Android
+artwork; mobile asset delivery is not included.
 
 On the right, 360 points wide, the **agent actions** list what agents did on
 the device (`stim logs --source agent`), oldest first, with filter chips (All,
@@ -611,9 +613,18 @@ swap panels; the path is adapted from
 While its viewer is open, Desktop observes the Duo hinge through
 `devicectl device motion hinge-angle`, so preset selection follows changes
 made by another controller. Arbitrary angles leave all presets unselected.
-With a valid observed angle below 180 degrees, the active inner display projects
-its two halves around the hinge. Touches and drags map back to the display
-pixels. The cover, unknown angle and fully open display stay flat.
+With **Show device frame** on and the installed V68 model available, the housing
+follows the observed hinge angle and display rotation. Touches and drags hit the
+posed active screen and map back to its pixels; the surrounding housing has no
+input. Desktop keeps both panel surfaces ready and snapshots the departing panel
+before its own posture controls change the hinge. External controllers can clear
+the departing panel before Desktop can snapshot it, so their handoff can leave
+that panel blank or retain an older snapshot.
+
+In the default frameless view, a valid observed angle below 180 degrees projects
+the active inner display's two halves around the hinge. The cover, unknown angle
+and fully open display stay flat. Touches and drags map back to the display
+pixels.
 Tools or devices without hinge observation retain the last requested posture.
 The observer consumes valid samples twice a second at most, uses one bounded
 process, and stops it when the viewer closes. Its parser depends on the human

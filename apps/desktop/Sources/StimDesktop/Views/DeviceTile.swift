@@ -52,6 +52,7 @@ struct DeviceTile: View {
   @State private var headerHeight: CGFloat = 0
   @State private var controlsHeight: CGFloat = 44
   @State private var simulatorButtons = SimulatorButtons()
+  @State private var duoFrame = SimulatorDuoFrame()
   @State private var emulatorButtons = EmulatorButtons()
   @EnvironmentObject private var actions: ActionCenter
 
@@ -479,6 +480,7 @@ struct DeviceTile: View {
     let failed = foldError != nil && postureTarget == target
     return Button(target.label, systemImage: failed ? "exclamationmark.triangle" : target.systemImage) {
       guard !selected else { return }
+      duoFrame.preparePostureChange()
       folding = true
       postureTarget = target
       foldError = nil
@@ -525,6 +527,7 @@ struct DeviceTile: View {
           let target = hingeAngle
           let from = currentHingeAngle
           guard target != from else { return }
+          duoFrame.preparePostureChange()
           folding = true
           postureTarget = nil
           foldError = nil
@@ -614,6 +617,7 @@ struct DeviceTile: View {
   }
 
   private var displayedScreenIDs: [UInt32] {
+    if framed, device.formFactor == .dual, let mainScreenID { return [mainScreenID] }
     let litIDs = screenIDs.filter { lit[$0] == true }
     return litIDs.count == 1 ? litIDs : screenIDs
   }
@@ -703,7 +707,9 @@ struct DeviceTile: View {
             buttons: screenID == mainScreenID ? simulatorButtons : nil,
             hingeAngle: viewer && device.formFactor == .dual && posture == "Unfolded" && screenID == mainScreenID
               ? observedHingeAngle : nil,
-            showsDeviceFrame: viewer && showsDeviceFrame, onFrameSizeChange: viewer ? { frameSizes[screenID] = $0 } : nil
+            showsDeviceFrame: viewer && showsDeviceFrame, onFrameSizeChange: viewer ? { frameSizes[screenID] = $0 } : nil,
+            duoFrame: viewer && device.formFactor == .dual ? duoFrame : nil, activeScreenID: mainScreenID,
+            duoHingeAngle: observedHingeAngle
           )
           .frame(
             width: displayedScreenIDs.contains(screenID) ? screenWidth(screenID) : 0,
