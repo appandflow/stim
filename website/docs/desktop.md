@@ -157,6 +157,15 @@ Releasing Option, ending the gesture, changing orientation or releasing Control
 lifts both contacts. Option and the gesture's Shift modifier stay on the Mac.
 These gestures are not available for physical devices, remote previews or web pages.
 
+With **Control** on an owned local simulator or emulator, **Paste into device**
+copies Mac clipboard text and pastes it into the focused guest field.
+**Copy device clipboard** copies guest text back to this Mac, including empty text.
+Unicode and line breaks are preserved. Transfers happen only when pressed; there
+is no automatic clipboard synchronization. An empty or non-text Mac clipboard
+leaves the guest unchanged. Disconnects and unavailable native clipboard APIs
+report a failure. Physical devices, remote sessions and replay do not offer
+clipboard actions.
+
 On the All devices and project wall, active workspaces without running or building
 devices use compact cards labelled **No running devices**, with Metro status,
 warnings and error links. CPU and RAM stay on the workspace page.

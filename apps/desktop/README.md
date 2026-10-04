@@ -205,6 +205,15 @@ valid observed hinge angle enable genuine posed hardware around its live panels.
 Missing model data retains the frameless view. Stim ships no Apple or Android
 artwork; mobile asset delivery is not included.
 
+While **Control** is active for an owned local simulator or emulator,
+**Paste into device** copies the Mac's text clipboard and pastes it into the
+focused guest field. **Copy device clipboard** replaces the Mac's text clipboard
+with the guest's current text, including an empty clipboard. Transfers preserve
+Unicode and line breaks and happen only when pressed; there is no background
+clipboard synchronization. Empty or non-text Mac clipboards are reported without
+changing the guest. Disconnects and unavailable native clipboard APIs report a
+failure. Physical devices, remote sessions and replay do not offer these actions.
+
 On the right, 360 points wide, the **agent actions** list what agents did on
 the device (`stim logs --source agent`), oldest first, with filter chips (All,
 Failed and the two most used commands) and a divider for a pause of more than

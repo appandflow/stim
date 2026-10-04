@@ -35,13 +35,15 @@ public final class ProcessRegistry: @unchecked Sendable {
   }
 }
 
-/// One run of an executable with an argument list, never through a shell, to its exit. Stdin is `/dev/null`.
+/// One run of an executable with an argument list, never through a shell, to its exit. Stdin is `/dev/null` unless `input` supplies bytes.
 /// Stdout, and stderr when asked for, go to temporary files, so a process that fills either cannot block on a
 /// pipe nobody reads, and a background child that inherits them cannot keep the run from ending.
 public struct ProcessRequest: Sendable {
   public var executable: String
   public var arguments: [String]
   public var cwd: String?
+  /// Bytes read from stdin, without a shell or a pipe that can block the writer.
+  public var input: Data?
   /// The child's environment; nil inherits this process's.
   public var environment: [String: String]?
   /// Seconds the process may run before it is signalled; nil waits for it.
@@ -98,7 +100,23 @@ public struct ProcessRequest: Sendable {
     if let cwd { process.currentDirectoryURL = URL(fileURLWithPath: cwd) }
     if let environment { process.environment = environment }
     if let qualityOfService { process.qualityOfService = qualityOfService }
-    process.standardInput = FileHandle.nullDevice
+    var inputURL: URL?
+    var inputHandle: FileHandle?
+    defer {
+      try? inputHandle?.close()
+      inputURL.map { try? FileManager.default.removeItem(at: $0) }
+    }
+    if let input {
+      let url = try Self.createTemporaryFile("stdin")
+      try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+      inputURL = url
+      try input.write(to: url)
+      let handle = try FileHandle(forReadingFrom: url)
+      inputHandle = handle
+      process.standardInput = handle
+    } else {
+      process.standardInput = FileHandle.nullDevice
+    }
     let outURL = try Self.createTemporaryFile("stdout")
     defer { try? FileManager.default.removeItem(at: outURL) }
     let out = try FileHandle(forWritingTo: outURL)

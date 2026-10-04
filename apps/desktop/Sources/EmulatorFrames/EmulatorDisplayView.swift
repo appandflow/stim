@@ -129,6 +129,12 @@ public final class EmulatorButtons {
 
   public init() {}
 
+  /// Copies text to the controlled guest clipboard and pastes it into its focused field.
+  public func paste(_ text: String) async -> Bool { await view?.paste(text) ?? false }
+
+  /// Reads the controlled guest clipboard only when explicitly requested.
+  public func clipboard() async -> String? { await view?.clipboard() }
+
   public func press(_ button: EmulatorButton) {
     view?.press(button)
   }
@@ -391,6 +397,28 @@ public final class EmulatorDisplayNSView: NSView {
     return input
   }
 
+  func paste(_ text: String) async -> Bool {
+    guard interactive, let serial, let input = inputClient(), let endpoint else { return false }
+    let clipboard = EmulatorInput(endpoint: endpoint)
+    defer { clipboard.close() }
+    guard await clipboard.call("setClipboard", InputMessages.clipboard(text), timeout: 5) != nil, !Task.isCancelled,
+      interactive, self.serial == serial, self.input === input
+    else { return false }
+    let adb = self.adb ?? AdbInput(serial: serial)
+    self.adb = adb
+    return await adb.paste()
+  }
+
+  func clipboard() async -> String? {
+    guard interactive, let serial, let input = inputClient(), let endpoint else { return nil }
+    let clipboard = EmulatorInput(endpoint: endpoint)
+    defer { clipboard.close() }
+    guard let result = await clipboard.call("getClipboard", Data(), timeout: 5), !Task.isCancelled,
+      interactive, self.serial == serial, self.input === input
+    else { return nil }
+    return InputMessages.clipboardText(result)
+  }
+
   func press(_ button: EmulatorButton) {
     guard interactive else { return }
     if hasKeyboard != false, let key = button.domKey, let input = inputClient() {
@@ -531,6 +559,11 @@ private final class AdbInput {
   func text(_ text: String) {
     let quoted = text.replacingOccurrences(of: " ", with: "%s").replacingOccurrences(of: "'", with: "'\\''")
     run(["shell", "input", "text", "'\(quoted)'"])
+  }
+
+  func paste() async -> Bool {
+    let request = ProcessRequest(Self.adbPath, ["-s", serial, "shell", "input", "keyevent", "KEYCODE_PASTE"], timeout: 10)
+    return (try? await request.run().succeeded) ?? false
   }
 
   func keyEvent(_ key: String) {

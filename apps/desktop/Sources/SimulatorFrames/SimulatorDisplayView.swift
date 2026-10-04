@@ -117,6 +117,12 @@ public final class SimulatorButtons {
 
   public init() {}
 
+  /// Copies text to the controlled guest clipboard and pastes it into its focused field.
+  public func paste(_ text: String) async -> Bool { await view?.paste(text) ?? false }
+
+  /// Reads the controlled guest clipboard only when explicitly requested.
+  public func clipboard() async -> String? { await view?.clipboard() }
+
   public func press(_ button: SimulatorButton) {
     view?.press(button)
   }
@@ -375,6 +381,35 @@ public final class SimulatorDisplayNSView: NSView {
     guard interactive, let udid, display != nil else { return nil }
     if hid?.isConnected != true { hid = SimulatorHID(udid: udid) }
     return hid
+  }
+
+  func paste(_ text: String) async -> Bool {
+    guard interactive, let udid, let hid = inputClient(), hid.isConnected,
+      (SimulatorKit.usageForKeyCode?(0x37) ?? 0) != 0, (SimulatorKit.usageForKeyCode?(0x09) ?? 0) != 0
+    else { return false }
+    var environment = ProcessInfo.processInfo.environment
+    environment["DEVELOPER_DIR"] = CoreSimulator.developerDir
+    var request = ProcessRequest("/usr/bin/xcrun", ["simctl", "pbcopy", udid], environment: environment, timeout: 10)
+    request.input = Data(text.utf8)
+    guard let result = try? await request.run(), result.succeeded, !Task.isCancelled,
+      interactive, self.udid == udid, self.hid === hid, hid.isConnected
+    else { return false }
+    hid.hardwareKey(code: 0x37, down: true)
+    hid.hardwareKey(code: 0x09, down: true)
+    hid.hardwareKey(code: 0x09, down: false)
+    hid.hardwareKey(code: 0x37, down: false)
+    return true
+  }
+
+  func clipboard() async -> String? {
+    guard interactive, let udid, display != nil else { return nil }
+    var environment = ProcessInfo.processInfo.environment
+    environment["DEVELOPER_DIR"] = CoreSimulator.developerDir
+    let request = ProcessRequest("/usr/bin/xcrun", ["simctl", "pbpaste", udid], environment: environment, timeout: 10)
+    guard let result = try? await request.run(), result.succeeded, !Task.isCancelled,
+      interactive, self.udid == udid
+    else { return nil }
+    return String(data: result.stdout, encoding: .utf8)
   }
 
   func press(_ button: SimulatorButton) {

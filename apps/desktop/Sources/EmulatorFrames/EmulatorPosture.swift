@@ -65,9 +65,9 @@ enum PostureMessages {
 }
 
 extension EmulatorInput {
-  func call(_ method: String, _ message: Data) async -> Data? {
+  func call(_ method: String, _ message: Data, timeout: TimeInterval? = nil) async -> Data? {
     await withCheckedContinuation { continuation in
-      call(method, message) { continuation.resume(returning: $0) }
+      call(method, message, timeout: timeout) { continuation.resume(returning: $0) }
     }
   }
 }

@@ -47,6 +47,8 @@ struct DeviceTile: View {
   @State private var hingeAngle = 180.0
   @State private var postureTarget: DuoPosture?
   @State private var rotateFailed = false
+  @State private var clipboardRequest: ClipboardRequest?
+  @State private var clipboardError: String?
   @State private var foldError: String?
   @State private var emulatorPosture: EmulatorPosture?
   @State private var postureFailed = false
@@ -142,6 +144,43 @@ struct DeviceTile: View {
       if !hingeEditing, let angle { hingeAngle = angle }
     }
     .onChange(of: simulatorOptionsUDID) { _, _ in showsSimulatorOptions = false }
+    .onChange(of: clipboardTarget) { _, _ in
+      clipboardRequest = nil
+      clipboardError = nil
+    }
+    .task(id: clipboardRequest) {
+      guard let request = clipboardRequest, request.target == clipboardTarget else { return }
+      defer { if clipboardRequest == request { clipboardRequest = nil } }
+      if let text = request.text {
+        let pasted: Bool
+        switch device {
+        case .ios: pasted = await simulatorButtons.paste(text)
+        case .android: pasted = await emulatorButtons.paste(text)
+        default: return
+        }
+        guard !Task.isCancelled, request.target == clipboardTarget else { return }
+        if !pasted { clipboardError = "Could not paste into the device. Check that it is connected and a text field is focused." }
+      } else {
+        let text: String?
+        switch device {
+        case .ios: text = await simulatorButtons.clipboard()
+        case .android: text = await emulatorButtons.clipboard()
+        default: return
+        }
+        guard !Task.isCancelled, request.target == clipboardTarget else { return }
+        guard let text else {
+          clipboardError = "Could not read the device clipboard. Check that the device is connected."
+          return
+        }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+      }
+    }
+    .alert("Clipboard transfer", isPresented: Binding(get: { clipboardError != nil }, set: { if !$0 { clipboardError = nil } })) {
+      Button("OK", role: .cancel) { clipboardError = nil }
+    } message: {
+      Text(clipboardError ?? "")
+    }
   }
 
   private var frameColor: Color {
@@ -318,6 +357,27 @@ struct DeviceTile: View {
         rotateButton(clockwise: true)
       }
       if canShowFrame { controlGroup { frameButton } }
+      if let target = clipboardTarget {
+        controlGroup {
+          Button("Paste into device", systemImage: "doc.on.clipboard") {
+            guard let text = NSPasteboard.general.string(forType: .string), !text.isEmpty else {
+              clipboardError = "The Mac clipboard has no text to paste."
+              return
+            }
+            clipboardRequest = ClipboardRequest(target: target, text: text)
+          }
+          .labelStyle(.iconOnly)
+          .buttonStyle(DeviceControlButtonStyle())
+          .help("Paste Mac clipboard text into the focused device field")
+          Button("Copy device clipboard", systemImage: "doc.on.doc") {
+            clipboardRequest = ClipboardRequest(target: target, text: nil)
+          }
+          .labelStyle(.iconOnly)
+          .buttonStyle(DeviceControlButtonStyle())
+          .help("Copy device clipboard text to this Mac")
+        }
+        .disabled(clipboardRequest != nil)
+      }
       if device.formFactor == .dual, screenIDs.count > 1, case .ios(_, let sim) = device {
         if hingeAvailable {
           controlGroup {
@@ -553,6 +613,15 @@ struct DeviceTile: View {
       screenIDs.count > 1, case .ios(_, let sim) = device
     else { return nil }
     return sim.udid
+  }
+
+  private var clipboardTarget: String? {
+    guard viewer, interactive, !replaying, device.isRunning else { return nil }
+    switch device {
+    case .ios(_, let sim) where sim.owned && !sim.physical: return sim.udid
+    case .android(_, let avd) where avd.owned && !avd.physical: return avd.serial
+    default: return nil
+    }
   }
 
   private var simulatorOptionsUDID: String? {
@@ -1003,4 +1072,9 @@ extension ActivityBadge {
     if case .driven(let tool, _) = self { return tool }
     return nil
   }
+}
+
+private struct ClipboardRequest: Equatable {
+  var target: String
+  var text: String?
 }
