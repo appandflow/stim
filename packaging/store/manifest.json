@@ -1,0 +1,42 @@
+{
+  "preparedAt": "2026-10-04",
+  "sourceCommit": "b6514931f22ceaba32839786a7f2d8f7a770463e",
+  "status": "preparation; screenshots and release approval pending",
+  "assets": [
+    {
+      "source": "apps/mobile/assets/images/icon-ios.png",
+      "output": "ios-icon-1024.png",
+      "sha256": "0eb641c089a06208a25da8dd005e503bb5ee433f0d142c7f42ccb9407f6a8584",
+      "width": 1024,
+      "height": 1024,
+      "alpha": false
+    },
+    {
+      "source": "apps/desktop/Support/AppIcon.icns",
+      "output": "macos-AppIcon.icns",
+      "sha256": "d7629498264c463379b0a6f8ee64f151cebd22b78b3666e027015fbf0716f244"
+    }
+  ],
+  "screenshots": [
+    {
+      "platform": "ios",
+      "display": "iPhone 6.9-inch",
+      "target": [1320, 2868],
+      "status": "capture pending",
+      "scenes": ["Workspaces", "Workspace and devices", "Live device control", "Focused logs", "Notifications"]
+    },
+    {
+      "platform": "ios",
+      "display": "iPad 13-inch",
+      "target": [2064, 2752],
+      "status": "capture pending; tablet supported by production config",
+      "scenes": ["Workspaces", "Workspace and devices", "Focused logs"]
+    },
+    {
+      "platform": "macos",
+      "target": [2880, 1800],
+      "status": "capture pending; current app is not a Mac App Store build",
+      "scenes": ["Workspace overview", "Device grid", "Build details and focused logs", "Device viewer controls"]
+    }
+  ]
+}

@@ -9,7 +9,7 @@
   ],
   "workspaces": {
     ".": {
-      "entry": ["apps/desktop/scripts/*.mjs"]
+      "entry": ["apps/desktop/scripts/*.mjs", "packaging/store/assemble.mjs"]
     },
     "packages/server": {
       "ignoreBinaries": ["plutil"]
