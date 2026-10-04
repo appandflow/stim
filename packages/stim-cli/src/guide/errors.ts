@@ -1471,11 +1471,12 @@ not on any remote"  (worktree remove)
     fnm exec --using=<version> stim <command>
     nvm exec --silent <version> stim <command>
 
-  <version> is 22.12.0 or later. These managers keep global packages per Node
-  version, so when Stim was installed with npm under one of them, use the
-  version it was installed with; asdf names it when it prints "No version is
-  set for command stim" instead of running Stim. The tools Stim starts
-  inherit the override.`,
+  <version> is 22.12.0 or later. asdf, mise, fnm and nvm keep global packages
+  per Node version, so when Stim was installed with npm under one of them, use
+  the version it was installed with; asdf names it when it prints "No version
+  is set for command stim" instead of running Stim. When that version is
+  older than 22.12.0, first install Stim with npm under a supported version.
+  The tools Stim starts inherit the override.`,
     },
   },
 };
