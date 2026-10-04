@@ -27,7 +27,7 @@ export type Capability = (typeof CAPABILITIES)[number];
  * Android phone also on `control.begin`. An older server ignores `physical` on `frames.subscribe` and would stream
  * the slot's Stim-owned device instead. `notifications` is `notifications.list` and the `notification` event.
  */
-export const FEATURES = ['physical-ios', 'physical-android', 'notifications'] as const;
+export const FEATURES = ['physical-ios', 'physical-android', 'notifications', 'macos-window'] as const;
 
 export type Feature = (typeof FEATURES)[number];
 
@@ -265,12 +265,13 @@ export type StatsResult = Record<string, unknown>;
 export type SettingsResult = Record<string, unknown>;
 
 /** `web` is the workspace's Stim-owned Chrome page, from `stim web`; it has only the default slot. */
-export const PLATFORMS = ['ios', 'android', 'web'] as const;
+export const PLATFORMS = ['ios', 'android', 'web', 'macos'] as const;
 
 export type Platform = (typeof PLATFORMS)[number];
 
 /** The platforms `build.plan` predicts builds for. */
-export type BuildPlatform = Exclude<Platform, 'web'>;
+export type BuildPlatform = Extract<Platform, 'ios' | 'android'>;
+export type ControlPlatform = Exclude<Platform, 'macos'>;
 
 /** `reload` also reaches the workspace's Stim-owned Chrome page. */
 export const RELOAD_PLATFORMS = ['ios', 'android', 'web'] as const;
@@ -484,7 +485,7 @@ export interface ActionResult {
  */
 export interface ControlBeginParams {
   workspace: string;
-  platform: Platform;
+  platform: ControlPlatform;
   slot?: string;
   physical?: boolean;
   takeOver?: boolean;
@@ -1452,7 +1453,7 @@ export function protocolJsonSchema(): JsonSchema {
         additionalProperties: false,
         properties: {
           workspace: { type: 'string', description: 'An environment path from a status payload.' },
-          platform: { enum: [...PLATFORMS] },
+          platform: { enum: PLATFORMS.filter((platform) => platform !== 'macos') },
           slot: { type: 'string', minLength: 1, default: 'default' },
           physical: { type: 'boolean', default: false },
           takeOver: { type: 'boolean', default: false },
@@ -1844,7 +1845,7 @@ export function protocolJsonSchema(): JsonSchema {
             additionalProperties: false,
             properties: {
               workspace: { type: 'string' },
-              platform: { enum: [...PLATFORMS] },
+              platform: { enum: [...RELOAD_PLATFORMS] },
               slot: { type: 'string', minLength: 1 },
             },
           }),
@@ -1854,7 +1855,7 @@ export function protocolJsonSchema(): JsonSchema {
             additionalProperties: false,
             properties: {
               workspace: { type: 'string' },
-              platform: { enum: [...PLATFORMS] },
+              platform: { enum: [...RELOAD_PLATFORMS] },
               slot: { type: 'string', minLength: 1 },
               at: { type: 'number', description: 'Epoch milliseconds on the Mac clock.' },
             },

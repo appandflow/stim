@@ -340,6 +340,23 @@ pending change. Older servers and unavailable simulator capabilities leave
 these controls hidden. These options do not appear for physical phones,
 Android or web.
 
+### Native macOS apps
+
+Native workspaces from `stim macos` appear on Home with app/build/runtime state.
+The workspace shows the owned app tile, a build card opening SwiftPM logs and a
+logs card opening native runtime stdout/stderr in the existing log viewer.
+macOS uses no Metro. Stopped and unverified apps retain their status tile.
+
+A running app's tile opens the same viewer with `platform: "macos"`, in the default
+slot, when the server advertises `macos-window`. This is read-only even on a
+control pairing, without a control toolbar or replay. The server captures only
+one visible window of the app whose PID, process start time, executable and
+bundle match its owned launch record; other apps and the desktop are excluded.
+Existing Screen Recording permission is required for the capture host. A denial
+shows permission guidance without requesting or resetting a grant, while status
+and logs stay usable. Close and reopen the viewer after opening or resizing the
+app window.
+
 ### Replay
 
 When the Mac has recorded the device, the viewer shows replay controls over

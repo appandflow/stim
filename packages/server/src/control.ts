@@ -28,6 +28,7 @@ import {
   ROTATE_DIRECTIONS,
   TOUCH_PHASES,
   type ControlBeginParams,
+  type ControlPlatform,
   type ControlBeginResult,
   type ControlEndedEvent,
   type DevicePosture,
@@ -64,6 +65,7 @@ export function parseControlBegin(params: unknown): Parsed<ControlBeginParams> {
   if (!PLATFORMS.includes(platform as Platform)) {
     return { code: 'bad-request', message: 'params.platform must be ios, android or web.' };
   }
+  if (platform === 'macos') return { code: 'action-failed', message: 'Native macOS app windows are view-only.' };
   if (slot !== undefined && (typeof slot !== 'string' || !SLOT_NAME.test(slot))) {
     return { code: 'bad-request', message: 'params.slot must be 1-64 letters, digits, underscores or hyphens.' };
   }
@@ -82,7 +84,7 @@ export function parseControlBegin(params: unknown): Parsed<ControlBeginParams> {
   return {
     value: {
       workspace,
-      platform: platform as Platform,
+      platform: platform as ControlPlatform,
       ...(slot ? { slot } : {}),
       ...(physical ? { physical } : {}),
       ...(takeOver ? { takeOver } : {}),
@@ -105,7 +107,7 @@ type InputMethod = 'input.touch' | 'input.text' | 'input.button' | 'input.rotate
  * physical device, which turns only in hand.
  */
 export interface SessionTarget {
-  platform: Platform;
+  platform: ControlPlatform;
   postures: readonly DevicePosture[];
   simulator?: SimulatorOptions;
   physical?: boolean;
@@ -866,6 +868,8 @@ export class ControlHub {
     cwd: string,
     beganAt: number,
   ): Promise<Lease | Refusal | null> {
+    if (device.platform === 'macos')
+      return { code: 'action-failed', message: 'Native macOS app windows are view-only.' };
     if (device.platform === 'web') return null;
     const id = device.platform === 'ios' ? device.udid : device.serial;
     const slot = target.slot && target.slot !== 'default' ? ['--slot', target.slot] : [];

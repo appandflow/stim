@@ -9,10 +9,10 @@ export const PROTOCOL_VERSION = 1;
 export type Platform = 'ios' | 'android';
 
 /** The platforms a device can stream and take input on: `web` is the workspace's Stim-owned Chrome page. */
-export type DevicePlatform = Platform | 'web';
+export type DevicePlatform = Platform | 'web' | 'macos';
 
 /** `reload` also reaches the workspace's Stim-owned Chrome page. */
-export type ReloadPlatform = DevicePlatform;
+export type ReloadPlatform = Exclude<DevicePlatform, 'macos'>;
 
 /** The JSON a Stim Desktop pairing QR code encodes. */
 export interface PairingPayload {
@@ -614,7 +614,7 @@ export interface ReplayEndedEvent {
 /** Needs `control`. The server refuses with `device-busy` while something else drives the device. */
 export interface ControlBeginParams {
   workspace: string;
-  platform: DevicePlatform;
+  platform: Exclude<DevicePlatform, 'macos'>;
   slot?: string;
   takeOver?: boolean;
   /** Controls the physical device the workspace leases in `slot`, while that lease lasts. */

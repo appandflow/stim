@@ -143,7 +143,7 @@ export function DeviceView({
     : undefined;
   const { mac, state: link, connection } = useMacConnection();
   const running = Boolean(device?.running && streamsFrames(device, link.kind === 'open' ? link.features : null));
-  const viewOnly = physical && platform === 'ios';
+  const viewOnly = (physical && platform === 'ios') || platform === 'macos';
   const slotRange = useReplayRange({ workspace, platform, slot });
   const range = physical ? null : slotRange;
   const replayOff = !physical && env?.recording?.enabled === false;
@@ -204,7 +204,7 @@ export function DeviceView({
   const zoom = useDeviceZoom(
     zoomKey({ macId: mac?.id ?? '', workspace, platform, slot, physical }),
     aspectOf(source),
-    platform === 'web' ? 1.6 : platform === 'ios' ? 0.46 : 0.45,
+    platform === 'web' || platform === 'macos' ? 1.6 : platform === 'ios' ? 0.46 : 0.45,
     !controlling && !((landscape || book || table) && readOnly) && !screenZoom.zoomed && !scrubbing,
     root,
     stage,

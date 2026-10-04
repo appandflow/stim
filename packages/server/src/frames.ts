@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { connect, type ClientHttp2Session } from 'node:http2';
 import { join } from 'node:path';
-import type { DeviceLeaseState, StatusPayload } from '@stim-cli/core/state';
+import type { DeviceLeaseState, MacosAppState, StatusPayload } from '@stim-cli/core/state';
 import type { ClaimHandle } from '@stim-cli/core/ownership-claim';
 import type { DevicePosture, FrameTarget } from './protocol.ts';
 import { serverDir } from './registry.ts';
@@ -22,7 +22,8 @@ import { connectOwnedPage, type OwnedPage } from './web-page.ts';
 export type Device =
   | { platform: 'ios'; udid: string; foldable: boolean; physical?: true; name?: string }
   | { platform: 'android'; serial: string; physical?: true }
-  | { platform: 'web'; endpoint: string; pid: number; targetId: string };
+  | { platform: 'web'; endpoint: string; pid: number; targetId: string }
+  | { platform: 'macos'; app: MacosAppState & { app: NonNullable<MacosAppState['app']> } };
 
 export type Posture = 'folded' | 'unfolded';
 
@@ -90,6 +91,7 @@ const MAX_EDGE = 1280;
 const JPEG_QUALITY = 70;
 
 export function deviceKey(device: Device): string {
+  if (device.platform === 'macos') return `macos:${device.app.launchId}:${device.app.app.pid}`;
   if (device.platform === 'web') return `web:${device.pid}:${device.targetId}`;
   if (device.platform === 'ios') return `ios:${device.udid}`;
   return device.physical ? `android-device:${device.serial}` : `android:${device.serial}`;
@@ -149,6 +151,13 @@ export function ownedDevice(
       ? { ios: environment.ios, android: environment.android }
       : environment.slots?.find((candidate) => candidate.slot === slot);
   const where = `${target.platform} in slot ${slot} of ${target.workspace}`;
+  if (target.platform === 'macos') {
+    if (target.physical || slot !== 'default') return 'A native macOS app has only the default owned window target.';
+    const app = environment.macos;
+    if (!app?.app || app.state !== 'running')
+      return `No verified owned macOS app runs for ${target.workspace}. Run stim macos there.`;
+    return { platform: 'macos', app: { ...app, app: app.app } };
+  }
   if (target.physical) {
     if (target.platform === 'web') return 'A web page has no physical device.';
     const lease = workspaceLease(payload, target, lookup);
@@ -568,7 +577,7 @@ export async function devicePostures(
   env: NodeJS.ProcessEnv,
   timeoutMs: number,
 ): Promise<DevicePosture[]> {
-  if (device.platform === 'web') return [];
+  if (device.platform === 'web' || device.platform === 'macos') return [];
   if (device.platform === 'ios') return device.foldable ? ['folded', 'unfolded'] : [];
   if (device.physical) return [];
   const endpoint = emulatorEndpoint(env, device.serial);
@@ -815,10 +824,13 @@ export class FramePool {
 
   private attach(device: Device, listener: FrameListener, hint: FrameHint): () => void {
     const helper = this.helper();
-    const physical = device.platform !== 'web' && device.physical === true;
-    if (helper === null && physical) {
+    const physical = (device.platform === 'ios' || device.platform === 'android') && device.physical === true;
+    const helperOnly = physical || device.platform === 'macos';
+    if (helper === null && helperOnly) {
       queueMicrotask(() =>
-        listener.failed('A physical device streams through the stim-frames helper, which this Mac has not built.'),
+        listener.failed(
+          'This app or physical device streams through the stim-frames helper, which this Mac has not built.',
+        ),
       );
       return () => {};
     }
@@ -842,7 +854,7 @@ export class FramePool {
           : {}),
         delayed: listener.delayed,
         failed: (message) => {
-          if (streamed || cancelled || physical || this.claim) return listener.failed(message);
+          if (streamed || cancelled || helperOnly || this.claim) return listener.failed(message);
           console.error(`stim-server: ${message} Falling back to screenshots.`);
           detach = this.screenshots(device).add(listener);
         },
@@ -860,6 +872,7 @@ export class FramePool {
    * helper: screenshots are not recorded.
    */
   record(device: Device, listener: FrameListener): (() => void) | null {
+    if (device.platform === 'macos') return null;
     const helper = this.helper();
     return helper === null ? null : this.stream(helper, device).add(listener, RECORD_HINT);
   }
@@ -954,6 +967,7 @@ export class FramePool {
   }
 
   private screenshots(device: Device): FrameSource {
+    if (device.platform === 'macos') throw new Error('Native macOS capture requires the owned-window helper.');
     const key = deviceKey(device);
     const existing = this.sources.get(key);
     if (existing instanceof FrameSource) return existing;

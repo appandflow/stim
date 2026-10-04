@@ -10,6 +10,7 @@ import IOSurface
 //   stim-frames android <serial>
 //   stim-frames android-device <serial> <adb> <scrcpy-server>
 //   stim-frames web <cdpEndpoint> <chromePid> <targetId>
+//   stim-frames macos <owned-app-json>
 //   stim-frames iphone <udid> [name]
 //
 // android-device streams any adb device through the scrcpy server jar at <scrcpy-server>,
@@ -1025,6 +1026,14 @@ case "simulator-options":
     FileHandle.standardError.write(Data("\(error.localizedDescription)\n".utf8))
     exit(1)
   }
+case "macos":
+  guard let data = arguments[2].data(using: .utf8),
+    let app = try? JSONDecoder().decode(MacosSource.OwnedApp.self, from: data)
+  else { fail("Invalid owned macOS app target.") }
+  let source = MacosSource(app: app)
+  Output.requestKeyframe = source.keyframe
+  readCommands(source)
+  source.start()
 case "ios":
   CoreSimulator.developerDir = CoreSimulator.selectedDeveloperDir()
   guard CoreSimulator.deviceSet != nil else { fail("CoreSimulator could not be loaded from \(CoreSimulator.developerDir).") }

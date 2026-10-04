@@ -49,8 +49,21 @@ The captured view is read-only; background mouse/keyboard relay is not included.
 Capture requires existing Screen Recording permission; Open app also requires
 existing Accessibility permission. Neither asks for permission or changes grants. If unavailable, use the normal app window and
 read the workspace logs. Use Refresh preview after the app window opens or is
-resized to rebind capture. Phone viewing, remote relay and multiwindow selection
-are not part of this prototype.
+resized to rebind capture.
+
+PHONE MONITORING
+
+A paired phone shows native app and build state in the workspace and home list.
+Tap the app tile to view its one visible window through stim-server. The server
+requires read access and its macos-window feature; it rechecks the recorded PID,
+process start time, executable and bundle before capture and on every frame.
+It never captures the desktop or another application, and offers no input or replay.
+
+The existing capture host needs Screen Recording permission. If capture is denied,
+the viewer explains where to allow that host in System Settings; Stim never
+requests or resets permissions. Status and logs still work. Tap the build card for
+SwiftPM output or the logs card for native runtime stdout and stderr. Metro is not
+used. Close and reopen the viewer after opening or resizing the app window.
 
 DESKTOP DOGFOOD
 
