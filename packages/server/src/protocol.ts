@@ -42,6 +42,7 @@ export const FEATURES = [
   'macos-keyboard-extended',
   'device-frames',
   'macos-hosted',
+  'duo-frames',
 ] as const;
 
 export type Feature = (typeof FEATURES)[number];
@@ -318,6 +319,8 @@ export const FRAME_EDGE = { min: 240, default: 1280, max: 2048 } as const;
 export interface FrameTarget {
   /** Requests installed ordinary-device artwork for this live subscription. */
   deviceFrame?: boolean;
+  /** Requests a composed Duo image carrying the pose used to map its input. */
+  duoFrame?: boolean;
   workspace: string;
   platform: Platform;
   slot?: string;
@@ -565,6 +568,8 @@ export interface InputTouchParams {
   x: number;
   y: number;
   display?: number;
+  /** The revision of the composed Duo image actually displayed by the client. */
+  duoRevision?: string;
 }
 
 /** Native macOS pixel scrolling at a normalized point of the captured window. Deltas are capped at 1000 pixels. */
@@ -1184,6 +1189,13 @@ export interface DeviceFrameEvent {
   artwork: DeviceFrameArtwork | null;
 }
 
+export interface DuoFramePose {
+  revision: string;
+  screenID: number;
+  angle: number;
+  orientation: number;
+}
+
 export interface FrameEvent {
   event: 'frame';
   subscription: string;
@@ -1203,6 +1215,7 @@ export interface FrameEvent {
   posture?: 'folded' | 'unfolded';
   /** Clockwise artwork rotation captured with this frame. */
   artworkTurns?: number;
+  duo?: DuoFramePose;
 }
 
 /**
@@ -1704,6 +1717,7 @@ export function protocolJsonSchema(): JsonSchema {
           slot: { type: 'string', minLength: 1, default: 'default' },
           physical: { type: 'boolean', default: false },
           deviceFrame: { type: 'boolean', default: false },
+          duoFrame: { type: 'boolean', default: false },
           fps: {
             type: 'integer',
             minimum: 1,
@@ -2165,6 +2179,7 @@ export function protocolJsonSchema(): JsonSchema {
                 x: { type: 'number', minimum: 0, maximum: 1 },
                 y: { type: 'number', minimum: 0, maximum: 1 },
                 display: { type: 'integer', minimum: 0, maximum: 3 },
+                duoRevision: { type: 'string', format: 'uuid' },
               },
               ['phase', 'x', 'y'],
             ),
@@ -2651,6 +2666,17 @@ export function protocolJsonSchema(): JsonSchema {
               data: { type: 'string', contentEncoding: 'base64' },
               posture: { enum: ['folded', 'unfolded'] },
               artworkTurns: { type: 'integer', minimum: 0, maximum: 3 },
+              duo: {
+                type: 'object',
+                required: ['revision', 'screenID', 'angle', 'orientation'],
+                additionalProperties: false,
+                properties: {
+                  revision: { type: 'string', format: 'uuid' },
+                  screenID: { type: 'integer', minimum: 0, maximum: 4294967295 },
+                  angle: { type: 'number', minimum: 0, maximum: 180 },
+                  orientation: { type: 'integer', minimum: 1, maximum: 4 },
+                },
+              },
             },
           },
           {

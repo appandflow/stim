@@ -60,7 +60,8 @@ jobs:
             | xargs xcrun swiftc -O -swift-version 5 -module-name StimFrames -o "$RUNNER_TEMP/stim-frames" \
               ../../packages/server/helper/main.swift ../../packages/server/helper/VideoEncoder.swift \
               ../../packages/server/helper/PhoneSource.swift ../../packages/server/helper/MacosSource.swift \
-              ../../packages/server/helper/FrameArtwork.swift
+              ../../packages/server/helper/FrameArtwork.swift ../../packages/server/helper/DuoFrameRenderer.swift \
+              ../../packages/server/helper/DuoHingeMonitor.swift ../../packages/server/helper/DuoCaptureSource.swift
       - name: Package an ad-hoc release build
         if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
         run: scripts/release.sh 0.0.0

@@ -571,11 +571,20 @@ require Control. The paired Mac supplies PNG layers from its installed DeviceKit
 or Android skin; artwork is not bundled in the app or repository. Touches stay
 inside the screen aperture, and taps on the bezel send no device input. Rotation
 metadata must match the current capture; otherwise the viewer shows the screen
-without its housing. Replay, physical phones, web pages, Duo and Android foldable
+without its housing. Replay, physical phones, web pages and Android foldable
 or circular devices remain frameless. Missing artwork or an older server also
 keeps the frameless viewer.
 
 Framed H.264 needs a mobile build containing the native orientation-clear acknowledgement; older clients stay frameless. Rotation clears old screen pixels before matching housing is shown. JPEG and housing images reset their displayed content on orientation changes.
+
+For a live iPhone Duo, a server advertising `duo-frames` composes Xcode's installed
+V68 hardware model and both screen surfaces on the Mac. **Device frame** starts
+off. The composed JPEG follows the observed hinge angle and rotation; without
+the model or a current angle reading, the raw screen remains visible. The app
+waits until the image is displayed before accepting a touch, then holds that
+image and pose throughout the drag. Bezel and hinge taps send no input. Leaving
+Control releases a held touch even while other clients keep viewing. Raw viewers
+and recordings keep their existing capture. Turn the frame off to use replay.
 
 With **Control** on, the server starts a control session (`control.begin`)
 and holds a `stim device lock` lease on the device, so agents see it as

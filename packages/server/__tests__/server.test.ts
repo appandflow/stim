@@ -679,6 +679,7 @@ describe('pairing', () => {
           'macos-keyboard-extended',
           'device-frames',
           'macos-hosted',
+          'duo-frames',
         ],
         actions: [],
       },
@@ -2741,9 +2742,10 @@ process.stdin.on('data', (chunk) => {
   for (let at = lines.indexOf('\\n'); at >= 0; at = lines.indexOf('\\n')) {
     const line = JSON.parse(lines.slice(0, at));
     run.configs.push(line);
+    if (line.input && env.FAKE_HELPER_INPUTS) appendFileSync(env.FAKE_HELPER_INPUTS, JSON.stringify(line) + '\\n');
     if (line.keyframe) keyframe = true;
     else if (line.recordKeyframe) recordKeyframe = true;
-    else {
+    else if (!line.input) {
       const wantsArtwork = !config.deviceFrame && line.deviceFrame;
       config = line;
       if (wantsArtwork && env.FAKE_HELPER_ARTWORK) message(2, Buffer.from(JSON.stringify({ deviceFrame: JSON.parse(env.FAKE_HELPER_ARTWORK) })));
@@ -2756,6 +2758,12 @@ let sent = 0;
 const displays = JSON.parse(env.FAKE_HELPER_DISPLAYS ?? '[]');
 setInterval(() => {
   if (typeof displays[sent] === 'number') message(2, Buffer.from(JSON.stringify({ display: displays[sent] })));
+  if (config.duoFrame && env.FAKE_HELPER_DUO) {
+    const metadata = Buffer.from(env.FAKE_HELPER_DUO);
+    const size = Buffer.alloc(2);
+    size.writeUInt16BE(metadata.length);
+    message(6, Buffer.concat([size, metadata, Buffer.from('composed ' + sent)]));
+  }
   if (config.video) {
     const header = Buffer.alloc(13);
     header[0] = (keyframe ? 1 : 0) | (env.FAKE_HELPER_ARTWORK ? 32 | (2 << 3) : 0);
@@ -3143,6 +3151,44 @@ describe('frames.subscribe', () => {
       .filter((run) => run.tool === 'stim-frames')
       .map((run) => run as unknown as HelperRun);
   }
+
+  test.skipIf(!fakeTailscale)(
+    'routes composed Duo images and their pose together without replacing raw subscribers',
+    async () => {
+      const pose = { revision: '16ef79a2-5cef-4cdb-b5e9-ab09ef0722d2', screenID: 10, angle: 76, orientation: 3 };
+      const port = await startWithTools(
+        {
+          FAKE_STIM_PAYLOADS: statusWith({ ios: { ...OWNED_SIM, name: 'stim-test (iPhone Duo 27.1)' } }),
+          FAKE_FRAMES: '[]',
+          FAKE_HELPER_DUO: JSON.stringify({ width: 800, height: 600, ...pose }),
+        },
+        undefined,
+        fakeHelper(),
+      );
+      const plain = await authed(port);
+      await plain.request('frames.subscribe', { workspace, platform: 'ios' });
+      expect(await plain.next()).toMatchObject({ event: 'frame', width: 390, height: 844 });
+      const composed = await authed(port);
+      expect(
+        await composed.request('frames.subscribe', { workspace, platform: 'ios', duoFrame: true, video: ['h264'] }),
+      ).toMatchObject({ result: { subscription: 's1' } });
+      let shown = await composed.next();
+      while ('event' in shown && shown.event === 'frame' && !shown.duo) shown = await composed.next();
+      expect(shown).toMatchObject({ event: 'frame', width: 800, height: 600, duo: pose });
+      expect(Buffer.from((shown as { data: string }).data, 'base64').toString()).toMatch(/^composed /);
+      const raw = await plain.next();
+      expect(raw).toMatchObject({ event: 'frame', width: 390, height: 844 });
+      expect(raw).not.toHaveProperty('duo');
+      expect(Buffer.from((raw as { data: string }).data, 'base64').toString()).toMatch(/^frame /);
+      const cached = await authed(port);
+      await cached.request('frames.subscribe', { workspace, platform: 'ios', duoFrame: true });
+      expect(await cached.next()).toMatchObject({ event: 'frame', duo: pose });
+      expect(
+        await cached.request('frames.subscribe', { workspace, platform: 'android', duoFrame: true }),
+      ).toMatchObject({ error: { code: 'bad-request' } });
+      for (const client of [plain, composed, cached]) client.socket.close();
+    },
+  );
 
   test.skipIf(!fakeTailscale)(
     'sends cached installed artwork only to opt-in read subscribers and preserves guest bytes',
@@ -4171,6 +4217,50 @@ describe('frames.subscribe', () => {
   }
 
   test.skipIf(!fakeTailscale)(
+    'preserves the displayed Duo revision and releases its gesture while read subscribers remain',
+    async () => {
+      const inputs = join(root, 'duo-inputs.ndjson');
+      const port = await startControl({
+        FAKE_STIM_PAYLOADS: statusWith({ ios: { ...OWNED_SIM, name: 'stim-test (iPhone Duo 27.1)' } }),
+        FAKE_HELPER_INPUTS: inputs,
+      });
+      const viewer = await authed(port);
+      await viewer.request('frames.subscribe', { workspace, platform: 'ios' });
+      await viewer.next();
+      const driver = await authed(port, true);
+      const begun = await driver.request('control.begin', { workspace, platform: 'ios' });
+      if (!('result' in begun)) throw new Error(JSON.stringify(begun));
+      const { session } = begun.result as { session: string };
+      const revision = '16ef79a2-5cef-4cdb-b5e9-ab09ef0722d2';
+      const touch = { session, phase: 'down', x: 0.25, y: 0.75, duoRevision: revision };
+      expect(await driver.request('input.touch', { ...touch, duoRevision: 'unbound' })).toMatchObject({
+        error: { code: 'bad-request' },
+      });
+      expect(await driver.request('input.touch', { ...touch, display: 0 })).toMatchObject({
+        error: { code: 'bad-request' },
+      });
+      expect(await driver.request('input.touch', touch)).toMatchObject({ result: {} });
+      driver.socket.close();
+      await driver.closed;
+      const commands = () =>
+        existsSync(inputs)
+          ? readFileSync(inputs, 'utf8')
+              .trim()
+              .split('\n')
+              .map((line) => JSON.parse(line))
+          : [];
+      await until(() => commands().some((command) => command.input === 'duo-release'));
+      expect(commands()).toEqual([
+        { input: 'touch', phase: 'down', x: 0.25, y: 0.75, duoRevision: revision },
+        { input: 'duo-release' },
+      ]);
+      expect(alive(Number(readFileSync(`${toolCalls}.started`, 'utf8')))).toBe(true);
+      expect(await viewer.next()).toMatchObject({ event: 'frame' });
+      viewer.socket.close();
+    },
+  );
+
+  test.skipIf(!fakeTailscale)(
     'changes only advertised simulator options under the current control session',
     async () => {
       const port = await startControl({
@@ -4601,6 +4691,7 @@ describe('frames.subscribe', () => {
         { input: 'rotate', direction: 'left' },
         { input: 'touch', phase: 'down', x: 0.25, y: 0.75, display: 1 },
         { input: 'touch', phase: 'up', x: 0.25, y: 0.75, display: 0 },
+        { input: 'duo-release' },
       ]);
     },
     10_000,

@@ -44,6 +44,7 @@ const VERSION_TIMEOUT_MS = 30_000;
 const MAX_MESSAGE_BYTES = 16 * 1024 * 1024;
 const FRAME_MESSAGE = 1;
 const ARTWORK_FRAME_MESSAGE = 5;
+const DUO_FRAME_MESSAGE = 6;
 const NOTICE_MESSAGE = 2;
 const VIDEO_MESSAGE = 3;
 const RECORD_MESSAGE = 4;
@@ -221,6 +222,8 @@ export class HelperSource {
   private readonly listeners = new Map<FrameListener, FrameHint | null>();
   private readonly child: ChildProcess;
   private last: Frame | null = null;
+  private lastDuo: Frame | null = null;
+  private duoAvailable = false;
   private artwork: DeviceFrameArtwork | null | undefined;
   private config = '';
   private stopped = false;
@@ -287,6 +290,7 @@ export class HelperSource {
     this.configure();
     if (this.artwork !== undefined) listener.artwork?.(this.artwork);
     if (listener.video) this.keyframe();
+    else if (listener.duo && this.lastDuo && this.duoAvailable) listener.duo(this.lastDuo);
     else if (this.last && !listener.record) listener.frame(this.last);
     if (this.stalled) listener.delayed(true, this.stalled);
     return () => {
@@ -347,15 +351,25 @@ export class HelperSource {
     const watching = [...this.listeners].flatMap(([listener, hint]) => (hint ? [{ listener, hint }] : []));
     const hints = watching.map(({ hint }) => hint);
     const viewers = watching.filter(({ listener }) => !listener.record);
-    const jpegFps = viewers.flatMap(({ listener, hint }) => (listener.video ? [] : [hint.fps]));
+    const raw = viewers.filter(({ listener }) => !listener.duo || !this.duoAvailable);
+    const duo = viewers.filter(({ listener }) => listener.duo);
+    const jpegFps = raw.flatMap(({ listener, hint }) => (listener.video ? [] : [hint.fps]));
     const recording = viewers.length < watching.length;
     const config = JSON.stringify({
       fps: Math.max(0, ...hints.map((hint) => hint.fps)),
       maxEdge: Math.max(FRAME_EDGE.min, ...hints.map((hint) => hint.maxEdge)),
       jpeg: jpegFps.length > 0,
       ...(viewers.some(({ listener }) => listener.artwork !== undefined) ? { deviceFrame: true } : {}),
+      ...(duo.length
+        ? {
+            duoFrame: {
+              fps: Math.max(...duo.map(({ hint }) => hint.fps)),
+              maxEdge: Math.max(...duo.map(({ hint }) => hint.maxEdge)),
+            },
+          }
+        : {}),
       ...(jpegFps.length ? { jpegFps: Math.max(...jpegFps) } : {}),
-      video: jpegFps.length < viewers.length,
+      video: raw.some(({ listener }) => listener.video !== undefined),
       bitrate: this.bitrate.current,
       ...(recording ? { record: { maxEdge: RECORD_HINT.maxEdge, fps: RECORD_HINT.fps, bitrate: RECORD_BITRATE } } : {}),
     });
@@ -390,6 +404,7 @@ export class HelperSource {
         else if (body[0] === VIDEO_MESSAGE && body.length > VIDEO_HEADER_BYTES) this.video(body);
         else if (body[0] === RECORD_MESSAGE && body.length > VIDEO_HEADER_BYTES) this.record(body);
         else if (body[0] === NOTICE_MESSAGE) this.readNotice(body.subarray(1).toString('utf8'));
+        else if (body[0] === DUO_FRAME_MESSAGE) this.duoFrame(body);
       }
     });
   }
@@ -404,7 +419,51 @@ export class HelperSource {
       ...(body[0] === ARTWORK_FRAME_MESSAGE ? { artworkTurns: body[5]! } : {}),
       ...(this.posture ? { posture: this.posture } : {}),
     };
-    for (const listener of this.listeners.keys()) if (!listener.video) listener.frame(this.last);
+    for (const listener of this.listeners.keys())
+      if (!listener.video && !(listener.duo && this.duoAvailable)) listener.frame(this.last);
+  }
+
+  private duoFrame(body: Buffer): void {
+    if (this.stopped || body.length < 4) return;
+    const size = body.readUInt16BE(1);
+    if (size === 0 || body.length <= size + 3) return;
+    try {
+      const metadata: unknown = JSON.parse(body.subarray(3, size + 3).toString('utf8'));
+      if (!isJsonObject(metadata)) return;
+      const { width, height, revision, screenID, angle, orientation } = metadata;
+      if (
+        !Number.isInteger(width) ||
+        (width as number) < 1 ||
+        (width as number) > FRAME_EDGE.max ||
+        !Number.isInteger(height) ||
+        (height as number) < 1 ||
+        (height as number) > FRAME_EDGE.max ||
+        typeof revision !== 'string' ||
+        !/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(revision) ||
+        !Number.isInteger(screenID) ||
+        (screenID as number) < 0 ||
+        (screenID as number) > 0xffffffff ||
+        typeof angle !== 'number' ||
+        !Number.isFinite(angle) ||
+        angle < 0 ||
+        angle > 180 ||
+        !Number.isInteger(orientation) ||
+        (orientation as number) < 1 ||
+        (orientation as number) > 4
+      )
+        return;
+      this.lastDuo = {
+        width: width as number,
+        height: height as number,
+        capturedAt: new Date().toISOString(),
+        data: body.subarray(size + 3).toString('base64'),
+        duo: { revision, screenID: screenID as number, angle, orientation: orientation as number },
+        ...(this.posture ? { posture: this.posture } : {}),
+      };
+      this.duoAvailable = true;
+      this.configure();
+      for (const listener of this.listeners.keys()) listener.duo?.(this.lastDuo);
+    } catch {}
   }
 
   private unit(body: Buffer): AccessUnit {
@@ -444,6 +503,11 @@ export class HelperSource {
   private readNotice(text: string): void {
     try {
       const notice: unknown = JSON.parse(text);
+      if (isJsonObject(notice) && typeof notice.duoAvailable === 'boolean') {
+        this.duoAvailable = notice.duoAvailable;
+        if (!this.duoAvailable) this.lastDuo = null;
+        this.configure();
+      }
       if (notice && typeof notice === 'object' && 'deviceFrame' in notice) {
         this.artwork = (notice as { deviceFrame: DeviceFrameArtwork | null }).deviceFrame;
         for (const listener of this.listeners.keys()) listener.artwork?.(this.artwork);

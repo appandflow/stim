@@ -1,5 +1,8 @@
 import Foundation
-import StimKit
+
+#if canImport(StimKit)
+  import StimKit
+#endif
 
 /// Reads live Duo hinge angles in degrees. Cancelling iteration interrupts
 /// only this stream's monitor process; the global timeout bounds its lifetime.

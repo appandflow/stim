@@ -96,7 +96,7 @@ export function parseControlBegin(params: unknown): Parsed<ControlBeginParams> {
 }
 
 export type InputCommand =
-  | { input: 'touch'; phase: TouchPhase; x: number; y: number; display?: number }
+  | { input: 'touch'; phase: TouchPhase; x: number; y: number; display?: number; duoRevision?: string }
   | { input: 'text'; text: string }
   | { input: 'scroll'; x: number; y: number; deltaX: number; deltaY: number }
   | { input: 'key'; key: InputKey; modifiers: KeyModifier[] }
@@ -233,7 +233,7 @@ export function parseInput(
     return { value: { session, command: { input: 'posture', posture: posture as DevicePosture } } };
   }
   if (method === 'input.touch') {
-    const { phase, x, y, display } = params;
+    const { phase, x, y, display, duoRevision } = params;
     if (!TOUCH_PHASES.includes(phase as TouchPhase) || !fraction(x) || !fraction(y)) {
       return { code: 'bad-request', message: 'input.touch needs phase (down, move or up), and x and y from 0 to 1.' };
     }
@@ -242,6 +242,20 @@ export function parseInput(
     }
     if (platform !== 'ios' && display !== undefined && display !== 0) {
       return { code: 'bad-request', message: 'An emulator or a web page takes input on its main display (0) only.' };
+    }
+    if (
+      duoRevision !== undefined &&
+      (platform !== 'ios' ||
+        target.physical ||
+        postures.length === 0 ||
+        display !== undefined ||
+        typeof duoRevision !== 'string' ||
+        !/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(duoRevision))
+    ) {
+      return {
+        code: 'bad-request',
+        message: 'duoRevision needs a composed Duo image revision, without a display index.',
+      };
     }
     return {
       value: {
@@ -252,6 +266,7 @@ export function parseInput(
           x: x as number,
           y: y as number,
           ...(display === undefined ? {} : { display: display as number }),
+          ...(duoRevision === undefined ? {} : { duoRevision: duoRevision as string }),
         },
       },
     };
@@ -777,7 +792,7 @@ export class ControlHub {
       session.input.keys()
     ) {
       session.input.send(
-        command.input === 'touch' && command.display === undefined
+        command.input === 'touch' && command.display === undefined && command.duoRevision === undefined
           ? { ...command, display: session.frames.litDisplay(session.device) }
           : command,
       );
