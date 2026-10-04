@@ -6,6 +6,22 @@ import Testing
 
 @MainActor
 struct ActionCenterTests {
+  #if DEBUG
+    @Test func fixtureActionsDoNotCreateLiveOperations() {
+      var simulated: [String] = []
+      let center = ActionCenter(fixtureAction: { simulated.append($0) })
+      let command = StimCommand(["ios"], cwd: "/Playground/app")
+
+      let run = center.run("Build fixture", steps: [command])
+
+      #expect(simulated == ["Build fixture"])
+      #expect(run == nil)
+      #expect(center.runs.isEmpty)
+      #expect(center.operations.runs.isEmpty)
+      #expect(center.presented == nil)
+    }
+  #endif
+
   @Test func runAppKeepsPendingAndFailedOutputInOperationsWithoutPresentingASheet() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
