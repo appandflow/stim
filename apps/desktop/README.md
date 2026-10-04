@@ -593,6 +593,14 @@ modes request native-resolution images; Fit and wall previews retain their 960-p
 Duo's projected housing and folded screen, replay, physical devices, web and
 remote previews retain **Fit**.
 
+While controlling a local iOS simulator or Android emulator, hold **Option** and
+drag to pinch or rotate two fingers around their center. Hold **Option-Shift**
+to move both fingers together. Trackpad pinch also sends a two-finger pinch.
+Two markers show the contact positions, including on a framed or folded screen.
+Releasing Option, ending the gesture, changing orientation or releasing Control
+lifts both contacts. Option and the gesture's Shift modifier stay on the Mac.
+These gestures are not available for physical devices, remote previews or web pages.
+
 While **Control** is on, groups below the screen of a running simulator or emulator have its
 hardware buttons and rotation: **Home** and **Lock** on a simulator, sent
 through the simulator's HID service; **Home**, **Back**, **Apps** and **Lock**
@@ -1222,10 +1230,51 @@ To check a bundle, point the DSN at a local listener, such as `http://<key>@127.
 ## Layout
 
 - `Sources/StimKit`: models for the CLI's JSON, the login shell environment, the CLI and `stim-server` clients, project grouping, warning remedies, the streaming runner, `stim logs` records and the follow runner, process, disk and gc usage, the status machine section, the Machine report, free plan and worktree lifecycle, the autopilot schedule, pressure plan and log, and the crash report scrubber. Unit-tested.
-- `Sources/StimStores`: the observable stores whose ordering and staleness rules have tests: the status refresh and watch, the gc report and the action runs. They take the `stim` call, and the clock where they decide staleness, as closures, so `Tests/StimStoresTests` can order results by hand. Tests cannot import the `StimDesktop` executable target.
+- `Sources/StimStores`: the observable stores whose ordering and staleness rules have tests: the status refresh and watch, the gc report and the action runs. They take the `stim` call, and the clock where they decide staleness, as closures, so `Tests/StimStoresTests` can order results by hand. The DEBUG visual fixture target imports `StimDesktop` to capture its production views.
 - `Sources/SimulatorFrames`: live simulator frames through CoreSimulator, and input through the simulator's CoreDevice HID service (`dtuhidd`) or, when a simulator has none, SimulatorKit's legacy HID client. All of them are private Apple interfaces. Expect Xcode releases to break it.
 - `Support/SimFold`: the `sim-fold` helper, an iOS Simulator executable that `scripts/bundle.sh` builds into the app's resources. stim-server builds the same sources to fold an iPhone Duo from the phone.
 - `Sources/EmulatorFrames`: live emulator frames through the emulator's localhost gRPC `streamScreenshot` call, found through its discovery file, and input through the same endpoint. An emulator without a hardware keyboard (`hw.keyboard=no`) drops key events, so Desktop types on it with `adb shell input`. Emulators Stim booted before it passed `-grpc` show no frames until their next boot.
 - `Sources/WebFrames`: the Stim-owned Chrome page from `stim web`, over the Chrome DevTools Protocol on the loopback `cdpEndpoint` `stim status` reports. It connects only when `SystemInfo.getProcessInfo` names the Chrome pid status reports, attaches to the page's `targetId`, streams it with `Page.startScreencast` and sends `Input.dispatch*` events. Public protocol only; no WebKit view, which would render a different engine than the one agents test.
 - stim-server's `stim-frames` helper compiles the non-view files of these modules, listed in `packages/server/helper/desktop-sources.txt`, together with its own `main.swift`. Desktop CI compiles it, so keep those files free of AppKit views, SwiftUI and StimKit. Desktop and the helper both send simulator keys through `SimulatorHID.hardwareKey`, and page input through `WebPage`.
 - `Sources/StimDesktop`: the SwiftUI app. `Design/` holds the generated tokens, the theme layer over them (`.textStyle(_:)`, `Font.stim(_:)` and the dynamic colors), and the component kit that mirrors the phone's: `.buttonStyle(.stim(_:_:))`, `IconButton`, `Pill`, `Banner` and `ListSection`/`ListRow`. A debug build has **Window > SwiftUI Playground** for production screen fixtures and design tokens.
+
+### Native visual fixture pilot
+
+`swift test --filter VisualFixtureTests` compares three production playground
+bodies: long-text Notifications at the detail's 440-point minimum, simulator
+controls in dark appearance, and the simulator error message in light appearance.
+The DEBUG fixtures use a fixed date. Captures pin en_US, UTC, InterVariable,
+380/440 by 640 points, arm64 and a 1x native window on macOS 27.0 build 26A428.
+They open only a fixture window, without starting the CLI, server or devices.
+The notification view reads its calendar, timezone and locale from the SwiftUI
+environment; fixtures supply UTC explicitly, independent of the process `TZ`.
+
+The current macOS 15 CI runner has no matching references and explicitly skips
+these image comparisons. This is a local pilot, not CI visual regression coverage.
+Issue [#2342](https://github.com/appandflow/stim/issues/2342) tracks matching CI
+references, Settings window chrome, Builds and the remaining representative cases.
+Native Settings tabs move into window chrome; a hosting-view bitmap cannot
+faithfully compare that strip. Compact 380-point Notifications is a stress case
+below the production detail minimum and is not an accepted reference.
+
+Normal runs never create or update references. To deliberately replace them on
+the matching machine, use
+`STIM_RECORD_VISUAL_FIXTURES=1 swift test --filter VisualFixtureTests`, then inspect
+every changed PNG under `Tests/VisualFixtureTests/__Snapshots__` and rerun without
+the variable. SnapshotTesting reports failures with reference, result and difference
+images. Its dependency belongs only to the visual test target.
+
+## Native macOS development prototype
+
+If Stim is not installed globally, replace `stim` with `npx stim`.
+This package includes explicit development settings for `stim macos`. From
+`apps/desktop`, run `stim macos` to build the `StimDesktop` Debug executable and
+launch its in-memory `--playground` entry in an isolated bundle. Inspect compiler
+output with `stim logs --source build`, and use `stim stop` to stop only that
+workspace's recorded app. The normal Desktop viewer shows its app/build state,
+logs and one local owned window using existing Screen Recording permission.
+**Open app** verifies and activates that owned app using existing Accessibility
+permission for normal native input;
+the captured view is read-only. Background input relay is not included. Use **Refresh preview** after the app window opens or is resized. No permission changes, real backend initialization or custom packaging
+script is part of this flow. See [the macOS guide](../../website/docs/macos.md)
+for the prototype's settings and limits.

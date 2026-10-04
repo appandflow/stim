@@ -61,8 +61,7 @@
     let environment: Workspace
     let checks: BuildPlanChecks
 
-    static func make(_ scenario: PlaygroundScenario) throws -> Self {
-      let now = Date()
+    static func make(_ scenario: PlaygroundScenario, now: Date = Date()) throws -> Self {
       let long = "The workspace with a very long branch name for accessibility and narrow-window review"
       let notificationCount = scenario == .empty ? 0 : scenario == .largeData ? Inbox.limit : 6
       let entries = (0..<notificationCount).map { index in

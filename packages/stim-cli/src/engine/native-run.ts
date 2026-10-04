@@ -11,11 +11,11 @@ export const NATIVE_RUN_WAIT_MS: number = 30 * 60_000;
 const WAIT_HEARTBEAT_MS = 30_000;
 const CANCEL_REQUEST_KEY = 'nativeRunCancel';
 
-export type NativeRunCommand = 'ios' | 'android' | 'stop';
+export type NativeRunCommand = 'ios' | 'android' | 'macos' | 'stop';
 
 export interface NativeRunDetails {
   command: NativeRunCommand;
-  platform?: 'ios' | 'android';
+  platform?: 'ios' | 'android' | 'macos';
   slot?: string;
 }
 
@@ -95,6 +95,10 @@ export function decideStopAction({
   ownerIdentity: ProcessIdentityStatus;
   deviceSlots: readonly string[];
 }): StopHolderAction {
+  if (holder.command === 'macos') {
+    if (stopSlot !== undefined) return { action: 'proceed' };
+    return ownerIdentity === 'same' ? { action: 'interrupt' } : { action: 'refuse' };
+  }
   if (holder.command !== 'ios' && holder.command !== 'android') return { action: 'wait' };
   const leavesNothing =
     stopSlot === undefined ||
@@ -183,7 +187,7 @@ function cancelOnInterrupt({
 }
 
 /**
- * Run an `ios` or `android` invocation under the workspace's native-run lock: the claim records the
+ * Run an `ios`, `android` or `macos` invocation under the workspace's native-run lock: the claim records the
  * command, platform and slot, and a wait for another holder is reported on `write`. The first SIGINT
  * forwards the interrupt to the running declared build tool; a run `stim stop` cancelled between build
  * tools starts no further one; a terminal interrupt with no build tool running, or a second SIGINT, exits

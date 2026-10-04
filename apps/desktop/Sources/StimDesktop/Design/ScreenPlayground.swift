@@ -40,6 +40,7 @@
   struct PlaygroundScreenView: View {
     var screen: PlaygroundScreen
     var scenario: PlaygroundScenario
+    var fixtureDate = Date()
     @State private var fixtures: PlaygroundFixtures?
     @State private var failure: String?
     @State private var action = "All changes stay in memory."
@@ -67,7 +68,7 @@
       .background(Palette.background)
       .onAppear {
         do {
-          fixtures = try PlaygroundFixtures.make(scenario)
+          fixtures = try PlaygroundFixtures.make(scenario, now: fixtureDate)
           actions = ActionCenter(fixtureAction: { action = "Simulated: \($0). No command was run." })
           if scenario == .empty { workspace = nil }
         } catch {
