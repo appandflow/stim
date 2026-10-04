@@ -58,6 +58,7 @@ export const METHODS = [
   'input.button',
   'input.rotate',
   'input.posture',
+  'input.simulator',
   'push.register',
   'push.unregister',
   'notifications.list',
@@ -481,7 +482,18 @@ export interface ControlBeginResult {
   platform: Platform;
   lease: { grantedAt: string | null; expiresAt: string } | null;
   postures: DevicePosture[];
+  simulator?: SimulatorOptions;
 }
+
+/** Available simulator controls and the current guest animation setting; null means unsupported. */
+export interface SimulatorOptions {
+  canShake: boolean;
+  slowAnimations: boolean | null;
+}
+
+export type SimulatorCommand = { action: 'read' | 'shake' } | { action: 'slow-animations'; enabled: boolean };
+
+export type InputSimulatorParams = SimulatorCommand & { session: string };
 
 export interface ControlEndParams {
   session: string;
@@ -938,6 +950,7 @@ export interface Methods {
   'input.button': { params: InputButtonParams; result: Record<string, never> };
   'input.rotate': { params: InputRotateParams; result: Record<string, never> };
   'input.posture': { params: InputPostureParams; result: Record<string, never> };
+  'input.simulator': { params: InputSimulatorParams; result: SimulatorOptions };
   'push.register': { params: PushRegisterParams; result: Record<string, never> };
   'push.unregister': { params?: Record<string, never>; result: Record<string, never> };
   'notifications.list': { params?: NotificationsListParams; result: NotificationsListResult };
@@ -1412,6 +1425,12 @@ export function protocolJsonSchema(): JsonSchema {
           takeOver: { type: 'boolean', default: false },
         },
       },
+      SimulatorOptions: {
+        type: 'object',
+        required: ['canShake', 'slowAnimations'],
+        additionalProperties: false,
+        properties: { canShake: { type: 'boolean' }, slowAnimations: { type: ['boolean', 'null'] } },
+      },
       ControlBeginResult: {
         type: 'object',
         required: ['session', 'platform', 'lease', 'postures'],
@@ -1434,6 +1453,7 @@ export function protocolJsonSchema(): JsonSchema {
             ],
           },
           postures: { type: 'array', items: { enum: [...DEVICE_POSTURES] }, uniqueItems: true },
+          simulator: { $ref: '#/$defs/SimulatorOptions' },
         },
       },
       BuildPlanParams: {
@@ -1809,6 +1829,12 @@ export function protocolJsonSchema(): JsonSchema {
           request('input.button', session({ button: { enum: [...INPUT_BUTTONS] } }, ['button'])),
           request('input.rotate', session({ direction: { enum: [...ROTATE_DIRECTIONS] } }, ['direction'])),
           request('input.posture', session({ posture: { enum: [...DEVICE_POSTURES] } }, ['posture'])),
+          request('input.simulator', {
+            oneOf: [
+              session({ action: { enum: ['read', 'shake'] } }, ['action']),
+              session({ action: { const: 'slow-animations' }, enabled: { type: 'boolean' } }, ['action', 'enabled']),
+            ],
+          }),
           request('push.register', {
             type: 'object',
             required: ['token', 'events', 'ref'],
@@ -1940,6 +1966,7 @@ export function protocolJsonSchema(): JsonSchema {
                   { $ref: '#/$defs/HostedAppChunkResult' },
                   { $ref: '#/$defs/HelloResult' },
                   { $ref: '#/$defs/ControlBeginResult' },
+                  { $ref: '#/$defs/SimulatorOptions' },
                   { $ref: '#/$defs/ActionResult' },
                   { $ref: '#/$defs/MachineUsage' },
                   { $ref: '#/$defs/MachineHistory' },

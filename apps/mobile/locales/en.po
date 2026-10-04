@@ -3068,6 +3068,10 @@ msgstr "Set by STIM_RECORDING on the Mac"
 msgid "Settings"
 msgstr "Settings"
 
+#: src/screens/device-view.tsx
+msgid "Shake"
+msgstr "Shake"
+
 #: src/screens/logs.tsx
 msgid "Share"
 msgstr "Share"
@@ -3160,6 +3164,10 @@ msgstr "Silent"
 msgid "Simulator"
 msgstr "Simulator"
 
+#: src/screens/device-view.tsx
+msgid "Simulator option not changed"
+msgstr "Simulator option not changed"
+
 #: src/lib/build-machines.ts
 msgid "Simulator SDK differs"
 msgstr "Simulator SDK differs"
@@ -3175,6 +3183,10 @@ msgstr "Simulators and emulators appear here while they run, on every paired mac
 #: src/lib/format.ts
 msgid "slot {slot}"
 msgstr "slot {slot}"
+
+#: src/screens/device-view.tsx
+msgid "Slow animations"
+msgstr "Slow animations"
 
 #: src/lib/settings-options.ts
 msgid "Someone takes over your device"

@@ -2386,7 +2386,19 @@ const { appendFileSync } = require('node:fs');
 const env = process.env;
 const run = { tool: 'stim-frames', args: process.argv.slice(2), pid: process.pid, configs: [] };
 const record = () => appendFileSync(env.FAKE_TOOL_CALLS, JSON.stringify(run) + '\\n');
-process.on('exit', record);
+if (run.args[0] !== 'simulator-options' || env.FAKE_SIMULATOR_OPTIONS) process.on('exit', record);
+if (run.args[0] === 'simulator-options') {
+  if (!env.FAKE_SIMULATOR_OPTIONS) process.exit(1);
+  if (env.FAKE_SIMULATOR_WAIT && run.args[2] !== 'read') {
+    appendFileSync(env.FAKE_TOOL_CALLS + '.option-started', String(process.pid));
+    setInterval(() => {}, 1000);
+  } else {
+    const options = JSON.parse(env.FAKE_SIMULATOR_OPTIONS);
+    if (run.args[2] === 'slow-animations') options.slowAnimations = run.args[3] === 'on';
+    process.stdout.write(JSON.stringify(options));
+    process.exit(0);
+  }
+}
 process.on('SIGTERM', () => process.exit(0));
 const message = (kind, body) => {
   const header = Buffer.alloc(5);
@@ -3243,6 +3255,78 @@ describe('frames.subscribe', () => {
       .map((call) => call.args)
       .filter((args) => args.startsWith('device '));
   }
+
+  test.skipIf(!fakeTailscale)(
+    'changes only advertised simulator options under the current control session',
+    async () => {
+      const port = await startControl({
+        FAKE_SIMULATOR_OPTIONS: JSON.stringify({ canShake: true, slowAnimations: false }),
+      });
+      const client = await authed(port, true);
+      const begun = await client.request('control.begin', { workspace, platform: 'ios' });
+      if (!('result' in begun)) throw new Error(JSON.stringify(begun));
+      const { session, simulator } = begun.result as { session: string; simulator: unknown };
+      expect(simulator).toEqual({ canShake: true, slowAnimations: false });
+      expect(
+        await client.request('input.simulator', { session, action: 'slow-animations', enabled: true }),
+      ).toMatchObject({ result: { canShake: true, slowAnimations: true } });
+      expect(await client.request('input.simulator', { session, action: 'shake', enabled: true })).toMatchObject({
+        error: { code: 'bad-request' },
+      });
+      expect(
+        await client.request('input.simulator', { session, action: 'slow-animations', enabled: 'true' }),
+      ).toMatchObject({ error: { code: 'bad-request' } });
+      expect(await client.request('input.simulator', { session, action: 'shake' })).toMatchObject({
+        result: { canShake: true },
+      });
+      const stranger = await authed(port, true);
+      expect(await stranger.request('input.simulator', { session, action: 'shake' })).toMatchObject({
+        error: { code: 'unknown-session' },
+      });
+      expect(
+        toolRuns()
+          .filter((run) => run.args[0] === 'simulator-options')
+          .map((run) => run.args.slice(2)),
+      ).toEqual([['read'], ['slow-animations', 'on'], ['shake']]);
+    },
+  );
+
+  test.skipIf(!fakeTailscale)(
+    'hides unavailable simulator controls and refuses a mutation without capability',
+    async () => {
+      const port = await startControl({
+        FAKE_SIMULATOR_OPTIONS: JSON.stringify({ canShake: false, slowAnimations: null }),
+      });
+      const client = await authed(port, true);
+      const begun = await client.request('control.begin', { workspace, platform: 'ios' });
+      if (!('result' in begun)) throw new Error(JSON.stringify(begun));
+      const { session } = begun.result as { session: string };
+      expect(await client.request('input.simulator', { session, action: 'shake' })).toMatchObject({
+        error: { code: 'bad-request' },
+      });
+      expect(
+        await client.request('input.simulator', { session, action: 'slow-animations', enabled: true }),
+      ).toMatchObject({ error: { code: 'bad-request' } });
+      expect(toolRuns().filter((run) => run.args[0] === 'simulator-options')).toHaveLength(1);
+    },
+  );
+
+  test.skipIf(!fakeTailscale)('stops a pending simulator option when its control session ends', async () => {
+    const port = await startControl({
+      FAKE_SIMULATOR_OPTIONS: JSON.stringify({ canShake: true, slowAnimations: false }),
+      FAKE_SIMULATOR_WAIT: '1',
+    });
+    const client = await authed(port, true);
+    const begun = await client.request('control.begin', { workspace, platform: 'ios' });
+    if (!('result' in begun)) throw new Error(JSON.stringify(begun));
+    const { session } = begun.result as { session: string };
+    const pending = client.request('input.simulator', { session, action: 'slow-animations', enabled: true });
+    await until(() => existsSync(`${toolCalls}.option-started`));
+    const pid = Number(readFileSync(`${toolCalls}.option-started`, 'utf8'));
+    expect(await client.request('control.end', { session })).toMatchObject({ result: {} });
+    expect(await pending).toMatchObject({ error: { code: 'action-failed' } });
+    expect(() => process.kill(pid, 0)).toThrow('ESRCH');
+  });
 
   test.skipIf(!fakeTailscale)('refuses control to a device paired read-only, and logs it', async () => {
     const port = await startControl();

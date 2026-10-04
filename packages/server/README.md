@@ -1170,6 +1170,15 @@ sends reaches any other device.
   helper receives it, so a failure there shows only in the server's log. A connection may send 120 inputs a second and type 40
   characters a second, with a burst of 256, and rotate or change posture twice a
   second; more fail with `limit-exceeded`.
+- On an owned iOS simulator, `control.begin` also reports optional `simulator`
+  capabilities: `canShake` and `slowAnimations` (a boolean, or `null` when
+  unavailable). `input.simulator` takes the session and `action: "shake"`,
+  `action: "read"`, or `action: "slow-animations"` with an explicit boolean
+  `enabled`. It returns the confirmed capabilities and state. Unavailable
+  controls are refused. The native operation times out after 8 seconds and
+  stops when its control session ends; only one option changes per simulator
+  at a time. These controls use the same CoreSimulator guest notifications as
+  Stim Desktop, without opening Device Hub.
 - `control.end` ends a session. The server also ends it with a
   `control-ended` event `{ "session", "reason", "message" }` after 5 minutes
   without input (`idle`), when another client takes the device over

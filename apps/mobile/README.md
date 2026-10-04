@@ -333,6 +333,13 @@ and **Reconnect** (see [Read-only pairings](#read-only-pairings)). The same
 banner appears when the server refuses `control.begin` with `forbidden`, or
 ends a session because the Mac took control away.
 
+On iOS simulators whose server advertises them, the control toolbar also has
+**Shake** and **Slow animations**. Slow animations shows its confirmed state;
+its buttons wait for the current change to finish. Ending control stops a
+pending change. Older servers and unavailable simulator capabilities leave
+these controls hidden. These options do not appear for physical phones,
+Android or web.
+
 ### Replay
 
 When the Mac has recorded the device, the viewer shows replay controls over
