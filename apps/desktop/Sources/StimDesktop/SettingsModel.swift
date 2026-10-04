@@ -73,8 +73,9 @@ final class SettingsModel: ObservableObject {
           self.loadError = nil
         case .failure(let error):
           self.payload = nil
+          let message = "stim settings --json failed: \(error.localizedDescription)"
           self.loadError =
-            "stim settings --json failed: \(error.localizedDescription) It needs a Stim version with the settings command."
+            message.contains("unknown command") ? message + " It needs a Stim version with the settings command." : message
         }
       }
     }

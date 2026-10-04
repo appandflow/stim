@@ -214,7 +214,9 @@ struct SetupGuideView: View {
         tone: .warning, icon: "exclamationmark.triangle.fill")
     case .outdated(let found)?:
       statusLine(
-        "Node.js \(found ?? "of an unknown version") is older than \(SetupChecks.nodeMinimum).", tone: .warning,
+        "Node.js \(found ?? "of an unknown version")"
+          + (onboarding.report?.nodePath.map { " at \($0)" } ?? "")
+          + " is older than \(SetupChecks.nodeMinimum).", tone: .warning,
         icon: "exclamationmark.triangle.fill")
     }
   }

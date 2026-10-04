@@ -76,7 +76,7 @@ final class ServerController: ObservableObject {
   func cli() async -> StimServerCLI {
     var environment = await environment?.value ?? ProcessInfo.processInfo.environment
     if case .running(let health, _) = state { environment["STIM_HOME"] = health.stimHome }
-    return StimServerCLI(
+    return await StimServerCLI.resolve(
       environment: environment,
       override: UserDefaults.standard.string(forKey: AppPreferences.Key.stimServerExecutable))
   }

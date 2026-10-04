@@ -1036,6 +1036,15 @@ replaces its card. With the main window closed, the link reopens it.
   commands see the same `PATH` and variables such as `ANDROID_HOME` as a
   terminal. It adds `STIM_DESKTOP_APP`, set to the app's bundle path, which
   tells `stim` that Stim Desktop is installed without a Launch Services lookup.
+  It runs `stim` and `stim-server` as their JavaScript file under the Node that
+  `node` resolves to in the home folder, not through the files'
+  `#!/usr/bin/env node` line in the workspace. A version manager that follows
+  the working directory (asdf, mise, Volta) would otherwise run them on the
+  Node a project pins, which can be older than Stim supports. When `stim` on
+  the `PATH` is a version-manager shim rather than a JavaScript file, the app
+  runs the global install that npm, pnpm or bun reports from the home folder.
+  When that Node's binary disappears, as after a Homebrew upgrade, the next
+  command runs through the shebang and later ones use the Node found again.
 
 At launch the app runs `stim --version` and needs 1.11.0 or later. When
 `stim` is missing, too old, or reports no version, a banner explains Stim and
@@ -1083,8 +1092,8 @@ button, or **Continue** once the step is done, and never skips a step; Escape is
 Later**.
 
 1. **Welcome**.
-2. **Install the CLI**: `node --version` from the login shell must report
-   22.12.0 or later. Without it, the step offers `brew install node` when
+2. **Install the CLI**: `node` from the login shell, run in the home folder,
+   must report 22.12.0 or later; an older one is shown with its path. Without it, the step offers `brew install node` when
    `brew` is on the `PATH`, else a link to nodejs.org. Then it
    shows tabs for npm, pnpm and bun, only for the managers on the `PATH`
    (the default is pnpm or bun when its global bin directory is on the `PATH`,

@@ -21,6 +21,8 @@ final class Onboarding: ObservableObject {
     var serverPath: String?
     var viewerKeys: [String]
     var node: CLICompatibility
+    /// The Node binary `node` resolves to in `home`, the one `stim` runs on.
+    var nodePath: String?
     var brewPath: String?
     var skillPath: String?
     /// `HOME` in the login shell's environment, where the setup commands run and the skills CLI installs.
@@ -100,17 +102,19 @@ final class Onboarding: ObservableObject {
       let environment = await environment.value
       let launched = await cli.value.executable
       let report = await Task.detached {
-        let stim = StimCLI(environment: environment, override: stimOverride)
+        let stim = await StimCLI.resolve(environment: environment, override: stimOverride)
         let compatibility = CLICompatibility.check(
           executable: stim.executable, versionOutput: await stim.versionOutput(), minimum: StimCLI.minimumVersion)
-        let server = serverOverride.map { StimServerCLI(environment: environment, override: $0) }
+        var server: StimServerCLI?
+        if let serverOverride { server = await StimServerCLI.resolve(environment: environment, override: serverOverride) }
         let viewerKeys =
           compatibility.isCompatible && offersViewer
           ? (try? await stim.settings(cwd: NSHomeDirectory())).map { DesktopViewerSettings.unset(in: $0.settings) } ?? []
           : []
-        let node = await SetupChecks.version(of: "node", environment: environment)
-        let packages = await PackageManagerLayout.probe(environment: environment)
         let home = environment["HOME"].flatMap { $0.isEmpty ? nil : $0 } ?? NSHomeDirectory()
+        var node = stim.launcher?.runtime
+        if node == nil { node = await NodeRuntime.probe(environment: stim.environment, home: home) }
+        let packages = await PackageManagerLayout.probe(environment: environment, home: home)
         let skillPath = SetupChecks.installedSkill(home: home) {
           FileManager.default.fileExists(atPath: $0)
         }
@@ -131,7 +135,8 @@ final class Onboarding: ObservableObject {
           serverPath: server?.executable,
           viewerKeys: viewerKeys,
           node: CLICompatibility.check(
-            executable: node.path, versionOutput: node.output, minimum: SetupChecks.nodeMinimum),
+            executable: node?.path, versionOutput: node?.version, minimum: SetupChecks.nodeMinimum),
+          nodePath: node?.path,
           brewPath: SetupChecks.tool("brew", environment: environment),
           skillPath: skillPath,
           home: home,

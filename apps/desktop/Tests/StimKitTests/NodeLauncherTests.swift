@@ -1,0 +1,97 @@
+import Foundation
+import Testing
+
+@testable import StimKit
+
+/// A home, a project whose `.nvmrc` pins Node 18, and a `node` shim on PATH that, like asdf's, picks the version
+/// from the working directory. Each fake Node prints its version and arguments.
+private struct VersionManagerFixture {
+  let root: String
+  let home: String
+  let project: String
+  let script: String
+  let environment: [String: String]
+
+  init() throws {
+    root = (NSTemporaryDirectory() as NSString).appendingPathComponent("node-launcher-\(UUID().uuidString)")
+    home = root + "/home"
+    project = root + "/project"
+    script = root + "/prefix/lib/node_modules/stim/dist/cli.mjs"
+    environment = ["PATH": "\(root)/shims:/usr/bin:/bin", "HOME": home]
+    let fm = FileManager.default
+    for directory in [home, project, root + "/shims", root + "/prefix/bin", (script as NSString).deletingLastPathComponent] {
+      try fm.createDirectory(atPath: directory, withIntermediateDirectories: true)
+    }
+    try "18\n".write(toFile: project + "/.nvmrc", atomically: true, encoding: .utf8)
+    try write(
+      root + "/shims/node", "if [ -f .nvmrc ]; then exec \"\(root)/v18/node\" \"$@\"; fi\nexec \"\(root)/v22/node\" \"$@\"")
+    try installNode("18.20.0")
+    try installNode("22.12.0")
+    try "#!/usr/bin/env node\n".write(toFile: script, atomically: true, encoding: .utf8)
+    try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script)
+    try fm.createSymbolicLink(atPath: root + "/prefix/bin/stim", withDestinationPath: "../lib/node_modules/stim/dist/cli.mjs")
+  }
+
+  func installNode(_ version: String) throws {
+    let major = version.split(separator: ".")[0]
+    try FileManager.default.createDirectory(atPath: "\(root)/v\(major)", withIntermediateDirectories: true)
+    try write(
+      "\(root)/v\(major)/node",
+      "if [ \"$1\" = -p ]; then echo \"$0\"; echo \(version); exit 0; fi\necho \"node \(version) $*\"")
+  }
+
+  func write(_ path: String, _ body: String) throws {
+    try "#!/bin/sh\n\(body)\n".write(toFile: path, atomically: true, encoding: .utf8)
+    try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: path)
+  }
+
+  var realScript: String { (script as NSString).resolvingSymlinksInPath }
+}
+
+@Suite struct NodeLauncherTests {
+  @Test func runsStimOnTheHomeDirectorysNodeWhereAProjectPinsAnOlderOne() async throws {
+    let fixture = try VersionManagerFixture()
+    defer { try? FileManager.default.removeItem(atPath: fixture.root) }
+    let stim = fixture.root + "/prefix/bin/stim"
+
+    let shebang = StimCLI(environment: fixture.environment, override: stim)
+    let pinned = try await shebang.run(["--version"], cwd: fixture.project)
+    #expect(String(decoding: pinned, as: UTF8.self).hasPrefix("node 18.20.0 "))
+
+    let cli = await StimCLI.resolve(environment: fixture.environment, override: stim)
+    let output = try await cli.run(["--version"], cwd: fixture.project)
+    #expect(String(decoding: output, as: UTF8.self) == "node 22.12.0 \(fixture.realScript) --version\n")
+  }
+
+  @Test func aVersionManagerShimRunsTheScriptOfTheGlobalInstall() async throws {
+    let fixture = try VersionManagerFixture()
+    defer { try? FileManager.default.removeItem(atPath: fixture.root) }
+    try fixture.write(fixture.root + "/shims/stim", "exec asdf exec stim \"$@\"")
+    let layout = PackageManagerLayout(npmPrefix: fixture.root + "/prefix", installed: [.npm])
+
+    let launcher = await NodeLauncher.resolve(
+      executable: fixture.root + "/shims/stim", name: "stim", environment: fixture.environment, home: fixture.home
+    ) { layout }
+
+    #expect(launcher?.script == fixture.realScript)
+    #expect(launcher?.runtime == NodeRuntime(path: fixture.root + "/v22/node", version: "22.12.0"))
+  }
+
+  @Test func resolvesTheNodeAgainOnceItsBinaryIsGone() async throws {
+    let fixture = try VersionManagerFixture()
+    defer { try? FileManager.default.removeItem(atPath: fixture.root) }
+    let launcher = try #require(
+      await NodeLauncher.resolve(
+        executable: fixture.script, name: "stim", environment: fixture.environment, home: fixture.home
+      ) { PackageManagerLayout() })
+    try FileManager.default.removeItem(atPath: fixture.root + "/v22/node")
+    try fixture.installNode("22.22.0")
+    try FileManager.default.moveItem(atPath: fixture.root + "/v22", toPath: fixture.root + "/v22-new")
+    try fixture.write(fixture.root + "/shims/node", "exec \"\(fixture.root)/v22-new/node\" \"$@\"")
+
+    #expect(launcher.command(["--version"]) == nil)
+    let deadline = Date().addingTimeInterval(10)
+    while launcher.runtime.version != "22.22.0", Date() < deadline { try await Task.sleep(for: .milliseconds(20)) }
+    #expect(launcher.command(["--version"])?.program == fixture.root + "/v22-new/node")
+  }
+}
