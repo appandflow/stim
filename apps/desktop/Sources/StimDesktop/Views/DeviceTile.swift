@@ -32,6 +32,8 @@ struct DeviceTile: View {
   /// A physical device's stream stopped taking input.
   var onControlLost: () -> Void = {}
   @State private var pixelSizes: [UInt32: CGSize] = [:]
+  @State private var frameSizes: [UInt32: CGSize] = [:]
+  @State private var showsDeviceFrame = false
   @State private var screenIDs: [UInt32] = [1]
   @State private var lit: [UInt32: Bool] = [:]
   @State private var folding = false
@@ -56,13 +58,20 @@ struct DeviceTile: View {
   private var screenPadding: CGFloat {
     let height = min(screenHeight, maxCardHeight.map { max(0, $0 - headerHeight - 1) } ?? screenHeight)
     let small = height <= TileSize.small.screenHeight || maxWidth.map { $0 <= Self.minimumWidth } == true
+    if framed { return 0 }
     return !viewer && small ? Space.sm : Space.lg
   }
   static let minimumWidth: CGFloat = 240
   static let stoppedMaximumWidth: CGFloat = 420
 
   var body: some View {
-    if viewer { canvas } else { card }
+    Group {
+      if viewer { canvas } else { card }
+    }
+    .onChange(of: device.id) { _, _ in
+      frameSizes = [:]
+      showsDeviceFrame = false
+    }
   }
 
   private var canvas: some View {
@@ -85,11 +94,16 @@ struct DeviceTile: View {
               .overlay { screenCover }
           }
         }
-        .background(Media.screen)
-        .clipShape(RoundedRectangle(cornerRadius: Radius.card))
-        .overlay { RoundedRectangle(cornerRadius: Radius.card).strokeBorder(frameColor, lineWidth: frameWidth) }
+        .background(framed ? Color.clear : Media.screen)
+        .clipShape(RoundedRectangle(cornerRadius: framed ? 0 : Radius.card))
+        .overlay {
+          if !framed { RoundedRectangle(cornerRadius: Radius.card).strokeBorder(frameColor, lineWidth: frameWidth) }
+        }
         if interactive, Self.hasButtons(device) {
           buttonBar
+        } else if canShowFrame {
+          controlGroup { frameButton }
+            .onGeometryChange(for: CGFloat.self, of: { $0.size.height }, action: { controlsHeight = $0 })
         }
       }
     }
@@ -267,6 +281,19 @@ struct DeviceTile: View {
     }
   }
 
+  private var canShowFrame: Bool { viewer && !replaying && frameSizes[1] != nil }
+  private var framed: Bool { canShowFrame && showsDeviceFrame }
+
+  private var frameButton: some View {
+    Button(showsDeviceFrame ? "Hide device frame" : "Show device frame", systemImage: "iphone.gen3") {
+      showsDeviceFrame.toggle()
+    }
+    .labelStyle(.iconOnly)
+    .buttonStyle(DeviceControlButtonStyle(active: showsDeviceFrame))
+    .help(showsDeviceFrame ? "Hide device frame" : "Show installed device frame")
+    .accessibilityAddTraits(showsDeviceFrame ? .isSelected : [])
+  }
+
   private var buttonBar: some View {
     FlowLayout(spacing: Space.sm, lineSpacing: Space.sm, centered: true) {
       controlGroup {
@@ -287,6 +314,7 @@ struct DeviceTile: View {
         rotateButton(clockwise: false)
         rotateButton(clockwise: true)
       }
+      if canShowFrame { controlGroup { frameButton } }
       if device.formFactor == .dual, screenIDs.count > 1, case .ios(_, let sim) = device {
         if hingeAvailable {
           controlGroup {
@@ -595,8 +623,12 @@ struct DeviceTile: View {
     return displayedScreenIDs.count > 1 && screenID != mainScreenID ? full * 0.3 : full
   }
 
+  private func layoutSize(_ screenID: UInt32) -> CGSize? {
+    framed ? frameSizes[screenID] ?? pixelSizes[screenID] : pixelSizes[screenID]
+  }
+
   private func screenWidth(_ screenID: UInt32) -> CGFloat? {
-    guard let size = pixelSizes[screenID], size.height > 0 else { return nil }
+    guard let size = layoutSize(screenID), size.height > 0 else { return nil }
     return screenHeight(screenID) * size.width / size.height
   }
 
@@ -620,14 +652,15 @@ struct DeviceTile: View {
   }
 
   private var fittedHeight: CGFloat {
-    let availableHeight = screenHeight - (viewer && interactive && Self.hasButtons(device) ? controlsHeight + Space.lg : 0)
+    let availableHeight =
+      screenHeight - (viewer && (interactive && Self.hasButtons(device) || canShowFrame) ? controlsHeight + Space.lg : 0)
     let screenHeight = min(availableHeight, maxCardHeight.map { max(0, $0 - headerHeight - 1) } ?? availableHeight)
     guard let maxWidth else { return screenHeight }
     if replaying, let size = replaySize, size.width > 0, size.height > 0 {
       return min(screenHeight, (maxWidth - screenPadding * 2) * size.height / size.width + screenPadding * 2)
     }
     let ratios = displayedScreenIDs.compactMap { screenID -> CGFloat? in
-      guard let size = pixelSizes[screenID], size.height > 0 else { return nil }
+      guard let size = layoutSize(screenID), size.height > 0 else { return nil }
       return size.width / size.height * (displayedScreenIDs.count > 1 && screenID != mainScreenID ? 0.3 : 1)
     }
     if ratios.count == displayedScreenIDs.count, !ratios.isEmpty {
@@ -669,7 +702,8 @@ struct DeviceTile: View {
             onLitChange: screenIDs.count > 1 ? { lit[screenID] = $0 } : nil,
             buttons: screenID == mainScreenID ? simulatorButtons : nil,
             hingeAngle: viewer && device.formFactor == .dual && posture == "Unfolded" && screenID == mainScreenID
-              ? observedHingeAngle : nil
+              ? observedHingeAngle : nil,
+            showsDeviceFrame: viewer && showsDeviceFrame, onFrameSizeChange: viewer ? { frameSizes[screenID] = $0 } : nil
           )
           .frame(
             width: displayedScreenIDs.contains(screenID) ? screenWidth(screenID) : 0,
@@ -690,15 +724,18 @@ struct DeviceTile: View {
       }
     case .android(_, let avd) where device.isRunning && avd.owned && !avd.physical:
       if let serial = avd.serial {
-        EmulatorScreen(serial: serial, interactive: interactive, buttons: emulatorButtons) { pixelSizes[1] = $0 }
-          .frame(width: screenWidth(1))
-          .padding(screenPadding)
-          .task(id: "\(serial) \(String(describing: pixelSizes[1]))") {
-            while !Task.isCancelled {
-              emulatorPosture = await EmulatorPosture.current(serial: serial)
-              try? await Task.sleep(for: .seconds(emulatorPosture == nil ? 30 : 5))
-            }
+        EmulatorScreen(
+          serial: serial, interactive: interactive, buttons: emulatorButtons, avdName: avd.name,
+          showsDeviceFrame: viewer && showsDeviceFrame, onFrameSizeChange: viewer ? { frameSizes[1] = $0 } : nil
+        ) { pixelSizes[1] = $0 }
+        .frame(width: screenWidth(1))
+        .padding(screenPadding)
+        .task(id: "\(serial) \(String(describing: pixelSizes[1]))") {
+          while !Task.isCancelled {
+            emulatorPosture = await EmulatorPosture.current(serial: serial)
+            try? await Task.sleep(for: .seconds(emulatorPosture == nil ? 30 : 5))
           }
+        }
       } else {
         placeholder(device.state)
       }
@@ -822,6 +859,9 @@ private struct EmulatorScreen: View {
   var serial: String
   var interactive: Bool
   var buttons: EmulatorButtons
+  var avdName: String
+  var showsDeviceFrame: Bool
+  var onFrameSizeChange: ((CGSize?) -> Void)?
   var onPixelSizeChange: (CGSize) -> Void
   @State private var status = EmulatorStreamStatus.connecting
 
@@ -829,7 +869,8 @@ private struct EmulatorScreen: View {
     EmulatorDisplayView(
       serial: serial, interactive: interactive,
       onStatus: { status in DispatchQueue.main.async { self.status = status } },
-      onPixelSizeChange: { size in DispatchQueue.main.async { onPixelSizeChange(size) } }, buttons: buttons
+      onPixelSizeChange: { size in DispatchQueue.main.async { onPixelSizeChange(size) } }, buttons: buttons,
+      avdName: avdName, showsDeviceFrame: showsDeviceFrame, onFrameSizeChange: onFrameSizeChange
     )
     .overlay {
       switch status {

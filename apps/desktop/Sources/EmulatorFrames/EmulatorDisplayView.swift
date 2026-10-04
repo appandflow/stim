@@ -20,29 +20,57 @@ public struct EmulatorDisplayView: NSViewRepresentable {
   public var onStatus: (EmulatorStreamStatus) -> Void
   public var onPixelSizeChange: (CGSize) -> Void
   public var buttons: EmulatorButtons?
+  public var avdName: String?
+  public var showsDeviceFrame: Bool
+  public var onFrameSizeChange: ((CGSize?) -> Void)?
 
   public init(
     serial: String, interactive: Bool = false, onStatus: @escaping (EmulatorStreamStatus) -> Void,
-    onPixelSizeChange: @escaping (CGSize) -> Void = { _ in }, buttons: EmulatorButtons? = nil
+    onPixelSizeChange: @escaping (CGSize) -> Void = { _ in }, buttons: EmulatorButtons? = nil,
+    avdName: String? = nil, showsDeviceFrame: Bool = false, onFrameSizeChange: ((CGSize?) -> Void)? = nil
   ) {
     self.serial = serial
     self.interactive = interactive
     self.onStatus = onStatus
     self.onPixelSizeChange = onPixelSizeChange
     self.buttons = buttons
+    self.avdName = avdName
+    self.showsDeviceFrame = showsDeviceFrame
+    self.onFrameSizeChange = onFrameSizeChange
   }
 
-  public func makeNSView(context: Context) -> EmulatorDisplayNSView {
+  public final class Coordinator {
+    var identity: String?
+  }
+
+  public func makeCoordinator() -> Coordinator { Coordinator() }
+
+  public func makeNSView(context: Context) -> DeviceFrameNSView {
     let view = EmulatorDisplayNSView()
+    let canvas = DeviceFrameNSView(screen: view)
+    canvas.onFrameSizeChange = onFrameSizeChange ?? { _ in }
+    let frameIdentity = showsDeviceFrame || onFrameSizeChange != nil ? avdName : nil
+    context.coordinator.identity = frameIdentity
+    canvas.artwork = frameIdentity == nil ? nil : avdName.flatMap { EmulatorFrameArtwork.load(avdName: $0) }
+    canvas.showsFrame = showsDeviceFrame
+    view.onRotationChange = { [weak canvas] rotation in canvas?.quarterTurns = -rotation }
     view.onStatus = onStatus
     view.onPixelSizeChange = onPixelSizeChange
     view.attach(serial: serial)
     view.setInteractive(interactive)
     buttons?.view = view
-    return view
+    return canvas
   }
 
-  public func updateNSView(_ view: EmulatorDisplayNSView, context: Context) {
+  public func updateNSView(_ canvas: DeviceFrameNSView, context: Context) {
+    guard let view = canvas.screen as? EmulatorDisplayNSView else { return }
+    canvas.onFrameSizeChange = onFrameSizeChange ?? { _ in }
+    let frameIdentity = showsDeviceFrame || onFrameSizeChange != nil ? avdName : nil
+    if context.coordinator.identity != frameIdentity {
+      context.coordinator.identity = frameIdentity
+      canvas.artwork = frameIdentity == nil ? nil : avdName.flatMap { EmulatorFrameArtwork.load(avdName: $0) }
+    }
+    canvas.showsFrame = showsDeviceFrame
     view.onStatus = onStatus
     view.onPixelSizeChange = onPixelSizeChange
     view.attach(serial: serial)
@@ -50,8 +78,8 @@ public struct EmulatorDisplayView: NSViewRepresentable {
     buttons?.view = view
   }
 
-  public static func dismantleNSView(_ view: EmulatorDisplayNSView, coordinator: ()) {
-    view.detach()
+  public static func dismantleNSView(_ canvas: DeviceFrameNSView, coordinator: Coordinator) {
+    (canvas.screen as? EmulatorDisplayNSView)?.detach()
   }
 }
 
@@ -98,6 +126,7 @@ public final class EmulatorDisplayNSView: NSView {
 
   var onStatus: ((EmulatorStreamStatus) -> Void)?
   var onPixelSizeChange: (CGSize) -> Void = { _ in }
+  var onRotationChange: (Int) -> Void = { _ in }
   private var serial: String?
   private var stream: ScreenshotStream?
   private var retryTimer: Timer?
@@ -211,6 +240,7 @@ public final class EmulatorDisplayNSView: NSView {
     layer?.contents = image
     let size = CGSize(width: frame.width, height: frame.height)
     if size != shown?.size { onPixelSizeChange(size) }
+    onRotationChange(frame.rotation)
     self.shown = (size, frame.rotation, frame.folded.map { CGSize(width: $0.width, height: $0.height) })
     _ = inputClient()
     report(.streaming)

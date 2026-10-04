@@ -117,6 +117,17 @@ viewer, with Control already on when the device allows it. Physical iOS devices
 and remote previews stay view-only; Android phones require a valid lease and a
 control-capable pairing. **Release control** or Escape returns to viewing.
 
+In a live local simulator or emulator viewer, **Show device frame** adds matching
+installed hardware artwork. **Hide device frame** returns to the default frameless
+view. Frames rotate with the display, preserve its aspect ratio and input
+coordinates, and do not require Control. Apple frames use installed DeviceKit
+chrome. Android frames use the AVD's configured skin or matching hardware profile
+artwork in `/Applications/Android Studio.app`, with matching screen dimensions.
+Missing artwork and unsupported skin layouts stay frameless; foldables, physical
+and remote devices, web pages and replay do too. Stim does not bundle the artwork.
+Duo's genuine folded housing and mobile frames are not included in this desktop
+slice.
+
 On the All devices and project wall, active workspaces without running or building
 devices use compact cards labelled **No running devices**, with Metro status,
 warnings and error links. CPU and RAM stay on the workspace page.
