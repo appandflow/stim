@@ -44,12 +44,15 @@ function latestBuild(env: EnvironmentState): LastBuildReport | null {
 function stage(
   kind: WorkspaceStage['kind'],
   since: string | null | undefined,
-  platform: StatsPlatform | null = null,
+  platform: StatsPlatform | 'macos' | null = null,
 ): WorkspaceStage {
   return { kind, since: since ?? null, platform, closedApps: [] };
 }
 
 function workspaceStage(env: EnvironmentState): WorkspaceStage {
+  if (env.macos?.build.state === 'running') return stage('building', env.macos.build.startedAt, 'macos');
+  if (env.macos?.build.state === 'failed')
+    return stage('build-failed', env.macos.build.finishedAt ?? env.macos.build.startedAt, 'macos');
   if (env.build?.state === 'running') return stage('building', env.build.startedAt, env.build.platform);
   if (!env.live && env.phase === 'warming') return stage('warming', env.phaseSince);
   if (!env.live && env.phase === 'ready') return stage('ready', env.phaseSince);

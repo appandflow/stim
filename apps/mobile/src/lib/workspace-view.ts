@@ -104,7 +104,7 @@ export function workspaceStage(env: EnvironmentState, devices: DeviceRef[], now:
   const reported = env.stage && STAGE_KINDS.includes(env.stage.kind) ? env.stage : null;
   const facts = reported ?? localStageFacts(env, devices);
   const since = ago(now, facts.since);
-  const platform = facts.platform ? platformName(facts.platform) : '';
+  const platform = facts.platform === 'macos' ? 'macOS' : facts.platform ? platformName(facts.platform) : '';
   switch (facts.kind) {
     case 'building':
       return {

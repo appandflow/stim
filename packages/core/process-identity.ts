@@ -37,13 +37,23 @@ export type ProcessStart = { status: 'running'; startedAtMs: number } | { status
 
 /** Start time of a live process, read from the same OS identity that `captureProcessIdentity` records. */
 export function inspectProcessStart(pid: number): ProcessStart {
+  const result = processStartMicros(pid);
+  return result.status === 'running'
+    ? { status: 'running', startedAtMs: Math.floor(result.startedAtMicros / 1000) }
+    : result;
+}
+
+/** Exact Darwin process start time for a native viewer that revalidates the same owned process. */
+export function processStartMicros(
+  pid: number,
+): { status: 'running'; startedAtMicros: number } | { status: 'gone' | 'unknown' } {
   const captured = capture(pid);
   if (!captured.ok) return captured.error.code === 'NOT_FOUND' ? { status: 'gone' } : { status: 'unknown' };
   const decoded = decode(captured.value);
   if (!decoded.ok || decoded.value.platform !== 'darwin') return { status: 'unknown' };
   const match = /^(\d+):(\d+)$/.exec(decoded.value.startTime);
   if (!match) return { status: 'unknown' };
-  return { status: 'running', startedAtMs: Number(match[1]) * 1000 + Math.floor(Number(match[2]) / 1000) };
+  return { status: 'running', startedAtMicros: Number(match[1]) * 1_000_000 + Number(match[2]) };
 }
 
 export async function waitForProcessExit(record: ProcessRecord, timeoutMs: number): Promise<boolean> {

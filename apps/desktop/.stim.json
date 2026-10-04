@@ -1,0 +1,7 @@
+{
+  "macos": {
+    "product": "StimDesktop",
+    "infoPlist": "Support/Info-Development.plist",
+    "arguments": ["--playground"]
+  }
+}

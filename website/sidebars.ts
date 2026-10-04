@@ -10,7 +10,7 @@ const sidebars: SidebarsConfig = {
       type: 'category',
       label: 'Understand Stim',
       collapsed: false,
-      items: ['build-caches', 'eas-builds', 'worktrees', 'owned-devices', 'dev-server-and-logs', 'web'],
+      items: ['build-caches', 'eas-builds', 'worktrees', 'owned-devices', 'dev-server-and-logs', 'web', 'macos'],
     },
     {
       type: 'category',

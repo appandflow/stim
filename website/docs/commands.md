@@ -463,6 +463,21 @@ whether the next build is a cache hit, how long it should take, and, on a
 miss, which native change causes it.
 ```
 
+## `macos`
+
+```text
+stim macos [--json]
+```
+
+Builds the explicitly configured Swift Package executable in Debug and launches
+an isolated development `.app`. Run from the `Package.swift` directory with
+`macos.product` and `macos.infoPlist` configured. It uses fixed SwiftPM commands,
+with no Metro or custom build scripts. Workspace logs include compiler output
+and runtime stdout/stderr. `status` reports the app and build, and `stop` signals
+only their verified owners. Stim Desktop can show and control one owned window
+on the same Mac using existing permissions. See the [native macOS prototype](./macos.md)
+for metadata, arguments and current limitations.
+
 ## `web`
 
 ```text

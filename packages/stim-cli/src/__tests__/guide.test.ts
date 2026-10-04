@@ -24,6 +24,7 @@ import { AUTOMATION_TOOLS } from '../devices/automation-tools.ts';
 import { STIM_DESKTOP_INSTALLED, workspaceLinkLine } from '../devices/stim-desktop.ts';
 import TOPICS from '../guide/index.ts';
 import webCommand from '../commands/web.ts';
+import macosCommand from '../commands/macos.ts';
 import { buildReport } from '../engine/build-progress.ts';
 import { PLACEMENT_DECISIONS, PLACEMENT_LIMIT, PLACEMENT_MAX_AGE_MS } from '../engine/stats.ts';
 import {
@@ -758,4 +759,16 @@ test('the web topic names every web setting and every stim web flag, and the age
   const keys = SETTINGS.filter((setting) => setting.key.startsWith('web.')).map((setting) => setting.key);
   expect([...keys, ...flags].filter((name) => !body.includes(name!))).toEqual([]);
   expect(renderTopic('agent')).toContain('stim guide web');
+});
+
+test('the macos guide covers the declared command flags and project settings', () => {
+  const body = renderTopic('macos');
+  assert(body);
+  const program = new Command();
+  macosCommand(program);
+  const flags = program.commands.find((command) => command.name() === 'macos')?.options.map((option) => option.long);
+  assert(flags?.length);
+  const keys = SETTINGS.filter((setting) => setting.key.startsWith('macos.')).map((setting) => setting.key);
+  expect([...keys, ...flags].filter((name) => !body.includes(name!))).toEqual([]);
+  expect(renderTopic('agent')).toContain('stim guide macos');
 });

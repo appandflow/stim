@@ -440,7 +440,7 @@ export function findProjectRoot(startDir: string): string | null {
     dir = resolve(startDir);
   }
   while (true) {
-    if (existsSync(join(dir, 'package.json'))) return dir;
+    if (existsSync(join(dir, 'package.json')) || existsSync(join(dir, 'Package.swift'))) return dir;
     const parent = dirname(dir);
     if (parent === dir) return null;
     dir = parent;
