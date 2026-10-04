@@ -1812,6 +1812,7 @@ msgid "hit"
 msgstr "hit"
 
 #: src/screens/device-view.tsx
+#: src/screens/device-view.tsx
 #: src/screens/settings.ios.tsx
 #: src/screens/settings.tsx
 msgid "Home"
@@ -2222,6 +2223,7 @@ msgstr "miss: {summary}"
 msgid "Modifiers apply to one letter or digit at a time. Use the extra keys for navigation."
 msgstr "Modifiers apply to one letter or digit at a time. Use the extra keys for navigation."
 
+#: src/components/viewer-toolbar.tsx
 #: src/screens/settings.ios.tsx
 #: src/screens/settings.tsx
 #: src/screens/workspace-detail.tsx
