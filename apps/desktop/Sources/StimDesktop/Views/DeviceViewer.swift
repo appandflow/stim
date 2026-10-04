@@ -194,9 +194,11 @@ struct DeviceViewer: View {
   }
 
   private func scalingModes(_ device: DeviceRef, replaying: Bool) -> [DeviceScalingMode] {
-    guard !replaying, device.isRunning, !device.isPhysical, device.formFactor != .dual,
-      device.platform == "ios" || device.platform == "android"
-    else { return [.fit] }
+    switch device {
+    case .ios, .android: break
+    case .remote, .web: return [.fit]
+    }
+    guard !replaying, device.isRunning, !device.isPhysical, device.formFactor != .dual else { return [.fit] }
     return DeviceScalingMode.allCases.filter {
       $0 == .fit
         || devicePixelScale(
