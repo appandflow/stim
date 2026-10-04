@@ -400,6 +400,19 @@ ends the session and the tunnel.
 An install or launch failure leaves the session running and billed. The remedy
 names the session: rerun the command to reuse it, or run `stim stop` to end it.
 
+## Control from the phone viewer
+
+A phone granted control can use the bottom icon toolbar for Home, Lock,
+Keyboard, rotation and supported foldable postures. The bar stays below the
+screen in portrait and landscape and scrolls sideways when needed. Duo
+simulators include Rotate left and Rotate right; the app in front still needs
+to support the requested orientation. Physical devices rotate only in hand.
+
+Tapping Control explicitly takes over from the displayed driver immediately.
+If the server reports a driver conflict after that tap, the Take over action
+also starts control immediately. The server keeps its exclusive control lease
+and records the takeover. Viewing replay remains read-only.
+
 ## Replay device screens
 
 `stim-server` records owned simulators, emulators and the Stim-owned Chrome
