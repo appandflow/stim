@@ -36,7 +36,7 @@ struct PhonesView: View {
       }
 
       if case .running(let health, _) = server.state, let route = health.route, let dnsName = health.tailscale.dnsName {
-        RouteSection(route: route, dnsName: dnsName, port: server.port)
+        RouteSection(server: server, route: route, dnsName: dnsName)
       }
 
       Section {
@@ -60,7 +60,7 @@ struct PhonesView: View {
           Text("Paired phones")
           Spacer()
           Button("Pair a Phone\u{2026}") { pairing = true }
-            .disabled(!server.isRunning)
+            .disabled(pairingUnavailable != nil)
             .help(pairingUnavailable ?? "Show a code to pair a phone")
         }
       }
@@ -147,7 +147,11 @@ struct PhonesView: View {
 
   private var pairingUnavailable: String? {
     switch server.state {
-    case .running: return nil
+    case .running(let health, _):
+      if health.tailscale.isRunning && health.route?.state != "routed" {
+        return "Pairing needs a verified tailnet-only connection. Set it up in the Tailscale route section."
+      }
+      return nil
     case .off: return "Pairing needs stim-server. Turn on Serve to phones to pair a phone."
     case .starting: return "Pairing is available once stim-server has started."
     case .failed: return "Pairing is unavailable because stim-server failed to start."
@@ -229,7 +233,7 @@ private struct TailscaleSetup: View {
         if canRestart {
           Button("Restart Server", action: restart)
         }
-        Text("3. Run the tailscale serve command this tab then shows, once.")
+        Text("3. Choose Set up connection in this tab.")
       }
       .padding(.vertical, Space.xs)
     }
@@ -247,9 +251,10 @@ private struct TailscaleSetup: View {
 }
 
 private struct RouteSection: View {
+  @ObservedObject var server: ServerController
   var route: ServeRoute
   var dnsName: String
-  var port: Int
+  private var port: Int { server.port }
 
   var body: some View {
     Section("Tailscale route") {
@@ -276,19 +281,37 @@ private struct RouteSection: View {
             systemImage: "exclamationmark.triangle.fill"
           )
           .foregroundStyle(Palette.warning)
-          Text("Once, serve it on a dedicated tailnet-only port. Phones then connect to \(route.endpoint(dnsName: dnsName)).")
+          Text("Set up a dedicated tailnet-only connection. Tailscale may ask you to enable HTTPS in your browser.")
             .foregroundStyle(Palette.secondary)
-          command
+          setup
         default:
           Label(
-            "Could not read tailscale serve status: \(route.reason ?? "unknown reason"). Pairing assumes \(route.endpoint(dnsName: dnsName)).",
+            "Could not read tailscale serve status: \(route.reason ?? "unknown reason"). Pairing waits until the connection is verified.",
             systemImage: "exclamationmark.triangle.fill"
           )
           .foregroundStyle(Palette.warning)
           .fixedSize(horizontal: false, vertical: true)
+          setup
+        }
+        if let error = server.connectionError {
+          Text(abbreviatingHome(error)).foregroundStyle(Palette.error).textSelection(.enabled)
+          if let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue),
+            let url = detector.matches(in: error, range: NSRange(error.startIndex..., in: error))
+              .compactMap(\.url).first(where: { $0.scheme == "https" && $0.host == "login.tailscale.com" })
+          {
+            Link("Open Tailscale setup", destination: url)
+          }
         }
       }
       .padding(.vertical, Space.xs)
+    }
+  }
+
+  private var setup: some View {
+    HStack {
+      Button(server.connectionError == nil ? "Set up connection" : "Try Again") { server.setupConnection() }
+        .disabled(server.settingUpConnection)
+      if server.settingUpConnection { ProgressView().controlSize(.small) }
     }
   }
 
@@ -529,11 +552,9 @@ struct PairSheet: View {
     error = nil
     code = nil
     showsToken = false
-    let port = server.port
     let control = allowsControl
     Task {
-      let cli = await server.cli()
-      let result = await Result.awaiting { try await cli.pair(port: port, control: control) }
+      let result = await Result.awaiting { try await server.pairPhone(control: control) }
       guard control == allowsControl else { return }
       switch result {
       case .success(let value): code = value

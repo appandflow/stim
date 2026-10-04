@@ -162,6 +162,25 @@ if (command === 'status') {
   process.exit(0);
 }
 if (command === 'serve') {
+  const fs = require('node:fs');
+  const args = process.argv.slice(2);
+  if (process.env.FAKE_SERVE_CALLS) fs.appendFileSync(process.env.FAKE_SERVE_CALLS, JSON.stringify(args) + '\\n');
+  if (args[1] !== 'status') {
+    if (process.env.FAKE_SERVE_HANG) { setInterval(() => {}, 1000); return; }
+    if (process.env.FAKE_SERVE_FAILURE) {
+      console.error(process.env.FAKE_SERVE_FAILURE);
+      process.exit(1);
+    }
+    if (!process.env.FAKE_SERVE_NO_CHANGE) {
+      const port = args.find((arg) => arg.startsWith('--https=')).split('=')[1];
+      const config = JSON.parse(fs.readFileSync(process.env.FAKE_SERVE_STATUS, 'utf8'));
+      config.TCP = { ...config.TCP, [port]: { HTTPS: true } };
+      config.Web = { ...config.Web, ['test.tail.ts.net:' + port]: { Handlers: { '/': { Proxy: args.at(-1) } } } };
+      fs.writeFileSync(process.env.FAKE_SERVE_STATUS, JSON.stringify(config));
+    }
+    process.exit(0);
+  }
+  if (process.env.FAKE_SERVE_STATUS_HANG) { setInterval(() => {}, 1000); return; }
   console.log(require('node:fs').readFileSync(process.env.FAKE_SERVE_STATUS, 'utf8'));
   process.exit(0);
 }
@@ -308,8 +327,10 @@ async function start(
   return server.addresses[0]!.port;
 }
 
-function connect(port: number, peer?: string): Promise<Client> {
-  const socket = new WebSocket(`ws://127.0.0.1:${port}`, { headers: peer ? { 'x-forwarded-for': peer } : {} });
+function connect(port: number, peer?: string, headers: Record<string, string> = {}): Promise<Client> {
+  const socket = new WebSocket(`ws://127.0.0.1:${port}`, {
+    headers: { ...(peer ? { 'x-forwarded-for': peer } : {}), ...headers },
+  });
   clients.push(socket);
   const inbox: ServerMessage[] = [];
   const waiting: ((message: ServerMessage) => void)[] = [];
@@ -419,6 +440,153 @@ afterEach(async () => {
   await server?.close();
   delete process.env.STIM_HOME;
   rmSync(root, { recursive: true, force: true });
+});
+
+describe.skipIf(!fakeTailscale)('Desktop route setup', () => {
+  async function routeServer(config: unknown = {}, env: Record<string, string> = {}) {
+    const status = join(root, 'serve.json');
+    const commandLog = join(root, 'serve-calls.ndjson');
+    writeFileSync(status, typeof config === 'string' ? config : JSON.stringify(config));
+    const port = await start({
+      tailscaleState: { state: 'running', dnsName: 'test.tail.ts.net', ips: [], hostName: 'test' },
+      env: { FAKE_SERVE_STATUS: status, FAKE_SERVE_CALLS: commandLog, ...env },
+    });
+    return {
+      port,
+      status,
+      commands: () =>
+        existsSync(commandLog)
+          ? readFileSync(commandLog, 'utf8')
+              .trim()
+              .split('\n')
+              .filter(Boolean)
+              .map((line) => JSON.parse(line) as string[])
+          : [],
+    };
+  }
+
+  it('creates and verifies a private free-port proxy without changing other handlers or Funnel', async () => {
+    const original = {
+      TCP: { '443': { HTTPS: true }, '7443': { HTTPS: true } },
+      Web: { 'test.tail.ts.net:443': { Handlers: { '/': { Proxy: 'http://127.0.0.1:9999' } } } },
+      AllowFunnel: { 'test.tail.ts.net:443': true },
+    };
+    const fixture = await routeServer(original);
+    const client = await authed(fixture.port, true);
+    expect(await client.request('route.setup', {})).toMatchObject({ result: { state: 'routed', port: 7444 } });
+    expect(fixture.commands()).toEqual([
+      ['serve', 'status', '--json'],
+      ['serve', '--bg', '--https=7444', `http://127.0.0.1:${fixture.port}`],
+      ['serve', 'status', '--json'],
+    ]);
+    const config = JSON.parse(readFileSync(fixture.status, 'utf8'));
+    expect(config.AllowFunnel).toEqual(original.AllowFunnel);
+    expect(config.Web['test.tail.ts.net:443']).toEqual(original.Web['test.tail.ts.net:443']);
+    expect(await client.request('route.setup')).toMatchObject({ result: { state: 'routed', port: 7444 } });
+    expect(fixture.commands().filter((args) => args[1] !== 'status')).toHaveLength(1);
+  });
+
+  it.each([
+    ['invalid JSON', '{', 'not JSON'],
+    ['unrecognized config', { Error: 'service unavailable' }, 'unrecognized'],
+    ['malformed config', { TCP: [] }, 'malformed'],
+    ['malformed foreground', { Foreground: { session: null } }, 'malformed'],
+  ])('refuses %s before changing any route', async (_name, config, reason) => {
+    const fixture = await routeServer(config);
+    const client = await authed(fixture.port, true);
+    expect(await client.request('route.setup')).toMatchObject({
+      error: { code: 'action-failed', message: expect.stringContaining(reason) },
+    });
+    expect(fixture.commands()).toEqual([['serve', 'status', '--json']]);
+  });
+
+  it('refuses an existing public route rather than adding another or changing Funnel', async () => {
+    const fixture = await routeServer();
+    writeFileSync(
+      fixture.status,
+      JSON.stringify({
+        TCP: { '443': { HTTPS: true } },
+        Web: { 'test.tail.ts.net:443': { Handlers: { '/': { Proxy: `http://127.0.0.1:${fixture.port}` } } } },
+        AllowFunnel: { 'test.tail.ts.net:443': true },
+      }),
+    );
+    const client = await authed(fixture.port, true);
+    expect(await client.request('route.setup')).toMatchObject({
+      error: { code: 'action-failed', message: expect.stringContaining('Funnel') },
+    });
+    expect(fixture.commands()).toEqual([['serve', 'status', '--json']]);
+  });
+
+  it.each([
+    [
+      'command refusal',
+      { FAKE_SERVE_FAILURE: 'Enable HTTPS at https://login.tailscale.com/admin/dns' },
+      'Enable HTTPS',
+    ],
+    ['unverified command success', { FAKE_SERVE_NO_CHANGE: '1' }, 'could not be verified'],
+  ])('keeps %s readable and permits an explicit retry', async (_name, env, reason) => {
+    const fixture = await routeServer({}, env);
+    const client = await authed(fixture.port, true);
+    for (let attempt = 0; attempt < 2; attempt++) {
+      expect(await client.request('route.setup')).toMatchObject({
+        error: { code: 'action-failed', message: expect.stringContaining(reason) },
+      });
+    }
+    expect(fixture.commands().filter((args) => args[1] !== 'status')).toHaveLength(2);
+  });
+
+  it('refuses a timed-out status probe without inferring that a route is missing', async () => {
+    const fixture = await routeServer({}, { FAKE_SERVE_STATUS_HANG: '1' });
+    const client = await authed(fixture.port, true);
+    expect(await client.request('route.setup')).toMatchObject({
+      error: { code: 'action-failed', message: expect.stringContaining('timed out') },
+    });
+    expect(fixture.commands()).toEqual([['serve', 'status', '--json']]);
+  });
+
+  it('bounds a stalled setup command and keeps the failure retryable', async () => {
+    const fixture = await routeServer({}, { FAKE_SERVE_HANG: '1' });
+    const client = await authed(fixture.port, true);
+    expect(await client.request('route.setup')).toMatchObject({
+      error: { code: 'action-failed', message: expect.stringContaining('setup timed out') },
+    });
+    expect(JSON.parse(readFileSync(fixture.status, 'utf8'))).toEqual({});
+  }, 15_000);
+
+  it.each([
+    ['read-only', false, {}],
+    ['forwarded empty', true, { 'x-forwarded-for': '' }],
+    ['forwarded host', true, { 'x-forwarded-host': 'test.tail.ts.net' }],
+    ['forwarded proto', true, { 'x-forwarded-proto': 'https' }],
+    ['Forwarded', true, { forwarded: 'for=100.64.0.2' }],
+    ['browser', true, { origin: 'http://attacker.example' }],
+    ['rebound host', true, { host: 'attacker.example' }],
+  ])('refuses %s even when it authenticates with a local token', async (_name, control, headers) => {
+    const fixture = await routeServer();
+    const { token } = await pair(fixture.port, undefined, control);
+    const client = await connect(fixture.port, undefined, headers);
+    await client.request('hello', { protocol: 1, client: CLIENT, auth: { deviceToken: token } });
+    expect(await client.request('route.setup')).toMatchObject({ error: { code: 'forbidden' } });
+    expect(fixture.commands()).toEqual([]);
+  });
+
+  it('refuses an authenticated tailnet control client', async () => {
+    const fixture = await routeServer();
+    const { token } = await pair(fixture.port, '100.64.0.2', true);
+    const client = await connect(fixture.port, '100.64.0.2');
+    await client.request('hello', { protocol: 1, client: CLIENT, auth: { deviceToken: token } });
+    expect(await client.request('route.setup')).toMatchObject({ error: { code: 'forbidden' } });
+    expect(fixture.commands()).toEqual([]);
+  });
+
+  it('refuses setup when Tailscale is unavailable and rejects target parameters', async () => {
+    const port = await start();
+    const client = await authed(port, true);
+    expect(await client.request('route.setup')).toMatchObject({
+      error: { code: 'action-failed', message: expect.stringContaining('Start Tailscale') },
+    });
+    expect(await client.request('route.setup', { port: 443 })).toMatchObject({ error: { code: 'bad-request' } });
+  });
 });
 
 describe('pairing', () => {

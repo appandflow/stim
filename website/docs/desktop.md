@@ -232,7 +232,10 @@ stim ios`}
 2. Click a device to open its viewer. **Take over** lets you use it; Escape
    gives it back.
 3. To use the phone app, open **Stim > Settings > Phones**, turn on **Serve to
-   phones** and choose **Pair a Phone…**.
+   phones**, choose **Set up connection** if needed, then **Pair a Phone…**.
+   Setup keeps existing Tailscale routes and never enables Funnel. If Tailscale
+   asks to enable HTTPS, approve its browser setup and retry. Pairing waits for a
+   verified private route; a timeout changes nothing.
 
 Revoking a paired phone closes its active connections on the next pairing
 check. The server checks pairings on changes and once a second. If QR pairing
