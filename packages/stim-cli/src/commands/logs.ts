@@ -21,6 +21,7 @@ import {
   queryLogs,
   queryJsonLogs,
   readLogRecords,
+  readMacosRecord,
   recordMatches,
   sortByTs,
 } from '@stim-cli/core/state';
@@ -268,7 +269,7 @@ export default function logsCommand(program: Command): void {
       const readAgent =
         (sources ? sources.includes('agent') : !opts.errors) && agentSince !== undefined
           ? createAgentActionReader({
-              targets: workspaceAgentTargets(loadConfig()?.projects?.[root]),
+              targets: workspaceAgentTargets(loadConfig()?.projects?.[root], readMacosRecord(root)),
               sinceTs: agentSince,
             })
           : null;

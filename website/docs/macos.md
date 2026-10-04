@@ -145,6 +145,32 @@ An
 unverifiable owner refuses cleanup rather than signalling another app. `stop`
 affects only this workspace's recorded app and supervisor.
 
+## Agent actions
+
+Launch the app through `stim macos` first. Use its isolated `bundleId` from
+the JSON launch record or `stim status --json` when opening it with agent-device:
+
+```sh
+agent-device open <bundleId> --platform macos --surface app --foreground
+agent-device click <ref> --settle
+stim logs --source agent
+```
+
+Recorded app-scoped actions and failures appear in the Desktop workspace's
+agent actions panel and the phone viewer. Text stays redacted by agent-device;
+timing includes its settle wait. App switches, unrecorded open/close attempts,
+unknown event formats and event-log rotation clear attribution. Open again with
+explicit `--surface app` to resume the feed; omitted surface can inherit a prior
+desktop or menubar session. Native screenshot actions are omitted because their
+surface override is absent from the recorded metadata. Generic computer-use
+tools and phone Control do not populate this feed. Keep launches and stops in
+Stim; manually duplicated bundles sharing its isolated identifier are unsupported.
+Native app replay remains unavailable.
+
+The feed requires agent-device to record the explicit surface in its open event.
+Version 0.21.12 omits it, so native actions remain unavailable with that version.
+Stim does not infer the surface from the bundle ID.
+
 ## Monitor from your phone
 
 Pair the phone with this Mac's stim-server. Native workspaces show the app, build
