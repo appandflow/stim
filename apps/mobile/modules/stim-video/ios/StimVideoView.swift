@@ -13,8 +13,10 @@ class StimVideoView: ExpoView {
   private var sps = Data()
   private var pps = Data()
   private var waitingForKeyframe = true
+  private var generation: Int?
 
   let onKeyframeNeeded = EventDispatcher()
+  let onOrientationCleared = EventDispatcher()
 
   var streamId: String? {
     didSet {
@@ -41,12 +43,20 @@ class StimVideoView: ExpoView {
     display.frame = bounds
   }
 
-  func push(_ accessUnit: Data) {
-    queue.async { self.decode(accessUnit) }
+  func push(_ accessUnit: Data, generation: Int? = nil) {
+    queue.async { self.decode(accessUnit, generation: generation) }
   }
 
-  private func decode(_ accessUnit: Data) {
+  private func decode(_ accessUnit: Data, generation: Int?) {
     let layer = display.displayLayer
+    if self.generation != generation {
+      self.generation = generation
+      layer.flushAndRemoveImage()
+      waitingForKeyframe = true
+      if let generation {
+        DispatchQueue.main.async { self.onOrientationCleared(["generation": generation]) }
+      }
+    }
     if layer.status == .failed {
       layer.flush()
       waitingForKeyframe = true

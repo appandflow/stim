@@ -12,6 +12,8 @@ import { DeviceView } from './device-view';
 const mockBegin = jest.fn();
 const mockRotate = jest.fn();
 const mockZoom = jest.fn();
+const mockTouch = jest.fn();
+let mockArtwork = false;
 let mockControlling = true;
 let mockAllowed = true;
 let mockPhysical = false;
@@ -58,7 +60,7 @@ jest.mock('@/hooks/machines', () => ({
   }),
   useMacConnection: () => ({
     mac: { id: 'm1', name: 'Fixture Mac' },
-    state: { kind: 'open', deviceId: 'phone', features: ['frames'] },
+    state: { kind: 'open', deviceId: 'phone', features: ['frames', 'device-frames'] },
     connection: null,
   }),
 }));
@@ -71,11 +73,27 @@ jest.mock('@/hooks/device-control', () => ({
     begin: mockBegin,
     end: jest.fn(),
     rotate: mockRotate,
+    touch: mockTouch,
   }),
 }));
 jest.mock('@/hooks/device-stream', () => ({
   useReplayAt: () => null,
-  useDeviceStream: () => ({ frame: { width: 400, height: 800, posture: 'folded' }, replay: null, video: null }),
+  useDeviceStream: () => ({
+    frame: { width: 400, height: 800, ...(mockArtwork ? { artworkTurns: 0 } : { posture: 'folded' }) },
+    replay: null,
+    video: null,
+    artwork: mockArtwork
+      ? {
+          width: 500,
+          height: 1000,
+          aperture: { x: 50, y: 100, width: 400, height: 800 },
+          quarterTurns: 0,
+          cornerRadius: 20,
+          background: 'png',
+          foreground: 'png',
+        }
+      : null,
+  }),
 }));
 jest.mock('@/hooks/replay-range', () => ({ useReplayRange: () => null }));
 jest.mock('@/hooks/auto-hide', () => ({ useAutoHide: () => ({ shown: true, hide: jest.fn() }) }));
@@ -99,7 +117,9 @@ jest.mock('@/hooks/screen-zoom', () => ({
   useScreenZoom: () => ({ gesture: {}, zoomed: false, lens: { scale: { get: () => 1 } } }),
 }));
 jest.mock('@/components/agent-feed', () => ({ AgentFeed: () => null }));
-jest.mock('@/components/device-screen', () => ({ DeviceScreen: () => null }));
+jest.mock('@/components/device-screen', () => ({
+  DeviceScreen: jest.requireActual<typeof import('react-native')>('react-native').View,
+}));
 jest.mock('@/components/viewer-backdrop', () => ({ ViewerBackdrop: () => null }));
 jest.mock('@/components/replay-bar', () => ({ ReplayBar: () => null }));
 jest.mock('@/components/lists', () => ({
@@ -119,6 +139,7 @@ beforeEach(() => {
   mockControlling = true;
   mockAllowed = true;
   mockPhysical = false;
+  mockArtwork = false;
   jest.clearAllMocks();
 });
 
@@ -175,4 +196,32 @@ it('keeps physical iPhones view-only without rotation buttons', async () => {
   );
   expect(screen.queryByLabelText('Rotate left')).toBeNull();
   expect(screen.queryByLabelText('Rotate right')).toBeNull();
+});
+
+it('starts frameless and maps framed touches using the aperture layout rather than the housing fit', async () => {
+  mockArtwork = true;
+  const screen = await render(
+    <I18nProvider i18n={i18n}>
+      <DeviceView workspace="/fixture" platform="ios" slot="default" />
+    </I18nProvider>,
+  );
+  const toggle = screen.getByLabelText('Device frame');
+  expect(toggle.props.accessibilityState.selected).toBe(false);
+  await fireEvent.press(toggle);
+  expect(screen.getByLabelText('Device frame').props.accessibilityState.selected).toBe(true);
+  const views = screen.root!.queryAll(
+    (view) => view.props.onResponderGrant !== undefined && view.props.pointerEvents === 'auto',
+  );
+  const aperture = views.find((view) => view.props.onResponderGrant)!;
+  expect(views.filter((view) => view.props.onResponderGrant)).toHaveLength(1);
+  await fireEvent(aperture, 'layout', { nativeEvent: { layout: { x: 30, y: 60, width: 300, height: 600 } } });
+  await fireEvent(aperture, 'responderGrant', { nativeEvent: { locationX: 150, locationY: 300 } });
+  await fireEvent(aperture, 'responderRelease', { nativeEvent: { locationX: 450, locationY: 900 } });
+  expect(mockTouch.mock.calls).toEqual([
+    ['down', 0.5, 0.5],
+    ['up', 1, 1],
+  ]);
+  mockTouch.mockClear();
+  await fireEvent(aperture, 'responderGrant', { nativeEvent: { locationX: -10, locationY: 300 } });
+  expect(mockTouch).not.toHaveBeenCalled();
 });

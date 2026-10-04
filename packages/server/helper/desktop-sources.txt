@@ -15,3 +15,8 @@ WebFrames/WebPage.swift
 EmulatorFrames/ScrcpyProtocol.swift
 EmulatorFrames/H264Decoder.swift
 EmulatorFrames/AndroidDeviceStream.swift
+StimKit/DeviceFrameGeometry.swift
+StimKit/DeviceFrameView.swift
+StimKit/StoragePaths.swift
+SimulatorFrames/SimulatorFrameArtwork.swift
+EmulatorFrames/EmulatorFrameArtwork.swift

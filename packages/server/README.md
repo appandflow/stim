@@ -612,6 +612,23 @@ Events are `{ "event", "subscription", ... }`.
   socket has more than two frames unsent skips frames and gets the newest
   once it catches up.
 
+  A server advertising `device-frames` accepts `deviceFrame: true` for live
+  ordinary iOS simulators and Android emulators. The existing read permission
+  and registered-workspace/owned-device checks apply. `device-frame` events
+  carry `artwork` (or null): PNG `background` and `foreground` layers, outer
+  `width` and `height`, screen `aperture` (`x`, `y`, `width`, `height`),
+  `cornerRadius`, and clockwise `quarterTurns`. Pixels come from installed
+  DeviceKit or Android skins at runtime; no artwork is bundled and no local
+  file paths are exposed. Layers are sent only to opt-in subscriptions and
+  cleared on replay or device changes. The screen bytes stay unchanged.
+  JPEG `artworkTurns` and live H.264 flag bit 5 with quarter-turns in bits 3-4
+  bind housing to its capture, including same-size rotations. A client shows
+  housing only when that rotation and aperture aspect match its screen.
+  Missing, oversized or unsupported artwork falls back to the existing screen:
+  Duo, Android foldables/circular displays, web and physical devices have no
+  housing in this path. Artwork notices stay within the helper's 16 MiB message
+  limit; the combined PNG layers are limited to 10 MiB before base64 encoding.
+
   Frames come from the `stim-frames` helper. When it starts, the server
   compiles it with `xcrun swiftc` from the Swift sources shipped in
   `dist/stim-frames/` (its own `main.swift` and the frame and input code it

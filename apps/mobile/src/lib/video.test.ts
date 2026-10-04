@@ -39,6 +39,16 @@ describe('parseVideoPacket', () => {
     expect(parseVideoPacket(packet('s1', 4, [1]))).toMatchObject({ keyframe: false, posture: 'unfolded' });
   });
 
+  it('reads artwork orientation without changing posture or the access-unit offset', () => {
+    const old = parseVideoPacket(packet('s1', 1, [0x65]));
+    expect(old).not.toHaveProperty('artworkTurns');
+    for (const turn of [0, 1, 2, 3]) {
+      const next = parseVideoPacket(packet('s1', 1 | 2 | 32 | (turn << 3), [0x65]))!;
+      expect(next).toMatchObject({ artworkTurns: turn, keyframe: true, posture: 'folded' });
+      expect([...next.accessUnit]).toEqual([0x65]);
+    }
+  });
+
   it('rejects another version and a header longer than the message', () => {
     const other = packet('s1', 0, [1]);
     new DataView(other).setUint8(0, 2);

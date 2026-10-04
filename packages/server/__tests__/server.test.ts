@@ -26,6 +26,8 @@ import {
   readViewedDevices,
   tryAcquireBuildSlotClaim,
 } from '@stim-cli/core/state';
+import { ownedDevice } from '../src/frames.ts';
+import type { StatusPayload } from '@stim-cli/core/state';
 import type { HelloResult, MachineUsage, ServerMessage, StatusEvent } from '../src/protocol.ts';
 import { runNodeCommand } from '../src/stim-command.ts';
 import { readAudit } from '../src/actions.ts';
@@ -436,7 +438,7 @@ describe('pairing', () => {
         protocol: 1,
         server: { name: 'Test Mac', version: '1.2.3', stim: '9.9.9', home: homedir() },
         capabilities: ['read'],
-        features: ['physical-ios', 'physical-android', 'notifications'],
+        features: ['physical-ios', 'physical-android', 'notifications', 'device-frames'],
         actions: [],
       },
     });
@@ -2416,7 +2418,11 @@ process.stdin.on('data', (chunk) => {
     run.configs.push(line);
     if (line.keyframe) keyframe = true;
     else if (line.recordKeyframe) recordKeyframe = true;
-    else config = line;
+    else {
+      const wantsArtwork = !config.deviceFrame && line.deviceFrame;
+      config = line;
+      if (wantsArtwork && env.FAKE_HELPER_ARTWORK) message(2, Buffer.from(JSON.stringify({ deviceFrame: JSON.parse(env.FAKE_HELPER_ARTWORK) })));
+    }
     lines = lines.slice(at + 1);
   }
 });
@@ -2427,7 +2433,7 @@ setInterval(() => {
   if (typeof displays[sent] === 'number') message(2, Buffer.from(JSON.stringify({ display: displays[sent] })));
   if (config.video) {
     const header = Buffer.alloc(13);
-    header[0] = keyframe ? 1 : 0;
+    header[0] = (keyframe ? 1 : 0) | (env.FAKE_HELPER_ARTWORK ? 32 | (2 << 3) : 0);
     header.writeDoubleBE(1759000000000 + sent, 1);
     header.writeUInt16BE(588, 9);
     header.writeUInt16BE(1280, 11);
@@ -2447,7 +2453,7 @@ setInterval(() => {
   const size = Buffer.alloc(4);
   size.writeUInt16BE(390, 0);
   size.writeUInt16BE(844, 2);
-  message(1, Buffer.concat([size, Buffer.from('frame ' + sent++)]));
+  message(env.FAKE_HELPER_ARTWORK ? 5 : 1, Buffer.concat([size, ...(env.FAKE_HELPER_ARTWORK ? [Buffer.from([2])] : []), Buffer.from('frame ' + sent++)]));
   if (env.FAKE_HELPER_FAIL_AFTER && sent >= Number(env.FAKE_HELPER_FAIL_AFTER)) {
     message(2, Buffer.from(JSON.stringify({ error: env.FAKE_HELPER_FAIL })));
     process.exit(1);
@@ -2486,6 +2492,23 @@ const OWNED_WEB = {
 };
 
 describe('frames.subscribe', () => {
+  it('preserves only the trusted AVD name when an attached emulator status becomes unknown', () => {
+    const target = { workspace, platform: 'android' as const };
+    const payload = (name: string) =>
+      statusPayload({
+        android: { name, owned: true, physical: false, serial: null, state: 'unknown' },
+      }) as StatusPayload;
+    expect(ownedDevice(payload('stim-app'), target, 'android:emulator-5554')).toEqual({
+      platform: 'android',
+      serial: 'emulator-5554',
+      avdName: 'stim-app',
+    });
+    expect(ownedDevice(payload('../other-avd'), target, 'android:emulator-5554')).toEqual({
+      platform: 'android',
+      serial: 'emulator-5554',
+    });
+    expect(ownedDevice(payload('stim-app'), target, null)).toBeTypeOf('string');
+  });
   let toolCalls: string;
 
   async function startWithTools(
@@ -2776,6 +2799,58 @@ describe('frames.subscribe', () => {
       .filter((run) => run.tool === 'stim-frames')
       .map((run) => run as unknown as HelperRun);
   }
+
+  test.skipIf(!fakeTailscale)(
+    'sends cached installed artwork only to opt-in read subscribers and preserves guest bytes',
+    async () => {
+      const artwork = {
+        width: 450,
+        height: 900,
+        aperture: { x: 30, y: 20, width: 390, height: 844 },
+        cornerRadius: 12,
+        quarterTurns: 2,
+        background: 'png-bg',
+        foreground: 'png-fg',
+      };
+      const port = await startWithTools(
+        {
+          FAKE_STIM_PAYLOADS: statusWith({ ios: OWNED_SIM }),
+          FAKE_FRAMES: '[]',
+          FAKE_HELPER_ARTWORK: JSON.stringify(artwork),
+        },
+        undefined,
+        fakeHelper(),
+      );
+      const framed = await authed(port);
+      await framed.request('frames.subscribe', { workspace, platform: 'ios', deviceFrame: true });
+      expect(await framed.next()).toMatchObject({ event: 'device-frame', artwork: null });
+      expect(await framed.next()).toMatchObject({ event: 'device-frame', artwork });
+      const captured = await framed.next();
+      expect(captured).toMatchObject({ event: 'frame', width: 390, height: 844, artworkTurns: 2 });
+      expect(Buffer.from((captured as { data: string }).data, 'base64').toString()).toMatch(/^frame /);
+      const plain = await authed(port);
+      await plain.request('frames.subscribe', { workspace, platform: 'ios' });
+      expect(await plain.next()).toMatchObject({ event: 'frame' });
+      const again = await authed(port);
+      await again.request('frames.subscribe', { workspace, platform: 'ios', deviceFrame: true });
+      expect(await again.next()).toMatchObject({ event: 'device-frame', artwork: null });
+      expect(await again.next()).toMatchObject({ event: 'device-frame', artwork });
+      expect(
+        await again.request('frames.subscribe', { workspace: '/not-registered', platform: 'ios', deviceFrame: true }),
+      ).toMatchObject({ error: { code: 'unknown-workspace' } });
+      const video = await authed(port);
+      await video.request('frames.subscribe', { workspace, platform: 'ios', deviceFrame: true, video: ['h264'] });
+      expect(await video.next()).toMatchObject({ event: 'device-frame', artwork: null });
+      expect(await video.next()).toMatchObject({ event: 'device-frame', artwork });
+      const packet = ((await video.next()) as unknown as { binary: Buffer }).binary;
+      expect(packet[1]! & 56).toBe(32 | (2 << 3));
+      expect(packet.subarray(packet.readUInt16BE(2), packet.readUInt16BE(2) + 4)).toEqual(Buffer.from([0, 0, 0, 1]));
+      video.socket.close();
+      framed.socket.close();
+      plain.socket.close();
+      again.socket.close();
+    },
+  );
 
   test.skipIf(!fakeTailscale)(
     'streams helper frames at the rate each subscriber asks for and stops the helper with the last one',

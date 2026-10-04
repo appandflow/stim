@@ -56,6 +56,7 @@ import {
   PUSH_TOKEN_PATTERN,
   REPLAY_RATES,
   type BuildPlanResult,
+  type DeviceFrameArtwork,
   type FramesSeekParams,
   type ErrorCode,
   type FrameTarget,
@@ -898,7 +899,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
 
     function subscribeFrames(id: RequestId, params: unknown): void {
       const target = isJsonObject(params) ? params : {};
-      const { workspace, platform, slot, physical, fps, maxEdge, video, at, rate } = target;
+      const { workspace, platform, slot, physical, fps, maxEdge, video, at, rate, deviceFrame } = target;
       if (typeof workspace !== 'string' || !PLATFORMS.includes(platform as Platform)) {
         return error(
           id,
@@ -912,6 +913,10 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       if (physical !== undefined && typeof physical !== 'boolean') {
         return error(id, 'bad-request', 'physical must be true or false.');
       }
+      if (deviceFrame !== undefined && typeof deviceFrame !== 'boolean') {
+        return error(id, 'bad-request', 'deviceFrame must be true or false.');
+      }
+      const wantsArtwork = deviceFrame === true && !physical && platform !== 'web';
       if (video !== undefined && (!Array.isArray(video) || !video.every((codec) => typeof codec === 'string'))) {
         return error(id, 'bad-request', 'video must be a list of codec names.');
       }
@@ -1025,6 +1030,13 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
           if (!ended) send(socket, { event: 'frame-delayed', subscription, delayed, ...(reason ? { reason } : {}) });
         },
         failed: end,
+        ...(wantsArtwork
+          ? {
+              artwork: (artwork: DeviceFrameArtwork | null) => {
+                if (!ended && !player) send(socket, { event: 'device-frame', subscription, artwork });
+              },
+            }
+          : {}),
         ...(offersVideo
           ? {
               video: (unit: AccessUnit) => {
@@ -1039,6 +1051,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       let player: Player | null = null;
       let latest: StatusPayload | null = null;
       const attach = (resolved: Device) => {
+        if (wantsArtwork) send(socket, { event: 'device-frame', subscription, artwork: null });
         detach?.();
         gate.reset();
         streamed = resolved;
@@ -1047,6 +1060,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       };
       const replay = (): Player => {
         if (player) return player;
+        if (wantsArtwork) send(socket, { event: 'device-frame', subscription, artwork: null });
         detach?.();
         detach = null;
         attached = null;

@@ -27,7 +27,7 @@ export type Capability = (typeof CAPABILITIES)[number];
  * Android phone also on `control.begin`. An older server ignores `physical` on `frames.subscribe` and would stream
  * the slot's Stim-owned device instead. `notifications` is `notifications.list` and the `notification` event.
  */
-export const FEATURES = ['physical-ios', 'physical-android', 'notifications'] as const;
+export const FEATURES = ['physical-ios', 'physical-android', 'notifications', 'device-frames'] as const;
 
 export type Feature = (typeof FEATURES)[number];
 
@@ -270,6 +270,8 @@ export const FRAME_EDGE = { min: 240, default: 1280, max: 2048 } as const;
  * frames, and larger ones while another subscriber of the same device asks for more.
  */
 export interface FrameTarget {
+  /** Requests installed ordinary-device artwork for this live subscription. */
+  deviceFrame?: boolean;
   workspace: string;
   platform: Platform;
   slot?: string;
@@ -416,9 +418,12 @@ export const VIDEO_KEYFRAME = 1;
 export const VIDEO_FOLDED = 2;
 export const VIDEO_UNFOLDED = 4;
 
+/** Bit 5 marks clockwise artwork quarter-turns in bits 3-4; absent on recordings and unsupported sources. */
+export const VIDEO_ARTWORK = 32;
+
 /**
  * The layout of a binary video message, big-endian: u8 version ({@link VIDEO_HEADER_VERSION}), u8 flags
- * ({@link VIDEO_KEYFRAME}, and on an iPhone Duo {@link VIDEO_FOLDED} or {@link VIDEO_UNFOLDED}), u16 header length, u32 sequence number of the messages sent on this subscription, f64 capture time in milliseconds since the
+ * ({@link VIDEO_KEYFRAME}, posture bits and {@link VIDEO_ARTWORK}), u16 header length, u32 sequence number of the messages sent on this subscription, f64 capture time in milliseconds since the
  * epoch on the Mac's clock, u16 width, u16 height, u8 subscription id length N, N bytes of ASCII subscription
  * id. After the header comes one Annex-B H.264 access unit; a keyframe carries its SPS and PPS. The stream has
  * no B-frames, so each access unit is shown as it arrives.
@@ -431,6 +436,7 @@ export interface VideoPacket {
   width: number;
   height: number;
   posture?: 'folded' | 'unfolded';
+  artworkTurns?: number;
   accessUnit: Uint8Array;
 }
 
@@ -1016,6 +1022,23 @@ export interface ErrorEvent {
 }
 
 /** A frame of the device's screen, sent when the screen changed, at most `fps` times a second. */
+/** Installed device artwork rasterized on the Mac; layers contain PNG bytes, never a local path. */
+export interface DeviceFrameArtwork {
+  width: number;
+  height: number;
+  aperture: { x: number; y: number; width: number; height: number };
+  cornerRadius: number;
+  quarterTurns: number;
+  background: string;
+  foreground: string;
+}
+
+export interface DeviceFrameEvent {
+  event: 'device-frame';
+  subscription: string;
+  artwork: DeviceFrameArtwork | null;
+}
+
 export interface FrameEvent {
   event: 'frame';
   subscription: string;
@@ -1033,6 +1056,8 @@ export interface FrameEvent {
    * outer display, and `unfolded` otherwise, including half open.
    */
   posture?: 'folded' | 'unfolded';
+  /** Clockwise artwork rotation captured with this frame. */
+  artworkTurns?: number;
 }
 
 /**
@@ -1086,6 +1111,7 @@ export type ServerEvent =
   | StatusEvent
   | LogsEvent
   | FrameEvent
+  | DeviceFrameEvent
   | FrameDelayedEvent
   | ReplayEndedEvent
   | ErrorEvent
@@ -1340,6 +1366,30 @@ export function protocolJsonSchema(): JsonSchema {
           tail: { type: 'integer', minimum: 1, maximum: MAX_LOG_TAIL, default: MAX_LOG_TAIL },
         },
       },
+      DeviceFrameArtwork: {
+        type: 'object',
+        required: ['width', 'height', 'aperture', 'cornerRadius', 'quarterTurns', 'background', 'foreground'],
+        additionalProperties: false,
+        properties: {
+          width: { type: 'number', exclusiveMinimum: 0 },
+          height: { type: 'number', exclusiveMinimum: 0 },
+          aperture: {
+            type: 'object',
+            required: ['x', 'y', 'width', 'height'],
+            additionalProperties: false,
+            properties: {
+              x: { type: 'number', minimum: 0 },
+              y: { type: 'number', minimum: 0 },
+              width: { type: 'number', exclusiveMinimum: 0 },
+              height: { type: 'number', exclusiveMinimum: 0 },
+            },
+          },
+          cornerRadius: { type: 'number', minimum: 0 },
+          quarterTurns: { type: 'integer', minimum: 0, maximum: 3 },
+          background: { type: 'string', contentEncoding: 'base64' },
+          foreground: { type: 'string', contentEncoding: 'base64' },
+        },
+      },
       FrameTarget: {
         type: 'object',
         required: ['workspace', 'platform'],
@@ -1349,6 +1399,7 @@ export function protocolJsonSchema(): JsonSchema {
           platform: { enum: [...PLATFORMS] },
           slot: { type: 'string', minLength: 1, default: 'default' },
           physical: { type: 'boolean', default: false },
+          deviceFrame: { type: 'boolean', default: false },
           fps: {
             type: 'integer',
             minimum: 1,
@@ -2052,6 +2103,16 @@ export function protocolJsonSchema(): JsonSchema {
         oneOf: [
           {
             type: 'object',
+            required: ['event', 'subscription', 'artwork'],
+            additionalProperties: false,
+            properties: {
+              event: { const: 'device-frame' },
+              subscription: { type: 'string' },
+              artwork: { oneOf: [{ type: 'null' }, { $ref: '#/$defs/DeviceFrameArtwork' }] },
+            },
+          },
+          {
+            type: 'object',
             required: ['event', 'job'],
             additionalProperties: false,
             properties: {
@@ -2110,6 +2171,7 @@ export function protocolJsonSchema(): JsonSchema {
               capturedAt: { type: 'string', format: 'date-time' },
               data: { type: 'string', contentEncoding: 'base64' },
               posture: { enum: ['folded', 'unfolded'] },
+              artworkTurns: { type: 'integer', minimum: 0, maximum: 3 },
             },
           },
           {

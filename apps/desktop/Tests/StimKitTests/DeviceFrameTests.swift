@@ -38,4 +38,33 @@ import Testing
     #expect(screen.frame == canvas.bounds)
     #expect(canvas.hitTest(CGPoint(x: 10, y: 100)) === screen)
   }
+  @Test func rasterLayersKeepClockwiseArtworkCoordinatesAndForegroundSeparate() throws {
+    let artwork = DeviceFrameArtwork(
+      geometry: DeviceFrameGeometry(
+        size: CGSize(width: 100, height: 200), aperture: CGRect(x: 10, y: 20, width: 80, height: 160)),
+      background: { _ in
+        NSColor.red.setFill()
+        CGRect(x: 0, y: 0, width: 20, height: 20).fill()
+      },
+      foreground: { _ in
+        NSColor.blue.setFill()
+        CGRect(x: 80, y: 180, width: 20, height: 20).fill()
+      })
+    for turn in 0...3 {
+      let layers = try #require(artwork.pngLayers(quarterTurns: turn))
+      let background = try #require(NSBitmapImageRep(data: layers.background))
+      let foreground = try #require(NSBitmapImageRep(data: layers.foreground))
+      let size = artwork.geometry.rotated(quarterTurns: turn).size
+      #expect(background.pixelsWide == Int(size.width))
+      #expect(background.pixelsHigh == Int(size.height))
+      let redPoints = [(10, 10), (190, 10), (90, 190), (10, 90)]
+      let bluePoints = [(90, 190), (10, 90), (10, 10), (190, 10)]
+      let red = try #require(background.colorAt(x: redPoints[turn].0, y: redPoints[turn].1)?.usingColorSpace(.deviceRGB))
+      let blue = try #require(foreground.colorAt(x: bluePoints[turn].0, y: bluePoints[turn].1)?.usingColorSpace(.deviceRGB))
+      #expect(red.redComponent > 0.99 && red.alphaComponent > 0.99)
+      #expect(blue.blueComponent > 0.99 && blue.alphaComponent > 0.99)
+      #expect((foreground.colorAt(x: redPoints[turn].0, y: redPoints[turn].1)?.alphaComponent ?? 1) == 0)
+    }
+  }
+
 }

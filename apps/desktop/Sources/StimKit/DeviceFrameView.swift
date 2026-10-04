@@ -17,6 +17,32 @@ public final class DeviceFrameArtwork {
     self.background = background
     self.foreground = foreground
   }
+
+  /// Rasterizes installed artwork in upright frame coordinates, keeping screen pixels out of both PNG layers.
+  public func pngLayers(quarterTurns: Int) -> (background: Data, foreground: Data)? {
+    let size = geometry.rotated(quarterTurns: quarterTurns).size
+    let scale = min(1, 2048 / max(size.width, size.height))
+    let bounds = CGRect(x: 0, y: 0, width: ceil(size.width * scale), height: ceil(size.height * scale))
+    func layer(foreground: Bool) -> Data? {
+      guard
+        let bitmap = NSBitmapImageRep(
+          bitmapDataPlanes: nil, pixelsWide: Int(bounds.width), pixelsHigh: Int(bounds.height),
+          bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+          colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0),
+        let context = NSGraphicsContext(bitmapImageRep: bitmap)
+      else { return nil }
+      NSGraphicsContext.saveGraphicsState()
+      defer { NSGraphicsContext.restoreGraphicsState() }
+      context.cgContext.clear(bounds)
+      context.cgContext.translateBy(x: 0, y: bounds.height)
+      context.cgContext.scaleBy(x: 1, y: -1)
+      NSGraphicsContext.current = NSGraphicsContext(cgContext: context.cgContext, flipped: true)
+      drawFrameArtwork(self, quarterTurns: quarterTurns, in: bounds, foreground: foreground)
+      return bitmap.representation(using: .png, properties: [:])
+    }
+    guard let background = layer(foreground: false), let foreground = layer(foreground: true) else { return nil }
+    return (background, foreground)
+  }
 }
 
 /// Keeps the existing display/input view inside the installed artwork's screen aperture.
