@@ -145,6 +145,14 @@ accurate modes use native-resolution images; Fit and wall previews keep their 96
 Duo's projected housing and folded screen, replay, physical devices, web and remote
 previews remain in **Fit**.
 
+While controlling a local iOS simulator or Android emulator, hold **Option** and
+drag to pinch or rotate two fingers around their center. Hold **Option-Shift**
+to move both fingers together. Trackpad pinch also sends a two-finger pinch.
+Two markers show the contact positions, including on a framed or folded screen.
+Releasing Option, ending the gesture, changing orientation or releasing Control
+lifts both contacts. Option and the gesture's Shift modifier stay on the Mac.
+These gestures are not available for physical devices, remote previews or web pages.
+
 On the All devices and project wall, active workspaces without running or building
 devices use compact cards labelled **No running devices**, with Metro status,
 warnings and error links. CPU and RAM stay on the workspace page.

@@ -142,6 +142,24 @@ public final class SimulatorDisplayNSView: NSView {
   private var interactive = false
   private var hid: SimulatorHID?
   private var touchPoint: CGPoint?
+  private var modifiersDown: Set<UInt16> = []
+  private lazy var twoFinger = TwoFingerGesture(
+    view: self, enabled: { [weak self] in self?.interactive == true },
+    map: { [weak self] point, clamped in self?.screenPoint(point, clamped: clamped) },
+    project: { [weak self] point in self?.viewPoint(point) },
+    send: { [weak self] phase, first, second in
+      guard let self else { return false }
+      if phase == .move, self.hid?.isConnected != true {
+        self.releaseInput()
+        return false
+      }
+      guard let hid = phase == .up ? self.hid : self.inputClient() else { return false }
+      let touchPhase: TouchPhase = phase == .down ? .down : phase == .move ? .move : .up
+      hid.touch(
+        touchPhase, at: nativeScreenPoint(first, orientation: self.orientation),
+        second: nativeScreenPoint(second, orientation: self.orientation), screenID: self.screenID)
+      return true
+    })
   private let surfaceLayer = CALayer()
   private let foldedScreen = DuoFoldRenderer()
   private var surface: IOSurface?
@@ -244,6 +262,7 @@ public final class SimulatorDisplayNSView: NSView {
   }
 
   func showSurface(_ surface: IOSurface?, orientation: UInt32) {
+    if orientation != self.orientation { releaseInput() }
     self.surface = surface
     surfaceLayer.contents = surface
     foldedScreen.show(surface)
@@ -292,6 +311,7 @@ public final class SimulatorDisplayNSView: NSView {
     duoModel?.frame = bounds
     if let projection { foldedScreen.layout(projection, in: bounds, orientation: orientation) }
     CATransaction.commit()
+    twoFinger.redraw()
   }
 
   private var framesPaused: Bool {
@@ -342,10 +362,13 @@ public final class SimulatorDisplayNSView: NSView {
   }
 
   func releaseInput() {
+    twoFinger.cancel()
     if let touchPoint {
       hid?.touch(.up, at: nativeScreenPoint(touchPoint, orientation: orientation), screenID: screenID)
     }
     touchPoint = nil
+    for code in modifiersDown { hid?.hardwareKey(code: code, down: false) }
+    modifiersDown = []
     hid = nil
   }
 
@@ -375,6 +398,18 @@ public final class SimulatorDisplayNSView: NSView {
     return normalizedScreenPoint(point, viewSize: bounds.size, screenSize: screenSize, clamped: clamped)
   }
 
+  private func viewPoint(_ point: CGPoint) -> CGPoint? {
+    guard let size = displayedScreenSize else { return nil }
+    if let duoModel { return duoModel.viewPoint(nativeScreenPoint(point, orientation: orientation)) }
+    if let projection = foldProjection {
+      return projection.viewPoint(CGPoint(x: point.x * size.width, y: (1 - point.y) * size.height), in: bounds)
+    }
+    let fitted = fittedScreenSize(viewSize: bounds.size, screenSize: size)
+    return CGPoint(
+      x: (bounds.width - fitted.width) / 2 + point.x * fitted.width,
+      y: (bounds.height - fitted.height) / 2 + (1 - point.y) * fitted.height)
+  }
+
   private func touch(_ phase: TouchPhase, at point: CGPoint) {
     guard let hid = inputClient() else { return }
     hid.touch(phase, at: nativeScreenPoint(point, orientation: orientation), screenID: screenID)
@@ -388,16 +423,20 @@ public final class SimulatorDisplayNSView: NSView {
   public override func mouseDown(with event: NSEvent) {
     guard interactive else { return super.mouseDown(with: event) }
     window?.makeFirstResponder(self)
-    guard touchPoint == nil, let point = screenPoint(event, clamped: false) else { return }
+    guard touchPoint == nil, !twoFinger.isActive else { return }
+    if twoFinger.mouseDown(event) { return }
+    guard !event.modifierFlags.contains(.option), let point = screenPoint(event, clamped: false) else { return }
     touch(.down, at: point)
   }
 
   public override func mouseDragged(with event: NSEvent) {
+    if twoFinger.mouseDragged(event) { return }
     guard touchPoint != nil, let point = screenPoint(event, clamped: true) else { return }
     touch(.move, at: point)
   }
 
   public override func mouseUp(with event: NSEvent) {
+    if twoFinger.mouseUp(event) { return }
     guard let last = touchPoint else { return }
     touch(.up, at: screenPoint(event, clamped: true) ?? last)
   }
@@ -406,6 +445,7 @@ public final class SimulatorDisplayNSView: NSView {
   // that follows the gesture's phases. Momentum events are dropped because iOS
   // applies its own deceleration after the finger lifts.
   public override func scrollWheel(with event: NSEvent) {
+    if twoFinger.isActive { return }
     if interactive, event.hasPreciseScrollingDeltas, !event.momentumPhase.isEmpty { return }
     guard interactive, event.hasPreciseScrollingDeltas else {
       return super.scrollWheel(with: event)
@@ -447,8 +487,13 @@ public final class SimulatorDisplayNSView: NSView {
     }
   }
 
+  public override func magnify(with event: NSEvent) {
+    guard touchPoint == nil else { return }
+    twoFinger.magnify(event)
+  }
+
   public override func keyDown(with event: NSEvent) {
-    guard let hid = inputClient() else { return super.keyDown(with: event) }
+    guard !event.modifierFlags.contains(.option), let hid = inputClient() else { return super.keyDown(with: event) }
     if !event.isARepeat { hid.hardwareKey(code: event.keyCode, down: true) }
   }
 
@@ -458,23 +503,38 @@ public final class SimulatorDisplayNSView: NSView {
   }
 
   public override func flagsChanged(with event: NSEvent) {
-    guard let hid = inputClient(), let flag = modifierFlag(keyCode: event.keyCode) else {
-      return super.flagsChanged(with: event)
+    twoFinger.flagsChanged(event)
+    guard let hid = inputClient() else { return super.flagsChanged(with: event) }
+    if event.modifierFlags.contains(.option) {
+      for code in modifiersDown where [56, 60, 58, 61].contains(code) {
+        hid.hardwareKey(code: code, down: false)
+        modifiersDown.remove(code)
+      }
     }
-    hid.hardwareKey(code: event.keyCode, down: event.modifierFlags.contains(flag))
+    guard let flag = modifierFlag(keyCode: event.keyCode), flag != .option,
+      !(flag == .shift && event.modifierFlags.contains(.option))
+    else { return }
+    let down = event.modifierFlags.contains(flag)
+    hid.hardwareKey(code: event.keyCode, down: down)
+    if down { modifiersDown.insert(event.keyCode) } else { modifiersDown.remove(event.keyCode) }
   }
 
   public override func viewDidMoveToWindow() {
     super.viewDidMoveToWindow()
     NotificationCenter.default.removeObserver(self, name: NSWindow.didChangeOcclusionStateNotification, object: nil)
+    NotificationCenter.default.removeObserver(self, name: NSWindow.didResignKeyNotification, object: nil)
     if let window {
       NotificationCenter.default.addObserver(
         self, selector: #selector(occlusionChanged), name: NSWindow.didChangeOcclusionStateNotification, object: window)
+      NotificationCenter.default.addObserver(
+        self, selector: #selector(windowResignedKey), name: NSWindow.didResignKeyNotification, object: window)
       connect()
     } else {
       disconnect()
     }
   }
+
+  @objc private func windowResignedKey() { twoFinger.cancel() }
 
   @objc private func occlusionChanged() {
     if !framesPaused { redraw() }
