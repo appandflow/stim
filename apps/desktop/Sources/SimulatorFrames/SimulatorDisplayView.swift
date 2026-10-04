@@ -142,7 +142,7 @@ public final class SimulatorDisplayNSView: NSView {
   private var interactive = false
   private var hid: SimulatorHID?
   private var touchPoint: CGPoint?
-  private var modifiersDown: Set<UInt16> = []
+  private var keyboardModifiers = SimulatorKeyboardModifiers()
   private lazy var twoFinger = TwoFingerGesture(
     view: self, enabled: { [weak self] in self?.interactive == true },
     map: { [weak self] point, clamped in self?.screenPoint(point, clamped: clamped) },
@@ -367,8 +367,7 @@ public final class SimulatorDisplayNSView: NSView {
       hid?.touch(.up, at: nativeScreenPoint(touchPoint, orientation: orientation), screenID: screenID)
     }
     touchPoint = nil
-    for code in modifiersDown { hid?.hardwareKey(code: code, down: false) }
-    modifiersDown = []
+    for code in keyboardModifiers.release() { hid?.hardwareKey(code: code, down: false) }
     hid = nil
   }
 
@@ -505,18 +504,9 @@ public final class SimulatorDisplayNSView: NSView {
   public override func flagsChanged(with event: NSEvent) {
     twoFinger.flagsChanged(event)
     guard let hid = inputClient() else { return super.flagsChanged(with: event) }
-    if event.modifierFlags.contains(.option) {
-      for code in modifiersDown where [56, 60, 58, 61].contains(code) {
-        hid.hardwareKey(code: code, down: false)
-        modifiersDown.remove(code)
-      }
+    for key in keyboardModifiers.change(keyCode: event.keyCode, flags: event.modifierFlags) {
+      hid.hardwareKey(code: key.code, down: key.down)
     }
-    guard let flag = modifierFlag(keyCode: event.keyCode), flag != .option,
-      !(flag == .shift && event.modifierFlags.contains(.option))
-    else { return }
-    let down = event.modifierFlags.contains(flag)
-    hid.hardwareKey(code: event.keyCode, down: down)
-    if down { modifiersDown.insert(event.keyCode) } else { modifiersDown.remove(event.keyCode) }
   }
 
   public override func viewDidMoveToWindow() {
@@ -538,16 +528,5 @@ public final class SimulatorDisplayNSView: NSView {
 
   @objc private func occlusionChanged() {
     if !framesPaused { redraw() }
-  }
-}
-
-private func modifierFlag(keyCode: UInt16) -> NSEvent.ModifierFlags? {
-  switch keyCode {
-  case 56, 60: return .shift
-  case 59, 62: return .control
-  case 58, 61: return .option
-  case 55, 54: return .command
-  case 57: return .capsLock
-  default: return nil
   }
 }
