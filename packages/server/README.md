@@ -69,7 +69,12 @@ same tailnet or with the Mac shared to the phone's user.
 addresses, never on every interface. It re-reads the Tailscale state in the
 background, so a server that started before Tailscale was up, or while it did
 not answer, starts listening on the Tailscale addresses once it runs, and stops
-when it goes away. Run this once so clients can use
+when it goes away. In Stim Desktop, choose **Set up connection** in Settings >
+Phones to create and verify the private route without a terminal command. A
+missing or unreadable route keeps Desktop pairing unavailable; HTTPS setup may
+require Tailscale browser approval. Existing routes stay unchanged.
+
+For manual server setup, run this once so clients can use
 `wss://<mac>.<tailnet>.ts.net:7443` with a valid certificate:
 
 ```bash
@@ -89,6 +94,15 @@ Funnel port makes it public, and `pair` refuses.
 
 When Tailscale is not running, `stim-server` listens on loopback only and
 says so on stderr. Start Tailscale, then restart `stim-server`.
+
+Desktop uses `route.setup` with no parameters on its authenticated loopback
+control connection. The result is a verified `ServeRoute`; an existing route is a
+no-op. The server refuses forwarded, browser-origin or tailnet connections,
+read-only clients, unknown configuration and any route exposing this server
+through Funnel. Only the fixed `tailscale serve --bg --https=<free port>
+http://127.0.0.1:<server port>` invocation runs, followed by route verification.
+No LaunchAgent or Funnel configuration is created. Failure output remains
+available for an explicit retry, including Tailscale's HTTPS approval link.
 
 ## Pairing
 

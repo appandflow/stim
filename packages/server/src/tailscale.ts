@@ -3,6 +3,7 @@ import { accessSync, constants } from 'node:fs';
 import { delimiter, join } from 'node:path';
 import { isJsonObject } from '@stim-cli/core/state';
 import type { PeerIdentity } from './registry.ts';
+import { planServe } from './service-plist.ts';
 
 const MAC_APP_BINARY = '/Applications/Tailscale.app/Contents/MacOS/Tailscale';
 const TIMEOUT_MS = 3000;
@@ -119,6 +120,16 @@ function portOf(hostPort: string): number {
  */
 function parseServeStatus(value: unknown, target: number, ips: string[]): ServeRoute {
   if (!isJsonObject(value)) return { state: 'unknown', reason: 'it printed no serve config', port: SERVE_PORT };
+  if (Object.keys(value).length && !['TCP', 'Web', 'AllowFunnel', 'Foreground'].some((field) => field in value)) {
+    return { state: 'unknown', reason: 'it printed an unrecognized serve config', port: SERVE_PORT };
+  }
+  if (
+    ['TCP', 'Web', 'AllowFunnel', 'Foreground'].some(
+      (field) => value[field] !== undefined && !isJsonObject(value[field]),
+    )
+  ) {
+    return { state: 'unknown', reason: 'it printed a malformed serve config', port: SERVE_PORT };
+  }
   const hosts = new Set([
     '127.0.0.1',
     'localhost',
@@ -130,11 +141,17 @@ function parseServeStatus(value: unknown, target: number, ips: string[]): ServeR
   const configs = [value, ...(isJsonObject(value.Foreground) ? Object.values(value.Foreground) : [])].filter(
     isJsonObject,
   );
+  if (isJsonObject(value.Foreground) && configs.length !== 1 + Object.keys(value.Foreground).length) {
+    return { state: 'unknown', reason: 'it printed a malformed foreground config', port: SERVE_PORT };
+  }
   const used = new Set<number>();
   const funneled = new Set<number>();
   const reaching = new Set<number>();
   const routes = new Set<number>();
   for (const config of configs) {
+    if (['TCP', 'Web', 'AllowFunnel'].some((field) => config[field] !== undefined && !isJsonObject(config[field]))) {
+      return { state: 'unknown', reason: 'it printed a malformed serve config', port: SERVE_PORT };
+    }
     const tcp = isJsonObject(config.TCP) ? config.TCP : {};
     for (const [port, listener] of Object.entries(tcp)) {
       used.add(Number(port));
@@ -204,6 +221,44 @@ export function tailnetEndpoint(dnsName: string, port: number): string {
 
 export function serveCommand(port: number, target: number): string {
   return `tailscale serve --bg --https=${port} http://127.0.0.1:${target}`;
+}
+
+export async function setupServeRoute(
+  binary: string | null,
+  env: NodeJS.ProcessEnv,
+  target: number,
+  state: TailscaleState,
+): Promise<ServeRoute> {
+  if (!binary || state.state !== 'running' || !state.dnsName) {
+    throw new Error('Start Tailscale on this Mac before setting up the phone connection.');
+  }
+  const route = await serveRoute(binary, env, target, state.ips);
+  const plan = planServe(route, target, null);
+  if ('refusal' in plan) throw new Error(plan.refusal.replace('run install again', 'retry setup'));
+  if (!plan.create) return route;
+  await new Promise<void>((resolve, reject) => {
+    execFile(
+      binary,
+      ['serve', '--bg', `--https=${plan.record.port}`, `http://127.0.0.1:${target}`],
+      { env, timeout: 10_000, killSignal: 'SIGKILL', encoding: 'utf8' },
+      (error, stdout, stderr) => {
+        if (!error) return resolve();
+        const detail = [stdout.trim(), stderr.trim()].filter(Boolean).join('\n');
+        reject(
+          new Error(
+            `Phone connection setup ${error.killed ? 'timed out' : 'failed'}. ${detail || error.message}\nIf Tailscale asks to enable HTTPS, approve its browser setup and try again.`,
+          ),
+        );
+      },
+    );
+  });
+  const verified = await serveRoute(binary, env, target, state.ips);
+  if (verified.state !== 'routed') {
+    throw new Error(
+      `Phone connection could not be verified (${verified.state === 'unknown' ? verified.reason : verified.state}). Check Tailscale and try again.`,
+    );
+  }
+  return verified;
 }
 
 /** Reads `tailscale whois --json`: the peer's node (`Node.StableID`, `Node.Name`) and user (`UserProfile.LoginName`). */

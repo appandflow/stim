@@ -7,6 +7,7 @@ import type {
   NdjsonRecord,
   StatusPayload,
 } from '@stim-cli/core/state';
+import type { ServeRoute } from './tailscale.ts';
 
 export const PROTOCOL_VERSION = 1;
 
@@ -39,6 +40,7 @@ export type Feature = (typeof FEATURES)[number];
 
 export const METHODS = [
   'hello',
+  'route.setup',
   'status.subscribe',
   'logs.query',
   'logs.subscribe',
@@ -972,6 +974,7 @@ export interface NotificationsListResult {
 }
 
 export interface Methods {
+  'route.setup': { params?: Record<string, never>; result: ServeRoute };
   'device-host.reserve': { params: HostedDeviceRequest; result: HostedDeviceSession };
   'device-host.attach': { params: { session: string } | { attempt: string }; result: HostedDeviceSession };
   'device-host.stop': { params: { session: string }; result: HostedDeviceSession };
@@ -1860,6 +1863,7 @@ export function protocolJsonSchema(): JsonSchema {
           request('device-host.input.rotate', session({ direction: { enum: [...ROTATE_DIRECTIONS] } }, ['direction'])),
           request('device-host.input.posture', session({ posture: { enum: [...DEVICE_POSTURES] } }, ['posture'])),
           request('hello', { $ref: '#/$defs/HelloParams' }),
+          optionalParams('route.setup', { type: 'object', maxProperties: 0 }),
           request('status.subscribe'),
           request('logs.query', { $ref: '#/$defs/LogFilter' }),
           request('logs.subscribe', { $ref: '#/$defs/LogFilter' }),

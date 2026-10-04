@@ -840,21 +840,19 @@ host simulator or emulator sessions here. **Review...** opens the request;
 **Revoke** removes it. It grants no read, control or build access. Hosted
 sessions are not available yet; an approval does not start a device.
 
-When the server reports that Tailscale is not running, the tab shows the
-steps: `tailscale up`, restart the server (a button when the app started it),
-then run the `tailscale serve` command the tab shows next. The server reports the
-Tailscale state it started with, so the steps stay until it restarts. Until then, the pairing
-endpoint is `ws://127.0.0.1:7787` and works only on this Mac, for example from
-an iOS Simulator.
+When Tailscale is not running, start it on this Mac. Pairing then works only on
+this Mac, such as in an iOS Simulator, until the private connection is ready.
 
-While Tailscale runs, the tab shows the route the server's health reports from
-`tailscale serve status`, re-read every 5 seconds. A tailnet-only route shows the
-endpoint phones connect to, such as `wss://<mac>.<tailnet>.ts.net:7443`.
-Without a route, the tab shows the command that serves the server on a
-dedicated tailnet-only port, `tailscale serve --bg --https=7443
-http://127.0.0.1:7787`, or the next free port when 7443 is taken. When a route
-to the server is on a port with Funnel on, the tab says the server is public
-and pairing fails with the same explanation; it never suggests a Funnel port.
+While Tailscale runs, **Set up connection** in the Phones tab configures and
+verifies a dedicated tailnet-only HTTPS proxy to the server's loopback port.
+It uses port 7443 or the next free port, keeps an existing route unchanged and
+never enables Funnel. This action uses Desktop's authenticated local control
+connection; a phone or forwarded connection cannot configure the Mac.
+Tailscale may ask you to enable HTTPS in your browser. Setup errors remain
+visible with **Try Again**. An unreadable or timed-out route probe changes
+nothing. A route exposing this server through Funnel refuses setup and pairing.
+**Pair a Phone** verifies the connection before showing its QR code; it no longer
+shows an assumed endpoint when the route is missing or unknown.
 
 ## Build machines
 

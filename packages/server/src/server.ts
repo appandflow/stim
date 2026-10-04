@@ -95,7 +95,7 @@ import {
 } from './registry.ts';
 import { runStats } from './stats.ts';
 import { Pending, runStim, type CommandLimits } from './stim-command.ts';
-import { serveRoute, whois, type ServeRoute, type TailscaleState } from './tailscale.ts';
+import { serveRoute, setupServeRoute, whois, type ServeRoute, type TailscaleState } from './tailscale.ts';
 import type { TailscaleMonitor, TailscaleSnapshot } from './tailscale-monitor.ts';
 import { DEFAULT_VIDEO_LIMITS, videoPacket, VideoGate, type AccessUnit } from './video.ts';
 import { DeviceViewers } from './viewers.ts';
@@ -618,7 +618,9 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   const revocationPoll = setInterval(checkRevocations, 1000);
   revocationPoll.unref();
 
-  function connection(socket: WebSocket, peer: string | null): void {
+  let settingUpRoute: Promise<ServeRoute> | null = null;
+
+  function connection(socket: WebSocket, peer: string | null, localControl: boolean): void {
     const limitKey = peer ?? 'local';
     const subscriptions = new Map<string, () => void>();
     const keyframes = new Map<string, () => void>();
@@ -1681,6 +1683,27 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       if (!device.capabilities.includes('read')) {
         return error(id, 'forbidden', `${message.method} needs read access, which this connection does not have.`);
       }
+      if (message.method === 'route.setup') {
+        if (!localControl || device.identity.kind !== 'local' || !device.capabilities.includes('control')) {
+          return error(
+            id,
+            'forbidden',
+            'Phone connection setup requires an authenticated local Desktop control connection.',
+          );
+        }
+        if (message.params !== undefined && (!isJsonObject(message.params) || Object.keys(message.params).length)) {
+          return error(id, 'bad-request', 'route.setup takes no parameters.');
+        }
+        const { binary, state } = tailscaleNow();
+        settingUpRoute ??= setupServeRoute(binary, options.env, addresses[0]!.port, state).finally(() => {
+          settingUpRoute = null;
+        });
+        try {
+          return send(socket, { id, result: await settingUpRoute });
+        } catch (cause) {
+          return error(id, 'action-failed', (cause as Error).message);
+        }
+      }
       if (message.method === 'status.subscribe') return subscribeStatus(id);
       if (message.method === 'logs.subscribe') return subscribeLogs(id, message.params);
       if (message.method === 'logs.query') return queryLogs(id, message.params);
@@ -1818,7 +1841,14 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       socket.end('HTTP/1.1 429 Too Many Requests\r\nConnection: close\r\nContent-Length: 0\r\n\r\n');
       return;
     }
-    wss.handleUpgrade(request, socket, head, (ws) => connection(ws, peer));
+    const host = request.headers.host?.replace(/:\d+$/, '');
+    const localControl =
+      isLoopback(request.socket.remoteAddress) &&
+      (host === '127.0.0.1' || host === 'localhost') &&
+      ['origin', 'sec-fetch-site', 'forwarded', 'x-forwarded-for', 'x-forwarded-host', 'x-forwarded-proto'].every(
+        (header) => request.headers[header] === undefined,
+      );
+    wss.handleUpgrade(request, socket, head, (ws) => connection(ws, peer, localControl));
   }
 
   const tailscaleNow = (): TailscaleSnapshot =>
