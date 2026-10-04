@@ -1049,9 +1049,11 @@ replaces its card. With the main window closed, the link reopens it.
   without a restart. When the Node binary disappears, as after a Homebrew
   upgrade, the next command finds the home folder's Node again first, waiting
   at most 2 seconds for it. A Node older than 22.12.0 refuses every command
-  with its version and path, and a popup asks for a newer default instead of
-  a newer Stim; the app looks for the Node again at most every 10 seconds, so
-  the next command after a new default runs without a restart.
+  with its version and path; when that is why `stim` reports no version, a
+  popup asks for a newer default instead of a newer Stim. The app looks for
+  the Node again at most every 10 seconds, so the next command after a new
+  default runs without a restart. Without a launcher for `stim-server`, it
+  tries again at most once a minute.
 
 At launch the app runs `stim --version` and needs 1.11.0 or later. When
 `stim` is missing, too old, or reports no version, a banner explains Stim and

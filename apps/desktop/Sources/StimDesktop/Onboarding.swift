@@ -28,9 +28,8 @@ final class Onboarding: ObservableObject {
     var home: String
     var androidSDK: String?
     var javaHome: String?
-
-    /// An installed `stim` cannot run, so cannot report its version, until the home folder's Node is supported.
-    var nodeBlocksStim: Bool { stim != .missing && !node.isCompatible }
+    /// `stim` reported no version because the Node its launcher runs it on is older than Stim supports.
+    var nodeBlocksStim = false
   }
 
   enum PopupKind {
@@ -149,7 +148,8 @@ final class Onboarding: ObservableObject {
           androidSDK: MachineCheck.androidSDK(environment: environment, home: home) {
             FileManager.default.fileExists(atPath: $0)
           },
-          javaHome: environment["JAVA_HOME"].flatMap { $0.isEmpty ? nil : $0 })
+          javaHome: environment["JAVA_HOME"].flatMap { $0.isEmpty ? nil : $0 },
+          nodeBlocksStim: compatibility == .outdated(found: nil) && stim.launcher?.runtime.isSupported == false)
       }.value
       self.report = report
       setup.stim = report.stim

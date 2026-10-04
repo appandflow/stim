@@ -25,8 +25,10 @@ struct OnboardingBanner: View {
 
   private func currentKind(_ report: Onboarding.Report) -> Onboarding.PopupKind? {
     if onboarding.showsGuide { return nil }
-    if report.nodeBlocksStim { return onboarding.dismissedPopups.contains(.node) ? nil : .node }
-    if !report.stim.isCompatible, !onboarding.dismissedPopups.contains(.stim) { return .stim }
+    if report.nodeBlocksStim, !onboarding.dismissedPopups.contains(.node) { return .node }
+    if !report.stim.isCompatible, !report.nodeBlocksStim, !onboarding.dismissedPopups.contains(.stim) {
+      return .stim
+    }
     if report.needsRelaunch, !onboarding.dismissedPopups.contains(.relaunch) { return .relaunch }
     if let server = report.server, !server.isCompatible, !onboarding.dismissedPopups.contains(.server) {
       return .server
