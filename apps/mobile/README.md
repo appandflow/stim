@@ -37,7 +37,16 @@ Duo fold detection requires a build made with the iOS 27.1 SDK and an iOS
   repo, live workspaces come before idle ones, each by name and machine, so a
   workspace moves only when it turns live or idle, not while builds run and
   agents attach. A workspace `stim worktree warm` is preparing or has prepared
-  counts as live. Each row is titled by its worktree's branch, or the
+  counts as live. When status identifies a linked Git checkout, its app projects
+  share one workspace heading, with the branch and git state shown once. App
+  children show paths such as `apps/mobile` and `apps/desktop`, each with its own
+  status and route to its devices, logs and commands. Children stay visible without
+  an extra expansion step; filters still apply per app. Repo live/idle counts count
+  the shown workspaces, while the hidden-idle footer counts apps. Different Macs
+  and checkouts stay separate even when they share a branch name. Primary checkouts
+  and older servers without an explicit checkout identity retain separate app rows;
+  [#2418](https://github.com/appandflow/stim/issues/2418) tracks that payload addition.
+  Each single-app row is titled by its worktree's branch, or the
   worktree's folder when it has no branch, or the project for a main checkout,
   truncated in the middle when long. At the trailing edge, a word says what the
   workspace is doing: **Building iOS**, **Warming** with how long, **Ready**

@@ -211,8 +211,8 @@ msgid "{hidden, plural, one {# more source changed.} other {# more sources chang
 msgstr "{hidden, plural, one {# more source changed.} other {# more sources changed.}}"
 
 #: src/screens/home.tsx
-msgid "{hiddenByActivity, plural, one {# idle workspace hidden.} other {# idle workspaces hidden.}}"
-msgstr "{hiddenByActivity, plural, one {# idle workspace hidden.} other {# idle workspaces hidden.}}"
+msgid "{hiddenByActivity, plural, one {# idle app hidden.} other {# idle apps hidden.}}"
+msgstr "{hiddenByActivity, plural, one {# idle app hidden.} other {# idle apps hidden.}}"
 
 #: src/intl/format.ts
 #: src/lib/replay.ts
