@@ -47,7 +47,7 @@ final class MacosSource: NSObject, Source, SCStreamDelegate, SCStreamOutput {
     guard matches() else { fail("The owned macOS app process changed or exited.") }
     guard CGPreflightScreenCaptureAccess() else {
       fail(
-        "Screen Recording access is unavailable for stim-frames. Allow the existing capture host in System Settings > Privacy & Security > Screen & System Audio Recording, then reconnect. Stim does not request or reset permissions; status and logs remain available."
+        "Screen Recording access is unavailable for stim-frames. Allow the existing capture host in System Settings > Privacy & Security > Screen & System Audio Recording, then reconnect. Open Permissions in Stim Desktop on this Mac to set up access, then reconnect. The server never requests or resets permissions; status and logs remain available."
       )
     }
     Task { [self] in
@@ -190,8 +190,10 @@ final class MacosSource: NSObject, Source, SCStreamDelegate, SCStreamOutput {
   private func inputWindow() throws -> ((windowID: CGWindowID, frame: CGRect), AXUIElement) {
     guard matches(), let captured = window else { throw refusal("The captured owned macOS app window is unavailable.") }
     guard AXIsProcessTrusted(), CGPreflightPostEventAccess() else {
+      let permission = ProcessInfo.processInfo.operatingSystemVersion.majorVersion >= 27
+        ? "Device Control and Data Access" : "Accessibility"
       throw refusal(
-        "Control needs existing Accessibility permission for the capture host. Allow it in System Settings > Privacy & Security > Accessibility, then reconnect. Stim does not request or reset permissions; viewing and logs remain available."
+        "Control needs \(permission) permission for the capture host. Open Permissions in Stim Desktop on this Mac, or allow the host in System Settings > Privacy & Security > \(permission), then reconnect. The server never requests or resets permissions; viewing and logs remain available."
       )
     }
     guard

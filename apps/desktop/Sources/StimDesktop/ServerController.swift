@@ -151,6 +151,7 @@ final class ServerController: ObservableObject {
         if let health {
           missedProbes = 0
           state = .running(health, owned: owned)
+          if health.nativeViewerOpened == true { NativeViewerPermissions.shared.viewerOpened(serverOwned: owned) }
         } else if !owned {
           missedProbes += 1
           guard missedProbes >= 2 else { return }

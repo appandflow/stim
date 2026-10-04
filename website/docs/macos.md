@@ -56,7 +56,7 @@ that owned app for normal native-window input. The captured view is read-only;
 background mouse/keyboard relay is not included.
 
 Capture requires existing Screen Recording permission; Open app also requires
-existing Accessibility permission. Stim never requests or changes grants. If unavailable, use the normal app window and workspace logs.
+Accessibility permission. The first native viewer opening shows one Desktop setup screen for both permissions, with status, **Request permissions**, **Settings** and **Check again**. Approve the normal macOS requests; Stim never resets or automatically grants access. **Permissions** on the app card reopens setup. Builds never prompt. If unavailable, use the normal app window and workspace logs.
 Use Refresh preview after the app window opens or is resized to rebind capture. An
 unverifiable owner refuses cleanup rather than signalling another app. `stop`
 affects only this workspace's recorded app and supervisor.
@@ -75,7 +75,7 @@ bundle before capture and on every frame. The view has no replay and never captu
 
 The capture host requires existing Screen Recording permission. When denied, the
 viewer names the existing host to allow in **System Settings → Privacy & Security →
-Screen & System Audio Recording**; Stim never requests or resets permissions.
+Screen & System Audio Recording**. Open **Permissions** in Stim Desktop on that Mac to request both grants, then reconnect the phone viewer. A phone-first native view asks the running Desktop host to show the same setup. A server started outside Desktop uses that launching host's permissions, so granting this copy of Stim may not apply to it. The phone and server never request or reset permissions.
 Status and logs remain available. Close and reopen the viewer after opening or
 resizing the app window.
 

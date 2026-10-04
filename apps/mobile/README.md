@@ -173,7 +173,9 @@ gc --json` dry run and `stim stats --json`, which the server refreshes at
   locale, on the clipboard for a bug report. A tap on home, a swipe left, or Android's back button closes the
   menu. Pairing scans the QR code Stim Desktop
   shows under **Pair a phone**, or takes the endpoint and pairing token typed
-  in; the token field is masked, with a button that shows it, and drops
+  in. A failed QR pairing keeps its error visible and pauses scanning until
+  **Retry** or manual entry is chosen; unrelated QR codes do not pause scanning.
+  The token field is masked, with a button that shows it, and drops
   what a token cannot hold, such as the spaces and line breaks of a paste, as you
   type, without moving the cursor. The device token
   the server issues is kept in the phone's secure storage (Keychain on iOS,
@@ -361,8 +363,7 @@ slot, when the server advertises `macos-window`. It has no replay. The server ca
 one visible window of the app whose PID, process start time, executable and
 bundle match its owned launch record; other apps and the desktop are excluded.
 Existing Screen Recording permission is required for the capture host. A denial
-shows permission guidance without requesting or resetting a grant, while status
-and logs stay usable. Close and reopen the viewer after opening or resizing the
+shows permission guidance while status and logs stay usable. On the host Mac, Stim Desktop opens one native viewer setup screen for Screen Recording and Accessibility (called Device Control and Data Access on macOS 27) on first use. Approve the normal macOS requests there, then reconnect the phone viewer. **Permissions** on the Desktop app card reopens setup. The phone and server do not request or reset OS grants. Close and reopen the viewer after opening or resizing the
 app window.
 
 With `macos-window-control` and a control pairing, **Control** enables mouse

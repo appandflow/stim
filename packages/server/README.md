@@ -184,6 +184,13 @@ It can deliver, install and launch a compatible app bundle, stream the simulator
 and control it. The hosted app connects back to Metro on the client Mac.
 Automatic CLI placement, client view/control relays and Android hosting remain in [#2266](https://github.com/appandflow/stim/issues/2266).
 
+The Stim client can name expected hosts with
+`stim settings set hosting.machines '["<mac>"]'` and request access with
+`stim doctor --fix`. It stores a separate private credential in
+`$STIM_HOME/device-host-machines.json`, pins the worker's tailnet node, and
+reports approval under `deviceHosts` in doctor JSON. Plain doctor makes no
+approval request. This setup does not yet place CLI sessions remotely.
+
 A client on the tailnet sends `hello` with
 `auth: { "request": "device-host", "deviceName": "Laptop" }`. As with a build
 request, the server returns a token and pending approval, then closes the
@@ -667,8 +674,7 @@ Events are `{ "event", "subscription", ... }`.
   identifier and bundle path before starting and while capturing. ScreenCaptureKit
   selects only that app's window; desktop capture and choosing between multiple
   windows are unsupported. It requires existing Screen Recording permission and
-  never requests or resets grants. Capture refusal names the host and System
-  Settings guidance; status and logs remain available. Native windows need the
+  never requests or resets grants. The local health payload sets `nativeViewerOpened` after a verified native view attaches, allowing the Desktop host to present its first-use Screen Recording and Accessibility (called Device Control and Data Access on macOS 27) setup. Only explicit buttons in that host invoke normal OS requests. Capture refusal names setup and System Settings guidance; status and logs remain available. Native windows need the
   helper, have no screenshot fallback, recording or replay, and consume
   only the paired device's `read` capability.
 
