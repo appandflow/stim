@@ -58,6 +58,7 @@ export const METHODS = [
   'input.button',
   'input.rotate',
   'input.posture',
+  'input.simulator',
   'push.register',
   'push.unregister',
   'notifications.list',
@@ -76,6 +77,16 @@ export const METHODS = [
   'device-host.app.attach',
   'device-host.metro.open',
   'device-host.metro.close',
+  'device-host.frames.subscribe',
+  'device-host.frames.keyframe',
+  'device-host.unsubscribe',
+  'device-host.control.begin',
+  'device-host.control.end',
+  'device-host.input.touch',
+  'device-host.input.text',
+  'device-host.input.button',
+  'device-host.input.rotate',
+  'device-host.input.posture',
 ] as const;
 
 /** The methods a connection with the `build` capability may call; they need `build`, not `read`. */
@@ -99,6 +110,16 @@ export const DEVICE_HOST_METHODS = [
   'device-host.app.attach',
   'device-host.metro.open',
   'device-host.metro.close',
+  'device-host.frames.subscribe',
+  'device-host.frames.keyframe',
+  'device-host.unsubscribe',
+  'device-host.control.begin',
+  'device-host.control.end',
+  'device-host.input.touch',
+  'device-host.input.text',
+  'device-host.input.button',
+  'device-host.input.rotate',
+  'device-host.input.posture',
 ] as const;
 
 export type Method = (typeof METHODS)[number];
@@ -487,7 +508,18 @@ export interface ControlBeginResult {
   platform: Platform;
   lease: { grantedAt: string | null; expiresAt: string } | null;
   postures: DevicePosture[];
+  simulator?: SimulatorOptions;
 }
+
+/** Available simulator controls and the current guest animation setting; null means unsupported. */
+export interface SimulatorOptions {
+  canShake: boolean;
+  slowAnimations: boolean | null;
+}
+
+export type SimulatorCommand = { action: 'read' | 'shake' } | { action: 'slow-animations'; enabled: boolean };
+
+export type InputSimulatorParams = SimulatorCommand & { session: string };
 
 export interface ControlEndParams {
   session: string;
@@ -918,6 +950,19 @@ export interface Methods {
     result: { port: number };
   };
   'device-host.metro.close': { params: { session: string }; result: { port: null } };
+  'device-host.frames.subscribe': {
+    params: { session: string; fps?: number; maxEdge?: number; video?: string[] };
+    result: FramesSubscribeResult;
+  };
+  'device-host.frames.keyframe': Methods['frames.keyframe'];
+  'device-host.unsubscribe': Methods['unsubscribe'];
+  'device-host.control.begin': { params: { session: string; takeOver?: boolean }; result: ControlBeginResult };
+  'device-host.control.end': Methods['control.end'];
+  'device-host.input.touch': Methods['input.touch'];
+  'device-host.input.text': Methods['input.text'];
+  'device-host.input.button': Methods['input.button'];
+  'device-host.input.rotate': Methods['input.rotate'];
+  'device-host.input.posture': Methods['input.posture'];
   hello: { params: HelloParams; result: HelloResult };
   'status.subscribe': { params?: Record<string, never>; result: SubscribeResult };
   'logs.query': { params: LogFilter; result: LogsQueryResult };
@@ -944,6 +989,7 @@ export interface Methods {
   'input.button': { params: InputButtonParams; result: Record<string, never> };
   'input.rotate': { params: InputRotateParams; result: Record<string, never> };
   'input.posture': { params: InputPostureParams; result: Record<string, never> };
+  'input.simulator': { params: InputSimulatorParams; result: SimulatorOptions };
   'push.register': { params: PushRegisterParams; result: Record<string, never> };
   'push.unregister': { params?: Record<string, never>; result: Record<string, never> };
   'notifications.list': { params?: NotificationsListParams; result: NotificationsListResult };
@@ -1463,6 +1509,12 @@ export function protocolJsonSchema(): JsonSchema {
           takeOver: { type: 'boolean', default: false },
         },
       },
+      SimulatorOptions: {
+        type: 'object',
+        required: ['canShake', 'slowAnimations'],
+        additionalProperties: false,
+        properties: { canShake: { type: 'boolean' }, slowAnimations: { type: ['boolean', 'null'] } },
+      },
       ControlBeginResult: {
         type: 'object',
         required: ['session', 'platform', 'lease', 'postures'],
@@ -1485,6 +1537,7 @@ export function protocolJsonSchema(): JsonSchema {
             ],
           },
           postures: { type: 'array', items: { enum: [...DEVICE_POSTURES] }, uniqueItems: true },
+          simulator: { $ref: '#/$defs/SimulatorOptions' },
         },
       },
       BuildPlanParams: {
@@ -1763,6 +1816,52 @@ export function protocolJsonSchema(): JsonSchema {
             ),
           ),
           request('device-host.metro.close', session({})),
+          request(
+            'device-host.frames.subscribe',
+            session({
+              fps: { type: 'integer', minimum: 1, maximum: FRAME_FPS.video },
+              maxEdge: { type: 'integer', minimum: FRAME_EDGE.min, maximum: FRAME_EDGE.max },
+              video: { type: 'array', items: { type: 'string' } },
+            }),
+          ),
+          request('device-host.frames.keyframe', {
+            type: 'object',
+            required: ['subscription'],
+            additionalProperties: false,
+            properties: { subscription: { type: 'string' } },
+          }),
+          request('device-host.unsubscribe', {
+            type: 'object',
+            required: ['subscription'],
+            additionalProperties: false,
+            properties: { subscription: { type: 'string' } },
+          }),
+          request('device-host.control.begin', session({ takeOver: { type: 'boolean' } })),
+          request('device-host.control.end', session({})),
+          request(
+            'device-host.input.touch',
+            session(
+              {
+                phase: { enum: [...TOUCH_PHASES] },
+                x: { type: 'number', minimum: 0, maximum: 1 },
+                y: { type: 'number', minimum: 0, maximum: 1 },
+                display: { type: 'integer', minimum: 0, maximum: 3 },
+              },
+              ['phase', 'x', 'y'],
+            ),
+          ),
+          request(
+            'device-host.input.text',
+            session(
+              {
+                text: { type: 'string', minLength: 1, maxLength: MAX_INPUT_TEXT, pattern: '^[\\x20-\\x7e\\n\\t\\b]+$' },
+              },
+              ['text'],
+            ),
+          ),
+          request('device-host.input.button', session({ button: { enum: [...INPUT_BUTTONS] } }, ['button'])),
+          request('device-host.input.rotate', session({ direction: { enum: [...ROTATE_DIRECTIONS] } }, ['direction'])),
+          request('device-host.input.posture', session({ posture: { enum: [...DEVICE_POSTURES] } }, ['posture'])),
           request('hello', { $ref: '#/$defs/HelloParams' }),
           request('status.subscribe'),
           request('logs.query', { $ref: '#/$defs/LogFilter' }),
@@ -1860,6 +1959,12 @@ export function protocolJsonSchema(): JsonSchema {
           request('input.button', session({ button: { enum: [...INPUT_BUTTONS] } }, ['button'])),
           request('input.rotate', session({ direction: { enum: [...ROTATE_DIRECTIONS] } }, ['direction'])),
           request('input.posture', session({ posture: { enum: [...DEVICE_POSTURES] } }, ['posture'])),
+          request('input.simulator', {
+            oneOf: [
+              session({ action: { enum: ['read', 'shake'] } }, ['action']),
+              session({ action: { const: 'slow-animations' }, enabled: { type: 'boolean' } }, ['action', 'enabled']),
+            ],
+          }),
           request('push.register', {
             type: 'object',
             required: ['token', 'events', 'ref'],
@@ -1991,6 +2096,7 @@ export function protocolJsonSchema(): JsonSchema {
                   { $ref: '#/$defs/HostedAppChunkResult' },
                   { $ref: '#/$defs/HelloResult' },
                   { $ref: '#/$defs/ControlBeginResult' },
+                  { $ref: '#/$defs/SimulatorOptions' },
                   { $ref: '#/$defs/ActionResult' },
                   { $ref: '#/$defs/MachineUsage' },
                   { $ref: '#/$defs/MachineHistory' },

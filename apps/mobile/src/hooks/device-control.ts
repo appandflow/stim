@@ -6,6 +6,8 @@ import type {
   DevicePlatform,
   DevicePosture,
   InputButton,
+  SimulatorCommand,
+  SimulatorOptions,
   Methods,
   RotateDirection,
   TouchPhase,
@@ -18,7 +20,7 @@ const MAX_INPUT_TEXT = 256;
 export type ControlState =
   | { kind: 'off'; ended?: string }
   | { kind: 'starting' }
-  | { kind: 'on'; session: string; leaseSince: string | null; postures: DevicePosture[] }
+  | { kind: 'on'; session: string; leaseSince: string | null; postures: DevicePosture[]; simulator?: SimulatorOptions }
   | { kind: 'busy'; message: string }
   | { kind: 'failed'; message: string };
 
@@ -34,11 +36,19 @@ export interface DeviceControl {
   rotate: (direction: RotateDirection) => void;
   /** Rejects with the server's reason; a Duo fold takes a few seconds to settle. */
   posture: (posture: DevicePosture) => Promise<void>;
+  simulator: (command: SimulatorCommand) => Promise<void>;
 }
 
 type HeldState =
   | ControlState
-  | { kind: 'on'; session: string; leaseSince: string | null; postures: DevicePosture[]; link: unknown };
+  | {
+      kind: 'on';
+      session: string;
+      leaseSince: string | null;
+      postures: DevicePosture[];
+      simulator?: SimulatorOptions;
+      link: unknown;
+    };
 
 /**
  * A control session on one device. It ends when the screen unmounts, when the connection drops (the server
@@ -97,6 +107,7 @@ export function useDeviceControl(
             session: result.session,
             leaseSince: result.lease?.grantedAt ?? null,
             postures: result.postures,
+            ...(result.simulator ? { simulator: result.simulator } : {}),
             link,
           });
         },
@@ -140,5 +151,18 @@ export function useDeviceControl(
     },
     [connection, session],
   );
-  return { allowed, state, begin, end, touch, text, button, rotate, posture };
+  const simulator = useCallback(
+    async (command: SimulatorCommand) => {
+      if (!connection || !session) return;
+      const result = await connection.request('input.simulator', { session, ...command });
+      if (!mounted.current) return;
+      setHeld((current) =>
+        current.kind === 'on' && current.session === session && 'link' in current && current.link === link
+          ? { ...current, simulator: result }
+          : current,
+      );
+    },
+    [connection, session, link],
+  );
+  return { allowed, state, begin, end, touch, text, button, rotate, posture, simulator };
 }

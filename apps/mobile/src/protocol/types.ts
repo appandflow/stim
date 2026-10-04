@@ -609,7 +609,17 @@ export interface ControlBeginResult {
   platform: DevicePlatform;
   lease: { grantedAt: string | null; expiresAt: string } | null;
   postures: DevicePosture[];
+  simulator?: SimulatorOptions;
 }
+
+export interface SimulatorOptions {
+  canShake: boolean;
+  slowAnimations: boolean | null;
+}
+
+export type SimulatorCommand = { action: 'read' | 'shake' } | { action: 'slow-animations'; enabled: boolean };
+
+export type InputSimulatorParams = SimulatorCommand & { session: string };
 
 export type TouchPhase = 'down' | 'move' | 'up';
 
@@ -828,6 +838,7 @@ export interface Methods {
   'input.text': { params: { session: string; text: string }; result: Record<string, never> };
   'input.button': { params: { session: string; button: InputButton }; result: Record<string, never> };
   'input.rotate': { params: { session: string; direction: RotateDirection }; result: Record<string, never> };
+  'input.simulator': { params: InputSimulatorParams; result: SimulatorOptions };
   'input.posture': { params: { session: string; posture: DevicePosture }; result: Record<string, never> };
   'push.register': { params: PushRegisterParams; result: Record<string, never> };
   'push.unregister': { params?: Record<string, never>; result: Record<string, never> };

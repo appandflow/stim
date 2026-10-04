@@ -223,7 +223,7 @@ struct StimDesktopApp: App {
     }
 
     #if DEBUG
-      Window("Component Gallery", id: ComponentGallery.windowID) { ComponentGallery() }
+      Window("SwiftUI Playground", id: ComponentGallery.windowID) { ComponentGallery() }
     #endif
 
     Settings {

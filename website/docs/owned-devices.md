@@ -18,6 +18,12 @@ Stim creates and records its local simulators and emulators. Their names start
 with `stim-`. It never creates, boots, or deletes a simulator or emulator that
 another tool made.
 
+The Stim phone viewer's control toolbar offers **Shake** and **Slow animations**
+for owned iOS simulators when the paired server supports them. Slow animations
+shows the confirmed simulator state. These options require control access and
+are hidden on older servers or devices that do not support them. They use
+Stim's viewer and never open Device Hub.
+
 A `stim-` name alone does not make a device Stim's. Stim lists every device it
 creates in `~/.stim/created-devices.json`, or in `$STIM_HOME/created-devices.json`
 when `STIM_HOME` points somewhere else. For devices created before that ledger,
@@ -592,8 +598,19 @@ stop and revocation close the streams. No public tunnel or Funnel is needed.
 Expo development clients need the forwarded-origin manifest contract described
 in that protocol; older client/CLI versions are not covered by this slice.
 
-Screen/control relays, automatic placement and
+Client screen/control relays, automatic placement and
 Android hosting remain in [#2266](https://github.com/appandflow/stim/issues/2266).
 This protocol slice does not change where `stim ios` or `stim android` runs.
 Hosting approval grants no access to unrelated
 workspaces, phone control or build offloading.
+
+The [hosted view and input protocol](https://github.com/appandflow/stim/blob/main/packages/server/README.md#hosted-ios-view-and-input)
+streams and controls only the approved client's ready, owned iOS session. The
+worker derives the exact simulator from its private ledger and keeps the
+capture helper under the session's ownership claim. Reconnect preserves the
+native session; subscribe and begin control again. Installation, stop and
+revocation close capture and input before native work. An uncertain journal
+retains native ownership while ending known capture. Surviving or unresolved
+posture input blocks native replacement and teardown after a server crash.
+Client viewer relays and
+automatic CLI placement remain under #2266.

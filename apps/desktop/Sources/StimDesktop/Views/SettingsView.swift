@@ -72,7 +72,7 @@ struct SettingsView: View {
   }
 }
 
-private struct ScopeSettingsView: View {
+struct ScopeSettingsView: View {
   var scope: SettingScope
   @ObservedObject var model: SettingsModel
   @Binding var workspace: String?
@@ -100,6 +100,9 @@ private struct ScopeSettingsView: View {
             }
           }
           Button("Choose\u{2026}", action: chooseWorkspace).buttonStyle(.stim())
+            #if DEBUG
+              .disabled(model.inMemory)
+            #endif
         }
       }
       if let file = model.payload?.file(for: scope) {

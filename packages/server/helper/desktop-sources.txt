@@ -20,3 +20,4 @@ StimKit/DeviceFrameView.swift
 StimKit/StoragePaths.swift
 SimulatorFrames/SimulatorFrameArtwork.swift
 EmulatorFrames/EmulatorFrameArtwork.swift
+SimulatorFrames/SimulatorDevelopmentOptions.swift

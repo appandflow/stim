@@ -1013,9 +1013,40 @@ let arguments = CommandLine.arguments
 let usage =
   "usage: stim-frames ios <udid> | android <serial> | android-device <serial> <adb> <scrcpy-server> | web <cdpEndpoint> <chromePid> <targetId> | iphone <udid> [name]"
 let terminated = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .global())
-let counts = ["web": [5], "iphone": [3, 4], "android-device": [5], "android": [3, 4]]
+let counts = ["simulator-options": [4, 5], "web": [5], "iphone": [3, 4], "android-device": [5], "android": [3, 4]]
 guard arguments.count > 1, (counts[arguments[1]] ?? [3]).contains(arguments.count) else { fail(usage) }
 switch arguments[1] {
+case "simulator-options":
+  DispatchQueue.global().async {
+    _ = FileHandle.standardInput.readDataToEndOfFile()
+    exit(0)
+  }
+  CoreSimulator.developerDir = CoreSimulator.selectedDeveloperDir()
+  do {
+    let udid = arguments[2]
+    let settings: SimulatorDevelopmentOptions.Settings
+    switch arguments[3] {
+    case "read" where arguments.count == 4:
+      settings = try SimulatorDevelopmentOptions.read(udid: udid)
+    case "shake" where arguments.count == 4:
+      try SimulatorDevelopmentOptions.shake(udid: udid)
+      settings = try SimulatorDevelopmentOptions.read(udid: udid)
+    case "slow-animations" where arguments.count == 5 && ["on", "off"].contains(arguments[4]):
+      settings = try SimulatorDevelopmentOptions.setSlowAnimations(arguments[4] == "on", udid: udid)
+    default:
+      throw NSError(domain: "StimFrames", code: 1, userInfo: [NSLocalizedDescriptionKey: "Invalid simulator option."])
+    }
+    let result: [String: Any] = [
+      "canShake": settings.canShake,
+      "slowAnimations": settings.slowAnimations.map { $0 as Any } ?? NSNull(),
+    ]
+    let data = try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys])
+    FileHandle.standardOutput.write(data)
+    exit(0)
+  } catch {
+    FileHandle.standardError.write(Data("\(error.localizedDescription)\n".utf8))
+    exit(1)
+  }
 case "ios":
   CoreSimulator.developerDir = CoreSimulator.selectedDeveloperDir()
   guard CoreSimulator.deviceSet != nil else { fail("CoreSimulator could not be loaded from \(CoreSimulator.developerDir).") }

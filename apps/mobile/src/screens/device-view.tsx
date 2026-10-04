@@ -238,6 +238,7 @@ export function DeviceView({
   const [typing, setTyping] = useState(false);
   const [typed, setTyped] = useState('');
   const [moving, setMoving] = useState<DevicePosture | null>(null);
+  const [changingOption, setChangingOption] = useState(false);
   const [barBottom, setBarBottom] = useState(0);
   const [bannerHeight, setBannerHeight] = useState(0);
   const [barSides, setBarSides] = useState<[number, number]>([0, 0]);
@@ -355,6 +356,14 @@ export function DeviceView({
       .catch((cause: Error) => Alert.alert(t`Posture not changed`, cause.message))
       .finally(() => setMoving(null));
   };
+  const simulator = control.state.kind === 'on' ? control.state.simulator : null;
+  const changeSimulator = (command: Parameters<typeof control.simulator>[0]) => {
+    setChangingOption(true);
+    control
+      .simulator(command)
+      .catch((cause: Error) => Alert.alert(t`Simulator option not changed`, cause.message))
+      .finally(() => setChangingOption(false));
+  };
   const readOnlyBanner = readOnly ? (
     <View style={styles.banner(true)}>
       <View style={styles.bannerBody}>
@@ -449,6 +458,23 @@ export function DeviceView({
               onPress={() => rotate('right')}
             />
           </>
+        ) : null}
+        {simulator?.canShake ? (
+          <ToolButton
+            icon="arrow.triangle.2.circlepath"
+            label={t`Shake`}
+            disabled={changingOption}
+            onPress={() => changeSimulator({ action: 'shake' })}
+          />
+        ) : null}
+        {typeof simulator?.slowAnimations === 'boolean' ? (
+          <ToolButton
+            icon="hourglass"
+            label={t`Slow animations`}
+            selected={simulator.slowAnimations}
+            disabled={changingOption}
+            onPress={() => changeSimulator({ action: 'slow-animations', enabled: !simulator.slowAnimations })}
+          />
         ) : null}
         {postures.map((posture) => (
           <ToolButton

@@ -1,4 +1,6 @@
 import AppKit
+import EmulatorFrames
+import SimulatorFrames
 import StimKit
 import StimStores
 import SwiftUI
@@ -16,6 +18,10 @@ struct DeviceViewer: View {
   @State private var takenOver = false
   @State private var escapeMonitor: Any?
   @State private var window = WindowRef()
+  @State private var scalingMode = DeviceScalingMode.fit
+  @State private var displayMetrics: DeviceDisplayMetrics?
+  @State private var backingScale: CGFloat = 1
+  @State private var displayPointsPerInch: CGFloat?
   @FocusState private var actionsFocused: Bool
   @AppStorage(AppPreferences.Key.viewerShowsActions) private var showsActions = true
   @EnvironmentObject private var actions: ActionCenter
@@ -66,7 +72,21 @@ struct DeviceViewer: View {
     }
     .frame(width: size.width, height: size.height)
     .background(Palette.background)
-    .background(WindowReader(found: window))
+    .background(WindowReader(found: window, changed: updateDisplayScale))
+    .onReceive(NotificationCenter.default.publisher(for: NSWindow.didChangeScreenNotification)) { event in
+      if event.object as? NSWindow === window.window { updateDisplayScale() }
+    }
+    .onReceive(NotificationCenter.default.publisher(for: NSWindow.didChangeBackingPropertiesNotification)) { event in
+      if event.object as? NSWindow === window.window { updateDisplayScale() }
+    }
+    .task(id: deviceID) {
+      switch device {
+      case .ios(_, let sim) where !sim.physical: displayMetrics = SimulatorDisplayMetrics.load(udid: sim.udid)
+      case .android(_, let avd) where !avd.physical: displayMetrics = EmulatorDisplayMetrics.load(avdName: avd.name)
+      default: displayMetrics = nil
+      }
+      scalingMode = .fit
+    }
     .onAppear {
       watchEscape()
       takenOver =
@@ -99,6 +119,7 @@ struct DeviceViewer: View {
       DeviceViewerToolbar(
         device: device, env: env, usage: device.isRunning ? env.usage(of: device, machine: machine) : nil,
         takenOver: $takenOver, replaying: replaying, showsActions: hasActions && fits ? $showsActions : nil,
+        scalingMode: $scalingMode, scalingModes: scalingModes(device, replaying: replaying),
         close: close)
       Rectangle().fill(Palette.border).frame(height: 1)
       HStack(spacing: 0) {
@@ -147,23 +168,57 @@ struct DeviceViewer: View {
     GeometryReader { geo in
       let padding = Space.xxl
       let interactive = device.isRunning && takenOver && !replaying
-      DeviceTile(
-        device: device, screenHeight: max(160, geo.size.height - padding * 2),
-        interactive: interactive, workspace: env.path,
-        build: env.runningBuild(for: device),
-        replay: replay, replaying: replaying,
-        presence: env.appPresence(device),
-        showsCovers: true,
-        viewer: true,
-        maxWidth: max(DeviceTile.minimumWidth, geo.size.width - padding * 2),
-        onControlLost: { takenOver = false }
-      )
-      .frame(width: geo.size.width, height: geo.size.height)
+      ScrollView([.horizontal, .vertical]) {
+        DeviceTile(
+          device: device, screenHeight: max(160, geo.size.height - padding * 2),
+          interactive: interactive, workspace: env.path,
+          build: env.runningBuild(for: device),
+          replay: replay, replaying: replaying,
+          presence: env.appPresence(device),
+          showsCovers: true,
+          viewer: true,
+          maxWidth: max(DeviceTile.minimumWidth, geo.size.width - padding * 2),
+          pixelScale: devicePixelScale(
+            mode: replaying ? .fit : scalingMode, device: displayMetrics,
+            backingScale: backingScale, displayPointsPerInch: displayPointsPerInch),
+          framePixelsPerUnit: device.platform == "ios" ? displayMetrics?.pixelsPerPoint ?? 1 : 1,
+          onControlLost: { takenOver = false }
+        )
+        .frame(minWidth: geo.size.width, minHeight: geo.size.height)
+      }
       .onChange(of: replaying) { _, replaying in
         if replaying { takenOver = false }
       }
     }
     .background(Palette.grouped)
+  }
+
+  private func scalingModes(_ device: DeviceRef, replaying: Bool) -> [DeviceScalingMode] {
+    switch device {
+    case .ios, .android: break
+    case .remote, .web: return [.fit]
+    }
+    guard !replaying, device.isRunning, !device.isPhysical, device.formFactor != .dual else { return [.fit] }
+    return DeviceScalingMode.allCases.filter {
+      $0 == .fit
+        || devicePixelScale(
+          mode: $0, device: displayMetrics, backingScale: backingScale, displayPointsPerInch: displayPointsPerInch) != nil
+    }
+  }
+
+  private func updateDisplayScale() {
+    guard let viewerWindow = window.window else { return }
+    backingScale = viewerWindow.backingScaleFactor
+    guard let screen = viewerWindow.screen,
+      let number = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber
+    else {
+      displayPointsPerInch = nil
+      if scalingMode == .physicalSize { scalingMode = .fit }
+      return
+    }
+    let millimeters = CGDisplayScreenSize(number.uint32Value).width
+    displayPointsPerInch = StimKit.displayPointsPerInch(pointWidth: screen.frame.width, physicalWidthMillimeters: millimeters)
+    if scalingMode == .physicalSize, displayPointsPerInch == nil { scalingMode = .fit }
   }
 
   /// Plays from just before the action, counting it as the action shown while the seek lands before it.
@@ -245,16 +300,19 @@ private final class WindowRef {
 /// Hands out the window a view is in.
 private struct WindowReader: NSViewRepresentable {
   var found: WindowRef
+  var changed: () -> Void
 
-  func makeNSView(context: Context) -> NSView { WindowView(found: found) }
+  func makeNSView(context: Context) -> NSView { WindowView(found: found, changed: changed) }
 
   func updateNSView(_ view: NSView, context: Context) {}
 
   private final class WindowView: NSView {
     let found: WindowRef
+    let changed: () -> Void
 
-    init(found: WindowRef) {
+    init(found: WindowRef, changed: @escaping () -> Void) {
       self.found = found
+      self.changed = changed
       super.init(frame: .zero)
     }
 
@@ -263,6 +321,7 @@ private struct WindowReader: NSViewRepresentable {
     override func viewDidMoveToWindow() {
       super.viewDidMoveToWindow()
       found.window = window
+      DispatchQueue.main.async { [changed] in changed() }
     }
   }
 }

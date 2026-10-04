@@ -50,6 +50,10 @@ performance traces. Every release is listed under
   **Refresh** reads changes made elsewhere. Unsupported options say
   **Unavailable**. Requires Xcode's simulator appearance API; audio, location,
   VoiceOver, color filters and Liquid Glass options are not included.
+  Its **Development** section also offers **Slow animations** and **Shake**
+  where CoreSimulator supports them. Slow animations changes guest UIKit
+  animation speed and reads the setting back; Shake sends a shake event to the
+  foreground app. Android animation settings are unchanged.
 - **Logs.** Separate Metro and App / native inspector sections open the same
   viewer with their source filters selected. Filters remain editable; repeated
   errors are grouped. **Build output > Readable** simplifies Xcode output; **Raw** restores
@@ -142,6 +146,19 @@ Android foldable/circular devices do not use this mobile frame path.
 
 Framed H.264 requires a current Stim phone build with native orientation-clear support; older phone builds keep the video frameless.
 
+The live local viewer's scale menu defaults to **Fit**. **Point Accurate** maps
+iOS points or Android profile dp to Mac points; **Pixel Accurate** maps guest
+pixels to display backing pixels. **Physical Size** uses installed iOS device DPI
+and the current monitor's reported dimensions, which can be approximate. It is
+unavailable without those measurements and on Android; Android dp density does
+not describe physical size. Moving between monitors updates the scale.
+Accurate modes keep their size when the viewer is small. Scroll outside the device
+screen, or release Control to scroll over it; **Fit** always returns to the full
+device view. Hardware frames retain the screen scale through rotation. Android
+accurate modes use native-resolution images; Fit and wall previews keep their 960-pixel limit.
+Duo's projected housing and folded screen, replay, physical devices, web and remote
+previews remain in **Fit**.
+
 On the All devices and project wall, active workspaces without running or building
 devices use compact cards labelled **No running devices**, with Metro status,
 warnings and error links. CPU and RAM stay on the workspace page.
@@ -223,3 +240,14 @@ Stim prints `Open in Stim Desktop: stim-desktop://workspace?path=...` when it
 starts work, and coding agents share the same link, so you can jump straight to
 a workspace. Settings and other details are in the
 [app's README](https://github.com/appandflow/stim/blob/main/apps/desktop/README.md).
+
+## SwiftUI playground for contributors
+
+A DEBUG build provides **Window > SwiftUI Playground** with production notification filters, build
+cards and disclosures, simulator appearance controls, Settings scope tabs and design tokens. Named
+scenarios cover each view's applicable loading, empty, error, long-text and large-data states.
+
+Run `swift run StimDesktop --playground` from `apps/desktop` to open only the playground, without
+starting the normal app's CLI or server. Fixture interactions stay in memory. Compact/regular
+viewports, light/dark, large text and increased contrast help inspect layout without
+changing system preferences. Release builds exclude it. See the [desktop development guide](https://github.com/appandflow/stim/blob/main/apps/desktop/README.md#swiftui-playground) for adding a fixture.

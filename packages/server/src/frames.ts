@@ -4,6 +4,7 @@ import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'n
 import { connect, type ClientHttp2Session } from 'node:http2';
 import { join } from 'node:path';
 import type { DeviceLeaseState, StatusPayload } from '@stim-cli/core/state';
+import type { ClaimHandle } from '@stim-cli/core/ownership-claim';
 import type { DevicePosture, FrameTarget, DeviceFrameArtwork } from './protocol.ts';
 import { serverDir } from './registry.ts';
 import { DEFAULT_FRAME_HINT, HelperSource, RECORD_HINT, type FrameHint } from './frame-helper.ts';
@@ -790,17 +791,20 @@ export class FramePool {
   private readonly limits: FrameLimits;
   private readonly helper: () => string | null;
   private readonly viewers: DeviceViewers | null;
+  private readonly claim: ClaimHandle | undefined;
 
   constructor(
     env: NodeJS.ProcessEnv,
     limits: FrameLimits = DEFAULT_FRAME_LIMITS,
     helper: () => string | null = () => null,
     viewers: DeviceViewers | null = null,
+    claim?: ClaimHandle,
   ) {
     this.env = env;
     this.limits = limits;
     this.helper = helper;
     this.viewers = viewers;
+    this.claim = claim;
   }
 
   subscribe(device: Device, listener: FrameListener, hint: FrameHint = DEFAULT_FRAME_HINT): () => void {
@@ -842,7 +846,7 @@ export class FramePool {
         ...(listener.artwork ? { artwork: listener.artwork } : {}),
         delayed: listener.delayed,
         failed: (message) => {
-          if (streamed || cancelled || physical) return listener.failed(message);
+          if (streamed || cancelled || physical || this.claim) return listener.failed(message);
           console.error(`stim-server: ${message} Falling back to screenshots.`);
           detach = this.screenshots(device).add(listener);
         },
@@ -909,6 +913,7 @@ export class FramePool {
     const helper = this.helper();
     if (helper === null) return null;
     const source = this.stream(helper, device);
+    if (!source.active) return null;
     const detach = source.add({ frame: () => {}, delayed: () => {}, failed }, null);
     return {
       send: (command) => source.send(command),
@@ -935,11 +940,18 @@ export class FramePool {
       device,
       this.env,
       (stopped) => {
-        if (this.sources.get(key) === created) this.sources.delete(key);
-        void this.stopping.track(stopped);
+        const remove = () => {
+          if (this.sources.get(key) === created) this.sources.delete(key);
+        };
+        if (this.claim) void this.stopping.track(stopped).then(remove, remove);
+        else {
+          remove();
+          void this.stopping.track(stopped);
+        }
       },
       this.limits.lingerMs,
       lit,
+      this.claim,
     );
     this.sources.set(key, created);
     return created;
