@@ -1140,6 +1140,36 @@ script with `--check` and fails when a committed file is stale. The color
 names match the phone's; `Palette` colors follow the system appearance and the
 app's Appearance setting.
 
+## SwiftUI playground
+
+Run the DEBUG playground without starting the normal app's CLI, server, notification service or updater:
+
+```bash
+cd apps/desktop
+swift run StimDesktop --playground
+```
+
+In a normal debug session, **Window > SwiftUI Playground** opens the same fixture views;
+that session's main window keeps its normal live services. The standalone entry is the
+backend-free option. Release builds exclude the playground and its fixture seams, and refuse `--playground`.
+
+Choose Notifications, Builds, Simulator controls, Settings or Design tokens. Each screen offers
+its applicable named scenarios: ready, loading, empty, error, long text and large data.
+Notifications includes 200 entries; Builds includes the retained maximum of 10 runs per platform. Local inboxes and fixed
+simulator forms omit loading/error or large-list scenarios that their production views do not have.
+Settings covers the four configuration scopes, not the App, Phones or Build Machines tabs.
+
+**Compact** sets the fixture viewport to 380 points; regular is 900 points. Switch light/dark,
+large text and increased contrast without changing system preferences. Reduce Motion follows the Mac's current accessibility setting because SwiftUI does not expose a writable override. Filters,
+mark-read/clear, build disclosures, simulator appearance controls and Settings edits operate only
+on fixture data. Run and log buttons report a simulated action. **Reset** restores the scenario.
+
+To add a scenario, extend `Design/PlaygroundFixtures.swift` and select the existing production
+view in `Design/ScreenPlayground.swift`. Keep fixtures synthetic and all effects in memory;
+add a narrow DEBUG seam only when that view would otherwise invoke a real backend. These
+fixtures can also seed the separate visual regression pilot tracked in #2342; the playground
+does not add a snapshot framework or a golden-image approval workflow.
+
 ## Build the app
 
 ```bash
@@ -1198,4 +1228,4 @@ To check a bundle, point the DSN at a local listener, such as `http://<key>@127.
 - `Sources/EmulatorFrames`: live emulator frames through the emulator's localhost gRPC `streamScreenshot` call, found through its discovery file, and input through the same endpoint. An emulator without a hardware keyboard (`hw.keyboard=no`) drops key events, so Desktop types on it with `adb shell input`. Emulators Stim booted before it passed `-grpc` show no frames until their next boot.
 - `Sources/WebFrames`: the Stim-owned Chrome page from `stim web`, over the Chrome DevTools Protocol on the loopback `cdpEndpoint` `stim status` reports. It connects only when `SystemInfo.getProcessInfo` names the Chrome pid status reports, attaches to the page's `targetId`, streams it with `Page.startScreencast` and sends `Input.dispatch*` events. Public protocol only; no WebKit view, which would render a different engine than the one agents test.
 - stim-server's `stim-frames` helper compiles the non-view files of these modules, listed in `packages/server/helper/desktop-sources.txt`, together with its own `main.swift`. Desktop CI compiles it, so keep those files free of AppKit views, SwiftUI and StimKit. Desktop and the helper both send simulator keys through `SimulatorHID.hardwareKey`, and page input through `WebPage`.
-- `Sources/StimDesktop`: the SwiftUI app. `Design/` holds the generated tokens, the theme layer over them (`.textStyle(_:)`, `Font.stim(_:)` and the dynamic colors), and the component kit that mirrors the phone's: `.buttonStyle(.stim(_:_:))`, `IconButton`, `Pill`, `Banner` and `ListSection`/`ListRow`. A debug build has **Window > Component Gallery**, which shows every token and component in light and dark.
+- `Sources/StimDesktop`: the SwiftUI app. `Design/` holds the generated tokens, the theme layer over them (`.textStyle(_:)`, `Font.stim(_:)` and the dynamic colors), and the component kit that mirrors the phone's: `.buttonStyle(.stim(_:_:))`, `IconButton`, `Pill`, `Banner` and `ListSection`/`ListRow`. A debug build has **Window > SwiftUI Playground** for production screen fixtures and design tokens.

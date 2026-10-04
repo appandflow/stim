@@ -230,3 +230,14 @@ Stim prints `Open in Stim Desktop: stim-desktop://workspace?path=...` when it
 starts work, and coding agents share the same link, so you can jump straight to
 a workspace. Settings and other details are in the
 [app's README](https://github.com/appandflow/stim/blob/main/apps/desktop/README.md).
+
+## SwiftUI playground for contributors
+
+A DEBUG build provides **Window > SwiftUI Playground** with production notification filters, build
+cards and disclosures, simulator appearance controls, Settings scope tabs and design tokens. Named
+scenarios cover each view's applicable loading, empty, error, long-text and large-data states.
+
+Run `swift run StimDesktop --playground` from `apps/desktop` to open only the playground, without
+starting the normal app's CLI or server. Fixture interactions stay in memory. Compact/regular
+viewports, light/dark, large text and increased contrast help inspect layout without
+changing system preferences. Release builds exclude it. See the [desktop development guide](https://github.com/appandflow/stim/blob/main/apps/desktop/README.md#swiftui-playground) for adding a fixture.
