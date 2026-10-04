@@ -4,6 +4,32 @@ import Testing
 @testable import StimKit
 
 @Suite @MainActor struct DeviceFrameTests {
+  @Test func accurateScaleSurvivesRoundedContainerBoundsAndRotation() {
+    let screen = NSView()
+    let canvas = DeviceFrameNSView(screen: screen)
+    canvas.artwork = DeviceFrameArtwork(
+      geometry: DeviceFrameGeometry(
+        size: CGSize(width: 433, height: 903), aperture: CGRect(x: 15, y: 14, width: 402, height: 874)), background: { _ in })
+    canvas.showsFrame = true
+    canvas.artworkScale = 1.5
+    canvas.frame = CGRect(x: 0, y: 0, width: 649, height: 1354)
+    canvas.layoutSubtreeIfNeeded()
+    #expect(screen.frame.size == CGSize(width: 603, height: 1311))
+    #expect(screen.frame.origin.x.rounded() == screen.frame.origin.x)
+    #expect(screen.frame.origin.y.rounded() == screen.frame.origin.y)
+
+    canvas.quarterTurns = 1
+    canvas.frame = CGRect(x: 0, y: 0, width: 1354, height: 649)
+    canvas.layoutSubtreeIfNeeded()
+    #expect(screen.frame.size == CGSize(width: 1311, height: 603))
+
+    canvas.showsFrame = false
+    canvas.accurateScreenSize = CGSize(width: 1080 / 2.625, height: 2400 / 2.625)
+    canvas.frame = CGRect(x: 0, y: 0, width: 411, height: 914)
+    canvas.layoutSubtreeIfNeeded()
+    #expect(screen.frame.size == canvas.accurateScreenSize)
+  }
+
   @Test func installedApertureKeepsTouchesOnScreenAndRejectsBezels() {
     let screen = NSView()
     let canvas = DeviceFrameNSView(screen: screen)

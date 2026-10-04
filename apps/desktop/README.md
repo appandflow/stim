@@ -579,6 +579,20 @@ trackpad scrolls as one-finger drags, and your keys. Turn it off before an agent
 drives the device again. Command-key shortcuts stay with the app's menus, and a
 mouse wheel without precise deltas does not scroll.
 
+The viewer's scale menu defaults to **Fit**. **Point Accurate** shows one iOS
+point or Android profile dp per Mac point; **Pixel Accurate** shows one guest
+pixel per display backing pixel. **Physical Size** uses the installed iOS
+device DPI and the current monitor's reported physical width. It is unavailable
+when either measurement is missing, and on Android, whose dp density is not a
+physical measurement. Monitor-reported dimensions can be approximate.
+Accurate modes retain their size when the viewer is small: scroll outside the
+screen, or release Control to scroll over it, and select **Fit** to return.
+The scale follows display and backing-scale changes when moving between monitors.
+Hardware frames retain the same screen scale through rotation. Android accurate
+modes request native-resolution images; Fit and wall previews retain their 960-pixel limit.
+Duo's projected housing and folded screen, replay, physical devices, web and
+remote previews retain **Fit**.
+
 While **Control** is on, groups below the screen of a running simulator or emulator have its
 hardware buttons and rotation: **Home** and **Lock** on a simulator, sent
 through the simulator's HID service; **Home**, **Back**, **Apps** and **Lock**

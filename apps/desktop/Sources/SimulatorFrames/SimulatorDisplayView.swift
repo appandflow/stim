@@ -25,13 +25,15 @@ public struct SimulatorDisplayView: NSViewRepresentable {
   public var duoFrame: SimulatorDuoFrame?
   public var activeScreenID: UInt32?
   public var duoHingeAngle: Double?
+  public var artworkScale: CGFloat?
+  public var accurateScreenSize: CGSize?
 
   public init(
     udid: String, screenID: UInt32 = 1, interactive: Bool = false,
     onPixelSizeChange: @escaping (CGSize) -> Void = { _ in }, onLitChange: ((Bool) -> Void)? = nil,
     buttons: SimulatorButtons? = nil, hingeAngle: Double? = nil, showsDeviceFrame: Bool = false,
     onFrameSizeChange: ((CGSize?) -> Void)? = nil, duoFrame: SimulatorDuoFrame? = nil, activeScreenID: UInt32? = nil,
-    duoHingeAngle: Double? = nil
+    duoHingeAngle: Double? = nil, artworkScale: CGFloat? = nil, accurateScreenSize: CGSize? = nil
   ) {
     self.udid = udid
     self.screenID = screenID
@@ -45,6 +47,8 @@ public struct SimulatorDisplayView: NSViewRepresentable {
     self.duoFrame = duoFrame
     self.activeScreenID = activeScreenID
     self.duoHingeAngle = duoHingeAngle
+    self.artworkScale = artworkScale
+    self.accurateScreenSize = accurateScreenSize
   }
 
   public final class Coordinator {
@@ -61,6 +65,8 @@ public struct SimulatorDisplayView: NSViewRepresentable {
     context.coordinator.identity = frameIdentity
     canvas.artwork = frameIdentity == nil ? nil : SimulatorFrameArtwork.load(udid: udid)
     canvas.showsFrame = showsDeviceFrame
+    canvas.artworkScale = artworkScale
+    canvas.accurateScreenSize = accurateScreenSize
     view.onOrientationChange = { [weak canvas] orientation in
       canvas?.quarterTurns = orientation == 3 ? 1 : orientation == 4 ? 3 : orientation == 2 ? 2 : 0
     }
@@ -85,6 +91,8 @@ public struct SimulatorDisplayView: NSViewRepresentable {
       canvas.artwork = frameIdentity == nil ? nil : SimulatorFrameArtwork.load(udid: udid)
     }
     canvas.showsFrame = showsDeviceFrame
+    canvas.artworkScale = artworkScale
+    canvas.accurateScreenSize = accurateScreenSize
     view.onPixelSizeChange = onPixelSizeChange
     view.onLitChange = onLitChange
     view.attach(udid: udid, screenID: screenID)
@@ -398,7 +406,8 @@ public final class SimulatorDisplayNSView: NSView {
   // that follows the gesture's phases. Momentum events are dropped because iOS
   // applies its own deceleration after the finger lifts.
   public override func scrollWheel(with event: NSEvent) {
-    guard interactive, event.hasPreciseScrollingDeltas, event.momentumPhase.isEmpty else {
+    if interactive, event.hasPreciseScrollingDeltas, !event.momentumPhase.isEmpty { return }
+    guard interactive, event.hasPreciseScrollingDeltas else {
       return super.scrollWheel(with: event)
     }
     if event.phase.contains(.began) {

@@ -132,6 +132,19 @@ Desktop snapshots the departing panel before its own posture controls change the
 hinge; external handoffs can leave that panel blank or retain an older snapshot.
 Stim does not bundle the artwork. Mobile frame delivery is not included.
 
+The live local viewer's scale menu defaults to **Fit**. **Point Accurate** maps
+iOS points or Android profile dp to Mac points; **Pixel Accurate** maps guest
+pixels to display backing pixels. **Physical Size** uses installed iOS device DPI
+and the current monitor's reported dimensions, which can be approximate. It is
+unavailable without those measurements and on Android; Android dp density does
+not describe physical size. Moving between monitors updates the scale.
+Accurate modes keep their size when the viewer is small. Scroll outside the device
+screen, or release Control to scroll over it; **Fit** always returns to the full
+device view. Hardware frames retain the screen scale through rotation. Android
+accurate modes use native-resolution images; Fit and wall previews keep their 960-pixel limit.
+Duo's projected housing and folded screen, replay, physical devices, web and remote
+previews remain in **Fit**.
+
 On the All devices and project wall, active workspaces without running or building
 devices use compact cards labelled **No running devices**, with Metro status,
 warnings and error links. CPU and RAM stay on the workspace page.

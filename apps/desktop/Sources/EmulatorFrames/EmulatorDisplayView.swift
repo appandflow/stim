@@ -23,11 +23,15 @@ public struct EmulatorDisplayView: NSViewRepresentable {
   public var avdName: String?
   public var showsDeviceFrame: Bool
   public var onFrameSizeChange: ((CGSize?) -> Void)?
+  public var fullResolution: Bool
+  public var artworkScale: CGFloat?
+  public var accurateScreenSize: CGSize?
 
   public init(
     serial: String, interactive: Bool = false, onStatus: @escaping (EmulatorStreamStatus) -> Void,
     onPixelSizeChange: @escaping (CGSize) -> Void = { _ in }, buttons: EmulatorButtons? = nil,
-    avdName: String? = nil, showsDeviceFrame: Bool = false, onFrameSizeChange: ((CGSize?) -> Void)? = nil
+    avdName: String? = nil, showsDeviceFrame: Bool = false, onFrameSizeChange: ((CGSize?) -> Void)? = nil,
+    fullResolution: Bool = false, artworkScale: CGFloat? = nil, accurateScreenSize: CGSize? = nil
   ) {
     self.serial = serial
     self.interactive = interactive
@@ -37,6 +41,9 @@ public struct EmulatorDisplayView: NSViewRepresentable {
     self.avdName = avdName
     self.showsDeviceFrame = showsDeviceFrame
     self.onFrameSizeChange = onFrameSizeChange
+    self.fullResolution = fullResolution
+    self.artworkScale = artworkScale
+    self.accurateScreenSize = accurateScreenSize
   }
 
   public final class Coordinator {
@@ -53,9 +60,12 @@ public struct EmulatorDisplayView: NSViewRepresentable {
     context.coordinator.identity = frameIdentity
     canvas.artwork = frameIdentity == nil ? nil : avdName.flatMap { EmulatorFrameArtwork.load(avdName: $0) }
     canvas.showsFrame = showsDeviceFrame
+    canvas.artworkScale = artworkScale
+    canvas.accurateScreenSize = accurateScreenSize
     view.onRotationChange = { [weak canvas] rotation in canvas?.quarterTurns = -rotation }
     view.onStatus = onStatus
     view.onPixelSizeChange = onPixelSizeChange
+    view.setFullResolution(fullResolution)
     view.attach(serial: serial)
     view.setInteractive(interactive)
     buttons?.view = view
@@ -71,8 +81,11 @@ public struct EmulatorDisplayView: NSViewRepresentable {
       canvas.artwork = frameIdentity == nil ? nil : avdName.flatMap { EmulatorFrameArtwork.load(avdName: $0) }
     }
     canvas.showsFrame = showsDeviceFrame
+    canvas.artworkScale = artworkScale
+    canvas.accurateScreenSize = accurateScreenSize
     view.onStatus = onStatus
     view.onPixelSizeChange = onPixelSizeChange
+    view.setFullResolution(fullResolution)
     view.attach(serial: serial)
     view.setInteractive(interactive)
     buttons?.view = view
@@ -132,7 +145,7 @@ public final class EmulatorDisplayNSView: NSView {
   private var retryTimer: Timer?
   private var status: EmulatorStreamStatus?
   private var generation = 0
-  private let pending = PendingFrame()
+  private var pending = PendingFrame()
   private var endpoint: EmulatorEndpoint?
   private var shown: (size: CGSize, rotation: Int, folded: CGSize?)?
   private var interactive = false
@@ -143,6 +156,7 @@ public final class EmulatorDisplayNSView: NSView {
   private var touchPoint: CGPoint?
   private var keysDown: Set<UInt16> = []
   private var lastShown: CFTimeInterval = 0
+  private var fullResolution = false
 
   override init(frame: NSRect) {
     super.init(frame: frame)
@@ -158,6 +172,14 @@ public final class EmulatorDisplayNSView: NSView {
     guard serial != self.serial else { return }
     disconnect()
     self.serial = serial
+    connect()
+  }
+
+  func setFullResolution(_ fullResolution: Bool) {
+    guard self.fullResolution != fullResolution else { return }
+    self.fullResolution = fullResolution
+    disconnect()
+    onPixelSizeChange(.zero)
     connect()
   }
 
@@ -190,9 +212,11 @@ public final class EmulatorDisplayNSView: NSView {
     report(.connecting)
     generation += 1
     let current = generation
+    let pending = PendingFrame()
+    self.pending = pending
     var framesSeen = 0
     let stream = ScreenshotStream(
-      endpoint: endpoint, width: Self.maxPixels, height: Self.maxPixels,
+      endpoint: endpoint, width: fullResolution ? 0 : Self.maxPixels, height: fullResolution ? 0 : Self.maxPixels,
       onFrame: { [weak self, pending] frame in
         framesSeen += 1
         if framesSeen > 1 { ScreenActivity.shared.record(serial) }
@@ -219,6 +243,7 @@ public final class EmulatorDisplayNSView: NSView {
   }
 
   private func frameArrived(_ generation: Int) {
+    guard generation == self.generation else { return }
     let wait = lastShown + 1 / AppPreferences.maxFramesPerSecond - CACurrentMediaTime()
     guard wait > 0 else {
       show(pending.take())
@@ -373,7 +398,8 @@ public final class EmulatorDisplayNSView: NSView {
   // phases, as on iOS. Momentum events are dropped because Android flings on
   // its own after the finger lifts.
   public override func scrollWheel(with event: NSEvent) {
-    guard interactive, event.hasPreciseScrollingDeltas, event.momentumPhase.isEmpty else {
+    if interactive, event.hasPreciseScrollingDeltas, !event.momentumPhase.isEmpty { return }
+    guard interactive, event.hasPreciseScrollingDeltas else {
       return super.scrollWheel(with: event)
     }
     if event.phase.contains(.began) {
