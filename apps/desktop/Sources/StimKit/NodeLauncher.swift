@@ -31,16 +31,17 @@ public struct NodeRuntime: Equatable, Sendable {
 /// in a project instead, a version manager that follows the working directory (asdf, mise, Volta) would pick the
 /// project's pinned Node, which can be older than the CLI supports.
 public final class NodeLauncher: @unchecked Sendable {
-  /// The JavaScript file the CLI runs.
-  public let script: String
+  /// The executable whose JavaScript file the CLI runs: the CLI's own, or a package manager's global install behind
+  /// a version-manager shim. Each command reads it again, so an update that moves the file takes effect at once.
+  public let source: String
   private let environment: [String: String]
   private let home: String
   private let lock = NSLock()
   private var current: NodeRuntime
   private var refreshing = false
 
-  init(script: String, runtime: NodeRuntime, environment: [String: String], home: String) {
-    self.script = script
+  init(source: String, runtime: NodeRuntime, environment: [String: String], home: String) {
+    self.source = source
     self.current = runtime
     self.environment = environment
     self.home = home
@@ -48,9 +49,12 @@ public final class NodeLauncher: @unchecked Sendable {
 
   public var runtime: NodeRuntime { lock.withLock { current } }
 
+  /// The JavaScript file `source` runs now.
+  public var script: String? { Self.nodeScript(at: source) }
+
   /// The launcher for the CLI at `executable`, or nil when the home directory has no `node` or `executable` leads
   /// to no JavaScript file. A version-manager shim leads to the `name` that `layout` places in a package manager's
-  /// global bin directory.
+  /// global bin directory; any other executable, such as a wrapper script, runs as it is.
   public static func resolve(
     executable: String?, name: String, environment: [String: String], home: String,
     layout: () async -> PackageManagerLayout
@@ -58,16 +62,18 @@ public final class NodeLauncher: @unchecked Sendable {
     guard let executable, let runtime = await NodeRuntime.probe(environment: environment, home: home) else {
       return nil
     }
-    var script = nodeScript(at: executable)
-    if script == nil {
-      script = await layout().globalExecutables(name).lazy.compactMap(nodeScript(at:)).first
+    var source: String? = nodeScript(at: executable) == nil ? nil : executable
+    if source == nil, isVersionManagerShim(executable) {
+      source = await layout().globalExecutables(name).first { nodeScript(at: $0) != nil }
     }
-    return script.map { NodeLauncher(script: $0, runtime: runtime, environment: environment, home: home) }
+    return source.map { NodeLauncher(source: $0, runtime: runtime, environment: environment, home: home) }
   }
 
-  /// The program and arguments that run the script with `arguments`. Nil once the Node binary is gone, as after a
-  /// Homebrew upgrade or a version manager's uninstall; the next commands use the Node resolved again.
+  /// The program and arguments that run the script with `arguments`. Nil while the script is gone, and once the
+  /// Node binary is gone, as after a Homebrew upgrade or a version manager's uninstall; the next commands use the
+  /// Node resolved again.
   public func command(_ arguments: [String]) -> (program: String, arguments: [String])? {
+    guard let script else { return nil }
     let node = runtime.path
     if FileManager.default.isExecutableFile(atPath: node) { return (node, [script] + arguments) }
     let start = lock.withLock {
@@ -84,6 +90,12 @@ public final class NodeLauncher: @unchecked Sendable {
       }
     }
     return nil
+  }
+
+  /// A file in a `shims` directory, where asdf, mise and nodenv put the shims that pick a version from the working
+  /// directory. Volta's shims pin a package to the Node it was installed with, so they run as they are.
+  static func isVersionManagerShim(_ executable: String) -> Bool {
+    ((executable as NSString).deletingLastPathComponent as NSString).lastPathComponent == "shims"
   }
 
   /// The JavaScript file `executable` runs, past symbolic links and pnpm shims, or nil when that file is not one.

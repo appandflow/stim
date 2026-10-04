@@ -102,19 +102,22 @@ final class Onboarding: ObservableObject {
       let environment = await environment.value
       let launched = await cli.value.executable
       let report = await Task.detached {
-        let stim = await StimCLI.resolve(environment: environment, override: stimOverride)
+        let home = environment["HOME"].flatMap { $0.isEmpty ? nil : $0 } ?? NSHomeDirectory()
+        let packages = await PackageManagerLayout.probe(environment: environment, home: home)
+        let stim = await StimCLI.resolve(environment: environment, override: stimOverride) { packages }
         let compatibility = CLICompatibility.check(
           executable: stim.executable, versionOutput: await stim.versionOutput(), minimum: StimCLI.minimumVersion)
         var server: StimServerCLI?
-        if let serverOverride { server = await StimServerCLI.resolve(environment: environment, override: serverOverride) }
+        if let serverOverride {
+          server = await StimServerCLI.resolve(environment: environment, override: serverOverride) { packages }
+        }
         let viewerKeys =
           compatibility.isCompatible && offersViewer
           ? (try? await stim.settings(cwd: NSHomeDirectory())).map { DesktopViewerSettings.unset(in: $0.settings) } ?? []
           : []
-        let home = environment["HOME"].flatMap { $0.isEmpty ? nil : $0 } ?? NSHomeDirectory()
         var node = stim.launcher?.runtime
         if node == nil { node = await NodeRuntime.probe(environment: stim.environment, home: home) }
-        let packages = await PackageManagerLayout.probe(environment: environment, home: home)
+        let nodePath = node?.path ?? SetupChecks.tool("node", environment: stim.environment)
         let skillPath = SetupChecks.installedSkill(home: home) {
           FileManager.default.fileExists(atPath: $0)
         }
@@ -135,8 +138,8 @@ final class Onboarding: ObservableObject {
           serverPath: server?.executable,
           viewerKeys: viewerKeys,
           node: CLICompatibility.check(
-            executable: node?.path, versionOutput: node?.version, minimum: SetupChecks.nodeMinimum),
-          nodePath: node?.path,
+            executable: nodePath, versionOutput: node?.version, minimum: SetupChecks.nodeMinimum),
+          nodePath: nodePath,
           brewPath: SetupChecks.tool("brew", environment: environment),
           skillPath: skillPath,
           home: home,

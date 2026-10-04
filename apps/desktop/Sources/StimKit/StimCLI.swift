@@ -30,29 +30,30 @@ public struct StimCLI: Sendable {
   /// Runs `executable`'s script under the home directory's Node; nil runs `executable` through its own shebang.
   public let launcher: NodeLauncher?
 
-  public init(environment: [String: String], override: String? = nil) {
+  public init(environment: [String: String], override: String? = nil, launcher: NodeLauncher? = nil) {
     var environment = environment
     self.executable = resolveExecutable(
       "stim", override: override.flatMap { $0.isEmpty ? nil : $0 } ?? environment["STIM_BIN"],
       environment: &environment)
     self.environment = environment
-    self.launcher = nil
-  }
-
-  private init(_ cli: StimCLI, launcher: NodeLauncher?) {
-    executable = cli.executable
-    environment = cli.environment
     self.launcher = launcher
   }
 
   /// `init(environment:override:)` with a launcher, so a project's Node pin does not choose the Node `stim` runs on.
-  public static func resolve(environment: [String: String], override: String? = nil) async -> StimCLI {
+  /// `layout` names the package managers' global directories, which only a version-manager shim needs.
+  public static func resolve(
+    environment: [String: String], override: String? = nil,
+    layout: (() async -> PackageManagerLayout)? = nil
+  ) async -> StimCLI {
     let cli = StimCLI(environment: environment, override: override)
     let home = environment["HOME"].flatMap { $0.isEmpty ? nil : $0 } ?? NSHomeDirectory()
     let launcher = await NodeLauncher.resolve(
       executable: cli.executable, name: "stim", environment: cli.environment, home: home
-    ) { await PackageManagerLayout.probe(environment: cli.environment, home: home) }
-    return StimCLI(cli, launcher: launcher)
+    ) {
+      if let layout { return await layout() }
+      return await PackageManagerLayout.probe(environment: cli.environment, home: home)
+    }
+    return StimCLI(environment: environment, override: override, launcher: launcher)
   }
 
   private func command(_ arguments: [String]) throws -> (program: String, arguments: [String]) {

@@ -29,6 +29,8 @@ final class ServerController: ObservableObject {
   private var generation = 0
   private var devicesEpoch = 0
   private var missedProbes = 0
+  /// The launcher resolved once for the `stim-server` override it was resolved with.
+  private var launcher: (override: String?, launcher: NodeLauncher?)?
 
   static let devicesInterval: Duration = .seconds(10)
   static let inactiveDevicesInterval: Duration = .seconds(60)
@@ -76,9 +78,11 @@ final class ServerController: ObservableObject {
   func cli() async -> StimServerCLI {
     var environment = await environment?.value ?? ProcessInfo.processInfo.environment
     if case .running(let health, _) = state { environment["STIM_HOME"] = health.stimHome }
-    return await StimServerCLI.resolve(
-      environment: environment,
-      override: UserDefaults.standard.string(forKey: AppPreferences.Key.stimServerExecutable))
+    let override = UserDefaults.standard.string(forKey: AppPreferences.Key.stimServerExecutable)
+    if launcher == nil || launcher?.override != override {
+      launcher = (override, await StimServerCLI.resolve(environment: environment, override: override).launcher)
+    }
+    return StimServerCLI(environment: environment, override: override, launcher: launcher?.launcher)
   }
 
   func start() {

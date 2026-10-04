@@ -1041,10 +1041,13 @@ replaces its card. With the main window closed, the link reopens it.
   `#!/usr/bin/env node` line in the workspace. A version manager that follows
   the working directory (asdf, mise, Volta) would otherwise run them on the
   Node a project pins, which can be older than Stim supports. When `stim` on
-  the `PATH` is a version-manager shim rather than a JavaScript file, the app
-  runs the global install that npm, pnpm or bun reports from the home folder.
-  When that Node's binary disappears, as after a Homebrew upgrade, the next
-  command runs through the shebang and later ones use the Node found again.
+  the `PATH` is a shim in a version manager's `shims` folder (asdf, mise,
+  nodenv), the app runs the global install that npm, pnpm or bun reports from
+  the home folder; any other script, such as a wrapper, runs as it is. Each
+  command follows the executable's links again, so an update takes effect
+  without a restart. When the Node binary disappears, as after a Homebrew
+  upgrade, the next command runs through the shebang and later ones use the
+  Node found again.
 
 At launch the app runs `stim --version` and needs 1.11.0 or later. When
 `stim` is missing, too old, or reports no version, a banner explains Stim and

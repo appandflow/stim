@@ -77,6 +77,40 @@ private struct VersionManagerFixture {
     #expect(launcher?.runtime == NodeRuntime(path: fixture.root + "/v22/node", version: "22.12.0"))
   }
 
+  @Test func aWrapperScriptRunsAsItIsEvenWithAGlobalInstall() async throws {
+    let fixture = try VersionManagerFixture()
+    defer { try? FileManager.default.removeItem(atPath: fixture.root) }
+    try FileManager.default.createDirectory(atPath: fixture.root + "/wrappers", withIntermediateDirectories: true)
+    try fixture.write(fixture.root + "/wrappers/stim", "export STIM_HOME=/tmp/elsewhere\nexec stim \"$@\"")
+    let layout = PackageManagerLayout(npmPrefix: fixture.root + "/prefix", installed: [.npm])
+
+    let launcher = await NodeLauncher.resolve(
+      executable: fixture.root + "/wrappers/stim", name: "stim", environment: fixture.environment, home: fixture.home
+    ) { layout }
+
+    #expect(launcher == nil)
+  }
+
+  @Test func runsTheScriptAnUpdateMovedTheExecutableTo() async throws {
+    let fixture = try VersionManagerFixture()
+    defer { try? FileManager.default.removeItem(atPath: fixture.root) }
+    let fm = FileManager.default
+    let link = fixture.root + "/prefix/bin/stim"
+    let launcher = try #require(
+      await NodeLauncher.resolve(
+        executable: link, name: "stim", environment: fixture.environment, home: fixture.home
+      ) { PackageManagerLayout() })
+    let updated = fixture.root + "/store/stim@2/dist/cli.mjs"
+    try fm.createDirectory(atPath: (updated as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
+    try "#!/usr/bin/env node\n".write(toFile: updated, atomically: true, encoding: .utf8)
+    try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: updated)
+    try fm.removeItem(atPath: fixture.script)
+    try fm.removeItem(atPath: link)
+    try fm.createSymbolicLink(atPath: link, withDestinationPath: updated)
+
+    #expect(launcher.command(["--version"])?.arguments == [(updated as NSString).resolvingSymlinksInPath, "--version"])
+  }
+
   @Test func resolvesTheNodeAgainOnceItsBinaryIsGone() async throws {
     let fixture = try VersionManagerFixture()
     defer { try? FileManager.default.removeItem(atPath: fixture.root) }

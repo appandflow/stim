@@ -155,27 +155,28 @@ public struct StimServerCLI: Sendable {
   /// Runs `executable`'s script under the home directory's Node; nil runs `executable` through its own shebang.
   public let launcher: NodeLauncher?
 
-  public init(environment: [String: String], override: String? = nil) {
+  public init(environment: [String: String], override: String? = nil, launcher: NodeLauncher? = nil) {
     var environment = environment
     self.executable = resolveExecutable("stim-server", override: override, environment: &environment)
     self.environment = environment
-    self.launcher = nil
-  }
-
-  private init(_ cli: StimServerCLI, launcher: NodeLauncher?) {
-    executable = cli.executable
-    environment = cli.environment
     self.launcher = launcher
   }
 
   /// `init(environment:override:)` with a launcher, so a project's Node pin does not choose the Node it runs on.
-  public static func resolve(environment: [String: String], override: String? = nil) async -> StimServerCLI {
+  /// `layout` names the package managers' global directories, which only a version-manager shim needs.
+  public static func resolve(
+    environment: [String: String], override: String? = nil,
+    layout: (() async -> PackageManagerLayout)? = nil
+  ) async -> StimServerCLI {
     let cli = StimServerCLI(environment: environment, override: override)
     let home = environment["HOME"].flatMap { $0.isEmpty ? nil : $0 } ?? NSHomeDirectory()
     let launcher = await NodeLauncher.resolve(
       executable: cli.executable, name: "stim-server", environment: cli.environment, home: home
-    ) { await PackageManagerLayout.probe(environment: cli.environment, home: home) }
-    return StimServerCLI(cli, launcher: launcher)
+    ) {
+      if let layout { return await layout() }
+      return await PackageManagerLayout.probe(environment: cli.environment, home: home)
+    }
+    return StimServerCLI(environment: environment, override: override, launcher: launcher)
   }
 
   private func command(_ arguments: [String]) throws -> (program: String, arguments: [String]) {
