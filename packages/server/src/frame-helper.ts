@@ -434,7 +434,12 @@ export class HelperSource {
       const keyboard = (notice as { keyboard?: unknown } | null)?.keyboard;
       if (keyboard === 'yes' || keyboard === 'no') this.keyboard = keyboard === 'yes';
       const inputError = (notice as { inputError?: unknown } | null)?.inputError;
-      if (typeof inputError === 'string') console.error(`stim-server: stim-frames: ${inputError}`);
+      if (typeof inputError === 'string') {
+        console.error(`stim-server: stim-frames: ${inputError}`);
+        const session = (notice as { controlSession?: unknown } | null)?.controlSession;
+        for (const listener of this.listeners.keys())
+          listener.inputFailed?.(inputError, typeof session === 'string' ? session : undefined);
+      }
       const stalled = (notice as { stalled?: unknown } | null)?.stalled;
       if (stalled === null || typeof stalled === 'string') this.stall(stalled);
       const display = (notice as { display?: unknown } | null)?.display;

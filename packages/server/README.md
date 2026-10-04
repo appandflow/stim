@@ -669,7 +669,7 @@ Events are `{ "event", "subscription", ... }`.
   windows are unsupported. It requires existing Screen Recording permission and
   never requests or resets grants. Capture refusal names the host and System
   Settings guidance; status and logs remain available. Native windows need the
-  helper, have no screenshot fallback, control, recording or replay, and consume
+  helper, have no screenshot fallback, recording or replay, and consume
   only the paired device's `read` capability.
 
   Frames come from the `stim-frames` helper. When it starts, the server
@@ -1227,9 +1227,31 @@ sends reaches any other device.
   `input.posture` takes one of the session's `postures`. A web page takes
   only `back`, its history back, and refuses rotation and posture. Each answers `{}` once the input
   is handed to the device: when it goes through the helper, that is when the
-  helper receives it, so a failure there shows only in the server's log. A connection may send 120 inputs a second and type 40
+  helper receives it, so native macOS input failures end Control with the reason while its view stays available; other helper failures are logged. A connection may send 120 inputs a second and type 40
   characters a second, with a burst of 256, and rotate or change posture twice a
   second; more fail with `limit-exceeded`.
+- When hello advertises `macos-window-control`, `control.begin` accepts
+  `platform: "macos"` for the verified native app in the default slot. It needs
+  `control` and takes one exclusive server session per app, with the same
+  takeover, disconnect, revocation and five-minute idle rules; `lease` is null
+  because CLI device locks do not cover macOS apps. Existing Accessibility
+  permission is required, without permission requests or resets. Before each
+  action the helper verifies PID/start time/executable/bundle and the captured
+  window ID, size and matching sole standard Accessibility window. Modal or
+  disjoint windows, resizing and changed ownership refuse input. Contained
+  nonmodal auxiliaries are allowed; only the focused captured main receives input. Events are
+  posted only to that PID; the desktop and other apps receive no input.
+  `input.touch` maps normalized captured-window coordinates to mouse events.
+  `input.scroll` takes normalized `x`, `y` and `deltaX`, `deltaY` in pixels,
+  each from -1000 to 1000. `input.key` accepts Escape, Tab, Return, Backspace,
+  arrows or `a/c/v/x/z/s/f`, with unique optional `command/shift/option/control`
+  modifiers. `input.text` retains the printable ASCII contract. Native windows
+  reject simulator buttons, rotation and posture. The helper dynamically resolves
+  private CoreGraphics `CGEventSetWindowLocation` to annotate PID-targeted pointer
+  events. This is a macOS compatibility limit outside the phone and Mac App Store
+  binaries: a missing symbol refuses Control while read-only capture remains
+  available. An input refusal sends
+  `control-ended` with its reason without ending read-only capture.
 - On an owned iOS simulator, `control.begin` also reports optional `simulator`
   capabilities: `canShake` and `slowAnimations` (a boolean, or `null` when
   unavailable). `input.simulator` takes the session and `action: "shake"`,

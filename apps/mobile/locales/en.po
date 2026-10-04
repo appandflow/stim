@@ -1609,6 +1609,10 @@ msgstr "Error"
 msgid "Errors"
 msgstr "Errors"
 
+#: src/screens/device-view.tsx
+msgid "Escape"
+msgstr "Escape"
+
 #: src/lib/workspace-view.ts
 msgid "est."
 msgstr "est."
@@ -3045,6 +3049,7 @@ msgstr "Same {language} error {count}x at {file}:{line}"
 msgid "Same {name} build error {count}x at {file}:{line}"
 msgstr "Same {name} build error {count}x at {file}:{line}"
 
+#: src/screens/device-view.tsx
 #: src/screens/pair.tsx
 #: src/screens/rename.tsx
 msgid "Save"
@@ -3064,6 +3069,10 @@ msgid "Screen updates delayed"
 msgstr "Screen updates delayed"
 
 #: src/screens/device-view.tsx
+msgid "Scroll"
+msgstr "Scroll"
+
+#: src/screens/device-view.tsx
 msgid "Scrub below to replay what it recorded."
 msgstr "Scrub below to replay what it recorded."
 
@@ -3074,6 +3083,10 @@ msgstr "Search (regular expression)"
 #: src/screens/logs.tsx
 msgid "Search logs"
 msgstr "Search logs"
+
+#: src/screens/device-view.tsx
+msgid "Select all"
+msgstr "Select all"
 
 #: src/lib/build-machines.ts
 #: src/lib/build-machines.ts
@@ -3411,6 +3424,10 @@ msgstr "Sync"
 msgid "System"
 msgstr "System"
 
+#: src/screens/device-view.tsx
+msgid "Tab"
+msgstr "Tab"
+
 #: src/lib/build-machines.ts
 msgid "Tailscale is off"
 msgstr "Tailscale is off"
@@ -3558,6 +3575,10 @@ msgstr "under a minute left"
 #: src/screens/mac-status.tsx
 msgid "Under the {budgetSize} Stim budget"
 msgstr "Under the {budgetSize} Stim budget"
+
+#: src/screens/device-view.tsx
+msgid "Undo"
+msgstr "Undo"
 
 #: src/screens/device-view.tsx
 msgid "Unfold"

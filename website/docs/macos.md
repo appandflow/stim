@@ -71,14 +71,29 @@ workflow.
 Tap the app tile to view its one visible window. A server advertising
 `macos-window` streams that window over the existing authenticated connection with
 read access. It verifies the recorded PID, process start time, executable and
-bundle before capture and on every frame. The view has no remote input or replay,
-and never captures the desktop or another app.
+bundle before capture and on every frame. The view has no replay and never captures the desktop or another app.
 
 The capture host requires existing Screen Recording permission. When denied, the
 viewer names the existing host to allow in **System Settings → Privacy & Security →
 Screen & System Audio Recording**; Stim never requests or resets permissions.
 Status and logs remain available. Close and reopen the viewer after opening or
 resizing the app window.
+
+With `macos-window-control` and a control pairing, tap **Control** for clicks,
+drags, printable ASCII typing and Tab, Escape, Select all, Undo and Save.
+Toggle **Scroll** to scroll with a drag. Each action rechecks the exact owned
+process and the same single standard window; modal or disjoint windows, changed
+capture or resize refuse input. Contained nonmodal auxiliaries are allowed; only
+the focused captured main receives input. The server holds one exclusive session per app, ending
+on disconnect, revocation, takeover or five idle minutes, without a CLI device
+lock. Existing **Accessibility** permission is required. Stim never requests
+or resets permissions. An input refusal ends Control with its reason while
+viewing and logs remain usable; older servers stay view-only.
+
+Native Control uses dynamically resolved private CoreGraphics input SPI in the
+server helper, outside the phone and Mac App Store app binaries. macOS updates
+can make it unavailable; then Control refuses while viewing and logs remain
+available.
 
 ## Try Stim Desktop itself
 

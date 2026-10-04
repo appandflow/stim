@@ -27,7 +27,13 @@ export type Capability = (typeof CAPABILITIES)[number];
  * Android phone also on `control.begin`. An older server ignores `physical` on `frames.subscribe` and would stream
  * the slot's Stim-owned device instead. `notifications` is `notifications.list` and the `notification` event.
  */
-export const FEATURES = ['physical-ios', 'physical-android', 'notifications', 'macos-window'] as const;
+export const FEATURES = [
+  'physical-ios',
+  'physical-android',
+  'notifications',
+  'macos-window',
+  'macos-window-control',
+] as const;
 
 export type Feature = (typeof FEATURES)[number];
 
@@ -59,6 +65,8 @@ export const METHODS = [
   'input.rotate',
   'input.posture',
   'input.simulator',
+  'input.scroll',
+  'input.key',
   'push.register',
   'push.unregister',
   'notifications.list',
@@ -271,7 +279,7 @@ export type Platform = (typeof PLATFORMS)[number];
 
 /** The platforms `build.plan` predicts builds for. */
 export type BuildPlatform = Extract<Platform, 'ios' | 'android'>;
-export type ControlPlatform = Exclude<Platform, 'macos'>;
+export type ControlPlatform = Platform;
 
 /** `reload` also reaches the workspace's Stim-owned Chrome page. */
 export const RELOAD_PLATFORMS = ['ios', 'android', 'web'] as const;
@@ -493,7 +501,7 @@ export interface ControlBeginParams {
 
 /**
  * `lease` is the `stim device lock` lease the server holds for the session, or null when it holds none, such
- * as after taking over a device another workspace leases, and always for a web page, which `stim device lock`
+ * as after taking over a device another workspace leases, and always for a web page or native macOS app, which `stim device lock`
  * does not cover. For a physical device it is the workspace's own lease, which the session ends with. `postures` lists what `input.posture` accepts for
  * the device: `folded` and `unfolded` for an iPhone Duo, all three for an emulator with a hinge, and none
  * otherwise.
@@ -535,6 +543,43 @@ export interface InputTouchParams {
   x: number;
   y: number;
   display?: number;
+}
+
+/** Native macOS pixel scrolling at a normalized point of the captured window. Deltas are capped at 1000 pixels. */
+export interface InputScrollParams {
+  session: string;
+  x: number;
+  y: number;
+  deltaX: number;
+  deltaY: number;
+}
+
+export const INPUT_KEYS = [
+  'escape',
+  'tab',
+  'return',
+  'backspace',
+  'left',
+  'right',
+  'up',
+  'down',
+  'a',
+  'c',
+  'v',
+  'x',
+  'z',
+  's',
+  'f',
+] as const;
+export type InputKey = (typeof INPUT_KEYS)[number];
+export const KEY_MODIFIERS = ['command', 'shift', 'option', 'control'] as const;
+export type KeyModifier = (typeof KEY_MODIFIERS)[number];
+
+/** A fixed native macOS key and optional modifiers, sent only to the captured owned app window. */
+export interface InputKeyParams {
+  session: string;
+  key: InputKey;
+  modifiers?: KeyModifier[];
 }
 
 export const MAX_INPUT_TEXT = 256;
@@ -985,6 +1030,8 @@ export interface Methods {
   'input.rotate': { params: InputRotateParams; result: Record<string, never> };
   'input.posture': { params: InputPostureParams; result: Record<string, never> };
   'input.simulator': { params: InputSimulatorParams; result: SimulatorOptions };
+  'input.scroll': { params: InputScrollParams; result: Record<string, never> };
+  'input.key': { params: InputKeyParams; result: Record<string, never> };
   'push.register': { params: PushRegisterParams; result: Record<string, never> };
   'push.unregister': { params?: Record<string, never>; result: Record<string, never> };
   'notifications.list': { params?: NotificationsListParams; result: NotificationsListResult };
@@ -1453,7 +1500,7 @@ export function protocolJsonSchema(): JsonSchema {
         additionalProperties: false,
         properties: {
           workspace: { type: 'string', description: 'An environment path from a status payload.' },
-          platform: { enum: PLATFORMS.filter((platform) => platform !== 'macos') },
+          platform: { enum: [...PLATFORMS] },
           slot: { type: 'string', minLength: 1, default: 'default' },
           physical: { type: 'boolean', default: false },
           takeOver: { type: 'boolean', default: false },
@@ -1904,6 +1951,28 @@ export function protocolJsonSchema(): JsonSchema {
                 text: { type: 'string', minLength: 1, maxLength: MAX_INPUT_TEXT, pattern: '^[\\x20-\\x7e\\n\\t\\b]+$' },
               },
               ['text'],
+            ),
+          ),
+          request(
+            'input.scroll',
+            session(
+              {
+                x: { type: 'number', minimum: 0, maximum: 1 },
+                y: { type: 'number', minimum: 0, maximum: 1 },
+                deltaX: { type: 'number', minimum: -1000, maximum: 1000 },
+                deltaY: { type: 'number', minimum: -1000, maximum: 1000 },
+              },
+              ['x', 'y', 'deltaX', 'deltaY'],
+            ),
+          ),
+          request(
+            'input.key',
+            session(
+              {
+                key: { enum: [...INPUT_KEYS] },
+                modifiers: { type: 'array', maxItems: 4, uniqueItems: true, items: { enum: [...KEY_MODIFIERS] } },
+              },
+              ['key'],
             ),
           ),
           request('input.button', session({ button: { enum: [...INPUT_BUTTONS] } }, ['button'])),

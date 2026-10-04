@@ -98,3 +98,41 @@ test('ignores simulator options returned by an ended connection with a reused se
   expect(result.current.state).toMatchObject({ kind: 'on', session: 'c1', simulator: { slowAnimations: false } });
   await unmount();
 });
+
+test('starts native Control only when the server advertises native window input', async () => {
+  const request = jest.fn((method: string) =>
+    method === 'control.begin'
+      ? Promise.resolve({ session: 'native', lease: null, postures: [] })
+      : Promise.resolve({}),
+  );
+  const connection = { request, onControlEnded: () => () => {}, reconnect: () => {} };
+  const state = {
+    kind: 'open' as const,
+    protocol: 1,
+    server: { name: 'stim-server', version: '1', stim: '1' },
+    actions: null,
+    capabilities: ['control' as const],
+    features: ['macos-window'],
+    deviceId: null,
+  };
+  machines.setMacs([{ id: 'm1', name: 'Mac', endpoint: 'ws://mac', pairedAt: '2026-09-30T00:00:00Z' }], false);
+  machines.patchLink('m1', { connection: connection as unknown as StimConnection, state });
+  const { result, unmount } = await renderHook(() => useDeviceControl('/app', 'macos', 'default'));
+  await act(async () => result.current.begin());
+  expect(request).not.toHaveBeenCalled();
+  await act(async () =>
+    machines.patchLink('m1', { state: { ...state, features: ['macos-window', 'macos-window-control'] } }),
+  );
+  await act(async () => result.current.begin());
+  expect(result.current.state.kind).toBe('on');
+  await act(async () => {
+    result.current.scroll(0.5, 0.6, 0, -40);
+    result.current.key('a', ['command']);
+  });
+  expect(request.mock.calls).toEqual([
+    ['control.begin', { workspace: '/app', platform: 'macos', slot: 'default' }],
+    ['input.scroll', { session: 'native', x: 0.5, y: 0.6, deltaX: 0, deltaY: -40 }],
+    ['input.key', { session: 'native', key: 'a', modifiers: ['command'] }],
+  ]);
+  await unmount();
+});

@@ -437,7 +437,7 @@ describe('pairing', () => {
         protocol: 1,
         server: { name: 'Test Mac', version: '1.2.3', stim: '9.9.9', home: homedir() },
         capabilities: ['read'],
-        features: ['physical-ios', 'physical-android', 'notifications', 'macos-window'],
+        features: ['physical-ios', 'physical-android', 'notifications', 'macos-window', 'macos-window-control'],
         actions: [],
       },
     });
@@ -3045,11 +3045,6 @@ describe('frames.subscribe', () => {
       expect(await client.request('control.begin', { workspace, platform: 'macos' })).toMatchObject({
         error: { code: 'forbidden' },
       });
-      const controller = await authed(port, true);
-      expect(await controller.request('control.begin', { workspace, platform: 'macos' })).toMatchObject({
-        error: { code: 'action-failed', message: expect.stringContaining('view-only') },
-      });
-      controller.socket.close();
       expect(await client.request('replay.range', { workspace, platform: 'macos' })).toMatchObject({
         error: { code: 'bad-request' },
       });
@@ -3058,6 +3053,111 @@ describe('frames.subscribe', () => {
       expect(helperRuns()[0]!.args).toEqual(['macos', JSON.stringify(OWNED_MACOS)]);
       expect(toolRuns().filter((run) => run.tool === 'xcrun' || run.tool === 'adb')).toEqual([]);
       expect(readViewedDevices()).toEqual([]);
+    },
+    10_000,
+  );
+
+  test.skipIf(!fakeTailscale)(
+    'controls only an owned native app session and keeps its view alive after an input permission refusal',
+    async () => {
+      const helper = fakeHelper();
+      writeFileSync(
+        helper,
+        readFileSync(helper, 'utf8')
+          .replace('else config = line;', 'else if (!line.input && !line.control) config = line;')
+          .replace(
+            'run.configs.push(line);',
+            `run.configs.push(line); record();
+          if (line.input === 'key' && line.key === 'escape') message(2, Buffer.from(JSON.stringify({ inputError: 'Control needs existing Accessibility permission.', controlSession: line.controlSession })));
+          const enabled = run.configs.filter(c => c.control?.enabled);
+          if (line.input === 'key' && line.key === 'a' && enabled.length > 1) message(2, Buffer.from(JSON.stringify({ inputError: 'Delayed failure from old controller.', controlSession: enabled[0].control.session })));`,
+          ),
+      );
+      const port = await startWithTools(
+        {
+          FAKE_STIM_PAYLOADS: statusWith({
+            macos: OWNED_MACOS,
+            android: {
+              ...OWNED_EMULATOR,
+              activity: { state: 'driven', driver: { tool: 'agent-device', pid: 42, since: null }, basis: [] },
+            },
+          }),
+          FAKE_HELPER_INTERVAL_MS: '10',
+        },
+        undefined,
+        helper,
+      );
+      const client = await authed(port, true);
+      const observer = await authed(port);
+      const viewed = await observer.request('frames.subscribe', { workspace, platform: 'macos' });
+      const begun = await client.request('control.begin', { workspace, platform: 'macos' });
+      expect(begun).toMatchObject({ result: { platform: 'macos', lease: null, postures: [] } });
+      const { session } = (begun as { result: { session: string } }).result;
+      const other = await authed(port, true);
+      expect(await other.request('control.begin', { workspace, platform: 'macos' })).toHaveProperty(
+        'error.code',
+        'device-busy',
+      );
+      expect(await other.request('input.text', { session, text: 'wrong connection' })).toHaveProperty(
+        'error.code',
+        'unknown-session',
+      );
+      expect(await client.request('input.touch', { session, phase: 'down', x: 0.5, y: 0.5 })).toHaveProperty('result');
+      expect(await client.request('input.text', { session, text: 'native' })).toHaveProperty('result');
+      expect(await client.request('input.scroll', { session, x: 0.5, y: 0.5, deltaX: 0, deltaY: -30 })).toHaveProperty(
+        'result',
+      );
+      expect(await client.request('input.scroll', { session, x: 0.5, y: 0.5, deltaX: 0, deltaY: 1001 })).toHaveProperty(
+        'error.code',
+        'bad-request',
+      );
+      expect(
+        await client.request('input.key', { session, key: 'a', modifiers: ['command', 'command'] }),
+      ).toHaveProperty('error.code', 'bad-request');
+      expect(await client.request('input.key', { session, key: 'q', modifiers: ['command'] })).toHaveProperty(
+        'error.code',
+        'bad-request',
+      );
+      expect(await client.request('input.key', { session, key: 'a', modifiers: ['command'] })).toHaveProperty('result');
+      for (const [method, params] of [
+        ['input.rotate', { direction: 'left' }],
+        ['input.button', { button: 'home' }],
+        ['input.simulator', { action: 'shake' }],
+      ]) {
+        expect(await client.request(method as string, { session, ...(params as object) })).toHaveProperty(
+          'error.code',
+          'bad-request',
+        );
+      }
+      const ended = client.next();
+      expect(await client.request('input.key', { session, key: 'escape' })).toHaveProperty('result');
+      expect(await ended).toMatchObject({ reason: 'failed', message: expect.stringContaining('Accessibility') });
+      expect(await client.request('input.text', { session, text: 'after refusal' })).toHaveProperty(
+        'error.code',
+        'unknown-session',
+      );
+      expect(
+        await new Promise((resolve) => observer.socket.once('message', (raw) => resolve(JSON.parse(raw.toString())))),
+      ).toMatchObject({ subscription: (viewed as { result: { subscription: string } }).result.subscription });
+      expect(lockCalls()).toEqual([]);
+      const sent = helperRuns().at(-1)!.configs;
+      const active = sent.find((entry) => entry.control && (entry.control as { enabled: boolean }).enabled)!
+        .control as { session: string };
+      expect(sent.filter((entry) => entry.input).map((entry) => entry.controlSession)).toEqual(
+        Array(5).fill(active.session),
+      );
+      const resumed = await client.request('control.begin', { workspace, platform: 'macos' });
+      const next = (resumed as { result: { session: string } }).result.session;
+      expect(await client.request('input.key', { session: next, key: 'a', modifiers: ['command'] })).toHaveProperty(
+        'result',
+      );
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(
+        await client.request('input.text', { session: next, text: 'new controller survives old notice' }),
+      ).toHaveProperty('result');
+      other.socket.close();
+      observer.socket.close();
+      client.socket.close();
     },
     10_000,
   );

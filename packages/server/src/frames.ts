@@ -1,5 +1,5 @@
 import { spawn, type ChildProcess } from 'node:child_process';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { connect, type ClientHttp2Session } from 'node:http2';
 import { join } from 'node:path';
@@ -60,6 +60,7 @@ export interface FrameListener {
    */
   delayed: (delayed: boolean, reason?: string) => void;
   failed: (message: string) => void;
+  inputFailed?: (message: string, session?: string) => void;
 }
 
 /** Tunables for capture timing; a busy Mac makes `xcrun simctl` and the emulator's gRPC call slow, not broken. */
@@ -923,11 +924,30 @@ export class FramePool {
     if (helper === null) return null;
     const source = this.stream(helper, device);
     if (!source.active) return null;
-    const detach = source.add({ frame: () => {}, delayed: () => {}, failed }, null);
+    const controlSession = device.platform === 'macos' ? randomUUID() : null;
+    const detach = source.add(
+      {
+        frame: () => {},
+        delayed: () => {},
+        failed,
+        ...(controlSession
+          ? {
+              inputFailed: (message: string, session?: string) => {
+                if (session === controlSession) failed(message);
+              },
+            }
+          : {}),
+      },
+      null,
+    );
+    if (controlSession) source.send({ control: { session: controlSession, enabled: true } });
     return {
-      send: (command) => source.send(command),
+      send: (command) => source.send(controlSession ? { ...command, controlSession } : command),
       keys: () => source.keyboard === true,
-      detach,
+      detach: () => {
+        if (controlSession) source.send({ control: { session: controlSession, enabled: false } });
+        detach();
+      },
     };
   }
 
