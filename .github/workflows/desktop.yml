@@ -59,7 +59,7 @@ jobs:
           sed 's|^|Sources/|' ../../packages/server/helper/desktop-sources.txt \
             | xargs xcrun swiftc -O -swift-version 5 -module-name StimFrames -o "$RUNNER_TEMP/stim-frames" \
               ../../packages/server/helper/main.swift ../../packages/server/helper/VideoEncoder.swift \
-              ../../packages/server/helper/PhoneSource.swift
+              ../../packages/server/helper/PhoneSource.swift ../../packages/server/helper/MacosSource.swift
       - name: Package an ad-hoc release build
         if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
         run: scripts/release.sh 0.0.0
