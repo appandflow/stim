@@ -18,6 +18,29 @@ Commands use `stim`. If it is not installed globally, replace `stim` with
 - Git for `stim worktree` commands.
 - macOS, Linux or Windows. What each host can run is listed below.
 
+## Projects that pin an older Node {#older-node-pins}
+
+`stim` and `stim-server` start through `#!/usr/bin/env node`. A version
+manager that follows the working directory (asdf, mise, Volta, fnm, nvm)
+runs them on the Node that the project's `.nvmrc`, `.node-version`,
+`.tool-versions` or `package.json` pins. When that Node is older than
+22.12.0, Stim refuses before it does anything and prints
+`STIM_NODE_UNSUPPORTED` with the Node version and path it found.
+
+Run Stim with a supported Node for that command:
+
+```bash
+ASDF_NODEJS_VERSION=<version> stim <command>
+mise exec node@22 -- stim <command>
+volta run --node 22 stim <command>
+fnm exec --using=22 stim <command>
+nvm exec 22 stim <command>
+```
+
+The tools Stim starts inherit that override. With asdf, a Stim installed
+under another Node fails with `No version is set for command stim` before
+Stim runs; the same override fixes it.
+
 ## iOS
 
 - Local builds and simulators need macOS with Xcode. Local simulator runs also

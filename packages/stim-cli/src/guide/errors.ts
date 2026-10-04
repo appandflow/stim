@@ -1368,9 +1368,9 @@ not on any remote"  (worktree remove)
   A line such as \`npm warn exec ... will be installed\` is normal when using
   the no-install form.
 
-"Unsupported engine" or a syntax error before Stim starts
-  Stim requires Node 22.12.0 or later.
-  Switch Node versions, then run the command again.
+"Unsupported engine" from npm, or a syntax error before Stim starts
+  Stim requires Node 22.12.0 or later. Stim itself refuses an older Node
+  with STIM_NODE_UNSUPPORTED; see that section.
 
 
 "Found no free Metro port between ..."
@@ -1453,6 +1453,26 @@ not on any remote"  (worktree remove)
   Expo build-cache provider would each use a different store. Set the named
   variable to an absolute path, or unset it to use the default. Metro and the
   cache provider, which cannot refuse, ignore a relative value with a warning.`,
+    },
+    STIM_NODE_UNSUPPORTED: {
+      summary: 'stim or stim-server started on a Node older than 22.12.0, often a project pin',
+      body: () => `STIM_NODE_UNSUPPORTED  ("Stim needs Node <floor> or later; this is Node <version> at <path>")
+  stim and stim-server refuse before loading anything else when the Node that
+  runs them is older than their engines floor. Both start through
+  \`#!/usr/bin/env node\`, so a version manager that follows the working
+  directory (asdf, mise, Volta, fnm, nvm) picks the Node that the project's
+  .nvmrc, .node-version, .tool-versions or package.json pins. Run Stim with a
+  supported Node for that one command, for example:
+
+    ASDF_NODEJS_VERSION=<version> stim <command>
+    mise exec node@22 -- stim <command>
+    volta run --node 22 stim <command>
+    fnm exec --using=22 stim <command>
+    nvm exec 22 stim <command>
+
+  The tools Stim starts inherit that override. asdf prints "No version is set
+  for command stim" instead when Stim was installed under another Node; the
+  same override applies.`,
     },
   },
 };
