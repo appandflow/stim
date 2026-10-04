@@ -259,7 +259,9 @@ PATH).
   repository build matrix uses Node 22 and 24, runs frozen pnpm install, lint,
   format check, ESM build, typecheck, knip, Vitest, and the cross-platform E2E.
   A separate job builds on Node 22.18 and then runs `test/runtime-floor.mjs`
-  under exactly Node 22.12.0, the published floor. Repository development needs
+  under exactly Node 22.12.0, the published floor, then `test/runtime-refusal.mjs`
+  under Node 18, where both built bins must refuse with `STIM_NODE_UNSUPPORTED`.
+  Repository development needs
   Node 22.18 or later because tsdown has the higher floor. A Windows lane,
   `test (windows)`, repeats install, build, typecheck and the unit suite on
   `windows-latest`.

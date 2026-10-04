@@ -20,26 +20,29 @@ Commands use `stim`. If it is not installed globally, replace `stim` with
 
 ## Projects that pin an older Node {/* #older-node-pins */}
 
-`stim` and `stim-server` start through `#!/usr/bin/env node`. A version
-manager that follows the working directory (asdf, mise, Volta, fnm, nvm)
-runs them on the Node that the project's `.nvmrc`, `.node-version`,
-`.tool-versions` or `package.json` pins. When that Node is older than
-22.12.0, Stim refuses before it does anything and prints
+`stim` and `stim-server` start through `#!/usr/bin/env node`, so the working
+directory can choose the Node that runs them. asdf, mise and Volta's `node`
+shim follow the project's `.nvmrc`, `.node-version`, `.tool-versions` or
+`package.json`; nvm and fnm do when a shell hook switches versions on `cd`. A
+Stim installed with Volta keeps the Node it was installed with. When that Node
+is older than 22.12.0, Stim refuses before it does anything and prints
 `STIM_NODE_UNSUPPORTED` with the Node version and path it found.
 
 Run Stim with a supported Node for that command:
 
 ```bash
 ASDF_NODEJS_VERSION=<version> stim <command>
-mise exec node@22 -- stim <command>
-volta run --node 22 stim <command>
-fnm exec --using=22 stim <command>
-nvm exec 22 stim <command>
+mise exec node@<version> -- stim <command>
+volta run --node <version> stim <command>
+fnm exec --using=<version> stim <command>
+nvm exec --silent <version> stim <command>
 ```
 
-The tools Stim starts inherit that override. With asdf, a Stim installed
-under another Node fails with `No version is set for command stim` before
-Stim runs; the same override fixes it.
+`<version>` is 22.12.0 or later. These managers keep global packages per Node
+version, so when Stim was installed with npm under one of them, use the
+version it was installed with. asdf names that version when it prints
+`No version is set for command stim` instead of running Stim. The tools Stim
+starts inherit the override.
 
 ## iOS
 

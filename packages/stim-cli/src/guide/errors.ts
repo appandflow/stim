@@ -1459,20 +1459,23 @@ not on any remote"  (worktree remove)
       body: () => `STIM_NODE_UNSUPPORTED  ("Stim needs Node <floor> or later; this is Node <version> at <path>")
   stim and stim-server refuse before loading anything else when the Node that
   runs them is older than their engines floor. Both start through
-  \`#!/usr/bin/env node\`, so a version manager that follows the working
-  directory (asdf, mise, Volta, fnm, nvm) picks the Node that the project's
-  .nvmrc, .node-version, .tool-versions or package.json pins. Run Stim with a
-  supported Node for that one command, for example:
+  \`#!/usr/bin/env node\`, so the working directory can choose that Node: asdf,
+  mise and Volta's node shim follow the project's .nvmrc, .node-version,
+  .tool-versions or package.json, and nvm and fnm do when a shell hook
+  switches versions on cd. A Stim installed with Volta keeps the Node it was
+  installed with. Run Stim with a supported Node for that one command:
 
     ASDF_NODEJS_VERSION=<version> stim <command>
-    mise exec node@22 -- stim <command>
-    volta run --node 22 stim <command>
-    fnm exec --using=22 stim <command>
-    nvm exec 22 stim <command>
+    mise exec node@<version> -- stim <command>
+    volta run --node <version> stim <command>
+    fnm exec --using=<version> stim <command>
+    nvm exec --silent <version> stim <command>
 
-  The tools Stim starts inherit that override. asdf prints "No version is set
-  for command stim" instead when Stim was installed under another Node; the
-  same override applies.`,
+  <version> is 22.12.0 or later. These managers keep global packages per Node
+  version, so when Stim was installed with npm under one of them, use the
+  version it was installed with; asdf names it when it prints "No version is
+  set for command stim" instead of running Stim. The tools Stim starts
+  inherit the override.`,
     },
   },
 };
