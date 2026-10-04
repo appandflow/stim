@@ -593,6 +593,14 @@ modes request native-resolution images; Fit and wall previews retain their 960-p
 Duo's projected housing and folded screen, replay, physical devices, web and
 remote previews retain **Fit**.
 
+While controlling a local iOS simulator or Android emulator, hold **Option** and
+drag to pinch or rotate two fingers around their center. Hold **Option-Shift**
+to move both fingers together. Trackpad pinch also sends a two-finger pinch.
+Two markers show the contact positions, including on a framed or folded screen.
+Releasing Option, ending the gesture, changing orientation or releasing Control
+lifts both contacts. Option and the gesture's Shift modifier stay on the Mac.
+These gestures are not available for physical devices, remote previews or web pages.
+
 While **Control** is on, groups below the screen of a running simulator or emulator have its
 hardware buttons and rotation: **Home** and **Lock** on a simulator, sent
 through the simulator's HID service; **Home**, **Back**, **Apps** and **Lock**
