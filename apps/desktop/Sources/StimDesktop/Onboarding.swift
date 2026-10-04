@@ -28,9 +28,13 @@ final class Onboarding: ObservableObject {
     var home: String
     var androidSDK: String?
     var javaHome: String?
+
+    /// An installed `stim` cannot run, so cannot report its version, until the home folder's Node is supported.
+    var nodeBlocksStim: Bool { stim != .missing && !node.isCompatible }
   }
 
   enum PopupKind {
+    case node
     case stim
     case relaunch
     case server

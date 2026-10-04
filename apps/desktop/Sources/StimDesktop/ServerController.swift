@@ -79,7 +79,7 @@ final class ServerController: ObservableObject {
     if case .running(let health, _) = state { environment["STIM_HOME"] = health.stimHome }
     let override = UserDefaults.standard.string(forKey: AppPreferences.Key.stimServerExecutable)
     let plain = StimServerCLI(environment: environment, override: override)
-    if serverLauncher == nil || serverLauncher?.executable != plain.executable {
+    if serverLauncher?.launcher == nil || serverLauncher?.executable != plain.executable {
       let launcher = await NodeLauncher.resolve(
         executable: plain.executable, name: "stim-server", environment: plain.environment)
       serverLauncher = (plain.executable, launcher)

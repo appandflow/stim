@@ -25,6 +25,7 @@ struct OnboardingBanner: View {
 
   private func currentKind(_ report: Onboarding.Report) -> Onboarding.PopupKind? {
     if onboarding.showsGuide { return nil }
+    if report.nodeBlocksStim { return onboarding.dismissedPopups.contains(.node) ? nil : .node }
     if !report.stim.isCompatible, !onboarding.dismissedPopups.contains(.stim) { return .stim }
     if report.needsRelaunch, !onboarding.dismissedPopups.contains(.relaunch) { return .relaunch }
     if let server = report.server, !server.isCompatible, !onboarding.dismissedPopups.contains(.server) {
@@ -41,6 +42,7 @@ struct OnboardingBanner: View {
   @ViewBuilder
   private func popup(_ kind: Onboarding.PopupKind, _ report: Onboarding.Report) -> some View {
     switch kind {
+    case .node: nodePopup(report)
     case .stim: stimPopup(report)
     case .relaunch: relaunchPopup(report)
     case .server: serverPopup(report)
@@ -66,6 +68,25 @@ struct OnboardingBanner: View {
           missing ? "Install stim" : "Update stim", variant: .primary, key: .stim, action: onboarding.installStim)
       }
       Button("Choose stim executable\u{2026}", action: onboarding.chooseStim).buttonStyle(.stim())
+    }
+  }
+
+  private func nodePopup(_ report: Onboarding.Report) -> some View {
+    var found: String?
+    if case .outdated(let version) = report.node { found = version }
+    return popupCard(kind: .node, icon: "exclamationmark.triangle", tone: .warning) {
+      Text("Update Node.js to use Stim Desktop").font(.stim(.headline))
+      Text(
+        "Stim Desktop runs stim on the Node.js that node gives in your home folder, and stim needs \(SetupChecks.nodeMinimum.description) or later. Make a newer Node your version manager's default, then check again."
+      )
+      .foregroundStyle(Palette.secondary)
+      disclosure {
+        Text(
+          report.nodePath.map { "\(abbreviatingHome($0)) is \(found ?? "of an unknown version")." }
+            ?? "No node on the login shell's PATH.")
+      }
+    } buttons: {
+      Button("Check Again", action: onboarding.check).buttonStyle(.stim(.primary))
     }
   }
 

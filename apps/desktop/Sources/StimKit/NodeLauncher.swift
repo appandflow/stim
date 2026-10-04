@@ -19,18 +19,22 @@ public struct NodeRuntime: Equatable, Sendable {
     return (try? await request.run()).flatMap(parse)
   }
 
-  /// `probe(environment:home:)` on the calling thread.
+  /// `probe(environment:home:)` on the calling thread, given 2 seconds.
   static func probeNow(environment: [String: String], home: String) -> NodeRuntime? {
-    guard let request = probeRequest(environment: environment, home: home) else { return nil }
+    guard let request = probeRequest(environment: environment, home: home, timeout: 2) else { return nil }
     return (try? request.runBlocking()).flatMap(parse)
   }
 
-  private static func probeRequest(environment: [String: String], home: String) -> ProcessRequest? {
+  public var isSupported: Bool { SemanticVersion(version).map { $0 >= SetupChecks.nodeMinimum } ?? false }
+
+  private static func probeRequest(
+    environment: [String: String], home: String, timeout: TimeInterval = 10
+  ) -> ProcessRequest? {
     var environment = environment
     guard let node = resolveExecutable("node", override: nil, environment: &environment) else { return nil }
     return ProcessRequest(
       node, ["-p", "process.execPath + '\\n' + process.versions.node"], cwd: home, environment: environment,
-      timeout: 10)
+      timeout: timeout)
   }
 
   private static func parse(_ result: ProcessResult) -> NodeRuntime? {
@@ -62,14 +66,20 @@ public final class NodeLauncher: @unchecked Sendable {
   public let source: String
   private let environment: [String: String]
   private let home: String
+  private let reprobeInterval: TimeInterval
   private let lock = NSLock()
   private var current: NodeRuntime
+  private var probed = Date.distantPast
 
-  init(source: String, runtime: NodeRuntime, environment: [String: String], home: String) {
+  init(
+    source: String, runtime: NodeRuntime, environment: [String: String], home: String,
+    reprobeInterval: TimeInterval = 10
+  ) {
     self.source = source
     self.current = runtime
     self.environment = environment
     self.home = home
+    self.reprobeInterval = reprobeInterval
   }
 
   public var runtime: NodeRuntime { lock.withLock { current } }
@@ -82,7 +92,7 @@ public final class NodeLauncher: @unchecked Sendable {
   /// package manager's global bin directory; any other executable, such as a wrapper script, runs as it is.
   public static func resolve(
     executable: String?, name: String, environment: [String: String],
-    layout: (() async -> PackageManagerLayout)? = nil
+    layout: (() async -> PackageManagerLayout)? = nil, reprobeInterval: TimeInterval = 10
   ) async -> NodeLauncher? {
     let home = environment["HOME"].flatMap { $0.isEmpty ? nil : $0 } ?? NSHomeDirectory()
     guard let executable, let runtime = await NodeRuntime.probe(environment: environment, home: home) else {
@@ -98,24 +108,29 @@ public final class NodeLauncher: @unchecked Sendable {
       }
       source = managers.globalExecutables(name).first { nodeScript(at: $0) != nil }
     }
-    return source.map { NodeLauncher(source: $0, runtime: runtime, environment: environment, home: home) }
+    return source.map {
+      NodeLauncher(
+        source: $0, runtime: runtime, environment: environment, home: home, reprobeInterval: reprobeInterval)
+    }
   }
 
-  /// The program and arguments that run the script with `arguments`. Once the Node binary is gone, as after a
-  /// Homebrew upgrade or a version manager's uninstall, it finds the home directory's Node again first. Nil while
-  /// the script or every `node` is gone; throws `Unsupported` for a Node older than `SetupChecks.nodeMinimum`.
+  /// The program and arguments that run the script with `arguments`. When the Node binary is gone, as after a
+  /// Homebrew upgrade or a version manager's uninstall, or older than `SetupChecks.nodeMinimum`, it finds the home
+  /// directory's Node again first, at most once per `reprobeInterval`. Nil while the script or every `node` is
+  /// gone; throws `Unsupported` while the Node is older than `SetupChecks.nodeMinimum`.
   public func command(_ arguments: [String]) throws -> (program: String, arguments: [String])? {
     guard let script else { return nil }
     let found: NodeRuntime? = lock.withLock {
-      if FileManager.default.isExecutableFile(atPath: current.path) { return current }
-      guard let found = NodeRuntime.probeNow(environment: environment, home: home) else { return nil }
-      current = found
-      return found
+      let exists = FileManager.default.isExecutableFile(atPath: current.path)
+      if (exists && current.isSupported) || Date().timeIntervalSince(probed) < reprobeInterval {
+        return exists ? current : nil
+      }
+      probed = Date()
+      if let found = NodeRuntime.probeNow(environment: environment, home: home) { current = found }
+      return FileManager.default.isExecutableFile(atPath: current.path) ? current : nil
     }
     guard let found else { return nil }
-    guard let version = SemanticVersion(found.version), version >= SetupChecks.nodeMinimum else {
-      throw Unsupported(runtime: found)
-    }
+    guard found.isSupported else { throw Unsupported(runtime: found) }
     return (found.path, [script] + arguments)
   }
 

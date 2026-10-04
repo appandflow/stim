@@ -137,4 +137,20 @@ private struct VersionManagerFixture {
       try await cli.run(["--version"], cwd: fixture.project)
     }
   }
+
+  @Test func runsOnTheNewDefaultOnceTheRefusedNodeIsReplaced() async throws {
+    let fixture = try VersionManagerFixture()
+    defer { try? FileManager.default.removeItem(atPath: fixture.root) }
+    try fixture.installNode("20.11.0")
+    try fixture.write(fixture.root + "/shims/node", "exec \"\(fixture.root)/v20/node\" \"$@\"")
+    let launcher = try #require(
+      await NodeLauncher.resolve(
+        executable: fixture.script, name: "stim", environment: fixture.environment,
+        layout: { PackageManagerLayout() }, reprobeInterval: 0))
+    #expect(throws: NodeLauncher.Unsupported.self) { try launcher.command(["--version"]) }
+
+    try fixture.write(fixture.root + "/shims/node", "exec \"\(fixture.root)/v22/node\" \"$@\"")
+
+    #expect(try launcher.command(["--version"])?.program == fixture.root + "/v22/node")
+  }
 }
