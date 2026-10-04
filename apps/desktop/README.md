@@ -1280,8 +1280,20 @@ Contained utility windows are supported; disjoint app windows refuse capture.
 The viewer skips its own process to prevent recursive previews.
 **Open app** verifies and activates that owned app using existing Accessibility
 permission for normal native input;
-the captured view is read-only. Background input relay is not included. Use **Refresh preview** after the app window opens or is resized. No permission changes or custom packaging
-script is part of this flow. For an unreleased CLI, run `pnpm run build` at the
+the captured view is read-only. Background input relay is not included. Use **Refresh preview** after the app window opens or is resized. No permission requests or custom packaging
+script is part of the build flow.
+
+On the first native viewer opening, one **Native app viewer** setup screen explains
+Screen Recording and Accessibility (called Device Control and Data Access on macOS 27),
+shows their status and offers **Request permissions**, **Settings** and **Check again**.
+You approve normal macOS requests; Stim never resets or automatically grants access.
+Use **Permissions** on the app card to reopen setup. A phone-first native viewer
+asks the running Desktop host to show the same setup on its next local health refresh.
+Grant access to the signed Stim app that started the server, then reconnect the phone
+viewer. A server started elsewhere uses that host's permissions; this app's status
+alone does not prove that server has access.
+
+For an unreleased CLI, run `pnpm run build` at the
 repository root, then set `STIM_BIN` to the absolute `packages/stim-cli/dist/cli.mjs`
 path and invoke that executable's `macos` command from `apps/desktop`. The app
 inherits the override without changing the installed app's preferences. See [the macOS guide](../../website/docs/macos.md)

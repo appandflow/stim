@@ -1223,6 +1223,7 @@ describe('health', () => {
       protocol: 1,
       stimHome: process.env.STIM_HOME,
       tailscale: { state: 'not-running', backendState: 'Stopped' },
+      nativeViewerOpened: false,
     });
     const forwarded = await fetch(`http://127.0.0.1:${port}/health`, { headers: { 'x-forwarded-for': '100.64.0.2' } });
     expect(forwarded.status).toBe(200);
@@ -3174,12 +3175,16 @@ describe('frames.subscribe', () => {
         undefined,
         fakeHelper(),
       );
+      const before = await (await fetch(`http://127.0.0.1:${port}/health`)).json();
+      expect(before).toHaveProperty('nativeViewerOpened', false);
       const client = await authed(port);
       await client.request('frames.subscribe', { workspace, platform: 'macos' });
       expect(await client.next()).toMatchObject({
         event: 'error',
         error: { code: 'frames-failed', message: expect.stringContaining('Screen Recording access is unavailable') },
       });
+      const after = await (await fetch(`http://127.0.0.1:${port}/health`)).json();
+      expect(after).toHaveProperty('nativeViewerOpened', true);
       expect(toolRuns().filter((run) => run.tool === 'xcrun' || run.tool === 'adb')).toEqual([]);
     },
     10_000,
@@ -3201,6 +3206,7 @@ describe('frames.subscribe', () => {
         error: { code: 'frames-failed', message: expect.stringContaining('No verified owned macOS app') },
       });
       expect(helperRuns()).toEqual([]);
+      expect(await (await fetch(`http://127.0.0.1:${port}/health`)).json()).toHaveProperty('nativeViewerOpened', false);
     },
   );
 

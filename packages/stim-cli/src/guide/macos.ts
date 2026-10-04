@@ -49,7 +49,12 @@ refuse capture. The viewer never captures its own process recursively.
 The captured view is read-only; background mouse/keyboard relay is not included.
 
 Capture requires existing Screen Recording permission; Open app also requires
-existing Accessibility permission. Neither asks for permission or changes grants. If unavailable, use the normal app window and
+Accessibility permission. The first native viewer opening shows one Desktop setup
+screen for both permissions (Accessibility is named Device Control and Data Access
+on macOS 27), with statuses, Request permissions, Settings and
+Check again. You approve normal macOS requests; Stim never resets or grants access
+automatically. Permissions on the app card reopens setup. Builds never prompt.
+If unavailable, use the normal app window and
 read the workspace logs. Use Refresh preview after the app window opens or is
 resized to rebind capture.
 
@@ -71,15 +76,18 @@ simulator/device lock. Each action rechecks the exact owned process and the
 same single standard app window. Modal or disjoint windows, changed capture or
 resize refuse input until the viewer reconnects. Contained nonmodal auxiliaries
 are allowed; only the focused captured main receives input. Existing Accessibility permission is required;
-Stim never requests or resets it. A refusal ends Control with its reason while
+The phone and server never request or reset it. A refusal ends Control with its reason while
 viewing and logs remain usable. Older servers remain view-only.
 Native Control uses dynamically resolved private CoreGraphics input SPI in the
 server helper, outside the phone and Mac App Store app binaries. A missing symbol
 or incompatible macOS version refuses Control while viewing and logs remain usable.
 
 The existing capture host needs Screen Recording permission. If capture is denied,
-the viewer explains where to allow that host in System Settings; Stim never
-requests or resets permissions. Status and logs still work. Tap the build card for
+open Permissions in Stim Desktop on the host Mac, approve its normal OS requests
+and reconnect the phone viewer. The Desktop host presents setup on the first
+native viewer opening, including one initiated by the phone. A server started
+outside Desktop uses that launching host's permissions; granting this copy of Stim
+may not apply to it. The server never requests or resets permissions. Status and logs still work. Tap the build card for
 SwiftPM output or the logs card for native runtime stdout and stderr. Metro is not
 used. Close and reopen the viewer after opening or resizing the app window.
 

@@ -674,8 +674,7 @@ Events are `{ "event", "subscription", ... }`.
   identifier and bundle path before starting and while capturing. ScreenCaptureKit
   selects only that app's window; desktop capture and choosing between multiple
   windows are unsupported. It requires existing Screen Recording permission and
-  never requests or resets grants. Capture refusal names the host and System
-  Settings guidance; status and logs remain available. Native windows need the
+  never requests or resets grants. The local health payload sets `nativeViewerOpened` after a verified native view attaches, allowing the Desktop host to present its first-use Screen Recording and Accessibility (called Device Control and Data Access on macOS 27) setup. Only explicit buttons in that host invoke normal OS requests. Capture refusal names setup and System Settings guidance; status and logs remain available. Native windows need the
   helper, have no screenshot fallback, recording or replay, and consume
   only the paired device's `read` capability.
 
