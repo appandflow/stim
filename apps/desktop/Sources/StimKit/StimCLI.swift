@@ -46,19 +46,14 @@ public struct StimCLI: Sendable {
     layout: (() async -> PackageManagerLayout)? = nil
   ) async -> StimCLI {
     let cli = StimCLI(environment: environment, override: override)
-    let home = environment["HOME"].flatMap { $0.isEmpty ? nil : $0 } ?? NSHomeDirectory()
     let launcher = await NodeLauncher.resolve(
-      executable: cli.executable, name: "stim", environment: cli.environment, home: home
-    ) {
-      if let layout { return await layout() }
-      return await PackageManagerLayout.probe(environment: cli.environment, home: home)
-    }
+      executable: cli.executable, name: "stim", environment: cli.environment, layout: layout)
     return StimCLI(environment: environment, override: override, launcher: launcher)
   }
 
   private func command(_ arguments: [String]) throws -> (program: String, arguments: [String]) {
     guard let executable else { throw Failure.notFound }
-    return launcher?.command(arguments) ?? (executable, arguments)
+    return try launcher?.command(arguments) ?? (executable, arguments)
   }
 
   /// The directory `stim` keeps its state in: `STIM_HOME` from `environment`, else `~/.stim`. This app's own
@@ -174,17 +169,17 @@ public struct StimCLI: Sendable {
     var environment = environment
     environment["NO_COLOR"] = "1"
     environment["FORCE_COLOR"] = "0"
-    let program: (program: String, arguments: [String])
+    let launch: (program: String, arguments: [String])
     if command.program == "stim" {
-      program = try self.command(command.arguments)
+      launch = try self.command(command.arguments)
     } else {
       guard let tool = resolveExecutable(command.program, override: nil, environment: &environment) else {
         throw Failure.toolNotFound(command.program)
       }
-      program = (tool, command.arguments)
+      launch = (tool, command.arguments)
     }
     return try ProcessStream.start(
-      executable: program.program, arguments: program.arguments, cwd: command.cwd, environment: environment,
+      executable: launch.program, arguments: launch.arguments, cwd: command.cwd, environment: environment,
       onLine: onLine, onExit: onExit)
   }
 }

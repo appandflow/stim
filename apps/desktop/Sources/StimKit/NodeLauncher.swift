@@ -15,15 +15,31 @@ public struct NodeRuntime: Equatable, Sendable {
   /// Runs the first `node` on `environment`'s PATH in `home`. Nil when it is missing, fails, or prints something
   /// else.
   public static func probe(environment: [String: String], home: String) async -> NodeRuntime? {
+    guard let request = probeRequest(environment: environment, home: home) else { return nil }
+    return (try? await request.run()).flatMap(parse)
+  }
+
+  /// `probe(environment:home:)` on the calling thread.
+  static func probeNow(environment: [String: String], home: String) -> NodeRuntime? {
+    guard let request = probeRequest(environment: environment, home: home) else { return nil }
+    return (try? request.runBlocking()).flatMap(parse)
+  }
+
+  private static func probeRequest(environment: [String: String], home: String) -> ProcessRequest? {
     var environment = environment
     guard let node = resolveExecutable("node", override: nil, environment: &environment) else { return nil }
-    let request = ProcessRequest(
+    return ProcessRequest(
       node, ["-p", "process.execPath + '\\n' + process.versions.node"], cwd: home, environment: environment,
       timeout: 10)
-    guard let result = try? await request.run(), result.succeeded else { return nil }
-    let lines = result.stdoutText.split(whereSeparator: \.isNewline).map(String.init)
-    guard lines.count == 2, lines[0].hasPrefix("/") else { return nil }
-    return NodeRuntime(path: lines[0], version: lines[1])
+  }
+
+  private static func parse(_ result: ProcessResult) -> NodeRuntime? {
+    guard result.succeeded else { return nil }
+    let lines = result.stdoutText.split(whereSeparator: \.isNewline).map(String.init).suffix(2)
+    guard lines.count == 2, let path = lines.first, let version = lines.last, path.hasPrefix("/"),
+      SemanticVersion(version) != nil
+    else { return nil }
+    return NodeRuntime(path: path, version: version)
   }
 }
 
@@ -31,6 +47,16 @@ public struct NodeRuntime: Equatable, Sendable {
 /// in a project instead, a version manager that follows the working directory (asdf, mise, Volta) would pick the
 /// project's pinned Node, which can be older than the CLI supports.
 public final class NodeLauncher: @unchecked Sendable {
+  /// The home directory's Node is older than `SetupChecks.nodeMinimum`.
+  public struct Unsupported: LocalizedError, Equatable {
+    public let runtime: NodeRuntime
+
+    public var errorDescription: String? {
+      "Stim needs Node.js \(SetupChecks.nodeMinimum) or later, but node in the home folder is \(runtime.version) at "
+        + "\(runtime.path). Make a newer Node your version manager's default, then try again."
+    }
+  }
+
   /// The executable whose JavaScript file the CLI runs: the CLI's own, or a package manager's global install behind
   /// a version-manager shim. Each command reads it again, so an update that moves the file takes effect at once.
   public let source: String
@@ -38,7 +64,6 @@ public final class NodeLauncher: @unchecked Sendable {
   private let home: String
   private let lock = NSLock()
   private var current: NodeRuntime
-  private var refreshing = false
 
   init(source: String, runtime: NodeRuntime, environment: [String: String], home: String) {
     self.source = source
@@ -53,43 +78,45 @@ public final class NodeLauncher: @unchecked Sendable {
   public var script: String? { Self.nodeScript(at: source) }
 
   /// The launcher for the CLI at `executable`, or nil when the home directory has no `node` or `executable` leads
-  /// to no JavaScript file. A version-manager shim leads to the `name` that `layout` places in a package manager's
-  /// global bin directory; any other executable, such as a wrapper script, runs as it is.
+  /// to no JavaScript file. A version-manager shim leads to the `name` that `layout`, probed when nil, places in a
+  /// package manager's global bin directory; any other executable, such as a wrapper script, runs as it is.
   public static func resolve(
-    executable: String?, name: String, environment: [String: String], home: String,
-    layout: () async -> PackageManagerLayout
+    executable: String?, name: String, environment: [String: String],
+    layout: (() async -> PackageManagerLayout)? = nil
   ) async -> NodeLauncher? {
+    let home = environment["HOME"].flatMap { $0.isEmpty ? nil : $0 } ?? NSHomeDirectory()
     guard let executable, let runtime = await NodeRuntime.probe(environment: environment, home: home) else {
       return nil
     }
     var source: String? = nodeScript(at: executable) == nil ? nil : executable
     if source == nil, isVersionManagerShim(executable) {
-      source = await layout().globalExecutables(name).first { nodeScript(at: $0) != nil }
+      var managers: PackageManagerLayout
+      if let layout {
+        managers = await layout()
+      } else {
+        managers = await PackageManagerLayout.probe(environment: environment, home: home)
+      }
+      source = managers.globalExecutables(name).first { nodeScript(at: $0) != nil }
     }
     return source.map { NodeLauncher(source: $0, runtime: runtime, environment: environment, home: home) }
   }
 
-  /// The program and arguments that run the script with `arguments`. Nil while the script is gone, and once the
-  /// Node binary is gone, as after a Homebrew upgrade or a version manager's uninstall; the next commands use the
-  /// Node resolved again.
-  public func command(_ arguments: [String]) -> (program: String, arguments: [String])? {
+  /// The program and arguments that run the script with `arguments`. Once the Node binary is gone, as after a
+  /// Homebrew upgrade or a version manager's uninstall, it finds the home directory's Node again first. Nil while
+  /// the script or every `node` is gone; throws `Unsupported` for a Node older than `SetupChecks.nodeMinimum`.
+  public func command(_ arguments: [String]) throws -> (program: String, arguments: [String])? {
     guard let script else { return nil }
-    let node = runtime.path
-    if FileManager.default.isExecutableFile(atPath: node) { return (node, [script] + arguments) }
-    let start = lock.withLock {
-      defer { refreshing = true }
-      return !refreshing
+    let found: NodeRuntime? = lock.withLock {
+      if FileManager.default.isExecutableFile(atPath: current.path) { return current }
+      guard let found = NodeRuntime.probeNow(environment: environment, home: home) else { return nil }
+      current = found
+      return found
     }
-    if start {
-      Task.detached { [self] in
-        let found = await NodeRuntime.probe(environment: environment, home: home)
-        lock.withLock {
-          if let found { current = found }
-          refreshing = false
-        }
-      }
+    guard let found else { return nil }
+    guard let version = SemanticVersion(found.version), version >= SetupChecks.nodeMinimum else {
+      throw Unsupported(runtime: found)
     }
-    return nil
+    return (found.path, [script] + arguments)
   }
 
   /// A file in a `shims` directory, where asdf, mise and nodenv put the shims that pick a version from the working
@@ -98,15 +125,17 @@ public final class NodeLauncher: @unchecked Sendable {
     ((executable as NSString).deletingLastPathComponent as NSString).lastPathComponent == "shims"
   }
 
-  /// The JavaScript file `executable` runs, past symbolic links and pnpm shims, or nil when that file is not one.
+  /// The JavaScript file `executable` runs, past symbolic links and pnpm shims, or nil when that file is not one:
+  /// its `#!` line names `node`, or it has none and a JavaScript extension.
   static func nodeScript(at executable: String) -> String? {
     guard FileManager.default.isExecutableFile(atPath: executable) else { return nil }
     let target = PackageManagerLayout.target(ofExecutable: executable)
-    if ["js", "mjs", "cjs"].contains((target as NSString).pathExtension) { return target }
     guard let handle = FileHandle(forReadingAtPath: target) else { return nil }
     defer { try? handle.close() }
     let head = (try? handle.read(upToCount: 256)).map { String(decoding: $0, as: UTF8.self) } ?? ""
-    guard head.hasPrefix("#!"), let line = head.split(whereSeparator: \.isNewline).first else { return nil }
+    guard head.hasPrefix("#!"), let line = head.split(whereSeparator: \.isNewline).first else {
+      return ["js", "mjs", "cjs"].contains((target as NSString).pathExtension) ? target : nil
+    }
     let interpreter = line.dropFirst(2).split(separator: " ").map { (String($0) as NSString).lastPathComponent }
     return interpreter.contains("node") ? target : nil
   }

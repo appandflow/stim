@@ -169,19 +169,14 @@ public struct StimServerCLI: Sendable {
     layout: (() async -> PackageManagerLayout)? = nil
   ) async -> StimServerCLI {
     let cli = StimServerCLI(environment: environment, override: override)
-    let home = environment["HOME"].flatMap { $0.isEmpty ? nil : $0 } ?? NSHomeDirectory()
     let launcher = await NodeLauncher.resolve(
-      executable: cli.executable, name: "stim-server", environment: cli.environment, home: home
-    ) {
-      if let layout { return await layout() }
-      return await PackageManagerLayout.probe(environment: cli.environment, home: home)
-    }
+      executable: cli.executable, name: "stim-server", environment: cli.environment, layout: layout)
     return StimServerCLI(environment: environment, override: override, launcher: launcher)
   }
 
   private func command(_ arguments: [String]) throws -> (program: String, arguments: [String]) {
     guard let executable else { throw Failure.notFound }
-    return launcher?.command(arguments) ?? (executable, arguments)
+    return try launcher?.command(arguments) ?? (executable, arguments)
   }
 
   public enum Failure: LocalizedError {

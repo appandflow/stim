@@ -1037,8 +1037,9 @@ replaces its card. With the main window closed, the link reopens it.
   terminal. It adds `STIM_DESKTOP_APP`, set to the app's bundle path, which
   tells `stim` that Stim Desktop is installed without a Launch Services lookup.
   It runs `stim` and `stim-server` as their JavaScript file under the Node that
-  `node` resolves to in the home folder, not through the files'
-  `#!/usr/bin/env node` line in the workspace. A version manager that follows
+  `node` resolves to in the home folder, with the directory holding `stim`
+  first on the `PATH` so a Node installed beside it, as nvm does, wins. It does
+  not run them through the files' `#!/usr/bin/env node` line in the workspace. A version manager that follows
   the working directory (asdf, mise, Volta) would otherwise run them on the
   Node a project pins, which can be older than Stim supports. When `stim` on
   the `PATH` is a shim in a version manager's `shims` folder (asdf, mise,
@@ -1046,8 +1047,8 @@ replaces its card. With the main window closed, the link reopens it.
   the home folder; any other script, such as a wrapper, runs as it is. Each
   command follows the executable's links again, so an update takes effect
   without a restart. When the Node binary disappears, as after a Homebrew
-  upgrade, the next command runs through the shebang and later ones use the
-  Node found again.
+  upgrade, the next command finds the home folder's Node again first. A Node
+  older than 22.12.0 refuses every command with its version and path.
 
 At launch the app runs `stim --version` and needs 1.11.0 or later. When
 `stim` is missing, too old, or reports no version, a banner explains Stim and

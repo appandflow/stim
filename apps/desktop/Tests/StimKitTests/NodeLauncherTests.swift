@@ -3,8 +3,6 @@ import Testing
 
 @testable import StimKit
 
-/// A home, a project whose `.nvmrc` pins Node 18, and a `node` shim on PATH that, like asdf's, picks the version
-/// from the working directory. Each fake Node prints its version and arguments.
 private struct VersionManagerFixture {
   let root: String
   let home: String
@@ -70,7 +68,7 @@ private struct VersionManagerFixture {
     let layout = PackageManagerLayout(npmPrefix: fixture.root + "/prefix", installed: [.npm])
 
     let launcher = await NodeLauncher.resolve(
-      executable: fixture.root + "/shims/stim", name: "stim", environment: fixture.environment, home: fixture.home
+      executable: fixture.root + "/shims/stim", name: "stim", environment: fixture.environment
     ) { layout }
 
     #expect(launcher?.script == fixture.realScript)
@@ -85,7 +83,7 @@ private struct VersionManagerFixture {
     let layout = PackageManagerLayout(npmPrefix: fixture.root + "/prefix", installed: [.npm])
 
     let launcher = await NodeLauncher.resolve(
-      executable: fixture.root + "/wrappers/stim", name: "stim", environment: fixture.environment, home: fixture.home
+      executable: fixture.root + "/wrappers/stim", name: "stim", environment: fixture.environment
     ) { layout }
 
     #expect(launcher == nil)
@@ -98,7 +96,7 @@ private struct VersionManagerFixture {
     let link = fixture.root + "/prefix/bin/stim"
     let launcher = try #require(
       await NodeLauncher.resolve(
-        executable: link, name: "stim", environment: fixture.environment, home: fixture.home
+        executable: link, name: "stim", environment: fixture.environment
       ) { PackageManagerLayout() })
     let updated = fixture.root + "/store/stim@2/dist/cli.mjs"
     try fm.createDirectory(atPath: (updated as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
@@ -108,24 +106,35 @@ private struct VersionManagerFixture {
     try fm.removeItem(atPath: link)
     try fm.createSymbolicLink(atPath: link, withDestinationPath: updated)
 
-    #expect(launcher.command(["--version"])?.arguments == [(updated as NSString).resolvingSymlinksInPath, "--version"])
+    #expect(try launcher.command(["--version"])?.arguments == [(updated as NSString).resolvingSymlinksInPath, "--version"])
   }
 
-  @Test func resolvesTheNodeAgainOnceItsBinaryIsGone() async throws {
+  @Test func findsTheNodeAgainOnceItsBinaryIsGone() async throws {
     let fixture = try VersionManagerFixture()
     defer { try? FileManager.default.removeItem(atPath: fixture.root) }
     let launcher = try #require(
-      await NodeLauncher.resolve(
-        executable: fixture.script, name: "stim", environment: fixture.environment, home: fixture.home
-      ) { PackageManagerLayout() })
+      await NodeLauncher.resolve(executable: fixture.script, name: "stim", environment: fixture.environment) {
+        PackageManagerLayout()
+      })
     try FileManager.default.removeItem(atPath: fixture.root + "/v22/node")
     try fixture.installNode("22.22.0")
     try FileManager.default.moveItem(atPath: fixture.root + "/v22", toPath: fixture.root + "/v22-new")
     try fixture.write(fixture.root + "/shims/node", "exec \"\(fixture.root)/v22-new/node\" \"$@\"")
 
-    #expect(launcher.command(["--version"]) == nil)
-    let deadline = Date().addingTimeInterval(10)
-    while launcher.runtime.version != "22.22.0", Date() < deadline { try await Task.sleep(for: .milliseconds(20)) }
-    #expect(launcher.command(["--version"])?.program == fixture.root + "/v22-new/node")
+    #expect(try launcher.command(["--version"])?.program == fixture.root + "/v22-new/node")
+  }
+
+  @Test func refusesAHomeNodeOlderThanStimSupportsNamingItsPath() async throws {
+    let fixture = try VersionManagerFixture()
+    defer { try? FileManager.default.removeItem(atPath: fixture.root) }
+    try fixture.installNode("20.11.0")
+    try fixture.write(fixture.root + "/shims/node", "exec \"\(fixture.root)/v20/node\" \"$@\"")
+    let cli = await StimCLI.resolve(environment: fixture.environment, override: fixture.root + "/prefix/bin/stim") {
+      PackageManagerLayout()
+    }
+
+    await #expect(throws: NodeLauncher.Unsupported(runtime: NodeRuntime(path: fixture.root + "/v20/node", version: "20.11.0"))) {
+      try await cli.run(["--version"], cwd: fixture.project)
+    }
   }
 }

@@ -54,7 +54,8 @@ final class SettingsModel: ObservableObject {
       let schema: Result<[SettingField], Error>? =
         needsSchema
         ? Result {
-          guard let url = SettingsSchema.locate(executable: cli.executable) ?? Self.repositorySchema() else {
+          guard let url = SettingsSchema.locate(executable: cli.launcher?.script ?? cli.executable) ?? Self.repositorySchema()
+          else {
             throw SchemaMissing()
           }
           return try SettingsSchema.fields(from: Data(contentsOf: url))

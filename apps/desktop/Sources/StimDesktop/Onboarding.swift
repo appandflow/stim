@@ -21,7 +21,6 @@ final class Onboarding: ObservableObject {
     var serverPath: String?
     var viewerKeys: [String]
     var node: CLICompatibility
-    /// The Node binary `node` resolves to in `home`, the one `stim` runs on.
     var nodePath: String?
     var brewPath: String?
     var skillPath: String?
@@ -130,7 +129,7 @@ final class Onboarding: ObservableObject {
         return Report(
           stim: compatibility,
           stimPath: stim.executable,
-          stimOwner: stim.executable.flatMap { packages.owner(ofExecutable: $0) },
+          stimOwner: (stim.launcher?.source ?? stim.executable).flatMap { packages.owner(ofExecutable: $0) },
           installers: packages.installed,
           defaultInstaller: packages.defaultInstaller(path: environment["PATH"] ?? ""),
           needsRelaunch: compatibility.isCompatible && stim.executable != launched,
