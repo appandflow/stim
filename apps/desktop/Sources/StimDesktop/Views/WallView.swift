@@ -48,12 +48,15 @@ struct WallView: View {
               .accessibilityLabel(env.names.title)
               .accessibilityAddTraits(.isButton)
               .accessibilityAction { selection = .environment(env.path) }
-              if devices.isEmpty {
+              if let macos = env.macos {
+                MacosAppCard(app: macos, workspace: env.path)
+              }
+              if devices.isEmpty && env.macos == nil {
                 Label("No running devices", systemImage: "iphone.gen3")
                   .font(.stim(.callout))
                   .foregroundStyle(Palette.secondary)
                   .labelStyle(.titleAndIcon)
-              } else {
+              } else if !devices.isEmpty {
                 ScrollView(.horizontal, showsIndicators: false) {
                   HStack(alignment: .top, spacing: Space.xl) {
                     ForEach(devices) { device in
