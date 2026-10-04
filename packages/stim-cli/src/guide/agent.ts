@@ -331,7 +331,7 @@ FULL TOPIC LIST
   stim guide lifecycle release    # Release configurations and ...Release variants
   stim guide facts                # the --json payloads
   stim guide facts devmenu        # the Expo dev menu or Tools button over the app
-  stim guide macos                # Swift Package Debug apps, logs, local window control
+  stim guide macos                # Swift Package Debug apps, logs, local window preview and Open app
   stim guide web                  # stim web: owned Chrome, page logs, launched, teardown
   stim guide ports                # named ports for web and API servers
   stim guide metro                # supervisor, custom Metro, tunnels, and remote devices
