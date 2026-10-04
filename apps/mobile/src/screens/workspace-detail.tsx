@@ -15,7 +15,15 @@ import { ScrollView } from '@/components/lists';
 import { explainReadOnly, readOnlyReason } from '@/components/read-only';
 import { RemoteTile } from '@/components/remote-tile';
 import { Text } from '@/components/text';
-import { BuildCard, BuildInProgressCard, CardGrid, LogsCard, StatusCard, WorkCard } from '@/components/workspace-cards';
+import {
+  BuildCard,
+  BuildInProgressCard,
+  CardGrid,
+  LogsCard,
+  MacosBuildCard,
+  StatusCard,
+  WorkCard,
+} from '@/components/workspace-cards';
 import { withAlpha } from '@/design/color';
 import { useBuildPlans } from '@/hooks/build-plans';
 import { useHasStatus, useMacConnection, useMachineStatus, useWorkspace } from '@/hooks/machines';
@@ -79,7 +87,7 @@ export function WorkspaceDetail({ path }: { path: string }) {
   const status = useMachineStatus(macId);
   const machine = status?.machine;
   const used = env ? usedPlatforms(env) : [];
-  const platforms: Platform[] = used.length ? used : ['ios', 'android'];
+  const platforms: Platform[] = used.length ? used : env?.macos ? [] : ['ios', 'android'];
   const plan = useBuildPlans(
     path,
     Object.fromEntries(platforms.map((platform) => [platform, planKey(env?.lastBuilds?.[platform])])),
@@ -90,7 +98,7 @@ export function WorkspaceDetail({ path }: { path: string }) {
     if (macId) touch({ macId, path });
   }, [macId, path, touch]);
 
-  const perform = async (action: ActionName, platform?: DevicePlatform) => {
+  const perform = async (action: ActionName, platform?: Exclude<DevicePlatform, 'macos'>) => {
     setToast({ kind: 'pending', message: action === 'stop' ? t`Stopping ${title}` : reloadMessage(platform, false) });
     const error = await actions.run(action, platform ? { platform } : {});
     setToast(
@@ -101,7 +109,7 @@ export function WorkspaceDetail({ path }: { path: string }) {
   };
 
   const reload = () => {
-    const platforms = env ? livePlatforms(env) : [];
+    const platforms = env ? livePlatforms(env).filter((platform) => platform !== 'macos') : [];
     if (platforms.length < 2) return void perform('reload', platforms[0] === 'web' ? 'web' : undefined);
     const names = platforms.map(platformName);
     const rest = names.slice(0, -1).join(', ');
@@ -148,7 +156,8 @@ export function WorkspaceDetail({ path }: { path: string }) {
         >
           {env && actions.available?.length ? (
             <Stack.Toolbar.Menu inline>
-              {actions.available.includes('reload') ? (
+              {actions.available.includes('reload') &&
+              (!env.macos || livePlatforms(env).some((platform) => platform !== 'macos')) ? (
                 <Stack.Toolbar.MenuAction icon="arrow.clockwise" disabled={actions.pending !== null} onPress={reload}>
                   {t`Reload`}
                 </Stack.Toolbar.MenuAction>
@@ -234,7 +243,7 @@ export function WorkspaceDetail({ path }: { path: string }) {
   const { byDevice, general } = deviceWarnings(env.warnings, all);
   const build = runningBuild(env);
   const stage = workspaceStage(env, all, now);
-  const devices = stage.kind === 'stopped' ? [] : all;
+  const devices = stage.kind === 'stopped' ? all.filter((device) => device.platform === 'macos') : all;
   const open = (pathname: '/mac/[id]/resources' | '/mac/[id]/build' | '/mac/[id]/work', platform?: Platform) =>
     router.push({ pathname, params: { id: macId, path, ...(platform ? { platform } : {}) } });
   const lines = platforms.map((platform) => buildLine(platform, env.lastBuilds?.[platform], plan(platform)));
@@ -254,14 +263,23 @@ export function WorkspaceDetail({ path }: { path: string }) {
         {header}
         <CardGrid>
           <StatusCard stage={stage} usage={workspaceUsage(env, machine)} onPress={() => open('/mac/[id]/resources')} />
-          {build ? null : (
+          {env.macos ? (
+            <MacosBuildCard
+              app={env.macos}
+              onPress={() => router.push({ pathname: '/mac/[id]/logs', params: { id: macId, path, source: 'build' } })}
+            />
+          ) : build ? null : (
             <BuildCard lines={lines} onPress={() => open('/mac/[id]/build', failed ?? lines[0]?.platform)} />
           )}
           <LogsCard
             errors={env.logs ? env.logs.errorsSinceMarker : null}
             metro={health}
             bundle={bundleLine(env, now, reportsBundles)}
-            onPress={() => openLogs((env.logs?.errorsSinceMarker ?? 0) > 0)}
+            onPress={() =>
+              env.macos
+                ? router.push({ pathname: '/mac/[id]/logs', params: { id: macId, path, source: 'macos' } })
+                : openLogs((env.logs?.errorsSinceMarker ?? 0) > 0)
+            }
           />
           <WorkCard
             sessions={workspaceAgentSessions(env)}

@@ -437,7 +437,7 @@ describe('pairing', () => {
         protocol: 1,
         server: { name: 'Test Mac', version: '1.2.3', stim: '9.9.9', home: homedir() },
         capabilities: ['read'],
-        features: ['physical-ios', 'physical-android', 'notifications'],
+        features: ['physical-ios', 'physical-android', 'notifications', 'macos-window'],
         actions: [],
       },
     });
@@ -2498,6 +2498,18 @@ const OWNED_WEB = {
   targetId: 'PAGE-1',
 };
 
+const OWNED_MACOS = {
+  launchId: 'LAUNCH-1',
+  product: 'MyApp',
+  arguments: [],
+  bundle: '/stim/macos/MyApp.app',
+  bundleId: 'dev.myapp.stim.workspace',
+  executable: '/stim/macos/MyApp.app/Contents/MacOS/MyApp',
+  state: 'running',
+  build: { state: 'ok', startedAt: '2026-10-04T12:00:00Z' },
+  app: { pid: 4242, startedAtMicros: 123456, processToken: 'owned-process' },
+};
+
 describe('frames.subscribe', () => {
   let toolCalls: string;
 
@@ -3015,6 +3027,81 @@ describe('frames.subscribe', () => {
       expect(helperRuns()[0]!.args).toEqual(['web', 'http://127.0.0.1:8900', '4242', 'PAGE-1']);
     },
     10_000,
+  );
+
+  test.skipIf(!fakeTailscale)(
+    'streams a verified native app to a read-only phone without control, replay or device tools',
+    async () => {
+      const port = await startWithTools(
+        { FAKE_STIM_PAYLOADS: statusWith({ macos: OWNED_MACOS }), FAKE_FRAMES: '[]', FAKE_HELPER_INTERVAL_MS: '10' },
+        undefined,
+        fakeHelper(),
+      );
+      const client = await authed(port);
+      expect(await client.request('frames.subscribe', { workspace, platform: 'macos', video: ['h264'] })).toMatchObject(
+        { result: { video: 'h264' } },
+      );
+      await new Promise((resolve) => client.socket.once('message', resolve));
+      expect(await client.request('control.begin', { workspace, platform: 'macos' })).toMatchObject({
+        error: { code: 'forbidden' },
+      });
+      const controller = await authed(port, true);
+      expect(await controller.request('control.begin', { workspace, platform: 'macos' })).toMatchObject({
+        error: { code: 'action-failed', message: expect.stringContaining('view-only') },
+      });
+      controller.socket.close();
+      expect(await client.request('replay.range', { workspace, platform: 'macos' })).toMatchObject({
+        error: { code: 'bad-request' },
+      });
+      client.socket.close();
+      await until(() => helperRuns().length === 1);
+      expect(helperRuns()[0]!.args).toEqual(['macos', JSON.stringify(OWNED_MACOS)]);
+      expect(toolRuns().filter((run) => run.tool === 'xcrun' || run.tool === 'adb')).toEqual([]);
+      expect(readViewedDevices()).toEqual([]);
+    },
+    10_000,
+  );
+
+  test.skipIf(!fakeTailscale)(
+    'preserves a native capture permission failure without a screenshot fallback',
+    async () => {
+      const port = await startWithTools(
+        {
+          FAKE_STIM_PAYLOADS: statusWith({ macos: OWNED_MACOS }),
+          FAKE_FRAMES: '[]',
+          FAKE_HELPER_FAIL: 'Screen Recording access is unavailable',
+        },
+        undefined,
+        fakeHelper(),
+      );
+      const client = await authed(port);
+      await client.request('frames.subscribe', { workspace, platform: 'macos' });
+      expect(await client.next()).toMatchObject({
+        event: 'error',
+        error: { code: 'frames-failed', message: expect.stringContaining('Screen Recording access is unavailable') },
+      });
+      expect(toolRuns().filter((run) => run.tool === 'xcrun' || run.tool === 'adb')).toEqual([]);
+    },
+    10_000,
+  );
+
+  test.each([{ state: 'stopped' }, { state: 'unverified' }, { app: undefined }])(
+    'refuses native windows without a verified running process: %j',
+    async (extra) => {
+      if (!fakeTailscale) return;
+      const port = await startWithTools(
+        { FAKE_STIM_PAYLOADS: statusWith({ macos: { ...OWNED_MACOS, ...extra } }), FAKE_FRAMES: '[]' },
+        undefined,
+        fakeHelper(),
+      );
+      const client = await authed(port);
+      await client.request('frames.subscribe', { workspace, platform: 'macos' });
+      expect(await client.next()).toMatchObject({
+        event: 'error',
+        error: { code: 'frames-failed', message: expect.stringContaining('No verified owned macOS app') },
+      });
+      expect(helperRuns()).toEqual([]);
+    },
   );
 
   function leasedPhonePayload(deviceName: string | null = 'Old iPhone'): string {

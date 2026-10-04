@@ -72,6 +72,20 @@ describe('initialFilter', () => {
   });
 });
 
+it('routes native runtime logs through client output and excludes React Native client lines', () => {
+  const filter = initialFilter({ source: 'macos' });
+  expect(logFilter('/native', filter, 100)).toEqual({ workspace: '/native', tail: 100, sources: ['client'] });
+  const entry = (platform: string) => ({
+    key: '1:0',
+    lead: { ts: 1, src: 'client', platform, level: 'info', msg: 'ready' } as LogRecord,
+    related: [],
+    context: [],
+  });
+  expect(showsEntry(filter, entry('macos'))).toBe(true);
+  expect(showsEntry(filter, entry('ios'))).toBe(false);
+  expect(logFilter('/native', initialFilter({ source: 'build' }), 100).sources).toEqual(['build']);
+});
+
 describe('showsEntry', () => {
   const entry = (lead: Partial<LogRecord>) => ({
     key: '1:0',

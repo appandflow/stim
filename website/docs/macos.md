@@ -8,7 +8,7 @@ import StimTabs from '@site/src/components/StimTabs';
 The macOS prototype builds a Swift Package executable in Debug, launches an
 isolated development bundle and shows its owned window in Stim Desktop.
 It uses fixed SwiftPM commands. Xcode projects, custom packaging scripts,
-release distribution, shared artifact caching and remote viewing remain outside
+release distribution and shared artifact caching remain outside
 this slice. If Stim is not installed globally, replace `stim` with `npx stim`.
 
 Run from the directory containing `Package.swift`. Set an explicit executable
@@ -60,6 +60,25 @@ existing Accessibility permission. Stim never requests or changes grants. If una
 Use Refresh preview after the app window opens or is resized to rebind capture. An
 unverifiable owner refuses cleanup rather than signalling another app. `stop`
 affects only this workspace's recorded app and supervisor.
+
+## Monitor from your phone
+
+Pair the phone with this Mac's stim-server. Native workspaces show the app, build
+state and runtime state on Home and in the workspace. Tap the build card for
+SwiftPM logs, or the logs card for native runtime output. Metro stays out of this
+workflow.
+
+Tap the app tile to view its one visible window. A server advertising
+`macos-window` streams that window over the existing authenticated connection with
+read access. It verifies the recorded PID, process start time, executable and
+bundle before capture and on every frame. The view has no remote input or replay,
+and never captures the desktop or another app.
+
+The capture host requires existing Screen Recording permission. When denied, the
+viewer names the existing host to allow in **System Settings → Privacy & Security →
+Screen & System Audio Recording**; Stim never requests or resets permissions.
+Status and logs remain available. Close and reopen the viewer after opening or
+resizing the app window.
 
 ## Try Stim Desktop itself
 

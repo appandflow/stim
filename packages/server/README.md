@@ -645,7 +645,7 @@ Events are `{ "event", "subscription", ... }`.
   `machine.details` uses the same reader. `settings.get` runs
   `stim settings --json`, which masks sensitive values. Without `workspace`,
   these reads use the home directory as their project context.
-- `frames.subscribe` takes `workspace`, `platform` (`ios`, `android` or `web`),
+- `frames.subscribe` takes `workspace`, `platform` (`ios`, `android`, `web` or `macos`),
   `slot` (`default` when absent), `fps` (1 to 30, 5 by default) and `maxEdge`
   (240 to 2048 pixels, 1280 by default), and sends `frame` events: a JPEG,
   base64 in `data`, with `width`, `height` and `capturedAt`, at most `fps` a
@@ -660,6 +660,17 @@ Events are `{ "event", "subscription", ... }`.
   event, and so does a device that stops or changes owner. A client whose
   socket has more than two frames unsent skips frames and gets the newest
   once it catches up.
+
+  With `macos`, it serves the one visible window of the workspace's verified
+  running native app, in the default slot, when hello advertises `macos-window`.
+  The helper verifies the recorded PID, process start time, executable, bundle
+  identifier and bundle path before starting and while capturing. ScreenCaptureKit
+  selects only that app's window; desktop capture and choosing between multiple
+  windows are unsupported. It requires existing Screen Recording permission and
+  never requests or resets grants. Capture refusal names the host and System
+  Settings guidance; status and logs remain available. Native windows need the
+  helper, have no screenshot fallback, control, recording or replay, and consume
+  only the paired device's `read` capability.
 
   Frames come from the `stim-frames` helper. When it starts, the server
   compiles it with `xcrun swiftc` from the Swift sources shipped in

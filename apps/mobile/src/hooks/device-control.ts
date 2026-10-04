@@ -93,7 +93,7 @@ export function useDeviceControl(
 
   const begin = useCallback(
     (takeOver = false) => {
-      if (!connection) return;
+      if (!connection || platform === 'macos') return;
       setHeld({ kind: 'starting' });
       const target = { workspace, platform, slot, ...(physical ? { physical } : {}) };
       connection.request('control.begin', { ...target, ...(takeOver ? { takeOver } : {}) }).then(

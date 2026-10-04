@@ -48,7 +48,7 @@ function latestBuild(env: EnvironmentState): LastBuild | null {
 /** The app presence `stim` reports on the device, or for an older `stim` the same rule run here. */
 export function appPresence(env: EnvironmentState, device: DeviceRef): 'none' | 'closed' | null {
   if (!env.stage) return localAppPresence(env, device);
-  return device.physical || device.platform === 'web' ? null : (device.presence ?? null);
+  return device.physical || device.platform === 'web' || device.platform === 'macos' ? null : (device.presence ?? null);
 }
 
 /**
@@ -57,7 +57,14 @@ export function appPresence(env: EnvironmentState, device: DeviceRef): 'none' | 
  * and the latest build failed.
  */
 function localAppPresence(env: EnvironmentState, device: DeviceRef): 'none' | 'closed' | null {
-  if (!device.running || device.platform === 'web' || device.physical || device.app?.state === 'running') return null;
+  if (
+    !device.running ||
+    device.platform === 'web' ||
+    device.platform === 'macos' ||
+    device.physical ||
+    device.app?.state === 'running'
+  )
+    return null;
   const last = env.lastBuilds?.[device.platform];
   const everBuilt = env.builds?.[device.platform]?.some((entry) => entry.result === 'succeeded') ?? true;
   if (last?.status === 'failed' && !everBuilt) return 'none';
@@ -73,12 +80,21 @@ const STAGE_KINDS: readonly StageFacts['kind'][] = [
   'stopped',
 ];
 
-function stageFacts(kind: StageFacts['kind'], since: string | null | undefined, platform: Platform | null = null) {
+function stageFacts(
+  kind: StageFacts['kind'],
+  since: string | null | undefined,
+  platform: StageFacts['platform'] = null,
+) {
   return { kind, since: since ?? null, platform, closedApps: [] } satisfies StageFacts;
 }
 
 /** The stage `stim` decided, for an older `stim` the same rule run here. */
 export function localStageFacts(env: EnvironmentState, devices: DeviceRef[]): StageFacts {
+  if (env.macos?.build.state === 'running') return stageFacts('building', env.macos.build.startedAt, 'macos');
+  if (env.macos?.build.state === 'failed')
+    return stageFacts('build-failed', env.macos.build.finishedAt ?? env.macos.build.startedAt, 'macos');
+  if (env.macos?.state === 'running' || env.macos?.state === 'orphaned')
+    return stageFacts('running', env.macos.build.finishedAt ?? env.macos.build.startedAt, 'macos');
   const build = runningBuild(env);
   if (build) return stageFacts('building', build.startedAt, build.platform);
   if (!env.live && env.phase === 'warming') return stageFacts('warming', env.phaseSince);
@@ -240,6 +256,7 @@ const DEVICE_KIND: Record<DeviceRef['platform'], MachineOwner['kind']> = {
   ios: 'simulator',
   android: 'emulator',
   web: 'browser',
+  macos: 'macos',
 };
 
 /**
@@ -335,6 +352,7 @@ export interface DeviceTitle {
 export function deviceTitle(device: DeviceRef): DeviceTitle {
   const slot = device.slot === 'default' ? null : device.slot;
   const join = (...parts: (string | null)[]) => parts.filter(Boolean).join(' \u00B7 ');
+  if (device.platform === 'macos') return { name: device.name, detail: 'macOS' };
   if (device.platform === 'web') return { name: t`Web`, detail: join(device.name, slot) };
   if (device.platform === 'android') {
     return {

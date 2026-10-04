@@ -51,6 +51,7 @@ export function adbPath(env: NodeJS.ProcessEnv): string {
 }
 
 function helperArgs(device: Device, env: NodeJS.ProcessEnv): string[] {
+  if (device.platform === 'macos') return ['macos', JSON.stringify(device.app)];
   if (device.platform === 'web') return ['web', device.endpoint, String(device.pid), device.targetId];
   if (device.platform === 'ios' && device.physical)
     return ['iphone', device.udid, ...(device.name ? [device.name] : [])];
