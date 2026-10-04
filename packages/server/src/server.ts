@@ -184,6 +184,7 @@ interface ServerHealth {
   stimHome: string;
   tailscale: { state: TailscaleState['state']; dnsName?: string | null; backendState?: string; reason?: string };
   route?: ServeRoute;
+  nativeViewerOpened: boolean;
 }
 
 function healthTailscale(tailscale: TailscaleState): ServerHealth['tailscale'] {
@@ -443,6 +444,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     return helperPath;
   };
   if (options.frameHelper === undefined) buildHelper();
+  let nativeViewerOpened = false;
   const frames = new FramePool(options.env, frameLimits, frameHelper, new DeviceViewers());
   const recorder =
     options.record === false
@@ -1064,6 +1066,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       let player: Player | null = null;
       let latest: StatusPayload | null = null;
       const attach = (resolved: Device) => {
+        if (resolved.platform === 'macos') nativeViewerOpened = true;
         detach?.();
         gate.reset();
         streamed = resolved;
@@ -1837,7 +1840,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       tailscale.state === 'running' && tailscale.dnsName
         ? await serveRoute(binary, options.env, addresses[0]!.port, tailscale.ips, HEALTH_ROUTE_TIMEOUT_MS)
         : undefined;
-    const body: ServerHealth = { ...health, tailscale: healthTailscale(tailscale), route };
+    const body: ServerHealth = { ...health, tailscale: healthTailscale(tailscale), route, nativeViewerOpened };
     response.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify(body));
   };
   const servers = new Map<string, { server: Server; sockets: Set<Socket> }>();
