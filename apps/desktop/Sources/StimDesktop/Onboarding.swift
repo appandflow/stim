@@ -28,10 +28,13 @@ final class Onboarding: ObservableObject {
     var home: String
     var androidSDK: String?
     var javaHome: String?
-    /// `stim` reported no version because the Node its launcher runs it on is older than Stim supports.
-    var nodeBlocksStim = false
+    /// The Node, older than Stim supports, that kept `stim` from reporting its version.
+    var nodeBlockingStim: NodeRuntime?
     /// The same for `stim-server`.
-    var nodeBlocksServer = false
+    var nodeBlockingServer: NodeRuntime?
+
+    var nodeBlocksStim: Bool { nodeBlockingStim != nil }
+    var nodeBlocksServer: Bool { nodeBlockingServer != nil }
   }
 
   enum PopupKind {
@@ -151,9 +154,10 @@ final class Onboarding: ObservableObject {
             FileManager.default.fileExists(atPath: $0)
           },
           javaHome: environment["JAVA_HOME"].flatMap { $0.isEmpty ? nil : $0 },
-          nodeBlocksStim: compatibility == .outdated(found: nil) && stim.launcher?.runtime.isSupported == false,
-          nodeBlocksServer: serverCompatibility == .outdated(found: nil)
-            && server?.launcher?.runtime.isSupported == false)
+          nodeBlockingStim: compatibility == .outdated(found: nil)
+            ? stim.launcher.map(\.runtime).flatMap { $0.isSupported ? nil : $0 } : nil,
+          nodeBlockingServer: serverCompatibility == .outdated(found: nil)
+            ? server?.launcher.map(\.runtime).flatMap { $0.isSupported ? nil : $0 } : nil)
       }.value
       self.report = report
       setup.stim = report.stim

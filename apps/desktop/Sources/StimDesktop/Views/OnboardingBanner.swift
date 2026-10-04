@@ -76,18 +76,15 @@ struct OnboardingBanner: View {
   }
 
   private func nodePopup(_ report: Onboarding.Report) -> some View {
-    var found: String?
-    if case .outdated(let version) = report.node { found = version }
+    let runtime = report.nodeBlockingStim ?? report.nodeBlockingServer
     return popupCard(kind: .node, icon: "exclamationmark.triangle", tone: .warning) {
       Text("Update Node.js to use Stim Desktop").font(.stim(.headline))
       Text(
-        "Stim Desktop runs stim and stim-server on the Node.js that node gives in your home folder, and they need \(SetupChecks.nodeMinimum.description) or later. Make a newer Node your version manager's default, then check again."
+        "stim and stim-server need Node.js \(SetupChecks.nodeMinimum.description) or later. Make a newer Node your version manager's default, or reinstall the CLI under one when an older Node sits beside it, then check again."
       )
       .foregroundStyle(Palette.secondary)
-      disclosure {
-        Text(
-          report.nodePath.map { "\(abbreviatingHome($0)) is \(found ?? "of an unknown version")." }
-            ?? "No node on the login shell's PATH.")
+      if let runtime {
+        disclosure { Text("\(abbreviatingHome(runtime.path)) is \(runtime.version).") }
       }
     } buttons: {
       Button("Check Again", action: onboarding.check).buttonStyle(.stim(.primary))

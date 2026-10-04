@@ -56,8 +56,9 @@ public final class NodeLauncher: @unchecked Sendable {
     public let runtime: NodeRuntime
 
     public var errorDescription: String? {
-      "Stim needs Node.js \(SetupChecks.nodeMinimum) or later, but node in the home folder is \(runtime.version) at "
-        + "\(runtime.path). Make a newer Node your version manager's default, then try again."
+      "Stim needs Node.js \(SetupChecks.nodeMinimum) or later, but would run on \(runtime.version) at \(runtime.path). "
+        + "Make a newer Node your version manager's default, or reinstall Stim under one when an older Node sits "
+        + "beside it, then try again."
     }
   }
 
