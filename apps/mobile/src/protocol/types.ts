@@ -244,7 +244,7 @@ export interface GitChipFacts {
 export interface StageFacts {
   kind: 'building' | 'warming' | 'ready' | 'build-failed' | 'running' | 'stopped';
   since: string | null;
-  platform: Platform | null;
+  platform: Platform | 'macos' | null;
   closedApps: { platform: Platform; slot: string }[];
 }
 
@@ -292,6 +292,25 @@ export interface WebBrowserState {
   activity?: DeviceActivity;
 }
 
+export interface MacosAppState {
+  launchId: string;
+  arguments: string[];
+  product: string;
+  bundle: string;
+  bundleId: string;
+  executable: string;
+  state: 'running' | 'orphaned' | 'stopped' | 'unverified';
+  app?: { pid: number; processToken: string; startedAtMicros: number };
+  supervisor?: { pid: number; processToken: string; startedAtMicros: number };
+  build: {
+    state: 'running' | 'ok' | 'failed';
+    startedAt: string;
+    finishedAt?: string;
+    durationMs?: number;
+    error?: string;
+  };
+}
+
 export interface EnvironmentState {
   path: string;
   labelOnly?: boolean;
@@ -324,6 +343,7 @@ export interface EnvironmentState {
     bundle?: MetroBundle;
   } | null;
   web?: WebBrowserState | null;
+  macos?: MacosAppState | null;
   supervisor?: { pid: number | null; mode: string | null; startedAt: string | null; healthy: boolean } | null;
   logs?: { dir: string; errorsSinceMarker: number } | null;
   worktree?: WorktreeFacts | null;
@@ -474,7 +494,7 @@ export interface StatusPayload {
   ownLeases?: string[];
 }
 
-export type MachineOwnerKind = 'simulator' | 'emulator' | 'metro' | 'build' | 'browser' | 'server' | 'shared';
+export type MachineOwnerKind = 'simulator' | 'emulator' | 'metro' | 'build' | 'browser' | 'macos' | 'server' | 'shared';
 
 /**
  * One thing using the Mac's CPU and memory, each process counted in exactly one owner. `slot` is absent for the

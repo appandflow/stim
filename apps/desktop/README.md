@@ -1255,3 +1255,18 @@ the matching machine, use
 every changed PNG under `Tests/VisualFixtureTests/__Snapshots__` and rerun without
 the variable. SnapshotTesting reports failures with reference, result and difference
 images. Its dependency belongs only to the visual test target.
+
+## Native macOS development prototype
+
+If Stim is not installed globally, replace `stim` with `npx stim`.
+This package includes explicit development settings for `stim macos`. From
+`apps/desktop`, run `stim macos` to build the `StimDesktop` Debug executable and
+launch its in-memory `--playground` entry in an isolated bundle. Inspect compiler
+output with `stim logs --source build`, and use `stim stop` to stop only that
+workspace's recorded app. The normal Desktop viewer shows its app/build state,
+logs and one local owned window using existing Screen Recording permission.
+**Open app** verifies and activates that owned app using existing Accessibility
+permission for normal native input;
+the captured view is read-only. Background input relay is not included. Use **Refresh preview** after the app window opens or is resized. No permission changes, real backend initialization or custom packaging
+script is part of this flow. See [the macOS guide](../../website/docs/macos.md)
+for the prototype's settings and limits.

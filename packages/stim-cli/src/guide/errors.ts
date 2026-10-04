@@ -295,6 +295,15 @@ Branch on the code, never on the message.`,
   identity and require separate manual inspection; \`stim guide lifecycle pool\`
   describes their field-only recovery.`,
     },
+    STIM_MACOS_OWNER_UNVERIFIED: {
+      summary: 'the macOS app owner cannot be verified; no signal is sent',
+      body: () => `STIM_MACOS_OWNER_UNVERIFIED
+  The recorded macOS process identity is unavailable or its workspace record
+  is malformed. Stim sends no signal to an owner it cannot verify. Inspect the
+  named process and workspace record before repairing it; do not replace a PID
+  or token with another running app. Retry stim stop once identity inspection
+  works. See stim guide macos.`,
+    },
     STIM_CLAIM_UNAVAILABLE: {
       summary: 'a process identity or warm claim store is unavailable, so the protected operation refuses',
       body: () => `STIM_CLAIM_UNAVAILABLE

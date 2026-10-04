@@ -387,6 +387,9 @@ function nestedSetting(path: string, value: unknown): Record<string, unknown> {
 }
 
 const SHAPE_CASES: Record<string, { valid: unknown; invalid: unknown; expected: string }> = {
+  'macos.product': { valid: 'MyApp', invalid: {}, expected: 'a string' },
+  'macos.infoPlist': { valid: 'Support/Info-Development.plist', invalid: {}, expected: 'a string path' },
+  'macos.arguments': { valid: ['--playground'], invalid: ['--playground', 7], expected: 'an array of strings' },
   'ios.deviceType': { valid: 'iPhone 17 Pro', invalid: {}, expected: 'a string' },
   'ios.runtime': { valid: '26.2', invalid: 26.2, expected: 'a string' },
   'ios.configuration': { valid: 'Release', invalid: { name: 'Release' }, expected: 'a string' },

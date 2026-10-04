@@ -180,9 +180,12 @@ struct WorkspaceDetail: View {
   private func canvas(devices: [DeviceRef], focused: DeviceRef?) -> some View {
     GeometryReader { geo in
       ScrollView {
-        if devices.isEmpty {
+        if let macos = env.macos {
+          MacosAppCard(app: macos, workspace: env.path).padding(Space.xxl)
+        }
+        if devices.isEmpty && env.macos == nil {
           emptyCanvas.frame(maxWidth: .infinity).padding(Space.xxxl)
-        } else {
+        } else if !devices.isEmpty {
           let availableWidth = max(0, geo.size.width - Space.xxl * 2)
           let cardWidth = min(Self.maximumCardWidth, availableWidth)
           let cardHeight = max(0, geo.size.height - Space.xxl * 2)
