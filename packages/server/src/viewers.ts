@@ -19,7 +19,7 @@ export class DeviceViewers {
   }
 
   add(device: Device): () => void {
-    if (device.platform === 'web' || device.physical) return () => {};
+    if (device.platform === 'web' || device.platform === 'macos' || device.physical) return () => {};
     const viewed: ViewedDevice =
       device.platform === 'ios' ? { platform: 'ios', id: device.udid } : { platform: 'android', id: device.serial };
     const key = `${viewed.platform}:${viewed.id}`;

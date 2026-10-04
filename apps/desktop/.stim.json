@@ -1,0 +1,22 @@
+{
+  "macos": {
+    "product": "StimDesktop",
+    "infoPlist": "Support/Info-Development.plist",
+    "arguments": [
+      "-autopilot.idleShutdown",
+      "NO",
+      "-autopilot.nightly",
+      "NO",
+      "-autopilot.pressure",
+      "NO",
+      "-autopilot.pullRequests",
+      "NO",
+      "-notify.diskPressure",
+      "NO",
+      "-notify.worktreeRemoval",
+      "NO",
+      "-notify.level.build-request",
+      "silent"
+    ]
+  }
+}

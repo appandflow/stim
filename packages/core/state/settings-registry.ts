@@ -245,6 +245,24 @@ export const SETTINGS: readonly SettingDefinition[] = [
       'Minutes an owned simulator or emulator stays idle before the workspace supervisor shuts it down; 0 never',
   },
   {
+    key: 'macos.product',
+    type: { kind: 'string', pattern: '^[A-Za-z0-9_-]+$', patternHelp: 'a Swift Package executable product name' },
+    scopes: PROJECT,
+    description: 'The Swift Package executable product stim macos builds in Debug.',
+  },
+  {
+    key: 'macos.infoPlist',
+    type: RELATIVE_PATH,
+    scopes: PROJECT,
+    description: 'Development Info.plist relative to the Swift Package directory.',
+  },
+  {
+    key: 'macos.arguments',
+    type: { kind: 'strings' },
+    scopes: PROJECT,
+    description: 'Arguments passed directly to the owned macOS development executable.',
+  },
+  {
     key: 'web.url',
     type: {
       kind: 'string',

@@ -23,7 +23,7 @@ export function useReplayRange(target: {
     { workspace, platform, slot },
     {
       intervalMs: POLL_MS,
-      active: open,
+      active: open && platform !== 'macos',
     },
   );
   return data;

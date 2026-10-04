@@ -103,6 +103,25 @@ test('only a definite unauthorized response and fix ask again on the same pinned
   ]);
 });
 
+test.each(['{"result":null}', '{"error":null}', '{"result":{"device":null}}', '{"error":{"code":null}}'])(
+  'malformed hello replies report unreachable without creating or replacing credentials: %s',
+  async (text) => {
+    const reply = JSON.parse(text) as HelloReply;
+    const first = await inspectDeviceHostMachines({ fix: true }, fakeIo([reply]).io, ['mini']);
+    expect(first.machines[0]?.state).toBe('unreachable');
+    expect(readDeviceHostMachines()).toEqual([]);
+
+    await inspectDeviceHostMachines({ fix: true }, fakeIo([pending]).io, ['mini']);
+    const saved = readFileSync(deviceHostMachinesFile(), 'utf8');
+    const { io, calls } = fakeIo([reply]);
+    const result = await inspectDeviceHostMachines({ fix: true }, io, ['mini']);
+    expect(result.machines[0]?.state).toBe('unreachable');
+    expect(calls).toHaveLength(1);
+    expect(readFileSync(deviceHostMachinesFile(), 'utf8')).toBe(saved);
+    expect(JSON.stringify(result)).not.toContain('hosting-secret');
+  },
+);
+
 test.each(['{"version":1,"machines":[{"deviceToken":"private"}]}', '{bad', '{"version":1,"machines":null}'])(
   'malformed credentials are retained and block all approval traffic: %s',
   async (text) => {

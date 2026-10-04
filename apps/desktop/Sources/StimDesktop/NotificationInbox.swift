@@ -8,6 +8,15 @@ final class NotificationInbox: ObservableObject {
   @Published private(set) var inbox: Inbox
 
   private let file: URL?
+  #if DEBUG
+    private var inMemory = false
+
+    init(fixtures: Inbox) {
+      file = nil
+      inbox = fixtures
+      inMemory = true
+    }
+  #endif
 
   init() {
     let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
@@ -30,6 +39,9 @@ final class NotificationInbox: ObservableObject {
 
   func open(_ entry: InboxEntry) {
     markRead(entry.id)
+    #if DEBUG
+      if inMemory { return }
+    #endif
     NoticeRouter.open(entry.target)
   }
 

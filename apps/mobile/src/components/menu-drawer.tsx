@@ -119,11 +119,12 @@ function SceneCard({ children, permanent, gap }: { children: ReactNode; permanen
           transition: permanent && !reducedMotion ? `marginLeft ${PANE_TRANSITION}` : 'none',
         },
         corners,
-        fade,
       ]}
     >
       <Animated.View style={[styles.clip, { backgroundColor: theme.colors.background }, corners]}>
-        <SafeAreaProvider style={styles.root}>{children}</SafeAreaProvider>
+        <Animated.View style={[styles.root, fade]}>
+          <SafeAreaProvider style={styles.root}>{children}</SafeAreaProvider>
+        </Animated.View>
       </Animated.View>
     </Animated.View>
   );

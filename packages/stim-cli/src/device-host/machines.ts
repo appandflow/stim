@@ -84,7 +84,7 @@ async function request(
   const reply = await io.hello(endpoint(peer, port), { request: 'device-host', deviceName });
   if (
     !('result' in reply) ||
-    reply.result.approval?.state !== 'pending' ||
+    reply.result?.approval?.state !== 'pending' ||
     typeof reply.result.deviceToken !== 'string' ||
     !reply.result.deviceToken ||
     typeof reply.result.device?.id !== 'string' ||
@@ -261,7 +261,7 @@ export async function inspectDeviceHostMachines(
         const reply = await io.hello(endpoint(peer, parsed.port), { deviceToken: credential.deviceToken });
         if (
           'result' in reply &&
-          reply.result.device?.id === credential.deviceId &&
+          reply.result?.device?.id === credential.deviceId &&
           Array.isArray(reply.result.capabilities) &&
           reply.result.capabilities.includes('device-host')
         ) {
@@ -272,7 +272,7 @@ export async function inspectDeviceHostMachines(
           inspected.machines.push({ ...known, state: 'approved' });
           continue;
         }
-        if ('error' in reply && reply.error.code === 'approval-pending') {
+        if ('error' in reply && reply.error?.code === 'approval-pending') {
           inspected.machines.push({ ...known, state: 'pending' });
           inspected.findings.push(
             note(
@@ -283,7 +283,7 @@ export async function inspectDeviceHostMachines(
           );
           continue;
         }
-        const revoked = 'error' in reply && reply.error.code === 'unauthorized';
+        const revoked = 'error' in reply && reply.error?.code === 'unauthorized';
         ask = revoked && fix;
         if (!ask) {
           inspected.machines.push({ ...known, state: revoked ? 'revoked' : 'unreachable' });

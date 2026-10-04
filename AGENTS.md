@@ -270,6 +270,11 @@ outside it moves to its own issue and pull request.
   reply. Unknown creation, journal, owner or shutdown state refuses replacement;
   never identify a device by name or guess an empty inventory. Stop and
   revocation touch only that client's recorded owned device.
+  A session's Metro endpoint listens only on worker loopback and reaches only the
+  authenticated client's peer address. The client gateway listens only on its own
+  tailnet address, pins the worker peer, requires a fresh secret and forwards only
+  to its verified loopback Metro. Stop and revocation close the bridge and active
+  streams. Keep the recorded worker port on reconnect; refuse an occupied port.
   App transfer uses bounded digest chunks, including the manifest itself. The
   worker validates content, contained links, simulator platform, architecture
   and minimum OS before installing on the exact ledger-owned device. Hold the
@@ -277,6 +282,15 @@ outside it moves to its own issue and pull request.
   app attempt without launching it again. Development launch remains unverified
   until the client's Metro bridge provides bundle evidence; a release launch
   needs positive native process evidence for true.
+  Hosted view and input resolve only a ready session's exact private ledger-owned
+  iOS device while this server holds its session claim. Track the capture helper
+  as that claim's child. Give native posture input its own core child-aware claim
+  and refuse restarted ownership or native work while that input is live or
+  unresolved. Close capture and control before installation or
+  native teardown. Wait for native input still running after disconnect or
+  takeover, including termination of timed-out children. Revocation and server close end known transports even when
+  the journal cannot be read or written; retain unresolved native claims.
+  Hosting approval never widens ordinary workspace read or phone control.
 
 ## Comment policy
 

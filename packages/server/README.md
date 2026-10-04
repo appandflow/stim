@@ -180,9 +180,9 @@ tokens.
 
 Device hosting has a separate `device-host` capability. An approved client can
 reserve, boot, reconnect to and stop its own iOS simulator through the protocol.
-It can deliver a compatible app bundle to that simulator and install and launch it.
-Metro and screen/control relays, automatic placement and
-Android hosting remain tracked in [#2266](https://github.com/appandflow/stim/issues/2266).
+It can deliver, install and launch a compatible app bundle, stream the simulator
+and control it. The hosted app connects back to Metro on the client Mac.
+Automatic CLI placement, client view/control relays and Android hosting remain in [#2266](https://github.com/appandflow/stim/issues/2266).
 
 The Stim client can name expected hosts with
 `stim settings set hosting.machines '["<mac>"]'` and request access with
@@ -293,12 +293,13 @@ After every digest is verified, call `device-host.app.launch` with
 `{session, attempt}`. Poll `device-host.app.attach` for `installed` or `unknown`.
 Reconnect to the same app attempt to reconcile a lost launch reply; replay
 does not install or launch twice. Session attach includes the latest
-`appAttempt`. The worker verifies the plist identity and simulator metadata,
+`appAttempt`. Development offers may include `devClientScheme` for an Expo
+development client; the attempt cannot change that scheme. The worker verifies the plist identity and simulator metadata,
 the executable's Mach-O platform, architecture and minimum OS, then rechecks
 the exact private device ledger before install and launch.
 
-Development launch reports `launched: "unverified"`: this slice has no Metro
-bridge. Release launch reports `true` only after observing a live native app
+Development launch reports `launched: "unverified"`: a bridge or native process
+alone does not prove bundle delivery. Release launch reports `true` only after observing a live native app
 process; absent evidence remains `"unverified"`. Stop and approval revocation
 cancel an in-flight install before shutting down the owned simulator. Uncertain
 native outcomes retain the session as `unknown`; explicitly stop it before
@@ -306,8 +307,93 @@ retrying. Receipts and artifacts remain in the server-chosen session area;
 artifact retention and session reuse/retirement remain under
 [#2266](https://github.com/appandflow/stim/issues/2266) and
 [#2348](https://github.com/appandflow/stim/issues/2348).
-This is a protocol API for approved clients; automatic CLI placement, Metro,
-view/control and Android remain in [#2266](https://github.com/appandflow/stim/issues/2266).
+
+### Private hosted Metro
+
+The client keeps its verified workspace Metro on loopback. It creates a
+`createMetroGateway` from `@stim-cli/core`, binds it only to its own Tailscale
+address, and supplies the pinned worker's literal tailnet address, local Metro
+port and a fresh 32-byte secret encoded as 64 lowercase hex characters. The
+gateway accepts only that worker address and authenticates each connection
+before forwarding to the fixed local Metro port. It never targets a client
+supplied URL. Close the gateway when its session ends.
+
+Call `device-host.metro.open` with `{session, gatewayPort, secret}` on the
+approved hosted connection. The server connects only to that connection's
+authenticated tailnet peer and returns `{port}` for the worker's loopback
+endpoint. Development installation uses that port for `RCT_jsLocation` and,
+when offered, the Expo development-client deep link. HTTP and WebSocket bytes
+stream over WireGuard with socket backpressure; no public tunnel, Funnel or
+Tailscale serve configuration change is needed. The 64 KiB server message
+limit remains unchanged.
+
+Replaying the same open request keeps the port. Client disconnection leaves
+the bridge available for the same session while its server owner lives. Call
+`device-host.metro.close` to replace a gateway, then reopen on the same port;
+an occupied port refuses rather than sending the app to another listener.
+Closing a bridge interrupts its active streams. Stop, revocation and server
+shutdown close its sockets before device shutdown. After a server owner
+disappears, the retained session requires explicit stop, as app delivery does.
+
+Expo dev-launcher and CLI versions that send and honor the `Forwarded` header
+resolve relative manifest URLs against the worker origin. Older versions may
+embed the client's local port instead; this slice does not rewrite manifests
+or claim that those versions work through a different worker port. Client
+placement still needs to check that contract before selecting hosted Metro.
+Bare React Native uses the worker `RCT_jsLocation`. Bridge readiness and
+manifest requests are not launch proof; development remains `unverified` until
+the workspace observes the app's own bundle delivery.
+This is a protocol API for approved clients; automatic CLI placement,
+client view/control relays and Android remain in [#2266](https://github.com/appandflow/stim/issues/2266).
+
+### Hosted iOS view and input
+
+An approved hosting client can subscribe to its ready session's exact owned
+simulator without access to the worker's registered workspaces:
+
+```json
+{
+  "id": 8,
+  "method": "device-host.frames.subscribe",
+  "params": { "session": "<hosted-session-id>", "fps": 5, "maxEdge": 1280 }
+}
+```
+
+The result contains a subscription ID. JPEG delivery uses the existing `frame`
+events; `video: ["h264"]` selects the existing H.264 binary stream and its
+backpressure/keyframe rules. `device-host.frames.keyframe` and
+`device-host.unsubscribe` take that subscription ID as `params.subscription`.
+Hosted capture requires the compiled `stim-frames` helper and does not support
+replay or screenshot fallback.
+
+Start control with `device-host.control.begin` and
+`{"session":"<hosted-session-id>"}`. Its result returns a connection-bound
+control session ID and `lease: null`: the hosted lifetime claim protects this
+private device. Only one controller can drive the device; `takeOver: true`
+replaces the previous controller. Use the returned control ID with
+`device-host.input.touch|text|button|rotate|posture`, using the same parameters
+as ordinary input. Touch coordinates range from 0 to 1 on the streamed display.
+End it with `device-host.control.end` and `{"session":"<control-id>"}`.
+
+The worker derives the workspace, slot and UDID from its owned session; callers
+cannot select arbitrary worker devices. Every begin and input rechecks session
+ownership and current approval. Hosting approval grants neither ordinary
+`frames.subscribe` nor ordinary `control.begin` access. Disconnecting releases
+that connection's capture and input; reconnect to the same hosted session and
+subscribe again.
+
+Installation, stop, revocation and server close end capture and input before
+native work reuses the session claim. In-flight native input settles before
+teardown even after disconnect or takeover; a timeout waits for its child to
+terminate. Known capture closes even if the journal
+is unreadable or unwritable; unresolved native state and claims remain retained.
+Hosted posture commands hold a separate child-aware input claim. A surviving
+command or unresolved child identity blocks replacement ownership, install and
+stop even after the server and capture helper exit; the refusal names the claim
+and its manual cleanup command. An unknown or lost owner requires explicit stop
+before replacement. This worker
+protocol does not add CLI placement or a local viewer relay; those remain in
+[#2266](https://github.com/appandflow/stim/issues/2266).
 
 ## Run as a service
 
@@ -566,7 +652,7 @@ Events are `{ "event", "subscription", ... }`.
   `machine.details` uses the same reader. `settings.get` runs
   `stim settings --json`, which masks sensitive values. Without `workspace`,
   these reads use the home directory as their project context.
-- `frames.subscribe` takes `workspace`, `platform` (`ios`, `android` or `web`),
+- `frames.subscribe` takes `workspace`, `platform` (`ios`, `android`, `web` or `macos`),
   `slot` (`default` when absent), `fps` (1 to 30, 5 by default) and `maxEdge`
   (240 to 2048 pixels, 1280 by default), and sends `frame` events: a JPEG,
   base64 in `data`, with `width`, `height` and `capturedAt`, at most `fps` a
@@ -581,6 +667,17 @@ Events are `{ "event", "subscription", ... }`.
   event, and so does a device that stops or changes owner. A client whose
   socket has more than two frames unsent skips frames and gets the newest
   once it catches up.
+
+  With `macos`, it serves the one visible window of the workspace's verified
+  running native app, in the default slot, when hello advertises `macos-window`.
+  The helper verifies the recorded PID, process start time, executable, bundle
+  identifier and bundle path before starting and while capturing. ScreenCaptureKit
+  selects only that app's window; desktop capture and choosing between multiple
+  windows are unsupported. It requires existing Screen Recording permission and
+  never requests or resets grants. Capture refusal names the host and System
+  Settings guidance; status and logs remain available. Native windows need the
+  helper, have no screenshot fallback, recording or replay, and consume
+  only the paired device's `read` capability.
 
   Frames come from the `stim-frames` helper. When it starts, the server
   compiles it with `xcrun swiftc` from the Swift sources shipped in
@@ -1137,9 +1234,40 @@ sends reaches any other device.
   `input.posture` takes one of the session's `postures`. A web page takes
   only `back`, its history back, and refuses rotation and posture. Each answers `{}` once the input
   is handed to the device: when it goes through the helper, that is when the
-  helper receives it, so a failure there shows only in the server's log. A connection may send 120 inputs a second and type 40
+  helper receives it, so native macOS input failures end Control with the reason while its view stays available; other helper failures are logged. A connection may send 120 inputs a second and type 40
   characters a second, with a burst of 256, and rotate or change posture twice a
   second; more fail with `limit-exceeded`.
+- When hello advertises `macos-window-control`, `control.begin` accepts
+  `platform: "macos"` for the verified native app in the default slot. It needs
+  `control` and takes one exclusive server session per app, with the same
+  takeover, disconnect, revocation and five-minute idle rules; `lease` is null
+  because CLI device locks do not cover macOS apps. Existing Accessibility
+  permission is required, without permission requests or resets. Before each
+  action the helper verifies PID/start time/executable/bundle and the captured
+  window ID, size and matching sole standard Accessibility window. Modal or
+  disjoint windows, resizing and changed ownership refuse input. Contained
+  nonmodal auxiliaries are allowed; only the focused captured main receives input. Events are
+  posted only to that PID; the desktop and other apps receive no input.
+  `input.touch` maps normalized captured-window coordinates to mouse events.
+  `input.scroll` takes normalized `x`, `y` and `deltaX`, `deltaY` in pixels,
+  each from -1000 to 1000. `input.key` accepts Escape, Tab, Return, Backspace,
+  arrows or `a/c/v/x/z/s/f`, with unique optional `command/shift/option/control`
+  modifiers. `input.text` retains the printable ASCII contract. Native windows
+  reject simulator buttons, rotation and posture. The helper dynamically resolves
+  private CoreGraphics `CGEventSetWindowLocation` to annotate PID-targeted pointer
+  events. This is a macOS compatibility limit outside the phone and Mac App Store
+  binaries: a missing symbol refuses Control while read-only capture remains
+  available. An input refusal sends
+  `control-ended` with its reason without ending read-only capture.
+- On an owned iOS simulator, `control.begin` also reports optional `simulator`
+  capabilities: `canShake` and `slowAnimations` (a boolean, or `null` when
+  unavailable). `input.simulator` takes the session and `action: "shake"`,
+  `action: "read"`, or `action: "slow-animations"` with an explicit boolean
+  `enabled`. It returns the confirmed capabilities and state. Unavailable
+  controls are refused. The native operation times out after 8 seconds and
+  stops when its control session ends; only one option changes per simulator
+  at a time. These controls use the same CoreSimulator guest notifications as
+  Stim Desktop, without opening Device Hub.
 - `control.end` ends a session. The server also ends it with a
   `control-ended` event `{ "session", "reason", "message" }` after 5 minutes
   without input (`idle`), when another client takes the device over

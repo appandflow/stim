@@ -125,7 +125,7 @@ import Testing
         view.layout()
         let root = try #require(view.layer)
         let flat = try #require(root.sublayers?.first)
-        let folded = try #require(root.sublayers?.last)
+        let folded = try #require(root.sublayers?.first(where: { $0.sublayers != nil }))
         #expect(flat.isHidden)
         #expect(!folded.isHidden)
         let leaves = try #require(folded.sublayers)
@@ -149,9 +149,11 @@ import Testing
     view.hingeAngle = nil
     view.layout()
     #expect(view.layer?.sublayers?.first?.isHidden == false)
-    #expect(view.layer?.sublayers?.last?.isHidden == true)
+    #expect(view.layer?.sublayers?.first(where: { $0.sublayers != nil })?.isHidden == true)
     view.detach()
-    for leaf in view.layer?.sublayers?.last?.sublayers ?? [] { #expect(leaf.sublayers?.first?.contents == nil) }
+    for leaf in view.layer?.sublayers?.first(where: { $0.sublayers != nil })?.sublayers ?? [] {
+      #expect(leaf.sublayers?.first?.contents == nil)
+    }
   }
 
   @Test @MainActor func nativeInnerAxisRotatesFromTheVerifiedUIKitDivisionAndUnknownStaysFlat() throws {
@@ -169,7 +171,7 @@ import Testing
       #expect(DuoFoldProjection.axis(orientation: orientation) == expectedAxis)
       view.showSurface(surface, orientation: orientation)
       view.layout()
-      let folded = try #require(view.layer?.sublayers?.last)
+      let folded = try #require(view.layer?.sublayers?.first(where: { $0.sublayers != nil }))
       let leaf = try #require(folded.sublayers?.first)
       let expected = expectedAxis == .vertical ? CGPoint(x: 1, y: 0.5) : CGPoint(x: 0.5, y: 1)
       #expect(leaf.anchorPoint == expected)
@@ -177,12 +179,12 @@ import Testing
     view.showSurface(surface, orientation: 0)
     view.layout()
     #expect(view.layer?.sublayers?.first?.isHidden == false)
-    #expect(view.layer?.sublayers?.last?.isHidden == true)
+    #expect(view.layer?.sublayers?.first(where: { $0.sublayers != nil })?.isHidden == true)
     view.showSurface(surface, orientation: 3)
     view.hingeAngle = 180
     view.layout()
     #expect(view.layer?.sublayers?.first?.isHidden == false)
-    #expect(view.layer?.sublayers?.last?.isHidden == true)
+    #expect(view.layer?.sublayers?.first(where: { $0.sublayers != nil })?.isHidden == true)
   }
 
 }

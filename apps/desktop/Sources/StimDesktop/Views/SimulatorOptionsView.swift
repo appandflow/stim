@@ -9,6 +9,24 @@ struct SimulatorOptionsView: View {
   @State private var error: String?
   @State private var operation: Task<Void, Never>?
 
+  #if DEBUG
+    @State private var fixture: PlaygroundSimulator?
+
+    init(fixture: PlaygroundSimulator) {
+      udid = "playground"
+      canControl = true
+      _fixture = State(initialValue: fixture)
+      _appearance = State(initialValue: fixture.appearance)
+      _busy = State(initialValue: fixture.loading)
+      _error = State(initialValue: fixture.error)
+    }
+  #endif
+
+  init(udid: String, canControl: Bool) {
+    self.udid = udid
+    self.canControl = canControl
+  }
+
   var body: some View {
     VStack(alignment: .leading, spacing: Space.md) {
       HStack {
@@ -42,6 +60,15 @@ struct SimulatorOptionsView: View {
           .foregroundStyle(Palette.warning)
           .fixedSize(horizontal: false, vertical: true)
       }
+      #if DEBUG
+        if fixture == nil {
+          Divider()
+          SimulatorDevelopmentOptionsView(udid: udid, canControl: canControl)
+        }
+      #else
+        Divider()
+        SimulatorDevelopmentOptionsView(udid: udid, canControl: canControl)
+      #endif
     }
     .font(.stim(.callout))
     .controlSize(.small)
@@ -104,6 +131,14 @@ struct SimulatorOptionsView: View {
   private func apply(_ change: SimulatorOptions.Change) { run(change) }
 
   private func run(_ change: SimulatorOptions.Change?) {
+    #if DEBUG
+      if var fixture {
+        fixture.apply(change)
+        self.fixture = fixture
+        appearance = fixture.appearance
+        return
+      }
+    #endif
     guard canControl, !busy else { return }
     busy = true
     error = nil

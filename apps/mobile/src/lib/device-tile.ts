@@ -25,6 +25,7 @@ function profileName(profile: string): string {
 
 /** The model and what it runs on: `iPhone 18 Pro` and `iOS 27.0`, `Pixel 9` and `Emulator`. */
 export function deviceTileName(device: DeviceRef): DeviceTileName {
+  if (device.platform === 'macos') return { name: device.name, detail: 'macOS' };
   if (device.platform === 'web') return { name: t`Chrome`, detail: device.page ? shortUrl(device.page.url) : null };
   if (device.physical) return { name: device.name, detail: device.model === device.name ? null : device.model };
   if (device.platform === 'ios') {
@@ -43,6 +44,11 @@ export function deviceTileName(device: DeviceRef): DeviceTileName {
  * page that needs attention, idleness, use in the last 10 minutes, and otherwise that it runs.
  */
 export function deviceTileState(device: DeviceRef, env: EnvironmentState, now: number): DeviceTileState {
+  if (device.platform === 'macos' && env.macos) {
+    if (env.macos.build.state === 'running') return { text: t`Building`, tone: 'brand' };
+    if (env.macos.build.state === 'failed') return { text: t`Build failed`, tone: 'error' };
+    return { text: device.state, tone: device.running ? 'success' : 'secondary' };
+  }
   const build = runningBuild(env, device);
   if (build) {
     const elapsed = clockDuration(buildProgress(build, now).elapsedMs);

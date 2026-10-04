@@ -24,7 +24,7 @@ read from, or an unknown key refuses with STIM_BAD_ARG naming the expected
 shape, before anything is written. Writes to the machine file take its lock
 and replace it atomically; a committed write keeps the file's other keys and
 indentation. Run \`stim settings\` from the app directory: workspace and
-committed resolve from the nearest package.json, repo from its Git
+committed resolve from the nearest package.json or Package.swift, repo from its Git
 repository. From a monorepo web package that resolves to its worktree's app
 (see stim guide ports), workspace and committed are that app's entry and
 .stim.json. worktree.exclude and worktree.defaultBranch are read only from
@@ -43,7 +43,7 @@ carries its dotted key, layers, and environment override under "x-stim".
 Resolution order, first match wins:
   1. workspace       ~/.stim/config.json, under this project's entry
   2. repo            ~/.stim/config.json, under this repo's git common dir
-  3. committed       .stim.json beside the app's package.json
+  3. committed       .stim.json beside the app's package.json or Package.swift
   4. machine         ~/.stim/config.json, top-level optimizations,
                      ios.deviceType, ios.runtime, android.systemImage,
                      android.deviceProfile and devices.idleShutdownMinutes
@@ -295,6 +295,12 @@ ${ANDROID_AVD_CONFIG_HELP.map((line) => `                          ${line}`).joi
                         shuts it down, never deletes it. Default 0, never.
                         Machine or project layers. Read when the supervisor
                         starts; see \`guide lifecycle budget\`.
+  macos.product         the explicit Swift Package executable product built in
+                        Debug by stim macos
+  macos.infoPlist       development Info.plist relative to Package.swift,
+                        without shared URL schemes or an update feed
+  macos.arguments       string array passed directly to the executable;
+                        see stim guide macos for the prototype's limits
   web.url               the page \`stim web\` opens in the owned Chrome, an
                         http:// or https:// URL. {port:<label>} becomes the
                         workspace's named port (allocated like \`stim ports

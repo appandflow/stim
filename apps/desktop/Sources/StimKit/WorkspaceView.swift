@@ -89,6 +89,10 @@ extension Workspace {
     func facts(_ kind: String, _ since: String?, _ platform: String? = nil) -> StageFacts {
       StageFacts(kind: kind, since: since, platform: platform, closedApps: [])
     }
+    if let macos, macos.build.state == "running" { return facts("building", macos.build.startedAt, "macos") }
+    if let macos, macos.build.state == "failed" {
+      return facts("build-failed", macos.build.finishedAt ?? macos.build.startedAt, "macos")
+    }
     if let build, build.isRunning { return facts("building", build.startedAt, build.platform) }
     if !live, phase == "warming" { return facts("warming", phaseSince) }
     if !live, phase == "ready" { return facts("ready", phaseSince) }

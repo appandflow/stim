@@ -21,6 +21,7 @@ import {
   readStatsReport,
   readHostedSessions,
   deviceHostArea,
+  deviceHostRoot,
   buildSlotPath,
   machineCapacity,
   readViewedDevices,
@@ -436,7 +437,7 @@ describe('pairing', () => {
         protocol: 1,
         server: { name: 'Test Mac', version: '1.2.3', stim: '9.9.9', home: homedir() },
         capabilities: ['read'],
-        features: ['physical-ios', 'physical-android', 'notifications'],
+        features: ['physical-ios', 'physical-android', 'notifications', 'macos-window', 'macos-window-control'],
         actions: [],
       },
     });
@@ -649,6 +650,15 @@ describe('hosted device sessions', () => {
         'ready',
       );
       expect(await next.request('stats.get')).toHaveProperty('error.code', 'forbidden');
+      expect(
+        await next.request('device-host.metro.open', { session: id, gatewayPort: 0, secret: 'bad' }),
+      ).toHaveProperty('error.code', 'bad-request');
+      const metro = { session: id, gatewayPort: 65530, secret: 'a'.repeat(64) };
+      const opened = await next.request('device-host.metro.open', metro);
+      const metroPort = (opened as { result: { port: number } }).result.port;
+      expect(metroPort).toBeGreaterThan(0);
+      expect(readHostedSessions()[0]?.metroPort).toBe(metroPort);
+
       const content = Buffer.alloc(40000, 65);
       const digest = createHash('sha256').update(content).digest('hex');
       const files = ['Info.plist', ...Array.from({ length: 700 }, (_, index) => `Assets/resource-${index}`)].map(
@@ -701,9 +711,15 @@ describe('hosted device sessions', () => {
         'unverified',
       );
       expect(readFileSync(join(deviceHostArea(id), 'home', 'installs'), 'utf8')).toBe('socket-app\n');
+      expect(await reattached.request('device-host.metro.open', metro)).toHaveProperty('result.port', metroPort);
+      expect(await reattached.request('device-host.metro.close', { session: id })).toHaveProperty('result.port', null);
+      await expect(fetch(`http://127.0.0.1:${metroPort}/status`)).rejects.toThrow('fetch failed');
+      expect(await reattached.request('device-host.metro.open', metro)).toHaveProperty('result.port', metroPort);
+
       expect(revokeDevice(pending.device.id)).toBe(true);
       expect(await reattached.closed).toBe(4401);
       await vi.waitFor(() => expect(readHostedSessions()[0]?.state).toBe('stopped'));
+      await expect(fetch(`http://127.0.0.1:${metroPort}/status`)).rejects.toThrow('fetch failed');
     },
   );
 });
@@ -2371,7 +2387,19 @@ const { appendFileSync } = require('node:fs');
 const env = process.env;
 const run = { tool: 'stim-frames', args: process.argv.slice(2), pid: process.pid, configs: [] };
 const record = () => appendFileSync(env.FAKE_TOOL_CALLS, JSON.stringify(run) + '\\n');
-process.on('exit', record);
+if (run.args[0] !== 'simulator-options' || env.FAKE_SIMULATOR_OPTIONS) process.on('exit', record);
+if (run.args[0] === 'simulator-options') {
+  if (!env.FAKE_SIMULATOR_OPTIONS) process.exit(1);
+  if (env.FAKE_SIMULATOR_WAIT && run.args[2] !== 'read') {
+    appendFileSync(env.FAKE_TOOL_CALLS + '.option-started', String(process.pid));
+    setInterval(() => {}, 1000);
+  } else {
+    const options = JSON.parse(env.FAKE_SIMULATOR_OPTIONS);
+    if (run.args[2] === 'slow-animations') options.slowAnimations = run.args[3] === 'on';
+    process.stdout.write(JSON.stringify(options));
+    process.exit(0);
+  }
+}
 process.on('SIGTERM', () => process.exit(0));
 const message = (kind, body) => {
   const header = Buffer.alloc(5);
@@ -2468,6 +2496,18 @@ const OWNED_WEB = {
   profile: '/stim/web/profile',
   cdpEndpoint: 'http://127.0.0.1:8900',
   targetId: 'PAGE-1',
+};
+
+const OWNED_MACOS = {
+  launchId: 'LAUNCH-1',
+  product: 'MyApp',
+  arguments: [],
+  bundle: '/stim/macos/MyApp.app',
+  bundleId: 'dev.myapp.stim.workspace',
+  executable: '/stim/macos/MyApp.app/Contents/MacOS/MyApp',
+  state: 'running',
+  build: { state: 'ok', startedAt: '2026-10-04T12:00:00Z' },
+  app: { pid: 4242, startedAtMicros: 123456, processToken: 'owned-process' },
 };
 
 describe('frames.subscribe', () => {
@@ -2763,6 +2803,172 @@ describe('frames.subscribe', () => {
   }
 
   test.skipIf(!fakeTailscale)(
+    'streams and controls only the hosting client session and closes its capture before native stop',
+    async () => {
+      const captureHelper = fakeHelper();
+      writeFileSync(
+        captureHelper,
+        readFileSync(captureHelper, 'utf8')
+          .replace("process.on('SIGTERM', () => process.exit(0));", "process.on('SIGTERM', () => {});")
+          .replace("process.stdin.on('end', () => process.exit(0));", "process.stdin.on('end', () => {});")
+          .replace('run.configs.push(line);', 'run.configs.push(line); record();'),
+      );
+      const port = await startWithTools(
+        { FAKE_STIM_PAYLOADS: statusWith({ ios: OWNED_SIM }) },
+        undefined,
+        captureHelper,
+      );
+      writeFileSync(
+        join(root, 'device-host-worker.mjs'),
+        `
+        import { writeFileSync, readFileSync, existsSync } from 'node:fs';
+        import { join } from 'node:path';
+        const chunks=[]; for await(const chunk of process.stdin) chunks.push(chunk);
+        const input=JSON.parse(Buffer.concat(chunks));
+        const device={udid:'12345678-1234-1234-1234-123456789abc',name:'stim-hosted',deviceTypeId:'iphone',runtimeId:'ios',deviceType:'iPhone',runtime:'27.1',architecture:'arm64'};
+        const home=process.env.STIM_HOME;
+        if(input.mode==='prepare') {
+          writeFileSync(join(home,'hosted-device.json'),JSON.stringify(device));
+          writeFileSync(join(home,'created-devices.json'),JSON.stringify({version:1,ios:[device.udid],android:[],web:[]}));
+        } else {
+          const file=process.env.FAKE_TOOL_CALLS+'.started';
+          const pids=existsSync(file)?readFileSync(file,'utf8').trim().split(/\\s+/).filter(Boolean).map(Number):[];
+          if(pids.some(pid=>{try{process.kill(pid,0);return true;}catch{return false;}})) {
+            process.stdout.write(JSON.stringify({state:'unknown',device,notice:'capture still running'}));
+            process.exit(0);
+          }
+        }
+        process.stdout.write(JSON.stringify({state:input.mode==='prepare'?'ready':'stopped',device}));
+      `,
+      );
+      const pending = requestDeviceHostAccess('Hosting client', {
+        kind: 'tailnet',
+        nodeId: 'nPhoneA',
+        nodeName: 'phone',
+        user: 'u',
+      });
+      if (!pending.ok) throw new Error(pending.reason);
+      grantDevice(pending.device.id, ['device-host']);
+      const open = async () => {
+        const client = await connect(port, '100.64.0.2');
+        await client.request('hello', { protocol: 1, client: CLIENT, auth: { deviceToken: pending.deviceToken } });
+        return client;
+      };
+      const first = await open();
+      const observerIdentity = await pair(port);
+      const observer = await connect(port);
+      await observer.request('hello', {
+        protocol: 1,
+        client: CLIENT,
+        auth: { deviceToken: observerIdentity.token },
+      });
+      const reserved = await first.request('device-host.reserve', {
+        workspace: '/client/not-worker-registered',
+        slot: 'phone',
+        platform: 'ios',
+        attempt: 'hosted-view',
+      });
+      if (!('result' in reserved)) throw new Error(JSON.stringify(reserved));
+      const session = (reserved.result as { id: string }).id;
+      await vi.waitFor(async () =>
+        expect(await first.request('device-host.attach', { session })).toHaveProperty('result.state', 'ready'),
+      );
+      expect(await first.request('frames.subscribe', { workspace, platform: 'ios' })).toHaveProperty(
+        'error.code',
+        'forbidden',
+      );
+      expect(await first.request('device-host.frames.subscribe', { session, at: 1 })).toHaveProperty(
+        'error.code',
+        'bad-request',
+      );
+      expect(await first.request('device-host.frames.subscribe', { session, fps: 5 })).toHaveProperty(
+        'result.subscription',
+        's1',
+      );
+      expect(await first.next()).toMatchObject({ event: 'frame', subscription: 's1', platform: 'ios', slot: 'phone' });
+      expect(await first.request('device-host.frames.subscribe', { session, video: ['h264'] })).toMatchObject({
+        result: { subscription: 's2', video: 'h264' },
+      });
+      let streamed = await first.next();
+      while (!('binary' in streamed)) streamed = await first.next();
+      expect(await first.request('device-host.frames.keyframe', { subscription: 's2' })).toHaveProperty('result');
+      expect(await first.request('device-host.unsubscribe', { subscription: 's2' })).toHaveProperty('result');
+      const claimRoot = join(deviceHostRoot(), `${session}.claims`);
+      const helper = readClaimSet(claimRoot).live[0]!.child;
+      expect(helper).not.toBeNull();
+      expect(alive(helper!.pid)).toBe(true);
+      const began = await first.request('device-host.control.begin', { session });
+      if (!('result' in began)) throw new Error(JSON.stringify(began));
+      const controlSession = (began.result as { session: string }).session;
+      expect(began).toHaveProperty('result.lease', null);
+      expect(
+        await first.request('device-host.input.touch', { session: controlSession, phase: 'down', x: 0, y: 1 }),
+      ).toHaveProperty('result');
+      expect(
+        await first.request('device-host.input.touch', { session: controlSession, phase: 'up', x: 0, y: 1 }),
+      ).toHaveProperty('result');
+      const sameClient = await open();
+      expect(await sameClient.request('device-host.control.begin', { session })).toHaveProperty(
+        'error.code',
+        'device-busy',
+      );
+      expect(
+        await sameClient.request('device-host.input.touch', { session: controlSession, phase: 'down', x: 1, y: 0 }),
+      ).toHaveProperty('error.code', 'unknown-session');
+      const other = requestDeviceHostAccess('Other client', {
+        kind: 'tailnet',
+        nodeId: 'nPhoneB',
+        nodeName: 'other',
+        user: 'u',
+      });
+      if (!other.ok) throw new Error(other.reason);
+      grantDevice(other.device.id, ['device-host']);
+      const foreign = await connect(port, '100.64.0.3');
+      await foreign.request('hello', { protocol: 1, client: CLIENT, auth: { deviceToken: other.deviceToken } });
+      expect(await foreign.request('device-host.frames.subscribe', { session })).toHaveProperty(
+        'error.code',
+        'action-failed',
+      );
+      revokeDevice(observerIdentity.id);
+      await observer.closed;
+      expect(
+        await first.request('device-host.input.touch', { session: controlSession, phase: 'move', x: 0.5, y: 0.5 }),
+      ).toHaveProperty('result');
+      first.socket.close();
+      await first.closed;
+      await until(() => !alive(helper!.pid));
+      expect(await sameClient.request('device-host.attach', { session })).toHaveProperty('result.state', 'ready');
+      expect(await sameClient.request('device-host.frames.subscribe', { session })).toHaveProperty(
+        'result.subscription',
+        's1',
+      );
+      expect(await sameClient.next()).toMatchObject({ event: 'frame', subscription: 's1', slot: 'phone' });
+      const replacement = readClaimSet(claimRoot).live[0]!.child;
+      expect(replacement!.pid).not.toBe(helper!.pid);
+      expect(await sameClient.request('device-host.stop', { session })).toHaveProperty('result.state', 'stopping');
+      await vi.waitFor(
+        async () =>
+          expect(await sameClient.request('device-host.attach', { session })).toHaveProperty('result.state', 'stopped'),
+        { timeout: 4000 },
+      );
+      expect(alive(replacement!.pid)).toBe(false);
+      expect(readClaimSet(claimRoot).live).toEqual([]);
+      const captures = [...new Map(helperRuns().map((run) => [run.pid, run])).values()];
+      expect(captures.map((run) => run.args)).toEqual([
+        ['ios', '12345678-1234-1234-1234-123456789abc'],
+        ['ios', '12345678-1234-1234-1234-123456789abc'],
+      ]);
+      expect(captures[0]!.configs).toEqual(
+        expect.arrayContaining([
+          { input: 'touch', phase: 'down', x: 0, y: 1, display: 0 },
+          { input: 'touch', phase: 'up', x: 0, y: 1, display: 0 },
+        ]),
+      );
+    },
+    10_000,
+  );
+
+  test.skipIf(!fakeTailscale)(
     'streams helper frames at the rate each subscriber asks for and stops the helper with the last one',
     async () => {
       const port = await startWithTools(
@@ -2821,6 +3027,181 @@ describe('frames.subscribe', () => {
       expect(helperRuns()[0]!.args).toEqual(['web', 'http://127.0.0.1:8900', '4242', 'PAGE-1']);
     },
     10_000,
+  );
+
+  test.skipIf(!fakeTailscale)(
+    'streams a verified native app to a read-only phone without control, replay or device tools',
+    async () => {
+      const port = await startWithTools(
+        { FAKE_STIM_PAYLOADS: statusWith({ macos: OWNED_MACOS }), FAKE_FRAMES: '[]', FAKE_HELPER_INTERVAL_MS: '10' },
+        undefined,
+        fakeHelper(),
+      );
+      const client = await authed(port);
+      expect(await client.request('frames.subscribe', { workspace, platform: 'macos', video: ['h264'] })).toMatchObject(
+        { result: { video: 'h264' } },
+      );
+      await new Promise((resolve) => client.socket.once('message', resolve));
+      expect(await client.request('control.begin', { workspace, platform: 'macos' })).toMatchObject({
+        error: { code: 'forbidden' },
+      });
+      expect(await client.request('replay.range', { workspace, platform: 'macos' })).toMatchObject({
+        error: { code: 'bad-request' },
+      });
+      client.socket.close();
+      await until(() => helperRuns().length === 1);
+      expect(helperRuns()[0]!.args).toEqual(['macos', JSON.stringify(OWNED_MACOS)]);
+      expect(toolRuns().filter((run) => run.tool === 'xcrun' || run.tool === 'adb')).toEqual([]);
+      expect(readViewedDevices()).toEqual([]);
+    },
+    10_000,
+  );
+
+  test.skipIf(!fakeTailscale)(
+    'controls only an owned native app session and keeps its view alive after an input permission refusal',
+    async () => {
+      const helper = fakeHelper();
+      writeFileSync(
+        helper,
+        readFileSync(helper, 'utf8')
+          .replace('else config = line;', 'else if (!line.input && !line.control) config = line;')
+          .replace(
+            'run.configs.push(line);',
+            `run.configs.push(line); record();
+          if (line.input === 'key' && line.key === 'escape') message(2, Buffer.from(JSON.stringify({ inputError: 'Control needs existing Accessibility permission.', controlSession: line.controlSession })));
+          const enabled = run.configs.filter(c => c.control?.enabled);
+          if (line.input === 'key' && line.key === 'a' && enabled.length > 1) message(2, Buffer.from(JSON.stringify({ inputError: 'Delayed failure from old controller.', controlSession: enabled[0].control.session })));`,
+          ),
+      );
+      const port = await startWithTools(
+        {
+          FAKE_STIM_PAYLOADS: statusWith({
+            macos: OWNED_MACOS,
+            android: {
+              ...OWNED_EMULATOR,
+              activity: { state: 'driven', driver: { tool: 'agent-device', pid: 42, since: null }, basis: [] },
+            },
+          }),
+          FAKE_HELPER_INTERVAL_MS: '10',
+        },
+        undefined,
+        helper,
+      );
+      const client = await authed(port, true);
+      const observer = await authed(port);
+      const viewed = await observer.request('frames.subscribe', { workspace, platform: 'macos' });
+      const begun = await client.request('control.begin', { workspace, platform: 'macos' });
+      expect(begun).toMatchObject({ result: { platform: 'macos', lease: null, postures: [] } });
+      const { session } = (begun as { result: { session: string } }).result;
+      const other = await authed(port, true);
+      expect(await other.request('control.begin', { workspace, platform: 'macos' })).toHaveProperty(
+        'error.code',
+        'device-busy',
+      );
+      expect(await other.request('input.text', { session, text: 'wrong connection' })).toHaveProperty(
+        'error.code',
+        'unknown-session',
+      );
+      expect(await client.request('input.touch', { session, phase: 'down', x: 0.5, y: 0.5 })).toHaveProperty('result');
+      expect(await client.request('input.text', { session, text: 'native' })).toHaveProperty('result');
+      expect(await client.request('input.scroll', { session, x: 0.5, y: 0.5, deltaX: 0, deltaY: -30 })).toHaveProperty(
+        'result',
+      );
+      expect(await client.request('input.scroll', { session, x: 0.5, y: 0.5, deltaX: 0, deltaY: 1001 })).toHaveProperty(
+        'error.code',
+        'bad-request',
+      );
+      expect(
+        await client.request('input.key', { session, key: 'a', modifiers: ['command', 'command'] }),
+      ).toHaveProperty('error.code', 'bad-request');
+      expect(await client.request('input.key', { session, key: 'q', modifiers: ['command'] })).toHaveProperty(
+        'error.code',
+        'bad-request',
+      );
+      expect(await client.request('input.key', { session, key: 'a', modifiers: ['command'] })).toHaveProperty('result');
+      for (const [method, params] of [
+        ['input.rotate', { direction: 'left' }],
+        ['input.button', { button: 'home' }],
+        ['input.simulator', { action: 'shake' }],
+      ]) {
+        expect(await client.request(method as string, { session, ...(params as object) })).toHaveProperty(
+          'error.code',
+          'bad-request',
+        );
+      }
+      const ended = client.next();
+      expect(await client.request('input.key', { session, key: 'escape' })).toHaveProperty('result');
+      expect(await ended).toMatchObject({ reason: 'failed', message: expect.stringContaining('Accessibility') });
+      expect(await client.request('input.text', { session, text: 'after refusal' })).toHaveProperty(
+        'error.code',
+        'unknown-session',
+      );
+      expect(
+        await new Promise((resolve) => observer.socket.once('message', (raw) => resolve(JSON.parse(raw.toString())))),
+      ).toMatchObject({ subscription: (viewed as { result: { subscription: string } }).result.subscription });
+      expect(lockCalls()).toEqual([]);
+      const sent = helperRuns().at(-1)!.configs;
+      const active = sent.find((entry) => entry.control && (entry.control as { enabled: boolean }).enabled)!
+        .control as { session: string };
+      expect(sent.filter((entry) => entry.input).map((entry) => entry.controlSession)).toEqual(
+        Array(5).fill(active.session),
+      );
+      const resumed = await client.request('control.begin', { workspace, platform: 'macos' });
+      const next = (resumed as { result: { session: string } }).result.session;
+      expect(await client.request('input.key', { session: next, key: 'a', modifiers: ['command'] })).toHaveProperty(
+        'result',
+      );
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(
+        await client.request('input.text', { session: next, text: 'new controller survives old notice' }),
+      ).toHaveProperty('result');
+      other.socket.close();
+      observer.socket.close();
+      client.socket.close();
+    },
+    10_000,
+  );
+
+  test.skipIf(!fakeTailscale)(
+    'preserves a native capture permission failure without a screenshot fallback',
+    async () => {
+      const port = await startWithTools(
+        {
+          FAKE_STIM_PAYLOADS: statusWith({ macos: OWNED_MACOS }),
+          FAKE_FRAMES: '[]',
+          FAKE_HELPER_FAIL: 'Screen Recording access is unavailable',
+        },
+        undefined,
+        fakeHelper(),
+      );
+      const client = await authed(port);
+      await client.request('frames.subscribe', { workspace, platform: 'macos' });
+      expect(await client.next()).toMatchObject({
+        event: 'error',
+        error: { code: 'frames-failed', message: expect.stringContaining('Screen Recording access is unavailable') },
+      });
+      expect(toolRuns().filter((run) => run.tool === 'xcrun' || run.tool === 'adb')).toEqual([]);
+    },
+    10_000,
+  );
+
+  test.each([{ state: 'stopped' }, { state: 'unverified' }, { app: undefined }])(
+    'refuses native windows without a verified running process: %j',
+    async (extra) => {
+      if (!fakeTailscale) return;
+      const port = await startWithTools(
+        { FAKE_STIM_PAYLOADS: statusWith({ macos: { ...OWNED_MACOS, ...extra } }), FAKE_FRAMES: '[]' },
+        undefined,
+        fakeHelper(),
+      );
+      const client = await authed(port);
+      await client.request('frames.subscribe', { workspace, platform: 'macos' });
+      expect(await client.next()).toMatchObject({
+        event: 'error',
+        error: { code: 'frames-failed', message: expect.stringContaining('No verified owned macOS app') },
+      });
+      expect(helperRuns()).toEqual([]);
+    },
   );
 
   function leasedPhonePayload(deviceName: string | null = 'Old iPhone'): string {
@@ -3228,6 +3609,78 @@ describe('frames.subscribe', () => {
       .map((call) => call.args)
       .filter((args) => args.startsWith('device '));
   }
+
+  test.skipIf(!fakeTailscale)(
+    'changes only advertised simulator options under the current control session',
+    async () => {
+      const port = await startControl({
+        FAKE_SIMULATOR_OPTIONS: JSON.stringify({ canShake: true, slowAnimations: false }),
+      });
+      const client = await authed(port, true);
+      const begun = await client.request('control.begin', { workspace, platform: 'ios' });
+      if (!('result' in begun)) throw new Error(JSON.stringify(begun));
+      const { session, simulator } = begun.result as { session: string; simulator: unknown };
+      expect(simulator).toEqual({ canShake: true, slowAnimations: false });
+      expect(
+        await client.request('input.simulator', { session, action: 'slow-animations', enabled: true }),
+      ).toMatchObject({ result: { canShake: true, slowAnimations: true } });
+      expect(await client.request('input.simulator', { session, action: 'shake', enabled: true })).toMatchObject({
+        error: { code: 'bad-request' },
+      });
+      expect(
+        await client.request('input.simulator', { session, action: 'slow-animations', enabled: 'true' }),
+      ).toMatchObject({ error: { code: 'bad-request' } });
+      expect(await client.request('input.simulator', { session, action: 'shake' })).toMatchObject({
+        result: { canShake: true },
+      });
+      const stranger = await authed(port, true);
+      expect(await stranger.request('input.simulator', { session, action: 'shake' })).toMatchObject({
+        error: { code: 'unknown-session' },
+      });
+      expect(
+        toolRuns()
+          .filter((run) => run.args[0] === 'simulator-options')
+          .map((run) => run.args.slice(2)),
+      ).toEqual([['read'], ['slow-animations', 'on'], ['shake']]);
+    },
+  );
+
+  test.skipIf(!fakeTailscale)(
+    'hides unavailable simulator controls and refuses a mutation without capability',
+    async () => {
+      const port = await startControl({
+        FAKE_SIMULATOR_OPTIONS: JSON.stringify({ canShake: false, slowAnimations: null }),
+      });
+      const client = await authed(port, true);
+      const begun = await client.request('control.begin', { workspace, platform: 'ios' });
+      if (!('result' in begun)) throw new Error(JSON.stringify(begun));
+      const { session } = begun.result as { session: string };
+      expect(await client.request('input.simulator', { session, action: 'shake' })).toMatchObject({
+        error: { code: 'bad-request' },
+      });
+      expect(
+        await client.request('input.simulator', { session, action: 'slow-animations', enabled: true }),
+      ).toMatchObject({ error: { code: 'bad-request' } });
+      expect(toolRuns().filter((run) => run.args[0] === 'simulator-options')).toHaveLength(1);
+    },
+  );
+
+  test.skipIf(!fakeTailscale)('stops a pending simulator option when its control session ends', async () => {
+    const port = await startControl({
+      FAKE_SIMULATOR_OPTIONS: JSON.stringify({ canShake: true, slowAnimations: false }),
+      FAKE_SIMULATOR_WAIT: '1',
+    });
+    const client = await authed(port, true);
+    const begun = await client.request('control.begin', { workspace, platform: 'ios' });
+    if (!('result' in begun)) throw new Error(JSON.stringify(begun));
+    const { session } = begun.result as { session: string };
+    const pending = client.request('input.simulator', { session, action: 'slow-animations', enabled: true });
+    await until(() => existsSync(`${toolCalls}.option-started`));
+    const pid = Number(readFileSync(`${toolCalls}.option-started`, 'utf8'));
+    expect(await client.request('control.end', { session })).toMatchObject({ result: {} });
+    expect(await pending).toMatchObject({ error: { code: 'action-failed' } });
+    expect(() => process.kill(pid, 0)).toThrow('ESRCH');
+  });
 
   test.skipIf(!fakeTailscale)('refuses control to a device paired read-only, and logs it', async () => {
     const port = await startControl();

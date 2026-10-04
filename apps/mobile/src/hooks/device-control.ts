@@ -6,6 +6,10 @@ import type {
   DevicePlatform,
   DevicePosture,
   InputButton,
+  InputKey,
+  KeyModifier,
+  SimulatorCommand,
+  SimulatorOptions,
   Methods,
   RotateDirection,
   TouchPhase,
@@ -18,7 +22,7 @@ const MAX_INPUT_TEXT = 256;
 export type ControlState =
   | { kind: 'off'; ended?: string }
   | { kind: 'starting' }
-  | { kind: 'on'; session: string; leaseSince: string | null; postures: DevicePosture[] }
+  | { kind: 'on'; session: string; leaseSince: string | null; postures: DevicePosture[]; simulator?: SimulatorOptions }
   | { kind: 'busy'; message: string }
   | { kind: 'failed'; message: string };
 
@@ -30,15 +34,25 @@ export interface DeviceControl {
   end: () => void;
   touch: (phase: TouchPhase, x: number, y: number) => void;
   text: (text: string) => void;
+  scroll: (x: number, y: number, deltaX: number, deltaY: number) => void;
+  key: (key: InputKey, modifiers?: KeyModifier[]) => void;
   button: (button: InputButton) => void;
   rotate: (direction: RotateDirection) => void;
   /** Rejects with the server's reason; a Duo fold takes a few seconds to settle. */
   posture: (posture: DevicePosture) => Promise<void>;
+  simulator: (command: SimulatorCommand) => Promise<void>;
 }
 
 type HeldState =
   | ControlState
-  | { kind: 'on'; session: string; leaseSince: string | null; postures: DevicePosture[]; link: unknown };
+  | {
+      kind: 'on';
+      session: string;
+      leaseSince: string | null;
+      postures: DevicePosture[];
+      simulator?: SimulatorOptions;
+      link: unknown;
+    };
 
 /**
  * A control session on one device. It ends when the screen unmounts, when the connection drops (the server
@@ -83,7 +97,11 @@ export function useDeviceControl(
 
   const begin = useCallback(
     (takeOver = false) => {
-      if (!connection) return;
+      if (
+        !connection ||
+        (platform === 'macos' && (link.kind !== 'open' || !link.features.includes('macos-window-control')))
+      )
+        return;
       setHeld({ kind: 'starting' });
       const target = { workspace, platform, slot, ...(physical ? { physical } : {}) };
       connection.request('control.begin', { ...target, ...(takeOver ? { takeOver } : {}) }).then(
@@ -97,6 +115,7 @@ export function useDeviceControl(
             session: result.session,
             leaseSince: result.lease?.grantedAt ?? null,
             postures: result.postures,
+            ...(result.simulator ? { simulator: result.simulator } : {}),
             link,
           });
         },
@@ -113,7 +132,7 @@ export function useDeviceControl(
   );
   const end = useCallback(() => setHeld({ kind: 'off' }), []);
   const send = useCallback(
-    <M extends 'input.touch' | 'input.text' | 'input.button' | 'input.rotate'>(
+    <M extends 'input.touch' | 'input.text' | 'input.button' | 'input.rotate' | 'input.scroll' | 'input.key'>(
       method: M,
       params: Omit<Methods[M]['params'], 'session'>,
     ) => {
@@ -132,6 +151,14 @@ export function useDeviceControl(
     [send],
   );
   const button = useCallback((value: InputButton) => send('input.button', { button: value }), [send]);
+  const scroll = useCallback(
+    (x: number, y: number, deltaX: number, deltaY: number) => send('input.scroll', { x, y, deltaX, deltaY }),
+    [send],
+  );
+  const key = useCallback(
+    (key: InputKey, modifiers: KeyModifier[] = []) => send('input.key', { key, modifiers }),
+    [send],
+  );
   const rotate = useCallback((direction: RotateDirection) => send('input.rotate', { direction }), [send]);
   const posture = useCallback(
     async (value: DevicePosture) => {
@@ -140,5 +167,18 @@ export function useDeviceControl(
     },
     [connection, session],
   );
-  return { allowed, state, begin, end, touch, text, button, rotate, posture };
+  const simulator = useCallback(
+    async (command: SimulatorCommand) => {
+      if (!connection || !session) return;
+      const result = await connection.request('input.simulator', { session, ...command });
+      if (!mounted.current) return;
+      setHeld((current) =>
+        current.kind === 'on' && current.session === session && 'link' in current && current.link === link
+          ? { ...current, simulator: result }
+          : current,
+      );
+    },
+    [connection, session, link],
+  );
+  return { allowed, state, begin, end, touch, text, scroll, key, button, rotate, posture, simulator };
 }
