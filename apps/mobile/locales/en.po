@@ -2983,6 +2983,10 @@ msgstr "Restart to update"
 msgid "Restart to update?"
 msgstr "Restart to update?"
 
+#: src/screens/pair.tsx
+msgid "Retry"
+msgstr "Retry"
+
 #: src/screens/workspace-work.tsx
 msgid "Review"
 msgstr "Review"

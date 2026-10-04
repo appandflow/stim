@@ -230,7 +230,9 @@ stim ios`}
    phones** and choose **Pair a Phone…**.
 
 Revoking a paired phone closes its active connections on the next pairing
-check. The server checks pairings on changes and once a second.
+check. The server checks pairings on changes and once a second. If QR pairing
+fails, the phone keeps the error visible until **Retry** or manual entry is
+chosen.
 
 ![The Pair a Phone sheet with a QR code to scan with the phone app](/img/desktop/pair.webp)
 
