@@ -213,6 +213,7 @@ process.stdin.resume();process.on('SIGTERM',()=>{});setInterval(()=>{},1000);
       const feeds = new FeedPool(join(home, 'unused-cli.mjs'), process.env);
       const sent: ServerMessage[] = [];
       const control = new ControlHub({
+        frameHelper: () => null,
         env: process.env,
         stimCli: join(home, 'unused-cli.mjs'),
         feeds,
@@ -299,6 +300,7 @@ ${ending === 'timeout' ? "process.on('SIGTERM',()=>{});setInterval(()=>{},1000);
     vi.spyOn(frames, 'litPosture').mockReturnValue('folded');
     vi.spyOn(frames, 'folded').mockImplementation(() => {});
     const control = new ControlHub({
+      frameHelper: () => null,
       env,
       stimCli: join(home, 'unused-cli.mjs'),
       feeds,
@@ -355,7 +357,8 @@ ${ending === 'timeout' ? "process.on('SIGTERM',()=>{});setInterval(()=>{},1000);
       const result = await input;
       await teardown;
       expect(waited).toBe(true);
-      expect(result?.code ?? null).toBe(ending === 'timeout' ? 'action-failed' : null);
+      const outcome = result !== null && 'code' in result ? result.code : result;
+      expect(outcome).toBe(ending === 'timeout' ? 'action-failed' : null);
       expect(ending === 'timeout' || existsSync(finished)).toBe(true);
       expect(alive(pid)).toBe(false);
     } finally {
@@ -386,6 +389,7 @@ test.skipIf(process.platform === 'win32')(
     vi.spyOn(frames, 'litPosture').mockReturnValue('folded');
     const claim = tryAcquireClaim({ root: join(home, 'identity-owner.claims'), mode: 'exclusive' }).acquired!;
     const control = new ControlHub({
+      frameHelper: () => null,
       env,
       stimCli: 'unused',
       feeds,

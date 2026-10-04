@@ -18,6 +18,12 @@ Stim creates and records its local simulators and emulators. Their names start
 with `stim-`. It never creates, boots, or deletes a simulator or emulator that
 another tool made.
 
+The Stim phone viewer's control toolbar offers **Shake** and **Slow animations**
+for owned iOS simulators when the paired server supports them. Slow animations
+shows the confirmed simulator state. These options require control access and
+are hidden on older servers or devices that do not support them. They use
+Stim's viewer and never open Device Hub.
+
 A `stim-` name alone does not make a device Stim's. Stim lists every device it
 creates in `~/.stim/created-devices.json`, or in `$STIM_HOME/created-devices.json`
 when `STIM_HOME` points somewhere else. For devices created before that ledger,
@@ -399,6 +405,19 @@ ends the session and the tunnel.
 
 An install or launch failure leaves the session running and billed. The remedy
 names the session: rerun the command to reuse it, or run `stim stop` to end it.
+
+## Control from the phone viewer
+
+A phone granted control can use the bottom icon toolbar for Home, Lock,
+Keyboard, rotation and supported foldable postures. The bar stays below the
+screen in portrait and landscape and scrolls sideways when needed. Duo
+simulators include Rotate left and Rotate right; the app in front still needs
+to support the requested orientation. Physical devices rotate only in hand.
+
+Tapping Control explicitly takes over from the displayed driver immediately.
+If the server reports a driver conflict after that tap, the Take over action
+also starts control immediately. The server keeps its exclusive control lease
+and records the takeover. Viewing replay remains read-only.
 
 ## Replay device screens
 

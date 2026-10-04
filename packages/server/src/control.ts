@@ -11,7 +11,7 @@ import { takeHostedInputClaim } from './hosted-input.ts';
 import { isJsonObject, type DeviceActivity, type StatusPayload } from '@stim-cli/core/state';
 import { actionOutcome, type AuditRecord } from './actions.ts';
 import type { FeedPool, FeedSpec } from './feed.ts';
-import { adbPath } from './frame-helper.ts';
+import { adbPath, simulatorOptions } from './frame-helper.ts';
 import {
   deviceKey,
   devicePostures,
@@ -33,6 +33,8 @@ import {
   type DevicePosture,
   type ErrorCode,
   type InputButton,
+  type SimulatorCommand,
+  type SimulatorOptions,
   type Platform,
   type ProtocolError,
   type RotateDirection,
@@ -93,9 +95,10 @@ export type InputCommand =
   | { input: 'text'; text: string }
   | { input: 'button'; button: InputButton }
   | { input: 'rotate'; direction: RotateDirection }
-  | { input: 'posture'; posture: DevicePosture };
+  | { input: 'posture'; posture: DevicePosture }
+  | ({ input: 'simulator' } & SimulatorCommand);
 
-type InputMethod = 'input.touch' | 'input.text' | 'input.button' | 'input.rotate' | 'input.posture';
+type InputMethod = 'input.touch' | 'input.text' | 'input.button' | 'input.rotate' | 'input.posture' | 'input.simulator';
 
 /**
  * What a control session accepts: its device's platform, the postures `input.posture` takes, and whether it is a
@@ -104,6 +107,7 @@ type InputMethod = 'input.touch' | 'input.text' | 'input.button' | 'input.rotate
 export interface SessionTarget {
   platform: Platform;
   postures: readonly DevicePosture[];
+  simulator?: SimulatorOptions;
   physical?: boolean;
 }
 
@@ -132,6 +136,23 @@ export function parseInput(
   }
   if (target.physical && (method === 'input.rotate' || method === 'input.posture')) {
     return { code: 'bad-request', message: 'A physical device rotates and folds only in hand.' };
+  }
+  if (method === 'input.simulator') {
+    const available = target.simulator;
+    if (platform !== 'ios' || target.physical || !available) {
+      return { code: 'bad-request', message: 'This session has no simulator development controls.' };
+    }
+    const { action, enabled, ...rest } = params;
+    if (Object.keys(rest).some((key) => key !== 'session')) {
+      return { code: 'bad-request', message: 'Unexpected simulator option parameter.' };
+    }
+    if (action === 'slow-animations' && typeof enabled === 'boolean' && available.slowAnimations !== null) {
+      return { value: { session, command: { input: 'simulator', action, enabled } } };
+    }
+    if (enabled === undefined && (action === 'read' || (action === 'shake' && available.canShake))) {
+      return { value: { session, command: { input: 'simulator', action } } };
+    }
+    return { code: 'bad-request', message: 'The session does not support that simulator option.' };
   }
   if (method === 'input.rotate') {
     const { direction } = params;
@@ -341,6 +362,8 @@ interface Session {
   permitted?: () => boolean;
   claim?: ClaimHandle;
   postures: DevicePosture[];
+  simulator: SimulatorOptions | null;
+  simulatorAbort: AbortController;
   startedAt: number;
   idle: NodeJS.Timeout;
   renew: NodeJS.Timeout;
@@ -373,6 +396,7 @@ export interface ControlOptions {
   /** Resolves to the `sim-fold` helper, building it on first use. */
   foldHelper: () => Promise<string>;
   foldTimeoutMs: number;
+  frameHelper: () => string | null;
   /** Tells the paired device `deviceId` that someone else took over, or started driving, the device it controls. */
   conflict: (deviceId: string, conflict: ControlConflict) => void;
   /** Test switch: resolves a `physical` target to an emulator the workspace leases, driven over adb. */
@@ -393,6 +417,7 @@ export class ControlHub {
   private readonly ownLeases = new Set<string>();
   private readonly starting = new Set<string>();
   private readonly folding = new Map<string, Promise<void>>();
+  private readonly changingSimulator = new Set<string>();
   private readonly pending = new Pending();
   private closing = false;
   private next = 1;
@@ -412,6 +437,7 @@ export class ControlHub {
       ? {
           platform: found.target.platform,
           postures: found.postures,
+          ...(found.simulator ? { simulator: found.simulator } : {}),
           ...(found.target.physical ? { physical: true } : {}),
         }
       : null;
@@ -460,6 +486,13 @@ export class ControlHub {
     } finally {
       this.starting.delete(key);
     }
+    const helper = this.options.frameHelper();
+    const simulator =
+      device.platform === 'ios' && !device.physical && helper
+        ? await this.pending
+            .track(simulatorOptions(helper, device.udid, { action: 'read' }, this.options.env))
+            .catch(() => null)
+        : null;
     const granted = lease === null || 'code' in lease ? null : lease;
     if (lease !== null && !granted && (!target.takeOver || target.physical)) return lease as Refusal;
     const current = this.byDevice.get(key);
@@ -473,7 +506,7 @@ export class ControlHub {
     if (current && current !== earlier && !target.takeOver) {
       return refuse({ code: 'device-busy', message: `${current.owner.device.name} started controlling this device.` });
     }
-    return this.open(owner, target, cwd, device, postures, granted, driver, current, beganAt, status);
+    return this.open(owner, target, cwd, device, postures, granted, driver, current, beganAt, status, simulator);
   }
 
   async beginHosted(
@@ -515,6 +548,7 @@ export class ControlHub {
       current,
       Date.now(),
       undefined,
+      undefined,
       frames,
       stillAllowed,
       claim,
@@ -532,6 +566,7 @@ export class ControlHub {
     current: Session | undefined,
     beganAt: number,
     status?: StatusPayload,
+    simulator: SimulatorOptions | null = null,
     frames: FramePool = this.options.frames,
     permitted?: () => boolean,
     claim?: ClaimHandle,
@@ -567,6 +602,8 @@ export class ControlHub {
       ...(permitted ? { permitted } : {}),
       ...(claim ? { claim } : {}),
       postures,
+      simulator,
+      simulatorAbort: new AbortController(),
       startedAt: Date.now(),
       idle: setTimeout(() => void this.end(session, 'idle', 'No input for 5 minutes.'), this.options.idleMs),
       renew: setInterval(() => this.renew(session, beganAt), this.options.renewMs),
@@ -613,6 +650,7 @@ export class ControlHub {
       platform: target.platform,
       lease: session.lease ? { grantedAt: session.lease.grantedAt, expiresAt: session.lease.expiresAt } : null,
       postures,
+      ...(simulator ? { simulator } : {}),
     };
   }
 
@@ -628,7 +666,7 @@ export class ControlHub {
     );
   }
 
-  input(owner: Controller, id: string, command: InputCommand): Promise<Refusal | null> {
+  input(owner: Controller, id: string, command: InputCommand): Promise<Refusal | SimulatorOptions | null> {
     const session = this.sessions.get(id);
     if (!session || session.owner !== owner || session.ended) {
       return Promise.resolve({ code: 'unknown-session', message: `No control session ${id} on this connection.` });
@@ -643,6 +681,7 @@ export class ControlHub {
       void this.end(session, 'device-gone', message);
       return Promise.resolve({ code: 'unknown-session', message });
     }
+    if (command.input === 'simulator') return this.simulator(session, command);
     if (command.input === 'posture' && session.device.platform === 'ios') {
       const udid = session.device.udid;
       if (this.folding.has(udid))
@@ -687,6 +726,32 @@ export class ControlHub {
     })();
     session.adb = run.then(() => undefined);
     return this.pending.track(run);
+  }
+
+  private async simulator(
+    session: Session,
+    command: Extract<InputCommand, { input: 'simulator' }>,
+  ): Promise<SimulatorOptions | Refusal> {
+    const helper = this.options.frameHelper();
+    if (session.device.platform !== 'ios' || session.device.physical || !session.simulator || !helper) {
+      return { code: 'action-failed', message: 'Simulator development controls are unavailable.' };
+    }
+    if (this.changingSimulator.has(session.key)) {
+      return { code: 'device-busy', message: 'A simulator option is still changing.' };
+    }
+    this.changingSimulator.add(session.key);
+    try {
+      const result = await this.pending.track(
+        simulatorOptions(helper, session.device.udid, command, this.options.env, session.simulatorAbort.signal),
+      );
+      if (session.ended) return { code: 'unknown-session', message: 'The control session ended.' };
+      session.simulator = result;
+      return result;
+    } catch (cause) {
+      return { code: 'action-failed', message: (cause as Error).message };
+    } finally {
+      this.changingSimulator.delete(session.key);
+    }
   }
 
   /**
@@ -755,6 +820,7 @@ export class ControlHub {
   ): Promise<void> {
     if (session.ended) return Promise.resolve();
     session.ended = true;
+    session.simulatorAbort.abort();
     clearTimeout(session.idle);
     clearInterval(session.renew);
     session.unwatch();

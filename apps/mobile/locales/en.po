@@ -154,10 +154,6 @@ msgstr "{days}d ago"
 msgid "{done} of {total} {unit}"
 msgstr "{done} of {total} {unit}"
 
-#: src/screens/device-view.tsx
-msgid "{driverName} is driving it. Your touches and keys can interfere with its work."
-msgstr "{driverName} is driving it. Your touches and keys can interfere with its work."
-
 #: src/screens/mac-status.tsx
 msgid "{duration} saved"
 msgstr "{duration} saved"
@@ -856,10 +852,6 @@ msgstr "Android Emulator"
 msgid "Android platform missing"
 msgstr "Android platform missing"
 
-#: src/screens/device-view.tsx
-msgid "Another client"
-msgstr "Another client"
-
 #: src/lib/machine-report.ts
 msgid "Another Stim home"
 msgstr "Another Stim home"
@@ -1119,7 +1111,6 @@ msgid "Can control"
 msgstr "Can control"
 
 #: src/hooks/app-update.ts
-#: src/screens/device-view.tsx
 #: src/screens/mac-list.tsx
 #: src/screens/workspace-detail.tsx
 #: src/screens/workspace-detail.tsx
@@ -3077,6 +3068,10 @@ msgstr "Set by STIM_RECORDING on the Mac"
 msgid "Settings"
 msgstr "Settings"
 
+#: src/screens/device-view.tsx
+msgid "Shake"
+msgstr "Shake"
+
 #: src/screens/logs.tsx
 msgid "Share"
 msgstr "Share"
@@ -3169,6 +3164,10 @@ msgstr "Silent"
 msgid "Simulator"
 msgstr "Simulator"
 
+#: src/screens/device-view.tsx
+msgid "Simulator option not changed"
+msgstr "Simulator option not changed"
+
 #: src/lib/build-machines.ts
 msgid "Simulator SDK differs"
 msgstr "Simulator SDK differs"
@@ -3184,6 +3183,10 @@ msgstr "Simulators and emulators appear here while they run, on every paired mac
 #: src/lib/format.ts
 msgid "slot {slot}"
 msgstr "slot {slot}"
+
+#: src/screens/device-view.tsx
+msgid "Slow animations"
+msgstr "Slow animations"
 
 #: src/lib/settings-options.ts
 msgid "Someone takes over your device"
@@ -3392,13 +3395,8 @@ msgid "Tailscale is off"
 msgstr "Tailscale is off"
 
 #: src/screens/device-view.tsx
-#: src/screens/device-view.tsx
 msgid "Take over"
 msgstr "Take over"
-
-#: src/screens/device-view.tsx
-msgid "Take over this device?"
-msgstr "Take over this device?"
 
 #: src/screens/home.tsx
 msgid "Tap a prompt to copy it for your coding agent."

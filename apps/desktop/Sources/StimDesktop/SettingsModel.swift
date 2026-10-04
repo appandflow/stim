@@ -16,6 +16,20 @@ final class SettingsModel: ObservableObject {
   private let cli: Task<StimCLI, Never>
   private let machine: MachineSettingsStore
 
+  #if DEBUG
+    private(set) var inMemory = false
+
+    init(fixtures: [SettingField], payload: SettingsPayload?, error: String? = nil) {
+      let cli = Task { StimCLI(environment: [:]) }
+      self.cli = cli
+      machine = MachineSettingsStore(cli: cli)
+      fields = fixtures
+      self.payload = payload
+      loadError = error
+      inMemory = true
+    }
+  #endif
+
   init(cli: Task<StimCLI, Never>, machine: MachineSettingsStore) {
     self.cli = cli
     self.machine = machine
@@ -29,6 +43,9 @@ final class SettingsModel: ObservableObject {
 
   func load(directory: String?) {
     self.directory = directory
+    #if DEBUG
+      if inMemory { return }
+    #endif
     let cli = cli
     let cwd = directory ?? NSHomeDirectory()
     let needsSchema = fields.isEmpty
@@ -66,6 +83,17 @@ final class SettingsModel: ObservableObject {
   /// Runs `stim settings set`, or `unset` for a nil value, then reloads every value. A machine-scope write goes
   /// through the machine settings store, whose `revision` makes the window reload.
   func write(_ field: SettingField, scope: SettingScope, value: JSONValue?) {
+    #if DEBUG
+      if inMemory {
+        guard var entry = payload?.entry(field.key) else { return }
+        entry.layers[scope.rawValue] = value
+        let winner = [SettingScope.workspace, .repo, .committed, .machine].first { entry.layers[$0.rawValue] != nil }
+        entry.value = winner.flatMap { entry.layers[$0.rawValue] } ?? field.defaultValue ?? .null
+        entry.origin = winner?.rawValue ?? "default"
+        payload = payload?.merging(entry)
+        return
+      }
+    #endif
     let id = Self.id(field.key, scope)
     guard !writing.contains(id) else { return }
     writing.insert(id)

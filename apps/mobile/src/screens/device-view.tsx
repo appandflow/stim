@@ -41,7 +41,7 @@ import { StatusBar } from 'expo-status-bar';
 import { Button } from '@/components/button';
 import { AgentFeed } from '@/components/agent-feed';
 import { DeviceScreen } from '@/components/device-screen';
-import { Icon } from '@/components/icon';
+import { Icon, type IconName } from '@/components/icon';
 import { ScrollView } from '@/components/lists';
 import { Pill } from '@/components/pill';
 import { ReplayBar } from '@/components/replay-bar';
@@ -80,7 +80,6 @@ const ROTATE_WAIT_MS = 2500;
 const ROTATE_NOTE_MS = 4000;
 const ROTATE_NOTE_SCREEN_READER_MS = 16_000;
 const NOTE_INSET = 64;
-const SIDE_WIDTH = 208;
 const CONTROLS_FADE_MS = 200;
 const CONTROLS_MIN_WIDTH = 320;
 
@@ -129,7 +128,7 @@ export function DeviceView({
   const book = fold?.axis === 'vertical' ? fold : null;
   const halfOpen = useHinges()[0]?.status === 'partiallyOpen';
   const table = fold?.axis === 'horizontal' && halfOpen ? fold : null;
-  const sideBySide = (landscape && !table) || book !== null;
+  const sideBySide = book !== null;
   const { videoQuality } = useSettings();
   const preset = QUALITY_PRESETS[videoQuality];
   const windowMaxEdge = Math.min(MAX_EDGE, Math.round(Math.max(window.width, window.height) * PixelRatio.get()));
@@ -206,7 +205,7 @@ export function DeviceView({
     zoomKey({ macId: mac?.id ?? '', workspace, platform, slot, physical }),
     aspectOf(source),
     platform === 'web' ? 1.6 : platform === 'ios' ? 0.46 : 0.45,
-    !controlling && !((sideBySide || table) && readOnly) && !screenZoom.zoomed && !scrubbing,
+    !controlling && !((landscape || book || table) && readOnly) && !screenZoom.zoomed && !scrubbing,
     root,
     stage,
     screenZoom.lens,
@@ -225,6 +224,7 @@ export function DeviceView({
   const [typing, setTyping] = useState(false);
   const [typed, setTyped] = useState('');
   const [moving, setMoving] = useState<DevicePosture | null>(null);
+  const [changingOption, setChangingOption] = useState(false);
   const [barBottom, setBarBottom] = useState(0);
   const [bannerHeight, setBannerHeight] = useState(0);
   const [barSides, setBarSides] = useState<[number, number]>([0, 0]);
@@ -315,21 +315,7 @@ export function DeviceView({
     },
   };
 
-  const takeOver = () => {
-    const driverName = driver ?? t`Another client`;
-    Alert.alert(
-      t`Take over this device?`,
-      t`${driverName} is driving it. Your touches and keys can interfere with its work.`,
-      [
-        { text: t`Cancel`, style: 'cancel' },
-        {
-          text: t`Take over`,
-          style: 'destructive',
-          onPress: () => control.begin(true),
-        },
-      ],
-    );
-  };
+  const takeOver = () => control.begin(true);
   const seek = (at: number, rate: ReplayRate) => {
     if (controlling) control.end();
     setView((current) => replayView(current, { type: 'seek', at, running, hasFootage }));
@@ -355,6 +341,14 @@ export function DeviceView({
       .posture(posture)
       .catch((cause: Error) => Alert.alert(t`Posture not changed`, cause.message))
       .finally(() => setMoving(null));
+  };
+  const simulator = control.state.kind === 'on' ? control.state.simulator : null;
+  const changeSimulator = (command: Parameters<typeof control.simulator>[0]) => {
+    setChangingOption(true);
+    control
+      .simulator(command)
+      .catch((cause: Error) => Alert.alert(t`Simulator option not changed`, cause.message))
+      .finally(() => setChangingOption(false));
   };
   const readOnlyBanner = readOnly ? (
     <View style={styles.banner(true)}>
@@ -414,50 +408,81 @@ export function DeviceView({
     controlling || readOnly ? (
       <>
         {controlling && overlayControls && !controls.shown ? (
-          <ToolButton label={t`Replay`} onPress={controls.reveal} />
+          <ToolButton icon="play.circle" label={t`Replay`} onPress={controls.reveal} />
         ) : null}
         <ToolButton
+          icon="keyboard"
           label={typing ? t`Hide keyboard` : t`Keyboard`}
+          selected={typing}
           disabled={readOnly}
           onPress={() => (typing ? keyboard.current?.blur() : keyboard.current?.focus())}
         />
-        {platform !== 'web' ? <ToolButton label={t`Home`} disabled={readOnly} onPress={() => press('home')} /> : null}
-        {platform !== 'ios' ? <ToolButton label={t`Back`} disabled={readOnly} onPress={() => press('back')} /> : null}
-        {platform === 'android' ? (
-          <ToolButton label={t`Apps`} disabled={readOnly} onPress={() => press('app-switch')} />
+        {platform !== 'web' ? (
+          <ToolButton icon="circle" label={t`Home`} disabled={readOnly} onPress={() => press('home')} />
         ) : null}
-        {platform !== 'web' ? <ToolButton label={t`Lock`} disabled={readOnly} onPress={() => press('lock')} /> : null}
-        {(platform === 'android' && !physical) || (platform === 'ios' && !postures.length && !shown) ? (
+        {platform !== 'ios' ? (
+          <ToolButton icon="chevron.backward" label={t`Back`} disabled={readOnly} onPress={() => press('back')} />
+        ) : null}
+        {platform === 'android' ? (
+          <ToolButton icon="rectangle.stack" label={t`Apps`} disabled={readOnly} onPress={() => press('app-switch')} />
+        ) : null}
+        {platform !== 'web' ? (
+          <ToolButton icon="lock" label={t`Lock`} disabled={readOnly} onPress={() => press('lock')} />
+        ) : null}
+        {platform !== 'web' && !physical ? (
           <>
-            <ToolButton label={t`Rotate left`} disabled={readOnly} onPress={() => rotate('left')} />
-            <ToolButton label={t`Rotate right`} disabled={readOnly} onPress={() => rotate('right')} />
+            <ToolButton
+              icon="arrow.counterclockwise"
+              label={t`Rotate left`}
+              disabled={readOnly}
+              onPress={() => rotate('left')}
+            />
+            <ToolButton
+              icon="arrow.clockwise"
+              label={t`Rotate right`}
+              disabled={readOnly}
+              onPress={() => rotate('right')}
+            />
           </>
         ) : null}
-        {postures
-          .filter((posture) => platform === 'android' || posture !== shown)
-          .map((posture) => (
-            <ToolButton
-              key={posture}
-              label={moving === posture ? t`Moving...` : postureLabel(posture)}
-              disabled={moving !== null}
-              onPress={() => move(posture)}
-            />
-          ))}
+        {simulator?.canShake ? (
+          <ToolButton
+            icon="arrow.triangle.2.circlepath"
+            label={t`Shake`}
+            disabled={changingOption}
+            onPress={() => changeSimulator({ action: 'shake' })}
+          />
+        ) : null}
+        {typeof simulator?.slowAnimations === 'boolean' ? (
+          <ToolButton
+            icon="hourglass"
+            label={t`Slow animations`}
+            selected={simulator.slowAnimations}
+            disabled={changingOption}
+            onPress={() => changeSimulator({ action: 'slow-animations', enabled: !simulator.slowAnimations })}
+          />
+        ) : null}
+        {postures.map((posture) => (
+          <ToolButton
+            key={posture}
+            icon={posture === 'folded' ? 'rectangle.portrait' : posture === 'half-open' ? 'book' : 'rectangle'}
+            label={moving === posture ? t`Moving...` : postureLabel(posture)}
+            selected={posture === shown}
+            disabled={readOnly || moving !== null || posture === shown}
+            onPress={() => move(posture)}
+          />
+        ))}
       </>
     ) : null;
   const toolbars = buttons ? (
-    sideBySide ? (
+    <ScrollView
+      horizontal
+      showsHorizontalScrollIndicator={false}
+      style={styles.toolScroll}
+      contentContainerStyle={styles.toolRow}
+    >
       <View style={styles.toolbar}>{buttons}</View>
-    ) : (
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        style={styles.toolScroll}
-        contentContainerStyle={styles.toolRow}
-      >
-        {buttons}
-      </ScrollView>
-    )
+    </ScrollView>
   ) : null;
   const model = device?.page
     ? shortUrl(device.page.url)
@@ -496,7 +521,7 @@ export function DeviceView({
               <View style={styles.root}>
                 <View style={table ? { height: table.start - insets.top } : styles.root}>
                   <View style={{ height: barBottom + headerGap }} />
-                  {sideBySide || table ? null : readOnlyBanner}
+                  {book || table ? null : readOnlyBanner}
                   <View
                     style={book && { width: book.start - insets.left }}
                     onLayout={(event) => setBannerHeight(event.nativeEvent.layout.height)}
@@ -544,17 +569,10 @@ export function DeviceView({
                       <View style={[styles.pane, { marginLeft: book.end - book.start }]}>
                         <ScrollView style={styles.root} contentContainerStyle={styles.sideContent}>
                           {readOnlyBanner}
-                          {toolbars}
                         </ScrollView>
                         {agentFeed}
+                        {toolbars}
                       </View>
-                    ) : landscape && !table ? (
-                      controlling || readOnly ? (
-                        <ScrollView style={styles.side} contentContainerStyle={styles.sideContent}>
-                          {readOnlyBanner}
-                          {toolbars}
-                        </ScrollView>
-                      ) : null
                     ) : table ? null : (
                       toolbars
                     )}
@@ -565,8 +583,8 @@ export function DeviceView({
                     <View style={{ height: table.end - table.start }} />
                     <ScrollView style={styles.root} contentContainerStyle={styles.sideContent}>
                       {readOnlyBanner}
-                      {toolbars}
                     </ScrollView>
+                    {toolbars}
                   </>
                 ) : null}
                 {overlayControls || !replayBar ? null : (
@@ -886,19 +904,30 @@ function controlsSpan(left: number, width: number, from: number, to: number) {
   return { left: Math.min(Math.max(left + width / 2 - span / 2, from), to - span), width: span };
 }
 
-function ToolButton({ label, onPress, disabled }: { label: string; onPress: () => void; disabled?: boolean }) {
+function ToolButton({
+  icon,
+  label,
+  onPress,
+  disabled,
+  selected = false,
+}: {
+  icon: IconName;
+  label: string;
+  onPress: () => void;
+  disabled?: boolean;
+  selected?: boolean;
+}) {
   const { theme } = useUnistyles();
   return (
     <Touch
       onPress={onPress}
       disabled={disabled}
-      defaultOpacity={disabled ? theme.opacity.disabled : 1}
-      accessibilityState={{ disabled }}
-      style={styles.tool}
+      defaultOpacity={disabled && !selected ? theme.opacity.disabled : 1}
+      accessibilityLabel={label}
+      accessibilityState={{ disabled, selected }}
+      style={styles.tool(selected)}
     >
-      <Text weight="medium" style={styles.mediaText}>
-        {label}
-      </Text>
+      <Icon name={icon} size={22} color={theme.media.text} />
     </Touch>
   );
 }
@@ -964,7 +993,6 @@ const styles = StyleSheet.create((theme) => ({
     textAlign: 'center',
   },
   row: { flex: 1, flexDirection: 'row' },
-  side: { width: SIDE_WIDTH, flexGrow: 0 },
   pane: { flex: 1 },
   sideContent: { flexGrow: 1, justifyContent: 'center', paddingVertical: theme.space.md },
   stage: { flex: 1, alignSelf: 'stretch', alignItems: 'center', justifyContent: 'center' },
@@ -1006,30 +1034,30 @@ const styles = StyleSheet.create((theme) => ({
   mutedAction: { color: theme.media.textTertiary },
   toolbar: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
-    justifyContent: 'center',
-    gap: theme.space.md,
-    paddingHorizontal: theme.space.md,
-    paddingVertical: theme.space.sm,
+    alignItems: 'center',
+    gap: theme.space.xs,
+    padding: theme.space.xs,
+    borderRadius: theme.radius.round,
+    backgroundColor: theme.media.fill,
+    borderWidth: 1,
+    borderColor: theme.media.fillSubtle,
   },
   toolScroll: { flexGrow: 0 },
   toolRow: {
     flexGrow: 1,
     justifyContent: 'center',
-    gap: theme.space.md,
+    alignItems: 'center',
     paddingHorizontal: theme.space.lg,
     paddingVertical: theme.space.sm,
   },
-  tool: {
-    minWidth: MIN_TARGET,
-    minHeight: MIN_TARGET,
-    paddingHorizontal: theme.space.lg,
-    paddingVertical: theme.space.sm,
+  tool: (selected: boolean) => ({
+    width: MIN_TARGET,
+    height: MIN_TARGET,
     alignItems: 'center',
     justifyContent: 'center',
     borderRadius: theme.radius.round,
-    backgroundColor: theme.media.fill,
-  },
+    backgroundColor: selected ? theme.media.fillSubtle : 'transparent',
+  }),
   barButton: {
     width: MIN_TARGET,
     height: MIN_TARGET,

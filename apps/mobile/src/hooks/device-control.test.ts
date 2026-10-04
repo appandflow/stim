@@ -54,3 +54,47 @@ test('ends a control session that begins after the screen unmounted', async () =
     ['control.end', { session: 'c1' }],
   ]);
 });
+
+test('ignores simulator options returned by an ended connection with a reused session id', async () => {
+  let finish: (value: unknown) => void = () => {};
+  const begun = { session: 'c1', lease: null, postures: [], simulator: { canShake: true, slowAnimations: false } };
+  const request = jest.fn((method: string) =>
+    method === 'control.begin'
+      ? Promise.resolve(begun)
+      : method === 'input.simulator'
+        ? new Promise((resolve) => (finish = resolve))
+        : Promise.resolve({}),
+  );
+  const first = { request, onControlEnded: () => () => {}, reconnect: () => {} };
+  const opened = {
+    kind: 'open' as const,
+    protocol: 1,
+    server: { name: 'stim-server', version: '1', stim: '1' },
+    actions: null,
+    capabilities: ['control' as const],
+    features: [],
+    deviceId: null,
+  };
+  machines.setMacs([{ id: 'm1', name: 'Mac', endpoint: 'ws://mac', pairedAt: '2026-09-30T00:00:00Z' }], false);
+  machines.patchLink('m1', { connection: first as unknown as StimConnection, state: opened });
+  const { result, unmount } = await renderHook(() => useDeviceControl('/app', 'ios', 'default'));
+  await act(async () => result.current.begin());
+  let changing: Promise<void>;
+  await act(async () => {
+    changing = result.current.simulator({ action: 'slow-animations', enabled: true });
+  });
+  const second = {
+    ...first,
+    request: jest.fn((method: string) => (method === 'control.begin' ? Promise.resolve(begun) : Promise.resolve({}))),
+  };
+  await act(async () =>
+    machines.patchLink('m1', { connection: second as unknown as StimConnection, state: { ...opened } }),
+  );
+  await act(async () => result.current.begin());
+  await act(async () => {
+    finish({ canShake: true, slowAnimations: true });
+    await changing!;
+  });
+  expect(result.current.state).toMatchObject({ kind: 'on', session: 'c1', simulator: { slowAnimations: false } });
+  await unmount();
+});

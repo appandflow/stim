@@ -11,8 +11,9 @@ import {
   type ClaimHandle,
 } from '@stim-cli/core/ownership-claim';
 import { captureProcessIdentity } from '@stim-cli/core/process-identity';
+import { isJsonObject } from '@stim-cli/core/state';
 import type { Device, Frame, FrameListener, Posture } from './frames.ts';
-import { FRAME_EDGE, FRAME_FPS } from './protocol.ts';
+import { FRAME_EDGE, FRAME_FPS, type SimulatorCommand, type SimulatorOptions } from './protocol.ts';
 import { serverDir } from './registry.ts';
 import { terminate } from './stim-command.ts';
 import { Bitrate, DEFAULT_VIDEO_LIMITS, type AccessUnit } from './video.ts';
@@ -64,9 +65,10 @@ function run(
   env: NodeJS.ProcessEnv,
   timeoutMs: number,
   signal?: AbortSignal,
+  holdInput = false,
 ): Promise<string> {
   return new Promise((resolve, reject) => {
-    const child = spawn(file, args, { env, stdio: ['ignore', 'pipe', 'pipe'], detached: true });
+    const child = spawn(file, args, { env, stdio: [holdInput ? 'pipe' : 'ignore', 'pipe', 'pipe'], detached: true });
     let output = '';
     let stopped: string | null = null;
     const stop = (reason: string) => {
@@ -78,10 +80,10 @@ function run(
     const timer = setTimeout(() => stop(`${file} ${args[0]} did not finish within ${timeoutMs / 1000} s.`), timeoutMs);
     const abort = () => stop(`${file} ${args[0]} was stopped with the server.`);
     signal?.addEventListener('abort', abort);
-    child.stdout.setEncoding('utf8');
-    child.stderr.setEncoding('utf8');
-    child.stdout.on('data', (chunk: string) => (output = (output + chunk).slice(-4000)));
-    child.stderr.on('data', (chunk: string) => (output = (output + chunk).slice(-4000)));
+    child.stdout!.setEncoding('utf8');
+    child.stderr!.setEncoding('utf8');
+    child.stdout!.on('data', (chunk: string) => (output = (output + chunk).slice(-4000)));
+    child.stderr!.on('data', (chunk: string) => (output = (output + chunk).slice(-4000)));
     child.on('error', (error) => {
       clearTimeout(timer);
       signal?.removeEventListener('abort', abort);
@@ -95,6 +97,27 @@ function run(
       else reject(new Error(`${file} ${args[0]} exited (code ${code}): ${output.trim()}`));
     });
   });
+}
+
+/** Reads or changes guest simulator controls through the same native helper as screen input. */
+export async function simulatorOptions(
+  helper: string,
+  udid: string,
+  command: SimulatorCommand,
+  env: NodeJS.ProcessEnv,
+  signal?: AbortSignal,
+): Promise<SimulatorOptions> {
+  signal?.throwIfAborted();
+  const args = ['simulator-options', udid, command.action];
+  if (command.action === 'slow-animations') args.push(command.enabled ? 'on' : 'off');
+  const result: unknown = JSON.parse(await run(helper, args, env, 8000, signal, true));
+  if (
+    !isJsonObject(result) ||
+    typeof result.canShake !== 'boolean' ||
+    (result.slowAnimations !== null && typeof result.slowAnimations !== 'boolean')
+  )
+    throw new Error('The simulator helper did not return its development controls.');
+  return { canShake: result.canShake, slowAnimations: result.slowAnimations };
 }
 
 /**
