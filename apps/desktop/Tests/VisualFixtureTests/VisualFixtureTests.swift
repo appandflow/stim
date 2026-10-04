@@ -31,19 +31,12 @@
         version.majorVersion == 27 && version.minorVersion == 0 && version.patchVersion == 0
           && ProcessInfo.processInfo.operatingSystemVersionString.contains("Build 26A428"),
         "Visual references require macOS 27.0 build 26A428; the macOS 15 CI lane has no matching references.")
-      let locale = UserDefaults.standard.volatileDomain(forName: UserDefaults.argumentDomain)
-      let zone = NSTimeZone.default
-      UserDefaults.standard.setVolatileDomain(
-        ["AppleLocale": "en_US", "AppleLanguages": ["en_US"]], forName: UserDefaults.argumentDomain)
-      NSTimeZone.default = TimeZone(secondsFromGMT: 0)!
-      defer {
-        UserDefaults.standard.setVolatileDomain(locale, forName: UserDefaults.argumentDomain)
-        NSTimeZone.default = zone
-      }
+      let zone = TimeZone(secondsFromGMT: 0)!
+      var calendar = Calendar(identifier: .gregorian)
+      calendar.timeZone = zone
       _ = NSApplication.shared
       BrandAssets.registerFonts()
       XCTAssertNotNil(NSFont(name: FontFamily.sans, size: 14))
-      XCTAssertEqual(Locale.current.identifier, "en_US")
       let size = CGSize(width: width, height: 640)
       let window = NSWindow(
         contentRect: CGRect(origin: .zero, size: size), styleMask: [.titled], backing: .buffered, defer: false)
@@ -57,6 +50,8 @@
         )
         .frame(width: size.width, height: size.height)
         .environment(\.locale, Locale(identifier: "en_US"))
+        .environment(\.calendar, calendar)
+        .environment(\.timeZone, zone)
         .environment(\.colorScheme, dark ? .dark : .light)
         .environment(\.dynamicTypeSize, .large)
         .transaction { $0.disablesAnimations = true })

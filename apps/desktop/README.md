@@ -1238,6 +1238,8 @@ controls in dark appearance, and the simulator error message in light appearance
 The DEBUG fixtures use a fixed date. Captures pin en_US, UTC, InterVariable,
 380/440 by 640 points, arm64 and a 1x native window on macOS 27.0 build 26A428.
 They open only a fixture window, without starting the CLI, server or devices.
+The notification view reads its calendar, timezone and locale from the SwiftUI
+environment; fixtures supply UTC explicitly, independent of the process `TZ`.
 
 The current macOS 15 CI runner has no matching references and explicitly skips
 these image comparisons. This is a local pilot, not CI visual regression coverage.

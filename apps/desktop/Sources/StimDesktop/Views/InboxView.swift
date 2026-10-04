@@ -7,13 +7,16 @@ struct InboxView: View {
   @ObservedObject var inbox: NotificationInbox
   var openLogs: (String) -> Void
   @EnvironmentObject private var actions: ActionCenter
+  @Environment(\.calendar) private var calendar
+  @Environment(\.timeZone) private var timeZone
+  @Environment(\.locale) private var locale
   @State private var filter = InboxFilter()
   @State private var confirmsClear = false
   @State private var visibleCount = 50
   @State private var fixing: (title: String, command: StimCommand)?
 
   var body: some View {
-    let days = inbox.inbox.days(filter)
+    let days = inbox.inbox.days(filter, calendar: calendar)
     let entries = days.flatMap(\.entries)
     let visibleIDs = Set(entries.prefix(visibleCount).map(\.id))
     let visibleDays = days.map { day in
@@ -35,7 +38,7 @@ struct InboxView: View {
         }
         ForEach(visibleDays, id: \.day) { day in
           VStack(alignment: .leading, spacing: Space.md) {
-            Text(Self.dayTitle(day.day)).font(.stim(.headline))
+            Text(dayTitle(day.day)).font(.stim(.headline))
             Card {
               VStack(spacing: 0) {
                 ForEach(Array(day.entries.enumerated()), id: \.element.id) { index, entry in
@@ -132,11 +135,12 @@ struct InboxView: View {
     return listed + [(selected, URL(fileURLWithPath: selected).lastPathComponent)]
   }
 
-  static func dayTitle(_ day: Date) -> String {
-    let calendar = Calendar.current
+  private func dayTitle(_ day: Date) -> String {
     if calendar.isDateInToday(day) { return "Today" }
     if calendar.isDateInYesterday(day) { return "Yesterday" }
-    return day.formatted(.dateTime.weekday(.wide).month(.abbreviated).day())
+    return day.formatted(
+      Date.FormatStyle(locale: locale, calendar: calendar, timeZone: timeZone)
+        .weekday(.wide).month(.abbreviated).day())
   }
 }
 
@@ -148,6 +152,9 @@ private struct InboxRow: View {
   var fix: (String, StimCommand) -> Void
   var open: () -> Void
   @EnvironmentObject private var actions: ActionCenter
+  @Environment(\.calendar) private var calendar
+  @Environment(\.timeZone) private var timeZone
+  @Environment(\.locale) private var locale
 
   var body: some View {
     HStack(alignment: .center, spacing: Space.lg) {
@@ -232,7 +239,8 @@ private struct InboxRow: View {
   }
 
   private var detail: String {
-    let time = entry.date.formatted(date: .omitted, time: .shortened)
+    let time = entry.date.formatted(
+      Date.FormatStyle(date: .omitted, time: .shortened, locale: locale, calendar: calendar, timeZone: timeZone))
     return entry.suppressed.map { "\(time) \u{00B7} \($0.title)" } ?? time
   }
 
