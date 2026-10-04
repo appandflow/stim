@@ -1,6 +1,7 @@
 import { t } from '@lingui/core/macro';
+import { Image } from 'expo-image';
 import { useRef, useState, type RefObject } from 'react';
-import { TextInput, View, type TextInputInstance } from 'react-native';
+import { Platform, TextInput, View, type TextInputInstance } from 'react-native';
 import { KeyboardStickyView } from 'react-native-keyboard-controller';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -8,6 +9,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { ScrollView } from '@/components/lists';
 import { Text } from '@/components/text';
 import { Touch } from '@/components/touch';
+import { ViewerBackdrop } from '@/components/viewer-backdrop';
 import { withAlpha } from '@/design/color';
 import { keyboardDelta } from '@/lib/device-control';
 import type { InputKey, KeyModifier } from '@/protocol/types';
@@ -54,29 +56,29 @@ export function ViewerKeyboard({
     selectModifiers([]);
     setNote(null);
   };
-  const extraKeys: [InputKey, string][] = [
-    ['tab', t`Tab`],
-    ['escape', t`Esc`],
-    ['backspace', t`Backspace`],
-    ['left', t`Left`],
-    ['up', t`Up`],
-    ['down', t`Down`],
-    ['right', t`Right`],
+  const extraKeys: [InputKey, string, string][] = [
+    ['tab', t`Tab`, '\u21e5'],
+    ['escape', t`Esc`, t`Esc`],
+    ['backspace', t`Backspace`, '\u232b'],
+    ['left', t`Left`, '\u2190'],
+    ['up', t`Up`, '\u2191'],
+    ['down', t`Down`, '\u2193'],
+    ['right', t`Right`, '\u2192'],
   ];
-  const shortcuts: [InputKey, string][] = [
-    ['a', t`Select all`],
-    ['z', t`Undo`],
-    ['s', t`Save`],
-    ['c', t`Copy`],
-    ['v', t`Paste`],
-    ['x', t`Cut`],
-    ['f', t`Find`],
+  const shortcuts: [InputKey, string, string][] = [
+    ['a', t`Select all`, 'selection.pin.in.out'],
+    ['z', t`Undo`, 'arrow.uturn.backward'],
+    ['s', t`Save`, 'square.and.arrow.down'],
+    ['c', t`Copy`, 'document.on.document'],
+    ['v', t`Paste`, 'document.on.clipboard'],
+    ['x', t`Cut`, 'scissors'],
+    ['f', t`Find`, 'magnifyingglass'],
   ];
-  const modifierKeys: [KeyModifier, string][] = [
-    ['shift', t`Shift`],
-    ['control', t`Control`],
-    ['option', t`Option`],
-    ['command', t`Command`],
+  const modifierKeys: [KeyModifier, string, string][] = [
+    ['shift', t`Shift`, '\u21e7'],
+    ['control', t`Control`, '\u2303'],
+    ['option', t`Option`, '\u2325'],
+    ['command', t`Command`, '\u2318'],
   ];
   return (
     <KeyboardStickyView
@@ -86,13 +88,15 @@ export function ViewerKeyboard({
       importantForAccessibility={shown ? 'auto' : 'no-hide-descendants'}
       onLayout={(event) => onHeight(event.nativeEvent.layout.height)}
     >
+      <ViewerBackdrop />
       {macos ? (
         <>
           <ScrollView horizontal keyboardShouldPersistTaps="always" contentContainerStyle={styles.keys}>
-            {modifierKeys.map(([value, label]) => (
+            {modifierKeys.map(([value, label, display]) => (
               <AccessoryKey
                 key={value}
                 label={label}
+                display={display}
                 selected={modifiers.includes(value)}
                 onPress={() => {
                   setNote(null);
@@ -104,22 +108,22 @@ export function ViewerKeyboard({
                 }}
               />
             ))}
-            {extraKeys.map(([value, label]) => (
+            {extraKeys.map(([value, label, display]) => (
               <AccessoryKey
                 key={value}
                 label={label}
+                display={display}
                 onPress={() => {
                   resetText();
                   key(value);
                 }}
               />
             ))}
-          </ScrollView>
-          <ScrollView horizontal keyboardShouldPersistTaps="always" contentContainerStyle={styles.keys}>
-            {shortcuts.map(([value, label]) => (
+            {shortcuts.map(([value, label, symbol]) => (
               <AccessoryKey
                 key={value}
                 label={label}
+                symbol={symbol}
                 onPress={() => {
                   resetText();
                   key(value, ['command']);
@@ -127,9 +131,6 @@ export function ViewerKeyboard({
               />
             ))}
           </ScrollView>
-          <Text variant="footnote" style={styles.note}>
-            {t`Mac letter shortcuts require the Mac's U.S. or ABC keyboard layout.`}
-          </Text>
           {note ? (
             <Text variant="footnote" style={styles.note} accessibilityLiveRegion="polite">
               {note}
@@ -207,52 +208,68 @@ export function ViewerKeyboard({
 
 function AccessoryKey({
   label,
+  display = label,
+  symbol,
   selected = false,
   onPress,
 }: {
   label: string;
+  display?: string;
+  symbol?: string;
   selected?: boolean;
   onPress: () => void;
 }) {
+  const { theme } = useUnistyles();
   return (
-    <Touch onPress={onPress} accessibilityLabel={label} accessibilityState={{ selected }} style={styles.key(selected)}>
-      <Text variant="callout" weight="semibold" style={styles.keyText}>
-        {label}
-      </Text>
+    <Touch
+      hitSlop={4}
+      onPress={onPress}
+      accessibilityLabel={label}
+      accessibilityState={{ selected }}
+      style={styles.key(selected)}
+    >
+      {symbol && Platform.OS === 'ios' ? (
+        <Image source={`sf:${symbol}`} style={styles.symbol} tintColor={theme.media.text} accessible={false} />
+      ) : (
+        <Text variant="footnote" weight="semibold" style={[styles.keyText, { fontSize: display === label ? 14 : 18 }]}>
+          {display}
+        </Text>
+      )}
     </Touch>
   );
 }
 
 const styles = StyleSheet.create((theme) => ({
-  bar: { position: 'absolute', left: 0, right: 0, bottom: 0, backgroundColor: theme.media.bar },
+  bar: { position: 'absolute', left: 0, right: 0, bottom: 0 },
   hidden: { opacity: 0 },
   keys: {
-    gap: theme.space.xs,
-    paddingHorizontal: theme.space.md,
+    gap: theme.space.sm,
+    paddingHorizontal: theme.space.sm,
     paddingVertical: theme.space.xs,
     alignItems: 'center',
   },
   key: (selected: boolean) => ({
-    minHeight: 44,
-    minWidth: 44,
-    paddingHorizontal: theme.space.md,
+    minHeight: 36,
+    minWidth: 36,
+    paddingHorizontal: theme.space.sm,
     alignItems: 'center',
     justifyContent: 'center',
     borderRadius: theme.radius.control,
     backgroundColor: selected ? theme.colors.primary : theme.media.fill,
   }),
+  symbol: { width: 18, height: 18 },
   keyText: { color: theme.media.text },
   note: { color: theme.media.text, paddingHorizontal: theme.space.md },
   inputRow: {
-    minHeight: 56,
-    paddingHorizontal: theme.space.xl,
+    minHeight: 44,
+    paddingHorizontal: theme.space.md,
     flexDirection: 'row',
     alignItems: 'center',
     gap: theme.space.lg,
   },
   typed: {
     flex: 1,
-    minHeight: 40,
+    minHeight: 36,
     paddingHorizontal: theme.space.lg,
     borderRadius: theme.radius.control,
     backgroundColor: theme.media.fill,

@@ -1628,6 +1628,7 @@ msgid "Errors"
 msgstr "Errors"
 
 #: src/components/viewer-keyboard.tsx
+#: src/components/viewer-keyboard.tsx
 msgid "Esc"
 msgstr "Esc"
 
@@ -2103,10 +2104,6 @@ msgstr "longer than usual"
 #: src/lib/build-machines.ts
 msgid "Low on disk"
 msgstr "Low on disk"
-
-#: src/components/viewer-keyboard.tsx
-msgid "Mac letter shortcuts require the Mac's U.S. or ABC keyboard layout."
-msgstr "Mac letter shortcuts require the Mac's U.S. or ABC keyboard layout."
 
 #: src/screens/inbox.tsx
 msgid "Machine"

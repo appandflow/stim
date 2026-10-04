@@ -81,8 +81,9 @@ resizing the app window.
 
 With `macos-window-control` and a control pairing, tap **Control** for clicks,
 drags and printable ASCII typing. The main bar offers **Keyboard** and **Scroll**;
-Scroll turns a drag into scrolling. Keyboard attaches a strip for Tab, Escape,
-Backspace, arrows and labeled Select all, Undo, Save, Copy, Paste, Cut and Find.
+Scroll turns a drag into scrolling. Keyboard attaches one compact scrolling row
+with modifier glyphs, navigation keys and shortcut icons over an iOS material
+backdrop, with a translucent fallback elsewhere. Every control keeps its accessible name.
 Shift, Control, Option and Command apply to the next supported key and then
 clear; dismissing the keyboard also clears them.
 

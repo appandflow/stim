@@ -368,8 +368,9 @@ app window.
 
 With `macos-window-control` and a control pairing, **Control** enables mouse
 clicks/drags and printable ASCII typing. The main bar offers **Keyboard** and
-**Scroll**. Keyboard attaches an extra-key strip with Tab, Escape, Backspace,
-arrows and labeled Select all, Undo, Save, Copy, Paste, Cut and Find. One-shot
+**Scroll**. Keyboard attaches one compact, horizontally scrolling extra-key row over a
+subtle material backdrop on iOS and a translucent fallback elsewhere, with
+modifier glyphs, navigation keys and shortcut icons. Every control keeps its accessible name. One-shot
 Shift, Control, Option and Command clear after the next supported key or on
 keyboard dismissal. Scroll turns a drag into scrolling instead of moving the
 mouse.
