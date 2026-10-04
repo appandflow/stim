@@ -18,7 +18,7 @@ Commands use `stim`. If it is not installed globally, replace `stim` with
 - Git for `stim worktree` commands.
 - macOS, Linux or Windows. What each host can run is listed below.
 
-## Projects that pin an older Node
+## Projects that pin an older Node {/* #older-node-pins */}
 
 `stim` and `stim-server` start through `#!/usr/bin/env node`. A version
 manager that follows the working directory (asdf, mise, Volta, fnm, nvm)

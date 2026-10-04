@@ -6,7 +6,7 @@ const encode = (version: string): number =>
 
 if (encode(process.versions.node) < encode(NODE_FLOOR)) {
   process.stderr.write(
-    `STIM_NODE_UNSUPPORTED: Stim needs Node ${NODE_FLOOR} or later; this is Node ${process.versions.node} at ${process.execPath}. To run Stim where a project pins an older Node, see https://stim.appandflow.com/docs/requirements#projects-that-pin-an-older-node\n`,
+    `STIM_NODE_UNSUPPORTED: Stim needs Node ${NODE_FLOOR} or later; this is Node ${process.versions.node} at ${process.execPath}. To run Stim where a project pins an older Node, see https://stim.appandflow.com/docs/requirements#older-node-pins\n`,
   );
   process.exitCode = 1;
 } else {
