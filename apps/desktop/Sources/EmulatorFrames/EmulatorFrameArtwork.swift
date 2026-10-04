@@ -94,7 +94,7 @@ enum EmulatorFrameArtwork {
       foreground: { _ in if let foreground { draw(foreground, in: layout.geometry.aperture) } })
   }
 
-  private static func values(_ url: URL) -> [String: String] {
+  static func values(_ url: URL) -> [String: String] {
     guard let text = try? String(contentsOf: url, encoding: .utf8) else { return [:] }
     var values: [String: String] = [:]
     for line in text.split(whereSeparator: \.isNewline) {

@@ -29,6 +29,8 @@ struct DeviceTile: View {
   var maxCardHeight: CGFloat? = nil
   /// False while the device's viewer is open, so the tile does not stream a second copy of its screen.
   var showsScreen = true
+  var pixelScale: CGFloat? = nil
+  var framePixelsPerUnit: CGFloat = 1
   /// A physical device's stream stopped taking input.
   var onControlLost: () -> Void = {}
   @State private var pixelSizes: [UInt32: CGSize] = [:]
@@ -623,6 +625,7 @@ struct DeviceTile: View {
   }
 
   private func screenHeight(_ screenID: UInt32) -> CGFloat {
+    if let size = accurateSize(screenID) { return size.height }
     let full = fittedHeight - screenPadding * 2
     return displayedScreenIDs.count > 1 && screenID != mainScreenID ? full * 0.3 : full
   }
@@ -632,6 +635,7 @@ struct DeviceTile: View {
   }
 
   private func screenWidth(_ screenID: UInt32) -> CGFloat? {
+    if let size = accurateSize(screenID) { return size.width }
     guard let size = layoutSize(screenID), size.height > 0 else { return nil }
     return screenHeight(screenID) * size.width / size.height
   }
@@ -656,6 +660,9 @@ struct DeviceTile: View {
   }
 
   private var fittedHeight: CGFloat {
+    if let height = displayedScreenIDs.compactMap({ accurateSize($0)?.height }).max() {
+      return height + screenPadding * 2
+    }
     let availableHeight =
       screenHeight - (viewer && (interactive && Self.hasButtons(device) || canShowFrame) ? controlsHeight + Space.lg : 0)
     let screenHeight = min(availableHeight, maxCardHeight.map { max(0, $0 - headerHeight - 1) } ?? availableHeight)
@@ -689,6 +696,17 @@ struct DeviceTile: View {
     }
   }
 
+  private func accurateSize(_ screenID: UInt32) -> CGSize? {
+    guard viewer, !replaying, let pixelScale, let size = layoutSize(screenID) else { return nil }
+    let scale = pixelScale * (framed ? framePixelsPerUnit : 1)
+    return CGSize(width: size.width * scale, height: size.height * scale)
+  }
+
+  private func accurateScreenSize(_ screenID: UInt32) -> CGSize? {
+    guard let pixelScale, let size = pixelSizes[screenID] else { return nil }
+    return CGSize(width: size.width * pixelScale, height: size.height * pixelScale)
+  }
+
   private var identity: String {
     var parts = [[device.label, device.detail].compactMap { $0 }.joined(separator: " "), source]
     if let tool = ActivityBadge(device.activity)?.driverTool { parts.append("Driven by \(tool)") }
@@ -709,7 +727,8 @@ struct DeviceTile: View {
               ? observedHingeAngle : nil,
             showsDeviceFrame: viewer && showsDeviceFrame, onFrameSizeChange: viewer ? { frameSizes[screenID] = $0 } : nil,
             duoFrame: viewer && device.formFactor == .dual ? duoFrame : nil, activeScreenID: mainScreenID,
-            duoHingeAngle: observedHingeAngle
+            duoHingeAngle: observedHingeAngle, artworkScale: pixelScale.map { $0 * framePixelsPerUnit },
+            accurateScreenSize: accurateScreenSize(screenID)
           )
           .frame(
             width: displayedScreenIDs.contains(screenID) ? screenWidth(screenID) : 0,
@@ -732,6 +751,9 @@ struct DeviceTile: View {
       if let serial = avd.serial {
         EmulatorScreen(
           serial: serial, interactive: interactive, buttons: emulatorButtons, avdName: avd.name,
+          fullResolution: pixelScale != nil,
+          artworkScale: pixelScale,
+          accurateScreenSize: accurateScreenSize(1),
           showsDeviceFrame: viewer && showsDeviceFrame, onFrameSizeChange: viewer ? { frameSizes[1] = $0 } : nil
         ) { pixelSizes[1] = $0 }
         .frame(width: screenWidth(1))
@@ -866,6 +888,9 @@ private struct EmulatorScreen: View {
   var interactive: Bool
   var buttons: EmulatorButtons
   var avdName: String
+  var fullResolution: Bool
+  var artworkScale: CGFloat?
+  var accurateScreenSize: CGSize?
   var showsDeviceFrame: Bool
   var onFrameSizeChange: ((CGSize?) -> Void)?
   var onPixelSizeChange: (CGSize) -> Void
@@ -876,7 +901,8 @@ private struct EmulatorScreen: View {
       serial: serial, interactive: interactive,
       onStatus: { status in DispatchQueue.main.async { self.status = status } },
       onPixelSizeChange: { size in DispatchQueue.main.async { onPixelSizeChange(size) } }, buttons: buttons,
-      avdName: avdName, showsDeviceFrame: showsDeviceFrame, onFrameSizeChange: onFrameSizeChange
+      avdName: avdName, showsDeviceFrame: showsDeviceFrame, onFrameSizeChange: onFrameSizeChange, fullResolution: fullResolution,
+      artworkScale: artworkScale, accurateScreenSize: accurateScreenSize
     )
     .overlay {
       switch status {
