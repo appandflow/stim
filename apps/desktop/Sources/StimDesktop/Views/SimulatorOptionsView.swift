@@ -42,6 +42,8 @@ struct SimulatorOptionsView: View {
           .foregroundStyle(Palette.warning)
           .fixedSize(horizontal: false, vertical: true)
       }
+      Divider()
+      SimulatorDevelopmentOptionsView(udid: udid, canControl: canControl)
     }
     .font(.stim(.callout))
     .controlSize(.small)
