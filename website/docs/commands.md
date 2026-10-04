@@ -110,7 +110,8 @@ doctor reports their separate device-host approval in `deviceHosts`. Only
 forgets names removed from the setting. A person on the hosting Mac runs the
 printed `stim-server devices grant <id> --device-host` command. Tokens remain
 private and pinned to that tailnet node. A changed node refuses access;
-unreadable credentials and uncertain replies preserve the pin. JSON states
+unreadable credentials and uncertain replies preserve the pin. Invalid hosting
+settings report an error and preserve every saved credential. JSON states
 are `approved`, `pending`, `not-asked`, `revoked`, `node-changed`,
 `not-on-tailnet`, `tailscale-off`, `unreachable`, `invalid`,
 `credentials-unavailable` and `busy`. Hosting approval does not yet change

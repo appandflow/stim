@@ -525,6 +525,7 @@ node. Doctor never prints the token; it reports each machine under deviceHosts
 in JSON. Stim sends tokens only to the pinned node's own tailnet address,
 with its MagicDNS name for TLS and Host routing. A changed node refuses
 access, and uncertain replies or unreadable credentials preserve the pin.
+Invalid hosting settings report an error and preserve every saved credential.
 \`doctor --fix\` forgets entries removed from hosting.machines; remove a
 replaced machine, run it, then re-add the name to request a new approval.
 A definite revoked or lapsed request can be requested again with --fix.

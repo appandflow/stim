@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { deviceHostMachinesFile, readBuildMachines, readDeviceHostMachines } from '@stim-cli/core/state';
 import { inspectDeviceHostMachines } from '../device-host/machines.ts';
 import type { HelloReply, TailnetMachineIo } from '../offload/tailnet.ts';
+import { getConfigPath } from '../workspace/config.ts';
 
 let home: string;
 beforeEach(() => {
@@ -71,6 +72,25 @@ test('the changed node receives neither a token nor a replacement access request
   expect(calls).toEqual([]);
   expect(readDeviceHostMachines()[0]?.nodeId).toBe('nMini');
 });
+
+test.each([{ machines: 'mini' }, { machines: ['mini', 42] }, { machines: null }, 'mini'])(
+  'invalid hosting settings preserve saved credentials without approval traffic: %j',
+  async (hosting) => {
+    await inspectDeviceHostMachines({ fix: true }, fakeIo([pending]).io, ['mini']);
+    const saved = readFileSync(deviceHostMachinesFile(), 'utf8');
+    writeFileSync(getConfigPath(), JSON.stringify({ hosting }));
+    const { io, calls } = fakeIo([]);
+    const readStatus = vi.spyOn(io, 'status');
+    for (const fix of [false, true]) {
+      const result = await inspectDeviceHostMachines({ fix }, io);
+      expect(result.findings).toEqual([expect.objectContaining({ title: 'Invalid hosting.machines setting' })]);
+      expect(readFileSync(deviceHostMachinesFile(), 'utf8')).toBe(saved);
+      expect(JSON.stringify(result)).not.toContain('hosting-secret');
+    }
+    expect(calls).toEqual([]);
+    expect(readStatus).not.toHaveBeenCalled();
+  },
+);
 
 test('pending, approved, revoked and uncertain responses preserve capability separation and the saved token', async () => {
   await inspectDeviceHostMachines({ fix: true }, fakeIo([pending]).io, ['mini']);

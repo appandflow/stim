@@ -5,8 +5,10 @@ import {
   deviceHostMachinesClaims,
   deviceHostMachinesFile,
   deviceHostMachinesLock,
+  acceptsShape,
   isJsonObject,
   readDeviceHostMachines,
+  settingDefinition,
   type DeviceHostMachineCredential,
 } from '@stim-cli/core/state';
 import type { Finding } from '../diagnostics/doctor.ts';
@@ -52,9 +54,12 @@ function note(title: string, detail: string, fix: string | null = null): Finding
 const approval = (machine: string, id: string) =>
   `A person on ${machine} approves it with \`stim-server devices grant ${id} --device-host\`.`;
 
-function configuredMachines(): string[] {
-  const machines = loadConfig()?.hosting?.machines;
-  return Array.isArray(machines) ? machines.filter((entry): entry is string => typeof entry === 'string') : [];
+function configuredMachines(): string[] | null {
+  const hosting = loadConfig()?.hosting;
+  if (hosting !== undefined && !isJsonObject(hosting)) return null;
+  const machines = hosting?.machines;
+  if (machines === undefined) return [];
+  return acceptsShape(settingDefinition('hosting.machines')!, machines) ? (machines as string[]) : null;
 }
 
 function store(machines: DeviceHostMachineCredential[]): void {
@@ -127,8 +132,20 @@ async function request(
 export async function inspectDeviceHostMachines(
   { fix }: { fix: boolean },
   io: TailnetMachineIo = realIo,
-  entries: string[] = configuredMachines(),
+  entries: string[] | null = configuredMachines(),
 ): Promise<Inspection> {
+  if (entries === null) {
+    return {
+      findings: [
+        note(
+          'Invalid hosting.machines setting',
+          'Use a hosting object with machines as an array of tailnet names. Existing hosting credentials and pinned nodes are preserved.',
+          'Run `stim guide settings` and correct the setting before running doctor again.',
+        ),
+      ],
+      machines: [],
+    };
+  }
   const unavailable = (state: MachineReport['state'], finding: Finding): Inspection => ({
     findings: [finding],
     machines: entries.map((machine) => ({ machine, state })),
