@@ -30,6 +30,8 @@ final class Onboarding: ObservableObject {
     var javaHome: String?
     /// `stim` reported no version because the Node its launcher runs it on is older than Stim supports.
     var nodeBlocksStim = false
+    /// The same for `stim-server`.
+    var nodeBlocksServer = false
   }
 
   enum PopupKind {
@@ -149,7 +151,9 @@ final class Onboarding: ObservableObject {
             FileManager.default.fileExists(atPath: $0)
           },
           javaHome: environment["JAVA_HOME"].flatMap { $0.isEmpty ? nil : $0 },
-          nodeBlocksStim: compatibility == .outdated(found: nil) && stim.launcher?.runtime.isSupported == false)
+          nodeBlocksStim: compatibility == .outdated(found: nil) && stim.launcher?.runtime.isSupported == false,
+          nodeBlocksServer: serverCompatibility == .outdated(found: nil)
+            && server?.launcher?.runtime.isSupported == false)
       }.value
       self.report = report
       setup.stim = report.stim

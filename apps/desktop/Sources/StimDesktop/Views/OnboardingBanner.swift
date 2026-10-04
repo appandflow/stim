@@ -25,12 +25,14 @@ struct OnboardingBanner: View {
 
   private func currentKind(_ report: Onboarding.Report) -> Onboarding.PopupKind? {
     if onboarding.showsGuide { return nil }
-    if report.nodeBlocksStim, !onboarding.dismissedPopups.contains(.node) { return .node }
+    if report.nodeBlocksStim || report.nodeBlocksServer, !onboarding.dismissedPopups.contains(.node) { return .node }
     if !report.stim.isCompatible, !report.nodeBlocksStim, !onboarding.dismissedPopups.contains(.stim) {
       return .stim
     }
     if report.needsRelaunch, !onboarding.dismissedPopups.contains(.relaunch) { return .relaunch }
-    if let server = report.server, !server.isCompatible, !onboarding.dismissedPopups.contains(.server) {
+    if let server = report.server, !server.isCompatible, !report.nodeBlocksServer,
+      !onboarding.dismissedPopups.contains(.server)
+    {
       return .server
     }
     if report.stim.isCompatible, !report.needsRelaunch, !report.viewerKeys.isEmpty,
@@ -79,7 +81,7 @@ struct OnboardingBanner: View {
     return popupCard(kind: .node, icon: "exclamationmark.triangle", tone: .warning) {
       Text("Update Node.js to use Stim Desktop").font(.stim(.headline))
       Text(
-        "Stim Desktop runs stim on the Node.js that node gives in your home folder, and stim needs \(SetupChecks.nodeMinimum.description) or later. Make a newer Node your version manager's default, then check again."
+        "Stim Desktop runs stim and stim-server on the Node.js that node gives in your home folder, and they need \(SetupChecks.nodeMinimum.description) or later. Make a newer Node your version manager's default, then check again."
       )
       .foregroundStyle(Palette.secondary)
       disclosure {
