@@ -380,7 +380,11 @@ native work reuses the session claim. In-flight native input settles before
 teardown even after disconnect or takeover; a timeout waits for its child to
 terminate. Known capture closes even if the journal
 is unreadable or unwritable; unresolved native state and claims remain retained.
-An unknown or lost owner requires explicit stop before replacement. This worker
+Hosted posture commands hold a separate child-aware input claim. A surviving
+command or unresolved child identity blocks replacement ownership, install and
+stop even after the server and capture helper exit; the refusal names the claim
+and its manual cleanup command. An unknown or lost owner requires explicit stop
+before replacement. This worker
 protocol does not add CLI placement or a local viewer relay; those remain in
 [#2266](https://github.com/appandflow/stim/issues/2266).
 

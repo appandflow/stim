@@ -1,4 +1,13 @@
 import { spawn } from 'node:child_process';
+import {
+  markClaimChildPending,
+  processGroupAlive,
+  releaseClaim,
+  setClaimChild,
+  type ClaimHandle,
+} from '@stim-cli/core/ownership-claim';
+import { captureProcessIdentity } from '@stim-cli/core/process-identity';
+import { takeHostedInputClaim } from './hosted-input.ts';
 import { isJsonObject, type DeviceActivity, type StatusPayload } from '@stim-cli/core/state';
 import { actionOutcome, type AuditRecord } from './actions.ts';
 import type { FeedPool, FeedSpec } from './feed.ts';
@@ -221,14 +230,20 @@ function runQuietly(
   args: string[],
   label: string,
   timeoutMs: number,
+  claim?: ClaimHandle,
 ): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const child = spawn(file, args, { env, stdio: ['ignore', 'ignore', 'pipe'] });
+  let childPid: number | undefined;
+  return new Promise<void>((resolve, reject) => {
+    if (claim) markClaimChildPending(claim);
+    const child = spawn(file, args, { env, detached: !!claim, stdio: ['ignore', 'ignore', 'pipe'] });
+    childPid = child.pid;
     let stderr = '';
     let timedOut = false;
     const finish = (code: number | null) => {
       clearTimeout(timer);
       if (timedOut) return;
+      if (claim && child.pid && processGroupAlive(child.pid))
+        return reject(new Error(`${label} left an unresolved process group; its input claim was retained.`));
       if (code === 0) resolve();
       else reject(new Error(`${label} failed (code ${code}): ${stderr.trim()}`));
     };
@@ -247,6 +262,19 @@ function runQuietly(
       reject(new Error(`${label} could not start (${error.message}).`));
     });
     child.on('close', finish);
+    if (claim) {
+      try {
+        const identity = child.pid ? captureProcessIdentity(child.pid) : null;
+        if (!identity?.ok) throw new Error(`${label} child identity could not be established.`);
+        setClaimChild(claim, { pid: child.pid!, processToken: identity.token });
+      } catch (error) {
+        timedOut = true;
+        clearTimeout(timer);
+        void terminate(child).then(() => reject(error));
+      }
+    }
+  }).finally(() => {
+    if (claim && (!childPid || !processGroupAlive(childPid))) releaseClaim(claim);
   });
 }
 
@@ -311,6 +339,7 @@ interface Session {
   input: DeviceInput;
   frames: FramePool;
   permitted?: () => boolean;
+  claim?: ClaimHandle;
   postures: DevicePosture[];
   startedAt: number;
   idle: NodeJS.Timeout;
@@ -454,6 +483,7 @@ export class ControlHub {
     device: Device,
     frames: FramePool,
     stillAllowed: () => boolean,
+    claim: ClaimHandle,
   ): Promise<ControlBeginResult | Refusal> {
     if (this.closing) return { code: 'action-failed', message: 'stim-server is stopping.' };
     const key = deviceKey(device);
@@ -487,6 +517,7 @@ export class ControlHub {
       undefined,
       frames,
       stillAllowed,
+      claim,
     );
   }
 
@@ -503,6 +534,7 @@ export class ControlHub {
     status?: StatusPayload,
     frames: FramePool = this.options.frames,
     permitted?: () => boolean,
+    claim?: ClaimHandle,
   ): ControlBeginResult | Refusal {
     const key = deviceKey(device);
     const resolve = { adbEmulators: this.options.adbEmulators === true };
@@ -533,6 +565,7 @@ export class ControlHub {
       input,
       frames,
       ...(permitted ? { permitted } : {}),
+      ...(claim ? { claim } : {}),
       postures,
       startedAt: Date.now(),
       idle: setTimeout(() => void this.end(session, 'idle', 'No input for 5 minutes.'), this.options.idleMs),
@@ -676,6 +709,7 @@ export class ControlHub {
           ['simctl', 'spawn', udid, helper],
           'sim-fold',
           this.options.foldTimeoutMs,
+          session.claim ? takeHostedInputClaim(session.claim) : undefined,
         ),
       );
       session.frames.folded(udid, posture === 'folded' ? 'folded' : 'unfolded');

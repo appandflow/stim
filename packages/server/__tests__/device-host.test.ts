@@ -1,6 +1,6 @@
 import { mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync, renameSync, chmodSync } from 'node:fs';
 import { createHash } from 'node:crypto';
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -9,7 +9,8 @@ import { createMetroGateway } from '@stim-cli/core';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { deviceHostArea, deviceHostRoot, readHostedSessions } from '@stim-cli/core/state';
-import { processGroupAlive, readClaimSet } from '@stim-cli/core/ownership-claim';
+import { processGroupAlive, readClaimSet, tryAcquireClaim, releaseClaim } from '@stim-cli/core/ownership-claim';
+import * as processIdentity from '@stim-cli/core/process-identity';
 import { DeviceHost } from '../src/device-host.ts';
 import { HostedViews } from '../src/hosted-view.ts';
 import { ControlHub } from '../src/control.ts';
@@ -315,7 +316,8 @@ ${ending === 'timeout' ? "process.on('SIGTERM',()=>{});setInterval(()=>{},1000);
     const device = { platform: 'ios' as const, udid: 'owned-duo', foldable: true };
     const target = { workspace: '/client/worktree', platform: 'ios' as const };
     const owner = { device: { id: 'client', name: 'Client' }, send: () => {} };
-    const begun = await control.beginHosted(owner, target, home, device, frames, () => true);
+    const claim = tryAcquireClaim({ root: join(home, 'input-owner.claims'), mode: 'exclusive' }).acquired!;
+    const begun = await control.beginHosted(owner, target, home, device, frames, () => true, claim);
     if ('code' in begun) throw new Error(begun.message);
     const input = control.input(owner, begun.session, { input: 'posture', posture: 'unfolded' });
     const alive = (pid: number) => {
@@ -338,6 +340,7 @@ ${ending === 'timeout' ? "process.on('SIGTERM',()=>{});setInterval(()=>{},1000);
           device,
           frames,
           () => true,
+          claim,
         );
         if ('code' in taken) throw new Error(taken.message);
       } else control.endFor(owner, null, 'The client disconnected.');
@@ -365,6 +368,159 @@ ${ending === 'timeout' ? "process.on('SIGTERM',()=>{});setInterval(()=>{},1000);
       vi.restoreAllMocks();
       await frames.close();
       await feeds.close();
+      releaseClaim(claim);
+    }
+  },
+);
+
+test.skipIf(process.platform === 'win32')(
+  'refuses and settles hosted fold when its child identity cannot be captured',
+  async () => {
+    const tool = join(home, 'xcrun');
+    writeFileSync(tool, `#!${process.execPath}\nsetInterval(()=>{},1000);\n`);
+    chmodSync(tool, 0o755);
+    const env = { ...process.env, PATH: `${home}:${process.env.PATH}` };
+    const frames = new FramePool(env);
+    const feeds = new FeedPool('unused', env);
+    vi.spyOn(frames, 'control').mockReturnValue({ send: () => {}, keys: () => true, detach: () => {} });
+    vi.spyOn(frames, 'litPosture').mockReturnValue('folded');
+    const claim = tryAcquireClaim({ root: join(home, 'identity-owner.claims'), mode: 'exclusive' }).acquired!;
+    const control = new ControlHub({
+      env,
+      stimCli: 'unused',
+      feeds,
+      frames,
+      statusFeed: { args: [], cwd: home, keep: 1, label: 'unused' },
+      audit: () => {},
+      lockLimits: { timeoutMs: 1000, maxOutputBytes: 1024 },
+      idleMs: 60_000,
+      renewMs: 60_000,
+      leaseFor: '1m',
+      foldHelper: async () => 'fixture-fold',
+      foldTimeoutMs: 5000,
+      conflict: () => {},
+    });
+    const owner = { device: { id: 'client', name: 'Client' }, send: () => {} };
+    let pid: number | undefined;
+    try {
+      const begun = await control.beginHosted(
+        owner,
+        { workspace: '/client/worktree', platform: 'ios' },
+        home,
+        { platform: 'ios', udid: 'owned-duo', foldable: true },
+        frames,
+        () => true,
+        claim,
+      );
+      if ('code' in begun) throw new Error(begun.message);
+      const captureIdentity = processIdentity.captureProcessIdentity;
+      vi.spyOn(processIdentity, 'captureProcessIdentity').mockImplementation((child) => {
+        if (child === process.pid) return captureIdentity(child);
+        pid = child;
+        return { ok: false, reason: 'fixture identity unavailable' };
+      });
+      expect(await control.input(owner, begun.session, { input: 'posture', posture: 'unfolded' })).toMatchObject({
+        code: 'action-failed',
+        message: expect.stringContaining('child identity'),
+      });
+      expect(pid).toBeDefined();
+      expect(processGroupAlive(pid!)).toBe(false);
+      expect(readClaimSet(`${claim.root}.input`).unresolved).toEqual([]);
+      expect(readClaimSet(`${claim.root}.input`).live).toEqual([]);
+    } finally {
+      vi.restoreAllMocks();
+      await control.close();
+      await frames.close();
+      await feeds.close();
+      releaseClaim(claim);
+    }
+  },
+);
+
+test.skipIf(process.platform === 'win32')(
+  'refuses restarted native teardown while a hosted fold survives owner death',
+  async () => {
+    const capture = join(home, 'capture-helper');
+    const fold = join(home, 'xcrun');
+    const started = join(home, 'fold-pid');
+    const ready = join(home, 'owner-ready');
+    writeFileSync(
+      capture,
+      `#!${process.execPath}
+const notice=Buffer.from(JSON.stringify({display:0}));const head=Buffer.alloc(5);head.writeUInt32BE(notice.length+1);head[4]=2;
+const frame=Buffer.alloc(10);frame.writeUInt32BE(6);frame[4]=1;frame.writeUInt16BE(1,5);frame.writeUInt16BE(1,7);frame[9]=120;
+process.stdout.write(Buffer.concat([head,notice,frame]));process.stdin.resume();process.stdin.on('end',()=>process.exit(0));setInterval(()=>{},1000);
+`,
+    );
+    writeFileSync(
+      fold,
+      `#!${process.execPath}
+require('node:fs').writeFileSync(${JSON.stringify(started)},String(process.pid));process.on('SIGTERM',()=>{});setInterval(()=>{},1000);
+`,
+    );
+    chmodSync(capture, 0o755);
+    chmodSync(fold, 0o755);
+    writeFileSync(join(home, 'worker.mjs'), WORKER.replace("name:'stim-hosted'", "name:'stim-hosted (iPhone Duo)'"));
+    const imports = (file: string) => JSON.stringify(new URL(`../src/${file}.ts`, import.meta.url).href);
+    const script = join(home, 'owner.mts');
+    writeFileSync(
+      script,
+      `import {writeFileSync} from 'node:fs';
+import {DeviceHost} from ${imports('device-host')};import {HostedViews} from ${imports('hosted-view')};
+import {ControlHub} from ${imports('control')};import {FramePool} from ${imports('frames')};import {FeedPool} from ${imports('feed')};
+const env={...process.env,PATH:${JSON.stringify(home)}+':'+process.env.PATH};
+const host=new DeviceHost({worker:${JSON.stringify(join(home, 'worker.mjs'))},env,allowed:()=>true,limits:{prepareMs:5000,stopMs:2000,killGraceMs:100}});
+const answer=host.reserve('client',${JSON.stringify(request)});if('error' in answer)throw new Error(answer.error.message);
+let attached;for(let i=0;i<200;i++){attached=host.attach('client',{session:answer.result.id});if(attached.result?.state==='ready')break;await new Promise(r=>setTimeout(r,20));}
+const frames=new FramePool(env),feeds=new FeedPool('unused',env);
+const control=new ControlHub({env,stimCli:'unused',feeds,frames,statusFeed:{args:[],cwd:${JSON.stringify(home)},keep:1,label:'unused'},audit:()=>{},lockLimits:{timeoutMs:1000,maxOutputBytes:1024},idleMs:60000,renewMs:60000,leaseFor:'1m',foldHelper:async()=> 'fixture-fold',foldTimeoutMs:60000,conflict:()=>{}});
+const views=new HostedViews(host,control,env,()=>${JSON.stringify(capture)});
+await new Promise(resolve=>views.subscribe('client',answer.result.id,{frame:resolve,delayed:()=>{},failed:()=>{}},{fps:5,maxEdge:480}));
+const owner={device:{id:'client',name:'Client'},send:()=>{}};
+const begun=await views.begin('client',answer.result.id,owner,false,()=>true);if('code' in begun)throw new Error(begun.message);
+writeFileSync(${JSON.stringify(ready)},JSON.stringify(answer.result));void control.input(owner,begun.session,{input:'posture',posture:'unfolded'});
+`,
+    );
+    const owner = spawn(process.execPath, [script], { env: process.env, stdio: ['ignore', 'ignore', 'pipe'] });
+    let errors = '';
+    owner.stderr.on('data', (chunk: Buffer) => (errors += chunk.toString()));
+    let foldPid: number | undefined;
+    let capturePid: number | undefined;
+    const alive = (pid: number) => {
+      try {
+        process.kill(pid, 0);
+        return true;
+      } catch {
+        return false;
+      }
+    };
+    try {
+      await vi.waitFor(
+        () => {
+          if (owner.exitCode !== null || owner.signalCode !== null) throw new Error(errors || 'Fixture owner exited.');
+          expect(existsSync(started)).toBe(true);
+        },
+        { timeout: 5000 },
+      );
+      const session = JSON.parse(readFileSync(ready, 'utf8')) as { id: string };
+      foldPid = Number(readFileSync(started, 'utf8'));
+      capturePid = readClaimSet(join(deviceHostRoot(), `${session.id}.claims`)).live[0]!.child!.pid;
+      const exited = new Promise<void>((resolve) => owner.once('exit', () => resolve()));
+      owner.kill('SIGKILL');
+      await exited;
+      await vi.waitFor(() => expect(alive(capturePid!)).toBe(false));
+      expect(alive(foldPid)).toBe(true);
+      expect(host.stop('client', { session: session.id })).toHaveProperty('error.code', 'action-failed');
+      expect(existsSync(join(deviceHostArea(session.id), 'home', 'stopped'))).toBe(false);
+      process.kill(foldPid, 'SIGKILL');
+      await vi.waitFor(() => expect(alive(foldPid!)).toBe(false));
+      expect(host.stop('client', { session: session.id })).toHaveProperty('result.state', 'stopping');
+      await state(session.id, 'stopped');
+    } finally {
+      if (owner.exitCode === null && owner.signalCode === null) owner.kill('SIGKILL');
+      foldPid ??= existsSync(started) ? Number(readFileSync(started, 'utf8')) : undefined;
+      if (foldPid && alive(foldPid)) process.kill(foldPid, 'SIGKILL');
+      if (capturePid && alive(capturePid)) process.kill(capturePid, 'SIGKILL');
     }
   },
 );

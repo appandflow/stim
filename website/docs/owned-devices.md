@@ -591,5 +591,7 @@ worker derives the exact simulator from its private ledger and keeps the
 capture helper under the session's ownership claim. Reconnect preserves the
 native session; subscribe and begin control again. Installation, stop and
 revocation close capture and input before native work. An uncertain journal
-retains native ownership while ending known capture. Client viewer relays and
+retains native ownership while ending known capture. Surviving or unresolved
+posture input blocks native replacement and teardown after a server crash.
+Client viewer relays and
 automatic CLI placement remain under #2266.

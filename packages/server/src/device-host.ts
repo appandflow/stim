@@ -33,6 +33,7 @@ import {
   type HostedDeviceSession,
 } from '@stim-cli/core/state';
 import { writeJson } from './registry.ts';
+import { takeHostedInputClaim } from './hosted-input.ts';
 import type { Methods, ProtocolError } from './protocol.ts';
 import { appDelivery, offerHostedApp, chunkHostedApp, changeHostedApp } from './hosted-app.ts';
 
@@ -134,6 +135,12 @@ export class DeviceHost {
     if (attempt.pending) releaseClaim(attempt.pending);
     if (!attempt.acquired)
       throw new Error(`Hosted session is held by another process: ${join(deviceHostRoot(), `${record.id}.claims`)}`);
+    try {
+      releaseClaim(takeHostedInputClaim(attempt.acquired));
+    } catch (error) {
+      releaseClaim(attempt.acquired);
+      throw error;
+    }
     const owned = { claim: attempt.acquired };
     this.owned.set(record.id, owned);
     return owned;
@@ -472,6 +479,7 @@ export class DeviceHost {
     try {
       await this.closeView(owned);
       if (owned.stopping || this.closed || !this.options.allowed(record.client)) return;
+      releaseClaim(takeHostedInputClaim(owned.claim));
       const run = this.run(record, owned, 'install', attempt);
       owned.run = run;
       const outcome = await run.done;
@@ -575,6 +583,7 @@ export class DeviceHost {
     owned.run?.cancel();
     await this.closeMetro(owned);
     await this.closeView(owned);
+    releaseClaim(takeHostedInputClaim(owned.claim));
     if (owned.run) {
       owned.run.cancel();
       const outcome = await owned.run.done;

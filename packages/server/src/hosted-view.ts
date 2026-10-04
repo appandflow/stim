@@ -1,4 +1,5 @@
 import type { DeviceHost } from './device-host.ts';
+import type { ClaimHandle } from '@stim-cli/core/ownership-claim';
 import { ControlHub, type Controller } from './control.ts';
 import { DEFAULT_FRAME_LIMITS, FramePool, type Device, type FrameListener } from './frames.ts';
 import type { FrameHint } from './frame-helper.ts';
@@ -8,6 +9,7 @@ interface HostedView {
   device: Extract<Device, { platform: 'ios' }>;
   frames: FramePool;
   home: string;
+  claim: ClaimHandle;
   workspace: string;
   slot: string;
   listeners: Set<FrameListener>;
@@ -56,6 +58,7 @@ export class HostedViews {
         target.claim,
       ),
       home: target.home,
+      claim: target.claim,
       workspace: target.session.workspace,
       slot: target.session.slot,
       listeners: new Set(),
@@ -110,6 +113,7 @@ export class HostedViews {
           return false;
         }
       },
+      view.claim,
     );
   }
 

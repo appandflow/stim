@@ -284,7 +284,9 @@ outside it moves to its own issue and pull request.
   needs positive native process evidence for true.
   Hosted view and input resolve only a ready session's exact private ledger-owned
   iOS device while this server holds its session claim. Track the capture helper
-  as that claim's child, and close capture and control before installation or
+  as that claim's child. Give native posture input its own core child-aware claim
+  and refuse restarted ownership or native work while that input is live or
+  unresolved. Close capture and control before installation or
   native teardown. Wait for native input still running after disconnect or
   takeover, including termination of timed-out children. Revocation and server close end known transports even when
   the journal cannot be read or written; retain unresolved native claims.
