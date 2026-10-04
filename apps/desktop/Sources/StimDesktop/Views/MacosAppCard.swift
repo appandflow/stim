@@ -71,6 +71,10 @@ struct MacosAppCard: View {
     error = nil
     guard !Task.isCancelled else { return }
     guard app.state == "running", matches(app) else { return }
+    guard app.app?.pid != getpid() else {
+      error = "This is the viewer app. View its window from another Stim Desktop instance or your phone."
+      return
+    }
     guard CGPreflightScreenCaptureAccess() else {
       error = "Screen capture permission is unavailable. This prototype does not request permission."
       return
@@ -80,7 +84,8 @@ struct MacosAppCard: View {
       let content = try await SCShareableContent.excludingDesktopWindows(true, onScreenWindowsOnly: true)
       guard !Task.isCancelled, self.app?.launchId == app.launchId, matches(app) else { return }
       let windows = content.windows.filter { $0.owningApplication?.processID == app.app?.pid && $0.windowLayer == 0 }
-      guard windows.count == 1, let window = windows.first else {
+      let mainWindows = windows.filter { candidate in windows.allSatisfy { candidate.frame.contains($0.frame) } }
+      guard mainWindows.count == 1, let window = mainWindows.first else {
         error = "This prototype needs one visible app window."
         return
       }

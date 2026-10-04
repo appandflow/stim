@@ -44,6 +44,8 @@ Stim Desktop shows this app in its workspace, with Build and run, Refresh previe
 Open app and Stop. Capture and Open app verify the recorded executable, bundle
 identifier, PID and process start time. Open app rechecks the same captured window and one standard app window, then
 activates that owned app for normal native input.
+A main window with contained utility windows is supported; disjoint app windows
+refuse capture. The viewer never captures its own process recursively.
 The captured view is read-only; background mouse/keyboard relay is not included.
 
 Capture requires existing Screen Recording permission; Open app also requires
@@ -54,14 +56,21 @@ are not part of this prototype.
 
 DESKTOP DOGFOOD
 
-This repository's apps/desktop/.stim.json selects StimDesktop, its development
-plist and --playground. The Debug-only playground opens production screen
-fixtures with in-memory actions and avoids live backend initialization:
+This repository's apps/desktop/.stim.json selects the full StimDesktop app and
+its development plist. It monitors the regular Stim home alongside the installed
+app, with a workspace-specific bundle identifier and separate preferences.
+Its launch arguments disable automatic cleanup and notification alerts in this development copy.
+Use Window > SwiftUI Playground for in-memory production screen fixtures.
 
   cd apps/desktop
   stim macos
   stim logs --source build
   stim stop
+
+When using an unreleased CLI from this repository, build the packages first and
+set STIM_BIN to the absolute packages/stim-cli/dist/cli.mjs path before running
+that executable's macos command. The development app inherits this CLI override;
+the installed app's CLI preference and running server remain unchanged.
 
 Ask an agent: "In my Swift Package app, configure the executable product and a
 development Info.plist for stim macos. Build and show its owned window in Stim

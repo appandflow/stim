@@ -1269,12 +1269,20 @@ images. Its dependency belongs only to the visual test target.
 If Stim is not installed globally, replace `stim` with `npx stim`.
 This package includes explicit development settings for `stim macos`. From
 `apps/desktop`, run `stim macos` to build the `StimDesktop` Debug executable and
-launch its in-memory `--playground` entry in an isolated bundle. Inspect compiler
+launch the full app as **Stim Development** in an isolated bundle. It monitors
+the regular Stim home with separate preferences; automatic cleanup and notification alerts are disabled
+by its development launch arguments. **Window > SwiftUI Playground** opens the
+in-memory screen fixtures. Inspect compiler
 output with `stim logs --source build`, and use `stim stop` to stop only that
 workspace's recorded app. The normal Desktop viewer shows its app/build state,
-logs and one local owned window using existing Screen Recording permission.
+logs and one local owned main window using existing Screen Recording permission.
+Contained utility windows are supported; disjoint app windows refuse capture.
+The viewer skips its own process to prevent recursive previews.
 **Open app** verifies and activates that owned app using existing Accessibility
 permission for normal native input;
-the captured view is read-only. Background input relay is not included. Use **Refresh preview** after the app window opens or is resized. No permission changes, real backend initialization or custom packaging
-script is part of this flow. See [the macOS guide](../../website/docs/macos.md)
+the captured view is read-only. Background input relay is not included. Use **Refresh preview** after the app window opens or is resized. No permission changes or custom packaging
+script is part of this flow. For an unreleased CLI, run `pnpm run build` at the
+repository root, then set `STIM_BIN` to the absolute `packages/stim-cli/dist/cli.mjs`
+path and invoke that executable's `macos` command from `apps/desktop`. The app
+inherits the override without changing the installed app's preferences. See [the macOS guide](../../website/docs/macos.md)
 for the prototype's settings and limits.
