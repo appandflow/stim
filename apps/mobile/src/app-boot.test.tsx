@@ -10,6 +10,8 @@ import statusFixture from '../mock-server/fixtures/status.json';
 
 // expo-router/testing-library mocks Reanimated with `react-native-reanimated/mock`, which throws while loading under
 // Reanimated 4.7 and leaves an empty module, so the mock it loads is replaced.
+jest.mock('react-native-keyboard-controller', () => jest.requireActual('react-native-keyboard-controller/jest'));
+
 jest.mock('react-native-reanimated/mock', () => {
   const inert: () => unknown = () =>
     new Proxy(() => {}, { get: (_, key) => (key === 'value' ? 0 : inert()), apply: () => inert() });

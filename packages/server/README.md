@@ -1264,8 +1264,13 @@ sends reaches any other device.
   `input.touch` maps normalized captured-window coordinates to mouse events.
   `input.scroll` takes normalized `x`, `y` and `deltaX`, `deltaY` in pixels,
   each from -1000 to 1000. `input.key` accepts Escape, Tab, Return, Backspace,
-  arrows or `a/c/v/x/z/s/f`, with unique optional `command/shift/option/control`
-  modifiers. `input.text` retains the printable ASCII contract. Native windows
+  arrows or `a-z` and `0-9`, with unique optional `command/shift/option/control`
+  modifiers. Hello advertises `macos-keyboard-extended` for the expanded keys;
+  older servers accept only `a/c/v/x/z/s/f` plus navigation. Letter and digit
+  key events require the selected U.S. or ABC host input source because Apple
+  ANSI key codes identify physical U.S. positions; other layouts are refused
+  with a specific reason. `input.text` retains the printable ASCII contract,
+  and navigation keys do not depend on that host layout. Native windows
   reject simulator buttons, rotation and posture. The helper dynamically resolves
   private CoreGraphics `CGEventSetWindowLocation` to annotate PID-targeted pointer
   events. This is a macOS compatibility limit outside the phone and Mac App Store

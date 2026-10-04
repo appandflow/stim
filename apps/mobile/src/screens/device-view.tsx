@@ -7,8 +7,6 @@ import {
   Alert,
   Keyboard,
   PixelRatio,
-  Platform as OS,
-  TextInput,
   useWindowDimensions,
   View,
   type GestureResponderEvent,
@@ -21,14 +19,8 @@ import {
   useExclusiveGestures,
   useTapGesture,
 } from 'react-native-gesture-handler';
-import Animated, {
-  useAnimatedReaction,
-  useAnimatedStyle,
-  useReducedMotion,
-  useSharedValue,
-  withTiming,
-  type SharedValue,
-} from 'react-native-reanimated';
+import Animated, { useAnimatedReaction, useAnimatedStyle, useReducedMotion, withTiming } from 'react-native-reanimated';
+import { useKeyboardState, useReanimatedKeyboardAnimation } from 'react-native-keyboard-controller';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { scheduleOnRN } from 'react-native-worklets';
 import { useHinges } from 'react-native-hinges';
@@ -47,8 +39,8 @@ import { Pill } from '@/components/pill';
 import { ReplayBar } from '@/components/replay-bar';
 import { Text } from '@/components/text';
 import { Touch } from '@/components/touch';
+import { ViewerKeyboard } from '@/components/viewer-keyboard';
 import { ViewerBackdrop } from '@/components/viewer-backdrop';
-import { withAlpha } from '@/design/color';
 import { useAutoHide } from '@/hooks/auto-hide';
 import { useDeviceStream, useReplayAt } from '@/hooks/device-stream';
 import { useReplayRange } from '@/hooks/replay-range';
@@ -59,7 +51,7 @@ import { grantCommand, readOnlyReason, allowControlSteps } from '@/components/re
 import { useDeviceControl } from '@/hooks/device-control';
 import { useMacConnection, useWorkspace } from '@/hooks/machines';
 import { useSettings, type VideoQuality } from '@/hooks/settings';
-import { framePoint, keyboardDelta, orientationOf, otherDriver } from '@/lib/device-control';
+import { framePoint, orientationOf, otherDriver } from '@/lib/device-control';
 import { foldOf } from '@/lib/fold';
 import { buildTimeline } from '@/lib/replay';
 import { LIVE_VIEW, replayView } from '@/lib/replay-view';
@@ -225,13 +217,14 @@ export function DeviceView({
   const keyboard = useRef<TextInputInstance>(null);
   const [typing, setTyping] = useState(false);
   const [scrolling, setScrolling] = useState(false);
-  const [typed, setTyped] = useState('');
   const [moving, setMoving] = useState<DevicePosture | null>(null);
   const [changingOption, setChangingOption] = useState(false);
   const [barBottom, setBarBottom] = useState(0);
   const [bannerHeight, setBannerHeight] = useState(0);
   const [barSides, setBarSides] = useState<[number, number]>([0, 0]);
-  const { height: keyboardHeight, shown: keyboardShown } = useKeyboardHeight();
+  const { height: keyboardHeight } = useReanimatedKeyboardAnimation();
+  const keyboardShown = useKeyboardState((state) => state.isVisible);
+  const [typingBarHeight, setTypingBarHeight] = useState(TYPING_BAR_HEIGHT);
   const typingBarShown = typing && keyboardShown;
   useEffect(() => {
     if (!keyboardShown || !controlling) keyboard.current?.blur();
@@ -239,17 +232,16 @@ export function DeviceView({
   const rest = zoom.screenRect;
   const headerGap = theme.space.md;
   const lift = useAnimatedStyle(() => {
-    const covered = keyboardHeight.get();
+    const covered = -keyboardHeight.get();
     if (!rest || covered <= 0 || rootHeight <= 0) return { transform: [{ translateY: 0 }] };
     const shift = liftAbove(
       rest[1],
       rest[3],
-      rootHeight - covered - TYPING_BAR_HEIGHT,
+      rootHeight - covered - typingBarHeight,
       insets.top + barBottom + headerGap,
     );
     return { transform: [{ translateY: -shift }] };
   });
-  const typingBar = useAnimatedStyle(() => ({ transform: [{ translateY: -keyboardHeight.get() }] }));
   const [rotateNote, setRotateNote] = useState<{ text: string; turned: boolean } | null>(null);
   useAnnounce(rest ? rotateNote?.text : null);
   const screenReader = useScreenReaderEnabled();
@@ -339,7 +331,6 @@ export function DeviceView({
   const toggle = () => {
     if (control.state.kind === 'starting') return;
     if (controlling) return control.end();
-    setTyped('');
     if (driver) return takeOver();
     control.begin(false);
   };
@@ -442,26 +433,6 @@ export function DeviceView({
               selected={scrolling}
               disabled={readOnly}
               onPress={() => setScrolling(!scrolling)}
-            />
-            <ToolButton icon="keyboard" label={t`Tab`} disabled={readOnly} onPress={() => control.key('tab')} />
-            <ToolButton icon="xmark" label={t`Escape`} disabled={readOnly} onPress={() => control.key('escape')} />
-            <ToolButton
-              icon="checkmark"
-              label={t`Select all`}
-              disabled={readOnly}
-              onPress={() => control.key('a', ['command'])}
-            />
-            <ToolButton
-              icon="arrow.counterclockwise"
-              label={t`Undo`}
-              disabled={readOnly}
-              onPress={() => control.key('z', ['command'])}
-            />
-            <ToolButton
-              icon="internaldrive"
-              label={t`Save`}
-              disabled={readOnly}
-              onPress={() => control.key('s', ['command'])}
             />
           </>
         ) : null}
@@ -690,7 +661,6 @@ export function DeviceView({
                 }}
                 onPress={() => {
                   Keyboard.dismiss();
-                  keyboardHeight.set(withTiming(0, { duration: 200 }));
                   zoom.close();
                 }}
                 accessibilityLabel={t`Close`}
@@ -820,51 +790,18 @@ export function DeviceView({
               </Text>
             </Animated.View>
           ) : null}
-          <Animated.View
-            style={[
-              styles.typingBar,
-              { paddingLeft: theme.space.xl + insets.left, paddingRight: theme.space.xl + insets.right },
-              typingBar,
-              !typingBarShown && styles.hidden,
-            ]}
-            pointerEvents={typingBarShown ? 'auto' : 'none'}
-            accessibilityElementsHidden={!typingBarShown}
-            importantForAccessibility={typingBarShown ? 'auto' : 'no-hide-descendants'}
-          >
-            <TextInput
-              ref={keyboard}
-              style={styles.typed}
-              placeholder={t`Type on the device`}
-              placeholderTextColor={withAlpha(theme.media.text, theme.opacity.disabled)}
-              value={typed}
-              autoCapitalize="none"
-              autoCorrect={false}
-              spellCheck={false}
-              keyboardType="ascii-capable"
-              disableFullscreenUI
-              submitBehavior="submit"
-              onChangeText={(next) => {
-                const delta = keyboardDelta(typed, next);
-                setTyped(next);
-                if (delta) control.text(delta);
-              }}
-              onKeyPress={(event) => {
-                if (event.nativeEvent.key === 'Backspace' && typed === '') control.text('\b');
-              }}
-              onSubmitEditing={() => {
-                setTyped('');
-                control.text('\n');
-              }}
-              onFocus={() => setTyping(true)}
-              onBlur={() => setTyping(false)}
-              accessibilityLabel={t`Type on the device`}
-            />
-            <Touch onPress={() => keyboard.current?.blur()} style={styles.typingDone}>
-              <Text weight="semibold" tone="brand">
-                <Trans>Done</Trans>
-              </Text>
-            </Touch>
-          </Animated.View>
+          <ViewerKeyboard
+            key={control.state.kind === 'on' ? control.state.session : 'off'}
+            keyboard={keyboard}
+            shown={typingBarShown}
+            macos={platform === 'macos'}
+            extendedKeys={link.kind === 'open' && link.features.includes('macos-keyboard-extended')}
+            onFocus={() => setTyping(true)}
+            onBlur={() => setTyping(false)}
+            onHeight={setTypingBarHeight}
+            text={control.text}
+            onKey={control.key}
+          />
         </View>
       </GestureDetector>
     </GestureHandlerRootView>
@@ -1106,12 +1043,6 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  typingDone: {
-    minWidth: MIN_TARGET,
-    minHeight: MIN_TARGET,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
   control: (on: boolean) => ({
     flexDirection: 'row',
     alignItems: 'center',
@@ -1122,49 +1053,4 @@ const styles = StyleSheet.create((theme) => ({
     backgroundColor: on ? theme.colors.primary : theme.media.fill,
   }),
   controlText: (on: boolean) => ({ color: on ? theme.colors.onPrimary : theme.media.text }),
-  typingBar: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    bottom: 0,
-    height: TYPING_BAR_HEIGHT,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: theme.space.lg,
-    backgroundColor: theme.media.bar,
-  },
-  hidden: { opacity: 0 },
-  typed: {
-    flex: 1,
-    height: 40,
-    paddingHorizontal: theme.space.lg,
-    borderRadius: theme.radius.control,
-    backgroundColor: theme.media.fill,
-    color: theme.media.text,
-    fontSize: theme.typography.body.fontSize,
-  },
 }));
-
-function useKeyboardHeight(): { height: SharedValue<number>; shown: boolean } {
-  const height = useSharedValue(0);
-  const [shown, setShown] = useState(false);
-  // React Native's Android keyboard events report the IME inset minus the system bars' bottom inset.
-  const { bottom } = useSafeAreaInsets();
-  const barInset = OS.OS === 'android' ? bottom : 0;
-  useEffect(() => {
-    const show = OS.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
-    const hide = OS.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
-    const subscriptions = [
-      Keyboard.addListener(show, (event) => {
-        setShown(true);
-        height.set(withTiming(event.endCoordinates.height + barInset, { duration: event.duration || 250 }));
-      }),
-      Keyboard.addListener(hide, (event) => {
-        setShown(false);
-        height.set(withTiming(0, { duration: event.duration || 250 }));
-      }),
-    ];
-    return () => subscriptions.forEach((subscription) => subscription.remove());
-  }, [height, barInset]);
-  return { height, shown };
-}

@@ -19,6 +19,8 @@ let mockFeatures = ['frames'];
 const mockKey = jest.fn();
 const mockDriver = { state: 'driven', driver: { tool: 'agent-device', pid: 1, since: '2026-10-01' }, basis: [] };
 
+jest.mock('react-native-keyboard-controller', () => jest.requireActual('react-native-keyboard-controller/jest'));
+
 jest.mock('expo-router', () => ({
   useLocalSearchParams: () => ({ id: 'm1' }),
   useRouter: () => ({ back: jest.fn() }),
@@ -181,7 +183,7 @@ it('keeps physical iPhones view-only without rotation buttons', async () => {
   expect(screen.queryByLabelText('Rotate right')).toBeNull();
 });
 
-it('offers native mouse scrolling and shortcuts without simulator buttons', async () => {
+it('keeps native mouse scrolling in the main bar without simulator buttons', async () => {
   mockFeatures = ['macos-window', 'macos-window-control'];
   const screen = await render(
     <I18nProvider i18n={i18n}>
@@ -193,6 +195,6 @@ it('offers native mouse scrolling and shortcuts without simulator buttons', asyn
   expect(screen.queryByLabelText('Home')).toBeNull();
   expect(screen.queryByLabelText('Lock')).toBeNull();
   expect(screen.queryByLabelText('Back')).toBeNull();
-  await fireEvent.press(screen.getByLabelText('Select all'));
-  expect(mockKey).toHaveBeenCalledWith('a', ['command']);
+  expect(screen.getByLabelText('Keyboard')).toBeTruthy();
+  expect(screen.queryByLabelText('Select all')).toBeNull();
 });

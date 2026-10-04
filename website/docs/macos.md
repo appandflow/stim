@@ -80,8 +80,25 @@ Status and logs remain available. Close and reopen the viewer after opening or
 resizing the app window.
 
 With `macos-window-control` and a control pairing, tap **Control** for clicks,
-drags, printable ASCII typing and Tab, Escape, Select all, Undo and Save.
-Toggle **Scroll** to scroll with a drag. Each action rechecks the exact owned
+drags and printable ASCII typing. The main bar offers **Keyboard** and **Scroll**;
+Scroll turns a drag into scrolling. Keyboard attaches a strip for Tab, Escape,
+Backspace, arrows and labeled Select all, Undo, Save, Copy, Paste, Cut and Find.
+Shift, Control, Option and Command apply to the next supported key and then
+clear; dismissing the keyboard also clears them.
+
+This requires a newly built phone client with Keyboard Controller, rather than
+an update to an older binary. A server advertising `macos-keyboard-extended`
+accepts modified letters `a-z` and digits `0-9` one at a time. Older servers keep
+fixed shortcuts and navigation; the phone explains when a server update is
+needed. Modified multi-character input and symbols are unsupported.
+
+Letter and digit shortcuts require the **Mac's U.S. or ABC keyboard layout**.
+Native virtual key codes identify physical U.S. positions; another host layout
+could turn a shortcut into a different command. The helper refuses letter and
+digit key events on other layouts; ordinary typing and navigation still work.
+[#2422](https://github.com/appandflow/stim/issues/2422) tracks logical shortcuts for other host layouts.
+
+Each action rechecks the exact owned
 process and the same single standard window; modal or disjoint windows, changed
 capture or resize refuse input. Contained nonmodal auxiliaries are allowed; only
 the focused captured main receives input. The server holds one exclusive session per app, ending
