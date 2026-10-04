@@ -62,6 +62,45 @@ describe('homeSections', () => {
   });
 });
 
+describe('monorepo workspace grouping', () => {
+  const linked = (path: string, checkout: string, extra: Partial<EnvironmentState> = {}) =>
+    env(path, { worktree: { path: checkout, repository: '/repo', branch: 'feat/shared' }, ...extra });
+
+  it('shows a linked checkout once with each app route and counts its workspace once', () => {
+    const mobile = item(
+      'repo',
+      'feat/shared',
+      linked('/checkout/apps/mobile', '/checkout', { phase: 'ready' }),
+      'apps/mobile',
+    );
+    const desktop = item(
+      'repo',
+      'feat/shared',
+      linked('/checkout/apps/desktop', '/checkout', { live: true }),
+      'apps/desktop',
+    );
+    const sections = homeSections([mobile, desktop]);
+    expect(sections).toHaveLength(1);
+    expect(sections[0]).toMatchObject({ live: 1, idle: 0 });
+    expect(sections[0].data).toHaveLength(1);
+    expect(sections[0].data[0].apps).toEqual([desktop, mobile]);
+    expect(sections[0].data[0].apps.map((app) => [app.macId, app.env.path])).toEqual([
+      ['mac', '/checkout/apps/desktop'],
+      ['mac', '/checkout/apps/mobile'],
+    ]);
+  });
+
+  it('keeps other checkouts, machines and unknown checkout identities separate', () => {
+    const first = item('repo', 'feat/shared', linked('/one/apps/mobile', '/one'), 'apps/mobile');
+    const anotherCheckout = item('repo', 'feat/shared', linked('/two/apps/mobile', '/two'), 'apps/mobile');
+    const anotherMac = { ...first, key: 'other\n/one/apps/mobile', macId: 'other' };
+    const noIdentity = item('repo', 'feat/shared', env('/one'));
+    const oldNested = item('repo', 'feat/shared', env('/one/apps/desktop'), 'apps/desktop');
+    const nested = item('repo', 'feat/shared', linked('/one/nested/app', '/one/nested'), 'app');
+    expect(homeSections([first, anotherCheckout, anotherMac, noIdentity, oldNested, nested])[0].data).toHaveLength(6);
+  });
+});
+
 describe('checkoutProjects', () => {
   it('names only repos whose workspaces sit in different folders', () => {
     const projects = checkoutProjects([

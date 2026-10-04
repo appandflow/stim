@@ -81,7 +81,12 @@ performance traces. Every release is listed under
   without retrying through the CLI.
 - **Phones.** Pair the Stim phone app, and watch a leased phone from the
   desktop: Android can be controlled, an iPhone over USB is view only. Needs
-  **Serve to phones**. On wide iPad and Duo windows, the app keeps its navigation
+  **Serve to phones**. The phone's workspace list groups app projects from one
+  linked Git checkout under one branch heading. Tap each app child for its own
+  devices, logs and commands. Different machines and checkouts remain separate.
+  Primary checkouts and older servers lacking checkout identity still show separate
+  app rows; [#2418](https://github.com/appandflow/stim/issues/2418) tracks that addition.
+  Desktop's sidebar retains its app rows. On wide iPad and Duo windows, the app keeps its navigation
   beside the main screen; details use the full window. A book fold aligns the panes with the display
   division; a narrow cover screen uses the menu drawer. Duo fold detection
   needs an app built with the iOS 27.1 SDK and an iOS 27.1 runtime.
