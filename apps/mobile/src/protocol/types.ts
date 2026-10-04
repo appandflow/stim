@@ -614,7 +614,7 @@ export interface ReplayEndedEvent {
 /** Needs `control`. The server refuses with `device-busy` while something else drives the device. */
 export interface ControlBeginParams {
   workspace: string;
-  platform: Exclude<DevicePlatform, 'macos'>;
+  platform: DevicePlatform;
   slot?: string;
   takeOver?: boolean;
   /** Controls the physical device the workspace leases in `slot`, while that lease lasts. */
@@ -642,6 +642,24 @@ export type InputSimulatorParams = SimulatorCommand & { session: string };
 export type TouchPhase = 'down' | 'move' | 'up';
 
 export type InputButton = 'home' | 'lock' | 'back' | 'app-switch';
+
+export type InputKey =
+  | 'escape'
+  | 'tab'
+  | 'return'
+  | 'backspace'
+  | 'left'
+  | 'right'
+  | 'up'
+  | 'down'
+  | 'a'
+  | 'c'
+  | 'v'
+  | 'x'
+  | 'z'
+  | 's'
+  | 'f';
+export type KeyModifier = 'command' | 'shift' | 'option' | 'control';
 
 export type RotateDirection = 'left' | 'right';
 
@@ -854,6 +872,11 @@ export interface Methods {
   };
   /** Printable ASCII; `\n` presses Return, `\t` Tab and `\b` Delete. */
   'input.text': { params: { session: string; text: string }; result: Record<string, never> };
+  'input.scroll': {
+    params: { session: string; x: number; y: number; deltaX: number; deltaY: number };
+    result: Record<string, never>;
+  };
+  'input.key': { params: { session: string; key: InputKey; modifiers?: KeyModifier[] }; result: Record<string, never> };
   'input.button': { params: { session: string; button: InputButton }; result: Record<string, never> };
   'input.rotate': { params: { session: string; direction: RotateDirection }; result: Record<string, never> };
   'input.simulator': { params: InputSimulatorParams; result: SimulatorOptions };

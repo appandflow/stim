@@ -107,6 +107,8 @@ const INPUT_METHODS = [
   'input.rotate',
   'input.posture',
   'input.simulator',
+  'input.scroll',
+  'input.key',
 ] as const;
 
 export interface ServerOptions {

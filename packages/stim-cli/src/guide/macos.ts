@@ -53,13 +53,29 @@ existing Accessibility permission. Neither asks for permission or changes grants
 read the workspace logs. Use Refresh preview after the app window opens or is
 resized to rebind capture.
 
-PHONE MONITORING
+PHONE VIEWING AND CONTROL
 
 A paired phone shows native app and build state in the workspace and home list.
 Tap the app tile to view its one visible window through stim-server. The server
 requires read access and its macos-window feature; it rechecks the recorded PID,
 process start time, executable and bundle before capture and on every frame.
-It never captures the desktop or another application, and offers no input or replay.
+It never captures the desktop or another application, and offers no replay.
+
+A server advertising macos-window-control also supports the phone's Control
+mode on a control pairing. Tap/click and drag act on the displayed window;
+Scroll mode turns a drag into pixel scrolling. Keyboard types printable ASCII,
+and the toolbar offers Tab, Escape, Select all, Undo and Save shortcuts.
+Control holds one exclusive server session per owned app, ends on disconnect,
+revocation, takeover or five minutes without input, and does not take a CLI
+simulator/device lock. Each action rechecks the exact owned process and the
+same single standard app window. Modal or disjoint windows, changed capture or
+resize refuse input until the viewer reconnects. Contained nonmodal auxiliaries
+are allowed; only the focused captured main receives input. Existing Accessibility permission is required;
+Stim never requests or resets it. A refusal ends Control with its reason while
+viewing and logs remain usable. Older servers remain view-only.
+Native Control uses dynamically resolved private CoreGraphics input SPI in the
+server helper, outside the phone and Mac App Store app binaries. A missing symbol
+or incompatible macOS version refuses Control while viewing and logs remain usable.
 
 The existing capture host needs Screen Recording permission. If capture is denied,
 the viewer explains where to allow that host in System Settings; Stim never

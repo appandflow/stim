@@ -15,6 +15,8 @@ const mockZoom = jest.fn();
 let mockControlling = true;
 let mockAllowed = true;
 let mockPhysical = false;
+let mockFeatures = ['frames'];
+const mockKey = jest.fn();
 const mockDriver = { state: 'driven', driver: { tool: 'agent-device', pid: 1, since: '2026-10-01' }, basis: [] };
 
 jest.mock('expo-router', () => ({
@@ -58,7 +60,7 @@ jest.mock('@/hooks/machines', () => ({
   }),
   useMacConnection: () => ({
     mac: { id: 'm1', name: 'Fixture Mac' },
-    state: { kind: 'open', deviceId: 'phone', features: ['frames'] },
+    state: { kind: 'open', deviceId: 'phone', features: mockFeatures },
     connection: null,
   }),
 }));
@@ -71,6 +73,7 @@ jest.mock('@/hooks/device-control', () => ({
     begin: mockBegin,
     end: jest.fn(),
     rotate: mockRotate,
+    key: mockKey,
   }),
 }));
 jest.mock('@/hooks/device-stream', () => ({
@@ -119,6 +122,7 @@ beforeEach(() => {
   mockControlling = true;
   mockAllowed = true;
   mockPhysical = false;
+  mockFeatures = ['frames'];
   jest.clearAllMocks();
 });
 
@@ -175,4 +179,20 @@ it('keeps physical iPhones view-only without rotation buttons', async () => {
   );
   expect(screen.queryByLabelText('Rotate left')).toBeNull();
   expect(screen.queryByLabelText('Rotate right')).toBeNull();
+});
+
+it('offers native mouse scrolling and shortcuts without simulator buttons', async () => {
+  mockFeatures = ['macos-window', 'macos-window-control'];
+  const screen = await render(
+    <I18nProvider i18n={i18n}>
+      <DeviceView workspace="/fixture" platform="macos" slot="default" />
+    </I18nProvider>,
+  );
+  expect(screen.getByLabelText('Scroll')).toBeTruthy();
+  expect(screen.queryByLabelText('Rotate left')).toBeNull();
+  expect(screen.queryByLabelText('Home')).toBeNull();
+  expect(screen.queryByLabelText('Lock')).toBeNull();
+  expect(screen.queryByLabelText('Back')).toBeNull();
+  await fireEvent.press(screen.getByLabelText('Select all'));
+  expect(mockKey).toHaveBeenCalledWith('a', ['command']);
 });
