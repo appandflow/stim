@@ -27,6 +27,7 @@ export default defineConfig({
         'helper/VideoEncoder.swift',
         'helper/PhoneSource.swift',
         'helper/FrameArtwork.swift',
+        'helper/MacosSource.swift',
         ...desktop.map((path) => `../../apps/desktop/Sources/${path}`),
       ]) {
         copyFileSync(source, `dist/stim-frames/${basename(source)}`);

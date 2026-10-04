@@ -928,12 +928,15 @@ msgid "Budgets"
 msgstr "Budgets"
 
 #: src/components/workspace-cards.tsx
+#: src/components/workspace-cards.tsx
 #: src/lib/logs.ts
 #: src/lib/workspace-view.ts
 #: src/screens/build-details.tsx
 msgid "Build"
 msgstr "Build"
 
+#: src/components/workspace-cards.tsx
+#: src/lib/device-tile.ts
 #: src/lib/workspace-view.ts
 msgid "Build failed"
 msgstr "Build failed"
@@ -958,6 +961,8 @@ msgstr "Build-tools missing"
 msgid "Build: {spoken}"
 msgstr "Build: {spoken}"
 
+#: src/components/workspace-cards.tsx
+#: src/lib/device-tile.ts
 #: src/lib/workspace-view.ts
 msgid "Building"
 msgstr "Building"
@@ -986,6 +991,10 @@ msgstr "Building {platform}, slot {slot}"
 #: src/screens/mac-status.tsx
 msgid "Builds for other Macs"
 msgstr "Builds for other Macs"
+
+#: src/components/workspace-cards.tsx
+msgid "Built"
+msgstr "Built"
 
 #: src/lib/build-machines.ts
 msgid "Built here"
@@ -1604,6 +1613,10 @@ msgstr "Error"
 msgid "Errors"
 msgstr "Errors"
 
+#: src/screens/device-view.tsx
+msgid "Escape"
+msgstr "Escape"
+
 #: src/lib/workspace-view.ts
 msgid "est."
 msgstr "est."
@@ -2095,6 +2108,14 @@ msgstr "Machine status"
 #: src/screens/settings.tsx
 msgid "Machines"
 msgstr "Machines"
+
+#: src/lib/workspaces.ts
+msgid "macOS app"
+msgstr "macOS app"
+
+#: src/components/workspace-cards.tsx
+msgid "macOS build: {state}"
+msgstr "macOS build: {state}"
 
 #: src/screens/about.tsx
 msgid "Made by App&Flow"
@@ -2613,6 +2634,10 @@ msgid "Opens {name}"
 msgstr "Opens {name}"
 
 #: src/components/workspace-cards.tsx
+msgid "Opens build logs"
+msgstr "Opens build logs"
+
+#: src/components/workspace-cards.tsx
 msgid "Opens the logs"
 msgstr "Opens the logs"
 
@@ -3028,6 +3053,7 @@ msgstr "Same {language} error {count}x at {file}:{line}"
 msgid "Same {name} build error {count}x at {file}:{line}"
 msgstr "Same {name} build error {count}x at {file}:{line}"
 
+#: src/screens/device-view.tsx
 #: src/screens/pair.tsx
 #: src/screens/rename.tsx
 msgid "Save"
@@ -3047,6 +3073,10 @@ msgid "Screen updates delayed"
 msgstr "Screen updates delayed"
 
 #: src/screens/device-view.tsx
+msgid "Scroll"
+msgstr "Scroll"
+
+#: src/screens/device-view.tsx
 msgid "Scrub below to replay what it recorded."
 msgstr "Scrub below to replay what it recorded."
 
@@ -3057,6 +3087,10 @@ msgstr "Search (regular expression)"
 #: src/screens/logs.tsx
 msgid "Search logs"
 msgstr "Search logs"
+
+#: src/screens/device-view.tsx
+msgid "Select all"
+msgstr "Select all"
 
 #: src/lib/build-machines.ts
 #: src/lib/build-machines.ts
@@ -3394,6 +3428,10 @@ msgstr "Sync"
 msgid "System"
 msgstr "System"
 
+#: src/screens/device-view.tsx
+msgid "Tab"
+msgstr "Tab"
+
 #: src/lib/build-machines.ts
 msgid "Tailscale is off"
 msgstr "Tailscale is off"
@@ -3543,6 +3581,10 @@ msgid "Under the {budgetSize} Stim budget"
 msgstr "Under the {budgetSize} Stim budget"
 
 #: src/screens/device-view.tsx
+msgid "Undo"
+msgstr "Undo"
+
+#: src/screens/device-view.tsx
 msgid "Unfold"
 msgstr "Unfold"
 
@@ -3605,6 +3647,10 @@ msgstr "Update stim-server on the Mac to see caches, runtimes and what Stim can 
 #: src/lib/workspaces.ts
 msgid "Update stim-server on the Mac to see this device's screen."
 msgstr "Update stim-server on the Mac to see this device's screen."
+
+#: src/lib/workspaces.ts
+msgid "Update stim-server on the Mac to view this app window."
+msgstr "Update stim-server on the Mac to view this app window."
 
 #: src/screens/inbox.tsx
 msgid "Update stim-server on your Macs to keep a history of their notifications."

@@ -10,6 +10,8 @@ import {
   listSegments,
   loadConfig,
   parseNdjsonLine,
+  RECORDING_PLATFORMS,
+  type RecordingPlatform,
   type NdjsonRecord,
   type StatusPayload,
 } from '@stim-cli/core/state';
@@ -106,6 +108,8 @@ const INPUT_METHODS = [
   'input.rotate',
   'input.posture',
   'input.simulator',
+  'input.scroll',
+  'input.key',
 ] as const;
 
 export interface ServerOptions {
@@ -922,7 +926,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         return error(
           id,
           'bad-request',
-          'frames.subscribe needs params.workspace and params.platform (ios, android or web).',
+          'frames.subscribe needs params.workspace and params.platform (ios, android, web or macos).',
         );
       }
       if (slot !== undefined && (typeof slot !== 'string' || !SLOT_NAME.test(slot))) {
@@ -964,8 +968,11 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         maxEdge: (maxEdge as number | undefined) ?? FRAME_EDGE.default,
       };
       if (!hosted && !workspaceDir(id, workspace, true)) return;
-      const replayDir = recordingDir(workspace, platform as Platform, typeof slot === 'string' ? slot : 'default');
-      if (replayAt && (physical || !hasFootage(replayDir))) {
+      const replayDir =
+        platform === 'macos'
+          ? null
+          : recordingDir(workspace, platform as RecordingPlatform, typeof slot === 'string' ? slot : 'default');
+      if (replayAt && (physical || replayDir === null || !hasFootage(replayDir))) {
         return error(
           id,
           'no-recording',
@@ -1085,7 +1092,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         detach = null;
         attached = null;
         player = new Player(
-          replayDir,
+          replayDir!,
           {
             unit: (unit) => {
               if (!ended && socket.readyState === socket.OPEN) socket.send(videoPacket(subscription, sequence++, unit));
@@ -1118,7 +1125,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         });
         replays.set(subscription, {
           seek: (seekAt, seekRate) => {
-            if (physical || !hasFootage(replayDir)) return null;
+            if (physical || replayDir === null || !hasFootage(replayDir)) return null;
             const wasLive = player === null;
             const shown = replay().seek(seekAt, seekRate);
             if (shown === null && wasLive) goLive();
@@ -1325,7 +1332,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     function replayRange(id: RequestId, params: unknown): void {
       const target = isJsonObject(params) ? params : {};
       const { workspace, platform, slot } = target;
-      if (typeof workspace !== 'string' || !PLATFORMS.includes(platform as Platform)) {
+      if (typeof workspace !== 'string' || !RECORDING_PLATFORMS.includes(platform as RecordingPlatform)) {
         return error(
           id,
           'bad-request',
@@ -1341,8 +1348,8 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         return error(id, 'limit-exceeded', `A connection can run ${MAX_COMMANDS} requests at a time.`);
       }
       const slotName = slot ?? 'default';
-      const spans = recordedSpans(listSegments(recordingDir(workspace, platform as Platform, slotName)));
-      const replayTarget = { workspace, platform: platform as Platform, slot: slotName };
+      const spans = recordedSpans(listSegments(recordingDir(workspace, platform as RecordingPlatform, slotName)));
+      const replayTarget = { workspace, platform: platform as RecordingPlatform, slot: slotName };
       const state = {
         enabled: recorder?.enabled(workspace) ?? false,
         recording: recorder?.recording(replayTarget) ?? false,
@@ -1360,7 +1367,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         const failed = [actions, errors].find((result) => typeof result === 'string');
         if (typeof failed === 'string') return error(id, 'stim-failed', failed);
         const records = [...(actions as NdjsonRecord[]), ...(errors as NdjsonRecord[])];
-        const markers = timelineMarkers(records, platform as Platform, slotName, spans[0]!.start);
+        const markers = timelineMarkers(records, platform as RecordingPlatform, slotName, spans[0]!.start);
         return send(socket, { id, result: { ...state, markers } });
       });
     }
@@ -1368,7 +1375,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     function replayKeyframe(id: RequestId, params: unknown): void {
       const target = isJsonObject(params) ? params : {};
       const { workspace, platform, slot, at } = target;
-      if (typeof workspace !== 'string' || !PLATFORMS.includes(platform as Platform)) {
+      if (typeof workspace !== 'string' || !RECORDING_PLATFORMS.includes(platform as RecordingPlatform)) {
         return error(
           id,
           'bad-request',
@@ -1385,23 +1392,25 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         return error(id, 'limit-exceeded', `A connection can read ${MAX_KEYFRAME_READS} keyframes at a time.`);
       }
       keyframeReads++;
-      void segmentKeyframe(recordingDir(workspace, platform as Platform, slot ?? 'default'), at).then((found) => {
-        keyframeReads--;
-        if (!found) return error(id, 'no-recording', 'Nothing was recorded for this device.');
-        const { segment, unit } = found;
-        return send(socket, {
-          id,
-          result: {
-            start: segment.start,
-            end: segment.end,
-            at: unit.capturedAt,
-            width: unit.width,
-            height: unit.height,
-            ...(unit.posture ? { posture: unit.posture } : {}),
-            data: unit.data.toString('base64'),
-          },
-        });
-      });
+      void segmentKeyframe(recordingDir(workspace, platform as RecordingPlatform, slot ?? 'default'), at).then(
+        (found) => {
+          keyframeReads--;
+          if (!found) return error(id, 'no-recording', 'Nothing was recorded for this device.');
+          const { segment, unit } = found;
+          return send(socket, {
+            id,
+            result: {
+              start: segment.start,
+              end: segment.end,
+              at: unit.capturedAt,
+              width: unit.width,
+              height: unit.height,
+              ...(unit.posture ? { posture: unit.posture } : {}),
+              data: unit.data.toString('base64'),
+            },
+          });
+        },
+      );
     }
 
     function setRecording(id: RequestId, params: unknown, session: PairedDevice): void {

@@ -105,6 +105,33 @@ describe('devicesOf', () => {
   });
 });
 
+describe('native macOS apps', () => {
+  it('keeps native app state on Home and allows only verified running windows from a supporting server', () => {
+    const macos: NonNullable<EnvironmentState['macos']> = {
+      launchId: 'native-launch',
+      product: 'MyApp',
+      arguments: [],
+      state: 'running',
+      bundle: '/MyApp.app',
+      bundleId: 'dev.myapp',
+      executable: '/MyApp.app/Contents/MacOS/MyApp',
+      build: { state: 'ok', startedAt: '2026-10-04T12:00:00Z' },
+      app: { pid: 42, processToken: 'owned', startedAtMicros: 123 },
+    };
+    const workspace = env('/native', { macos });
+    const [device] = devicesOf(workspace);
+    expect(device).toMatchObject({ platform: 'macos', slot: 'default', name: 'MyApp', running: true });
+    expect(isActive(workspace)).toBe(true);
+    expect(livePlatforms(workspace)).toEqual(['macos']);
+    expect(streamsFrames(device!, ['macos-window'])).toBe(true);
+    expect(streamsFrames(device!, [])).toBe(false);
+    const [stopped] = devicesOf(env('/native', { macos: { ...macos, state: 'stopped' } }));
+    expect(stopped).toMatchObject({ name: 'MyApp', running: false });
+    expect(streamsFrames(stopped!, ['macos-window'])).toBe(false);
+    expect(isActive(env('/native', { macos: { ...macos, state: 'stopped' } }))).toBe(false);
+  });
+});
+
 describe('the Stim-owned Chrome', () => {
   it('is a Web device with its current page, its load failure and its driver', () => {
     const web: WebBrowserState = {

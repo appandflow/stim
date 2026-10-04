@@ -145,7 +145,9 @@ export function DeviceView({
     : undefined;
   const { mac, state: link, connection } = useMacConnection();
   const running = Boolean(device?.running && streamsFrames(device, link.kind === 'open' ? link.features : null));
-  const viewOnly = physical && platform === 'ios';
+  const viewOnly =
+    (physical && platform === 'ios') ||
+    (platform === 'macos' && (link.kind !== 'open' || !link.features.includes('macos-window-control')));
   const slotRange = useReplayRange({ workspace, platform, slot });
   const range = physical ? null : slotRange;
   const replayOff = !physical && env?.recording?.enabled === false;
@@ -157,7 +159,10 @@ export function DeviceView({
   const [scrubbing, setScrubbing] = useState(false);
   const [showsFrame, setShowsFrame] = useState(false);
   const frameSupported =
-    !physical && platform !== 'web' && link.kind === 'open' && link.features?.includes('device-frames') === true;
+    !physical &&
+    (platform === 'ios' || platform === 'android') &&
+    link.kind === 'open' &&
+    link.features?.includes('device-frames') === true;
   const streamOptions = useMemo(
     () => ({
       enabled: streams,
@@ -218,7 +223,7 @@ export function DeviceView({
   const zoom = useDeviceZoom(
     zoomKey({ macId: mac?.id ?? '', workspace, platform, slot, physical }),
     activeArtwork ? activeArtwork.width / activeArtwork.height : aspectOf(source),
-    platform === 'web' ? 1.6 : platform === 'ios' ? 0.46 : 0.45,
+    platform === 'web' || platform === 'macos' ? 1.6 : platform === 'ios' ? 0.46 : 0.45,
     !controlling && !((landscape || book || table) && readOnly) && !screenZoom.zoomed && !scrubbing,
     root,
     stage,
@@ -236,6 +241,7 @@ export function DeviceView({
   const touchSize = useRef<{ width: number; height: number } | null>(null);
   const keyboard = useRef<TextInputInstance>(null);
   const [typing, setTyping] = useState(false);
+  const [scrolling, setScrolling] = useState(false);
   const [typed, setTyped] = useState('');
   const [moving, setMoving] = useState<DevicePosture | null>(null);
   const [changingOption, setChangingOption] = useState(false);
@@ -303,29 +309,37 @@ export function DeviceView({
     onResponderGrant: (event: GestureResponderEvent) => {
       const at = point(event.nativeEvent.locationX, event.nativeEvent.locationY, false);
       touches.current = { active: at !== null, lastMove: Date.now(), pending: at };
-      if (at) control.touch('down', at.x, at.y);
+      if (at && !scrolling) control.touch('down', at.x, at.y);
     },
     onResponderMove: (event: GestureResponderEvent) => {
       if (!touches.current.active) return;
       const at = point(event.nativeEvent.locationX, event.nativeEvent.locationY, true);
       if (!at) return;
-      touches.current.pending = at;
+      const previous = touches.current.pending;
       const now = Date.now();
       if (now - touches.current.lastMove < MOVE_INTERVAL_MS) return;
       touches.current.lastMove = now;
-      control.touch('move', at.x, at.y);
+      touches.current.pending = at;
+      if (scrolling && previous && source) {
+        control.scroll(
+          at.x,
+          at.y,
+          Math.max(-1000, Math.min(1000, (at.x - previous.x) * source.width)),
+          Math.max(-1000, Math.min(1000, (at.y - previous.y) * source.height)),
+        );
+      } else control.touch('move', at.x, at.y);
     },
     onResponderRelease: (event: GestureResponderEvent) => {
       if (!touches.current.active) return;
       const at = point(event.nativeEvent.locationX, event.nativeEvent.locationY, true) ?? touches.current.pending;
       touches.current.active = false;
-      if (at) control.touch('up', at.x, at.y);
+      if (at && !scrolling) control.touch('up', at.x, at.y);
     },
     onResponderTerminate: () => {
       const at = touches.current.pending;
       if (!touches.current.active || !at) return;
       touches.current.active = false;
-      control.touch('up', at.x, at.y);
+      if (!scrolling) control.touch('up', at.x, at.y);
     },
   };
 
@@ -431,19 +445,50 @@ export function DeviceView({
           disabled={readOnly}
           onPress={() => (typing ? keyboard.current?.blur() : keyboard.current?.focus())}
         />
-        {platform !== 'web' ? (
+        {platform === 'ios' || platform === 'android' ? (
           <ToolButton icon="circle" label={t`Home`} disabled={readOnly} onPress={() => press('home')} />
         ) : null}
-        {platform !== 'ios' ? (
+        {platform === 'web' || platform === 'android' ? (
           <ToolButton icon="chevron.backward" label={t`Back`} disabled={readOnly} onPress={() => press('back')} />
+        ) : null}
+        {platform === 'macos' ? (
+          <>
+            <ToolButton
+              icon="hand.raised"
+              label={t`Scroll`}
+              selected={scrolling}
+              disabled={readOnly}
+              onPress={() => setScrolling(!scrolling)}
+            />
+            <ToolButton icon="keyboard" label={t`Tab`} disabled={readOnly} onPress={() => control.key('tab')} />
+            <ToolButton icon="xmark" label={t`Escape`} disabled={readOnly} onPress={() => control.key('escape')} />
+            <ToolButton
+              icon="checkmark"
+              label={t`Select all`}
+              disabled={readOnly}
+              onPress={() => control.key('a', ['command'])}
+            />
+            <ToolButton
+              icon="arrow.counterclockwise"
+              label={t`Undo`}
+              disabled={readOnly}
+              onPress={() => control.key('z', ['command'])}
+            />
+            <ToolButton
+              icon="internaldrive"
+              label={t`Save`}
+              disabled={readOnly}
+              onPress={() => control.key('s', ['command'])}
+            />
+          </>
         ) : null}
         {platform === 'android' ? (
           <ToolButton icon="rectangle.stack" label={t`Apps`} disabled={readOnly} onPress={() => press('app-switch')} />
         ) : null}
-        {platform !== 'web' ? (
+        {platform === 'ios' || platform === 'android' ? (
           <ToolButton icon="lock" label={t`Lock`} disabled={readOnly} onPress={() => press('lock')} />
         ) : null}
-        {platform !== 'web' && !physical ? (
+        {(platform === 'ios' || platform === 'android') && !physical ? (
           <>
             <ToolButton
               icon="arrow.counterclockwise"

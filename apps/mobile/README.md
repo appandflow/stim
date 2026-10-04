@@ -340,6 +340,39 @@ pending change. Older servers and unavailable simulator capabilities leave
 these controls hidden. These options do not appear for physical phones,
 Android or web.
 
+### Native macOS apps
+
+Native workspaces from `stim macos` appear on Home with app/build/runtime state.
+The workspace shows the owned app tile, a build card opening SwiftPM logs and a
+logs card opening native runtime stdout/stderr in the existing log viewer.
+macOS uses no Metro. Stopped and unverified apps retain their status tile.
+
+A running app's tile opens the same viewer with `platform: "macos"`, in the default
+slot, when the server advertises `macos-window`. It has no replay. The server captures only
+one visible window of the app whose PID, process start time, executable and
+bundle match its owned launch record; other apps and the desktop are excluded.
+Existing Screen Recording permission is required for the capture host. A denial
+shows permission guidance without requesting or resetting a grant, while status
+and logs stay usable. Close and reopen the viewer after opening or resizing the
+app window.
+
+With `macos-window-control` and a control pairing, **Control** enables mouse
+clicks/drags, printable ASCII typing and keyboard shortcuts (Tab, Escape,
+Select all, Undo and Save). Turn on **Scroll** to scroll with a drag instead of
+moving the mouse. Each action verifies the same owned process and captured
+standard window. A modal or disjoint window, changed capture or resize refuses
+input. Contained nonmodal auxiliary windows are allowed; input still goes only
+to the focused captured main window. Control
+uses one exclusive server session per app, with disconnect/revocation/takeover
+and five-minute idle expiry; it takes no CLI simulator lock. Existing
+Accessibility permission is required. Refusals end Control and show the reason
+while the live view remains available. Older servers keep the viewer read-only.
+
+Native Control uses dynamically resolved private CoreGraphics input SPI in the
+server helper, outside the phone and Mac App Store app binaries. A macOS update
+can make it unavailable; then Control refuses while viewing and logs remain
+available.
+
 ### Replay
 
 When the Mac has recorded the device, the viewer shows replay controls over
