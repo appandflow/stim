@@ -13,7 +13,14 @@ final class ServerController: ObservableObject {
 
     init(probe: ServerHealthProbe, owned: Bool, resolvedHome: String, port: Int) {
       switch probe {
-      case .notReady(let startup): self = .notReady(startup, owned: owned)
+      case .notReady(let startup, let stimHome):
+        if !owned, let stimHome,
+          let failure = StimHome.adoptionFailure(serverHome: stimHome, resolved: resolvedHome, port: port)
+        {
+          self = .failed(failure)
+        } else {
+          self = .notReady(startup, owned: owned)
+        }
       case .ready(let health):
         if !owned,
           let failure = StimHome.adoptionFailure(serverHome: health.stimHome, resolved: resolvedHome, port: port)
@@ -29,15 +36,21 @@ final class ServerController: ObservableObject {
   static let shared = ServerController()
   static let startTimeout: TimeInterval = 15
 
-  @Published private(set) var state = State.off {
-    didSet {
-      if case .notReady = state {
-        devicesEpoch += 1
-        devices = []
-        devicesError = nil
+  enum StartupAction: Equatable {
+    case retry
+    case handOver
+    case fail
+
+    init(lastAnswer: ServerHealthProbe?, deadlinePassed: Bool) {
+      switch lastAnswer {
+      case .ready: self = .handOver
+      case .notReady: self = deadlinePassed ? .handOver : .retry
+      case nil: self = deadlinePassed ? .fail : .retry
       }
     }
   }
+
+  @Published private(set) var state = State.off
   @Published private(set) var devices: [PairedDevice] = []
   @Published private(set) var devicesError: String?
   @Published private(set) var changeError: String?
@@ -89,10 +102,8 @@ final class ServerController: ObservableObject {
   }
 
   var canRestart: Bool {
-    switch state {
-    case .running(_, owned: true), .notReady(_, owned: true): return true
-    default: return false
-    }
+    if case .running(_, owned: true) = state { return true }
+    return false
   }
 
   func configure(environment: Task<[String: String], Never>) {
@@ -158,17 +169,20 @@ final class ServerController: ObservableObject {
         return
       }
       let deadline = Date().addingTimeInterval(Self.startTimeout)
-      while Date() < deadline {
+      var lastAnswer: ServerHealthProbe?
+      var action = StartupAction.retry
+      while action == .retry {
         try? await Task.sleep(for: .milliseconds(250))
         guard current == generation, process != nil else { return }
-        if let probe = await StimServerCLI.health(port: port) {
-          if current == generation {
-            state = State(probe: probe, owned: true, resolvedHome: StimHome.path(environment: cli.environment), port: port)
-          }
-          return
+        let probe = await StimServerCLI.health(port: port)
+        guard current == generation, process != nil else { return }
+        if let probe {
+          lastAnswer = probe
+          state = State(probe: probe, owned: true, resolvedHome: StimHome.path(environment: cli.environment), port: port)
         }
+        action = StartupAction(lastAnswer: lastAnswer, deadlinePassed: Date() >= deadline)
       }
-      guard current == generation else { return }
+      guard current == generation, process != nil, action == .fail else { return }
       generation += 1
       terminate()
       state = .failed("stim-server did not answer on port \(port) within \(Int(Self.startTimeout)) seconds.")
@@ -231,6 +245,7 @@ final class ServerController: ObservableObject {
   }
 
   func refresh() {
+    reloadDevices()
     let owned: Bool
     switch state {
     case .running(_, let value), .notReady(_, let value): owned = value
@@ -242,14 +257,14 @@ final class ServerController: ObservableObject {
       let resolved = StimHome.path(environment: await environment?.value ?? ProcessInfo.processInfo.environment)
       guard current == generation, isResponding else { return }
       switch probe {
-      case .notReady(let startup):
+      case .notReady(let startup, let stimHome)
+      where owned || (stimHome.map { StimHome.adopts(serverHome: $0, resolved: resolved) } ?? true):
         missedProbes = 0
         state = .notReady(startup, owned: owned)
       case .ready(let health) where owned || StimHome.adopts(serverHome: health.stimHome, resolved: resolved):
         missedProbes = 0
         state = .running(health, owned: owned)
         if health.nativeViewerOpened == true { NativeViewerPermissions.shared.viewerOpened(serverOwned: owned) }
-        reloadDevices()
       default:
         if !owned {
           missedProbes += 1
@@ -263,16 +278,15 @@ final class ServerController: ObservableObject {
   }
 
   func reloadDevices() {
-    guard case .running(let health, _) = state else { return }
     let epoch = devicesEpoch
+    let health: ServerHealth? = if case .running(let health, _) = state { health } else { nil }
     Task {
       let cli = await cli()
-      guard epoch == devicesEpoch, isRunning else { return }
       let result = await Result.awaiting { try await cli.devices() }
-      guard epoch == devicesEpoch, isRunning else { return }
+      guard epoch == devicesEpoch else { return }
       switch result {
       case .success(let devices):
-        let own = ServerSession.ownDeviceID(home: health.stimHome)
+        let own = health.flatMap { ServerSession.ownDeviceID(home: $0.stimHome) }
         self.devices = devices.filter { $0.id != own }.map { device in
           guard let control = pendingGrants[device.id] else { return device }
           var device = device
@@ -288,7 +302,7 @@ final class ServerController: ObservableObject {
   }
 
   func grant(_ device: PairedDevice, control: Bool) {
-    guard isRunning, pendingGrants[device.id] == nil else { return }
+    guard pendingGrants[device.id] == nil else { return }
     pendingGrants[device.id] = control
     if let index = devices.firstIndex(where: { $0.id == device.id }) {
       devices[index].capabilities = Self.capabilities(control: control)
@@ -308,7 +322,6 @@ final class ServerController: ObservableObject {
   }
 
   func allowMachine(_ device: PairedDevice) {
-    guard isRunning else { return }
     Task {
       let cli = await cli()
       switch await Result.awaiting({
@@ -327,7 +340,6 @@ final class ServerController: ObservableObject {
   }
 
   func revoke(_ device: PairedDevice) {
-    guard isRunning else { return }
     Task {
       let cli = await cli()
       switch await Result.awaiting({ try await cli.revoke(device.id) }) {

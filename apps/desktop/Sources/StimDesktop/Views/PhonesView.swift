@@ -56,7 +56,6 @@ struct PhonesView: View {
             allowControl: { server.grant(device, control: $0) }
           ) { revoking = device }
         }
-        .disabled(!server.isRunning)
       } header: {
         HStack {
           Text("Paired phones")
@@ -74,7 +73,6 @@ struct PhonesView: View {
         ForEach(server.buildClients) { device in
           BuildClientRow(device: device, review: { BuildRequestPrompt.present(id: device.id) }) { revoking = device }
         }
-        .disabled(!server.isRunning)
       } header: {
         Text("Macs that build here")
       } footer: {
@@ -93,7 +91,6 @@ struct PhonesView: View {
         ForEach(server.deviceHostClients) { device in
           BuildClientRow(device: device, review: { BuildRequestPrompt.present(id: device.id) }) { revoking = device }
         }
-        .disabled(!server.isRunning)
       } header: {
         Text("Device hosting approvals")
       } footer: {
@@ -172,19 +169,14 @@ struct PhonesView: View {
     switch server.state {
     case .off:
       Label("Not serving", systemImage: "circle").foregroundStyle(Palette.secondary)
-    case .starting:
-      HStack(spacing: Space.md) {
-        ProgressView().controlSize(.small)
-        Text("Starting stim-server\u{2026}").foregroundStyle(Palette.secondary)
-      }
-    case .notReady(.pending, _):
+    case .starting, .notReady(.pending, _):
       HStack(spacing: Space.md) {
         ProgressView().controlSize(.small)
         Text("Starting").foregroundStyle(Palette.secondary)
       }
     case .notReady(.degraded(let reason), _):
       VStack(alignment: .leading, spacing: Space.md) {
-        Text("Degraded: \(reason)").foregroundStyle(Palette.warning).textSelection(.enabled)
+        Text("Degraded: \(abbreviatingHome(reason))").foregroundStyle(Palette.warning).textSelection(.enabled)
         Text("The server retries every 30 seconds.").foregroundStyle(Palette.tertiary)
       }
     case .running(let health, let owned):

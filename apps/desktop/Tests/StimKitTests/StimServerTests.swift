@@ -27,7 +27,10 @@ import Testing
   }
 
   @Test func decodesReadyHealthWithStartupAndLegacyHealth() throws {
-    for startup in ["", #","startup":{"state":"ready"}"#] {
+    for startup in [
+      "", #","startup":{"state":"ready"}"#, #","startup":{"state":"pending"}"#,
+      #","startup":{"state":"degraded","reason":"Old status."}"#, #","startup":{"state":7}"#,
+    ] {
       let data = Data(
         #"{"server":"stim-server","name":"Mac","version":"1","stim":"1","protocol":1,"stimHome":"/Users/me/.stim","tailscale":{"state":"running"}\#(startup)}"#
           .utf8)
@@ -40,26 +43,35 @@ import Testing
     }
   }
 
-  @Test func recognizesNotReadyHealthWithoutReadyOnlyFields() {
-    let pending = Data(#"{"server":"stim-server","startup":{"state":"pending"}}"#.utf8)
-    #expect(StimServerCLI.decodeHealth(pending, statusCode: 503) == .notReady(.pending))
+  @Test func decodesNotReadyHealthAndKeepsItsHome() {
+    let pending = Data(
+      #"{"server":"stim-server","name":"Mac","version":"1","stim":"1","protocol":1,"stimHome":"/Users/me/.stim","tailscale":{"state":"running"},"startup":{"state":"pending"}}"#
+        .utf8)
+    #expect(StimServerCLI.decodeHealth(pending, statusCode: 503) == .notReady(.pending, stimHome: "/Users/me/.stim"))
     let degraded = Data(
-      #"{"server":"stim-server","version":"1","startup":{"state":"degraded","reason":"Volume /Volumes/Work is stalled."}}"#
+      #"{"server":"stim-server","startup":{"state":"degraded","reason":"Volume /Volumes/Work is stalled."}}"#
         .utf8)
     #expect(
       StimServerCLI.decodeHealth(degraded, statusCode: 503)
-        == .notReady(.degraded("Volume /Volumes/Work is stalled.")))
+        == .notReady(.degraded("Volume /Volumes/Work is stalled."), stimHome: nil))
     let other = Data(#"{"server":"other","startup":{"state":"pending"}}"#.utf8)
     #expect(StimServerCLI.decodeHealth(other, statusCode: 503) == nil)
   }
 
-  @Test func treatsUnknownStartupStatesAsDegraded() {
+  @Test func treatsUnknownStartupStatesAsDegraded() throws {
     let data = Data(#"{"server":"stim-server","startup":{"state":"recovering"}}"#.utf8)
-    for status in [200, 503] {
-      #expect(
-        StimServerCLI.decodeHealth(data, statusCode: status)
-          == .notReady(.degraded("Unknown server startup state: recovering.")))
+    #expect(
+      StimServerCLI.decodeHealth(data, statusCode: 503)
+        == .notReady(.degraded("Unknown server startup state: recovering."), stimHome: nil))
+    let ready = Data(
+      #"{"server":"stim-server","name":"Mac","version":"1","stim":"1","protocol":1,"stimHome":"/Users/me/.stim","tailscale":{"state":"running"},"startup":{"state":"recovering"}}"#
+        .utf8)
+    let probe = try #require(StimServerCLI.decodeHealth(ready, statusCode: 200))
+    guard case .ready(let health) = probe else {
+      Issue.record("HTTP 200 must permit a connection despite an unknown startup state")
+      return
     }
+    #expect(health.stimHome == "/Users/me/.stim" && health.tailscale.isRunning)
   }
 
   @Test func recognizesTheDefaultHomeThroughSymlinks() throws {

@@ -71,7 +71,7 @@ public enum ServerStartup: Equatable, Sendable {
 /// A loopback health answer, including HTTP 503 while stim-server reads its Stim home.
 public enum ServerHealthProbe: Equatable, Sendable {
   case ready(ServerHealth)
-  case notReady(ServerStartup)
+  case notReady(ServerStartup, stimHome: String?)
 }
 
 /// `stim-server pair --json`: the QR payload and when its single-use token expires.
@@ -273,27 +273,31 @@ public struct StimServerCLI: Sendable {
   }
 
   static func decodeHealth(_ data: Data, statusCode: Int) -> ServerHealthProbe? {
+    if statusCode == 200 {
+      guard let health = try? decoder.decode(ServerHealth.self, from: data), health.server == "stim-server" else {
+        return nil
+      }
+      return .ready(health)
+    }
     struct Answer: Decodable {
       struct Startup: Decodable {
         var state: String
         var reason: String?
       }
       var server: String
-      var startup: Startup?
+      var stimHome: String?
+      var startup: Startup
     }
-    guard statusCode == 200 || statusCode == 503,
+    guard statusCode == 503,
       let answer = try? decoder.decode(Answer.self, from: data), answer.server == "stim-server"
     else { return nil }
-    if let startup = answer.startup {
-      switch startup.state {
-      case "pending": return .notReady(.pending)
-      case "degraded": return .notReady(.degraded(startup.reason ?? "The server could not read its Stim home."))
-      case "ready" where statusCode == 200: break
-      default: return .notReady(.degraded(startup.reason ?? "Unknown server startup state: \(startup.state)."))
-      }
+    let startup: ServerStartup
+    switch answer.startup.state {
+    case "pending": startup = .pending
+    case "degraded": startup = .degraded(answer.startup.reason ?? "The server could not read its Stim home.")
+    default: startup = .degraded("Unknown server startup state: \(answer.startup.state).")
     }
-    guard statusCode == 200, let health = try? decoder.decode(ServerHealth.self, from: data) else { return nil }
-    return .ready(health)
+    return .notReady(startup, stimHome: answer.stimHome)
   }
 
   private func run(_ args: [String]) async throws -> Data {

@@ -634,9 +634,9 @@ struct SidebarFooter: View {
   private var phonesTooltip: String {
     switch server.state {
     case .off: return "Phone server is off \u{2014} click to open Phones settings"
-    case .starting, .notReady(.pending, _): return "Phone server is Starting \u{2014} click to open Phones settings"
+    case .starting, .notReady(.pending, _): return "Phone server is starting \u{2014} click to open Phones settings"
     case .notReady(.degraded(let reason), _):
-      return "Phone server is Degraded: \(reason) \u{2014} click to open Phones settings"
+      return "Phone server is degraded: \(abbreviatingHome(reason)) \u{2014} click to open Phones settings"
     case .failed(let message): return "Phone server failed: \(message) \u{2014} click to open Phones settings"
     case .running(let health, _):
       guard let route = health.route, let dnsName = health.tailscale.dnsName else {

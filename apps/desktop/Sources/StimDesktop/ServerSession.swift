@@ -86,7 +86,7 @@ struct LocalServerCredential: Codable, Equatable {
       switch controller.state {
       case .starting: return .connecting
       case .notReady(.pending, _): return .connecting
-      case .notReady(.degraded(let reason), _): return .unavailable("Degraded: \(reason)")
+      case .notReady(.degraded(let reason), _): return .unavailable("Degraded: \(abbreviatingHome(reason))")
       case .failed(let message): return .unavailable(message)
       case .off, .running: return .off
       }
