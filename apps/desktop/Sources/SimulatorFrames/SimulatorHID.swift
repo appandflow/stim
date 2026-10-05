@@ -70,6 +70,7 @@ enum TouchPhase {
 /// otherwise. `isConnected` turns false once the CoreDevice connection closes,
 /// and a few seconds after falling back to the legacy client, so a service
 /// that was not up yet is tried again; make a new instance then.
+/// Construction performs synchronous CoreSimulator XPC lookups and must run off the main thread.
 final class SimulatorHID {
   private let transport: Transport
   private let legacyUntil = Date().addingTimeInterval(10)
@@ -93,6 +94,11 @@ final class SimulatorHID {
   var isConnected: Bool {
     if case .coreDevice(let coreDevice) = transport { return coreDevice.isConnected }
     return Date() < legacyUntil
+  }
+
+  var isReady: Bool {
+    if case .coreDevice(let coreDevice) = transport { return coreDevice.isReady }
+    return isConnected
   }
 
   /// `point` is a fraction of the screen in its native orientation, origin top-left.

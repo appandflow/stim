@@ -116,7 +116,7 @@ struct DeviceTile: View {
       hingeAvailable = false
       guard let udid = dualSimulatorUDID else { return }
       while !Task.isCancelled {
-        let available = await Task.detached { SimulatorPosture.isAvailable(udid: udid) }.value
+        let available = await SimulatorPosture.isAvailable(udid: udid)
         guard !Task.isCancelled else { return }
         hingeAvailable = available
         if hingeAvailable { return }
@@ -503,7 +503,7 @@ struct DeviceTile: View {
       Task {
         switch device {
         case .ios(_, let sim):
-          rotateFailed = !(await Task.detached { SimulatorRotation.rotate(udid: sim.udid, clockwise: clockwise) }.value)
+          rotateFailed = !(await SimulatorRotation.rotate(udid: sim.udid, clockwise: clockwise))
         case .android(_, let avd):
           guard let serial = avd.serial else { return }
           rotateFailed = !(await EmulatorRotation.rotate(serial: serial, clockwise: clockwise))

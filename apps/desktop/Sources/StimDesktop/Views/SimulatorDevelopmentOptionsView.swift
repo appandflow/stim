@@ -56,20 +56,11 @@ struct SimulatorDevelopmentOptionsView: View {
       defer { busy = false }
       do {
         try Task.checkCancellation()
-        let worker = Task.detached { [udid] in
-          try Task.checkCancellation()
-          switch action {
-          case .read: return try SimulatorDevelopmentOptions.read(udid: udid)
-          case .slow(let enabled): return try SimulatorDevelopmentOptions.setSlowAnimations(enabled, udid: udid)
-          case .shake:
-            try SimulatorDevelopmentOptions.shake(udid: udid)
-            return try SimulatorDevelopmentOptions.read(udid: udid)
-          }
-        }
-        let updated = try await withTaskCancellationHandler {
-          try await worker.value
-        } onCancel: {
-          worker.cancel()
+        let updated: SimulatorDevelopmentOptions.Settings
+        switch action {
+        case .read: updated = try await SimulatorDevelopmentOptions.read(udid: udid)
+        case .slow(let enabled): updated = try await SimulatorDevelopmentOptions.setSlowAnimations(enabled, udid: udid)
+        case .shake: updated = try await SimulatorDevelopmentOptions.shake(udid: udid)
         }
         try Task.checkCancellation()
         settings = updated

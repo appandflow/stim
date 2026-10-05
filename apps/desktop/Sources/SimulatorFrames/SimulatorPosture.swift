@@ -186,9 +186,10 @@ public enum SimulatorPosture {
   private static var connections: [String: CoreDeviceHID] = [:]
   private static var angles: [String: Double] = [:]
 
-  /// Whether the simulator takes hinge input. Blocks on a CoreSimulator lookup;
-  /// call it off the main thread.
-  public static func isAvailable(udid: String) -> Bool { connection(udid: udid) != nil }
+  /// Whether the simulator takes hinge input, with a bounded background lookup.
+  public static func isAvailable(udid: String) async -> Bool {
+    (try? await SimulatorLookup.run(udid: udid) { connection(udid: udid) != nil }) ?? false
+  }
 
   /// The posture Stim Desktop last moved this simulator to, if any.
   public static func lastPosture(udid: String) -> DuoPosture? {
@@ -219,8 +220,14 @@ public enum SimulatorPosture {
   /// Sweeps the simulated hinge to an angle in 0...180 degrees. Returns an
   /// error message when the input service is missing or closes.
   public static func move(udid: String, from angle: Double, to target: Double) async -> String? {
-    guard let hid = await Task.detached(operation: { connection(udid: udid) }).value else {
-      return "This simulator has no hinge input service."
+    let hid: CoreDeviceHID
+    do {
+      hid = try await SimulatorLookup.run(udid: udid) {
+        guard let hid = connection(udid: udid) else { throw SimulatorLookup.Failure.unavailable }
+        return hid
+      }
+    } catch {
+      return error.localizedDescription
     }
     while !hid.isReady, hid.isConnected { try? await Task.sleep(for: .milliseconds(50)) }
     guard hid.isConnected else { return "The simulator's input connection closed. Try again." }

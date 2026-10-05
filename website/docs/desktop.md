@@ -41,6 +41,11 @@ performance traces. Every release is listed under
   take it over with your mouse and keyboard, and read what the agent did
   and when. Hardware, rotation and posture controls sit in groups below the
   screen, wrapping when space is tight.
+  Local iOS input connects in the background and drops clicks and keys while
+  the screen shows **Connecting input** or **Input unavailable**. Lookups time
+  out after 10 seconds; Desktop stays responsive and waits for CoreSimulator's
+  blocked call to return before trying again. Rotation, hinge input and
+  development controls share that per-device guard.
 - **Replay.** Scrub back through a device's recent screen, with agent actions
   and errors marked on the timeline. Needs **Serve to phones** in **Stim >
   Settings > Phones**.

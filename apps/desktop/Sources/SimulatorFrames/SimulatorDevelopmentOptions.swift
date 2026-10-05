@@ -1,7 +1,7 @@
 import Foundation
 import ObjectiveC
 
-/// Guest development controls on a selected iOS simulator. CoreSimulator calls can block; use off the main thread.
+/// Guest development controls on a selected iOS simulator, with bounded background lookups.
 public enum SimulatorDevelopmentOptions {
   public struct Settings: Sendable {
     public let slowAnimations: Bool?
@@ -15,14 +15,29 @@ public enum SimulatorDevelopmentOptions {
   private static let setSelector = NSSelectorFromString("darwinNotificationSetState:name:error:")
   private static let postSelector = NSSelectorFromString("postDarwinNotification:error:")
 
-  public static func read(udid: String) throws -> Settings {
+  public static func read(udid: String) async throws -> Settings {
+    try await SimulatorLookup.run(udid: udid) { try readSettings(udid: udid) }
+  }
+
+  public static func setSlowAnimations(_ enabled: Bool, udid: String) async throws -> Settings {
+    try await SimulatorLookup.run(udid: udid) { try updateSlowAnimations(enabled, udid: udid) }
+  }
+
+  public static func shake(udid: String) async throws -> Settings {
+    try await SimulatorLookup.run(udid: udid) {
+      try post("com.apple.UIKit.SimulatorShake", device: selectedDevice(udid))
+      return try readSettings(udid: udid)
+    }
+  }
+
+  private static func readSettings(udid: String) throws -> Settings {
     let device = try selectedDevice(udid)
     let canPost = device.responds(to: postSelector)
     let canSetSlow = canPost && device.responds(to: readSelector) && device.responds(to: setSelector)
     return Settings(slowAnimations: canSetSlow ? try state(device) != 0 : nil, canShake: canPost)
   }
 
-  public static func setSlowAnimations(_ enabled: Bool, udid: String) throws -> Settings {
+  private static func updateSlowAnimations(_ enabled: Bool, udid: String) throws -> Settings {
     let device = try selectedDevice(udid)
     guard device.responds(to: setSelector), device.responds(to: readSelector), device.responds(to: postSelector) else {
       throw Failure.unavailable
@@ -34,13 +49,9 @@ public enum SimulatorDevelopmentOptions {
       throw error ?? Failure.unavailable
     }
     try post(slowAnimationNotification, device: device)
-    let settings = try read(udid: udid)
+    let settings = try readSettings(udid: udid)
     guard settings.slowAnimations == enabled else { throw Failure.unconfirmed }
     return settings
-  }
-
-  public static func shake(udid: String) throws {
-    try post("com.apple.UIKit.SimulatorShake", device: selectedDevice(udid))
   }
 
   private static func selectedDevice(_ udid: String) throws -> NSObject {
