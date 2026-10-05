@@ -59,19 +59,6 @@ struct BuildSheet: View {
 
   var body: some View {
     VStack(spacing: 0) {
-      if let page {
-        Picker("Platform", selection: $selectedEntry) {
-          ForEach(page.buildEntries) { entry in
-            Text(
-              platformName(entry.platform)
-                + (page.subtitle(for: entry, among: page.buildEntries).map { " \u{00B7} " + $0 } ?? "")
-            ).tag(entry)
-          }
-        }
-        .pickerStyle(.segmented)
-        .labelsHidden()
-        .padding([.horizontal, .top], Space.xxl)
-      }
       header
       Divider()
       if isMacos {
@@ -169,7 +156,18 @@ struct BuildSheet: View {
         Text("Build").font(.stim(.title, weight: .semibold))
         Text(app.names.title).foregroundStyle(Palette.secondary).lineLimit(1)
       }
-      if page == nil, platforms.count > 1 {
+      if let page {
+        let entries = page.buildEntries
+        let titles = entries.map { entry in
+          platformName(entry.platform) + (page.subtitle(for: entry, among: entries).map { " \u{00B7} " + $0 } ?? "")
+        }
+        Picker("Platform", selection: $selectedEntry) {
+          ForEach(Array(zip(entries, titles)), id: \.0) { entry, title in Text(title).tag(entry) }
+        }
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .fixedSize()
+      } else if platforms.count > 1 {
         Picker("Platform", selection: $nativePlatform) {
           ForEach(platforms, id: \.self) { Text(platformName($0)).tag($0) }
         }
