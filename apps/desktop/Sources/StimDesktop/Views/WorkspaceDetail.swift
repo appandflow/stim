@@ -284,7 +284,9 @@ struct WorkspaceDetail: View {
   private var unifiedCanvas: some View {
     let devices = page.orderedDevices
     let entries = page.canvasEntries
-    let target = page.canvasScrollTarget(selectedPath: selectedPath, focusedID: focusedID, devices: devices)
+    let target = page.canvasScrollTarget(selectedPath: selectedPath, focusedID: focusedID, devices: devices).map {
+      !page.apps.contains { $0.macos != nil } && $0 == devices.first?.id ? "devices" : $0
+    }
     return GeometryReader { geo in
       ScrollViewReader { reader in
         ScrollView {
@@ -312,7 +314,7 @@ struct WorkspaceDetail: View {
                   owner: entry.workspace, project: page.subtitle(for: entry.entry, among: entries)
                 ).id(entry.id)
               }
-            }.padding(Space.xxl)
+            }.padding(Space.xxl).id("devices")
           }
         }
         .onChange(of: selectedPath, initial: true) {
