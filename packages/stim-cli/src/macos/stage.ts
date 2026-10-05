@@ -70,7 +70,10 @@ export function resolveBundleExtras(
   if (!resources || typeof resources !== 'object' || Array.isArray(resources))
     resourceError('macos.resources', resources, 'expected an object');
   const entries = Object.entries(resources);
-  if (entries.length > 256) resourceError('macos.resources', 'map', 'at most 256 entries are allowed');
+  if (entries.length > 256) {
+    const [destination, source] = entries[256]!;
+    resourceError(`macos.resources[${JSON.stringify(destination)}]`, source, 'at most 256 entries are allowed');
+  }
   const reserved = catalog ? ['Assets.car'] : [];
   const resolved: Array<[string, string]> = [];
   for (const [destination, source] of entries) {
@@ -94,6 +97,7 @@ export function stageBundle(
   extras: BundleExtras = { resources: {} },
 ): void {
   const { minimumSystemVersion } = validateInfoPlist(root, product, infoPlist);
+  // SwiftPM exposes emitted resource bundle names in its build directory, after compilation.
   for (const entry of readdirSync(bin).filter((name) => name.endsWith('.bundle'))) {
     for (const [destination, source] of Object.entries(extras.resources)) {
       if (overlaps(destination, entry))

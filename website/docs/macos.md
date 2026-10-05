@@ -56,7 +56,11 @@ to reach another directory in the same repository. Destinations are non-empty
 relative paths without empty, `.` or `..` segments, at most 1024 characters.
 They cannot overlap another declared destination, a SwiftPM resource bundle, or
 `Assets.car` when an asset catalog is set. The map allows at most 256 entries.
-Stim does not run packaging scripts or build extra executables.
+Stim does not run packaging scripts or build extra executables. If `actool` does
+not emit `Assets.car`, staging refuses. Set `LSMinimumSystemVersion` in the plist
+when Xcode requires a deployment target. Entry paths are validated before
+placement or compilation; collisions with built SwiftPM bundles are checked
+while staging the reported build outputs.
 
 <StimTabs
 code={`stim macos

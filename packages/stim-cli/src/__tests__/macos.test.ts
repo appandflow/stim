@@ -322,13 +322,14 @@ describe('macOS build placement and promotion', () => {
   it('sends sources outside the package as repository-relative paths without parent segments', async () => {
     vi.spyOn(worktree, 'repoRoot').mockReturnValue(dir);
     writeFileSync(join(dir, 'icon'), 'icon bytes');
+    symlinkSync(join(dir, 'icon'), join(dir, 'icon-link'));
     mkdirSync(join(dir, 'Assets.xcassets'));
     const fetched = remoteBundle();
     mkdirSync(join(fetched, 'Contents', 'Resources'));
     writeFileSync(join(fetched, 'Contents', 'Resources', 'icon.icns'), 'icon bytes');
     writeFileSync(join(fetched, 'Contents', 'Resources', 'Assets.car'), 'compiled assets');
     succeeds(fetched);
-    await build({ resources: { 'icon.icns': '../icon' }, assetCatalog: '../Assets.xcassets' });
+    await build({ resources: { 'icon.icns': '../icon-link' }, assetCatalog: '../Assets.xcassets' });
     expect(offload.offloadBuild).toHaveBeenCalledWith(
       expect.objectContaining({
         request: {
@@ -365,6 +366,13 @@ describe('macOS build placement and promotion', () => {
     writeFileSync(join(dir, 'outside'), 'outside');
     symlinkSync(join(dir, 'outside'), join(root, 'escape'));
     await expect(build({ resources })).rejects.toThrow(/macos.resources.*entry.*stim guide macos/);
+    expect(offload.chooseBuildMachine).not.toHaveBeenCalled();
+    expect(localBuilds).toBe(0);
+  });
+
+  it('refuses an absolute source even when it is inside the repository', async () => {
+    writeFileSync(join(root, 'icon'), 'icon bytes');
+    await expect(build({ resources: { 'icon.icns': join(root, 'icon') } })).rejects.toThrow('relative path');
     expect(offload.chooseBuildMachine).not.toHaveBeenCalled();
     expect(localBuilds).toBe(0);
   });

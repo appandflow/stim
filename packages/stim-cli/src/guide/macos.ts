@@ -26,14 +26,18 @@ sources relative to the Swift Package directory, for example:
 
 macos.assetCatalog selects an optional .xcassets directory compiled by fixed
 xcrun actool arguments. Copies and the compiled Assets.car are added before
-ad hoc signing. Destinations are non-empty relative paths without empty, . or
+ad hoc signing. If actool does not emit Assets.car, staging refuses; set
+LSMinimumSystemVersion in the plist when Xcode requires a deployment target.
+Destinations are non-empty relative paths without empty, . or
 .. segments, at most 1024 characters, and cannot overlap another resource,
 Assets.car when a catalog is set, or a SwiftPM resource bundle. At most 256
 resources are allowed. Sources must exist as regular files or directories;
 their realpaths must stay inside the git repository root, or the Swift Package
 directory when there is no git root. Sources can use ../ to reach other files
 inside that repository. Custom packaging scripts are not run and extra
-executables, including Stim Desktop's sim-fold helper, are not built.
+executables, including Stim Desktop's sim-fold helper, are not built. Entry paths
+are validated before placement or compilation; collisions with built SwiftPM
+bundles are checked while staging the reported build outputs.
 
   stim macos              # fixed SwiftPM Debug build, then launch
   stim macos --json       # one launch record; progress goes to stderr

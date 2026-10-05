@@ -27,6 +27,7 @@ import {
   readViewedDevices,
   tryAcquireBuildSlotClaim,
 } from '@stim-cli/core/state';
+import { BuildHost } from '../src/build.ts';
 import { ownedDevice } from '../src/frames.ts';
 import type { StatusPayload } from '@stim-cli/core/state';
 import {
@@ -994,6 +995,59 @@ describe('hosted device sessions', () => {
   );
 });
 
+test('build.start rejects escaping or oversized macOS resources before probing the toolchain', async () => {
+  const host = new BuildHost({ worker: 'unused-worker', env: process.env });
+  const toolchain = vi.spyOn(host, 'toolchain').mockResolvedValue(null);
+  const session = host.session('client', {} as WebSocket, () => {});
+  const base = { repo: 'app-1', project: '', platform: 'macos', fingerprint: 'digest', stimBuild: 'b1' };
+  const macos = { product: 'Sample', infoPlist: 'Support/Info.plist', bundleId: 'dev.sample.stim.test' };
+  const validate = new Ajv2020({ strict: false }).compile({ ...protocolJsonSchema(), $ref: '#/$defs/ClientRequest' });
+  try {
+    session.sync({ repo: 'app-1', files: [], done: true });
+    for (const options of [
+      { ...macos, resources: { '../icon': 'icon' } },
+      { ...macos, resources: { '/icon': 'icon' } },
+      { ...macos, resources: { icon: '../icon' } },
+      { ...macos, resources: { icon: '/icon' } },
+      { ...macos, resources: { icon: 7 } },
+      { ...macos, resources: Object.fromEntries(Array.from({ length: 257 }, (_, i) => [`icon${i}`, 'icon'])) },
+      { ...macos, assetCatalog: '../Assets.xcassets' },
+    ]) {
+      expect(await session.start({ ...base, macos: options })).toMatchObject({ error: { code: 'bad-request' } });
+    }
+    expect(toolchain).not.toHaveBeenCalled();
+    const valid = {
+      ...base,
+      macos: {
+        ...macos,
+        resources: { 'AppIcon.icns': 'apps/sample/Support/icon.icns' },
+        assetCatalog: 'apps/sample/Support/Assets.xcassets',
+      },
+    };
+    expect(validate({ id: 'request', method: 'build.start', params: valid })).toBe(true);
+    expect(await session.start(valid)).toMatchObject({
+      error: { code: 'build-refused', message: 'This Mac runs Stim build unknown.' },
+    });
+    expect(toolchain).toHaveBeenCalledOnce();
+    expect(
+      validate({
+        id: 'request',
+        method: 'build.start',
+        params: {
+          ...valid,
+          macos: {
+            ...valid.macos,
+            resources: Object.fromEntries(Array.from({ length: 257 }, (_, i) => [`icon${i}`, 'icon'])),
+          },
+        },
+      }),
+    ).toBe(false);
+  } finally {
+    toolchain.mockRestore();
+    await host.close();
+  }
+});
+
 describe('offloaded builds', () => {
   const sha = (text: string) => createHash('sha256').update(text).digest('hex');
   const file = (path: string, text: string) => ({ path, kind: 'file', size: text.length, sha256: sha(text) });
@@ -1167,12 +1221,6 @@ describe('offloaded builds', () => {
         { ...macos, product: '../Sample' },
         { ...macos, infoPlist: '../Info.plist' },
         { ...macos, bundleId: '-bad' },
-        { ...macos, resources: { '../icon': 'icon' } },
-        { ...macos, resources: { '/icon': 'icon' } },
-        { ...macos, resources: { icon: '../icon' } },
-        { ...macos, resources: { icon: '/icon' } },
-        { ...macos, resources: Object.fromEntries(Array.from({ length: 257 }, (_, i) => [`icon${i}`, 'icon'])) },
-        { ...macos, assetCatalog: '../Assets.xcassets' },
       ]) {
         expect(await client.request('build.start', { ...base, macos: options })).toMatchObject({
           error: { code: 'bad-request' },
