@@ -47,9 +47,14 @@ if (args[0] === 'proxy' && process.env.FAKE_PROXY === 'daemon-only') {
     request.on('data', (chunk) => chunks.push(chunk));
     request.on('end', () => {
       const ok = request.headers.authorization === 'Bearer daemon-secret' && process.env.FAKE_ADMIN !== 'refuse';
-      appendFileSync(join(stateDir, 'admin.log'), JSON.stringify({ method: request.method, url: request.url, body: Buffer.concat(chunks).toString() }) + '\\n');
-      response.writeHead(ok ? 200 : 400, { 'content-type': 'application/json', connection: 'close' });
-      response.end(JSON.stringify({ ok }));
+      const entry = JSON.stringify({ method: request.method, url: request.url, body: Buffer.concat(chunks).toString() }) + '\\n';
+      const slow = request.method === 'PUT' ? Number(process.env.FAKE_ADMIN_PUT_MS ?? 0) : 0;
+      appendFileSync(join(stateDir, 'admin-started.log'), entry);
+      setTimeout(() => {
+        appendFileSync(join(stateDir, 'admin.log'), entry);
+        response.writeHead(ok ? 200 : 400, { 'content-type': 'application/json', connection: 'close' });
+        response.end(JSON.stringify({ ok }));
+      }, slow);
     });
   });
   admin.listen(0, '127.0.0.1', () => {
@@ -214,6 +219,29 @@ describe.skipIf(process.platform === 'win32')('agent-device driver', () => {
       await new Promise((resolve) => setTimeout(resolve, 200));
       expect(calls()).toHaveLength(after);
       expect((await through(driver, SESSION, 'GET', '/health')).status).toBe(503);
+    } finally {
+      await driver.stop();
+    }
+  });
+
+  test('revoke waits for a renewal in flight so the DELETE is the last admin call', async () => {
+    install(root);
+    const driver = driverIn(root, { leaseRenewMs: 300 }, { FAKE_ADMIN_PUT_MS: '200' });
+    await driver.start();
+    try {
+      await driver.issue({ client: 'c', session: SESSION, bundleId: 'dev.example.app.hosted1', pid: 4242 });
+      const started = () =>
+        readFileSync(join(root, 'state', 'admin-started.log'), 'utf8')
+          .trim()
+          .split('\n');
+      await vi.waitFor(() => expect(started().length).toBeGreaterThan(1));
+      await driver.revoke(SESSION);
+      const calls = readFileSync(join(root, 'state', 'admin.log'), 'utf8')
+        .trim()
+        .split('\n')
+        .map((line) => (JSON.parse(line) as { method: string }).method);
+      expect(calls.at(-1)).toBe('DELETE');
+      expect(calls.filter((method) => method === 'PUT')).toHaveLength(2);
     } finally {
       await driver.stop();
     }
@@ -422,11 +450,18 @@ describe.skipIf(process.platform === 'win32')('agent-device driver', () => {
         },
         input: { text: 'hi' },
       });
-      expect(Object.keys((selected.upstream?.params.flags as object) ?? {}).toSorted()).toEqual([
-        'batchSteps',
-        'platform',
-        'surface',
-      ]);
+      const sent = selected.upstream?.params as {
+        flags: { batchSteps: Record<string, unknown>[] } & Record<string, unknown>;
+        input: unknown;
+      };
+      expect(Object.keys(sent.flags).toSorted()).toEqual(['batchSteps', 'platform', 'surface']);
+      expect(sent.input).toEqual({ text: 'hi' });
+      expect(sent.flags.batchSteps[0]).toEqual({
+        command: 'open',
+        positionals: ['dev.example.app.hosted1'],
+        flags: { platform: 'macos' },
+        input: {},
+      });
       const bareOpen = await rpc({ method: 'agent_device.command', params: { command: 'open' } });
       expect(bareOpen.upstream?.params.flags).toEqual({ platform: 'macos' });
       for (const denied of ['session_list', 'lease_release', 'install', 'devices', 'diff', undefined])
