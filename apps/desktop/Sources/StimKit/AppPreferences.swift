@@ -21,6 +21,7 @@ public enum AppPreferences {
     public static let pausesHiddenFrames = "pausesHiddenFrames"
     public static let editorBundleID = "editorBundleID"
     public static let terminalBundleID = "terminalBundleID"
+    public static let diffViewer = "diffViewer"
     public static let showsMenuBarExtra = "showsMenuBarExtra"
     public static let stimExecutable = "stimExecutable"
     public static let remoteSessionMinutes = "remoteSessionMinutes"
@@ -104,6 +105,12 @@ public enum Appearance: String, CaseIterable, Sendable {
     case .dark: return "Dark"
     }
   }
+}
+
+public enum DiffViewer: String, CaseIterable, Sendable {
+  case builtIn, visualStudioCode
+
+  public var title: String { self == .builtIn ? "Built-in" : "Visual Studio Code" }
 }
 
 public enum DefaultView: String, CaseIterable, Sendable {
