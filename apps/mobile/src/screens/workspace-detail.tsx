@@ -142,7 +142,7 @@ export function WorkspaceDetail({ path }: { path: string }) {
     <>
       <Stack.Screen
         options={{
-          headerBlurEffect: OS.OS === 'ios' ? 'systemMaterial' : undefined,
+          scrollEdgeEffects: { top: 'soft' },
           headerTitle: () => (
             <HeaderTitle title={title} subtitle={[project, inCheckout, mac?.name].filter(Boolean).join(' \u00B7 ')} />
           ),
