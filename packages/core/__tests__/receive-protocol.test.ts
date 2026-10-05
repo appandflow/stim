@@ -25,6 +25,7 @@ test('accepts captured older status while checking Android runtime fields', () =
 test('accepts the original hello and unknown compatible fields but refuses malformed nested server data', () => {
   expect(isRpcResult('hello', hello)).toBe(true);
   expect(isRpcResult('hello', { ...hello, features: ['future-feature'], future: 1 })).toBe(true);
+  expect(isRpcResult('hello', { ...hello, actions: ['reload', 'future-action'] })).toBe(true);
   expect(isRpcResult('hello', { ...hello, server: { ...hello.server, name: 1 } })).toBe(false);
   expect(isRpcResult('hello', { ...hello, capabilities: [1] })).toBe(false);
   expect(isRpcResult('hello', { subscription: 'wrong-method' })).toBe(false);

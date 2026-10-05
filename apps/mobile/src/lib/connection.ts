@@ -2,6 +2,7 @@ import { t } from '@lingui/core/macro';
 import { isRpcError, isRpcEvent, isRpcEventName, isRpcResult } from '@stim-cli/core/receive-protocol';
 
 import {
+  ACTIONS,
   PROTOCOL_VERSION,
   type ActionName,
   type ClientAuth,
@@ -89,6 +90,7 @@ function isMessageObject(value: unknown): value is {
 
 const MIN_RETRY_MS = 1000;
 const MAX_RETRY_MS = 30_000;
+const INVALID_BACKOFF_MS = 60_000;
 const REFUSAL_CODES = new Set(['unauthorized', 'pairing-expired', 'protocol-unsupported']);
 
 /**
@@ -105,7 +107,7 @@ export class StimConnection {
   private controlListeners = new Set<(event: ControlEndedEvent) => void>();
   private notificationListeners = new Set<(event: NotificationEvent) => void>();
   private retryMs = MIN_RETRY_MS;
-  private invalidReconnect = false;
+  private lastInvalidAt = Number.NEGATIVE_INFINITY;
   private timer: unknown = null;
   private stopped = false;
   private open = false;
@@ -217,12 +219,14 @@ export class StimConnection {
         (hello) => {
           if (socket !== this.socket) return;
           this.open = true;
-          if (!this.invalidReconnect) this.retryMs = MIN_RETRY_MS;
+          if (Date.now() - this.lastInvalidAt > INVALID_BACKOFF_MS) this.retryMs = MIN_RETRY_MS;
           this.options.onState?.({
             kind: 'open',
             server: hello.server,
             protocol: hello.protocol,
-            actions: hello.actions ?? null,
+            actions:
+              hello.actions?.filter((action): action is ActionName => ACTIONS.some((known) => known === action)) ??
+              null,
             capabilities: hello.capabilities,
             features: hello.features ?? [],
             deviceId: hello.device?.id ?? null,
@@ -330,7 +334,6 @@ export class StimConnection {
       this.invalidMessage();
       return;
     }
-    this.receivedValid();
     if (message.event === 'control-ended') {
       for (const listener of this.controlListeners) listener(message);
       return;
@@ -347,14 +350,8 @@ export class StimConnection {
     }
   }
 
-  private receivedValid(): void {
-    if (!this.invalidReconnect) return;
-    this.invalidReconnect = false;
-    this.retryMs = MIN_RETRY_MS;
-  }
-
   private invalidMessage(): void {
-    this.invalidReconnect = true;
+    this.lastInvalidAt = Date.now();
     const socket = this.socket;
     const reason = t`The Mac sent an invalid RPC message. Reconnecting.`;
     this.detach(reason);

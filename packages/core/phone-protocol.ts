@@ -1,7 +1,7 @@
 import type * as Wire from './protocol.ts';
 import type * as State from './state/index.ts';
 
-export { PROTOCOL_VERSION } from './protocol.ts';
+export { ACTIONS, PROTOCOL_VERSION } from './protocol.ts';
 
 export type PhonePlatform = Wire.BuildPlanParams['platform'];
 export type PhoneDevicePlatform = Wire.Platform;
@@ -161,9 +161,10 @@ export type PhoneServerEvent =
 type OptionalFields<T, K extends keyof T> = Omit<T, K> & Partial<Pick<T, K>>;
 
 export type PhoneHelloResult = OptionalFields<
-  Omit<Wire.HelloResult, 'server' | 'features' | 'capabilities'>,
-  'actions' | 'device'
+  Omit<Wire.HelloResult, 'server' | 'features' | 'capabilities' | 'actions'>,
+  'device'
 > & {
+  actions?: string[];
   server: OptionalFields<Wire.HelloResult['server'], 'home'>;
   features?: string[];
   capabilities: string[];
