@@ -134,6 +134,10 @@ export type PhoneNotificationLevel = Wire.NotificationLevel;
 export type PhonePushRegisterParams = Wire.PushRegisterParams;
 export type PhoneNotificationSuppression = Wire.NotificationSuppression;
 export type PhoneNotificationTarget = Wire.NotificationTarget;
+export type PhoneWorkspaceFile = Wire.WorkspaceFile;
+export type PhoneWorkspaceFiles = Wire.WorkspaceFiles;
+export type PhoneWorkspacePatch = Wire.WorkspacePatch;
+export type PhoneWorkspaceDiff = Wire.WorkspaceDiff;
 export type PhoneNotificationEntry = Wire.NotificationEntry;
 export type PhoneNotificationsListResult = Wire.NotificationsListResult;
 export type PhoneProtocolError = Omit<Wire.ProtocolError, 'code'> & { code: string };
@@ -281,6 +285,10 @@ export type {
   PhonePushRegisterParams as PushRegisterParams,
   PhoneNotificationSuppression as NotificationSuppression,
   PhoneNotificationTarget as NotificationTarget,
+  PhoneWorkspaceFile as WorkspaceFile,
+  PhoneWorkspaceFiles as WorkspaceFiles,
+  PhoneWorkspacePatch as WorkspacePatch,
+  PhoneWorkspaceDiff as WorkspaceDiff,
   PhoneNotificationEntry as NotificationEntry,
   PhoneNotificationsListResult as NotificationsListResult,
   PhoneProtocolError as ProtocolError,
