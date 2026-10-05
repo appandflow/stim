@@ -1859,9 +1859,11 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
                       ? hostedDevices.appLaunch(session.id, raw)
                       : method === 'device-host.app.attach'
                         ? hostedDevices.appAttach(session.id, raw)
-                        : method === 'device-host.metro.open'
-                          ? await hostedDevices.metroOpen(session.id, raw, peer)
-                          : await hostedDevices.metroClose(session.id, raw);
+                        : method === 'device-host.logs.query'
+                          ? hostedDevices.logsQuery(session.id, raw)
+                          : method === 'device-host.metro.open'
+                            ? await hostedDevices.metroOpen(session.id, raw, peer)
+                            : await hostedDevices.metroClose(session.id, raw);
       return send(socket, 'error' in answer ? { id, error: answer.error } : { id, result: answer.result });
     }
 

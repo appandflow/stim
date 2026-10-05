@@ -24,3 +24,4 @@ export * from './device-host-machines.ts';
 export * from './macos.ts';
 export * from './hosted-macos.ts';
 export * from './tailnet.ts';
+export * from './hosted-logs.ts';

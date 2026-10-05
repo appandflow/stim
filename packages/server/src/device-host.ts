@@ -34,9 +34,12 @@ import {
   parseHostedOfferRequest,
   parseHostedNativeOffer,
   hostedAppAttempt,
+  hostedMacosLogsDir,
   parseHostedAppOffer,
+  parseHostedLogsCursor,
   readHostedApp,
   readHostedAppMetadata,
+  readLogsSince,
   type HostedAppDelivery,
   type HostedAppLaunch,
   type HostedAppRecord,
@@ -588,6 +591,24 @@ export class DeviceHost {
         result.notice = 'The install owner is unavailable. Stop this hosted session before retrying.';
       }
       return { result };
+    } catch (error) {
+      return refused('action-failed', (error as Error).message);
+    }
+  }
+
+  /** The hosted macOS app's captured logs, also after its session stopped; the isolated home keeps them. */
+  logsQuery(client: string, params: unknown): AppAnswer<Methods['device-host.logs.query']['result']> {
+    if (this.closed || !this.options.allowed(client))
+      return refused('forbidden', 'Current device-host approval is required.');
+    const cursor = isJsonObject(params) && params.cursor !== undefined ? parseHostedLogsCursor(params.cursor) : {};
+    if (!isJsonObject(params) || typeof params.session !== 'string' || !cursor)
+      return refused('bad-request', 'logs.query needs a session and, optionally, a cursor from a previous result.');
+    try {
+      const record = readHostedSessions().find((each) => each.client === client && each.id === params.session);
+      if (!record) return refused('unknown-session', 'This client has no such hosted session.');
+      if (record.platform !== 'macos') throw new Error('Hosted logs support macOS sessions only.');
+      const dir = hostedMacosLogsDir(join(deviceHostArea(record.id), 'home'));
+      return { result: dir ? readLogsSince(dir, cursor) : { records: [], cursor, more: false } };
     } catch (error) {
       return refused('action-failed', (error as Error).message);
     }

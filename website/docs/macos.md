@@ -46,7 +46,8 @@ the background without activating it or changing focus: it sets
 An app that activates itself at launch still takes focus. Hosted launches
 (`macos --host`) do not set it. A failed build keeps the compiler
 output in workspace logs and does not launch an app. Runtime stdout and stderr
-are client logs; unexpected exits are errors. `macos --json` prints one launch
+are client logs, and Stim runs the app with `NSUnbufferedIO=YES` so Swift `print`
+output arrives per line instead of when the app exits; unexpected exits are errors. `macos --json` prints one launch
 record on stdout, with progress on stderr. `status --json` reports
 `environments[].macos`, its build and process state. This command does not
 support `--plan`, `--slot` or `reload`.
@@ -171,6 +172,17 @@ a person on that Mac approves the request with
 `stim-server devices grant <id> --device-host`, then run `stim doctor` once more.
 Stim connects only to the Mac's pinned tailnet node. If the host refuses or is
 unreachable, the command fails; it never launches the app locally instead.
+
+The host records the hosted app's stdout, stderr and exit like a local run.
+`stim logs`, including `--errors`, `--json` and `--follow`, asks the host over the
+same approved connection, copies the records it has not copied yet into the
+workspace's `logs/macos-host.ndjson` and prints them with the local records.
+`stim stop` copies the last ones, including the exit record, before it forgets the
+placement, so the logs stay readable after stop. A host that cannot answer, because
+it is unreachable or runs a `stim-server` that predates this, costs one stderr
+warning; stdout still carries the records already copied, so `logs --json` stays
+valid NDJSON. The host's unified log is not collected: `os.Logger` output that is
+not written to stderr does not appear.
 
 Phones and Stim Desktop view and control the hosted app through this Mac's
 stim-server, which relays to the host. The phone sends clicks, scrolls,

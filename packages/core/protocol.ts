@@ -7,6 +7,8 @@ import type {
   HostedAppOffer,
   HostedAppDelivery,
   HostedAppLaunch,
+  HostedLogsCursor,
+  HostedLogsPage,
   NdjsonRecord,
   StatusPayload,
 } from './state/index.ts';
@@ -100,6 +102,7 @@ export const METHODS = [
   'device-host.app.chunk',
   'device-host.app.launch',
   'device-host.app.attach',
+  'device-host.logs.query',
   'device-host.metro.open',
   'device-host.metro.close',
   'device-host.frames.subscribe',
@@ -136,6 +139,7 @@ export const DEVICE_HOST_METHODS = [
   'device-host.app.chunk',
   'device-host.app.launch',
   'device-host.app.attach',
+  'device-host.logs.query',
   'device-host.metro.open',
   'device-host.metro.close',
   'device-host.frames.subscribe',
@@ -1078,6 +1082,7 @@ export interface Methods {
   };
   'device-host.app.launch': { params: { session: string; attempt: string }; result: HostedAppLaunch };
   'device-host.app.attach': { params: { session: string; attempt: string }; result: HostedAppLaunch };
+  'device-host.logs.query': { params: { session: string; cursor?: HostedLogsCursor }; result: HostedLogsPage };
   'device-host.metro.open': {
     params: { session: string; gatewayPort: number; secret: string };
     result: { port: number };

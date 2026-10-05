@@ -21,12 +21,14 @@ import {
   parseSince,
   queryLogs,
   readLogRecords,
+  readMacosRecord,
   recordMatches,
   sortByTs,
 } from '@stim-cli/core/state';
 import { createAgentActionReader, workspaceAgentTargets } from '../devices/agent-actions.ts';
 import { errorDiagnostics } from '../diagnostics/error-diagnostics.ts';
 import { launchErrorPreview } from '../diagnostics/launch-error-preview.ts';
+import { followHostedMacosLogs, syncHostedMacosLogs } from '../device-host/hosted-logs-sync.ts';
 import { readWorkspaceState } from '../workspace/workspace-state.ts';
 import { captureWorkspaceCrashes } from '../diagnostics/native-crash.ts';
 
@@ -233,6 +235,9 @@ export default function logsCommand(program: Command): void {
 
       requireLogsWorkspace(root, dir);
 
+      const hosted = readMacosRecord(root)?.host;
+      const hostedReachable = hosted ? await syncHostedMacosLogs(root, hosted) : true;
+
       const query = {
         slot: opts.slot,
         dir,
@@ -330,8 +335,10 @@ export default function logsCommand(program: Command): void {
             for (const record of readAgent()) if (recordMatches(record, criteria)) emit(record);
           }, 500)
         : null;
+      const stopHosted = hosted ? followHostedMacosLogs(root, { failing: !hostedReachable }) : null;
       const finish = () => {
         stop();
+        stopHosted?.();
         stopReader();
         if (agentTimer) clearInterval(agentTimer);
         process.exit(0);

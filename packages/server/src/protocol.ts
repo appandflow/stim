@@ -944,6 +944,16 @@ export function protocolJsonSchema(): JsonSchema {
           request('device-host.app.launch', session({ attempt: { type: 'string' } }, ['attempt'])),
           request('device-host.app.attach', session({ attempt: { type: 'string' } }, ['attempt'])),
           request(
+            'device-host.logs.query',
+            session({
+              cursor: {
+                type: 'object',
+                maxProperties: 16,
+                additionalProperties: { type: 'integer', minimum: 0 },
+              },
+            }),
+          ),
+          request(
             'device-host.metro.open',
             session(
               {
