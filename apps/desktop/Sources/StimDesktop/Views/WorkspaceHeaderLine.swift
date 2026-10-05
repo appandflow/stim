@@ -5,6 +5,7 @@ import SwiftUI
 /// The top of a workspace page, one line: the stage, the running build's progress, the git chip and the workspace
 /// actions. The inspector holds the details.
 struct WorkspaceHeaderLine: View {
+  var cli: Task<StimCLI, Never>
   var env: Workspace
   var openLogs: () -> Void
   @EnvironmentObject private var actions: ActionCenter
@@ -12,7 +13,7 @@ struct WorkspaceHeaderLine: View {
   var body: some View {
     HStack(spacing: Space.md) {
       TimelineView(env.build.flatMap { $0.isRunning ? .buildSeconds($0) : nil } ?? .periodic(from: .now, by: 15)) { context in
-        StageLine(env: env, now: context.date)
+        StageLine(cli: cli, env: env, now: context.date)
       }
       Spacer(minLength: Space.md)
       if env.replayOff {
@@ -89,6 +90,7 @@ struct BuildInlineProgress: View {
 }
 
 struct StageLine: View {
+  var cli: Task<StimCLI, Never>
   var env: Workspace
   var now: Date
 
@@ -110,7 +112,7 @@ struct StageLine: View {
       }
       if let chip = GitChip(env.worktree) {
         Rectangle().fill(Palette.border).frame(width: 1, height: 14)
-        GitChipButton(chip: chip, worktree: env.worktree!).layoutPriority(1)
+        GitChipButton(cli: cli, chip: chip, worktree: env.worktree!, workspace: env.path).layoutPriority(1)
       }
     }
   }
@@ -129,9 +131,14 @@ struct ChecksMark: View {
 }
 
 struct GitChipButton: View {
+  var cli: Task<StimCLI, Never>
   var chip: GitChip
   var worktree: WorktreeInfo
+  var workspace: String
   @State private var shown = false
+  @State private var reviewing = false
+  @State private var openError: String?
+  @AppStorage(AppPreferences.Key.diffViewer) private var diffViewer = DiffViewer.builtIn
 
   var body: some View {
     Button {
@@ -159,13 +166,38 @@ struct GitChipButton: View {
     .help("\(chip.label). Click for the branch and pull request.")
     .accessibilityLabel(chip.label)
     .popover(isPresented: $shown, arrowEdge: .bottom) {
-      GitPopover(worktree: worktree).presentationBackground(Palette.surface)
+      GitPopover(worktree: worktree, reviewChanges: reviewChanges).presentationBackground(Palette.surface)
+    }
+    .sheet(isPresented: $reviewing) { WorkspaceDiffView(cli: cli, workspace: workspace) }
+    .alert("Could not open changes", isPresented: Binding(get: { openError != nil }, set: { if !$0 { openError = nil } })) {
+      Button("OK") { openError = nil }
+    } message: {
+      Text(openError ?? "")
+    }
+  }
+
+  private func reviewChanges() {
+    shown = false
+    if diffViewer == .builtIn {
+      reviewing = true
+      return
+    }
+    guard let app = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.microsoft.VSCode") else {
+      openError = "Visual Studio Code is not installed. Choose Built-in in Settings > Integrations."
+      return
+    }
+    NSWorkspace.shared.open(
+      [URL(fileURLWithPath: worktree.path).resolvingSymlinksInPath()], withApplicationAt: app,
+      configuration: NSWorkspace.OpenConfiguration()
+    ) { _, error in
+      if let error { Task { @MainActor in openError = error.localizedDescription } }
     }
   }
 }
 
 struct GitPopover: View {
   var worktree: WorktreeInfo
+  var reviewChanges: () -> Void
 
   var body: some View {
     VStack(alignment: .leading, spacing: Space.md) {
@@ -177,6 +209,8 @@ struct GitPopover: View {
         Text(git.upstream.map { "Tracks \($0)" } ?? "No upstream").foregroundStyle(Palette.secondary)
         Text(git.summary == "Clean" ? "No uncommitted or unpushed changes" : git.summary).foregroundStyle(Palette.secondary)
       }
+      Button("Review changes", systemImage: "doc.text.magnifyingglass", action: reviewChanges)
+        .buttonStyle(.stim())
       if let pull = worktree.pullRequest {
         Rectangle().fill(Palette.border).frame(height: 1)
         HStack(spacing: Space.sm) {

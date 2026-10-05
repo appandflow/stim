@@ -115,8 +115,20 @@ pull request it starts with a branch icon. Commits ahead and behind,
 uncommitted files, "merged into main" (left out when the pull request itself
 is merged) or "no upstream" follow only when there are some.
 Clicking it opens a popover with the branch, its upstream, the pull request's
-title, checks and review, and **Open on GitHub**. The "..." menu at the end of
-the line holds the workspace actions.
+title, checks and review, and **Open on GitHub**. **Review changes** opens a
+read-only diff sheet. **Changed** lists staged and unstaged files; **New** lists
+untracked files. Selecting a file requests only its patches. Lists stop at
+200 files and previews at 256 KiB; binary, oversized and unavailable previews
+are labeled. Built-in viewing needs the existing loopback server (turn on **Serve to
+phones** on the Phones page) to support workspace diffs and allow reads for the
+CLI's same Stim home. An older or
+unavailable server shows its reason without a CLI fallback or starting a server.
+
+In **Settings > Integrations > Review changes in**, choose **Built-in** or
+**Visual Studio Code**. The latter opens this local repository in the installed
+app; use its Source Control view to compare files. It does not export a selected
+comparison. A missing app or launch failure shows an error and keeps the choice.
+The "..." menu at the end of the line holds the workspace actions.
 
 The inspector, toggled from the toolbar, floats over the workspace in narrow
 windows. Its content scrolls behind the glass toolbar controls.

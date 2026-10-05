@@ -11,6 +11,7 @@ struct AppPreferencesView: View {
   @AppStorage(AppPreferences.Key.maxFramesPerSecond) private var framesPerSecond = 60.0
   @AppStorage(AppPreferences.Key.pausesHiddenFrames) private var pausesHidden = true
   @AppStorage(AppPreferences.Key.editorBundleID) private var editor = ""
+  @AppStorage(AppPreferences.Key.diffViewer) private var diffViewer = DiffViewer.builtIn
   @AppStorage(AppPreferences.Key.terminalBundleID) private var terminal = ""
   @AppStorage(AppPreferences.Key.showsMenuBarExtra) private var showsMenuBarExtra = false
   @AppStorage(AppPreferences.Key.stimExecutable) private var stimExecutable = ""
@@ -79,6 +80,13 @@ struct AppPreferencesView: View {
       Section("Integrations") {
         appPicker("Open in editor", selection: $editor, apps: ExternalApp.editors)
         appPicker("Open in Terminal", selection: $terminal, apps: ExternalApp.terminals)
+        Picker("Review changes in", selection: $diffViewer) {
+          ForEach(DiffViewer.allCases, id: \.self) { Text($0.title).tag($0) }
+        }
+        if diffViewer == .visualStudioCode {
+          Text("Opens the local repository. Use Source Control in Visual Studio Code to compare files.")
+            .font(.stim(.footnote)).foregroundStyle(Palette.secondary)
+        }
       }
 
       Section {
