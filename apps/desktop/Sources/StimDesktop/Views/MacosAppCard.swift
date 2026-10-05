@@ -267,6 +267,15 @@ private struct HostedMacosWindow: View {
     }
   }
 
+  // NSRunningApplication(processIdentifier:) returns nil for 1-2 ms at a time on macOS 27 while the process runs.
+  private nonisolated static func runningApplication(_ pid: pid_t) -> NSRunningApplication? {
+    for attempt in 0..<4 {
+      if attempt > 0 { usleep(5_000) }
+      if let running = NSRunningApplication(processIdentifier: pid) { return running }
+    }
+    return nil
+  }
+
   private func matches(_ app: MacosApp) -> Bool {
     guard let process = app.app else { return false }
     var info = proc_bsdinfo()
@@ -274,7 +283,7 @@ private struct HostedMacosWindow: View {
       proc_pidinfo(process.pid, PROC_PIDTBSDINFO, 0, &info, Int32(MemoryLayout<proc_bsdinfo>.size))
         == MemoryLayout<proc_bsdinfo>.size,
       info.pbi_start_tvsec * 1_000_000 + info.pbi_start_tvusec == process.startedAtMicros,
-      let running = NSRunningApplication(processIdentifier: process.pid),
+      let running = Self.runningApplication(process.pid),
       running.bundleIdentifier == app.bundleId,
       running.executableURL?.resolvingSymlinksInPath().path == URL(fileURLWithPath: app.executable).resolvingSymlinksInPath().path
     else { return false }
@@ -288,7 +297,7 @@ private struct HostedMacosWindow: View {
       let windows = content.windows.filter { $0.owningApplication?.processID == app.app?.pid && $0.windowLayer == 0 }
       guard self.app?.launchId == app.launchId, self.window?.windowID == window.windowID, stream != nil, matches(app),
         windows.contains(where: { $0.windowID == window.windowID && $0.frame.size == window.frame.size }),
-        let process = app.app, let running = NSRunningApplication(processIdentifier: process.pid)
+        let process = app.app, let running = Self.runningApplication(process.pid)
       else {
         error = "Open app needs the same single owned window."
         return
