@@ -2,6 +2,7 @@ packages:
   - packages/*
   - website
   - apps/mobile
+  - apps/demo-server
 
 # Defence in depth: the packages declare each other with `workspace:` ranges,
 # which link regardless. This keeps a plain semver internal dep linking to the
@@ -24,6 +25,7 @@ allowBuilds:
   core-js: false
   esbuild: false
   unrs-resolver: false
+  workerd: false
 
 # Docusaurus uses image-size only while building repository-owned content, and
 # image-size has no patched release (facebook/docusaurus#12231).

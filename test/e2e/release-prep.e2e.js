@@ -30,7 +30,7 @@ const makeWorkspace = () => {
   const root = mkdtempSync(join(tmpdir(), 'stim-release-prep-'));
   for (const file of ['pnpm-workspace.yaml', 'pnpm-lock.yaml']) cpSync(join(REPO, file), join(root, file));
   cpSync(join(REPO, 'patches'), join(root, 'patches'), { recursive: true });
-  for (const dir of ['website', 'apps/mobile']) {
+  for (const dir of ['website', 'apps/mobile', 'apps/demo-server']) {
     mkdirSync(join(root, dir), { recursive: true });
     cpSync(join(REPO, dir, 'package.json'), join(root, dir, 'package.json'));
   }

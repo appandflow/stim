@@ -1,0 +1,51 @@
+name: Demo server deploy
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'apps/demo-server/**'
+      - 'apps/mobile/mock-server/payloads.mjs'
+      - '.github/workflows/demo-server-deploy.yml'
+
+concurrency:
+  group: demo-server-deploy
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: demo-server
+    env:
+      HAS_CLOUDFLARE: ${{ secrets.CLOUDFLARE_API_TOKEN != '' && secrets.CLOUDFLARE_ACCOUNT_ID != '' }}
+    steps:
+      - name: Skip without Cloudflare credentials
+        if: env.HAS_CLOUDFLARE != 'true'
+        run: echo "::notice::CLOUDFLARE_API_TOKEN or CLOUDFLARE_ACCOUNT_ID is not set; the demo server was not deployed."
+      - if: env.HAS_CLOUDFLARE == 'true'
+        uses: actions/checkout@v4
+      - if: env.HAS_CLOUDFLARE == 'true'
+        uses: ./.github/actions/setup-stim
+        with:
+          install: 'false'
+          build: 'false'
+      - if: env.HAS_CLOUDFLARE == 'true'
+        run: pnpm install --frozen-lockfile --filter stim-demo-server
+      - name: Deploy
+        if: env.HAS_CLOUDFLARE == 'true'
+        working-directory: apps/demo-server
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          DEMO_TOKEN: ${{ secrets.DEMO_TOKEN }}
+        run: |
+          args=()
+          if [ -n "$DEMO_TOKEN" ]; then
+            node -e 'process.stdout.write(JSON.stringify({ DEMO_TOKEN: process.env.DEMO_TOKEN }))' > "$RUNNER_TEMP/demo-secrets.json"
+            args=(--secrets-file "$RUNNER_TEMP/demo-secrets.json")
+          fi
+          pnpm exec wrangler deploy "${args[@]}"

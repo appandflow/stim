@@ -1,0 +1,12 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "module": "preserve",
+    "moduleResolution": "bundler",
+    "allowJs": true,
+    "types": ["@cloudflare/workers-types"],
+    "declaration": false,
+    "isolatedDeclarations": false
+  },
+  "include": ["src/**/*.ts"]
+}

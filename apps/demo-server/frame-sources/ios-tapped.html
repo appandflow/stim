@@ -1,0 +1,207 @@
+<!doctype html><meta charset="utf-8" /><style>
+  * {
+    box-sizing: border-box;
+    margin: 0;
+  }
+  body {
+    width: 440px;
+    height: 956px;
+    font-family: -apple-system, 'SF Pro Text', system-ui;
+    background: #f6f8f5;
+    color: #16231c;
+    overflow: hidden;
+    position: relative;
+  }
+  .sb {
+    height: 62px;
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+    padding: 0 34px 8px;
+    font-weight: 600;
+    font-size: 17px;
+  }
+  .nav {
+    padding: 10px 16px;
+    color: #2f7d5b;
+    font-size: 17px;
+  }
+  .hero {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 18px 20px 22px;
+  }
+  .ic {
+    width: 96px;
+    height: 96px;
+    border-radius: 26px;
+    background: #d9efe4;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 48px;
+  }
+  h1 {
+    font-size: 30px;
+    font-weight: 700;
+    margin-top: 16px;
+  }
+  .s {
+    font-size: 15px;
+    color: #6a7b70;
+    margin-top: 4px;
+  }
+  .stats {
+    display: flex;
+    gap: 10px;
+    margin: 0 20px 16px;
+  }
+  .stat {
+    flex: 1;
+    background: #fff;
+    border-radius: 14px;
+    padding: 14px;
+    text-align: center;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+  }
+  .stat b {
+    display: block;
+    font-size: 24px;
+    color: #2f7d5b;
+  }
+  .stat span {
+    font-size: 13px;
+    color: #6a7b70;
+  }
+  .sec {
+    padding: 8px 20px;
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: #6a7b70;
+    font-weight: 600;
+  }
+  .week {
+    display: flex;
+    justify-content: space-between;
+    margin: 0 20px 18px;
+    background: #fff;
+    border-radius: 14px;
+    padding: 14px 16px;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+  }
+  .day {
+    text-align: center;
+    font-size: 13px;
+    color: #6a7b70;
+  }
+  .day i {
+    display: block;
+    width: 30px;
+    height: 30px;
+    border-radius: 15px;
+    margin-top: 6px;
+    background: #e5ebe6;
+  }
+  .day i.on {
+    background: #2f7d5b;
+  }
+  .glasses {
+    margin: 0 20px;
+    background: #fff;
+    border-radius: 14px;
+    padding: 16px;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+    font-size: 17px;
+  }
+  .bar {
+    height: 12px;
+    border-radius: 6px;
+    background: #e5ebe6;
+    margin-top: 12px;
+    overflow: hidden;
+  }
+  .bar div {
+    width: 62%;
+    height: 100%;
+    background: #2f7d5b;
+  }
+  .btn {
+    position: absolute;
+    left: 20px;
+    right: 20px;
+    bottom: 122px;
+    height: 54px;
+    border-radius: 14px;
+    background: #2f7d5b;
+    color: #fff;
+    font-size: 18px;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .tab {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 92px;
+    background: rgba(255, 255, 255, 0.94);
+    border-top: 1px solid #dde4de;
+    display: flex;
+    justify-content: space-around;
+    padding-top: 10px;
+    font-size: 11px;
+    color: #6a7b70;
+  }
+  .tab div {
+    text-align: center;
+  }
+  .tab b {
+    display: block;
+    font-size: 22px;
+    margin-bottom: 2px;
+    font-weight: 400;
+  }
+  .tab .on {
+    color: #2f7d5b;
+  }
+</style>
+<body>
+  <div class="sb"><span>4:56</span><span></span></div>
+  <div class="nav">&#8249; Search</div>
+  <div class="hero">
+    <div class="ic">&#128167;</div>
+    <h1>Drink water</h1>
+    <div class="s">Daily &middot; 8 glasses</div>
+  </div>
+  <div class="stats">
+    <div class="stat"><b>12</b><span>day streak</span></div>
+    <div class="stat"><b>87%</b><span>this month</span></div>
+    <div class="stat"><b>41</b><span>best streak</span></div>
+  </div>
+  <div class="sec">This week</div>
+  <div class="week">
+    <div class="day">M<i class="on"></i></div>
+    <div class="day">T<i class="on"></i></div>
+    <div class="day">W<i class="on"></i></div>
+    <div class="day">T<i class="on"></i></div>
+    <div class="day">F<i class="on"></i></div>
+    <div class="day">S<i></i></div>
+    <div class="day">S<i></i></div>
+  </div>
+  <div class="sec">Today</div>
+  <div class="glasses">
+    5 of 8 glasses
+    <div class="bar"><div></div></div>
+  </div>
+  <div class="btn">Log a glass</div>
+  <div class="tab">
+    <div class="on"><b>&#9679;</b>Today</div>
+    <div><b>&#9906;</b>Search</div>
+    <div><b>&#9776;</b>Habits</div>
+    <div><b>&#9881;</b>Settings</div>
+  </div>
+</body>

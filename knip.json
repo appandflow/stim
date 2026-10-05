@@ -29,6 +29,9 @@
       "entry": ["e2e.config.ts", "tests/*.e2e.ts"],
       "ignoreBinaries": ["stim", "e2e"],
       "ignoreDependencies": ["ai"]
+    },
+    "apps/demo-server": {
+      "ignoreDependencies": ["cloudflare"]
     }
   }
 }

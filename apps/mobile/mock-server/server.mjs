@@ -6,7 +6,8 @@ import { join } from 'node:path';
 import { parseArgs } from 'node:util';
 import { WebSocketServer } from 'ws';
 
-import { filterRecords, loadFixtures, shiftTimestamps, usageHistory } from './fixtures.mjs';
+import { loadFixtures } from './fixtures.mjs';
+import { filterRecords, shiftTimestamps, usageHistory } from './payloads.mjs';
 import { loadRecording, replayRange, VideoFeed } from './replay.mjs';
 
 const { values } = parseArgs({

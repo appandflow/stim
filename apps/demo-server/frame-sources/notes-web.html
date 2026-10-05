@@ -1,0 +1,85 @@
+<!doctype html><meta charset="utf-8" /><style>
+  * {
+    box-sizing: border-box;
+    margin: 0;
+  }
+  body {
+    width: 1280px;
+    height: 800px;
+    font-family: -apple-system, system-ui;
+    background: #fffdf5;
+    color: #26210f;
+    overflow: hidden;
+    display: flex;
+  }
+  .side {
+    width: 260px;
+    background: #f6f0da;
+    padding: 28px 20px;
+  }
+  .logo {
+    font-size: 22px;
+    font-weight: 700;
+    color: #c58a00;
+    margin-bottom: 24px;
+  }
+  .side div {
+    padding: 9px 12px;
+    border-radius: 8px;
+    margin-bottom: 4px;
+    font-size: 15px;
+  }
+  .on {
+    background: #fffdf5;
+  }
+  .list {
+    width: 340px;
+    border-right: 1px solid #eee7cc;
+    padding: 28px 0;
+  }
+  .list div {
+    padding: 14px 24px;
+    border-bottom: 1px solid #eee7cc;
+    font-weight: 600;
+  }
+  .list small {
+    display: block;
+    font-weight: 400;
+    color: #8a8266;
+    margin-top: 3px;
+  }
+  .doc {
+    flex: 1;
+    padding: 44px 52px;
+  }
+  h1 {
+    font-size: 32px;
+    margin-bottom: 16px;
+  }
+  p {
+    font-size: 18px;
+    line-height: 1.6;
+    color: #4a4328;
+    margin-bottom: 12px;
+  }
+</style>
+<body>
+  <div class="side">
+    <div class="logo">Notes</div>
+    <div class="on">All notes</div>
+    <div>Personal</div>
+    <div>Work</div>
+    <div>Archive</div>
+  </div>
+  <div class="list">
+    <div>Trip packing list<small>Today</small></div>
+    <div>Sprint planning<small>Yesterday</small></div>
+    <div>Book ideas<small>Monday</small></div>
+    <div>Recipe: lentil soup<small>Sunday</small></div>
+  </div>
+  <div class="doc">
+    <h1>Trip packing list</h1>
+    <p>Weekend in Lisbon. Check the forecast on Thursday.</p>
+    <p>Passport, phone charger, rain jacket, walking shoes, sunglasses, camera.</p>
+  </div>
+</body>

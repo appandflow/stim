@@ -1,0 +1,111 @@
+<!doctype html><meta charset="utf-8" /><style>
+  * {
+    box-sizing: border-box;
+    margin: 0;
+  }
+  body {
+    width: 440px;
+    height: 956px;
+    font-family: -apple-system, system-ui;
+    background: #fffdf5;
+    color: #26210f;
+    overflow: hidden;
+    position: relative;
+  }
+  .sb {
+    height: 62px;
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+    padding: 0 34px 8px;
+    font-weight: 600;
+    font-size: 17px;
+  }
+  .nav {
+    padding: 10px 16px;
+    color: #c58a00;
+    font-size: 17px;
+    display: flex;
+    justify-content: space-between;
+  }
+  .meta {
+    padding: 12px 20px 0;
+    color: #8a8266;
+    font-size: 13px;
+  }
+  h1 {
+    font-size: 30px;
+    font-weight: 700;
+    padding: 6px 20px 14px;
+  }
+  .item {
+    margin: 0 20px;
+    padding: 11px 0;
+    border-bottom: 1px solid #eee7cc;
+    font-size: 17px;
+    display: flex;
+    gap: 12px;
+    align-items: center;
+  }
+  .box {
+    width: 22px;
+    height: 22px;
+    border-radius: 11px;
+    border: 2px solid #c58a00;
+    flex: none;
+  }
+  .box.on {
+    background: #c58a00;
+  }
+  .done {
+    color: #8a8266;
+    text-decoration: line-through;
+  }
+  p {
+    padding: 18px 20px 0;
+    font-size: 17px;
+    line-height: 1.45;
+  }
+  .tab {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 92px;
+    background: rgba(255, 253, 245, 0.95);
+    border-top: 1px solid #eee7cc;
+    display: flex;
+    justify-content: space-around;
+    padding-top: 10px;
+    font-size: 11px;
+    color: #8a8266;
+  }
+  .tab b {
+    display: block;
+    font-size: 22px;
+    margin-bottom: 2px;
+    font-weight: 400;
+  }
+  .tab .on {
+    color: #c58a00;
+  }
+</style>
+<body>
+  <div class="sb"><span>4:56</span><span></span></div>
+  <div class="nav"><span>&#8249; Notes</span><span>Share</span></div>
+  <div class="meta">Today at 9:12 &middot; Travel</div>
+  <h1>Trip packing list</h1>
+  <div class="item"><span class="box on"></span><span class="done">Passport</span></div>
+  <div class="item"><span class="box on"></span><span class="done">Phone charger</span></div>
+  <div class="item"><span class="box"></span><span>Rain jacket</span></div>
+  <div class="item"><span class="box"></span><span>Walking shoes</span></div>
+  <div class="item"><span class="box"></span><span>Travel adapter</span></div>
+  <div class="item"><span class="box"></span><span>Paperback for the flight</span></div>
+  <p>Check in online the day before. Train to the airport leaves at 7:40.</p>
+  <div class="tab">
+    <div class="on"><b>&#9998;</b>Notes</div>
+    <div><b>&#9906;</b>Search</div>
+    <div><b>&#128193;</b>Folders</div>
+    <div><b>&#9881;</b>Settings</div>
+  </div>
+</body>

@@ -1,0 +1,12 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "module": "preserve",
+    "moduleResolution": "bundler",
+    "allowJs": true,
+    "types": ["node", "vitest/globals"],
+    "declaration": false,
+    "isolatedDeclarations": false
+  },
+  "include": ["test/**/*.ts", "vitest.config.ts", "vitest.live.config.ts"]
+}
