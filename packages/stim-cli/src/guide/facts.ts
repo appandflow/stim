@@ -1335,12 +1335,14 @@ RULES
     host?               { machine, session, appSlot, appAttempt, bundleId,
                           agent } when stim macos --host placed the app on
                           another Mac; it then has no local app or supervisor
-    hostLaunched?       true when that host reported a live app, "unverified"
-                          when it could not confirm one
+    hostLaunched?       true when that host reported a live app, false when
+                          stopped, "unverified" when it could not confirm one
   A live app without its supervisor is orphaned. An identity the system cannot
-  verify is unverified. A hosted app is running or unverified from its host's
-  launch reply once no placement is in progress; status does not contact the
-  host.
+  verify is unverified. For hosted placements only, status asks the host for
+  the session state with about a 3 s timeout per connection and request and
+  a 10 s cache. It reports stopped when the host says the session stopped,
+  for example after a stim-server restart there, and unverified when the
+  host is unreachable or cannot confirm. The placement stays recorded.
   See stim guide macos for local capture, hosting and cleanup.
 
   An environment with a recorded run also carries builds, each platform's

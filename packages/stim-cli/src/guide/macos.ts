@@ -161,7 +161,7 @@ text and keys; Stim Desktop's Control sends clicks, drags and typed text.
 
   stim macos --host mini          # build here, deliver, launch on mini
   stim macos --host mini --json   # { platform, product, launchId, build, host }
-  stim status --json              # environments[].macos.host
+  stim status --json              # environments[].macos.state and macos.host
   stim stop                       # stop the session on mini and confirm it
   stim worktree remove <path>     # also stops it
 
@@ -193,8 +193,13 @@ approved host that lacks them. A server started by Stim Desktop uses Desktop's
 grants.
 
 status --json reports macos.host { machine, session, appSlot, appAttempt,
-bundleId, agent }. state is running when the host reported a live app and
-unverified when it could not confirm one; status does not contact the host.
+bundleId, agent }. For hosted placements only, status asks the host for the
+session state with about a 3 s timeout per connection and request and a 10 s
+cache. It reports stopped when the host says the session stopped, for example
+after a stim-server restart there, and unverified when the host is unreachable
+or cannot confirm. Run stim macos --host <machine> to launch a stopped app
+again, or stim stop to clear or reconcile the placement. The host field stays
+in status --json for cleanup.
 While a placement is recorded, gc treats the workspace as in use. agent says
 how a coding agent drives the app: { driver: "none", setting:
 "hosting.agentDriver" } until the hosting Mac's owner sets that setting there,

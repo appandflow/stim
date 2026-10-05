@@ -34,7 +34,7 @@ export interface MacosAppRecord {
   app?: MacosProcess;
   /** Set when `stim macos --host` reserved a session on another Mac; the app then has no local process. */
   host?: HostedMacosPlacement;
-  /** What the host reported about this launch: true for a live app; status never contacts the host. */
+  /** Host launch evidence: true for a live app; status can override it in memory after probing the session. */
   hostLaunched?: boolean | 'unverified';
 }
 
