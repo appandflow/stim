@@ -1,5 +1,6 @@
 import { t } from '@lingui/core/macro';
 
+import { machineName } from '@/lib/format';
 import type {
   AndroidState,
   AppPresence,
@@ -58,6 +59,8 @@ export interface DeviceRef {
   diskBytes?: number | null;
   /** When the workspace's lease on a physical device ends. */
   leaseExpiresAt?: string;
+  /** The Mac a hosted macOS app runs on, without the entry's port. */
+  host?: string;
 }
 
 export function deviceKey(device: Pick<DeviceRef, 'platform' | 'slot' | 'physical'>): string {
@@ -194,6 +197,7 @@ export function devicesOf(env: EnvironmentState): DeviceRef[] {
       running: env.macos.state === 'running',
       owned: true,
       physical: false,
+      host: env.macos.host ? machineName(env.macos.host.machine) : undefined,
     });
   for (const slot of env.slots ?? []) add(slot.slot, slot.ios, slot.android);
   for (const device of env.physicalDevices ?? []) out.push(physicalDevice(device));

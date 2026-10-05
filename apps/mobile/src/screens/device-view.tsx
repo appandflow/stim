@@ -35,6 +35,7 @@ import { AgentFeed } from '@/components/agent-feed';
 import { DeviceFrame } from '@/components/device-frame';
 import { DeviceScreen } from '@/components/device-screen';
 import { Icon } from '@/components/icon';
+import { HostLabel } from '@/components/host-label';
 import { ViewerToolbar, type ViewerAction } from '@/components/viewer-toolbar';
 import { ScrollView } from '@/components/lists';
 import { Pill } from '@/components/pill';
@@ -771,6 +772,7 @@ export function DeviceView({
                   >
                     {subtitle}
                   </Text>
+                  {device?.host ? <HostLabel host={device.host} color={theme.media.textTertiary} /> : null}
                   {range?.recording && !replayOff ? (
                     <View style={styles.driver} accessible accessibilityLabel={t`Recording for replay`}>
                       <View style={styles.recordingDot} />

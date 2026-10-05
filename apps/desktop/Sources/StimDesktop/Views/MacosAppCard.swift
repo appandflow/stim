@@ -39,10 +39,17 @@ struct MacosAppCard: View {
         }
       }
       HStack {
-        Text("Swift Package Debug \u{00B7} build \(app.build.state) \u{00B7} app \(app.state)\(hostNote)")
+        Text("Swift Package Debug \u{00B7} build \(app.build.state) \u{00B7} app \(app.state)")
           .font(.stim(.footnote)).foregroundStyle(Palette.secondary)
         Spacer()
         if app.host == nil { Button("Permissions") { permissions.openSetup() }.nativeControlStyle() }
+      }
+      if let host = app.host {
+        Label("on \(machineName(host.machine))", systemImage: "desktopcomputer")
+          .font(.stim(.footnote))
+          .foregroundStyle(Palette.secondary)
+          .lineLimit(1)
+          .help("\(host.machine) \u{00B7} \(host.bundleId)")
       }
       if let error = app.build.error { Text(error).foregroundStyle(Palette.error).textSelection(.enabled) }
       if app.host != nil {
@@ -75,11 +82,6 @@ extension MacosAppCard {
   fileprivate var runArguments: [String] {
     guard let host = app.host else { return ["macos"] }
     return ["macos", "--host", host.machine]
-  }
-
-  fileprivate var hostNote: String {
-    guard let host = app.host else { return "" }
-    return " on \(host.machine) as \(host.bundleId)"
   }
 }
 
@@ -129,7 +131,7 @@ private struct HostedMacosWindow: View {
     case .stream(let readOnly):
       VStack(alignment: .leading, spacing: Space.sm) {
         HStack {
-          Text(controlNote ?? readOnly ?? "Window on \(app.host?.machine ?? "the host")")
+          Text(controlNote ?? readOnly ?? "Window on \(machineName(app.host?.machine ?? "the host"))")
             .font(.stim(.caption)).foregroundStyle(Palette.secondary).lineLimit(2)
           Spacer()
           if stream.problem != nil {
@@ -152,11 +154,13 @@ private struct HostedMacosWindow: View {
         .aspectRatio(pixelSize.map { $0.width / max($0.height, 1) } ?? 1.6, contentMode: .fit)
         .frame(maxWidth: .infinity)
         .overlay {
-          if let problem = stream.problem ?? (stream.receiving ? nil : "Connecting to \(app.host?.machine ?? "the host")") {
+          if let problem = stream.problem
+            ?? (stream.receiving ? nil : "Connecting to \(machineName(app.host?.machine ?? "the host"))")
+          {
             PhysicalMessage(text: problem)
           }
         }
-        .accessibilityLabel("\(app.product) window on \(app.host?.machine ?? "the host")")
+        .accessibilityLabel("\(app.product) window on \(machineName(app.host?.machine ?? "the host"))")
       }
     }
   }
