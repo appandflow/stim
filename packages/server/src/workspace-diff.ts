@@ -7,6 +7,12 @@ import { runFileCommand } from './stim-command.ts';
 const MAX_FILES = 200;
 const PATCH_BYTES = 256 * 1024;
 const LIST_BYTES = 1024 * 1024;
+const TRACKED_BYTES = 64 * 1024 * 1024;
+
+export function parseGitVersion(text: string): [number, number, number] | null {
+  const match = /^(?:git version )?(\d+)\.(\d+)\.(\d+)(?:[.\s-]|$)/.exec(text.trim());
+  return match ? [Number(match[1]), Number(match[2]), Number(match[3])] : null;
+}
 
 function within(root: string, path: string): boolean {
   const rel = relative(root, path);
@@ -78,11 +84,26 @@ export async function readWorkspaceDiff(
   if (!within(root, cwd)) throw new Error('The registered workspace is outside its Git worktree.');
   cwd = root;
   const configured = await git(
-    ['config', '--null', '--get-regexp', '^filter\\..*\\.(clean|process)$'],
+    ['config', '--null', '--get-regexp', '^filter\\..*\\.(clean|process)$|^extensions\\.partialclone$'],
     LIST_BYTES,
     true,
   );
   if (configured === null) throw new Error('The Git filter configuration is too large to check.');
+  const promisors = await git(
+    ['config', '--null', '--type=bool', '--get-regexp', '^remote\\..*\\.promisor$'],
+    LIST_BYTES,
+    true,
+  );
+  if (promisors === null) throw new Error('The Git promisor configuration is too large to check.');
+  if (
+    configured.split('\0').some((entry) => /^extensions\.partialclone(?:\n|$)/.test(entry)) ||
+    promisors.split('\0').some((entry) => entry.endsWith('\ntrue'))
+  ) {
+    const version = parseGitVersion((await git(['--version'])) ?? '');
+    if (!version || version[0] < 2 || (version[0] === 2 && version[1] < 45)) {
+      throw new Error('Workspace diffs need Git 2.45 or later for partial clones. Review on the Mac.');
+    }
+  }
   const drivers = new Set(
     configured.split('\0').flatMap((entry) => {
       const match = /^filter\.(.+)\.(?:clean|process)\n([\s\S]+)$/.exec(entry);
@@ -90,7 +111,7 @@ export async function readWorkspaceDiff(
     }),
   );
   if (drivers.size) {
-    const tracked = await git(['ls-files', '-z']);
+    const tracked = await git(['ls-files', '-z'], TRACKED_BYTES);
     if (tracked === null) throw new Error('The tracked file list is too large to check for Git filters.');
     const paths = tracked.split('\0').filter(Boolean);
     let cursor = 0;
@@ -102,7 +123,13 @@ export async function readWorkspaceDiff(
         bytes += Buffer.byteLength(next) + 1;
         batch.push(next);
       }
-      const attributes = await git(['check-attr', '-z', '--all', '--', ...batch]);
+      const attributes = await git([
+        'check-attr',
+        '-z',
+        drivers.has('unspecified') ? '--all' : 'filter',
+        '--',
+        ...batch,
+      ]);
       if (attributes === null) throw new Error('The Git filter attributes are too large to check.');
       const fields = attributes.split('\0');
       for (let i = 0; i + 2 < fields.length; i += 3) {

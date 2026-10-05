@@ -83,3 +83,38 @@ test('keeps older servers view-only without sending an unsupported request', asy
   expect(mockRequest).not.toHaveBeenCalled();
   expect(screen.getByText('Update Stim on the Mac to view workspace diffs.')).toBeTruthy();
 });
+
+test('omits trailing newline rows while preserving blank lines within new file contents', async () => {
+  mockFocused = true;
+  mockRequest.mockResolvedValue({
+    path: 'source.txt',
+    patches: [
+      { section: 'staged', kind: 'text', text: '@@ -0,0 +1 @@\n+added\n' },
+      { section: 'untracked', kind: 'text', text: 'first\n\nlast\n' },
+    ],
+  });
+  const screen = await render(<WorkspaceDiff path="/fixture" file="source.txt" group="changed" />);
+  expect(screen.getByText('+added')).toBeTruthy();
+  expect(screen.getByText('first')).toBeTruthy();
+  expect(screen.getByText('last')).toBeTruthy();
+  expect(screen.getAllByText(' ')).toHaveLength(1);
+});
+
+test('keeps file headers neutral and colors triple-prefix changes only within a hunk', async () => {
+  mockFocused = true;
+  mockRequest.mockResolvedValue({
+    path: 'source.txt',
+    patches: [
+      {
+        section: 'unstaged',
+        kind: 'text',
+        text: 'diff --git a/source.txt b/source.txt\n--- a/source.txt\n+++ b/source.txt\n@@ -1 +1 @@\n--- old\n+++ new\n',
+      },
+    ],
+  });
+  const screen = await render(<WorkspaceDiff path="/fixture" file="source.txt" group="changed" />);
+  expect(screen.getByText('--- a/source.txt').props.tone).toBe('default');
+  expect(screen.getByText('+++ b/source.txt').props.tone).toBe('default');
+  expect(screen.getByText('--- old').props.tone).toBe('error');
+  expect(screen.getByText('+++ new').props.tone).toBe('success');
+});

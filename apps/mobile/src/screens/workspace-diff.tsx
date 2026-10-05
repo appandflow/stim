@@ -47,25 +47,32 @@ export function WorkspaceDiff({ path, file, group }: { path: string; file?: stri
   const rows = files.data?.files ?? [];
   const lines = useMemo(
     () =>
-      patch.data?.patches.flatMap((part, section) => [
-        { key: `${section}:header`, text: sectionName(part.section), kind: 'header' },
-        ...(part.kind === 'text' && part.text
-          ? part.text.split('\n').map((text, index) => ({
-              key: `${section}:${index}`,
-              text,
-              kind:
-                part.section === 'untracked'
-                  ? 'new'
-                  : text.startsWith('+')
-                    ? 'add'
-                    : text.startsWith('-')
-                      ? 'remove'
-                      : text.startsWith('@@')
-                        ? 'hunk'
-                        : 'context',
-            }))
-          : [{ key: `${section}:note`, text: patchNote(part), kind: 'note' }]),
-      ]) ?? [],
+      patch.data?.patches.flatMap((part, section) => {
+        const texts = part.text.split('\n');
+        if (texts.at(-1) === '') texts.pop();
+        const firstHunk = texts.findIndex((text) => text.startsWith('@@'));
+        return [
+          { key: `${section}:header`, text: sectionName(part.section), kind: 'header' },
+          ...(part.kind === 'text' && part.text
+            ? texts.map((text, index) => ({
+                key: `${section}:${index}`,
+                text,
+                kind:
+                  part.section === 'untracked'
+                    ? 'new'
+                    : firstHunk === -1 || index < firstHunk
+                      ? 'context'
+                      : text.startsWith('+')
+                        ? 'add'
+                        : text.startsWith('-')
+                          ? 'remove'
+                          : text.startsWith('@@')
+                            ? 'hunk'
+                            : 'context',
+              }))
+            : [{ key: `${section}:note`, text: patchNote(part), kind: 'note' }]),
+        ];
+      }) ?? [],
     [patch.data],
   );
   const request = file === undefined ? files : patch;

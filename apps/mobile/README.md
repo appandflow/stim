@@ -653,7 +653,9 @@ that predates actions shows neither entry.
 
 `hello` returns the pairing's `capabilities` and the phone's device id. A
 pairing without `control` is read-only: Stim Desktop's **Pair a phone** makes
-read-only pairings. The machine row, the machine sheet and the **Machines**
+read-only pairings. With workspace diff support, a read-only pairing can read
+changed and untracked text files in registered workspaces, including
+non-ignored `.env` files. The machine row, the machine sheet and the **Machines**
 section in Settings show the scope while connected: **Can control**,
 **Read-only**, or the connection state. In Settings, tapping a read-only
 machine explains how to allow control, and tapping any other machine opens

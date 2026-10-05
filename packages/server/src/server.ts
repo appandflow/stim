@@ -1345,7 +1345,9 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       }
       const cwd = workspaceDir(id, params.workspace, true);
       if (!cwd) return;
-      if (commands.size >= MAX_COMMANDS) return error(id, 'limit-exceeded', 'Too many pending requests.');
+      if (commands.size >= MAX_COMMANDS) {
+        return error(id, 'limit-exceeded', `A connection can run ${MAX_COMMANDS} requests at a time.`);
+      }
       const abort = new AbortController();
       let task: Promise<void>;
       const cancel = async () => {

@@ -3,7 +3,8 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { WorkspaceDiff, WorkspaceFiles } from '../src/protocol.ts';
-import { readWorkspaceDiff } from '../src/workspace-diff.ts';
+import * as commands from '../src/stim-command.ts';
+import { parseGitVersion, readWorkspaceDiff } from '../src/workspace-diff.ts';
 
 let root: string;
 let repo: string;
@@ -25,8 +26,58 @@ beforeEach(() => {
   git('commit', '-qm', 'base');
 });
 afterEach(() => {
+  vi.restoreAllMocks();
   delete process.env.STIM_HOME;
   rmSync(root, { recursive: true, force: true });
+});
+
+test('parses vendor Git versions without mistaking suffixes for a newer release', () => {
+  expect(parseGitVersion('git version 2.39.5 (Apple Git-154)')).toEqual([2, 39, 5]);
+  expect(parseGitVersion('git version 2.45.0\n')).toEqual([2, 45, 0]);
+  expect(parseGitVersion('2.54.0.windows.1')).toEqual([2, 54, 0]);
+  expect(parseGitVersion('git version unknown')).toBeNull();
+});
+
+test('refuses partial clones on old or unparseable Git without probing ordinary repositories', async () => {
+  const original = commands.runFileCommand;
+  let version = 'git version 2.39.5 (Apple Git-154)';
+  const run = vi
+    .spyOn(commands, 'runFileCommand')
+    .mockImplementation((...args) =>
+      args[2].includes('--version')
+        ? { outcome: Promise.resolve({ ok: true, stdout: version }), cancel: async () => {} }
+        : original(...args),
+    );
+  expect(((await read()) as WorkspaceFiles).files).toEqual([]);
+  expect(run.mock.calls.some((call) => call[2].includes('--version'))).toBe(false);
+  git('config', 'remote.origin.promisor', 'false');
+  expect(((await read()) as WorkspaceFiles).files).toEqual([]);
+  expect(run.mock.calls.some((call) => call[2].includes('--version'))).toBe(false);
+  git('config', 'remote.origin.promisor', 'yes');
+  await expect(read()).rejects.toThrow('Git 2.45 or later for partial clones');
+  version = 'unparseable';
+  await expect(read()).rejects.toThrow('Git 2.45 or later for partial clones');
+  version = 'git version 2.45.0';
+  expect(((await read()) as WorkspaceFiles).files).toEqual([]);
+  git('config', '--unset', 'remote.origin.promisor');
+  git('config', 'extensions.partialclone', 'origin');
+  version = 'git version 2.44.0';
+  await expect(read()).rejects.toThrow('Git 2.45 or later for partial clones');
+});
+
+test('allows unused filters when the internal tracked path list exceeds 1 MiB', async () => {
+  const blob = git('rev-parse', 'HEAD:source.txt').trim();
+  const prefix = `${'a'.repeat(240)}/${'b'.repeat(240)}/${'c'.repeat(240)}/${'d'.repeat(240)}`;
+  const paths = Array.from({ length: 1100 }, (_, i) => `${prefix}/file-${i}.txt`);
+  execFileSync('git', ['update-index', '--index-info'], {
+    cwd: repo,
+    input: paths.map((path) => `100644 ${blob}\t${path}\n`).join(''),
+  });
+  execFileSync('git', ['update-index', '--skip-worktree', '--stdin'], { cwd: repo, input: paths.join('\n') + '\n' });
+  git('commit', '-qm', 'large index');
+  expect(Buffer.byteLength(paths.join('\0'))).toBeGreaterThan(1024 * 1024);
+  git('config', 'filter.unused.clean', 'unused-filter-must-not-run');
+  expect(((await read()) as WorkspaceFiles).files).toEqual([]);
 });
 
 test('reads staged and unstaged independently with literal unusual paths', async () => {

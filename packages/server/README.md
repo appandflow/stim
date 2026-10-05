@@ -140,8 +140,11 @@ connection authorized.
 ## Scopes
 
 A paired device has the `read` capability, which serves state, or also
-`control`, which runs [actions](#actions) and [controls devices](#control). Pairing grants `read` only, unless
-the pairing code came from `stim-server pair --control`. On the Mac,
+`control`, which runs [actions](#actions) and [controls devices](#control).
+With the `workspace-diff` feature, `read` also serves changed and untracked
+text file contents in registered workspaces, including any non-ignored
+untracked text file such as an unignored `.env`. Pairing grants `read` only,
+unless the pairing code came from `stim-server pair --control`. On the Mac,
 `stim-server devices grant <id> --control` adds control to a paired device and
 `--read` takes it away. Nothing a client sends changes its own capabilities.
 The server checks the device's capabilities in `devices.json` on every action
@@ -1181,7 +1184,7 @@ Events are `{ "event", "subscription", ... }`.
   `status`, and `staged`, `unstaged`, `untracked` flags. It needs `read` and the
   `workspace-diff` feature. The registered app project resolves to its canonical
   Git worktree, including changes elsewhere in that worktree. At most 200 files
-  and 256 KiB are returned; raw Git status/list output exceeding 1 MiB refuses.
+  and 256 KiB are returned; raw Git status exceeding 1 MiB refuses.
   Changed lists include submodules only when their recorded commit differs;
   uncommitted edits inside submodules are not listed. Each Git call has a
   5-second deadline; a request runs several calls in sequence, with no overall
@@ -1192,13 +1195,17 @@ Events are `{ "event", "subscription", ... }`.
   and `text`. Text previews total at most 256 KiB. New files must be regular
   UTF-8 files within the worktree; symlinks, submodules and conflicts report
   unavailable. Each Git call has a 5-second deadline; a request runs several
-  calls in sequence, with no overall deadline. Raw status/list output is capped
+  calls in sequence, with no overall deadline. Raw status output is capped
   at 1 MiB and patches at 256 KiB. Closing the connection stops a running request.
   Git reads disable color, external diff, text conversion, fsmonitor
   commands and lazy fetches, use literal paths and never edit or stage files.
+  Partial clones require Git 2.45 or later so lazy-fetch protection applies
+  across subprocesses; an older or unparseable Git version refuses these reads.
   Tracked files attributed to configured clean or process filters refuse before
-  status or diff; unused filter configuration alone does not refuse. Git LFS
-  previews are unavailable in this version.
+  status or diff. Unused filters are allowed within the preflight limits: each
+  request checks filter attributes for all tracked paths. The internal path
+  list has a 64 MiB cap; each Git call keeps its 5-second deadline.
+  Git LFS previews are unavailable in this version.
 - `machine.get` returns cheap machine usage, read in the server process
   without running `stim`: `volumes`, one per volume that holds a Stim
   workspace, Stim home, or the simulators, with `mount`, `holds`, `freeBytes`
