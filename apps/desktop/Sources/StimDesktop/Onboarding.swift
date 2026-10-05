@@ -33,8 +33,8 @@ final class Onboarding: ObservableObject {
     /// The same for `stim-server`.
     var nodeBlockingServer: NodeRuntime?
 
-    var nodeBlocksStim: Bool { nodeBlockingStim != nil }
-    var nodeBlocksServer: Bool { nodeBlockingServer != nil }
+    var nodeBlocksStim: Bool
+    var nodeBlocksServer: Bool
   }
 
   enum PopupKind {
@@ -107,7 +107,7 @@ final class Onboarding: ObservableObject {
     let offersViewer = !defaults.bool(forKey: AppPreferences.Key.viewerOfferDismissed)
     Task {
       let environment = await environment.value
-      let launched = await cli.value.executable
+      let launched = await cli.value
       let report = await Task.detached {
         let home = environment["HOME"].flatMap { $0.isEmpty ? nil : $0 } ?? NSHomeDirectory()
         let packages = await PackageManagerLayout.probe(environment: environment, home: home)
@@ -140,7 +140,8 @@ final class Onboarding: ObservableObject {
           stimOwner: (stim.launcher?.source ?? stim.executable).flatMap { packages.owner(ofExecutable: $0) },
           installers: packages.installed,
           defaultInstaller: packages.defaultInstaller(path: environment["PATH"] ?? ""),
-          needsRelaunch: compatibility.isCompatible && stim.executable != launched,
+          needsRelaunch: compatibility.isCompatible
+            && (stim.executable != launched.executable || stim.launcher?.source != launched.launcher?.source),
           server: serverCompatibility,
           serverPath: server?.executable,
           viewerKeys: viewerKeys,
@@ -155,9 +156,13 @@ final class Onboarding: ObservableObject {
           },
           javaHome: environment["JAVA_HOME"].flatMap { $0.isEmpty ? nil : $0 },
           nodeBlockingStim: compatibility == .outdated(found: nil)
-            ? stim.launcher.map(\.runtime).flatMap { $0.isSupported ? nil : $0 } : nil,
+            ? stim.launcher.flatMap(\.runtime).flatMap { $0.isSupported ? nil : $0 } : nil,
           nodeBlockingServer: serverCompatibility == .outdated(found: nil)
-            ? server?.launcher.map(\.runtime).flatMap { $0.isSupported ? nil : $0 } : nil)
+            ? server?.launcher.flatMap(\.runtime).flatMap { $0.isSupported ? nil : $0 } : nil,
+          nodeBlocksStim: compatibility == .outdated(found: nil) && stim.launcher != nil
+            && stim.launcher?.runtime?.isSupported != true,
+          nodeBlocksServer: serverCompatibility == .outdated(found: nil) && server?.launcher != nil
+            && server?.launcher?.runtime?.isSupported != true)
       }.value
       self.report = report
       setup.stim = report.stim

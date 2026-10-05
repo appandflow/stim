@@ -106,7 +106,7 @@ private struct VersionManagerFixture {
     try fm.removeItem(atPath: link)
     try fm.createSymbolicLink(atPath: link, withDestinationPath: updated)
 
-    #expect(try launcher.command(["--version"])?.arguments == [(updated as NSString).resolvingSymlinksInPath, "--version"])
+    #expect(try launcher.command(["--version"]).arguments == [(updated as NSString).resolvingSymlinksInPath, "--version"])
   }
 
   @Test func findsTheNodeAgainOnceItsBinaryIsGone() async throws {
@@ -121,7 +121,7 @@ private struct VersionManagerFixture {
     try FileManager.default.moveItem(atPath: fixture.root + "/v22", toPath: fixture.root + "/v22-new")
     try fixture.write(fixture.root + "/shims/node", "exec \"\(fixture.root)/v22-new/node\" \"$@\"")
 
-    #expect(try launcher.command(["--version"])?.program == fixture.root + "/v22-new/node")
+    #expect(try launcher.command(["--version"]).program == fixture.root + "/v22-new/node")
   }
 
   @Test func refusesAHomeNodeOlderThanStimSupportsNamingItsPath() async throws {
@@ -138,6 +138,60 @@ private struct VersionManagerFixture {
     }
   }
 
+  @Test func refusesFailedRedetectionInsteadOfRunningTheProjectsNode() async throws {
+    let fixture = try VersionManagerFixture()
+    defer { try? FileManager.default.removeItem(atPath: fixture.root) }
+    let cli = await StimCLI.resolve(environment: fixture.environment, override: fixture.root + "/prefix/bin/stim")
+    try FileManager.default.removeItem(atPath: fixture.root + "/v22/node")
+
+    await #expect(throws: NodeLauncher.Unavailable.self) {
+      try await cli.run(["--version"], cwd: fixture.project)
+    }
+  }
+
+  @Test func recoversTheSameLauncherAfterTheInitialNodeProbeFails() async throws {
+    let fixture = try VersionManagerFixture()
+    defer { try? FileManager.default.removeItem(atPath: fixture.root) }
+    try FileManager.default.removeItem(atPath: fixture.root + "/v22/node")
+    let launcher = try #require(
+      await NodeLauncher.resolve(
+        executable: fixture.root + "/prefix/bin/stim", name: "stim", environment: fixture.environment,
+        reprobeInterval: 0))
+    #expect(throws: NodeLauncher.Unavailable.self) { try launcher.command(["--version"]) }
+
+    try fixture.installNode("22.12.0")
+    let command = try launcher.command(["--version"])
+    let result = try await ProcessRequest(
+      command.program, command.arguments, cwd: fixture.project, environment: fixture.environment
+    ).run()
+    #expect(result.stdoutText == "node 22.12.0 \(fixture.realScript) --version\n")
+  }
+
+  @Test func refusesAKnownShimWhoseGlobalInstallCannotResolve() async throws {
+    let fixture = try VersionManagerFixture()
+    defer { try? FileManager.default.removeItem(atPath: fixture.root) }
+    let shim = fixture.root + "/shims/stim"
+    try fixture.write(shim, "exec node \"\(fixture.script)\" \"$@\"")
+    let cli = await StimCLI.resolve(environment: fixture.environment, override: shim) { PackageManagerLayout() }
+
+    await #expect(throws: NodeLauncher.ScriptUnavailable.self) {
+      try await cli.run(["--version"], cwd: fixture.project)
+    }
+
+    let restored = await StimCLI.resolve(environment: fixture.environment, override: shim) {
+      PackageManagerLayout(npmPrefix: fixture.root + "/prefix", installed: [.npm])
+    }
+    #expect(cli.launcher?.source == shim)
+    #expect(restored.launcher?.source != cli.launcher?.source)
+    let output = try await restored.run(["--version"], cwd: fixture.project)
+    #expect(String(decoding: output, as: UTF8.self) == "node 22.12.0 \(fixture.realScript) --version\n")
+
+    try FileManager.default.removeItem(atPath: fixture.script)
+    await #expect(throws: NodeLauncher.ScriptUnavailable.self) {
+      try await restored.run(["--version"], cwd: fixture.project)
+    }
+  }
+
   @Test func runsOnTheNewDefaultOnceTheRefusedNodeIsReplaced() async throws {
     let fixture = try VersionManagerFixture()
     defer { try? FileManager.default.removeItem(atPath: fixture.root) }
@@ -151,6 +205,6 @@ private struct VersionManagerFixture {
 
     try fixture.write(fixture.root + "/shims/node", "exec \"\(fixture.root)/v22/node\" \"$@\"")
 
-    #expect(try launcher.command(["--version"])?.program == fixture.root + "/v22/node")
+    #expect(try launcher.command(["--version"]).program == fixture.root + "/v22/node")
   }
 }

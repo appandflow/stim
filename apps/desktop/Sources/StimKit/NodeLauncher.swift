@@ -51,6 +51,22 @@ public struct NodeRuntime: Equatable, Sendable {
 /// in a project instead, a version manager that follows the working directory (asdf, mise, Volta) would pick the
 /// project's pinned Node, which can be older than the CLI supports.
 public final class NodeLauncher: @unchecked Sendable {
+  /// No working Node runtime can be resolved outside the project.
+  public struct Unavailable: LocalizedError {
+    public var errorDescription: String? {
+      "Stim could not find a working Node.js in the home directory. "
+        + "Make Node.js \(SetupChecks.nodeMinimum) or later your version manager's default, then try again."
+    }
+  }
+
+  /// The Node CLI script cannot be located.
+  public struct ScriptUnavailable: LocalizedError {
+    public var errorDescription: String? {
+      "Stim could not locate its Node CLI script. "
+        + "Check the home directory's Node default and global Stim installation, then check again and restart Stim Desktop."
+    }
+  }
+
   /// The home directory's Node is older than `SetupChecks.nodeMinimum`.
   public struct Unsupported: LocalizedError, Equatable {
     public let runtime: NodeRuntime
@@ -69,11 +85,11 @@ public final class NodeLauncher: @unchecked Sendable {
   private let home: String
   private let reprobeInterval: TimeInterval
   private let lock = NSLock()
-  private var current: NodeRuntime
+  private var current: NodeRuntime?
   private var probed = Date.distantPast
 
   init(
-    source: String, runtime: NodeRuntime, environment: [String: String], home: String,
+    source: String, runtime: NodeRuntime?, environment: [String: String], home: String,
     reprobeInterval: TimeInterval = 10
   ) {
     self.source = source
@@ -83,22 +99,20 @@ public final class NodeLauncher: @unchecked Sendable {
     self.reprobeInterval = reprobeInterval
   }
 
-  public var runtime: NodeRuntime { lock.withLock { current } }
+  public var runtime: NodeRuntime? { lock.withLock { current } }
 
   /// The JavaScript file `source` runs now.
   public var script: String? { Self.nodeScript(at: source) }
 
-  /// The launcher for the CLI at `executable`, or nil when the home directory has no `node` or `executable` leads
-  /// to no JavaScript file. A version-manager shim leads to the `name` that `layout`, probed when nil, places in a
+  /// The launcher for a Node script or recognized version-manager shim, or nil for other executables.
+  /// A version-manager shim leads to the `name` that `layout`, probed when nil, places in a
   /// package manager's global bin directory; any other executable, such as a wrapper script, runs as it is.
   public static func resolve(
     executable: String?, name: String, environment: [String: String],
     layout: (() async -> PackageManagerLayout)? = nil, reprobeInterval: TimeInterval = 10
   ) async -> NodeLauncher? {
     let home = environment["HOME"].flatMap { $0.isEmpty ? nil : $0 } ?? NSHomeDirectory()
-    guard let executable, let runtime = await NodeRuntime.probe(environment: environment, home: home) else {
-      return nil
-    }
+    guard let executable else { return nil }
     var source: String? = nodeScript(at: executable) == nil ? nil : executable
     if source == nil, isVersionManagerShim(executable) {
       var managers: PackageManagerLayout
@@ -107,30 +121,31 @@ public final class NodeLauncher: @unchecked Sendable {
       } else {
         managers = await PackageManagerLayout.probe(environment: environment, home: home)
       }
-      source = managers.globalExecutables(name).first { nodeScript(at: $0) != nil }
+      source = managers.globalExecutables(name).first { nodeScript(at: $0) != nil } ?? executable
     }
-    return source.map {
-      NodeLauncher(
-        source: $0, runtime: runtime, environment: environment, home: home, reprobeInterval: reprobeInterval)
-    }
+    guard let source else { return nil }
+    let runtime = await NodeRuntime.probe(environment: environment, home: home)
+    return NodeLauncher(
+      source: source, runtime: runtime, environment: environment, home: home, reprobeInterval: reprobeInterval)
   }
 
   /// The program and arguments that run the script with `arguments`. When the Node binary is gone, as after a
   /// Homebrew upgrade or a version manager's uninstall, or older than `SetupChecks.nodeMinimum`, it finds the home
-  /// directory's Node again first, at most once per `reprobeInterval`. Nil while the script or every `node` is
-  /// gone; throws `Unsupported` while the Node is older than `SetupChecks.nodeMinimum`.
-  public func command(_ arguments: [String]) throws -> (program: String, arguments: [String])? {
-    guard let script else { return nil }
+  /// directory's Node again first, at most once per `reprobeInterval`. Throws `ScriptUnavailable` when the
+  /// source is no longer a Node script, `Unavailable` without a working
+  /// Node or `Unsupported` below `SetupChecks.nodeMinimum`.
+  public func command(_ arguments: [String]) throws -> (program: String, arguments: [String]) {
+    guard let script else { throw ScriptUnavailable() }
     let found: NodeRuntime? = lock.withLock {
-      let exists = FileManager.default.isExecutableFile(atPath: current.path)
-      if (exists && current.isSupported) || Date().timeIntervalSince(probed) < reprobeInterval {
+      let exists = current.map { FileManager.default.isExecutableFile(atPath: $0.path) } ?? false
+      if (exists && current?.isSupported == true) || Date().timeIntervalSince(probed) < reprobeInterval {
         return exists ? current : nil
       }
       probed = Date()
       if let found = NodeRuntime.probeNow(environment: environment, home: home) { current = found }
-      return FileManager.default.isExecutableFile(atPath: current.path) ? current : nil
+      return current.flatMap { FileManager.default.isExecutableFile(atPath: $0.path) ? $0 : nil }
     }
-    guard let found else { return nil }
+    guard let found else { throw Unavailable() }
     guard found.isSupported else { throw Unsupported(runtime: found) }
     return (found.path, [script] + arguments)
   }

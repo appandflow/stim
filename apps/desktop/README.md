@@ -1048,7 +1048,14 @@ replaces its card. With the main window closed, the link reopens it.
   command follows the executable's links again, so an update takes effect
   without a restart. When the Node binary disappears, as after a Homebrew
   upgrade, the next command finds the home folder's Node again first, waiting
-  at most 2 seconds for it. A Node older than 22.12.0 refuses every command
+  at most 2 seconds for it. If the initial probe or redetection fails, the
+  managed launcher refuses the command rather than falling back to a project's
+  Node, and retries detection on later commands without requiring an app restart.
+  A recognized version-manager shim whose global CLI cannot be located also
+  refuses to run. Once Check Again resolves that install, it offers a restart
+  when the app's cached launcher still points to the unresolved shim. The server's
+  unresolved launcher is detected again on a later command after 60 seconds.
+  A Node older than 22.12.0 refuses every command
   with its version and path; when that is why `stim` reports no version, a
   popup asks for a newer default instead of a newer Stim. The app looks for
   the Node again at most every 10 seconds, so the next command after a new
