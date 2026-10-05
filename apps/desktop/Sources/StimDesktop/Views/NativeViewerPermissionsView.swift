@@ -61,7 +61,7 @@ struct NativeViewerPermissionsView: View {
           Text(title).font(.stim(.headline))
           Text(allowed ? "Allowed" : "Needed").foregroundStyle(Palette.secondary)
         }
-        Text(detail).foregroundStyle(Palette.secondary)
+        Text(detail).foregroundStyle(Palette.secondary).fixedSize(horizontal: false, vertical: true)
       }
       Spacer()
       Button("Settings") { permissions.openSettings(pane) }.buttonStyle(.stim())
