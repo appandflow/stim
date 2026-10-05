@@ -205,7 +205,7 @@ export function workspaceUsage(env: EnvironmentState, machine: MachineUsageState
   return {
     cpuPercent: owners.length ? owners.reduce((sum, owner) => sum + owner.cpuPercent, 0) : null,
     memoryMb: owners.length
-      ? owners.reduce((sum, owner) => sum + owner.memoryMb, 0)
+      ? owners.reduce((sum, owner) => sum + (owner.memoryMb ?? owner.residentMb), 0)
       : env.memoryMb > 0
         ? env.memoryMb
         : null,
@@ -284,7 +284,11 @@ export function deviceUsage(
 ): Usage | null {
   const owner = deviceOwner(device, path, machine);
   if (!owner && diskBytes == null) return null;
-  return { cpuPercent: owner?.cpuPercent ?? null, memoryMb: owner?.memoryMb ?? null, diskBytes: diskBytes ?? null };
+  return {
+    cpuPercent: owner?.cpuPercent ?? null,
+    memoryMb: owner ? (owner.memoryMb ?? owner.residentMb) : null,
+    diskBytes: diskBytes ?? null,
+  };
 }
 
 export interface ProcessRow {
@@ -336,7 +340,7 @@ export function processRows(
       key: `${owner.kind}:${owner.slot ?? ''}:${owner.id ?? owner.name}`,
       label: ownerLabel(owner, devices),
       cpuPercent: owner.cpuPercent,
-      memoryMb: owner.memoryMb,
+      memoryMb: owner.memoryMb ?? owner.residentMb,
     }));
 }
 

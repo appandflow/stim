@@ -1653,6 +1653,12 @@ a build client until the Mac approves it; clients retry the others.
 
 The package exports the message types, and the build writes their JSON Schema
 to `dist/protocol.schema.json`, exported as `@stim-cli/server/protocol.schema.json`.
+The wire types are shared through `@stim-cli/core/protocol`. The phone derives
+its receiving types from that contract and checks JSON results against the
+pending method, and known events before dispatch. Its validators are compiled
+during development, not on app startup. Compatible additional fields and
+unknown future events remain supported; malformed known data closes the socket
+and enters the normal reconnect flow without logging the payload.
 
 ## Physical Android devices
 

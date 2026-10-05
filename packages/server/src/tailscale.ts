@@ -1,3 +1,4 @@
+import type { ServeRoute } from '@stim-cli/core/protocol';
 import { execFile, execFileSync } from 'node:child_process';
 import { accessSync, constants } from 'node:fs';
 import { delimiter, join } from 'node:path';
@@ -110,11 +111,7 @@ export function tailscaleStatus(binary: string | null, env: NodeJS.ProcessEnv): 
  * `missing` with the free port the setup command would use, or `unknown` when the config was
  * unreadable.
  */
-export type ServeRoute =
-  | { state: 'routed'; port: number }
-  | { state: 'funneled'; ports: number[]; port: number }
-  | { state: 'missing'; port: number }
-  | { state: 'unknown'; reason: string; port: number };
+export type { ServeRoute } from '@stim-cli/core/protocol';
 
 function reaches(address: unknown, target: number, hosts: Set<string>): URL | null {
   if (typeof address !== 'string') return null;

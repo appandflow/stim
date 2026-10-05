@@ -11,6 +11,7 @@
     ".claude/**",
     "apps/mobile/**",
     "apps/desktop/Support/Assets.xcassets/**",
-    "apps/desktop/Tests/StimKitTests/Fixtures/oversight-vectors.json"
+    "apps/desktop/Tests/StimKitTests/Fixtures/oversight-vectors.json",
+    "packages/core/receive-validators.mjs"
   ]
 }

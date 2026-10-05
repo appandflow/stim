@@ -41,6 +41,21 @@
       "types": "./dist/oversight.d.mts",
       "module-sync": "./dist/oversight.mjs",
       "default": "./dist/oversight.mjs"
+    },
+    "./protocol": {
+      "types": "./dist/protocol.d.mts",
+      "module-sync": "./dist/protocol.mjs",
+      "default": "./dist/protocol.mjs"
+    },
+    "./phone-protocol": {
+      "types": "./dist/phone-protocol.d.mts",
+      "module-sync": "./dist/phone-protocol.mjs",
+      "default": "./dist/phone-protocol.mjs"
+    },
+    "./receive-protocol": {
+      "types": "./dist/receive-protocol.d.mts",
+      "module-sync": "./dist/receive-protocol.mjs",
+      "default": "./dist/receive-protocol.mjs"
     }
   },
   "scripts": {

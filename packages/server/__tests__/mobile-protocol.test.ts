@@ -20,7 +20,7 @@ type ResultsTheAppMisreads = {
     : M;
 }[SharedMethod];
 
-describe('the mobile app protocol copy', () => {
+describe('the shared phone protocol', () => {
   it('knows every server method and sends params the server accepts', () => {
     expectTypeOf<Exclude<PhoneMethod, keyof Mobile.Methods>>().toBeNever();
     expectTypeOf<Exclude<keyof Mobile.Methods, PhoneMethod>>().toBeNever();
@@ -30,7 +30,7 @@ describe('the mobile app protocol copy', () => {
 
   it('reads every result and event the server sends', () => {
     expectTypeOf<ResultsTheAppMisreads>().toBeNever();
-    expectTypeOf<Server.StatusEvent>().toExtend<Mobile.StatusEvent>();
+    expectTypeOf<Server.StatusEvent extends Mobile.StatusEvent ? never : 'status'>().toBeNever();
     expectTypeOf<Server.ErrorEvent>().toExtend<Mobile.ErrorEvent>();
     expectTypeOf<Server.FrameEvent>().toExtend<Mobile.FrameEvent>();
     expectTypeOf<Server.FrameDelayedEvent>().toExtend<Mobile.FrameDelayedEvent>();

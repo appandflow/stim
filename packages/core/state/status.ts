@@ -536,8 +536,38 @@ export interface MetroBundleState {
   last?: { platform: StatsPlatform; status: 'ok' | 'failed'; durationMs: number; finishedAt: string };
 }
 
+export interface SimulatorState {
+  name: string | null;
+  udid: string;
+  owned: boolean;
+  state: string;
+  activity?: DeviceActivity;
+  app?: DeviceAppProcess;
+  appPresence?: AppPresence;
+  /** The simulator's data folder, for an owned simulator once measured. */
+  disk?: DiskMeasure;
+  /** Present while the device is not booted after the supervisor shut it down for `devices.idleShutdownMinutes`. */
+  idleShutdown?: DeviceIdleShutdownRecord;
+}
+
+export interface AndroidDeviceState {
+  name: string | undefined;
+  owned: boolean;
+  physical: boolean;
+  serial?: string | null;
+  state?: AndroidRuntimeFacts['state'];
+  deviceProfile?: string | null;
+  activity?: DeviceActivity;
+  app?: DeviceAppProcess;
+  appPresence?: AppPresence;
+  /** The AVD's folder, for an owned emulator once measured. */
+  disk?: DiskMeasure;
+  /** Present while the emulator is not running after the supervisor shut it down for `devices.idleShutdownMinutes`. */
+  idleShutdown?: DeviceIdleShutdownRecord;
+}
+
 export interface EnvironmentState {
-  slots?: { slot: string; ios: EnvironmentState['ios']; android: EnvironmentState['android'] }[];
+  slots?: { slot: string; ios: SimulatorState | null | undefined; android: AndroidDeviceState | null | undefined }[];
   path: string;
   live: boolean;
   phase?: WorkspacePhase;
@@ -559,34 +589,8 @@ export interface EnvironmentState {
   memorySource?: Exclude<MemorySource, 'rss'>;
   warnings: string[];
   issues: StatusIssue[];
-  ios?: {
-    name: string | null;
-    udid: string;
-    owned: boolean;
-    state: string;
-    activity?: DeviceActivity;
-    app?: DeviceAppProcess;
-    appPresence?: AppPresence;
-    /** The simulator's data folder, for an owned simulator once measured. */
-    disk?: DiskMeasure;
-    /** Present while the device is not booted after the supervisor shut it down for `devices.idleShutdownMinutes`. */
-    idleShutdown?: DeviceIdleShutdownRecord;
-  } | null;
-  android?: {
-    name: string | undefined;
-    owned: boolean;
-    physical: boolean;
-    serial?: string | null;
-    state?: AndroidRuntimeFacts['state'];
-    deviceProfile?: string | null;
-    activity?: DeviceActivity;
-    app?: DeviceAppProcess;
-    appPresence?: AppPresence;
-    /** The AVD's folder, for an owned emulator once measured. */
-    disk?: DiskMeasure;
-    /** Present while the emulator is not running after the supervisor shut it down for `devices.idleShutdownMinutes`. */
-    idleShutdown?: DeviceIdleShutdownRecord;
-  } | null;
+  ios?: SimulatorState | null;
+  android?: AndroidDeviceState | null;
   metro?: {
     port: number;
     running: boolean;

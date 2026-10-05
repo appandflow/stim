@@ -41,3 +41,11 @@ import this subpath without loading the Node-only root or state entry points.
 Build core before typechecking, testing or bundling the phone app.
 
 The npm scope remains `@stim-cli` until the `@stim` scope is available.
+
+`@stim-cli/core/protocol` defines the server's wire contracts. The
+`phone-protocol` entry derives the phone's receiving types, including optional
+fields from older servers. `receive-protocol` contains precompiled validators
+for method results, known events and errors, with no Node or schema compiler
+dependency in the phone runtime. Unknown compatible fields remain accepted.
+After changing these contracts, run `pnpm run rpc:generate` at the repository
+root; `pnpm run rpc:check` verifies the committed validators in CI.
