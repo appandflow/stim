@@ -41,13 +41,17 @@ Secrets, on the repository or on the `demo-server` environment:
 | `CLOUDFLARE_ACCOUNT_ID` | The Cloudflare account ID.                                                            |
 | `DEMO_TOKEN`            | Optional. When set, each deploy uploads it as the Worker secret `DEMO_TOKEN`.         |
 
-First deploy:
+The account's `workers.dev` subdomain is `appandflow`, so the Worker `stim-demo` is at `https://stim-demo.appandflow.workers.dev` and phones pair with `wss://stim-demo.appandflow.workers.dev`. Until `DEMO_TOKEN` is set, the Worker refuses every pairing.
 
-1. In the Cloudflare dashboard, open Workers & Pages once so the account has a `workers.dev` subdomain (`<subdomain>.workers.dev`).
-2. Add `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` to GitHub.
-3. Generate the review token, for example `openssl rand -base64 32 | tr '+/' '-_' | tr -d '='`, and either add it as the GitHub secret `DEMO_TOKEN` or set it after the first deploy with `pnpm exec wrangler secret put DEMO_TOKEN` (or in the dashboard under the Worker's Settings, Variables and Secrets).
-4. Run the "Demo server deploy" workflow from the Actions tab. The Worker is `stim-demo`, at `https://stim-demo.<subdomain>.workers.dev`.
-5. Pair from a clean install of the app with endpoint `wss://stim-demo.<subdomain>.workers.dev` and the token, and put both in the App Review notes, never in this repository.
+Set or rotate the review token from GitHub, then redeploy:
+
+```sh
+openssl rand -base64 32 | tr '+/' '-_' | tr -d '='   # keep this value for the App Review notes
+gh secret set DEMO_TOKEN --repo appandflow/stim             # paste it at the prompt
+gh workflow run demo-server-deploy.yml --repo appandflow/stim
+```
+
+Without GitHub, set it once with `pnpm exec wrangler secret put DEMO_TOKEN` from this directory (after `wrangler login`), or in the Cloudflare dashboard under the Worker's Settings, Variables and Secrets. Then pair from a clean install of the app with the endpoint and the token, and put both in the App Review notes, never in this repository.
 
 After the review, rotate `DEMO_TOKEN` or delete the Worker.
 
