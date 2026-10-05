@@ -68,11 +68,12 @@ A main window with contained utility windows is supported; disjoint app windows
 refuse capture. The viewer never captures its own process recursively.
 The captured view is read-only; background mouse/keyboard relay is not included.
 
-Capture requires existing Screen Recording permission; Open app also requires
-Accessibility permission. The first native viewer opening shows one Desktop setup
-screen for both permissions (Accessibility is named Device Control and Data Access
-on macOS 27), with statuses, Request permissions, Settings and
-Check again. You approve normal macOS requests; Stim never resets or grants access
+Capture requires existing Screen & System Audio Recording permission (Screen
+Recording on macOS 14); Open app also requires Device Control and Data Access
+permission (Accessibility on macOS 26 and earlier). The first native viewer opening
+shows one Desktop setup screen for both permissions, named for this Mac's macOS
+version, with statuses, Request permissions, Settings and Check again. Settings
+opens the matching System Settings > Privacy & Security pane. You approve normal macOS requests; Stim never resets or grants access
 automatically. Permissions on the app card reopens setup. Builds never prompt.
 If unavailable, use the normal app window and
 read the workspace logs. Use Refresh preview after the app window opens or is
@@ -114,14 +115,17 @@ revocation, takeover or five minutes without input, and does not take a CLI
 simulator/device lock. Each action rechecks the exact owned process and the
 same single standard app window. Modal or disjoint windows, changed capture or
 resize refuse input until the viewer reconnects. Contained nonmodal auxiliaries
-are allowed; only the focused captured main receives input. Existing Accessibility permission is required;
-The phone and server never request or reset it. A refusal ends Control with its reason while
-viewing and logs remain usable. Older servers remain view-only.
+are allowed; only the focused captured main receives input. Existing Device
+Control and Data Access permission (Accessibility on macOS 26 and earlier) is
+required. The phone and server never request or reset it. A refusal ends Control
+with its reason while viewing and logs remain usable. Older servers remain
+view-only.
 Native Control uses dynamically resolved private CoreGraphics input SPI in the
 server helper, outside the phone and Mac App Store app binaries. A missing symbol
 or incompatible macOS version refuses Control while viewing and logs remain usable.
 
-The existing capture host needs Screen Recording permission. If capture is denied,
+The existing capture host needs Screen & System Audio Recording permission (Screen
+Recording on macOS 14). If capture is denied,
 open Permissions in Stim Desktop on the host Mac, approve its normal OS requests
 and reconnect the phone viewer. The Desktop host presents setup on the first
 native viewer opening, including one initiated by the phone. A server started
@@ -153,8 +157,8 @@ text and keys; Stim Desktop's Control sends clicks, drags and typed text.
 
 The copy keeps the plist's own CFBundleIdentifier. The host runs it as
 <id>.hosted<slot> from a fixed slot pool, so the bundle id stays the same
-across rebuilds; whether macOS keeps permission approvals for it also depends
-on how the host signs it. Running the
+across rebuilds; whether macOS keeps the permissions the hosted app asks for
+itself also depends on how the host signs it. Running the
 command again reuses the session and delivers a new copy. macos.arguments are
 passed to the hosted launch as plain arguments, without environment injection:
 at most 32 arguments, 1024 characters each and 8192 characters total. Empty
@@ -167,6 +171,13 @@ A workspace has one macOS app: a local stim macos
 refuses while it runs on a host, and --host with a different machine refuses
 until stim stop. When the host cannot be reached or does not confirm the stop,
 the placement stays recorded; restore the connection and run stim stop again.
+
+Viewing and controlling the hosted app from a phone needs Screen & System Audio
+Recording and Device Control and Data Access (Accessibility on macOS 26 and
+earlier), granted once on the host to the process that spawns stim-frames, not to
+the hosted app. For a stim-server run by stim-server service install, that is the
+node that stim-server service status reports, usually /opt/homebrew/bin/node. Add
+it in System Settings > Privacy & Security in both panes.
 
 status --json reports macos.host { machine, session, appSlot, appAttempt,
 bundleId, agent }. state is running when the host reported a live app and

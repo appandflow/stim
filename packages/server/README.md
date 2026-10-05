@@ -586,10 +586,14 @@ backpressure/keyframe rules. `device-host.frames.keyframe` and
 Hosted capture requires the compiled `stim-frames` helper and does not support
 replay, device artwork or screenshot fallback. macOS frames show only the one
 window of the hosted app. Viewing is refused before launch and after the app
-exits. On the hosting Mac, grant Screen Recording and Accessibility once to the
-process that spawns `stim-frames`. Missing Screen Recording access ends the
-stream with the helper's refusal message. Missing Accessibility access refuses
-control while viewing remains available.
+exits. On the hosting Mac, grant Screen & System Audio Recording (Screen Recording on
+macOS 14) and Device Control and Data Access (Accessibility on macOS 26 and
+earlier) once to the process that spawns `stim-frames`. For a stim-server run by
+`stim-server service install`, that is the `node` that `stim-server service status`
+reports, usually `/opt/homebrew/bin/node`; a Stim Host app that owns these grants
+is tracked in https://github.com/appandflow/stim/issues/2493. Missing Screen & System Audio Recording access ends the
+stream with the helper's refusal message. Missing Device Control and Data Access
+access refuses control while viewing remains available.
 
 Start control with `device-host.control.begin` and
 `{"session":"<hosted-session-id>"}`. Its result returns a connection-bound
@@ -952,8 +956,8 @@ Events are `{ "event", "subscription", ... }`.
   The helper verifies the recorded PID, process start time, executable, bundle
   identifier and bundle path before starting and while capturing. ScreenCaptureKit
   selects only that app's window; desktop capture and choosing between multiple
-  windows are unsupported. It requires existing Screen Recording permission and
-  never requests or resets grants. The local health payload sets `nativeViewerOpened` after a verified native view attaches, allowing the Desktop host to present its first-use Screen Recording and Accessibility (called Device Control and Data Access on macOS 27) setup. Only explicit buttons in that host invoke normal OS requests. Capture refusal names setup and System Settings guidance; status and logs remain available. Native windows need the
+  windows are unsupported. It requires existing Screen & System Audio Recording permission (Screen Recording on macOS 14) and
+  never requests or resets grants. The local health payload sets `nativeViewerOpened` after a verified native view attaches, allowing the Desktop host to present its first-use Screen & System Audio Recording and Device Control and Data Access (Accessibility on macOS 26 and earlier) setup. Only explicit buttons in that host invoke normal OS requests. Capture refusal names setup and System Settings guidance; status and logs remain available. Native windows need the
   helper, have no screenshot fallback, recording or replay, and consume
   only the paired device's `read` capability.
 
@@ -1519,8 +1523,8 @@ sends reaches any other device.
   `platform: "macos"` for the verified native app in the default slot. It needs
   `control` and takes one exclusive server session per app, with the same
   takeover, disconnect, revocation and five-minute idle rules; `lease` is null
-  because CLI device locks do not cover macOS apps. Existing Accessibility
-  permission is required, without permission requests or resets. Before each
+  because CLI device locks do not cover macOS apps. Existing Device Control and
+  Data Access permission (Accessibility on macOS 26 and earlier) is required, without permission requests or resets. Before each
   action the helper verifies PID/start time/executable/bundle and the captured
   window ID, size and matching sole standard Accessibility window. Modal or
   disjoint windows, resizing and changed ownership refuse input. Contained

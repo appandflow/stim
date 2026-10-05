@@ -14,11 +14,11 @@ struct NativeViewerPermissionsView: View {
       )
       .foregroundStyle(Palette.secondary)
       permission(
-        "Screen Recording", detail: "Shows the app's window in Desktop and on your paired phone.",
+        permissions.screenPermissionTitle, detail: permissions.screenPermissionDetail,
         allowed: permissions.screenRecording, pane: "Privacy_ScreenCapture")
       permission(
         permissions.controlPermissionTitle,
-        detail: "Lets Control interact with the captured app window and Open app bring it forward.",
+        detail: permissions.controlPermissionDetail,
         allowed: permissions.accessibility, pane: "Privacy_Accessibility")
       if permissions.serverOwned == false {
         Text(
@@ -61,7 +61,7 @@ struct NativeViewerPermissionsView: View {
           Text(title).font(.stim(.headline))
           Text(allowed ? "Allowed" : "Needed").foregroundStyle(Palette.secondary)
         }
-        Text(detail).foregroundStyle(Palette.secondary)
+        Text(detail).foregroundStyle(Palette.secondary).fixedSize(horizontal: false, vertical: true)
       }
       Spacer()
       Button("Settings") { permissions.openSettings(pane) }.buttonStyle(.stim())

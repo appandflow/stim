@@ -552,7 +552,10 @@ A definite revoked or lapsed request can be requested again with --fix.
 An in-progress approval inspection reports busy rather than replacing its
 pending token. \`stim macos --host <machine>\` runs a macOS app on an
 approved machine (stim guide macos); \`ios\` and \`android\` do not yet
-place sessions on these machines.
+place sessions on these machines. To view or control a hosted macOS app, a person
+on that Mac grants Screen & System Audio Recording and Device Control and Data
+Access (Accessibility on macOS 26 and earlier) to the node that
+\`stim-server service status\` reports, usually /opt/homebrew/bin/node.
 
 On a hosting Mac, \`hosting.agentDriver\` names the tool it starts so a
 client's coding agent can drive the macOS apps it hosts for that client.

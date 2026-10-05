@@ -689,8 +689,11 @@ workspaces, phone control or build offloading.
 The [hosted view and input protocol](https://github.com/appandflow/stim/blob/main/packages/server/README.md#hosted-ios-and-macos-view-and-input)
 streams and controls only the approved client's ready, owned iOS simulator or
 running macOS app. macOS frames show only the hosted app's window. Viewing is
-refused before launch and after exit. On the host, grant Screen Recording and
-Accessibility once to the process that spawns `stim-frames`. The worker derives
+refused before launch and after exit. On the host, grant Screen & System Audio Recording and
+Device Control and Data Access (Accessibility on macOS 26 and earlier) once to the
+process that spawns `stim-frames`. For a stim-server run by
+`stim-server service install`, that is the `node` that `stim-server service status`
+reports, usually `/opt/homebrew/bin/node`. The worker derives
 the exact simulator or app identity from its private records and keeps the
 capture helper under the session's ownership claim. Reconnect preserves the
 native session; subscribe and begin control again. Installation, stop and

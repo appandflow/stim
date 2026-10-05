@@ -1329,16 +1329,17 @@ by its development launch arguments. **Window > SwiftUI Playground** opens the
 in-memory screen fixtures. Inspect compiler
 output with `stim logs --source build`, and use `stim stop` to stop only that
 workspace's recorded app. The normal Desktop viewer shows its app/build state,
-logs and one local owned main window using existing Screen Recording permission.
+logs and one local owned main window using existing Screen & System Audio Recording permission (Screen Recording on macOS 14).
 Contained utility windows are supported; disjoint app windows refuse capture.
 The viewer skips its own process to prevent recursive previews.
-**Open app** verifies and activates that owned app using existing Accessibility
-permission for normal native input;
+**Open app** verifies and activates that owned app using existing Device Control and
+Data Access permission (Accessibility on macOS 26 and earlier) for normal native input;
 the captured view is read-only. Background input relay is not included. Use **Refresh preview** after the app window opens or is resized. No permission requests or custom packaging
 script is part of the build flow.
 
 On the first native viewer opening, one **Native app viewer** setup screen explains
-Screen Recording and Accessibility (called Device Control and Data Access on macOS 27),
+Screen & System Audio Recording (Screen Recording on macOS 14) and Device Control and
+Data Access (Accessibility on macOS 26 and earlier), named for the Mac's macOS version,
 shows their status and offers **Request permissions**, **Settings** and **Check again**.
 You approve normal macOS requests; Stim never resets or automatically grants access.
 Use **Permissions** on the app card to reopen setup. A phone-first native viewer
