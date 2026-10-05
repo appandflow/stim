@@ -117,6 +117,9 @@ public final class SimulatorButtons {
 
   public init() {}
 
+  /// Reads the controlled guest clipboard only when explicitly requested.
+  public func clipboard() async -> String? { await view?.clipboard() }
+
   public func press(_ button: SimulatorButton) {
     view?.press(button)
   }
@@ -375,6 +378,17 @@ public final class SimulatorDisplayNSView: NSView {
     guard interactive, let udid, display != nil else { return nil }
     if hid?.isConnected != true { hid = SimulatorHID(udid: udid) }
     return hid
+  }
+
+  func clipboard() async -> String? {
+    guard interactive, let udid, display != nil else { return nil }
+    var environment = ProcessInfo.processInfo.environment
+    environment["DEVELOPER_DIR"] = CoreSimulator.developerDir
+    let request = ProcessRequest("/usr/bin/xcrun", ["simctl", "pbpaste", udid], environment: environment, timeout: 10)
+    guard let result = try? await request.run(), result.succeeded, !Task.isCancelled,
+      interactive, self.udid == udid
+    else { return nil }
+    return String(data: result.stdout, encoding: .utf8)
   }
 
   func press(_ button: SimulatorButton) {

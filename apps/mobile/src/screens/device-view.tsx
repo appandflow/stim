@@ -32,6 +32,7 @@ import { StatusBar } from 'expo-status-bar';
 
 import { Button } from '@/components/button';
 import { AgentFeed } from '@/components/agent-feed';
+import { DeviceFrame } from '@/components/device-frame';
 import { DeviceScreen } from '@/components/device-screen';
 import { Icon } from '@/components/icon';
 import { ViewerToolbar, type ViewerAction } from '@/components/viewer-toolbar';
@@ -53,6 +54,7 @@ import { useDeviceControl } from '@/hooks/device-control';
 import { useMacConnection, useWorkspace } from '@/hooks/machines';
 import { useSettings, type VideoQuality } from '@/hooks/settings';
 import { framePoint, orientationOf, otherDriver } from '@/lib/device-control';
+import { matchingDeviceFrame } from '@/lib/device-frame';
 import { foldOf } from '@/lib/fold';
 import { buildTimeline } from '@/lib/replay';
 import { LIVE_VIEW, replayView } from '@/lib/replay-view';
@@ -148,9 +150,22 @@ export function DeviceView({
   const replayStart = hasFootage ? view.startAt : null;
   const streams = running || replayStart !== null;
   const [scrubbing, setScrubbing] = useState(false);
+  const [showsFrame, setShowsFrame] = useState(false);
+  const frameSupported =
+    !physical &&
+    (platform === 'ios' || platform === 'android') &&
+    link.kind === 'open' &&
+    link.features?.includes('device-frames') === true;
   const streamOptions = useMemo(
-    () => ({ enabled: streams, fps: preset.fps, maxEdge, video: preset.video, startAt: replayStart }),
-    [streams, preset.fps, maxEdge, preset.video, replayStart],
+    () => ({
+      enabled: streams,
+      fps: preset.fps,
+      maxEdge,
+      video: preset.video,
+      startAt: replayStart,
+      deviceFrame: frameSupported,
+    }),
+    [streams, preset.fps, maxEdge, preset.video, replayStart, frameSupported],
   );
   const stream = useDeviceStream({ workspace, platform, slot, physical }, streamOptions);
   const canReplay = hasFootage && stream.replayable !== false;
@@ -165,6 +180,8 @@ export function DeviceView({
   });
   if (synced !== view) setView(synced);
   const source = stream.video ?? stream.frame;
+  const artwork = replaying ? null : matchingDeviceFrame(stream.artwork, source);
+  const activeArtwork = showsFrame ? artwork : null;
   const control = useDeviceControl(workspace, platform, slot, physical);
   const readOnly = !viewOnly && control.allowed === false;
   const [copied, setCopied] = useState(false);
@@ -198,7 +215,7 @@ export function DeviceView({
   const screenGesture = useExclusiveGestures(screenZoom.gesture, revealTap);
   const zoom = useDeviceZoom(
     zoomKey({ macId: mac?.id ?? '', workspace, platform, slot, physical }),
-    aspectOf(source),
+    activeArtwork ? activeArtwork.width / activeArtwork.height : aspectOf(source),
     platform === 'web' || platform === 'macos' ? 1.6 : platform === 'ios' ? 0.46 : 0.45,
     !controlling && !((landscape || book || table) && readOnly) && !screenZoom.zoomed && !scrubbing,
     root,
@@ -214,7 +231,7 @@ export function DeviceView({
     },
   );
   const snapshot = zoom.landed && source ? null : zoom.snapshot;
-  const screen = zoom.screenSize;
+  const touchSize = useRef<{ width: number; height: number } | null>(null);
   const keyboard = useRef<TextInputInstance>(null);
   const [typing, setTyping] = useState(false);
   const [scrolling, setScrolling] = useState(false);
@@ -278,7 +295,7 @@ export function DeviceView({
 
   const touches = useRef({ active: false, lastMove: 0, pending: null as { x: number; y: number } | null });
   const point = (x: number, y: number, clamp: boolean) =>
-    source && screen ? framePoint(x, y, screen, source, clamp) : null;
+    source && touchSize.current ? framePoint(x, y, touchSize.current, source, clamp) : null;
   const touchHandlers = {
     onStartShouldSetResponder: () => true,
     onMoveShouldSetResponder: () => true,
@@ -407,98 +424,120 @@ export function DeviceView({
       />
     ) : null;
   const overlayControls = !table && replayBar !== null && streams && rest !== null && rootHeight > 0;
-  const primary: ViewerAction[] = [
-    {
-      id: 'keyboard',
-      icon: 'keyboard',
-      label: typing ? t`Hide keyboard` : t`Keyboard`,
-      selected: typing,
-      disabled: readOnly,
-      onPress: () => (typing ? keyboard.current?.blur() : keyboard.current?.focus()),
-    },
-    ...(platform === 'ios'
-      ? [{ id: 'home', icon: 'circle' as const, label: t`Home`, disabled: readOnly, onPress: () => press('home') }]
-      : []),
-    ...(platform === 'web' || platform === 'android'
+  const primary: ViewerAction[] =
+    controlling || readOnly
       ? [
           {
-            id: 'back',
-            icon: 'chevron.backward' as const,
-            label: t`Back`,
+            id: 'keyboard',
+            icon: 'keyboard',
+            label: typing ? t`Hide keyboard` : t`Keyboard`,
+            selected: typing,
             disabled: readOnly,
-            onPress: () => press('back'),
+            onPress: () => (typing ? keyboard.current?.blur() : keyboard.current?.focus()),
           },
+          ...(platform === 'ios'
+            ? [
+                {
+                  id: 'home',
+                  icon: 'circle' as const,
+                  label: t`Home`,
+                  disabled: readOnly,
+                  onPress: () => press('home'),
+                },
+              ]
+            : []),
+          ...(platform === 'web' || platform === 'android'
+            ? [
+                {
+                  id: 'back',
+                  icon: 'chevron.backward' as const,
+                  label: t`Back`,
+                  disabled: readOnly,
+                  onPress: () => press('back'),
+                },
+              ]
+            : []),
+          ...(platform === 'macos'
+            ? [
+                {
+                  id: 'scroll',
+                  icon: 'hand.raised' as const,
+                  label: t`Scroll`,
+                  selected: scrolling,
+                  disabled: readOnly,
+                  onPress: () => setScrolling(!scrolling),
+                },
+              ]
+            : []),
+          ...((platform === 'ios' || platform === 'android') && !physical
+            ? [
+                {
+                  id: 'rotate-left',
+                  icon: 'arrow.counterclockwise' as const,
+                  label: t`Rotate left`,
+                  disabled: readOnly,
+                  onPress: () => rotate('left'),
+                },
+                {
+                  id: 'rotate-right',
+                  icon: 'arrow.clockwise' as const,
+                  label: t`Rotate right`,
+                  disabled: readOnly,
+                  onPress: () => rotate('right'),
+                },
+              ]
+            : []),
         ]
-      : []),
-    ...(platform === 'macos'
-      ? [
-          {
-            id: 'scroll',
-            icon: 'hand.raised' as const,
-            label: t`Scroll`,
-            selected: scrolling,
-            disabled: readOnly,
-            onPress: () => setScrolling(!scrolling),
-          },
-        ]
-      : []),
-    ...((platform === 'ios' || platform === 'android') && !physical
-      ? [
-          {
-            id: 'rotate-left',
-            icon: 'arrow.counterclockwise' as const,
-            label: t`Rotate left`,
-            disabled: readOnly,
-            onPress: () => rotate('left'),
-          },
-          {
-            id: 'rotate-right',
-            icon: 'arrow.clockwise' as const,
-            label: t`Rotate right`,
-            disabled: readOnly,
-            onPress: () => rotate('right'),
-          },
-        ]
-      : []),
-  ];
+      : [];
   const secondary: ViewerAction[] = [];
-  if (controlling && overlayControls && !controls.shown)
-    secondary.push({ id: 'replay', icon: 'play.circle', label: t`Replay`, onPress: controls.reveal });
-  if (platform === 'android')
+  if (controlling || readOnly) {
+    if (controlling && overlayControls && !controls.shown)
+      secondary.push({ id: 'replay', icon: 'play.circle', label: t`Replay`, onPress: controls.reveal });
+    if (platform === 'android')
+      secondary.push(
+        { id: 'home', icon: 'circle', label: t`Home`, disabled: readOnly, onPress: () => press('home') },
+        { id: 'apps', icon: 'rectangle.stack', label: t`Apps`, disabled: readOnly, onPress: () => press('app-switch') },
+      );
+    if (platform === 'ios' || platform === 'android')
+      secondary.push({ id: 'lock', icon: 'lock', label: t`Lock`, disabled: readOnly, onPress: () => press('lock') });
+    if (simulator?.canShake)
+      secondary.push({
+        id: 'shake',
+        icon: 'arrow.triangle.2.circlepath',
+        label: t`Shake`,
+        disabled: changingOption,
+        onPress: () => changeSimulator({ action: 'shake' }),
+      });
+    if (typeof simulator?.slowAnimations === 'boolean')
+      secondary.push({
+        id: 'slow-animations',
+        icon: 'hourglass',
+        label: t`Slow animations`,
+        selected: simulator.slowAnimations,
+        disabled: changingOption,
+        onPress: () => changeSimulator({ action: 'slow-animations', enabled: !simulator.slowAnimations }),
+      });
     secondary.push(
-      { id: 'home', icon: 'circle', label: t`Home`, disabled: readOnly, onPress: () => press('home') },
-      { id: 'apps', icon: 'rectangle.stack', label: t`Apps`, disabled: readOnly, onPress: () => press('app-switch') },
+      ...postures.map((posture): ViewerAction => ({
+        id: posture,
+        icon: posture === 'folded' ? 'rectangle.portrait' : posture === 'half-open' ? 'book' : 'rectangle',
+        label: moving === posture ? t`Moving...` : postureLabel(posture),
+        selected: posture === shown,
+        disabled: readOnly || moving !== null || posture === shown,
+        onPress: () => move(posture),
+      })),
     );
-  if (platform === 'ios' || platform === 'android')
-    secondary.push({ id: 'lock', icon: 'lock', label: t`Lock`, disabled: readOnly, onPress: () => press('lock') });
-  if (simulator?.canShake)
+  }
+  if (artwork)
     secondary.push({
-      id: 'shake',
-      icon: 'arrow.triangle.2.circlepath',
-      label: t`Shake`,
-      disabled: changingOption,
-      onPress: () => changeSimulator({ action: 'shake' }),
+      id: 'device-frame',
+      icon: 'rectangle.portrait',
+      label: t`Device frame`,
+      selected: showsFrame,
+      onPress: () => setShowsFrame(!showsFrame),
     });
-  if (typeof simulator?.slowAnimations === 'boolean')
-    secondary.push({
-      id: 'slow-animations',
-      icon: 'hourglass',
-      label: t`Slow animations`,
-      selected: simulator.slowAnimations,
-      disabled: changingOption,
-      onPress: () => changeSimulator({ action: 'slow-animations', enabled: !simulator.slowAnimations }),
-    });
-  secondary.push(
-    ...postures.map((posture): ViewerAction => ({
-      id: posture,
-      icon: posture === 'folded' ? 'rectangle.portrait' : posture === 'half-open' ? 'book' : 'rectangle',
-      label: moving === posture ? t`Moving...` : postureLabel(posture),
-      selected: posture === shown,
-      disabled: readOnly || moving !== null || posture === shown,
-      onPress: () => move(posture),
-    })),
-  );
-  const toolbars = controlling || readOnly ? <ViewerToolbar primary={primary} secondary={secondary} /> : null;
+  const toolbars =
+    primary.length || secondary.length ? <ViewerToolbar primary={primary} secondary={secondary} /> : null;
   const model = device?.page
     ? shortUrl(device.page.url)
     : (device?.model ?? (platform === 'ios' ? t`iOS Simulator` : platform === 'web' ? t`Web` : t`Android Emulator`));
@@ -616,28 +655,33 @@ export function DeviceView({
                 pointerEvents="box-none"
               >
                 <Animated.View style={[styles.flying, zoom.screenStyle, lift]}>
-                  <DeviceScreen
-                    stream={stream}
-                    label={model}
-                    style={StyleSheet.absoluteFill}
-                    requested={{ fps: preset.fps, maxEdge }}
-                  >
-                    {snapshot ? (
-                      <Image
-                        source={{ uri: `data:${snapshot.mime};base64,${snapshot.data}` }}
-                        style={StyleSheet.absoluteFill}
-                        contentFit="contain"
-                        transition={0}
-                      />
-                    ) : null}
-                    {source ? (
-                      <View
-                        style={[styles.overlay, controlling && styles.overlayActive]}
-                        pointerEvents={controlling ? 'auto' : 'none'}
-                        {...(controlling ? touchHandlers : {})}
-                      />
-                    ) : null}
-                  </DeviceScreen>
+                  <DeviceFrame artwork={snapshot ? null : activeArtwork}>
+                    <DeviceScreen
+                      stream={stream}
+                      label={model}
+                      style={StyleSheet.absoluteFill}
+                      requested={{ fps: preset.fps, maxEdge }}
+                    >
+                      {snapshot ? (
+                        <Image
+                          source={{ uri: `data:${snapshot.mime};base64,${snapshot.data}` }}
+                          style={StyleSheet.absoluteFill}
+                          contentFit="contain"
+                          transition={0}
+                        />
+                      ) : null}
+                      {source ? (
+                        <View
+                          onLayout={(event) => {
+                            touchSize.current = event.nativeEvent.layout;
+                          }}
+                          style={[styles.overlay, controlling && styles.overlayActive]}
+                          pointerEvents={controlling ? 'auto' : 'none'}
+                          {...(controlling ? touchHandlers : {})}
+                        />
+                      ) : null}
+                    </DeviceScreen>
+                  </DeviceFrame>
                 </Animated.View>
               </View>
             </GestureDetector>

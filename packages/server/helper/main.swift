@@ -7,7 +7,7 @@ import IOSurface
 // stim-frames streams one device's screen as JPEG frames for stim-server.
 //
 //   stim-frames ios <udid>
-//   stim-frames android <serial>
+//   stim-frames android <serial> [owned-avd-name]
 //   stim-frames android-device <serial> <adb> <scrcpy-server>
 //   stim-frames web <cdpEndpoint> <chromePid> <targetId>
 //   stim-frames macos <owned-app-json>
@@ -40,7 +40,9 @@ import IOSurface
 // {"stalled": message} while frames cannot arrive and {"stalled": null} once they can), 3 is an H.264 access unit (1-byte
 // flags with bit 0 set on a keyframe, 8-byte big-endian float capture time in
 // milliseconds since the epoch, 2-byte width, 2-byte height, Annex-B bytes), and 4 is an
-// access unit of the recording encoder, laid out like 3.
+// access unit of the recording encoder, laid out like 3. Kind 5 adds a clockwise artwork
+// quarter-turn byte after the frame dimensions. Live video bit 5 marks that rotation
+// in bits 3-4; recordings omit it. The deviceFrame config requests PNG artwork notices.
 // The helper exits when stdin closes.
 
 struct Config: Equatable {
@@ -50,6 +52,7 @@ struct Config: Equatable {
   var jpeg = true
   var jpegFps: Double?
   var video = false
+  var deviceFrame = false
   var bitrate = 3_000_000
   var record: Recording?
 }
@@ -70,12 +73,13 @@ enum Output {
   private static let maxPendingVideo = 30
   static var requestKeyframe: () -> Void = {}
 
-  static func frame(jpeg: Data, width: Int, height: Int) {
+  static func frame(jpeg: Data, width: Int, height: Int, artworkTurns: Int? = nil) {
     lock.lock()
     defer { lock.unlock() }
     guard !writing else { return }
     writing = true
-    var body = Data([1, UInt8(width >> 8), UInt8(width & 0xff), UInt8(height >> 8), UInt8(height & 0xff)])
+    var body = Data([artworkTurns == nil ? 1 : 5, UInt8(width >> 8), UInt8(width & 0xff), UInt8(height >> 8), UInt8(height & 0xff)])
+    if let artworkTurns { body.append(UInt8(artworkTurns)) }
     body += jpeg
     writer.async {
       write(body)
@@ -96,7 +100,8 @@ enum Output {
     videoNeedsKeyframe = false
     keyframeRequested = false
     pendingVideo += 1
-    var body = Data([3, unit.keyframe ? 1 : 0])
+    let artwork = unit.artworkTurns.map { UInt8(32 | ($0 << 3)) } ?? 0
+    var body = Data([3, (unit.keyframe ? 1 : 0) | artwork])
     withUnsafeBytes(of: unit.capturedAt.bitPattern.bigEndian) { body.append(contentsOf: $0) }
     body += Data([UInt8(unit.width >> 8), UInt8(unit.width & 0xff), UInt8(unit.height >> 8), UInt8(unit.height & 0xff)])
     body += unit.data
@@ -259,6 +264,8 @@ final class SimulatorSource {
   private let recorder = recordEncoder()
   private let recordGate = RecordGate()
   private let jpegGate = JpegGate()
+  private var frameTurns: Int?
+  private lazy var artwork = FrameArtworkPublisher { SimulatorFrameArtwork.load(udid: self.udid) }
 
   init(udid: String) {
     self.udid = udid
@@ -359,25 +366,31 @@ final class SimulatorSource {
     default: (orientation, quarterTurns) = (.up, 0)
     }
     let ioSurface = unsafeBitCast(surface, to: IOSurfaceRef.self)
+    let artworkTurns = (4 - quarterTurns) % 4
+    if config.deviceFrame, frameTurns != artworkTurns {
+      frameTurns = artworkTurns
+      artwork.send(quarterTurns: artworkTurns)
+    }
     let record = recordGate.admit(config, pacer: pacer)
     if config.video || record {
       var buffer: Unmanaged<CVPixelBuffer>?
       CVPixelBufferCreateWithIOSurface(nil, ioSurface, nil, &buffer)
       if let pixels = buffer?.takeRetainedValue() {
         let capturedAt = now()
-        if config.video { video.encode(pixels, quarterTurns: quarterTurns, capturedAt: capturedAt) }
+        if config.video { video.encode(pixels, quarterTurns: quarterTurns, capturedAt: capturedAt, artworkTurns: artworkTurns) }
         if record { recorder.encode(pixels, quarterTurns: quarterTurns, capturedAt: capturedAt) }
       }
     }
     guard config.jpeg, jpegGate.admit(config, pacer: pacer) else { return }
     let image = CIImage(ioSurface: ioSurface).oriented(orientation)
     guard let (data, width, height) = jpeg(image, config: config) else { return }
-    Output.frame(jpeg: data, width: width, height: height)
+    Output.frame(jpeg: data, width: width, height: height, artworkTurns: artworkTurns)
   }
 }
 
 final class EmulatorSource {
   let serial: String
+  let avdName: String?
   let queue = DispatchQueue(label: "stim.frames.emulator")
   let inputQueue = DispatchQueue(label: "stim.frames.emulator-input")
   var input: EmulatorInput?
@@ -391,9 +404,12 @@ final class EmulatorSource {
   private let recorder = recordEncoder()
   private let recordGate = RecordGate()
   private let jpegGate = JpegGate()
+  private var frameTurns: Int?
+  private lazy var artwork = FrameArtworkPublisher { self.avdName.flatMap { EmulatorFrameArtwork.load(avdName: $0) } }
 
-  init(serial: String) {
+  init(serial: String, avdName: String? = nil) {
     self.serial = serial
+    self.avdName = avdName
     pacer = Pacer { [unowned self] config in
       guard let frame = self.queue.sync(execute: { self.latest }) else { return }
       self.render(frame, config: config)
@@ -462,7 +478,12 @@ final class EmulatorSource {
 
   private func render(_ frame: EmulatorFrame, config: Config) {
     let capturedAt = now()
-    if config.video { video.encode(rgba: frame.rgba, width: frame.width, height: frame.height, capturedAt: capturedAt) }
+    let artworkTurns = (-frame.rotation % 4 + 4) % 4
+    if config.deviceFrame, frameTurns != artworkTurns {
+      frameTurns = artworkTurns
+      artwork.send(quarterTurns: artworkTurns)
+    }
+    if config.video { video.encode(rgba: frame.rgba, width: frame.width, height: frame.height, capturedAt: capturedAt, artworkTurns: artworkTurns) }
     if recordGate.admit(config, pacer: pacer) {
       recorder.encode(rgba: frame.rgba, width: frame.width, height: frame.height, capturedAt: capturedAt)
     }
@@ -473,7 +494,7 @@ final class EmulatorSource {
         provider: provider, decode: nil, shouldInterpolate: false, intent: .defaultIntent),
       let (data, width, height) = jpeg(CIImage(cgImage: image), config: config)
     else { return }
-    Output.frame(jpeg: data, width: width, height: height)
+    Output.frame(jpeg: data, width: width, height: height, artworkTurns: artworkTurns)
   }
 }
 
@@ -801,6 +822,7 @@ func parseCommand(_ line: String, base: Config) -> Command? {
     if let jpeg = object["jpeg"] as? Bool { config.jpeg = jpeg }
     if let jpegFps = object["jpegFps"] as? Double, jpegFps > 0 { config.jpegFps = min(jpegFps, 60) }
     if let video = object["video"] as? Bool { config.video = video }
+    config.deviceFrame = object["deviceFrame"] as? Bool ?? false
     if let bitrate = object["bitrate"] as? Int, bitrate > 0 { config.bitrate = bitrate }
     config.record = (object["record"] as? [String: Any]).flatMap { record in
       guard let edge = record["maxEdge"] as? Int, edge > 0, let bitrate = record["bitrate"] as? Int, bitrate > 0,
@@ -1015,7 +1037,7 @@ let arguments = CommandLine.arguments
 let usage =
   "usage: stim-frames ios <udid> | android <serial> | android-device <serial> <adb> <scrcpy-server> | web <cdpEndpoint> <chromePid> <targetId> | iphone <udid> [name]"
 let terminated = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .global())
-let counts = ["simulator-options": [4, 5], "web": [5], "iphone": [3, 4], "android-device": [5]]
+let counts = ["simulator-options": [4, 5], "web": [5], "iphone": [3, 4], "android-device": [5], "android": [3, 4]]
 guard arguments.count > 1, (counts[arguments[1]] ?? [3]).contains(arguments.count) else { fail(usage) }
 switch arguments[1] {
 case "simulator-options":
@@ -1073,7 +1095,7 @@ case "ios":
   readCommands(source)
   source.queue.async { source.start() }
 case "android":
-  let source = EmulatorSource(serial: arguments[2])
+  let source = EmulatorSource(serial: arguments[2], avdName: arguments.count == 4 ? arguments[3] : nil)
   Output.requestKeyframe = source.keyframe
   readCommands(source)
   source.start()

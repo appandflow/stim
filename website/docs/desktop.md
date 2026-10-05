@@ -139,7 +139,17 @@ enables genuine hardware that follows the hinge and rotation, with input mapped
 to the posed active screen. Without that model, the viewer stays frameless.
 Desktop snapshots the departing panel before its own posture controls change the
 hinge; external handoffs can leave that panel blank or retain an older snapshot.
-Stim does not bundle the artwork. Mobile frame delivery is not included.
+Stim does not bundle the artwork.
+
+The phone app's bottom toolbar offers **Device frame** for ordinary live iOS
+simulators and Android emulators when the paired server supports it. Frames
+start off. The Mac sends installed housing pixels to the authenticated read
+subscriber; the app keeps its existing guest screen inside the housing's
+aperture, so bezel taps send no input. Missing artwork or mismatched rotation
+keeps the screen frameless. Phone replay, physical devices, web pages, Duo and
+Android foldable/circular devices do not use this mobile frame path.
+
+Framed H.264 requires a current Stim phone build with native orientation-clear support; older phone builds keep the video frameless.
 
 The live local viewer's scale menu defaults to **Fit**. **Point Accurate** maps
 iOS points or Android profile dp to Mac points; **Pixel Accurate** maps guest
@@ -161,6 +171,18 @@ Two markers show the contact positions, including on a framed or folded screen.
 Releasing Option, ending the gesture, changing orientation or releasing Control
 lifts both contacts. Option and the gesture's Shift modifier stay on the Mac.
 These gestures are not available for physical devices, remote previews or web pages.
+
+With **Control** on an owned local Android emulator, **Paste into device**
+copies Mac clipboard text and pastes it into the focused guest field.
+Owned local iOS simulators and Android emulators offer **Copy device clipboard**,
+which copies guest text back to this Mac, including empty text. iOS Paste remains
+unavailable while [#2331](https://github.com/appandflow/stim/issues/2331) tracks
+the simulator pasteboard provider's failed insertion.
+Unicode and line breaks are preserved. Transfers happen only when pressed; there
+is no automatic clipboard synchronization. An empty or non-text Mac clipboard
+leaves the guest unchanged. Disconnects and unavailable native clipboard APIs
+report a failure. Physical devices, remote sessions and replay do not offer
+clipboard actions.
 
 On the All devices and project wall, active workspaces without running or building
 devices use compact cards labelled **No running devices**, with Metro status,

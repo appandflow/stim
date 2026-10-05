@@ -13,6 +13,7 @@ export interface FrameOptions {
   maxEdge?: number;
   video?: readonly string[];
   startAt?: number | null;
+  deviceFrame?: boolean;
 }
 
 /**
@@ -22,7 +23,7 @@ export interface FrameOptions {
 export function frameTarget(target: FrameTarget, options: FrameOptions = {}) {
   const { workspace, platform, slot, physical } = target;
   return {
-    key: `${workspace}\n${platform}\n${slot}\n${physical ? 'physical' : ''}\n${options.fps}\n${options.maxEdge}\n${options.video?.join(',')}\n${options.startAt ?? ''}`,
+    key: `${workspace}\n${platform}\n${slot}\n${physical ? 'physical' : ''}\n${options.fps}\n${options.maxEdge}\n${options.video?.join(',')}\n${options.startAt ?? ''}\n${options.deviceFrame ? 'frame' : ''}`,
     params: { workspace, platform, slot, ...(physical ? { physical } : {}) },
   };
 }

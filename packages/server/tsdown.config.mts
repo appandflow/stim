@@ -31,11 +31,13 @@ export default defineConfig({
         'helper/main.swift',
         'helper/VideoEncoder.swift',
         'helper/PhoneSource.swift',
+        'helper/FrameArtwork.swift',
         'helper/MacosSource.swift',
         ...desktop.map((path) => `../../apps/desktop/Sources/${path}`),
       ]) {
         copyFileSync(source, `dist/stim-frames/${basename(source)}`);
       }
+      copyFileSync('../../apps/desktop/Support/Siniulator-LICENSE.txt', 'dist/stim-frames/Siniulator-LICENSE.txt');
       copyFileSync('../../apps/desktop/Support/SimFold/main.m', 'dist/stim-frames/sim-fold.m');
       copyFileSync('../../apps/desktop/Support/SimFold/entitlements.plist', 'dist/stim-frames/sim-fold.entitlements');
       rmSync('dist/scrcpy', { recursive: true, force: true });
