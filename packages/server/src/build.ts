@@ -36,6 +36,8 @@ import {
   settingValueError,
   tryAcquireBuildSlotClaim,
 } from '@stim-cli/core/state';
+import { validMacosResourceDestination } from '@stim-cli/core';
+import type { BuildStartParams } from '@stim-cli/core/protocol';
 import { readAvailableMemory } from './machine.ts';
 import {
   BUILD_REPO_PATTERN,
@@ -739,7 +741,7 @@ export class BuildSession {
         'An android build needs params.android: variant and abi (string or null), gradleBuildCache, pch and compilerCache.',
       );
     }
-    let macos: { product: string; infoPlist: string; bundleId: string } | null = null;
+    let macos: BuildStartParams['macos'] = null;
     if (platform === 'macos') {
       const options = params.macos;
       if (
@@ -755,7 +757,27 @@ export class BuildSession {
           'A macos build needs a valid product, relative infoPlist path and bundleId in params.macos.',
         );
       }
-      macos = { product: options.product, infoPlist: options.infoPlist, bundleId: options.bundleId };
+      if (
+        (options.resources !== undefined &&
+          (!isJsonObject(options.resources) ||
+            Object.keys(options.resources).length > 256 ||
+            Object.entries(options.resources).some(
+              ([destination, source]) => !validMacosResourceDestination(destination) || !validBuildPath(source),
+            ))) ||
+        (options.assetCatalog !== undefined && options.assetCatalog !== null && !validBuildPath(options.assetCatalog))
+      ) {
+        return refusal(
+          'bad-request',
+          'params.macos needs contained resource destinations and repository-relative sources.',
+        );
+      }
+      macos = {
+        product: options.product,
+        infoPlist: options.infoPlist,
+        bundleId: options.bundleId,
+        ...(options.resources !== undefined ? { resources: options.resources as Record<string, string> } : {}),
+        ...(options.assetCatalog !== undefined ? { assetCatalog: options.assetCatalog as string | null } : {}),
+      };
     }
     if (params.project !== '' && !validBuildPath(params.project)) {
       return refusal('bad-request', 'params.project must be a relative path inside the repository.');

@@ -610,7 +610,14 @@ export type BuildRequest =
       optimizations: unknown;
     }
   | { platform: 'android'; isExpo: boolean; android: AndroidBuildOptions }
-  | { platform: 'macos'; product: string; infoPlist: string; bundleId: string };
+  | {
+      platform: 'macos';
+      product: string;
+      infoPlist: string;
+      bundleId: string;
+      resources?: Record<string, string>;
+      assetCatalog?: string | null;
+    };
 
 const ARTIFACT_NAME = { ios: /^[^/]+\.app$/, android: /^[^/]+\.apk$/, macos: /^[^/]+\.app$/ } as const;
 
@@ -814,7 +821,13 @@ export async function offloadBuild({
         fingerprint: request.platform === 'macos' ? synced.digest : expectedFingerprint,
         ...(request.platform === 'macos'
           ? {
-              macos: { product: request.product, infoPlist: request.infoPlist, bundleId: request.bundleId },
+              macos: {
+                product: request.product,
+                infoPlist: request.infoPlist,
+                bundleId: request.bundleId,
+                ...(request.resources !== undefined ? { resources: request.resources } : {}),
+                ...(request.assetCatalog !== undefined ? { assetCatalog: request.assetCatalog } : {}),
+              },
             }
           : {
               configuration: request.platform === 'ios' ? request.configuration : null,

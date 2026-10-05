@@ -1155,12 +1155,24 @@ describe('offloaded builds', () => {
       await client.request('build.sync', { repo: 'app-1', files: [file('Package.swift', 'x')], done: true });
       client.socket.send(blob('x'));
       const base = { repo: 'app-1', project: '', platform: 'macos', fingerprint: 'f00d', stimBuild: 'b1' };
-      const macos = { product: 'Sample', infoPlist: 'Support/Info.plist', bundleId: 'dev.sample.stim.test' };
+      const macos = {
+        product: 'Sample',
+        infoPlist: 'Support/Info.plist',
+        bundleId: 'dev.sample.stim.test',
+        resources: { 'AppIcon.icns': 'apps/sample/Support/icon.icns' },
+        assetCatalog: 'apps/sample/Support/Assets.xcassets',
+      };
       for (const options of [
         undefined,
         { ...macos, product: '../Sample' },
         { ...macos, infoPlist: '../Info.plist' },
         { ...macos, bundleId: '-bad' },
+        { ...macos, resources: { '../icon': 'icon' } },
+        { ...macos, resources: { '/icon': 'icon' } },
+        { ...macos, resources: { icon: '../icon' } },
+        { ...macos, resources: { icon: '/icon' } },
+        { ...macos, resources: Object.fromEntries(Array.from({ length: 257 }, (_, i) => [`icon${i}`, 'icon'])) },
+        { ...macos, assetCatalog: '../Assets.xcassets' },
       ]) {
         expect(await client.request('build.start', { ...base, macos: options })).toMatchObject({
           error: { code: 'bad-request' },

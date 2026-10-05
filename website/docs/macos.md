@@ -28,8 +28,35 @@ matching the selected product. Use development metadata without shared URL
 schemes or an update feed. Optional `macos.arguments` is a string array passed
 directly to the executable. Stim copies the Debug executable, built frameworks
 and SwiftPM resource bundles into its runtime area, derives a unique bundle ID
-from the workspace and signs that copy ad hoc. Extra application assets are not
-copied, and no signing account or provisioning settings change.
+from the workspace and signs that copy ad hoc. No signing account or
+provisioning settings change.
+
+Use `macos.resources` to copy files or directories into `Contents/Resources`.
+Each key is the destination and each value is a source relative to the Swift
+Package directory. `macos.assetCatalog` selects a `.xcassets` directory for a
+fixed `xcrun actool` invocation. Stim adds these resources before signing:
+
+```json
+{
+  "macos": {
+    "product": "MyApp",
+    "infoPlist": "Support/Info-Development.plist",
+    "assetCatalog": "Support/Assets.xcassets",
+    "resources": {
+      "AppIcon.icns": "Support/AppIcon-Dev.icns",
+      "branding": "../../website/static/img/branding"
+    }
+  }
+}
+```
+
+Sources must exist and their realpaths must stay inside the git repository root,
+or the Swift Package directory when there is no git root. A source can use `../`
+to reach another directory in the same repository. Destinations are non-empty
+relative paths without empty, `.` or `..` segments, at most 1024 characters.
+They cannot overlap another declared destination, a SwiftPM resource bundle, or
+`Assets.car` when an asset catalog is set. The map allows at most 256 entries.
+Stim does not run packaging scripts or build extra executables.
 
 <StimTabs
 code={`stim macos
@@ -56,10 +83,14 @@ dependencies the first time. It keeps SwiftPM dependencies per client and
 incremental outputs per repository; macOS artifacts are not cached. It runs no
 JavaScript install, prebuild or pod install for this job. It receives the files
 git lists (tracked and untracked, not ignored), so a build input that is
-gitignored is missing there.
+gitignored is missing there. Resource and asset catalog sources must be tracked
+or untracked and not ignored. Offload sends the resolved source paths relative
+to the repository root; the worker resolves them inside its checkout and stages
+them before signing.
 
-Stim validates the development plist before asking a machine and verifies the
-returned archive digest, bundle ID, executable and ad hoc signature before
+Stim validates the development plist and resource entries before asking a machine
+and verifies the returned archive digest, bundle ID, executable, declared
+resources and ad hoc signature before
 replacing the bundle. Every offload failure falls back locally, including in
 `force` mode; failed staging preserves the previous bundle. The app launches
 locally with the same supervisor and ownership checks. The build record carries
@@ -165,7 +196,8 @@ stim status --json
 stim stop`}
 />
 
-The copied bundle keeps its own `CFBundleIdentifier`. The host runs it as
+Hosted delivery carries the staged bundle, including declared resources and
+compiled assets. The copied bundle keeps its own `CFBundleIdentifier`. The host runs it as
 `<id>.hosted<slot>` from a fixed pool of slots, so its bundle ID stays the same
 across rebuilds. Whether macOS keeps the permissions the hosted app asks for itself
 also depends on how the host signs it.
@@ -237,7 +269,9 @@ Copy this prompt:
 ## Try Stim Desktop itself
 
 The repository's `apps/desktop/.stim.json` launches the full `StimDesktop` app
-as **Stim Development**. It monitors your regular Stim home alongside the
+as **Stim Development**, with its asset catalog, fonts, branding and licences.
+The bespoke `sim-fold` helper is not built, so simulator folding is unavailable
+in this copy. It monitors your regular Stim home alongside the
 installed app, with a workspace-specific bundle ID and separate preferences.
 Automatic cleanup and notification alerts are disabled for this development copy. **Window > SwiftUI
 Playground** still opens the in-memory production screen fixtures.
@@ -256,6 +290,6 @@ its server.
 Copy this prompt:
 
 > In my Swift Package app, configure the executable product and a development
-> Info.plist for `stim macos`. Build and show its owned window in Stim Desktop,
+> Info.plist and any `macos.resources` or `macos.assetCatalog` for `stim macos`. Build and show its owned window in Stim Desktop,
 > verify a source edit and readable failed-build logs, then stop only this
 > workspace's app. Do not change permissions or use custom build scripts.

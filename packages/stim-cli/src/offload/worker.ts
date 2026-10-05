@@ -26,7 +26,7 @@ import { buildIos } from '../engine/xcode.ts';
 import { getExecutor } from '../exec.ts';
 import { logLines } from '../macos/run.ts';
 import { stripAnsi } from '../process-output.ts';
-import { stageBundle } from '../macos/stage.ts';
+import { resolveBundleExtras, stageBundle } from '../macos/stage.ts';
 import { manifestDigest } from './manifest.ts';
 import type { NdjsonWriter } from '../ndjson.ts';
 import type { Optimizations } from '../optimizations.ts';
@@ -49,7 +49,13 @@ export interface WorkerJob {
   blobs: string;
   manifest: ManifestEntry[];
   platform: 'ios' | 'android' | 'macos';
-  macos: { product: string; infoPlist: string; bundleId: string } | null;
+  macos: {
+    product: string;
+    infoPlist: string;
+    bundleId: string;
+    resources?: Record<string, string>;
+    assetCatalog?: string | null;
+  } | null;
   swiftpmCache: string;
   project: string;
   packageName: string | null;
@@ -431,6 +437,7 @@ type Compiled =
 async function compileMacos(job: WorkerJob, root: string, log: NdjsonWriter, time: Timer): Promise<Compiled> {
   const options = job.macos;
   if (!options) return { ok: false, code: 'bad-request', message: 'The job has no SwiftPM options.' };
+  const src = join(job.area, 'src');
   const scratch = join(job.area, 'macos', job.project.replaceAll('/', '_') || 'root');
   const run = async (args: string[], capture = false): Promise<string> => {
     const child = getExecutor().spawn('swift', args, { cwd: root, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -459,6 +466,7 @@ async function compileMacos(job: WorkerJob, root: string, log: NdjsonWriter, tim
     return stdout.trim();
   };
   try {
+    const extras = resolveBundleExtras(src, src, options.resources, options.assetCatalog);
     return await time('buildMs', async () => {
       await run([
         'build',
@@ -476,7 +484,7 @@ async function compileMacos(job: WorkerJob, root: string, log: NdjsonWriter, tim
         true,
       );
       const bundle = join(job.area, 'out', job.job, `${options.product}.app`);
-      stageBundle(root, options.product, options.infoPlist, bin, bundle, options.bundleId);
+      stageBundle(root, options.product, options.infoPlist, bin, bundle, options.bundleId, extras);
       return { ok: true, path: bundle, cache: {} };
     });
   } catch (error) {

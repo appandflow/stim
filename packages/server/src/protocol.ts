@@ -1279,6 +1279,8 @@ export function protocolJsonSchema(): JsonSchema {
                   product: { type: 'string', pattern: '^[A-Za-z0-9_.-]{1,100}$' },
                   infoPlist: { type: 'string', minLength: 1 },
                   bundleId: { type: 'string', pattern: '^[A-Za-z0-9][A-Za-z0-9.-]{0,199}$' },
+                  resources: { type: 'object', maxProperties: 256, additionalProperties: { type: 'string' } },
+                  assetCatalog: { type: ['string', 'null'], minLength: 1 },
                 },
               },
               stimBuild: { type: 'string', minLength: 1 },

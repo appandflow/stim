@@ -321,6 +321,10 @@ ${ANDROID_AVD_CONFIG_HELP.map((line) => `                          ${line}`).joi
                         without shared URL schemes or an update feed
   macos.arguments       string array passed directly to the executable;
                         see stim guide macos for the prototype's limits
+  macos.assetCatalog    optional .xcassets directory relative to Package.swift,
+                        compiled into Contents/Resources before signing
+  macos.resources       map of Contents/Resources destinations to source paths
+                        relative to Package.swift; see stim guide macos
   web.url               the page \`stim web\` opens in the owned Chrome, an
                         http:// or https:// URL. {port:<label>} becomes the
                         workspace's named port (allocated like \`stim ports

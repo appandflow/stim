@@ -1,7 +1,16 @@
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import type { ChildProcess } from 'node:child_process';
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdtempSync,
+  mkdirSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -12,6 +21,8 @@ import {
   type MacosProcess,
 } from '@stim-cli/core/state';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
+import { resolveBundleExtras, stageBundle } from '../macos/stage.ts';
+import * as worktree from '../workspace/worktree.ts';
 import { buildMacosBundle } from '../macos/build.ts';
 import { createNdjsonWriter } from '../ndjson.ts';
 import * as offload from '../offload/client.ts';
@@ -182,7 +193,7 @@ describe('macOS build placement and promotion', () => {
     vi.spyOn(slots, 'releaseBuildSlot').mockReturnValue(true);
     vi.spyOn(spawns, 'spawnDeclared').mockImplementation((spawn) => spawn());
     setExecutor({
-      runFileQuiet: () => '27.0',
+      runFileQuiet: (file) => (file === 'git' ? root : '27.0'),
       runFile: (file: string, args: string[]) => {
         if (file === 'plutil') {
           const path = args.at(-1)!;
@@ -191,6 +202,8 @@ describe('macOS build placement and promotion', () => {
         if (file === '/usr/libexec/PlistBuddy') {
           writeFileSync(args.at(-1)!, JSON.stringify({ CFBundleIdentifier: bundleId, CFBundleExecutable: 'Sample' }));
         }
+        if (file === 'xcrun' && args[0] === 'actool')
+          writeFileSync(join(args[args.indexOf('--compile') + 1]!, 'Assets.car'), 'compiled assets');
         if (file === 'otool') return '@executable_path/../Frameworks';
         return '';
       },
@@ -219,7 +232,7 @@ describe('macOS build placement and promotion', () => {
     vi.restoreAllMocks();
   });
 
-  const build = () =>
+  const build = (extras: { resources?: unknown; assetCatalog?: unknown } = {}) =>
     buildMacosBundle({
       root,
       product: 'Sample',
@@ -230,6 +243,7 @@ describe('macOS build placement and promotion', () => {
       writer,
       note: () => {},
       record: buildRecord,
+      ...extras,
     });
   function remoteBundle(valid = true): string {
     const fetched = join(dir, 'fetched', 'Sample.app');
@@ -290,6 +304,81 @@ describe('macOS build placement and promotion', () => {
     },
   );
 
+  it.each(['icon.icns', 'Assets.car'])('falls back when an older worker omits declared %s', async (missing) => {
+    writeFileSync(join(root, 'icon'), 'icon bytes');
+    mkdirSync(join(root, 'Assets.xcassets'));
+    succeeds(remoteBundle());
+    const result = await build(
+      missing === 'Assets.car' ? { assetCatalog: 'Assets.xcassets' } : { resources: { 'icon.icns': 'icon' } },
+    );
+    expect(result.offloadedTo).toBeNull();
+    expect(result.offloadFallback).toContain(missing);
+    expect(localBuilds).toBe(1);
+    const copied =
+      missing === 'Assets.car' ? null : readFileSync(join(bundle, 'Contents', 'Resources', missing), 'utf8');
+    expect(copied).toBe(missing === 'Assets.car' ? null : 'icon bytes');
+  });
+
+  it('sends sources outside the package as repository-relative paths without parent segments', async () => {
+    vi.spyOn(worktree, 'repoRoot').mockReturnValue(dir);
+    writeFileSync(join(dir, 'icon'), 'icon bytes');
+    mkdirSync(join(dir, 'Assets.xcassets'));
+    const fetched = remoteBundle();
+    mkdirSync(join(fetched, 'Contents', 'Resources'));
+    writeFileSync(join(fetched, 'Contents', 'Resources', 'icon.icns'), 'icon bytes');
+    writeFileSync(join(fetched, 'Contents', 'Resources', 'Assets.car'), 'compiled assets');
+    succeeds(fetched);
+    await build({ resources: { 'icon.icns': '../icon' }, assetCatalog: '../Assets.xcassets' });
+    expect(offload.offloadBuild).toHaveBeenCalledWith(
+      expect.objectContaining({
+        request: {
+          platform: 'macos',
+          product: 'Sample',
+          infoPlist: 'Info.plist',
+          bundleId,
+          resources: { 'icon.icns': 'icon' },
+          assetCatalog: 'Assets.xcassets',
+        },
+      }),
+    );
+    expect(localBuilds).toBe(0);
+  });
+
+  it.each([
+    { '': 'icon' },
+    { 'nested//icon': 'icon' },
+    { 'nested/./icon': 'icon' },
+    { 'nested/../icon': 'icon' },
+    { ['a'.repeat(1025)]: 'icon' },
+    { ['bad\0icon']: 'icon' },
+    { '../icon': 'icon' },
+    { '/icon': 'icon' },
+    { nested: 'icon', 'nested/icon': 'icon' },
+    { ICON: 'icon', icon: 'icon' },
+    { icon: 'absent' },
+    { icon: '../outside' },
+    { icon: 'escape' },
+    { icon: 7 },
+    Object.fromEntries(Array.from({ length: 257 }, (_, i) => [`icon${i}`, 'icon'])),
+  ])('refuses invalid resources before selecting a worker or compiling: %j', async (resources) => {
+    writeFileSync(join(root, 'icon'), 'icon');
+    writeFileSync(join(dir, 'outside'), 'outside');
+    symlinkSync(join(dir, 'outside'), join(root, 'escape'));
+    await expect(build({ resources })).rejects.toThrow(/macos.resources.*entry.*stim guide macos/);
+    expect(offload.chooseBuildMachine).not.toHaveBeenCalled();
+    expect(localBuilds).toBe(0);
+  });
+
+  it('refuses a resource that would overwrite the compiled catalog before any compile', async () => {
+    writeFileSync(join(root, 'icon'), 'icon');
+    mkdirSync(join(root, 'Assets.xcassets'));
+    await expect(build({ resources: { 'Assets.car': 'icon' }, assetCatalog: 'Assets.xcassets' })).rejects.toThrow(
+      'collides',
+    );
+    expect(offload.chooseBuildMachine).not.toHaveBeenCalled();
+    expect(localBuilds).toBe(0);
+  });
+
   it('builds locally without a fallback record when no machine is paired', async () => {
     vi.mocked(machines.pairedMachines).mockReturnValue([]);
     expect(await build()).toEqual({ bundleId, offloadedTo: null, offloadFallback: null });
@@ -348,5 +437,156 @@ describe('macOS build placement and promotion', () => {
     await expect(build()).rejects.toThrow('signing failed');
     expect(readFileSync(join(bundle, 'previous'), 'utf8')).toBe('old');
     expect(slots.releaseBuildSlot).toHaveBeenCalledOnce();
+  });
+});
+
+describe('macOS resource staging', () => {
+  let bin: string;
+  let bundle: string;
+  let calls: Array<[string, string[]]>;
+  let sealed: string[];
+  beforeEach(() => {
+    bin = join(root, 'bin');
+    bundle = join(dir, 'Sample.app');
+    mkdirSync(bin);
+    writeFileSync(join(bin, 'Sample'), 'executable');
+    mkdirSync(join(bin, 'Sample_Resources.bundle'));
+    writeFileSync(join(bin, 'Sample_Resources.bundle', 'swiftpm'), 'swiftpm resource');
+    writeFileSync(join(root, 'Info.plist'), '{}');
+    writeFileSync(join(root, 'icon'), 'icon bytes');
+    mkdirSync(join(root, 'branding'));
+    writeFileSync(join(root, 'branding', 'wordmark.svg'), 'wordmark bytes');
+    mkdirSync(join(root, 'Assets.xcassets'));
+    calls = [];
+    sealed = [];
+    setExecutor({
+      runFile: (file, args) => {
+        calls.push([file, args]);
+        if (file === 'xcrun')
+          writeFileSync(join(args[args.indexOf('--compile') + 1]!, 'Assets.car'), 'compiled assets');
+        if (file === 'codesign' && args.at(-1) === bundle)
+          sealed = ['AppIcon.icns', 'nested/branding/wordmark.svg', 'Assets.car'].filter((name) =>
+            existsSync(join(bundle, 'Contents', 'Resources', name)),
+          );
+        if (file === 'plutil')
+          return JSON.stringify({
+            CFBundleIdentifier: 'dev.sample',
+            CFBundleExecutable: 'Sample',
+            LSMinimumSystemVersion: '14.0',
+          });
+        if (file === 'otool') return '@executable_path/../Frameworks';
+        return 'tool output';
+      },
+    });
+  });
+  afterEach(() => {
+    resetExecutor();
+  });
+
+  it('seals renamed files, directory contents and the compiled catalog in the final signature', () => {
+    const extras = resolveBundleExtras(
+      root,
+      root,
+      { 'AppIcon.icns': 'icon', 'nested/branding': 'branding' },
+      'Assets.xcassets',
+    );
+    stageBundle(root, 'Sample', 'Info.plist', bin, bundle, 'dev.sample.stim.test', extras);
+    expect(readFileSync(join(bundle, 'Contents', 'Resources', 'AppIcon.icns'), 'utf8')).toBe('icon bytes');
+    expect(readFileSync(join(bundle, 'Contents', 'Resources', 'nested', 'branding', 'wordmark.svg'), 'utf8')).toBe(
+      'wordmark bytes',
+    );
+    expect(readFileSync(join(bundle, 'Contents', 'Resources', 'Sample_Resources.bundle', 'swiftpm'), 'utf8')).toBe(
+      'swiftpm resource',
+    );
+    expect(calls).toContainEqual([
+      'xcrun',
+      [
+        'actool',
+        join(root, 'Assets.xcassets'),
+        '--compile',
+        join(bundle, 'Contents', 'Resources'),
+        '--platform',
+        'macosx',
+        '--minimum-deployment-target',
+        '14.0',
+        '--output-partial-info-plist',
+        '/dev/null',
+      ],
+    ]);
+    expect(calls.at(-1)).toEqual(['codesign', ['--force', '--sign', '-', bundle]]);
+    expect(sealed).toEqual(['AppIcon.icns', 'nested/branding/wordmark.svg', 'Assets.car']);
+  });
+
+  it('compiles assets when the development plist does not declare a minimum OS', () => {
+    setExecutor({
+      runFile: (file, args) => {
+        calls.push([file, args]);
+        if (file === 'xcrun')
+          writeFileSync(join(args[args.indexOf('--compile') + 1]!, 'Assets.car'), 'compiled assets');
+        return file === 'plutil'
+          ? JSON.stringify({ CFBundleIdentifier: 'dev.sample', CFBundleExecutable: 'Sample' })
+          : '@executable_path/../Frameworks';
+      },
+    });
+    stageBundle(
+      root,
+      'Sample',
+      'Info.plist',
+      bin,
+      bundle,
+      'dev.sample.stim.test',
+      resolveBundleExtras(root, root, {}, 'Assets.xcassets'),
+    );
+    expect(calls).toContainEqual([
+      'xcrun',
+      [
+        'actool',
+        join(root, 'Assets.xcassets'),
+        '--compile',
+        join(bundle, 'Contents', 'Resources'),
+        '--platform',
+        'macosx',
+        '--output-partial-info-plist',
+        '/dev/null',
+      ],
+    ]);
+  });
+
+  it('refuses an actool success with no compiled catalog instead of signing an incomplete app', () => {
+    setExecutor({
+      runFile: (file, args) => {
+        calls.push([file, args]);
+        return file === 'plutil'
+          ? JSON.stringify({ CFBundleIdentifier: 'dev.sample', CFBundleExecutable: 'Sample' })
+          : '';
+      },
+    });
+    expect(() =>
+      stageBundle(
+        root,
+        'Sample',
+        'Info.plist',
+        bin,
+        bundle,
+        'dev.sample.stim.test',
+        resolveBundleExtras(root, root, {}, 'Assets.xcassets'),
+      ),
+    ).toThrow('actool did not produce Assets.car');
+    expect(calls.filter(([file]) => file === 'codesign')).toEqual([]);
+  });
+
+  it.each(['Sample_Resources.bundle', 'Sample_Resources.bundle/icon'])(
+    'refuses %s instead of overwriting SwiftPM resources',
+    (destination) => {
+      const extras = resolveBundleExtras(root, root, { [destination]: 'icon' });
+      expect(() => stageBundle(root, 'Sample', 'Info.plist', bin, bundle, 'dev.sample.stim.test', extras)).toThrow(
+        'collides',
+      );
+      expect(existsSync(bundle)).toBe(false);
+    },
+  );
+
+  it.each(['icon', 'branding', 'absent.xcassets'])('refuses an invalid asset catalog %s', (source) => {
+    expect(() => resolveBundleExtras(root, root, {}, source)).toThrow(/macos.assetCatalog.*stim guide macos/);
   });
 });

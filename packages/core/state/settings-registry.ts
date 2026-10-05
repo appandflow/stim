@@ -271,6 +271,19 @@ export const SETTINGS: readonly SettingDefinition[] = [
     description: 'Arguments passed directly to the owned macOS development executable.',
   },
   {
+    key: 'macos.assetCatalog',
+    type: RELATIVE_PATH,
+    scopes: PROJECT,
+    description: 'Optional .xcassets directory relative to the Swift Package directory.',
+  },
+  {
+    key: 'macos.resources',
+    type: OBJECT,
+    scopes: PROJECT,
+    description:
+      'Resource destinations under Contents/Resources mapped to sources relative to the Swift Package directory.',
+  },
+  {
     key: 'web.url',
     type: {
       kind: 'string',
