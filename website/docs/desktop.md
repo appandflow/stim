@@ -86,6 +86,12 @@ performance traces. Every release is listed under
   devices, logs and commands. Different machines and checkouts remain separate.
   Primary checkouts and older servers lacking checkout identity still show separate
   app rows; [#2418](https://github.com/appandflow/stim/issues/2418) tracks that addition.
+  The phone's Logs screen starts with 200 recent records. **Load older logs**
+  expands that recent window by 200 up to 5,000; each request repeats the
+  recent window. Opening a specific agent action retains the larger window.
+  Log followers pause while their route is covered or the phone app is in the
+  background and refresh the retained window when visible again. This reduces
+  initial phone transfer; the server still reads its captured log timeline.
   Desktop's sidebar retains its app rows. On wide iPad and Duo windows, the app keeps its navigation
   beside the main screen; details use the full window. A book fold aligns the panes with the display
   division; a narrow cover screen uses the menu drawer. Duo fold detection

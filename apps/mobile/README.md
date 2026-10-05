@@ -287,9 +287,18 @@ gc --json` dry run and `stim stats --json`, which the server refreshes at
   workspace runs or that sent records; none selected shows every source. iOS,
   Android and Web split the device logs by their platform. The server does not
   filter by platform or warnings alone, so the phone filters those within the
-  newest 5,000 records it loaded. A slot row and a regular expression search
-  complete the filters. The list follows new records until you scroll up, and
-  again after a filter change. It keeps the newest 5,000, and a tap on a record
+  records it loaded. A slot row and a regular expression search complete the
+  filters. It starts with the newest 200 records. **Load older logs** reloads a
+  recent window with another 200 records, up to 5,000; these requests repeat
+  recent records rather than use a history cursor. Opening a particular agent
+  action keeps the 5,000-record window so that action can be found.
+  Log followers pause when another route covers the screen or the app enters
+  the background. Returning replaces the snapshot using the retained display
+  window, then follows new records. History outside that window requires
+  **Load older logs**. This bounds the phone's initial transfer; the server's
+  existing CLI reader still reads its captured timeline.
+  The list follows new records until you scroll up, and again after a filter
+  change. It keeps the newest 5,000, and a tap on a record
   shows its whole message and stack. Each entry shows a severity dot, its
   source and time, then the message; a record with a stack shows its top
   frames, the workspace's own frames in bold, one framework frame dimmed as its
