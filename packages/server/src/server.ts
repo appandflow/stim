@@ -232,6 +232,10 @@ const CLOSE_ABNORMAL = 1006;
 const MAX_PAYLOAD = 64 * 1024;
 const MAX_SUBSCRIPTIONS = 32;
 const MAX_COMMANDS = 4;
+
+function isWorkspaceChangeMethod(method: string): method is 'workspace.files' | 'workspace.diff' {
+  return method === 'workspace.files' || method === 'workspace.diff';
+}
 const MAX_KEYFRAME_READS = 8;
 const LOG_LIMITS: LogLimits = { maxBufferedBytes: 4 * 1024 * 1024, maxPendingRecords: 20_000 };
 const HELPER_RETRY_MS = 5 * 60_000;
@@ -1917,7 +1921,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         }
         return send(socket, { id, result: sampler.history(sinceMs) });
       }
-      if (message.method === 'workspace.files' || message.method === 'workspace.diff') {
+      if (isWorkspaceChangeMethod(message.method)) {
         return workspaceChanges(id, message.method, message.params);
       }
       if (message.method === 'stats.get' || message.method === 'settings.get') {
