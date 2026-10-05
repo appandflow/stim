@@ -22,10 +22,10 @@ struct SettingsView: View {
 
   var body: some View {
     TabView(selection: $tab) {
-      AppPreferencesView()
+      AppPreferencesView(stimHome: store.stimHome)
         .tabItem { Label("App", systemImage: "macwindow") }
         .tag("app")
-      PhonesView(server: ServerController.shared, settings: machine)
+      PhonesView(server: ServerController.shared, settings: machine, stimHome: store.stimHome)
         .tabItem { Label("Phones", systemImage: "iphone.gen3.radiowaves.left.and.right") }
         .tag("phones")
       BuildMachinesView(model: buildMachines, store: store, workspace: workspace)

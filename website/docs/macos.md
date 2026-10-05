@@ -51,6 +51,14 @@ record on stdout, with progress on stderr. `status --json` reports
 `environments[].macos`, its build and process state. This command does not
 support `--plan`, `--slot` or `reload`.
 
+SwiftPM scratch outputs and dependencies in `macos/build`, the staged
+`macos/<Product>.app` and interrupted-build `macos/staging-*` directories can
+use substantial disk space under `$STIM_HOME/workspaces/<id>/`. Clear them
+with `stim gc --delete --cache workspaces` after stopping the app. Running,
+building, unverified and hosted macOS apps keep their workspace untouched.
+Runtime locks, state, logs and the project's own `.build` stay; the next
+`stim macos` performs a full Swift build and restages the app.
+
 `offload.mode` also places these SwiftPM Debug builds: `auto` builds here while
 this Mac has capacity, `force` uses an approved build machine when one accepts,
 and `off` always builds here. Configure `offload.machines` and approve build
@@ -218,8 +226,13 @@ Settings entries when you no longer need them.
 `macos --json` prints `{ platform, product, launchId, build, host }`, and
 `status --json` reports the same `host` under `environments[].macos`: the
 machine, session, app slot, app attempt, hosted bundle ID and `agent`. Status
-uses the host's launch reply (`running`, or `unverified` when the host could not
-confirm a live app) and does not contact the host. `agent` is
+asks the host for the session state only for hosted placements, with about a
+3 s timeout per connection and request and a 10 s cache. It reports `stopped`
+when the host says the session stopped, for example after a stim-server restart
+there, and `unverified` when the host is unreachable or cannot confirm. The
+`host` field stays recorded for cleanup. Run `stim macos --host <machine>` to
+launch a stopped app again, or `stim stop` to clear or reconcile the placement.
+`agent` is
 `{ "driver": "none", "setting": "hosting.agentDriver" }` until the hosting Mac's
 owner turns on a driver with that setting. With `agent-device`, it names a
 `remoteConfig` file (mode 0600, in the workspace directory) and the `command` to

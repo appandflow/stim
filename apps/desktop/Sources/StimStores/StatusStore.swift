@@ -13,7 +13,7 @@ public final class StatusStore: ObservableObject {
   }
   private var projectTitleMap: [String: String] = [:]
   @Published public private(set) var watching = false
-  public private(set) var stimHome = "\(NSHomeDirectory())/.stim"
+  @Published public private(set) var stimHome = "\(NSHomeDirectory())/.stim"
   @Published public private(set) var doctor: [String: Fetched<DoctorReport>] = [:]
 
   private let cli: Task<StimCLI, Never>

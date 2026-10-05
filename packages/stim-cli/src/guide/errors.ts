@@ -1014,7 +1014,9 @@ captured"  (in metro.ndjson, bare RN)
   The command refused before doing anything: an unusable --wait value, a known
   setting with the wrong type ("Invalid <key> setting <value>. Expected <shape>."
   -- \`guide settings\` names the type each key takes), an invalid
-  Metro tunnel setting, an invalid android.dataPartitionSizeGb value, an unsafe
+  Metro tunnel setting, \`stim macos\` with macos.product or macos.infoPlist
+  unset (set both explicitly in .stim.json; see \`stim guide macos\`),
+  an invalid android.dataPartitionSizeGb value, an unsafe
   android.avdConfig key or fragment, a malformed ios.signingIdentity,
   ios.signingIdentitySha1 or ios.lanHost value, a metro.port or
   STIM_METRO_PORT that another workspace reserves or another process holds,

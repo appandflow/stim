@@ -58,8 +58,7 @@ public struct ServerHealth: Decodable, Equatable, Sendable {
 
   /// Whether `stimHome` is `~/.stim`, compared after resolving symlinks.
   public func servesDefaultHome(home: String = NSHomeDirectory()) -> Bool {
-    func canonical(_ path: String) -> String { URL(fileURLWithPath: path).resolvingSymlinksInPath().path }
-    return canonical(stimHome) == canonical("\(home)/.stim")
+    StimHome.isDefault(stimHome, home: home)
   }
 }
 

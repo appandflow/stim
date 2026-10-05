@@ -1287,8 +1287,11 @@ and `--delete` removes them. An entry that records no readable path, or whose
 volume is not mounted, is kept and counted under "Skipped".
 
 `--delete` also clears the build outputs (`derived-data/`, `gradle-build/`,
-`android-cas/` and `cache-provider/`) of every workspace that is not in use. The
-workspace keeps its state, logs, devices and ports. See
+`android-cas/`, `cache-provider/`, `macos/build`, staged `macos/<Product>.app`
+and interrupted-build `macos/staging-*` directories) of every workspace that
+is not in use. A running, building, unverified or hosted macOS app keeps its
+workspace untouched. The workspace keeps its state, logs, devices, ports,
+`macos/runtime.lock` and its claim set; the project's own `.build` stays. See
 [workspace build outputs](./build-caches.md#workspace-build-outputs).
 
 `gc` reports the size of each workspace's logs. The Metro, client and device

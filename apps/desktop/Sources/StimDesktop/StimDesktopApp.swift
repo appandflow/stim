@@ -150,7 +150,9 @@ struct StimDesktopApp: App {
     CoreSimulator.developerDir = CoreSimulator.selectedDeveloperDir()
     let override = UserDefaults.standard.string(forKey: AppPreferences.Key.stimExecutable)
     let environment = Task.detached {
-      var environment = await LoginShell.environment() ?? LoginShell.fallback(ProcessInfo.processInfo.environment)
+      var environment = StimHome.environment(
+        await LoginShell.environment() ?? LoginShell.fallback(ProcessInfo.processInfo.environment),
+        launch: ProcessInfo.processInfo.environment)
       if Bundle.main.bundleURL.pathExtension == "app" { environment["STIM_DESKTOP_APP"] = Bundle.main.bundlePath }
       return environment
     }

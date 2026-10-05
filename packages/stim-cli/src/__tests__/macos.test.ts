@@ -20,6 +20,7 @@ import * as slots from '../engine/build-slots.ts';
 import * as spawns from '../engine/spawn-claims.ts';
 import { markClaimChildPending, releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
 import { macosRuntimeClaim, requiredMacosRecord } from '../macos/state.ts';
+import { runMacos } from '../commands/macos.ts';
 import { runStop } from '../commands/stop.ts';
 import { stopMacosApp } from '../macos/stop.ts';
 import { captureProcessToken, inspectProcessIdentity, waitForProcessExit } from '../process-identity.ts';
@@ -80,6 +81,17 @@ test('a Swift package inside a monorepo keeps its own command workspace', () => 
   expect(findProjectRoot(nested)).toBe(root);
   expect(findCommandWorkspace(nested)).toBe(root);
 });
+
+test.skipIf(process.platform !== 'darwin')(
+  'missing macOS settings are a bad argument with a named remedy',
+  async () => {
+    writeFileSync(join(root, 'Package.swift'), '// swift-tools-version:6.0\n');
+    await expect(runMacos(root)).rejects.toMatchObject({
+      code: 'STIM_BAD_ARG',
+      message: expect.stringContaining('macos.product'),
+    });
+  },
+);
 
 test('malformed app ownership is a refusal, never treated as no owned app', async () => {
   writeWorkspaceState(root, { macos: { ...record(), app: { pid: 42 } } });

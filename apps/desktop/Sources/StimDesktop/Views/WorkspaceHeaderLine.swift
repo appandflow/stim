@@ -8,12 +8,13 @@ struct WorkspaceHeaderLine: View {
   var cli: Task<StimCLI, Never>
   var env: Workspace
   var openLogs: () -> Void
+  var openBuild: (BuildSheetSelection) -> Void
   @EnvironmentObject private var actions: ActionCenter
 
   var body: some View {
     HStack(spacing: Space.md) {
       TimelineView(env.build.flatMap { $0.isRunning ? .buildSeconds($0) : nil } ?? .periodic(from: .now, by: 15)) { context in
-        StageLine(cli: cli, env: env, now: context.date)
+        StageLine(cli: cli, env: env, now: context.date, openBuild: openBuild)
       }
       Spacer(minLength: Space.md)
       if env.replayOff {
@@ -93,6 +94,7 @@ struct StageLine: View {
   var cli: Task<StimCLI, Never>
   var env: Workspace
   var now: Date
+  var openBuild: (BuildSheetSelection) -> Void
 
   var body: some View {
     let stage = env.stage(now: now)
@@ -108,7 +110,14 @@ struct StageLine: View {
       .accessibilityLabel([stage.label.rawValue, stage.subtitle].compactMap { $0 }.joined(separator: ", "))
       .layoutPriority(-1)
       if let build = env.build, build.isRunning {
-        BuildInlineProgress(build: build, now: now)
+        Button {
+          openBuild(BuildSheetSelection(workspace: env.path, platform: build.platform, run: build.key))
+        } label: {
+          BuildInlineProgress(build: build, now: now)
+        }
+        .buttonStyle(.hoverRow())
+        .help("Open build details")
+        .accessibilityHint("Opens the running build's details")
       }
       if let chip = GitChip(env.worktree) {
         Rectangle().fill(Palette.border).frame(width: 1, height: 14)
