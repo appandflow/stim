@@ -157,8 +157,8 @@ async function downloadRelease(release: HostRelease, dir: string): Promise<strin
 }
 
 /**
- * Installs the host app in `~/Applications`: the pinned signed release, or Stim Host Dev built from `sources` while
- * none is pinned. An installed bundle with the same bytes stays untouched, so the grants macOS keyed to its signature
+ * Installs the host app in `~/Applications`: the pinned signed `release`, or Stim Host Dev built from `sources` when
+ * `release` is null. An installed bundle with the same bytes stays untouched, so the grants macOS keyed to its signature
  * still match.
  */
 export async function installHostApp(
