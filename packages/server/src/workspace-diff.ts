@@ -9,7 +9,7 @@ const PATCH_BYTES = 256 * 1024;
 const LIST_BYTES = 1024 * 1024;
 const TRACKED_BYTES = 64 * 1024 * 1024;
 
-export function parseGitVersion(text: string): [number, number, number] | null {
+function parseGitVersion(text: string): [number, number, number] | null {
   const match = /^(?:git version )?(\d+)\.(\d+)\.(\d+)(?:[.\s-]|$)/.exec(text.trim());
   return match ? [Number(match[1]), Number(match[2]), Number(match[3])] : null;
 }
@@ -226,6 +226,7 @@ export async function readWorkspaceDiff(
         '--no-color',
         '--no-ext-diff',
         '--no-textconv',
+        '--submodule=short',
         '--no-renames',
         ...(section === 'staged' ? ['--cached'] : []),
       ];

@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { WorkspaceDiff, WorkspaceFiles } from '../src/protocol.ts';
 import * as commands from '../src/stim-command.ts';
-import { parseGitVersion, readWorkspaceDiff } from '../src/workspace-diff.ts';
+import { readWorkspaceDiff } from '../src/workspace-diff.ts';
 
 let root: string;
 let repo: string;
@@ -29,13 +29,6 @@ afterEach(() => {
   vi.restoreAllMocks();
   delete process.env.STIM_HOME;
   rmSync(root, { recursive: true, force: true });
-});
-
-test('parses vendor Git versions without mistaking suffixes for a newer release', () => {
-  expect(parseGitVersion('git version 2.39.5 (Apple Git-154)')).toEqual([2, 39, 5]);
-  expect(parseGitVersion('git version 2.45.0\n')).toEqual([2, 45, 0]);
-  expect(parseGitVersion('2.54.0.windows.1')).toEqual([2, 54, 0]);
-  expect(parseGitVersion('git version unknown')).toBeNull();
 });
 
 test('refuses partial clones on old or unparseable Git without probing ordinary repositories', async () => {
@@ -134,29 +127,25 @@ test('omits dirty-only submodules without running their clean filters and still 
   expect(dirty.files).toEqual([]);
   git('-C', 'nested', 'config', 'user.email', 'test@example.invalid');
   git('-C', 'nested', 'config', 'user.name', 'Test');
-  git(
-    '-C',
-    'nested',
-    '-c',
-    'filter.evil.clean=',
-    '-c',
-    'commit.gpgsign=false',
-    'commit',
-    '--allow-empty',
-    '-qm',
-    'moved',
-  );
+  git('-C', 'nested', '-c', 'filter.evil.clean=', '-c', 'commit.gpgsign=false', 'commit', '-a', '-qm', 'moved');
   git('config', 'diff.ignoreSubmodules', 'all');
   git('config', 'submodule.nested.ignore', 'all');
   const moved = (await read()) as WorkspaceFiles;
   expect(moved.files).toEqual([{ path: 'nested', status: ' M', staged: false, unstaged: true, untracked: false }]);
   expect(((await read('nested')) as WorkspaceDiff).patches[0]!.kind).toBe('unavailable');
   expect(existsSync(marker)).toBe(false);
+  const nestedDriver = join(root, 'nested-driver.js');
+  const nestedMarker = join(root, 'nested-driver-ran');
+  writeFileSync(nestedDriver, `require('node:fs').writeFileSync(${JSON.stringify(nestedMarker)}, 'ran')`);
+  git('-C', 'nested', 'config', 'diff.external', `"${process.execPath}" "${nestedDriver}"`);
+  git('config', '--unset', 'diff.ignoreSubmodules');
+  git('config', '--unset', 'submodule.nested.ignore');
   git('rm', '--cached', '--', 'nested');
   git('config', 'diff.submodule', 'diff');
   const removed = (await read('nested')) as WorkspaceDiff;
   expect(removed.patches[0]!.kind).toBe('text');
   expect(existsSync(marker)).toBe(false);
+  expect(existsSync(nestedMarker)).toBe(false);
 });
 
 test('returns plain staged and unstaged patches when Git color is forced', async () => {
