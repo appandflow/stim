@@ -166,7 +166,7 @@ describe('native macOS actions', () => {
     ]);
     const relaunch = { ...target, id: 'second-launch', launchedAt: target.launchedAt + 10_000 };
     current = [relaunch];
-    append(event(11, 'press'), open(12), event(13, 'type'));
+    append(event(9, 'press'), event(11, 'press'), open(12), event(13, 'type'));
     expect(reader().map((r) => [r.command, r.deviceId])).toEqual([
       ['press', 'second-launch'],
       ['open', 'second-launch'],
