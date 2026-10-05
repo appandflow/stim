@@ -6,7 +6,6 @@ struct NoDeviceArt: View {
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
   @Environment(\.colorScheme) private var colorScheme
   @State private var floating = false
-  @State private var spinning = false
 
   private var outline: Color { colorScheme == .dark ? Palette.accent : Palette.brand }
   private var lavender: Color {
@@ -32,23 +31,12 @@ struct NoDeviceArt: View {
         let slot = Path(ellipseIn: CGRect(x: 49, y: 91, width: 122, height: 54))
         context.stroke(slot, with: .color(outline), style: StrokeStyle(lineWidth: 1, dash: [4, 4]))
       }
-      Canvas { context, _ in
-        let perspective = CGAffineTransform(a: 1, b: 0.52, c: 0, d: 1, tx: 85, ty: 15)
-        let device = Path(roundedRect: CGRect(x: 0, y: 0, width: 50, height: 64), cornerRadius: 4).applying(perspective)
-        context.fill(device, with: .color(Palette.background))
-        context.stroke(device, with: .color(outline), lineWidth: 1.5)
-        let screen = Path(roundedRect: CGRect(x: 5, y: 10, width: 40, height: 42), cornerRadius: 2).applying(perspective)
-        context.fill(screen, with: .color(lavender))
-        context.stroke(screen, with: .color(outline), lineWidth: 1)
-        let marks = Path {
-          $0.move(to: CGPoint(x: 19, y: 5))
-          $0.addLine(to: CGPoint(x: 31, y: 5))
-          $0.move(to: CGPoint(x: 18, y: 59))
-          $0.addLine(to: CGPoint(x: 32, y: 59))
+      TimelineView(.animation(minimumInterval: 1 / 30, paused: reduceMotion)) { timeline in
+        Canvas { context, _ in
+          let angle = reduceMotion ? -0.35 : timeline.date.timeIntervalSinceReferenceDate / 12 * .pi * 2
+          phone(context: context, angle: angle)
         }
-        context.stroke(marks.applying(perspective), with: .color(outline), style: StrokeStyle(lineWidth: 1, lineCap: .round))
       }
-      .rotation3DEffect(.degrees(spinning ? 360 : 0), axis: (x: 0, y: 1, z: 0), perspective: 0.45)
       .offset(y: floating ? -4 : 0)
     }
     .frame(width: 220, height: 166)
@@ -57,9 +45,66 @@ struct NoDeviceArt: View {
       withAnimation(reduceMotion ? nil : .easeInOut(duration: 3).repeatForever(autoreverses: true)) {
         floating = !reduceMotion
       }
-      withAnimation(reduceMotion ? nil : .linear(duration: 12).repeatForever(autoreverses: false)) {
-        spinning = !reduceMotion
+    }
+  }
+
+  private func phone(context: GraphicsContext, angle: Double) {
+    let yaw = CGFloat(angle)
+    let pitch: CGFloat = -0.15
+    func project(_ x: CGFloat, _ y: CGFloat, _ z: CGFloat) -> (point: CGPoint, depth: CGFloat) {
+      let turnedX = x * cos(yaw) + z * sin(yaw)
+      let turnedZ = z * cos(yaw) - x * sin(yaw)
+      let depth = y * sin(pitch) + turnedZ * cos(pitch)
+      let scale = 1 / (1 - depth / 320)
+      return (CGPoint(x: 110 + turnedX * scale, y: 58 + (y * cos(pitch) - turnedZ * sin(pitch)) * scale), depth)
+    }
+    func rounded(_ rect: CGRect, radius: CGFloat, depth: CGFloat) -> [(point: CGPoint, depth: CGFloat)] {
+      let corners: [(CGFloat, CGFloat, CGFloat)] = [
+        (rect.minX + radius, rect.minY + radius, .pi),
+        (rect.maxX - radius, rect.minY + radius, -.pi / 2),
+        (rect.maxX - radius, rect.maxY - radius, 0),
+        (rect.minX + radius, rect.maxY - radius, .pi / 2),
+      ]
+      return corners.flatMap { x, y, start in
+        (0...6).map { step in
+          let turn = start + CGFloat(step) / 6 * .pi / 2
+          return project(x + radius * cos(turn), y + radius * sin(turn), depth)
+        }
       }
+    }
+    func shape(_ points: [CGPoint]) -> Path {
+      Path { path in
+        path.addLines(points)
+        path.closeSubpath()
+      }
+    }
+    let body = CGRect(x: -24, y: -47, width: 48, height: 94)
+    let front = rounded(body, radius: 7, depth: 4)
+    let back = rounded(body, radius: 7, depth: -4)
+    var faces = [(points: front, color: Palette.background), (points: back, color: lavender)]
+    for index in front.indices {
+      let next = (index + 1) % front.count
+      faces.append(([front[index], back[index], back[next], front[next]], Palette.brand))
+    }
+    faces.sort { left, right in
+      left.points.map(\.depth).reduce(0, +) / CGFloat(left.points.count)
+        < right.points.map(\.depth).reduce(0, +) / CGFloat(right.points.count)
+    }
+    for face in faces {
+      let path = shape(face.points.map(\.point))
+      context.fill(path, with: .color(face.color))
+      context.stroke(path, with: .color(outline), lineWidth: 0.6)
+    }
+    if cos(yaw) > 0 {
+      let screen = shape(rounded(CGRect(x: -20, y: -42, width: 40, height: 84), radius: 4, depth: 4).map(\.point))
+      context.fill(screen, with: .color(lavender))
+      context.stroke(screen, with: .color(outline), lineWidth: 0.7)
+      for mark in [CGRect(x: -7, y: -39, width: 14, height: 3), CGRect(x: -7, y: 37, width: 14, height: 1.5)] {
+        context.fill(shape(rounded(mark, radius: mark.height / 2, depth: 4).map(\.point)), with: .color(outline))
+      }
+    } else {
+      let camera = shape(rounded(CGRect(x: -18, y: -40, width: 10, height: 13), radius: 3, depth: -4).map(\.point))
+      context.fill(camera, with: .color(outline))
     }
   }
 }
