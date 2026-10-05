@@ -304,6 +304,24 @@ Branch on the code, never on the message.`,
   or token with another running app. Retry stim stop once identity inspection
   works. See stim guide macos.`,
     },
+    STIM_OFFLOAD_REFUSED: {
+      summary: 'the selected build machine cannot build this app',
+      body: () => `STIM_OFFLOAD_REFUSED
+
+A named --build-machine selection is strict. The message names the machine
+and why it cannot take or finish the build: not configured or paired, approval
+pending or denied, unreachable or changed pinned identity, incompatible
+toolchain/runtime/CPU, low disk, busy, sync/build failure, artifact failure,
+or a checkout that changed while it built. Unsupported build kinds also refuse.
+No local compile or alternate machine follows a refusal. Cache hits need no
+build and do not contact the selected machine.
+
+Check stim settings get offload.machines and the build pairing. A person on
+the worker approves this Mac with stim-server devices grant <id> --build.
+Rerun with --build-machine auto for normal placement and local fallback, or
+--build-machine local to keep the build here.
+`,
+    },
     STIM_CLAIM_UNAVAILABLE: {
       summary: 'a process identity or warm claim store is unavailable, so the protected operation refuses',
       body: () => `STIM_CLAIM_UNAVAILABLE

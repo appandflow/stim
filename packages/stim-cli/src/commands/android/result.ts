@@ -44,9 +44,13 @@ export function androidFacts({
   durationMs,
   lease,
   devServer = null,
+  buildMachine = 'auto',
+  builtOn,
   offloadedTo = null,
   offloadFallback = null,
 }: {
+  buildMachine?: string;
+  builtOn?: string;
   offloadedTo?: string | null;
   offloadFallback?: string | null;
   slot?: string;
@@ -89,6 +93,8 @@ export function androidFacts({
     metroPort: metroPort ?? null,
     cacheHit: cacheLevel(cacheHit),
     cacheSkipped: Boolean(cacheSkipped),
+    buildMachine,
+    ...(builtOn ? { builtOn } : {}),
     ...(offloadedTo ? { offloadedTo } : {}),
     ...(offloadFallback ? { offloadFallback } : {}),
     waitedForBuild: waitedForBuild ? { pid: waitedForBuild.pid ?? null, ms: waitedForBuild.ms ?? 0 } : null,
@@ -123,9 +129,13 @@ export function lastBuildRecord({
   missReason = null,
   diagnostics = null,
   configuration = null,
+  buildMachine = 'auto',
+  builtOn,
   offloadedTo = null,
   offloadFallback = null,
 }: {
+  buildMachine?: string;
+  builtOn?: string;
   offloadedTo?: string | null;
   offloadFallback?: string | null;
   configuration?: string | null;
@@ -160,6 +170,8 @@ export function lastBuildRecord({
     configuration: configuration ?? null,
   };
   if (errorCode) record.errorCode = errorCode;
+  record.buildMachine = buildMachine;
+  if (builtOn) record.builtOn = builtOn;
   if (offloadedTo) record.offloadedTo = offloadedTo;
   if (offloadFallback) record.offloadFallback = offloadFallback;
   if (missReason && !cacheLevel(cacheHit)) record.missReason = missReason;
@@ -282,6 +294,8 @@ export function reportAndroidResult({
     durationMs,
     lease,
     devServer,
+    buildMachine: record.buildMachine,
+    builtOn: record.builtOn ?? undefined,
     offloadedTo,
     offloadFallback: record.offloadFallback ?? null,
   });

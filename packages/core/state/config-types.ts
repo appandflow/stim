@@ -91,6 +91,7 @@ export interface StimConfig {
   caches?: { buildCache?: unknown; metroCache?: unknown };
   hosting?: { machines?: unknown; agentDriver?: unknown };
   offload?: {
+    machine?: unknown;
     machines?: unknown;
     mode?: unknown;
     workerRoot?: unknown;

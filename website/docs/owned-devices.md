@@ -362,6 +362,10 @@ Stim supports two optional remote backends:
 - `proxy` connects through an Agent Device daemon that already owns a session.
 - `eas` creates and owns an EAS simulator session.
 
+A named `--build-machine` refuses physical and `--remote` cache misses with
+`STIM_OFFLOAD_REFUSED`. Use `auto` or `local` for those builds; an existing
+cache hit needs no worker. See [machine settings](./settings.md#machine-settings).
+
 The app builds locally by default; `--eas-profile` can instead download an
 [EAS development build](./eas-builds.md). `stim start --remote` creates the
 Metro route required by the remote device. Remote EAS sessions can incur cost

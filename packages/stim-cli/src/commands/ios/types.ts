@@ -56,6 +56,7 @@ export interface VerifyLaunchResultLike {
 }
 
 export interface IosCommandOptions {
+  buildMachine?: string;
   slot?: string;
   json?: boolean;
   metroCheck?: boolean;
@@ -89,6 +90,8 @@ export interface FailArgs {
 }
 
 export interface BuildFailureFields {
+  buildMachine?: string;
+  builtOn?: string;
   missReason?: BuildMissReason | null;
   diagnostics?: readonly unknown[] | null;
   fingerprint?: string | null;

@@ -55,7 +55,16 @@ building, unverified and hosted macOS apps keep their workspace untouched.
 Runtime locks, state, logs and the project's own `.build` stay; the next
 `stim macos` performs a full Swift build and restages the app.
 
-`offload.mode` also places these SwiftPM Debug builds: `auto` builds here while
+`--build-machine <auto|local|name>` overrides `STIM_OFFLOAD_MACHINE` and the
+machine setting `offload.machine` (default `auto`). `local` builds here. A name
+requires that exact configured and paired worker, ignoring `offload.mode` and
+this Mac's capacity. Any failure is `STIM_OFFLOAD_REFUSED` with the worker and
+reason; no local compile or another machine follows. Check
+`stim settings get offload.machines` and approve on the worker with
+`stim-server devices grant <id> --build`, or rerun with `--build-machine auto`
+or `--build-machine local`.
+
+With `auto`, `offload.mode` also places these SwiftPM Debug builds: `auto` builds here while
 this Mac has capacity, `force` uses an approved build machine when one accepts,
 and `off` always builds here. Configure `offload.machines` and approve build
 access as described in [settings](./settings.md). The worker needs matching Stim,
@@ -68,9 +77,11 @@ gitignored is missing there.
 
 Stim validates the development plist before asking a machine and verifies the
 returned archive digest, bundle ID, executable and ad hoc signature before
-replacing the bundle. Every offload failure falls back locally, including in
+replacing the bundle. With `auto`, every offload failure falls back locally, including in
 `force` mode; failed staging preserves the previous bundle. The app launches
 locally with the same supervisor and ownership checks. The build record carries
+`buildMachine` for the selection and `builtOn` for the actual worker or `here`
+(absent before a build runs), plus `errorCode` for typed failures. It retains
 `offloadedTo` for a remote build or `offloadFallback` for a fallback, and build
 logs show placement and its reason.
 

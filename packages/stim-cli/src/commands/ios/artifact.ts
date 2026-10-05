@@ -54,6 +54,7 @@ import {
 } from '../../offload/client.ts';
 import { pairedMachines } from '../../offload/build-machines.ts';
 import { bundlerPin } from '../../engine/bundler.ts';
+import { namedBuildMachine, OffloadRefusal } from '../../offload/selection.ts';
 import { iosToolchain } from '../../offload/toolchain.ts';
 import { workspaceDir } from '../../workspace/paths.ts';
 import type { CacheHitLevel, CompilationCacheActivity } from '../../engine/build-facts.ts';
@@ -78,6 +79,7 @@ const PROVIDER_SKIPPED_ON_DEVICE =
   'a device build is local-tier only: its cache key names the iphoneos slice, and a remote or provider entry is keyed for the simulator';
 
 interface IosArtifactRequest {
+  buildMachine?: string;
   root: string;
   logFile: string;
   udid: string;
@@ -156,6 +158,8 @@ export interface PreparedIosArtifact {
     identity: { fingerprint: string; key: string } | null;
     hit: CacheHitLevel;
     providerName: string | null;
+    buildMachine: string;
+    builtOn?: string;
     /** The build machine that compiled the app, when the build was offloaded. */
     offloadedTo: string | null;
     /** Why the app was built here after the run considered offloading it. */
@@ -196,6 +200,7 @@ export async function acquireIosArtifact(
     configuration,
     buildScheme,
     buildProfile,
+    buildMachine = 'auto',
     isExpo,
     optimizations,
     cache,
@@ -272,7 +277,9 @@ export async function acquireIosArtifact(
   let offloadFallback: string | null = null;
   let fallbackMachine: string | null = null;
   let hereReason: string | null = null;
+  let builtOn: string | undefined;
   const fallBack = (reason: string, line: string = reason) => {
+    if (namedBuildMachine(buildMachine)) throw new OffloadRefusal(buildMachine, reason);
     offloadFallback = reason;
     buildFailure = { ...buildFailure, offloadFallback: reason };
     phase('build', `${line} -> building here`);
@@ -708,9 +715,14 @@ export async function acquireIosArtifact(
 
   /** Whether this build should leave this Mac, before any machine is asked; null builds here. */
   function placeBuild(): Candidate | null {
-    const mode = offloadMode();
-    const machines = pairedMachines();
-    if (machines.length === 0) return null;
+    const mode = buildMachine === 'local' ? 'off' : offloadMode();
+    const machines =
+      buildMachine === 'local'
+        ? []
+        : namedBuildMachine(buildMachine)
+          ? pairedMachines([buildMachine]).slice(0, 1)
+          : pairedMachines();
+    if (machines.length === 0 && !namedBuildMachine(buildMachine) && buildMachine !== 'local') return null;
     const runtime = physical || remoteDestination || release ? null : simulatorRuntime(udid);
     const unsupported = physical
       ? 'device builds build here'
@@ -724,7 +736,7 @@ export async function acquireIosArtifact(
               ? `the runtime of simulator ${udid} is unknown`
               : null;
     const here = machineCapacity();
-    const placement = offloadPlacement({ mode, machines: machines.length, here, unsupported });
+    const placement = offloadPlacement({ mode, machines: machines.length, here, unsupported, selected: buildMachine });
     if (!placement.offload) {
       hereReason = placement.reason;
       if (mode !== 'off') phase('build', `placement: here (${placement.reason})`);
@@ -747,6 +759,7 @@ export async function acquireIosArtifact(
       here: candidate.here,
       note: (line) => note(chalk.dim(phaseLine('build', `offload: ${line}`))),
       machines: candidate.machines,
+      selected: buildMachine,
     });
     if (typeof choice === 'string') {
       const only = candidate.machines.length === 1 ? candidate.machines[0]!.machine : null;
@@ -759,7 +772,7 @@ export async function acquireIosArtifact(
     return choice;
   }
 
-  /** Builds on the chosen machine and stores the app under the post-mutation key; false builds here instead. */
+  /** Builds on the chosen machine and stores the app under the post-mutation key; false builds here instead unless a machine was named. */
   async function compileElsewhere({
     choice,
     candidate,
@@ -777,6 +790,10 @@ export async function acquireIosArtifact(
       stagingDir,
       onPhase: (name, msg) => phase(name, remotePhaseText(name, msg, choice.machine)),
       onEnter: (name) => {
+        if (name === 'compile' || name === 'build' || name === 'prebuild' || name === 'pods') {
+          builtOn = choice.machine;
+          buildFailure = { ...buildFailure, builtOn };
+        }
         place({ host: choice.machine, phase: name });
         step(name === 'prebuild' || name === 'pods' ? name : 'compile');
       },
@@ -820,6 +837,7 @@ export async function acquireIosArtifact(
     }
     const { timings } = outcome;
     appPath = prepared;
+    builtOn = outcome.machine;
     offloadedTo = outcome.machine;
     stats.setPlacement({
       decision: 'offloaded',
@@ -845,7 +863,7 @@ export async function acquireIosArtifact(
   }
 
   async function buildArtifact(): Promise<void> {
-    buildFailure = { fingerprint, cacheKey, cacheHit, cacheSkipped: !useBuildCache };
+    buildFailure = { fingerprint, cacheKey, cacheHit, cacheSkipped: !useBuildCache, buildMachine };
     if (!appPath) {
       const offload = placeBuild();
       if (!offload) await takeBuildSlot();
@@ -996,6 +1014,8 @@ export async function acquireIosArtifact(
         } else if (hereReason) {
           stats.setPlacement({ decision: 'here', reason: hereReason });
         }
+        builtOn = 'here';
+        buildFailure = { ...buildFailure, builtOn };
         phase('build', `compiling ${configuration || 'Debug'} with xcodebuild`);
         const result = await d.buildIos({
           root,
@@ -1091,6 +1111,8 @@ export async function acquireIosArtifact(
         identity: storeHash && storeKey ? { fingerprint: storeHash, key: storeKey } : null,
         hit: cacheHit,
         providerName: remote?.name ?? providerName,
+        buildMachine,
+        ...(builtOn ? { builtOn } : {}),
         offloadedTo,
         offloadFallback: offloadedTo ? null : offloadFallback,
         readEnabled: useBuildCache,
@@ -1100,6 +1122,8 @@ export async function acquireIosArtifact(
       },
       failureFields: {
         ...buildFailure,
+        buildMachine,
+        ...(builtOn ? { builtOn } : {}),
         fingerprint: storeHash,
         cacheKey: storeKey,
         cacheHit,
@@ -1119,6 +1143,19 @@ export async function acquireIosArtifact(
     transferred = true;
     return { ok: true, artifact };
   } catch (error) {
+    if (error instanceof OffloadRefusal) {
+      const refusal = error;
+      return {
+        ok: false,
+        failure: {
+          code: refusal.code,
+          message: refusal.message,
+          remedy: refusal.remedy,
+          build: { ...buildFailure, buildMachine, ...(builtOn ? { builtOn } : {}) },
+        },
+        compilationCache,
+      };
+    }
     if (error instanceof ArtifactRefusal) return { ok: false, failure: error.failure, compilationCache };
     throw error;
   } finally {

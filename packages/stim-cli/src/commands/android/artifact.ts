@@ -70,6 +70,7 @@ import {
   remotePhaseText,
   type OffloadChoice,
 } from '../../offload/client.ts';
+import { namedBuildMachine, OffloadRefusal } from '../../offload/selection.ts';
 import { androidRequirements, androidToolchain } from '../../offload/toolchain.ts';
 import { workspaceDir } from '../../workspace/paths.ts';
 import { detectAndroidPackage } from '../../workspace/app-id.ts';
@@ -223,7 +224,9 @@ export async function acquireAndroidArtifact(
   const { phase, out, estimates, stats, step, miss, hit: lateHit, place, waitingOn } = progress;
   let fallbackMachine: string | null = null;
   let hereReason: string | null = null;
+  const buildMachine = record.buildMachine ?? 'auto';
   const fallBack = (reason: string, line: string = reason) => {
+    if (namedBuildMachine(buildMachine)) throw new OffloadRefusal(buildMachine, reason);
     record.offloadFallback = reason;
     phase('build', `${line} -> building here`);
   };
@@ -600,9 +603,14 @@ export async function acquireAndroidArtifact(
 
   /** Whether this build should leave this Mac, before any machine is asked; null builds here. */
   function placeBuild(): Candidate | null {
-    const mode = offloadMode();
-    const machines = pairedMachines();
-    if (machines.length === 0) return null;
+    const mode = buildMachine === 'local' ? 'off' : offloadMode();
+    const machines =
+      buildMachine === 'local'
+        ? []
+        : namedBuildMachine(buildMachine)
+          ? pairedMachines([buildMachine]).slice(0, 1)
+          : pairedMachines();
+    if (machines.length === 0 && !namedBuildMachine(buildMachine) && buildMachine !== 'local') return null;
     const unsupported = physical
       ? 'device builds build here'
       : remoteTarget
@@ -615,7 +623,7 @@ export async function acquireAndroidArtifact(
               ? 'the build cache is off'
               : null;
     const here = machineCapacity();
-    const placement = offloadPlacement({ mode, machines: machines.length, here, unsupported });
+    const placement = offloadPlacement({ mode, machines: machines.length, here, unsupported, selected: buildMachine });
     if (!placement.offload) {
       hereReason = placement.reason;
       if (mode !== 'off') phase('build', `placement: here (${placement.reason})`);
@@ -635,6 +643,7 @@ export async function acquireAndroidArtifact(
       here: candidate.here,
       note: (line) => phase('build', chalk.dim(`offload: ${line}`)),
       machines: candidate.machines,
+      selected: buildMachine,
     });
     if (typeof choice === 'string') {
       const only = candidate.machines.length === 1 ? candidate.machines[0]!.machine : null;
@@ -647,7 +656,7 @@ export async function acquireAndroidArtifact(
     return choice;
   }
 
-  /** Builds on the chosen machine and stores the APK under the post-mutation key; false builds here instead. */
+  /** Builds on the chosen machine and stores the APK under the post-mutation key; false builds here instead unless a machine was named. */
   async function compileElsewhere(choice: OffloadChoice, candidate: Candidate): Promise<boolean> {
     const stagingDir = join(workspaceDir(root), 'offload', PLATFORM);
     const outcome = await offloadBuild({
@@ -667,6 +676,8 @@ export async function acquireAndroidArtifact(
       stagingDir,
       onPhase: (name, msg) => phase(name, remotePhaseText(name, msg, choice.machine)),
       onEnter: (name) => {
+        if (name === 'compile' || name === 'build' || name === 'prebuild' || name === 'pods')
+          record.builtOn = choice.machine;
         place({ host: choice.machine, phase: name });
         step(name === 'prebuild' ? name : 'compile');
       },
@@ -709,6 +720,7 @@ export async function acquireAndroidArtifact(
     }
     const { timings } = outcome;
     apkPath = stored;
+    record.builtOn = outcome.machine;
     record.offloadedTo = outcome.machine;
     stats.setPlacement({
       decision: 'offloaded',
@@ -837,6 +849,7 @@ export async function acquireAndroidArtifact(
           } else if (hereReason) {
             stats.setPlacement({ decision: 'here', reason: hereReason });
           }
+          record.builtOn = 'here';
           phase('build', `compiling ${variant || 'debug'} with Gradle`);
           const built = await build(
             { root, logWriter: writer, variant, abi: buildAbi },
@@ -956,6 +969,11 @@ export async function acquireAndroidArtifact(
             }
           }
         }
+      } catch (error) {
+        if (!(error instanceof OffloadRefusal)) throw error;
+        const refusal = error;
+        phaseFailure = fail(refusal.code, refusal.message, refusal.remedy, { lastBuildStatus: true });
+        return false;
       } finally {
         if (openOffload.choice) closeOffload(openOffload.choice);
         releaseHeldLock();

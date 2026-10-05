@@ -588,7 +588,31 @@ Bundler for an app whose Gemfile.lock pins CocoaPods, no iPhone simulator on
 the runtime \`stim ios\` builds for here, low disk, or busy. With Package.swift
 and no platform selection on a Mac, it also checks the macOS Xcode and SDK.
 
-\`offload.mode\` decides where an iOS simulator Debug build or an Android
+\`offload.machine\` (machine scope, default auto) selects placement for
+\`ios\`, \`android\` and \`macos\`. \`--build-machine <auto|local|name>\`
+overrides STIM_OFFLOAD_MACHINE, which overrides the setting.
+
+  auto   follows offload.mode and keeps its local fallback behavior
+  local  builds only on this Mac for this invocation
+  name   requires that exact entry in offload.machines, already paired and
+         approved; ignores offload.mode and this Mac's load/slot gating
+
+A name never prompts for pairing, tries another machine or falls back here.
+Any refusal or failure is STIM_OFFLOAD_REFUSED with the machine and reason.
+Device, Release/non-Debug, --remote, Android CAS compiler builds, builds with
+the build cache off, and an unknown simulator runtime cannot build there and
+refuse on a cache miss. A cache hit compiles nothing, contacts no worker and
+records buildMachine with builtOn absent. A compiling run records builtOn as
+here or the machine name; failed runs retain the selected value too.
+Check stim settings get offload.machines and approve build access on the worker
+with stim-server devices grant <id> --build, or rerun with --build-machine auto
+or --build-machine local. Ctrl-C cancels the remote build without a local compile.
+
+Copyable agent prompt:
+  Run stim ios --build-machine janics-mac-mini. If it refuses, report the
+  STIM_OFFLOAD_REFUSED reason and remedy; do not retry with another placement.
+
+With offload.machine auto, \`offload.mode\` decides where an iOS simulator Debug build or an Android
 emulator debug build or a stim macos SwiftPM Debug build compiles:
 
   auto   (default) here while this Mac has capacity: a free
@@ -628,7 +652,7 @@ installs the pinned gems itself on the first build. For Android its JDK major
 version must match, and its Android SDK must hold the NDK, build-tools and
 compile platform that the project's React Native version names in
 gradle/libs.versions.toml; Gradle and AGP come from the synced project. When
-no machine takes the build, the run prints one line with each machine's
+no machine takes the build in auto placement, the run prints one line with each machine's
 reason, such as \`janics-mac-mini: busy (load at or above 2/core; load
 8.2/core, 2 builds) -> building here\`, and compiles here. It sends the files
 \`git ls-files -co --exclude-standard\` lists (the machine keeps only files it
@@ -644,17 +668,17 @@ While a machine builds, Stim pings it every 15 seconds and treats a minute of
 silence as a dropped connection while it waits for the build. When the
 connection drops without a close, Stim reconnects to the same pinned machine
 for up to 3 minutes and takes the running build back; the machine keeps it
-running for 5 minutes without a connection, then cancels it. A drop while the
+running for 5 minutes without a connection, then cancels it. With auto, a drop while the
 app is fetched still builds here. Interrupting the run with Ctrl-C closes the
 connection, which cancels the build there; a run killed another way, or
-interrupted while it reconnects, leaves it until those 5 minutes pass. A failure after a machine took the build prints \`offload failed: <reason>
+interrupted while it reconnects, leaves it until those 5 minutes pass. With auto, a failure after a machine took the build prints \`offload failed: <reason>
 -> building here\` and compiles here. The run's lastBuilds entry and
 \`--json\` facts record the reason as offloadFallback. Offloading holds no
 local build slot; that fallback takes one. \`stim stats\` keeps where each
 compiling build ran and why (\`guide facts stats\`).
 An offloaded app lands only in this Mac's build cache, not in a remote cache
 provider. A project whose xcodebuild changes its own fingerprinted inputs
-cannot offload: the fingerprint check fails and it builds here.
+fails the offload fingerprint check: auto builds here; a named placement refuses.
 
 On the build machine, stim-server keeps each client's checkouts, dependencies,
 DerivedData, compilation cache, ccache and Gradle home under

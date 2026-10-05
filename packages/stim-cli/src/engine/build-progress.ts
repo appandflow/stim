@@ -339,6 +339,8 @@ const HISTORY_FIELDS = [
   'startedAt',
   'errorCode',
   'missReason',
+  'buildMachine',
+  'builtOn',
   'offloadedTo',
   'offloadFallback',
   'diagnostics',

@@ -1,3 +1,4 @@
+import { resolveBuildPlacement, resolveBuildMachine } from '../offload/selection.ts';
 import { isEasBuildFailure, resolveEasDevelopmentBuild } from '../engine/eas-build.ts';
 import { configuredAndroidEmulatorApp } from '../devices/android-emulator-viewer.ts';
 import { deviceSlotFileKey, parseDeviceSlotOption, validateDeviceSlot } from '../devices/device-slots.ts';
@@ -157,6 +158,7 @@ export {
 export { formatDuration, phaseLine, shortHash } from '../command-output.ts';
 
 interface AndroidCommandOptions {
+  buildMachine?: string;
   easProfile?: string;
   slot?: string;
   json?: boolean;
@@ -187,6 +189,11 @@ export function registerAndroid(program: Command): void {
       'Download a matching EAS development build; on a miss, print the build command without running it',
     )
     .option('--slot <name>', 'Reusable device slot within this workspace (default: default)', parseDeviceSlotOption)
+    .option(
+      '--build-machine <value>',
+      'Build on auto, local, or one named machine; a name refuses without fallback',
+      (value) => resolveBuildMachine(value),
+    )
     .option('--json', 'Emit the facts as a single JSON line on stdout; every other line goes to stderr')
     .option(
       '--plan',
@@ -260,6 +267,7 @@ export function registerAndroid(program: Command): void {
           try {
             return await runAndroid({
               root,
+              buildMachine: opts.buildMachine,
               slot: opts.slot,
               easProfile: opts.easProfile,
               json: Boolean(opts.json),
@@ -285,6 +293,7 @@ export function registerAndroid(program: Command): void {
 }
 
 interface RunAndroidOptions {
+  buildMachine?: string;
   progress?: BuildProgress;
   easProfile?: string;
   resolveEasDevelopmentBuild?: typeof resolveEasDevelopmentBuild;
@@ -806,6 +815,12 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
   let estimatesRead: RunEstimates | null = null;
   const estimates = (): RunEstimates => (estimatesRead ??= readEstimates({ projectKey, platform: PLATFORM }));
   const settings = resolveSettingsFor(settingsContext);
+  const placement = resolveBuildPlacement(options.buildMachine);
+  record.buildMachine = placement.selected;
+  if (placement.failure) {
+    const { code, message, remedy } = placement.failure;
+    return fail(code, message, remedy, { lastBuildStatus: true });
+  }
   const planned = resolveAndroidRunPlan(
     {
       settings,

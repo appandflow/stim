@@ -599,7 +599,12 @@ function renderStatus(
     if (state.macos) {
       const host = state.macos.host;
       const where = host ? ` on ${host.machine} as ${host.bundleId}${chalk.dim(` (session ${host.session})`)}` : '';
-      out.push(`  macOS ${state.macos.product}: ${state.macos.state}${where}; build ${state.macos.build.state}`);
+      const build = state.macos.build;
+      const placement =
+        build.buildMachine === undefined
+          ? ''
+          : `; build machine ${build.buildMachine}, built on ${build.builtOn ?? 'none'}`;
+      out.push(`  macOS ${state.macos.product}: ${state.macos.state}${where}; build ${build.state}${placement}`);
       if (host?.agent.driver === 'agent-device') out.push(chalk.dim(`    agent: ${host.agent.command}`));
     }
     if (state.web) {
@@ -738,7 +743,11 @@ function lastBuildsLines(reports: EnvironmentState['lastBuilds']): string[] {
 function lastBuildText(report: LastBuildReport): string {
   const source = report.cacheHit ? `${report.cacheHit} cache` : report.status === 'ok' ? 'compiled' : 'no cache hit';
   const took = report.durationMs === null ? '' : ` in ${formatDuration(report.durationMs)}`;
-  return `${report.platform} ${report.status === 'ok' ? source : `failed (${report.errorCode ?? 'error'}), ${source}`}${took}`;
+  const placement =
+    report.buildMachine === undefined
+      ? ''
+      : `; build machine ${report.buildMachine}, built on ${report.builtOn ?? (report.cacheHit ? 'none (cache)' : 'none')}`;
+  return `${report.platform} ${report.status === 'ok' ? source : `failed (${report.errorCode ?? 'error'}), ${source}`}${took}${placement}`;
 }
 
 function idleShutdownSuffix(record: DeviceIdleShutdownRecord | undefined): string {

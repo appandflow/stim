@@ -49,6 +49,8 @@ export interface IosFacts {
   cacheKey?: string | null;
   cacheHit: CacheHitLevel;
   cacheSkipped: boolean;
+  buildMachine?: string;
+  builtOn?: string;
   /** The build machine that compiled the app when the build was offloaded; absent otherwise. */
   offloadedTo?: string;
   /** Why the app was built here after the run considered offloading it; absent otherwise. */
@@ -81,6 +83,8 @@ export interface AndroidFacts {
   metroPort: number | null;
   cacheHit: CacheHitLevel;
   cacheSkipped: boolean;
+  buildMachine?: string;
+  builtOn?: string;
   /** The build machine that compiled the APK when the build was offloaded; absent otherwise. */
   offloadedTo?: string;
   /** Why the APK was built here after the run considered offloading it; absent otherwise. */

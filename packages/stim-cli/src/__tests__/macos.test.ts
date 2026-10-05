@@ -1,3 +1,4 @@
+import { writeConfigSetting } from '../workspace/config.ts';
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import type { ChildProcess } from 'node:child_process';
@@ -231,7 +232,7 @@ describe('macOS build placement and promotion', () => {
     vi.restoreAllMocks();
   });
 
-  const build = () =>
+  const build = (buildMachine?: string) =>
     buildMacosBundle({
       root,
       product: 'Sample',
@@ -242,6 +243,7 @@ describe('macOS build placement and promotion', () => {
       writer,
       note: () => {},
       record: buildRecord,
+      buildMachine,
     });
   function remoteBundle(valid = true): string {
     const fetched = join(dir, 'fetched', 'Sample.app');
@@ -299,6 +301,79 @@ describe('macOS build placement and promotion', () => {
       expect(readMacosRecord(root)?.build.offloadFallback).toBe(result.offloadFallback);
       expect(readFileSync(writer.file, 'utf8')).toContain('offload_failed');
       expect(readFileSync(writer.file, 'utf8')).toContain('placement: here');
+    },
+  );
+
+  it.each(['unreachable', 'approval-pending', 'forbidden', 'incompatible', 'busy', 'disk too low'])(
+    'a named worker refusal %s starts no Swift compiler or local slot',
+    async (reason) => {
+      writeConfigSetting({ scope: 'machine' }, 'offload.machines', ['mini', 'other']);
+      vi.mocked(offload.chooseBuildMachine).mockResolvedValue(`mini: ${reason}`);
+      vi.mocked(offload.offloadMode).mockReturnValue('off');
+      await expect(build('mini')).rejects.toMatchObject({
+        code: 'STIM_OFFLOAD_REFUSED',
+        message: expect.stringContaining(reason),
+      });
+      expect(localBuilds).toBe(0);
+      expect(slots.acquireBuildSlot).not.toHaveBeenCalled();
+      expect(buildRecord).toMatchObject({ buildMachine: 'mini' });
+      expect(buildRecord.builtOn).toBeUndefined();
+      expect(offload.chooseBuildMachine).toHaveBeenCalledWith(
+        expect.objectContaining({ selected: 'mini', machines: [expect.objectContaining({ machine: 'mini' })] }),
+      );
+    },
+  );
+
+  it.each(['swift-failed', 'sync failed', 'start: busy', 'fetch: digest mismatch'])(
+    'a failed strict remote build %s never starts swift locally',
+    async (reason) => {
+      writeConfigSetting({ scope: 'machine' }, 'offload.machines', ['mini']);
+      vi.spyOn(offload, 'offloadBuild').mockResolvedValue({ ok: false, machine: 'mini', reason });
+      await expect(build('mini')).rejects.toMatchObject({
+        code: 'STIM_OFFLOAD_REFUSED',
+        message: expect.stringContaining(reason),
+      });
+      expect(localBuilds).toBe(0);
+      expect(slots.acquireBuildSlot).not.toHaveBeenCalled();
+      expect(readFileSync(join(bundle, 'previous'), 'utf8')).toBe('old');
+    },
+  );
+
+  it('a strict unpaired worker refuses before asking for an offer or running Swift', async () => {
+    writeConfigSetting({ scope: 'machine' }, 'offload.machines', ['mini']);
+    vi.mocked(machines.pairedMachines).mockReturnValue([]);
+    await expect(build('mini')).rejects.toMatchObject({ code: 'STIM_OFFLOAD_REFUSED' });
+    expect(offload.chooseBuildMachine).not.toHaveBeenCalled();
+    expect(localBuilds).toBe(0);
+    expect(slots.acquireBuildSlot).not.toHaveBeenCalled();
+  });
+
+  it('local overrides force placement and persists actual compilation', async () => {
+    await build('local');
+    expect(offload.chooseBuildMachine).not.toHaveBeenCalled();
+    expect(localBuilds).toBe(1);
+    expect(buildRecord).toMatchObject({ buildMachine: 'local', builtOn: 'here' });
+  });
+
+  test.skipIf(process.platform !== 'darwin')(
+    'the macos command persists a typed strict refusal in status',
+    async () => {
+      writeFileSync(join(root, 'Package.swift'), '// swift-tools-version:6.0\n');
+      writeFileSync(
+        join(root, '.stim.json'),
+        JSON.stringify({ macos: { product: 'Sample', infoPlist: 'Info.plist' } }),
+      );
+      await expect(runMacos(root, () => {}, undefined, 'missing')).rejects.toMatchObject({
+        code: 'STIM_OFFLOAD_REFUSED',
+      });
+      expect(readMacosRecord(root)?.build).toMatchObject({
+        state: 'failed',
+        errorCode: 'STIM_OFFLOAD_REFUSED',
+        buildMachine: 'missing',
+      });
+      expect(readMacosRecord(root)?.build.builtOn).toBeUndefined();
+      expect(localBuilds).toBe(0);
+      expect(slots.acquireBuildSlot).not.toHaveBeenCalled();
     },
   );
 

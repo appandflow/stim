@@ -1,6 +1,21 @@
+import assert from 'node:assert';
+import { mkdtempSync, mkdirSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { setExecutor, resetExecutor } from '../exec.ts';
+import * as buildMachines from '../offload/build-machines.ts';
+import { resolveBuildMachine, requireConfiguredMachine } from '../offload/selection.ts';
 import { manifestDigest } from '../offload/manifest.ts';
-import type { MachineCapacity, OffloadMode } from '@stim-cli/core/state';
-import { offerProblems, offloadPlacement, pickOffer, type BuildOffer } from '../offload/client.ts';
+import type { MachineCapacity, OffloadMode, BuildMachineCredential } from '@stim-cli/core/state';
+import {
+  BuildConnection,
+  chooseBuildMachine,
+  offloadBuild,
+  offerProblems,
+  offloadPlacement,
+  pickOffer,
+  type BuildOffer,
+} from '../offload/client.ts';
 import {
   toolchainMismatches,
   iphoneRuntimes,
@@ -318,4 +333,193 @@ it('fingerprints the same manifest in any order but detects changed content and 
   expect(manifestDigest(entries.toReversed())).toBe(digest);
   expect(manifestDigest([{ ...entries[0]!, sha256: 'cc' }, entries[1]!])).not.toBe(digest);
   expect(manifestDigest([{ ...entries[0]!, kind: 'link' }, entries[1]!])).not.toBe(digest);
+});
+
+describe('explicit build placement', () => {
+  it.each([
+    [undefined, undefined, undefined, 'auto'],
+    [undefined, undefined, 'mini', 'mini'],
+    [undefined, 'local', 'mini', 'local'],
+    ['auto', 'local', 'mini', 'auto'],
+    ['mini:8443', 'local', 'auto', 'mini:8443'],
+  ])('resolves flag %s, env %s and setting %s without losing precedence', (flag, env, setting, expected) => {
+    expect(resolveBuildMachine(flag, env, setting)).toBe(expected);
+  });
+
+  it.each(['', ' ', 'bad name', '../mini', 'mini:0', 'mini:65536', 12])(
+    'rejects invalid selection %s instead of silently choosing auto',
+    (value) => {
+      expect(() => resolveBuildMachine(undefined, undefined, value)).toThrow(
+        expect.objectContaining({ code: 'STIM_BAD_ARG' }),
+      );
+    },
+  );
+
+  it('an empty explicit flag does not inherit a valid environment selection', () => {
+    expect(() => resolveBuildMachine('', 'mini', 'local')).toThrow(expect.objectContaining({ code: 'STIM_BAD_ARG' }));
+  });
+
+  it('refuses a name outside the configured list while auto and local require no list', () => {
+    expect(() => requireConfiguredMachine('mini', ['other'])).toThrow(
+      expect.objectContaining({ code: 'STIM_OFFLOAD_REFUSED', message: expect.stringContaining('mini') }),
+    );
+    expect(() => requireConfiguredMachine('local', undefined)).not.toThrow();
+    expect(() => requireConfiguredMachine('auto', undefined)).not.toThrow();
+  });
+
+  it('strict placement ignores local load and offload.mode off, but still requires a pairing', () => {
+    const base = { selected: 'mini', mode: 'off' as const, here: IDLE, machines: 1, unsupported: null };
+    expect(offloadPlacement(base).offload).toBe(true);
+    expect(() => offloadPlacement({ ...base, machines: 0 })).toThrow(
+      expect.objectContaining({ code: 'STIM_OFFLOAD_REFUSED' }),
+    );
+    expect(offloadPlacement({ ...base, selected: 'local', mode: 'force' }).offload).toBe(false);
+  });
+
+  it.each([
+    'device builds build here',
+    '--remote builds build here',
+    'Release builds build here',
+    'Apple Clang CAS builds build here',
+    'the build cache is off',
+    'the runtime of simulator U1 is unknown',
+  ])('strict placement refuses unsupported build: %s', (unsupported) => {
+    expect(() => offloadPlacement({ selected: 'mini', mode: 'off', here: IDLE, machines: 1, unsupported })).toThrow(
+      expect.objectContaining({ code: 'STIM_OFFLOAD_REFUSED', message: `mini: ${unsupported}` }),
+    );
+  });
+
+  it.each(['auto', 'local'])(
+    '%s keeps unsupported Release and device builds here even when offload.mode is force',
+    (selected) => {
+      for (const unsupported of ['Release builds build here', 'device builds build here']) {
+        expect(offloadPlacement({ selected, mode: 'force', here: IDLE, machines: 1, unsupported }).offload).toBe(false);
+      }
+    },
+  );
+
+  it('strict offers bypass auto load gating and cannot rank another worker as a runner up', () => {
+    const offers = [
+      { machine: 'other', offer: offer({ warm: { checkout: true, dependencies: true, build: true } }) },
+      { machine: 'mini', offer: offer({ capacity: capacity({ loadPerCore: 1.5 }) }) },
+    ];
+    expect(pickOffer({ selected: 'mini', mode: 'off', here: IDLE, offers, target: IOS }).order).toEqual([1]);
+    expect(pickOffer({ selected: 'mini', mode: 'auto', here: IDLE, offers, target: IOS }).order).toEqual([1]);
+    expect(
+      pickOffer({
+        selected: 'mini',
+        mode: 'auto',
+        here: IDLE,
+        offers: [{ ...offers[1]!, offer: null, failure: 'unreachable' }, offers[0]!],
+        target: IOS,
+      }),
+    ).toEqual({ order: [], reasons: ['mini: unreachable'] });
+  });
+
+  it.each([
+    ['CPU incompatible', offer({ toolchain: { arch: 'x64' } })],
+    ['runtime unavailable', offer({ toolchain: { runtimes: [] } })],
+    ['disk too low', offer({ capacity: capacity({ diskFreeBytes: 0 }) })],
+    ['no free slot', offer({ capacity: capacity({ declined: 'all slots busy' }) })],
+  ])('strict offers keep safety checks for %s instead of choosing another worker', (_reason, blocked) => {
+    const picked = pickOffer({
+      selected: 'mini',
+      mode: 'force',
+      here: IDLE,
+      offers: [
+        { machine: 'mini', offer: blocked },
+        { machine: 'other', offer: offer() },
+      ],
+      target: IOS,
+    });
+    expect(picked.order).toEqual([]);
+    expect(picked.reasons[0]).toMatch(/^mini: /);
+  });
+});
+
+describe('strict client routing', () => {
+  let root: string;
+  const credentials = ['mini', 'other'].map((machine) => ({ machine, deviceToken: machine }) as BuildMachineCredential);
+
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), 'stim-strict-client-'));
+    process.env.STIM_HOME = join(root, 'home');
+    mkdirSync(join(root, '.git'));
+    setExecutor({
+      runFile: (_file, args) =>
+        args?.includes('--git-common-dir') ? join(root, '.git') : args?.includes('ls-files') ? '' : root,
+    });
+    vi.spyOn(buildMachines, 'pinnedEndpoint').mockImplementation((credential) => ({
+      url: credential.machine,
+      servername: credential.machine,
+      host: credential.machine,
+    }));
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+    resetExecutor();
+    delete process.env.STIM_HOME;
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  const choose = () =>
+    chooseBuildMachine({
+      projectRoot: root,
+      selected: 'mini',
+      target: IOS,
+      mode: 'off',
+      here: IDLE,
+      machines: credentials,
+      note: () => {},
+    });
+
+  it.each(['unreachable', 'approval-pending', 'forbidden', 'pinned identity changed'])(
+    'strict %s never probes another configured worker',
+    async (reason) => {
+      const open = vi.spyOn(BuildConnection, 'open').mockResolvedValue({ failure: reason, refused: true });
+      expect(await choose()).toBe(`mini: ${reason}`);
+      expect(open.mock.calls.map(([endpoint]) => endpoint.url)).toEqual(['mini']);
+    },
+  );
+
+  it.each(['sync', 'start'])(
+    'strict %s failure closes the chosen worker without trying another',
+    async (failedMethod) => {
+      const request = vi.fn<BuildConnection['request']>().mockImplementation(async (method) => {
+        if (method === 'build.offer') return { result: offer({ capacity: capacity({ loadPerCore: 1.5 }) }) };
+        if (method === `build.${failedMethod}`) return { error: { code: 'busy', message: 'cannot take this build' } };
+        return { result: {} };
+      });
+      const close = vi.fn<() => void>();
+      const connection = Object.assign(Object.create(BuildConnection.prototype), {
+        request,
+        close,
+        onProgress: () => {},
+      }) as BuildConnection;
+      const open = vi.spyOn(BuildConnection, 'open').mockResolvedValue(connection);
+      const choice = await choose();
+      assert(typeof choice !== 'string');
+      expect(choice.runnersUp).toEqual([]);
+      const outcome = await offloadBuild({
+        choice,
+        expectedFingerprint: 'fingerprint',
+        request: {
+          platform: 'ios',
+          runtime: RUNTIME,
+          configuration: null,
+          scheme: null,
+          isExpo: false,
+          optimizations: {},
+        },
+        stagingDir: join(root, 'staging'),
+        onPhase: () => {},
+        onEnter: () => {},
+        onRecord: () => {},
+        note: () => {},
+      });
+      expect(outcome).toEqual({ ok: false, machine: 'mini', reason: `${failedMethod}: busy: cannot take this build` });
+      expect(open.mock.calls.map(([endpoint]) => endpoint.url)).toEqual(['mini']);
+      expect(close).toHaveBeenCalled();
+    },
+  );
 });

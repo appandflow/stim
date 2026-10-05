@@ -36,7 +36,13 @@ records, all with platform "macos". Unexpected app exits are error records.
 
 BUILD OFFLOAD
 
-offload.mode places these SwiftPM Debug builds:
+--build-machine <auto|local|name> overrides STIM_OFFLOAD_MACHINE and the
+machine setting offload.machine (default auto). local builds here; a name
+requires that exact configured and paired build machine, ignoring offload.mode
+and this Mac's capacity. Any failure is STIM_OFFLOAD_REFUSED without a local
+compile or another machine. See stim guide errors STIM_OFFLOAD_REFUSED.
+
+With offload.machine auto, offload.mode places these SwiftPM Debug builds:
 auto builds here while this Mac has capacity, force uses an approved build
 machine when one accepts, and off always builds here. Configure offload.machines
 and approve build access as described in stim guide settings. The worker needs
@@ -48,10 +54,11 @@ the files git lists (tracked and untracked, not ignored).
 
 The client validates the development plist before asking a machine. It verifies
 the returned archive's sha256, bundle identifier, executable and ad hoc signature
-before replacing the owned bundle, then launches locally as usual. Every offload
+before replacing the owned bundle, then launches locally as usual. With auto, every offload
 failure falls back to the local build, including force. Failed staging preserves
 the previous bundle. No failed artifact is promoted or cached. The build record
-carries offloadedTo only for a remote build, and offloadFallback when an offload
+carries buildMachine (selected) and builtOn (here or the machine, absent until
+a build runs), and errorCode on a typed failure. It carries offloadedTo only for a remote build, and offloadFallback when an offload
 attempt falls back here. Placement and failure reasons are in build logs.
 
 OWNERSHIP AND LOCAL VIEWING

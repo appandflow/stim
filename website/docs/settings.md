@@ -252,7 +252,7 @@ Run `stim guide settings` for the complete key and value list.
   "androidEmulatorApp": "emulator",
   "tempDir": "/Volumes/SSD/stim-tmp",
   "pool": { "iosParkedMax": 3, "androidParkedMax": 3 },
-  "offload": { "machines": ["janics-mac-mini"], "mode": "auto" },
+  "offload": { "machines": ["janics-mac-mini"], "machine": "auto", "mode": "auto" },
   "caches": {
     "buildCache": "/Volumes/Cache/stim/build-cache",
     "metroCache": "/Volumes/Cache/stim/metro-cache"
@@ -347,7 +347,40 @@ Mac's tailnet node. Approve the request on the build machine with
 Stim connects to a named Mac only while it is still the pinned node, and never
 sends its token to another. Doctor reports each machine's pairing state.
 
-`offload.mode` decides where `stim ios` compiles a simulator Debug build and
+`offload.machine` is a machine setting, defaulting to `auto`. On `ios`,
+`android` and `macos`, `--build-machine <auto|local|name>` overrides
+`STIM_OFFLOAD_MACHINE`, which overrides the setting:
+
+- `auto` follows `offload.mode`, with the existing local fallback on failure.
+- `local` keeps the build on this Mac for this run.
+- A tailnet name requires that exact entry in `offload.machines`, already
+  paired and approved. It ignores `offload.mode` and this Mac's load and slots.
+
+A named selection never prompts for pairing, uses another machine or falls
+back locally. Missing configuration/pairing, denied or pending approval,
+unreachability or changed pinned identity, incompatible toolchain/CPU/runtime,
+low disk, busy workers, sync/build failures, artifact fetch/store failures and
+a checkout changing during the build fail with `STIM_OFFLOAD_REFUSED`. The
+message names the worker and the concrete reason. Check
+`stim settings get offload.machines`; a person on the worker grants build
+access with `stim-server devices grant <id> --build`. To change placement,
+rerun with `--build-machine auto` or `--build-machine local`.
+
+Device, Release/non-Debug, `--remote`, Android CAS compiler, build-cache-off
+and unknown simulator runtime builds refuse a named worker on a cache miss.
+A cache hit needs no build and contacts no worker. `stim status` and its JSON
+record `buildMachine` (the selected value) and `builtOn` (`here` or the worker
+name, absent when no build ran). Ctrl-C cancels the worker build and starts no
+local compile.
+
+Copy this prompt to your agent:
+
+```text
+Run stim ios --build-machine janics-mac-mini. If it refuses, report the
+STIM_OFFLOAD_REFUSED reason and remedy; do not retry with another placement.
+```
+
+With `offload.machine` set to `auto`, `offload.mode` decides where `stim ios` compiles a simulator Debug build and
 where `stim android` compiles an emulator debug build, and where `stim macos`
 compiles a SwiftPM Debug build:
 
@@ -366,11 +399,11 @@ Load per core is the 5-minute load average divided by the CPU count.
 counts as saturated: this Mac stops preferring itself, and a build machine
 declines offloaded builds.
 
-`STIM_OFFLOAD_MODE` overrides it for one command. Device, Release and
+`STIM_OFFLOAD_MODE` overrides it for one command in `auto`. Device, Release and
 `--remote` builds, Android builds with the Apple Clang CAS compiler cache, and
 iOS/Android runs with the build cache off, always build here.
 
-An offloaded iOS/Android build runs prebuild (and `pod install` for iOS) here, then asks
+In `auto`, an offloaded iOS/Android build runs prebuild (and `pod install` for iOS) here, then asks
 every paired machine what it can build. Stim picks one whose Stim build and
 CPU architecture match this Mac exactly, with at least 10 GB free, that does
 not decline, preferring the one that already holds this repository, then the
@@ -401,7 +434,7 @@ unless its fingerprint equals the one here, and sends back the `.app` or APK.
 Stim checks the archive's sha256 and fingerprints the checkout again before it
 stores and installs the app the usual way; an APK is still compared with the
 installed one before Stim skips an install. The build output shows
-`placement: <machine>` or `placement: here (<reason>)`. When no machine takes
+`placement: <machine>` or `placement: here (<reason>)`. With `auto`, when no machine takes
 the build, one line gives each machine's reason, such as
 `janics-mac-mini: busy (load at or above 2/core; load 8.2/core, 2 builds) -> building here`,
 and a failure after a machine took it prints
@@ -415,7 +448,8 @@ here. Ctrl-C cancels the build on the machine; a run killed another way, or
 interrupted while it reconnects, leaves it running until those 5 minutes pass. An
 offloaded app lands only in this Mac's build cache, not in a remote cache
 provider. A project whose `xcodebuild` changes its own fingerprinted inputs
-builds on the machine, fails the fingerprint check there and builds here, so
+builds on the machine, fails the fingerprint check there; `auto` builds here and a named selection
+refuses, so
 set `offload.mode` to `off` for it. The `--json` payload and `lastBuilds` carry
 `offloadedTo`, or `offloadFallback` with the reason it built here,
 `stim status` shows the machine and its step while a build runs there, and

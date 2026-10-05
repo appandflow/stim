@@ -15,8 +15,9 @@ import { buildMacosBundle } from '../macos/build.ts';
 import { validateInfoPlist } from '../macos/stage.ts';
 import { stopMacosAppHeld } from '../macos/stop.ts';
 import { createNdjsonWriter } from '../ndjson.ts';
+import { resolveBuildMachine } from '../offload/selection.ts';
 import { spawnEntry } from '../spawn-entry.ts';
-import { upsertProject } from '../workspace/config.ts';
+import { loadConfig, upsertProject } from '../workspace/config.ts';
 import { ensureWorkspaceStorage, workspaceDir, workspaceLogsDir } from '../workspace/paths.ts';
 import { findProjectRoot } from '../workspace/project.ts';
 import { resolveSettings, settingShapeErrors, SETTING_SHAPE_REMEDY } from '../workspace/settings.ts';
@@ -31,6 +32,7 @@ export async function runMacos(
   root: string,
   note: (line: string) => void = console.error,
   host?: string,
+  buildMachineFlag?: string,
 ): Promise<MacosAppRecord> {
   if (process.platform !== 'darwin') throw new Error('stim macos requires a Mac with Swift installed.');
   root = realpathSync(root);
@@ -40,6 +42,8 @@ export async function runMacos(
   const settings = resolveSettings({ projectPath: root, gitCommonDir: gitCommonDir(root), repoRoot: repoRoot(root) });
   const [shape] = settingShapeErrors(settings);
   if (shape) throw new Error(`${shape} ${SETTING_SHAPE_REMEDY}`);
+  const offload = loadConfig()?.offload;
+  const buildMachine = resolveBuildMachine(buildMachineFlag, process.env.STIM_OFFLOAD_MACHINE, offload?.machine);
   const macos = settings.macos as { product?: string; infoPlist?: string; arguments?: string[] } | undefined;
   if (!macos?.product || !macos.infoPlist) {
     throw Object.assign(
@@ -78,7 +82,7 @@ export async function runMacos(
             launchId: randomUUID(),
             arguments: macos.arguments ?? [],
             supervisor: macosProcess(process.pid),
-            build: { state: 'running', startedAt: new Date().toISOString() },
+            build: { state: 'running', startedAt: new Date().toISOString(), buildMachine },
             ...(previous?.host ? { host: previous.host, hostLaunched: previous.hostLaunched ?? false } : {}),
           };
           await buildBundle(root, macos.infoPlist!, record, host !== undefined, note);
@@ -147,6 +151,7 @@ async function buildBundle(
       writer,
       note,
       record: record.build,
+      buildMachine: record.build.buildMachine,
     });
     record.bundleId = built.bundleId;
     record.bundle = realpathSync(record.bundle);
@@ -171,6 +176,9 @@ async function buildBundle(
           finishedAt: new Date().toISOString(),
           durationMs: Date.now() - started,
           error: message,
+          ...('code' in Object(error) && typeof (error as { code?: unknown }).code === 'string'
+            ? { errorCode: (error as { code: string }).code }
+            : {}),
         },
       },
     });
@@ -223,12 +231,17 @@ export default function macosCommand(program: Command): void {
   program
     .command('macos')
     .description('Build and launch an owned Swift Package macOS Debug app.')
+    .option(
+      '--build-machine <value>',
+      'Build on auto, local, or one named machine; a name refuses without fallback',
+      (value) => resolveBuildMachine(value),
+    )
     .option('--json', 'print one launch payload; build output goes to stderr')
     .option('--host <machine>', 'run it on this approved hosting Mac from hosting.machines')
-    .action(async (options: { json?: boolean; host?: string }) => {
+    .action(async (options: { json?: boolean; host?: string; buildMachine?: string }) => {
       const root = findProjectRoot(process.cwd());
       if (!root) throw new Error('Run stim macos from the Swift Package directory.');
-      const record = await runMacos(root, console.error, options.host);
+      const record = await runMacos(root, console.error, options.host, options.buildMachine);
       if (options.json) console.log(JSON.stringify(launchPayload(record)));
       else if (record.host)
         console.log(

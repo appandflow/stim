@@ -436,13 +436,27 @@ export const SETTINGS: readonly SettingDefinition[] = [
       'Tailscale names of the Macs that may build for this one, each optionally with :<port> of its tailscale serve route (default 7443)',
   },
   {
+    key: 'offload.machine',
+    type: {
+      kind: 'string',
+      pattern:
+        '^[A-Za-z0-9][A-Za-z0-9.-]*(?::(?!0+$)(?:[0-5]?[0-9]{1,4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5]))?$',
+      patternHelp: 'auto, local, or a tailnet machine name',
+    },
+    scopes: MACHINE,
+    default: 'auto',
+    env: 'STIM_OFFLOAD_MACHINE',
+    description:
+      'Build placement: auto follows offload.mode with local fallback; local always builds here; a name in offload.machines requires that machine without fallback. The ios, android and macos --build-machine flag overrides this setting and its environment override',
+  },
+  {
     key: 'offload.mode',
     type: { kind: 'choice', choices: OFFLOAD_MODES },
     scopes: MACHINE,
     default: 'auto',
     env: 'STIM_OFFLOAD_MODE',
     description:
-      'Where iOS simulator Debug, Android emulator debug and macOS SwiftPM Debug builds run: auto builds here while this Mac has a free concurrency.maxBuilds slot and its load is under offload.maxLoadPerCore, and otherwise offloads to a less loaded machine in offload.machines; force offloads whenever a machine can take the build; off always builds here',
+      'When offload.machine is auto, where iOS simulator Debug, Android emulator debug and macOS SwiftPM Debug builds run: auto builds here while this Mac has a free concurrency.maxBuilds slot and its load is under offload.maxLoadPerCore, and otherwise offloads to a less loaded machine in offload.machines; force offloads whenever a machine can take the build; off always builds here',
   },
   {
     key: 'offload.maxLoadPerCore',

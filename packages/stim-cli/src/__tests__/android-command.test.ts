@@ -1,3 +1,4 @@
+import * as offloadClient from '../offload/client.ts';
 import { SETTING_SHAPE_REMEDY } from '../workspace/settings.ts';
 import { hashFile } from '../engine/installed-artifact.ts';
 import { vi } from 'vitest';
@@ -34,10 +35,10 @@ import {
   upsertProject,
   writeConfigSetting,
 } from '../workspace/config.ts';
-import { buildMachinesFile } from '@stim-cli/core/state';
+import { buildMachinesFile, readLastBuilds } from '@stim-cli/core/state';
 import { parseNdjsonText } from '../ndjson.ts';
 import { emulatorLogFile, workspaceLogsDir, workspaceStateFile } from '../workspace/paths.ts';
-import { writeWorkspaceState } from '../workspace/workspace-state.ts';
+import { readWorkspaceState, writeWorkspaceState } from '../workspace/workspace-state.ts';
 import {
   NO_DEVICE,
   NO_FINGERPRINT,
@@ -1520,6 +1521,7 @@ describe('a cache hit', () => {
     assert(stdout0);
     expect(JSON.parse(stdout0)).toEqual({
       platform: 'android',
+      buildMachine: 'auto',
       serial: 'emulator-5584',
       avdName: 'stim-app-412',
       deviceName: 'stim-app-412',
@@ -3317,6 +3319,7 @@ describe('the pure parts', () => {
   test('androidFacts and lastBuildRecord fill every field of their contracts', () => {
     expect(androidFacts({})).toEqual({
       platform: 'android',
+      buildMachine: 'auto',
       serial: null,
       avdName: null,
       deviceName: null,
@@ -3356,21 +3359,8 @@ describe('the pure parts', () => {
       ms: 761000,
     });
     const record = lastBuildRecord({ startedAt: 'now', status: 'ok' });
-    expect(Object.keys(record)).toEqual([
-      'platform',
-      'avdName',
-      'deviceName',
-      'fingerprint',
-      'cacheKey',
-      'cacheHit',
-      'cacheSkipped',
-      'durationMs',
-      'appPath',
-      'bundleId',
-      'startedAt',
-      'status',
-      'configuration',
-    ]);
+    expect(record.buildMachine).toBe('auto');
+    expect(record.builtOn).toBeUndefined();
     expect(lastBuildRecord({ startedAt: 'now', status: 'failed', errorCode: BUILD_ERROR }).errorCode).toBe(BUILD_ERROR);
   });
 
@@ -6651,4 +6641,223 @@ test('a named Android run scopes allocation, launch verification and collector s
   expect(h.calls.spawn.some((call) => call.args.includes('--slot') && call.args.includes('phone'))).toBe(true);
   const facts = JSON.parse(h.stdout.at(-1)!);
   expect(facts.slot).toBe('phone');
+});
+
+describe('strict build machine selection', () => {
+  beforeEach(() => {
+    setExecutor(makeExecutor());
+    vi.spyOn(offloadClient, 'simulatorRuntime').mockReturnValue('iOS-27-0');
+    vi.spyOn(offloadClient, 'closeOffload').mockImplementation(() => {});
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+    resetExecutor();
+  });
+
+  function configureMini(paired = true, state: 'approved' | 'pending' = 'approved') {
+    writeConfigSetting({ scope: 'machine' }, 'offload.machines', ['mini', 'other']);
+    if (paired)
+      writeFileSync(
+        buildMachinesFile(),
+        JSON.stringify({
+          version: 1,
+          machines: [
+            {
+              machine: 'mini',
+              nodeId: 'nMini',
+              dnsName: 'mini.tail.ts.net',
+              deviceId: 'ab12',
+              deviceToken: 'secret',
+              state,
+              requestedAt: '2026-09-01T00:00:00.000Z',
+            },
+          ],
+        }),
+      );
+  }
+
+  test.each([
+    'not listed',
+    'not paired',
+    'no reply in time',
+    'approval-pending',
+    'forbidden',
+    'node changed',
+    'JDK incompatible',
+    'CPU incompatible',
+    'disk too low',
+    'busy',
+  ])('refusal %s records selected placement and never compiles or takes a local slot', async (reason) => {
+    if (reason !== 'not listed')
+      configureMini(reason !== 'not paired', reason === 'approval-pending' ? 'pending' : 'approved');
+    const choose = vi.spyOn(offloadClient, 'chooseBuildMachine').mockResolvedValue(`mini: ${reason}`);
+    const build = vi.fn<() => never>();
+    const slot = vi.fn<() => never>();
+    const result = await harness({ buildMachine: 'mini', build, acquireSlot: slot }).run();
+    expect(result.error?.code).toBe('STIM_OFFLOAD_REFUSED');
+    expect(result.error?.message).toContain('mini');
+    expect(build).not.toHaveBeenCalled();
+    expect(slot).not.toHaveBeenCalled();
+    const report = readLastBuilds(readWorkspaceState(root)).android;
+    expect(report).toMatchObject({ status: 'failed', errorCode: 'STIM_OFFLOAD_REFUSED', buildMachine: 'mini' });
+    expect(report?.builtOn).toBeUndefined();
+    expect(result.error?.message).toContain(
+      reason === 'not listed' ? 'not listed' : reason === 'not paired' ? 'paired' : reason,
+    );
+    expect(
+      choose.mock.calls.map(([request]) => ({
+        selected: request.selected,
+        machines: request.machines?.map((machine) => machine.machine),
+      })),
+    ).toEqual(['not listed', 'not paired'].includes(reason) ? [] : [{ selected: 'mini', machines: ['mini'] }]);
+  });
+
+  test.each(['sync failed', 'start: busy', 'gradle failed', 'fetch: digest mismatch', 'cancelled'])(
+    'remote %s never falls back to Gradle',
+    async (reason) => {
+      configureMini();
+      const choice = { machine: 'mini', offer: { capacity: {} } } as offloadClient.OffloadChoice;
+      vi.spyOn(offloadClient, 'chooseBuildMachine').mockResolvedValue(choice);
+      vi.spyOn(offloadClient, 'offloadBuild').mockResolvedValue({ ok: false, machine: 'mini', reason });
+      const build = vi.fn<() => never>();
+      const slot = vi.fn<() => never>();
+      const result = await harness({ buildMachine: 'mini', build, acquireSlot: slot }).run();
+      expect(result.error?.code).toBe('STIM_OFFLOAD_REFUSED');
+      expect(result.error?.message).toContain(reason);
+      expect(build).not.toHaveBeenCalled();
+      expect(slot).not.toHaveBeenCalled();
+      expect(readLastBuilds(readWorkspaceState(root)).android?.errorCode).toBe('STIM_OFFLOAD_REFUSED');
+    },
+  );
+
+  test('a Release cache miss refuses strict placement before Gradle', async () => {
+    configureMini();
+    const build = vi.fn<() => never>();
+    const slot = vi.fn<() => never>();
+    const result = await harness({ buildMachine: 'mini', variant: 'release', build, acquireSlot: slot }).run();
+    expect(result.error?.code).toBe('STIM_OFFLOAD_REFUSED');
+    expect(result.error?.message).toContain('release builds build here');
+    expect(build).not.toHaveBeenCalled();
+    expect(slot).not.toHaveBeenCalled();
+  });
+
+  test('a named cache hit needs no pairing or machine contact and records no compilation', async () => {
+    configureMini(false);
+    const choose = vi.spyOn(offloadClient, 'chooseBuildMachine');
+    const build = vi.fn<() => never>();
+    expect((await harness({ buildMachine: 'mini', resolveCached: () => fakeApk(), build }).run()).ok).toBe(true);
+    expect(choose).not.toHaveBeenCalled();
+    expect(build).not.toHaveBeenCalled();
+    const report = readLastBuilds(readWorkspaceState(root)).android;
+    expect(report).toMatchObject({ buildMachine: 'mini', cacheHit: 'local' });
+    expect(report?.builtOn).toBeUndefined();
+  });
+
+  test.each([null, 'release'])(
+    'local overrides force mode for %s and records the actual local compile',
+    async (variant) => {
+      configureMini();
+      const mode = vi.spyOn(offloadClient, 'offloadMode').mockReturnValue('force');
+      const choose = vi.spyOn(offloadClient, 'chooseBuildMachine');
+      const h = harness({ buildMachine: 'local', variant });
+      expect((await h.run()).ok).toBe(true);
+      expect(h.calls.build).toHaveLength(1);
+      expect(choose).not.toHaveBeenCalled();
+      expect(mode).not.toHaveBeenCalled();
+      expect(readLastBuilds(readWorkspaceState(root)).android).toMatchObject({
+        buildMachine: 'local',
+        builtOn: 'here',
+      });
+    },
+  );
+
+  test('auto still builds a Release cache miss here without contacting a paired worker', async () => {
+    configureMini();
+    vi.spyOn(offloadClient, 'offloadMode').mockReturnValue('force');
+    const choose = vi.spyOn(offloadClient, 'chooseBuildMachine');
+    const h = harness({ buildMachine: 'auto', variant: 'release' });
+    expect((await h.run()).ok).toBe(true);
+    expect(h.calls.build).toHaveLength(1);
+    expect(choose).not.toHaveBeenCalled();
+    expect(readLastBuilds(readWorkspaceState(root)).android).toMatchObject({ buildMachine: 'auto', builtOn: 'here' });
+  });
+
+  test('an unexpected artifact preparation error keeps its existing handling under strict placement', async () => {
+    configureMini();
+    const error = new Error('unexpected prebuild planning failure');
+    const build = vi.fn<() => never>();
+    await expect(
+      harness({
+        buildMachine: 'mini',
+        planPrebuildFor: () => {
+          throw error;
+        },
+        build,
+      }).run(),
+    ).rejects.toBe(error);
+    expect(build).not.toHaveBeenCalled();
+  });
+
+  test.each(['stored', 'store failure', 'checkout changed'])(
+    'a strict fetched artifact is %s without a local compile',
+    async (scenario) => {
+      configureMini();
+      const choice = { machine: 'mini', offer: { capacity: {} } } as offloadClient.OffloadChoice;
+      vi.spyOn(offloadClient, 'chooseBuildMachine').mockResolvedValue(choice);
+      const artifactPath = fakeApk();
+      let built = false;
+      vi.spyOn(offloadClient, 'offloadBuild').mockImplementation(async ({ onEnter }) => {
+        onEnter('compile');
+        built = true;
+        return {
+          ok: true,
+          machine: 'mini',
+          artifactPath,
+          compilationCache: { status: 'not-run' },
+          ccache: { status: 'not-run' },
+          timings: {
+            offerMs: 0,
+            syncMs: 0,
+            workerMs: 10,
+            fetchMs: 0,
+            totalMs: 10,
+            worker: {},
+            uploadedBytes: 0,
+            artifactBytes: 0,
+          },
+        } as Extract<offloadClient.OffloadOutcome, { ok: true }>;
+      });
+      const compile = vi.fn<() => never>();
+      const slot = vi.fn<() => never>();
+      const store = vi.fn<(_platform: string, _key: string, path: string) => string>((_platform, _key, path) => {
+        if (scenario === 'store failure') throw new Error('disk full');
+        return path;
+      });
+      const fingerprint = async () => ({
+        hash: scenario === 'checkout changed' && built ? 'changed' : FINGERPRINT,
+        sources: [],
+      });
+      const result = await harness({
+        buildMachine: 'mini',
+        fingerprint,
+        storeCached: store,
+        build: compile,
+        acquireSlot: slot,
+      }).run();
+      expect(result.ok).toBe(scenario === 'stored');
+      expect(result.error?.code).toBe(scenario === 'stored' ? undefined : 'STIM_OFFLOAD_REFUSED');
+      expect(result.error?.message ?? '').toContain(
+        scenario === 'stored' ? '' : scenario === 'store failure' ? 'disk full' : 'checkout here changed',
+      );
+      expect(compile).not.toHaveBeenCalled();
+      expect(slot).not.toHaveBeenCalled();
+      const report = readLastBuilds(readWorkspaceState(root)).android;
+      expect(report).toMatchObject({
+        buildMachine: 'mini',
+        builtOn: 'mini',
+        status: scenario === 'stored' ? 'ok' : 'failed',
+      });
+      expect(store).toHaveBeenCalledTimes(scenario === 'checkout changed' ? 0 : 1);
+    },
+  );
 });
