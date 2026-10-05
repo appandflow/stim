@@ -16,6 +16,8 @@ import {
   type StatusPayload,
 } from '@stim-cli/core/state';
 import { actionArgs, actionOutcome, appendAudit, loadAudit, parseAction, type AuditRecord } from './actions.ts';
+import { AgentDeviceDriver } from './agent-device-driver.ts';
+import { HostedAgentHost } from './agent-driver.ts';
 import { DeviceHost, type DeviceHostLimits } from './device-host.ts';
 import { HostedViews } from './hosted-view.ts';
 import { BuildHost, type BuildLimits, type BuildSession } from './build.ts';
@@ -529,6 +531,47 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     allowed: (client) =>
       readDeviceHostClients().some((entry) => entry.id === client && entry.capabilities.includes('device-host')),
   });
+  const agentDrivers = new HostedAgentHost({
+    resolve: () =>
+      loadConfig()?.hosting?.agentDriver === 'agent-device'
+        ? new AgentDeviceDriver({
+            env: options.env,
+            stateDir: join(serverDir(), 'agent-device'),
+            claimRoot: join(serverDir(), 'agent-device.claims'),
+          })
+        : null,
+    nodeOf: (client) => {
+      const identity = readDeviceHostClients().find(
+        (entry) => entry.id === client && entry.capabilities.includes('device-host'),
+      )?.identity;
+      return identity?.kind === 'tailnet' ? identity.nodeId : null;
+    },
+  });
+  const agentNodes = new Map<string, { node: string; until: number }>();
+  const agentLimiter = new FailureLimiter(30, options.failureWindowMs ?? 60_000);
+  async function answerAgent(request: IncomingMessage, response: ServerResponse, session: string): Promise<void> {
+    const peer = peerAddress(request);
+    const refuse = (status: number, text: string) =>
+      void response.writeHead(status, { 'content-type': 'text/plain' }).end(`${text}\n`);
+    if (!peer || !isIP(peer) || request.headers.origin !== undefined || request.headers['sec-fetch-site'] !== undefined)
+      return refuse(403, 'Forbidden.');
+    if (agentLimiter.blocked(peer)) return refuse(429, 'Too many attempts. Try again in a minute.');
+    const bearer = /^bearer (.+)$/i.exec(request.headers.authorization ?? '')?.[1];
+    const header = request.headers['x-agent-device-token'];
+    const token = bearer ?? (typeof header === 'string' ? header : null);
+    let known = agentNodes.get(peer);
+    if (!known || known.until < Date.now()) {
+      const identity = await whois(tailscaleNow().binary, options.env, peer);
+      if (identity?.kind !== 'tailnet') {
+        agentLimiter.record(peer);
+        return refuse(403, 'Forbidden.');
+      }
+      known = { node: identity.nodeId, until: Date.now() + 30_000 };
+      agentNodes.set(peer, known);
+      if (agentNodes.size > 256) agentNodes.delete(agentNodes.keys().next().value!);
+    }
+    if (agentDrivers.forward(session, token, known.node, request, response) === 'forbidden') agentLimiter.record(peer);
+  }
   const builds = new BuildHost({
     worker: join(dirname(options.stimCli), 'offload-worker.mjs'),
     env: options.env,
@@ -1905,6 +1948,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     for (const client of wss.clients) client.terminate();
     await control.close();
     await builds.close();
+    await agentDrivers.close();
     await hostedDevices.close();
     recorder?.close();
     await Promise.all([frames.close(), feeds.close(), ...[...running].map((cancel) => cancel()), cancelling.settled()]);
@@ -1926,6 +1970,14 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       ) {
         const peerHealth = { server: health.server, version: health.version, protocol: health.protocol };
         response.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify(peerHealth));
+        return;
+      }
+      const agent = /^\/device-host\/agent\/([a-f0-9-]{36})(?:[/?]|$)/.exec(request.url ?? '');
+      if (agent) {
+        answerAgent(request, response, agent[1]!).catch(() => {
+          if (response.headersSent) response.destroy();
+          else response.writeHead(500, { 'content-type': 'text/plain' }).end('Agent control failed.\n');
+        });
         return;
       }
       response.writeHead(426, { 'content-type': 'text/plain' }).end('stim-server speaks WebSocket only.\n');
