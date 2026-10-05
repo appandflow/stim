@@ -82,7 +82,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   func applicationDidFinishLaunching(_ notification: Notification) {
     // `swift run` starts a bare executable as a background process with no Dock icon or focus.
     NSApp.setActivationPolicy(.regular)
-    NSApp.activate(ignoringOtherApps: true)
+    if ProcessInfo.processInfo.environment["STIM_BACKGROUND_LAUNCH"] != "1" {
+      NSApp.activate(ignoringOtherApps: true)
+    }
     // AppKit exits on SIGTERM without posting willTerminateNotification, which would orphan stim-server
     // and the stim children the stores stop from that notification.
     signal(SIGTERM, SIG_IGN)

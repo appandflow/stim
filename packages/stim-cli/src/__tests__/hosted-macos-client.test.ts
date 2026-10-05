@@ -17,7 +17,9 @@ import { join } from 'node:path';
 import { Command } from 'commander';
 import { WebSocketServer } from 'ws';
 import { deviceHostMachinesFile, macosAppState, readMacosRecord, type MacosAppRecord } from '@stim-cli/core/state';
+import logsCommand from '../commands/logs.ts';
 import macosCommand, { runMacos } from '../commands/macos.ts';
+import { followHostedMacosLogs, syncHostedMacosLogs } from '../device-host/hosted-logs-sync.ts';
 import { agentRemoteConfig, probeHostedMacos, type HostedMacosProbe } from '../device-host/hosted-macos.ts';
 import { applyHostedMacosProbe, readHostedMacosStatus } from '../device-host/hosted-macos-status.ts';
 import { reclaimProject } from '../devices/reclaim.ts';
@@ -26,6 +28,7 @@ import { stopMacosApp } from '../macos/stop.ts';
 import { BuildConnection } from '../offload/client.ts';
 import { getConfigPath } from '../workspace/config.ts';
 import { workspaceInUse } from '../workspace/in-use.ts';
+import { workspaceLogsDir } from '../workspace/paths.ts';
 
 const tailnet = { port: 0, nodeId: 'nMini' };
 
@@ -64,6 +67,10 @@ interface FakeHost {
   capabilities: string[];
   grant: unknown;
   applyArguments: boolean;
+  logs: Record<string, unknown>[];
+  logPage: number;
+  logQueries: Record<string, unknown>[];
+  logsRefused: boolean;
   installed: { state: string; launched: true | 'unverified' | null; notice?: string };
   attachReply?: { state: string; notice?: string } | { error: { code: string; message: string } };
   silentMethods: Set<string>;
@@ -89,6 +96,10 @@ async function fakeHost(): Promise<FakeHost> {
     capabilities: ['device-host'],
     grant: { driver: 'none' },
     applyArguments: true,
+    logs: [],
+    logPage: 1000,
+    logQueries: [],
+    logsRefused: false,
     installed: { state: 'installed', launched: true },
     stopSession: () => void (session = { ...session, state: 'stopped' }),
     close: () => new Promise((done) => server.close(() => done())),
@@ -158,6 +169,18 @@ async function fakeHost(): Promise<FakeHost> {
         const size = files().find((file) => file.sha256 === params.sha256)!.size;
         if (bytes.length === size && sha256(bytes) === params.sha256) host.blobs.set(params.sha256, bytes);
         return reply({ offset: bytes.length });
+      }
+      if (method === 'device-host.logs.query') {
+        host.logQueries.push(params);
+        if (host.logsRefused)
+          return socket.send(JSON.stringify({ id, error: { code: 'forbidden', message: 'needs read access' } }));
+        const from = params.cursor?.['macos.ndjson'] ?? 0;
+        const to = Math.min(host.logs.length, from + host.logPage);
+        return reply({
+          records: host.logs.slice(from, to),
+          cursor: { 'macos.ndjson': to },
+          more: to < host.logs.length,
+        });
       }
       if (method === 'device-host.app.launch') return reply({ ...delivery, state: 'installing', launched: null });
       if (method === 'device-host.app.attach') return reply({ ...delivery, ...host.installed, agent: host.grant });
@@ -291,12 +314,23 @@ describe.skipIf(process.platform !== 'darwin')('stim macos --host (SwiftPM and c
     await host.close();
   });
 
-  test('places the bundle on the host, records the session, and stop ends it there', async () => {
+  test('delivers declared resources with the bundle, records the session, and stop ends it there', async () => {
     host.grant = GRANT;
     const args = ['-autopilot.enabled', 'true', ''];
+    writeFileSync(join(root, 'icon.icns'), 'icon bytes');
+    writeFileSync(join(root, 'font.woff2'), 'font bytes');
+    mkdirSync(join(root, 'branding'));
+    writeFileSync(join(root, 'branding', 'animation.json'), '{"frames":[]}');
     writeFileSync(
       join(root, '.stim.json'),
-      JSON.stringify({ macos: { product: 'Fixture', infoPlist: 'Info.plist', arguments: args } }),
+      JSON.stringify({
+        macos: {
+          product: 'Fixture',
+          infoPlist: 'Info.plist',
+          arguments: args,
+          resources: { 'AppIcon.icns': 'icon.icns', 'font.woff2': 'font.woff2', branding: 'branding' },
+        },
+      }),
     );
     const notes: string[] = [];
     const record = await runMacos(root, (line) => notes.push(line), 'mini');
@@ -313,6 +347,21 @@ describe.skipIf(process.platform !== 'darwin')('stim macos --host (SwiftPM and c
         expect.objectContaining({ path: 'Contents/Info.plist', kind: 'file' }),
         expect.objectContaining({ path: 'Contents/MacOS/Fixture', kind: 'exec', size: 70 * 1024 }),
         expect.objectContaining({ path: 'Contents/Frameworks/Fixture.framework/Fixture', kind: 'link' }),
+        expect.objectContaining({
+          path: 'Contents/Resources/AppIcon.icns',
+          kind: 'file',
+          sha256: sha256(Buffer.from('icon bytes')),
+        }),
+        expect.objectContaining({
+          path: 'Contents/Resources/font.woff2',
+          kind: 'file',
+          sha256: sha256(Buffer.from('font bytes')),
+        }),
+        expect.objectContaining({
+          path: 'Contents/Resources/branding/animation.json',
+          kind: 'file',
+          sha256: sha256(Buffer.from('{"frames":[]}')),
+        }),
       ]),
     );
     for (const file of manifest) expect(host.blobs.has(file.sha256)).toBe(true);
@@ -645,5 +694,116 @@ describe.skipIf(process.platform !== 'darwin')('stim macos --host (SwiftPM and c
     const removed = await reclaimProject(root, { deleteOwnedDevices: true });
     expect(host.methods).toContain('device-host.stop');
     expect(removed.failedDevices).toEqual([]);
+  });
+
+  describe('stim logs for a hosted app', () => {
+    const originalCwd = process.cwd();
+    const clientRecord = (n: number, level = 'info') => ({
+      ts: 1_000 + n,
+      src: 'client',
+      platform: 'macos',
+      level,
+      msg: `line ${n}`,
+    });
+    const messages = (lines: string[]) => lines.map((line) => JSON.parse(line).msg);
+
+    async function logs(args: string[]): Promise<{ out: string[]; err: string }> {
+      const out: string[] = [];
+      const log = vi.spyOn(console, 'log').mockImplementation((line: string) => void out.push(line));
+      const stderr = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+      process.chdir(root);
+      try {
+        const program = new Command();
+        logsCommand(program);
+        await program.parseAsync(['node', 'stim', 'logs', ...args]);
+        return { out, err: stderr.mock.calls.map(([line]) => String(line)).join('') };
+      } finally {
+        process.chdir(originalCwd);
+        log.mockRestore();
+        stderr.mockRestore();
+      }
+    }
+
+    test('copies each host record once, in pages, and picks up new ones on the next run', async () => {
+      await runMacos(root, () => {}, 'mini');
+      host.logPage = 2;
+      host.logs.push(clientRecord(1), clientRecord(2), clientRecord(3, 'error'));
+      const first = await logs(['--json', '--source', 'client']);
+      expect(messages(first.out)).toEqual(['line 1', 'line 2', 'line 3']);
+      expect(host.logQueries.map((query) => query.cursor)).toEqual([undefined, { 'macos.ndjson': 2 }]);
+      expect(first.err).toBe('');
+      host.logs.push(clientRecord(4));
+      const second = await logs(['--json', '--source', 'client']);
+      expect(messages(second.out)).toEqual(['line 1', 'line 2', 'line 3', 'line 4']);
+      expect(host.logQueries.at(-1)).toMatchObject({ cursor: { 'macos.ndjson': 3 } });
+      expect(messages((await logs(['--json', '--errors'])).out)).toEqual(['line 3']);
+    });
+
+    test('concurrent runs do not duplicate records', async () => {
+      await runMacos(root, () => {}, 'mini');
+      host.logs.push(clientRecord(1), clientRecord(2));
+      const placement = readMacosRecord(root)!.host!;
+      await Promise.all([syncHostedMacosLogs(root, placement), syncHostedMacosLogs(root, placement)]);
+      expect(messages((await logs(['--json', '--source', 'client'])).out)).toEqual(['line 1', 'line 2']);
+    });
+
+    test('a host that refuses costs a stderr warning, never stdout or the exit code', async () => {
+      await runMacos(root, () => {}, 'mini');
+      host.logsRefused = true;
+      const result = await logs(['--json', '--source', 'client']);
+      expect(result.out).toEqual([]);
+      expect(result.err).toContain('Could not read the app');
+      expect(result.err).toContain('needs read access');
+    });
+
+    test('follow keeps copying, warns once per outage and recovers', async () => {
+      await runMacos(root, () => {}, 'mini');
+      host.logs.push(clientRecord(1));
+      const stderr = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+      const stop = followHostedMacosLogs(root, { intervalMs: 10, retryMs: 10 });
+      try {
+        const copied = () => {
+          const file = join(workspaceLogsDir(root), 'macos-host.ndjson');
+          return existsSync(file) ? readFileSync(file, 'utf8').split('\n').filter(Boolean).length : 0;
+        };
+        await vi.waitFor(() => expect(copied()).toBe(1));
+        host.logsRefused = true;
+        await vi.waitFor(() => expect(stderr).toHaveBeenCalledTimes(1));
+        await new Promise((done) => setTimeout(done, 100));
+        expect(stderr).toHaveBeenCalledTimes(1);
+        host.logsRefused = false;
+        host.logs.push(clientRecord(2));
+        await vi.waitFor(() => expect(copied()).toBe(2));
+      } finally {
+        stop();
+        stderr.mockRestore();
+      }
+    });
+
+    test('stop copies the last records before it forgets the placement', async () => {
+      await runMacos(root, () => {}, 'mini');
+      host.logs.push(clientRecord(1), clientRecord(2, 'error'));
+      await stopMacosApp(root);
+      expect(host.methods.lastIndexOf('device-host.logs.query')).toBeGreaterThan(
+        host.methods.indexOf('device-host.stop'),
+      );
+      expect(readMacosRecord(root)?.host).toBeUndefined();
+      const after = await logs(['--json', '--source', 'client']);
+      expect(messages(after.out)).toEqual(['line 1', 'line 2']);
+      expect(host.logQueries).toHaveLength(1);
+    });
+
+    test('a host that cannot return the final logs does not block stop', async () => {
+      await runMacos(root, () => {}, 'mini');
+      host.logsRefused = true;
+      const stderr = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+      try {
+        await stopMacosApp(root);
+        expect(stderr.mock.calls.join('')).toContain('Could not copy the final logs from mini');
+      } finally {
+        stderr.mockRestore();
+      }
+      expect(readMacosRecord(root)?.host).toBeUndefined();
+    });
   });
 });

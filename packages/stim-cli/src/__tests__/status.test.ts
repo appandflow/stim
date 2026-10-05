@@ -395,21 +395,12 @@ function writeState(
   writeFileSync(workspaceStateFile(root), JSON.stringify({ supervisor }));
 }
 
-test('status reports a supervisor whose port answers as this project as healthy', async ({ skip }) => {
+test('status reports a supervisor whose port answers as this project as healthy', async () => {
   const root = mkdtempSync(join(tmpdir(), 'stim-proj-'));
   const server = createServer((_req, res) => res.end('packager-status:running'));
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', () => resolve()));
+  const port = (server.address() as AddressInfo).port;
   try {
-    await new Promise<void>((resolve, reject) => {
-      server.once('error', reject);
-      server.listen(0, '127.0.0.1', () => {
-        server.removeListener('error', reject);
-        resolve();
-      });
-    }).catch((error: NodeJS.ErrnoException) => {
-      if (error.code === 'EPERM' || error.code === 'EACCES') skip(`Loopback binding unavailable: ${error.message}`);
-      throw error;
-    });
-    const port = (server.address() as AddressInfo).port;
     const listenerPid = 999999901;
     setExecutor({
       run: () => '',
@@ -468,7 +459,7 @@ test('status reports a supervisor whose port answers as this project as healthy'
     expect(env.logs.dir).toBe(workspaceLogsDir(root));
     expect(env.warnings).toEqual([]);
   } finally {
-    if (server.listening) await new Promise((resolve) => server.close(resolve));
+    await new Promise((resolve) => server.close(resolve));
     rmSync(root, { recursive: true, force: true });
   }
 });

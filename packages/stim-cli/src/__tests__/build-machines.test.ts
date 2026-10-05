@@ -155,7 +155,7 @@ describe('inspectBuildMachines', () => {
       { code: 'build-machine-busy', level: 'note' },
     ]);
     expect(findings[0]!.detail).toContain('6bbe there, e774 here');
-    expect(findings[0]!.fix).toContain('Update Stim on mini');
+    expect(findings[0]!.fix).toContain('run `stim-server service update --release <version>`');
 
     const ready = await inspectBuildMachines(
       { fix: false, check: () => Promise.resolve({ capacity: null, problems: [] }) },

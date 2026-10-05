@@ -22,7 +22,7 @@ stim-server devices grant <id> --control|--read|--build|--device-host
                                   # --build approves builds; --device-host approves device hosting
 stim-server devices revoke <id>   # revoke a paired device or client, or deny a request
 stim-server log                   # list the actions paired devices ran
-stim-server service install|status|uninstall
+stim-server service install|status|update|rollback|uninstall
                                   # run stim-server as a macOS LaunchAgent, see below
 ```
 
@@ -40,8 +40,12 @@ pending record without `requestedCapability` is a build request.
 [Actions](#actions).
 
 `GET http://127.0.0.1:7787/health` answers requests from this Mac with the
-server's name, versions, protocol, `stimHome`, and the current
-Tailscale state. While Tailscale runs, it also carries `route`, read from
+server's name, versions, `stimBuild` (the digest of the bundled Stim's build,
+which offload compares between Macs), protocol, `stimHome`, `startup`, `busy`
+(the offloaded `builds` and `hostedSessions` running now) and the current
+Tailscale state. It answers HTTP 200 once `startup.state` is `ready`; while the
+state is `pending` or `degraded` (see the LaunchAgent notes below) it answers
+HTTP 503 with the same body. While Tailscale runs, it also carries `route`, read from
 `tailscale serve status --json` on each request: `routed` with the HTTPS
 `port` that proxies to the server, `funneled` with the Funnel `ports` that do,
 `missing`, or `unknown` with a `reason`; the last three carry the `port` the
@@ -535,6 +539,17 @@ reports the app's pid, `DeviceHost` registers the running app with the agent
 driver before the receipt reads `installed`, and ends that registration when the
 session stops, is revoked or the server closes.
 
+`device-host.logs.query` with `{session, cursor?}` returns `{records, cursor, more}`:
+the NDJSON records the session's macOS app wrote to its captured log (stdout and
+stderr as `client` records, and its exit). `cursor` maps each log file name to the
+byte offset after the last complete line read; pass the previous result's cursor to
+receive only newer records, and repeat while `more` is true. Without a cursor, each
+file starts at most 4 MiB before its end. A page holds at most 1 MiB; a file that
+rotated since the cursor is read from the end of its previous generation. The
+session's own client only, for macOS sessions, and also after the session stopped,
+because stop keeps logs. Servers that predate it answer `forbidden` or
+`unknown-method`.
+
 macOS sessions refuse Metro. Viewing and control are supported while the hosted
 app is running. CLI placement and client view/control relays remain follow-ups in [#2403](https://github.com/appandflow/stim/issues/2403).
 
@@ -581,8 +596,21 @@ client iOS view/control relays and Android Metro/viewing remain in [#2266](https
 The client's stim-server relays a hosted workspace's macOS view and input to
 its host using the client's approved device-host credential over the pinned
 tailnet connection. Stim Desktop and phones keep talking only to their own
-server. The `macos-hosted` feature advertises this relay. Hosted frames and
-control reject `physical`, a non-default slot, and replay (`at`/`rate`).
+server. The `macos-hosted` feature advertises this relay. All of the client's
+relayed subscriptions and control sessions for one host share one connection,
+whichever local client opened them. Each request still checks the credential
+and the pinned node; a changed credential or endpoint opens a new connection.
+Ending a subscription or session sends `device-host.unsubscribe` or
+`device-host.control.end`, and the connection closes when the last one ends.
+The host's per-connection limits, such as its 32 subscriptions and input
+budgets, therefore apply to all of the client's relayed use of that host.
+While a local client is behind on a relayed H.264 subscription, the relay drops
+its packets until the next keyframe and, when the host advertises the
+`hosted-congestion` feature, sends `device-host.frames.congested` at most every
+250 ms, so the host lowers that app's bitrate as it does for a local subscriber
+whose socket backs up.
+Hosted frames and control reject `physical`, a non-default slot, and replay
+(`at`/`rate`).
 `control.begin` still needs the local `control` grant. Screen Recording for
 viewing and Accessibility for control are granted on the host, not the client.
 
@@ -602,8 +630,12 @@ workspaces:
 
 The result contains a subscription ID. JPEG delivery uses the existing `frame`
 events; `video: ["h264"]` selects the existing H.264 binary stream and its
-backpressure/keyframe rules. `device-host.frames.keyframe` and
-`device-host.unsubscribe` take that subscription ID as `params.subscription`.
+backpressure/keyframe rules. `device-host.frames.keyframe`,
+`device-host.frames.congested` and `device-host.unsubscribe` take that
+subscription ID as `params.subscription`. `device-host.frames.congested`
+(feature `hosted-congestion`) reports that a client further downstream is
+behind on that H.264 subscription; it lowers the bitrate the same way a backed-up
+socket does.
 Hosted capture requires the compiled `stim-frames` helper and does not support
 replay, device artwork or screenshot fallback. macOS frames show only the one
 window of the hosted app. Viewing is refused before launch and after the app
@@ -656,6 +688,8 @@ terminal:
 stim-server service install [--port <n>] [--label <name>] [--serve]
                             [--env KEY=VALUE]... [--path-prepend <dir>]...
 stim-server service status [--label <name>] [--json]
+stim-server service update [--label <name>] --release <version>|--from <dir>
+stim-server service rollback [--label <name>]
 stim-server service uninstall [--label <name>]
 ```
 
@@ -673,10 +707,11 @@ the old plist and job back. `install` and `uninstall` act only on a plist
 that `install` wrote, and refuse a port that another stim-server (Stim
 Desktop's, for example) already answers on. Install from a permanent
 installation, not from an `npx` cache, because the plist stores its paths. It never touches pairings, anything
-under `$STIM_HOME/server` or settings. `install` waits up to 15 seconds for
-`/health`; an installed LaunchAgent without a health response reports readiness
-as unavailable and points to `status` and its log. Installation success alone
-does not prove that the server is ready.
+under `$STIM_HOME/server` or settings. `install` waits up to 15 seconds for a
+`/health` answer that is no longer `pending`. An installed LaunchAgent with no
+answer reports readiness as unavailable, and one that answers `degraded` reports
+the reason; both point to `status` and its log. Installation success alone does
+not prove that the server is ready.
 
 Install downloads the Stim Host release this package pins from the
 `host-v<version>` GitHub release, checks the pinned SHA-256 and App & Flow's
@@ -699,14 +734,26 @@ on macOS 26 and earlier). Stim never changes these settings itself. Servers
 launched by Stim Desktop keep Desktop's grants. For an older node-first service,
 run `stim-server service install` again to use Stim Host.
 
-Before starting status followers, native helpers or recording, the server checks
-the recording ownership directories in a read-only child process. A directory
-read that does not return fails startup after 10 seconds, plus up to one second
-to stop the child. Returned filesystem errors still go through the recorder's
-existing claim refusal; missing directories are created by that protocol.
-This diagnostic preserves claims and recordings. It does not restore an
-inaccessible volume or change the server's permissions. Loss of filesystem
-access after the check still needs an operating-system access remedy.
+The server binds its port before it touches the Stim home. It then reads the
+Stim home, its `server` and `workspaces` directories and the recording
+ownership directories in a read-only child process, so a read that never
+returns, such as one on a stalled external volume, cannot block the server's
+event loop. Until that read returns, `/health` answers HTTP 503 with
+`startup: { "state": "pending" }`, WebSocket upgrades and device-host agent
+requests get 503, and no status follower, native helper, file watcher or
+recorder starts. A read that does not return within 10 seconds, plus up to one
+second to stop the child, leaves the server listening with
+`startup: { "state": "degraded", "reason": "..." }` and HTTP 503 on `/health`,
+logs the reason once, and reads again every 30 seconds. When a read returns,
+the server starts its watchers and recorder, `/health` answers 200 with
+`startup: { "state": "ready" }`, and no restart is needed. `service status`
+prints `health: degraded` or `health: starting` and the reason, and `service
+install` reports a listening but degraded server instead of success. Returned
+filesystem errors still go through the recorder's existing claim refusal;
+missing directories are created by that protocol. The check preserves claims and
+recordings. It does not restore an inaccessible volume or change the server's
+permissions, and a stall that starts after the check passes still blocks the
+server until the operating system returns.
 
 The job runs in your GUI login session, so it starts when you log in and not at
 boot. On a Mac with no one at the screen, turn on automatic login. Moving the
@@ -744,8 +791,35 @@ next to the `stim` on PATH. Offload needs the same digest on the client, so a
 mismatch there is not an offload match either. `--json` prints the same fields
 as one object.
 
-`uninstall` boots the job out, removes the plist and, when `install` created it,
-the serve route. Logs, pairings and the host app stay; other labels may use the app. Use `--label` and `--port` to run a
+`update` installs another stim-server beside the one the job runs and switches
+the job to it. `--release <version>` takes an exact version from the public npm
+registry (`https://registry.npmjs.org/`, never a registry `.npmrc` names), and
+npm checks each package against the registry's integrity. `--from <dir>`
+installs the `.tgz` packages in that directory, such as `pnpm pack` output of
+the `@stim-cli/core`, `@stim-cli/cache`, `@stim-cli/metro`, `stim` and
+`@stim-cli/server` packages of a checkout, and records each file's sha256.
+Either way, `npm audit signatures` must verify the registry signature of every
+package that came from the registry, and the provenance attestation of each one
+that has it, or the update stops before it touches the job. Install scripts
+never run. Each install goes to
+`~/Library/Application Support/Stim/services/<label>/versions/`, in a directory
+named by its version, Stim build and server code, and must start with the job's
+`node` before the switch. `update` then waits up to 30 minutes for `/health` to
+report no offloaded build and no hosted session (a server older than `busy` in
+`/health` restarts without waiting), rewrites only the server script in the
+plist (recording the previous one), restarts the job and waits up to 90 seconds
+for `/health` to answer with the new version and Stim build. When it does not,
+`update` puts the previous plist back and restarts it. Interrupt signals wait
+for the switch to finish. A second update to the same build reuses its
+directory, and after a switch `update` removes the installs neither the current
+nor the previous script uses. `rollback` switches the job back to the previous
+script under the same checks, and running it again returns to the newer one.
+Neither touches the node, the host app, the `--env` and `--path-prepend` pins,
+pairings, approvals, `$STIM_HOME` or the serve route. Install, update, rollback
+and uninstall of one label run one at a time.
+
+`uninstall` boots the job out, removes the plist, the servers `update`
+installed and, when `install` created it, the serve route. Logs, pairings and the host app stay; other labels may use the app. Use `--label` and `--port` to run a
 second service beside the first, for example with another `STIM_HOME`.
 
 To set up a build machine: install Stim and stim-server on the Mac, run
@@ -828,11 +902,16 @@ closes its connections and cancels its builds.
   checks every minute and on each change under its server directory. A daemon
   whose Gradle home is deleted stops itself within seconds, because Gradle
   expires a daemon whose registry file is gone.
-  A macOS request supplies `macos: { product, infoPlist, bundleId }`, omitting
-  runtime, configuration, scheme, packageName, isExpo, optimizations and android.
+  A macOS request supplies `macos: { product, infoPlist, bundleId }` and
+  optionally `resources` (up to 256 destination-to-source entries) and
+  `assetCatalog` (a string or null), omitting runtime, configuration, scheme, packageName, isExpo, optimizations and android.
   Product matches `^[A-Za-z0-9_.-]{1,100}$`; infoPlist is a valid relative build
   path within the project; bundleId matches `^[A-Za-z0-9][A-Za-z0-9.-]{0,199}$`.
-  Missing or malformed options get `bad-request`. Its fingerprint is sha256 of
+  Each `resources` destination must be a contained path under
+  `Contents/Resources` (no empty, `.` or `..` segments, no backslash, at most
+  1024 characters) and each source, like `assetCatalog`, a valid build path
+  relative to the repository root, not the project. Missing or malformed
+  options get `bad-request`. Its fingerprint is sha256 of
   every manifest entry sorted by path, encoded as `path NUL kind NUL sha256 LF`.
   The worker recomputes it before building and refuses a mismatch. It skips
   JavaScript installation, prebuild, pods and project fingerprinting. It runs
@@ -844,7 +923,10 @@ closes its connections and cancels its builds.
   process group so cancellation stops it. A failed Swift command reports
   `swift-failed` with the first error or last three output lines. The worker
   stages the executable, frameworks and resource bundles in
-  `out/<job>/<Product>.app`, stamps the requested bundle ID and signs ad hoc.
+  `out/<job>/<Product>.app`, copies each declared resource from its checkout
+  (refusing a source whose realpath leaves it), compiles `assetCatalog` with
+  `xcrun actool`, stamps the requested bundle ID and signs ad hoc. A bad
+  resource entry also reports `swift-failed`, before Swift runs.
   It returns that app as a tar archive, its manifest fingerprint, timings and
   `compilationCache: {}`. The client verifies the digest, identity, executable
   and signature before promotion and launches locally. Every offload failure
@@ -1006,8 +1088,9 @@ Events are `{ "event", "subscription", ... }`.
   when the app has no open window at start; after the app closes its last window
   the subscription gets `frame-delayed` until another opens. When hello
   advertises `macos-windows`, the subscription also gets
-  `{ event: "macos-windows", subscription, current, windows }` after it starts and
-  whenever the windows change: `current` is the captured window or null, and
+  `{ event: "macos-windows", subscription, current, windows, pinned }` after it
+  starts and whenever the windows or the pin change: `current` is the captured
+  window or null, `pinned` says whether `input.window` holds the view on it, and
   `windows` lists the app's on-screen standard windows front to back, each
   `{ id, title, frame: { x, y, width, height } }` in points with a top-left global
   origin. A hosted app's relay forwards the event with the local subscription. It requires existing Screen & System Audio Recording permission (Screen Recording on macOS 14) and
@@ -1624,7 +1707,8 @@ sends reaches any other device.
   because CLI device locks do not cover macOS apps. Existing Device Control and
   Data Access permission (Accessibility on macOS 26 and earlier) is required, without permission requests or resets. Before each
   action the helper verifies PID/start time/executable/bundle and that the
-  captured window ID and size are still the app's front standard window. The app's
+  captured window ID and size are still the app's front standard window, or the
+  window `input.window` pinned. The app's
   other windows are allowed. A modal dialog window and changed ownership refuse
   input. Input that arrives while capture moves to another window is dropped with a
   logged reason and Control continues. A sheet attached to the captured window
@@ -1633,14 +1717,29 @@ sends reaches any other device.
   posted only to that PID; the desktop and other apps receive no input.
   `input.touch` maps normalized captured-window coordinates to mouse events.
   `input.scroll` takes normalized `x`, `y` and `deltaX`, `deltaY` in pixels,
-  each from -1000 to 1000. `input.key` accepts Escape, Tab, Return, Backspace,
+  each from -1000 to 1000. When hello advertises `macos-window-select`,
+  `input.window` takes `window`, an id from the `macos-windows` event, to pin the
+  view and input to that window of the app: the helper verifies it is one of the
+  app's on-screen standard windows, makes it the app's main window and raises it
+  among the app's windows without activating the app, and capture stays on it
+  while another window comes to the front.
+  `window: null` follows the front window again. A pin also ends when its window
+  closes or leaves the screen, or when the Control session that set it ends,
+  including takeover, disconnect and the idle timeout. A window that is gone by
+  then, or a modal dialog in the app, drops the input with a logged reason
+  without ending Control. The hosted relay forwards it as `device-host.input.window`.
+  `input.key` accepts Escape, Tab, Return, Backspace,
   arrows or `a-z` and `0-9`, with unique optional `command/shift/option/control`
   modifiers. Hello advertises `macos-keyboard-extended` for the expanded keys;
   older servers accept only `a/c/v/x/z/s/f` plus navigation. Letter and digit
-  key events require the owned app's selected U.S. or ABC input source because
-  Apple ANSI key codes identify physical U.S. positions. The helper focuses
-  the app and waits up to one second for activation before checking its layout;
-  unavailable activation and other layouts are refused with a specific reason. `input.text` retains the printable ASCII contract,
+  key events require the Mac's selected U.S. or ABC input source because
+  Apple ANSI key codes identify physical U.S. positions; other layouts are refused with a specific reason.
+  The helper posts input to the owned process without activating it or raising its window,
+  except that `input.window` raises the window it pins among the app's windows.
+  Only when the captured window is not the app's key window does it activate the app (waiting up to one
+  second for focus) and send a `controlActivated` notice, which stim-server logs. Clicks on views that
+  reject the first mouse, such as custom views and SwiftUI `onTapGesture` regions, do not land while the app
+  is in the background. `input.text` retains the printable ASCII contract,
   and navigation keys do not depend on that host layout. Native windows
   reject simulator buttons, rotation and posture. The helper dynamically resolves
   private CoreGraphics `CGEventSetWindowLocation` to annotate PID-targeted pointer

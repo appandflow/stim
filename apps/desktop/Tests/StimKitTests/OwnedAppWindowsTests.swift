@@ -92,6 +92,21 @@ import Testing
         screen: [.init(id: 6, layer: 0, frame: sheet, title: "Inspector")], accessible: [minimizedMain]) == nil)
   }
 
+  @Test func aPinnedWindowStaysCurrentUntilItCloses() {
+    let main = OwnedAppWindows.Window(id: 1, title: "Main", frame: big, accessible: 0)
+    let tools = OwnedAppWindows.Window(id: 2, title: "Tools", frame: settings, accessible: 1)
+    let toolsOnScreen = OwnedAppWindows.Screen(id: 2, layer: 0, frame: settings, title: "Tools")
+    let pinned = OwnedAppWindows.pin(.init(current: main, windows: [main, tools]), to: 2, screen: [toolsOnScreen])
+    #expect(pinned.selection.current == tools)
+    #expect(pinned.pinned == 2)
+    let unmatched = OwnedAppWindows.pin(.init(current: main, windows: [main]), to: 2, screen: [toolsOnScreen])
+    #expect(unmatched.selection.current == .init(id: 2, title: "Tools", frame: settings, accessible: nil))
+    #expect(unmatched.pinned == 2)
+    let closed = OwnedAppWindows.pin(.init(current: main, windows: [main]), to: 2, screen: [])
+    #expect(closed.selection.current == main)
+    #expect(closed.pinned == nil)
+  }
+
   @Test func withoutAccessibilityNeedsOneWindowContainingTheOthers() {
     let main = OwnedAppWindows.Screen(id: 1, layer: 0, frame: big, title: "Main")
     let withSheet = OwnedAppWindows.single(screen: [.init(id: 9, layer: 0, frame: sheet, title: ""), main])

@@ -409,15 +409,19 @@ receive it through a JavaScript update. A server advertising
 Older servers retain fixed shortcuts and navigation but reject other modified
 letters; the phone explains that requirement. Modified symbols and
 multi-character input are unsupported. Letter and digit shortcuts require the
-owned app's selected **U.S. or ABC** layout because native key codes represent
-physical U.S. positions. The helper focuses the app and waits up to one second
-for activation before checking its layout; it refuses unavailable activation
-or other layouts. Ordinary typing and
+Mac's selected **U.S. or ABC** layout because native key codes represent
+physical U.S. positions; other layouts are refused. Control does not bring the
+app to the front. Ordinary typing and
 navigation remain available. [#2422](https://github.com/appandflow/stim/issues/2422) tracks logical mapping for
 other host layouts.
 
+With `macos-window-select`, Control adds a **Window** toolbar menu when the app has
+more than one window: **Follow front window**, or a window by title, which pins the
+view and input to that window (`input.window`) until it closes, Control ends (including the idle timeout) or the
+menu follows the front window again.
+
 Each action verifies the same owned process and that the captured
-window is still the app's front standard window. The app's other windows are allowed;
+window is still the app's front standard window, or the window Control pinned. The app's other windows are allowed;
 input that arrives while the view moves to another window is dropped and Control
 continues. A modal dialog window refuses input. A sheet attached to the captured
 window takes focus and pointer input. A sheet larger than the captured window is not
@@ -831,6 +835,8 @@ do not load core's Node-only root or state readers.
 errors before the connection publishes them to screens. Invalid payloads close
 the connection and trigger a retry without logging the payload. Unknown future
 events and additional compatible fields remain accepted.
+
+Display enums accept open strings, and unknown values show neutral information or are skipped when unsupported.
 
 After changing the contracts, run `pnpm run rpc:generate` at the repository
 root. `pnpm run rpc:check` verifies the generated validators in CI.

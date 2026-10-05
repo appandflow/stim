@@ -1,0 +1,462 @@
+{
+  "cases": [
+    {
+      "name": "a single app in a linked worktree keeps platform labels only",
+      "input": {
+        "now": "2026-10-05T12:00:00.000Z",
+        "path": "/w/one/apps/mobile",
+        "environments": [
+          {
+            "path": "/w/one/apps/mobile",
+            "live": true,
+            "warnings": [],
+            "worktree": {
+              "path": "/w/one"
+            },
+            "stage": {
+              "kind": "running",
+              "since": "2026-10-05T11:00:00.000Z",
+              "platform": null,
+              "closedApps": []
+            }
+          }
+        ],
+        "entries": [
+          {
+            "path": "/w/one/apps/mobile",
+            "platform": "ios"
+          },
+          {
+            "path": "/w/one/apps/mobile",
+            "platform": "android"
+          }
+        ]
+      },
+      "expected": {
+        "apps": ["/w/one/apps/mobile"],
+        "projects": ["apps/mobile"],
+        "lead": "/w/one/apps/mobile",
+        "subtitles": [null, null],
+        "appLabels": ["iOS \u00b7 Android"]
+      }
+    },
+    {
+      "name": "apps sharing a worktree join in path order and other checkouts stay out",
+      "input": {
+        "now": "2026-10-05T12:00:00.000Z",
+        "path": "/w/wt/apps/desktop",
+        "environments": [
+          {
+            "path": "/w/wt/apps/mobile",
+            "live": true,
+            "warnings": [],
+            "worktree": {
+              "path": "/w/wt"
+            },
+            "stage": {
+              "kind": "running",
+              "since": "2026-10-05T11:00:00.000Z",
+              "platform": null,
+              "closedApps": [
+                {
+                  "platform": "ios",
+                  "slot": "default"
+                }
+              ]
+            }
+          },
+          {
+            "path": "/w/other/apps/mobile",
+            "live": false,
+            "warnings": [],
+            "worktree": {
+              "path": "/w/other"
+            },
+            "stage": {
+              "kind": "building",
+              "since": "2026-10-05T11:00:00.000Z",
+              "platform": "ios",
+              "closedApps": []
+            }
+          },
+          {
+            "path": "/w/wt/apps/desktop",
+            "live": true,
+            "warnings": [],
+            "worktree": {
+              "path": "/w/wt"
+            },
+            "stage": {
+              "kind": "running",
+              "since": "2026-10-05T11:00:00.000Z",
+              "platform": "macos",
+              "closedApps": []
+            }
+          }
+        ],
+        "entries": [
+          {
+            "path": "/w/wt/apps/mobile",
+            "platform": "ios"
+          },
+          {
+            "path": "/w/wt/apps/mobile",
+            "platform": "android"
+          },
+          {
+            "path": "/w/wt/apps/desktop",
+            "platform": "macos"
+          },
+          {
+            "path": "/w/wt/apps/mobile",
+            "platform": "web"
+          }
+        ]
+      },
+      "expected": {
+        "apps": ["/w/wt/apps/desktop", "/w/wt/apps/mobile"],
+        "projects": ["apps/desktop", "apps/mobile"],
+        "lead": "/w/wt/apps/mobile",
+        "subtitles": [null, null, null, null],
+        "appLabels": ["macOS", "iOS \u00b7 Android \u00b7 Web"]
+      }
+    },
+    {
+      "name": "a platform two apps share names each project",
+      "input": {
+        "now": "2026-10-05T12:00:00.000Z",
+        "path": "/w/wt/apps/b",
+        "environments": [
+          {
+            "path": "/w/wt/apps/b",
+            "live": false,
+            "warnings": [],
+            "worktree": {
+              "path": "/w/wt"
+            },
+            "stage": {
+              "kind": "ready",
+              "since": "2026-10-05T11:00:00.000Z",
+              "platform": null,
+              "closedApps": []
+            }
+          },
+          {
+            "path": "/w/wt/apps/a",
+            "live": false,
+            "warnings": [],
+            "worktree": {
+              "path": "/w/wt"
+            },
+            "stage": {
+              "kind": "ready",
+              "since": "2026-10-05T11:00:00.000Z",
+              "platform": null,
+              "closedApps": []
+            }
+          }
+        ],
+        "entries": [
+          {
+            "path": "/w/wt/apps/a",
+            "platform": "ios"
+          },
+          {
+            "path": "/w/wt/apps/b",
+            "platform": "ios"
+          },
+          {
+            "path": "/w/wt/apps/a",
+            "platform": "android"
+          }
+        ]
+      },
+      "expected": {
+        "apps": ["/w/wt/apps/a", "/w/wt/apps/b"],
+        "projects": ["apps/a", "apps/b"],
+        "lead": "/w/wt/apps/a",
+        "subtitles": ["apps/a", "apps/b", null],
+        "appLabels": ["iOS \u00b7 Android", "iOS"]
+      }
+    },
+    {
+      "name": "apps with the same platforms fall back to their project",
+      "input": {
+        "now": "2026-10-05T12:00:00.000Z",
+        "path": "/w/wt/apps/a",
+        "environments": [
+          {
+            "path": "/w/wt/apps/a",
+            "live": false,
+            "warnings": [],
+            "worktree": {
+              "path": "/w/wt"
+            },
+            "stage": {
+              "kind": "stopped",
+              "since": "2026-10-05T11:00:00.000Z",
+              "platform": null,
+              "closedApps": []
+            }
+          },
+          {
+            "path": "/w/wt/apps/b",
+            "live": false,
+            "warnings": [],
+            "worktree": {
+              "path": "/w/wt"
+            },
+            "stage": {
+              "kind": "stopped",
+              "since": "2026-10-05T11:00:00.000Z",
+              "platform": null,
+              "closedApps": []
+            }
+          }
+        ],
+        "entries": [
+          {
+            "path": "/w/wt/apps/a",
+            "platform": "ios"
+          },
+          {
+            "path": "/w/wt/apps/b",
+            "platform": "ios"
+          }
+        ]
+      },
+      "expected": {
+        "apps": ["/w/wt/apps/a", "/w/wt/apps/b"],
+        "projects": ["apps/a", "apps/b"],
+        "lead": "/w/wt/apps/a",
+        "subtitles": ["apps/a", "apps/b"],
+        "appLabels": ["iOS \u00b7 apps/a", "iOS \u00b7 apps/b"]
+      }
+    },
+    {
+      "name": "an app with no platform yet is named by its project",
+      "input": {
+        "now": "2026-10-05T12:00:00.000Z",
+        "path": "/w/wt/apps/a",
+        "environments": [
+          {
+            "path": "/w/wt/apps/a",
+            "live": false,
+            "warnings": [],
+            "worktree": {
+              "path": "/w/wt"
+            },
+            "stage": {
+              "kind": "warming",
+              "since": "2026-10-05T11:00:00.000Z",
+              "platform": null,
+              "closedApps": []
+            }
+          },
+          {
+            "path": "/w/wt/apps/b",
+            "live": false,
+            "warnings": [],
+            "worktree": {
+              "path": "/w/wt"
+            },
+            "stage": {
+              "kind": "ready",
+              "since": "2026-10-05T11:00:00.000Z",
+              "platform": null,
+              "closedApps": []
+            }
+          }
+        ],
+        "entries": [
+          {
+            "path": "/w/wt/apps/b",
+            "platform": "android"
+          }
+        ]
+      },
+      "expected": {
+        "apps": ["/w/wt/apps/a", "/w/wt/apps/b"],
+        "projects": ["apps/a", "apps/b"],
+        "lead": "/w/wt/apps/a",
+        "subtitles": [null],
+        "appLabels": ["apps/a", "Android"]
+      }
+    },
+    {
+      "name": "workspaces without a linked worktree stay alone",
+      "input": {
+        "now": "2026-10-05T12:00:00.000Z",
+        "path": "/repo/apps/mobile",
+        "environments": [
+          {
+            "path": "/repo/apps/mobile",
+            "live": true,
+            "warnings": [],
+            "stage": {
+              "kind": "running",
+              "since": "2026-10-05T11:00:00.000Z",
+              "platform": null,
+              "closedApps": []
+            }
+          },
+          {
+            "path": "/repo/apps/web",
+            "live": true,
+            "warnings": [],
+            "stage": {
+              "kind": "running",
+              "since": "2026-10-05T11:00:00.000Z",
+              "platform": null,
+              "closedApps": []
+            }
+          }
+        ],
+        "entries": [
+          {
+            "path": "/repo/apps/mobile",
+            "platform": "ios"
+          }
+        ]
+      },
+      "expected": {
+        "apps": ["/repo/apps/mobile"],
+        "projects": ["mobile"],
+        "lead": "/repo/apps/mobile",
+        "subtitles": [null],
+        "appLabels": ["iOS"]
+      }
+    },
+    {
+      "name": "an app at the worktree root joins one in a folder and a nested checkout stays out",
+      "input": {
+        "now": "2026-10-05T12:00:00.000Z",
+        "path": "/w/root/packages/app",
+        "environments": [
+          {
+            "path": "/w/root/packages/app",
+            "live": false,
+            "warnings": [],
+            "worktree": {
+              "path": "/w/root"
+            },
+            "stage": {
+              "kind": "ready",
+              "since": "2026-10-05T11:00:00.000Z",
+              "platform": null,
+              "closedApps": []
+            }
+          },
+          {
+            "path": "/w/root",
+            "live": false,
+            "warnings": [],
+            "worktree": {
+              "path": "/w/root"
+            },
+            "stage": {
+              "kind": "building",
+              "since": "2026-10-05T11:00:00.000Z",
+              "platform": "android",
+              "closedApps": []
+            }
+          },
+          {
+            "path": "/w/root/.worktrees/feat",
+            "live": false,
+            "warnings": [],
+            "worktree": {
+              "path": "/w/root/.worktrees/feat"
+            },
+            "stage": {
+              "kind": "build-failed",
+              "since": "2026-10-05T11:00:00.000Z",
+              "platform": "ios",
+              "closedApps": []
+            }
+          }
+        ],
+        "entries": [
+          {
+            "path": "/w/root",
+            "platform": "android"
+          },
+          {
+            "path": "/w/root/packages/app",
+            "platform": "android"
+          }
+        ]
+      },
+      "expected": {
+        "apps": ["/w/root", "/w/root/packages/app"],
+        "projects": ["root", "packages/app"],
+        "lead": "/w/root",
+        "subtitles": ["root", "packages/app"],
+        "appLabels": ["Android \u00b7 root", "Android \u00b7 packages/app"]
+      }
+    },
+    {
+      "name": "the lead is the most urgent stage, the first app on a tie",
+      "input": {
+        "now": "2026-10-05T12:00:00.000Z",
+        "path": "/w/wt/apps/c",
+        "environments": [
+          {
+            "path": "/w/wt/apps/c",
+            "live": false,
+            "warnings": [],
+            "worktree": {
+              "path": "/w/wt"
+            },
+            "stage": {
+              "kind": "build-failed",
+              "since": "2026-10-05T11:00:00.000Z",
+              "platform": "ios",
+              "closedApps": []
+            }
+          },
+          {
+            "path": "/w/wt/apps/a",
+            "live": true,
+            "warnings": [],
+            "worktree": {
+              "path": "/w/wt"
+            },
+            "stage": {
+              "kind": "running",
+              "since": "2026-10-05T11:00:00.000Z",
+              "platform": null,
+              "closedApps": []
+            }
+          },
+          {
+            "path": "/w/wt/apps/b",
+            "live": true,
+            "warnings": [],
+            "worktree": {
+              "path": "/w/wt"
+            },
+            "stage": {
+              "kind": "running",
+              "since": "2026-10-05T11:00:00.000Z",
+              "platform": null,
+              "closedApps": []
+            },
+            "logs": {
+              "dir": "/l",
+              "errorsSinceMarker": 2
+            }
+          }
+        ],
+        "entries": []
+      },
+      "expected": {
+        "apps": ["/w/wt/apps/a", "/w/wt/apps/b", "/w/wt/apps/c"],
+        "projects": ["apps/a", "apps/b", "apps/c"],
+        "lead": "/w/wt/apps/b",
+        "subtitles": [],
+        "appLabels": ["apps/a", "apps/b", "apps/c"]
+      }
+    }
+  ]
+}

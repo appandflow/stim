@@ -18,7 +18,25 @@ The plist must contain CFBundleIdentifier and CFBundleExecutable matching the
 product. Use a development plist without shared URL schemes or an update feed.
 Stim gives the copied bundle a workspace-specific identifier. SwiftPM resource
 bundles and frameworks in the reported build directory are copied into it;
-extra app assets and custom packaging scripts are not supported.
+macos.resources maps destinations under Contents/Resources to file or directory
+sources relative to the Swift Package directory, for example:
+
+  { "macos": { "resources": { "AppIcon.icns": "Support/AppIcon-Dev.icns" },
+               "assetCatalog": "Support/Assets.xcassets" } }
+
+macos.assetCatalog selects an optional .xcassets directory compiled by fixed
+xcrun actool arguments. Copies and the compiled Assets.car are added before
+ad hoc signing. If actool does not emit Assets.car, staging refuses; set
+LSMinimumSystemVersion in the plist when Xcode requires a deployment target.
+Destinations are non-empty relative paths without empty, . or
+.. segments, at most 1024 characters, and cannot overlap another resource,
+Assets.car when a catalog is set, or a SwiftPM resource bundle. At most 256
+resources are allowed. Sources must exist as regular files or directories;
+their realpaths must stay inside the git repository root, or the Swift Package
+directory when there is no git root, and a source directory cannot contain
+symbolic links. Sources can use ../ to reach other files
+inside that repository. Custom packaging scripts are not run and extra
+executables, including Stim Desktop's sim-fold helper, are not built.
 
   stim macos              # fixed SwiftPM Debug build, then launch
   stim macos --json       # one launch record; progress goes to stderr
@@ -29,18 +47,25 @@ extra app assets and custom packaging scripts are not supported.
 
 Each invocation stops its previous owned app, rebuilds and launches. SwiftPM
 keeps incremental outputs in the workspace's runtime directory under STIM_HOME.
+Local stim macos starts the app in the background without activating it or
+changing focus: it sets STIM_BACKGROUND_LAUNCH=1 in the app's environment, which
+Stim Desktop honors. An app that activates itself at launch still takes focus.
+Hosted launches (macos --host) do not set it.
 macOS artifacts are not cached. This prototype has no --plan, --slot, or reload command.
 A failed build records its error and compiler output without launching an app.
 Runtime stdout and stderr become client records; build output becomes build
 records, all with platform "macos". Unexpected app exits are error records.
+Stim runs the app with NSUnbufferedIO=YES, so Swift print output arrives per
+line instead of when the app exits.
 
 BUILD OFFLOAD
 
 --build-machine <auto|local|name> overrides STIM_OFFLOAD_MACHINE and the
 machine setting offload.machine (default auto). local builds here; a name
-requires that exact configured and paired build machine, ignoring offload.mode
-and this Mac's capacity. Any failure is STIM_OFFLOAD_REFUSED without a local
-compile or another machine. See stim guide errors STIM_OFFLOAD_REFUSED.
+requires the matching configured and paired build machine, ignoring offload.mode
+and this Mac's capacity. Any failure is STIM_OFFLOAD_REFUSED without a local xcodebuild, Gradle or
+SwiftPM compile or another machine. Invalid, unlisted or unpaired selections
+refuse before stopping the app or changing its build record. See stim guide errors STIM_OFFLOAD_REFUSED.
 
 With offload.machine auto, offload.mode places these SwiftPM Debug builds:
 auto builds here while this Mac has capacity, force uses an approved build
@@ -50,13 +75,17 @@ matching Stim, CPU architecture, Xcode and macOS SDK, plus network access to
 fetch package dependencies the first time. It keeps SwiftPM dependencies in a
 per-client cache and incremental outputs per repository. It runs fixed swift
 build commands without JavaScript installs, prebuild or pods. It receives only
-the files git lists (tracked and untracked, not ignored).
+the files git lists (tracked and untracked, not ignored). Resource and catalog
+sources must be among those files. The client sends resolved sources relative
+to the repository root; the worker resolves them inside its checkout.
 
-The client validates the development plist before asking a machine. It verifies
-the returned archive's sha256, bundle identifier, executable and ad hoc signature
+The client validates the development plist and resource entries before asking a machine. It verifies
+the returned archive's sha256, bundle identifier, executable, declared resources
+and ad hoc signature
 before replacing the owned bundle, then launches locally as usual. With auto, every offload
 failure falls back to the local build, including force. Failed staging preserves
 the previous bundle. No failed artifact is promoted or cached. The build record
+is unchanged by invalid, unlisted or unpaired setup refusals. It
 carries buildMachine (selected) and builtOn (here or the machine, absent until
 a build runs), and errorCode on a typed failure. It carries offloadedTo only for a remote build, and offloadFallback when an offload
 attempt falls back here. Placement and failure reasons are in build logs.
@@ -67,10 +96,11 @@ The supervisor owns a process-identity claim with the app as its child. Stop
 signals only verified recorded identities. An unverifiable or malformed owner
 refuses with STIM_MACOS_OWNER_UNVERIFIED; other apps remain untouched.
 
-Stim Desktop shows this app in its workspace, with Build and run, Refresh preview,
-Open app and Stop. Capture and Open app verify the recorded executable, bundle
+Stim Desktop shows this app in its workspace, with Build and run, Open app (local
+apps only) and Stop, and a live preview that updates itself while the app runs. Capture and Open app verify the recorded executable, bundle
 identifier, PID and process start time. Open app rechecks that the captured window
-is still the app's front window, then activates that owned app for normal native input.
+is still the app's front window, or raises the pinned one, then activates that
+owned app for normal native input.
 The preview follows the app's front standard window, its main window with any
 attached sheet, as the app opens, switches, closes or resizes windows. It never
 captures another process's windows, menus or the desktop. Without Device Control
@@ -103,6 +133,24 @@ in points), after subscribing and whenever they change. Viewing starts only with
 an open window; after the app closes its last one the view reports a delay until
 another opens.
 
+WINDOWS
+
+The view follows the app's front window by default. A controller can pin it to
+one of the app's windows instead: with a server advertising macos-window-select,
+input.window { session, window: <id from macos-windows> } brings that window to
+the front of the app, and capture and input stay on it while another window
+comes forward on the Mac. input.window { session, window: null } follows the
+front window again. The pin also ends when its window closes or minimizes, or
+when the Control session that set it ends for any reason, including release,
+takeover, disconnect and the five-minute idle timeout, since viewers without
+Control cannot unpin; macos-windows reports pinned true while it holds. Choosing
+a window while the app shows a modal dialog, or one that just closed, is dropped
+without ending Control. The phone's Control toolbar and Stim Desktop's app card and
+hosted viewer offer the same choice as a Window menu: Follow front window, or a
+window by title. Stim Desktop's local preview pins without Control because it
+only raises the window among the app's own windows. An agent that drives the app
+through the stim-server protocol sends the same input.window.
+
 A server advertising macos-window-control also supports the phone's Control
 mode on a control pairing. Tap/click and drag act on the displayed window;
 Scroll mode turns a drag into pixel scrolling. The main toolbar offers Keyboard
@@ -118,19 +166,25 @@ time. Older servers retain fixed shortcuts and navigation but cannot receive
 other modified letters or digits. Multi-character modified input and symbols
 are not supported; ordinary typing keeps using input.text.
 
-Letter and digit shortcuts require the owned app's selected U.S. or ABC input source.
-The helper focuses that app and waits up to one second for activation before
-checking the layout; an app that does not activate refuses the shortcut.
+Letter and digit shortcuts require the Mac's selected U.S. or ABC input source.
 Apple's ANSI virtual key codes represent physical U.S. positions, not logical
 letters in other host layouts. The helper refuses those key events on other
 layouts with a specific reason; ordinary typing and navigation remain available.
 Logical shortcuts for other host layouts remain tracked in
 https://github.com/appandflow/stim/issues/2422.
+Control posts input to the owned process without activating it or raising its
+window; only choosing a window to pin raises it among the app's windows. Only when the captured window is not the app's key window (or its
+attached sheet) does Stim activate the app to deliver input, waiting up to one
+second for focus. The helper then sends a controlActivated notice, which stim-server
+logs.
+Clicks on views that reject the first mouse, such as custom views and SwiftUI
+onTapGesture regions, do not land while the app is in the background. Use
+Desktop's Open app to bring the app to the front for those views.
 Control holds one exclusive server session per owned app, ends on disconnect,
 revocation, takeover or five minutes without input, and does not take a CLI
 simulator/device lock. Each action rechecks the exact owned process and that the
-captured window is still the app's front standard window. The app's other windows
-are allowed; input goes to the captured window, and a sheet attached to it takes
+captured window is still the app's front standard window, or the pinned one. The
+app's other windows are allowed; input goes to the captured window, and a sheet attached to it takes
 focus and pointer input. Input that arrives while the view moves to another
 window is dropped and Control continues. A modal dialog window refuses input. A
 sheet larger than the captured window is not supported. Existing Device
@@ -161,6 +215,17 @@ Mac runs stim-server devices grant <id> --device-host, and stim doctor then
 records the approval. Stim connects only to the machine's pinned tailnet node.
 A refusal or an unreachable host fails the command; it never launches here
 instead.
+
+Logs: the host records the hosted app's stdout, stderr and exit like a local run.
+stim logs, including --errors, --json and --follow, asks the host over the same
+approved connection, copies the records it has not copied yet into the
+workspace's logs/macos-host.ndjson and prints them with the local records.
+stim stop copies the last ones, including the exit record, before it forgets the
+placement, so the logs stay readable after stop. A host that cannot answer, because
+it is unreachable or runs a stim-server that predates this, costs one stderr
+warning (after up to 10 seconds of connecting); stdout still carries the records already copied, so logs --json stays
+valid NDJSON. The host's unified log is not collected: os.Logger output that is
+not written to stderr does not appear.
 
 Phones and Stim Desktop view and control the hosted app through this Mac's
 stim-server, which relays to the host. The phone sends clicks, scrolls,
@@ -198,6 +263,8 @@ macOS's own requests on that Mac's screen; a person there approves them.
 stim-server service status shows the grants, and stim doctor here reports an
 approved host that lacks them. A server started by Stim Desktop uses Desktop's
 grants.
+
+Hosted delivery carries the staged bundle with declared resources and compiled assets.
 
 status --json reports macos.host { machine, session, appSlot, appAttempt,
 bundleId, agent }. For hosted placements only, status asks the host for the
@@ -244,8 +311,9 @@ The agent-device rows work once the host's agent field names agent-device.
 
 DESKTOP DOGFOOD
 
-This repository's apps/desktop/.stim.json selects the full StimDesktop app and
-its development plist. It monitors the regular Stim home alongside the installed
+This repository's apps/desktop/.stim.json selects the full StimDesktop app,
+its development plist, asset catalog, fonts, branding and licences. Its sim-fold
+helper is not built. It monitors the regular Stim home alongside the installed
 app, with a workspace-specific bundle identifier and separate preferences.
 Its launch arguments disable automatic cleanup and notification alerts in this development copy.
 Use Window > SwiftUI Playground for in-memory production screen fixtures.

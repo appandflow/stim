@@ -49,9 +49,21 @@ const CHUNK_BYTES = 60 * 1024;
 const MAX_BUFFERED = 8 * 1024 * 1024;
 const DIGEST_BYTES = 32;
 
-export function offloadMode(env: NodeJS.ProcessEnv = process.env): OffloadMode {
+function offloadMode(env: NodeJS.ProcessEnv = process.env): OffloadMode {
   const raw = env.STIM_OFFLOAD_MODE || loadConfig()?.offload?.mode;
   return OFFLOAD_MODES.includes(raw as OffloadMode) ? (raw as OffloadMode) : 'auto';
+}
+
+export function buildPlacementCandidates(selected: string): { mode: OffloadMode; machines: BuildMachineCredential[] } {
+  return {
+    mode: selected === 'local' ? 'off' : offloadMode(),
+    machines:
+      selected === 'local'
+        ? []
+        : namedBuildMachine(selected)
+          ? pairedMachines([selected]).slice(0, 1)
+          : pairedMachines(),
+  };
 }
 
 export function remotePhaseText(name: string, msg: string, machine: string): string {
@@ -94,7 +106,7 @@ export function offloadPlacement({
   unsupported: string | null;
 }): { offload: boolean; reason: string } {
   if (namedBuildMachine(selected)) {
-    if (unsupported) throw new OffloadRefusal(selected, unsupported);
+    if (unsupported) throw new OffloadRefusal(selected, `${unsupported}, so a named build machine cannot take it`);
     if (machines === 0) throw new OffloadRefusal(selected, 'no build machine is paired');
     return { offload: true, reason: `selected with --build-machine ${selected}` };
   }
@@ -512,7 +524,6 @@ interface OfferingMachine {
  * refuses `build.start`, `offloadBuild` moves this choice to the next one in place.
  */
 export interface OffloadChoice extends OfferingMachine {
-  strict?: boolean;
   target: BuildTarget;
   offerMs: number;
   identity: RepoIdentity;
@@ -609,7 +620,6 @@ export async function chooseBuildMachine({
   });
   return {
     ...first!,
-    strict: namedBuildMachine(selected),
     target,
     offerMs: Date.now() - started,
     identity,
@@ -637,7 +647,14 @@ export type BuildRequest =
       optimizations: unknown;
     }
   | { platform: 'android'; isExpo: boolean; android: AndroidBuildOptions }
-  | { platform: 'macos'; product: string; infoPlist: string; bundleId: string };
+  | {
+      platform: 'macos';
+      product: string;
+      infoPlist: string;
+      bundleId: string;
+      resources?: Record<string, string>;
+      assetCatalog?: string | null;
+    };
 
 const ARTIFACT_NAME = { ios: /^[^/]+\.app$/, android: /^[^/]+\.apk$/, macos: /^[^/]+\.app$/ } as const;
 
@@ -813,7 +830,6 @@ export async function offloadBuild({
     let uploadedBytes = 0;
     let workerStarted = 0;
     const moveOn = (why: string): boolean => {
-      if (choice.strict) return false;
       const next = choice.runnersUp.shift();
       if (!next) return false;
       note(`placement: ${next.machine} (${choice.machine} could not take the build: ${why})`);
@@ -842,7 +858,13 @@ export async function offloadBuild({
         fingerprint: request.platform === 'macos' ? synced.digest : expectedFingerprint,
         ...(request.platform === 'macos'
           ? {
-              macos: { product: request.product, infoPlist: request.infoPlist, bundleId: request.bundleId },
+              macos: {
+                product: request.product,
+                infoPlist: request.infoPlist,
+                bundleId: request.bundleId,
+                ...(request.resources !== undefined ? { resources: request.resources } : {}),
+                ...(request.assetCatalog !== undefined ? { assetCatalog: request.assetCatalog } : {}),
+              },
             }
           : {
               configuration: request.platform === 'ios' ? request.configuration : null,

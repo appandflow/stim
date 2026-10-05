@@ -26,7 +26,9 @@ import {
 import { macosDir } from '../macos/state.ts';
 import { BuildConnection } from '../offload/client.ts';
 import { parseMachine, pinnedEndpoint } from '../offload/tailnet.ts';
+import { phaseLine } from '../command-output.ts';
 import { closeAgentConnection } from './agent-connection.ts';
+import { pullHostedMacosLogs } from './hosted-logs.ts';
 import { configuredMachines } from './machines.ts';
 
 const CONNECT_TIMEOUT_MS = 10_000;
@@ -430,6 +432,11 @@ export async function stopHostedMacos(root: string, placement: HostedMacosPlacem
       let session = hostedSession(host, await call(host, 'device-host.stop', { session: placement.session }));
       session = await settle(host, session, ['stopping'], SESSION_TIMEOUT_MS);
       if (session.state !== 'stopped') throw unknownSession(host, session);
+      await pullHostedMacosLogs(root, placement, host).catch((error: unknown) => {
+        process.stderr.write(
+          `${phaseLine('device', `Could not copy the final logs from ${host.machine}: ${(error as Error).message}`)}\n`,
+        );
+      });
     } catch (error) {
       if (!heldNoLonger(error)) throw error;
     }

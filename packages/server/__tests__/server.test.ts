@@ -27,6 +27,7 @@ import {
   readViewedDevices,
   tryAcquireBuildSlotClaim,
 } from '@stim-cli/core/state';
+import { BuildHost } from '../src/build.ts';
 import { ownedDevice } from '../src/frames.ts';
 import type { StatusPayload } from '@stim-cli/core/state';
 import {
@@ -290,6 +291,9 @@ async function start(
     pushEndpoint?: string;
     buildLimits?: ServerOptions['buildLimits'];
     hostedRelay?: ServerOptions['hostedRelay'];
+    startupProbeMs?: number;
+    startupRetryMs?: number;
+    settle?: boolean;
   } = {},
 ): Promise<number> {
   const stimCli = join(root, 'fake-stim.mjs');
@@ -337,7 +341,10 @@ async function start(
     pullRequests: async () => new Map(),
     buildLimits: overrides.buildLimits,
     hostedRelay: overrides.hostedRelay,
+    startupProbeMs: overrides.startupProbeMs,
+    startupRetryMs: overrides.startupRetryMs,
   });
+  if (overrides.settle !== false) await server!.ready;
   return server.addresses[0]!.port;
 }
 
@@ -482,38 +489,145 @@ describe('recorder startup', () => {
     },
   );
 
-  test('bounds a blocked directory read before spawning status followers', async () => {
-    const pidFile = join(root, 'probe.pid');
-    const preload = join(root, 'blocked-read.cjs');
-    writeFileSync(
-      preload,
-      `const fs = require('node:fs');
+  describe('while a Stim home directory read does not return', () => {
+    const blockRead = (name: string) => {
+      const preload = join(root, `${name}.cjs`);
+      const pidFile = join(root, `${name}.pid`);
+      const release = join(root, `${name}.release`);
+      writeFileSync(
+        preload,
+        `const fs = require('node:fs');
 const { syncBuiltinESMExports } = require('node:module');
 fs.readdirSync = () => {
+  if (fs.existsSync(process.env.PROBE_RELEASE_FILE)) return [];
   fs.writeFileSync(process.env.PROBE_PID_FILE, String(process.pid));
   process.on('SIGTERM', () => {});
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0);
 };
 syncBuiltinESMExports();
 `,
+      );
+      return {
+        pidFile,
+        release,
+        env: {
+          NODE_OPTIONS: `--require ${JSON.stringify(preload)}`,
+          PROBE_PID_FILE: pidFile,
+          PROBE_RELEASE_FILE: release,
+        },
+      };
+    };
+
+    test('listens at once, reports degraded health, serves no clients and starts no recorder', async () => {
+      const blocked = blockRead('blocked-read');
+      const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const port = await start({
+        record: true,
+        settle: false,
+        startupProbeMs: 400,
+        startupRetryMs: 60_000,
+        env: blocked.env,
+      });
+      try {
+        const pending = await fetch(`http://127.0.0.1:${port}/health`);
+        expect(pending.status).toBe(503);
+        expect(await pending.json()).toMatchObject({ server: 'stim-server', startup: { state: 'pending' } });
+
+        const settled = await server!.ready;
+        expect(settled).toEqual({
+          state: 'degraded',
+          reason: expect.stringContaining('did not finish within 0.4 s'),
+        });
+        const degraded = await fetch(`http://127.0.0.1:${port}/health`);
+        expect(degraded.status).toBe(503);
+        expect(await degraded.json()).toMatchObject({ startup: settled });
+
+        await expect(
+          new Promise((resolve, reject) => {
+            const socket = new WebSocket(`ws://127.0.0.1:${port}`);
+            socket.once('unexpected-response', (_request, response) => resolve(response.statusCode));
+            socket.once('error', reject);
+          }),
+        ).resolves.toBe(503);
+
+        expect(existsSync(calls)).toBe(false);
+        expect(existsSync(join(process.env.STIM_HOME!, 'server'))).toBe(false);
+        expect(error).toHaveBeenCalledWith(expect.stringContaining('not serving clients'));
+        const pid = Number(readFileSync(blocked.pidFile, 'utf8'));
+        expect(() => process.kill(pid, 0)).toThrow('ESRCH');
+      } finally {
+        error.mockRestore();
+      }
+    });
+
+    test.skipIf(process.platform === 'win32')(
+      'does not read Stim home files from timers before the first read returns',
+      async () => {
+        const blocked = blockRead('sweep-read');
+        const config = join(process.env.STIM_HOME!, 'config.json');
+        const opened = join(root, 'config-opened');
+        rmSync(config, { force: true });
+        execFileSync('mkfifo', [config]);
+        const opener = spawn(process.execPath, [
+          '-e',
+          `const fs = require('node:fs');
+for (;;) { fs.closeSync(fs.openSync(${JSON.stringify(config)}, 'w')); fs.writeFileSync(${JSON.stringify(opened)}, ''); }`,
+        ]);
+        const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+        try {
+          await start({
+            settle: false,
+            startupProbeMs: 10_000,
+            startupRetryMs: 60_000,
+            buildLimits: { daemonSweepMs: 30 },
+            env: blocked.env,
+          });
+          await new Promise((resolve) => setTimeout(resolve, 400));
+          expect(existsSync(opened)).toBe(false);
+        } finally {
+          await server?.close();
+          server = null;
+          opener.kill('SIGKILL');
+          error.mockRestore();
+        }
+      },
     );
-    let responsive = false;
-    const timer = setTimeout(() => {
-      responsive = true;
-    }, 20);
-    try {
-      await expect(
-        start({ record: true, env: { NODE_OPTIONS: `--require ${JSON.stringify(preload)}`, PROBE_PID_FILE: pidFile } }),
-      ).rejects.toThrow('Reading recorder ownership directories did not finish within 10 s.');
-      expect(responsive).toBe(true);
-      expect(existsSync(calls)).toBe(false);
-      expect(existsSync(join(process.env.STIM_HOME!, 'server', 'recorder'))).toBe(false);
-      const pid = Number(readFileSync(pidFile, 'utf8'));
-      expect(() => process.kill(pid, 0)).toThrow('ESRCH');
-    } finally {
-      clearTimeout(timer);
-    }
-  }, 20_000);
+
+    test('stops promptly while the first read is still out', async () => {
+      const blocked = blockRead('closing-read');
+      await start({ settle: false, startupProbeMs: 10_000, env: blocked.env });
+      const started = Date.now();
+      await server!.close();
+      expect(Date.now() - started).toBeLessThan(3000);
+      expect((await server!.ready).state).toBe('pending');
+    });
+
+    test('becomes ready without a restart once the read returns', async () => {
+      const blocked = blockRead('recovering-read');
+      const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const port = await start({
+        record: true,
+        settle: false,
+        startupProbeMs: 400,
+        startupRetryMs: 50,
+        env: { FAKE_STIM_PAYLOADS: '[]', ...blocked.env },
+      });
+      try {
+        expect((await server!.ready).state).toBe('degraded');
+        writeFileSync(blocked.release, '');
+        await vi.waitFor(async () => {
+          const response = await fetch(`http://127.0.0.1:${port}/health`);
+          expect(response.status).toBe(200);
+          expect(await response.json()).toMatchObject({ startup: { state: 'ready' } });
+        });
+        expect(existsSync(join(process.env.STIM_HOME!, 'server'))).toBe(true);
+        const client = await connect(port);
+        expect(client.socket.readyState).toBe(WebSocket.OPEN);
+      } finally {
+        error.mockRestore();
+      }
+    }, 20_000);
+  });
 });
 
 describe.skipIf(!fakeTailscale)('Desktop route setup', () => {
@@ -685,12 +799,14 @@ describe('pairing', () => {
           'notifications',
           'macos-window',
           'macos-windows',
+          'macos-window-select',
           'macos-window-control',
           'macos-keyboard-extended',
           'device-frames',
           'macos-hosted',
           'duo-frames',
           'workspace-diff',
+          'hosted-congestion',
         ],
         actions: [],
       },
@@ -994,6 +1110,59 @@ describe('hosted device sessions', () => {
   );
 });
 
+test('build.start rejects escaping or oversized macOS resources before probing the toolchain', async () => {
+  const host = new BuildHost({ worker: 'unused-worker', env: process.env });
+  const toolchain = vi.spyOn(host, 'toolchain').mockResolvedValue(null);
+  const session = host.session('client', {} as WebSocket, () => {});
+  const base = { repo: 'app-1', project: '', platform: 'macos', fingerprint: 'digest', stimBuild: 'b1' };
+  const macos = { product: 'Sample', infoPlist: 'Support/Info.plist', bundleId: 'dev.sample.stim.test' };
+  const validate = new Ajv2020({ strict: false }).compile({ ...protocolJsonSchema(), $ref: '#/$defs/ClientRequest' });
+  try {
+    session.sync({ repo: 'app-1', files: [], done: true });
+    for (const options of [
+      { ...macos, resources: { '../icon': 'icon' } },
+      { ...macos, resources: { '/icon': 'icon' } },
+      { ...macos, resources: { icon: '../icon' } },
+      { ...macos, resources: { icon: '/icon' } },
+      { ...macos, resources: { icon: 7 } },
+      { ...macos, resources: Object.fromEntries(Array.from({ length: 257 }, (_, i) => [`icon${i}`, 'icon'])) },
+      { ...macos, assetCatalog: '../Assets.xcassets' },
+    ]) {
+      expect(await session.start({ ...base, macos: options })).toMatchObject({ error: { code: 'bad-request' } });
+    }
+    expect(toolchain).not.toHaveBeenCalled();
+    const valid = {
+      ...base,
+      macos: {
+        ...macos,
+        resources: { 'AppIcon.icns': 'apps/sample/Support/icon.icns' },
+        assetCatalog: 'apps/sample/Support/Assets.xcassets',
+      },
+    };
+    expect(validate({ id: 'request', method: 'build.start', params: valid })).toBe(true);
+    expect(await session.start(valid)).toMatchObject({
+      error: { code: 'build-refused', message: 'This Mac runs Stim build unknown.' },
+    });
+    expect(toolchain).toHaveBeenCalledOnce();
+    expect(
+      validate({
+        id: 'request',
+        method: 'build.start',
+        params: {
+          ...valid,
+          macos: {
+            ...valid.macos,
+            resources: Object.fromEntries(Array.from({ length: 257 }, (_, i) => [`icon${i}`, 'icon'])),
+          },
+        },
+      }),
+    ).toBe(false);
+  } finally {
+    toolchain.mockRestore();
+    await host.close();
+  }
+});
+
 describe('offloaded builds', () => {
   const sha = (text: string) => createHash('sha256').update(text).digest('hex');
   const file = (path: string, text: string) => ({ path, kind: 'file', size: text.length, sha256: sha(text) });
@@ -1155,7 +1324,13 @@ describe('offloaded builds', () => {
       await client.request('build.sync', { repo: 'app-1', files: [file('Package.swift', 'x')], done: true });
       client.socket.send(blob('x'));
       const base = { repo: 'app-1', project: '', platform: 'macos', fingerprint: 'f00d', stimBuild: 'b1' };
-      const macos = { product: 'Sample', infoPlist: 'Support/Info.plist', bundleId: 'dev.sample.stim.test' };
+      const macos = {
+        product: 'Sample',
+        infoPlist: 'Support/Info.plist',
+        bundleId: 'dev.sample.stim.test',
+        resources: { 'AppIcon.icns': 'apps/sample/Support/icon.icns' },
+        assetCatalog: 'apps/sample/Support/Assets.xcassets',
+      };
       for (const options of [
         undefined,
         { ...macos, product: '../Sample' },
@@ -1586,8 +1761,11 @@ setTimeout(() => console.log(fs.readFileSync(${JSON.stringify(grants)}, 'utf8'))
       name: 'Test Mac',
       version: '1.2.3',
       stim: '9.9.9',
+      stimBuild: expect.stringMatching(/^[0-9a-f]{16}$/),
       protocol: 1,
       stimHome: process.env.STIM_HOME,
+      startup: { state: 'ready' },
+      busy: { builds: 0, hostedSessions: 0 },
       tailscale: { state: 'not-running', backendState: 'Stopped' },
       nativeViewerOpened: false,
     });
@@ -3473,6 +3651,12 @@ describe('frames.subscribe', () => {
         expect(
           await client.request('device-host.input.key', { session: controlSession, key: 'a', modifiers: ['command'] }),
         ).toHaveProperty('result');
+        expect(await client.request('device-host.input.window', { session: controlSession, window: 7 })).toHaveProperty(
+          'result',
+        );
+        expect(
+          await client.request('device-host.input.window', { session: controlSession, window: null }),
+        ).toHaveProperty('result');
         expect(
           await client.request('device-host.input.key', { session: controlSession, key: 'invalid' }),
         ).toHaveProperty('error.code', 'bad-request');
@@ -3491,6 +3675,8 @@ describe('frames.subscribe', () => {
             expect.arrayContaining([
               expect.objectContaining({ input: 'scroll', deltaX: -5, deltaY: 10 }),
               expect.objectContaining({ input: 'key', key: 'a', modifiers: ['command'] }),
+              expect.objectContaining({ input: 'window', window: 7, controlSession: expect.any(String) }),
+              expect.objectContaining({ input: 'window', window: null, controlSession: expect.any(String) }),
             ]),
           );
           const args = helperRuns()[0]!.args;
@@ -3598,6 +3784,16 @@ describe('frames.subscribe', () => {
       let streamed = await first.next();
       while (!('binary' in streamed)) streamed = await first.next();
       expect(await first.request('device-host.frames.keyframe', { subscription: 's2' })).toHaveProperty('result');
+      expect(await first.request('device-host.frames.congested', { subscription: 's1' })).toHaveProperty(
+        'error.code',
+        'unknown-subscription',
+      );
+      expect(await first.request('device-host.frames.congested', { subscription: 's2' })).toHaveProperty('result');
+      await vi.waitFor(() =>
+        expect(helperRuns().flatMap((run) => run.configs)).toContainEqual(
+          expect.objectContaining({ video: true, bitrate: 1_500_000 }),
+        ),
+      );
       expect(await first.request('device-host.unsubscribe', { subscription: 's2' })).toHaveProperty('result');
       const claimRoot = join(deviceHostRoot(), `${session}.claims`);
       const helper = readClaimSet(claimRoot).live[0]!.child;
@@ -3735,21 +3931,26 @@ describe('frames.subscribe', () => {
     10_000,
   );
 
-  test.skipIf(!fakeTailscale)(
-    'streams a verified native app to a read-only phone without control, replay or device tools',
-    async () => {
+  test.each([undefined, false, true])(
+    'streams a verified native app to a read-only phone without control, replay or device tools (pinned: %s)',
+    { skip: !fakeTailscale, timeout: 10_000 },
+    async (pinned) => {
       const windows = [
         { id: 12, title: 'MyApp', frame: { x: -100, y: 20, width: 800, height: 600 } },
         { id: 13, title: '', frame: { x: 100, y: -20, width: 400, height: 300 } },
       ];
-      const macosWindows = { current: windows[0], windows };
+      const macosWindows = { current: windows[0], windows, pinned: pinned ?? false };
       const port = await startWithTools(
         {
           FAKE_STIM_PAYLOADS: statusWith({ macos: OWNED_MACOS }),
           FAKE_FRAMES: '[]',
           FAKE_HELPER_INTERVAL_MS: '10',
-          FAKE_HELPER_MACOS_WINDOWS: JSON.stringify(macosWindows),
-          FAKE_HELPER_MACOS_WINDOWS_MALFORMED: JSON.stringify({ current: null, windows: [{ id: -1 }] }),
+          FAKE_HELPER_MACOS_WINDOWS: JSON.stringify({ ...macosWindows, pinned }),
+          FAKE_HELPER_MACOS_WINDOWS_MALFORMED: JSON.stringify(
+            pinned === undefined
+              ? { current: null, windows: [{ id: -1 }] }
+              : { current: null, windows: [], pinned: 'yes' },
+          ),
         },
         undefined,
         fakeHelper(),
@@ -3764,7 +3965,11 @@ describe('frames.subscribe', () => {
       validator.addSchema(protocolJsonSchema(), 'protocol');
       const acceptsEvent = validator.compile({ $ref: 'protocol#/$defs/ServerEvent' });
       expect(acceptsEvent(event)).toBe(true);
-      expect(acceptsEvent({ event: 'macos-windows', subscription: 's1', current: null, windows: [] })).toBe(true);
+      expect(
+        acceptsEvent({ event: 'macos-windows', subscription: 's1', current: null, windows: [], pinned: false }),
+      ).toBe(true);
+      expect(acceptsEvent({ event: 'macos-windows', subscription: 's1', current: null, windows: [] })).toBe(false);
+      expect(acceptsEvent({ ...event, pinned: 'yes' })).toBe(false);
       expect(await client.next()).toHaveProperty('binary');
       const again = await authed(port);
       expect(await again.request('frames.subscribe', { workspace, platform: 'macos', video: ['h264'] })).toMatchObject({
@@ -3785,7 +3990,6 @@ describe('frames.subscribe', () => {
       expect(toolRuns().filter((run) => run.tool === 'xcrun' || run.tool === 'adb')).toEqual([]);
       expect(readViewedDevices()).toEqual([]);
     },
-    10_000,
   );
 
   test.skipIf(!fakeTailscale)(
@@ -3852,6 +4056,10 @@ describe('frames.subscribe', () => {
       expect(await client.request('input.key', { session, key: 'q', modifiers: ['command'] })).toHaveProperty('result');
       expect(await client.request('input.key', { session, key: '7', modifiers: ['shift'] })).toHaveProperty('result');
       expect(await client.request('input.key', { session, key: 'a', modifiers: ['command'] })).toHaveProperty('result');
+      expect(await client.request('input.window', { session, window: 12 })).toHaveProperty('result');
+      expect(await client.request('input.window', { session, window: null })).toHaveProperty('result');
+      for (const window of [undefined, -1, 0x100000000, 1.5, '12'])
+        expect(await client.request('input.window', { session, window })).toHaveProperty('error.code', 'bad-request');
       for (const [method, params] of [
         ['input.rotate', { direction: 'left' }],
         ['input.button', { button: 'home' }],
@@ -3877,8 +4085,12 @@ describe('frames.subscribe', () => {
       const active = sent.find((entry) => entry.control && (entry.control as { enabled: boolean }).enabled)!
         .control as { session: string };
       expect(sent.filter((entry) => entry.input).map((entry) => entry.controlSession)).toEqual(
-        Array(7).fill(active.session),
+        Array(9).fill(active.session),
       );
+      expect(sent.filter((entry) => entry.input === 'window')).toEqual([
+        { input: 'window', window: 12, controlSession: active.session },
+        { input: 'window', window: null, controlSession: active.session },
+      ]);
       const resumed = await client.request('control.begin', { workspace, platform: 'macos' });
       const next = (resumed as { result: { session: string } }).result.session;
       expect(await client.request('input.key', { session: next, key: 'a', modifiers: ['command'] })).toHaveProperty(
@@ -4511,6 +4723,9 @@ describe('frames.subscribe', () => {
       expect(await client.request('input.rotate', { session, direction: 'left' })).toMatchObject({ result: {} });
       expect(await client.request('input.rotate', { session, direction: 'right' })).toMatchObject({
         error: { code: 'limit-exceeded', message: expect.stringContaining('rotate or fold') },
+      });
+      expect(await client.request('input.window', { session, window: null })).toMatchObject({
+        error: { code: 'bad-request' },
       });
       expect(await client.request('input.button', { session, button: 'back' })).toMatchObject({
         error: { code: 'bad-request' },

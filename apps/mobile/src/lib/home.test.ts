@@ -441,3 +441,18 @@ describe('usageCharts', () => {
     expect(usageCharts([sample(END, 0.5)], { ...usage, volumes: [] }).map((c) => c.kind)).toEqual(['cpu', 'memory']);
   });
 });
+
+test('renders unknown live and numeric history memory pressure without an alarm tone', () => {
+  const usage: MachineUsage = {
+    volumes: [],
+    memory: { totalBytes: 1024, usedBytes: 100, pressure: 'future-kind' },
+    load: { avg1: 0, avg5: 0, avg15: 0, cpus: 4 },
+    sampledAt: '2026-09-27T12:00:00Z',
+  };
+  expect(machineStats(usage).find((stat) => stat.kind === 'memory')?.tone).toBe('normal');
+  expect(
+    usageCharts([{ at: 1, cpu: null, memoryUsedBytes: 100, memoryPressure: 99, diskFreeBytes: null }], usage).find(
+      (chart) => chart.kind === 'memory',
+    )?.tone,
+  ).toBe('normal');
+});

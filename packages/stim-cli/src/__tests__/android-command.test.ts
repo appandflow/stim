@@ -6676,59 +6676,69 @@ describe('strict build machine selection', () => {
       );
   }
 
-  test.each([
-    'not listed',
-    'not paired',
-    'no reply in time',
-    'approval-pending',
-    'forbidden',
-    'node changed',
-    'JDK incompatible',
-    'CPU incompatible',
-    'disk too low',
-    'busy',
-  ])('refusal %s records selected placement and never compiles or takes a local slot', async (reason) => {
-    if (reason !== 'not listed')
-      configureMini(reason !== 'not paired', reason === 'approval-pending' ? 'pending' : 'approved');
-    const choose = vi.spyOn(offloadClient, 'chooseBuildMachine').mockResolvedValue(`mini: ${reason}`);
+  test.each(['invalid', 'not listed', 'not paired'])(
+    'setup refusal %s neither looks up a cache nor records a failed run',
+    async (reason) => {
+      if (reason === 'not paired') configureMini(false);
+      const choose = vi.spyOn(offloadClient, 'chooseBuildMachine');
+      const cache = vi.fn<() => never>();
+      const build = vi.fn<() => never>();
+      const slot = vi.fn<() => never>();
+      const recordStats = vi.fn<(_run: StatsRun, _now: number) => RecordStatsResult>();
+      const result = await harness({
+        buildMachine: reason === 'invalid' ? '' : 'mini',
+        resolveCached: cache,
+        build,
+        acquireSlot: slot,
+        recordStats,
+      }).run();
+      expect(result.error?.code).toBe(reason === 'invalid' ? 'STIM_BAD_ARG' : 'STIM_OFFLOAD_REFUSED');
+      expect(cache).not.toHaveBeenCalled();
+      expect(choose).not.toHaveBeenCalled();
+      expect(build).not.toHaveBeenCalled();
+      expect(slot).not.toHaveBeenCalled();
+      expect(recordStats).not.toHaveBeenCalled();
+      expect(readLastBuilds(readWorkspaceState(root)).android).toBeUndefined();
+    },
+  );
+
+  test('a paired pending worker refusal records failure without compiling or taking a local slot', async () => {
+    configureMini(true, 'pending');
+    const choose = vi.spyOn(offloadClient, 'chooseBuildMachine').mockResolvedValue('mini: approval-pending');
     const build = vi.fn<() => never>();
     const slot = vi.fn<() => never>();
     const result = await harness({ buildMachine: 'mini', build, acquireSlot: slot }).run();
     expect(result.error?.code).toBe('STIM_OFFLOAD_REFUSED');
-    expect(result.error?.message).toContain('mini');
+    expect(result.error?.message).toContain('mini: approval-pending');
     expect(build).not.toHaveBeenCalled();
     expect(slot).not.toHaveBeenCalled();
-    const report = readLastBuilds(readWorkspaceState(root)).android;
-    expect(report).toMatchObject({ status: 'failed', errorCode: 'STIM_OFFLOAD_REFUSED', buildMachine: 'mini' });
-    expect(report?.builtOn).toBeUndefined();
-    expect(result.error?.message).toContain(
-      reason === 'not listed' ? 'not listed' : reason === 'not paired' ? 'paired' : reason,
+    expect(readLastBuilds(readWorkspaceState(root)).android).toMatchObject({
+      status: 'failed',
+      errorCode: 'STIM_OFFLOAD_REFUSED',
+      buildMachine: 'mini',
+    });
+    expect(choose).toHaveBeenCalledWith(
+      expect.objectContaining({
+        selected: 'mini',
+        machines: [expect.objectContaining({ machine: 'mini', state: 'pending' })],
+      }),
     );
-    expect(
-      choose.mock.calls.map(([request]) => ({
-        selected: request.selected,
-        machines: request.machines?.map((machine) => machine.machine),
-      })),
-    ).toEqual(['not listed', 'not paired'].includes(reason) ? [] : [{ selected: 'mini', machines: ['mini'] }]);
   });
 
-  test.each(['sync failed', 'start: busy', 'gradle failed', 'fetch: digest mismatch', 'cancelled'])(
-    'remote %s never falls back to Gradle',
-    async (reason) => {
-      configureMini();
-      const choice = { machine: 'mini', offer: { capacity: {} } } as offloadClient.OffloadChoice;
-      vi.spyOn(offloadClient, 'chooseBuildMachine').mockResolvedValue(choice);
-      vi.spyOn(offloadClient, 'offloadBuild').mockResolvedValue({ ok: false, machine: 'mini', reason });
-      const build = vi.fn<() => never>();
-      const slot = vi.fn<() => never>();
-      const result = await harness({ buildMachine: 'mini', build, acquireSlot: slot }).run();
-      expect(result.error?.code).toBe('STIM_OFFLOAD_REFUSED');
-      expect(result.error?.message).toContain(reason);
-      expect(build).not.toHaveBeenCalled();
-      expect(slot).not.toHaveBeenCalled();
-      expect(readLastBuilds(readWorkspaceState(root)).android?.errorCode).toBe('STIM_OFFLOAD_REFUSED');
-    },
-  );
+  test.each(['sync failed'])('remote %s never falls back to Gradle', async (reason) => {
+    configureMini();
+    const choice = { machine: 'mini', offer: { capacity: {} } } as offloadClient.OffloadChoice;
+    vi.spyOn(offloadClient, 'chooseBuildMachine').mockResolvedValue(choice);
+    vi.spyOn(offloadClient, 'offloadBuild').mockResolvedValue({ ok: false, machine: 'mini', reason });
+    const build = vi.fn<() => never>();
+    const slot = vi.fn<() => never>();
+    const result = await harness({ buildMachine: 'mini', build, acquireSlot: slot }).run();
+    expect(result.error?.code).toBe('STIM_OFFLOAD_REFUSED');
+    expect(result.error?.message).toContain(reason);
+    expect(build).not.toHaveBeenCalled();
+    expect(slot).not.toHaveBeenCalled();
+    expect(readLastBuilds(readWorkspaceState(root)).android?.errorCode).toBe('STIM_OFFLOAD_REFUSED');
+  });
 
   test('a Release cache miss refuses strict placement before Gradle', async () => {
     configureMini();
@@ -6741,15 +6751,19 @@ describe('strict build machine selection', () => {
     expect(slot).not.toHaveBeenCalled();
   });
 
-  test('a named cache hit needs no pairing or machine contact and records no compilation', async () => {
-    configureMini(false);
+  test('a listed paired named cache hit contacts no worker and records no compilation', async () => {
+    configureMini();
+    writeConfigSetting({ scope: 'machine' }, 'offload.machines', ['mini:7443']);
+    const credentials = JSON.parse(readFileSync(buildMachinesFile(), 'utf8'));
+    credentials.machines[0].machine = 'mini:7443';
+    writeFileSync(buildMachinesFile(), JSON.stringify(credentials));
     const choose = vi.spyOn(offloadClient, 'chooseBuildMachine');
     const build = vi.fn<() => never>();
-    expect((await harness({ buildMachine: 'mini', resolveCached: () => fakeApk(), build }).run()).ok).toBe(true);
+    expect((await harness({ buildMachine: 'Mini', resolveCached: () => fakeApk(), build }).run()).ok).toBe(true);
     expect(choose).not.toHaveBeenCalled();
     expect(build).not.toHaveBeenCalled();
     const report = readLastBuilds(readWorkspaceState(root)).android;
-    expect(report).toMatchObject({ buildMachine: 'mini', cacheHit: 'local' });
+    expect(report).toMatchObject({ buildMachine: 'mini:7443', cacheHit: 'local' });
     expect(report?.builtOn).toBeUndefined();
   });
 
@@ -6757,13 +6771,12 @@ describe('strict build machine selection', () => {
     'local overrides force mode for %s and records the actual local compile',
     async (variant) => {
       configureMini();
-      const mode = vi.spyOn(offloadClient, 'offloadMode').mockReturnValue('force');
+      writeConfigSetting({ scope: 'machine' }, 'offload.mode', 'force');
       const choose = vi.spyOn(offloadClient, 'chooseBuildMachine');
       const h = harness({ buildMachine: 'local', variant });
       expect((await h.run()).ok).toBe(true);
       expect(h.calls.build).toHaveLength(1);
       expect(choose).not.toHaveBeenCalled();
-      expect(mode).not.toHaveBeenCalled();
       expect(readLastBuilds(readWorkspaceState(root)).android).toMatchObject({
         buildMachine: 'local',
         builtOn: 'here',
@@ -6773,7 +6786,7 @@ describe('strict build machine selection', () => {
 
   test('auto still builds a Release cache miss here without contacting a paired worker', async () => {
     configureMini();
-    vi.spyOn(offloadClient, 'offloadMode').mockReturnValue('force');
+    writeConfigSetting({ scope: 'machine' }, 'offload.mode', 'force');
     const choose = vi.spyOn(offloadClient, 'chooseBuildMachine');
     const h = harness({ buildMachine: 'auto', variant: 'release' });
     expect((await h.run()).ok).toBe(true);

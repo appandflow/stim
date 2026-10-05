@@ -325,6 +325,36 @@ import Testing
     #expect(planner.mostActive == 1)
   }
 
+  @Test func cancellingOnePlatformPreservesTheOtherInFlightCheck() async throws {
+    let started = AsyncStream<String>.makeStream()
+    let gate = AsyncStream<Void>.makeStream()
+    let checks = BuildPlanChecks { platform, _ in
+      started.continuation.yield(platform)
+      for await _ in gate.stream { break }
+      try Task.checkCancellation()
+      return .refused(CommandRefusal(code: "STIM_TEST", message: "still running", remedy: nil))
+    }
+    defer {
+      gate.continuation.finish()
+      started.continuation.finish()
+      checks.cancel(workspace: "/w")
+    }
+    checks.check(workspace: "/w", builds: ["android": "a", "ios": "b"])
+    var calls = started.stream.makeAsyncIterator()
+    #expect(await calls.next() == "android")
+
+    checks.cancel(workspace: "/w", platforms: ["ios"])
+    #expect(checks.entry(workspace: "/w", platform: "ios") == nil)
+    #expect(checks.entry(workspace: "/w", platform: "android")?.state == .checking)
+
+    gate.continuation.yield(())
+    try await settled(checks, "/w", ["android"])
+    #expect(
+      checks.entry(workspace: "/w", platform: "android")?.state
+        == .done(
+          .refused(CommandRefusal(code: "STIM_TEST", message: "still running", remedy: nil))))
+  }
+
   @Test func cancellingForgetsUnfinishedChecksAndLetsTheNextOneRun() async throws {
     let planner = Planner()
     let checks = BuildPlanChecks(planner: planner.plan)

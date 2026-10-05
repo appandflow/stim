@@ -15,9 +15,9 @@ import { buildMacosBundle } from '../macos/build.ts';
 import { validateInfoPlist } from '../macos/stage.ts';
 import { stopMacosAppHeld } from '../macos/stop.ts';
 import { createNdjsonWriter } from '../ndjson.ts';
-import { resolveBuildMachine } from '../offload/selection.ts';
+import { resolveBuildPlacement, parseBuildMachineOption } from '../offload/selection.ts';
 import { spawnEntry } from '../spawn-entry.ts';
-import { loadConfig, upsertProject } from '../workspace/config.ts';
+import { upsertProject } from '../workspace/config.ts';
 import { ensureWorkspaceStorage, workspaceDir, workspaceLogsDir } from '../workspace/paths.ts';
 import { findProjectRoot } from '../workspace/project.ts';
 import { resolveSettings, settingShapeErrors, SETTING_SHAPE_REMEDY } from '../workspace/settings.ts';
@@ -38,19 +38,22 @@ export async function runMacos(
   root = realpathSync(root);
   if (!existsSync(join(root, 'Package.swift')))
     throw new Error('Run stim macos from the directory containing Package.swift.');
-  ensureWorkspaceStorage(root);
   const settings = resolveSettings({ projectPath: root, gitCommonDir: gitCommonDir(root), repoRoot: repoRoot(root) });
   const [shape] = settingShapeErrors(settings);
   if (shape) throw new Error(`${shape} ${SETTING_SHAPE_REMEDY}`);
-  const offload = loadConfig()?.offload;
-  const buildMachine = resolveBuildMachine(buildMachineFlag, process.env.STIM_OFFLOAD_MACHINE, offload?.machine);
-  const macos = settings.macos as { product?: string; infoPlist?: string; arguments?: string[] } | undefined;
+  const selected = resolveBuildPlacement(buildMachineFlag);
+  if (selected.failure) throw Object.assign(new Error(selected.failure.message), selected.failure);
+  const buildMachine = selected.selected;
+  const macos = settings.macos as
+    | { product?: string; infoPlist?: string; arguments?: string[]; resources?: unknown; assetCatalog?: unknown }
+    | undefined;
   if (!macos?.product || !macos.infoPlist) {
     throw Object.assign(
       new Error('Set macos.product and macos.infoPlist explicitly in .stim.json. See stim guide macos.'),
       { code: 'STIM_BAD_ARG' },
     );
   }
+  ensureWorkspaceStorage(root);
   return withNativeBuildRun(
     root,
     { command: 'macos', platform: 'macos' },
@@ -85,7 +88,7 @@ export async function runMacos(
             build: { state: 'running', startedAt: new Date().toISOString(), buildMachine },
             ...(previous?.host ? { host: previous.host, hostLaunched: previous.hostLaunched ?? false } : {}),
           };
-          await buildBundle(root, macos.infoPlist!, record, host !== undefined, note);
+          await buildBundle(root, macos.infoPlist!, record, host !== undefined, note, macos);
           if (!host) return launchHere(root, record);
           const connection = await connectHost(host);
           const write = (patch: Partial<MacosAppRecord>) =>
@@ -133,13 +136,14 @@ async function buildBundle(
   record: MacosAppRecord,
   hosted: boolean,
   note: (line: string) => void,
+  extras: { resources?: unknown; assetCatalog?: unknown },
 ): Promise<void> {
   const started = Date.parse(record.build.startedAt);
   const scratch = join(macosDir(root), 'build');
   writeWorkspaceState(root, { macos: record });
   const writer = createNdjsonWriter(macosLogFile(root), { maxBytes: LOG_ROTATE_BYTES });
   try {
-    const base = validateInfoPlist(root, record.product, infoPlist);
+    const { bundleId: base } = validateInfoPlist(root, record.product, infoPlist);
     const bundleId = hosted ? base : `${base}.stim.${createHash('sha256').update(root).digest('hex').slice(0, 12)}`;
     const built = await buildMacosBundle({
       root,
@@ -152,6 +156,8 @@ async function buildBundle(
       note,
       record: record.build,
       buildMachine: record.build.buildMachine,
+      resources: extras.resources,
+      assetCatalog: extras.assetCatalog,
     });
     record.bundleId = built.bundleId;
     record.bundle = realpathSync(record.bundle);
@@ -197,7 +203,7 @@ async function launchHere(root: string, record: MacosAppRecord): Promise<MacosAp
         cwd: root,
         detached: true,
         stdio: ['ignore', fd, fd],
-        env: process.env,
+        env: { ...process.env, STIM_BACKGROUND_LAUNCH: '1' },
       }),
     );
     child.unref();
@@ -234,7 +240,7 @@ export default function macosCommand(program: Command): void {
     .option(
       '--build-machine <value>',
       'Build on auto, local, or one named machine; a name refuses without fallback',
-      (value) => resolveBuildMachine(value),
+      parseBuildMachineOption,
     )
     .option('--json', 'print one launch payload; build output goes to stderr')
     .option('--host <machine>', 'run it on this approved hosting Mac from hosting.machines')

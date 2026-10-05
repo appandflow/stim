@@ -80,6 +80,7 @@ export interface WaitedForBuild {
 }
 
 export interface FailArgs {
+  setup?: boolean;
   code: string;
   message?: string | null;
   remedy?: string | null;

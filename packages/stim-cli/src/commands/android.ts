@@ -1,4 +1,3 @@
-import { resolveBuildPlacement, resolveBuildMachine } from '../offload/selection.ts';
 import { isEasBuildFailure, resolveEasDevelopmentBuild } from '../engine/eas-build.ts';
 import { configuredAndroidEmulatorApp } from '../devices/android-emulator-viewer.ts';
 import { deviceSlotFileKey, parseDeviceSlotOption, validateDeviceSlot } from '../devices/device-slots.ts';
@@ -51,6 +50,7 @@ import { acquireBuildLock, releaseBuildLock, waitForBuild as waitForOtherBuild }
 import { claimFailure } from '../ownership-claim.ts';
 import { acquireBuildSlot, releaseBuildSlot } from '../engine/build-slots.ts';
 import { createNdjsonWriter } from '../ndjson.ts';
+import { resolveBuildPlacement, parseBuildMachineOption } from '../offload/selection.ts';
 import { pidExists, resolveProjectMetro } from '../metro.ts';
 import { warmMetro } from '../engine/metro-warmup.ts';
 import { ensureDevServer, ensureWorkspaceStorageSafely } from './native-runtime.ts';
@@ -192,7 +192,7 @@ export function registerAndroid(program: Command): void {
     .option(
       '--build-machine <value>',
       'Build on auto, local, or one named machine; a name refuses without fallback',
-      (value) => resolveBuildMachine(value),
+      parseBuildMachineOption,
     )
     .option('--json', 'Emit the facts as a single JSON line on stdout; every other line goes to stderr')
     .option(
@@ -758,6 +758,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     remedy?: string | null,
     {
       lastBuildStatus = false,
+      setup = false,
       diagnostics = [],
       buildDiagnostics: rawDiagnostics = [],
       lines = [],
@@ -785,7 +786,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     for (const line of lines) out(phaseLine('', chalk.dim(line)));
     if (remedy) out(phaseLine('remedy', remedy));
     if (logPath) out(phaseLine('log', logPath));
-    recordRun({ failed: true, durationMs: now() - started });
+    if (!setup) recordRun({ failed: true, durationMs: now() - started });
     if (json) {
       emit(
         JSON.stringify({
@@ -819,7 +820,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
   record.buildMachine = placement.selected;
   if (placement.failure) {
     const { code, message, remedy } = placement.failure;
-    return fail(code, message, remedy, { lastBuildStatus: true });
+    return fail(code, message, remedy, { setup: true });
   }
   const planned = resolveAndroidRunPlan(
     {

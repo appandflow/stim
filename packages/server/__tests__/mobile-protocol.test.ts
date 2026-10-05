@@ -33,6 +33,7 @@ describe('the shared phone protocol', () => {
     expectTypeOf<Server.StatusEvent extends Mobile.StatusEvent ? never : 'status'>().toBeNever();
     expectTypeOf<Server.ErrorEvent>().toExtend<Mobile.ErrorEvent>();
     expectTypeOf<Server.FrameEvent>().toExtend<Mobile.FrameEvent>();
+    expectTypeOf<Server.MacosWindowsEvent>().toExtend<Mobile.MacosWindowsEvent>();
     expectTypeOf<Server.FrameDelayedEvent>().toExtend<Mobile.FrameDelayedEvent>();
     expectTypeOf<Server.ReplayEndedEvent>().toExtend<Mobile.ReplayEndedEvent>();
     expectTypeOf<Server.ControlEndedEvent>().toExtend<Mobile.ControlEndedEvent>();

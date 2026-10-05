@@ -321,6 +321,10 @@ ${ANDROID_AVD_CONFIG_HELP.map((line) => `                          ${line}`).joi
                         without shared URL schemes or an update feed
   macos.arguments       string array passed directly to the executable;
                         see stim guide macos for the prototype's limits
+  macos.assetCatalog    optional .xcassets directory relative to Package.swift,
+                        compiled into Contents/Resources before signing
+  macos.resources       map of Contents/Resources destinations to source paths
+                        relative to Package.swift; see stim guide macos
   web.url               the page \`stim web\` opens in the owned Chrome, an
                         http:// or https:// URL. {port:<label>} becomes the
                         workspace's named port (allocated like \`stim ports
@@ -590,23 +594,32 @@ and no platform selection on a Mac, it also checks the macOS Xcode and SDK.
 
 \`offload.machine\` (machine scope, default auto) selects placement for
 \`ios\`, \`android\` and \`macos\`. \`--build-machine <auto|local|name>\`
-overrides STIM_OFFLOAD_MACHINE, which overrides the setting.
+overrides STIM_OFFLOAD_MACHINE, which overrides the setting. A blank environment
+value is unset. Trimmed auto/local are case-insensitive. Machine names match
+configured names case-insensitively, with port 7443 when omitted; reports use
+the configured entry.
 
   auto   follows offload.mode and keeps its local fallback behavior
   local  builds only on this Mac for this invocation
-  name   requires that exact entry in offload.machines, already paired and
+  name   requires a matching entry in offload.machines, already paired and
          approved; ignores offload.mode and this Mac's load/slot gating
 
 A name never prompts for pairing, tries another machine or falls back here.
 Any refusal or failure is STIM_OFFLOAD_REFUSED with the machine and reason.
 Device, Release/non-Debug, --remote, Android CAS compiler builds, builds with
 the build cache off, and an unknown simulator runtime cannot build there and
-refuse on a cache miss. A cache hit compiles nothing, contacts no worker and
-records buildMachine with builtOn absent. A compiling run records builtOn as
-here or the machine name; failed runs retain the selected value too.
-Check stim settings get offload.machines and approve build access on the worker
-with stim-server devices grant <id> --build, or rerun with --build-machine auto
-or --build-machine local. Ctrl-C cancels the remote build without a local compile.
+refuse on a cache miss. Invalid values, unlisted names and unpaired names refuse
+at setup before consulting the cache; they create no build record or failed-run
+stats. A listed paired name with a cache hit compiles nothing, contacts no worker
+and records buildMachine with builtOn absent. Build failures retain the selected
+value; builtOn is here or the configured machine entry when compilation ran.
+Prebuild and pod install still run on this Mac before a named offload. A refusal
+starts no local xcodebuild, Gradle or SwiftPM compile.
+Run stim doctor --fix to ask for build access if not paired. A person on the
+worker finds the id with stim-server devices and approves it with
+stim-server devices grant <id> --build. Check stim settings get offload.machines,
+or rerun with --build-machine auto or --build-machine local. Ctrl-C cancels
+the remote build without a local xcodebuild, Gradle or SwiftPM compile.
 
 Copyable agent prompt:
   Run stim ios --build-machine janics-mac-mini. If it refuses, report the
@@ -704,12 +717,23 @@ worker root stops it too.
 running as a login LaunchAgent; \`--path-prepend <dir>\` and \`--env KEY=VALUE\`
 pin a PATH entry or variable such as a private CocoaPods that stim-server's
 login-shell environment would otherwise replace.
+\`stim-server service update --release <version>\` there moves the service to
+that exact stim-server release from the public npm registry once npm verifies
+its integrity and registry signatures; \`--from <dir>\` installs the packed
+packages of a checkout instead. It waits for offloaded builds and hosted
+sessions to finish, restarts the job, and switches back when the new server
+does not answer within 90 seconds; \`stim-server service rollback\` returns
+to the previous server.
 Installation alone does not prove readiness; check \`stim-server service status\`
-and its reported log. A read-only recording-directory check refuses startup
-when a read does not return within 10 seconds, plus up to one second to stop
-the check, before status followers or native helpers start. It preserves
-claims and recordings; it does not restore an inaccessible volume or grant
-filesystem access.
+and its reported log. The server listens before it touches the Stim home; a
+read-only child process reads the Stim home, server and recording directories,
+and until it returns \`/health\` answers 503 with \`startup.state\` pending.
+A read that does not return within 10 seconds, plus up to one second to stop
+the child, leaves the server listening and degraded, with the reason in
+\`/health\` and \`stim-server service status\`, and no status followers,
+watchers, native helpers or recorder; it reads again every 30 seconds and
+serves once a read returns. It preserves claims and recordings; it does not
+restore an inaccessible volume or grant filesystem access.
 
 THE GC WORKTREE GRACE PERIOD IS MACHINE-LEVEL
 \`gc.worktreeGraceMinutes\` is how long \`gc --delete\` waits before it removes

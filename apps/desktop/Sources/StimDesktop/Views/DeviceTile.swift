@@ -11,6 +11,7 @@ struct DeviceTile: View {
   var screenHeight: CGFloat
   var interactive = false
   var workspace: String?
+  var project: String? = nil
   var build: Build? = nil
   /// The device's replay through stim-server, where the tile offers one.
   var replay: ReplayController? = nil
@@ -285,6 +286,7 @@ struct DeviceTile: View {
             .help("This remote session is billed while it runs.")
         }
       }
+      if let project { Text(project).font(.stim(.footnote)).foregroundStyle(Palette.secondary) }
       FlowLayout(spacing: Space.sm) {
         TimelineView(.periodic(from: .now, by: 30)) { context in
           if let badge = ActivityBadge(

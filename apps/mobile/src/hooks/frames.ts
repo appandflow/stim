@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
 
 import type { StimConnection } from '@/lib/connection';
+import { supportsFrame } from '@/lib/device-frame';
+
 import type { DevicePlatform, FrameEvent } from '@/protocol/types';
 
 import { frameTarget } from './frame-target';
@@ -43,6 +45,7 @@ export function useFrame(
     return connection.subscribe('frames.subscribe', params, (event) => {
       setLatest((prev) => {
         const base = prev && prev.key === key ? prev : { key, ...EMPTY_FRAME_STATE };
+        if (event.event === 'frame' && !supportsFrame(event, platform)) return base;
         if (event.event === 'frame') return { key, ...EMPTY_FRAME_STATE, frame: event };
         if (event.event === 'frame-delayed') {
           return { ...base, key, delayed: event.delayed, delayedReason: event.delayed ? (event.reason ?? null) : null };
@@ -84,6 +87,7 @@ export function useFrameSnapshot(
         (event) => {
           if (event.event !== 'frame' && event.event !== 'error') return;
           if (event.event === 'frame') {
+            if (!supportsFrame(event, platform)) return;
             setLatest({ key, frame: event, error: null });
             delay = intervalMs;
           } else {

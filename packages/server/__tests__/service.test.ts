@@ -4,16 +4,22 @@ import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSyn
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import {
+  answersAs,
   applyServeEnvironment,
+  unusedInstalls,
   parseEnvAssignment,
   parseInstalledPlist,
   parseLaunchctlPrint,
   planServe,
   renderPlist,
+  argumentsWithScript,
+  signatureProblem,
+  validateRelease,
   validateServeEnvironment,
   type ServiceSpec,
 } from '../src/service-plist.ts';
-import { statusLines, type ServiceStatus } from '../src/service.ts';
+import { statusLines, updateService, type ServiceStatus } from '../src/service.ts';
+import { releaseClaim, tryAcquireClaim } from '@stim-cli/core/ownership-claim';
 import {
   hostFromExecutable,
   installHostApp,
@@ -65,6 +71,33 @@ describe('service plist', () => {
             logPath: SPEC.logPath,
             managed: true,
             serve: { port: 7443, created: true },
+            previousScript: null,
+            programArguments: [
+              ...(host ? [host, 'run'] : []),
+              SPEC.node,
+              SPEC.script,
+              ...json.ProgramArguments.slice(host ? 4 : 2),
+            ],
+          });
+          const next =
+            '/Users/me/Library/Application Support/Stim/services/dev.stim.server/versions/2.0.0-0123456789abcdef/node_modules/@stim-cli/server/dist/stim-server.mjs';
+          const installed = parseInstalledPlist(json)!;
+          execFileSync('plutil', [
+            '-replace',
+            'ProgramArguments',
+            '-json',
+            JSON.stringify(argumentsWithScript(installed, next)),
+            file,
+          ]);
+          execFileSync('plutil', ['-replace', 'StimService.PreviousScript', '-string', SPEC.script, file]);
+          const switched = parseInstalledPlist(
+            JSON.parse(execFileSync('plutil', ['-convert', 'json', '-o', '-', file], { encoding: 'utf8' })),
+          );
+          expect(switched).toEqual({
+            ...installed,
+            script: next,
+            previousScript: SPEC.script,
+            programArguments: argumentsWithScript(installed, next),
           });
           const without = join(dir, 'plain.plist');
           writeFileSync(without, renderPlist({ ...SPEC, serve: null }));
@@ -134,6 +167,79 @@ describe('serve plan', () => {
   });
 });
 
+describe('service update checks', () => {
+  it('takes only an exact release version', () => {
+    expect(validateRelease('1.15.0')).toBeNull();
+    expect(validateRelease('2.0.0-rc.1')).toBeNull();
+    for (const value of ['^1.15.0', 'latest', '1.15', '1.15.0 || 2.0.0', '../1.0.0']) {
+      expect(validateRelease(value)).toContain('exact stim-server version');
+    }
+  });
+
+  it('tells two builds of one version apart by their Stim build, and matches an older server on its version', () => {
+    const expected = { version: '1.14.0', stimBuild: 'aaaaaaaaaaaaaaaa' };
+    expect(answersAs({ version: '1.14.0', stimBuild: 'aaaaaaaaaaaaaaaa' }, expected)).toBe(true);
+    expect(answersAs({ version: '1.14.0', stimBuild: 'bbbbbbbbbbbbbbbb' }, expected)).toBe(false);
+    expect(answersAs({ version: '1.13.0', stimBuild: 'aaaaaaaaaaaaaaaa' }, expected)).toBe(false);
+    expect(answersAs({ version: '1.14.0' }, expected)).toBe(true);
+    expect(
+      answersAs({ version: '1.14.0', stimBuild: 'aaaaaaaaaaaaaaaa', startup: { state: 'degraded' } }, expected),
+    ).toBe(false);
+    expect(answersAs(null, expected)).toBe(false);
+  });
+
+  it('prunes only installs that hold neither the current nor the previous server', () => {
+    const versions = '/Users/me/Library/Application Support/Stim/services/dev.stim.server/versions';
+    const script = (dir: string) => `${versions}/${dir}/node_modules/@stim-cli/server/dist/stim-server.mjs`;
+    expect(
+      unusedInstalls(
+        versions,
+        ['1.14.0-a-1', '1.14.0-a-10', '1.15.0-b-2', '.install-123'],
+        [script('1.14.0-a-1'), '/Users/me/stim/packages/server/dist/stim-server.mjs'],
+      ),
+    ).toEqual(['1.14.0-a-10', '1.15.0-b-2', '.install-123']);
+    expect(unusedInstalls(versions, ['1.15.0-b-2'], [script('1.15.0-b-2'), script('1.14.0-a-1')])).toEqual([]);
+  });
+
+  describe.skipIf(process.platform !== 'darwin')('on macOS', () => {
+    it('refuses a second update of a label while one holds its claim', async () => {
+      const home = mkdtempSync(join(tmpdir(), 'stim-service-claim-'));
+      const previous = process.env.HOME;
+      process.env.HOME = home;
+      try {
+        mkdirSync(join(home, 'Library', 'LaunchAgents'), { recursive: true });
+        writeFileSync(join(home, 'Library', 'LaunchAgents', 'dev.stim.claimed.plist'), renderPlist(SPEC));
+        const held = tryAcquireClaim({
+          root: join(home, 'Library', 'Application Support', 'Stim', 'services', 'dev.stim.claimed', 'update.claims'),
+          mode: 'exclusive',
+        });
+        expect(held.acquired).toBeDefined();
+        await expect(updateService('dev.stim.claimed', { release: '1.14.0' }, () => {})).rejects.toThrow(
+          'An install, update or rollback of dev.stim.claimed is running',
+        );
+        releaseClaim(held.acquired);
+      } finally {
+        if (previous === undefined) delete process.env.HOME;
+        else process.env.HOME = previous;
+        rmSync(home, { recursive: true, force: true });
+      }
+    });
+  });
+
+  it('accepts only an npm signature report that vouches for every package', () => {
+    expect(signatureProblem('{"invalid":[],"missing":[]}')).toBeNull();
+    expect(
+      signatureProblem(
+        JSON.stringify({ invalid: [{ name: 'stim', version: '1.14.0', code: 'EINTEGRITYSIGNATURE' }], missing: [] }),
+      ),
+    ).toContain('invalid registry signatures or attestations: stim@1.14.0');
+    expect(signatureProblem(JSON.stringify({ invalid: [], missing: [{ name: 'ws', version: '8.0.0' }] }))).toContain(
+      'without registry signatures: ws@8.0.0',
+    );
+    expect(signatureProblem('npm ERR! audit signatures failed')).toContain('did not print a JSON report');
+  });
+});
+
 describe('launchctl print', () => {
   it('reads the top-level job fields and ignores nested state lines', () => {
     const output = [
@@ -176,6 +282,17 @@ describe('service command line', () => {
     expect(stimServer('service', 'install', '--env', 'X').stderr).toContain('KEY=VALUE');
     expect(stimServer('pair', '--label', 'x').stderr).toContain('only to `service`');
     expect(stimServer('service', 'restart').stderr).toContain('unknown command');
+  });
+
+  it('takes exactly one update source, and only for service update', { timeout: 30_000 }, () => {
+    expect(stimServer('service', 'install', '--release', '1.0.0').stderr).toContain('only to `service update`');
+    expect(stimServer('pair', '--from', '/tmp').stderr).toContain('only to `service update`');
+    expect(stimServer('service', 'update').stderr).toContain('exactly one of --release');
+    expect(stimServer('service', 'update', '--release', '1.0.0', '--from', '/tmp').stderr).toContain(
+      'exactly one of --release',
+    );
+    expect(stimServer('service', 'update', '--release', 'latest').stderr).toContain('exact stim-server version');
+    expect(stimServer('service', 'update', '--from', '/nonexistent-stim-dir').stderr).toContain('directory of .tgz');
   });
 });
 
@@ -230,6 +347,7 @@ describe('service status permissions', () => {
     logPath: SPEC.logPath,
     node: SPEC.node,
     script: SPEC.script,
+    previousScript: null,
     host: {
       app: '/Users/me/Applications/Stim Host Dev.app',
       name: 'Stim Host Dev',
@@ -258,6 +376,26 @@ describe('service status permissions', () => {
     );
     expect(line(lines, 'Screen Recording:')).toContain('unknown');
     expect(line(lines, 'Accessibility:')).toContain('unknown');
+  });
+
+  it('reports a server that listens but cannot read its Stim home as degraded, not ok', () => {
+    const health = {
+      startup: { state: 'ready' as const },
+      version: '1',
+      stim: '1',
+      stimHome: '/h',
+      tailscale: null,
+      route: null,
+    };
+    expect(line(statusLines({ ...status, health }, permissionPanes(27)), 'health:')).toMatch(/^ {2}health: ok,/);
+    const degraded = { ...health, startup: { state: 'degraded' as const, reason: 'A read did not finish.' } };
+    expect(line(statusLines({ ...status, health: degraded }, permissionPanes(27)), 'health:')).toMatch(
+      /^ {2}health: degraded.*A read did not finish\./,
+    );
+    const pending = { ...health, startup: { state: 'pending' as const } };
+    expect(line(statusLines({ ...status, health: pending }, permissionPanes(27)), 'health:')).toMatch(
+      /^ {2}health: starting/,
+    );
   });
 
   it('points a node-first service at reinstalling', () => {

@@ -1319,7 +1319,9 @@ RULES
                diagnostic with a file and a line, keyed "<file>:<line>",
                else the errorCode (or "failed") with null file and line.
                Failed runs in a row with the same key failed the same way.
-  buildMachine selected auto, local or machine name; always on new runs
+  Invalid, unlisted or unpaired selections refuse during setup, before cache
+  lookup, and create no lastBuild record or failed-run stats.
+  buildMachine selected auto, local or configured machine entry; always on new build records
   builtOn      here or machine name; absent when no build ran (cache/refusal)
   offloadedTo  only on a run a build machine compiled: its name
   offloadFallback

@@ -1,5 +1,7 @@
 import { Image } from 'expo-image';
 
+import { Icon } from '@/components/icon';
+
 import type { AgentSession } from '@/protocol/types';
 
 /**
@@ -18,6 +20,7 @@ const svgUri = (tool: AgentSession['tool'], color: string) =>
 
 /** The coding agent's mark in one color, sized to sit before a line of text. */
 export function AgentIcon({ tool, size, color }: { tool: AgentSession['tool']; size: number; color: string }) {
+  if (tool !== 'codex' && tool !== 'claude-code') return <Icon name="gearshape" size={size} color={color} />;
   return (
     <Image
       source={{ uri: svgUri(tool, color) }}

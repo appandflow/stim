@@ -53,6 +53,19 @@ jobs:
       - name: Lint Swift formatting
         run: scripts/format.sh --check
       - run: swift build -Xswiftc -warnings-as-errors
+      - name: Check the linked SDK
+        run: |
+          otool -l .build/debug/StimDesktop | awk '
+            /LC_BUILD_VERSION/ { build_version = 1 }
+            build_version && $1 == "sdk" { sdk = $2; exit }
+            END {
+              print "Linked SDK: " sdk
+              if (sdk + 0 < 26) {
+                print "Linked SDK must be 26 or newer for Liquid Glass." > "/dev/stderr"
+                exit 1
+              }
+            }
+          '
       - run: swift test -Xswiftc -warnings-as-errors
       - name: Compile the stim-server frames helper
         run: |

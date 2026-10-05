@@ -166,3 +166,96 @@ struct WorkspaceActionsButton: View {
     actions.run("Stop \(env.names.title)", steps: [StimCommand(["stop"], cwd: env.path)], present: false)
   }
 }
+
+struct WorktreeActionsButton: View {
+  var page: WorktreePage
+  var openLogs: (Workspace) -> Void
+  @EnvironmentObject private var actions: ActionCenter
+  @State private var confirmingStop = false
+  @State private var stopping: Workspace?
+  @State private var removal: WorktreeRemoval?
+
+  private var liveApps: [Workspace] { page.apps.filter(\.isActive) }
+
+  var body: some View {
+    let firstApp = page.apps[0]
+    let removalAllowed = worktreeRemovalAllowed(git: firstApp.worktree?.git)
+    Menu {
+      ForEach(Array(zip(page.apps, page.appLabels)), id: \.0.path) { app, label in
+        Menu(label) { appMenu(app) }
+      }
+      Divider()
+      Button("Stop all", systemImage: "stop.circle") { confirmingStop = true }
+        .disabled(
+          liveApps.isEmpty || actions.active(for: page.actionKey) != nil
+            || page.apps.contains { actions.active(for: $0.path) != nil })
+      Button("Remove worktree\u{2026}", systemImage: "trash", role: .destructive) {
+        resolveRemovalBranch(at: firstApp.path) { removal = WorktreeRemoval(branch: $0) }
+      }
+      .disabled(
+        !removalAllowed || actions.active(for: page.actionKey) != nil
+          || page.apps.contains { actions.active(for: $0.path) != nil }
+      )
+      .help(removalAllowed ? "" : "Stim refuses to remove a worktree with uncommitted or unpushed work.")
+    } label: {
+      Image(systemName: "ellipsis")
+    }
+    .menuStyle(.button).menuIndicator(.hidden).buttonStyle(.borderless).fixedSize()
+    .help("Worktree actions").accessibilityLabel("Worktree actions")
+    .confirmationDialog(
+      "Stop this workspace?", isPresented: Binding(get: { stopping != nil }, set: { if !$0 { stopping = nil } }),
+      titleVisibility: .visible, presenting: stopping
+    ) { app in
+      Button("Run stim stop", role: .destructive) { stop(app) }
+    } message: { _ in
+      Text("This also ends the workspace's billable EAS Simulator session.")
+    }
+    .confirmationDialog(
+      "Remove this worktree?", isPresented: Binding(get: { removal != nil }, set: { if !$0 { removal = nil } }),
+      titleVisibility: .visible, presenting: removal
+    ) { _ in
+      Button("Run stim worktree remove", role: .destructive) {
+        actions.run("Remove \(firstApp.names.title)", StimCommand(["worktree", "remove"], cwd: firstApp.path))
+      }
+    } message: { removal in
+      Text(worktreeRemovalMessage(path: firstApp.path, branch: removal.branch))
+    }
+    .confirmationDialog("Stop all apps in this worktree?", isPresented: $confirmingStop, titleVisibility: .visible) {
+      Button("Run stim stop in each live app", role: .destructive) {
+        let apps = liveApps
+        guard !apps.isEmpty else { return }
+        actions.run(
+          "Stop \(page.apps[0].names.title)", steps: apps.map { StimCommand(["stop"], cwd: $0.path) },
+          key: page.actionKey, present: false)
+      }
+    } message: {
+      if page.apps.contains(where: { $0.remoteDevices?.isEmpty == false }) {
+        Text("This also ends the worktree's billable EAS Simulator sessions.")
+      } else {
+        Text("Stops each live app in this worktree.")
+      }
+    }
+  }
+
+  private func appMenu(_ app: Workspace) -> some View {
+    WorkspaceActionsMenu(
+      kind: .workspace(
+        metroRunning: app.metro?.running == true, platforms: app.runPlatforms, linkedWorktree: false),
+      path: app.path, busy: actions.active(for: page.actionKey) != nil || actions.active(for: app.path) != nil,
+      removalAllowed: worktreeRemovalAllowed(git: app.worktree?.git), building: app.build?.isRunning == true,
+      reloadAllowed: app.canReload,
+      onShowLastOutput: actions.latest(for: app.path).map { last in { actions.presented = last } },
+      onRun: { actions.runApp(app, platform: $0) },
+      onReload: { actions.run("Reload \(app.names.title)", steps: [StimCommand(["reload"], cwd: app.path)], present: false) },
+      onStartDevServer: { actions.run("Start \(app.names.title)", StimCommand(["start"], cwd: app.path)) },
+      onStopDevServer: {
+        if app.remoteDevices?.isEmpty == false { stopping = app } else { stop(app) }
+      },
+      onShowLogs: { openLogs(app) })
+  }
+
+  private func stop(_ app: Workspace) {
+    actions.run("Stop \(app.names.title)", steps: [StimCommand(["stop"], cwd: app.path)], present: false)
+  }
+
+}

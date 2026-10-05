@@ -247,7 +247,13 @@ build can compile on a paired build machine instead: see `offload.mode` in
 - `--configuration <name>` selects an Xcode configuration. The default is Debug.
 - `--build-machine <auto|local|name>` overrides `STIM_OFFLOAD_MACHINE` and
   `offload.machine`. A name requires that configured, paired worker and fails
-  with `STIM_OFFLOAD_REFUSED` without local fallback. Cache hits contact no worker.
+  with `STIM_OFFLOAD_REFUSED` without local fallback. Unlisted or unpaired names refuse at setup before checking the cache, without
+  a build record or failed-run stats. A listed paired name with a cache hit
+  contacts no worker. Prebuild and pod install still run on this Mac before
+  a named offload. A refusal starts no local xcodebuild, Gradle or SwiftPM compile.
+  Run `stim doctor --fix` to ask for build access if not paired; a person on
+  the worker finds the id with `stim-server devices` and approves it with
+  `stim-server devices grant <id> --build`.
   See [machine settings](./settings.md#machine-settings) for supported builds and remedies.
 - `--scheme <name>` selects an exact shared Xcode scheme when the automatic
   app selection is not the one you need. Explicit schemes have separate build
@@ -363,7 +369,13 @@ on a paired build machine instead: see `offload.mode` in
 
 - `--build-machine <auto|local|name>` overrides `STIM_OFFLOAD_MACHINE` and
   `offload.machine`. A name requires that configured, paired worker and fails
-  with `STIM_OFFLOAD_REFUSED` without local fallback. Cache hits contact no worker.
+  with `STIM_OFFLOAD_REFUSED` without local fallback. Unlisted or unpaired names refuse at setup before checking the cache, without
+  a build record or failed-run stats. A listed paired name with a cache hit
+  contacts no worker. Prebuild and pod install still run on this Mac before
+  a named offload. A refusal starts no local xcodebuild, Gradle or SwiftPM compile.
+  Run `stim doctor --fix` to ask for build access if not paired; a person on
+  the worker finds the id with `stim-server devices` and approves it with
+  `stim-server devices grant <id> --build`.
   See [machine settings](./settings.md#machine-settings) for supported builds and remedies.
 - `--variant <name>` selects a Gradle variant. The default is `debug`.
 - `--system-image <id>` creates this workspace's owned AVD from that sdkmanager
@@ -803,7 +815,8 @@ stim status [--json] [--watch]
 
 Shows every Stim environment on the machine. Last builds include `buildMachine`
 (the selection) and `builtOn` (`here` or the worker name, absent when no build
-ran, including cache hits and early strict refusals). Older records may lack
+ran, including cache hits and refusals after setup). Configuration refusals
+create no build record or failed-run stats. Older records may lack
 these additive fields. The output includes worktrees,
 ports, devices, supervisors, builds, logs, capacity, and free disk space.
 Each linked worktree shows its uncommitted changes, commits ahead of and
@@ -1062,6 +1075,7 @@ In `--json`, an environment with a recorded run carries
 when the run compiled or failed before finding an app. `buildMachine` records the
 selected `auto`, `local`, or machine name. `builtOn` records `here` or the worker
 name when a build ran; it is absent on a cache hit or a refusal before building.
+Invalid, unlisted or unpaired selections refuse at setup without a build record.
 `offloadedTo` names the
 build machine that compiled the app; `offloadFallback` is why a run that
 considered offloading built here instead, such as

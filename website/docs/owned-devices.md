@@ -364,7 +364,8 @@ Stim supports two optional remote backends:
 
 A named `--build-machine` refuses physical and `--remote` cache misses with
 `STIM_OFFLOAD_REFUSED`. Use `auto` or `local` for those builds; an existing
-cache hit needs no worker. See [machine settings](./settings.md#machine-settings).
+cache hit with a listed paired name needs no worker. Unlisted or unpaired
+names refuse at setup before checking the cache. See [machine settings](./settings.md#machine-settings).
 
 The app builds locally by default; `--eas-profile` can instead download an
 [EAS development build](./eas-builds.md). `stim start --remote` creates the

@@ -1,3 +1,12 @@
+import capturedStatus from '../../mock-server/fixtures/status.json';
+import {
+  receiveStatus,
+  replaceReceivedField,
+  statusEnumPaths,
+  resultEnumCases,
+  eventEnumCases,
+} from '../../mock-server/receive-fixtures';
+import type { StatusPayload, Methods } from '@/protocol/types';
 import { pair, pairingScope, StimConnection, type ConnectionState } from '@/lib/connection';
 import type { ServerEvent } from '@/protocol/types';
 
@@ -298,6 +307,21 @@ describe('pair', () => {
 });
 
 describe('RPC receive validation', () => {
+  it('opens with a future approval label without granting capabilities the server omitted', async () => {
+    const { connection, sockets, states, timers } = setup();
+    connection.start();
+    sockets[0]!.onopen?.();
+    sockets[0]!.reply('hello', {
+      ...hello,
+      capabilities: [],
+      approval: { state: 'future-kind', expiresAt: '2026-10-01T00:00:00Z' },
+    });
+    await flush();
+    expect(states.at(-1)).toMatchObject({ kind: 'open', capabilities: [] });
+    expect(sockets[0]!.closed).toBe(false);
+    expect(timers).toEqual([]);
+    connection.close();
+  });
   it('rejects a response for another method and reconnects without resolving it', async () => {
     const { connection, sockets, states, timers } = setup();
     connection.start();
@@ -387,4 +411,58 @@ describe('RPC receive validation', () => {
     await rejected;
     expect(socket.closed).toBe(true);
   });
+});
+
+test.each([
+  ...statusEnumPaths.map((path) => [path, 'future-kind'] as const),
+  ['environments.0.build.missProvisional', false] as const,
+])('keeps the socket open when status has a future value at %s', async (path, value) => {
+  const { connection, sockets, timers } = setup();
+  const seen: ServerEvent[] = [];
+  connection.subscribe('status.subscribe', {}, (event) => seen.push(event));
+  connection.start();
+  sockets[0]!.onopen?.();
+  sockets[0]!.reply('hello', hello);
+  await flush();
+  sockets[0]!.reply('status.subscribe', { subscription: 's' });
+  await flush();
+  sockets[0]!.emit({
+    event: 'status',
+    subscription: 's',
+    payload: replaceReceivedField(receiveStatus(capturedStatus.payload as StatusPayload), path, value),
+  });
+  expect(seen).toHaveLength(1);
+  expect(sockets[0]!.closed).toBe(false);
+  expect(timers).toEqual([]);
+  connection.close();
+});
+
+test.each(resultEnumCases)(
+  'delivers %s with a future result value instead of reconnecting',
+  async (method, fixture, path, value) => {
+    const { connection, sockets, timers } = setup();
+    connection.start();
+    sockets[0]!.onopen?.();
+    sockets[0]!.reply('hello', hello);
+    await flush();
+    const answer = connection.request(method, {} as Methods[typeof method]['params']);
+    const received = replaceReceivedField(fixture, path, value);
+    sockets[0]!.reply(method, received);
+    await expect(answer).resolves.toEqual(received);
+    expect(sockets[0]!.closed).toBe(false);
+    expect(timers).toEqual([]);
+    connection.close();
+  },
+);
+
+test.each(eventEnumCases)('keeps the socket open for future event values at %s', async (fixture, path) => {
+  const { connection, sockets, timers } = setup();
+  connection.start();
+  sockets[0]!.onopen?.();
+  sockets[0]!.reply('hello', hello);
+  await flush();
+  sockets[0]!.emit(replaceReceivedField(fixture, path, 'future-kind'));
+  expect(sockets[0]!.closed).toBe(false);
+  expect(timers).toEqual([]);
+  connection.close();
 });

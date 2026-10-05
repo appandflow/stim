@@ -112,7 +112,7 @@ export interface LastBuildReport {
   finishedAt: string | null;
   errorCode?: string;
   missReason?: BuildMissReason;
-  /** The selected auto, local, or machine name; present on new runs, including cache hits and refusals. */
+  /** The selected auto, local, or configured machine entry; present on new build records, including cache hits. */
   buildMachine?: string;
   /** Where compilation ran: here or a machine name; absent when no build ran. */
   builtOn?: string;

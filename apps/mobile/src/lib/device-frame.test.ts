@@ -1,4 +1,6 @@
-import { matchingDeviceFrame } from './device-frame';
+import { eventEnumCases, replaceReceivedField } from '../../mock-server/receive-fixtures';
+import type { FrameEvent } from '@/protocol/types';
+import { matchingDeviceFrame, supportsFrame } from './device-frame';
 import type { DeviceFrameArtwork } from '@/protocol/types';
 
 const artwork: DeviceFrameArtwork = {
@@ -21,3 +23,11 @@ it('falls back until artwork belongs to the current capture, including same-size
   expect(matchingDeviceFrame(artwork, { ...source, artworkTurns: undefined })).toBeNull();
   expect(matchingDeviceFrame(artwork, { ...source, posture: 'folded' })).toBeNull();
 });
+
+test.each(eventEnumCases.filter(([, path]) => ['platform', 'posture', 'mime'].includes(path)))(
+  'ignores unsupported captures at %j %s instead of choosing a device path',
+  (fixture, path) => {
+    expect(supportsFrame(fixture as FrameEvent, 'ios')).toBe(true);
+    expect(supportsFrame(replaceReceivedField(fixture, path, 'future-kind') as FrameEvent, 'ios')).toBe(false);
+  },
+);

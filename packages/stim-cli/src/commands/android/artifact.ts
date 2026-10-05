@@ -59,12 +59,12 @@ import type { RunEstimates, RunRecorder } from '../../engine/stats.ts';
 import type { BuildPhase } from '../../engine/build-progress.ts';
 import { machineCapacity, type BuildMissReason, type MachineCapacity, type OffloadMode } from '@stim-cli/core/state';
 import { claimFailure } from '../../ownership-claim.ts';
-import { pairedMachines } from '../../offload/build-machines.ts';
+import type { pairedMachines } from '../../offload/build-machines.ts';
 import {
   closeOffload,
   chooseBuildMachine,
   offloadBuild,
-  offloadMode,
+  buildPlacementCandidates,
   offloadPlacement,
   placementLoad,
   remotePhaseText,
@@ -603,13 +603,7 @@ export async function acquireAndroidArtifact(
 
   /** Whether this build should leave this Mac, before any machine is asked; null builds here. */
   function placeBuild(): Candidate | null {
-    const mode = buildMachine === 'local' ? 'off' : offloadMode();
-    const machines =
-      buildMachine === 'local'
-        ? []
-        : namedBuildMachine(buildMachine)
-          ? pairedMachines([buildMachine]).slice(0, 1)
-          : pairedMachines();
+    const { mode, machines } = buildPlacementCandidates(buildMachine);
     if (machines.length === 0 && !namedBuildMachine(buildMachine) && buildMachine !== 'local') return null;
     const unsupported = physical
       ? 'device builds build here'
@@ -658,6 +652,10 @@ export async function acquireAndroidArtifact(
 
   /** Builds on the chosen machine and stores the APK under the post-mutation key; false builds here instead unless a machine was named. */
   async function compileElsewhere(choice: OffloadChoice, candidate: Candidate): Promise<boolean> {
+    if (!storeKey || !storeHash) {
+      if (namedBuildMachine(buildMachine)) fallBack('the build fingerprint or cache key is unavailable');
+      return false;
+    }
     const stagingDir = join(workspaceDir(root), 'offload', PLATFORM);
     const outcome = await offloadBuild({
       choice,

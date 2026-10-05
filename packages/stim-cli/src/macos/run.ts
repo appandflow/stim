@@ -58,7 +58,8 @@ export async function runMacosSupervisor(root: string, launchId: string): Promis
     const child = getExecutor().spawn(record.executable, record.arguments, {
       cwd: root,
       stdio: ['ignore', 'pipe', 'pipe'],
-      env: process.env,
+      // Foundation reads NSUnbufferedIO to flush stdout per write; a piped Swift print() otherwise waits until exit.
+      env: { ...process.env, NSUnbufferedIO: 'YES' },
     });
     spawned = child.pid !== undefined;
     const ended = new Promise<void>((resolve, reject) => {

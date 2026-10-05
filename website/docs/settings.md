@@ -349,11 +349,14 @@ sends its token to another. Doctor reports each machine's pairing state.
 
 `offload.machine` is a machine setting, defaulting to `auto`. On `ios`,
 `android` and `macos`, `--build-machine <auto|local|name>` overrides
-`STIM_OFFLOAD_MACHINE`, which overrides the setting:
+`STIM_OFFLOAD_MACHINE`, which overrides the setting. A blank environment value
+is unset. Trimmed `auto`/`local` are case-insensitive; names match configured
+names case-insensitively with port 7443 when omitted. Reports use the configured
+entry:
 
 - `auto` follows `offload.mode`, with the existing local fallback on failure.
 - `local` keeps the build on this Mac for this run.
-- A tailnet name requires that exact entry in `offload.machines`, already
+- A tailnet name requires a matching entry in `offload.machines`, already
   paired and approved. It ignores `offload.mode` and this Mac's load and slots.
 
 A named selection never prompts for pairing, uses another machine or falls
@@ -361,17 +364,21 @@ back locally. Missing configuration/pairing, denied or pending approval,
 unreachability or changed pinned identity, incompatible toolchain/CPU/runtime,
 low disk, busy workers, sync/build failures, artifact fetch/store failures and
 a checkout changing during the build fail with `STIM_OFFLOAD_REFUSED`. The
-message names the worker and the concrete reason. Check
-`stim settings get offload.machines`; a person on the worker grants build
+message names the worker and the concrete reason. Run `stim doctor --fix` to
+ask for build access if not paired. Check `stim settings get offload.machines`;
+a person on the worker finds the id with `stim-server devices` and grants build
 access with `stim-server devices grant <id> --build`. To change placement,
 rerun with `--build-machine auto` or `--build-machine local`.
 
 Device, Release/non-Debug, `--remote`, Android CAS compiler, build-cache-off
 and unknown simulator runtime builds refuse a named worker on a cache miss.
-A cache hit needs no build and contacts no worker. `stim status` and its JSON
+Invalid values, unlisted names and unpaired names refuse at setup before the
+cache is consulted, without a build record or failed-run stats. A listed paired
+name with a cache hit needs no build and contacts no worker. Prebuild and pod
+install still run on this Mac before a named offload. `stim status` and its JSON
 record `buildMachine` (the selected value) and `builtOn` (`here` or the worker
 name, absent when no build ran). Ctrl-C cancels the worker build and starts no
-local compile.
+local xcodebuild, Gradle or SwiftPM compile.
 
 Copy this prompt to your agent:
 
@@ -497,13 +504,37 @@ reports the process, its health, the route, Stim Host's permissions and
 whether its Stim build matches the `stim` on PATH. Doctor points to this
 command when a named machine does not answer.
 
+Offload needs the same Stim build on both Macs. To move the build machine's
+service to another build, run one of these there:
+
+```bash
+stim-server service update --release 1.14.0   # an exact release from npm
+stim-server service update --from ./packed     # pnpm pack output of a checkout
+stim-server service rollback                   # back to the previous server
+```
+
+`--release` installs that exact version from the public npm registry, and
+the update stops unless npm verifies each package's integrity and registry
+signature. `--from` installs the `.tgz` packages in the directory. Either way
+the new server is installed beside the running one and must start before the
+switch. The update waits up to 30 minutes for offloaded builds and hosted
+sessions to finish, restarts the job, and switches back to the previous server
+when the new one does not answer within 90 seconds. It never changes pairings,
+approvals, Stim Host, the pinned `--env` and `--path-prepend` values or the
+serve route.
+
 An installed LaunchAgent does not prove server readiness: check its health in
 `stim-server service status` and the reported log when readiness is unavailable.
-Before creating status followers or native helpers, the server bounds a
-read-only recording-directory check to 10 seconds, plus up to one second to
-stop the check. A stalled read fails startup without changing ownership claims
-or recordings. It does not restore an inaccessible volume or grant filesystem
-access; the underlying access problem still needs to be resolved.
+The server listens before it touches the Stim home. A read-only child process
+reads the Stim home, server and recording directories; until it returns,
+`/health` answers 503 with `startup.state` `pending`. A read that does not
+return within 10 seconds, plus up to one second to stop the child, leaves the
+server listening and `degraded`: `/health` and `stim-server service status` name
+the reason, and no status followers, watchers, native helpers or recorder start.
+The server reads again every 30 seconds and serves as soon as a read returns,
+without changing ownership claims or recordings. It does not restore an
+inaccessible volume or grant filesystem access; the underlying access problem
+still needs to be resolved.
 
 `gc.worktreeGraceMinutes` is how long `stim gc --delete` waits before it
 removes a merged or idle linked worktree, counted from the worktree's latest

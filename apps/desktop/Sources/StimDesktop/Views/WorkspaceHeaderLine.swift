@@ -7,26 +7,44 @@ import SwiftUI
 struct WorkspaceHeaderLine: View {
   var cli: Task<StimCLI, Never>
   var env: Workspace
+  var page: WorktreePage? = nil
+  var openAppLogs: ((Workspace) -> Void)? = nil
   var openLogs: () -> Void
   var openBuild: (BuildSheetSelection) -> Void
   @EnvironmentObject private var actions: ActionCenter
 
   var body: some View {
+    let apps = page?.apps ?? [env]
+    let active = page.flatMap { actions.active(for: $0.actionKey) } ?? apps.compactMap { actions.active(for: $0.path) }.first
+    let buildingApp = apps.first { $0.build?.isRunning == true }
+    let running = buildingApp?.build
     HStack(spacing: Space.md) {
-      TimelineView(env.build.flatMap { $0.isRunning ? .buildSeconds($0) : nil } ?? .periodic(from: .now, by: 15)) { context in
-        StageLine(cli: cli, env: env, now: context.date, openBuild: openBuild)
+      TimelineView(
+        (page == nil ? env.build : running).flatMap { $0.isRunning ? .buildSeconds($0) : nil } ?? .periodic(from: .now, by: 15)
+      ) { context in
+        let lead = page?.lead(now: context.date) ?? env
+        StageLine(
+          cli: cli, env: lead, now: context.date,
+          inlineBuild: page == nil ? nil : (lead.build?.isRunning == true ? lead.build : running),
+          inlineWorkspace: page == nil ? nil : (lead.build?.isRunning == true ? lead.path : buildingApp?.path),
+          gitWorkspace: page?.apps[0].path,
+          openBuild: openBuild)
       }
       Spacer(minLength: Space.md)
-      if env.replayOff {
+      if apps.contains(where: \.replayOff) {
         Pill("Replay off")
           .help("recording.enabled is false for this workspace, so stim-server records none of its screens.")
       }
-      if let active = actions.active(for: env.path) {
+      if let active {
         ProgressView().controlSize(.small)
         Text(active.title).font(.stim(.footnote)).foregroundStyle(Palette.secondary).lineLimit(1)
         Button("Show output") { actions.presented = active }.buttonStyle(.stim(.plain)).fixedSize()
       }
-      WorkspaceActionsButton(env: env, openLogs: openLogs)
+      if let page {
+        WorktreeActionsButton(page: page, openLogs: { app in openAppLogs?(app) })
+      } else {
+        WorkspaceActionsButton(env: env, openLogs: openLogs)
+      }
     }
   }
 }
@@ -94,6 +112,9 @@ struct StageLine: View {
   var cli: Task<StimCLI, Never>
   var env: Workspace
   var now: Date
+  var inlineBuild: Build? = nil
+  var inlineWorkspace: String? = nil
+  var gitWorkspace: String? = nil
   var openBuild: (BuildSheetSelection) -> Void
 
   var body: some View {
@@ -109,9 +130,9 @@ struct StageLine: View {
       .accessibilityElement(children: .ignore)
       .accessibilityLabel([stage.label.rawValue, stage.subtitle].compactMap { $0 }.joined(separator: ", "))
       .layoutPriority(-1)
-      if let build = env.build, build.isRunning {
+      if let build = inlineBuild ?? env.build, build.isRunning {
         Button {
-          openBuild(BuildSheetSelection(workspace: env.path, platform: build.platform, run: build.key))
+          openBuild(BuildSheetSelection(workspace: inlineWorkspace ?? env.path, platform: build.platform, run: build.key))
         } label: {
           BuildInlineProgress(build: build, now: now)
         }
@@ -121,7 +142,7 @@ struct StageLine: View {
       }
       if let chip = GitChip(env.worktree) {
         Rectangle().fill(Palette.border).frame(width: 1, height: 14)
-        GitChipButton(cli: cli, chip: chip, worktree: env.worktree!, workspace: env.path).layoutPriority(1)
+        GitChipButton(cli: cli, chip: chip, worktree: env.worktree!, workspace: gitWorkspace ?? env.path).layoutPriority(1)
       }
     }
   }
@@ -301,7 +322,6 @@ struct ProcessRowsTable: View {
   }
 }
 
-/// The Apple logo or the Android head in the same square box, so rows line up whatever the platform.
 struct PlatformGlyph: View {
   var platform: String
   var size: CGFloat = 12
@@ -312,6 +332,9 @@ struct PlatformGlyph: View {
       if platform == "ios" {
         Image(systemName: "apple.logo").font(.system(size: size * 0.95, weight: .medium)).foregroundStyle(color)
           .offset(y: -1)
+      } else if platform == "macos" || platform == "web" {
+        Image(systemName: platform == "macos" ? "laptopcomputer" : "globe")
+          .font(.system(size: size, weight: .medium)).foregroundStyle(color)
       } else {
         AndroidHead().fill(color, style: FillStyle(eoFill: true)).frame(width: size * 1.1, height: size * 0.93)
       }

@@ -57,6 +57,7 @@ function allBodies(): string[] {
 const NOT_A_REFUSAL_CODE = new Set([
   'STIM_HOME',
   'STIM_ANDROID_CAS_TOOLCHAIN',
+  'STIM_BACKGROUND_LAUNCH',
   ...SETTINGS.flatMap((setting) => (setting.env ? [setting.env] : [])),
 ]);
 
@@ -797,13 +798,13 @@ test('the macos guide covers the declared command flags and project settings', (
 test.each([registerIos, registerAndroid, macosCommand])(
   'build command %s parses placement and rejects empty names',
   (register) => {
-    const program = new Command();
+    const program = new Command().exitOverride().configureOutput({ writeErr: () => {} });
     register(program);
     const command = program.commands[0]!;
     command.parseOptions(['--build-machine', 'mini']);
     expect(command.opts().buildMachine).toBe('mini');
     expect(() => command.parseOptions(['--build-machine', ''])).toThrow(
-      expect.objectContaining({ code: 'STIM_BAD_ARG' }),
+      expect.objectContaining({ code: 'commander.invalidArgument' }),
     );
     expect(renderSection('lifecycle', 'options')).toContain('--build-machine');
   },

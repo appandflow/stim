@@ -52,7 +52,7 @@ import { chooseLanAddress, lanOriginUrlFor } from '../engine/ios-lan.ts';
 import { ownedSessionName } from '../engine/eas-simulator.ts';
 import { createRunRecorder, statsProjectKey, type RunEstimates } from '../engine/stats.ts';
 import { COMPILATION_CACHE_NOT_RUN } from '../engine/xcode.ts';
-import { resolveBuildPlacement, resolveBuildMachine } from '../offload/selection.ts';
+import { resolveBuildPlacement, parseBuildMachineOption } from '../offload/selection.ts';
 import type { NdjsonWriter } from '../ndjson.ts';
 import type { ReclaimedStep } from '../budget.ts';
 import { workspaceLogsDir } from '../workspace/paths.ts';
@@ -126,7 +126,7 @@ export function registerIos(program: Command, deps: Partial<IosDeps> = {}): void
     .option(
       '--build-machine <value>',
       'Build on auto, local, or one named machine; a name refuses without fallback',
-      (value) => resolveBuildMachine(value),
+      parseBuildMachineOption,
     )
     .option('--json', 'Emit the facts as a single JSON line on stdout; every other line goes to stderr')
     .option(
@@ -258,8 +258,7 @@ function resolveIosBuildSetup(
   settings: ReturnType<IosDeps['resolveSettings']>,
 ): { ok: true; buildMachine: string; optimizations: Optimizations } | { ok: false; failure: FailArgs } {
   const placement = resolveBuildPlacement(flag);
-  if (placement.failure)
-    return { ok: false, failure: { ...placement.failure, build: { buildMachine: placement.selected } } };
+  if (placement.failure) return { ok: false, failure: { ...placement.failure, setup: true } };
   try {
     return { ok: true, buildMachine: placement.selected, optimizations: resolveOptimizations(settings) };
   } catch (error) {
@@ -384,7 +383,16 @@ async function runIos(
   let buildMachine = 'auto';
   let builtConfiguration: string | null = null;
 
-  const fail = ({ code, message, remedy = null, lines = [], logPath = null, build = null, lease }: FailArgs): null => {
+  const fail = ({
+    code,
+    message,
+    remedy = null,
+    lines = [],
+    logPath = null,
+    build = null,
+    lease,
+    setup = false,
+  }: FailArgs): null => {
     ({ code, message, remedy, lines } = cancelledFailure(PLATFORM, { code, message }) ?? {
       code,
       message,
@@ -410,7 +418,7 @@ async function runIos(
         }),
       );
     note(chalk.red(phaseLine('failed', code)));
-    recordRun({ failed: true, durationMs: elapsed() });
+    if (!setup) recordRun({ failed: true, durationMs: elapsed() });
     if (json) {
       console.log(
         JSON.stringify({

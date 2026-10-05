@@ -5,7 +5,9 @@ import { frameTarget } from '@/hooks/frame-target';
 import { useMacConnection } from '@/hooks/machines';
 import { SeekQueue, type Seek } from '@/lib/replay-seek';
 import { VideoMeter } from '@/lib/video';
-import type { DeviceFrameArtwork, DevicePlatform, FrameEvent, ReplayRate } from '@/protocol/types';
+import { supportsFrame } from '@/lib/device-frame';
+
+import type { DeviceFrameArtwork, DevicePlatform, FrameEvent, MacosWindowsEvent, ReplayRate } from '@/protocol/types';
 import { pushAccessUnit, supportsFrameOrientation } from '../../modules/stim-video/src';
 
 export interface DeviceStream {
@@ -16,6 +18,7 @@ export interface DeviceStream {
   /** The size of the latest video frame, and an iPhone Duo's posture, once the first H.264 keyframe arrives. */
   video: { width: number; height: number; posture?: 'folded' | 'unfolded'; artworkTurns?: number } | null;
   artwork: DeviceFrameArtwork | null;
+  windows: Omit<MacosWindowsEvent, 'event' | 'subscription'> | null;
   displayedDuoRevision: string | null;
   frameDisplayed: (revision: string) => void;
   error: string | null;
@@ -51,6 +54,7 @@ interface StreamState {
   frame: FrameEvent | null;
   video: { width: number; height: number; posture?: 'folded' | 'unfolded'; artworkTurns?: number } | null;
   artwork: DeviceFrameArtwork | null;
+  windows: Omit<MacosWindowsEvent, 'event' | 'subscription'> | null;
   displayedDuoRevision: string | null;
   error: string | null;
   delayed: boolean;
@@ -64,6 +68,7 @@ const EMPTY: Omit<StreamState, 'key'> = {
   frame: null,
   video: null,
   artwork: null,
+  windows: null,
   displayedDuoRevision: null,
   error: null,
   delayed: false,
@@ -199,6 +204,7 @@ export function useDeviceStream(
       },
       (event) => {
         if (event.event === 'frame') {
+          if (!supportsFrame(event, platform)) return;
           size = '';
           orientation.current = null;
           const revision = event.duo?.revision ?? null;
@@ -212,6 +218,8 @@ export function useDeviceStream(
             delayedReason: null,
             ...(changed ? { displayedDuoRevision: null } : {}),
           });
+        } else if (event.event === 'macos-windows') {
+          update({ windows: { current: event.current, windows: event.windows, pinned: event.pinned ?? false } });
         } else if (event.event === 'device-frame') {
           update({ artwork: event.artwork });
         } else if (event.event === 'frame-delayed') {
@@ -234,7 +242,7 @@ export function useDeviceStream(
         }
       },
       (result) => {
-        subscription.current = result.subscription;
+        subscription.current = result.video && result.video !== 'h264' ? null : result.subscription;
         queue.interrupt();
         size = '';
         orientation.current = null;
@@ -245,12 +253,14 @@ export function useDeviceStream(
           video: null,
           displayedDuoRevision: null,
           replay: startAt !== null ? { at: null, rate: 0, ended: false } : null,
+          windows: null,
           replayable: result.video === 'h264',
           seeking: !queue.settled,
         });
         pumpSeeks(connection);
       },
       (packet) => {
+        if (subscription.current === null) return;
         meter.add(packet, Date.now());
         const shown = replaying.current;
         if (shown && queue.settled) {

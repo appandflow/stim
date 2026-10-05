@@ -1330,11 +1330,6 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
         'every flag per command, Android variants and flavors, the per-run simulator model, runtime and system image',
       body: () => `THE OPTION SURFACE, IN FULL
   start           --json --wait <seconds> --remote --reset-cache
-  --build-machine <auto|local|name>
-    Overrides STIM_OFFLOAD_MACHINE and offload.machine. A name requires that
-    machine without fallback (STIM_OFFLOAD_REFUSED). Cache hits need no build.
-    See guide settings for supported builds and guide errors for remedies.
-
   ios             --build-machine <auto|local|name> --slot <name> --json --plan --no-metro-check --no-build-cache --scheme <name> --configuration <name> --device-type <name> --runtime <version> --simulator-app <xcode|siniulator|stim-desktop> --device [udid] --wait <seconds> --no-wait --remote <proxy|eas>
   android         --build-machine <auto|local|name> --slot <name> --json --plan --no-metro-check --no-build-cache --variant <name> --system-image <id> --device-profile <id> --device [serial] --wait <seconds> --no-wait --remote <proxy|eas>
   reload          [ios|android] --json

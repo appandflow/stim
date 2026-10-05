@@ -36,6 +36,8 @@ import {
   settingValueError,
   tryAcquireBuildSlotClaim,
 } from '@stim-cli/core/state';
+import { validMacosResourceDestination } from '@stim-cli/core';
+import type { BuildStartParams } from '@stim-cli/core/protocol';
 import { readAvailableMemory } from './machine.ts';
 import {
   BUILD_REPO_PATTERN,
@@ -209,6 +211,8 @@ export interface BuildHostOptions {
   finished?: (record: { client: string; repo: string; ok: boolean; error?: ProtocolError; durationMs: number }) => void;
   /** Whether a client still holds `build`; the Gradle daemons of one that does not are stopped. */
   allowed?: (client: string) => boolean;
+  /** Whether the periodic daemon sweep may read the Stim home yet; it runs unconditionally when absent. */
+  ready?: () => boolean;
 }
 
 /** Runs other Macs' iOS and Android builds here for clients with `build`, each in its own area under the worker root. */
@@ -228,7 +232,9 @@ export class BuildHost {
   constructor(options: BuildHostOptions) {
     this.options = options;
     this.limits = { ...DEFAULT_BUILD_LIMITS, ...options.limits };
-    this.sweeper = setInterval(() => void this.sweepDaemons(), this.limits.daemonSweepMs);
+    this.sweeper = setInterval(() => {
+      if (this.options.ready?.() ?? true) void this.sweepDaemons();
+    }, this.limits.daemonSweepMs);
     this.sweeper.unref();
   }
 
@@ -331,6 +337,10 @@ export class BuildHost {
         },
       },
     };
+  }
+
+  running(): number {
+    return this.jobs.size;
   }
 
   capacity(): BuildCapacity {
@@ -739,7 +749,7 @@ export class BuildSession {
         'An android build needs params.android: variant and abi (string or null), gradleBuildCache, pch and compilerCache.',
       );
     }
-    let macos: { product: string; infoPlist: string; bundleId: string } | null = null;
+    let macos: BuildStartParams['macos'] = null;
     if (platform === 'macos') {
       const options = params.macos;
       if (
@@ -755,7 +765,27 @@ export class BuildSession {
           'A macos build needs a valid product, relative infoPlist path and bundleId in params.macos.',
         );
       }
-      macos = { product: options.product, infoPlist: options.infoPlist, bundleId: options.bundleId };
+      if (
+        (options.resources !== undefined &&
+          (!isJsonObject(options.resources) ||
+            Object.keys(options.resources).length > 256 ||
+            Object.entries(options.resources).some(
+              ([destination, source]) => !validMacosResourceDestination(destination) || !validBuildPath(source),
+            ))) ||
+        (options.assetCatalog !== undefined && options.assetCatalog !== null && !validBuildPath(options.assetCatalog))
+      ) {
+        return refusal(
+          'bad-request',
+          'params.macos needs contained resource destinations and repository-relative sources.',
+        );
+      }
+      macos = {
+        product: options.product,
+        infoPlist: options.infoPlist,
+        bundleId: options.bundleId,
+        ...(options.resources !== undefined ? { resources: options.resources as Record<string, string> } : {}),
+        ...(options.assetCatalog !== undefined ? { assetCatalog: options.assetCatalog as string | null } : {}),
+      };
     }
     if (params.project !== '' && !validBuildPath(params.project)) {
       return refusal('bad-request', 'params.project must be a relative path inside the repository.');

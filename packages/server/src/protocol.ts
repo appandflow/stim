@@ -944,6 +944,16 @@ export function protocolJsonSchema(): JsonSchema {
           request('device-host.app.launch', session({ attempt: { type: 'string' } }, ['attempt'])),
           request('device-host.app.attach', session({ attempt: { type: 'string' } }, ['attempt'])),
           request(
+            'device-host.logs.query',
+            session({
+              cursor: {
+                type: 'object',
+                maxProperties: 16,
+                additionalProperties: { type: 'integer', minimum: 0 },
+              },
+            }),
+          ),
+          request(
             'device-host.metro.open',
             session(
               {
@@ -963,6 +973,12 @@ export function protocolJsonSchema(): JsonSchema {
             }),
           ),
           request('device-host.frames.keyframe', {
+            type: 'object',
+            required: ['subscription'],
+            additionalProperties: false,
+            properties: { subscription: { type: 'string' } },
+          }),
+          request('device-host.frames.congested', {
             type: 'object',
             required: ['subscription'],
             additionalProperties: false,
@@ -1019,6 +1035,12 @@ export function protocolJsonSchema(): JsonSchema {
               },
               ['key'],
             ),
+          ),
+          request(
+            'device-host.input.window',
+            session({ window: { oneOf: [{ type: 'null' }, { type: 'integer', minimum: 0, maximum: 4294967295 }] } }, [
+              'window',
+            ]),
           ),
           request('device-host.input.button', session({ button: { enum: [...INPUT_BUTTONS] } }, ['button'])),
           request('device-host.input.rotate', session({ direction: { enum: [...ROTATE_DIRECTIONS] } }, ['direction'])),
@@ -1158,6 +1180,12 @@ export function protocolJsonSchema(): JsonSchema {
               ['key'],
             ),
           ),
+          request(
+            'input.window',
+            session({ window: { oneOf: [{ type: 'null' }, { type: 'integer', minimum: 0, maximum: 4294967295 }] } }, [
+              'window',
+            ]),
+          ),
           request('input.button', session({ button: { enum: [...INPUT_BUTTONS] } }, ['button'])),
           request('input.rotate', session({ direction: { enum: [...ROTATE_DIRECTIONS] } }, ['direction'])),
           request('input.posture', session({ posture: { enum: [...DEVICE_POSTURES] } }, ['posture'])),
@@ -1279,6 +1307,8 @@ export function protocolJsonSchema(): JsonSchema {
                   product: { type: 'string', pattern: '^[A-Za-z0-9_.-]{1,100}$' },
                   infoPlist: { type: 'string', minLength: 1 },
                   bundleId: { type: 'string', pattern: '^[A-Za-z0-9][A-Za-z0-9.-]{0,199}$' },
+                  resources: { type: 'object', maxProperties: 256, additionalProperties: { type: 'string' } },
+                  assetCatalog: { type: ['string', 'null'], minLength: 1 },
                 },
               },
               stimBuild: { type: 'string', minLength: 1 },
@@ -1420,13 +1450,14 @@ export function protocolJsonSchema(): JsonSchema {
         oneOf: [
           {
             type: 'object',
-            required: ['event', 'subscription', 'current', 'windows'],
+            required: ['event', 'subscription', 'current', 'windows', 'pinned'],
             additionalProperties: false,
             properties: {
               event: { const: 'macos-windows' },
               subscription: { type: 'string' },
               current: { oneOf: [{ type: 'null' }, { $ref: '#/$defs/MacosWindow' }] },
               windows: { type: 'array', items: { $ref: '#/$defs/MacosWindow' } },
+              pinned: { type: 'boolean' },
             },
           },
           {

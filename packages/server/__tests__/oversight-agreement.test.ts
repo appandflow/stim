@@ -14,6 +14,26 @@ import {
 import { PUSH_EVENTS } from '../src/protocol.ts';
 
 describe('shared notification rules', () => {
+  it('keeps a future issue severity as a warning so actionable remedies remain visible', () => {
+    const items = needsAttention({
+      environments: [
+        {
+          path: '/app',
+          live: true,
+          issues: [
+            { code: 'avd-unchecked', severity: 'future-severity', message: 'Device missing', remedy: 'stim android' },
+          ],
+        },
+      ],
+      volumes: null,
+      now: Date.parse('2026-10-01T00:00:00Z'),
+      stuckMinutes: 15,
+      easSessionMinutes: 30,
+    });
+    expect(items).toEqual([
+      expect.objectContaining({ severity: 'warning', body: 'Device missing', remedy: 'stim android' }),
+    ]);
+  });
   it('knows the same categories stim-server pushes', () => {
     expect([...OVERSIGHT_CATEGORIES]).toEqual([...PUSH_EVENTS]);
   });

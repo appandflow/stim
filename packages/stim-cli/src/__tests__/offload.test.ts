@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setExecutor, resetExecutor } from '../exec.ts';
 import * as buildMachines from '../offload/build-machines.ts';
-import { resolveBuildMachine, requireConfiguredMachine } from '../offload/selection.ts';
+import { resolveBuildMachine, requireConfiguredMachine, parseBuildMachineOption } from '../offload/selection.ts';
 import { manifestDigest } from '../offload/manifest.ts';
 import type { MachineCapacity, OffloadMode, BuildMachineCredential } from '@stim-cli/core/state';
 import {
@@ -342,6 +342,11 @@ describe('explicit build placement', () => {
     [undefined, 'local', 'mini', 'local'],
     ['auto', 'local', 'mini', 'auto'],
     ['mini:8443', 'local', 'auto', 'mini:8443'],
+    [undefined, '', 'mini', 'mini'],
+    [undefined, '  ', 'local', 'local'],
+    [undefined, '  ', undefined, 'auto'],
+    [' AUTO ', 'mini', 'local', 'auto'],
+    ['Local', 'mini', 'auto', 'local'],
   ])('resolves flag %s, env %s and setting %s without losing precedence', (flag, env, setting, expected) => {
     expect(resolveBuildMachine(flag, env, setting)).toBe(expected);
   });
@@ -367,6 +372,19 @@ describe('explicit build placement', () => {
     expect(() => requireConfiguredMachine('auto', undefined)).not.toThrow();
   });
 
+  it.each(['mini', 'Mini', 'MINI:7443'])(
+    'matches %s to the configured default-port entry, preserving its spelling',
+    (selected) => {
+      expect(requireConfiguredMachine(selected, ['other', 'mini:7443'])).toBe('mini:7443');
+      expect(requireConfiguredMachine(selected, ['Mini'])).toBe('Mini');
+      expect(() => requireConfiguredMachine(selected, ['mini:8443'])).toThrow('configured: mini:8443');
+    },
+  );
+
+  it('invalid flag values use the Commander argument error instead of a runtime exception', () => {
+    expect(() => parseBuildMachineOption('')).toThrow(expect.objectContaining({ code: 'commander.invalidArgument' }));
+  });
+
   it('strict placement ignores local load and offload.mode off, but still requires a pairing', () => {
     const base = { selected: 'mini', mode: 'off' as const, here: IDLE, machines: 1, unsupported: null };
     expect(offloadPlacement(base).offload).toBe(true);
@@ -385,7 +403,10 @@ describe('explicit build placement', () => {
     'the runtime of simulator U1 is unknown',
   ])('strict placement refuses unsupported build: %s', (unsupported) => {
     expect(() => offloadPlacement({ selected: 'mini', mode: 'off', here: IDLE, machines: 1, unsupported })).toThrow(
-      expect.objectContaining({ code: 'STIM_OFFLOAD_REFUSED', message: `mini: ${unsupported}` }),
+      expect.objectContaining({
+        code: 'STIM_OFFLOAD_REFUSED',
+        message: `mini: ${unsupported}, so a named build machine cannot take it`,
+      }),
     );
   });
 

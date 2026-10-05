@@ -12,6 +12,7 @@ import {
   readMacosRecord,
   parseNdjsonLine,
   RECORDING_PLATFORMS,
+  stimBuildDigest,
   type RecordingPlatform,
   type NdjsonRecord,
   type StatusPayload,
@@ -21,12 +22,13 @@ import { AgentDeviceDriver } from './agent-device-driver.ts';
 import { HostedAgentHost } from './agent-driver.ts';
 import { DeviceHost, type DeviceHostLimits } from './device-host.ts';
 import { HostedViews } from './hosted-view.ts';
-import { HostedRelay, type HostedRelayOptions } from './hosted-relay.ts';
+import { HostConnections, HostedRelay, type HostedRelayOptions } from './hosted-relay.ts';
 import { LatestFrames, FRAME_RETRY_MS } from './frame-delivery.ts';
 import { BuildHost, type BuildLimits, type BuildSession } from './build.ts';
 import { ControlHub, parseControlBegin, parseInput, SLOT_NAME, type Controller } from './control.ts';
 import { Recorder, type RecordLimits } from './recorder.ts';
-import { checkRecorderStartup } from './recorder-startup.ts';
+import { probeDirectories, STARTUP_PROBE_MS, STARTUP_RETRY_MS, type StartupState } from './startup.ts';
+import { exclusiveClaimDir, sharedClaimDir } from '@stim-cli/core/ownership-claim';
 import { Player, recordedSpans, recordingDir, segmentKeyframe, timelineMarkers } from './replay.ts';
 import { FeedPool, type JsonObject } from './feed.ts';
 import { buildFoldHelper, buildFrameHelper, type FrameHint } from './frame-helper.ts';
@@ -126,6 +128,7 @@ const INPUT_METHODS = [
   'input.simulator',
   'input.scroll',
   'input.key',
+  'input.window',
 ] as const;
 
 export interface ServerOptions {
@@ -146,6 +149,12 @@ export interface ServerOptions {
   tailscaleMonitor?: TailscaleMonitor;
   /** How long to wait before listening again on a Tailscale address that failed; tests shorten it. */
   listenRetryMs?: number;
+  /**
+   * How long the startup read of the Stim home directories may take, and how long to wait before reading them
+   * again after it failed; tests shorten them.
+   */
+  startupProbeMs?: number;
+  startupRetryMs?: number;
   authTimeoutMs?: number;
   maxAuthFailures?: number;
   failureWindowMs?: number;
@@ -196,12 +205,17 @@ interface ControlLimits {
 
 interface ServerHealth {
   host?: HelloResult['host'];
+  startup: StartupState;
   server: 'stim-server';
   name: string;
   version: string;
   stim: string;
+  /** The digest of the `stim` build this server runs, which offload compares between Macs. */
+  stimBuild: string | null;
   protocol: number;
   stimHome: string;
+  /** The work a restart would cut off: offloaded builds and hosted sessions running now. */
+  busy: { builds: number; hostedSessions: number };
   tailscale: { state: TailscaleState['state']; dnsName?: string | null; backendState?: string; reason?: string };
   route?: ServeRoute;
   nativeViewerOpened: boolean;
@@ -226,6 +240,8 @@ function localHealthRequest(request: IncomingMessage): boolean {
 
 export interface RunningServer {
   addresses: { host: string; port: number }[];
+  /** Settles once the first read of the Stim home finished: `ready`, or `degraded` while a read does not return. */
+  ready: Promise<StartupState>;
   close: () => Promise<void>;
 }
 
@@ -449,7 +465,6 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     }
     return hostProbe;
   };
-  if (options.record !== false) await checkRecorderStartup(join(serverDir(), 'recorder'), options.env);
   const limiter = new FailureLimiter(options.maxAuthFailures ?? 5, options.failureWindowMs ?? 60_000);
   const authTimeoutMs = options.authTimeoutMs ?? 5000;
   const feeds = new FeedPool(options.stimCli, options.env);
@@ -479,18 +494,13 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     }
     return helperPath;
   };
-  if (options.frameHelper === undefined) buildHelper();
   let nativeViewerOpened = false;
   const helperEnv = options.host ? { ...options.env, STIM_CAPTURE_HOST: options.host.name } : options.env;
   const frames = new FramePool(helperEnv, frameLimits, frameHelper, new DeviceViewers());
-  const recorder =
-    options.record === false
-      ? null
-      : new Recorder({
-          frames,
-          subscribeStatus: (listener) => feeds.subscribe(STATUS_FEED, listener),
-          limits: options.recordLimits,
-        });
+  let recorder: Recorder | null = null;
+  let startup: StartupState = { state: 'pending' };
+  let startupProbe: ReturnType<typeof probeDirectories> | null = null;
+  let startupRetry: NodeJS.Timeout | null = null;
   let foldBuild: Promise<string> | null = null;
   const foldHelper = () => {
     if (options.foldHelper !== undefined) return Promise.resolve(options.foldHelper);
@@ -609,6 +619,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     worker: join(dirname(options.stimCli), 'offload-worker.mjs'),
     env: options.env,
     limits: options.buildLimits,
+    ready: () => startup.state === 'ready',
     finished: ({ client, repo, ok, error, durationMs }) =>
       auditSafely({
         at: new Date().toISOString(),
@@ -665,8 +676,11 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     limits: options.pushLimits,
   });
 
-  mkdirSync(serverDir(), { recursive: true, mode: 0o700 });
   const relays = new Map<WebSocket, HostedRelay>();
+  const hostConnections = new HostConnections(
+    options.hostedRelay ?? { status: () => readRawTailscaleStatus(tailscaleNow().binary, options.env) },
+    options.serverVersion,
+  );
   let revocationCheck: NodeJS.Timeout | null = null;
   let checkedRegistry: string | null = null;
   const checkRevocations = () => {
@@ -691,15 +705,28 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       }
     }
   };
-  const watcher: FSWatcher = watch(serverDir(), () => {
-    revocationCheck ??= setTimeout(() => {
-      revocationCheck = null;
-      checkRevocations();
-    }, 50);
-  });
-  // Node's macOS watcher can miss changes before it is ready: https://github.com/nodejs/node/issues/52601.
-  const revocationPoll = setInterval(checkRevocations, 1000);
-  revocationPoll.unref();
+  let watcher: FSWatcher | null = null;
+  let revocationPoll: NodeJS.Timeout | null = null;
+  const becomeReady = () => {
+    mkdirSync(serverDir(), { recursive: true, mode: 0o700 });
+    watcher ??= watch(serverDir(), () => {
+      revocationCheck ??= setTimeout(() => {
+        revocationCheck = null;
+        checkRevocations();
+      }, 50);
+    });
+    // Node's macOS watcher can miss changes before it is ready: https://github.com/nodejs/node/issues/52601.
+    revocationPoll ??= setInterval(checkRevocations, 1000).unref();
+    push.refresh();
+    if (options.frameHelper === undefined && !helperPath && !helperBuilding) buildHelper();
+    if (options.record !== false) {
+      recorder ??= new Recorder({
+        frames,
+        subscribeStatus: (listener) => feeds.subscribe(STATUS_FEED, listener),
+        limits: options.recordLimits,
+      });
+    }
+  };
 
   let settingUpRoute: Promise<ServeRoute> | null = null;
 
@@ -707,6 +734,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     const limitKey = peer ?? 'local';
     const subscriptions = new Map<string, () => void>();
     const keyframes = new Map<string, () => void>();
+    const congestion = new Map<string, () => void>();
     const replays = new Map<string, Replayable>();
     let keyframeReads = 0;
     const commands = new Set<() => Promise<void>>();
@@ -715,8 +743,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     let buildSession: BuildSession | null = null;
     let queue = Promise.resolve();
     const relay = new HostedRelay(
-      options.hostedRelay ?? { status: () => readRawTailscaleStatus(tailscaleNow().binary, options.env) },
-      options.serverVersion,
+      hostConnections,
       (message) => {
         if (Buffer.isBuffer(message)) {
           if (socket.readyState === socket.OPEN) socket.send(message);
@@ -1156,6 +1183,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         replays.delete(subscription);
         stopViewing?.();
         keyframes.delete(subscription);
+        congestion.delete(subscription);
         delivery.stop();
         if (draining) clearTimeout(draining);
         detach?.();
@@ -1176,8 +1204,16 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         failed: end,
         ...(frameTarget.platform === 'macos'
           ? {
-              windows: ({ current, windows }: { current: MacosWindow | null; windows: MacosWindow[] }) => {
-                if (!ended) send(socket, { event: 'macos-windows', subscription, current, windows });
+              windows: ({
+                current,
+                windows,
+                pinned,
+              }: {
+                current: MacosWindow | null;
+                windows: MacosWindow[];
+                pinned: boolean;
+              }) => {
+                if (!ended) send(socket, { event: 'macos-windows', subscription, current, windows, pinned });
               },
             }
           : {}),
@@ -1246,6 +1282,9 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         return null;
       };
       if (offersVideo) {
+        congestion.set(subscription, () => {
+          if (streamed && !player) framePool.congested(streamed);
+        });
         keyframes.set(subscription, () => {
           if (player) return player.resend();
           gate.reset();
@@ -1807,6 +1846,13 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         keyframe();
         return send(socket, { id, result: {} });
       }
+      if (method === 'device-host.frames.congested') {
+        const name = params.subscription;
+        const congested = typeof name === 'string' ? congestion.get(name) : undefined;
+        if (!congested) return error(id, 'unknown-subscription', `No video subscription ${String(name)}.`);
+        congested();
+        return send(socket, { id, result: {} });
+      }
       if (method === 'device-host.unsubscribe') {
         const name = params.subscription;
         const unsubscribe = typeof name === 'string' ? subscriptions.get(name) : undefined;
@@ -1842,9 +1888,11 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
                       ? hostedDevices.appLaunch(session.id, raw)
                       : method === 'device-host.app.attach'
                         ? hostedDevices.appAttach(session.id, raw)
-                        : method === 'device-host.metro.open'
-                          ? await hostedDevices.metroOpen(session.id, raw, peer)
-                          : await hostedDevices.metroClose(session.id, raw);
+                        : method === 'device-host.logs.query'
+                          ? hostedDevices.logsQuery(session.id, raw)
+                          : method === 'device-host.metro.open'
+                            ? await hostedDevices.metroOpen(session.id, raw, peer)
+                            : await hostedDevices.metroClose(session.id, raw);
       return send(socket, 'error' in answer ? { id, error: answer.error } : { id, result: answer.result });
     }
 
@@ -2035,6 +2083,10 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   }
 
   function upgrade(request: IncomingMessage, socket: Socket, head: Buffer): void {
+    if (startup.state !== 'ready') {
+      socket.end('HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\nContent-Length: 0\r\n\r\n');
+      return;
+    }
     const peer = peerAddress(request);
     if (limiter.blocked(peer ?? 'local')) {
       socket.end('HTTP/1.1 429 Too Many Requests\r\nConnection: close\r\nContent-Length: 0\r\n\r\n');
@@ -2057,6 +2109,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     name: options.name,
     version: options.serverVersion,
     stim: options.stimVersion,
+    stimBuild: stimBuildDigest(dirname(options.stimCli)),
     protocol: PROTOCOL_VERSION,
     stimHome: configDir(),
   } as const;
@@ -2068,31 +2121,44 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         : undefined;
     const body: ServerHealth = {
       ...health,
+      startup,
       ...(options.host ? { host: await hostHealth() } : {}),
+      busy: { builds: builds.running(), hostedSessions: hostedDevices.active() },
       tailscale: healthTailscale(tailscale),
       route,
       nativeViewerOpened,
     };
-    response.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify(body));
+    response
+      .writeHead(startup.state === 'ready' ? 200 : 503, { 'content-type': 'application/json' })
+      .end(JSON.stringify(body));
   };
   const servers = new Map<string, { server: Server; sockets: Set<Socket> }>();
   const addresses: RunningServer['addresses'] = [];
-  push.refresh();
   const close = async () => {
     closing = true;
-    push.close();
-    watcher.close();
-    clearInterval(revocationPoll);
-    helperAbort.abort();
-    sampler.stop();
+    if (startupRetry) clearTimeout(startupRetry);
+    startupProbe?.cancel();
+    watcher?.close();
+    if (revocationPoll) clearInterval(revocationPoll);
     if (revocationCheck) clearTimeout(revocationCheck);
-    for (const client of wss.clients) client.terminate();
-    await control.close();
     await builds.close();
-    await agentDrivers.close();
-    await hostedDevices.close();
-    recorder?.close();
-    await Promise.all([frames.close(), feeds.close(), ...[...running].map((cancel) => cancel()), cancelling.settled()]);
+    for (const client of wss.clients) client.terminate();
+    hostConnections.close();
+    if (startup.state === 'ready') {
+      push.close();
+      helperAbort.abort();
+      sampler.stop();
+      await control.close();
+      await agentDrivers.close();
+      await hostedDevices.close();
+      recorder?.close();
+      await Promise.all([
+        frames.close(),
+        feeds.close(),
+        ...[...running].map((cancel) => cancel()),
+        cancelling.settled(),
+      ]);
+    }
     wss.close();
     await Promise.all([...servers.values()].map(closeListener));
   };
@@ -2110,10 +2176,16 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         request.headers['sec-fetch-site'] === undefined
       ) {
         const peerHealth = { server: health.server, version: health.version, protocol: health.protocol };
-        response.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify(peerHealth));
+        response
+          .writeHead(startup.state === 'ready' ? 200 : 503, { 'content-type': 'application/json' })
+          .end(JSON.stringify(peerHealth));
         return;
       }
       const agent = /^\/device-host\/agent\/([a-f0-9-]{36})(?:[/?]|$)/.exec(request.url ?? '');
+      if (agent && startup.state !== 'ready') {
+        response.writeHead(503, { 'content-type': 'text/plain' }).end('stim-server is not ready.\n');
+        return;
+      }
       if (agent) {
         answerAgent(request, response, agent[1]!).catch(() => {
           if (response.headersSent) response.destroy();
@@ -2187,8 +2259,43 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   queueReconcile();
   await reconciling;
   const stopWatching = monitor?.onChange(queueReconcile);
+  let settle!: (state: StartupState) => void;
+  const ready = new Promise<StartupState>((resolve) => {
+    settle = resolve;
+  });
+  const checkHome = async (): Promise<void> => {
+    const directories = [configDir(), serverDir(), join(configDir(), 'workspaces')];
+    if (options.record !== false) {
+      const recorderRoot = join(serverDir(), 'recorder');
+      directories.push(exclusiveClaimDir(recorderRoot), sharedClaimDir(recorderRoot));
+    }
+    startupProbe = probeDirectories(directories, options.env, options.startupProbeMs ?? STARTUP_PROBE_MS, configDir());
+    let reason = await startupProbe.result;
+    startupProbe = null;
+    if (closing) return settle(startup);
+    if (reason === null) {
+      try {
+        becomeReady();
+      } catch (error) {
+        reason = (error as Error).message;
+      }
+    }
+    if (reason === null) {
+      if (startup.state === 'degraded') console.error('stim-server: the Stim home answers again; serving clients.');
+      startup = { state: 'ready' };
+      return settle(startup);
+    }
+    if (startup.state !== 'degraded' || startup.reason !== reason) {
+      console.error(`stim-server: listening, but not serving clients until the Stim home answers. ${reason}`);
+    }
+    startup = { state: 'degraded', reason };
+    settle(startup);
+    startupRetry = setTimeout(() => void checkHome(), options.startupRetryMs ?? STARTUP_RETRY_MS);
+  };
+  void checkHome();
   return {
     addresses,
+    ready,
     close: async () => {
       stopWatching?.();
       const closed = close();
