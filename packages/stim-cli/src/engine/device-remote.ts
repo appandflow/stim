@@ -1091,6 +1091,13 @@ export async function ensureMetroReachable({
     gate = true;
   } else {
     const port = Number(metroPort);
+    if (plan.start === 'tailscale' && ctx.backend === 'eas') {
+      return {
+        failed: 'metro.tunnel is "tailscale", but an EAS Simulator is not on your tailnet and cannot reach it.',
+        remedy: 'Use the proxy backend with a device on the same tailnet, or set metro.tunnel to "auto" or "ngrok".',
+        code: REMOTE_METRO_ERROR,
+      };
+    }
     const providerMatches = recorded?.kind === 'managed' && recorded.provider === plan.start;
     if (
       recorded &&

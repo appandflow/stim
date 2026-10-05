@@ -29,7 +29,8 @@ TAILNET-ONLY METRO
     stim settings set metro.tunnel tailscale --scope workspace
     stim start --remote
 
-  The device must be on the same tailnet. "auto" never selects tailscale.
+  The device must be on the same tailnet, so the eas backend refuses it. "auto"
+  never selects tailscale.
   Stim runs a foreground \`tailscale serve --https=<metro port>
   http://127.0.0.1:<metro port>\` process, never Funnel. It prints
   https://<tailnet-name>:<metro port> and \`status\` reports the recorded

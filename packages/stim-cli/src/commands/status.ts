@@ -18,7 +18,14 @@ import { getConfigDir, loadConfig } from '../workspace/config.ts';
 import type { ProjectRecord, SupervisorRecord } from '../workspace/config.ts';
 import { getExecutor } from '../exec.ts';
 import { isMetroRunning } from '../ports.ts';
-import { listeningPids, listeningPidsByPort, processCwd, processCwds, resolveProjectMetro } from '../metro.ts';
+import {
+  listeningPids,
+  listeningPidsByPort,
+  pidExists,
+  processCwd,
+  processCwds,
+  resolveProjectMetro,
+} from '../metro.ts';
 import { resolveSupervisorTarget } from '../supervisor/ownership.ts';
 import { describeMetroLastStop, metroLastStop } from '../supervisor/stop-cause.ts';
 import type { MetroResolution } from '../metro.ts';
@@ -305,7 +312,7 @@ async function readStatusFacts(gitMaxAgeMs: number, simctlListing: string | null
     const state = states[states.length - 1];
     if (state) {
       const tunnel = readMetroTunnel(path);
-      if (state.metro && tunnel?.kind === 'managed' && tunnel.port === state.metro.port) {
+      if (state.metro && tunnel?.kind === 'managed' && tunnel.port === state.metro.port && pidExists(tunnel.pid)) {
         state.metro.tunnel = { provider: tunnel.provider, url: tunnel.url };
       }
       if (macos) {

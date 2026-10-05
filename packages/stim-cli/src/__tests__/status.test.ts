@@ -502,7 +502,7 @@ test('status reports the recorded tailscale Metro URL as tailnet-only', async ()
     metroTunnel: {
       kind: 'managed',
       provider: 'tailscale',
-      pid: 4242,
+      pid: process.pid,
       processToken: 'linux:100',
       url: 'https://host.tail123.ts.net:8083',
       port: 8083,

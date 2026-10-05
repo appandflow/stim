@@ -421,7 +421,8 @@ stim status
 Stim runs a foreground `tailscale serve --https=<metro port>
 http://127.0.0.1:<metro port>` process. It never enables Funnel. The printed
 URL is `https://<tailnet-name>:<metro port>`, and status reports the recorded
-provider and URL. The device must be on the same tailnet; the host may not
+provider and URL. The device must be on the same tailnet, so the `eas` backend
+refuses it; the host may not
 reach its own tailnet name, so Stim skips the public bundle probe for its
 recorded Tailscale tunnel.
 

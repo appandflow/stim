@@ -1455,6 +1455,25 @@ describe('a tunnel Stim starts for itself', () => {
     },
   );
 
+  test('tailscale is refused for the EAS backend, which is not on the tailnet', async () => {
+    const { result } = await reach({
+      ctx: { root, label: 'wt', platform: 'ios', backend: 'eas', publicMetroUrl: null },
+      tunnelMode: 'tailscale',
+      available: ['tailscale'],
+      readTunnelRecord: () => ({
+        kind: 'managed',
+        provider: 'tailscale',
+        pid: 4242,
+        processToken: 'linux:100',
+        url: 'https://host.tail123.ts.net:8085',
+        port: 8085,
+        startedAt: 'T',
+      }),
+      isTunnelAlive: () => true,
+    });
+    expect(result).toMatchObject({ code: 'STIM_REMOTE_METRO_UNREACHABLE', failed: expect.stringContaining('EAS') });
+  });
+
   test.each([{ available: [] }, { available: ['ngrok'] }])(
     'auto refuses a recorded tailscale tunnel with $available',
     async ({ available }) => {
