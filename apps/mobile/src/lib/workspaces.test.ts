@@ -121,6 +121,23 @@ describe('native macOS apps', () => {
     const workspace = env('/native', { macos });
     const [device] = devicesOf(workspace);
     expect(device).toMatchObject({ platform: 'macos', slot: 'default', name: 'MyApp', running: true });
+    expect(device!.host).toBeUndefined();
+    const [hosted] = devicesOf(
+      env('/native', {
+        macos: {
+          ...macos,
+          host: {
+            machine: 'janics-mac-mini:7443',
+            session: 'hosted-session',
+            appSlot: 1,
+            appAttempt: 'hosted-attempt',
+            bundleId: 'dev.myapp.hosted1',
+            agent: { driver: 'none', setting: 'hosting.agentDriver' },
+          },
+        },
+      }),
+    );
+    expect(hosted).toMatchObject({ platform: 'macos', name: 'MyApp', host: 'janics-mac-mini' });
     expect(isActive(workspace)).toBe(true);
     expect(livePlatforms(workspace)).toEqual(['macos']);
     expect(streamsFrames(device!, ['macos-window'])).toBe(true);

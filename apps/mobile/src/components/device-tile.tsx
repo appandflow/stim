@@ -7,6 +7,7 @@ import { View, type ViewInstance } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { Card } from '@/components/card';
+import { HostLabel } from '@/components/host-label';
 import { Icon } from '@/components/icon';
 import { StatRow } from '@/components/stat-row';
 import { Pill } from '@/components/pill';
@@ -91,6 +92,11 @@ export function DeviceTile({
     return (
       <Card>
         {header}
+        {device.host ? (
+          <View style={styles.stateLine}>
+            <HostLabel host={device.host} />
+          </View>
+        ) : null}
         <Text variant="footnote" tone="tertiary" style={styles.stateLine}>
           {device.platform === 'web' ? t`Closed` : t`Not running \u00B7 ${deviceState}`}
         </Text>
@@ -135,6 +141,11 @@ export function DeviceTile({
   return (
     <Card>
       {header}
+      {device.host ? (
+        <View style={styles.stateLine}>
+          <HostLabel host={device.host} />
+        </View>
+      ) : null}
       {pills.length ? <View style={styles.badges}>{pills}</View> : null}
       {device.page?.error ? (
         <Text variant="caption" tone="warning" style={styles.note} numberOfLines={2}>

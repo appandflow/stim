@@ -7,6 +7,7 @@ import { StyleSheet } from 'react-native-unistyles';
 
 import { AgentSessionLine } from '@/components/agent-sessions';
 import { Card } from '@/components/card';
+import { HostLabel } from '@/components/host-label';
 import { Text } from '@/components/text';
 import { Touch } from '@/components/touch';
 import { openDeviceViewer, useZoomedAway, zoomKey } from '@/hooks/device-zoom';
@@ -74,6 +75,7 @@ export const DeviceGridTile = memo(function DeviceGridTile({ tile, wide, visible
   };
   const zoomedAway = useZoomedAway(zoomKey(target));
   const { macName } = item;
+  const { host } = device;
   const where = [...new Set([item.title, item.project])].join(', ');
   const platform = platformName(device.platform);
   const deviceLabel = [name, detail, detail?.includes(platform) ? null : platform].filter(Boolean).join(', ');
@@ -82,6 +84,7 @@ export const DeviceGridTile = memo(function DeviceGridTile({ tile, wide, visible
     deviceLabel,
     ...deviceTileStatusLabels(device, now, item.env),
     workspaceLabel,
+    host ? t`on ${host}` : null,
     agentsSummary(sessions),
   ]
     .filter(Boolean)
@@ -163,6 +166,7 @@ export const DeviceGridTile = memo(function DeviceGridTile({ tile, wide, visible
             </Text>
           ) : null}
         </View>
+        {host ? <HostLabel host={host} /> : null}
         {sessions.length ? (
           sessionUrl ? (
             <Touch onPress={openSession} accessible={false} hitSlop={8}>

@@ -2644,6 +2644,11 @@ msgstr "offload skipped"
 msgid "OK"
 msgstr "OK"
 
+#: src/components/device-grid-tile.tsx
+#: src/components/host-label.tsx
+msgid "on {host}"
+msgstr "on {host}"
+
 #: src/lib/workspace-view.ts
 msgid "on {machine}"
 msgstr "on {machine}"
