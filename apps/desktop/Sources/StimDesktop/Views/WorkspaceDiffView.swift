@@ -131,10 +131,11 @@ struct WorkspaceDiffView: View {
                   ? "New"
                   : [file.staged ? "Staged" : nil, file.unstaged ? "Unstaged" : nil].compactMap { $0 }.joined(separator: " / ")
               )
-              .font(.stim(.caption)).foregroundStyle(Palette.secondary)
+              .font(.stim(.caption)).foregroundStyle(.secondary)
             }
             .tag(file.path)
           }
+          .scrollContentBackground(.hidden)
         }
         if files.truncated {
           Text("Showing the first 200 files").font(.stim(.footnote)).foregroundStyle(Palette.warning).padding(Space.md)
@@ -153,26 +154,17 @@ struct WorkspaceDiffView: View {
       ScrollView([.horizontal, .vertical]) {
         LazyVStack(alignment: .leading, spacing: 0) {
           Text(patch.path).font(.stim(.headline)).padding(Space.lg)
-          ForEach(Array(patch.patches.enumerated()), id: \.offset) { _, section in
-            Text(section.section.title).font(.stim(.callout, weight: .semibold)).padding(Space.lg)
-            if section.kind == .text {
-              ForEach(Array(section.text.split(separator: "\n", omittingEmptySubsequences: false).enumerated()), id: \.offset) {
-                _, line in
-                Text(line.isEmpty ? " " : String(line))
-                  .font(.system(size: 12, design: .monospaced))
-                  .foregroundStyle(
-                    line.hasPrefix("+")
-                      ? Palette.success
-                      : line.hasPrefix("-") ? Palette.error : line.hasPrefix("@@") ? Palette.accent : Palette.text
-                  )
-                  .textSelection(.enabled).padding(.horizontal, Space.lg)
-              }
-            } else {
-              Text(
-                section.kind == .binary
-                  ? "Binary file: preview unavailable"
-                  : section.kind == .tooLarge ? "This patch exceeds the preview limit" : "Diff unavailable for this file"
-              ).foregroundStyle(Palette.secondary).textSelection(.enabled).padding(Space.lg)
+          ForEach(Self.rows(of: patch)) { row in
+            switch row.kind {
+            case .title:
+              Text(row.text).font(.stim(.callout, weight: .semibold)).padding(Space.lg)
+            case .note:
+              Text(row.text).foregroundStyle(Palette.secondary).textSelection(.enabled).padding(Space.lg)
+            case .line(let plain):
+              Text(row.text.isEmpty ? " " : row.text)
+                .font(.system(size: 12, design: .monospaced))
+                .foregroundStyle(lineColor(row.text, plain: plain))
+                .textSelection(.enabled).fixedSize(horizontal: true, vertical: false).padding(.horizontal, Space.lg)
             }
           }
           if patch.patches.isEmpty { Text("No diff available").foregroundStyle(Palette.secondary).padding(Space.lg) }
@@ -183,5 +175,46 @@ struct WorkspaceDiffView: View {
     } else {
       Text("Choose a file to review its changes").foregroundStyle(Palette.secondary)
     }
+  }
+
+  private struct Row: Identifiable {
+    enum Kind {
+      case title, note
+      case line(plain: Bool)
+    }
+    var id: String
+    var kind: Kind
+    var text: String
+  }
+
+  private static func rows(of patch: WorkspaceDiff) -> [Row] {
+    var rows: [Row] = []
+    for (section, part) in patch.patches.enumerated() {
+      rows.append(Row(id: "\(section):title", kind: .title, text: part.section.title))
+      guard part.kind == .text else {
+        let note =
+          part.kind == .binary
+          ? "Binary file: preview unavailable"
+          : part.kind == .tooLarge ? "This patch exceeds the preview limit" : "Diff unavailable for this file"
+        rows.append(Row(id: "\(section):note", kind: .note, text: note))
+        continue
+      }
+      var lines = part.text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+      if lines.last == "" { lines.removeLast() }
+      let firstHunk = lines.firstIndex { $0.hasPrefix("@@") } ?? lines.count
+      for (index, line) in lines.enumerated() {
+        rows.append(
+          Row(id: "\(section):\(index)", kind: .line(plain: part.section == .untracked || index < firstHunk), text: line))
+      }
+    }
+    return rows
+  }
+
+  private func lineColor(_ line: String, plain: Bool) -> Color {
+    if plain { return Palette.text }
+    if line.hasPrefix("+") { return Palette.success }
+    if line.hasPrefix("-") { return Palette.error }
+    if line.hasPrefix("@@") { return Palette.accent }
+    return Palette.text
   }
 }
