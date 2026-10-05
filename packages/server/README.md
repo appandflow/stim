@@ -447,7 +447,8 @@ contained executable, architecture slice, MACOS Mach-O platform and minimum OS.
 URL registrations (`CFBundleURLTypes`) and update feeds (`SUFeedURL`) refuse.
 
 Before launch the worker stamps `<bundleId>.hosted<appSlot>` and ad hoc signs
-its frameworks and bundle. That identity must fit within 255 characters. The
+its frameworks and bundle. That identity must fit within 249 characters so its
+`.plist` preferences filename fits within the 255-byte filename limit. The
 existing macOS supervisor owns the app process, with `HOME`, `CFFIXED_USER_HOME`
 and `TMPDIR` pointing into the session's private app home. This is home and
 identity isolation, not an OS sandbox for the client's native code.
@@ -464,9 +465,10 @@ from every app attempt, keeping logs and receipts so `app.attach` can still repo
 the recorded state.
 
 Once a macOS app is `installed`, `device-host.app.launch` and
-`device-host.app.attach` return `agent: { driver: 'none' }` until a driver is
-configured. The field is built for the response and never stored in the receipt
-or journal; it is absent before installation and for iOS and Android sessions.
+`device-host.app.attach` return `agent: { driver: 'none' }` only while the session
+is ready, until a driver is configured. The field is built for the response and
+never stored in the receipt or journal; it is absent before installation, after
+stop and for iOS and Android sessions.
 
 macOS sessions refuse Metro, viewing and control. Client placement and streaming
 remain follow-ups in [#2403](https://github.com/appandflow/stim/issues/2403).

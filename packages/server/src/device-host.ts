@@ -467,8 +467,8 @@ export class DeviceHost {
           throw new Error('Hosted macOS apps require release mode without a development client scheme.');
         if (offer.bundleId.startsWith('com.apple.'))
           throw new Error('Hosted macOS apps cannot use a com.apple. bundle identity.');
-        if (hostedMacosBundleId(offer.bundleId, record.appSlot!).length > 255)
-          throw new Error('The hosted macOS bundle identity exceeds 255 characters.');
+        if (hostedMacosBundleId(offer.bundleId, record.appSlot!).length + '.plist'.length > 255)
+          throw new Error('The hosted macOS bundle identity exceeds 249 characters for its preferences plist.');
       }
       if (record.state !== 'ready' || this.closed || !this.owned.has(record.id))
         throw new Error(
@@ -517,7 +517,8 @@ export class DeviceHost {
       const record = this.appSession(client, params);
       const app = readHostedAppMetadata(record.id, (params as { attempt: string }).attempt);
       const result: HostedAppLaunch = appDelivery(app);
-      if (record.platform === 'macos' && app.state === 'installed') result.agent = { driver: 'none' };
+      if (record.platform === 'macos' && app.state === 'installed' && record.state === 'ready')
+        result.agent = { driver: 'none' };
       if (app.state === 'installing' && this.owned.get(record.id)?.installing?.attempt !== app.attempt) {
         result.state = 'unknown';
         result.notice = 'The install owner is unavailable. Stop this hosted session before retrying.';
@@ -539,6 +540,9 @@ export class DeviceHost {
       const owned = this.acquire(record);
       const app = readHostedAppMetadata(record.id, (params as { attempt: string }).attempt);
       if (app.state !== 'receiving') return this.appAttach(client, params);
+      const files = readHostedApp(record.id, app.attempt).files;
+      if ((record.platform === 'macos') !== files.some((file) => file.path === 'Contents/Info.plist'))
+        throw new Error('The app manifest must include Contents/Info.plist only for macOS sessions.');
       if (owned.stopping || owned.installing)
         throw new Error('This hosted session already has a native operation in progress.');
       if (owned.metro && (!owned.metro.port || owned.metro.closing))

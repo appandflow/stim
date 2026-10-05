@@ -63,7 +63,7 @@ function preferenceIdentity(home: string, appSlot: number): string | null {
   if (
     !isJsonObject(stored) ||
     typeof stored.bundleId !== 'string' ||
-    !/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,254}$/.test(stored.bundleId) ||
+    !/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,248}$/.test(stored.bundleId) ||
     stored.bundleId.startsWith('com.apple.') ||
     !stored.bundleId.endsWith(`.hosted${appSlot}`)
   )
@@ -72,11 +72,19 @@ function preferenceIdentity(home: string, appSlot: number): string | null {
 }
 
 function removePreferences(bundleId: string): void {
-  getExecutor().runFileQuiet('defaults', ['delete', bundleId], {
-    timeoutMs: 10000,
-    killSignal: 'SIGKILL',
-  });
-  rmSync(join(homedir(), 'Library', 'Preferences', `${bundleId}.plist`), { force: true });
+  const exec = getExecutor();
+  const options = { timeoutMs: 10000, killSignal: 'SIGKILL' as const };
+  exec.runFileQuiet('defaults', ['delete', bundleId], options);
+  const file = join(homedir(), 'Library', 'Preferences', `${bundleId}.plist`);
+  rmSync(file, { force: true });
+  if (existsSync(file)) throw new Error('The hosted macOS preferences plist still exists after deletion.');
+  try {
+    exec.runFile('defaults', ['read', bundleId], options);
+  } catch (error) {
+    if (/not found|does not exist/i.test((error as Error).message)) return;
+    throw error;
+  }
+  throw new Error('The hosted macOS preference domain is still readable after deletion.');
 }
 
 function assertInside(root: string, path: string): void {

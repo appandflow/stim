@@ -873,7 +873,9 @@ test.each(['ios', 'android', 'macos'])(
       await state(first.id, 'stopped');
       rmSync(join(deviceHostArea(first.id), 'apps', params.attempt, 'blobs'), { recursive: true });
     }
-    expect(host.appAttach('client', params)).toEqual(installed);
+    const attached = host.appAttach('client', params);
+    expect(attached).toHaveProperty('result.state', 'installed');
+    expect(attached).not.toHaveProperty('result.agent');
     const stored = JSON.parse(readFileSync(receipt, 'utf8'));
     writeFileSync(receipt, JSON.stringify({ ...stored, state: 'unknown', launched: null }));
     const unknown = host.appAttach('client', params);
@@ -1185,13 +1187,40 @@ test.each([
   [{ mode: 'development', devClientScheme: 'fixture' }, 'action-failed'],
   [{ devClientScheme: 'fixture' }, 'bad-request'],
   [{ bundleId: 'com.apple.fixture' }, 'action-failed'],
-  [{ bundleId: 'a'.repeat(255) }, 'action-failed'],
-])('refuses macOS app offer %j as %s before creating a receipt', async (invalid, code) => {
+  [{ bundleId: 'a'.repeat(250 - '.hosted1'.length) }, 'action-failed'],
+  [{ bundleId: 'a'.repeat(249 - '.hosted1'.length) }, null],
+])('validates macOS app offer %j with outcome %s before creating a receipt', async (invalid, code) => {
   const first = reserve({ platform: 'macos' });
   await state(first.id, 'ready');
   const app = appOffer(first.id, 'app-first', 'macos');
-  expect(host.appOffer('client', { ...app.params, ...invalid })).toHaveProperty('error.code', code);
-  expect(existsSync(join(deviceHostArea(first.id), 'apps', 'app-first'))).toBe(false);
+  expect(host.appOffer('client', { ...app.params, ...invalid })).toHaveProperty(
+    code === null ? 'result.delivery.state' : 'error.code',
+    code ?? 'receiving',
+  );
+  expect(existsSync(join(deviceHostArea(first.id), 'apps', 'app-first'))).toBe(code === null);
+});
+
+test.each([
+  ['ios', 'macos'],
+  ['android', 'macos'],
+  ['macos', 'ios'],
+  ['macos', 'android'],
+])('refuses a %s app manifest in a %s session without starting native installation', async (appPlatform, platform) => {
+  const first = reserve({ platform });
+  await state(first.id, 'ready');
+  const app = appOffer(first.id, 'wrong-platform', appPlatform);
+  const { params, content, sha256 } = app;
+  expect(host.appOffer('client', params)).toHaveProperty('result.delivery.state', 'receiving');
+  await uploadManifest(app);
+  expect(
+    await host.appChunk('client', { ...params, sha256, offset: 0, data: content.toString('base64') }),
+  ).toHaveProperty('result.offset', content.length);
+  expect(host.appLaunch('client', params)).toMatchObject({
+    error: { code: 'action-failed', message: expect.stringContaining('Contents/Info.plist') },
+  });
+  expect(host.attach('client', { session: first.id })).toHaveProperty('result.state', 'ready');
+  expect(host.appAttach('client', params)).toHaveProperty('result.state', 'receiving');
+  expect(existsSync(join(deviceHostArea(first.id), 'home', 'installed'))).toBe(false);
 });
 
 test('macOS offer and reserve refuse all 64 unresolved app slots without mutating the journal', async () => {

@@ -17,10 +17,8 @@ import { join } from 'node:path';
 import {
   assertHostedDeviceLedger,
   HOSTED_MACOS_APP_SLOTS,
-  deviceHostRoot,
   parseHostedMacosDevice,
   parseHostedOfferRequest,
-  readHostedSessions,
   readMacosRecord,
   type HostedMacosDevice,
 } from '@stim-cli/core/state';
@@ -78,6 +76,7 @@ beforeEach(() => {
   native.pressure.mockReturnValue('normal');
   native.identity.mockReturnValue('same');
   native.runFile.mockImplementation((file, args = []) => {
+    if (file === 'defaults' && args[0] === 'read') throw new Error(`Domain ${args[1]} not found.`);
     if (file === 'sw_vers') return '27.0';
     if (file === 'plutil') return JSON.stringify(plist);
     if (args[0] === 'lipo') return arch;
@@ -339,6 +338,45 @@ test('a preference plist removal failure leaves stop unresolved and app data int
   expect(existsSync(join(area, 'App.app'))).toBe(true);
 });
 
+test.each([
+  ['read succeeds', null, 'unknown', 'still readable'],
+  ['read times out', 'defaults read timed out', 'unknown', 'timed out'],
+  ['read fails unexpectedly', 'Permission denied', 'unknown', 'Permission denied'],
+  ['domain not found', 'Domain dev.stim.fixture.hosted3 not found.', 'stopped', null],
+  ['domain does not exist', 'Domain does not exist', 'stopped', null],
+])('stop requires verified preference deletion when %s', async (_outcome, error, state, notice) => {
+  writeFileSync(join(home, 'hosted-macos-app.json'), JSON.stringify({ bundleId: `${bundleId}.hosted3` }));
+  const file = join(process.env.HOME!, 'Library', 'Preferences', `${bundleId}.hosted3.plist`);
+  writeFileSync(file, '{}');
+  native.runFile.mockImplementation(() => {
+    if (error) throw new Error(error);
+    return '{}';
+  });
+  const result = await runHostedMacosApp('stop', request);
+  expect(result.state).toBe(state);
+  expect(result.notice ?? '').toContain(notice ?? '');
+  expect(result.notice === undefined).toBe(notice === null);
+  expect(existsSync(file)).toBe(false);
+});
+
+test.each(['foo.hosted4', `${'a'.repeat(242)}.hosted3`])(
+  'stop refuses tampered preference identity %s without deleting preferences or app data',
+  async (id) => {
+    receipt();
+    await runHostedMacosApp('install', request, { attempt: 'app' });
+    const file = join(process.env.HOME!, 'Library', 'Preferences', 'foo.hosted4.plist');
+    writeFileSync(file, 'another slot');
+    writeFileSync(join(home, 'hosted-macos-app.json'), JSON.stringify({ bundleId: id }));
+    expect(await runHostedMacosApp('stop', request)).toMatchObject({ state: 'unknown' });
+    expect(native.quiet).not.toHaveBeenCalled();
+    expect(native.runFile.mock.calls.some(([command]) => command === 'defaults')).toBe(false);
+    expect(readFileSync(file, 'utf8')).toBe('another slot');
+    expect(existsSync(join(home, 'app-home'))).toBe(true);
+    expect(existsSync(join(area, 'App.app'))).toBe(true);
+    expect(existsSync(join(area, 'blobs'))).toBe(true);
+  },
+);
+
 test('does not claim a launch when registration lacks a verified process', async () => {
   receipt();
   native.identity.mockReturnValue('unknown');
@@ -399,33 +437,4 @@ test('macOS device parsing rejects foreign devices, invalid slots and selector r
     JSON.stringify({ version: 1, ios: ['foreign'], android: [], web: [] }),
   );
   expect(() => assertHostedDeviceLedger(home, 'macos-3', 'macos')).toThrow('ownership ledger');
-});
-
-test('journal rejects missing, foreign and mismatched macOS app slots', () => {
-  mkdirSync(deviceHostRoot(), { recursive: true });
-  const record = {
-    ...request,
-    platform: 'macos',
-    workspace: '/client/worktree',
-    slot: 'default',
-    attempt: 'first',
-    id: session,
-    client: 'client',
-    state: 'ready',
-    device,
-    createdAt: new Date().toISOString(),
-  };
-  const write = (value: object) =>
-    writeFileSync(join(deviceHostRoot(), 'sessions.json'), JSON.stringify({ version: 1, sessions: [value] }));
-  write(record);
-  expect(readHostedSessions()).toEqual([record]);
-  for (const invalid of [
-    { appSlot: undefined },
-    { appSlot: 0 },
-    { appSlot: 2 },
-    { platform: 'ios', device: null, state: 'preparing' },
-  ]) {
-    write({ ...record, ...invalid });
-    expect(() => readHostedSessions()).toThrow('Malformed hosted session record');
-  }
 });

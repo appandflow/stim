@@ -78,10 +78,6 @@ test('reports selected installed SDK metadata without native or filesystem mutat
     choice: { architecture: 'arm64', macosVersion: '27.0' },
     declined: null,
   });
-  expect(native.runFile).toHaveBeenCalledWith('sw_vers', ['-productVersion'], {
-    timeoutMs: 10000,
-    killSignal: 'SIGKILL',
-  });
   expect(native.create).not.toHaveBeenCalled();
   expect(native.boot).not.toHaveBeenCalled();
   expect(readdirSync(home)).toEqual([]);

@@ -53,6 +53,7 @@ export function newer(value: string, supported: string): boolean {
   return false;
 }
 
+/** Materializes only digest-verified manifest content with links contained inside the app bundle. */
 export async function materializeHostedApp(
   home: string,
   session: string,
@@ -107,7 +108,6 @@ export async function materializeHostedApp(
   return { app, root, record };
 }
 
-/** Materializes only verified manifest content inside the server-selected attempt, then drives its exact device. */
 export async function installHostedApp(
   home: string,
   session: string,
