@@ -758,12 +758,9 @@ it('drops congested video, requests one recovery keyframe within a second, and r
   }
 });
 
-it.each([
-  ['a host with hosted-congestion', ['hosted-congestion'], true],
-  ['an older host', [], false],
-] as const)('tells %s about local congestion until the client drains', async (_, features, notifies) => {
+async function congestionNotices(features: string[]) {
   saveCredential();
-  helloFeatures = [...features];
+  helloFeatures = features;
   let buffered = 0;
   const sent: (ServerMessage | Buffer)[] = [];
   const relay = new HostedRelay(
@@ -782,7 +779,7 @@ it.each([
     () => {},
     () => {},
   );
-  const congested = () => requests.filter((request) => request.method === 'device-host.frames.congested');
+  const notices = () => requests.filter((request) => request.method === 'device-host.frames.congested');
   try {
     await relay.subscribe(1, readMacosRecord(workspace)!.host!, { video: ['h264'] }, () => {});
     await vi.waitFor(() => expect(sent.filter(Buffer.isBuffer)).toHaveLength(1));
@@ -792,16 +789,25 @@ it.each([
       videoPacket(UPSTREAM, 8, { keyframe: false, capturedAt: 1000, width: 800, height: 600, data: Buffer.from([0]) }),
     );
     await new Promise((resolve) => setTimeout(resolve, 600));
-    const notices = congested().length;
-    expect(notices >= 2 && notices <= 3 ? 'notified' : notices === 0 ? 'silent' : notices).toBe(
-      notifies ? 'notified' : 'silent',
-    );
-    expect(congested().every((request) => request.params.subscription === UPSTREAM)).toBe(true);
+    const whileBehind = notices().map((request) => request.params.subscription);
     buffered = 0;
-    const count = congested().length;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    const drained = notices().length;
     await new Promise((resolve) => setTimeout(resolve, 400));
-    expect(congested()).toHaveLength(count);
+    return { whileBehind, afterDrain: notices().length - drained };
   } finally {
     relay.close();
   }
+}
+
+it('tells a host with hosted-congestion about local congestion at most every 250 ms until the client drains', async () => {
+  const { whileBehind, afterDrain } = await congestionNotices(['hosted-congestion']);
+  expect(whileBehind.length).toBeGreaterThanOrEqual(2);
+  expect(whileBehind.length).toBeLessThanOrEqual(4);
+  expect(new Set(whileBehind)).toEqual(new Set([UPSTREAM]));
+  expect(afterDrain).toBe(0);
+});
+
+it('sends no congestion notices to a host without hosted-congestion', async () => {
+  expect(await congestionNotices([])).toEqual({ whileBehind: [], afterDrain: 0 });
 });

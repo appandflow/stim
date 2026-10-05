@@ -48,7 +48,7 @@ class Upstream {
   private holding: NodeJS.Immediate | null = null;
   private ended: Error | null = null;
   private users = 0;
-  private features: unknown[] = [];
+  private features: string[] = [];
   onClose: (() => void) | null = null;
 
   private readonly token: string;
@@ -154,7 +154,8 @@ class Upstream {
     ) {
       throw new Error('the host did not grant device-host access');
     }
-    if (Array.isArray(reply.result.features)) this.features = reply.result.features;
+    if (Array.isArray(reply.result.features))
+      this.features = reply.result.features.filter((feature): feature is string => typeof feature === 'string');
   }
 
   request(method: string, params: unknown): Promise<Reply> {
