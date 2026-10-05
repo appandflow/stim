@@ -1437,7 +1437,7 @@ finishes, it starts the EAS workflow `.eas/workflows/testflight.yml` with
 profile, waits for Apple to process it, adds it to the `External` TestFlight
 group, sets What to Test and submits the build for Beta App Review. Internal
 testers still get it through the groups that have automatic distribution
-turned on. The job needs no secret beyond `EXPO_TOKEN`; it reads the same
+turned on. The job is expected to need no GitHub secret beyond `EXPO_TOKEN`; it reads the same
 App Store Connect API key from EAS credentials as the upload did before.
 
 What to Test is the commit subject and short hash of the commit being
@@ -1447,8 +1447,8 @@ Apple requires Beta App Review for the first build of each marketing version
 (`version` in `app.config.ts`) before external testers can install it, and
 the beta app description and feedback email in App Store Connect must be
 filled in. The first build of a new version is therefore not installable
-for external testers until Apple approves it. Apple reviews only the first
-build of each version.
+for external testers until Apple approves it. Apple reviews the first build
+of each version; later builds usually need no new review.
 
 The last step of the run reads `eas submit:status` for the build and reports
 one state in the run's annotations and summary:
