@@ -408,10 +408,12 @@ names the session: rerun the command to reuse it, or run `stim stop` to end it.
 
 ## Control from the phone viewer
 
-A phone granted control can use the bottom icon toolbar for Home, Lock,
-Keyboard, rotation and supported foldable postures. The bar stays below the
-screen in portrait and landscape and scrolls sideways when needed. Duo
-simulators include Rotate left and Rotate right; the app in front still needs
+A phone granted control can use the compact bottom toolbar for Keyboard,
+Home on iOS or Back on Android and web, and both rotation directions. **More** (the ellipsis button)
+opens a native menu for Lock, Android Home and Apps, supported foldable postures,
+and simulator options. **Device frame** appears in More when matching artwork is
+available and remains usable without a control lease. The bar stays below the screen in portrait and landscape
+and fits its common controls within the available width. The app in front still needs
 to support the requested orientation. Physical devices rotate only in hand.
 
 Tapping Control explicitly takes over from the displayed driver immediately.

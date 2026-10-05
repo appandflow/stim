@@ -19,6 +19,8 @@ let mockAllowed = true;
 let mockPhysical = false;
 let mockFeatures = ['frames'];
 const mockKey = jest.fn();
+const mockButton = jest.fn();
+const mockSimulator = jest.fn();
 const mockDriver = { state: 'driven', driver: { tool: 'agent-device', pid: 1, since: '2026-10-01' }, basis: [] };
 
 jest.mock('react-native-keyboard-controller', () => jest.requireActual('react-native-keyboard-controller/jest'));
@@ -79,6 +81,8 @@ jest.mock('@/hooks/device-control', () => ({
     rotate: mockRotate,
     touch: mockTouch,
     key: mockKey,
+    button: mockButton,
+    simulator: mockSimulator,
   }),
 }));
 jest.mock('@/hooks/device-stream', () => ({
@@ -139,6 +143,41 @@ jest.mock('@/components/touch', () => ({
 jest.mock('@/components/icon', () => ({ Icon: () => null }));
 jest.mock('@/components/button', () => ({ Button: () => null }));
 jest.mock('@/components/pill', () => ({ Pill: () => null }));
+jest.mock('@/components/viewer-menu', () => ({
+  ViewerMenu: ({
+    actions,
+    label,
+    children,
+  }: {
+    actions: import('@/components/viewer-toolbar').ViewerAction[];
+    label: string;
+    children: import('react').ReactElement;
+  }) => {
+    const React = jest.requireActual<typeof import('react')>('react');
+    const { Pressable, View, Text } = jest.requireActual<typeof import('react-native')>('react-native');
+    const [open, setOpen] = React.useState(false);
+    return (
+      <View>
+        <Pressable accessibilityLabel={label} onPress={() => setOpen(!open)}>
+          {children}
+        </Pressable>
+        {open
+          ? actions.map((action) => (
+              <Pressable
+                key={action.id}
+                accessibilityLabel={action.label}
+                disabled={action.disabled}
+                accessibilityState={{ disabled: action.disabled, selected: action.selected }}
+                onPress={action.onPress}
+              >
+                <Text>{action.label}</Text>
+              </Pressable>
+            ))
+          : null}
+      </View>
+    );
+  },
+}));
 
 beforeEach(() => {
   mockControlling = true;
@@ -176,7 +215,33 @@ it('lets a Duo control session rotate in both directions while advertising postu
   await fireEvent.press(screen.getByLabelText('Rotate left'));
   await fireEvent.press(screen.getByLabelText('Rotate right'));
   expect(mockRotate.mock.calls).toEqual([['left'], ['right']]);
+  expect(screen.queryByLabelText('Fold')).toBeNull();
+  await fireEvent.press(screen.getByLabelText('More'));
   expect(screen.getByLabelText('Fold').props.accessibilityState).toEqual({ disabled: true, selected: true });
+});
+
+it('dispatches secondary device actions from More and keeps them disabled on a read-only pairing', async () => {
+  const screen = await render(
+    <I18nProvider i18n={i18n}>
+      <DeviceView workspace="/fixture" platform="ios" slot="default" />
+    </I18nProvider>,
+  );
+  expect(screen.queryByLabelText('Lock')).toBeNull();
+  await fireEvent.press(screen.getByLabelText('More'));
+  await fireEvent.press(screen.getByLabelText('Lock'));
+  expect(mockButton).toHaveBeenCalledWith('lock');
+  await screen.unmount();
+  mockButton.mockClear();
+  mockAllowed = false;
+  mockControlling = false;
+  const readOnly = await render(
+    <I18nProvider i18n={i18n}>
+      <DeviceView workspace="/fixture" platform="ios" slot="default" />
+    </I18nProvider>,
+  );
+  await fireEvent.press(readOnly.getByLabelText('More'));
+  await fireEvent.press(readOnly.getByLabelText('Lock'));
+  expect(mockButton).not.toHaveBeenCalled();
 });
 
 it('takes over directly from the conflict banner without a second confirmation', async () => {
@@ -211,6 +276,8 @@ it('starts frameless and maps framed touches using the aperture layout rather th
       <DeviceView workspace="/fixture" platform="ios" slot="default" />
     </I18nProvider>,
   );
+  expect(screen.queryByLabelText('Device frame')).toBeNull();
+  await fireEvent.press(screen.getByLabelText('More'));
   const toggle = screen.getByLabelText('Device frame');
   expect(toggle.props.accessibilityState.selected).toBe(false);
   await fireEvent.press(toggle);
@@ -230,6 +297,28 @@ it('starts frameless and maps framed touches using the aperture layout rather th
   mockTouch.mockClear();
   await fireEvent(aperture, 'responderGrant', { nativeEvent: { locationX: -10, locationY: 300 } });
   expect(mockTouch).not.toHaveBeenCalled();
+});
+
+it('keeps the frame presentation toggle available without a control lease or control permission', async () => {
+  mockArtwork = true;
+  mockControlling = false;
+  for (const allowed of [true, false]) {
+    mockAllowed = allowed;
+    const screen = await render(
+      <I18nProvider i18n={i18n}>
+        <DeviceView workspace="/fixture" platform="ios" slot="default" />
+      </I18nProvider>,
+    );
+    await fireEvent.press(screen.getByLabelText('More'));
+    const toggle = screen.getByLabelText('Device frame');
+    expect(toggle.props.accessibilityState.disabled).not.toBe(true);
+    expect(toggle.props.accessibilityState.selected).toBe(false);
+    await fireEvent.press(toggle);
+    expect(screen.getByLabelText('Device frame').props.accessibilityState.selected).toBe(true);
+    expect(mockBegin).not.toHaveBeenCalled();
+    expect(mockTouch).not.toHaveBeenCalled();
+    await screen.unmount();
+  }
 });
 
 it('keeps native mouse scrolling in the main bar without simulator buttons', async () => {

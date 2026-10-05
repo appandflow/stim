@@ -344,7 +344,15 @@ and **Reconnect** (see [Read-only pairings](#read-only-pairings)). The same
 banner appears when the server refuses `control.begin` with `forbidden`, or
 ends a session because the Mac took control away.
 
-On iOS simulators whose server advertises them, the control toolbar also has
+The compact bottom toolbar keeps common icons visible: **Keyboard**, **Home** on iOS or
+**Back** on Android and web, and both rotation directions on simulators and
+emulators. **More** (the ellipsis button) opens
+a native menu for Lock, Android Home and Apps, supported foldable postures,
+and simulator options. **Device frame** appears in More when matching frame artwork
+is available; this display toggle does not require control permission. Unavailable
+device commands stay disabled.
+
+On iOS simulators whose server advertises them, **More** includes
 **Shake** and **Slow animations**. Slow animations shows its confirmed state;
 its buttons wait for the current change to finish. Ending control stops a
 pending change. Older servers and unavailable simulator capabilities leave
