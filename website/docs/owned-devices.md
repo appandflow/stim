@@ -576,6 +576,16 @@ first, or deny a request with `stim-server devices revoke <id>`.
 Hosting approval permits that client's native app code to run in its own
 hosted simulators. Approve only an expected client.
 
+Before reserving, an approved client can query the
+[hosted availability offer protocol](https://github.com/appandflow/stim/blob/main/packages/server/README.md#hosted-availability-offers)
+for an installed iOS or Android SDK choice, host architecture, current hosted
+reservation capacity, memory pressure, load and free disk on the Stim home
+volume. An unavailable or unknown choice carries a decline reason. This query
+creates no device or session. Offers are advisory snapshots; reserve still
+admits atomically and rechecks native conditions. Ordinary local device
+producers do not participate in hosted capacity, and Android AVD storage can
+be on a different volume. CLI host placement remains a follow-up in #2266.
+
 An approved client can reserve, boot, reconnect to and stop its own iOS simulator
 through the [hosted session protocol](https://github.com/appandflow/stim/blob/main/packages/server/README.md#hosted-ios-session-protocol).
 It can also transfer a digest-verified simulator `.app` bundle and install and

@@ -228,6 +228,36 @@ from phone pairings and build clients. A hosting token grants no `read`,
 read, control and build tokens cannot gain hosting through `devices grant`.
 Loopback requests and `pair --device-host` are refused.
 
+### Hosted availability offers
+
+Before reserving, an approved hosting client can send:
+
+```json
+{ "id": 1, "method": "device-host.offer", "params": { "platform": "ios", "runtime": "27.0" } }
+```
+
+Use `platform: "android"` with optional `systemImage` and `deviceProfile`, or
+`ios` with optional `deviceType` and `runtime`. Omit selectors for the same
+installed defaults used by reserve. The response includes `platform`, the
+selected SDK `choice` (runtime/model/image and host architecture), `resources`,
+`capacity` and a nullable `declined` reason. An unavailable SDK choice is `null`
+with a reason; unknown or elevated memory pressure declines. The query creates
+no session, simulator, AVD or ownership claim.
+
+`capacity.running` counts every reservation not confirmed stopped, including
+unresolved sessions. `max` is `concurrency.maxDevices`; zero means uncapped and
+`available` is then `null`. Android offers also decline when all supported
+console ports are already recorded as occupied. Resource values are advisory:
+`cpus`, five-minute `loadPerCore`, `memoryFreeBytes`, `memoryPressure` (nullable
+when unknown), and `workerDiskFreeBytes` (nullable when unreadable). Disk space
+is measured on the Stim home volume, which can differ from Android AVD storage.
+
+An offer is a snapshot, not a reservation or a boot guarantee. Capacity,
+memory, installed SDKs and local device producers can change before reserve;
+reserve still takes atomic admission and revalidates native preflight. A
+non-null choice with a non-null `declined` reason is currently unavailable.
+This protocol does not select a host for `stim ios` or `stim android`.
+
 ### Hosted iOS session protocol
 
 An approved client sends `device-host.reserve` with an opaque attempt ID and
