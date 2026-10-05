@@ -156,8 +156,12 @@ struct DeviceTile: View {
       guard let request = clipboardRequest, request.target == clipboardTarget else { return }
       defer { if clipboardRequest == request { clipboardRequest = nil } }
       if let text = request.text {
-        guard case .android = device else { return }
-        let pasted = await emulatorButtons.paste(text)
+        let pasted: Bool
+        switch device {
+        case .ios: pasted = await simulatorButtons.paste(text)
+        case .android: pasted = await emulatorButtons.paste(text)
+        default: return
+        }
         guard !Task.isCancelled, request.target == clipboardTarget else { return }
         if !pasted { clipboardError = "Could not paste into the device. Check that it is connected and a text field is focused." }
       } else {
@@ -361,18 +365,16 @@ struct DeviceTile: View {
       if canShowFrame { controlGroup { frameButton } }
       if let target = clipboardTarget {
         controlGroup {
-          if case .android = device {
-            Button("Paste into device", systemImage: "doc.on.clipboard") {
-              guard let text = NSPasteboard.general.string(forType: .string), !text.isEmpty else {
-                clipboardError = "The Mac clipboard has no text to paste."
-                return
-              }
-              clipboardRequest = ClipboardRequest(target: target, text: text)
+          Button("Paste into device", systemImage: "doc.on.clipboard") {
+            guard let text = NSPasteboard.general.string(forType: .string), !text.isEmpty else {
+              clipboardError = "The Mac clipboard has no text to paste."
+              return
             }
-            .labelStyle(.iconOnly)
-            .buttonStyle(DeviceControlButtonStyle())
-            .help("Paste Mac clipboard text into the focused device field")
+            clipboardRequest = ClipboardRequest(target: target, text: text)
           }
+          .labelStyle(.iconOnly)
+          .buttonStyle(DeviceControlButtonStyle())
+          .help("Paste Mac clipboard text into the focused device field")
           Button("Copy device clipboard", systemImage: "doc.on.doc") {
             clipboardRequest = ClipboardRequest(target: target, text: nil)
           }
