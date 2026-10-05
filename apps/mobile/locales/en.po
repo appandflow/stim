@@ -3580,6 +3580,19 @@ msgstr "The endpoint must start with wss://."
 msgid "the Mac"
 msgstr "the Mac"
 
+#: src/lib/connection.ts
+#: src/lib/connection.ts
+msgid "The Mac sent an invalid pairing response."
+msgstr "The Mac sent an invalid pairing response."
+
+#: src/lib/connection.ts
+msgid "The Mac sent an invalid RPC message. Reconnecting."
+msgstr "The Mac sent an invalid RPC message. Reconnecting."
+
+#: src/lib/connection.ts
+msgid "The Mac sent an invalid RPC response."
+msgstr "The Mac sent an invalid RPC response."
+
 #: src/screens/workspace-resources.tsx
 msgid "The Mac volume that holds workspaces has {freeSpace} free."
 msgstr "The Mac volume that holds workspaces has {freeSpace} free."

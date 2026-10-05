@@ -1,4 +1,5 @@
 import { t } from '@lingui/core/macro';
+import { isRpcError, isRpcEvent, isRpcEventName, isRpcResult } from '@stim-cli/core/receive-protocol';
 
 import {
   PROTOCOL_VERSION,
@@ -10,7 +11,6 @@ import {
   type Methods,
   type ProtocolError,
   type ServerEvent,
-  type ServerMessage,
 } from '@/protocol/types';
 import { parseVideoPacket, type VideoPacket } from '@/lib/video';
 
@@ -54,6 +54,7 @@ interface Subscription {
 }
 
 interface Pending {
+  method: Method;
   resolve: (result: unknown) => void;
   reject: (error: Error) => void;
 }
@@ -74,6 +75,16 @@ export interface ConnectionOptions {
   createSocket?: SocketFactory;
   setTimer?: (fn: () => void, ms: number) => unknown;
   clearTimer?: (handle: unknown) => void;
+}
+
+function isMessageObject(value: unknown): value is {
+  id?: unknown;
+  event?: unknown;
+  subscription?: unknown;
+  result?: unknown;
+  error?: unknown;
+} {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
 const MIN_RETRY_MS = 1000;
@@ -279,24 +290,43 @@ export class StimConnection {
   private send<M extends Method>(socket: WebSocket, method: M, params: Methods[M]['params']) {
     const id = this.nextId++;
     return new Promise<Methods[M]['result']>((resolve, reject) => {
-      this.pending.set(id, { resolve: resolve as (result: unknown) => void, reject });
+      this.pending.set(id, { method, resolve: resolve as (result: unknown) => void, reject });
       socket.send(JSON.stringify({ id, method, params }));
     });
   }
 
   private receive(text: string): void {
-    let message: ServerMessage;
+    let message: unknown;
     try {
-      message = JSON.parse(text) as ServerMessage;
+      message = JSON.parse(text);
     } catch {
+      this.invalidMessage();
+      return;
+    }
+    if (!isMessageObject(message)) {
+      this.invalidMessage();
       return;
     }
     if ('id' in message) {
-      const pending = this.pending.get(message.id);
+      const pending = typeof message.id === 'number' ? this.pending.get(message.id) : undefined;
       if (!pending) return;
-      this.pending.delete(message.id);
-      if ('error' in message) pending.reject(new RequestError(message.error));
-      else pending.resolve(message.result);
+      this.pending.delete(message.id as number);
+      if ('error' in message && !('result' in message) && isRpcError(message.error)) {
+        pending.reject(new RequestError(message.error));
+      } else if ('result' in message && !('error' in message) && isRpcResult(pending.method, message.result)) {
+        pending.resolve(message.result);
+      } else {
+        pending.reject(new Error(t`The Mac sent an invalid RPC response.`));
+        this.invalidMessage();
+      }
+      return;
+    }
+    if (typeof message.event !== 'string' || !isRpcEventName(message.event)) return;
+    const subscription = message.subscription;
+    if (typeof subscription === 'string' && ![...this.subscriptions].some((sub) => sub.serverId === subscription))
+      return;
+    if (!isRpcEvent(message)) {
+      this.invalidMessage();
       return;
     }
     if (message.event === 'control-ended') {
@@ -313,6 +343,14 @@ export class StimConnection {
       else sub.retryMs = MIN_RETRY_MS;
       sub.onEvent(message);
     }
+  }
+
+  private invalidMessage(): void {
+    const socket = this.socket;
+    const reason = t`The Mac sent an invalid RPC message. Reconnecting.`;
+    this.detach(reason);
+    socket?.close();
+    if (!this.stopped) this.scheduleRetry(reason);
   }
 
   private receiveVideo(buffer: ArrayBuffer): void {
@@ -376,16 +414,22 @@ export function pair(
     };
     socket.onopen = () => socket.send(JSON.stringify({ id: 1, method: 'hello', params: hello }));
     socket.onmessage = (message) => {
-      let parsed: ServerMessage;
+      let parsed: unknown;
       try {
-        parsed = JSON.parse(String(message.data)) as ServerMessage;
+        parsed = JSON.parse(String(message.data));
       } catch {
+        finish(() => reject(new Error(t`The Mac sent an invalid pairing response.`)));
         return;
       }
-      if (!('id' in parsed) || parsed.id !== 1) return;
+      if (!isMessageObject(parsed) || parsed.id !== 1) return;
       finish(() => {
-        if ('error' in parsed) return reject(new RequestError(parsed.error));
-        const result = parsed.result as Methods['hello']['result'];
+        if ('error' in parsed && !('result' in parsed) && isRpcError(parsed.error)) {
+          return reject(new RequestError(parsed.error));
+        }
+        if ('error' in parsed || !isRpcResult('hello', parsed.result)) {
+          return reject(new Error(t`The Mac sent an invalid pairing response.`));
+        }
+        const result = parsed.result;
         if (!result.deviceToken) return reject(new Error(t`The server did not issue a device token.`));
         resolve({ deviceToken: result.deviceToken, serverName: result.server.name });
       });

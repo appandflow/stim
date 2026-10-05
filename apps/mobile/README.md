@@ -820,23 +820,22 @@ directories to the fingerprint, which does not hash inline modules on its own.
 
 ## Protocol types
 
-`src/protocol/types.ts` holds the protocol messages and the `stim status --json`
-and `stim logs --json` payload types the app reads. It is a copy of the types
-`@stim-cli/server` and `@stim-cli/core/state` export, not an import:
+`src/protocol/types.ts` re-exports `@stim-cli/core/phone-protocol`, which derives
+the phone's receiving types from the shared wire contract. Compatibility fields
+such as `issues` and `home` are optional in the phone's types. These entries
+do not load core's Node-only root or state readers.
 
-- The copy describes what the app accepts from any paired Mac, including one
-  running an older `stim-server`. Fields that older servers omit, such as
-  `issues` or `home`, are optional here and required in the server's types.
-- The protocol copy stays independent of the server package build. The app
-  imports shared notification rules from the isolated `@stim-cli/core/oversight`
-  entry instead of the Node-only core root or state entries.
+`@stim-cli/core/receive-protocol` validates method results, known events and
+errors before the connection publishes them to screens. Invalid payloads close
+the connection and trigger a retry without logging the payload. Unknown future
+events and additional compatible fields remain accepted.
 
-`packages/server/__tests__/mobile-protocol.test.ts` keeps the copy honest: the
-root `pnpm run typecheck` fails when the app would send params the server
-refuses, misses a server method, or misreads a result or event the server
-sends. The root CI runs when this file changes. The app's `LogRecord` is
-narrower than the server's on purpose: the server forwards whatever
-`stim logs --json` prints.
+After changing the contracts, run `pnpm run rpc:generate` at the repository
+root. `pnpm run rpc:check` verifies the generated validators in CI.
+`packages/server/__tests__/mobile-protocol.test.ts` checks agreement between the
+phone's types and the server's types; receiver and connection tests cover
+payload validation and reconnect behavior. The phone requires structured
+`LogRecord` fields even though the server's NDJSON type permits other records.
 
 ## Develop
 

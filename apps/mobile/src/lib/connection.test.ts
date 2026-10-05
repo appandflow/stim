@@ -42,6 +42,13 @@ class FakeSocket {
 }
 
 const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
+const status = {
+  environments: [],
+  capacity: { liveCount: 0, committedMb: 0, totalMemoryMb: 1024, overCapacity: false },
+  deviceLeases: [],
+  simctlAvailable: true,
+};
+const currentWorkspace = { path: '/current', live: false, memoryMb: 0, warnings: [], issues: [] };
 const hello = { protocol: 1, server: { name: 'Mac', version: '1', stim: '1.9.0' }, capabilities: ['read'] };
 
 function setup() {
@@ -76,7 +83,7 @@ describe('StimConnection', () => {
     await flush();
     sockets[0].reply('status.subscribe', { subscription: 's1' });
     await flush();
-    sockets[0].emit({ event: 'status', subscription: 's1', payload: { environments: [] } });
+    sockets[0].emit({ event: 'status', subscription: 's1', payload: status });
 
     sockets[0].close();
     expect(timers.map((t) => t.ms)).toEqual([1000]);
@@ -88,9 +95,9 @@ describe('StimConnection', () => {
     sockets[1].reply('status.subscribe', { subscription: 's9' });
     await flush();
     sockets[1].emit({ event: 'status', subscription: 's1', payload: { environments: [1] } });
-    sockets[1].emit({ event: 'status', subscription: 's9', payload: { environments: [2] } });
+    sockets[1].emit({ event: 'status', subscription: 's9', payload: { ...status, environments: [currentWorkspace] } });
 
-    expect(events.map((e) => (e.event === 'status' ? e.payload.environments : null))).toEqual([[], [2]]);
+    expect(events.map((e) => (e.event === 'status' ? e.payload.environments : null))).toEqual([[], [currentWorkspace]]);
   });
 
   it('hands the subscribe result over and routes binary video by the current subscription id', async () => {
@@ -287,5 +294,78 @@ describe('pair', () => {
     );
     socket.close();
     await expect(result).rejects.toThrow('Cannot reach wss://mac.');
+  });
+});
+
+describe('RPC receive validation', () => {
+  it('rejects a response for another method and reconnects without resolving it', async () => {
+    const { connection, sockets, states, timers } = setup();
+    connection.start();
+    sockets[0].onopen?.();
+    sockets[0].reply('hello', hello);
+    await flush();
+    const result = connection.request('machine.get', {});
+    const rejected = expect(result).rejects.toThrow('invalid RPC response');
+    sockets[0].reply('machine.get', { subscription: 'wrong-method' });
+    await rejected;
+    expect(sockets[0].closed).toBe(true);
+    expect(states.at(-1)).toMatchObject({ kind: 'waiting', retryInMs: 1000 });
+    timers[0].fn();
+    sockets[1].onopen?.();
+    sockets[1].reply('hello', { ...hello, features: ['future-feature'], extra: true });
+    await flush();
+    expect(states.at(-1)).toMatchObject({ kind: 'open', features: ['future-feature'] });
+    connection.close();
+  });
+
+  it('keeps malformed nested log records out of listeners and resubscribes after reconnect', async () => {
+    const { connection, sockets, timers } = setup();
+    const listener = jest.fn();
+    connection.subscribe('logs.subscribe', { workspace: '/current' }, listener);
+    connection.start();
+    sockets[0].onopen?.();
+    sockets[0].reply('hello', hello);
+    await flush();
+    sockets[0].reply('logs.subscribe', { subscription: 's' });
+    await flush();
+    sockets[0].emit({ event: 'logs', subscription: 's', records: [{ ts: 1, src: 'metro', level: 'info', msg: 5 }] });
+    expect(listener).not.toHaveBeenCalled();
+    expect(sockets[0].closed).toBe(true);
+    timers[0].fn();
+    sockets[1].onopen?.();
+    sockets[1].reply('hello', hello);
+    await flush();
+    expect(sockets[1].sent.map(({ method }) => method)).toEqual(['hello', 'logs.subscribe']);
+    connection.close();
+  });
+
+  it('ignores unknown future events but closes malformed JSON without exposing its contents', async () => {
+    const { connection, sockets, states } = setup();
+    connection.start();
+    sockets[0].onopen?.();
+    sockets[0].reply('hello', hello);
+    await flush();
+    sockets[0].emit({ event: 'future-event', payload: null });
+    expect(sockets[0].closed).toBe(false);
+    sockets[0].onmessage?.({ data: 'private malformed payload' });
+    expect(sockets[0].closed).toBe(true);
+    expect(JSON.stringify(states)).not.toContain('private malformed payload');
+    connection.close();
+  });
+
+  it('rejects a malformed pairing hello before storing a token', async () => {
+    const socket = new FakeSocket();
+    const promise = pair(
+      'wss://mac',
+      'pairing',
+      'Phone',
+      { name: 'test', version: '0' },
+      () => socket as unknown as WebSocket,
+    );
+    const rejected = expect(promise).rejects.toThrow('invalid pairing response');
+    socket.onopen?.();
+    socket.reply('hello', { ...hello, deviceToken: 'private-token', server: { name: 5 } });
+    await rejected;
+    expect(socket.closed).toBe(true);
   });
 });

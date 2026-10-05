@@ -296,6 +296,11 @@ check. The server checks pairings on changes and once a second. If QR pairing
 fails, the phone keeps the error visible until **Retry** or manual entry is
 chosen.
 
+The phone validates server replies and live events before displaying them.
+Malformed known data triggers a reconnect with a connection error; message
+contents are not logged. Older compatible payloads and extra fields remain
+supported. Binary video uses its existing stream format.
+
 ![The Pair a Phone sheet with a QR code to scan with the phone app](/img/desktop/pair.webp)
 
 Stim prints `Open in Stim Desktop: stim-desktop://workspace?path=...` when it

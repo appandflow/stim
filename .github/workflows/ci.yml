@@ -76,6 +76,9 @@ jobs:
       - name: Format check (oxfmt)
         run: pnpm run format:check
 
+      - name: Shared RPC validators match the contract
+        run: pnpm run rpc:check
+
       # Build every package with tsdown as ESM. Proves the published artifacts
       # compile.
       #

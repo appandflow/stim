@@ -2,6 +2,8 @@
   "$schema": "https://unpkg.com/knip@6/schema.json",
   "ignore": [
     "website/**",
+    "packages/core/receive-validators.mjs",
+    "packages/core/receive-validators.d.mts",
     "packages/stim-cli/shim/**",
     "scripts/agent-benchmark/compat/ps-bridge.mjs",
     "scripts/agent-benchmark/stamp.mjs",
