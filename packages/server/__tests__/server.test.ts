@@ -1496,6 +1496,17 @@ describe('health', () => {
     expect(rebound).toBe(426);
   });
 
+  it('answers the agent route only to tailnet peers and never as a WebSocket upgrade page', async () => {
+    const port = await start();
+    const session = '11111111-1111-4111-8111-111111111111';
+    const agent = (headers: Record<string, string>) =>
+      fetch(`http://127.0.0.1:${port}/device-host/agent/${session}/rpc`, { method: 'POST', body: '{}', headers });
+    expect((await agent({})).status).toBe(403);
+    expect((await agent({ 'x-forwarded-for': '100.64.0.2', origin: 'http://attacker.example' })).status).toBe(403);
+    expect((await agent({ 'x-forwarded-for': '100.64.0.2', authorization: 'Bearer nothing' })).status).toBe(404);
+    expect((await fetch(`http://127.0.0.1:${port}/device-host/agent/not-a-session/rpc`)).status).toBe(426);
+  });
+
   it('follows Tailscale coming up and going away after start', async () => {
     let next: TailscaleState = { state: 'unavailable', reason: 'it timed out' };
     const initial = { binary: null, state: next };

@@ -258,6 +258,37 @@ reserve still takes atomic admission and revalidates native preflight. A
 non-null choice with a non-null `declined` reason is currently unavailable.
 This protocol does not select a host for `stim ios` or `stim android`.
 
+### Agent driver route
+
+On the hosting Mac, `hosting.agentDriver` names the tool that lets a client's
+coding agent drive the macOS app hosted for that client. `none` (the default)
+starts nothing. `stim-server` reference-counts the driver's daemon on running
+hosted macOS apps: it starts with the first, stops after the last, on
+revocation and on server shutdown, and restarts if it exits while apps run. The
+daemon is held under an ownership claim at `server/agent-device.claims` whose
+child is the daemon, and its state lives in `server/agent-device`.
+
+Each hosted app gets a grant scoped to one client and one app. The grant's
+token is kept in memory only, is returned to that client in `app.launch` and
+`app.attach` results, and is never journaled or logged. The route
+
+```text
+ANY /device-host/agent/<session>/<driver path>
+```
+
+on the tailnet `serve` route is forwarded to the loopback daemon, with the
+daemon's own token, only when all of these hold: the request carries that
+session's token as a bearer token, it comes from the tailnet node pinned to the
+session's approved device-host client, the client still holds `device-host`, and
+the session's app is running. Loopback requests, browser requests and other
+sessions' tokens are refused with 403, an unknown or stopped session with 404.
+
+The `agent-device` adapter finds the binary at `~/.local/bin/agent-device`,
+`/opt/homebrew/bin/agent-device` or `/usr/local/bin/agent-device` and never
+searches `PATH`. agent-device has no remote lease limited to one macOS app, so
+the adapter does not start and the grant is `{ "driver": "none" }` with a
+notice; Stim never hands out the Mac's desktop.
+
 ### Hosted iOS session protocol
 
 An approved client sends `device-host.reserve` with an opaque attempt ID and
