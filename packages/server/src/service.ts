@@ -813,24 +813,30 @@ async function switchTo(
     }
     rmSync(staged, { force: true });
     writeFileSync(path, before, { mode: 0o644 });
+    let unloaded = true;
     try {
       await unload(installed.label);
-    } catch {}
+    } catch {
+      unloaded = false;
+    }
     let loadedAgain = false;
-    for (const deadline = Date.now() + UNLOAD_WAIT_MS; !loadedAgain && Date.now() < deadline;) {
+    const deadline = unloaded ? Date.now() + UNLOAD_WAIT_MS : 0;
+    while (!loadedAgain && Date.now() < deadline) {
       loadedAgain =
         (await run('launchctl', ['bootstrap', domain(), path])).ok ||
         (await loaded(installed.label).catch(() => null)) !== null;
       if (!loadedAgain) await sleep(1000);
     }
     const back = loadedAgain ? await waitForHealth(installed.port) : null;
+    const previous = serverBuild(installed.script);
+    const answered = back !== null && (previous ? answersAs(back, previous) : back.startup?.state !== 'degraded');
     throw new ServiceError(
       `${describeBuild(expected)} ${why}. ${
-        back
-          ? `Switched back to stim-server ${back.version}.`
+        answered
+          ? `Switched back to ${describeBuild(previous ?? { version: back.version, stimBuild: null })}.`
           : loadedAgain
             ? `Restored the previous plist, but that server does not answer either; check ${installed.logPath ?? logPath(installed.label)}.`
-            : `Restored the previous plist, but launchd did not load it; run \`launchctl bootstrap ${domain()} ${path}\`.`
+            : `Restored the previous plist, but launchd did not load it; run \`launchctl bootout ${domain()}/${installed.label}\` and \`launchctl bootstrap ${domain()} ${path}\`.`
       }`,
     );
   });

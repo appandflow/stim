@@ -219,7 +219,8 @@ describe('service update checks', () => {
         );
         releaseClaim(held.acquired);
       } finally {
-        process.env.HOME = previous;
+        if (previous === undefined) delete process.env.HOME;
+        else process.env.HOME = previous;
         rmSync(home, { recursive: true, force: true });
       }
     });
