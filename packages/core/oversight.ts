@@ -112,7 +112,7 @@ export interface OversightPrefs {
 export type OversightTarget =
   | { kind: 'machine' }
   | { kind: 'workspace'; path: string }
-  | { kind: 'device'; path: string; platform: 'ios' | 'android' | 'web'; slot: string }
+  | { kind: 'device'; path: string; platform: 'ios' | 'android' | 'web' | 'macos'; slot: string }
   | { kind: 'build'; path: string; platform: 'ios' | 'android' }
   | { kind: 'url'; path: string; url: string };
 

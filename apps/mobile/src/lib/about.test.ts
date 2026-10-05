@@ -23,9 +23,10 @@ const app: AboutApp = {
 const device: AboutDevice = { os: 'ios', osVersion: '27.0', model: 'iPhone 18 Pro', locale: 'en-CA' };
 
 describe('about', () => {
-  it('lists the App&Flow libraries whatever the case of their GitHub owner, without Stim', () => {
+  it('lists the App&Flow libraries whatever the case of their GitHub owner, without Stim or its core package', () => {
     const packages = [
       { name: 'Stim', url: 'https://github.com/appandflow/stim' },
+      { name: '@stim-cli/core', url: 'https://github.com/appandflow/stim' },
       { name: 'react-native-ease', url: 'https://github.com/AppAndFlow/react-native-ease' },
       { name: 'react-native-hinges', url: 'https://github.com/appandflow/react-native-hinges' },
       { name: 'react-native-screens', url: 'https://github.com/software-mansion/react-native-screens' },

@@ -13,7 +13,13 @@ import Testing
     #expect(stopped.protocolVersion == 1 && stopped.stimHome == "/Users/me/.stim")
     #expect(!stopped.tailscale.isRunning)
     #expect(stopped.tailscale.summary == "Tailscale is not running (Stopped).")
-    #expect(stopped.route == nil)
+    #expect(stopped.route == nil && stopped.nativeViewerOpened == nil)
+    let opened = try StimServerCLI.decoder.decode(
+      ServerHealth.self,
+      from: Data(
+        #"{"server":"stim-server","name":"Mac","version":"1","stim":"1","protocol":1,"stimHome":"/Users/me/.stim","tailscale":{"state":"running"},"nativeViewerOpened":true}"#
+          .utf8))
+    #expect(opened.nativeViewerOpened == true)
     let running = try StimServerCLI.decoder.decode(
       TailscaleState.self,
       from: Data(#"{"state":"running","dnsName":"mac.tail1.ts.net"}"#.utf8))

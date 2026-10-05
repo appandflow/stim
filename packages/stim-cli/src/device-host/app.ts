@@ -58,6 +58,7 @@ export async function installHostedApp(
   session: string,
   attempt: string,
   device: HostedIosDevice,
+  metroPort?: number,
 ): Promise<true | 'unverified'> {
   const record = readHostedApp(session, attempt, home);
   const area = hostedAppArea(session, attempt, home);
@@ -143,12 +144,18 @@ export async function installHostedApp(
     udid: device.udid,
     appPath: app,
     bundleId: record.bundleId,
+    devClientScheme: record.devClientScheme,
     proveInstalled: false,
   });
   if (!installed.ok) throw new Error(installed.reason ?? 'Hosted app installation was not established.');
   assertHostedDeviceLedger(home, device.udid);
   if (readHostedDevice(home).udid !== device.udid) throw new Error('The hosted device identity changed.');
-  const launched = launchIosApp({ udid: device.udid, bundleId: record.bundleId, metroPort: null });
+  const launched = launchIosApp({
+    udid: device.udid,
+    bundleId: record.bundleId,
+    metroPort: record.mode === 'development' ? (metroPort ?? null) : null,
+    devClientScheme: record.devClientScheme,
+  });
   if (!launched.ok) throw new Error(launched.reason ?? 'Hosted app launch was not established.');
   if (record.mode === 'development') return 'unverified';
   for (let tries = 0; tries < 10; tries++) {

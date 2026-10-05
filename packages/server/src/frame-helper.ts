@@ -4,8 +4,16 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { compiledHelper } from '@stim-cli/core';
+import {
+  clearClaimChild,
+  markClaimChildPending,
+  setClaimChild,
+  type ClaimHandle,
+} from '@stim-cli/core/ownership-claim';
+import { captureProcessIdentity } from '@stim-cli/core/process-identity';
+import { isJsonObject } from '@stim-cli/core/state';
 import type { Device, Frame, FrameListener, Posture } from './frames.ts';
-import { FRAME_EDGE, FRAME_FPS } from './protocol.ts';
+import { FRAME_EDGE, FRAME_FPS, type SimulatorCommand, type SimulatorOptions } from './protocol.ts';
 import { serverDir } from './registry.ts';
 import { terminate } from './stim-command.ts';
 import { Bitrate, DEFAULT_VIDEO_LIMITS, type AccessUnit } from './video.ts';
@@ -43,6 +51,7 @@ export function adbPath(env: NodeJS.ProcessEnv): string {
 }
 
 function helperArgs(device: Device, env: NodeJS.ProcessEnv): string[] {
+  if (device.platform === 'macos') return ['macos', JSON.stringify(device.app)];
   if (device.platform === 'web') return ['web', device.endpoint, String(device.pid), device.targetId];
   if (device.platform === 'ios' && device.physical)
     return ['iphone', device.udid, ...(device.name ? [device.name] : [])];
@@ -57,9 +66,10 @@ function run(
   env: NodeJS.ProcessEnv,
   timeoutMs: number,
   signal?: AbortSignal,
+  holdInput = false,
 ): Promise<string> {
   return new Promise((resolve, reject) => {
-    const child = spawn(file, args, { env, stdio: ['ignore', 'pipe', 'pipe'], detached: true });
+    const child = spawn(file, args, { env, stdio: [holdInput ? 'pipe' : 'ignore', 'pipe', 'pipe'], detached: true });
     let output = '';
     let stopped: string | null = null;
     const stop = (reason: string) => {
@@ -71,10 +81,10 @@ function run(
     const timer = setTimeout(() => stop(`${file} ${args[0]} did not finish within ${timeoutMs / 1000} s.`), timeoutMs);
     const abort = () => stop(`${file} ${args[0]} was stopped with the server.`);
     signal?.addEventListener('abort', abort);
-    child.stdout.setEncoding('utf8');
-    child.stderr.setEncoding('utf8');
-    child.stdout.on('data', (chunk: string) => (output = (output + chunk).slice(-4000)));
-    child.stderr.on('data', (chunk: string) => (output = (output + chunk).slice(-4000)));
+    child.stdout!.setEncoding('utf8');
+    child.stderr!.setEncoding('utf8');
+    child.stdout!.on('data', (chunk: string) => (output = (output + chunk).slice(-4000)));
+    child.stderr!.on('data', (chunk: string) => (output = (output + chunk).slice(-4000)));
     child.on('error', (error) => {
       clearTimeout(timer);
       signal?.removeEventListener('abort', abort);
@@ -88,6 +98,27 @@ function run(
       else reject(new Error(`${file} ${args[0]} exited (code ${code}): ${output.trim()}`));
     });
   });
+}
+
+/** Reads or changes guest simulator controls through the same native helper as screen input. */
+export async function simulatorOptions(
+  helper: string,
+  udid: string,
+  command: SimulatorCommand,
+  env: NodeJS.ProcessEnv,
+  signal?: AbortSignal,
+): Promise<SimulatorOptions> {
+  signal?.throwIfAborted();
+  const args = ['simulator-options', udid, command.action];
+  if (command.action === 'slow-animations') args.push(command.enabled ? 'on' : 'off');
+  const result: unknown = JSON.parse(await run(helper, args, env, 8000, signal, true));
+  if (
+    !isJsonObject(result) ||
+    typeof result.canShake !== 'boolean' ||
+    (result.slowAnimations !== null && typeof result.slowAnimations !== 'boolean')
+  )
+    throw new Error('The simulator helper did not return its development controls.');
+  return { canShake: result.canShake, slowAnimations: result.slowAnimations };
 }
 
 /**
@@ -195,6 +226,7 @@ export class HelperSource {
   private posture: Posture | undefined;
   private readonly lingerMs: number;
   private lingerTimer: NodeJS.Timeout | null = null;
+  private readonly claim: ClaimHandle | undefined;
 
   constructor(
     helper: string,
@@ -203,10 +235,13 @@ export class HelperSource {
     ended: (stopped: Promise<void>) => void,
     lingerMs: number,
     lit?: (display: number) => Posture | undefined,
+    claim?: ClaimHandle,
   ) {
     this.ended = ended;
     this.lingerMs = lingerMs;
     this.lit = lit;
+    this.claim = claim;
+    if (claim) markClaimChildPending(claim);
     this.child = spawn(helper, helperArgs(device, env), { env, stdio: ['pipe', 'pipe', 'pipe'] });
     this.child.stdin!.on('error', () => {});
     this.child.stderr!.setEncoding('utf8');
@@ -219,10 +254,23 @@ export class HelperSource {
       const detail = this.notice ?? this.stderr.trim();
       this.fail(`stim-frames exited (${signal ?? `code ${code}`})${detail ? `: ${detail}` : ''}`);
     });
+    if (claim) {
+      try {
+        const identity = this.child.pid ? captureProcessIdentity(this.child.pid) : null;
+        if (!identity?.ok) throw new Error('Hosted capture child identity could not be established.');
+        setClaimChild(claim, { pid: this.child.pid!, processToken: identity.token });
+      } catch (error) {
+        queueMicrotask(() => this.fail((error as Error).message));
+      }
+    }
   }
 
   /** A null `hint` keeps the helper running for input without asking for frames. */
   add(listener: FrameListener, hint: FrameHint | null): () => void {
+    if (this.stopped) {
+      queueMicrotask(() => listener.failed('The capture helper is stopping; reconnect and retry.'));
+      return () => {};
+    }
     if (this.lingerTimer) clearTimeout(this.lingerTimer);
     this.lingerTimer = null;
     this.listeners.set(listener, hint);
@@ -237,6 +285,10 @@ export class HelperSource {
     };
   }
 
+  get active(): boolean {
+    return !this.stopped;
+  }
+
   stop(): Promise<void> {
     if (this.stopped) return Promise.resolve();
     this.stopped = true;
@@ -244,7 +296,9 @@ export class HelperSource {
     if (this.lingerTimer) clearTimeout(this.lingerTimer);
     this.listeners.clear();
     this.child.stdin!.end();
-    const stopped = terminate(this.child);
+    const stopped = terminate(this.child).then(() => {
+      return this.claim ? clearClaimChild(this.claim) : undefined;
+    });
     this.ended(stopped);
     return stopped;
   }
@@ -380,7 +434,12 @@ export class HelperSource {
       const keyboard = (notice as { keyboard?: unknown } | null)?.keyboard;
       if (keyboard === 'yes' || keyboard === 'no') this.keyboard = keyboard === 'yes';
       const inputError = (notice as { inputError?: unknown } | null)?.inputError;
-      if (typeof inputError === 'string') console.error(`stim-server: stim-frames: ${inputError}`);
+      if (typeof inputError === 'string') {
+        console.error(`stim-server: stim-frames: ${inputError}`);
+        const session = (notice as { controlSession?: unknown } | null)?.controlSession;
+        for (const listener of this.listeners.keys())
+          listener.inputFailed?.(inputError, typeof session === 'string' ? session : undefined);
+      }
       const stalled = (notice as { stalled?: unknown } | null)?.stalled;
       if (stalled === null || typeof stalled === 'string') this.stall(stalled);
       const display = (notice as { display?: unknown } | null)?.display;

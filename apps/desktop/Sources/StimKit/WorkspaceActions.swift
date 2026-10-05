@@ -39,9 +39,12 @@ public func workspaceMenuItems(for kind: ActionRowKind) -> [WorkspaceMenuItem?] 
     return [
       .openInEditor, .openInTerminal, .revealInFinder, .copyPath, .lastOutput,
       nil,
-    ] + platforms.map { .run(platform: $0) } + [
-      .reload, metroRunning ? .stopDevServer : .startDevServer, .showLogs,
-    ] + (linkedWorktree ? [nil, .removeWorktree] : [])
+    ] + platforms.map { .run(platform: $0) }
+      + (platforms == ["macos"]
+        ? [.stopDevServer, .showLogs]
+        : [
+          .reload, metroRunning ? .stopDevServer : .startDevServer, .showLogs,
+        ]) + (linkedWorktree ? [nil, .removeWorktree] : [])
   case .worktree:
     return [
       .openInEditor, .openInTerminal, .revealInFinder, .copyPath,
@@ -64,9 +67,10 @@ public func worktreeRemovalAllowed(git: WorktreeGit?) -> Bool {
 extension Workspace {
   /// The platforms with a device or a last build.
   public var usedPlatforms: [String] {
-    ["ios", "android"].filter { platform in
-      devices.contains { $0.platform == platform } || lastBuilds?.build(for: platform) != nil
-    }
+    return (macos == nil ? [] : ["macos"])
+      + ["ios", "android"].filter { platform in
+        devices.contains { $0.platform == platform } || lastBuilds?.build(for: platform) != nil
+      }
   }
 
   /// The platforms Run offers: `usedPlatforms`, or both when neither is recorded.
@@ -89,6 +93,7 @@ public func platformName(_ platform: String) -> String {
   switch platform {
   case "ios": return "iOS"
   case "web": return "Web"
+  case "macos": return "macOS"
   default: return "Android"
   }
 }

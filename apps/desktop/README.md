@@ -190,6 +190,21 @@ device sits on a plain canvas, as large as it fits, with its hardware,
 rotation and posture controls grouped below it. The groups wrap when space is
 tight, and the replay bar (see [Replay](#replay)) runs across the bottom.
 
+**Show device frame** adds the matching installed hardware artwork to a live local
+simulator or emulator. The screen keeps its aspect ratio and input coordinates;
+the frame turns with the display. **Hide device frame** returns to the default
+frameless view. The button is available without taking Control.
+
+Apple frames come from installed DeviceKit chrome and the simulator's actual
+device-type profile. Android frames use the AVD's configured `skin.path`, or its
+exact hardware profile's artwork in `/Applications/Android Studio.app`; the skin's
+screen dimensions must match the AVD. Missing artwork, unsupported skin layouts,
+Android foldables, physical or remote devices, web pages and replay stay frameless.
+For a local iPhone Duo, an installed Xcode containing DeviceKit's V68 model and a
+valid observed hinge angle enable genuine posed hardware around its live panels.
+Missing model data retains the frameless view. Stim ships no Apple or Android
+artwork; mobile asset delivery is not included.
+
 On the right, 360 points wide, the **agent actions** list what agents did on
 the device (`stim logs --source agent`), oldest first, with filter chips (All,
 Failed and the two most used commands) and a divider for a pause of more than
@@ -564,6 +579,28 @@ trackpad scrolls as one-finger drags, and your keys. Turn it off before an agent
 drives the device again. Command-key shortcuts stay with the app's menus, and a
 mouse wheel without precise deltas does not scroll.
 
+The viewer's scale menu defaults to **Fit**. **Point Accurate** shows one iOS
+point or Android profile dp per Mac point; **Pixel Accurate** shows one guest
+pixel per display backing pixel. **Physical Size** uses the installed iOS
+device DPI and the current monitor's reported physical width. It is unavailable
+when either measurement is missing, and on Android, whose dp density is not a
+physical measurement. Monitor-reported dimensions can be approximate.
+Accurate modes retain their size when the viewer is small: scroll outside the
+screen, or release Control to scroll over it, and select **Fit** to return.
+The scale follows display and backing-scale changes when moving between monitors.
+Hardware frames retain the same screen scale through rotation. Android accurate
+modes request native-resolution images; Fit and wall previews retain their 960-pixel limit.
+Duo's projected housing and folded screen, replay, physical devices, web and
+remote previews retain **Fit**.
+
+While controlling a local iOS simulator or Android emulator, hold **Option** and
+drag to pinch or rotate two fingers around their center. Hold **Option-Shift**
+to move both fingers together. Trackpad pinch also sends a two-finger pinch.
+Two markers show the contact positions, including on a framed or folded screen.
+Releasing Option, ending the gesture, changing orientation or releasing Control
+lifts both contacts. Option and the gesture's Shift modifier stay on the Mac.
+These gestures are not available for physical devices, remote previews or web pages.
+
 While **Control** is on, groups below the screen of a running simulator or emulator have its
 hardware buttons and rotation: **Home** and **Lock** on a simulator, sent
 through the simulator's HID service; **Home**, **Back**, **Apps** and **Lock**
@@ -585,6 +622,14 @@ the simulator's settings, not Desktop preferences. This requires an Xcode whose
 `devicectl device info|settings appearance` supports that simulator. Audio,
 location, VoiceOver, color filters and Liquid Glass controls are not included.
 
+The panel's **Development** section offers **Slow animations** and **Shake**
+on supported iOS simulators. Slow animations changes UIKit's animation speed
+in the guest, leaving Desktop's live stream and input speed unchanged. Its
+switch reads the simulator's current state, confirms each change by reading it
+back, and has its own refresh button. Shake sends the simulator's shake event;
+the foreground app decides how to handle it. These controls share the panel's
+Control and replay gates. They do not change Android animation settings.
+
 The iPhone Duo frame fits the display its posture lights, and touches go to
 that display. Until the active display is known, both displays appear side by
 side. **Folded**, **Half open** and **Unfolded** below the screen move the simulated hinge to 0,
@@ -598,9 +643,18 @@ swap panels; the path is adapted from
 While its viewer is open, Desktop observes the Duo hinge through
 `devicectl device motion hinge-angle`, so preset selection follows changes
 made by another controller. Arbitrary angles leave all presets unselected.
-With a valid observed angle below 180 degrees, the active inner display projects
-its two halves around the hinge. Touches and drags map back to the display
-pixels. The cover, unknown angle and fully open display stay flat.
+With **Show device frame** on and the installed V68 model available, the housing
+follows the observed hinge angle and display rotation. Touches and drags hit the
+posed active screen and map back to its pixels; the surrounding housing has no
+input. Desktop keeps both panel surfaces ready and snapshots the departing panel
+before its own posture controls change the hinge. External controllers can clear
+the departing panel before Desktop can snapshot it, so their handoff can leave
+that panel blank or retain an older snapshot.
+
+In the default frameless view, a valid observed angle below 180 degrees projects
+the active inner display's two halves around the hinge. The cover, unknown angle
+and fully open display stay flat. Touches and drags map back to the display
+pixels.
 Tools or devices without hinge observation retain the last requested posture.
 The observer consumes valid samples twice a second at most, uses one bounded
 process, and stops it when the viewer closes. Its parser depends on the human
@@ -786,21 +840,19 @@ host simulator or emulator sessions here. **Review...** opens the request;
 **Revoke** removes it. It grants no read, control or build access. Hosted
 sessions are not available yet; an approval does not start a device.
 
-When the server reports that Tailscale is not running, the tab shows the
-steps: `tailscale up`, restart the server (a button when the app started it),
-then run the `tailscale serve` command the tab shows next. The server reports the
-Tailscale state it started with, so the steps stay until it restarts. Until then, the pairing
-endpoint is `ws://127.0.0.1:7787` and works only on this Mac, for example from
-an iOS Simulator.
+When Tailscale is not running, start it on this Mac. Pairing then works only on
+this Mac, such as in an iOS Simulator, until the private connection is ready.
 
-While Tailscale runs, the tab shows the route the server's health reports from
-`tailscale serve status`, re-read every 5 seconds. A tailnet-only route shows the
-endpoint phones connect to, such as `wss://<mac>.<tailnet>.ts.net:7443`.
-Without a route, the tab shows the command that serves the server on a
-dedicated tailnet-only port, `tailscale serve --bg --https=7443
-http://127.0.0.1:7787`, or the next free port when 7443 is taken. When a route
-to the server is on a port with Funnel on, the tab says the server is public
-and pairing fails with the same explanation; it never suggests a Funnel port.
+While Tailscale runs, **Set up connection** in the Phones tab configures and
+verifies a dedicated tailnet-only HTTPS proxy to the server's loopback port.
+It uses port 7443 or the next free port, keeps an existing route unchanged and
+never enables Funnel. This action uses Desktop's authenticated local control
+connection; a phone or forwarded connection cannot configure the Mac.
+Tailscale may ask you to enable HTTPS in your browser. Setup errors remain
+visible with **Try Again**. An unreadable or timed-out route probe changes
+nothing. A route exposing this server through Funnel refuses setup and pairing.
+**Pair a Phone** verifies the connection before showing its QR code; it no longer
+shows an assumed endpoint when the route is missing or unknown.
 
 ## Build machines
 
@@ -1094,6 +1146,36 @@ script with `--check` and fails when a committed file is stale. The color
 names match the phone's; `Palette` colors follow the system appearance and the
 app's Appearance setting.
 
+## SwiftUI playground
+
+Run the DEBUG playground without starting the normal app's CLI, server, notification service or updater:
+
+```bash
+cd apps/desktop
+swift run StimDesktop --playground
+```
+
+In a normal debug session, **Window > SwiftUI Playground** opens the same fixture views;
+that session's main window keeps its normal live services. The standalone entry is the
+backend-free option. Release builds exclude the playground and its fixture seams, and refuse `--playground`.
+
+Choose Notifications, Builds, Simulator controls, Settings or Design tokens. Each screen offers
+its applicable named scenarios: ready, loading, empty, error, long text and large data.
+Notifications includes 200 entries; Builds includes the retained maximum of 10 runs per platform. Local inboxes and fixed
+simulator forms omit loading/error or large-list scenarios that their production views do not have.
+Settings covers the four configuration scopes, not the App, Phones or Build Machines tabs.
+
+**Compact** sets the fixture viewport to 380 points; regular is 900 points. Switch light/dark,
+large text and increased contrast without changing system preferences. Reduce Motion follows the Mac's current accessibility setting because SwiftUI does not expose a writable override. Filters,
+mark-read/clear, build disclosures, simulator appearance controls and Settings edits operate only
+on fixture data. Run and log buttons report a simulated action. **Reset** restores the scenario.
+
+To add a scenario, extend `Design/PlaygroundFixtures.swift` and select the existing production
+view in `Design/ScreenPlayground.swift`. Keep fixtures synthetic and all effects in memory;
+add a narrow DEBUG seam only when that view would otherwise invoke a real backend. These
+fixtures can also seed the separate visual regression pilot tracked in #2342; the playground
+does not add a snapshot framework or a golden-image approval workflow.
+
 ## Build the app
 
 ```bash
@@ -1146,10 +1228,71 @@ To check a bundle, point the DSN at a local listener, such as `http://<key>@127.
 ## Layout
 
 - `Sources/StimKit`: models for the CLI's JSON, the login shell environment, the CLI and `stim-server` clients, project grouping, warning remedies, the streaming runner, `stim logs` records and the follow runner, process, disk and gc usage, the status machine section, the Machine report, free plan and worktree lifecycle, the autopilot schedule, pressure plan and log, and the crash report scrubber. Unit-tested.
-- `Sources/StimStores`: the observable stores whose ordering and staleness rules have tests: the status refresh and watch, the gc report and the action runs. They take the `stim` call, and the clock where they decide staleness, as closures, so `Tests/StimStoresTests` can order results by hand. Tests cannot import the `StimDesktop` executable target.
+- `Sources/StimStores`: the observable stores whose ordering and staleness rules have tests: the status refresh and watch, the gc report and the action runs. They take the `stim` call, and the clock where they decide staleness, as closures, so `Tests/StimStoresTests` can order results by hand. The DEBUG visual fixture target imports `StimDesktop` to capture its production views.
 - `Sources/SimulatorFrames`: live simulator frames through CoreSimulator, and input through the simulator's CoreDevice HID service (`dtuhidd`) or, when a simulator has none, SimulatorKit's legacy HID client. All of them are private Apple interfaces. Expect Xcode releases to break it.
 - `Support/SimFold`: the `sim-fold` helper, an iOS Simulator executable that `scripts/bundle.sh` builds into the app's resources. stim-server builds the same sources to fold an iPhone Duo from the phone.
 - `Sources/EmulatorFrames`: live emulator frames through the emulator's localhost gRPC `streamScreenshot` call, found through its discovery file, and input through the same endpoint. An emulator without a hardware keyboard (`hw.keyboard=no`) drops key events, so Desktop types on it with `adb shell input`. Emulators Stim booted before it passed `-grpc` show no frames until their next boot.
 - `Sources/WebFrames`: the Stim-owned Chrome page from `stim web`, over the Chrome DevTools Protocol on the loopback `cdpEndpoint` `stim status` reports. It connects only when `SystemInfo.getProcessInfo` names the Chrome pid status reports, attaches to the page's `targetId`, streams it with `Page.startScreencast` and sends `Input.dispatch*` events. Public protocol only; no WebKit view, which would render a different engine than the one agents test.
 - stim-server's `stim-frames` helper compiles the non-view files of these modules, listed in `packages/server/helper/desktop-sources.txt`, together with its own `main.swift`. Desktop CI compiles it, so keep those files free of AppKit views, SwiftUI and StimKit. Desktop and the helper both send simulator keys through `SimulatorHID.hardwareKey`, and page input through `WebPage`.
-- `Sources/StimDesktop`: the SwiftUI app. `Design/` holds the generated tokens, the theme layer over them (`.textStyle(_:)`, `Font.stim(_:)` and the dynamic colors), and the component kit that mirrors the phone's: `.buttonStyle(.stim(_:_:))`, `IconButton`, `Pill`, `Banner` and `ListSection`/`ListRow`. A debug build has **Window > Component Gallery**, which shows every token and component in light and dark.
+- `Sources/StimDesktop`: the SwiftUI app. `Design/` holds the generated tokens, the theme layer over them (`.textStyle(_:)`, `Font.stim(_:)` and the dynamic colors), and the component kit that mirrors the phone's: `.buttonStyle(.stim(_:_:))`, `IconButton`, `Pill`, `Banner` and `ListSection`/`ListRow`. A debug build has **Window > SwiftUI Playground** for production screen fixtures and design tokens.
+
+### Native visual fixture pilot
+
+`swift test --filter VisualFixtureTests` compares three production playground
+bodies: long-text Notifications at the detail's 440-point minimum, simulator
+controls in dark appearance, and the simulator error message in light appearance.
+The DEBUG fixtures use a fixed date. Captures pin en_US, UTC, InterVariable,
+380/440 by 640 points, arm64 and a 1x native window on macOS 27.0 build 26A428.
+They open only a fixture window, without starting the CLI, server or devices.
+The notification view reads its calendar, timezone and locale from the SwiftUI
+environment; fixtures supply UTC explicitly, independent of the process `TZ`.
+
+The current macOS 15 CI runner has no matching references and explicitly skips
+these image comparisons. This is a local pilot, not CI visual regression coverage.
+Issue [#2342](https://github.com/appandflow/stim/issues/2342) tracks matching CI
+references, Settings window chrome, Builds and the remaining representative cases.
+Native Settings tabs move into window chrome; a hosting-view bitmap cannot
+faithfully compare that strip. Compact 380-point Notifications is a stress case
+below the production detail minimum and is not an accepted reference.
+
+Normal runs never create or update references. To deliberately replace them on
+the matching machine, use
+`STIM_RECORD_VISUAL_FIXTURES=1 swift test --filter VisualFixtureTests`, then inspect
+every changed PNG under `Tests/VisualFixtureTests/__Snapshots__` and rerun without
+the variable. SnapshotTesting reports failures with reference, result and difference
+images. Its dependency belongs only to the visual test target.
+
+## Native macOS development prototype
+
+If Stim is not installed globally, replace `stim` with `npx stim`.
+This package includes explicit development settings for `stim macos`. From
+`apps/desktop`, run `stim macos` to build the `StimDesktop` Debug executable and
+launch the full app as **Stim Development** in an isolated bundle. It monitors
+the regular Stim home with separate preferences; automatic cleanup and notification alerts are disabled
+by its development launch arguments. **Window > SwiftUI Playground** opens the
+in-memory screen fixtures. Inspect compiler
+output with `stim logs --source build`, and use `stim stop` to stop only that
+workspace's recorded app. The normal Desktop viewer shows its app/build state,
+logs and one local owned main window using existing Screen Recording permission.
+Contained utility windows are supported; disjoint app windows refuse capture.
+The viewer skips its own process to prevent recursive previews.
+**Open app** verifies and activates that owned app using existing Accessibility
+permission for normal native input;
+the captured view is read-only. Background input relay is not included. Use **Refresh preview** after the app window opens or is resized. No permission requests or custom packaging
+script is part of the build flow.
+
+On the first native viewer opening, one **Native app viewer** setup screen explains
+Screen Recording and Accessibility (called Device Control and Data Access on macOS 27),
+shows their status and offers **Request permissions**, **Settings** and **Check again**.
+You approve normal macOS requests; Stim never resets or automatically grants access.
+Use **Permissions** on the app card to reopen setup. A phone-first native viewer
+asks the running Desktop host to show the same setup on its next local health refresh.
+Grant access to the signed Stim app that started the server, then reconnect the phone
+viewer. A server started elsewhere uses that host's permissions; this app's status
+alone does not prove that server has access.
+
+For an unreleased CLI, run `pnpm run build` at the
+repository root, then set `STIM_BIN` to the absolute `packages/stim-cli/dist/cli.mjs`
+path and invoke that executable's `macos` command from `apps/desktop`. The app
+inherits the override without changing the installed app's preferences. See [the macOS guide](../../website/docs/macos.md)
+for the prototype's settings and limits.

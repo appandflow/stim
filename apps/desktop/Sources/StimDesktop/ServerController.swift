@@ -19,6 +19,8 @@ final class ServerController: ObservableObject {
   @Published private(set) var devicesError: String?
   @Published private(set) var changeError: String?
   @Published private(set) var pendingGrants: [String: Bool] = [:]
+  @Published private(set) var settingUpConnection = false
+  @Published private(set) var connectionError: String?
 
   private var environment: Task<[String: String], Never>?
   private var process: Process?
@@ -142,6 +144,49 @@ final class ServerController: ObservableObject {
     start()
   }
 
+  func setupConnection() {
+    guard !settingUpConnection else { return }
+    settingUpConnection = true
+    connectionError = nil
+    Task {
+      defer { settingUpConnection = false }
+      guard let client = ServerSession.shared.client, client.isOpen else {
+        connectionError = "The local Desktop connection is not ready. Try again."
+        return
+      }
+      do {
+        _ = try await client.request("route.setup", [:])
+        refresh()
+      } catch let error as ServerError where error.code == "unknown-method" {
+        connectionError = "Update stim-server to set up the phone connection from Desktop."
+      } catch {
+        connectionError = error.localizedDescription
+      }
+    }
+  }
+
+  func pairPhone(control: Bool) async throws -> PairingCode {
+    let cli = await cli()
+    guard let before = await StimServerCLI.health(port: port) else {
+      throw ServerError(code: "not-connected", message: "Could not verify the phone connection. Try again.")
+    }
+    if before.tailscale.isRunning && before.route?.state != "routed" {
+      throw ServerError(
+        code: "not-connected",
+        message: "Set up the phone connection in the Phones tab before pairing. A verified tailnet-only route is required.")
+    }
+    let code = try await cli.pair(port: port, control: control)
+    if before.tailscale.isRunning || !code.isLocalOnly {
+      guard let after = await StimServerCLI.health(port: port), after.route?.state == "routed",
+        let dnsName = after.tailscale.dnsName, code.qr.endpoint == after.route?.endpoint(dnsName: dnsName)
+      else {
+        throw ServerError(
+          code: "not-connected", message: "The phone connection changed or could not be verified. Try again in the Phones tab.")
+      }
+    }
+    return code
+  }
+
   func refresh() {
     if case .running(_, let owned) = state {
       let current = generation
@@ -151,6 +196,7 @@ final class ServerController: ObservableObject {
         if let health {
           missedProbes = 0
           state = .running(health, owned: owned)
+          if health.nativeViewerOpened == true { NativeViewerPermissions.shared.viewerOpened(serverOwned: owned) }
         } else if !owned {
           missedProbes += 1
           guard missedProbes >= 2 else { return }

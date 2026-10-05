@@ -114,7 +114,40 @@ test('materializes verified files and contained links, drives only the recorded 
 
 test('keeps development launch unverified despite a live native process', async () => {
   receipt([], 'development');
-  expect(await installHostedApp(home, session, 'app', device)).toBe('unverified');
+  expect(await installHostedApp(home, session, 'app', device, 14321)).toBe('unverified');
+  expect(native.runFile).toHaveBeenCalledWith(
+    'xcrun',
+    ['simctl', 'spawn', device.udid, 'defaults', 'write', bundleId, 'RCT_jsLocation', 'localhost:14321'],
+    expect.anything(),
+  );
+});
+
+test('routes an Expo development client to the worker loopback origin without claiming bundle delivery', async () => {
+  receipt([], 'development');
+  const path = join(area, 'receipt.json');
+  const offered = JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>;
+  writeFileSync(path, JSON.stringify({ ...offered, devClientScheme: 'stim-dev' }));
+  expect(await installHostedApp(home, session, 'app', device, 14321)).toBe('unverified');
+  expect(native.runFile).toHaveBeenCalledWith(
+    'xcrun',
+    [
+      'simctl',
+      'spawn',
+      device.udid,
+      'defaults',
+      'write',
+      'com.apple.launchservices.schemeapproval',
+      'com.apple.CoreSimulator.CoreSimulatorBridge-->stim-dev',
+      '-string',
+      bundleId,
+    ],
+    expect.anything(),
+  );
+  const opened = native.runFile.mock.calls.find(([, args]) => args?.[1] === 'openurl');
+  expect(opened?.[1]?.slice(0, 3)).toEqual(['simctl', 'openurl', device.udid]);
+  const url = new URL(opened![1]![3]!);
+  expect(url.protocol).toBe('stim-dev:');
+  expect(new URL(url.searchParams.get('url')!).origin).toBe('http://localhost:14321');
 });
 
 test.each(['../outside', '/tmp/outside', 'missing'])(

@@ -1,3 +1,4 @@
+import type { MacosAppState } from './macos.ts';
 import type { WebViewport } from './settings-registry.ts';
 import type { DeviceIdleShutdownRecord, IdleStopRecord, MetroLastStop } from './workspace-state.ts';
 export type StatsPlatform = 'ios' | 'android';
@@ -407,7 +408,7 @@ export const WORKSPACE_STAGE_KINDS = ['building', 'warming', 'ready', 'build-fai
 export interface WorkspaceStage {
   kind: (typeof WORKSPACE_STAGE_KINDS)[number];
   since: string | null;
-  platform: StatsPlatform | null;
+  platform: StatsPlatform | 'macos' | null;
   closedApps: { platform: StatsPlatform; slot: string }[];
 }
 
@@ -598,6 +599,7 @@ export interface EnvironmentState {
     bundle?: MetroBundleState;
   } | null;
   web?: WebBrowserState | null;
+  macos?: MacosAppState | null;
   supervisor?: { pid: number | null; mode: string | null; startedAt: string | null; healthy: boolean } | null;
   logs?: { dir: string; errorsSinceMarker: number } | null;
   worktree?: WorktreeFacts | null;
@@ -648,7 +650,16 @@ export const MEMORY_SOURCES = ['footprint', 'rss', 'estimate'] as const;
 export type MemorySource = (typeof MEMORY_SOURCES)[number];
 
 /** Every kind of process owner the status machine section reports. */
-export const MACHINE_OWNER_KINDS = ['simulator', 'emulator', 'metro', 'build', 'browser', 'server', 'shared'] as const;
+export const MACHINE_OWNER_KINDS = [
+  'simulator',
+  'emulator',
+  'metro',
+  'build',
+  'browser',
+  'macos',
+  'server',
+  'shared',
+] as const;
 
 export type MachineOwnerKind = (typeof MACHINE_OWNER_KINDS)[number];
 

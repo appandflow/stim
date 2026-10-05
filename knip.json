@@ -9,7 +9,7 @@
   ],
   "workspaces": {
     ".": {
-      "entry": ["apps/desktop/scripts/*.mjs"]
+      "entry": ["apps/desktop/scripts/*.mjs", "packaging/store/assemble.mjs"]
     },
     "packages/server": {
       "ignoreBinaries": ["plutil"]
@@ -22,6 +22,11 @@
         "interface": true,
         "type": true
       }
+    },
+    "test/mobile-e2e": {
+      "entry": ["e2e.config.ts", "tests/*.e2e.ts"],
+      "ignoreBinaries": ["stim", "e2e"],
+      "ignoreDependencies": ["ai"]
     }
   }
 }
