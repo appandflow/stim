@@ -100,6 +100,26 @@ spells it out.
 
 ## Workspace page
 
+Apps in the same linked worktree share one detail page. The sidebar keeps one
+row per app; selecting an app scrolls its first device or macOS preview into
+view unless it already starts the canvas. A device deep link scrolls to that
+device. Single-app worktrees keep the same layout. The shared canvas puts
+macOS previews above one ordered grid of all apps' devices. Build cards keep
+platform titles, with a small project subtitle only when multiple apps share
+that platform. The header uses the most urgent app's stage and shows git and
+pull request state once. Its menu keeps each app's actions in a submenu and
+offers **Stop all** and one **Remove worktree** action, with confirmation.
+
+The unified inspector sums CPU and memory, aligns chart samples at the newest
+sample, lists every app's processes, and counts the worktree folder once plus
+each app's build output. Metro lines show their app labels, ports and log
+shortcuts; agent sessions appear once per tool and session id. Build plans,
+history, cache stats and warnings stay tied to their apps. The logs drawer adds an **App** picker;
+app-specific log shortcuts select that app, and selecting another sidebar app
+follows its logs. Changing the log app clears slot and build-run filters. The
+toolbar toggle selects the only app with errors when there is one; otherwise
+it keeps the current log selection.
+
 A workspace's page starts with one line. The **stage line** says where the
 workspace is, with a subtitle: **Running** ("up 42m", turning red with "3
 errors" or "iOS app closed"), **Building** ("iOS · started 1m ago"), **Build
@@ -140,8 +160,12 @@ It holds the workspace's details, in this order:
   Otherwise it separates **Last build**, with compiler errors, from **Next build**,
   predicted by `stim <platform> --plan --json`. **Check** refreshes the next plan;
   **Run** starts the app. The next-build prediction keeps **Cache miss details**.
-  **Details** opens a build sheet with a platform switch and recent runs. The
-  sheet shows every phase with its timing, the wait holder, full cache miss reason,
+  **Details** opens a build sheet with a platform switch and recent runs.
+  In a multi-app worktree, the sheet switches among all apps' iOS, Android and
+  macOS entries, adding project names only for repeated platforms; checks, runs,
+  history and logs use the selected app. Its macOS panel shows the product,
+  build state, duration, error and build logs. The sheet shows every phase with
+  its timing, the wait holder, full cache miss reason,
   changed sources and baseline, build machine and offload fallback reason,
   compiler diagnostics, retained output, and the next-build plan. **Open in logs
   panel** opens that run in the existing logs drawer. Click a recent-build row

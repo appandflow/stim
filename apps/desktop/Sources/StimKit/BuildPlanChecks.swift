@@ -69,9 +69,9 @@ public final class BuildPlanChecks: ObservableObject {
     }
   }
 
-  /// Stops the workspace's running and queued checks and forgets them; finished results stay.
-  public func cancel(workspace: String) {
-    for platform in ["ios", "android"] {
+  /// Stops and forgets the workspace's unfinished checks for these platforms; finished results stay.
+  public func cancel(workspace: String, platforms: [String] = ["ios", "android"]) {
+    for platform in platforms {
       let key = Self.key(workspace, platform)
       guard let task = tasks.removeValue(forKey: key) else { continue }
       task.cancel()

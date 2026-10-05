@@ -10,6 +10,8 @@ struct BuildSection: View {
   var env: Workspace
   var openLogs: (LogQuery) -> Void
   var openBuild: (BuildSheetSelection) -> Void
+  var onlyPlatform: String? = nil
+  var projectSubtitle: String? = nil
   @EnvironmentObject private var checks: BuildPlanChecks
   @EnvironmentObject private var actions: ActionCenter
 
@@ -18,9 +20,12 @@ struct BuildSection: View {
   private func buildKey(_ platform: String) -> String { env.lastBuilds?.build(for: platform)?.planKey ?? "" }
 
   private var platforms: [String] {
+    if let onlyPlatform { return onlyPlatform == "macos" ? [] : [onlyPlatform] }
     guard let running, !env.runPlatforms.contains(running.platform) else { return env.runPlatforms.filter { $0 != "macos" } }
     return env.runPlatforms.filter { $0 != "macos" } + [running.platform]
   }
+
+  private var cancellationPlatforms: [String] { onlyPlatform == nil ? ["ios", "android"] : platforms }
 
   private var trigger: [String] {
     [running == nil ? "idle" : "building"] + platforms.map(buildKey)
@@ -28,11 +33,17 @@ struct BuildSection: View {
 
   var body: some View {
     VStack(alignment: .leading, spacing: Space.md) {
-      SectionLabel(title: "Build")
-      if let macos = env.macos {
+      if onlyPlatform == nil { SectionLabel(title: "Build") }
+      if let macos = env.macos, onlyPlatform == nil || onlyPlatform == "macos" {
         HStack {
           Text("macOS \(macos.product)").font(.stim(.callout, weight: .semibold))
           Spacer()
+          if onlyPlatform == "macos" {
+            Button("Details") { openBuild(BuildSheetSelection(workspace: env.path, platform: "macos")) }
+              .buttonStyle(.stim())
+              .fixedSize()
+              .help("Open build details")
+          }
           if let query = LogQuery.build(
             platform: "macos", slot: "default", startedAt: macos.build.startedAt,
             finishedAt: macos.build.finishedAt)
@@ -42,6 +53,7 @@ struct BuildSection: View {
               .fixedSize()
           }
         }
+        if let projectSubtitle { Text(projectSubtitle).font(.stim(.footnote)).foregroundStyle(Palette.secondary) }
         Text("Swift Package Debug: \(macos.build.state)").font(.stim(.footnote)).foregroundStyle(Palette.secondary)
         if let error = macos.build.error {
           Text(error).font(.stim(.footnote)).foregroundStyle(Palette.error).textSelection(.enabled)
@@ -53,11 +65,11 @@ struct BuildSection: View {
     }
     .onAppear(perform: checkUsed)
     .onChange(of: trigger) { checkUsed() }
-    .onDisappear { checks.cancel(workspace: env.path) }
+    .onDisappear { checks.cancel(workspace: env.path, platforms: cancellationPlatforms) }
   }
 
   private func checkUsed() {
-    if running != nil { return checks.cancel(workspace: env.path) }
+    if running != nil { return checks.cancel(workspace: env.path, platforms: cancellationPlatforms) }
     checks.check(workspace: env.path, builds: Dictionary(uniqueKeysWithValues: platforms.map { ($0, buildKey($0)) }))
   }
 
@@ -77,6 +89,7 @@ struct BuildSection: View {
           .help("Open build details")
         if building == nil { runButton(platform) }
       }
+      if let projectSubtitle { Text(projectSubtitle).font(.stim(.footnote)).foregroundStyle(Palette.secondary) }
       if let host = building?.remote(at: Date())?.host {
         Label("on \(host)", systemImage: "desktopcomputer").foregroundStyle(Palette.secondary).lineLimit(1)
       }

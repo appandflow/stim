@@ -8,6 +8,8 @@ struct LogsView: View {
   @Binding var query: LogQuery
   /// A moment to scroll to and select, taken and cleared once the logs follow `query`.
   @Binding var moment: LogMoment?
+  var page: WorktreePage? = nil
+  var selectedApp: Binding<String?>? = nil
   @StateObject private var model = LogsModel()
   @State private var search = ""
   @State private var selection = IndexSet()
@@ -48,6 +50,7 @@ struct LogsView: View {
     }
     .background(Palette.background)
     .onAppear { search = query.search }
+    .onChange(of: env.path) { selection = [] }
     .onChange(of: query.search) { _, text in search = text }
     .onChange(of: moment?.id, initial: true) {
       guard let moment else { return }
@@ -75,6 +78,22 @@ struct LogsView: View {
 
   private var filterBar: some View {
     FlowLayout(spacing: Space.md) {
+      if let page, let selectedApp {
+        MenuPill(
+          label: "App",
+          selection: Binding(
+            get: { selectedApp.wrappedValue },
+            set: { path in
+              guard path != selectedApp.wrappedValue else { return }
+              query.slot = nil
+              query.buildRun = nil
+              selectedApp.wrappedValue = path
+            }),
+          options: zip(page.apps, page.appLabels).map { app, label in
+            MenuPillOption(value: Optional(app.path), title: label)
+          }, isActive: true
+        )
+      }
       ForEach(LogSource.allCases, id: \.self) { source in
         let on = query.sources.contains(source)
         Button {

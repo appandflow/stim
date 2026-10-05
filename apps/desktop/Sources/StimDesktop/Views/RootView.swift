@@ -37,6 +37,7 @@ struct RootView: View {
   @State private var windowSize = CGSize.zero
   @State private var sidebarWidth: CGFloat = 0
   @State private var detailWidth: CGFloat = 0
+  @State private var logWorkspacePath: String?
   @State private var columnVisibility = NavigationSplitViewVisibility.all
   @ObservedObject private var nativePermissions = NativeViewerPermissions.shared
   @ObservedObject private var openRequests = OpenRequests.shared
@@ -111,7 +112,10 @@ struct RootView: View {
           if showsWorkspace {
             ToolbarItem(placement: .primaryAction) { Spacer() }
             ToolbarItem(placement: .primaryAction) {
-              LogsToggleButton(isShown: showsLogs, errors: selectedWorkspace?.logs?.errorsSinceMarker ?? 0) {
+              LogsToggleButton(isShown: showsLogs, errors: selectedPage?.errors ?? 0) {
+                if !showsLogs, let page = selectedPage, page.isUnified, let app = page.soleErrorApp {
+                  logsWorkspace.wrappedValue = app.path
+                }
                 showsLogs.toggle()
               }
             }
@@ -204,9 +208,21 @@ struct RootView: View {
     return false
   }
 
-  private var selectedWorkspace: Workspace? {
+  private var selectedPage: WorktreePage? {
     guard case .environment(let path) = selection else { return nil }
-    return store.payload?.environments.first { $0.path == path }
+    return WorktreePage(path: path, environments: store.payload?.environments ?? [])
+  }
+
+  private var logsWorkspace: Binding<String?> {
+    Binding(
+      get: { logWorkspacePath },
+      set: { path in
+        if selectedPage?.isUnified == true, logWorkspacePath != path {
+          logQuery.slot = nil
+          logQuery.buildRun = nil
+        }
+        logWorkspacePath = path
+      })
   }
 
   private var inspectorFits: Bool {
@@ -379,12 +395,14 @@ struct RootView: View {
   }
 
   private func openErrors(_ path: String) {
+    logsWorkspace.wrappedValue = path
     selection = .environment(path)
     showsLogs = true
     logQuery.errorsOnly = true
   }
 
   private func showLogs(_ path: String) {
+    logsWorkspace.wrappedValue = path
     selection = .environment(path)
     showsLogs = true
   }
@@ -392,11 +410,18 @@ struct RootView: View {
   @ViewBuilder private var detail: some View {
     switch selection {
     case .environment(let path):
-      if let env = store.payload?.environments.first(where: { $0.path == path }) {
-        WorkspaceDetailHost(
-          statsReader: statsReader, cli: cli, env: env, metrics: metrics, machine: store.payload?.machine,
+      if let page = WorktreePage(path: path, environments: store.payload?.environments ?? []) {
+        let host = WorkspaceDetailHost(
+          statsReader: statsReader, cli: cli, page: page, selectedPath: path, metrics: metrics, machine: store.payload?.machine,
           reportsBundles: store.payload?.environments.contains { $0.metro?.bundle != nil } ?? false,
-          inspector: inspector, inspectorWidth: $inspectorWidth, focusedID: $focusedDeviceID, logQuery: $logQuery)
+          inspector: inspector, inspectorWidth: $inspectorWidth, focusedID: $focusedDeviceID, logQuery: $logQuery,
+          logWorkspacePath: logsWorkspace
+        )
+        if page.isUnified {
+          host.id(page.identity)
+        } else {
+          host
+        }
       } else {
         EmptyState(title: "Workspace gone", message: "stim status no longer reports this workspace.")
       }
@@ -419,7 +444,8 @@ struct RootView: View {
 private struct WorkspaceDetailHost: View {
   var statsReader: StatsReader
   var cli: Task<StimCLI, Never>
-  var env: Workspace
+  var page: WorktreePage
+  var selectedPath: String
   var metrics: MetricsStore
   var machine: MachineUsage?
   var reportsBundles: Bool
@@ -427,13 +453,16 @@ private struct WorkspaceDetailHost: View {
   @Binding var inspectorWidth: CGFloat
   @Binding var focusedID: String?
   @Binding var logQuery: LogQuery
+  @Binding var logWorkspacePath: String?
 
   var body: some View {
+    let env = page.apps[0]
     WorkspaceDetail(
-      cli: cli, statsReader: statsReader, env: env, usage: metrics.usage[env.path], machine: machine,
+      cli: cli, statsReader: statsReader, env: env, page: page, selectedPath: selectedPath, sampled: metrics.usage,
+      usage: metrics.usage[env.path], machine: machine,
       reportsBundles: reportsBundles,
       history: metrics.owners, inspector: inspector, inspectorWidth: $inspectorWidth, focusedID: $focusedID,
-      logQuery: $logQuery)
+      logQuery: $logQuery, logWorkspacePath: $logWorkspacePath)
   }
 }
 
