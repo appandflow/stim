@@ -47,5 +47,7 @@ The npm scope remains `@stim-cli` until the `@stim` scope is available.
 fields from older servers. `receive-protocol` contains precompiled validators
 for method results, known events and errors, with no Node or schema compiler
 dependency in the phone runtime. Unknown compatible fields remain accepted.
+Display enums accept open strings, and unknown values show neutral information or are skipped when unsupported.
+
 After changing these contracts, run `pnpm run rpc:generate` at the repository
 root; `pnpm run rpc:check` verifies the committed validators in CI.

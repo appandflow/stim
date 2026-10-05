@@ -19,13 +19,13 @@ import { formatDuration } from '@/intl/format';
 import { byDay, itemData, type InboxFilters, type InboxItem } from '@/lib/inbox';
 import { NOTIFY_CATEGORIES, notificationRoute } from '@/lib/notifications';
 import type { OversightCategory } from '@stim-cli/core/oversight';
-import { notifyCategoryLabel } from '@/lib/settings-options';
+import { notificationSuppressionLabel, notifyCategoryLabel } from '@/lib/settings-options';
 
 const MENU_ICON = require('@/assets/icons/menu.png');
 const SLIDERS_ICON = require('@/assets/icons/sliders.png');
 
 /** The same symbols as Stim Desktop's inbox (#1746). */
-const CATEGORY_ICONS: Record<OversightCategory, IconName> = {
+const CATEGORY_ICONS: Partial<Record<string, IconName>> = {
   started: 'play.circle',
   stuck: 'hourglass',
   looping: 'arrow.triangle.2.circlepath',
@@ -35,7 +35,7 @@ const CATEGORY_ICONS: Record<OversightCategory, IconName> = {
   attention: 'exclamationmark.bubble',
 };
 
-function categoryColor(theme: Theme, category: OversightCategory): string {
+function categoryColor(theme: Theme, category: string): string {
   switch (category) {
     case 'started':
       return theme.colors.info;
@@ -49,11 +49,9 @@ function categoryColor(theme: Theme, category: OversightCategory): string {
       return theme.colors.success;
     case 'control':
       return theme.colors.primary;
+    default:
+      return theme.colors.tertiary;
   }
-}
-
-function suppressedText(suppressed: NonNullable<InboxItem['suppressed']>): string {
-  return suppressed === 'muted' ? t`Muted` : t`Quiet hours`;
 }
 
 export function Inbox() {
@@ -175,7 +173,11 @@ function InboxRow({ item, now, onPress }: { item: InboxItem; now: number; onPres
       style={styles.row}
     >
       <View style={styles.iconWell(categoryColor(theme, item.category))}>
-        <Icon name={CATEGORY_ICONS[item.category]} size={18} color={categoryColor(theme, item.category)} />
+        <Icon
+          name={Object.hasOwn(CATEGORY_ICONS, item.category) ? CATEGORY_ICONS[item.category]! : 'bell'}
+          size={18}
+          color={categoryColor(theme, item.category)}
+        />
       </View>
       <View style={styles.grow}>
         <View style={styles.titleLine}>
@@ -198,7 +200,7 @@ function InboxRow({ item, now, onPress }: { item: InboxItem; now: number; onPres
         </Text>
         <Text variant="caption" tone="tertiary" numberOfLines={1}>
           {detail}
-          {item.suppressed ? ` \u00B7 ${suppressedText(item.suppressed)}` : ''}
+          {item.suppressed ? ` \u00B7 ${notificationSuppressionLabel(item.suppressed)}` : ''}
         </Text>
       </View>
     </Touch>

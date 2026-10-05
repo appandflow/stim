@@ -7,6 +7,8 @@ import type {
   BuildReport,
   DeviceActivity,
   LastBuild,
+  MacosAppState,
+  PullRequestFacts,
   WorktreeGit,
 } from '@/protocol/types';
 
@@ -42,10 +44,10 @@ export function activityBadge(activity: DeviceActivity | undefined, now: number)
       const duration = formatDuration(Math.max(0, now - last));
       return { kind: 'idle', text: Number.isFinite(last) ? t`Idle ${duration}` : t`Idle` };
     }
-    case 'unknown':
-      return { kind: 'unknown', text: t`Activity unknown` };
-    default:
+    case 'active':
       return null;
+    default:
+      return { kind: 'unknown', text: t`Activity unknown` };
   }
 }
 
@@ -141,7 +143,7 @@ export function buildTiming(build: BuildReport, now: number): { elapsed: string;
 export function outcomeLabel(
   build: Pick<BuildReport, 'outcome' | 'phase' | 'outcomeKnown' | 'missReason'>,
 ): string | null {
-  if (!build.outcome) return null;
+  if (build.outcome !== 'hit' && build.outcome !== 'cold') return null;
   const settled = build.outcomeKnown ?? !['prepare', 'cache-lookup', 'wait', 'device'].includes(build.phase);
   if (build.outcome === 'hit') return settled ? t`Cache hit` : t`Likely cache hit`;
   if (!settled) return t`Likely cold`;
@@ -164,9 +166,11 @@ export function lastBuildSummary(last: LastBuild, now: number, withReason = true
     Number.isNaN(ended) ? '' : ` \u00B7 ${ago}`
   }`;
   const code = last.errorCode ?? 'error';
+  if (last.status !== 'ok' && last.status !== 'failed') return `${t`Unknown`}${took}`;
   if (last.status !== 'ok') return t`Failed (${code})${took}`;
   if (last.cacheHit === 'local') return t`Cache hit (local)${took}`;
   if (last.cacheHit === 'remote') return t`Cache hit (remote)${took}`;
+  if (last.cacheHit !== false) return `${t`Unknown`}${took}`;
   const summary = last.missReason?.summary ?? '';
   const why = last.missReason ? (withReason ? t`: ${summary}` : '') : last.cacheSkipped ? t` (cache reads off)` : '';
   const machine = last.offloadedTo ? machineName(last.offloadedTo) : null;
@@ -183,6 +187,12 @@ export function historyTitle(entry: BuildHistoryEntry): string {
   if (entry.result === 'cancelled') return t`Cancelled`;
   const code = entry.errorCode ?? 'error';
   if (entry.result === 'failed') return t`Failed (${code})`;
+  if (
+    entry.result !== 'succeeded' ||
+    entry.status !== 'ok' ||
+    (entry.cacheHit !== false && entry.cacheHit !== 'local' && entry.cacheHit !== 'remote')
+  )
+    return t`Unknown`;
   const { cacheHit } = entry;
   if (cacheHit) return t`Cache hit (${cacheHit})`;
   const machine = entry.offloadedTo ? machineName(entry.offloadedTo) : null;
@@ -191,7 +201,8 @@ export function historyTitle(entry: BuildHistoryEntry): string {
 
 /** A history row's detail line: the cache outcome of a run that looked one up, when it ran, and its slot. */
 export function historyDetail(entry: BuildHistoryEntry, now: number): string {
-  const { cacheHit, slot } = entry;
+  const { slot } = entry;
+  const cacheHit = entry.cacheHit === 'local' || entry.cacheHit === 'remote' ? entry.cacheHit : false;
   const summary = entry.missReason?.summary ?? '';
   const cache =
     entry.result === 'interrupted'
@@ -229,6 +240,7 @@ export function nextBuild(plan: BuildPlan, withReason = true): string {
   }
   if (plan.cacheHit === 'local') return t`cache hit (local)`;
   if (plan.cacheHit === 'remote') return t`cache hit (remote)`;
+  if (plan.cacheHit !== false) return t`Unknown`;
   const off = plan.cacheSkipped ? t` (cache reads off)` : '';
   const prebuilds = plan.missReason?.kind !== 'prebuild-pending';
   const native =
@@ -244,7 +256,7 @@ export function nextBuild(plan: BuildPlan, withReason = true): string {
 
 /** The remote provider and the runs behind the estimate. */
 export function planDetail(plan: BuildPlan): string | null {
-  if (plan.refusal || !plan.outcome) return null;
+  if (plan.refusal || (plan.outcome !== 'hit' && plan.outcome !== 'cold')) return null;
   const { outcome } = plan;
   const runs =
     plan.expectedMs === null
@@ -285,4 +297,42 @@ export function gitBadges(git: WorktreeGit | null | undefined): GitBadges | null
     .filter(Boolean)
     .join(', ');
   return { uncommitted, ahead, behind, arrows: arrows || null, merged, label };
+}
+
+export function pullRequestStateName(state: PullRequestFacts['state']): string {
+  switch (state) {
+    case 'open':
+      return t`Open`;
+    case 'draft':
+      return t`Draft`;
+    case 'merged':
+      return t`Merged`;
+    case 'closed':
+      return t`Closed`;
+    default:
+      return t`Unknown`;
+  }
+}
+
+export function pullRequestReviewName(decision: NonNullable<PullRequestFacts['reviewDecision']>): string {
+  switch (decision) {
+    case 'approved':
+      return t`Approved`;
+    case 'changes-requested':
+      return t`Changes requested`;
+    case 'review-required':
+      return t`Review required`;
+    default:
+      return t`Unknown`;
+  }
+}
+
+export function macosBuildLabel(app: MacosAppState): string {
+  return app.build.state === 'running'
+    ? t`Building`
+    : app.build.state === 'failed'
+      ? t`Build failed`
+      : app.build.state === 'ok'
+        ? t`Built`
+        : t`Unknown`;
 }

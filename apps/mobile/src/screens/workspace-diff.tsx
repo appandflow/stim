@@ -14,13 +14,20 @@ import { usePolledRequest } from '@/hooks/polled-request';
 import type { WorkspacePatch } from '@/protocol/types';
 
 function sectionName(section: WorkspacePatch['section']): string {
-  return section === 'staged' ? t`Staged` : section === 'unstaged' ? t`Unstaged` : t`New file`;
+  return section === 'staged'
+    ? t`Staged`
+    : section === 'unstaged'
+      ? t`Unstaged`
+      : section === 'untracked'
+        ? t`New file`
+        : t`Unknown`;
 }
 
 function patchNote(patch: WorkspacePatch): string {
   if (patch.kind === 'binary') return t`Binary file: preview unavailable.`;
   if (patch.kind === 'too-large') return t`This patch exceeds the 256 KiB preview limit.`;
   if (patch.kind === 'unavailable') return patch.text;
+  if (patch.kind !== 'text') return t`Unknown`;
   if (patch.section === 'untracked') return t`Empty new file.`;
   return t`No diff remains in this section. Refresh the file list if the file changed on the Mac.`;
 }

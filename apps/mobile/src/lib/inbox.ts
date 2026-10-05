@@ -100,7 +100,7 @@ export function inboxItems(
   for (const mac of macs) {
     if (!mac.history || (filters.macIds && !filters.macIds.includes(mac.id))) continue;
     for (const entry of mac.history.entries) {
-      if (filters.categories && !filters.categories.includes(entry.category)) continue;
+      if (filters.categories && !filters.categories.some((category) => category === entry.category)) continue;
       items.push({ ...entry, macId: mac.id, macName: mac.name, read: mac.read ? isRead(mac.read, entry.seq) : false });
     }
   }
@@ -136,6 +136,19 @@ export function byDay(items: InboxItem[], now: number): { title: string; data: I
 
 /** What tapping the item opens, as its push does. */
 export function itemData(item: InboxItem): NotificationData {
-  const { kind, ...target } = item.target;
-  return { ref: item.macId, target: kind, ...target };
+  const { kind, path, platform, slot, url } = item.target;
+  const ref = item.macId;
+  if (kind === 'workspace' && path !== undefined) return { ref, target: 'workspace', path };
+  if (kind === 'url' && path !== undefined && url !== undefined) return { ref, target: 'url', path, url };
+  if (path !== undefined) {
+    if (kind === 'build' && (platform === 'ios' || platform === 'android'))
+      return { ref, target: 'build', path, platform };
+    if (
+      kind === 'device' &&
+      slot !== undefined &&
+      (platform === 'ios' || platform === 'android' || platform === 'web' || platform === 'macos')
+    )
+      return { ref, target: 'device', path, platform, slot };
+  }
+  return { ref, target: 'machine' };
 }

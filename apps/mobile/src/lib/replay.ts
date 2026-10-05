@@ -160,5 +160,7 @@ export function markerTitle(kind: ReplayMarker['kind']): string {
       return t`Error`;
     case 'crash':
       return t`Crash`;
+    default:
+      return t`Unknown`;
   }
 }

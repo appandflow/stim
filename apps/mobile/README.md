@@ -832,6 +832,8 @@ errors before the connection publishes them to screens. Invalid payloads close
 the connection and trigger a retry without logging the payload. Unknown future
 events and additional compatible fields remain accepted.
 
+Display enums accept open strings, and unknown values show neutral information or are skipped when unsupported.
+
 After changing the contracts, run `pnpm run rpc:generate` at the repository
 root. `pnpm run rpc:check` verifies the generated validators in CI.
 `packages/server/__tests__/mobile-protocol.test.ts` checks agreement between the

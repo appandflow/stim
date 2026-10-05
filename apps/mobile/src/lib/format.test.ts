@@ -1,3 +1,5 @@
+import { resultEnumCases, replaceReceivedField } from '../../mock-server/receive-fixtures';
+import { platformName } from '@/lib/workspaces';
 import {
   activityBadge,
   activityLabel,
@@ -160,6 +162,7 @@ describe('build cache outcome', () => {
     expect(outcomeLabel({ outcome: 'cold', phase: 'pods', outcomeKnown: true })).toBe('Cold build');
     expect(recheckNote({ phase: 'pods', missProvisional: true })).toBe('Checks the cache again after pods');
     expect(recheckNote({ phase: 'compile' })).toBeNull();
+    expect(recheckNote({ phase: 'pods', missProvisional: false })).toBeNull();
   });
 
   it('reads a last build whose cacheHit is false as compiled, and a failed one by its code', () => {
@@ -332,3 +335,14 @@ describe('build history rows', () => {
     ]);
   });
 });
+
+test.each(resultEnumCases.filter(([method]) => method === 'build.plan'))(
+  'shows a neutral plan or its server summary for future %s values at %s',
+  (_method, fixture, path, value) => {
+    const plan = replaceReceivedField(fixture, path, value) as BuildPlan;
+    if (path === 'platform') expect(platformName(plan.platform)).toBe('Unknown');
+    else if (path.startsWith('missReason.') || path === 'prebuild' || path === 'outcome')
+      expect(nextBuild(plan)).toBe('cold build, Native files changed');
+    else expect(nextBuild(plan)).toBe('Unknown');
+  },
+);

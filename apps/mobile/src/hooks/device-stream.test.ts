@@ -4,7 +4,7 @@ import { useDeviceStream } from './device-stream';
 import type { ServerEvent } from '@/protocol/types';
 
 const mockPush = jest.fn();
-const mockAnswers: ((result: { subscription: string; video?: 'h264' }) => void)[] = [];
+const mockAnswers: ((result: { subscription: string; video?: string }) => void)[] = [];
 const mockEvents: ((event: ServerEvent) => void)[] = [];
 const mockPackets: ((packet: {
   capturedAt: number;
@@ -201,4 +201,37 @@ test('keeps housing unavailable until native clearing, ignoring stale generation
   expect(result.current.video?.artworkTurns).toBeUndefined();
   await act(async () => result.current.orientationCleared({ nativeEvent: { generation: resubscribed } }));
   expect(result.current.video?.artworkTurns).toBe(2);
+});
+
+test.each(['platform', 'posture', 'mime'])(
+  'ignores a future frame %s without replacing the displayed capture',
+  async (field) => {
+    const { result, unmount } = await renderHook(() => useDeviceStream(TARGET, OPTIONS));
+    await act(async () => mockAnswers[0]!({ subscription: 's' }));
+    const image: ServerEvent = {
+      event: 'frame',
+      subscription: 's',
+      platform: 'ios',
+      slot: 'default',
+      mime: 'image/jpeg',
+      width: 400,
+      height: 800,
+      data: 'image',
+      capturedAt: '2026-09-27T12:00:00Z',
+    };
+    await act(async () => mockEvents[0]!(image));
+    await act(async () => mockEvents[0]!({ ...image, [field]: 'future-kind', data: 'unsupported' }));
+    expect(result.current.frame).toEqual(image);
+    await unmount();
+  },
+);
+
+test('does not pass an unknown negotiated video codec into the native decoder', async () => {
+  const { result, unmount } = await renderHook(() => useDeviceStream(TARGET, OPTIONS));
+  await act(async () => mockAnswers[0]!({ subscription: 's', video: 'future-kind' }));
+  await act(async () => mockPackets[0]!(frame(1, true)));
+  expect(result.current.replayable).toBe(false);
+  expect(result.current.video).toBeNull();
+  expect(mockPush).not.toHaveBeenCalled();
+  await unmount();
 });

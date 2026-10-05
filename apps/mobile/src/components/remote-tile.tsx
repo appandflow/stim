@@ -14,7 +14,10 @@ import type { RemoteDeviceState } from '@/protocol/types';
 export function RemoteTile({ session }: { session: RemoteDeviceState }) {
   const now = useNow(30_000);
   const started = session.startedAt ? Date.parse(session.startedAt) : NaN;
-  const { platform } = session;
+  const platform =
+    session.backend === 'eas' && (session.platform === 'ios' || session.platform === 'android')
+      ? session.platform
+      : null;
   const platformLabel = platform ? platformName(platform) : '';
   const title = platform ? t`EAS Simulator \u00B7 ${platformLabel}` : t`EAS Simulator`;
   const claim =

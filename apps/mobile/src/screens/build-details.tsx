@@ -125,7 +125,11 @@ export function BuildDetails({ path, platform: initial }: { path: string; platfo
           : undefined
       }
     >
-      <PlatformSwitch value={platform} onChange={setPlatform} building={building?.platform ?? null} />
+      <PlatformSwitch
+        value={platform}
+        onChange={setPlatform}
+        building={building?.platform === 'ios' || building?.platform === 'android' ? building.platform : null}
+      />
 
       {running ? <RunningBuild build={running} path={path} history={history} now={now} /> : null}
 
@@ -183,7 +187,13 @@ export function BuildDetails({ path, platform: initial }: { path: string; platfo
             <Text
               variant="body"
               weight="semibold"
-              tone={plan.plan.refusal || plan.plan.cacheHit === false ? 'warning' : 'success'}
+              tone={
+                plan.plan.refusal || plan.plan.cacheHit === false
+                  ? 'warning'
+                  : plan.plan.cacheHit === 'local' || plan.plan.cacheHit === 'remote'
+                    ? 'success'
+                    : 'tertiary'
+              }
               accessibilityLabel={estimated ? t`Next build: ${next}, about ${estimated}` : t`Next build: ${next}`}
             >
               {t`Next: ${next}`}
@@ -477,7 +487,7 @@ function Diagnostics({ diagnostics, root }: { diagnostics: BuildDiagnostic[]; ro
 function resultColor(result: BuildHistoryEntry['result'], theme: Theme): string {
   if (result === 'succeeded') return theme.colors.success;
   if (result === 'failed') return theme.colors.error;
-  return theme.colors.warning;
+  return result === 'cancelled' || result === 'interrupted' ? theme.colors.warning : theme.colors.tertiary;
 }
 
 function History({ entries, now, root }: { entries: BuildHistoryEntry[]; now: number; root: string }) {
@@ -616,7 +626,9 @@ function MissReason({ reason }: { reason: BuildMissReason }) {
   const baseline = reason.baseline
     ? reason.baseline.from === 'workspace'
       ? t`Compared with ${fingerprint}, the last build in this workspace.`
-      : t`Compared with ${fingerprint}, the last build of this project in another worktree.`
+      : reason.baseline.from === 'project'
+        ? t`Compared with ${fingerprint}, the last build of this project in another worktree.`
+        : null
     : null;
   return (
     <>
@@ -628,10 +640,18 @@ function MissReason({ reason }: { reason: BuildMissReason }) {
             <View key={`${change.change}-${change.source}`} style={styles.change}>
               <Text
                 mono
-                tone={change.change === 'added' ? 'success' : change.change === 'removed' ? 'error' : 'warning'}
+                tone={
+                  change.change === 'added'
+                    ? 'success'
+                    : change.change === 'removed'
+                      ? 'error'
+                      : change.change === 'changed'
+                        ? 'warning'
+                        : 'tertiary'
+                }
                 style={styles.mark}
               >
-                {CHANGE_MARK[change.change]}
+                {Object.hasOwn(CHANGE_MARK, change.change) ? CHANGE_MARK[change.change] : '?'}
               </Text>
               <Text variant="caption" mono style={styles.source} numberOfLines={2}>
                 {change.source}

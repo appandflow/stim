@@ -326,7 +326,9 @@ export function ReplayBar({
                       ? theme.colors.accent
                       : marker.kind === 'crash'
                         ? theme.colors.error
-                        : theme.colors.warning,
+                        : marker.kind === 'error'
+                          ? theme.colors.warning
+                          : theme.colors.tertiary,
                 },
               ]}
             />

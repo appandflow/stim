@@ -179,7 +179,10 @@ export function MacStatus({ id }: { id: string }) {
               : t`Nothing Stim tracks is using CPU or memory.`
           }
           footer={
-            owners.length ? (
+            owners.length &&
+            (status.machine?.memorySource === undefined ||
+              status.machine.memorySource === 'footprint' ||
+              status.machine.memorySource === 'rss') ? (
               <Text variant="footnote" tone="tertiary" style={styles.note}>
                 {status.machine?.memorySource === 'footprint'
                   ? t`Each process counts in one row. Memory is each process's footprint, as Activity Monitor shows it.`

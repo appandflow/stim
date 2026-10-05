@@ -292,7 +292,12 @@ export function WorkspaceDetail({ path }: { path: string }) {
             env={env}
             build={build}
             target={buildTarget ? deviceTitle(buildTarget).name : null}
-            onPress={() => open('/mac/[id]/build', build.platform)}
+            onPress={() =>
+              open(
+                '/mac/[id]/build',
+                build.platform === 'ios' || build.platform === 'android' ? build.platform : undefined,
+              )
+            }
           />
         ) : null}
         {general.map((warning) => (

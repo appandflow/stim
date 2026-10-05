@@ -106,15 +106,19 @@ export function useDeviceControl(
       const target = { workspace, platform, slot, ...(physical ? { physical } : {}) };
       connection.request('control.begin', { ...target, ...(takeOver ? { takeOver } : {}) }).then(
         (result) => {
-          if (!mounted.current) {
+          if (!mounted.current || result.platform !== platform) {
             connection.request('control.end', { session: result.session }).catch(() => {});
+            if (mounted.current) setHeld({ kind: 'off' });
             return;
           }
           setHeld({
             kind: 'on',
             session: result.session,
             leaseSince: result.lease?.grantedAt ?? null,
-            postures: result.postures,
+            postures: result.postures.filter(
+              (posture): posture is DevicePosture =>
+                posture === 'folded' || posture === 'half-open' || posture === 'unfolded',
+            ),
             ...(result.simulator ? { simulator: result.simulator } : {}),
             link,
           });

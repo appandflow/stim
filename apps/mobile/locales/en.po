@@ -379,6 +379,10 @@ msgstr "{name} · last build failed, {since} ago"
 msgid "{name} · no build recorded"
 msgstr "{name} · no build recorded"
 
+#: src/lib/workspace-view.ts
+msgid "{name} · Unknown"
+msgstr "{name} · Unknown"
+
 #: src/lib/home-list.ts
 msgid "{name} app closed"
 msgstr "{name} app closed"
@@ -885,7 +889,7 @@ msgid "Appearance"
 msgstr "Appearance"
 
 #: src/lib/build-machines.ts
-#: src/screens/workspace-work.tsx
+#: src/lib/format.ts
 msgid "Approved"
 msgstr "Approved"
 
@@ -943,8 +947,8 @@ msgstr "Budgets"
 msgid "Build"
 msgstr "Build"
 
-#: src/components/workspace-cards.tsx
 #: src/lib/device-tile.ts
+#: src/lib/format.ts
 #: src/lib/workspace-view.ts
 msgid "Build failed"
 msgstr "Build failed"
@@ -969,8 +973,8 @@ msgstr "Build-tools missing"
 msgid "Build: {spoken}"
 msgstr "Build: {spoken}"
 
-#: src/components/workspace-cards.tsx
 #: src/lib/device-tile.ts
+#: src/lib/format.ts
 #: src/lib/workspace-view.ts
 msgid "Building"
 msgstr "Building"
@@ -1000,7 +1004,7 @@ msgstr "Building {platform}, slot {slot}"
 msgid "Builds for other Macs"
 msgstr "Builds for other Macs"
 
-#: src/components/workspace-cards.tsx
+#: src/lib/format.ts
 msgid "Built"
 msgstr "Built"
 
@@ -1174,7 +1178,7 @@ msgstr "Changed files"
 msgid "Changes"
 msgstr "Changes"
 
-#: src/screens/workspace-work.tsx
+#: src/lib/format.ts
 msgid "Changes requested"
 msgstr "Changes requested"
 
@@ -1291,7 +1295,7 @@ msgid "closed"
 msgstr "closed"
 
 #: src/components/device-tile.tsx
-#: src/screens/workspace-work.tsx
+#: src/lib/format.ts
 msgid "Closed"
 msgstr "Closed"
 
@@ -1553,7 +1557,7 @@ msgstr "Down"
 msgid "Download"
 msgstr "Download"
 
-#: src/screens/workspace-work.tsx
+#: src/lib/format.ts
 msgid "Draft"
 msgstr "Draft"
 
@@ -2211,7 +2215,7 @@ msgstr "Menu"
 msgid "Menu, {unread} unread notifications"
 msgstr "Menu, {unread} unread notifications"
 
-#: src/screens/workspace-work.tsx
+#: src/lib/format.ts
 msgid "Merged"
 msgstr "Merged"
 
@@ -2266,7 +2270,7 @@ msgstr "More"
 msgid "Moving..."
 msgstr "Moving..."
 
-#: src/screens/inbox.tsx
+#: src/lib/settings-options.ts
 msgid "Muted"
 msgstr "Muted"
 
@@ -2669,7 +2673,7 @@ msgstr "On {where}, open Stim Desktop, Settings → Phones, and turn on Allow co
 msgid "only below the hard floor"
 msgstr "only below the hard floor"
 
-#: src/screens/workspace-work.tsx
+#: src/lib/format.ts
 msgid "Open"
 msgstr "Open"
 
@@ -2909,7 +2913,7 @@ msgstr "Pull request {number}, merged"
 msgid "Pull request {number}, open"
 msgstr "Pull request {number}, open"
 
-#: src/screens/inbox.tsx
+#: src/lib/settings-options.ts
 #: src/screens/settings.ios.tsx
 #: src/screens/settings.tsx
 msgid "Quiet hours"
@@ -3091,7 +3095,7 @@ msgstr "Retry"
 msgid "Review"
 msgstr "Review"
 
-#: src/screens/workspace-work.tsx
+#: src/lib/format.ts
 msgid "Review required"
 msgstr "Review required"
 
@@ -3731,10 +3735,34 @@ msgid "unhealthy"
 msgstr "unhealthy"
 
 #: src/lib/workspaces.ts
+#: src/lib/workspaces.ts
 msgid "unknown"
 msgstr "unknown"
 
 #: src/lib/build-machines.ts
+#: src/lib/device-tile.ts
+#: src/lib/device-tile.ts
+#: src/lib/format.ts
+#: src/lib/format.ts
+#: src/lib/format.ts
+#: src/lib/format.ts
+#: src/lib/format.ts
+#: src/lib/format.ts
+#: src/lib/format.ts
+#: src/lib/replay.ts
+#: src/lib/settings-options.ts
+#: src/lib/settings-options.ts
+#: src/lib/workspace-view.ts
+#: src/lib/workspace-view.ts
+#: src/lib/workspace-view.ts
+#: src/lib/workspace-view.ts
+#: src/lib/workspace-view.ts
+#: src/lib/workspace-view.ts
+#: src/lib/workspace-view.ts
+#: src/lib/workspace-view.ts
+#: src/lib/workspaces.ts
+#: src/screens/workspace-diff.tsx
+#: src/screens/workspace-diff.tsx
 msgid "Unknown"
 msgstr "Unknown"
 

@@ -5,6 +5,8 @@ import { frameTarget } from '@/hooks/frame-target';
 import { useMacConnection } from '@/hooks/machines';
 import { SeekQueue, type Seek } from '@/lib/replay-seek';
 import { VideoMeter } from '@/lib/video';
+import { supportsFrame } from '@/lib/device-frame';
+
 import type { DeviceFrameArtwork, DevicePlatform, FrameEvent, ReplayRate } from '@/protocol/types';
 import { pushAccessUnit, supportsFrameOrientation } from '../../modules/stim-video/src';
 
@@ -199,6 +201,7 @@ export function useDeviceStream(
       },
       (event) => {
         if (event.event === 'frame') {
+          if (!supportsFrame(event, platform)) return;
           size = '';
           orientation.current = null;
           const revision = event.duo?.revision ?? null;
@@ -234,7 +237,7 @@ export function useDeviceStream(
         }
       },
       (result) => {
-        subscription.current = result.subscription;
+        subscription.current = result.video && result.video !== 'h264' ? null : result.subscription;
         queue.interrupt();
         size = '';
         orientation.current = null;
@@ -251,6 +254,7 @@ export function useDeviceStream(
         pumpSeeks(connection);
       },
       (packet) => {
+        if (subscription.current === null) return;
         meter.add(packet, Date.now());
         const shown = replaying.current;
         if (shown && queue.settled) {

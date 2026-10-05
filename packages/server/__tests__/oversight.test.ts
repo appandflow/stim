@@ -432,6 +432,38 @@ describe('oversee', () => {
   });
 
   describe('work finished', () => {
+    it.each(['finished', 'stuck'])(
+      'names a future build platform in %s notifications without claiming Android',
+      (category) => {
+        const green = builds({ status: 'ok', at: T0 + MIN });
+        green.lastBuilds!.ios!.platform = 'future-platform';
+        let state: OversightState | null = null;
+        let notifications: OversightNotification[] = [];
+        const released = category === 'finished';
+        for (const [at, workspace] of [
+          [T0, env({ ios: sim(null) })],
+          [T0 + MIN, env({ ios: driven(T0 + MIN), ...green })],
+          [
+            T0 + 17 * MIN,
+            env({
+              ios: released ? sim(null, 'Shutdown') : driven(T0 + MIN),
+              ...(released ? { live: false, phase: 'idle' } : {}),
+              ...green,
+            }),
+          ],
+        ] as const) {
+          const result = oversee(state, input([workspace]), ALL, at);
+          state = result.state;
+          notifications = result.notifications;
+        }
+        const body = notifications.find((notification) => notification.category === category)?.body;
+        expect(body).toBe(
+          released
+            ? 'Agent stopped after a green future-platform build'
+            : 'No agent activity for 16 min after a green future-platform build; iPhone 18 Pro 27.0 still up',
+        );
+      },
+    );
     const drove = [
       { at: T0, input: input([env({ ios: sim(null) })]) },
       { at: T0 + MIN, input: input([env({ ios: driven(T0 + MIN, T0 + MIN) })]) },

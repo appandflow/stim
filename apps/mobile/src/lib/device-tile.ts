@@ -47,7 +47,10 @@ export function deviceTileState(device: DeviceRef, env: EnvironmentState, now: n
   if (device.platform === 'macos' && env.macos) {
     if (env.macos.build.state === 'running') return { text: t`Building`, tone: 'brand' };
     if (env.macos.build.state === 'failed') return { text: t`Build failed`, tone: 'error' };
-    return { text: device.state, tone: device.running ? 'success' : 'secondary' };
+    return {
+      text: ['running', 'orphaned', 'stopped', 'unverified'].includes(device.state) ? device.state : t`Unknown`,
+      tone: device.running ? 'success' : 'secondary',
+    };
   }
   const build = runningBuild(env, device);
   if (build) {
@@ -56,6 +59,8 @@ export function deviceTileState(device: DeviceRef, env: EnvironmentState, now: n
   }
   const badge = activityBadge(device.activity, now);
   if (badge?.kind === 'driven') return { text: badge.text, tone: 'brand' };
+  if (device.app && !['running', 'stopped', 'unknown'].includes(device.app.state))
+    return { text: t`Unknown`, tone: 'secondary' };
   if (device.app?.state === 'stopped') return { text: t`App not running`, tone: 'warning' };
   if (device.page?.error) return { text: t`Page failed to load`, tone: 'warning' };
   if (badge) return { text: badge.text, tone: 'tertiary' };
