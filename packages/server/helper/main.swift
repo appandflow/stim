@@ -10,6 +10,7 @@ import IOSurface
 //   stim-frames android <serial>
 //   stim-frames android-device <serial> <adb> <scrcpy-server>
 //   stim-frames web <cdpEndpoint> <chromePid> <targetId>
+//   stim-frames macos <owned-app-json>
 //   stim-frames iphone <udid> [name]
 //
 // android-device streams any adb device through the scrcpy server jar at <scrcpy-server>,
@@ -564,7 +565,7 @@ extension AndroidDeviceSource: Source {
       stream.send(Scrcpy.keycode(.up, key))
     case .rotate, .posture:
       Output.notice(["inputError": "A physical device rotates and folds only in hand."])
-    case .config, .keyframe, .recordKeyframe:
+    case .config, .keyframe, .recordKeyframe, .control, .scoped, .scroll, .key:
       break
     }
   }
@@ -731,13 +732,17 @@ extension WebSource: Source {
       page.back()
     case .rotate, .posture:
       Output.notice(["inputError": "A web page does not rotate or fold."])
-    case .config, .keyframe, .recordKeyframe:
+    case .config, .keyframe, .recordKeyframe, .control, .scoped, .scroll, .key:
       break
     }
   }
 }
 
-enum Command {
+indirect enum Command {
+  case control(String, enabled: Bool)
+  case scoped(String, Command)
+  case scroll(CGPoint, delta: CGPoint)
+  case key(String, modifiers: [String])
   case config(Config)
   case keyframe
   case recordKeyframe
@@ -750,6 +755,16 @@ enum Command {
 
 func parseCommand(_ line: String, base: Config) -> Command? {
   guard let object = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any] else { return nil }
+  if let control = object["control"] as? [String: Any], let session = control["session"] as? String,
+    let enabled = control["enabled"] as? Bool { return .control(session, enabled: enabled) }
+  if let session = object["controlSession"] as? String {
+    var unscoped = object
+    unscoped.removeValue(forKey: "controlSession")
+    guard let data = try? JSONSerialization.data(withJSONObject: unscoped),
+      let command = parseCommand(String(decoding: data, as: UTF8.self), base: base)
+    else { return nil }
+    return .scoped(session, command)
+  }
   if object["keyframe"] as? Bool == true { return .keyframe }
   if object["recordKeyframe"] as? Bool == true { return .recordKeyframe }
   switch object["input"] as? String {
@@ -759,6 +774,15 @@ func parseCommand(_ line: String, base: Config) -> Command? {
       let x = object["x"] as? Double, let y = object["y"] as? Double, (0...1).contains(x), (0...1).contains(y)
     else { return nil }
     return .touch(phase, CGPoint(x: x, y: y), display: object["display"] as? Int ?? 0)
+  case "scroll":
+    guard let x = object["x"] as? Double, let y = object["y"] as? Double,
+      let dx = object["deltaX"] as? Double, let dy = object["deltaY"] as? Double,
+      (0...1).contains(x), (0...1).contains(y), dx.isFinite, dy.isFinite, abs(dx) <= 1000, abs(dy) <= 1000
+    else { return nil }
+    return .scroll(CGPoint(x: x, y: y), delta: CGPoint(x: dx, y: dy))
+  case "key":
+    guard let key = object["key"] as? String, let modifiers = object["modifiers"] as? [String] else { return nil }
+    return .key(key, modifiers: modifiers)
   case "text":
     return (object["text"] as? String).map { .text($0) }
   case "button":
@@ -891,7 +915,7 @@ extension SimulatorSource: Source {
       hid.button(button, down: true)
       usleep(100_000)
       hid.button(button, down: false)
-    case .config, .keyframe, .recordKeyframe, .rotate, .posture:
+    case .config, .keyframe, .recordKeyframe, .rotate, .posture, .control, .scoped, .scroll, .key:
       break
     }
   }
@@ -937,7 +961,7 @@ extension EmulatorSource: Source {
       wait("rotation") { await EmulatorRotation.rotate(serial: self.serial, clockwise: clockwise) }
     case .posture(let posture):
       wait("posture") { await posture.apply(serial: self.serial) }
-    case .config, .keyframe, .recordKeyframe:
+    case .config, .keyframe, .recordKeyframe, .control, .scoped, .scroll, .key:
       break
     }
   }
@@ -1025,6 +1049,22 @@ case "simulator-options":
     FileHandle.standardError.write(Data("\(error.localizedDescription)\n".utf8))
     exit(1)
   }
+case "macos":
+  guard let data = arguments[2].data(using: .utf8),
+    let app = try? JSONDecoder().decode(MacosSource.OwnedApp.self, from: data)
+  else { fail("Invalid owned macOS app target.") }
+  let source = MacosSource(app: app)
+  let stop = source.stop
+  beforeExit = stop
+  signal(SIGTERM, SIG_IGN)
+  terminated.setEventHandler {
+    stop()
+    exit(0)
+  }
+  terminated.resume()
+  Output.requestKeyframe = source.keyframe
+  readCommands(source)
+  source.start()
 case "ios":
   CoreSimulator.developerDir = CoreSimulator.selectedDeveloperDir()
   guard CoreSimulator.deviceSet != nil else { fail("CoreSimulator could not be loaded from \(CoreSimulator.developerDir).") }

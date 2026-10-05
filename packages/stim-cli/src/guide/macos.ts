@@ -44,24 +44,70 @@ Stim Desktop shows this app in its workspace, with Build and run, Refresh previe
 Open app and Stop. Capture and Open app verify the recorded executable, bundle
 identifier, PID and process start time. Open app rechecks the same captured window and one standard app window, then
 activates that owned app for normal native input.
+A main window with contained utility windows is supported; disjoint app windows
+refuse capture. The viewer never captures its own process recursively.
 The captured view is read-only; background mouse/keyboard relay is not included.
 
 Capture requires existing Screen Recording permission; Open app also requires
-existing Accessibility permission. Neither asks for permission or changes grants. If unavailable, use the normal app window and
+Accessibility permission. The first native viewer opening shows one Desktop setup
+screen for both permissions (Accessibility is named Device Control and Data Access
+on macOS 27), with statuses, Request permissions, Settings and
+Check again. You approve normal macOS requests; Stim never resets or grants access
+automatically. Permissions on the app card reopens setup. Builds never prompt.
+If unavailable, use the normal app window and
 read the workspace logs. Use Refresh preview after the app window opens or is
-resized to rebind capture. Phone viewing, remote relay and multiwindow selection
-are not part of this prototype.
+resized to rebind capture.
+
+PHONE VIEWING AND CONTROL
+
+A paired phone shows native app and build state in the workspace and home list.
+Tap the app tile to view its one visible window through stim-server. The server
+requires read access and its macos-window feature; it rechecks the recorded PID,
+process start time, executable and bundle before capture and on every frame.
+It never captures the desktop or another application, and offers no replay.
+
+A server advertising macos-window-control also supports the phone's Control
+mode on a control pairing. Tap/click and drag act on the displayed window;
+Scroll mode turns a drag into pixel scrolling. Keyboard types printable ASCII,
+and the toolbar offers Tab, Escape, Select all, Undo and Save shortcuts.
+Control holds one exclusive server session per owned app, ends on disconnect,
+revocation, takeover or five minutes without input, and does not take a CLI
+simulator/device lock. Each action rechecks the exact owned process and the
+same single standard app window. Modal or disjoint windows, changed capture or
+resize refuse input until the viewer reconnects. Contained nonmodal auxiliaries
+are allowed; only the focused captured main receives input. Existing Accessibility permission is required;
+The phone and server never request or reset it. A refusal ends Control with its reason while
+viewing and logs remain usable. Older servers remain view-only.
+Native Control uses dynamically resolved private CoreGraphics input SPI in the
+server helper, outside the phone and Mac App Store app binaries. A missing symbol
+or incompatible macOS version refuses Control while viewing and logs remain usable.
+
+The existing capture host needs Screen Recording permission. If capture is denied,
+open Permissions in Stim Desktop on the host Mac, approve its normal OS requests
+and reconnect the phone viewer. The Desktop host presents setup on the first
+native viewer opening, including one initiated by the phone. A server started
+outside Desktop uses that launching host's permissions; granting this copy of Stim
+may not apply to it. The server never requests or resets permissions. Status and logs still work. Tap the build card for
+SwiftPM output or the logs card for native runtime stdout and stderr. Metro is not
+used. Close and reopen the viewer after opening or resizing the app window.
 
 DESKTOP DOGFOOD
 
-This repository's apps/desktop/.stim.json selects StimDesktop, its development
-plist and --playground. The Debug-only playground opens production screen
-fixtures with in-memory actions and avoids live backend initialization:
+This repository's apps/desktop/.stim.json selects the full StimDesktop app and
+its development plist. It monitors the regular Stim home alongside the installed
+app, with a workspace-specific bundle identifier and separate preferences.
+Its launch arguments disable automatic cleanup and notification alerts in this development copy.
+Use Window > SwiftUI Playground for in-memory production screen fixtures.
 
   cd apps/desktop
   stim macos
   stim logs --source build
   stim stop
+
+When using an unreleased CLI from this repository, build the packages first and
+set STIM_BIN to the absolute packages/stim-cli/dist/cli.mjs path before running
+that executable's macos command. The development app inherits this CLI override;
+the installed app's CLI preference and running server remain unchanged.
 
 Ask an agent: "In my Swift Package app, configure the executable product and a
 development Info.plist for stim macos. Build and show its owned window in Stim

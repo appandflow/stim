@@ -849,21 +849,19 @@ host simulator or emulator sessions here. **Review...** opens the request;
 **Revoke** removes it. It grants no read, control or build access. Hosted
 sessions are not available yet; an approval does not start a device.
 
-When the server reports that Tailscale is not running, the tab shows the
-steps: `tailscale up`, restart the server (a button when the app started it),
-then run the `tailscale serve` command the tab shows next. The server reports the
-Tailscale state it started with, so the steps stay until it restarts. Until then, the pairing
-endpoint is `ws://127.0.0.1:7787` and works only on this Mac, for example from
-an iOS Simulator.
+When Tailscale is not running, start it on this Mac. Pairing then works only on
+this Mac, such as in an iOS Simulator, until the private connection is ready.
 
-While Tailscale runs, the tab shows the route the server's health reports from
-`tailscale serve status`, re-read every 5 seconds. A tailnet-only route shows the
-endpoint phones connect to, such as `wss://<mac>.<tailnet>.ts.net:7443`.
-Without a route, the tab shows the command that serves the server on a
-dedicated tailnet-only port, `tailscale serve --bg --https=7443
-http://127.0.0.1:7787`, or the next free port when 7443 is taken. When a route
-to the server is on a port with Funnel on, the tab says the server is public
-and pairing fails with the same explanation; it never suggests a Funnel port.
+While Tailscale runs, **Set up connection** in the Phones tab configures and
+verifies a dedicated tailnet-only HTTPS proxy to the server's loopback port.
+It uses port 7443 or the next free port, keeps an existing route unchanged and
+never enables Funnel. This action uses Desktop's authenticated local control
+connection; a phone or forwarded connection cannot configure the Mac.
+Tailscale may ask you to enable HTTPS in your browser. Setup errors remain
+visible with **Try Again**. An unreadable or timed-out route probe changes
+nothing. A route exposing this server through Funnel refuses setup and pairing.
+**Pair a Phone** verifies the connection before showing its QR code; it no longer
+shows an assumed endpoint when the route is missing or unknown.
 
 ## Build machines
 
@@ -1278,12 +1276,32 @@ images. Its dependency belongs only to the visual test target.
 If Stim is not installed globally, replace `stim` with `npx stim`.
 This package includes explicit development settings for `stim macos`. From
 `apps/desktop`, run `stim macos` to build the `StimDesktop` Debug executable and
-launch its in-memory `--playground` entry in an isolated bundle. Inspect compiler
+launch the full app as **Stim Development** in an isolated bundle. It monitors
+the regular Stim home with separate preferences; automatic cleanup and notification alerts are disabled
+by its development launch arguments. **Window > SwiftUI Playground** opens the
+in-memory screen fixtures. Inspect compiler
 output with `stim logs --source build`, and use `stim stop` to stop only that
 workspace's recorded app. The normal Desktop viewer shows its app/build state,
-logs and one local owned window using existing Screen Recording permission.
+logs and one local owned main window using existing Screen Recording permission.
+Contained utility windows are supported; disjoint app windows refuse capture.
+The viewer skips its own process to prevent recursive previews.
 **Open app** verifies and activates that owned app using existing Accessibility
 permission for normal native input;
-the captured view is read-only. Background input relay is not included. Use **Refresh preview** after the app window opens or is resized. No permission changes, real backend initialization or custom packaging
-script is part of this flow. See [the macOS guide](../../website/docs/macos.md)
+the captured view is read-only. Background input relay is not included. Use **Refresh preview** after the app window opens or is resized. No permission requests or custom packaging
+script is part of the build flow.
+
+On the first native viewer opening, one **Native app viewer** setup screen explains
+Screen Recording and Accessibility (called Device Control and Data Access on macOS 27),
+shows their status and offers **Request permissions**, **Settings** and **Check again**.
+You approve normal macOS requests; Stim never resets or automatically grants access.
+Use **Permissions** on the app card to reopen setup. A phone-first native viewer
+asks the running Desktop host to show the same setup on its next local health refresh.
+Grant access to the signed Stim app that started the server, then reconnect the phone
+viewer. A server started elsewhere uses that host's permissions; this app's status
+alone does not prove that server has access.
+
+For an unreleased CLI, run `pnpm run build` at the
+repository root, then set `STIM_BIN` to the absolute `packages/stim-cli/dist/cli.mjs`
+path and invoke that executable's `macos` command from `apps/desktop`. The app
+inherits the override without changing the installed app's preferences. See [the macOS guide](../../website/docs/macos.md)
 for the prototype's settings and limits.

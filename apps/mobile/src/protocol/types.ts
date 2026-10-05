@@ -9,10 +9,10 @@ export const PROTOCOL_VERSION = 1;
 export type Platform = 'ios' | 'android';
 
 /** The platforms a device can stream and take input on: `web` is the workspace's Stim-owned Chrome page. */
-export type DevicePlatform = Platform | 'web';
+export type DevicePlatform = Platform | 'web' | 'macos';
 
 /** `reload` also reaches the workspace's Stim-owned Chrome page. */
-export type ReloadPlatform = DevicePlatform;
+export type ReloadPlatform = Exclude<DevicePlatform, 'macos'>;
 
 /** The JSON a Stim Desktop pairing QR code encodes. */
 export interface PairingPayload {
@@ -643,6 +643,24 @@ export type TouchPhase = 'down' | 'move' | 'up';
 
 export type InputButton = 'home' | 'lock' | 'back' | 'app-switch';
 
+export type InputKey =
+  | 'escape'
+  | 'tab'
+  | 'return'
+  | 'backspace'
+  | 'left'
+  | 'right'
+  | 'up'
+  | 'down'
+  | 'a'
+  | 'c'
+  | 'v'
+  | 'x'
+  | 'z'
+  | 's'
+  | 'f';
+export type KeyModifier = 'command' | 'shift' | 'option' | 'control';
+
 export type RotateDirection = 'left' | 'right';
 
 export type DevicePosture = 'folded' | 'half-open' | 'unfolded';
@@ -854,6 +872,11 @@ export interface Methods {
   };
   /** Printable ASCII; `\n` presses Return, `\t` Tab and `\b` Delete. */
   'input.text': { params: { session: string; text: string }; result: Record<string, never> };
+  'input.scroll': {
+    params: { session: string; x: number; y: number; deltaX: number; deltaY: number };
+    result: Record<string, never>;
+  };
+  'input.key': { params: { session: string; key: InputKey; modifiers?: KeyModifier[] }; result: Record<string, never> };
   'input.button': { params: { session: string; button: InputButton }; result: Record<string, never> };
   'input.rotate': { params: { session: string; direction: RotateDirection }; result: Record<string, never> };
   'input.simulator': { params: InputSimulatorParams; result: SimulatorOptions };

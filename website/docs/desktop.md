@@ -81,7 +81,12 @@ performance traces. Every release is listed under
   without retrying through the CLI.
 - **Phones.** Pair the Stim phone app, and watch a leased phone from the
   desktop: Android can be controlled, an iPhone over USB is view only. Needs
-  **Serve to phones**. On wide iPad and Duo windows, the app keeps its navigation
+  **Serve to phones**. The phone's workspace list groups app projects from one
+  linked Git checkout under one branch heading. Tap each app child for its own
+  devices, logs and commands. Different machines and checkouts remain separate.
+  Primary checkouts and older servers lacking checkout identity still show separate
+  app rows; [#2418](https://github.com/appandflow/stim/issues/2418) tracks that addition.
+  Desktop's sidebar retains its app rows. On wide iPad and Duo windows, the app keeps its navigation
   beside the main screen; details use the full window. A book fold aligns the panes with the display
   division; a narrow cover screen uses the menu drawer. Duo fold detection
   needs an app built with the iOS 27.1 SDK and an iOS 27.1 runtime.
@@ -236,10 +241,15 @@ stim ios`}
 2. Click a device to open its viewer. **Take over** lets you use it; Escape
    gives it back.
 3. To use the phone app, open **Stim > Settings > Phones**, turn on **Serve to
-   phones** and choose **Pair a Phone…**.
+   phones**, choose **Set up connection** if needed, then **Pair a Phone…**.
+   Setup keeps existing Tailscale routes and never enables Funnel. If Tailscale
+   asks to enable HTTPS, approve its browser setup and retry. Pairing waits for a
+   verified private route; a timeout changes nothing.
 
 Revoking a paired phone closes its active connections on the next pairing
-check. The server checks pairings on changes and once a second.
+check. The server checks pairings on changes and once a second. If QR pairing
+fails, the phone keeps the error visible until **Retry** or manual entry is
+chosen.
 
 ![The Pair a Phone sheet with a QR code to scan with the phone app](/img/desktop/pair.webp)
 

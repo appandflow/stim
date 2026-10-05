@@ -6,6 +6,8 @@ import type {
   DevicePlatform,
   DevicePosture,
   InputButton,
+  InputKey,
+  KeyModifier,
   SimulatorCommand,
   SimulatorOptions,
   Methods,
@@ -32,6 +34,8 @@ export interface DeviceControl {
   end: () => void;
   touch: (phase: TouchPhase, x: number, y: number) => void;
   text: (text: string) => void;
+  scroll: (x: number, y: number, deltaX: number, deltaY: number) => void;
+  key: (key: InputKey, modifiers?: KeyModifier[]) => void;
   button: (button: InputButton) => void;
   rotate: (direction: RotateDirection) => void;
   /** Rejects with the server's reason; a Duo fold takes a few seconds to settle. */
@@ -93,7 +97,11 @@ export function useDeviceControl(
 
   const begin = useCallback(
     (takeOver = false) => {
-      if (!connection) return;
+      if (
+        !connection ||
+        (platform === 'macos' && (link.kind !== 'open' || !link.features.includes('macos-window-control')))
+      )
+        return;
       setHeld({ kind: 'starting' });
       const target = { workspace, platform, slot, ...(physical ? { physical } : {}) };
       connection.request('control.begin', { ...target, ...(takeOver ? { takeOver } : {}) }).then(
@@ -124,7 +132,7 @@ export function useDeviceControl(
   );
   const end = useCallback(() => setHeld({ kind: 'off' }), []);
   const send = useCallback(
-    <M extends 'input.touch' | 'input.text' | 'input.button' | 'input.rotate'>(
+    <M extends 'input.touch' | 'input.text' | 'input.button' | 'input.rotate' | 'input.scroll' | 'input.key'>(
       method: M,
       params: Omit<Methods[M]['params'], 'session'>,
     ) => {
@@ -143,6 +151,14 @@ export function useDeviceControl(
     [send],
   );
   const button = useCallback((value: InputButton) => send('input.button', { button: value }), [send]);
+  const scroll = useCallback(
+    (x: number, y: number, deltaX: number, deltaY: number) => send('input.scroll', { x, y, deltaX, deltaY }),
+    [send],
+  );
+  const key = useCallback(
+    (key: InputKey, modifiers: KeyModifier[] = []) => send('input.key', { key, modifiers }),
+    [send],
+  );
   const rotate = useCallback((direction: RotateDirection) => send('input.rotate', { direction }), [send]);
   const posture = useCallback(
     async (value: DevicePosture) => {
@@ -164,5 +180,5 @@ export function useDeviceControl(
     },
     [connection, session, link],
   );
-  return { allowed, state, begin, end, touch, text, button, rotate, posture, simulator };
+  return { allowed, state, begin, end, touch, text, scroll, key, button, rotate, posture, simulator };
 }

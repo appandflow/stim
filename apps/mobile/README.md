@@ -37,7 +37,16 @@ Duo fold detection requires a build made with the iOS 27.1 SDK and an iOS
   repo, live workspaces come before idle ones, each by name and machine, so a
   workspace moves only when it turns live or idle, not while builds run and
   agents attach. A workspace `stim worktree warm` is preparing or has prepared
-  counts as live. Each row is titled by its worktree's branch, or the
+  counts as live. When status identifies a linked Git checkout, its app projects
+  share one workspace heading, with the branch and git state shown once. App
+  children show paths such as `apps/mobile` and `apps/desktop`, each with its own
+  status and route to its devices, logs and commands. Children stay visible without
+  an extra expansion step; filters still apply per app. Repo live/idle counts count
+  the shown workspaces, while the hidden-idle footer counts apps. Different Macs
+  and checkouts stay separate even when they share a branch name. Primary checkouts
+  and older servers without an explicit checkout identity retain separate app rows;
+  [#2418](https://github.com/appandflow/stim/issues/2418) tracks that payload addition.
+  Each single-app row is titled by its worktree's branch, or the
   worktree's folder when it has no branch, or the project for a main checkout,
   truncated in the middle when long. At the trailing edge, a word says what the
   workspace is doing: **Building iOS**, **Warming** with how long, **Ready**
@@ -164,7 +173,9 @@ gc --json` dry run and `stim stats --json`, which the server refreshes at
   locale, on the clipboard for a bug report. A tap on home, a swipe left, or Android's back button closes the
   menu. Pairing scans the QR code Stim Desktop
   shows under **Pair a phone**, or takes the endpoint and pairing token typed
-  in; the token field is masked, with a button that shows it, and drops
+  in. A failed QR pairing keeps its error visible and pauses scanning until
+  **Retry** or manual entry is chosen; unrelated QR codes do not pause scanning.
+  The token field is masked, with a button that shows it, and drops
   what a token cannot hold, such as the spaces and line breaks of a paste, as you
   type, without moving the cursor. The device token
   the server issues is kept in the phone's secure storage (Keychain on iOS,
@@ -339,6 +350,38 @@ its buttons wait for the current change to finish. Ending control stops a
 pending change. Older servers and unavailable simulator capabilities leave
 these controls hidden. These options do not appear for physical phones,
 Android or web.
+
+### Native macOS apps
+
+Native workspaces from `stim macos` appear on Home with app/build/runtime state.
+The workspace shows the owned app tile, a build card opening SwiftPM logs and a
+logs card opening native runtime stdout/stderr in the existing log viewer.
+macOS uses no Metro. Stopped and unverified apps retain their status tile.
+
+A running app's tile opens the same viewer with `platform: "macos"`, in the default
+slot, when the server advertises `macos-window`. It has no replay. The server captures only
+one visible window of the app whose PID, process start time, executable and
+bundle match its owned launch record; other apps and the desktop are excluded.
+Existing Screen Recording permission is required for the capture host. A denial
+shows permission guidance while status and logs stay usable. On the host Mac, Stim Desktop opens one native viewer setup screen for Screen Recording and Accessibility (called Device Control and Data Access on macOS 27) on first use. Approve the normal macOS requests there, then reconnect the phone viewer. **Permissions** on the Desktop app card reopens setup. The phone and server do not request or reset OS grants. Close and reopen the viewer after opening or resizing the
+app window.
+
+With `macos-window-control` and a control pairing, **Control** enables mouse
+clicks/drags, printable ASCII typing and keyboard shortcuts (Tab, Escape,
+Select all, Undo and Save). Turn on **Scroll** to scroll with a drag instead of
+moving the mouse. Each action verifies the same owned process and captured
+standard window. A modal or disjoint window, changed capture or resize refuses
+input. Contained nonmodal auxiliary windows are allowed; input still goes only
+to the focused captured main window. Control
+uses one exclusive server session per app, with disconnect/revocation/takeover
+and five-minute idle expiry; it takes no CLI simulator lock. Existing
+Accessibility permission is required. Refusals end Control and show the reason
+while the live view remains available. Older servers keep the viewer read-only.
+
+Native Control uses dynamically resolved private CoreGraphics input SPI in the
+server helper, outside the phone and Mac App Store app binaries. A macOS update
+can make it unavailable; then Control refuses while viewing and logs remain
+available.
 
 ### Replay
 

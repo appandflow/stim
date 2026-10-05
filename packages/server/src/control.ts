@@ -23,11 +23,16 @@ import {
 } from './frames.ts';
 import {
   INPUT_BUTTONS,
+  INPUT_KEYS,
+  KEY_MODIFIERS,
+  type InputKey,
+  type KeyModifier,
   PLATFORMS,
   MAX_INPUT_TEXT,
   ROTATE_DIRECTIONS,
   TOUCH_PHASES,
   type ControlBeginParams,
+  type ControlPlatform,
   type ControlBeginResult,
   type ControlEndedEvent,
   type DevicePosture,
@@ -62,7 +67,7 @@ export function parseControlBegin(params: unknown): Parsed<ControlBeginParams> {
     return { code: 'bad-request', message: 'params.workspace must be an environment path from a status payload.' };
   }
   if (!PLATFORMS.includes(platform as Platform)) {
-    return { code: 'bad-request', message: 'params.platform must be ios, android or web.' };
+    return { code: 'bad-request', message: 'params.platform must be ios, android, web or macos.' };
   }
   if (slot !== undefined && (typeof slot !== 'string' || !SLOT_NAME.test(slot))) {
     return { code: 'bad-request', message: 'params.slot must be 1-64 letters, digits, underscores or hyphens.' };
@@ -82,7 +87,7 @@ export function parseControlBegin(params: unknown): Parsed<ControlBeginParams> {
   return {
     value: {
       workspace,
-      platform: platform as Platform,
+      platform: platform as ControlPlatform,
       ...(slot ? { slot } : {}),
       ...(physical ? { physical } : {}),
       ...(takeOver ? { takeOver } : {}),
@@ -93,19 +98,29 @@ export function parseControlBegin(params: unknown): Parsed<ControlBeginParams> {
 export type InputCommand =
   | { input: 'touch'; phase: TouchPhase; x: number; y: number; display?: number }
   | { input: 'text'; text: string }
+  | { input: 'scroll'; x: number; y: number; deltaX: number; deltaY: number }
+  | { input: 'key'; key: InputKey; modifiers: KeyModifier[] }
   | { input: 'button'; button: InputButton }
   | { input: 'rotate'; direction: RotateDirection }
   | { input: 'posture'; posture: DevicePosture }
   | ({ input: 'simulator' } & SimulatorCommand);
 
-type InputMethod = 'input.touch' | 'input.text' | 'input.button' | 'input.rotate' | 'input.posture' | 'input.simulator';
+type InputMethod =
+  | 'input.touch'
+  | 'input.text'
+  | 'input.button'
+  | 'input.rotate'
+  | 'input.posture'
+  | 'input.simulator'
+  | 'input.scroll'
+  | 'input.key';
 
 /**
  * What a control session accepts: its device's platform, the postures `input.posture` takes, and whether it is a
  * physical device, which turns only in hand.
  */
 export interface SessionTarget {
-  platform: Platform;
+  platform: ControlPlatform;
   postures: readonly DevicePosture[];
   simulator?: SimulatorOptions;
   physical?: boolean;
@@ -113,6 +128,10 @@ export interface SessionTarget {
 
 const IOS_BUTTONS: readonly InputButton[] = ['home', 'lock'];
 const WEB_BUTTONS: readonly InputButton[] = ['back'];
+
+function delta(value: unknown): boolean {
+  return typeof value === 'number' && Number.isFinite(value) && Math.abs(value) <= 1000;
+}
 
 function fraction(value: unknown): boolean {
   return typeof value === 'number' && value >= 0 && value <= 1;
@@ -131,6 +150,50 @@ export function parseInput(
   if (!target) return { code: 'unknown-session', message: `No control session ${params.session} on this connection.` };
   const { platform, postures } = target;
   const session = params.session;
+  if (platform === 'macos' && !['input.touch', 'input.text', 'input.scroll', 'input.key'].includes(method)) {
+    return { code: 'bad-request', message: 'A native macOS app takes mouse, scroll, text and keyboard input only.' };
+  }
+  if (method === 'input.scroll' || method === 'input.key') {
+    if (platform !== 'macos')
+      return { code: 'bad-request', message: 'This input is for a native macOS app window only.' };
+    if (method === 'input.scroll') {
+      const { x, y, deltaX, deltaY } = params;
+      if (!fraction(x) || !fraction(y) || !delta(deltaX) || !delta(deltaY)) {
+        return {
+          code: 'bad-request',
+          message: 'input.scroll needs x and y from 0 to 1 and finite pixel deltas from -1000 to 1000.',
+        };
+      }
+      return {
+        value: {
+          session,
+          command: {
+            input: 'scroll',
+            x: x as number,
+            y: y as number,
+            deltaX: deltaX as number,
+            deltaY: deltaY as number,
+          },
+        },
+      };
+    }
+    const { key, modifiers = [] } = params;
+    if (
+      !INPUT_KEYS.includes(key as InputKey) ||
+      !Array.isArray(modifiers) ||
+      modifiers.length > 4 ||
+      new Set(modifiers).size !== modifiers.length ||
+      !modifiers.every((modifier) => KEY_MODIFIERS.includes(modifier as KeyModifier))
+    ) {
+      return {
+        code: 'bad-request',
+        message: 'input.key needs a supported native key and unique command, shift, option or control modifiers.',
+      };
+    }
+    return {
+      value: { session, command: { input: 'key', key: key as InputKey, modifiers: modifiers as KeyModifier[] } },
+    };
+  }
   if (platform === 'web' && (method === 'input.rotate' || method === 'input.posture')) {
     return { code: 'bad-request', message: 'A web page does not rotate or fold.' };
   }
@@ -206,7 +269,12 @@ export function parseInput(
   const { button } = params;
   const allowed = platform === 'ios' ? IOS_BUTTONS : platform === 'web' ? WEB_BUTTONS : INPUT_BUTTONS;
   if (!allowed.includes(button as InputButton)) {
-    const device = { ios: 'An iOS device', android: 'An Android device', web: 'A web page' }[platform];
+    const device = {
+      ios: 'An iOS device',
+      android: 'An Android device',
+      web: 'A web page',
+      macos: 'A native macOS app',
+    }[platform];
     return { code: 'bad-request', message: `${device} takes these buttons: ${allowed.join(', ')}.` };
   }
   return { value: { session, command: { input: 'button', button: button as InputButton } } };
@@ -304,7 +372,7 @@ function runAdb(env: NodeJS.ProcessEnv, serial: string, args: string[]): Promise
 }
 
 function activityOf(payload: StatusPayload, target: ControlBeginParams): DeviceActivity | undefined {
-  if (target.physical) return undefined;
+  if (target.physical || target.platform === 'macos') return undefined;
   const environment = payload.environments?.find((candidate) => candidate.path === target.workspace);
   const slot = target.slot ?? 'default';
   const devices = slot === 'default' ? environment : environment?.slots?.find((candidate) => candidate.slot === slot);
@@ -312,7 +380,12 @@ function activityOf(payload: StatusPayload, target: ControlBeginParams): DeviceA
   return target.platform === 'ios' ? devices?.ios?.activity : devices?.android?.activity;
 }
 
-const DEVICE_NOUN = { ios: 'iOS device', android: 'Android device', web: 'web page' } as const;
+const DEVICE_NOUN = {
+  ios: 'iOS device',
+  android: 'Android device',
+  web: 'web page',
+  macos: 'native macOS app',
+} as const;
 
 function conflictAbout(payload: StatusPayload, target: ControlBeginParams): Omit<ControlConflict, 'body'> {
   const environment = payload.environments?.find((candidate) => candidate.path === target.workspace);
@@ -866,7 +939,7 @@ export class ControlHub {
     cwd: string,
     beganAt: number,
   ): Promise<Lease | Refusal | null> {
-    if (device.platform === 'web') return null;
+    if (device.platform === 'web' || device.platform === 'macos') return null;
     const id = device.platform === 'ios' ? device.udid : device.serial;
     const slot = target.slot && target.slot !== 'default' ? ['--slot', target.slot] : [];
     const args = [

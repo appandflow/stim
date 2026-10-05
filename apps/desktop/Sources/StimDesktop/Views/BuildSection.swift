@@ -29,7 +29,18 @@ struct BuildSection: View {
     VStack(alignment: .leading, spacing: Space.md) {
       SectionLabel(title: "Build")
       if let macos = env.macos {
-        Text("macOS \(macos.product)").font(.stim(.callout, weight: .semibold))
+        HStack {
+          Text("macOS \(macos.product)").font(.stim(.callout, weight: .semibold))
+          Spacer()
+          if let query = LogQuery.build(
+            platform: "macos", slot: "default", startedAt: macos.build.startedAt,
+            finishedAt: macos.build.finishedAt)
+          {
+            Button("Build logs") { openLogs(query) }
+              .buttonStyle(.stim())
+              .fixedSize()
+          }
+        }
         Text("Swift Package Debug: \(macos.build.state)").font(.stim(.footnote)).foregroundStyle(Palette.secondary)
         if let error = macos.build.error {
           Text(error).font(.stim(.footnote)).foregroundStyle(Palette.error).textSelection(.enabled)

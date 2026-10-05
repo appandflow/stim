@@ -36,7 +36,7 @@ import {
   usageParts,
 } from '@/lib/workspace-view';
 import { platformName } from '@/lib/workspaces';
-import type { AgentSession, BuildReport, EnvironmentState } from '@/protocol/types';
+import type { AgentSession, BuildReport, EnvironmentState, MacosAppState } from '@/protocol/types';
 
 const STACK_FONT_SCALE = 1.3;
 const CardColumns = createContext(2);
@@ -76,6 +76,36 @@ function SmallCard({
       </View>
       {children}
     </Card>
+  );
+}
+
+export function MacosBuildCard({ app, onPress }: { app: MacosAppState; onPress: () => void }) {
+  const state = app.build.state === 'running' ? t`Building` : app.build.state === 'failed' ? t`Build failed` : t`Built`;
+  return (
+    <SmallCard
+      title={t`Build`}
+      alert={app.build.state === 'failed'}
+      onPress={onPress}
+      accessibilityLabel={t`macOS build: ${state}`}
+      accessibilityHint={t`Opens build logs`}
+    >
+      <Text variant={VALUE} weight={VALUE_WEIGHT} numberOfLines={1}>
+        {app.product}
+      </Text>
+      <Text variant={VALUE} tone={app.build.state === 'failed' ? 'error' : 'secondary'}>
+        {state}
+      </Text>
+      {app.build.durationMs !== undefined ? (
+        <Text variant={VALUE} tone="tertiary">
+          {formatDuration(app.build.durationMs)}
+        </Text>
+      ) : null}
+      {app.build.error ? (
+        <Text variant={VALUE} tone="error" numberOfLines={2}>
+          {app.build.error}
+        </Text>
+      ) : null}
+    </SmallCard>
   );
 }
 

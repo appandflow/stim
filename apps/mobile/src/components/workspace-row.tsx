@@ -17,21 +17,58 @@ import { useNow } from '@/hooks/use-now';
 import { workspaceAgentSessions } from '@/lib/agents';
 import { buildKey, buildTiming, outcomeLabel } from '@/lib/format';
 import type { HomeItem } from '@/lib/home';
-import { rowDevices, rowLabel, rowProblems, rowStatus, warmStepText } from '@/lib/home-list';
+import { rowDevices, rowLabel, rowProblems, rowStatus, warmStepText, type HomeWorkspace } from '@/lib/home-list';
 import { barSteps, currentPhaseLabel, gitChip, phaseSteps } from '@/lib/workspace-view';
 import { isSettingUp, isShownLive, runningBuild } from '@/lib/workspaces';
 import type { BuildReport, EnvironmentState } from '@/protocol/types';
 
 const SEPARATOR = '\u00B7';
 
-export const WorkspaceRow = memo(function WorkspaceRow({
+export const WorkspaceGroupRow = memo(function WorkspaceGroupRow({
+  workspace,
+  ...props
+}: {
+  workspace: HomeWorkspace;
+  now: number;
+  folder: boolean;
+  showsMachine: boolean;
+  onOpen: (item: HomeItem, errors: boolean) => void;
+}) {
+  const first = workspace.apps[0];
+  const { online, cached } = useMachinePresence(first.macId);
+  if (workspace.apps.length === 1) return <WorkspaceRow item={first} {...props} />;
+  return (
+    <View>
+      <View style={[styles.checkout, (!online || cached) && styles.dimmed]}>
+        <Text variant="headline" weight="medium" accessibilityRole="header">
+          {workspace.title}
+        </Text>
+        {props.showsMachine ? (
+          <Text variant="footnote" tone="secondary">
+            {first.macName}
+          </Text>
+        ) : null}
+        <GitLine item={first} folder={false} />
+      </View>
+      <View style={styles.apps}>
+        {workspace.apps.map((item) => (
+          <WorkspaceRow key={item.key} item={item} {...props} app showsMachine={false} />
+        ))}
+      </View>
+    </View>
+  );
+});
+
+const WorkspaceRow = memo(function WorkspaceRow({
   item,
   now,
   folder,
   showsMachine,
   onOpen,
+  app = false,
 }: {
   item: HomeItem;
+  app?: boolean;
   now: number;
   /** Whether to name the folder in the checkout, when the repo's workspaces sit in different ones. */
   folder: boolean;
@@ -51,7 +88,7 @@ export const WorkspaceRow = memo(function WorkspaceRow({
   const devices = rowDevices(env, at);
   const sessions = workspaceAgentSessions(env);
   const build = runningBuild(env);
-  const git = gitChip(env.worktree);
+  const title = app ? (item.inCheckout ?? item.env.path.split('/').filter(Boolean).pop() ?? item.title) : item.title;
   const live = isShownLive(env);
   const errors = env.logs?.errorsSinceMarker ?? 0;
   const color = toneColor(theme, offline ? 'tertiary' : status.tone);
@@ -99,6 +136,77 @@ export const WorkspaceRow = memo(function WorkspaceRow({
     );
   }
 
+  return (
+    <Touch
+      feedback="row"
+      onPress={() => onOpen(item, false)}
+      accessibilityLabel={rowLabel({
+        item: { ...item, title },
+        now: at,
+        status,
+        problems,
+        sessions,
+        folder: !app && folder,
+        showsMachine,
+      })}
+      accessibilityHint={t`Opens the workspace`}
+      accessibilityActions={errors > 0 ? [{ name: 'errors', label: t`Show errors` }] : undefined}
+      onAccessibilityAction={(event) => {
+        if (event.nativeEvent.actionName === 'errors') onOpen(item, true);
+      }}
+      style={styles.row}
+    >
+      <View style={[styles.lead, offline && styles.dimmed]}>
+        <View style={[styles.dot, { borderColor: color, backgroundColor: live && !offline ? color : 'transparent' }]} />
+      </View>
+      <View style={[styles.body, offline && styles.dimmed]}>
+        <View style={[styles.titleLine, large && styles.titleLineStacked]}>
+          <Text
+            variant="headline"
+            weight="medium"
+            tone={live ? 'default' : 'secondary'}
+            numberOfLines={lines}
+            ellipsizeMode={lines > 1 ? 'tail' : 'middle'}
+            style={styles.title}
+          >
+            {title}
+          </Text>
+          <Text variant="callout" weight="medium" tone={offline ? 'tertiary' : status.tone} numberOfLines={1}>
+            {status.text}
+          </Text>
+        </View>
+        {sessions.length ? <AgentSessionLine sessions={sessions} variant="callout" tone="secondary" /> : null}
+        {problems.length ? (
+          <View style={styles.pills}>
+            {problems.map((problem) => (
+              <Pill
+                key={`${problem.kind}:${problem.text}`}
+                tone={offline ? 'neutral' : problem.tone}
+                onPress={problem.kind === 'errors' ? () => onOpen(item, true) : undefined}
+              >
+                {problem.text}
+              </Pill>
+            ))}
+          </View>
+        ) : null}
+        {build && offline ? <RowBuild env={env} build={build} now={at} /> : null}
+        {build && !offline ? <TickingRowBuild env={env} build={build} /> : null}
+        {isSettingUp(env) && env.phase === 'warming' ? (
+          <Text variant="footnote" tone="secondary">
+            {warmStepText(env)}
+          </Text>
+        ) : null}
+        {context.length ? <Line parts={context} /> : null}
+        {!app ? <GitLine item={item} folder={folder} /> : null}
+      </View>
+    </Touch>
+  );
+});
+
+function GitLine({ item, folder }: { item: HomeItem; folder: boolean }) {
+  const large = useLargeText();
+  const lines = large ? 3 : 1;
+  const git = gitChip(item.env.worktree);
   const gitParts: ReactNode[] = [];
   if (folder && item.inCheckout) {
     gitParts.push(
@@ -135,64 +243,8 @@ export const WorkspaceRow = memo(function WorkspaceRow({
     );
   }
 
-  return (
-    <Touch
-      feedback="row"
-      onPress={() => onOpen(item, false)}
-      accessibilityLabel={rowLabel({ item, now: at, status, problems, sessions, folder, showsMachine })}
-      accessibilityHint={t`Opens the workspace`}
-      accessibilityActions={errors > 0 ? [{ name: 'errors', label: t`Show errors` }] : undefined}
-      onAccessibilityAction={(event) => {
-        if (event.nativeEvent.actionName === 'errors') onOpen(item, true);
-      }}
-      style={styles.row}
-    >
-      <View style={[styles.lead, offline && styles.dimmed]}>
-        <View style={[styles.dot, { borderColor: color, backgroundColor: live && !offline ? color : 'transparent' }]} />
-      </View>
-      <View style={[styles.body, offline && styles.dimmed]}>
-        <View style={[styles.titleLine, large && styles.titleLineStacked]}>
-          <Text
-            variant="headline"
-            weight="medium"
-            tone={live ? 'default' : 'secondary'}
-            numberOfLines={lines}
-            ellipsizeMode={lines > 1 ? 'tail' : 'middle'}
-            style={styles.title}
-          >
-            {item.title}
-          </Text>
-          <Text variant="callout" weight="medium" tone={offline ? 'tertiary' : status.tone} numberOfLines={1}>
-            {status.text}
-          </Text>
-        </View>
-        {sessions.length ? <AgentSessionLine sessions={sessions} variant="callout" tone="secondary" /> : null}
-        {problems.length ? (
-          <View style={styles.pills}>
-            {problems.map((problem) => (
-              <Pill
-                key={`${problem.kind}:${problem.text}`}
-                tone={offline ? 'neutral' : problem.tone}
-                onPress={problem.kind === 'errors' ? () => onOpen(item, true) : undefined}
-              >
-                {problem.text}
-              </Pill>
-            ))}
-          </View>
-        ) : null}
-        {build && offline ? <RowBuild env={env} build={build} now={at} /> : null}
-        {build && !offline ? <TickingRowBuild env={env} build={build} /> : null}
-        {isSettingUp(env) && env.phase === 'warming' ? (
-          <Text variant="footnote" tone="secondary">
-            {warmStepText(env)}
-          </Text>
-        ) : null}
-        {context.length ? <Line parts={context} /> : null}
-        {gitParts.length ? <Line parts={gitParts} /> : null}
-      </View>
-    </Touch>
-  );
-});
+  return gitParts.length ? <Line parts={gitParts} /> : null;
+}
 
 function Line({ parts }: { parts: ReactNode[] }) {
   return (
@@ -258,6 +310,8 @@ function RowBuild({ env, build, now }: { env: EnvironmentState; build: BuildRepo
 }
 
 const styles = StyleSheet.create((theme) => ({
+  checkout: { gap: theme.space.sm, paddingHorizontal: theme.space.xxl, paddingTop: theme.space.xl },
+  apps: { marginLeft: theme.space.xxl },
   row: {
     flexDirection: 'row',
     gap: theme.space.lg,

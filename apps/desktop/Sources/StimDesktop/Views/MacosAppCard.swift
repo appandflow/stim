@@ -10,6 +10,7 @@ struct MacosAppCard: View {
   var app: MacosApp
   var workspace: String
   @EnvironmentObject private var actions: ActionCenter
+  @ObservedObject private var permissions = NativeViewerPermissions.shared
   @StateObject private var capture = MacosWindowCapture()
   @State private var refreshing = false
   @State private var previewRequest = 0
@@ -34,8 +35,12 @@ struct MacosAppCard: View {
             .nativeControlStyle(.destructive)
         }
       }
-      Text("Swift Package Debug \u{00B7} build \(app.build.state) \u{00B7} app \(app.state)")
-        .font(.stim(.footnote)).foregroundStyle(Palette.secondary)
+      HStack {
+        Text("Swift Package Debug \u{00B7} build \(app.build.state) \u{00B7} app \(app.state)")
+          .font(.stim(.footnote)).foregroundStyle(Palette.secondary)
+        Spacer()
+        Button("Permissions") { permissions.openSetup() }.nativeControlStyle()
+      }
       if let error = app.build.error { Text(error).foregroundStyle(Palette.error).textSelection(.enabled) }
       if let error = capture.error { Text(error).foregroundStyle(Palette.secondary).textSelection(.enabled) }
       if let image = capture.image {
@@ -52,6 +57,7 @@ struct MacosAppCard: View {
       await capture.start(app)
       if !Task.isCancelled { refreshing = false }
     }
+    .onChange(of: permissions.revision) { previewRequest += 1 }
     .onDisappear {
       Task { await capture.stop() }
     }
@@ -71,8 +77,13 @@ struct MacosAppCard: View {
     error = nil
     guard !Task.isCancelled else { return }
     guard app.state == "running", matches(app) else { return }
+    guard app.app?.pid != getpid() else {
+      error = "This is the viewer app. View its window from another Stim Desktop instance or your phone."
+      return
+    }
+    NativeViewerPermissions.shared.viewerOpened()
     guard CGPreflightScreenCaptureAccess() else {
-      error = "Screen capture permission is unavailable. This prototype does not request permission."
+      error = "Allow Screen Recording in Permissions to view this app. Status and logs remain available."
       return
     }
     self.app = app
@@ -80,7 +91,8 @@ struct MacosAppCard: View {
       let content = try await SCShareableContent.excludingDesktopWindows(true, onScreenWindowsOnly: true)
       guard !Task.isCancelled, self.app?.launchId == app.launchId, matches(app) else { return }
       let windows = content.windows.filter { $0.owningApplication?.processID == app.app?.pid && $0.windowLayer == 0 }
-      guard windows.count == 1, let window = windows.first else {
+      let mainWindows = windows.filter { candidate in windows.allSatisfy { candidate.frame.contains($0.frame) } }
+      guard mainWindows.count == 1, let window = mainWindows.first else {
         error = "This prototype needs one visible app window."
         return
       }
@@ -161,7 +173,7 @@ struct MacosAppCard: View {
         return
       }
       guard AXIsProcessTrusted() else {
-        error = "Open app needs existing Accessibility permission. This prototype does not request permission."
+        error = "Allow \(NativeViewerPermissions.shared.controlPermissionTitle) in Permissions to open the captured app window."
         return
       }
       let element = AXUIElementCreateApplication(process.pid)

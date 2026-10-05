@@ -761,6 +761,15 @@ test('the web topic names every web setting and every stim web flag, and the age
   expect(renderTopic('agent')).toContain('stim guide web');
 });
 
+test('hosting setup routes approval through doctor and a separate person-granted capability', () => {
+  const settings = renderTopic('settings');
+  expect(settings).toContain('hosting.machines');
+  expect(settings).toContain('doctor --fix');
+  expect(settings).toContain('stim-server devices grant <id> --device-host');
+  expect(settings).toContain('$STIM_HOME/device-host-machines.json');
+  expect(renderSection('facts', 'payloads')).toContain('deviceHosts');
+});
+
 test('the macos guide covers the declared command flags and project settings', () => {
   const body = renderTopic('macos');
   assert(body);

@@ -10,6 +10,8 @@ import {
   listSegments,
   loadConfig,
   parseNdjsonLine,
+  RECORDING_PLATFORMS,
+  type RecordingPlatform,
   type NdjsonRecord,
   type StatusPayload,
 } from '@stim-cli/core/state';
@@ -93,7 +95,7 @@ import {
 } from './registry.ts';
 import { runStats } from './stats.ts';
 import { Pending, runStim, type CommandLimits } from './stim-command.ts';
-import { serveRoute, whois, type ServeRoute, type TailscaleState } from './tailscale.ts';
+import { serveRoute, setupServeRoute, whois, type ServeRoute, type TailscaleState } from './tailscale.ts';
 import type { TailscaleMonitor, TailscaleSnapshot } from './tailscale-monitor.ts';
 import { DEFAULT_VIDEO_LIMITS, videoPacket, VideoGate, type AccessUnit } from './video.ts';
 import { DeviceViewers } from './viewers.ts';
@@ -105,6 +107,8 @@ const INPUT_METHODS = [
   'input.rotate',
   'input.posture',
   'input.simulator',
+  'input.scroll',
+  'input.key',
 ] as const;
 
 export interface ServerOptions {
@@ -180,6 +184,7 @@ interface ServerHealth {
   stimHome: string;
   tailscale: { state: TailscaleState['state']; dnsName?: string | null; backendState?: string; reason?: string };
   route?: ServeRoute;
+  nativeViewerOpened: boolean;
 }
 
 function healthTailscale(tailscale: TailscaleState): ServerHealth['tailscale'] {
@@ -439,6 +444,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     return helperPath;
   };
   if (options.frameHelper === undefined) buildHelper();
+  let nativeViewerOpened = false;
   const frames = new FramePool(options.env, frameLimits, frameHelper, new DeviceViewers());
   const recorder =
     options.record === false
@@ -614,7 +620,9 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   const revocationPoll = setInterval(checkRevocations, 1000);
   revocationPoll.unref();
 
-  function connection(socket: WebSocket, peer: string | null): void {
+  let settingUpRoute: Promise<ServeRoute> | null = null;
+
+  function connection(socket: WebSocket, peer: string | null, localControl: boolean): void {
     const limitKey = peer ?? 'local';
     const subscriptions = new Map<string, () => void>();
     const keyframes = new Map<string, () => void>();
@@ -921,7 +929,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         return error(
           id,
           'bad-request',
-          'frames.subscribe needs params.workspace and params.platform (ios, android or web).',
+          'frames.subscribe needs params.workspace and params.platform (ios, android, web or macos).',
         );
       }
       if (slot !== undefined && (typeof slot !== 'string' || !SLOT_NAME.test(slot))) {
@@ -959,8 +967,11 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         maxEdge: (maxEdge as number | undefined) ?? FRAME_EDGE.default,
       };
       if (!hosted && !workspaceDir(id, workspace, true)) return;
-      const replayDir = recordingDir(workspace, platform as Platform, typeof slot === 'string' ? slot : 'default');
-      if (replayAt && (physical || !hasFootage(replayDir))) {
+      const replayDir =
+        platform === 'macos'
+          ? null
+          : recordingDir(workspace, platform as RecordingPlatform, typeof slot === 'string' ? slot : 'default');
+      if (replayAt && (physical || replayDir === null || !hasFootage(replayDir))) {
         return error(
           id,
           'no-recording',
@@ -1057,6 +1068,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       let player: Player | null = null;
       let latest: StatusPayload | null = null;
       const attach = (resolved: Device) => {
+        if (resolved.platform === 'macos') nativeViewerOpened = true;
         detach?.();
         gate.reset();
         streamed = resolved;
@@ -1071,7 +1083,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         detach = null;
         attached = null;
         player = new Player(
-          replayDir,
+          replayDir!,
           {
             unit: (unit) => {
               if (!ended && socket.readyState === socket.OPEN) socket.send(videoPacket(subscription, sequence++, unit));
@@ -1104,7 +1116,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         });
         replays.set(subscription, {
           seek: (seekAt, seekRate) => {
-            if (physical || !hasFootage(replayDir)) return null;
+            if (physical || replayDir === null || !hasFootage(replayDir)) return null;
             const wasLive = player === null;
             const shown = replay().seek(seekAt, seekRate);
             if (shown === null && wasLive) goLive();
@@ -1311,7 +1323,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     function replayRange(id: RequestId, params: unknown): void {
       const target = isJsonObject(params) ? params : {};
       const { workspace, platform, slot } = target;
-      if (typeof workspace !== 'string' || !PLATFORMS.includes(platform as Platform)) {
+      if (typeof workspace !== 'string' || !RECORDING_PLATFORMS.includes(platform as RecordingPlatform)) {
         return error(
           id,
           'bad-request',
@@ -1327,8 +1339,8 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         return error(id, 'limit-exceeded', `A connection can run ${MAX_COMMANDS} requests at a time.`);
       }
       const slotName = slot ?? 'default';
-      const spans = recordedSpans(listSegments(recordingDir(workspace, platform as Platform, slotName)));
-      const replayTarget = { workspace, platform: platform as Platform, slot: slotName };
+      const spans = recordedSpans(listSegments(recordingDir(workspace, platform as RecordingPlatform, slotName)));
+      const replayTarget = { workspace, platform: platform as RecordingPlatform, slot: slotName };
       const state = {
         enabled: recorder?.enabled(workspace) ?? false,
         recording: recorder?.recording(replayTarget) ?? false,
@@ -1346,7 +1358,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         const failed = [actions, errors].find((result) => typeof result === 'string');
         if (typeof failed === 'string') return error(id, 'stim-failed', failed);
         const records = [...(actions as NdjsonRecord[]), ...(errors as NdjsonRecord[])];
-        const markers = timelineMarkers(records, platform as Platform, slotName, spans[0]!.start);
+        const markers = timelineMarkers(records, platform as RecordingPlatform, slotName, spans[0]!.start);
         return send(socket, { id, result: { ...state, markers } });
       });
     }
@@ -1354,7 +1366,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     function replayKeyframe(id: RequestId, params: unknown): void {
       const target = isJsonObject(params) ? params : {};
       const { workspace, platform, slot, at } = target;
-      if (typeof workspace !== 'string' || !PLATFORMS.includes(platform as Platform)) {
+      if (typeof workspace !== 'string' || !RECORDING_PLATFORMS.includes(platform as RecordingPlatform)) {
         return error(
           id,
           'bad-request',
@@ -1371,23 +1383,25 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         return error(id, 'limit-exceeded', `A connection can read ${MAX_KEYFRAME_READS} keyframes at a time.`);
       }
       keyframeReads++;
-      void segmentKeyframe(recordingDir(workspace, platform as Platform, slot ?? 'default'), at).then((found) => {
-        keyframeReads--;
-        if (!found) return error(id, 'no-recording', 'Nothing was recorded for this device.');
-        const { segment, unit } = found;
-        return send(socket, {
-          id,
-          result: {
-            start: segment.start,
-            end: segment.end,
-            at: unit.capturedAt,
-            width: unit.width,
-            height: unit.height,
-            ...(unit.posture ? { posture: unit.posture } : {}),
-            data: unit.data.toString('base64'),
-          },
-        });
-      });
+      void segmentKeyframe(recordingDir(workspace, platform as RecordingPlatform, slot ?? 'default'), at).then(
+        (found) => {
+          keyframeReads--;
+          if (!found) return error(id, 'no-recording', 'Nothing was recorded for this device.');
+          const { segment, unit } = found;
+          return send(socket, {
+            id,
+            result: {
+              start: segment.start,
+              end: segment.end,
+              at: unit.capturedAt,
+              width: unit.width,
+              height: unit.height,
+              ...(unit.posture ? { posture: unit.posture } : {}),
+              data: unit.data.toString('base64'),
+            },
+          });
+        },
+      );
     }
 
     function setRecording(id: RequestId, params: unknown, session: PairedDevice): void {
@@ -1672,6 +1686,27 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       if (!device.capabilities.includes('read')) {
         return error(id, 'forbidden', `${message.method} needs read access, which this connection does not have.`);
       }
+      if (message.method === 'route.setup') {
+        if (!localControl || device.identity.kind !== 'local' || !device.capabilities.includes('control')) {
+          return error(
+            id,
+            'forbidden',
+            'Phone connection setup requires an authenticated local Desktop control connection.',
+          );
+        }
+        if (message.params !== undefined && (!isJsonObject(message.params) || Object.keys(message.params).length)) {
+          return error(id, 'bad-request', 'route.setup takes no parameters.');
+        }
+        const { binary, state } = tailscaleNow();
+        settingUpRoute ??= setupServeRoute(binary, options.env, addresses[0]!.port, state).finally(() => {
+          settingUpRoute = null;
+        });
+        try {
+          return send(socket, { id, result: await settingUpRoute });
+        } catch (cause) {
+          return error(id, 'action-failed', (cause as Error).message);
+        }
+      }
       if (message.method === 'status.subscribe') return subscribeStatus(id);
       if (message.method === 'logs.subscribe') return subscribeLogs(id, message.params);
       if (message.method === 'logs.query') return queryLogs(id, message.params);
@@ -1809,7 +1844,14 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       socket.end('HTTP/1.1 429 Too Many Requests\r\nConnection: close\r\nContent-Length: 0\r\n\r\n');
       return;
     }
-    wss.handleUpgrade(request, socket, head, (ws) => connection(ws, peer));
+    const host = request.headers.host?.replace(/:\d+$/, '');
+    const localControl =
+      isLoopback(request.socket.remoteAddress) &&
+      (host === '127.0.0.1' || host === 'localhost') &&
+      ['origin', 'sec-fetch-site', 'forwarded', 'x-forwarded-for', 'x-forwarded-host', 'x-forwarded-proto'].every(
+        (header) => request.headers[header] === undefined,
+      );
+    wss.handleUpgrade(request, socket, head, (ws) => connection(ws, peer, localControl));
   }
 
   const tailscaleNow = (): TailscaleSnapshot =>
@@ -1828,7 +1870,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       tailscale.state === 'running' && tailscale.dnsName
         ? await serveRoute(binary, options.env, addresses[0]!.port, tailscale.ips, HEALTH_ROUTE_TIMEOUT_MS)
         : undefined;
-    const body: ServerHealth = { ...health, tailscale: healthTailscale(tailscale), route };
+    const body: ServerHealth = { ...health, tailscale: healthTailscale(tailscale), route, nativeViewerOpened };
     response.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify(body));
   };
   const servers = new Map<string, { server: Server; sockets: Set<Socket> }>();
