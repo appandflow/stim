@@ -1176,6 +1176,22 @@ Events are `{ "event", "subscription", ... }`.
   computed is a `stim-failed` error. One plan runs per workspace at a time,
   across all connections; later requests wait their turn, and the 150
   seconds start when the plan starts.
+- `workspace.files` takes `{ "workspace", "group": "changed" | "untracked" }`
+  and returns `{ "files", "truncated" }`; each file has a repo-relative `path`,
+  `status`, and `staged`, `unstaged`, `untracked` flags. It needs `read` and the
+  `workspace-diff` feature. The registered app project resolves to its canonical
+  Git worktree, including changes elsewhere in that worktree. At most 200 files
+  and 256 KiB are returned; a raw Git status exceeding 1 MiB refuses.
+- `workspace.diff` takes `{ "workspace", "path" }` for a current changed file
+  and returns `{ "path", "patches" }`. Each patch has a `section` (`staged`,
+  `unstaged`, `untracked`), `kind` (`text`, `binary`, `too-large`, `unavailable`)
+  and `text`. Text previews total at most 256 KiB. New files must be regular
+  UTF-8 files within the worktree; symlinks, submodules and conflicts report
+  unavailable. Fixed Git arguments disable external diff, text conversion and
+  fsmonitor commands, use literal paths and never edit or stage files. Each Git
+  call has a 5-second deadline. Tracked files attributed to configured clean or
+  process filters refuse before status or diff; unused filter configuration
+  alone does not refuse. Git LFS previews are unavailable in this version. Disconnecting stops a running child.
 - `machine.get` returns cheap machine usage, read in the server process
   without running `stim`: `volumes`, one per volume that holds a Stim
   workspace, Stim home, or the simulators, with `mount`, `holds`, `freeBytes`
@@ -1249,7 +1265,7 @@ Events are `{ "event", "subscription", ... }`.
 `workspace` is an environment `path` from a status payload. Any other path is
 refused with `unknown-workspace` and runs nothing. A connection holds at most
 32 subscriptions and runs at most 4 `logs.query`, `stats.get`,
-`settings.get` and `build.plan` requests at a time. Those requests fail after
+`settings.get`, `build.plan`, `workspace.files` and `workspace.diff` requests at a time. Those requests fail after
 60 seconds, `build.plan` after 150, or at 32 MiB of output, and closing the
 connection stops them. When the command refuses with Stim's error contract on
 stdout, the `stim-failed` message is its code, message and remedy; otherwise

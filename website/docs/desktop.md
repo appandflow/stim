@@ -90,7 +90,13 @@ performance traces. Every release is listed under
   desktop: Android can be controlled, an iPhone over USB is view only. Needs
   **Serve to phones**. The phone's workspace list groups app projects from one
   linked Git checkout under one branch heading. Tap each app child for its own
-  devices, logs and commands. Different machines and checkouts remain separate.
+  devices, logs and commands. In the phone's **Work** sheet, **Changed** and
+  **Untracked** open a file list; choosing a file shows staged/unstaged patches
+  or new text. Diffs load only on demand, with virtualized lists, up to 200 files
+  and a 256 KiB preview limit. Binary files and unsupported previews are labeled.
+  Active Git clean/process filters, including Git LFS, refuse without running
+  them. Viewing needs a Mac server with workspace diff support; edits and staging stay
+  on the Mac. Different machines and checkouts remain separate.
   Primary checkouts and older servers lacking checkout identity still show separate
   app rows; [#2418](https://github.com/appandflow/stim/issues/2418) tracks that addition.
   The phone's Logs screen starts with 200 recent records. **Load older logs**

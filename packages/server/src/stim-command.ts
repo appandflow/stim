@@ -1,6 +1,8 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 
-export type CommandOutcome = { ok: true; stdout: string } | { ok: false; message: string; stdout?: string };
+export type CommandOutcome =
+  | { ok: true; stdout: string }
+  | { ok: false; message: string; stdout?: string; exitCode?: number | null };
 
 export interface CommandLimits {
   timeoutMs: number;
@@ -41,8 +43,8 @@ export class Pending {
   }
 }
 
-export function runNodeCommand(
-  entry: string,
+export function runFileCommand(
+  file: string,
   env: NodeJS.ProcessEnv,
   args: string[],
   cwd: string,
@@ -50,7 +52,7 @@ export function runNodeCommand(
   label: string,
   cooperative = false,
 ): { outcome: Promise<CommandOutcome>; cancel: () => Promise<void> } {
-  const child = spawn(process.execPath, [entry, ...args], {
+  const child = spawn(file, args, {
     cwd,
     env,
     stdio: cooperative ? ['ignore', 'pipe', 'pipe', 'ipc'] : ['ignore', 'pipe', 'pipe'],
@@ -96,6 +98,7 @@ export function runNodeCommand(
       settle({
         ok: false,
         message: `${label} exited (${signal ?? `code ${code}`})${detail ? `: ${detail}` : ''}`,
+        exitCode: code,
         stdout: Buffer.concat(chunks).toString('utf8'),
       });
     });
@@ -108,6 +111,18 @@ export function runNodeCommand(
       return terminate(child, cooperative);
     },
   };
+}
+
+export function runNodeCommand(
+  entry: string,
+  env: NodeJS.ProcessEnv,
+  args: string[],
+  cwd: string,
+  limits: CommandLimits,
+  label: string,
+  cooperative = false,
+): ReturnType<typeof runFileCommand> {
+  return runFileCommand(process.execPath, env, [entry, ...args], cwd, limits, label, cooperative);
 }
 
 export function runStim(

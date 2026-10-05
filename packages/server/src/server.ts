@@ -101,6 +101,7 @@ import {
   validStuckMinutes,
 } from './registry.ts';
 import { runStats } from './stats.ts';
+import { readWorkspaceDiff } from './workspace-diff.ts';
 import { Pending, runStim, type CommandLimits } from './stim-command.ts';
 import {
   readRawTailscaleStatus,
@@ -1320,6 +1321,59 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       }));
     }
 
+    function workspaceChanges(id: RequestId, method: 'workspace.files' | 'workspace.diff', params: unknown): void {
+      const needsPath = method === 'workspace.diff';
+      if (
+        !isJsonObject(params) ||
+        typeof params.workspace !== 'string' ||
+        !params.workspace.length ||
+        params.workspace.length > 4096 ||
+        params.workspace.includes('\0') ||
+        (!needsPath && params.group !== 'changed' && params.group !== 'untracked') ||
+        (needsPath &&
+          (typeof params.path !== 'string' ||
+            !params.path.length ||
+            params.path.length > 4096 ||
+            params.path.includes('\0'))) ||
+        Object.keys(params).some((key) => key !== 'workspace' && !(needsPath ? key === 'path' : key === 'group'))
+      ) {
+        return error(id, 'bad-request', 'Workspace diff requires workspace and, for a patch, a file path.');
+      }
+      const cwd = workspaceDir(id, params.workspace, true);
+      if (!cwd) return;
+      if (commands.size >= MAX_COMMANDS) return error(id, 'limit-exceeded', 'Too many pending requests.');
+      const abort = new AbortController();
+      let task: Promise<void>;
+      const cancel = async () => {
+        abort.abort();
+        await task;
+      };
+      commands.add(cancel);
+      running.add(cancel);
+      task = readWorkspaceDiff(
+        cwd,
+        needsPath ? (params.path as string) : undefined,
+        options.env,
+        abort.signal,
+        !needsPath ? (params.group as 'changed' | 'untracked') : undefined,
+      )
+        .then(
+          (result) => {
+            if (!abort.signal.aborted) send(socket, { id, result });
+            return undefined;
+          },
+          (cause: Error) => {
+            if (!abort.signal.aborted) error(id, 'stim-failed', cause.message);
+            return undefined;
+          },
+        )
+        .finally(() => {
+          commands.delete(cancel);
+          running.delete(cancel);
+        });
+      return;
+    }
+
     function workspaceCommand(id: RequestId, method: 'stats.get' | 'settings.get', params: unknown): void {
       if (params !== undefined && !isJsonObject(params)) return error(id, 'bad-request', 'params must be an object.');
       const cwd = workspaceDir(id, params?.workspace, false);
@@ -1862,6 +1916,9 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
           return error(id, 'bad-request', 'machine.history takes an optional numeric sinceMs.');
         }
         return send(socket, { id, result: sampler.history(sinceMs) });
+      }
+      if (message.method === 'workspace.files' || message.method === 'workspace.diff') {
+        return workspaceChanges(id, message.method, message.params);
       }
       if (message.method === 'stats.get' || message.method === 'settings.get') {
         return workspaceCommand(id, message.method, message.params);

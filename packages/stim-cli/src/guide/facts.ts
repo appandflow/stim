@@ -62,6 +62,12 @@ change, and for at most 60 s, so a file edit, creation or deletion that is
 not staged can take up to a minute to show. Plain status prints "git: 2 changed, 1 untracked, ahead 3" under
 each environment, and the same after each worktree with no environment.
 
+The paired phone's Work sheet can open changed and untracked files when the
+server advertises workspace-diff. File lists and selected patches load on
+demand, not through status. The read-only preview is capped at 200 files per
+list and 256 KiB per patch response; binary and unavailable files are labeled. Active Git clean/process filters
+(including Git LFS) refuse without running those commands.
+
 A worktree entry also carries pullRequest, the GitHub pull request of its
 branch and HEAD, once \`status --watch\` has looked it up:
 

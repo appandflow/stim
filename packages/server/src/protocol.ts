@@ -43,6 +43,7 @@ export const FEATURES = [
   'device-frames',
   'macos-hosted',
   'duo-frames',
+  'workspace-diff',
 ] as const;
 
 export type Feature = (typeof FEATURES)[number];
@@ -55,6 +56,8 @@ export const METHODS = [
   'logs.subscribe',
   'stats.get',
   'settings.get',
+  'workspace.files',
+  'workspace.diff',
   'frames.subscribe',
   'frames.keyframe',
   'frames.seek',
@@ -1029,7 +1032,33 @@ export interface NotificationsListResult {
   notifications: NotificationEntry[];
 }
 
+export interface WorkspaceFile {
+  path: string;
+  staged: boolean;
+  unstaged: boolean;
+  untracked: boolean;
+  status: string;
+}
+
+export interface WorkspaceFiles {
+  files: WorkspaceFile[];
+  truncated: boolean;
+}
+
+export interface WorkspacePatch {
+  section: 'staged' | 'unstaged' | 'untracked';
+  kind: 'text' | 'binary' | 'too-large' | 'unavailable';
+  text: string;
+}
+
+export interface WorkspaceDiff {
+  path: string;
+  patches: WorkspacePatch[];
+}
+
 export interface Methods {
+  'workspace.files': { params: { workspace: string; group: 'changed' | 'untracked' }; result: WorkspaceFiles };
+  'workspace.diff': { params: { workspace: string; path: string }; result: WorkspaceDiff };
   'device-host.offer': { params: HostedDeviceOfferRequest; result: HostedDeviceOffer };
   'route.setup': { params?: Record<string, never>; result: ServeRoute };
   'device-host.reserve': { params: HostedDeviceRequest; result: HostedDeviceSession };
@@ -2283,6 +2312,24 @@ export function protocolJsonSchema(): JsonSchema {
           request('machine.details'),
           optionalParams('stats.get', { $ref: '#/$defs/WorkspaceParams' }),
           optionalParams('settings.get', { $ref: '#/$defs/WorkspaceParams' }),
+          request('workspace.files', {
+            type: 'object',
+            required: ['workspace', 'group'],
+            additionalProperties: false,
+            properties: {
+              workspace: { type: 'string', minLength: 1, maxLength: 4096 },
+              group: { enum: ['changed', 'untracked'] },
+            },
+          }),
+          request('workspace.diff', {
+            type: 'object',
+            required: ['workspace', 'path'],
+            additionalProperties: false,
+            properties: {
+              workspace: { type: 'string', minLength: 1, maxLength: 4096 },
+              path: { type: 'string', minLength: 1, maxLength: 4096 },
+            },
+          }),
           request('unsubscribe', {
             type: 'object',
             required: ['subscription'],

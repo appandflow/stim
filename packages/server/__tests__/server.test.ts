@@ -9,7 +9,7 @@ import {
   rmSync,
   writeFileSync,
 } from 'node:fs';
-import { spawn, type ChildProcess } from 'node:child_process';
+import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
 import { createServer as createHttpServer, get } from 'node:http';
 import { createServer as createHttp2Server, type ServerHttp2Stream } from 'node:http2';
 import { createHash } from 'node:crypto';
@@ -680,6 +680,7 @@ describe('pairing', () => {
           'device-frames',
           'macos-hosted',
           'duo-frames',
+          'workspace-diff',
         ],
         actions: [],
       },
@@ -1874,6 +1875,43 @@ describe('push.register', () => {
       expect(await client.request('push.register', params)).toMatchObject({ error: { code: 'bad-request' } });
     }
     expect(readDevices()[0]!.push).toBeUndefined();
+  });
+});
+
+describe('workspace diff reads', () => {
+  it('serves a registered worktree to a read-only paired phone without exposing another directory', async () => {
+    execFileSync('git', ['init', '-q', workspace]);
+    writeFileSync(join(workspace, 'new.txt'), 'new text\n');
+    const client = await authed(await start());
+    expect(await client.request('workspace.files', { workspace, group: 'untracked' })).toMatchObject({
+      result: { files: [{ path: 'new.txt', untracked: true }], truncated: false },
+    });
+    expect(await client.request('workspace.diff', { workspace, path: 'new.txt' })).toMatchObject({
+      result: { path: 'new.txt', patches: [{ section: 'untracked', kind: 'text', text: 'new text\n' }] },
+    });
+    expect(await client.request('workspace.files', { workspace: root, group: 'changed' })).toMatchObject({
+      error: { code: 'unknown-workspace' },
+    });
+    expect(await client.request('workspace.diff', { workspace, path: '../secret' })).toMatchObject({
+      error: { code: 'stim-failed' },
+    });
+    expect(await client.request('workspace.files', { workspace })).toMatchObject({ error: { code: 'bad-request' } });
+    expect(await client.request('workspace.diff', { workspace, path: 'new.txt', command: 'add' })).toMatchObject({
+      error: { code: 'bad-request' },
+    });
+    expect(stimCalls()).toEqual([]);
+  });
+
+  it('refuses a connection that has no read grant before any diff read', async () => {
+    const client = await connect(await start());
+    await client.request('hello', {
+      protocol: 1,
+      client: CLIENT,
+      auth: { pairingToken: createPairingToken(Date.now(), ['control']).token, deviceName: 'Test phone' },
+    });
+    expect(await client.request('workspace.files', { workspace, group: 'changed' })).toMatchObject({
+      error: { code: 'forbidden' },
+    });
   });
 });
 
