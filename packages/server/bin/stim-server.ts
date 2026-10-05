@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { readFileSync, statSync } from 'node:fs';
+import { readFileSync, realpathSync, statSync } from 'node:fs';
 import { hostname } from 'node:os';
 import { resolve } from 'node:path';
 import { parseArgs } from 'node:util';
@@ -118,6 +118,7 @@ async function serve(port: number, extraEnv: string[], pathPrepend: string[]): P
   if (!process.env.STIM_HOME && env.STIM_HOME) process.env.STIM_HOME = env.STIM_HOME;
   if (process.env.STIM_HOME) env.STIM_HOME = process.env.STIM_HOME;
 
+  const launchdLabel = process.env.XPC_SERVICE_NAME;
   const tailscaleBinary = findTailscale(env);
   const tailscale = tailscaleStatus(tailscaleBinary, env);
   const stim = bundledStim();
@@ -136,6 +137,11 @@ async function serve(port: number, extraEnv: string[], pathPrepend: string[]): P
       tailscale: tailscaleBinary,
       tailscaleState: tailscale,
       tailscaleMonitor: monitor,
+      service: {
+        label: launchdLabel && !validateLabel(launchdLabel) ? launchdLabel : null,
+        node: process.execPath,
+        script: realpathSync(process.argv[1] ?? ''),
+      },
     });
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'EADDRINUSE') {

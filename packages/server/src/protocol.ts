@@ -163,11 +163,76 @@ export function protocolJsonSchema(): JsonSchema {
           },
         },
       },
+      ServerUpdateProgress: {
+        type: 'object',
+        required: ['id', 'by', 'target', 'state', 'startedAt', 'missing', 'log'],
+        additionalProperties: false,
+        properties: {
+          id: { type: 'string' },
+          by: {
+            type: 'object',
+            required: ['id', 'name'],
+            additionalProperties: false,
+            properties: { id: { type: 'string' }, name: { type: 'string' } },
+          },
+          target: { type: 'string' },
+          state: { enum: ['uploading', 'installing'] },
+          startedAt: { type: 'string' },
+          missing: {
+            type: 'array',
+            items: {
+              type: 'object',
+              required: ['name', 'offset'],
+              additionalProperties: false,
+              properties: { name: { type: 'string' }, offset: { type: 'integer', minimum: 0 } },
+            },
+          },
+          log: { type: 'array', items: { type: 'string' } },
+        },
+      },
+      ServerUpdateStatus: {
+        type: 'object',
+        required: ['server', 'service', 'acceptsClientBuilds', 'running', 'last'],
+        additionalProperties: false,
+        properties: {
+          server: {
+            type: 'object',
+            required: ['version', 'stimBuild'],
+            additionalProperties: false,
+            properties: { version: { type: 'string' }, stimBuild: { type: ['string', 'null'] } },
+          },
+          service: { type: ['string', 'null'] },
+          acceptsClientBuilds: { type: 'boolean' },
+          running: { anyOf: [{ $ref: '#/$defs/ServerUpdateProgress' }, { type: 'null' }] },
+          last: {
+            anyOf: [
+              {
+                type: 'object',
+                required: ['at', 'target', 'ok', 'message'],
+                additionalProperties: false,
+                properties: {
+                  at: { type: 'string' },
+                  target: { type: 'string' },
+                  ok: { type: 'boolean' },
+                  message: { type: 'string' },
+                },
+              },
+              { type: 'null' },
+            ],
+          },
+        },
+      },
       HostedAppChunkResult: {
         type: 'object',
         required: ['offset'],
         additionalProperties: false,
         properties: { offset: { type: 'integer', minimum: 0 } },
+      },
+      HostedAppHandoffResult: {
+        type: 'object',
+        required: ['files', 'bytes'],
+        additionalProperties: false,
+        properties: { files: { type: 'integer', minimum: 0 }, bytes: { type: 'integer', minimum: 0 } },
       },
       HostedDeviceOffer: {
         type: 'object',
@@ -941,6 +1006,21 @@ export function protocolJsonSchema(): JsonSchema {
               ['attempt', 'sha256', 'offset', 'data'],
             ),
           ),
+          request(
+            'device-host.app.handoff',
+            session(
+              {
+                attempt: { type: 'string' },
+                build: {
+                  type: 'object',
+                  required: ['handoff', 'sha256'],
+                  additionalProperties: false,
+                  properties: { handoff: sha256, sha256 },
+                },
+              },
+              ['attempt', 'build'],
+            ),
+          ),
           request('device-host.app.launch', session({ attempt: { type: 'string' } }, ['attempt'])),
           request('device-host.app.attach', session({ attempt: { type: 'string' } }, ['attempt'])),
           request(
@@ -1317,6 +1397,52 @@ export function protocolJsonSchema(): JsonSchema {
           request('build.cancel', buildJob),
           request('build.artifact', buildJob),
           request('build.attach', buildJob),
+          request('server.update.status'),
+          request('server.update.start', {
+            oneOf: [
+              {
+                type: 'object',
+                required: ['release'],
+                additionalProperties: false,
+                properties: {
+                  release: { type: 'string', pattern: '^\\d+\\.\\d+\\.\\d+(?:-[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?$' },
+                },
+              },
+              {
+                type: 'object',
+                required: ['packages'],
+                additionalProperties: false,
+                properties: {
+                  packages: {
+                    type: 'array',
+                    minItems: 1,
+                    maxItems: 8,
+                    items: {
+                      type: 'object',
+                      required: ['name', 'size', 'sha256'],
+                      additionalProperties: false,
+                      properties: {
+                        name: { type: 'string', pattern: '^[A-Za-z0-9][A-Za-z0-9._-]{0,127}\\.tgz$' },
+                        size: { type: 'integer', minimum: 1, maximum: 64 * 1024 ** 2 },
+                        sha256,
+                      },
+                    },
+                  },
+                },
+              },
+            ],
+          }),
+          request('server.update.chunk', {
+            type: 'object',
+            required: ['id', 'name', 'offset', 'data'],
+            additionalProperties: false,
+            properties: {
+              id: { type: 'string' },
+              name: { type: 'string' },
+              offset: { type: 'integer', minimum: 0 },
+              data: { type: 'string', maxLength: 32768 },
+            },
+          }),
         ],
       },
       ServerResponse: {
@@ -1335,6 +1461,9 @@ export function protocolJsonSchema(): JsonSchema {
                   { $ref: '#/$defs/HostedMetroResult' },
                   { $ref: '#/$defs/HostedAppOfferResult' },
                   { $ref: '#/$defs/HostedAppChunkResult' },
+                  { $ref: '#/$defs/HostedAppHandoffResult' },
+                  { $ref: '#/$defs/ServerUpdateStatus' },
+                  { $ref: '#/$defs/ServerUpdateProgress' },
                   { $ref: '#/$defs/HelloResult' },
                   { $ref: '#/$defs/ControlBeginResult' },
                   { $ref: '#/$defs/SimulatorOptions' },

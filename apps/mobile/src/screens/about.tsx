@@ -40,6 +40,7 @@ const STIM_LICENSE = 0;
 const WEBSITE = 'https://stim.appandflow.com';
 const REPOSITORY = 'https://github.com/appandflow/stim';
 const APP_AND_FLOW = 'https://appandflow.com';
+const PRIVACY_POLICY = `${WEBSITE}/privacy`;
 
 const LIBRARIES = appAndFlowLibraries(LICENSES);
 
@@ -148,6 +149,7 @@ export function About({ onClose }: { onClose?: () => void }) {
         />
         <ListRow title={t`Website`} accessory="chevron" onPress={() => open(WEBSITE)} />
         <ListRow title={t`GitHub`} accessory="chevron" onPress={() => open(REPOSITORY)} />
+        <ListRow title={t`Privacy policy`} accessory="chevron" onPress={() => open(PRIVACY_POLICY)} />
         <ListRow
           title={t`License`}
           value={LICENSES[STIM_LICENSE].license}

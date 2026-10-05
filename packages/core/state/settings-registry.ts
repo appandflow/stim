@@ -442,6 +442,14 @@ export const SETTINGS: readonly SettingDefinition[] = [
       "Tool this Mac starts so a client's coding agent can drive the macOS apps it hosts for that client; none starts nothing",
   },
   {
+    key: 'server.acceptClientBuilds',
+    type: { kind: 'boolean' },
+    scopes: MACHINE,
+    default: false,
+    description:
+      "Whether a Mac approved for builds or device hosting here may update this Mac's stim-server service to that Mac's own stim-server build; releases from npm need no setting",
+  },
+  {
     key: 'offload.machines',
     type: { kind: 'strings' },
     scopes: MACHINE,

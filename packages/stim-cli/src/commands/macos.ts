@@ -12,6 +12,7 @@ import { getExecutor } from '../exec.ts';
 import { inspectProcessIdentity } from '../process-identity.ts';
 import { macosDir, macosLogFile, macosProcess, requiredMacosRecord } from '../macos/state.ts';
 import { buildMacosBundle } from '../macos/build.ts';
+import type { BuildHandoff } from '../offload/client.ts';
 import { validateInfoPlist } from '../macos/stage.ts';
 import { stopMacosAppHeld } from '../macos/stop.ts';
 import { createNdjsonWriter } from '../ndjson.ts';
@@ -88,7 +89,7 @@ export async function runMacos(
             build: { state: 'running', startedAt: new Date().toISOString(), buildMachine },
             ...(previous?.host ? { host: previous.host, hostLaunched: previous.hostLaunched ?? false } : {}),
           };
-          await buildBundle(root, macos.infoPlist!, record, host !== undefined, note, macos);
+          const handoff = await buildBundle(root, macos.infoPlist!, record, host !== undefined, note, macos);
           if (!host) return launchHere(root, record);
           const connection = await connectHost(host);
           const write = (patch: Partial<MacosAppRecord>) =>
@@ -99,6 +100,7 @@ export async function runMacos(
               root,
               bundle: record.bundle,
               bundleId: record.bundleId,
+              handoff,
               arguments: macos.arguments ?? [],
               recorded: previous?.host,
               reserved: (reserved) => {
@@ -137,7 +139,7 @@ async function buildBundle(
   hosted: boolean,
   note: (line: string) => void,
   extras: { resources?: unknown; assetCatalog?: unknown },
-): Promise<void> {
+): Promise<BuildHandoff | null> {
   const started = Date.parse(record.build.startedAt);
   const scratch = join(macosDir(root), 'build');
   writeWorkspaceState(root, { macos: record });
@@ -169,6 +171,7 @@ async function buildBundle(
       durationMs: Date.now() - started,
     };
     writeWorkspaceState(root, { macos: record });
+    return built.handoff;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     writer.write({ src: 'build', platform: 'macos', level: 'error', msg: message });

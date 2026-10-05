@@ -20,7 +20,13 @@ import { deviceHostMachinesFile, macosAppState, readMacosRecord, type MacosAppRe
 import logsCommand from '../commands/logs.ts';
 import macosCommand, { runMacos } from '../commands/macos.ts';
 import { followHostedMacosLogs, syncHostedMacosLogs } from '../device-host/hosted-logs-sync.ts';
-import { agentRemoteConfig, probeHostedMacos, type HostedMacosProbe } from '../device-host/hosted-macos.ts';
+import {
+  agentRemoteConfig,
+  connectHost,
+  placeHostedMacos,
+  probeHostedMacos,
+  type HostedMacosProbe,
+} from '../device-host/hosted-macos.ts';
 import { applyHostedMacosProbe, readHostedMacosStatus } from '../device-host/hosted-macos-status.ts';
 import { reclaimProject } from '../devices/reclaim.ts';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
@@ -63,6 +69,8 @@ const sha256 = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex
 interface FakeHost {
   methods: string[];
   blobs: Map<string, Buffer>;
+  chunks: string[];
+  handoff: ((params: Record<string, unknown>) => unknown) | null;
   offers: Record<string, unknown>[];
   capabilities: string[];
   grant: unknown;
@@ -92,6 +100,8 @@ async function fakeHost(): Promise<FakeHost> {
     silentMethods: new Set(),
     forgetSession: null,
     blobs: new Map(),
+    chunks: [],
+    handoff: null,
     offers: [],
     capabilities: ['device-host'],
     grant: { driver: 'none' },
@@ -160,7 +170,12 @@ async function fakeHost(): Promise<FakeHost> {
           .map((file) => ({ sha256: file.sha256, size: file.size, offset: partial.get(file.sha256)?.length ?? 0 }));
         return reply({ delivery: { ...delivery, state: 'receiving', launched: null }, missing });
       }
+      if (method === 'device-host.app.handoff' && host.handoff) {
+        const answer = host.handoff(params) as { error?: unknown };
+        return socket.send(JSON.stringify({ id, ...(answer.error ? answer : { result: answer }) }));
+      }
       if (method === 'device-host.app.chunk') {
+        host.chunks.push(params.sha256);
         const bytes = Buffer.concat([
           partial.get(params.sha256) ?? Buffer.alloc(0),
           Buffer.from(params.data, 'base64'),
@@ -643,6 +658,61 @@ describe.skipIf(process.platform !== 'darwin')('stim macos --host (SwiftPM and c
       await host.close();
     },
   );
+
+  test.each<[string, string, 'all' | 'some' | 'refuse' | 'older', boolean]>([
+    ['takes the whole build on the same node', 'nMini', 'all', true],
+    ['uploads what the host could not take', 'nMini', 'some', true],
+    ['uploads the app when the host refuses the handoff', 'nMini', 'refuse', true],
+    ['uploads the app to a host that predates handoffs', 'nMini', 'older', true],
+    ['never offers the build to a host on another node', 'nOther', 'all', false],
+  ])('%s', async (_name, nodeId, answer, asked) => {
+    const placed = await runMacos(root, () => {}, 'mini');
+    const built = new Map(host.blobs);
+    const manifestDigest = (host.offers.at(-1)!.manifest as { sha256: string }).sha256;
+    const content = [...built.keys()].filter((digest) => digest !== manifestDigest);
+    host.blobs.clear();
+    host.chunks = [];
+    host.methods = [];
+    const requests: Record<string, unknown>[] = [];
+    host.handoff =
+      answer === 'older'
+        ? null
+        : (params) => {
+            requests.push(params);
+            if (answer === 'refuse') return { error: { code: 'action-failed', message: 'mini no longer holds it' } };
+            const taken = answer === 'all' ? content : content.slice(1);
+            for (const digest of taken) host.blobs.set(digest, built.get(digest)!);
+            return {
+              files: taken.length,
+              bytes: taken.reduce((total, digest) => total + built.get(digest)!.length, 0),
+            };
+          };
+    const handoff = { nodeId, token: 'a'.repeat(64), sha256: 'b'.repeat(64) };
+    const notes: string[] = [];
+    const connection = await connectHost('mini');
+    const run = await placeHostedMacos(connection, {
+      root,
+      bundle: placed.bundle,
+      bundleId: 'dev.fixture.app',
+      handoff,
+      arguments: [],
+      recorded: placed.host,
+      reserved: () => {},
+      note: (line) => notes.push(line),
+    }).finally(() => connection.connection.close());
+    expect(run.launched).toBe(true);
+    expect(host.methods.includes('device-host.app.handoff')).toBe(asked);
+    const sent = asked && answer !== 'older' ? [{ build: { handoff: handoff.token, sha256: handoff.sha256 } }] : [];
+    expect(requests).toMatchObject(sent);
+    const uploaded = new Set(host.chunks.filter((digest) => digest !== manifestDigest));
+    expect([...uploaded].toSorted()).toEqual(
+      (asked && answer === 'all' ? [] : asked && answer === 'some' ? content.slice(0, 1) : content).toSorted(),
+    );
+    expect(notes.some((line) => line.includes('uploading the app instead'))).toBe(
+      asked && (answer === 'refuse' || answer === 'older'),
+    );
+    for (const digest of content) expect(host.blobs.get(digest)).toEqual(built.get(digest));
+  });
 
   test('a session the host stopped is replaced by a new reservation', async () => {
     const first = await runMacos(root, () => {}, 'mini');

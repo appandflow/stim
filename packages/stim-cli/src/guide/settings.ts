@@ -723,7 +723,10 @@ its integrity and registry signatures; \`--from <dir>\` installs the packed
 packages of a checkout instead. It waits for offloaded builds and hosted
 sessions to finish, restarts the job, and switches back when the new server
 does not answer within 90 seconds; \`stim-server service rollback\` returns
-to the previous server.
+to the previous server. A client Mac approved for builds or device hosting
+there can ask for the same update over its tailnet connection: an npm release
+always, and its own packed build only while \`server.acceptClientBuilds\` is
+true on that machine (default false).
 Installation alone does not prove readiness; check \`stim-server service status\`
 and its reported log. The server listens before it touches the Stim home; a
 read-only child process reads the Stim home, server and recording directories,

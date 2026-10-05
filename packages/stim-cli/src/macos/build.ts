@@ -13,6 +13,7 @@ import {
   offloadPlacement,
   placementLoad,
   remotePhaseText,
+  type BuildHandoff,
   type OffloadChoice,
 } from '../offload/client.ts';
 import { resolveBuildPlacement, namedBuildMachine, OffloadRefusal } from '../offload/selection.ts';
@@ -78,7 +79,12 @@ export async function buildMacosBundle({
   buildMachine?: string;
   resources?: unknown;
   assetCatalog?: unknown;
-}): Promise<{ bundleId: string; offloadedTo: string | null; offloadFallback: string | null }> {
+}): Promise<{
+  bundleId: string;
+  offloadedTo: string | null;
+  offloadFallback: string | null;
+  handoff: BuildHandoff | null;
+}> {
   const resolved = selected === undefined ? resolveBuildPlacement() : { selected, failure: undefined };
   if (resolved.failure) throw Object.assign(new Error(resolved.failure.message), resolved.failure);
   const buildMachine = resolved.selected;
@@ -183,7 +189,7 @@ export async function buildMacosBundle({
           record.offloadedTo = outcome.machine;
           record.builtOn = outcome.machine;
         }
-        return { bundleId, offloadedTo: outcome.machine, offloadFallback: null };
+        return { bundleId, offloadedTo: outcome.machine, offloadFallback: null, handoff: outcome.handoff ?? null };
       }
       write(`placement: here (${placement.reason})`);
     } catch (error) {
@@ -211,7 +217,7 @@ export async function buildMacosBundle({
       const staged = join(staging, `${product}.app`);
       stageBundle(root, product, infoPlist, bin, staged, bundleId, extras);
       promote(staged);
-      return { bundleId, offloadedTo: null, offloadFallback };
+      return { bundleId, offloadedTo: null, offloadFallback, handoff: null };
     } finally {
       releaseBuildSlot(slot);
     }

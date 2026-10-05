@@ -269,16 +269,19 @@ describe('macOS build placement and promotion', () => {
     writeFileSync(join(fetched, 'Contents', 'MacOS', 'Sample'), 'remote');
     return fetched;
   }
+  const handoff = { nodeId: 'nMini', token: 'a'.repeat(64), sha256: 'b'.repeat(64) };
   function succeeds(path: string): void {
-    vi.spyOn(offload, 'offloadBuild').mockResolvedValue({ ok: true, machine: 'mini', artifactPath: path } as Extract<
-      offload.OffloadOutcome,
-      { ok: true }
-    >);
+    vi.spyOn(offload, 'offloadBuild').mockResolvedValue({
+      ok: true,
+      machine: 'mini',
+      artifactPath: path,
+      handoff,
+    } as Extract<offload.OffloadOutcome, { ok: true }>);
   }
 
   it('promotes a verified offloaded bundle without taking a local build slot and persists placement', async () => {
     succeeds(remoteBundle());
-    expect(await build()).toEqual({ bundleId, offloadedTo: 'mini', offloadFallback: null });
+    expect(await build()).toEqual({ bundleId, offloadedTo: 'mini', offloadFallback: null, handoff });
     expect(slots.acquireBuildSlot).not.toHaveBeenCalled();
     expect(localBuilds).toBe(0);
     expect(readFileSync(join(bundle, 'Contents', 'MacOS', 'Sample'), 'utf8')).toBe('remote');
@@ -485,7 +488,7 @@ describe('macOS build placement and promotion', () => {
 
   it('builds locally without a fallback record when no machine is paired', async () => {
     vi.mocked(machines.pairedMachines).mockReturnValue([]);
-    expect(await build()).toEqual({ bundleId, offloadedTo: null, offloadFallback: null });
+    expect(await build()).toEqual({ bundleId, offloadedTo: null, offloadFallback: null, handoff: null });
     expect(offload.chooseBuildMachine).not.toHaveBeenCalled();
     expect(previousDuringBuild).toEqual(['old']);
     expect(buildRecord.offloadFallback).toBeUndefined();
@@ -493,7 +496,7 @@ describe('macOS build placement and promotion', () => {
 
   it('builds locally without asking a machine when offload is off', async () => {
     writeConfigSetting({ scope: 'machine' }, 'offload.mode', 'off');
-    expect(await build()).toEqual({ bundleId, offloadedTo: null, offloadFallback: null });
+    expect(await build()).toEqual({ bundleId, offloadedTo: null, offloadFallback: null, handoff: null });
     expect(offload.chooseBuildMachine).not.toHaveBeenCalled();
     expect(localBuilds).toBe(1);
   });

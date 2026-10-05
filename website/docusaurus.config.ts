@@ -127,6 +127,8 @@ const config: Config = {
           items: [
             { label: 'GitHub', href: 'https://github.com/appandflow/stim' },
             { label: 'Issues', href: 'https://github.com/appandflow/stim/issues' },
+            { label: 'Support', to: '/support' },
+            { label: 'Privacy policy', to: '/privacy' },
           ],
         },
       ],

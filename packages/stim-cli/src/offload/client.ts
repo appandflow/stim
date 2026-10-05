@@ -499,6 +499,13 @@ interface OffloadTimings {
   artifactBytes: number;
 }
 
+/** A macOS build the build machine keeps for a while, which a hosted session on that tailnet node can take. */
+export interface BuildHandoff {
+  nodeId: string;
+  token: string;
+  sha256: string;
+}
+
 export type OffloadOutcome =
   | {
       ok: true;
@@ -508,6 +515,7 @@ export type OffloadOutcome =
       compilationCache: CompilationCacheActivity;
       ccache: CcacheActivity;
       timings: OffloadTimings;
+      handoff?: BuildHandoff;
     }
   | { ok: false; machine: string | null; reason: string };
 
@@ -934,7 +942,7 @@ export async function offloadBuild({
     const fetchFailure = replyError(fetched);
     if (fetchFailure || !('result' in fetched)) return fail(`fetch: ${fetchFailure ?? 'no reply'}`);
     const digest = hash.digest('hex');
-    const declared = fetched.result as { size?: unknown; sha256?: unknown };
+    const declared = fetched.result as { size?: unknown; sha256?: unknown; handoff?: unknown };
     if (badFrame) return fail('fetch: an artifact frame had another digest or could not be written here');
     if (digest !== artifact.sha256 || declared.sha256 !== digest || declared.size !== received) {
       return fail(
@@ -965,6 +973,11 @@ export async function offloadBuild({
       ok: true,
       machine,
       artifactPath,
+      ...(request.platform === 'macos' &&
+      typeof declared.handoff === 'string' &&
+      /^[0-9a-f]{64}$/.test(declared.handoff)
+        ? { handoff: { nodeId: choice.credential.nodeId, token: declared.handoff, sha256: digest } }
+        : {}),
       compilationCache:
         request.platform === 'ios' ? compilationActivity(result.compilationCache) : COMPILATION_CACHE_UNAVAILABLE,
       ccache: request.platform === 'android' ? ccacheActivity(result.compilationCache) : CCACHE_UNAVAILABLE,

@@ -523,6 +523,16 @@ when the new one does not answer within 90 seconds. It never changes pairings,
 approvals, Stim Host, the pinned `--env` and `--path-prepend` values or the
 serve route.
 
+A client Mac this machine approved for builds or device hosting can request
+the same update over its tailnet connection, so the build machine keeps up
+without ssh. It can always ask for an npm release. It can send its own packed
+build only while `server.acceptClientBuilds` is true on the build machine; it
+is false by default:
+
+```bash
+stim settings set server.acceptClientBuilds true   # on the build machine
+```
+
 An installed LaunchAgent does not prove server readiness: check its health in
 `stim-server service status` and the reported log when readiness is unavailable.
 The server listens before it touches the Stim home. A read-only child process

@@ -24,7 +24,7 @@ import {
   type HostedMacosPlacement,
 } from '@stim-cli/core/state';
 import { macosDir } from '../macos/state.ts';
-import { BuildConnection } from '../offload/client.ts';
+import { BuildConnection, type BuildHandoff } from '../offload/client.ts';
 import { parseMachine, pinnedEndpoint } from '../offload/tailnet.ts';
 import { phaseLine } from '../command-output.ts';
 import { closeAgentConnection } from './agent-connection.ts';
@@ -35,6 +35,7 @@ const CONNECT_TIMEOUT_MS = 10_000;
 const POLL_MS = 500;
 const SESSION_TIMEOUT_MS = 120_000;
 const INSTALL_TIMEOUT_MS = 5 * 60_000;
+const HANDOFF_TIMEOUT_MS = 5 * 60_000;
 
 interface ManifestFile {
   path: string;
@@ -329,6 +330,7 @@ export async function placeHostedMacos(
     root,
     bundle,
     bundleId,
+    handoff,
     arguments: requestedArguments,
     recorded,
     reserved,
@@ -337,6 +339,8 @@ export async function placeHostedMacos(
     root: string;
     bundle: string;
     bundleId: string;
+    /** The build machine's copy of `bundle`, which the host takes instead of an upload when it is the same node. */
+    handoff?: BuildHandoff | null;
     arguments: string[];
     recorded: HostedMacosPlacement | undefined;
     reserved: (placement: HostedMacosPlacement) => void;
@@ -398,7 +402,22 @@ export async function placeHostedMacos(
   };
   note(`Delivering ${files.length} files to ${host.machine} (macOS ${device.macosVersion}, ${device.architecture})`);
   await upload(host, ids, (await call(host, 'device-host.app.offer', offer)).missing, content);
-  await upload(host, ids, (await call(host, 'device-host.app.offer', offer)).missing, content);
+  let missing = (await call(host, 'device-host.app.offer', offer)).missing;
+  if (handoff && handoff.nodeId === host.credential.nodeId && Array.isArray(missing) && missing.length) {
+    try {
+      const taken = await call(
+        host,
+        'device-host.app.handoff',
+        { ...ids, build: { handoff: handoff.token, sha256: handoff.sha256 } },
+        HANDOFF_TIMEOUT_MS,
+      );
+      if (taken.files) note(`${host.machine} took ${String(taken.files)} files from the build it ran`);
+    } catch (error) {
+      note(`${error instanceof Error ? error.message : String(error)}; uploading the app instead`);
+    }
+    missing = (await call(host, 'device-host.app.offer', offer)).missing;
+  }
+  await upload(host, ids, missing, content);
   note(`Launching on ${host.machine}`);
   let delivery = await call(host, 'device-host.app.launch', ids);
   const deadline = Date.now() + INSTALL_TIMEOUT_MS;
