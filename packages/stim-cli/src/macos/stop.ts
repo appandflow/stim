@@ -1,7 +1,9 @@
 import { readMacosRecord, type MacosProcess } from '@stim-cli/core/state';
+import { stopHostedMacos } from '../device-host/hosted-macos.ts';
 import { inspectProcessIdentity, waitForProcessExit } from '../process-identity.ts';
 import { withWorkspaceProcessLock } from '../engine/workspace-process-lock.ts';
 import { workspaceDir } from '../workspace/paths.ts';
+import { writeWorkspaceState } from '../workspace/workspace-state.ts';
 import { macosRuntimeClaim, requiredMacosRecord } from './state.ts';
 import { readClaimSet } from '../ownership-claim.ts';
 
@@ -38,8 +40,17 @@ export async function stopMacosAppHeld(root: string): Promise<boolean> {
   return true;
 }
 
+/** Stops the workspace's app here, or its session on the hosting Mac, which must confirm the session stopped. */
 export function stopMacosApp(root: string): Promise<boolean> {
-  return withWorkspaceProcessLock(workspaceDir(root), 'macos-launch', () => stopMacosAppHeld(root), {
+  const stop = async () => {
+    const record = requiredMacosRecord(root);
+    if (!record?.host) return stopMacosAppHeld(root);
+    await stopHostedMacos(root, record.host);
+    const { host: _host, hostLaunched: _launched, ...stopped } = record;
+    writeWorkspaceState(root, { macos: { ...stopped, supervisor: undefined } });
+    return true;
+  };
+  return withWorkspaceProcessLock(workspaceDir(root), 'macos-launch', stop, {
     external: true,
     waitMs: 0,
     ownerPurpose: 'stop macOS app',

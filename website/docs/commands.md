@@ -479,7 +479,7 @@ miss, which native change causes it.
 ## `macos`
 
 ```text
-stim macos [--json]
+stim macos [--host <machine>] [--json]
 ```
 
 Builds the explicitly configured Swift Package executable in Debug and launches
@@ -488,8 +488,12 @@ an isolated development `.app`. Run from the `Package.swift` directory with
 with no Metro or custom build scripts. Workspace logs include compiler output
 and runtime stdout/stderr. `status` reports the app and build, and `stop` signals
 only their verified owners. Stim Desktop can preview one owned window and open
-the verified app for native input on the same Mac using existing permissions. See the [native macOS prototype](./macos.md)
-for metadata, arguments and current limitations.
+the verified app for native input on the same Mac using existing permissions.
+`--host <machine>` builds here and runs the app on an approved
+[`hosting.machines`](./settings.md#machine-settings) Mac over the tailnet; it never
+falls back to a local launch, and `stop` or `worktree remove` stop it there. See the
+[native macOS prototype](./macos.md) for metadata, arguments, hosting and current
+limitations.
 
 ## `web`
 

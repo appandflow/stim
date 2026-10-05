@@ -23,7 +23,8 @@ import {
   type ManagedTunnelRecord,
 } from '../supervisor/state.ts';
 import { readWorkspaceState } from '../workspace/workspace-state.ts';
-import { LAST_BUILD_KEYS } from '@stim-cli/core/state';
+import { LAST_BUILD_KEYS, readMacosRecord } from '@stim-cli/core/state';
+import { stopMacosApp } from '../macos/stop.ts';
 import { readWebRecord } from '../web/state.ts';
 import { endRecordedSession } from '../engine/device-remote.ts';
 import { releaseWorkspaceLeases, type ReleasedLease } from '../engine/device-lease.ts';
@@ -500,6 +501,20 @@ async function reclaimIdleProject(
   if (remote.failed) {
     skippedDevices.push(remote.failed);
     failedDevices.push(remote.failed);
+  }
+
+  const hosted = readMacosRecord(path)?.host;
+  if (hosted) {
+    try {
+      await stopMacosApp(path);
+    } catch (error) {
+      const failed = {
+        name: `hosted macOS session ${hosted.session} on ${hosted.machine}`,
+        reason: String((error as Error)?.message ?? error),
+      };
+      skippedDevices.push(failed);
+      failedDevices.push(failed);
+    }
   }
 
   const tunnel = await reclaimMetroTunnel(path, { stopMetroTunnel });
