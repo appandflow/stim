@@ -1275,11 +1275,17 @@ To check a bundle, point the DSN at a local listener, such as `http://<key>@127.
 
 ### Native visual fixture pilot
 
-`swift test --filter VisualFixtureTests` compares three production playground
-bodies: long-text Notifications at the detail's 440-point minimum, simulator
-controls in dark appearance, and the simulator error message in light appearance.
+`swift test --filter VisualFixtureTests` compares production playground bodies
+for long-text Notifications at the detail's 440-point minimum, simulator controls
+in dark appearance, and the simulator error message in light appearance. It also
+compares a failed build history row collapsed and expanded, including its wrapped
+diagnostic, at the inspector's 320-point default width.
 The DEBUG fixtures use a fixed date. Captures pin en_US, UTC, InterVariable,
-380/440 by 640 points, arm64 and a 1x native window on macOS 27.0 build 26A428.
+320/380/440 by 640 points and arm64 on macOS 27.0 build 26A428. Native 1x and
+2x windows use separate references; Retina reference names end in `.2x.png`.
+The three playground bodies retain their 1x references. The two build row cases
+currently have only 2x references and explicitly skip on 1x; no downsampled image
+stands in for native 1x coverage.
 They open only a fixture window, without starting the CLI, server or devices.
 The notification view reads its calendar, timezone and locale from the SwiftUI
 environment; fixtures supply UTC explicitly, independent of the process `TZ`.
@@ -1287,7 +1293,8 @@ environment; fixtures supply UTC explicitly, independent of the process `TZ`.
 The current macOS 15 CI runner has no matching references and explicitly skips
 these image comparisons. This is a local pilot, not CI visual regression coverage.
 Issue [#2342](https://github.com/appandflow/stim/issues/2342) tracks matching CI
-references, Settings window chrome, Builds and the remaining representative cases.
+references, native 1x build rows, Settings window chrome and the remaining
+representative cases.
 Native Settings tabs move into window chrome; a hosting-view bitmap cannot
 faithfully compare that strip. Compact 380-point Notifications is a stress case
 below the production detail minimum and is not an accepted reference.
