@@ -22,6 +22,7 @@ import { HostedAgentHost } from './agent-driver.ts';
 import { DeviceHost, type DeviceHostLimits } from './device-host.ts';
 import { HostedViews } from './hosted-view.ts';
 import { HostedRelay, type HostedRelayOptions } from './hosted-relay.ts';
+import { LatestFrames, FRAME_RETRY_MS } from './frame-delivery.ts';
 import { BuildHost, type BuildLimits, type BuildSession } from './build.ts';
 import { ControlHub, parseControlBegin, parseInput, SLOT_NAME, type Controller } from './control.ts';
 import { Recorder, type RecordLimits } from './recorder.ts';
@@ -232,8 +233,6 @@ const MAX_SUBSCRIPTIONS = 32;
 const MAX_COMMANDS = 4;
 const MAX_KEYFRAME_READS = 8;
 const LOG_LIMITS: LogLimits = { maxBufferedBytes: 4 * 1024 * 1024, maxPendingRecords: 20_000 };
-const FRAME_BUFFER_FRAMES = 2;
-const FRAME_RETRY_MS = 50;
 const HELPER_RETRY_MS = 5 * 60_000;
 /**
  * Test switch: set to 1, a `physical` target may resolve to an emulator its workspace leases with `stim device
@@ -703,6 +702,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       () => socket.bufferedAmount,
       openSubscription,
       (subscription) => subscriptions.delete(subscription),
+      auditSafely,
     );
     relays.set(socket, relay);
 
@@ -862,6 +862,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
             socket.readyState === socket.OPEN &&
             controllers.get(socket) === owner &&
             readDevices().some((entry) => entry.id === session.id && entry.capabilities.includes('control')),
+          { workspace: resolved.dir, device: { id: session.id, name: session.name } },
         );
       }
       const outcome = await control.begin(
@@ -884,7 +885,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       session: Pick<PairedDevice, 'id' | 'name'>,
     ): Promise<void> {
       const owner = controller(session);
-      const parsed = parseInput(method, params, (name) => control.targetOf(owner, name));
+      const parsed = parseInput(method, params, (name) => relay.targetOf(name) ?? control.targetOf(owner, name));
       if ('code' in parsed) return error(id, parsed.code, parsed.message);
       if (!take(inputs, 1, controlLimits.inputPerSecond, controlLimits.inputPerSecond)) {
         return error(id, 'limit-exceeded', `A connection can send ${controlLimits.inputPerSecond} inputs a second.`);
@@ -907,6 +908,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       ) {
         return error(id, 'limit-exceeded', `A connection can rotate or fold ${shapeChangesPerSecond} times a second.`);
       }
+      if (relay.control(id, method, params)) return;
       const refused = await control.input(owner, parsed.value.session, parsed.value.command);
       if (refused && 'code' in refused) return error(id, refused.code, refused.message);
       send(socket, { id, result: refused ?? {} });
@@ -1004,11 +1006,11 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       });
     }
 
-    async function subscribeFrames(
+    function subscribeFrames(
       id: RequestId,
       params: unknown,
       hosted?: { client: string; session: string; view: ReturnType<HostedViews['target']> },
-    ): Promise<void> {
+    ): void {
       const framePool = hosted?.view.frames ?? frames;
       const target = isJsonObject(params) ? params : {};
       const { workspace, platform, slot, physical, fps, maxEdge, video, at, rate, deviceFrame } = target;
@@ -1058,7 +1060,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
             'Hosted macOS frames require the default, non-physical target without replay.',
           );
         }
-        return relay.subscribe(id, host, target, (subscription, stop) => subscriptions.set(subscription, stop));
+        return void relay.subscribe(id, host, target, (subscription, stop) => subscriptions.set(subscription, stop));
       }
       const offersVideo = wantsVideo && frameHelper() !== null;
       const replayAt = parseReplay(at, rate);
@@ -1102,41 +1104,28 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       };
       let attached: string | null = null;
       let detach: (() => void) | null = null;
-      let pending: Frame | null = null;
-      let retry: NodeJS.Timeout | null = null;
       let ended = false;
-      let sentAt = 0;
-      const flush = () => {
-        retry = null;
-        if (!pending || ended) return;
-        const wait = sentAt + 1000 / hint.fps - Date.now();
-        if (wait > 0) {
-          retry = setTimeout(flush, wait);
-          return;
-        }
-        if (socket.bufferedAmount > FRAME_BUFFER_FRAMES * pending.data.length) {
-          retry = setTimeout(flush, FRAME_RETRY_MS);
-          return;
-        }
-        const frame = pending;
-        pending = null;
-        sentAt = Date.now();
-        send(socket, {
-          event: 'frame',
-          subscription,
-          platform: frameTarget.platform,
-          slot: slot ?? 'default',
-          mime: 'image/jpeg',
-          ...frame,
-        });
-      };
+      const delivery = new LatestFrames<Frame>(
+        hint.fps,
+        () => socket.bufferedAmount,
+        (frame) => {
+          send(socket, {
+            event: 'frame',
+            subscription,
+            platform: frameTarget.platform,
+            slot: slot ?? 'default',
+            mime: 'image/jpeg',
+            ...frame,
+          });
+        },
+      );
       const cleanup = () => {
         ended = true;
         player?.stop();
         replays.delete(subscription);
         stopViewing?.();
         keyframes.delete(subscription);
-        if (retry) clearTimeout(retry);
+        delivery.stop();
         if (draining) clearTimeout(draining);
         detach?.();
         detach = null;
@@ -1149,10 +1138,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         send(socket, { event: 'error', subscription, error: { code: 'frames-failed', message } });
       };
       const listener = {
-        frame: (frame: Frame) => {
-          pending = frame;
-          if (!retry) flush();
-        },
+        frame: (frame: Frame) => delivery.push(frame),
         delayed: (delayed: boolean, reason?: string) => {
           if (!ended) send(socket, { event: 'frame-delayed', subscription, delayed, ...(reason ? { reason } : {}) });
         },
@@ -1822,7 +1808,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       if (message.method === 'frames.subscribe') return subscribeFrames(id, message.params);
       if (message.method === 'frames.keyframe') {
         const name = isJsonObject(message.params) ? message.params.subscription : undefined;
-        if (typeof name === 'string' && (await relay.keyframe(id, name))) return;
+        if (typeof name === 'string' && relay.keyframe(id, name)) return;
         const keyframe = typeof name === 'string' ? keyframes.get(name) : undefined;
         if (!keyframe) {
           return send(socket, {
@@ -1878,7 +1864,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         return;
       }
       if (message.method === 'control.end') {
-        if (await relay.control(id, message.method, message.params)) return;
+        if (relay.control(id, message.method, message.params)) return;
         const name = isJsonObject(message.params) ? message.params.session : undefined;
         if (typeof name !== 'string' || !control.endById(controller(device), name)) {
           return error(id, 'unknown-session', `No control session ${String(name)} on this connection.`);
@@ -1887,7 +1873,6 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       }
       const inputMethod = INPUT_METHODS.find((method) => method === message.method);
       if (inputMethod) {
-        if (await relay.control(id, inputMethod, message.params)) return;
         void input(id, inputMethod, message.params, device);
         return;
       }

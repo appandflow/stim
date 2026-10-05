@@ -551,7 +551,10 @@ client iOS view/control relays and Android Metro/viewing remain in [#2266](https
 The client's stim-server relays a hosted workspace's macOS view and input to
 its host using the client's approved device-host credential over the pinned
 tailnet connection. Stim Desktop and phones keep talking only to their own
-server. Capture needs Screen Recording and Accessibility permissions on the host.
+server. The `macos-hosted` feature advertises this relay. Hosted frames and
+control reject `physical`, a non-default slot, and replay (`at`/`rate`).
+`control.begin` still needs the local `control` grant. Screen Recording for
+viewing and Accessibility for control are granted on the host, not the client.
 
 ### Hosted iOS and macOS view and input
 

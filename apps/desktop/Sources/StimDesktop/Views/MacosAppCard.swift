@@ -42,11 +42,11 @@ struct MacosAppCard: View {
         Text("Swift Package Debug \u{00B7} build \(app.build.state) \u{00B7} app \(app.state)\(hostNote)")
           .font(.stim(.footnote)).foregroundStyle(Palette.secondary)
         Spacer()
-        Button("Permissions") { permissions.openSetup() }.nativeControlStyle()
+        if app.host == nil { Button("Permissions") { permissions.openSetup() }.nativeControlStyle() }
       }
       if let error = app.build.error { Text(error).foregroundStyle(Palette.error).textSelection(.enabled) }
       if app.host != nil {
-        if app.state == "running" { HostedMacosWindow(app: app, workspace: workspace) }
+        if app.state == "running" || app.state == "unverified" { HostedMacosWindow(app: app, workspace: workspace) }
       } else if let error = capture.error {
         Text(error).foregroundStyle(Palette.secondary).textSelection(.enabled)
       }
@@ -132,6 +132,14 @@ private struct HostedMacosWindow: View {
           Text(controlNote ?? readOnly ?? "Window on \(app.host?.machine ?? "the host")")
             .font(.stim(.caption)).foregroundStyle(Palette.secondary).lineLimit(2)
           Spacer()
+          if stream.problem != nil {
+            Button("Reconnect") {
+              controlling = false
+              stream.stop()
+              follow(screen)
+            }
+            .nativeControlStyle()
+          }
           if readOnly == nil {
             Button(controlling ? "Release" : "Control") { controlling.toggle() }
               .nativeControlStyle()

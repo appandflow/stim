@@ -33,7 +33,6 @@ export function videoPacket(subscription: string, sequence: number, unit: Access
   return Buffer.concat([header, unit.data]);
 }
 
-/** Replaces a matching video's subscription id, preserving its header fields and encoded payload. */
 export function rewriteVideoSubscription(packet: Buffer, upstream: string, subscription: string): Buffer | null {
   if (packet.length < FIXED_HEADER_BYTES || packet[0] !== VIDEO_HEADER_VERSION) return null;
   const length = packet[20]!;

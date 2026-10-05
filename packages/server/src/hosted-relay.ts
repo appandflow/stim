@@ -7,7 +7,10 @@ import {
   type Endpoint,
   type HostedMacosPlacement,
 } from '@stim-cli/core/state';
-import { VIDEO_KEYFRAME, type ProtocolError, type RequestId, type ServerMessage } from './protocol.ts';
+import type { AuditRecord } from './actions.ts';
+import type { SessionTarget } from './control.ts';
+import { LatestFrames, FRAME_RETRY_MS } from './frame-delivery.ts';
+import { FRAME_FPS, VIDEO_KEYFRAME, type ProtocolError, type RequestId, type ServerMessage } from './protocol.ts';
 import { DEFAULT_VIDEO_LIMITS, rewriteVideoSubscription, VideoGate } from './video.ts';
 
 const TIMEOUT_MS = 10_000;
@@ -16,9 +19,7 @@ type Reply = { result: unknown } | { error: ProtocolError };
 type Event = Record<string, unknown> | Buffer;
 
 export interface HostedRelayOptions {
-  /** Supplies raw `tailscale status --json`; defaults to the server's current Tailscale binary. */
   status: () => unknown | Promise<unknown>;
-  /** Overrides transport after node pin verification; tests use a loopback fake host. */
   endpoint?: (pinned: Endpoint) => Endpoint;
 }
 
@@ -167,8 +168,21 @@ class Upstream {
 
 export class HostedRelay {
   private readonly connections = new Set<Upstream>();
-  private readonly frames = new Map<string, { connection: Upstream; subscription: string; gate: VideoGate }>();
-  private readonly controls = new Map<string, Upstream>();
+  private readonly frames = new Map<
+    string,
+    { connection: Upstream; subscription: string; reset: () => void; stop: () => void }
+  >();
+  private readonly controls = new Map<
+    string,
+    {
+      connection: Upstream;
+      hostSession: string;
+      startedAt: number;
+      workspace: string;
+      device: { id: string; name: string };
+    }
+  >();
+  private nextControl = 1;
   private closed = false;
 
   private readonly options: HostedRelayOptions;
@@ -177,6 +191,7 @@ export class HostedRelay {
   private readonly buffered: () => number;
   private readonly openSubscription: (id: RequestId, result: { video?: 'h264' }) => string | null;
   private readonly dropSubscription: (subscription: string) => void;
+  private readonly audit: (record: AuditRecord) => void;
 
   constructor(
     options: HostedRelayOptions,
@@ -185,6 +200,7 @@ export class HostedRelay {
     buffered: () => number,
     openSubscription: (id: RequestId, result: { video?: 'h264' }) => string | null,
     dropSubscription: (subscription: string) => void,
+    audit: (record: AuditRecord) => void,
   ) {
     this.options = options;
     this.version = version;
@@ -192,6 +208,7 @@ export class HostedRelay {
     this.buffered = buffered;
     this.openSubscription = openSubscription;
     this.dropSubscription = dropSubscription;
+    this.audit = audit;
   }
 
   private async connect(host: HostedMacosPlacement): Promise<Upstream> {
@@ -246,9 +263,30 @@ export class HostedRelay {
       if (!local) return this.release(connection);
       const subscription = local;
       const gate = new VideoGate(DEFAULT_VIDEO_LIMITS.congestedBytes);
-      this.frames.set(subscription, { connection, subscription: upstream, gate });
-      let askedAt = 0;
+      let askedAt = -Infinity;
+      let keyframeRetry: NodeJS.Timeout | null = null;
+      const delivery = new LatestFrames<Record<string, unknown> & { data: string }>(
+        Math.min(
+          (params.fps as number | undefined) ?? FRAME_FPS.default,
+          reply.result.video === 'h264' ? FRAME_FPS.video : FRAME_FPS.max,
+        ),
+        this.buffered,
+        (event) => this.send(event as unknown as ServerMessage),
+      );
+      const requestKeyframe = () => {
+        keyframeRetry = null;
+        if (!this.frames.has(subscription)) return;
+        if (this.buffered() > DEFAULT_VIDEO_LIMITS.congestedBytes) {
+          keyframeRetry = setTimeout(requestKeyframe, FRAME_RETRY_MS);
+          return;
+        }
+        if (Date.now() - askedAt < KEYFRAME_RETRY_MS) return;
+        askedAt = Date.now();
+        void connection!.request('device-host.frames.keyframe', { subscription: upstream }).catch(() => {});
+      };
       const stop = () => {
+        delivery.stop();
+        if (keyframeRetry) clearTimeout(keyframeRetry);
         this.frames.delete(subscription);
         this.dropSubscription(subscription);
         this.release(connection!);
@@ -264,6 +302,17 @@ export class HostedRelay {
         } as ServerMessage);
         stop();
       };
+      this.frames.set(subscription, {
+        connection,
+        subscription: upstream,
+        stop,
+        reset: () => {
+          gate.reset();
+          askedAt = Date.now();
+          if (keyframeRetry) clearTimeout(keyframeRetry);
+          keyframeRetry = null;
+        },
+      });
       register(subscription, stop);
       connection.listen(
         (event) => {
@@ -273,17 +322,18 @@ export class HostedRelay {
             if (!packet) return;
             const keyframe = (packet[1]! & VIDEO_KEYFRAME) !== 0;
             if (gate.admit({ keyframe }, this.buffered()) === 'send') return this.send(packet);
-            if (this.buffered() > DEFAULT_VIDEO_LIMITS.congestedBytes || Date.now() - askedAt < KEYFRAME_RETRY_MS)
-              return;
-            askedAt = Date.now();
-            connection!.request('device-host.frames.keyframe', { subscription: upstream }).catch(() => {});
+            if (!keyframeRetry) requestKeyframe();
           } else if (
             event.subscription === upstream &&
             ['frame', 'frame-delayed', 'error'].includes(String(event.event))
           ) {
             if (event.event === 'error')
               return failed(isJsonObject(event.error) ? String(event.error.message) : 'host frames failed');
-            this.send({ ...event, subscription, platform: 'macos', slot: 'default' } as unknown as ServerMessage);
+            const forwarded = { ...event, subscription, platform: 'macos', slot: 'default' };
+            if (event.event === 'frame') {
+              if (typeof event.data !== 'string') return failed('the host sent an invalid JPEG frame');
+              delivery.push({ ...forwarded, data: event.data });
+            } else this.send(forwarded as unknown as ServerMessage);
           }
         },
         (error) => failed(error.message),
@@ -292,7 +342,7 @@ export class HostedRelay {
       if (connection) this.release(connection);
       const message = (cause as Error).message;
       if (local) {
-        this.frames.delete(local);
+        this.frames.get(local)?.stop();
         this.dropSubscription(local);
         this.send({
           event: 'error',
@@ -303,80 +353,115 @@ export class HostedRelay {
     }
   }
 
-  async keyframe(id: RequestId, subscription: string): Promise<boolean> {
+  keyframe(id: RequestId, subscription: string): boolean {
     const frame = this.frames.get(subscription);
     if (!frame) return false;
-    frame.gate.reset();
-    await this.forward(id, frame.connection, 'device-host.frames.keyframe', { subscription: frame.subscription });
+    frame.reset();
+    void this.forward(id, frame.connection, 'device-host.frames.keyframe', { subscription: frame.subscription });
     return true;
   }
 
-  async begin(id: RequestId, host: HostedMacosPlacement, takeOver: boolean, allowed: () => boolean): Promise<void> {
+  async begin(
+    id: RequestId,
+    host: HostedMacosPlacement,
+    takeOver: boolean,
+    allowed: () => boolean,
+    context: { workspace: string; device: { id: string; name: string } },
+  ): Promise<void> {
     let connection: Upstream | undefined;
     let opened: string | undefined;
+    const record = (outcome: { ok: boolean; error?: ProtocolError }) =>
+      this.audit({
+        at: new Date().toISOString(),
+        ...context,
+        platform: 'macos',
+        action: takeOver ? 'control.take-over' : 'control.begin',
+        ...outcome,
+      });
     try {
       connection = await this.connect(host);
       const reply = await connection.request('device-host.control.begin', { session: host.session, takeOver });
       if ('error' in reply) {
         this.release(connection);
+        record({ ok: false, error: reply.error });
         return this.send({ id, error: reply.error });
       }
       if (!isJsonObject(reply.result) || typeof reply.result.session !== 'string')
         throw new Error('the host sent no control session');
       if (this.closed || !allowed()) throw new Error('local control access ended');
-      const session = reply.result.session;
-      this.controls.set(session, connection);
+      const hostSession = reply.result.session;
+      const session = `h${this.nextControl++}`;
+      this.controls.set(session, { connection, hostSession, startedAt: Date.now(), ...context });
       opened = session;
-      this.send({ id, result: reply.result });
-      const ended = () => {
-        this.controls.delete(session);
-        this.release(connection!);
-      };
+      record({ ok: true });
+      this.send({ id, result: { ...reply.result, session } });
       connection.listen(
         (event) => {
           if (
             this.controls.has(session) &&
             !Buffer.isBuffer(event) &&
             event.event === 'control-ended' &&
-            event.session === session
+            event.session === hostSession
           ) {
-            this.send(event as unknown as ServerMessage);
-            ended();
+            this.send({ ...event, session } as unknown as ServerMessage);
+            this.endControl(session, String(event.reason), String(event.message));
           }
         },
         (error) => {
-          this.send({
-            event: 'control-ended',
-            session,
-            reason: 'failed',
-            message: `${host.machine}: ${error.message}`,
-          });
-          ended();
+          if (!this.controls.has(session)) return;
+          const message = `${host.machine}: ${error.message}`;
+          this.send({ event: 'control-ended', session, reason: 'failed', message });
+          this.endControl(session, 'failed', message);
         },
       );
     } catch (cause) {
       if (connection) this.release(connection);
       const message = `${host.machine}: ${(cause as Error).message}`;
       if (opened) {
-        this.controls.delete(opened);
         this.send({ event: 'control-ended', session: opened, reason: 'failed', message });
-      } else this.send({ id, error: { code: 'action-failed', message } });
+        this.endControl(opened, 'failed', message);
+      } else {
+        const error: ProtocolError = { code: 'action-failed', message };
+        record({ ok: false, error });
+        this.send({ id, error });
+      }
     }
   }
 
-  async control(id: RequestId, method: string, params: unknown): Promise<boolean> {
-    const session = isJsonObject(params) ? params.session : undefined;
-    const connection = typeof session === 'string' ? this.controls.get(session) : undefined;
-    if (!connection) return false;
-    try {
-      await this.forward(id, connection, `device-host.${method}`, params);
-    } finally {
-      if (method === 'control.end') {
-        this.controls.delete(session as string);
-        this.release(connection);
-      }
+  targetOf(session: string): SessionTarget | null {
+    return this.controls.has(session) ? { platform: 'macos', postures: [] } : null;
+  }
+
+  control(id: RequestId, method: string, params: unknown): boolean {
+    if (!isJsonObject(params) || typeof params.session !== 'string') return false;
+    const entry = this.controls.get(params.session);
+    if (!entry) return false;
+    const response = this.forward(id, entry.connection, `device-host.${method}`, {
+      ...params,
+      session: entry.hostSession,
+    });
+    if (method === 'control.end') {
+      this.endControl(params.session, null, 'The client ended the session.', false);
+      void response.finally(() => this.release(entry.connection));
     }
     return true;
+  }
+
+  private endControl(session: string, reason: string | null, message: string, release = true): void {
+    const entry = this.controls.get(session);
+    if (!entry) return;
+    this.controls.delete(session);
+    this.audit({
+      at: new Date().toISOString(),
+      device: entry.device,
+      workspace: entry.workspace,
+      platform: 'macos',
+      action: 'control.end',
+      ok: true,
+      durationMs: Date.now() - entry.startedAt,
+      reason: `${reason ?? 'ended'}: ${message}`,
+    });
+    if (release) this.release(entry.connection);
   }
 
   private async forward(id: RequestId, connection: Upstream, method: string, params: unknown): Promise<void> {
@@ -388,18 +473,18 @@ export class HostedRelay {
   }
 
   endControls(): void {
-    for (const [session, connection] of this.controls) {
-      this.send({ event: 'control-ended', session, reason: 'forbidden', message: 'Local control access ended.' });
-      this.release(connection);
+    for (const session of this.controls.keys()) {
+      const message = 'Local control access ended.';
+      this.send({ event: 'control-ended', session, reason: 'forbidden', message });
+      this.endControl(session, 'forbidden', message);
     }
-    this.controls.clear();
   }
 
   close(): void {
     this.closed = true;
+    for (const session of this.controls.keys()) this.endControl(session, null, 'The client disconnected.');
+    for (const frame of this.frames.values()) frame.stop();
     for (const connection of this.connections) connection.close();
     this.connections.clear();
-    this.controls.clear();
-    this.frames.clear();
   }
 }

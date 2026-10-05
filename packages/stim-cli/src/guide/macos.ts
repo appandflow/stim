@@ -141,8 +141,9 @@ A refusal or an unreachable host fails the command; it never launches here
 instead.
 
 Phones and Stim Desktop view and control the hosted app through this Mac's
-stim-server, which relays to the host. Viewing needs Screen Recording and
-Accessibility capture permissions on the host.
+stim-server, which relays to the host. Viewing needs Screen Recording on the
+host; control needs Accessibility on the host. The phone sends clicks, scrolls,
+text and keys; Stim Desktop's Control sends clicks, drags and typed text.
 
   stim macos --host mini          # build here, deliver, launch on mini
   stim macos --host mini --json   # { platform, product, launchId, build, host }
