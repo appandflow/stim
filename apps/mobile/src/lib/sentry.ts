@@ -14,6 +14,7 @@ if (dsn) {
     attachViewHierarchy: false,
     enableNetworkBreadcrumbs: false,
     enableNetworkEventBreadcrumbs: false,
+    enableAutoSessionTracking: false,
     beforeSend: scrubEvent,
     beforeBreadcrumb: scrubBreadcrumb,
   });

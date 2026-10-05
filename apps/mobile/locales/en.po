@@ -2880,6 +2880,10 @@ msgstr "Prepare"
 msgid "Previous agent action"
 msgstr "Previous agent action"
 
+#: src/screens/about.tsx
+msgid "Privacy policy"
+msgstr "Privacy policy"
+
 #: src/screens/workspace-resources.tsx
 msgid "Process"
 msgstr "Process"
