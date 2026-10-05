@@ -1016,7 +1016,11 @@ captured"  (in metro.ndjson, bare RN)
   -- \`guide settings\` names the type each key takes), an invalid
   Metro tunnel setting, an invalid android.dataPartitionSizeGb value, an unsafe
   android.avdConfig key or fragment, a malformed ios.signingIdentity,
-  ios.signingIdentitySha1 or ios.lanHost value, \`--device\` with an empty
+  ios.signingIdentitySha1 or ios.lanHost value, a metro.port or
+  STIM_METRO_PORT that another workspace reserves or another process holds,
+  a changed pin while this workspace's dev server runs or its supervisor
+  cannot be verified,
+  \`--device\` with an empty
   serial or UDID, \`--device\` together with \`--remote\`, \`ios --runtime\`
   on a remote run (\`--remote\` or ios.remote; the remote backend picks the
   iOS version), \`ios --device-type\` on the proxy backend or with an
@@ -1059,6 +1063,12 @@ captured"  (in metro.ndjson, bare RN)
   is on stdout, except \`logs --json\`, whose stdout stays empty NDJSON; the
   refusal is on stderr. \`stop\` outside a project refuses rather than
   reporting that nothing was running.
+  For a changed Metro pin, run stim stop before retrying, or unset or restore
+  the pin; for an unverified supervisor, stop it with the tool that started it. A foreign holder is refused before anything starts; this project's
+  own Metro on the pin is attached to. stim web follows the same rules when
+  its page uses Metro. ios and android with --no-metro-check use the pin,
+  then the recorded port, then 8081, without probing or reserving; an invalid
+  pin still refuses.
   These errors are caught before the port is reserved and before any build or
   device work, so nothing was started. The one listing they need
   (\`simctl list runtimes\`, the SDK's system-images directory, \`avdmanager

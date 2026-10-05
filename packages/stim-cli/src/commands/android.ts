@@ -24,6 +24,8 @@ import {
   resolveCacheProviderConfig,
   resolveSettings,
   metroWarmupUrlSetting,
+  metroPortSetting,
+  SETTING_SHAPE_REMEDY,
   publicUrlSetting,
   tunnelModeSetting,
 } from '../workspace/settings.ts';
@@ -906,14 +908,20 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
       );
       return true;
     } else {
+      const pin = metroPortSetting(root);
+      if (pin.error) {
+        phaseFailure = fail('STIM_BAD_ARG', pin.error, SETTING_SHAPE_REMEDY);
+        return false;
+      }
+      metroPort = pin.port ?? reservedPort ?? DEFAULT_METRO_PORT;
       phase(
         'metro',
-        reservedPort
-          ? `port ${reservedPort} (not checked)`
+        (pin.port ?? reservedPort)
+          ? `port ${metroPort} (not checked)`
           : `no reservation; using ${DEFAULT_METRO_PORT} (not checked)`,
       );
     }
-    metroPort = release ? null : (reservedPort ?? DEFAULT_METRO_PORT);
+    if (release) metroPort = null;
     return true;
   }
 

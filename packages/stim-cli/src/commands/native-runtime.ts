@@ -4,6 +4,7 @@ import type { ReclaimedStep } from '../budget.ts';
 import { phaseLine } from '../command-output.ts';
 import type { DevServerStart } from '../engine/build-facts.ts';
 import { resolveProjectMetro } from '../metro.ts';
+import { metroPortSetting } from '../workspace/settings.ts';
 import { readWorkspaceState } from '../workspace/workspace-state.ts';
 import { startDevServer, type StartDevServerRequest } from './start.ts';
 import { ensureWorkspaceStorage } from '../workspace/paths.ts';
@@ -34,7 +35,9 @@ export async function ensureDevServer({
   start?: typeof startDevServer;
   readState?: typeof readWorkspaceState;
 }): Promise<DevServerGate> {
-  const held = port === null ? null : (await resolve(port, root)).metro;
+  const pin = metroPortSetting(root);
+  const canReuse = !pin.error && (pin.port === null || pin.port === port);
+  const held = port === null || !canReuse ? null : (await resolve(port, root)).metro;
   if (port !== null && held) return { ok: true, port, pid: held.pid ?? null, devServer: null, reclaimed: [] };
   const reason = readIdleStop(readState(root)) ? 'stopped (idle)' : 'not running';
   note(chalk.dim(phaseLine('metro', `dev server ${reason}; starting it${remote ? ' for a remote device' : ''}`)));

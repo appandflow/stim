@@ -264,6 +264,23 @@ ${ANDROID_AVD_CONFIG_HELP.map((line) => `                          ${line}`).joi
                         did not create it, so a Metro request through it is
                         still gated through a public bundle probe. Set it
                         before Expo start so the manifest advertises it.
+  metro.port            this workspace's Metro port, 1024-65535;
+                        STIM_METRO_PORT overrides it. Stim reserves this
+                        number instead of picking one from 8082 up, for a
+                        workspace whose tools already expect a port. A
+                        committed value suits a single checkout; give each
+                        worktree its own in the workspace layer or the
+                        environment. start refuses with STIM_BAD_ARG when
+                        another workspace reserves it or another process
+                        holds it. start, ios, android and web refuse a
+                        changed pin while this workspace's dev server runs
+                        (run stim stop before retrying) or its supervisor
+                        cannot be verified (stop it with the tool that
+                        started it). A foreign holder is refused before
+                        anything starts; this project's Metro on the pin is
+                        attached to. --no-metro-check uses the pin, then the
+                        recorded port, then 8081, without probing or reserving;
+                        an invalid pin still refuses.
   metro.warmupUrl       optional object with per-platform bundle URLs:
   metro.warmupUrl.ios
   metro.warmupUrl.android

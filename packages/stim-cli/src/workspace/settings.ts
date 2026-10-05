@@ -10,6 +10,7 @@ import {
   acceptsShape,
   expectedShape,
   isLayeredSetting,
+  coerceSettingText,
   settingDefinition,
   settingValueError,
   REMOTE_DEVICE_BACKENDS,
@@ -681,6 +682,24 @@ export function metroTunnelSettingError(settings: SettingsObject): string | null
     return 'metro.ngrokUrl must be a valid HTTPS URL.';
   }
   return null;
+}
+
+export function metroPortSetting(
+  projectPath: string,
+  env: NodeJS.ProcessEnv = process.env,
+): { port: number | null; error: string | null } {
+  const setting = settingDefinition('metro.port')!;
+  const fromEnv = env.STIM_METRO_PORT?.trim();
+  const value = fromEnv
+    ? coerceSettingText(setting, fromEnv)
+    : settingValueAt(settingsForProject(projectPath), 'metro.port');
+  if (value === undefined) return { port: null, error: null };
+  const problem = settingValueError(setting, value);
+  if (problem === null) return { port: value as number, error: null };
+  const source = fromEnv
+    ? `STIM_METRO_PORT value ${JSON.stringify(env.STIM_METRO_PORT)}`
+    : `metro.port setting ${JSON.stringify(value)}`;
+  return { port: null, error: `Invalid ${source}. Expected ${problem}.` };
 }
 
 export function publicUrlSetting(settings: SettingsObject): string | null {

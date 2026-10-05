@@ -14,7 +14,6 @@ import { getExecutor } from '../exec.ts';
 import { resolveProjectMetro } from '../metro.ts';
 import { getNamedPort, reserveBrowserPort } from '../named-ports.ts';
 import { readNdjsonGenerations } from '../ndjson.ts';
-import { reserveMetroPort } from '../ports.ts';
 import { spawnEntry } from '../spawn-entry.ts';
 import { resolveSupervisorTarget } from '../supervisor/ownership.ts';
 import { findChrome, CHROME_INSTALL_REMEDY } from '../web/chrome.ts';
@@ -40,9 +39,16 @@ import {
 import { getProject, upsertProject } from '../workspace/config.ts';
 import { workspaceDir, workspaceLogsDir } from '../workspace/paths.ts';
 import { detectIsExpo, findCommandWorkspace, isPackageResolvable } from '../workspace/project.ts';
-import { resolveSettings, SETTING_SHAPE_REMEDY, settingShapeErrors, webSettings } from '../workspace/settings.ts';
+import {
+  metroPortSetting,
+  resolveSettings,
+  SETTING_SHAPE_REMEDY,
+  settingShapeErrors,
+  webSettings,
+} from '../workspace/settings.ts';
 import { readWorkspaceState, recordWorkspaceUse } from '../workspace/workspace-state.ts';
 import { gitCommonDir, repoRoot } from '../workspace/worktree.ts';
+import { resolveWorkspaceMetroPort } from './start.ts';
 import { ensureWorkspaceStorageSafely, sleep } from './native-runtime.ts';
 
 interface WebFailure {
@@ -183,12 +189,14 @@ export async function runWeb({
   const [shapeError] = settingShapeErrors(settings);
   if (shapeError) return failure('STIM_BAD_ARG', shapeError, SETTING_SHAPE_REMEDY);
   const web = webSettings(settings);
+  const usesMetro = web.url === null || web.url.includes('{port:metro}');
+  const pin = usesMetro ? metroPortSetting(root) : null;
+  if (pin?.error) return failure('STIM_BAD_ARG', pin.error, SETTING_SHAPE_REMEDY);
 
   const chrome = findChrome();
   if (!chrome)
     return failure('STIM_WEB_NO_CHROME', 'Google Chrome or Chromium is not installed.', CHROME_INSTALL_REMEDY);
 
-  const usesMetro = web.url === null || web.url.includes('{port:metro}');
   if (web.url === null && !detectIsExpo(root)) {
     return failure(
       'STIM_WEB_NO_URL',
@@ -205,7 +213,11 @@ export async function runWeb({
   }
 
   let metroPort = getProject(root)?.metroPort ?? null;
-  if (usesMetro && metroPort === null) metroPort = await reserveMetroPort(root);
+  if (usesMetro && (pin?.port !== null || metroPort === null)) {
+    const result = await resolveWorkspaceMetroPort(root, note, 'web');
+    if (typeof result !== 'number') return failure(result.code, result.message, result.remedy);
+    metroPort = result;
+  }
   const metro = usesMetro && metroPort !== null ? await resolveProjectMetro(metroPort, root) : null;
   const supervisor = resolveSupervisorTarget({
     state: readWorkspaceState(root)?.supervisor,

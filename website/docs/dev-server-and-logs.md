@@ -25,6 +25,28 @@ Bare React Native runs Metro in the supervisor. Expo runs the project's Expo CLI
 as a supervised child. A healthy server that another process started for the
 same project can be reused, but Stim cannot capture its full output.
 
+## Choose the port
+
+Stim picks a free Metro port from 8082 up. When a workspace's own tools
+already expect a port, set it with the `metro.port` setting or
+`STIM_METRO_PORT`, and Stim reserves that number instead. A committed value
+suits a single checkout. Give each worktree its own, in the workspace layer or
+the environment: `stim start` refuses with `STIM_BAD_ARG` when another
+workspace reserves the port or another process holds it.
+
+<StimTabs code={`stim settings set metro.port 25062 --scope workspace`} />
+
+Changing the pin while this workspace's dev server runs is refused until
+`stim stop`; an unverified supervisor also blocks the change until you stop it
+with the tool that started it. You can also unset or restore the pin. A foreign process on the pin is refused before
+anything starts or the port is reserved. This project's own Metro already
+on the pin is attached to. `stim web` follows the same rules when its page
+uses Metro.
+
+For `stim ios` and `stim android`, `--no-metro-check` uses the pin, then the
+recorded port, then 8081, without probing, reserving or writing the registry.
+An invalid pin still refuses with `STIM_BAD_ARG`. Release builds skip Metro.
+
 ## Idle stop
 
 A dev server holds about 450 MB. The supervisor stops it after

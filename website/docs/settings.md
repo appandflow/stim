@@ -114,6 +114,7 @@ Explicit machine project/repository overrides keep their existing precedence.
 | `metro.tunnel`                | Remote tunnel mode: `auto`, `off`, `expo`, `cloudflared`, `ngrok`, or `tailscale` (explicit, tailnet-only) |
 | `metro.ngrokUrl`              | Existing ngrok URL                                                                                         |
 | `metro.publicUrl`             | Existing public Metro URL                                                                                  |
+| `metro.port`                  | This workspace's Metro port, reserved instead of one Stim picks                                            |
 | `metro.warmupUrl.ios`         | Bundle URL `stim ios` prefetches to warm Metro                                                             |
 | `metro.warmupUrl.android`     | Bundle URL `stim android` prefetches to warm Metro                                                         |
 | `metro.idleStopMinutes`       | Minutes of no use before the dev server stops; `0` never, default 60                                       |
@@ -126,6 +127,18 @@ Explicit machine project/repository overrides keep their existing precedence.
 | `cache.provider`              | Optional second-tier cache provider module                                                                 |
 | `cache.options`               | Options passed to that provider                                                                            |
 | `optimizations`               | [Build optimization switches and defaults](./build-optimizations.md)                                       |
+
+`metro.port` and `STIM_METRO_PORT` pin Metro for `stim start`, `stim ios`,
+`stim android` and pages using Metro in `stim web`. Changing the pin while
+this workspace's dev server runs is refused until `stim stop`; an unverified
+supervisor also blocks the change until you stop it with the tool that started
+it. You can also unset or restore the pin.
+A foreign holder is refused before anything starts or the port is reserved.
+This project's own Metro already on the pin is attached to. With
+`--no-metro-check`, iOS and Android use the pin, then the recorded port, then
+8081, without probing, reserving or writing the registry. An invalid pin
+still refuses with `STIM_BAD_ARG`. Release builds skip Metro. A `web.url`
+without `{port:metro}` ignores the pin.
 
 `worktree warm` reads repository-wide copy settings from the source checkout's
 root `.stim.json`, not individual app files. Keep `worktree.exclude` and
@@ -162,7 +175,11 @@ The setting only changes the prefetch, not the app. Setting
 `stim guide settings` for the full rules.
 
 ```json
-{ "metro": { "warmupUrl": { "ios": "/src/main.bundle?platform=ios&dev=true&lazy=true" } } }
+{
+  "metro": {
+    "warmupUrl": { "ios": "/src/main.bundle?platform=ios&dev=true&lazy=true" }
+  }
+}
 ```
 
 ### Default simulator model and runtime
@@ -553,6 +570,7 @@ recordings are otherwise cleaned up.
 | `STIM_POOL_IOS_PARKED_MAX`            | Maximum parked simulators                                                                                   |
 | `STIM_GC_WORKTREE_GRACE_MINUTES`      | Minutes `gc --delete` waits after a worktree's last activity or merge; overrides `gc.worktreeGraceMinutes`  |
 | `STIM_METRO_PUBLIC_URL`               | Public Metro URL for remote use                                                                             |
+| `STIM_METRO_PORT`                     | This workspace's Metro port, reserved instead of one Stim picks; overrides `metro.port`                     |
 | `STIM_ANDROID_CAS_TOOLCHAIN`          | Absolute path to the [Android CAS toolchain manifest](./build-optimizations.md#experimental-android-cas)    |
 | `STIM_NO_UPDATE_CHECK`                | Set to disable the daily check for a newer Stim release in `stim guide`                                     |
 | `STIM_RECORDING`                      | `0` or `false` stops `stim-server` recording device screens; overrides `recording.enabled`                  |

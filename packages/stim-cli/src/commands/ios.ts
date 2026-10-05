@@ -30,6 +30,7 @@ import {
   publicUrlSetting,
   remoteIosSetting,
   SETTING_SHAPE_REMEDY,
+  metroPortSetting,
   settingShapeErrors,
   tunnelModeSetting,
   unknownSettingKeys,
@@ -685,9 +686,15 @@ async function runIos(
       }
       metroPort = gate.port;
       devServer = gate.devServer;
-    } else if (!metroPort) {
-      metroPort = DEFAULT_METRO_PORT;
-      note(chalk.yellow(`No Metro port is reserved for this workspace; wiring the app to ${metroPort}.`));
+    } else {
+      const pin = metroPortSetting(root);
+      if (pin.error) {
+        fail({ code: 'STIM_BAD_ARG', message: pin.error, remedy: SETTING_SHAPE_REMEDY });
+        return false;
+      }
+      if (pin.port === null && !metroPort)
+        note(chalk.yellow(`No Metro port is reserved for this workspace; wiring the app to ${DEFAULT_METRO_PORT}.`));
+      metroPort = pin.port ?? metroPort ?? DEFAULT_METRO_PORT;
     }
     if (physical && metroPort !== null && !(await resolveLanOrigin())) return false;
     if (remoteDevice && metroPort !== null) {
