@@ -37,6 +37,8 @@ export type Capability = (typeof CAPABILITIES)[number];
  * and the app's other windows.
  * `hosted-congestion` is `device-host.frames.congested`, which lowers the bitrate of a hosted video subscription
  * whose client is behind.
+ * `macos-window-select` is `input.window`, which pins the view to a macOS app window named by `macos-windows`,
+ * bringing it to the front, or with null resumes following the front window.
  */
 export const FEATURES = [
   'physical-ios',
@@ -44,6 +46,7 @@ export const FEATURES = [
   'notifications',
   'macos-window',
   'macos-windows',
+  'macos-window-select',
   'macos-window-control',
   'macos-keyboard-extended',
   'device-frames',
@@ -88,6 +91,7 @@ export const METHODS = [
   'input.simulator',
   'input.scroll',
   'input.key',
+  'input.window',
   'push.register',
   'push.unregister',
   'notifications.list',
@@ -121,6 +125,7 @@ export const METHODS = [
   'device-host.input.button',
   'device-host.input.rotate',
   'device-host.input.posture',
+  'device-host.input.window',
 ] as const;
 
 /** The methods a connection with the `build` capability may call; they need `build`, not `read`. */
@@ -159,6 +164,7 @@ export const DEVICE_HOST_METHODS = [
   'device-host.input.button',
   'device-host.input.rotate',
   'device-host.input.posture',
+  'device-host.input.window',
 ] as const;
 
 export type Method = (typeof METHODS)[number];
@@ -647,6 +653,12 @@ export type InputKey = (typeof INPUT_KEYS)[number];
 export const KEY_MODIFIERS = ['command', 'shift', 'option', 'control'] as const;
 export type KeyModifier = (typeof KEY_MODIFIERS)[number];
 
+/** Pins an owned macOS app window by id, or resumes following its front window with null. */
+export interface InputWindowParams {
+  session: string;
+  window: number | null;
+}
+
 /** A fixed native macOS key and optional modifiers, sent only to the captured owned app window. */
 export interface InputKeyParams {
   session: string;
@@ -1115,6 +1127,7 @@ export interface Methods {
   'device-host.input.button': Methods['input.button'];
   'device-host.input.rotate': Methods['input.rotate'];
   'device-host.input.posture': Methods['input.posture'];
+  'device-host.input.window': Methods['input.window'];
   hello: { params: HelloParams; result: HelloResult };
   'status.subscribe': { params?: Record<string, never>; result: SubscribeResult };
   'logs.query': { params: LogFilter; result: LogsQueryResult };
@@ -1144,6 +1157,7 @@ export interface Methods {
   'input.simulator': { params: InputSimulatorParams; result: SimulatorOptions };
   'input.scroll': { params: InputScrollParams; result: Record<string, never> };
   'input.key': { params: InputKeyParams; result: Record<string, never> };
+  'input.window': { params: InputWindowParams; result: Record<string, never> };
   'push.register': { params: PushRegisterParams; result: Record<string, never> };
   'push.unregister': { params?: Record<string, never>; result: Record<string, never> };
   'notifications.list': { params?: NotificationsListParams; result: NotificationsListResult };
@@ -1245,12 +1259,16 @@ export interface MacosWindow {
   frame: { x: number; y: number; width: number; height: number };
 }
 
-/** Sent after subscribing and whenever the captured window or the app's window list changes. */
+/**
+ * Sent after subscribing and when the captured window, window list or pin mode changes. `pinned` is true while
+ * `input.window` pins the view to `current`, and false while following the front window.
+ */
 export interface MacosWindowsEvent {
   event: 'macos-windows';
   subscription: string;
   current: MacosWindow | null;
   windows: MacosWindow[];
+  pinned: boolean;
 }
 
 export interface DuoFramePose {

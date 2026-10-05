@@ -34,7 +34,8 @@ final class MacosSource: NSObject, Source, SCStreamDelegate, SCStreamOutput {
   private let video = videoEncoder()
   private let jpegGate = JpegGate()
   private var window: SCWindow?
-  private var reported: OwnedAppWindows.Selection??
+  private var reported: (selection: OwnedAppWindows.Selection?, pinned: Bool)?
+  private var pinned: (window: UInt32, session: String)?
   private var switching = false
   private var followTimer: DispatchSourceTimer?
   private let followQueue = DispatchQueue(label: "stim.frames.macos.follow")
@@ -148,11 +149,21 @@ final class MacosSource: NSObject, Source, SCStreamDelegate, SCStreamOutput {
     OwnedAppWindowReader.screen(pid: app.app.pid)?.contains { $0.id == id } == true
   }
 
+  private func applyPin(_ selection: OwnedAppWindows.Selection) -> OwnedAppWindows.Selection {
+    let result = OwnedAppWindows.pin(selection, to: pinned?.window)
+    if result.pinned == nil { pinned = nil }
+    return result.selection
+  }
+
   private func follow() {
     guard !switching, matches() else { return }
     let found: OwnedAppWindows.Selection?
     do { found = try currentWindows() } catch { return }
-    guard let selection = found else { return report(nil) }
+    guard let found else {
+      pinned = nil
+      return report(nil)
+    }
+    let selection = applyPin(found)
     guard let stream, let captured = window else {
       switching = true
       Task {
@@ -196,15 +207,16 @@ final class MacosSource: NSObject, Source, SCStreamDelegate, SCStreamOutput {
   private func report(_ found: OwnedAppWindows.Selection?) {
     let shown: (OwnedAppWindows.Window) -> OwnedAppWindows.Window = { .init(id: $0.id, title: $0.title, frame: $0.frame, accessible: nil) }
     let selection = found.map { OwnedAppWindows.Selection(current: shown($0.current), windows: $0.windows.map(shown)) }
-    guard reported != .some(selection) else { return }
-    if (reported ?? nil) == nil || selection == nil {
+    let state = (selection: selection, pinned: pinned != nil)
+    if let reported, reported.selection == state.selection, reported.pinned == state.pinned { return }
+    if reported?.selection == nil || selection == nil {
       let reason =
         AXIsProcessTrusted()
         ? "The owned macOS app has no open window."
         : "Without \(Self.controlPermission) permission Stim views only an owned app whose one window contains the others."
       Output.notice(["stalled": selection == nil ? reason : NSNull()])
     }
-    reported = .some(selection)
+    reported = state
     let json: (OwnedAppWindows.Window) -> [String: Any] = {
       [
         "id": Int($0.id), "title": $0.title,
@@ -214,6 +226,7 @@ final class MacosSource: NSObject, Source, SCStreamDelegate, SCStreamOutput {
     Output.notice([
       "macosWindows": [
         "current": selection.map { json($0.current) as Any } ?? NSNull(), "windows": (selection?.windows ?? []).map(json),
+        "pinned": state.pinned,
       ]
     ])
   }
@@ -247,9 +260,11 @@ final class MacosSource: NSObject, Source, SCStreamDelegate, SCStreamOutput {
         if enabled {
           if let held = self.heldMouse { self.releaseMouse(held.session) }
           self.controlSession = session
+          self.followQueue.async { if self.pinned?.session != session { self.pinned = nil } }
         } else if self.controlSession == session {
           self.releaseMouse(session)
           self.controlSession = nil
+          self.unpin(session)
         }
       case .scoped(let session, let action):
         let previous = self.lastInput
@@ -277,8 +292,14 @@ final class MacosSource: NSObject, Source, SCStreamDelegate, SCStreamOutput {
       guard controlSession == session else { return false }
       releaseMouse(session)
       controlSession = nil
+      unpin(session)
       return true
     }
+  }
+
+  /// A pin lasts only as long as the Control session that chose it.
+  private func unpin(_ session: String) {
+    followQueue.async { if self.pinned?.session == session { self.pinned = nil } }
   }
 
   private func releaseMouse(_ session: String) {
@@ -351,8 +372,11 @@ final class MacosSource: NSObject, Source, SCStreamDelegate, SCStreamOutput {
     guard let screen = OwnedAppWindowReader.screen(pid: app.app.pid) else {
       throw refusal("The owned app's current window inventory is unavailable.")
     }
-    guard let selection = OwnedAppWindows.select(screen: screen, accessible: accessible.windows), matches(),
-      selection.current.id == captured.windowID,
+    guard let found = OwnedAppWindows.select(screen: screen, accessible: accessible.windows), matches() else {
+      throw WindowChanged()
+    }
+    let selection = followQueue.sync { applyPin(found) }
+    guard selection.current.id == captured.windowID,
       selection.current.frame.size == captured.frame.size, let index = selection.current.accessible
     else { throw WindowChanged() }
     return ((selection.current.id, selection.current.frame), accessible.elements[index])
@@ -382,7 +406,32 @@ final class MacosSource: NSObject, Source, SCStreamDelegate, SCStreamOutput {
       && focused.map { value in ([own] + attachedSheets(own)).contains { CFEqual(value, $0) } } == true
   }
 
+  /// Pins capture and Control to the app's window `id`, raising it, or with nil follows the front window again.
+  private func select(_ id: UInt32?, session: String) throws {
+    guard let id else {
+      followQueue.sync { pinned = nil }
+      return
+    }
+    guard matches(), AXIsProcessTrusted(), let accessible = OwnedAppWindowReader.accessible(pid: app.app.pid),
+      let screen = OwnedAppWindowReader.screen(pid: app.app.pid)
+    else { throw refusal("The owned app's accessible windows are unavailable.") }
+    guard !accessible.modal else { throw refusal("Control needs accessible owned app windows without a modal dialog.") }
+    guard let selection = OwnedAppWindows.select(screen: screen, accessible: accessible.windows),
+      let index = selection.windows.first(where: { $0.id == id })?.accessible, matches()
+    else { throw WindowChanged() }
+    let element = accessible.elements[index]
+    _ = AXUIElementSetAttributeValue(element, kAXMainAttribute as CFString, kCFBooleanTrue)
+    _ = AXUIElementPerformAction(element, kAXRaiseAction as CFString)
+    _ = NSRunningApplication(processIdentifier: app.app.pid)?.activate(options: [])
+    guard isActive(session) else { throw CancellationError() }
+    followQueue.sync {
+      pinned = (id, session)
+      follow()
+    }
+  }
+
   private func apply(_ command: Command, session: String) async throws {
+    if case .window(let id) = command { return try select(id, session: session) }
     guard let setWindowLocation = Self.windowLocation else {
       throw refusal("Native window input is unavailable on this macOS version. Viewing and logs remain available.")
     }

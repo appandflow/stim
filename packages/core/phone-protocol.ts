@@ -309,6 +309,7 @@ export type PhoneStatusEvent = Omit<Wire.StatusEvent, 'payload' | 'usage'> & {
 export type PhoneLogsEvent = Omit<Wire.LogsEvent, 'records'> & { records: PhoneLogRecord[] };
 export type PhoneDeviceFrameArtwork = Wire.DeviceFrameArtwork;
 export type PhoneDeviceFrameEvent = Wire.DeviceFrameEvent;
+export type PhoneMacosWindowsEvent = Wire.MacosWindowsEvent;
 export type PhoneFrameEvent = Omit<Wire.FrameEvent, 'platform' | 'posture' | 'mime'> & {
   platform: string;
   posture?: string;
@@ -497,6 +498,7 @@ export type {
   PhoneLogsEvent as LogsEvent,
   PhoneDeviceFrameArtwork as DeviceFrameArtwork,
   PhoneDeviceFrameEvent as DeviceFrameEvent,
+  PhoneMacosWindowsEvent as MacosWindowsEvent,
   PhoneFrameEvent as FrameEvent,
   PhoneFrameDelayedEvent as FrameDelayedEvent,
   PhoneErrorEvent as ErrorEvent,

@@ -48,7 +48,7 @@ export interface FrameListener {
   frame: (frame: Frame) => void;
   artwork?: (artwork: DeviceFrameArtwork | null) => void;
   /** macOS only. */
-  windows?: (windows: { current: MacosWindow | null; windows: MacosWindow[] }) => void;
+  windows?: (windows: { current: MacosWindow | null; windows: MacosWindow[]; pinned: boolean }) => void;
   duo?: (frame: Frame) => void;
   /**
    * With `video`, a device the helper streams sends H.264 access units here instead of JPEG frames; a device on

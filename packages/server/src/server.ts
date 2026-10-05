@@ -127,6 +127,7 @@ const INPUT_METHODS = [
   'input.simulator',
   'input.scroll',
   'input.key',
+  'input.window',
 ] as const;
 
 export interface ServerOptions {
@@ -1198,8 +1199,16 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         failed: end,
         ...(frameTarget.platform === 'macos'
           ? {
-              windows: ({ current, windows }: { current: MacosWindow | null; windows: MacosWindow[] }) => {
-                if (!ended) send(socket, { event: 'macos-windows', subscription, current, windows });
+              windows: ({
+                current,
+                windows,
+                pinned,
+              }: {
+                current: MacosWindow | null;
+                windows: MacosWindow[];
+                pinned: boolean;
+              }) => {
+                if (!ended) send(socket, { event: 'macos-windows', subscription, current, windows, pinned });
               },
             }
           : {}),

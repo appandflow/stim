@@ -319,8 +319,10 @@ it('routes hosted frames and video to the local subscription and forwards keyfra
   expect(packet.subarray(21 + packet[20]!)).toEqual(Buffer.from([0, 0, 1, 101, 99]));
   const upstream = requests.find((request) => request.method === 'device-host.frames.subscribe')!.socket;
   const window = { id: 7, title: 'Hosted app', frame: { x: -100, y: 0, width: 800, height: 600 } };
-  const windowsEvent = { event: 'macos-windows', current: window, windows: [window] };
-  upstream.send(JSON.stringify({ event: 'macos-windows', subscription: 'unrelated', current: null, windows: [] }));
+  const windowsEvent = { event: 'macos-windows', current: window, windows: [window], pinned: true };
+  upstream.send(
+    JSON.stringify({ event: 'macos-windows', subscription: 'unrelated', current: null, windows: [], pinned: false }),
+  );
   upstream.send(JSON.stringify({ ...windowsEvent, subscription: UPSTREAM }));
   expect(await local.next()).toEqual({ ...windowsEvent, subscription });
   expect(await local.request('frames.keyframe', { subscription })).toMatchObject({ result: {} });
@@ -353,6 +355,10 @@ it('routes input using the host control id and closes upstream after control.end
     ['input.text', { text: 'hello' }],
     ['input.scroll', { x: 0.5, y: 0.5, deltaX: 0, deltaY: 1 }],
     ['input.key', { key: 'return', modifiers: [] }],
+    ['input.window', { window: 7 }],
+    ['input.window', { window: null }],
+    ['input.window', { window: 0 }],
+    ['input.window', { window: 0xffffffff }],
   ] as const;
   for (const [method, params] of inputs) {
     expect(await local.request(method, { session, ...params })).toMatchObject({ result: {} });
@@ -654,16 +660,21 @@ it('validates hosted macOS input and applies the connection input budget', async
     ['input.text', { text: '' }],
     ['input.scroll', { x: 0, y: 0, deltaX: 2000, deltaY: 0 }],
     ['input.key', { key: 'unknown' }],
+    ['input.window', { window: -1 }],
+    ['input.window', { window: 0x100000000 }],
+    ['input.window', { window: 1.5 }],
+    ['input.window', { window: '7' }],
+    ['input.window', {}],
     ['input.button', { button: 'home' }],
   ] as const) {
     expect(await local.request(method, { session, ...params })).toMatchObject({ error: { code: 'bad-request' } });
   }
   expect(requests.filter((request) => request.method.startsWith('device-host.input.'))).toEqual([]);
-  expect(await local.request('input.text', { session, text: 'first' })).toMatchObject({ result: {} });
-  expect(await local.request('input.text', { session, text: 'second' })).toMatchObject({
+  expect(await local.request('input.window', { session, window: 7 })).toMatchObject({ result: {} });
+  expect(await local.request('input.window', { session, window: null })).toMatchObject({
     error: { code: 'limit-exceeded' },
   });
-  expect(requests.filter((request) => request.method === 'device-host.input.text')).toHaveLength(1);
+  expect(requests.filter((request) => request.method === 'device-host.input.window')).toHaveLength(1);
 });
 
 it('applies the local text character budget before forwarding hosted input', async () => {

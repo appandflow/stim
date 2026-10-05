@@ -100,6 +100,7 @@ export type InputCommand =
   | { input: 'text'; text: string }
   | { input: 'scroll'; x: number; y: number; deltaX: number; deltaY: number }
   | { input: 'key'; key: InputKey; modifiers: KeyModifier[] }
+  | { input: 'window'; window: number | null }
   | { input: 'button'; button: InputButton }
   | { input: 'rotate'; direction: RotateDirection }
   | { input: 'posture'; posture: DevicePosture }
@@ -113,7 +114,8 @@ type InputMethod =
   | 'input.posture'
   | 'input.simulator'
   | 'input.scroll'
-  | 'input.key';
+  | 'input.key'
+  | 'input.window';
 
 /**
  * What a control session accepts: its device's platform, the postures `input.posture` takes, and whether it is a
@@ -150,8 +152,25 @@ export function parseInput(
   if (!target) return { code: 'unknown-session', message: `No control session ${params.session} on this connection.` };
   const { platform, postures } = target;
   const session = params.session;
-  if (platform === 'macos' && !['input.touch', 'input.text', 'input.scroll', 'input.key'].includes(method)) {
-    return { code: 'bad-request', message: 'A native macOS app takes mouse, scroll, text and keyboard input only.' };
+  if (
+    platform === 'macos' &&
+    !['input.touch', 'input.text', 'input.scroll', 'input.key', 'input.window'].includes(method)
+  ) {
+    return {
+      code: 'bad-request',
+      message: 'A native macOS app takes mouse, scroll, text, keyboard and window input only.',
+    };
+  }
+  if (method === 'input.window') {
+    if (platform !== 'macos')
+      return { code: 'bad-request', message: 'This input is for a native macOS app window only.' };
+    const window = params.window;
+    if (
+      window !== null &&
+      (typeof window !== 'number' || !Number.isInteger(window) || window < 0 || window > 0xffffffff)
+    )
+      return { code: 'bad-request', message: 'input.window needs a window id from 0 to 4294967295 or null.' };
+    return { value: { session, command: { input: 'window', window } } };
   }
   if (method === 'input.scroll' || method === 'input.key') {
     if (platform !== 'macos')

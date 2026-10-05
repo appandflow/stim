@@ -247,7 +247,7 @@ export class HelperSource {
   private lastDuo: Frame | null = null;
   private duoAvailable = false;
   private artwork: DeviceFrameArtwork | null | undefined;
-  private windows: { current: MacosWindow | null; windows: MacosWindow[] } | undefined;
+  private windows: { current: MacosWindow | null; windows: MacosWindow[]; pinned: boolean } | undefined;
   private config = '';
   private stopped = false;
   private notice: string | null = null;
@@ -529,11 +529,11 @@ export class HelperSource {
       const notice: unknown = JSON.parse(text);
       if (isJsonObject(notice) && isJsonObject(notice.macosWindows)) {
         const value = notice.macosWindows;
-        if (Array.isArray(value.windows)) {
+        if (Array.isArray(value.windows) && (value.pinned === undefined || typeof value.pinned === 'boolean')) {
           const windows = value.windows.map(parseMacosWindow);
           const current = value.current === null ? null : parseMacosWindow(value.current);
           if ((value.current === null || current !== null) && windows.every((window) => window !== null)) {
-            this.windows = { current, windows };
+            this.windows = { current, windows, pinned: value.pinned ?? false };
             for (const listener of this.listeners.keys()) listener.windows?.(this.windows);
           }
         }

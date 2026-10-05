@@ -1796,13 +1796,30 @@ process.stdin.on('end',()=>process.exit(0));
   });
 });
 
-test('hosted scroll and key requests validate bounded coordinates, deltas, keys and unique modifiers', () => {
+test('hosted window, scroll and key requests validate bounded ids, coordinates, deltas, keys and unique modifiers', () => {
   const validator = new Ajv2020({ strict: false, validateFormats: false });
   validator.addSchema(protocolJsonSchema(), 'protocol');
   const accepts = validator.compile({ $ref: 'protocol#/$defs/ClientRequest' });
   const scroll = { session: 'c1', x: 0, y: 1, deltaX: -1000, deltaY: 1000 };
   const key = { session: 'c1', key: 'a', modifiers: ['command', 'shift'] };
   for (const [method, params, invalid] of [
+    ...['input.window', 'device-host.input.window'].flatMap((inputMethod) =>
+      [null, 0, 0xffffffff].map(
+        (window) =>
+          [
+            inputMethod,
+            { session: 'c1', window },
+            [
+              { session: 'c1', window: -1 },
+              { session: 'c1', window: 0x100000000 },
+              { session: 'c1', window: 1.5 },
+              { session: 'c1', window: '7' },
+              { session: 'c1' },
+              { window },
+            ],
+          ] as const,
+      ),
+    ),
     [
       'device-host.input.scroll',
       scroll,

@@ -235,3 +235,39 @@ test('does not pass an unknown negotiated video codec into the native decoder', 
   expect(mockPush).not.toHaveBeenCalled();
   await unmount();
 });
+
+test('reports window selection mode and clears it when the subscription or target changes', async () => {
+  const { result, rerender } = await renderHook(
+    ({ workspace }: { workspace: string }) => useDeviceStream({ ...TARGET, platform: 'macos', workspace }, OPTIONS),
+    { initialProps: { workspace: '/app' } },
+  );
+  expect(result.current.windows).toBeNull();
+  await act(async () => mockAnswers[0]!({ subscription: 's1' }));
+  const window = { id: 12, title: 'App', frame: { x: 0, y: 0, width: 800, height: 600 } };
+  for (const pinned of [false, true]) {
+    await act(async () =>
+      mockEvents[0]!({
+        event: 'macos-windows',
+        subscription: 's1',
+        current: window,
+        windows: [window],
+        pinned,
+      }),
+    );
+    expect(result.current.windows).toEqual({ current: window, windows: [window], pinned });
+  }
+  await act(async () => mockAnswers[0]!({ subscription: 's2' }));
+  expect(result.current.windows).toBeNull();
+  await act(async () =>
+    mockEvents[0]!({
+      event: 'macos-windows',
+      subscription: 's2',
+      current: null,
+      windows: [],
+      pinned: false,
+    }),
+  );
+  expect(result.current.windows).toEqual({ current: null, windows: [], pinned: false });
+  await rerender({ workspace: '/other' });
+  expect(result.current.windows).toBeNull();
+});
