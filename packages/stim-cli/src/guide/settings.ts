@@ -684,6 +684,13 @@ worker root stops it too.
 running as a login LaunchAgent; \`--path-prepend <dir>\` and \`--env KEY=VALUE\`
 pin a PATH entry or variable such as a private CocoaPods that stim-server's
 login-shell environment would otherwise replace.
+\`stim-server service update --release <version>\` there moves the service to
+that exact stim-server release from the public npm registry once npm verifies
+its integrity and registry signatures; \`--from <dir>\` installs the packed
+packages of a checkout instead. It waits for offloaded builds and hosted
+sessions to finish, restarts the job, and switches back when the new server
+does not answer within 90 seconds; \`stim-server service rollback\` returns
+to the previous server.
 Installation alone does not prove readiness; check \`stim-server service status\`
 and its reported log. The server listens before it touches the Stim home; a
 read-only child process reads the Stim home, server and recording directories,

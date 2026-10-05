@@ -4,12 +4,16 @@ import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSyn
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import {
+  answersAs,
   applyServeEnvironment,
   parseEnvAssignment,
   parseInstalledPlist,
   parseLaunchctlPrint,
   planServe,
   renderPlist,
+  argumentsWithScript,
+  signatureProblem,
+  validateRelease,
   validateServeEnvironment,
   type ServiceSpec,
 } from '../src/service-plist.ts';
@@ -65,6 +69,33 @@ describe('service plist', () => {
             logPath: SPEC.logPath,
             managed: true,
             serve: { port: 7443, created: true },
+            previousScript: null,
+            programArguments: [
+              ...(host ? [host, 'run'] : []),
+              SPEC.node,
+              SPEC.script,
+              ...json.ProgramArguments.slice(host ? 4 : 2),
+            ],
+          });
+          const next =
+            '/Users/me/Library/Application Support/Stim/services/dev.stim.server/versions/2.0.0-0123456789abcdef/node_modules/@stim-cli/server/dist/stim-server.mjs';
+          const installed = parseInstalledPlist(json)!;
+          execFileSync('plutil', [
+            '-replace',
+            'ProgramArguments',
+            '-json',
+            JSON.stringify(argumentsWithScript(installed, next)),
+            file,
+          ]);
+          execFileSync('plutil', ['-replace', 'StimService.PreviousScript', '-string', SPEC.script, file]);
+          const switched = parseInstalledPlist(
+            JSON.parse(execFileSync('plutil', ['-convert', 'json', '-o', '-', file], { encoding: 'utf8' })),
+          );
+          expect(switched).toEqual({
+            ...installed,
+            script: next,
+            previousScript: SPEC.script,
+            programArguments: argumentsWithScript(installed, next),
           });
           const without = join(dir, 'plain.plist');
           writeFileSync(without, renderPlist({ ...SPEC, serve: null }));
@@ -134,6 +165,38 @@ describe('serve plan', () => {
   });
 });
 
+describe('service update checks', () => {
+  it('takes only an exact release version', () => {
+    expect(validateRelease('1.15.0')).toBeNull();
+    expect(validateRelease('2.0.0-rc.1')).toBeNull();
+    for (const value of ['^1.15.0', 'latest', '1.15', '1.15.0 || 2.0.0', '../1.0.0']) {
+      expect(validateRelease(value)).toContain('exact stim-server version');
+    }
+  });
+
+  it('tells two builds of one version apart by their Stim build, and matches an older server on its version', () => {
+    const expected = { version: '1.14.0', stimBuild: 'aaaaaaaaaaaaaaaa' };
+    expect(answersAs({ version: '1.14.0', stimBuild: 'aaaaaaaaaaaaaaaa' }, expected)).toBe(true);
+    expect(answersAs({ version: '1.14.0', stimBuild: 'bbbbbbbbbbbbbbbb' }, expected)).toBe(false);
+    expect(answersAs({ version: '1.13.0', stimBuild: 'aaaaaaaaaaaaaaaa' }, expected)).toBe(false);
+    expect(answersAs({ version: '1.14.0' }, expected)).toBe(true);
+    expect(answersAs(null, expected)).toBe(false);
+  });
+
+  it('accepts only an npm signature report that vouches for every package', () => {
+    expect(signatureProblem('{"invalid":[],"missing":[]}')).toBeNull();
+    expect(
+      signatureProblem(
+        JSON.stringify({ invalid: [{ name: 'stim', version: '1.14.0', code: 'EINTEGRITYSIGNATURE' }], missing: [] }),
+      ),
+    ).toContain('invalid registry signatures or attestations: stim@1.14.0');
+    expect(signatureProblem(JSON.stringify({ invalid: [], missing: [{ name: 'ws', version: '8.0.0' }] }))).toContain(
+      'without registry signatures: ws@8.0.0',
+    );
+    expect(signatureProblem('npm ERR! audit signatures failed')).toContain('did not print a JSON report');
+  });
+});
+
 describe('launchctl print', () => {
   it('reads the top-level job fields and ignores nested state lines', () => {
     const output = [
@@ -176,6 +239,17 @@ describe('service command line', () => {
     expect(stimServer('service', 'install', '--env', 'X').stderr).toContain('KEY=VALUE');
     expect(stimServer('pair', '--label', 'x').stderr).toContain('only to `service`');
     expect(stimServer('service', 'restart').stderr).toContain('unknown command');
+  });
+
+  it('takes exactly one update source, and only for service update', { timeout: 30_000 }, () => {
+    expect(stimServer('service', 'install', '--release', '1.0.0').stderr).toContain('only to `service update`');
+    expect(stimServer('pair', '--from', '/tmp').stderr).toContain('only to `service update`');
+    expect(stimServer('service', 'update').stderr).toContain('exactly one of --release');
+    expect(stimServer('service', 'update', '--release', '1.0.0', '--from', '/tmp').stderr).toContain(
+      'exactly one of --release',
+    );
+    expect(stimServer('service', 'update', '--release', 'latest').stderr).toContain('exact stim-server version');
+    expect(stimServer('service', 'update', '--from', '/nonexistent-stim-dir').stderr).toContain('directory of .tgz');
   });
 });
 
@@ -230,6 +304,7 @@ describe('service status permissions', () => {
     logPath: SPEC.logPath,
     node: SPEC.node,
     script: SPEC.script,
+    previousScript: null,
     host: {
       app: '/Users/me/Applications/Stim Host Dev.app',
       name: 'Stim Host Dev',

@@ -123,7 +123,7 @@ function problemFix(code: OffloadProblem['code'], entry: string): string {
     case 'checkout':
       return 'Offload syncs the files git lists; run Stim from a git checkout of the app.';
     case 'stim-build':
-      return `Update Stim on ${entry} to the same build as this Mac (install it from the same commit or release), then restart its stim-server.`;
+      return `Update stim-server on ${entry} to the same Stim build as this Mac: there, run \`stim-server service update --release <version>\` for this Mac's release, or \`--from <dir>\` with the packed packages of this Mac's checkout.`;
     case 'arch':
       return 'Use a build machine with the same CPU architecture as this Mac.';
     case 'xcode':

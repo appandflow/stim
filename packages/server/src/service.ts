@@ -1,18 +1,35 @@
 import { execFile } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { createRequire } from 'node:module';
 import { homedir } from 'node:os';
-import { basename, delimiter, dirname, join } from 'node:path';
+import { basename, delimiter, dirname, isAbsolute, join, relative } from 'node:path';
+import { releaseClaim, tryAcquireClaim } from '@stim-cli/core/ownership-claim';
 import { stimBuildDigest } from '@stim-cli/core/state';
 import {
+  answersAs,
+  DEFAULT_LABEL,
   parseInstalledPlist,
   parseLaunchctlPrint,
   planServe,
   renderPlist,
+  argumentsWithScript,
   ServiceError,
+  signatureProblem,
   type InstalledService,
   type LaunchdJob,
   type ServeRecord,
+  type ServerBuild,
   type ServiceSpec,
 } from './service-plist.ts';
 import { hostPermissionPanes, installHostApp, requestHostPermissions } from './stim-host.ts';
@@ -38,12 +55,17 @@ interface Run {
   stderr: string;
 }
 
-function run(file: string, args: string[], env: NodeJS.ProcessEnv = process.env): Promise<Run> {
+function run(
+  file: string,
+  args: string[],
+  env: NodeJS.ProcessEnv = process.env,
+  timeout: number = LAUNCHCTL_TIMEOUT_MS,
+): Promise<Run> {
   return new Promise((resolve) => {
     execFile(
       file,
       args,
-      { env, timeout: LAUNCHCTL_TIMEOUT_MS, killSignal: 'SIGKILL', encoding: 'utf8' },
+      { env, timeout, killSignal: 'SIGKILL', encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 },
       (error, stdout, stderr) => resolve({ ok: !error, stdout, stderr: stderr || (error ? error.message : '') }),
     );
   });
@@ -126,6 +148,8 @@ interface Health {
   host?: { name: string; screenRecording: boolean; accessibility: boolean } | null;
   version: string;
   stim: string;
+  stimBuild?: string | null;
+  busy?: { builds: number; hostedSessions: number };
   stimHome: string;
   tailscale?: { state: string; dnsName?: string | null; backendState?: string; reason?: string };
   route?: { state: string; port?: number; ports?: number[]; reason?: string };
@@ -322,6 +346,8 @@ export interface ServiceStatus {
   host: { app: string; name: string; screenRecording: boolean | null; accessibility: boolean | null } | null;
   node: string | null;
   script: string | null;
+  /** The server script `service rollback` switches back to, or null when no update recorded one. */
+  previousScript: string | null;
   /** Names only: a value may be a secret, and the plist holds it in plain text. */
   envNames: string[];
   pathPrepend: string[];
@@ -391,6 +417,7 @@ export async function serviceStatus(label: string): Promise<ServiceStatus> {
       : null,
     node: installed?.node ?? null,
     script: installed?.script ?? null,
+    previousScript: installed?.previousScript ?? null,
     envNames: (installed?.env ?? []).map((entry) => entry.slice(0, entry.indexOf('='))),
     pathPrepend: installed?.pathPrepend ?? [],
     stimBuild: { service, cli, match: service && cli ? service === cli : null },
@@ -461,7 +488,9 @@ export function statusLines(status: ServiceStatus, panes: { screen: string; cont
       `  macOS attributes ${panes.screen} and ${panes.control} to node. Run \`stim-server service install\` again to use Stim Host.`,
     );
   }
-  lines.push(`  node: ${status.node}`, `  server: ${status.script}`, `  log: ${status.logPath}`);
+  lines.push(`  node: ${status.node}`, `  server: ${status.script}`);
+  if (status.previousScript) lines.push(`  previous server: ${status.previousScript} (service rollback)`);
+  lines.push(`  log: ${status.logPath}`);
   if (status.pathPrepend.length) lines.push(`  path-prepend: ${status.pathPrepend.join(delimiter)}`);
   if (status.envNames.length) lines.push(`  env: ${status.envNames.join(', ')}`);
   lines.push(`  plist: ${status.plist}`);
@@ -470,6 +499,15 @@ export function statusLines(status: ServiceStatus, panes: { screen: string; cont
 
 export async function uninstallService(label: string): Promise<string[]> {
   requireMacOs();
+  if (!existsSync(serviceRoot(label))) return uninstallJob(label);
+  return holdingUpdateClaim(label, async () => {
+    const notes = await uninstallJob(label);
+    rmSync(join(serviceRoot(label), 'versions'), { recursive: true, force: true });
+    return notes;
+  });
+}
+
+async function uninstallJob(label: string): Promise<string[]> {
   const installed = await requireManaged(label);
   if (!installed) return [`${label} is not installed.`];
   const notes: string[] = [];
@@ -508,4 +546,335 @@ export async function uninstallService(label: string): Promise<string[]> {
     `Uninstalled ${label}. Pairings, stim home and the log ${installed.logPath ?? logPath(label)} are kept.`,
   );
   return notes;
+}
+
+const UPDATE_HEALTH_WAIT_MS = 90_000;
+const UPDATE_SETTLE_MS = 5000;
+const IDLE_WAIT_MS = 30 * 60_000;
+const IDLE_POLL_MS = 5000;
+const NPM_TIMEOUT_MS = 10 * 60_000;
+const REGISTRY = 'https://registry.npmjs.org/';
+const SERVER_PACKAGE = '@stim-cli/server';
+const SERVER_SCRIPT = ['node_modules', '@stim-cli', 'server', 'dist', 'stim-server.mjs'];
+
+/** Where `service update` keeps the servers it installs for `label`, next to nothing else Stim owns. */
+const serviceRoot = (label: string) => join(homedir(), 'Library', 'Application Support', 'Stim', 'services', label);
+
+export type UpdateSource = { release: string } | { from: string };
+
+/** The package version and Stim build of the server that `script` starts. */
+function serverBuild(script: string): ServerBuild | null {
+  try {
+    const pkg = JSON.parse(readFileSync(join(dirname(script), '..', 'package.json'), 'utf8')) as { version?: unknown };
+    if (typeof pkg.version !== 'string') return null;
+    const dist = stimDist(script);
+    return { version: pkg.version, stimBuild: dist ? stimBuildDigest(dist) : null };
+  } catch {
+    return null;
+  }
+}
+
+const describeBuild = (build: ServerBuild) =>
+  `stim-server ${build.version}${build.stimBuild ? ` (Stim build ${build.stimBuild})` : ''}`;
+
+const lastLines = (text: string) => text.trim().split('\n').slice(-8).join('\n');
+
+/** The npm that ships with the service's node, else the first on PATH, with that node first on PATH for its shebang. */
+function npmFor(node: string): { npm: string; env: NodeJS.ProcessEnv } {
+  const path = [dirname(node), ...(process.env.PATH ?? '').split(delimiter)].filter(Boolean);
+  const env = { ...process.env, PATH: path.join(delimiter) };
+  for (const dir of path) {
+    const npm = join(dir, 'npm');
+    if (existsSync(npm)) return { npm, env };
+  }
+  throw new ServiceError(`No npm next to ${node} or on PATH. Install npm for that node, then run update again.`);
+}
+
+function installedIntegrity(staging: string): string | null {
+  try {
+    const lock = JSON.parse(readFileSync(join(staging, 'package-lock.json'), 'utf8')) as {
+      packages?: Record<string, { integrity?: unknown }>;
+    };
+    const integrity = lock.packages?.[`node_modules/${SERVER_PACKAGE}`]?.integrity;
+    return typeof integrity === 'string' ? integrity : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Installs `source` into its own directory under `versions`, named by version and Stim build so a second update to
+ * the same build reuses it. A release comes from the public npm registry at that exact version: npm checks each
+ * tarball against the registry's integrity, and `npm audit signatures` must vouch for every installed package. Package
+ * files from `--from` are installed as given, with their sha256 recorded. The caller holds the update claim.
+ */
+async function installServer(
+  versions: string,
+  source: UpdateSource,
+  node: string,
+  log: (line: string) => void,
+): Promise<{ script: string; build: ServerBuild; dir: string }> {
+  mkdirSync(versions, { recursive: true });
+  for (const entry of readdirSync(versions)) {
+    if (entry.startsWith('.install-')) rmSync(join(versions, entry), { recursive: true, force: true });
+  }
+  const staging = join(versions, `.install-${process.pid}`);
+  mkdirSync(staging);
+  try {
+    const { npm, env } = npmFor(node);
+    const registry = [`--registry=${REGISTRY}`, `--@stim-cli:registry=${REGISTRY}`];
+    let files: { name: string; sha256: string }[] = [];
+    let specs: string[];
+    if ('release' in source) {
+      specs = [`${SERVER_PACKAGE}@${source.release}`];
+    } else {
+      const names = readdirSync(source.from).filter((name) => name.endsWith('.tgz'));
+      if (!names.length) throw new ServiceError(`${source.from} has no .tgz package files.`);
+      files = names.map((name) => ({
+        name,
+        sha256: createHash('sha256')
+          .update(readFileSync(join(source.from, name)))
+          .digest('hex'),
+      }));
+      specs = names.map((name) => join(source.from, name));
+    }
+    writeFileSync(join(staging, 'package.json'), '{ "private": true }\n');
+    log(
+      `Installing ${'release' in source ? `${SERVER_PACKAGE}@${source.release} from ${REGISTRY}` : `${files.length} package file(s) from ${source.from}`}.`,
+    );
+    const installed = await run(
+      npm,
+      [
+        'install',
+        '--prefix',
+        staging,
+        '--ignore-scripts',
+        '--no-audit',
+        '--no-fund',
+        '--omit=dev',
+        '--save-exact',
+        ...registry,
+        ...specs,
+      ],
+      env,
+      NPM_TIMEOUT_MS,
+    );
+    if (!installed.ok) throw new ServiceError(`npm install failed:\n${lastLines(installed.stderr)}`);
+    if ('release' in source) {
+      const audit = await run(
+        npm,
+        ['audit', 'signatures', '--json', '--prefix', staging, ...registry],
+        env,
+        NPM_TIMEOUT_MS,
+      );
+      const problem = signatureProblem(audit.stdout);
+      if (problem) throw new ServiceError(`${problem}. Not switching to it.`);
+    }
+    const script = join(staging, ...SERVER_SCRIPT);
+    const build = existsSync(script) ? serverBuild(script) : null;
+    if (!build?.stimBuild) throw new ServiceError(`The install has no ${SERVER_PACKAGE} with its stim build.`);
+    if ('release' in source && build.version !== source.release) {
+      throw new ServiceError(`npm installed ${SERVER_PACKAGE} ${build.version}, not ${source.release}.`);
+    }
+    if (!/^[0-9A-Za-z.+-]+$/.test(build.version)) {
+      throw new ServiceError(`${SERVER_PACKAGE} has an unusable version "${build.version}".`);
+    }
+    const started = await run(node, [script, '--version'], env, 60_000);
+    if (!started.ok || started.stdout.trim() !== build.version) {
+      throw new ServiceError(`The installed stim-server does not run with ${node}:\n${lastLines(started.stderr)}`);
+    }
+    writeFileSync(
+      join(staging, 'install.json'),
+      `${JSON.stringify(
+        {
+          version: build.version,
+          stimBuild: build.stimBuild,
+          ...('release' in source
+            ? { release: source.release, registry: REGISTRY, integrity: installedIntegrity(staging) }
+            : { files }),
+          installedAt: new Date().toISOString(),
+        },
+        null,
+        2,
+      )}\n`,
+    );
+    const dir = join(versions, `${build.version}-${build.stimBuild}`);
+    if (!existsSync(dir)) renameSync(staging, dir);
+    return { script: join(dir, ...SERVER_SCRIPT), build, dir };
+  } finally {
+    rmSync(staging, { recursive: true, force: true });
+  }
+}
+
+/** Waits until the running server reports no offloaded build and no hosted session, so the restart cuts none off. */
+async function waitForIdle(port: number, log: (line: string) => void): Promise<void> {
+  const deadline = Date.now() + IDLE_WAIT_MS;
+  let said = '';
+  for (;;) {
+    const busy = (await fetchHealth(port))?.busy;
+    if (!busy || busy.builds + busy.hostedSessions === 0) return;
+    const work = `${busy.builds} offloaded build(s) and ${busy.hostedSessions} hosted session(s)`;
+    if (Date.now() >= deadline) {
+      throw new ServiceError(
+        `stim-server still runs ${work} after ${IDLE_WAIT_MS / 60_000} minutes; not restarting it. Run this again later.`,
+      );
+    }
+    if (work !== said) log(`Waiting for ${work} to finish.`);
+    said = work;
+    await sleep(IDLE_POLL_MS);
+  }
+}
+
+/** Whether the server on `port` answers as `expected`, and still does a few seconds later. */
+async function waitForBuild(port: number, expected: ServerBuild): Promise<boolean> {
+  const deadline = Date.now() + UPDATE_HEALTH_WAIT_MS;
+  while (Date.now() < deadline) {
+    if (answersAs(await fetchHealth(port), expected)) {
+      await sleep(UPDATE_SETTLE_MS);
+      if (answersAs(await fetchHealth(port), expected)) return true;
+    }
+    await sleep(1000);
+  }
+  return false;
+}
+
+/**
+ * Points the job at `script`, recording the script it ran as `PreviousScript`, and restarts it. Every other plist
+ * value stays as install wrote it. When the server does not answer as `expected`, the old plist comes back.
+ */
+async function switchTo(
+  installed: InstalledService & { script: string; port: number },
+  script: string,
+  expected: ServerBuild,
+): Promise<void> {
+  const path = plistPath(installed.label);
+  const before = readFileSync(path);
+  const staged = `${path}.${process.pid}.tmp`;
+  copyFileSync(path, staged);
+  try {
+    for (const args of [
+      ['-replace', 'ProgramArguments', '-json', JSON.stringify(argumentsWithScript(installed, script)), staged],
+      ['-replace', 'StimService.PreviousScript', '-string', installed.script, staged],
+    ]) {
+      const edited = await run('plutil', args);
+      if (!edited.ok) throw new ServiceError(`plutil ${args.slice(0, 2).join(' ')} failed: ${edited.stderr.trim()}`);
+    }
+    renameSync(staged, path);
+  } finally {
+    rmSync(staged, { force: true });
+  }
+  await unload(installed.label);
+  const started = await run('launchctl', ['bootstrap', domain(), path]);
+  if (started.ok && (await waitForBuild(installed.port, expected))) return;
+  writeFileSync(path, before, { mode: 0o644 });
+  await unload(installed.label);
+  const restored = await run('launchctl', ['bootstrap', domain(), path]);
+  const back = restored.ok ? await waitForHealth(installed.port) : null;
+  const why = started.ok
+    ? `did not answer on 127.0.0.1:${installed.port} within ${UPDATE_HEALTH_WAIT_MS / 1000} s`
+    : `did not start (launchctl bootstrap: ${started.stderr.trim()})`;
+  throw new ServiceError(
+    `${describeBuild(expected)} ${why}. ${
+      back
+        ? `Switched back to stim-server ${back.version}.`
+        : `Restored the previous plist, but that server does not answer either; check ${installed.logPath ?? logPath(installed.label)}.`
+    }`,
+  );
+}
+
+/** Removes the installed servers neither the current nor the previous script uses. The caller holds the update claim. */
+function prune(versions: string, keep: string[]): void {
+  for (const entry of readdirSync(versions)) {
+    const dir = join(versions, entry);
+    const used = keep.some((script) => {
+      const inside = relative(dir, script);
+      return !inside.startsWith('..') && !isAbsolute(inside);
+    });
+    if (!used) rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+/** Runs `work` holding the label's update claim, so one update, rollback or uninstall of a label runs at a time. */
+async function holdingUpdateClaim<T>(label: string, work: () => Promise<T>): Promise<T> {
+  const root = serviceRoot(label);
+  mkdirSync(root, { recursive: true });
+  let attempt;
+  try {
+    attempt = tryAcquireClaim({
+      root: join(root, 'update.claims'),
+      mode: 'exclusive',
+      label: `${label} update`,
+      details: { label },
+    });
+  } catch (error) {
+    throw new ServiceError((error as Error).message);
+  }
+  if (attempt.pending) releaseClaim(attempt.pending);
+  if (!attempt.acquired) {
+    throw new ServiceError(
+      `An update or rollback of ${label} is running (pid ${attempt.held?.owner.pid ?? 'unknown'}). Wait for it to finish.`,
+    );
+  }
+  try {
+    return await work();
+  } finally {
+    releaseClaim(attempt.acquired);
+  }
+}
+
+function withUpdateClaim<T>(
+  label: string,
+  work: (installed: InstalledService & { script: string; node: string; port: number }) => Promise<T>,
+): Promise<T> {
+  requireMacOs();
+  return holdingUpdateClaim(label, async () => {
+    const installed = await requireManaged(label);
+    if (!installed?.script || !installed.node || installed.port === null) {
+      throw new ServiceError(`${label} is not installed. Run \`stim-server service install\` first.`);
+    }
+    return work({ ...installed, script: installed.script, node: installed.node, port: installed.port });
+  });
+}
+
+/**
+ * Installs `source` beside the server the job runs, waits for offloaded builds and hosted sessions to finish,
+ * switches the job to it and restarts it, and switches back when it does not answer as the installed build. Never
+ * touches pairings, approvals, the host app, `$STIM_HOME` or the serve route.
+ */
+export async function updateService(
+  label: string,
+  source: UpdateSource,
+  log: (line: string) => void,
+): Promise<string[]> {
+  return withUpdateClaim(label, async (installed) => {
+    const versions = join(serviceRoot(label), 'versions');
+    const target = await installServer(versions, source, installed.node, log);
+    const script = realpathSync(target.script);
+    if (realpathSync(installed.script) === script) {
+      return [`${label} already runs ${describeBuild(target.build)}.`];
+    }
+    await waitForIdle(installed.port, log);
+    log(`Switching ${label} to ${describeBuild(target.build)}.`);
+    await switchTo(installed, script, target.build);
+    prune(versions, [script, installed.script]);
+    const flag = label === DEFAULT_LABEL ? '' : ` --label ${label}`;
+    return [
+      `${label} now runs ${describeBuild(target.build)} from ${target.dir}.`,
+      `The previous server stays installed: ${installed.script}. \`stim-server service rollback${flag}\` switches back to it.`,
+    ];
+  });
+}
+
+/** Switches the job back to the server it ran before the last update or rollback, under the same checks. */
+export async function rollbackService(label: string, log: (line: string) => void): Promise<string[]> {
+  return withUpdateClaim(label, async (installed) => {
+    const previous = installed.previousScript;
+    if (!previous) throw new ServiceError(`${label} has no previous server; \`service update\` records one.`);
+    const build = existsSync(previous) ? serverBuild(previous) : null;
+    if (!build) throw new ServiceError(`The previous server ${previous} is no longer installed.`);
+    await waitForIdle(installed.port, log);
+    log(`Switching ${label} back to ${describeBuild(build)}.`);
+    await switchTo(installed, previous, build);
+    return [`${label} now runs ${describeBuild(build)} again: ${previous}.`];
+  });
 }

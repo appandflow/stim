@@ -880,6 +880,11 @@ export class DeviceHost {
     }
   }
 
+  /** How many hosted sessions this server holds now. */
+  active(): number {
+    return this.owned.size;
+  }
+
   async close(): Promise<void> {
     this.closed = true;
     for (const probe of this.probes.keys()) probe.cancel();

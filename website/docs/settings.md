@@ -463,6 +463,25 @@ reports the process, its health, the route, Stim Host's permissions and
 whether its Stim build matches the `stim` on PATH. Doctor points to this
 command when a named machine does not answer.
 
+Offload needs the same Stim build on both Macs. To move the build machine's
+service to another build, run one of these there:
+
+```bash
+stim-server service update --release 1.15.0   # an exact release from npm
+stim-server service update --from ./packed     # pnpm pack output of a checkout
+stim-server service rollback                   # back to the previous server
+```
+
+`--release` installs that exact version from the public npm registry, and
+the update stops unless npm verifies each package's integrity and registry
+signature. `--from` installs the `.tgz` packages in the directory. Either way
+the new server is installed beside the running one and must start before the
+switch. The update waits up to 30 minutes for offloaded builds and hosted
+sessions to finish, restarts the job, and switches back to the previous server
+when the new one does not answer within 90 seconds. It never changes pairings,
+approvals, Stim Host, the pinned `--env` and `--path-prepend` values or the
+serve route.
+
 An installed LaunchAgent does not prove server readiness: check its health in
 `stim-server service status` and the reported log when readiness is unavailable.
 The server listens before it touches the Stim home. A read-only child process
