@@ -135,19 +135,19 @@ windows. Its content scrolls behind the glass toolbar controls.
 It holds the workspace's details, in this order:
 
 - **Build**: one card per platform. While a build runs, its card shows the
-  phase or the build tool's step with its counts ("Compiling 45 of 180
-  targets"), the elapsed time over the estimate, a bar with a segment per
-  phase sized by the reference run, the phase checklist, and why the cache missed.
-  A resolved Hit/Miss badge sits beside Cache lookup when the CLI reports an actual lookup result.
-  Runs that skip lookup and older CLI versions do not show that badge. **Build logs** opens the
-  full retained raw output for the running or most recent build in the existing
-  viewer, filtered by platform, slot and run timestamps. Otherwise
-  it separates **Last build**, with its compiler errors, from **Next build**,
-  predicted by `stim <platform> --plan --json`. **Check** refreshes the next
-  plan; **Run** starts the app. **Cache miss details** opens the full reason
-  and changed sources. Recent-build rows show outcome, duration and age;
-  expanding a row reveals its reason, phase timings and diagnostics. Disclosure
-  content and chevrons animate unless Reduce Motion is enabled.
+  phase or build tool step with counts, elapsed time over the estimate, a phase
+  bar, the remote host, the wait holder, compile output and the cache miss summary.
+  Otherwise it separates **Last build**, with compiler errors, from **Next build**,
+  predicted by `stim <platform> --plan --json`. **Check** refreshes the next plan;
+  **Run** starts the app. The next-build prediction keeps **Cache miss details**.
+  **Details** opens a build sheet with a platform switch and recent runs. The
+  sheet shows every phase with its timing, the wait holder, full cache miss reason,
+  changed sources and baseline, build machine and offload fallback reason,
+  compiler diagnostics, retained output, and the next-build plan. **Open in logs
+  panel** opens that run in the existing logs drawer. Click a recent-build row
+  to open its run in the sheet, or the header's running-build progress to follow
+  the current run. **Recent builds** keeps its disclosure, which animates unless
+  Reduce Motion is enabled.
 - **Resources**: CPU (100% is one core) and memory with charts over the last
   10 minutes the app sampled while on screen, every process that counts
   toward the workspace (simulators and emulators, Chrome, Metro, builds) and

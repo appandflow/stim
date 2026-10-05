@@ -55,11 +55,12 @@ struct PhaseBar: View {
 
 struct PhaseChecklist: View {
   var steps: [PhaseStep]
-  var build: Build
+  var cacheOutcome: String?
+  var stoppedPhase: String? = nil
 
   var body: some View {
     VStack(alignment: .leading, spacing: Space.xs) {
-      if !steps.contains(where: { $0.phase == "cache-lookup" }), let outcome = build.cacheLookupOutcome {
+      if !steps.contains(where: { $0.phase == "cache-lookup" }), let outcome = cacheOutcome {
         HStack(spacing: Space.sm) {
           Image(systemName: "checkmark.circle.fill").foregroundStyle(Palette.success)
             .font(.system(size: 11))
@@ -70,14 +71,16 @@ struct PhaseChecklist: View {
       ForEach(steps, id: \.phase) { step in
         HStack(spacing: Space.sm) {
           switch step.state {
-          case .done: Image(systemName: "checkmark.circle.fill").foregroundStyle(Palette.success)
+          case .done:
+            Image(systemName: step.phase == stoppedPhase ? "exclamationmark.circle.fill" : "checkmark.circle.fill")
+              .foregroundStyle(step.phase == stoppedPhase ? Palette.warning : Palette.success)
           case .current: ProgressView().controlSize(.mini).frame(width: 12, height: 12)
           case .pending: Image(systemName: "circle").foregroundStyle(Palette.tertiary)
           }
-          Text(PhaseStep.name(step.phase))
+          Text(step.phase == stoppedPhase ? "Stopped in \(PhaseStep.name(step.phase))" : PhaseStep.name(step.phase))
             .font(.stim(.footnote, weight: step.state == .current ? .semibold : nil))
             .foregroundStyle(step.state == .pending ? Palette.tertiary : Palette.text)
-          if step.phase == "cache-lookup", let outcome = build.cacheLookupOutcome {
+          if step.phase == "cache-lookup", let outcome = cacheOutcome {
             Pill(outcome == "hit" ? "Hit" : "Miss", tone: outcome == "hit" ? .success : .warning, size: .small)
           }
           Spacer(minLength: Space.sm)
@@ -91,7 +94,8 @@ struct PhaseChecklist: View {
   private func timing(_ step: PhaseStep) -> String {
     let expected = step.expectedMs.map { "~\(Format.clock(ms: $0))" }
     switch step.state {
-    case .done, .pending: return expected ?? ""
+    case .done: return step.elapsedMs.map { Format.clock(ms: $0) } ?? expected ?? ""
+    case .pending: return expected ?? ""
     case .current: return step.elapsedMs.map { Format.clock(ms: $0) } ?? ""
     }
   }

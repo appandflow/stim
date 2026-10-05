@@ -106,19 +106,40 @@
           ["key": field.key, "value": value(field.defaultValue), "origin": "default", "layers": [:]] as [String: Any]
         }, "unknown": [],
       ])
+      let phases: [String: Double] = [
+        "prepare": 200, "cache-lookup": 600, "prebuild": 2400, "pods": 5200,
+        "compile": 112000, "install": 7000, "launch": 1000,
+      ]
+      let miss: [String: Any] = [
+        "kind": "changed", "summary": "Native sources changed",
+        "changes": [
+          ["source": "ios/Example/AppDelegate.swift", "change": "changed", "category": "native-source"],
+          ["source": "node_modules/expo-clipboard", "change": "added", "category": "native-dependency"],
+          ["source": "ios/Example/OldBridge.swift", "change": "removed", "category": "native-source"],
+        ],
+        "changeCount": 5, "baseline": ["fingerprint": "0123456789abcdef", "from": "workspace"], "rekeyedBy": [],
+      ]
       var env: [String: Any] = ["path": workspace, "live": false, "warnings": []]
       if scenario != .empty {
         let count = scenario == .largeData ? 10 : 3
         let builds = (0..<count).map { index -> [String: Any] in
           let failed = scenario == .error || (scenario == .longText && index == 0)
-          let date = now.addingTimeInterval(-Double(index + 1) * 600).ISO8601Format()
+          let date = now.addingTimeInterval(-Double(index + 1) * 600)
+          let cacheHit: Any = failed || (scenario == .largeData && index == 0) ? false : index.isMultiple(of: 2) ? "local" : false
           var build: [String: Any] = [
-            "platform": "ios", "status": failed ? "failed" : "ok", "cacheHit": index.isMultiple(of: 2) ? "local" : false,
-            "durationMs": 128400, "startedAt": date, "finishedAt": date,
+            "platform": "ios", "status": failed ? "failed" : "ok", "cacheHit": cacheHit,
+            "durationMs": 128400, "startedAt": date.ISO8601Format(),
+            "finishedAt": date.addingTimeInterval(128.4).ISO8601Format(), "fingerprint": "abc123456789abcd",
             "result": failed ? "failed" : "succeeded", "slot": "default", "configuration": "Debug",
-            "phases": ["compile": 120000, "install": 8400],
+            "phases": failed ? phases.filter { !["install", "launch"].contains($0.key) } : phases,
           ]
+          if scenario == .largeData && index == 0 {
+            build["missReason"] = miss
+            build["offloadFallback"] =
+              "janics-mac-mini: busy with another native build; no less loaded than this Mac, so compilation ran here."
+          }
           if failed {
+            build["missReason"] = miss
             build["errorCode"] = "STIM_IOS_BUILD_FAILED"
             build["diagnostics"] = (0..<3).map { line in
               [
@@ -149,6 +170,13 @@
           "platform": "ios", "slot": "default", "state": "running", "phase": "compile",
           "startedAt": date, "phaseStartedAt": date, "basis": 3, "expectedMs": 120000,
           "expectedPhaseMs": 100000, "outcome": "cold", "outcomeKnown": true,
+          "cacheLookupOutcome": "miss", "missReason": miss, "missProvisional": true,
+          "placement": ["host": "janics-mac-mini", "phase": "build", "startedAt": date, "phaseStartedAt": date],
+          "plannedPhases": phases.map { ["phase": $0.key, "expectedMs": $0.value] as [String: Any] },
+          "detail": [
+            "step": "compile", "unit": "targets", "done": 45, "total": 180,
+            "line": "CompileSwift ios/Example/Components/WorkspaceHeader.swift",
+          ],
         ]
       }
       let plan: BuildPlan = try decode([
