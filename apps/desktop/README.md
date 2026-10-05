@@ -948,9 +948,9 @@ A build machine that runs another Stim build than this Mac (doctor's
 **Machines** page. Desktop asks the local stim-server, over its local control connection,
 to update that machine with `machines.update.start`. The local server connects
 to the machine's pinned tailnet node with the credential `stim doctor --fix`
-stored. It asks for the same npm release when this Mac runs one, or sends this
-checkout's packed packages when it runs from a Stim checkout. The machine must
-approve that with `server.acceptClientBuilds`. Its stim-server then waits for
+stored. It asks for the same npm release when this Mac runs one, or, when it
+runs from a Stim checkout, sends the checkout's packed packages, which the
+machine takes only with `server.acceptClientBuilds`. Its stim-server then waits for
 its offloaded builds and hosted sessions, installs the update beside the current
 server, restarts, and switches back if the new one does not answer. The row
 follows `machines.update.status` every 2 seconds:
@@ -960,7 +960,7 @@ follows `machines.update.status` every 2 seconds:
 - the restart;
 - the outcome, or the refusal (for example, the setting the machine needs).
 
-If the machine stops answering for 3 minutes, the update shows as failed with the reason.
+If the machine stops answering for 5 minutes, or answers for 90 seconds without an update running or an outcome, the update shows as failed with the reason.
 Then the row checks the machine again. **Install this Mac's build on build
 machines automatically** (off by default) does the same the next time Desktop
 checks a machine that reports another Stim build. It runs once per machine and

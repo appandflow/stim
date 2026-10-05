@@ -36,7 +36,7 @@ final class BuildMachinesModel {
 
   init(
     cli: Task<StimCLI, Never>, settings: MachineSettingsStore, statsReader: StatsReader,
-    pollInterval: Duration = .seconds(2), unreachableLimit: Duration = .seconds(180),
+    pollInterval: Duration = .seconds(2), unreachableLimit: Duration = .seconds(300),
     request: @escaping @MainActor (String, [String: JSONValue]) async throws -> JSONValue = BuildMachinesModel.localRequest
   ) {
     self.cli = cli
@@ -71,6 +71,7 @@ final class BuildMachinesModel {
     }
     let deadline = ContinuousClock.now + .seconds(45 * 60)
     var unreachableSince: ContinuousClock.Instant?
+    var idleSince: ContinuousClock.Instant?
     while !Task.isCancelled {
       try? await Task.sleep(for: pollInterval)
       var phase: MachineUpdatePhase
@@ -80,6 +81,15 @@ final class BuildMachinesModel {
         let status = try JSONDecoder().decode(MachineUpdateStatus.self, from: JSONEncoder().encode(result))
         phase = MachineUpdatePhase.from(status, startedAt: startedAt)
         unreachable = status.remote == nil ? status.unreachable : nil
+        if status.remote != nil, phase == .restarting {
+          let since = idleSince ?? ContinuousClock.now
+          idleSince = since
+          if ContinuousClock.now - since > .seconds(90) {
+            phase = .failed("\(entry) ended the update without recording an outcome; check its update.log.")
+          }
+        } else {
+          idleSince = nil
+        }
       } catch {
         phase = .restarting
         unreachable = error.localizedDescription
