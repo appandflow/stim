@@ -263,6 +263,12 @@ final class MacosSource: NSObject, Source, SCStreamDelegate, SCStreamOutput {
     return (current, own)
   }
 
+  private func isFocused(_ own: AXUIElement, application: AXUIElement) -> Bool {
+    var focused: CFTypeRef?
+    return AXUIElementCopyAttributeValue(application, kAXFocusedWindowAttribute as CFString, &focused) == .success
+      && focused.map { CFEqual($0, own) } == true
+  }
+
   private func apply(_ command: Command, session: String) async throws {
     guard let setWindowLocation = Self.windowLocation else {
       throw refusal("Native window input is unavailable on this macOS version. Viewing and logs remain available.")
@@ -270,10 +276,23 @@ final class MacosSource: NSObject, Source, SCStreamDelegate, SCStreamOutput {
     let (window, own) = try inputWindow()
     guard isActive(session) else { throw CancellationError() }
     let application = AXUIElementCreateApplication(app.app.pid)
-    guard AXUIElementPerformAction(own, kAXRaiseAction as CFString) == .success,
-      AXUIElementSetAttributeValue(application, kAXFocusedWindowAttribute as CFString, own) == .success,
-      let running = NSRunningApplication(processIdentifier: app.app.pid), running.activate(options: [])
+    guard let running = NSRunningApplication(processIdentifier: app.app.pid)
     else { throw refusal("The captured owned window could not be focused for Control.") }
+    if !running.isActive || !isFocused(own, application: application) {
+      let raise = AXUIElementPerformAction(own, kAXRaiseAction as CFString)
+      let focus = AXUIElementSetAttributeValue(application, kAXFocusedWindowAttribute as CFString, own)
+      let activated = running.activate(options: [])
+      let deadline = ContinuousClock.now.advanced(by: .seconds(1))
+      while !(running.isActive && isFocused(own, application: application)) {
+        guard isActive(session), matches() else { throw CancellationError() }
+        guard activated, ContinuousClock.now < deadline else {
+          throw refusal(
+            "The captured owned window could not be focused for Control. (raise \(raise.rawValue), focus \(focus.rawValue), activate \(activated))"
+          )
+        }
+        try await Task.sleep(for: .milliseconds(10))
+      }
+    }
     var focused: CFTypeRef?
     guard AXUIElementCopyAttributeValue(application, kAXFocusedWindowAttribute as CFString, &focused) == .success,
       let focused, CFEqual(focused, own), matches()
