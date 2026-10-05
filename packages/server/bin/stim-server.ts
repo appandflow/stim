@@ -4,11 +4,12 @@ import { hostname } from 'node:os';
 import { parseArgs } from 'node:util';
 import { bundledStim, loginShellEnvironment } from '../src/environment.ts';
 import { readAudit } from '../src/actions.ts';
-import { installService, ServiceError, serviceStatus, statusLines, uninstallService } from '../src/service.ts';
+import { installService, serviceStatus, statusLines, uninstallService } from '../src/service.ts';
 import {
   applyServeEnvironment,
   DEFAULT_LABEL,
   DEFAULT_PORT,
+  ServiceError,
   validateLabel,
   validatePort,
   validateServeEnvironment,
@@ -24,6 +25,7 @@ import {
   revokeDevice,
   type PairedDevice,
 } from '../src/registry.ts';
+import { hostFromExecutable, hostPermissionPanes } from '../src/stim-host.ts';
 import { startServer } from '../src/server.ts';
 import { watchTailscale } from '../src/tailscale-monitor.ts';
 import {
@@ -92,6 +94,7 @@ function macName(tailscale: TailscaleState): string {
 }
 
 async function serve(port: number, extraEnv: string[], pathPrepend: string[]): Promise<void> {
+  const captureHost = hostFromExecutable(process.env.STIM_HOST_EXECUTABLE);
   const login = loginShellEnvironment();
   if (!login) console.error('stim-server: could not read the login shell environment; using this process environment.');
   const env = applyServeEnvironment(login ?? process.env, extraEnv, pathPrepend);
@@ -108,6 +111,7 @@ async function serve(port: number, extraEnv: string[], pathPrepend: string[]): P
   try {
     server = await startServer({
       name: macName(tailscale),
+      host: captureHost,
       hosts: ['127.0.0.1'],
       port,
       stimCli: stim.cli,
@@ -246,7 +250,7 @@ async function runService(
       }
     } else if (sub === 'status') {
       const status = await serviceStatus(label);
-      console.log(values.json ? JSON.stringify(status) : statusLines(status).join('\n'));
+      console.log(values.json ? JSON.stringify(status) : statusLines(status, await hostPermissionPanes()).join('\n'));
     } else {
       for (const line of await uninstallService(label)) console.log(line);
     }

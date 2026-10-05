@@ -286,6 +286,28 @@ export async function inspectDeviceHostMachines(
             credentials = credentials.map((each) => (each.machine === machine ? { ...each, state: 'approved' } : each));
             store(credentials);
           }
+          const host = reply.result.host;
+          if (host && (host.screenRecording === false || host.accessibility === false)) {
+            const panes = [
+              ...(host.screenRecording === false
+                ? ['Screen & System Audio Recording (Screen Recording on macOS 14)']
+                : []),
+              ...(host.accessibility === false
+                ? ['Device Control and Data Access (Accessibility on macOS 26 and earlier)']
+                : []),
+            ];
+            const detail = [
+              ...(host.screenRecording === false ? ['Viewing hosted macOS apps needs Screen Recording.'] : []),
+              ...(host.accessibility === false ? ['Controlling them needs the control permission.'] : []),
+            ];
+            inspected.findings.push(
+              note(
+                `Hosting machine ${machine} needs ${panes.join(' and ')} for ${host.name}`,
+                detail.join(' '),
+                `On ${machine}, approve ${host.name} in System Settings > Privacy & Security, or run \`stim-server service install\` there again to show the requests.`,
+              ),
+            );
+          }
           inspected.machines.push({ ...known, state: 'approved' });
           continue;
         }

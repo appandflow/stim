@@ -147,8 +147,7 @@ A refusal or an unreachable host fails the command; it never launches here
 instead.
 
 Phones and Stim Desktop view and control the hosted app through this Mac's
-stim-server, which relays to the host. Viewing needs Screen Recording on the
-host; control needs Accessibility on the host. The phone sends clicks, scrolls,
+stim-server, which relays to the host. The phone sends clicks, scrolls,
 text and keys; Stim Desktop's Control sends clicks, drags and typed text.
 
   stim macos --host mini          # build here, deliver, launch on mini
@@ -176,10 +175,13 @@ the placement stays recorded; restore the connection and run stim stop again.
 
 Viewing and controlling the hosted app from a phone needs Screen & System Audio
 Recording and Device Control and Data Access (Accessibility on macOS 26 and
-earlier), granted once on the host to the process that spawns stim-frames, not to
-the hosted app. For a stim-server run by stim-server service install, that is the
-node that stim-server service status reports, usually /opt/homebrew/bin/node. Add
-it in System Settings > Privacy & Security in both panes.
+earlier), granted once on the host to the app that runs stim-server, not to the
+hosted app. stim-server service install runs the server under the Stim Host app
+(Stim Host Dev, built on that Mac, until a signed release ships) and shows
+macOS's own requests on that Mac's screen; a person there approves them.
+stim-server service status shows the grants, and stim doctor here reports an
+approved host that lacks them. A server started by Stim Desktop uses Desktop's
+grants.
 
 status --json reports macos.host { machine, session, appSlot, appAttempt,
 bundleId, agent }. state is running when the host reported a live app and

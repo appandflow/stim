@@ -376,6 +376,21 @@ export function protocolJsonSchema(): JsonSchema {
         required: ['protocol', 'server', 'capabilities', 'features', 'actions', 'device'],
         additionalProperties: false,
         properties: {
+          host: {
+            anyOf: [
+              { type: 'null' },
+              {
+                type: 'object',
+                required: ['name', 'screenRecording', 'accessibility'],
+                additionalProperties: false,
+                properties: {
+                  name: { type: 'string' },
+                  screenRecording: { type: 'boolean' },
+                  accessibility: { type: 'boolean' },
+                },
+              },
+            ],
+          },
           protocol: { type: 'integer' },
           server: {
             type: 'object',

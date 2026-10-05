@@ -54,6 +54,11 @@ final class MacosSource: NSObject, Source, SCStreamDelegate, SCStreamOutput {
   func start() {
     guard matches() else { fail("The owned macOS app process changed or exited.") }
     guard CGPreflightScreenCaptureAccess() else {
+      if let host = ProcessInfo.processInfo.environment["STIM_CAPTURE_HOST"] {
+        fail(
+          "\(Self.screenPermission) access is unavailable for stim-frames. Allow \(host) in System Settings > Privacy & Security > \(Self.screenPermission) on this Mac, or run `stim-server service install` again on this Mac to show the request, then reconnect. The server never requests or resets permissions; status and logs remain available."
+        )
+      }
       fail(
         "\(Self.screenPermission) access is unavailable for stim-frames. Allow the existing capture host in System Settings > Privacy & Security > \(Self.screenPermission), then reconnect. Open Permissions in Stim Desktop on this Mac to set up access, then reconnect. The server never requests or resets permissions; status and logs remain available."
       )
@@ -199,6 +204,11 @@ final class MacosSource: NSObject, Source, SCStreamDelegate, SCStreamOutput {
     guard matches(), let captured = window else { throw refusal("The captured owned macOS app window is unavailable.") }
     guard AXIsProcessTrusted(), CGPreflightPostEventAccess() else {
       let permission = Self.controlPermission
+      if let host = ProcessInfo.processInfo.environment["STIM_CAPTURE_HOST"] {
+        throw refusal(
+          "Control needs \(permission) permission. Allow \(host) in System Settings > Privacy & Security > \(permission) on this Mac, or run `stim-server service install` again on this Mac to show the request, then reconnect. The server never requests or resets permissions; viewing and logs remain available."
+        )
+      }
       throw refusal(
         "Control needs \(permission) permission for the capture host. Open Permissions in Stim Desktop on this Mac, or allow the host in System Settings > Privacy & Security > \(permission), then reconnect. The server never requests or resets permissions; viewing and logs remain available."
       )

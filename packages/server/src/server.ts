@@ -103,6 +103,7 @@ import {
 import { runStats } from './stats.ts';
 import { readWorkspaceDiff } from './workspace-diff.ts';
 import { Pending, runStim, type CommandLimits } from './stim-command.ts';
+import { readHostPermissions } from './stim-host.ts';
 import {
   readRawTailscaleStatus,
   serveRoute,
@@ -127,6 +128,7 @@ const INPUT_METHODS = [
 ] as const;
 
 export interface ServerOptions {
+  host?: { executable: string; name: string };
   name: string;
   hosts: string[];
   port: number;
@@ -192,6 +194,7 @@ interface ControlLimits {
 }
 
 interface ServerHealth {
+  host?: HelloResult['host'];
   server: 'stim-server';
   name: string;
   version: string;
@@ -432,6 +435,19 @@ const closeListener = ({ server, sockets }: { server: Server; sockets: Set<Socke
   });
 
 export async function startServer(options: ServerOptions): Promise<RunningServer> {
+  let hostProbe: Promise<HelloResult['host']> | undefined;
+  let hostExpires = 0;
+  const hostHealth = (): Promise<HelloResult['host']> => {
+    if (!options.host) return Promise.resolve(undefined);
+    if (!hostProbe || Date.now() >= hostExpires) {
+      hostExpires = Infinity;
+      hostProbe = readHostPermissions(options.host.executable).then((permissions) => {
+        hostExpires = Date.now() + 5000;
+        return permissions ? { name: options.host!.name, ...permissions } : null;
+      });
+    }
+    return hostProbe;
+  };
   if (options.record !== false) await checkRecorderStartup(join(serverDir(), 'recorder'), options.env);
   const limiter = new FailureLimiter(options.maxAuthFailures ?? 5, options.failureWindowMs ?? 60_000);
   const authTimeoutMs = options.authTimeoutMs ?? 5000;
@@ -464,7 +480,8 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   };
   if (options.frameHelper === undefined) buildHelper();
   let nativeViewerOpened = false;
-  const frames = new FramePool(options.env, frameLimits, frameHelper, new DeviceViewers());
+  const helperEnv = options.host ? { ...options.env, STIM_CAPTURE_HOST: options.host.name } : options.env;
+  const frames = new FramePool(helperEnv, frameLimits, frameHelper, new DeviceViewers());
   const recorder =
     options.record === false
       ? null
@@ -620,7 +637,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     conflict: (deviceId, conflict) => push.control(deviceId, conflict),
     adbEmulators,
   });
-  const hostedViews = new HostedViews(hostedDevices, control, options.env, frameHelper);
+  const hostedViews = new HostedViews(hostedDevices, control, helperEnv, frameHelper);
   const wss = new WebSocketServer({ noServer: true, maxPayload: MAX_PAYLOAD });
   const notificationLog = new NotificationLog(notificationLogFile(serverDir()));
   const push = new PushNotifier({
@@ -801,6 +818,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       const result: HelloResult = {
         protocol: PROTOCOL_VERSION,
         server: { name: options.name, version: options.serverVersion, stim: options.stimVersion, home: homedir() },
+        ...(options.host ? { host: await hostHealth() } : {}),
         capabilities: device.capabilities,
         features: [...FEATURES],
         actions: device.capabilities.includes('control') ? [...ACTIONS] : [],
@@ -2040,7 +2058,13 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       tailscale.state === 'running' && tailscale.dnsName
         ? await serveRoute(binary, options.env, addresses[0]!.port, tailscale.ips, HEALTH_ROUTE_TIMEOUT_MS)
         : undefined;
-    const body: ServerHealth = { ...health, tailscale: healthTailscale(tailscale), route, nativeViewerOpened };
+    const body: ServerHealth = {
+      ...health,
+      ...(options.host ? { host: await hostHealth() } : {}),
+      tailscale: healthTailscale(tailscale),
+      route,
+      nativeViewerOpened,
+    };
     response.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify(body));
   };
   const servers = new Map<string, { server: Server; sockets: Set<Socket> }>();

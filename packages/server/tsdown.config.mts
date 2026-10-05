@@ -24,6 +24,9 @@ export default defineConfig({
   hooks: {
     'build:done': () => {
       writeFileSync(`dist/${PROTOCOL_SCHEMA_FILE}`, `${JSON.stringify(protocolJsonSchema(), null, 2)}\n`);
+      rmSync('dist/stim-host', { recursive: true, force: true });
+      mkdirSync('dist/stim-host');
+      for (const name of ['stim-host.c', 'Info.plist']) copyFileSync(`host/${name}`, `dist/stim-host/${name}`);
       rmSync('dist/stim-frames', { recursive: true, force: true });
       mkdirSync('dist/stim-frames');
       const desktop = readFileSync('helper/desktop-sources.txt', 'utf8').split(/\s+/).filter(Boolean);

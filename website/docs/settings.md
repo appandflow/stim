@@ -313,9 +313,9 @@ Hosting approval is separate from `offload.machines` and grants no read,
 control or build access. [`stim macos --host <machine>`](./macos.md#run-it-on-another-mac)
 runs a macOS app on an approved machine; `stim ios` and `stim android` do not yet
 place sessions on these machines. To view or control a hosted macOS app, a person on
-that Mac grants Screen & System Audio Recording and Device Control and Data Access
-(Accessibility on macOS 26 and earlier) to the `node` that `stim-server service status`
-reports, usually `/opt/homebrew/bin/node`.
+that Mac approves Screen & System Audio Recording and Device Control and Data Access
+(Accessibility on macOS 26 and earlier) for Stim Host, the app
+`stim-server service install` runs the server under.
 
 Credentials stay private in `$STIM_HOME/device-host-machines.json`. Doctor
 reports approval under `deviceHosts` in JSON and never prints the token.
@@ -455,7 +455,9 @@ that starts at login and restarts the server if it exits, and `--serve` adds the
 tailnet-only `tailscale serve` route (port 7443, or the next free one). `--path-prepend <dir>` and
 `--env KEY=VALUE` pin a PATH entry or a variable, such as a private CocoaPods
 install, that stim-server's login-shell environment would otherwise replace.
-`stim-server service status` reports the process, its health, the route and
+The service runs under the Stim Host app, which install builds in
+`~/Applications` with Xcode Command Line Tools. `stim-server service status`
+reports the process, its health, the route, Stim Host's permissions and
 whether its Stim build matches the `stim` on PATH. Doctor points to this
 command when a named machine does not answer.
 

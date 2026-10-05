@@ -2,6 +2,8 @@ import { delimiter, isAbsolute } from 'node:path';
 import { isJsonObject } from '@stim-cli/core/state';
 import type { ServeRoute } from './tailscale.ts';
 
+export class ServiceError extends Error {}
+
 export const DEFAULT_LABEL = 'dev.stim.server';
 export const DEFAULT_PORT = 7787;
 const THROTTLE_SECONDS = 30;
@@ -17,6 +19,7 @@ export interface ServeRecord {
 
 export interface ServiceSpec {
   label: string;
+  host: string | null;
   node: string;
   script: string;
   port: number;
@@ -119,7 +122,9 @@ export function renderPlist(spec: ServiceSpec): string {
     string(spec.label, '\t'),
     key('ProgramArguments', '\t'),
     '\t<array>',
-    ...[spec.node, spec.script, ...serverArguments(spec)].map((argument) => string(argument, '\t\t')),
+    ...[...(spec.host ? [spec.host, 'run'] : []), spec.node, spec.script, ...serverArguments(spec)].map((argument) =>
+      string(argument, '\t\t'),
+    ),
     '\t</array>',
   ];
   const environment = Object.entries(spec.environment);
@@ -160,6 +165,7 @@ export function renderPlist(spec: ServiceSpec): string {
 
 export interface InstalledService {
   label: string;
+  host: string | null;
   node: string | null;
   script: string | null;
   port: number | null;
@@ -179,7 +185,12 @@ function strings(value: unknown): string[] {
 /** Reads `plutil -convert json` output of a plist `renderPlist` wrote. */
 export function parseInstalledPlist(value: unknown): InstalledService | null {
   if (!isJsonObject(value) || typeof value.Label !== 'string') return null;
-  const [node = null, script = null, ...args] = strings(value.ProgramArguments);
+  const programArguments = strings(value.ProgramArguments);
+  const host =
+    programArguments[1] === 'run' && programArguments[0]?.endsWith('/Contents/MacOS/stim-host')
+      ? programArguments[0]
+      : null;
+  const [node = null, script = null, ...args] = host ? programArguments.slice(2) : programArguments;
   const env: string[] = [];
   const pathPrepend: string[] = [];
   let port: number | null = null;
@@ -196,6 +207,7 @@ export function parseInstalledPlist(value: unknown): InstalledService | null {
   const servePort = meta.ServePort;
   return {
     label: value.Label,
+    host,
     node,
     script,
     port: Number.isInteger(port) ? port : null,

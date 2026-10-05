@@ -2,26 +2,26 @@ import { execFile } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { homedir } from 'node:os';
-import { delimiter, dirname, join } from 'node:path';
+import { basename, delimiter, dirname, join } from 'node:path';
 import { stimBuildDigest } from '@stim-cli/core/state';
 import {
   parseInstalledPlist,
   parseLaunchctlPrint,
   planServe,
   renderPlist,
+  ServiceError,
   type InstalledService,
   type LaunchdJob,
   type ServeRecord,
   type ServiceSpec,
 } from './service-plist.ts';
+import { hostPermissionPanes, installHostApp, requestHostPermissions } from './stim-host.ts';
 import { findTailscale, serveCommand, serveRoute, tailscaleStatus } from './tailscale.ts';
 
 const LAUNCHCTL_TIMEOUT_MS = 15_000;
 const HEALTH_TIMEOUT_MS = 5_000;
 const HEALTH_WAIT_MS = 15_000;
 const UNLOAD_WAIT_MS = 45_000;
-
-export class ServiceError extends Error {}
 
 export interface ServiceOptions {
   label: string;
@@ -121,6 +121,7 @@ async function unload(label: string): Promise<void> {
 }
 
 interface Health {
+  host?: { name: string; screenRecording: boolean; accessibility: boolean } | null;
   version: string;
   stim: string;
   stimHome: string;
@@ -200,7 +201,9 @@ export async function installService(options: ServiceOptions): Promise<string[]>
   const environment: Record<string, string> = {};
   if (process.env.STIM_HOME) environment.STIM_HOME = process.env.STIM_HOME;
   if (process.env.SHELL) environment.SHELL = process.env.SHELL;
+  const host = await installHostApp();
   const spec: ServiceSpec = {
+    host: host.executable,
     label: options.label,
     node: stableNode(process.env.PATH),
     script,
@@ -260,6 +263,22 @@ export async function installService(options: ServiceOptions): Promise<string[]>
       ? `stim-server ${health.version} answers on 127.0.0.1:${options.port}.`
       : `LaunchAgent installed, but server readiness is unavailable on 127.0.0.1:${options.port}. Run \`stim-server service status --label ${options.label}\` and check ${spec.logPath}.`,
   );
+  try {
+    await requestHostPermissions(host.app);
+  } catch (error) {
+    notes.push(`Could not show macOS permission requests: ${(error as Error).message}`);
+  }
+  const panes = await hostPermissionPanes();
+  notes.push(
+    `The service runs under ${host.name}: ${host.app}.`,
+    "macOS shows its own permission requests on this Mac's screen; you only approve them. Over SSH, use Screen Sharing to see this Mac's screen.",
+    `If a request does not appear, turn ${host.name} on in System Settings > Privacy & Security > ${panes.screen} and System Settings > Privacy & Security > ${panes.control}. Stim never changes these settings itself.`,
+  );
+  if (host.adHoc) {
+    notes.push(
+      `${host.name} is signed ad hoc, so macOS keeps its approvals only while the launcher source and Xcode toolchain are unchanged.`,
+    );
+  }
   if (serve) {
     notes.push(
       `Tailnet route: https port ${serve.port}, ${serve.created ? 'created by install; uninstall removes it' : 'already present; uninstall keeps it'}.`,
@@ -286,6 +305,7 @@ export interface ServiceStatus {
   health: { version: string; stim: string; stimHome: string; tailscale: string | null; route: string | null } | null;
   serve: ServeRecord | null;
   logPath: string | null;
+  host: { app: string; name: string; screenRecording: boolean | null; accessibility: boolean | null } | null;
   node: string | null;
   script: string | null;
   /** Names only: a value may be a secret, and the plist holds it in plain text. */
@@ -346,6 +366,14 @@ export async function serviceStatus(label: string): Promise<ServiceStatus> {
       : null,
     serve: installed?.serve ?? null,
     logPath: installed?.logPath ?? null,
+    host: installed?.host
+      ? {
+          app: dirname(dirname(dirname(installed.host))),
+          name: basename(dirname(dirname(dirname(installed.host))), '.app'),
+          screenRecording: health?.host?.screenRecording ?? null,
+          accessibility: health?.host?.accessibility ?? null,
+        }
+      : null,
     node: installed?.node ?? null,
     script: installed?.script ?? null,
     envNames: (installed?.env ?? []).map((entry) => entry.slice(0, entry.indexOf('='))),
@@ -368,7 +396,7 @@ function routeText(route: Health['route']): string | null {
   return route.reason ? `${route.state} (${route.reason})` : route.state;
 }
 
-export function statusLines(status: ServiceStatus): string[] {
+export function statusLines(status: ServiceStatus, panes: { screen: string; control: string }): string[] {
   if (!status.installed) {
     return [`${status.label} is not installed (no ${status.plist}).${status.loaded ? ' launchd still lists it.' : ''}`];
   }
@@ -396,6 +424,21 @@ export function statusLines(status: ServiceStatus): string[] {
       match === null ? '' : match ? ', same as the `stim` on PATH' : `, differs from the \`stim\` on PATH (${cli})`
     }`,
   );
+  if (status.host) {
+    lines.push(`  host app: ${status.host.app}`);
+    for (const [permission, pane] of [
+      [status.host.screenRecording, panes.screen],
+      [status.host.accessibility, panes.control],
+    ] as const) {
+      lines.push(
+        `  ${pane}: ${permission === true ? 'allowed' : permission === false ? `needed: System Settings > Privacy & Security > ${pane} > ${status.host.name}` : 'unknown (server did not report permissions)'}`,
+      );
+    }
+  } else {
+    lines.push(
+      `  macOS attributes ${panes.screen} and ${panes.control} to node. Run \`stim-server service install\` again to use Stim Host.`,
+    );
+  }
   lines.push(`  node: ${status.node}`, `  server: ${status.script}`, `  log: ${status.logPath}`);
   if (status.pathPrepend.length) lines.push(`  path-prepend: ${status.pathPrepend.join(delimiter)}`);
   if (status.envNames.length) lines.push(`  env: ${status.envNames.join(', ')}`);
@@ -428,6 +471,7 @@ export async function uninstallService(label: string): Promise<string[]> {
   } else if (installed.serve) {
     notes.push(`Kept the tailscale serve route on https port ${installed.serve.port}; install did not create it.`);
   }
+  if (installed.host) notes.push(`Kept ${dirname(dirname(dirname(installed.host)))}; other service labels may use it.`);
   await unload(label);
   if (routeOff && tailscale) {
     const removed = await run(tailscale, ['serve', `--https=${routeOff}`, 'off']);

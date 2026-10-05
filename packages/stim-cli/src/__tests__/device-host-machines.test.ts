@@ -194,3 +194,42 @@ test('unconfigured hosting makes doctor fix a no-op without taking a process cla
   expect(calls).toEqual([]);
   expect(readdirSync(home)).toEqual([]);
 });
+
+test('missing hosting grants produce a note without changing approval', async () => {
+  await inspectDeviceHostMachines({ fix: true }, fakeIo([pending]).io, ['mini']);
+  const { io } = fakeIo([
+    {
+      result: {
+        capabilities: ['device-host'],
+        device: { id: 'host12', name: 'laptop' },
+        host: { name: 'Stim Host Dev', screenRecording: false, accessibility: false },
+      },
+    },
+  ]);
+  const result = await inspectDeviceHostMachines({ fix: false }, io, ['mini']);
+  expect(result.machines[0]?.state).toBe('approved');
+  expect(readDeviceHostMachines()[0]?.state).toBe('approved');
+  expect(result.findings).toHaveLength(1);
+  const [finding] = result.findings;
+  expect(finding).toMatchObject({ code: 'device-host-machine', level: 'note' });
+  expect(finding?.title).toMatch(
+    /mini.*Screen & System Audio Recording.*Device Control and Data Access.*Stim Host Dev/,
+  );
+  expect(finding?.fix).toContain('stim-server service install');
+});
+
+test('granted host permissions produce no doctor note', async () => {
+  await inspectDeviceHostMachines({ fix: true }, fakeIo([pending]).io, ['mini']);
+  const { io } = fakeIo([
+    {
+      result: {
+        capabilities: ['device-host'],
+        device: { id: 'host12', name: 'laptop' },
+        host: { name: 'Stim Host Dev', screenRecording: true, accessibility: true },
+      },
+    },
+  ]);
+  const result = await inspectDeviceHostMachines({ fix: false }, io, ['mini']);
+  expect(result.machines[0]?.state).toBe('approved');
+  expect(result.findings).toEqual([]);
+});
