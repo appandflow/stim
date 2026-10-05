@@ -115,6 +115,10 @@ export function parseHostedAppManifest(value: unknown): HostedAppFile[] | null {
   }
   if (
     !files.some((file) => file.path === 'Info.plist' && file.kind === 'file') &&
+    !(
+      files.some((file) => file.path === 'Contents/Info.plist' && file.kind === 'file') &&
+      files.some((file) => file.path.startsWith('Contents/MacOS/') && file.kind === 'exec')
+    ) &&
     !(files.length === 1 && files[0]?.path === 'App.apk' && files[0].kind === 'file')
   )
     return null;

@@ -2,7 +2,14 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { configDir } from '../index.ts';
 import { isJsonObject } from './json-file.ts';
-export type HostedDevicePlatform = 'ios' | 'android';
+import {
+  hostedMacosAppSlot,
+  parseHostedMacosChoice,
+  parseHostedMacosDevice,
+  type HostedMacosChoice,
+  type HostedMacosDevice,
+} from './hosted-macos.ts';
+export type HostedDevicePlatform = 'ios' | 'android' | 'macos';
 
 export interface HostedIosChoice {
   deviceTypeId: string;
@@ -29,7 +36,7 @@ export interface HostedAndroidDevice extends HostedAndroidChoice {
   consolePort: number;
 }
 
-export type HostedDevice = HostedIosDevice | HostedAndroidDevice;
+export type HostedDevice = HostedIosDevice | HostedAndroidDevice | HostedMacosDevice;
 
 export interface HostedDeviceSelectors {
   deviceType?: string;
@@ -53,7 +60,11 @@ export type HostedNativeOffer = {
     workerDiskFreeBytes: number | null;
   };
   declined: string | null;
-} & ({ platform: 'ios'; choice: HostedIosChoice | null } | { platform: 'android'; choice: HostedAndroidChoice | null });
+} & (
+  | { platform: 'ios'; choice: HostedIosChoice | null }
+  | { platform: 'android'; choice: HostedAndroidChoice | null }
+  | { platform: 'macos'; choice: HostedMacosChoice | null }
+);
 
 export type HostedDeviceOffer = HostedNativeOffer & {
   capacity: { running: number; max: number; available: number | null };
@@ -73,6 +84,7 @@ export interface HostedDeviceSession extends HostedDeviceRequest {
   state: HostedDevicePhase;
   device: HostedDevice | null;
   consolePort?: number;
+  appSlot?: number;
   createdAt: string;
   notice?: string;
   appAttempt?: string;
@@ -130,15 +142,20 @@ export function hostedConsolePort(value: unknown): value is number {
 }
 
 export function parseHostedPlatformDevice(value: unknown, platform: HostedDevicePlatform): HostedDevice | null {
-  return platform === 'ios' ? parseHostedDevice(value) : parseHostedAndroidDevice(value);
+  return platform === 'ios'
+    ? parseHostedDevice(value)
+    : platform === 'android'
+      ? parseHostedAndroidDevice(value)
+      : parseHostedMacosDevice(value);
 }
 
 export function hostedDeviceId(device: HostedDevice): string {
-  return 'udid' in device ? device.udid : device.avdName;
+  return 'udid' in device ? device.udid : 'avdName' in device ? device.avdName : `macos-${device.appSlot}`;
 }
 
 export function parseHostedRequest(value: unknown): HostedDeviceRequest | null {
-  if (!isJsonObject(value) || (value.platform !== 'ios' && value.platform !== 'android')) return null;
+  if (!isJsonObject(value) || (value.platform !== 'ios' && value.platform !== 'android' && value.platform !== 'macos'))
+    return null;
   if (
     typeof value.workspace !== 'string' ||
     !value.workspace ||
@@ -158,7 +175,8 @@ export function parseHostedRequest(value: unknown): HostedDeviceRequest | null {
 }
 
 export function parseHostedOfferRequest(value: unknown): HostedDeviceOfferRequest | null {
-  if (!isJsonObject(value) || (value.platform !== 'ios' && value.platform !== 'android')) return null;
+  if (!isJsonObject(value) || (value.platform !== 'ios' && value.platform !== 'android' && value.platform !== 'macos'))
+    return null;
   if (
     ['deviceType', 'runtime', 'systemImage', 'deviceProfile'].some(
       (key) =>
@@ -168,9 +186,12 @@ export function parseHostedOfferRequest(value: unknown): HostedDeviceOfferReques
   )
     return null;
   if (
-    (value.platform === 'ios' ? ['systemImage', 'deviceProfile'] : ['deviceType', 'runtime']).some(
-      (key) => value[key] !== undefined,
-    )
+    (value.platform === 'ios'
+      ? ['systemImage', 'deviceProfile']
+      : value.platform === 'android'
+        ? ['deviceType', 'runtime']
+        : ['deviceType', 'runtime', 'systemImage', 'deviceProfile']
+    ).some((key) => value[key] !== undefined)
   )
     return null;
   return {
@@ -186,7 +207,7 @@ export function parseHostedNativeOffer(value: unknown): HostedNativeOffer | null
   if (!isJsonObject(value) || !isJsonObject(value.resources)) return null;
   const { resources } = value;
   if (
-    (value.platform !== 'ios' && value.platform !== 'android') ||
+    (value.platform !== 'ios' && value.platform !== 'android' && value.platform !== 'macos') ||
     (value.declined !== null &&
       (typeof value.declined !== 'string' || !value.declined || value.declined.length > 4000)) ||
     !Number.isInteger(resources.cpus) ||
@@ -204,7 +225,7 @@ export function parseHostedNativeOffer(value: unknown): HostedNativeOffer | null
       resources.memoryPressure !== 'critical')
   )
     return null;
-  let choice: HostedIosChoice | HostedAndroidChoice | null = null;
+  let choice: HostedIosChoice | HostedAndroidChoice | HostedMacosChoice | null = null;
   if (value.choice !== null) {
     if (value.platform === 'ios') {
       const parsed = parseHostedChoice(value.choice);
@@ -216,6 +237,9 @@ export function parseHostedNativeOffer(value: unknown): HostedNativeOffer | null
         runtimeId: parsed.runtimeId,
         architecture: parsed.architecture,
       };
+    } else if (value.platform === 'macos') {
+      choice = parseHostedMacosChoice(value.choice);
+      if (!choice) return null;
     } else {
       const selected = value.choice;
       if (
@@ -282,7 +306,11 @@ export function readHostedSessions(): HostedDeviceSession[] {
       typeof entry.createdAt !== 'string' ||
       !['preparing', 'ready', 'stopping', 'stopped', 'unknown'].includes(String(entry.state)) ||
       (entry.platform === 'android' && !hostedConsolePort(entry.consolePort)) ||
+      (entry.platform === 'macos' ? !hostedMacosAppSlot(entry.appSlot) : entry.appSlot !== undefined) ||
       (entry.device !== null && !parseHostedPlatformDevice(entry.device, entry.platform as HostedDevicePlatform)) ||
+      (entry.platform === 'macos' &&
+        entry.device !== null &&
+        (entry.device as HostedMacosDevice).appSlot !== entry.appSlot) ||
       (entry.platform === 'android' &&
         entry.device !== null &&
         (entry.device as HostedAndroidDevice).consolePort !== entry.consolePort) ||
@@ -305,6 +333,7 @@ export function readHostedSessions(): HostedDeviceSession[] {
 /** The private worker's exact device record; an absent record is unresolved after creation started. */
 export function readHostedDevice(home: string): HostedIosDevice;
 export function readHostedDevice(home: string, platform: 'android'): HostedAndroidDevice;
+export function readHostedDevice(home: string, platform: 'macos'): HostedMacosDevice;
 export function readHostedDevice(home: string, platform: HostedDevicePlatform): HostedDevice;
 export function readHostedDevice(home: string, platform: HostedDevicePlatform = 'ios'): HostedDevice {
   const value: unknown = JSON.parse(readFileSync(join(home, 'hosted-device.json'), 'utf8'));
@@ -315,7 +344,13 @@ export function readHostedDevice(home: string, platform: HostedDevicePlatform = 
 
 /** Hosted sessions use isolated homes: only one exact device of their platform may appear in this ledger. */
 export function assertHostedDeviceLedger(home: string, id: string, platform: HostedDevicePlatform = 'ios'): void {
-  const value: unknown = JSON.parse(readFileSync(join(home, 'created-devices.json'), 'utf8'));
+  let value: unknown;
+  try {
+    value = JSON.parse(readFileSync(join(home, 'created-devices.json'), 'utf8'));
+  } catch (error) {
+    if (platform === 'macos' && (error as NodeJS.ErrnoException).code === 'ENOENT') return;
+    throw error;
+  }
   if (
     !isJsonObject(value) ||
     value.version !== 1 ||
