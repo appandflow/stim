@@ -613,6 +613,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     worker: join(dirname(options.stimCli), 'offload-worker.mjs'),
     env: options.env,
     limits: options.buildLimits,
+    ready: () => startup.state === 'ready',
     finished: ({ client, repo, ok, error, durationMs }) =>
       auditSafely({
         at: new Date().toISOString(),
@@ -698,19 +699,18 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   let revocationPoll: NodeJS.Timeout | null = null;
   const becomeReady = () => {
     mkdirSync(serverDir(), { recursive: true, mode: 0o700 });
-    watcher = watch(serverDir(), () => {
+    watcher ??= watch(serverDir(), () => {
       revocationCheck ??= setTimeout(() => {
         revocationCheck = null;
         checkRevocations();
       }, 50);
     });
     // Node's macOS watcher can miss changes before it is ready: https://github.com/nodejs/node/issues/52601.
-    revocationPoll = setInterval(checkRevocations, 1000);
-    revocationPoll.unref();
+    revocationPoll ??= setInterval(checkRevocations, 1000).unref();
     push.refresh();
-    if (options.frameHelper === undefined) buildHelper();
+    if (options.frameHelper === undefined && !helperPath && !helperBuilding) buildHelper();
     if (options.record !== false) {
-      recorder = new Recorder({
+      recorder ??= new Recorder({
         frames,
         subscribeStatus: (listener) => feeds.subscribe(STATUS_FEED, listener),
         limits: options.recordLimits,
@@ -2104,16 +2104,16 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   const close = async () => {
     closing = true;
     if (startupRetry) clearTimeout(startupRetry);
-    await startupProbe?.cancel();
+    startupProbe?.cancel();
+    watcher?.close();
+    if (revocationPoll) clearInterval(revocationPoll);
+    if (revocationCheck) clearTimeout(revocationCheck);
     await builds.close();
     for (const client of wss.clients) client.terminate();
     if (startup.state === 'ready') {
       push.close();
-      watcher?.close();
-      if (revocationPoll) clearInterval(revocationPoll);
       helperAbort.abort();
       sampler.stop();
-      if (revocationCheck) clearTimeout(revocationCheck);
       await control.close();
       await agentDrivers.close();
       await hostedDevices.close();

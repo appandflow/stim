@@ -559,6 +559,48 @@ syncBuiltinESMExports();
       }
     });
 
+    test.skipIf(process.platform === 'win32')(
+      'does not read Stim home files from timers before the first read returns',
+      async () => {
+        const blocked = blockRead('sweep-read');
+        const config = join(process.env.STIM_HOME!, 'config.json');
+        const opened = join(root, 'config-opened');
+        rmSync(config, { force: true });
+        execFileSync('mkfifo', [config]);
+        const opener = spawn(process.execPath, [
+          '-e',
+          `const fs = require('node:fs');
+for (;;) { fs.closeSync(fs.openSync(${JSON.stringify(config)}, 'w')); fs.writeFileSync(${JSON.stringify(opened)}, ''); }`,
+        ]);
+        const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+        try {
+          await start({
+            settle: false,
+            startupProbeMs: 10_000,
+            startupRetryMs: 60_000,
+            buildLimits: { daemonSweepMs: 30 },
+            env: blocked.env,
+          });
+          await new Promise((resolve) => setTimeout(resolve, 400));
+          expect(existsSync(opened)).toBe(false);
+        } finally {
+          await server?.close();
+          server = null;
+          opener.kill('SIGKILL');
+          error.mockRestore();
+        }
+      },
+    );
+
+    test('stops promptly while the first read is still out', async () => {
+      const blocked = blockRead('closing-read');
+      await start({ settle: false, startupProbeMs: 10_000, env: blocked.env });
+      const started = Date.now();
+      await server!.close();
+      expect(Date.now() - started).toBeLessThan(3000);
+      expect((await server!.ready).state).toBe('pending');
+    });
+
     test('becomes ready without a restart once the read returns', async () => {
       const blocked = blockRead('recovering-read');
       const error = vi.spyOn(console, 'error').mockImplementation(() => {});
