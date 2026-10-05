@@ -7,7 +7,8 @@ import SwiftUI
 /// Live frames of one display of a booted iOS simulator, the main display
 /// unless `screenID` names another, turned upright for the device's
 /// orientation. When `interactive` is true, clicks, drags, trackpad scrolls
-/// and keys go to the simulator. `onPixelSizeChange` receives the frame's
+/// and keys go to the simulator once its input connection is ready; input is
+/// dropped while connecting or unavailable. `onPixelSizeChange` receives the frame's
 /// pixel size as displayed, after rotation. `onLitChange`, when set, receives
 /// whether the display shows anything; the panel of an iPhone Duo that the
 /// posture turned off is all black. `hingeAngle`, in degrees, projects the
@@ -125,6 +126,10 @@ public final class SimulatorButtons {
   }
 }
 
+private final class SimulatorInputStatusLabel: NSTextField {
+  override func hitTest(_ point: NSPoint) -> NSView? { nil }
+}
+
 public final class SimulatorDisplayNSView: NSView {
   var onPixelSizeChange: (CGSize) -> Void = { _ in }
   var onOrientationChange: (UInt32) -> Void = { _ in }
@@ -144,15 +149,19 @@ public final class SimulatorDisplayNSView: NSView {
   private var retryTimer: Timer?
   private var interactive = false
   private var hid: SimulatorHID?
+  private var inputTask: Task<Void, Never>?
+  private var inputTimer: Timer?
+  private var nextInputAttempt = Date.distantPast
+  private let inputStatus = SimulatorInputStatusLabel(wrappingLabelWithString: "")
   private var touchPoint: CGPoint?
   private var keyboardModifiers = SimulatorKeyboardModifiers()
   private lazy var twoFinger = TwoFingerGesture(
-    view: self, enabled: { [weak self] in self?.interactive == true },
+    view: self, enabled: { [weak self] in self?.acceptsInput == true },
     map: { [weak self] point, clamped in self?.screenPoint(point, clamped: clamped) },
     project: { [weak self] point in self?.viewPoint(point) },
     send: { [weak self] phase, first, second in
       guard let self else { return false }
-      if phase == .move, self.hid?.isConnected != true {
+      if phase == .move, self.hid?.isReady != true {
         self.releaseInput()
         return false
       }
@@ -173,7 +182,7 @@ public final class SimulatorDisplayNSView: NSView {
     didSet {
       guard oldValue !== duoModel else { return }
       oldValue?.removeFromSuperview()
-      if let duoModel { addSubview(duoModel) }
+      if let duoModel { addSubview(duoModel, positioned: .below, relativeTo: inputStatus) }
       needsLayout = true
     }
   }
@@ -197,6 +206,19 @@ public final class SimulatorDisplayNSView: NSView {
     surfaceLayer.minificationFilter = .trilinear
     layer?.addSublayer(surfaceLayer)
     layer?.addSublayer(foldedScreen.layer)
+    inputStatus.isHidden = true
+    inputStatus.isSelectable = false
+    inputStatus.alignment = .center
+    inputStatus.textColor = .white
+    inputStatus.backgroundColor = .black.withAlphaComponent(0.8)
+    inputStatus.drawsBackground = true
+    inputStatus.translatesAutoresizingMaskIntoConstraints = false
+    addSubview(inputStatus)
+    NSLayoutConstraint.activate([
+      inputStatus.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
+      inputStatus.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+      inputStatus.topAnchor.constraint(equalTo: topAnchor, constant: 8),
+    ])
   }
 
   required init?(coder: NSCoder) { nil }
@@ -231,13 +253,18 @@ public final class SimulatorDisplayNSView: NSView {
     reportedLit = nil
     litTimer?.invalidate()
     litTimer = nil
-    releaseInput()
+    stopInput()
   }
 
   private func connect() {
-    guard let udid, display == nil, retryTimer == nil else { return }
+    guard let udid else { return }
+    guard display == nil, retryTimer == nil else {
+      watchInput()
+      return
+    }
     guard let display = CoreSimulator.displays(udid: udid).first(where: { $0.screenProperties?.screenID == screenID })
     else {
+      watchInput()
       retryTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: false) { [weak self] _ in
         self?.retryTimer = nil
         self?.connect()
@@ -245,6 +272,7 @@ public final class SimulatorDisplayNSView: NSView {
       return
     }
     self.display = display
+    watchInput()
     showSurface()
     display.registerSurfacesCallback(callbackID) { [weak self] _ in
       DispatchQueue.main.async { self?.showSurface() }
@@ -359,9 +387,73 @@ public final class SimulatorDisplayNSView: NSView {
     self.interactive = interactive
     if interactive {
       window?.makeFirstResponder(self)
+      watchInput()
     } else {
-      releaseInput()
+      stopInput()
     }
+  }
+
+  private var acceptsInput: Bool { interactive && display != nil && hid?.isReady == true }
+
+  private func watchInput() {
+    guard interactive, udid != nil, window != nil else { return }
+    if inputTimer == nil {
+      inputTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in self?.connectInput() }
+    }
+    connectInput()
+  }
+
+  private func stopInput() {
+    inputTimer?.invalidate()
+    inputTimer = nil
+    inputTask?.cancel()
+    inputTask = nil
+    nextInputAttempt = .distantPast
+    releaseInput()
+    hid = nil
+    inputStatus.isHidden = true
+  }
+
+  private func connectInput() {
+    guard interactive, let udid else { return }
+    if hid?.isReady == true {
+      inputStatus.isHidden = true
+      if hid?.isConnected == true { return }
+    }
+    if let hid, !hid.isReady {
+      releaseInput()
+      self.hid = nil
+    }
+    guard display != nil else {
+      showInputStatus("Input unavailable. Waiting for the simulator.")
+      return
+    }
+    guard inputTask == nil, Date() >= nextInputAttempt else { return }
+    if !acceptsInput { showInputStatus("Connecting input...") }
+    inputTask = Task { [weak self] in
+      do {
+        let hid = try await SimulatorLookup.run(udid: udid) {
+          guard let hid = SimulatorHID(udid: udid) else { throw SimulatorLookup.Failure.unavailable }
+          while !hid.isReady, hid.isConnected { Thread.sleep(forTimeInterval: 0.05) }
+          guard hid.isReady else { throw SimulatorLookup.Failure.unavailable }
+          return hid
+        }
+        guard let self, !Task.isCancelled, self.udid == udid, self.interactive else { return }
+        self.inputTask = nil
+        self.hid = hid
+        self.connectInput()
+      } catch {
+        guard let self, !Task.isCancelled, self.udid == udid, self.interactive else { return }
+        self.inputTask = nil
+        self.nextInputAttempt = Date().addingTimeInterval(2)
+        if !self.acceptsInput { self.showInputStatus("Input unavailable. \(error.localizedDescription)") }
+      }
+    }
+  }
+
+  private func showInputStatus(_ message: String) {
+    inputStatus.stringValue = message
+    inputStatus.isHidden = false
   }
 
   func releaseInput() {
@@ -371,12 +463,10 @@ public final class SimulatorDisplayNSView: NSView {
     }
     touchPoint = nil
     for code in keyboardModifiers.release() { hid?.hardwareKey(code: code, down: false) }
-    hid = nil
   }
 
   private func inputClient() -> SimulatorHID? {
-    guard interactive, let udid, display != nil else { return nil }
-    if hid?.isConnected != true { hid = SimulatorHID(udid: udid) }
+    guard acceptsInput else { return nil }
     return hid
   }
 
@@ -431,10 +521,10 @@ public final class SimulatorDisplayNSView: NSView {
 
   public override var acceptsFirstResponder: Bool { interactive }
 
-  public override func acceptsFirstMouse(for event: NSEvent?) -> Bool { interactive }
+  public override func acceptsFirstMouse(for event: NSEvent?) -> Bool { acceptsInput }
 
   public override func mouseDown(with event: NSEvent) {
-    guard interactive else { return super.mouseDown(with: event) }
+    guard acceptsInput else { return super.mouseDown(with: event) }
     window?.makeFirstResponder(self)
     guard touchPoint == nil, !twoFinger.isActive else { return }
     if twoFinger.mouseDown(event) { return }
@@ -506,18 +596,21 @@ public final class SimulatorDisplayNSView: NSView {
   }
 
   public override func keyDown(with event: NSEvent) {
-    guard !event.modifierFlags.contains(.option), let hid = inputClient() else { return super.keyDown(with: event) }
+    guard interactive, !event.modifierFlags.contains(.option) else { return super.keyDown(with: event) }
+    guard let hid = inputClient() else { return }
     if !event.isARepeat { hid.hardwareKey(code: event.keyCode, down: true) }
   }
 
   public override func keyUp(with event: NSEvent) {
-    guard let hid = inputClient() else { return super.keyUp(with: event) }
+    guard interactive else { return super.keyUp(with: event) }
+    guard let hid = inputClient() else { return }
     hid.hardwareKey(code: event.keyCode, down: false)
   }
 
   public override func flagsChanged(with event: NSEvent) {
     twoFinger.flagsChanged(event)
-    guard let hid = inputClient() else { return super.flagsChanged(with: event) }
+    guard interactive else { return super.flagsChanged(with: event) }
+    guard let hid = inputClient() else { return }
     for key in keyboardModifiers.change(keyCode: event.keyCode, flags: event.modifierFlags) {
       hid.hardwareKey(code: key.code, down: key.down)
     }

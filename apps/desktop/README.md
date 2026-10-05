@@ -593,6 +593,16 @@ trackpad scrolls as one-finger drags, and your keys. Turn it off before an agent
 drives the device again. Command-key shortcuts stay with the app's menus, and a
 mouse wheel without precise deltas does not scroll.
 
+Local iOS input connects in the background. The screen shows **Connecting input**
+or **Input unavailable** and drops clicks and keys until the connection is ready.
+A lookup times out after 10 seconds without blocking Desktop. CoreSimulator
+cannot cancel that lookup, so Desktop waits for it to return before trying again,
+including when the viewer is reopened. Rotation, hinge input and development
+controls share this per-device lookup guard. Input reconnects after a disconnect.
+Legacy input stays usable while Desktop retries the CoreDevice service in the
+background. Cancelling a development request stops waiting immediately; its
+lookup guard remains held until CoreSimulator returns.
+
 The viewer's scale menu defaults to **Fit**. **Point Accurate** shows one iOS
 point or Android profile dp per Mac point; **Pixel Accurate** shows one guest
 pixel per display backing pixel. **Physical Size** uses the installed iOS

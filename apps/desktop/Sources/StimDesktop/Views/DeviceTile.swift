@@ -120,7 +120,7 @@ struct DeviceTile: View {
       hingeAvailable = false
       guard let udid = dualSimulatorUDID else { return }
       while !Task.isCancelled {
-        let available = await Task.detached { SimulatorPosture.isAvailable(udid: udid) }.value
+        let available = await SimulatorPosture.isAvailableBounded(udid: udid)
         guard !Task.isCancelled else { return }
         hingeAvailable = available
         if hingeAvailable { return }
@@ -509,7 +509,7 @@ struct DeviceTile: View {
       Task {
         switch device {
         case .ios(_, let sim):
-          rotateFailed = !(await Task.detached { SimulatorRotation.rotate(udid: sim.udid, clockwise: clockwise) }.value)
+          rotateFailed = !(await SimulatorRotation.rotateBounded(udid: sim.udid, clockwise: clockwise))
         case .android(_, let avd):
           guard let serial = avd.serial else { return }
           rotateFailed = !(await EmulatorRotation.rotate(serial: serial, clockwise: clockwise))
@@ -552,7 +552,7 @@ struct DeviceTile: View {
       foldError = nil
       Task {
         let from = currentHingeAngle
-        foldError = await SimulatorPosture.move(udid: udid, from: from, to: target)
+        foldError = await SimulatorPosture.moveBounded(udid: udid, from: from, to: target.hingeAngle)
         if foldError == nil {
           hingeAngle = target.hingeAngle
           try? await Task.sleep(for: .seconds(3))
@@ -598,7 +598,7 @@ struct DeviceTile: View {
           postureTarget = nil
           foldError = nil
           Task {
-            foldError = await SimulatorPosture.move(udid: udid, from: from, to: target)
+            foldError = await SimulatorPosture.moveBounded(udid: udid, from: from, to: target)
             folding = false
           }
         }
