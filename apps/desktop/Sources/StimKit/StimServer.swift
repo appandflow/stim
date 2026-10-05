@@ -49,9 +49,10 @@ public struct ServerHealth: Decodable, Equatable, Sendable {
   public var tailscale: TailscaleState
   /// The `tailscale serve` route read on this request, present while Tailscale runs.
   public var route: ServeRoute?
+  public var nativeViewerOpened: Bool?
 
   enum CodingKeys: String, CodingKey {
-    case server, name, version, stim, stimHome, tailscale, route
+    case server, name, version, stim, stimHome, tailscale, route, nativeViewerOpened
     case protocolVersion = "protocol"
   }
 

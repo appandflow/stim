@@ -96,10 +96,10 @@ final class SimulatorHID {
   }
 
   /// `point` is a fraction of the screen in its native orientation, origin top-left.
-  func touch(_ phase: TouchPhase, at point: CGPoint, screenID: UInt32 = 1) {
+  func touch(_ phase: TouchPhase, at point: CGPoint, second: CGPoint? = nil, screenID: UInt32 = 1) {
     switch transport {
-    case .coreDevice(let coreDevice): coreDevice.touch(phase, at: point, screenID: screenID)
-    case .legacy(let legacy): legacy.touch(phase, at: point, screenID: screenID)
+    case .coreDevice(let coreDevice): coreDevice.touch(phase, at: point, second: second, screenID: screenID)
+    case .legacy(let legacy): legacy.touch(phase, at: point, second: second, screenID: screenID)
     }
   }
 
@@ -204,7 +204,7 @@ final class CoreDeviceHID {
   }
 
   // dtuhidd's DigitizerTarget is 0 for the main screen and the screen ID for any other display.
-  func touch(_ phase: TouchPhase, at point: CGPoint, screenID: UInt32) {
+  func touch(_ phase: TouchPhase, at point: CGPoint, second: CGPoint?, screenID: UInt32) {
     let contact = xpc_dictionary_create(nil, nil, 0)
     xpc_dictionary_set_double(contact, "x", point.x)
     xpc_dictionary_set_double(contact, "y", point.y)
@@ -212,6 +212,12 @@ final class CoreDeviceHID {
       "eventType": phase == .down ? 0 : phase == .move ? 1 : 2, "edge": 0, "target": UInt64(screenID == 1 ? 0 : screenID),
     ])
     xpc_dictionary_set_value(payload, "pointOne", contact)
+    if let second {
+      let contact = xpc_dictionary_create(nil, nil, 0)
+      xpc_dictionary_set_double(contact, "x", second.x)
+      xpc_dictionary_set_double(contact, "y", second.y)
+      xpc_dictionary_set_value(payload, "pointTwo", contact)
+    }
     send("IndigoDigitizerEvent", payload)
   }
 
@@ -300,14 +306,19 @@ private final class LegacyHID {
   // The simulator's SimulatorHID addresses a display's digitizer by its screen
   // ID with bit 30 set, and backboardd aborts on a target it has no service
   // for. The main display keeps its legacy target.
-  func touch(_ phase: TouchPhase, at point: CGPoint, screenID: UInt32) {
+  func touch(_ phase: TouchPhase, at point: CGPoint, second: CGPoint?, screenID: UInt32) {
     let target = screenID == 1 ? Self.mainScreenTarget : 0x4000_0000 | screenID
     var point = point
     // The builder returns nil for a drag that arrives within 16 ms of the previous message.
-    guard
-      let message = SimulatorKit.mouseMessage?(
+    let message: UnsafeMutableRawPointer?
+    if var other = second {
+      message = SimulatorKit.mouseMessage?(
+        &point, &other, target, UInt(phase.eventType.rawValue), CGSize(width: 1, height: 1), 0)
+    } else {
+      message = SimulatorKit.mouseMessage?(
         &point, nil, target, UInt(phase.eventType.rawValue), CGSize(width: 1, height: 1), 0)
-    else { return }
+    }
+    guard let message else { return }
     deliver(message)
   }
 

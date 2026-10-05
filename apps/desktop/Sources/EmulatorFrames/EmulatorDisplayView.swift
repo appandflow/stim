@@ -20,38 +20,79 @@ public struct EmulatorDisplayView: NSViewRepresentable {
   public var onStatus: (EmulatorStreamStatus) -> Void
   public var onPixelSizeChange: (CGSize) -> Void
   public var buttons: EmulatorButtons?
+  public var avdName: String?
+  public var showsDeviceFrame: Bool
+  public var onFrameSizeChange: ((CGSize?) -> Void)?
+  public var fullResolution: Bool
+  public var artworkScale: CGFloat?
+  public var accurateScreenSize: CGSize?
 
   public init(
     serial: String, interactive: Bool = false, onStatus: @escaping (EmulatorStreamStatus) -> Void,
-    onPixelSizeChange: @escaping (CGSize) -> Void = { _ in }, buttons: EmulatorButtons? = nil
+    onPixelSizeChange: @escaping (CGSize) -> Void = { _ in }, buttons: EmulatorButtons? = nil,
+    avdName: String? = nil, showsDeviceFrame: Bool = false, onFrameSizeChange: ((CGSize?) -> Void)? = nil,
+    fullResolution: Bool = false, artworkScale: CGFloat? = nil, accurateScreenSize: CGSize? = nil
   ) {
     self.serial = serial
     self.interactive = interactive
     self.onStatus = onStatus
     self.onPixelSizeChange = onPixelSizeChange
     self.buttons = buttons
+    self.avdName = avdName
+    self.showsDeviceFrame = showsDeviceFrame
+    self.onFrameSizeChange = onFrameSizeChange
+    self.fullResolution = fullResolution
+    self.artworkScale = artworkScale
+    self.accurateScreenSize = accurateScreenSize
   }
 
-  public func makeNSView(context: Context) -> EmulatorDisplayNSView {
+  public final class Coordinator {
+    var identity: String?
+  }
+
+  public func makeCoordinator() -> Coordinator { Coordinator() }
+
+  public func makeNSView(context: Context) -> DeviceFrameNSView {
     let view = EmulatorDisplayNSView()
+    let canvas = DeviceFrameNSView(screen: view)
+    canvas.onFrameSizeChange = onFrameSizeChange ?? { _ in }
+    let frameIdentity = showsDeviceFrame || onFrameSizeChange != nil ? avdName : nil
+    context.coordinator.identity = frameIdentity
+    canvas.artwork = frameIdentity == nil ? nil : avdName.flatMap { EmulatorFrameArtwork.load(avdName: $0) }
+    canvas.showsFrame = showsDeviceFrame
+    canvas.artworkScale = artworkScale
+    canvas.accurateScreenSize = accurateScreenSize
+    view.onRotationChange = { [weak canvas] rotation in canvas?.quarterTurns = -rotation }
     view.onStatus = onStatus
     view.onPixelSizeChange = onPixelSizeChange
+    view.setFullResolution(fullResolution)
     view.attach(serial: serial)
     view.setInteractive(interactive)
     buttons?.view = view
-    return view
+    return canvas
   }
 
-  public func updateNSView(_ view: EmulatorDisplayNSView, context: Context) {
+  public func updateNSView(_ canvas: DeviceFrameNSView, context: Context) {
+    guard let view = canvas.screen as? EmulatorDisplayNSView else { return }
+    canvas.onFrameSizeChange = onFrameSizeChange ?? { _ in }
+    let frameIdentity = showsDeviceFrame || onFrameSizeChange != nil ? avdName : nil
+    if context.coordinator.identity != frameIdentity {
+      context.coordinator.identity = frameIdentity
+      canvas.artwork = frameIdentity == nil ? nil : avdName.flatMap { EmulatorFrameArtwork.load(avdName: $0) }
+    }
+    canvas.showsFrame = showsDeviceFrame
+    canvas.artworkScale = artworkScale
+    canvas.accurateScreenSize = accurateScreenSize
     view.onStatus = onStatus
     view.onPixelSizeChange = onPixelSizeChange
+    view.setFullResolution(fullResolution)
     view.attach(serial: serial)
     view.setInteractive(interactive)
     buttons?.view = view
   }
 
-  public static func dismantleNSView(_ view: EmulatorDisplayNSView, coordinator: ()) {
-    view.detach()
+  public static func dismantleNSView(_ canvas: DeviceFrameNSView, coordinator: Coordinator) {
+    (canvas.screen as? EmulatorDisplayNSView)?.detach()
   }
 }
 
@@ -98,12 +139,13 @@ public final class EmulatorDisplayNSView: NSView {
 
   var onStatus: ((EmulatorStreamStatus) -> Void)?
   var onPixelSizeChange: (CGSize) -> Void = { _ in }
+  var onRotationChange: (Int) -> Void = { _ in }
   private var serial: String?
   private var stream: ScreenshotStream?
   private var retryTimer: Timer?
   private var status: EmulatorStreamStatus?
   private var generation = 0
-  private let pending = PendingFrame()
+  private var pending = PendingFrame()
   private var endpoint: EmulatorEndpoint?
   private var shown: (size: CGSize, rotation: Int, folded: CGSize?)?
   private var interactive = false
@@ -112,8 +154,32 @@ public final class EmulatorDisplayNSView: NSView {
   private var hasKeyboard: Bool?
   private var displaySize: CGSize?
   private var touchPoint: CGPoint?
+  private lazy var twoFinger = TwoFingerGesture(
+    view: self, enabled: { [weak self] in self?.interactive == true },
+    map: { [weak self] point, clamped in
+      guard let self, let shown = self.shown else { return nil }
+      return normalizedScreenPoint(point, viewSize: self.bounds.size, screenSize: shown.size, clamped: clamped)
+    },
+    project: { [weak self] point in
+      guard let self, let shown = self.shown else { return nil }
+      let fitted = fittedScreenSize(viewSize: self.bounds.size, screenSize: shown.size)
+      return CGPoint(
+        x: (self.bounds.width - fitted.width) / 2 + point.x * fitted.width,
+        y: (self.bounds.height - fitted.height) / 2 + (1 - point.y) * fitted.height)
+    },
+    send: { [weak self] phase, first, second in
+      guard let self, let input = phase == .up ? self.input : self.inputClient(),
+        let displaySize = self.displaySize, let shown = self.shown
+      else { return false }
+      let points = [first, second].map {
+        displayPixel($0, rotation: shown.rotation, displaySize: shown.folded ?? displaySize)
+      }
+      input.call("sendTouch", InputMessages.touches(points, pressed: phase != .up))
+      return true
+    })
   private var keysDown: Set<UInt16> = []
   private var lastShown: CFTimeInterval = 0
+  private var fullResolution = false
 
   override init(frame: NSRect) {
     super.init(frame: frame)
@@ -129,6 +195,14 @@ public final class EmulatorDisplayNSView: NSView {
     guard serial != self.serial else { return }
     disconnect()
     self.serial = serial
+    connect()
+  }
+
+  func setFullResolution(_ fullResolution: Bool) {
+    guard self.fullResolution != fullResolution else { return }
+    self.fullResolution = fullResolution
+    disconnect()
+    onPixelSizeChange(.zero)
     connect()
   }
 
@@ -161,9 +235,11 @@ public final class EmulatorDisplayNSView: NSView {
     report(.connecting)
     generation += 1
     let current = generation
+    let pending = PendingFrame()
+    self.pending = pending
     var framesSeen = 0
     let stream = ScreenshotStream(
-      endpoint: endpoint, width: Self.maxPixels, height: Self.maxPixels,
+      endpoint: endpoint, width: fullResolution ? 0 : Self.maxPixels, height: fullResolution ? 0 : Self.maxPixels,
       onFrame: { [weak self, pending] frame in
         framesSeen += 1
         if framesSeen > 1 { ScreenActivity.shared.record(serial) }
@@ -173,6 +249,7 @@ public final class EmulatorDisplayNSView: NSView {
       onEnd: { [weak self] in
         DispatchQueue.main.async {
           guard let self, self.stream != nil, self.generation == current else { return }
+          self.releaseInput()
           self.stream = nil
           self.report(.connecting)
           self.retry()
@@ -190,6 +267,7 @@ public final class EmulatorDisplayNSView: NSView {
   }
 
   private func frameArrived(_ generation: Int) {
+    guard generation == self.generation else { return }
     let wait = lastShown + 1 / AppPreferences.maxFramesPerSecond - CACurrentMediaTime()
     guard wait > 0 else {
       show(pending.take())
@@ -207,10 +285,17 @@ public final class EmulatorDisplayNSView: NSView {
 
   private func show(_ frame: EmulatorFrame?) {
     guard stream != nil, let frame, let image = Self.image(frame) else { return }
+    if let shown,
+      shown.rotation != frame.rotation
+        || shown.folded != frame.folded.map({ CGSize(width: $0.width, height: $0.height) })
+    {
+      releaseInput()
+    }
     lastShown = CACurrentMediaTime()
     layer?.contents = image
     let size = CGSize(width: frame.width, height: frame.height)
     if size != shown?.size { onPixelSizeChange(size) }
+    onRotationChange(frame.rotation)
     self.shown = (size, frame.rotation, frame.folded.map { CGSize(width: $0.width, height: $0.height) })
     _ = inputClient()
     report(.streaming)
@@ -234,14 +319,19 @@ public final class EmulatorDisplayNSView: NSView {
   public override func viewDidMoveToWindow() {
     super.viewDidMoveToWindow()
     NotificationCenter.default.removeObserver(self, name: NSWindow.didChangeOcclusionStateNotification, object: nil)
+    NotificationCenter.default.removeObserver(self, name: NSWindow.didResignKeyNotification, object: nil)
     if let window {
       NotificationCenter.default.addObserver(
         self, selector: #selector(occlusionChanged), name: NSWindow.didChangeOcclusionStateNotification, object: window)
+      NotificationCenter.default.addObserver(
+        self, selector: #selector(windowResignedKey), name: NSWindow.didResignKeyNotification, object: window)
       connect()
     } else {
       disconnect()
     }
   }
+
+  @objc private func windowResignedKey() { twoFinger.cancel() }
 
   @objc private func occlusionChanged() {
     if framesPaused {
@@ -262,6 +352,7 @@ public final class EmulatorDisplayNSView: NSView {
   }
 
   private func releaseInput() {
+    twoFinger.cancel()
     if let touchPoint, let input, let displaySize, let shown {
       let native = displayPixel(touchPoint, rotation: shown.rotation, displaySize: shown.folded ?? displaySize)
       input.call("sendMouse", InputMessages.mouse(x: native.x, y: native.y, pressed: false))
@@ -280,6 +371,12 @@ public final class EmulatorDisplayNSView: NSView {
     guard interactive, let endpoint, shown != nil else { return nil }
     if let input { return input }
     let input = EmulatorInput(endpoint: endpoint)
+    input.onDisconnect = { [weak self, weak input] in
+      DispatchQueue.main.async {
+        guard let self, input != nil, input === self.input else { return }
+        self.releaseInput()
+      }
+    }
     self.input = input
     input.call("getStatus", Data()) { [weak self, weak input] response in
       guard let response else { return }
@@ -325,16 +422,20 @@ public final class EmulatorDisplayNSView: NSView {
   public override func mouseDown(with event: NSEvent) {
     guard interactive else { return super.mouseDown(with: event) }
     window?.makeFirstResponder(self)
-    guard touchPoint == nil, let point = screenPoint(event, clamped: false) else { return }
+    guard touchPoint == nil, !twoFinger.isActive else { return }
+    if twoFinger.mouseDown(event) { return }
+    guard !event.modifierFlags.contains(.option), let point = screenPoint(event, clamped: false) else { return }
     mouse(at: point, pressed: true)
   }
 
   public override func mouseDragged(with event: NSEvent) {
+    if twoFinger.mouseDragged(event) { return }
     guard touchPoint != nil, let point = screenPoint(event, clamped: true) else { return }
     mouse(at: point, pressed: true)
   }
 
   public override func mouseUp(with event: NSEvent) {
+    if twoFinger.mouseUp(event) { return }
     guard let last = touchPoint else { return }
     mouse(at: screenPoint(event, clamped: true) ?? last, pressed: false)
   }
@@ -343,7 +444,9 @@ public final class EmulatorDisplayNSView: NSView {
   // phases, as on iOS. Momentum events are dropped because Android flings on
   // its own after the finger lifts.
   public override func scrollWheel(with event: NSEvent) {
-    guard interactive, event.hasPreciseScrollingDeltas, event.momentumPhase.isEmpty else {
+    if twoFinger.isActive { return }
+    if interactive, event.hasPreciseScrollingDeltas, !event.momentumPhase.isEmpty { return }
+    guard interactive, event.hasPreciseScrollingDeltas else {
       return super.scrollWheel(with: event)
     }
     if event.phase.contains(.began) {
@@ -360,6 +463,18 @@ public final class EmulatorDisplayNSView: NSView {
     }
   }
 
+  public override func layout() {
+    super.layout()
+    twoFinger.redraw()
+  }
+
+  public override func magnify(with event: NSEvent) {
+    guard touchPoint == nil else { return }
+    twoFinger.magnify(event)
+  }
+
+  public override func flagsChanged(with event: NSEvent) { twoFinger.flagsChanged(event) }
+
   // Printable ASCII goes as text so the emulator picks the evdev keys and
   // Shift itself; other keys go as macOS key codes, which the emulator
   // translates. An emulator without a hardware keyboard drops both, so its
@@ -367,6 +482,7 @@ public final class EmulatorDisplayNSView: NSView {
   // the Mac.
   public override func keyDown(with event: NSEvent) {
     guard !event.modifierFlags.contains(.command), !event.modifierFlags.contains(.control),
+      !event.modifierFlags.contains(.option),
       let input = inputClient()
     else { return super.keyDown(with: event) }
     let text = event.characters.flatMap { isPrintableASCII($0) ? $0 : nil }

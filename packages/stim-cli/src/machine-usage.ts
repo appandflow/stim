@@ -14,6 +14,7 @@ export interface WorkspaceProcessRoots {
   supervisorPid: number | null;
   build: { platform: StatsPlatform; pid: number } | null;
   browserPids: number[];
+  macosPids?: number[];
 }
 
 const SHARED: { name: string; pattern: RegExp }[] = [
@@ -160,6 +161,10 @@ export function attributeMachineUsage({
     if (root.build && present.has(root.build.pid)) {
       const label = root.build.platform === 'ios' ? 'iOS build' : 'Android build';
       claim(root.build.pid, `build:${env.path}`, workspaceOwner('build', env, label, root.build.platform));
+    }
+    for (const pid of root.macosPids ?? []) {
+      if (present.has(pid))
+        claim(pid, `macos:${env.path}`, workspaceOwner('macos', env, env.macos?.product ?? 'macOS app', null));
     }
     for (const pid of root.browserPids) {
       if (present.has(pid)) claim(pid, `browser:${env.path}`, workspaceOwner('browser', env, 'Chrome', null));

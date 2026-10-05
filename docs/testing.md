@@ -81,3 +81,13 @@ pass.
 
 The opt-in [website prompt evaluation](../scripts/prompt-eval/README.md) checks
 real-agent command selection against the shipped guides without native builds.
+
+## Optional mobile AI pilot
+
+The [tester.army pilot](../test/mobile-e2e/README.md) prepares two mock-mobile
+flows with exact assertions and optional AI actions. It is an isolated private
+package outside the pnpm workspace. Root knip covers its dependencies; UI/model
+runs are optional. Its documented native,
+intentional-regression and model-cost gates remain unavailable until an owned
+fixture and an authorized model are available. It does not replace any stage
+above.

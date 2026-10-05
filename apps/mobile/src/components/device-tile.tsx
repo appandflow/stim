@@ -120,7 +120,8 @@ export function DeviceTile({
       </Pill>
     ) : null,
   ].filter(Boolean);
-  const fallbackAspect = device.platform === 'web' ? 1.6 : device.platform === 'ios' ? 0.46 : 0.45;
+  const fallbackAspect =
+    device.platform === 'web' || device.platform === 'macos' ? 1.6 : device.platform === 'ios' ? 0.46 : 0.45;
   const aspect = frame && frame.height > 0 ? frame.width / frame.height : fallbackAspect;
   const imageHeight = Math.min(SCREEN_HEIGHT - SCREEN_PADDING * 2, (screenWidth - SCREEN_PADDING * 2) / aspect);
   const buildName = build ? platformName(build.platform) : '';

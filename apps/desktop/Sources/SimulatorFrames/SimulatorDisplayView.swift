@@ -20,11 +20,20 @@ public struct SimulatorDisplayView: NSViewRepresentable {
   public var onLitChange: ((Bool) -> Void)?
   public var buttons: SimulatorButtons?
   public var hingeAngle: Double?
+  public var showsDeviceFrame: Bool
+  public var onFrameSizeChange: ((CGSize?) -> Void)?
+  public var duoFrame: SimulatorDuoFrame?
+  public var activeScreenID: UInt32?
+  public var duoHingeAngle: Double?
+  public var artworkScale: CGFloat?
+  public var accurateScreenSize: CGSize?
 
   public init(
     udid: String, screenID: UInt32 = 1, interactive: Bool = false,
     onPixelSizeChange: @escaping (CGSize) -> Void = { _ in }, onLitChange: ((Bool) -> Void)? = nil,
-    buttons: SimulatorButtons? = nil, hingeAngle: Double? = nil
+    buttons: SimulatorButtons? = nil, hingeAngle: Double? = nil, showsDeviceFrame: Bool = false,
+    onFrameSizeChange: ((CGSize?) -> Void)? = nil, duoFrame: SimulatorDuoFrame? = nil, activeScreenID: UInt32? = nil,
+    duoHingeAngle: Double? = nil, artworkScale: CGFloat? = nil, accurateScreenSize: CGSize? = nil
   ) {
     self.udid = udid
     self.screenID = screenID
@@ -33,30 +42,70 @@ public struct SimulatorDisplayView: NSViewRepresentable {
     self.onLitChange = onLitChange
     self.buttons = buttons
     self.hingeAngle = hingeAngle
+    self.showsDeviceFrame = showsDeviceFrame
+    self.onFrameSizeChange = onFrameSizeChange
+    self.duoFrame = duoFrame
+    self.activeScreenID = activeScreenID
+    self.duoHingeAngle = duoHingeAngle
+    self.artworkScale = artworkScale
+    self.accurateScreenSize = accurateScreenSize
   }
 
-  public func makeNSView(context: Context) -> SimulatorDisplayNSView {
+  public final class Coordinator {
+    var identity: String?
+  }
+
+  public func makeCoordinator() -> Coordinator { Coordinator() }
+
+  public func makeNSView(context: Context) -> DeviceFrameNSView {
     let view = SimulatorDisplayNSView()
+    let canvas = DeviceFrameNSView(screen: view)
+    canvas.onFrameSizeChange = onFrameSizeChange ?? { _ in }
+    let frameIdentity = showsDeviceFrame || onFrameSizeChange != nil ? udid : nil
+    context.coordinator.identity = frameIdentity
+    canvas.artwork = frameIdentity == nil ? nil : SimulatorFrameArtwork.load(udid: udid)
+    canvas.showsFrame = showsDeviceFrame
+    canvas.artworkScale = artworkScale
+    canvas.accurateScreenSize = accurateScreenSize
+    view.onOrientationChange = { [weak canvas] orientation in
+      canvas?.quarterTurns = orientation == 3 ? 1 : orientation == 4 ? 3 : orientation == 2 ? 2 : 0
+    }
     view.onPixelSizeChange = onPixelSizeChange
     view.onLitChange = onLitChange
     view.attach(udid: udid, screenID: screenID)
     view.setInteractive(interactive)
     view.hingeAngle = hingeAngle
+    duoFrame?.attach(
+      view, udid: udid, screenID: screenID, activeID: activeScreenID,
+      angle: duoHingeAngle, shown: showsDeviceFrame, onFrameSize: onFrameSizeChange ?? { _ in })
     buttons?.view = view
-    return view
+    return canvas
   }
 
-  public func updateNSView(_ view: SimulatorDisplayNSView, context: Context) {
+  public func updateNSView(_ canvas: DeviceFrameNSView, context: Context) {
+    guard let view = canvas.screen as? SimulatorDisplayNSView else { return }
+    canvas.onFrameSizeChange = onFrameSizeChange ?? { _ in }
+    let frameIdentity = showsDeviceFrame || onFrameSizeChange != nil ? udid : nil
+    if context.coordinator.identity != frameIdentity {
+      context.coordinator.identity = frameIdentity
+      canvas.artwork = frameIdentity == nil ? nil : SimulatorFrameArtwork.load(udid: udid)
+    }
+    canvas.showsFrame = showsDeviceFrame
+    canvas.artworkScale = artworkScale
+    canvas.accurateScreenSize = accurateScreenSize
     view.onPixelSizeChange = onPixelSizeChange
     view.onLitChange = onLitChange
     view.attach(udid: udid, screenID: screenID)
     view.setInteractive(interactive)
     view.hingeAngle = hingeAngle
+    duoFrame?.attach(
+      view, udid: udid, screenID: screenID, activeID: activeScreenID,
+      angle: duoHingeAngle, shown: showsDeviceFrame, onFrameSize: onFrameSizeChange ?? { _ in })
     buttons?.view = view
   }
 
-  public static func dismantleNSView(_ view: SimulatorDisplayNSView, coordinator: ()) {
-    view.detach()
+  public static func dismantleNSView(_ canvas: DeviceFrameNSView, coordinator: Coordinator) {
+    (canvas.screen as? SimulatorDisplayNSView)?.detach()
   }
 }
 
@@ -75,6 +124,7 @@ public final class SimulatorButtons {
 
 public final class SimulatorDisplayNSView: NSView {
   var onPixelSizeChange: (CGSize) -> Void = { _ in }
+  var onOrientationChange: (UInt32) -> Void = { _ in }
   var onLitChange: ((Bool) -> Void)? {
     didSet {
       watchLit()
@@ -92,9 +142,38 @@ public final class SimulatorDisplayNSView: NSView {
   private var interactive = false
   private var hid: SimulatorHID?
   private var touchPoint: CGPoint?
+  private var keyboardModifiers = SimulatorKeyboardModifiers()
+  private lazy var twoFinger = TwoFingerGesture(
+    view: self, enabled: { [weak self] in self?.interactive == true },
+    map: { [weak self] point, clamped in self?.screenPoint(point, clamped: clamped) },
+    project: { [weak self] point in self?.viewPoint(point) },
+    send: { [weak self] phase, first, second in
+      guard let self else { return false }
+      if phase == .move, self.hid?.isConnected != true {
+        self.releaseInput()
+        return false
+      }
+      guard let hid = phase == .up ? self.hid : self.inputClient() else { return false }
+      let touchPhase: TouchPhase = phase == .down ? .down : phase == .move ? .move : .up
+      hid.touch(
+        touchPhase, at: nativeScreenPoint(first, orientation: self.orientation),
+        second: nativeScreenPoint(second, orientation: self.orientation), screenID: self.screenID)
+      return true
+    })
   private let surfaceLayer = CALayer()
   private let foldedScreen = DuoFoldRenderer()
   private var surface: IOSurface?
+  var onSurfaceChange: ((IOSurface?, UInt32) -> Void)? {
+    didSet { onSurfaceChange?(surface, orientation) }
+  }
+  var duoModel: DuoModelView? {
+    didSet {
+      guard oldValue !== duoModel else { return }
+      oldValue?.removeFromSuperview()
+      if let duoModel { addSubview(duoModel) }
+      needsLayout = true
+    }
+  }
   var hingeAngle: Double? {
     didSet { needsLayout = true }
   }
@@ -142,6 +221,7 @@ public final class SimulatorDisplayNSView: NSView {
     }
     display = nil
     surface = nil
+    onSurfaceChange?(nil, orientation)
     surfaceLayer.contents = nil
     foldedScreen.show(nil)
     reportedSize = nil
@@ -182,10 +262,13 @@ public final class SimulatorDisplayNSView: NSView {
   }
 
   func showSurface(_ surface: IOSurface?, orientation: UInt32) {
+    if orientation != self.orientation { releaseInput() }
     self.surface = surface
     surfaceLayer.contents = surface
     foldedScreen.show(surface)
     self.orientation = orientation
+    onOrientationChange(orientation)
+    onSurfaceChange?(surface, orientation)
     needsLayout = true
     reportLit()
     guard let displayed = displayedScreenSize, displayed != reportedSize else { return }
@@ -223,10 +306,12 @@ public final class SimulatorDisplayNSView: NSView {
     surfaceLayer.position = CGPoint(x: bounds.midX, y: bounds.midY)
     surfaceLayer.setAffineTransform(CGAffineTransform(rotationAngle: rotation))
     let projection = foldProjection
-    surfaceLayer.isHidden = projection != nil
-    foldedScreen.layer.isHidden = projection == nil
+    surfaceLayer.isHidden = duoModel != nil || projection != nil
+    foldedScreen.layer.isHidden = duoModel != nil || projection == nil
+    duoModel?.frame = bounds
     if let projection { foldedScreen.layout(projection, in: bounds, orientation: orientation) }
     CATransaction.commit()
+    twoFinger.redraw()
   }
 
   private var framesPaused: Bool {
@@ -248,6 +333,7 @@ public final class SimulatorDisplayNSView: NSView {
     // contents changed; the method is QuartzCore SPI, not public API.
     _ = surfaceLayer.perform(NSSelectorFromString("setContentsChanged"))
     foldedScreen.redraw()
+    onSurfaceChange?(surface, orientation)
     reportLit()
   }
 
@@ -275,11 +361,13 @@ public final class SimulatorDisplayNSView: NSView {
     }
   }
 
-  private func releaseInput() {
+  func releaseInput() {
+    twoFinger.cancel()
     if let touchPoint {
       hid?.touch(.up, at: nativeScreenPoint(touchPoint, orientation: orientation), screenID: screenID)
     }
     touchPoint = nil
+    for code in keyboardModifiers.release() { hid?.hardwareKey(code: code, down: false) }
     hid = nil
   }
 
@@ -301,8 +389,24 @@ public final class SimulatorDisplayNSView: NSView {
 
   func screenPoint(_ point: CGPoint, clamped: Bool) -> CGPoint? {
     guard let screenSize = displayedScreenSize else { return nil }
+    if let duoModel {
+      guard let native = duoModel.nativeScreenPoint(point, clamped: clamped) else { return nil }
+      return nativeScreenPoint(native, orientation: orientation == 3 ? 4 : orientation == 4 ? 3 : orientation)
+    }
     if let projection = foldProjection { return projection.screenPoint(point, in: bounds, clamped: clamped) }
     return normalizedScreenPoint(point, viewSize: bounds.size, screenSize: screenSize, clamped: clamped)
+  }
+
+  private func viewPoint(_ point: CGPoint) -> CGPoint? {
+    guard let size = displayedScreenSize else { return nil }
+    if let duoModel { return duoModel.viewPoint(nativeScreenPoint(point, orientation: orientation)) }
+    if let projection = foldProjection {
+      return projection.viewPoint(CGPoint(x: point.x * size.width, y: (1 - point.y) * size.height), in: bounds)
+    }
+    let fitted = fittedScreenSize(viewSize: bounds.size, screenSize: size)
+    return CGPoint(
+      x: (bounds.width - fitted.width) / 2 + point.x * fitted.width,
+      y: (bounds.height - fitted.height) / 2 + (1 - point.y) * fitted.height)
   }
 
   private func touch(_ phase: TouchPhase, at point: CGPoint) {
@@ -318,16 +422,20 @@ public final class SimulatorDisplayNSView: NSView {
   public override func mouseDown(with event: NSEvent) {
     guard interactive else { return super.mouseDown(with: event) }
     window?.makeFirstResponder(self)
-    guard touchPoint == nil, let point = screenPoint(event, clamped: false) else { return }
+    guard touchPoint == nil, !twoFinger.isActive else { return }
+    if twoFinger.mouseDown(event) { return }
+    guard !event.modifierFlags.contains(.option), let point = screenPoint(event, clamped: false) else { return }
     touch(.down, at: point)
   }
 
   public override func mouseDragged(with event: NSEvent) {
+    if twoFinger.mouseDragged(event) { return }
     guard touchPoint != nil, let point = screenPoint(event, clamped: true) else { return }
     touch(.move, at: point)
   }
 
   public override func mouseUp(with event: NSEvent) {
+    if twoFinger.mouseUp(event) { return }
     guard let last = touchPoint else { return }
     touch(.up, at: screenPoint(event, clamped: true) ?? last)
   }
@@ -336,7 +444,9 @@ public final class SimulatorDisplayNSView: NSView {
   // that follows the gesture's phases. Momentum events are dropped because iOS
   // applies its own deceleration after the finger lifts.
   public override func scrollWheel(with event: NSEvent) {
-    guard interactive, event.hasPreciseScrollingDeltas, event.momentumPhase.isEmpty else {
+    if twoFinger.isActive { return }
+    if interactive, event.hasPreciseScrollingDeltas, !event.momentumPhase.isEmpty { return }
+    guard interactive, event.hasPreciseScrollingDeltas else {
       return super.scrollWheel(with: event)
     }
     if event.phase.contains(.began) {
@@ -344,7 +454,15 @@ public final class SimulatorDisplayNSView: NSView {
       touch(.down, at: point)
     } else if let last = touchPoint, let screenSize = displayedScreenSize {
       let point: CGPoint
-      if let projection = foldProjection {
+      if let duoModel {
+        guard let location = duoModel.viewPoint(nativeScreenPoint(last, orientation: orientation)),
+          let native = duoModel.nativeScreenPoint(
+            CGPoint(
+              x: location.x + event.scrollingDeltaX,
+              y: location.y - event.scrollingDeltaY), clamped: true)
+        else { return }
+        point = nativeScreenPoint(native, orientation: orientation == 3 ? 4 : orientation == 4 ? 3 : orientation)
+      } else if let projection = foldProjection {
         let location = projection.viewPoint(
           CGPoint(
             x: last.x * screenSize.width,
@@ -368,8 +486,13 @@ public final class SimulatorDisplayNSView: NSView {
     }
   }
 
+  public override func magnify(with event: NSEvent) {
+    guard touchPoint == nil else { return }
+    twoFinger.magnify(event)
+  }
+
   public override func keyDown(with event: NSEvent) {
-    guard let hid = inputClient() else { return super.keyDown(with: event) }
+    guard !event.modifierFlags.contains(.option), let hid = inputClient() else { return super.keyDown(with: event) }
     if !event.isARepeat { hid.hardwareKey(code: event.keyCode, down: true) }
   }
 
@@ -379,36 +502,31 @@ public final class SimulatorDisplayNSView: NSView {
   }
 
   public override func flagsChanged(with event: NSEvent) {
-    guard let hid = inputClient(), let flag = modifierFlag(keyCode: event.keyCode) else {
-      return super.flagsChanged(with: event)
+    twoFinger.flagsChanged(event)
+    guard let hid = inputClient() else { return super.flagsChanged(with: event) }
+    for key in keyboardModifiers.change(keyCode: event.keyCode, flags: event.modifierFlags) {
+      hid.hardwareKey(code: key.code, down: key.down)
     }
-    hid.hardwareKey(code: event.keyCode, down: event.modifierFlags.contains(flag))
   }
 
   public override func viewDidMoveToWindow() {
     super.viewDidMoveToWindow()
     NotificationCenter.default.removeObserver(self, name: NSWindow.didChangeOcclusionStateNotification, object: nil)
+    NotificationCenter.default.removeObserver(self, name: NSWindow.didResignKeyNotification, object: nil)
     if let window {
       NotificationCenter.default.addObserver(
         self, selector: #selector(occlusionChanged), name: NSWindow.didChangeOcclusionStateNotification, object: window)
+      NotificationCenter.default.addObserver(
+        self, selector: #selector(windowResignedKey), name: NSWindow.didResignKeyNotification, object: window)
       connect()
     } else {
       disconnect()
     }
   }
 
+  @objc private func windowResignedKey() { twoFinger.cancel() }
+
   @objc private func occlusionChanged() {
     if !framesPaused { redraw() }
-  }
-}
-
-private func modifierFlag(keyCode: UInt16) -> NSEvent.ModifierFlags? {
-  switch keyCode {
-  case 56, 60: return .shift
-  case 59, 62: return .control
-  case 58, 61: return .option
-  case 55, 54: return .command
-  case 57: return .capsLock
-  default: return nil
   }
 }

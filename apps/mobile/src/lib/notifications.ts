@@ -252,13 +252,15 @@ export function notificationRoute(data: unknown, macIds: readonly string[]): Not
   if (typeof value.path !== 'string') return { pathname: '/' };
   const path = value.path;
   const platform =
-    value.platform === 'ios' || value.platform === 'android' || value.platform === 'web' ? value.platform : null;
+    value.platform === 'ios' || value.platform === 'android' || value.platform === 'web' || value.platform === 'macos'
+      ? value.platform
+      : null;
   if (value.target === 'url' && typeof value.url === 'string' && GITHUB_PULL.test(value.url)) return { url: value.url };
   if (value.target === 'device' && platform) {
     const slot = typeof value.slot === 'string' ? value.slot : 'default';
     return { pathname: '/mac/[id]/device', params: { id, path, platform, slot } };
   }
-  if (value.target === 'build' && platform && platform !== 'web') {
+  if (value.target === 'build' && (platform === 'ios' || platform === 'android')) {
     return { pathname: '/mac/[id]/build', params: { id, path, platform } };
   }
   if (value.target === 'logs') return { pathname: '/mac/[id]/logs', params: { id, path, errors: '1' } };

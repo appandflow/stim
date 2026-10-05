@@ -1,3 +1,4 @@
+import { inspectProcessIdentity } from '../process-identity.ts';
 import { deviceSlotKey, projectDeviceSlots } from '../devices/device-slots.ts';
 import {
   createRefreshScheduler,
@@ -55,6 +56,8 @@ import { readIosDevices, type IosDeviceEntry } from '../engine/ios-device.ts';
 import { readEasSessionLedger } from '../engine/eas-session-ledger.ts';
 import { readRemoteSession, readWorkspaceLaunches } from '../supervisor/state.ts';
 import {
+  macosAppState,
+  readMacosRecord,
   readBuildDetail,
   readDeviceIdleShutdowns,
   readIdleStop,
@@ -254,6 +257,7 @@ async function readStatusFacts(gitMaxAgeMs: number, simctlListing: string | null
     const saved = readWorkspaceState(path);
     const builds = workspaceBuilds(path, saved, history);
     const web = webFacts(readWebRecord(path));
+    const macos = macosAppState(readMacosRecord(path));
     const activeBuild = parseActiveBuild(saved?.[ACTIVE_BUILD_KEY]);
     roots.push({
       path,
@@ -263,6 +267,9 @@ async function readStatusFacts(gitMaxAgeMs: number, simctlListing: string | null
           ? { platform: activeBuild.platform, pid: activeBuild.claim.pid }
           : null,
       browserPids: browserPids(web),
+      macosPids: [macos?.supervisor, macos?.app].flatMap((owner) =>
+        owner && inspectProcessIdentity(owner) === 'same' ? [owner.pid] : [],
+      ),
     });
     const launches = readWorkspaceLaunches(path);
     launchesByState.push(launches);
@@ -297,6 +304,10 @@ async function readStatusFacts(gitMaxAgeMs: number, simctlListing: string | null
     );
     const state = states[states.length - 1];
     if (state) {
+      if (macos) {
+        state.macos = macos;
+        state.live ||= macos.state === 'running' || macos.state === 'orphaned' || macos.build.state === 'running';
+      }
       Object.assign(state, builds, workspacePhase(state.live, saved, { now: leaseNow }), {
         recording: { enabled: workspaceRecordingEnabled(path, proj, cfg, process.env) },
       });
@@ -309,7 +320,15 @@ async function readStatusFacts(gitMaxAgeMs: number, simctlListing: string | null
     });
     if (state && physicalDevices.length) state.physicalDevices = physicalDevices;
     labelOnlyRoots.push(
-      Boolean(proj.worktreeRoot && !proj.bundleId && !state?.metro && !state?.ios && !state?.android && !state?.web),
+      Boolean(
+        proj.worktreeRoot &&
+        !proj.bundleId &&
+        !state?.metro &&
+        !state?.ios &&
+        !state?.android &&
+        !state?.web &&
+        !state?.macos,
+      ),
     );
   }
 
@@ -557,6 +576,9 @@ function renderStatus(
           `  android${slotLabel}: ${chalk.cyan(deviceState.android.name)} ${kind}${observed}${deviceState.android.owned ? chalk.dim(' (owned)') : ''}${activitySuffix(deviceState.android.activity)}${appSuffix(deviceState.android.app)}${idleShutdownSuffix(deviceState.android.idleShutdown)}`,
         );
       }
+    }
+    if (state.macos) {
+      out.push(`  macOS ${state.macos.product}: ${state.macos.state}; build ${state.macos.build.state}`);
     }
     if (state.web) {
       const browser = state.web.running

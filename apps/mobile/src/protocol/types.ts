@@ -9,10 +9,10 @@ export const PROTOCOL_VERSION = 1;
 export type Platform = 'ios' | 'android';
 
 /** The platforms a device can stream and take input on: `web` is the workspace's Stim-owned Chrome page. */
-export type DevicePlatform = Platform | 'web';
+export type DevicePlatform = Platform | 'web' | 'macos';
 
 /** `reload` also reaches the workspace's Stim-owned Chrome page. */
-export type ReloadPlatform = DevicePlatform;
+export type ReloadPlatform = Exclude<DevicePlatform, 'macos'>;
 
 /** The JSON a Stim Desktop pairing QR code encodes. */
 export interface PairingPayload {
@@ -244,7 +244,7 @@ export interface GitChipFacts {
 export interface StageFacts {
   kind: 'building' | 'warming' | 'ready' | 'build-failed' | 'running' | 'stopped';
   since: string | null;
-  platform: Platform | null;
+  platform: Platform | 'macos' | null;
   closedApps: { platform: Platform; slot: string }[];
 }
 
@@ -292,6 +292,25 @@ export interface WebBrowserState {
   activity?: DeviceActivity;
 }
 
+export interface MacosAppState {
+  launchId: string;
+  arguments: string[];
+  product: string;
+  bundle: string;
+  bundleId: string;
+  executable: string;
+  state: 'running' | 'orphaned' | 'stopped' | 'unverified';
+  app?: { pid: number; processToken: string; startedAtMicros: number };
+  supervisor?: { pid: number; processToken: string; startedAtMicros: number };
+  build: {
+    state: 'running' | 'ok' | 'failed';
+    startedAt: string;
+    finishedAt?: string;
+    durationMs?: number;
+    error?: string;
+  };
+}
+
 export interface EnvironmentState {
   path: string;
   labelOnly?: boolean;
@@ -324,6 +343,7 @@ export interface EnvironmentState {
     bundle?: MetroBundle;
   } | null;
   web?: WebBrowserState | null;
+  macos?: MacosAppState | null;
   supervisor?: { pid: number | null; mode: string | null; startedAt: string | null; healthy: boolean } | null;
   logs?: { dir: string; errorsSinceMarker: number } | null;
   worktree?: WorktreeFacts | null;
@@ -474,7 +494,7 @@ export interface StatusPayload {
   ownLeases?: string[];
 }
 
-export type MachineOwnerKind = 'simulator' | 'emulator' | 'metro' | 'build' | 'browser' | 'server' | 'shared';
+export type MachineOwnerKind = 'simulator' | 'emulator' | 'metro' | 'build' | 'browser' | 'macos' | 'server' | 'shared';
 
 /**
  * One thing using the Mac's CPU and memory, each process counted in exactly one owner. `slot` is absent for the
@@ -607,11 +627,39 @@ export interface ControlBeginResult {
   platform: DevicePlatform;
   lease: { grantedAt: string | null; expiresAt: string } | null;
   postures: DevicePosture[];
+  simulator?: SimulatorOptions;
 }
+
+export interface SimulatorOptions {
+  canShake: boolean;
+  slowAnimations: boolean | null;
+}
+
+export type SimulatorCommand = { action: 'read' | 'shake' } | { action: 'slow-animations'; enabled: boolean };
+
+export type InputSimulatorParams = SimulatorCommand & { session: string };
 
 export type TouchPhase = 'down' | 'move' | 'up';
 
 export type InputButton = 'home' | 'lock' | 'back' | 'app-switch';
+
+export type InputKey =
+  | 'escape'
+  | 'tab'
+  | 'return'
+  | 'backspace'
+  | 'left'
+  | 'right'
+  | 'up'
+  | 'down'
+  | 'a'
+  | 'c'
+  | 'v'
+  | 'x'
+  | 'z'
+  | 's'
+  | 'f';
+export type KeyModifier = 'command' | 'shift' | 'option' | 'control';
 
 export type RotateDirection = 'left' | 'right';
 
@@ -824,8 +872,14 @@ export interface Methods {
   };
   /** Printable ASCII; `\n` presses Return, `\t` Tab and `\b` Delete. */
   'input.text': { params: { session: string; text: string }; result: Record<string, never> };
+  'input.scroll': {
+    params: { session: string; x: number; y: number; deltaX: number; deltaY: number };
+    result: Record<string, never>;
+  };
+  'input.key': { params: { session: string; key: InputKey; modifiers?: KeyModifier[] }; result: Record<string, never> };
   'input.button': { params: { session: string; button: InputButton }; result: Record<string, never> };
   'input.rotate': { params: { session: string; direction: RotateDirection }; result: Record<string, never> };
+  'input.simulator': { params: InputSimulatorParams; result: SimulatorOptions };
   'input.posture': { params: { session: string; posture: DevicePosture }; result: Record<string, never> };
   'push.register': { params: PushRegisterParams; result: Record<string, never> };
   'push.unregister': { params?: Record<string, never>; result: Record<string, never> };

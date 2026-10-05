@@ -17,13 +17,19 @@ enum InputMessages {
   /// is false (pressure 0). Unlike a MouseEvent, Android sees a touchscreen
   /// finger, not a mouse or stylus.
   static func touch(x: Int, y: Int, pressed: Bool) -> Data {
-    var touch = Data()
-    for (field, value) in [(1, UInt64(max(x, 0))), (2, UInt64(max(y, 0))), (4, pressed ? 1 : 0)] where value != 0 {
-      ScreenshotMessages.appendVarint(UInt64(field << 3), to: &touch)
-      ScreenshotMessages.appendVarint(value, to: &touch)
-    }
+    touches([(x, y)], pressed: pressed)
+  }
+
+  /// Contacts keep their list index as their tracking identifier until pressure-zero release.
+  static func touches(_ points: [(x: Int, y: Int)], pressed: Bool) -> Data {
     var out = Data()
-    appendBytes(field: 1, touch, to: &out)
+    for (identifier, point) in points.enumerated() {
+      let touch = message([
+        (1, UInt64(max(point.x, 0))), (2, UInt64(max(point.y, 0))),
+        (3, UInt64(identifier)), (4, pressed ? 1 : 0),
+      ])
+      appendBytes(field: 1, touch, to: &out)
+    }
     return out
   }
 

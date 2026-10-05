@@ -11,6 +11,8 @@ struct DeviceViewerToolbar: View {
   var replaying: Bool
   /// Whether the agent action list is shown; nil when the device has none or the sheet is too narrow for it.
   var showsActions: Binding<Bool>?
+  @Binding var scalingMode: DeviceScalingMode
+  var scalingModes: [DeviceScalingMode]
   var close: () -> Void
   @State private var confirmingStop = false
   @EnvironmentObject private var actions: ActionCenter
@@ -26,6 +28,20 @@ struct DeviceViewerToolbar: View {
         EmptyView()
       }
       Spacer(minLength: Space.md)
+      if scalingModes.count > 1 {
+        Menu {
+          ForEach(DeviceScalingMode.allCases, id: \.self) { mode in
+            Toggle(mode.rawValue, isOn: Binding(get: { scalingMode == mode }, set: { _ in scalingMode = mode }))
+              .disabled(!scalingModes.contains(mode))
+          }
+        } label: {
+          Label(scalingMode.rawValue, systemImage: "arrow.up.left.and.arrow.down.right")
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .help("Fit adapts to the viewer. Accurate modes keep their scale; scroll to see the rest of a large device.")
+        .accessibilityLabel("Device scale: \(scalingMode.rawValue)")
+      }
       commands
       Rectangle().fill(Palette.border).frame(width: 1, height: 18)
       if let showsActions {

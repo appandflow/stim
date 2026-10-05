@@ -10,11 +10,14 @@ import {
   listSegments,
   loadConfig,
   parseNdjsonLine,
+  RECORDING_PLATFORMS,
+  type RecordingPlatform,
   type NdjsonRecord,
   type StatusPayload,
 } from '@stim-cli/core/state';
 import { actionArgs, actionOutcome, appendAudit, loadAudit, parseAction, type AuditRecord } from './actions.ts';
 import { DeviceHost, type DeviceHostLimits } from './device-host.ts';
+import { HostedViews } from './hosted-view.ts';
 import { BuildHost, type BuildLimits, type BuildSession } from './build.ts';
 import { ControlHub, parseControlBegin, parseInput, SLOT_NAME, type Controller } from './control.ts';
 import { Recorder, type RecordLimits } from './recorder.ts';
@@ -92,10 +95,21 @@ import {
 } from './registry.ts';
 import { runStats } from './stats.ts';
 import { Pending, runStim, type CommandLimits } from './stim-command.ts';
-import { serveRoute, whois, type ServeRoute, type TailscaleState } from './tailscale.ts';
+import { serveRoute, setupServeRoute, whois, type ServeRoute, type TailscaleState } from './tailscale.ts';
 import type { TailscaleMonitor, TailscaleSnapshot } from './tailscale-monitor.ts';
 import { DEFAULT_VIDEO_LIMITS, videoPacket, VideoGate, type AccessUnit } from './video.ts';
 import { DeviceViewers } from './viewers.ts';
+
+const INPUT_METHODS = [
+  'input.touch',
+  'input.text',
+  'input.button',
+  'input.rotate',
+  'input.posture',
+  'input.simulator',
+  'input.scroll',
+  'input.key',
+] as const;
 
 export interface ServerOptions {
   name: string;
@@ -170,6 +184,7 @@ interface ServerHealth {
   stimHome: string;
   tailscale: { state: TailscaleState['state']; dnsName?: string | null; backendState?: string; reason?: string };
   route?: ServeRoute;
+  nativeViewerOpened: boolean;
 }
 
 function healthTailscale(tailscale: TailscaleState): ServerHealth['tailscale'] {
@@ -429,6 +444,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     return helperPath;
   };
   if (options.frameHelper === undefined) buildHelper();
+  let nativeViewerOpened = false;
   const frames = new FramePool(options.env, frameLimits, frameHelper, new DeviceViewers());
   const recorder =
     options.record === false
@@ -538,10 +554,12 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     renewMs: controlLimits.renewMs,
     leaseFor: controlLimits.leaseFor,
     foldHelper,
+    frameHelper,
     foldTimeoutMs: controlLimits.foldTimeoutMs,
     conflict: (deviceId, conflict) => push.control(deviceId, conflict),
     adbEmulators,
   });
+  const hostedViews = new HostedViews(hostedDevices, control, options.env, frameHelper);
   const wss = new WebSocketServer({ noServer: true, maxPayload: MAX_PAYLOAD });
   const notificationLog = new NotificationLog(notificationLogFile(serverDir()));
   const push = new PushNotifier({
@@ -585,7 +603,8 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     builds.abandonDetached((client) => paired.get(client)?.capabilities.includes('build') ?? false);
     void builds.sweepDaemons();
     for (const [socket, controller] of controllers) {
-      if (!paired.get(controller.device.id)?.capabilities.includes('control')) {
+      const capabilities = paired.get(controller.device.id)?.capabilities;
+      if (!capabilities?.includes('control') && !capabilities?.includes('device-host')) {
         control.endFor(controller, 'forbidden', 'This device can no longer control devices.');
         controllers.delete(socket);
       }
@@ -601,7 +620,9 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   const revocationPoll = setInterval(checkRevocations, 1000);
   revocationPoll.unref();
 
-  function connection(socket: WebSocket, peer: string | null): void {
+  let settingUpRoute: Promise<ServeRoute> | null = null;
+
+  function connection(socket: WebSocket, peer: string | null, localControl: boolean): void {
     const limitKey = peer ?? 'local';
     const subscriptions = new Map<string, () => void>();
     const keyframes = new Map<string, () => void>();
@@ -720,7 +741,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     const characters = { tokens: MAX_INPUT_TEXT, at: Date.now() };
     const shapeChanges = { tokens: controlLimits.shapeChangesPerSecond, at: Date.now() };
 
-    function controller(session: PairedDevice): Controller {
+    function controller(session: Pick<PairedDevice, 'id' | 'name'>): Controller {
       let found = controllers.get(socket);
       if (!found) {
         found = { device: session, send: (message) => send(socket, message) };
@@ -771,9 +792,9 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
 
     async function input(
       id: RequestId,
-      method: 'input.touch' | 'input.text' | 'input.button' | 'input.rotate' | 'input.posture',
+      method: (typeof INPUT_METHODS)[number],
       params: unknown,
-      session: PairedDevice,
+      session: Pick<PairedDevice, 'id' | 'name'>,
     ): Promise<void> {
       const owner = controller(session);
       const parsed = parseInput(method, params, (name) => control.targetOf(owner, name));
@@ -794,14 +815,14 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       }
       const { shapeChangesPerSecond } = controlLimits;
       if (
-        (sent.input === 'rotate' || sent.input === 'posture') &&
+        (sent.input === 'rotate' || sent.input === 'posture' || sent.input === 'simulator') &&
         !take(shapeChanges, 1, shapeChangesPerSecond, shapeChangesPerSecond)
       ) {
         return error(id, 'limit-exceeded', `A connection can rotate or fold ${shapeChangesPerSecond} times a second.`);
       }
       const refused = await control.input(owner, parsed.value.session, parsed.value.command);
-      if (refused) return error(id, refused.code, refused.message);
-      send(socket, { id, result: {} });
+      if (refused && 'code' in refused) return error(id, refused.code, refused.message);
+      send(socket, { id, result: refused ?? {} });
     }
 
     function workspaceDir(id: RequestId, workspace: unknown, required: boolean): string | null {
@@ -896,14 +917,19 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       });
     }
 
-    function subscribeFrames(id: RequestId, params: unknown): void {
+    function subscribeFrames(
+      id: RequestId,
+      params: unknown,
+      hosted?: { client: string; session: string; view: ReturnType<HostedViews['target']> },
+    ): void {
+      const framePool = hosted?.view.frames ?? frames;
       const target = isJsonObject(params) ? params : {};
       const { workspace, platform, slot, physical, fps, maxEdge, video, at, rate } = target;
       if (typeof workspace !== 'string' || !PLATFORMS.includes(platform as Platform)) {
         return error(
           id,
           'bad-request',
-          'frames.subscribe needs params.workspace and params.platform (ios, android or web).',
+          'frames.subscribe needs params.workspace and params.platform (ios, android, web or macos).',
         );
       }
       if (slot !== undefined && (typeof slot !== 'string' || !SLOT_NAME.test(slot))) {
@@ -940,9 +966,12 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         fps: Math.min((fps as number | undefined) ?? FRAME_FPS.default, offersVideo ? FRAME_FPS.video : FRAME_FPS.max),
         maxEdge: (maxEdge as number | undefined) ?? FRAME_EDGE.default,
       };
-      if (!workspaceDir(id, workspace, true)) return;
-      const replayDir = recordingDir(workspace, platform as Platform, typeof slot === 'string' ? slot : 'default');
-      if (replayAt && (physical || !hasFootage(replayDir))) {
+      if (!hosted && !workspaceDir(id, workspace, true)) return;
+      const replayDir =
+        platform === 'macos'
+          ? null
+          : recordingDir(workspace, platform as RecordingPlatform, typeof slot === 'string' ? slot : 'default');
+      if (replayAt && (physical || replayDir === null || !hasFootage(replayDir))) {
         return error(
           id,
           'no-recording',
@@ -964,8 +993,8 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       const drain = () => {
         draining = null;
         if (ended || !streamed) return;
-        if (socket.bufferedAmount <= DEFAULT_VIDEO_LIMITS.congestedBytes) return frames.keyframe(streamed);
-        frames.congested(streamed);
+        if (socket.bufferedAmount <= DEFAULT_VIDEO_LIMITS.congestedBytes) return framePool.keyframe(streamed);
+        framePool.congested(streamed);
         draining = setTimeout(drain, FRAME_RETRY_MS);
       };
       let attached: string | null = null;
@@ -1039,11 +1068,14 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       let player: Player | null = null;
       let latest: StatusPayload | null = null;
       const attach = (resolved: Device) => {
+        if (resolved.platform === 'macos') nativeViewerOpened = true;
         detach?.();
         gate.reset();
         streamed = resolved;
         attached = deviceKey(resolved);
-        detach = frames.subscribe(resolved, listener, hint);
+        detach = hosted
+          ? hostedViews.subscribe(hosted.client, hosted.session, listener, hint)
+          : framePool.subscribe(resolved, listener, hint);
       };
       const replay = (): Player => {
         if (player) return player;
@@ -1051,7 +1083,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         detach = null;
         attached = null;
         player = new Player(
-          replayDir,
+          replayDir!,
           {
             unit: (unit) => {
               if (!ended && socket.readyState === socket.OPEN) socket.send(videoPacket(subscription, sequence++, unit));
@@ -1080,11 +1112,11 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         keyframes.set(subscription, () => {
           if (player) return player.resend();
           gate.reset();
-          if (streamed) frames.keyframe(streamed);
+          if (streamed) framePool.keyframe(streamed);
         });
         replays.set(subscription, {
           seek: (seekAt, seekRate) => {
-            if (physical || !hasFootage(replayDir)) return null;
+            if (physical || replayDir === null || !hasFootage(replayDir)) return null;
             const wasLive = player === null;
             const shown = replay().seek(seekAt, seekRate);
             if (shown === null && wasLive) goLive();
@@ -1096,20 +1128,22 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       if (replayAt && replay().seek(replayAt.at, replayAt.rate) === null) {
         send(socket, { event: 'replay-ended', subscription, at: replayAt.at });
       }
-      const stopViewing = physical ? undefined : recorder?.viewing(frameTarget);
+      const stopViewing = physical || hosted ? undefined : recorder?.viewing(frameTarget);
       let unsubscribeStatus: (() => void) | null = null;
-      unsubscribeStatus = feeds.subscribe(STATUS_FEED, {
-        item: (payload) => {
-          if (ended) return;
-          latest = payload as unknown as StatusPayload;
-          if (player) return;
-          const resolved = ownedDevice(latest, frameTarget, attached, { adbEmulators });
-          if (typeof resolved === 'string') return queueMicrotask(() => end(resolved));
-          if (deviceKey(resolved) === attached) return;
-          attach(resolved);
-        },
-        failed: (message) => queueMicrotask(() => end(message)),
-      });
+      if (hosted) attach(hosted.view.device);
+      else
+        unsubscribeStatus = feeds.subscribe(STATUS_FEED, {
+          item: (payload) => {
+            if (ended) return;
+            latest = payload as unknown as StatusPayload;
+            if (player) return;
+            const resolved = ownedDevice(latest, frameTarget, attached, { adbEmulators });
+            if (typeof resolved === 'string') return queueMicrotask(() => end(resolved));
+            if (deviceKey(resolved) === attached) return;
+            attach(resolved);
+          },
+          failed: (message) => queueMicrotask(() => end(message)),
+        });
       subscriptions.set(subscription, cleanup);
     }
 
@@ -1289,7 +1323,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     function replayRange(id: RequestId, params: unknown): void {
       const target = isJsonObject(params) ? params : {};
       const { workspace, platform, slot } = target;
-      if (typeof workspace !== 'string' || !PLATFORMS.includes(platform as Platform)) {
+      if (typeof workspace !== 'string' || !RECORDING_PLATFORMS.includes(platform as RecordingPlatform)) {
         return error(
           id,
           'bad-request',
@@ -1305,8 +1339,8 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         return error(id, 'limit-exceeded', `A connection can run ${MAX_COMMANDS} requests at a time.`);
       }
       const slotName = slot ?? 'default';
-      const spans = recordedSpans(listSegments(recordingDir(workspace, platform as Platform, slotName)));
-      const replayTarget = { workspace, platform: platform as Platform, slot: slotName };
+      const spans = recordedSpans(listSegments(recordingDir(workspace, platform as RecordingPlatform, slotName)));
+      const replayTarget = { workspace, platform: platform as RecordingPlatform, slot: slotName };
       const state = {
         enabled: recorder?.enabled(workspace) ?? false,
         recording: recorder?.recording(replayTarget) ?? false,
@@ -1324,7 +1358,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         const failed = [actions, errors].find((result) => typeof result === 'string');
         if (typeof failed === 'string') return error(id, 'stim-failed', failed);
         const records = [...(actions as NdjsonRecord[]), ...(errors as NdjsonRecord[])];
-        const markers = timelineMarkers(records, platform as Platform, slotName, spans[0]!.start);
+        const markers = timelineMarkers(records, platform as RecordingPlatform, slotName, spans[0]!.start);
         return send(socket, { id, result: { ...state, markers } });
       });
     }
@@ -1332,7 +1366,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     function replayKeyframe(id: RequestId, params: unknown): void {
       const target = isJsonObject(params) ? params : {};
       const { workspace, platform, slot, at } = target;
-      if (typeof workspace !== 'string' || !PLATFORMS.includes(platform as Platform)) {
+      if (typeof workspace !== 'string' || !RECORDING_PLATFORMS.includes(platform as RecordingPlatform)) {
         return error(
           id,
           'bad-request',
@@ -1349,23 +1383,25 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         return error(id, 'limit-exceeded', `A connection can read ${MAX_KEYFRAME_READS} keyframes at a time.`);
       }
       keyframeReads++;
-      void segmentKeyframe(recordingDir(workspace, platform as Platform, slot ?? 'default'), at).then((found) => {
-        keyframeReads--;
-        if (!found) return error(id, 'no-recording', 'Nothing was recorded for this device.');
-        const { segment, unit } = found;
-        return send(socket, {
-          id,
-          result: {
-            start: segment.start,
-            end: segment.end,
-            at: unit.capturedAt,
-            width: unit.width,
-            height: unit.height,
-            ...(unit.posture ? { posture: unit.posture } : {}),
-            data: unit.data.toString('base64'),
-          },
-        });
-      });
+      void segmentKeyframe(recordingDir(workspace, platform as RecordingPlatform, slot ?? 'default'), at).then(
+        (found) => {
+          keyframeReads--;
+          if (!found) return error(id, 'no-recording', 'Nothing was recorded for this device.');
+          const { segment, unit } = found;
+          return send(socket, {
+            id,
+            result: {
+              start: segment.start,
+              end: segment.end,
+              at: unit.capturedAt,
+              width: unit.width,
+              height: unit.height,
+              ...(unit.posture ? { posture: unit.posture } : {}),
+              data: unit.data.toString('base64'),
+            },
+          });
+        },
+      );
     }
 
     function setRecording(id: RequestId, params: unknown, session: PairedDevice): void {
@@ -1537,6 +1573,94 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       if (refused) socket.close(CLOSE_BAD_REQUEST, refused.slice(0, 120));
     }
 
+    async function hostedMethod(id: RequestId, method: string, raw: unknown, session: PairedDevice): Promise<void> {
+      const params = isJsonObject(raw) ? raw : {};
+      if (method === 'device-host.frames.subscribe' || method === 'device-host.control.begin') {
+        if (typeof params.session !== 'string') return error(id, 'bad-request', 'A hosted session is required.');
+        if (
+          method === 'device-host.control.begin' &&
+          params.takeOver !== undefined &&
+          typeof params.takeOver !== 'boolean'
+        )
+          return error(id, 'bad-request', 'takeOver must be true or false.');
+        if (method === 'device-host.frames.subscribe' && (params.at !== undefined || params.rate !== undefined))
+          return error(id, 'bad-request', 'Hosted recorded replay is not supported.');
+        try {
+          const hostedSession = params.session;
+          if (method === 'device-host.frames.subscribe') {
+            const view = hostedViews.target(session.id, hostedSession);
+            return subscribeFrames(
+              id,
+              { ...params, workspace: view.workspace, platform: 'ios', slot: view.slot },
+              { client: session.id, session: hostedSession, view },
+            );
+          }
+          const owner = controller(session);
+          const outcome = await hostedViews.begin(
+            session.id,
+            hostedSession,
+            owner,
+            params.takeOver === true,
+            () => socket.readyState === socket.OPEN && controllers.get(socket) === owner,
+          );
+          return 'code' in outcome ? error(id, outcome.code, outcome.message) : send(socket, { id, result: outcome });
+        } catch (cause) {
+          return error(id, 'action-failed', (cause as Error).message);
+        }
+      }
+      if (method === 'device-host.frames.keyframe') {
+        const name = params.subscription;
+        const keyframe = typeof name === 'string' ? keyframes.get(name) : undefined;
+        if (!keyframe) return error(id, 'unknown-subscription', `No video subscription ${String(name)}.`);
+        keyframe();
+        return send(socket, { id, result: {} });
+      }
+      if (method === 'device-host.unsubscribe') {
+        const name = params.subscription;
+        const unsubscribe = typeof name === 'string' ? subscriptions.get(name) : undefined;
+        if (!unsubscribe) return error(id, 'unknown-subscription', `No subscription ${String(name)}.`);
+        unsubscribe();
+        subscriptions.delete(name as string);
+        return send(socket, { id, result: {} });
+      }
+      if (method === 'device-host.control.end') {
+        const name = params.session;
+        if (typeof name !== 'string' || !control.endById(controller(session), name))
+          return error(id, 'unknown-session', `No control session ${String(name)} on this connection.`);
+        return send(socket, { id, result: {} });
+      }
+      if (method.startsWith('device-host.input.')) {
+        const inputMethod = method.slice('device-host.'.length) as
+          | 'input.touch'
+          | 'input.text'
+          | 'input.button'
+          | 'input.rotate'
+          | 'input.posture';
+        return input(id, inputMethod, raw, session);
+      }
+      const answer =
+        method === 'device-host.offer'
+          ? await hostedDevices.offer(session.id, raw)
+          : method === 'device-host.reserve'
+            ? hostedDevices.reserve(session.id, raw)
+            : method === 'device-host.attach'
+              ? hostedDevices.attach(session.id, raw)
+              : method === 'device-host.stop'
+                ? hostedDevices.stop(session.id, raw)
+                : method === 'device-host.app.offer'
+                  ? hostedDevices.appOffer(session.id, raw)
+                  : method === 'device-host.app.chunk'
+                    ? await hostedDevices.appChunk(session.id, raw)
+                    : method === 'device-host.app.launch'
+                      ? hostedDevices.appLaunch(session.id, raw)
+                      : method === 'device-host.app.attach'
+                        ? hostedDevices.appAttach(session.id, raw)
+                        : method === 'device-host.metro.open'
+                          ? await hostedDevices.metroOpen(session.id, raw, peer)
+                          : await hostedDevices.metroClose(session.id, raw);
+      return send(socket, 'error' in answer ? { id, error: answer.error } : { id, result: answer.result });
+    }
+
     async function handle(raw: string): Promise<void> {
       if (socket.readyState !== socket.OPEN) return;
       let message: unknown;
@@ -1556,29 +1680,34 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       if ((DEVICE_HOST_METHODS as readonly string[]).includes(message.method)) {
         if (!device.capabilities.includes('device-host'))
           return error(id, 'forbidden', 'Explicit device-host approval is required.');
-        const answer =
-          message.method === 'device-host.offer'
-            ? await hostedDevices.offer(device.id, message.params)
-            : message.method === 'device-host.reserve'
-              ? hostedDevices.reserve(device.id, message.params)
-              : message.method === 'device-host.attach'
-                ? hostedDevices.attach(device.id, message.params)
-                : message.method === 'device-host.stop'
-                  ? hostedDevices.stop(device.id, message.params)
-                  : message.method === 'device-host.app.offer'
-                    ? hostedDevices.appOffer(device.id, message.params)
-                    : message.method === 'device-host.app.chunk'
-                      ? await hostedDevices.appChunk(device.id, message.params)
-                      : message.method === 'device-host.app.launch'
-                        ? hostedDevices.appLaunch(device.id, message.params)
-                        : hostedDevices.appAttach(device.id, message.params);
-        return send(socket, 'error' in answer ? { id, error: answer.error } : { id, result: answer.result });
+        return hostedMethod(id, message.method, message.params, device);
       }
       if ((BUILD_METHODS as readonly string[]).includes(message.method)) {
         return buildMethod(id, message.method, message.params, device);
       }
       if (!device.capabilities.includes('read')) {
         return error(id, 'forbidden', `${message.method} needs read access, which this connection does not have.`);
+      }
+      if (message.method === 'route.setup') {
+        if (!localControl || device.identity.kind !== 'local' || !device.capabilities.includes('control')) {
+          return error(
+            id,
+            'forbidden',
+            'Phone connection setup requires an authenticated local Desktop control connection.',
+          );
+        }
+        if (message.params !== undefined && (!isJsonObject(message.params) || Object.keys(message.params).length)) {
+          return error(id, 'bad-request', 'route.setup takes no parameters.');
+        }
+        const { binary, state } = tailscaleNow();
+        settingUpRoute ??= setupServeRoute(binary, options.env, addresses[0]!.port, state).finally(() => {
+          settingUpRoute = null;
+        });
+        try {
+          return send(socket, { id, result: await settingUpRoute });
+        } catch (cause) {
+          return error(id, 'action-failed', (cause as Error).message);
+        }
       }
       if (message.method === 'status.subscribe') return subscribeStatus(id);
       if (message.method === 'logs.subscribe') return subscribeLogs(id, message.params);
@@ -1647,15 +1776,9 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         }
         return send(socket, { id, result: {} });
       }
-      if (
-        message.method === 'input.touch' ||
-        message.method === 'input.text' ||
-        message.method === 'input.button' ||
-        message.method === 'input.rotate' ||
-        message.method === 'input.posture'
-      ) {
-        const method = message.method;
-        void input(id, method, message.params, device);
+      const inputMethod = INPUT_METHODS.find((method) => method === message.method);
+      if (inputMethod) {
+        void input(id, inputMethod, message.params, device);
         return;
       }
       if (message.method === 'push.register') return registerPush(id, message.params, device);
@@ -1723,7 +1846,14 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       socket.end('HTTP/1.1 429 Too Many Requests\r\nConnection: close\r\nContent-Length: 0\r\n\r\n');
       return;
     }
-    wss.handleUpgrade(request, socket, head, (ws) => connection(ws, peer));
+    const host = request.headers.host?.replace(/:\d+$/, '');
+    const localControl =
+      isLoopback(request.socket.remoteAddress) &&
+      (host === '127.0.0.1' || host === 'localhost') &&
+      ['origin', 'sec-fetch-site', 'forwarded', 'x-forwarded-for', 'x-forwarded-host', 'x-forwarded-proto'].every(
+        (header) => request.headers[header] === undefined,
+      );
+    wss.handleUpgrade(request, socket, head, (ws) => connection(ws, peer, localControl));
   }
 
   const tailscaleNow = (): TailscaleSnapshot =>
@@ -1742,7 +1872,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       tailscale.state === 'running' && tailscale.dnsName
         ? await serveRoute(binary, options.env, addresses[0]!.port, tailscale.ips, HEALTH_ROUTE_TIMEOUT_MS)
         : undefined;
-    const body: ServerHealth = { ...health, tailscale: healthTailscale(tailscale), route };
+    const body: ServerHealth = { ...health, tailscale: healthTailscale(tailscale), route, nativeViewerOpened };
     response.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify(body));
   };
   const servers = new Map<string, { server: Server; sockets: Set<Socket> }>();

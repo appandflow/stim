@@ -28,6 +28,7 @@ import {
 } from '../devices/android.ts';
 import { teardownOwnedAvd } from '../devices/teardown.ts';
 import type { HostedWorkerResult } from './worker.ts';
+import { installHostedAndroidApp } from './android-app.ts';
 
 function portIsOccupied(port: number): boolean {
   const devices = listAdbDevices({ timeoutMs: 5000 });
@@ -52,13 +53,19 @@ export function selectHostedAndroidDevice(request: HostedDeviceSelectors): Hoste
 export async function runHostedAndroidDevice(
   mode: 'prepare' | 'stop' | 'install',
   request: { session: string; consolePort?: unknown; systemImage?: string; deviceProfile?: string },
+  app?: { attempt: string },
 ): Promise<HostedWorkerResult> {
   const home = process.env.STIM_HOME;
   if (!home) throw new Error('Hosted workers require their isolated STIM_HOME.');
   let device: HostedAndroidDevice | null = null;
   let creationStarted = false;
   try {
-    if (mode === 'install') throw new Error('Hosted Android app delivery is not implemented.');
+    if (mode === 'install') {
+      if (!app) throw new Error('Hosted Android installation needs its admitted app attempt.');
+      device = readHostedDevice(home, 'android');
+      const launched = await installHostedAndroidApp(home, request.session, app.attempt, device);
+      return { state: 'installed', device, launched };
+    }
     if (mode === 'prepare') {
       creationStarted = existsSync(join(home, 'hosted-device.json')) || existsSync(join(home, 'created-devices.json'));
       if (creationStarted) throw new Error('Attach or stop the existing hosted Android session.');

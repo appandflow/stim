@@ -76,6 +76,7 @@ export interface HostedDeviceSession extends HostedDeviceRequest {
   createdAt: string;
   notice?: string;
   appAttempt?: string;
+  metroPort?: number;
 }
 
 export function deviceHostRoot(): string {
@@ -288,7 +289,12 @@ export function readHostedSessions(): HostedDeviceSession[] {
       (entry.state === 'ready' && entry.device === null) ||
       (entry.notice !== undefined && typeof entry.notice !== 'string') ||
       (entry.appAttempt !== undefined &&
-        (typeof entry.appAttempt !== 'string' || !/^[a-zA-Z0-9_-]{1,128}$/.test(entry.appAttempt)))
+        (typeof entry.appAttempt !== 'string' || !/^[a-zA-Z0-9_-]{1,128}$/.test(entry.appAttempt))) ||
+      (entry.metroPort !== undefined &&
+        (typeof entry.metroPort !== 'number' ||
+          !Number.isInteger(entry.metroPort) ||
+          entry.metroPort < 1 ||
+          entry.metroPort > 65535))
     )
       throw new Error(`Malformed hosted session record: ${root}`);
     ids.add(entry.id);

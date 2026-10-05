@@ -20,7 +20,7 @@ import { StimJar } from '@/components/stim-jar';
 import { Text } from '@/components/text';
 import { Touch } from '@/components/touch';
 import { useMenuDrawer } from '@/components/menu-drawer';
-import { WorkspaceRow } from '@/components/workspace-row';
+import { WorkspaceGroupRow } from '@/components/workspace-row';
 import { useHomeFilters } from '@/hooks/home-filters';
 import { useInbox } from '@/hooks/inbox';
 import { useMacs, usePairedMacs, useWorkspaceItems } from '@/hooks/machines';
@@ -242,10 +242,10 @@ export function Home() {
         ListHeaderComponent={listHeader}
         renderSectionHeader={({ section }) => <RepoHeader section={section} />}
         renderItem={({ item }) => (
-          <WorkspaceRow
-            item={item}
+          <WorkspaceGroupRow
+            workspace={item}
             now={now}
-            folder={folders.has(item.project)}
+            folder={folders.has(item.apps[0].project)}
             showsMachine={showsMachine}
             onOpen={openWorkspace}
           />
@@ -257,7 +257,7 @@ export function Home() {
           filters.activity === 'live' && hiddenByActivity > 0 ? (
             <Touch feedback="row" onPress={() => update({ activity: 'all' })} style={styles.footer}>
               <Text tone="secondary">
-                {plural(hiddenByActivity, { one: '# idle workspace hidden.', other: '# idle workspaces hidden.' })}{' '}
+                {plural(hiddenByActivity, { one: '# idle app hidden.', other: '# idle apps hidden.' })}{' '}
                 <Text tone="brand">
                   <Trans>Show all</Trans>
                 </Text>

@@ -1,3 +1,5 @@
+import { macosAppState, readMacosRecord } from '@stim-cli/core/state';
+import { macosRuntimeClaim } from '../macos/state.ts';
 import { lstatSync, readdirSync, rmdirSync, rmSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { isClaimRefusal, isClaimUnavailable, readClaimSet } from '../ownership-claim.ts';
@@ -40,6 +42,15 @@ export function workspaceInUse(
     else if (target.status === 'unverified') {
       reasons.push(`its dev server supervisor cannot be verified: ${target.reason ?? 'unknown identity'}`);
     }
+    const macos = macosAppState(readMacosRecord(root));
+    if (macos?.state === 'running' || macos?.state === 'orphaned' || macos?.build.state === 'running')
+      reasons.push('its macOS app or build is running');
+    else if (macos?.state === 'unverified' || (!macos && readWorkspaceState(root)?.macos !== undefined))
+      reasons.push('its macOS process owner cannot be verified');
+    const runtime = readClaimSet(macosRuntimeClaim(root));
+    if (runtime.live.length) reasons.push('its macOS runtime claim is held');
+    else if (runtime.unresolved[0])
+      reasons.push(`its macOS runtime cannot be verified: ${runtime.unresolved[0].reason}`);
     const browser = webFacts(readWebRecord(root));
     if (browser?.status === 'running' || browser?.status === 'orphaned') {
       reasons.push(`its owned Chrome (pid ${browser.record.chromeProcess?.pid}) is running`);

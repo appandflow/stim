@@ -20,3 +20,5 @@ export * from './viewers.ts';
 export * from './stats.ts';
 export * from './device-host.ts';
 export * from './hosted-app.ts';
+export * from './device-host-machines.ts';
+export * from './macos.ts';
