@@ -433,7 +433,9 @@ Tailscale refuses and Stim prints Tailscale's error message.
 `tailscale serve status --json` lists foreground sessions under the top-level
 `Foreground` key; plain `tailscale serve status` does not list them.
 
-<PromptBox prompt="Set metro.tunnel to tailscale for this workspace and start Metro for my remote agent-device proxy on the same tailnet. Show me its URL with stim status, then use stim stop when finished." />
+<PromptBox title="Expose Metro on your tailnet">
+{`Set metro.tunnel to tailscale for this workspace and start Metro for my remote agent-device proxy on the same tailnet. Show me its URL with stim status, then use stim stop when finished.`}
+</PromptBox>
 
 ## Control from the phone viewer
 
