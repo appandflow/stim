@@ -21,7 +21,7 @@ import { AgentDeviceDriver } from './agent-device-driver.ts';
 import { HostedAgentHost } from './agent-driver.ts';
 import { DeviceHost, type DeviceHostLimits } from './device-host.ts';
 import { HostedViews } from './hosted-view.ts';
-import { HostedRelay, type HostedRelayOptions } from './hosted-relay.ts';
+import { HostConnections, HostedRelay, type HostedRelayOptions } from './hosted-relay.ts';
 import { LatestFrames, FRAME_RETRY_MS } from './frame-delivery.ts';
 import { BuildHost, type BuildLimits, type BuildSession } from './build.ts';
 import { ControlHub, parseControlBegin, parseInput, SLOT_NAME, type Controller } from './control.ts';
@@ -671,6 +671,10 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   });
 
   const relays = new Map<WebSocket, HostedRelay>();
+  const hostConnections = new HostConnections(
+    options.hostedRelay ?? { status: () => readRawTailscaleStatus(tailscaleNow().binary, options.env) },
+    options.serverVersion,
+  );
   let revocationCheck: NodeJS.Timeout | null = null;
   let checkedRegistry: string | null = null;
   const checkRevocations = () => {
@@ -732,8 +736,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     let buildSession: BuildSession | null = null;
     let queue = Promise.resolve();
     const relay = new HostedRelay(
-      options.hostedRelay ?? { status: () => readRawTailscaleStatus(tailscaleNow().binary, options.env) },
-      options.serverVersion,
+      hostConnections,
       (message) => {
         if (Buffer.isBuffer(message)) {
           if (socket.readyState === socket.OPEN) socket.send(message);
@@ -2110,6 +2113,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     if (revocationCheck) clearTimeout(revocationCheck);
     await builds.close();
     for (const client of wss.clients) client.terminate();
+    hostConnections.close();
     if (startup.state === 'ready') {
       push.close();
       helperAbort.abort();

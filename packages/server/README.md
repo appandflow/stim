@@ -583,8 +583,16 @@ client iOS view/control relays and Android Metro/viewing remain in [#2266](https
 The client's stim-server relays a hosted workspace's macOS view and input to
 its host using the client's approved device-host credential over the pinned
 tailnet connection. Stim Desktop and phones keep talking only to their own
-server. The `macos-hosted` feature advertises this relay. Hosted frames and
-control reject `physical`, a non-default slot, and replay (`at`/`rate`).
+server. The `macos-hosted` feature advertises this relay. All of the client's
+relayed subscriptions and control sessions for one host share one connection,
+whichever local client opened them. Each request still checks the credential
+and the pinned node; a changed credential or endpoint opens a new connection.
+Ending a subscription or session sends `device-host.unsubscribe` or
+`device-host.control.end`, and the connection closes when the last one ends.
+The host's per-connection limits, such as its 32 subscriptions and input
+budgets, therefore apply to all of the client's relayed use of that host.
+Hosted frames and control reject `physical`, a non-default slot, and replay
+(`at`/`rate`).
 `control.begin` still needs the local `control` grant. Screen Recording for
 viewing and Accessibility for control are granted on the host, not the client.
 
