@@ -1,9 +1,11 @@
 import { act, renderHook } from '@testing-library/react-native';
 
 import { useDeviceStream } from './device-stream';
+import type { ServerEvent } from '@/protocol/types';
 
 const mockPush = jest.fn();
 const mockAnswers: ((result: { subscription: string; video?: 'h264' }) => void)[] = [];
+const mockEvents: ((event: ServerEvent) => void)[] = [];
 const mockPackets: ((packet: {
   capturedAt: number;
   keyframe: boolean;
@@ -31,11 +33,12 @@ const mockConnection = {
     (
       _method: string,
       _params: unknown,
-      _event: unknown,
+      event: unknown,
       answered: (typeof mockAnswers)[number],
       packet: (typeof mockPackets)[number],
     ) => {
       mockAnswers.push(answered);
+      mockEvents.push(event as (event: ServerEvent) => void);
       mockPackets.push(packet);
       return () => {};
     },
@@ -54,8 +57,43 @@ const OPTIONS = { enabled: true, fps: 30, maxEdge: 720, video: ['h264' as const]
 beforeEach(() => {
   mockPush.mockClear();
   mockAnswers.length = 0;
+  mockEvents.length = 0;
   mockPackets.length = 0;
   mockRequests.length = 0;
+});
+
+test('requires presentation of the current Duo pose and ignores old image callbacks', async () => {
+  const { result, rerender } = await renderHook(
+    ({ workspace }: { workspace: string }) => useDeviceStream({ ...TARGET, workspace }, { ...OPTIONS, duoFrame: true }),
+    { initialProps: { workspace: '/app' } },
+  );
+  await act(async () => mockAnswers[0]!({ subscription: 's1' }));
+  const image = (revision: string): ServerEvent => ({
+    event: 'frame',
+    subscription: 's1',
+    platform: 'ios',
+    slot: 'default',
+    mime: 'image/jpeg',
+    width: 800,
+    height: 600,
+    capturedAt: '2026-10-04T10:00:00Z',
+    data: 'jpeg',
+    duo: { revision, screenID: 10, angle: 76, orientation: 3 },
+  });
+  await act(async () => mockEvents[0]!(image('first')));
+  expect(result.current.displayedDuoRevision).toBeNull();
+  await act(async () => result.current.frameDisplayed('first'));
+  expect(result.current.displayedDuoRevision).toBe('first');
+  await act(async () => mockEvents[0]!(image('second')));
+  await act(async () => result.current.frameDisplayed('first'));
+  expect(result.current.displayedDuoRevision).toBeNull();
+  await act(async () => result.current.frameDisplayed('second'));
+  expect(result.current.displayedDuoRevision).toBe('second');
+  await act(async () => mockEvents[0]!(image('second')));
+  expect(result.current.displayedDuoRevision).toBe('second');
+  await rerender({ workspace: '/other' });
+  await act(async () => result.current.frameDisplayed('second'));
+  expect(result.current.displayedDuoRevision).toBeNull();
 });
 
 test.each([

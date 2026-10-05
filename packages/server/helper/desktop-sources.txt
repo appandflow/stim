@@ -21,3 +21,10 @@ StimKit/StoragePaths.swift
 SimulatorFrames/SimulatorFrameArtwork.swift
 EmulatorFrames/EmulatorFrameArtwork.swift
 SimulatorFrames/SimulatorDevelopmentOptions.swift
+SimulatorFrames/DuoDeviceProfile.swift
+SimulatorFrames/DuoMesh.swift
+SimulatorFrames/DuoPoseClip.swift
+SimulatorFrames/DuoScreenHitMesh.swift
+SimulatorFrames/DuoModelView.swift
+SimulatorFrames/SimulatorHingeAngle.swift
+StimKit/ProcessStream.swift

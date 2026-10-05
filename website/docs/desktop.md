@@ -159,10 +159,18 @@ simulators and Android emulators when the paired server supports it. Frames
 start off. The Mac sends installed housing pixels to the authenticated read
 subscriber; the app keeps its existing guest screen inside the housing's
 aperture, so bezel taps send no input. Missing artwork or mismatched rotation
-keeps the screen frameless. Phone replay, physical devices, web pages, Duo and
+keeps the screen frameless. Phone replay, physical devices, web pages and
 Android foldable/circular devices do not use this mobile frame path.
 
 Framed H.264 requires a current Stim phone build with native orientation-clear support; older phone builds keep the video frameless.
+
+For a live iPhone Duo, **Device frame** uses the paired Mac's installed V68 model
+when the server advertises `duo-frames`. The Mac composes the hardware and screen
+pixels into JPEG images with the observed hinge angle and rotation. A missing
+model or angle reading keeps the raw screen visible. Input is enabled only after
+the image is displayed, and a drag stays bound to that image's pose. Bezel and
+hinge taps send no input. Raw subscribers and recordings are unchanged; turn the
+frame off to replay them.
 
 The live local viewer's scale menu defaults to **Fit**. **Point Accurate** maps
 iOS points or Android profile dp to Mac points; **Pixel Accurate** maps guest

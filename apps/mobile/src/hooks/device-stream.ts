@@ -16,6 +16,8 @@ export interface DeviceStream {
   /** The size of the latest video frame, and an iPhone Duo's posture, once the first H.264 keyframe arrives. */
   video: { width: number; height: number; posture?: 'folded' | 'unfolded'; artworkTurns?: number } | null;
   artwork: DeviceFrameArtwork | null;
+  displayedDuoRevision: string | null;
+  frameDisplayed: (revision: string) => void;
   error: string | null;
   delayed: boolean;
   /** Why frames stopped, such as a locked iPhone, when the server says. */
@@ -49,6 +51,7 @@ interface StreamState {
   frame: FrameEvent | null;
   video: { width: number; height: number; posture?: 'folded' | 'unfolded'; artworkTurns?: number } | null;
   artwork: DeviceFrameArtwork | null;
+  displayedDuoRevision: string | null;
   error: string | null;
   delayed: boolean;
   replay: Replay | null;
@@ -61,6 +64,7 @@ const EMPTY: Omit<StreamState, 'key'> = {
   frame: null,
   video: null,
   artwork: null,
+  displayedDuoRevision: null,
   error: null,
   delayed: false,
   replay: null,
@@ -104,6 +108,7 @@ export function useDeviceStream(
     video: 'h264'[];
     startAt?: number | null;
     deviceFrame?: boolean;
+    duoFrame?: boolean;
   },
 ): DeviceStream {
   const { connection } = useMacConnection();
@@ -111,11 +116,16 @@ export function useDeviceStream(
   const { workspace, platform, slot, physical } = target;
   const { fps, maxEdge, video } = options;
   const deviceFrame = options.deviceFrame === true;
+  const duoFrame = options.duoFrame === true;
   const startAt = options.startAt ?? null;
   const [latest, setLatest] = useState<StreamState | null>(null);
   const subscription = useRef<string | null>(null);
   const replaying = useRef<(Shown & { timer: ReturnType<typeof setTimeout> | null }) | null>(null);
   const updateRef = useRef<((patch: Update) => void) | null>(null);
+  const requestedDuo = useRef<string | null>(null);
+  const frameDisplayed = useCallback((revision: string) => {
+    if (requestedDuo.current === revision) updateRef.current?.({ displayedDuoRevision: revision });
+  }, []);
   const seeks = useRef(new SeekQueue());
   const orientation = useRef<{ generation: number; video: NonNullable<DeviceStream['video']> } | null>(null);
   const orientationCleared = useCallback(({ nativeEvent }: { nativeEvent: { generation: number } }) => {
@@ -124,7 +134,8 @@ export function useDeviceStream(
   }, []);
   const key =
     connection && options.enabled
-      ? frameTarget({ workspace, platform, slot, physical }, { fps, maxEdge, video, startAt, deviceFrame }).key
+      ? frameTarget({ workspace, platform, slot, physical }, { fps, maxEdge, video, startAt, deviceFrame, duoFrame })
+          .key
       : null;
   const [meter] = useState(() => new VideoMeter());
   const [playhead] = useState<ReplayPlayhead>(() => createStore(() => ({ at: null })));
@@ -165,6 +176,7 @@ export function useDeviceStream(
     if (!connection || key === null) return;
     let size = '';
     orientation.current = null;
+    requestedDuo.current = null;
     const queue = seeks.current;
     subscription.current = null;
     const update = ({ replay, ...patch }: Update) => {
@@ -182,13 +194,24 @@ export function useDeviceStream(
         maxEdge,
         video,
         ...(deviceFrame ? { deviceFrame: true } : {}),
+        ...(duoFrame ? { duoFrame: true } : {}),
         ...(startAt !== null ? { at: startAt, rate: 0 as const } : {}),
       },
       (event) => {
         if (event.event === 'frame') {
           size = '';
           orientation.current = null;
-          update({ frame: event, video: null, error: null, delayed: false, delayedReason: null });
+          const revision = event.duo?.revision ?? null;
+          const changed = requestedDuo.current !== revision;
+          requestedDuo.current = revision;
+          update({
+            frame: event,
+            video: null,
+            error: null,
+            delayed: false,
+            delayedReason: null,
+            ...(changed ? { displayedDuoRevision: null } : {}),
+          });
         } else if (event.event === 'device-frame') {
           update({ artwork: event.artwork });
         } else if (event.event === 'frame-delayed') {
@@ -199,7 +222,15 @@ export function useDeviceStream(
         } else if (event.event === 'error') {
           size = '';
           orientation.current = null;
-          update({ frame: null, video: null, error: event.error.message, delayed: false, delayedReason: null });
+          requestedDuo.current = null;
+          update({
+            frame: null,
+            video: null,
+            displayedDuoRevision: null,
+            error: event.error.message,
+            delayed: false,
+            delayedReason: null,
+          });
         }
       },
       (result) => {
@@ -207,8 +238,12 @@ export function useDeviceStream(
         queue.interrupt();
         size = '';
         orientation.current = null;
+        requestedDuo.current = null;
         replaying.current = startAt !== null ? { at: null, rate: 0, ended: false, timer: null } : null;
         update({
+          frame: null,
+          video: null,
+          displayedDuoRevision: null,
           replay: startAt !== null ? { at: null, rate: 0, ended: false } : null,
           replayable: result.video === 'h264',
           seeking: !queue.settled,
@@ -249,6 +284,7 @@ export function useDeviceStream(
       replaying.current = null;
       updateRef.current = null;
       orientation.current = null;
+      requestedDuo.current = null;
       queue.clear();
       unsubscribe();
     };
@@ -267,6 +303,7 @@ export function useDeviceStream(
     playhead,
     startAt,
     deviceFrame,
+    duoFrame,
   ]);
   const requestKeyframe = useCallback(() => {
     const current = subscription.current;
@@ -293,5 +330,5 @@ export function useDeviceStream(
     );
   }, [connection]);
   const state = latest && latest.key === key ? latest : EMPTY;
-  return { ...state, streamId, meter, playhead, requestKeyframe, orientationCleared, seek, live };
+  return { ...state, streamId, meter, playhead, requestKeyframe, orientationCleared, frameDisplayed, seek, live };
 }

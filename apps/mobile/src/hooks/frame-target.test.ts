@@ -14,6 +14,7 @@ test('the key changes with the device, the physical flag and each requested opti
     frameTarget(device, { ...base, maxEdge: 640 }).key,
     frameTarget(device, { ...base, video: [] }).key,
     frameTarget(device, { ...base, startAt: 1000 }).key,
+    frameTarget(device, { ...base, duoFrame: true }).key,
   ];
   expect(new Set(keys).size).toBe(keys.length);
 });

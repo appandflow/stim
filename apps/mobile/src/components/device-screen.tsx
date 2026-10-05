@@ -39,8 +39,10 @@ export function DeviceScreen({
       />
       {stream.frame && !stream.video ? (
         <Image
+          key={stream.frame.duo?.revision ?? 'raw'}
           source={{ uri: `data:${stream.frame.mime};base64,${stream.frame.data}` }}
-          recyclingKey={`${stream.streamId}/${stream.frame.artworkTurns ?? ''}/${stream.frame.width}x${stream.frame.height}`}
+          recyclingKey={`${stream.streamId}/${stream.frame.duo?.revision ?? stream.frame.artworkTurns ?? ''}/${stream.frame.width}x${stream.frame.height}`}
+          onDisplay={stream.frame.duo ? () => stream.frameDisplayed(stream.frame!.duo!.revision) : undefined}
           style={StyleSheet.absoluteFill}
           contentFit="contain"
           transition={0}

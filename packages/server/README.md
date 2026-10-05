@@ -961,6 +961,22 @@ Events are `{ "event", "subscription", ... }`.
   helper, have no screenshot fallback, recording or replay, and consume
   only the paired device's `read` capability.
 
+  A server advertising `duo-frames` also accepts `duoFrame: true` for a live local
+  owned iPhone Duo. The helper composes the installed DeviceKit V68 model with
+  both display surfaces and a current `devicectl` hinge-angle reading. It sends
+  JPEG `frame` events with `duo: { revision, screenID, angle, orientation }` bound
+  to the image. This path does not offer H.264 or replay; other live subscriptions
+  and raw recordings keep their existing capture. Missing model or angle data
+  falls back to the raw screen. The hinge reader runs only while composition is
+  requested and stops on helper stdin EOF or parent exit.
+
+  Clients acknowledge actual image display locally before accepting input and
+  keep the image stable during a drag. `input.touch` takes the matching
+  `duoRevision` instead of `display`; the helper raycasts against the original
+  posed screen, refuses unknown revisions and ignores bezel or hinge touch-down.
+  Move and up stay bound to that pose. Ending Control releases any held touch,
+  even when read subscribers keep the helper alive.
+
   Frames come from the `stim-frames` helper. When it starts, the server
   compiles it with `xcrun swiftc` from the Swift sources shipped in
   `dist/stim-frames/` (its own `main.swift` and the frame and input code it
