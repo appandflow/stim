@@ -31,6 +31,7 @@ final class DuoFrameRenderer {
   private let inputModel: DuoModelView
   private var poses: [(revision: String, pose: Pose)] = []
   private var gesture: (revision: String, pose: Pose, last: CGPoint)?
+  private var rendered: Pose?
 
   static func load(udid: String) -> DuoFrameRenderer? {
     guard let profile = DuoDeviceProfile.load(udid: udid),
@@ -58,15 +59,18 @@ final class DuoFrameRenderer {
     for surface in surfaces where surface.screenID == model.coverID || surface.screenID == model.innerID {
       model.updateSurface(surface.surface, screenID: surface.screenID)
     }
-    // A hidden SCNView can return the previous skinned frame after a pose change; flush and
-    // discard one snapshot first. https://github.com/kmagiera/Siniulator/pull/9
-    SCNTransaction.flush()
-    _ = model.snapshot()
+    let pose = Pose(angle: angle, orientation: orientation, screenID: activeID, viewport: viewport)
+    if pose != rendered {
+      // A hidden SCNView can return the previous skinned frame after a pose change; flush and
+      // discard one snapshot first. https://github.com/kmagiera/Siniulator/pull/9
+      SCNTransaction.flush()
+      _ = model.snapshot()
+      rendered = pose
+    }
     guard let image = model.snapshot().cgImage(forProposedRect: nil, context: nil, hints: nil),
       let (data, width, height) = jpeg(CIImage(cgImage: image), config: config)
     else { return nil }
     model.preparePanelChange()
-    let pose = Pose(angle: angle, orientation: orientation, screenID: activeID, viewport: viewport)
     let revision: String
     if let previous = poses.last, previous.pose == pose {
       revision = previous.revision
