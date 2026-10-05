@@ -56,11 +56,9 @@ public struct StimCLI: Sendable {
     return try launcher?.command(arguments) ?? (executable, arguments)
   }
 
-  /// The directory `stim` keeps its state in: `STIM_HOME` from `environment`, else `~/.stim`. This app's own
-  /// process environment does not count; a Finder launch does not share the login shell's.
+  /// The directory `stim` keeps its state in: `STIM_HOME` from `environment`, else `~/.stim`.
   public var stimHome: String {
-    if let home = environment["STIM_HOME"], !home.isEmpty { return home }
-    return "\(NSHomeDirectory())/.stim"
+    StimHome.path(environment: environment)
   }
 
   public static let minimumVersion = SemanticVersion("1.11.0")!
