@@ -8,18 +8,18 @@ import {
   readFileSync,
   realpathSync,
   renameSync,
+  rmdirSync,
   rmSync,
   writeFileSync,
 } from 'node:fs';
 import { createRequire } from 'node:module';
 import { homedir } from 'node:os';
 import { basename, delimiter, dirname, join } from 'node:path';
-import { releaseClaim, tryAcquireClaim } from '@stim-cli/core/ownership-claim';
+import { clearFreeClaimSet, releaseClaim, tryAcquireClaim } from '@stim-cli/core/ownership-claim';
 import { stimBuildDigest } from '@stim-cli/core/state';
 import {
   answersAs,
   DEFAULT_LABEL,
-  installDirName,
   parseInstalledPlist,
   parseLaunchctlPrint,
   planServe,
@@ -505,13 +505,21 @@ export function statusLines(status: ServiceStatus, panes: { screen: string; cont
 
 export async function uninstallService(label: string): Promise<string[]> {
   requireMacOs();
-  if (!existsSync(serviceRoot(label))) return uninstallJob(label);
   const notes = await holdingUpdateClaim(label, async () => {
     const result = await uninstallJob(label);
-    rmSync(join(serviceRoot(label), 'versions'), { recursive: true, force: true });
+    for (const entry of readdirSync(serviceRoot(label))) {
+      if (entry !== 'update.claims') rmSync(join(serviceRoot(label), entry), { recursive: true, force: true });
+    }
     return result;
   });
-  rmSync(serviceRoot(label), { recursive: true, force: true });
+  if (
+    clearFreeClaimSet({ root: join(serviceRoot(label), 'update.claims'), label: `${label} update` }).status ===
+    'cleared'
+  ) {
+    try {
+      rmdirSync(serviceRoot(label));
+    } catch {}
+  }
   return notes;
 }
 
@@ -708,7 +716,7 @@ async function installServer(
         2,
       )}\n`,
     );
-    const dir = join(versions, installDirName(build, serverDigest));
+    const dir = join(versions, `${build.version}-${build.stimBuild}-${serverDigest}`);
     if (!existsSync(dir)) renameSync(staging, dir);
     return { script: join(dir, ...SERVER_SCRIPT), build, dir };
   } finally {
@@ -805,25 +813,32 @@ async function switchTo(
     }
     rmSync(staged, { force: true });
     writeFileSync(path, before, { mode: 0o644 });
-    let back: Health | null = null;
     try {
-      back = (await restart(installed.label, path)).ok ? await waitForHealth(installed.port) : null;
-    } catch {
-      const retried = await run('launchctl', ['bootstrap', domain(), path]);
-      back = retried.ok ? await waitForHealth(installed.port) : null;
+      await unload(installed.label);
+    } catch {}
+    let loadedAgain = false;
+    for (const deadline = Date.now() + UNLOAD_WAIT_MS; !loadedAgain && Date.now() < deadline;) {
+      loadedAgain =
+        (await run('launchctl', ['bootstrap', domain(), path])).ok ||
+        (await loaded(installed.label).catch(() => null)) !== null;
+      if (!loadedAgain) await sleep(1000);
     }
+    const back = loadedAgain ? await waitForHealth(installed.port) : null;
     throw new ServiceError(
       `${describeBuild(expected)} ${why}. ${
         back
           ? `Switched back to stim-server ${back.version}.`
-          : `Restored the previous plist, but that server does not answer either; check ${installed.logPath ?? logPath(installed.label)}.`
+          : loadedAgain
+            ? `Restored the previous plist, but that server does not answer either; check ${installed.logPath ?? logPath(installed.label)}.`
+            : `Restored the previous plist, but launchd did not load it; run \`launchctl bootstrap ${domain()} ${path}\`.`
       }`,
     );
   });
 }
 
 function prune(versions: string, keep: string[]): void {
-  for (const entry of unusedInstalls(versions, readdirSync(versions), keep)) {
+  const real = realpathSync(versions);
+  for (const entry of unusedInstalls(real, readdirSync(real), keep)) {
     rmSync(join(versions, entry), { recursive: true, force: true });
   }
 }
@@ -879,6 +894,8 @@ export async function updateService(
   source: UpdateSource,
   log: (line: string) => void,
 ): Promise<string[]> {
+  requireMacOs();
+  if (!existsSync(plistPath(label))) throw new ServiceError(`${label} is not installed.`);
   return withUpdateClaim(label, async (installed) => {
     const versions = join(serviceRoot(label), 'versions');
     const target = await installServer(versions, source, installed.node, log);

@@ -6,7 +6,6 @@ import { delimiter, join } from 'node:path';
 import {
   answersAs,
   applyServeEnvironment,
-  installDirName,
   unusedInstalls,
   parseEnvAssignment,
   parseInstalledPlist,
@@ -19,7 +18,8 @@ import {
   validateServeEnvironment,
   type ServiceSpec,
 } from '../src/service-plist.ts';
-import { statusLines, type ServiceStatus } from '../src/service.ts';
+import { statusLines, updateService, type ServiceStatus } from '../src/service.ts';
+import { releaseClaim, tryAcquireClaim } from '@stim-cli/core/ownership-claim';
 import {
   hostFromExecutable,
   installHostApp,
@@ -188,11 +188,6 @@ describe('service update checks', () => {
     expect(answersAs(null, expected)).toBe(false);
   });
 
-  it('gives a server-only change of one version and Stim build its own directory', () => {
-    const build = { version: '1.14.0', stimBuild: 'aaaaaaaaaaaaaaaa' };
-    expect(installDirName(build, '1111111111111111')).not.toBe(installDirName(build, '2222222222222222'));
-  });
-
   it('prunes only installs that hold neither the current nor the previous server', () => {
     const versions = '/Users/me/Library/Application Support/Stim/services/dev.stim.server/versions';
     const script = (dir: string) => `${versions}/${dir}/node_modules/@stim-cli/server/dist/stim-server.mjs`;
@@ -204,6 +199,30 @@ describe('service update checks', () => {
       ),
     ).toEqual(['1.14.0-a-10', '1.15.0-b-2', '.install-123']);
     expect(unusedInstalls(versions, ['1.15.0-b-2'], [script('1.15.0-b-2'), script('1.14.0-a-1')])).toEqual([]);
+  });
+
+  describe.skipIf(process.platform !== 'darwin')('on macOS', () => {
+    it('refuses a second update of a label while one holds its claim', async () => {
+      const home = mkdtempSync(join(tmpdir(), 'stim-service-claim-'));
+      const previous = process.env.HOME;
+      process.env.HOME = home;
+      try {
+        mkdirSync(join(home, 'Library', 'LaunchAgents'), { recursive: true });
+        writeFileSync(join(home, 'Library', 'LaunchAgents', 'dev.stim.claimed.plist'), renderPlist(SPEC));
+        const held = tryAcquireClaim({
+          root: join(home, 'Library', 'Application Support', 'Stim', 'services', 'dev.stim.claimed', 'update.claims'),
+          mode: 'exclusive',
+        });
+        expect(held.acquired).toBeDefined();
+        await expect(updateService('dev.stim.claimed', { release: '1.14.0' }, () => {})).rejects.toThrow(
+          'An install, update or rollback of dev.stim.claimed is running',
+        );
+        releaseClaim(held.acquired);
+      } finally {
+        process.env.HOME = previous;
+        rmSync(home, { recursive: true, force: true });
+      }
+    });
   });
 
   it('accepts only an npm signature report that vouches for every package', () => {
