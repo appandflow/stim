@@ -86,11 +86,11 @@ struct NoDeviceArt: View {
       let next = (index + 1) % front.count
       faces.append(([front[index], back[index], back[next], front[next]], Palette.brand))
     }
-    faces.sort { left, right in
-      left.points.map(\.depth).reduce(0, +) / CGFloat(left.points.count)
-        < right.points.map(\.depth).reduce(0, +) / CGFloat(right.points.count)
+    let meanDepths: [CGFloat] = faces.map { face in
+      face.points.reduce(0) { $0 + $1.depth } / CGFloat(face.points.count)
     }
-    for face in faces {
+    let order = faces.indices.sorted { meanDepths[$0] < meanDepths[$1] }
+    for face in order.map({ faces[$0] }) {
       let path = shape(face.points.map(\.point))
       context.fill(path, with: .color(face.color))
       context.stroke(path, with: .color(outline), lineWidth: 0.6)
