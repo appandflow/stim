@@ -52,14 +52,16 @@ public struct SidebarOptions: Equatable, Sendable {
   }
 }
 
-/// A sidebar row: a workspace, or a worktree with no environment.
+/// A sidebar row: one app, a multi-app worktree, or a worktree with no environment.
 public enum SidebarEntry: Hashable, Identifiable, Sendable {
   case workspace(Workspace)
+  case worktreeGroup(WorktreePage)
   case worktree(UnprovisionedWorktree)
 
   public var path: String {
     switch self {
     case .workspace(let env): return env.path
+    case .worktreeGroup(let page): return page.id
     case .worktree(let worktree): return worktree.path
     }
   }
@@ -67,23 +69,33 @@ public enum SidebarEntry: Hashable, Identifiable, Sendable {
   public var id: String { path }
 
   var active: Bool {
-    if case .workspace(let env) = self { return env.isActive }
-    return false
+    switch self {
+    case .workspace(let env): return env.isActive
+    case .worktreeGroup(let page): return page.apps.contains(where: \.isActive)
+    case .worktree: return false
+    }
   }
 
   var memoryMb: Int {
-    if case .workspace(let env) = self { return env.memoryMb ?? 0 }
-    return 0
+    switch self {
+    case .workspace(let env): return env.memoryMb ?? 0
+    case .worktreeGroup(let page): return page.apps.reduce(0) { $0 + ($1.memoryMb ?? 0) }
+    case .worktree: return 0
+    }
   }
 
   var lastActivityAt: Date? {
-    if case .workspace(let env) = self { return env.lastActivityAt }
-    return nil
+    switch self {
+    case .workspace(let env): return env.lastActivityAt
+    case .worktreeGroup(let page): return page.apps.compactMap(\.lastActivityAt).max()
+    case .worktree: return nil
+    }
   }
 
   var sortName: String {
     switch self {
     case .workspace(let env): return env.names.title.lowercased()
+    case .worktreeGroup(let page): return page.apps[0].names.title.lowercased()
     case .worktree(let worktree): return worktree.names.title.lowercased()
     }
   }
@@ -102,7 +114,7 @@ extension Workspace {
   }
 }
 
-/// A project in the sidebar tree and its visible rows. `summary` counts every workspace, including hidden ones.
+/// A project in the sidebar tree and its visible rows. `summary` counts every worktree, including hidden ones.
 public struct ProjectTree: Hashable, Sendable {
   public var summary: ProjectSummary
   public var entries: [SidebarEntry]
@@ -146,7 +158,10 @@ private func visibleEntries(
   _ options: SidebarOptions
 ) -> [SidebarEntry] {
   let worktrees = options.showsNoEnvironment ? unprovisioned.map(SidebarEntry.worktree) : []
-  return (environments.map(SidebarEntry.workspace) + worktrees).filter { entry in
+  let apps = WorktreePage.groups(environments: environments).map { page in
+    page.isUnified ? SidebarEntry.worktreeGroup(page) : .workspace(page.apps[0])
+  }
+  return (apps + worktrees).filter { entry in
     guard !options.hiddenProjects.contains(project(entry.path).root) else { return false }
     switch options.status {
     case .all: return true

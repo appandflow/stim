@@ -139,6 +139,15 @@ extension Workspace {
   /// The step `stim worktree warm` is on.
   public var warmStepText: String { warmStep == "copy" ? "Copying ignored files" : "Installing dependencies" }
 
+  var rowDriverTools: [String] {
+    var tools: [String] = []
+    for device in runningLocalDevices where device.activity?.state == "driven" {
+      let tool = device.activity?.driver?.tool ?? "unknown tool"
+      if !tools.contains(tool) { tools.append(tool) }
+    }
+    return tools
+  }
+
   public func rowDevices(now: Date) -> RowDevices {
     let running = runningLocalDevices
     var kinds: [(name: String, count: Int)] = []
@@ -150,11 +159,7 @@ extension Workspace {
         kinds.append((name, 1))
       }
     }
-    var tools: [String] = []
-    for device in running where device.activity?.state == "driven" {
-      let tool = device.activity?.driver?.tool ?? "unknown tool"
-      if !tools.contains(tool) { tools.append(tool) }
-    }
+    let tools = rowDriverTools
     var idle: RowDevices.Idle?
     let activities = running.compactMap(\.activity).filter { $0.state != "unknown" }
     if tools.isEmpty, !activities.isEmpty, activities.allSatisfy({ $0.state == "idle" }),
@@ -214,5 +219,48 @@ extension ActivityBadge {
     case .unknown:
       return "activity unknown"
     }
+  }
+}
+
+public struct WorktreeRowSummary: Sendable {
+  public struct App: Sendable {
+    public var label: String
+    public var status: RowStatus
+    public var active: Bool
+  }
+
+  public var title: String
+  public var status: RowStatus
+  public var active: Bool
+  public var apps: [App]
+  public var agents: [AgentSession]
+  public var problems: [String]
+  public var drivers: String?
+  public var remote: Int
+  public var git: GitChip?
+  public var subtitle: String?
+
+  public var label: String {
+    var parts = [title, status.label] + apps.map { "\($0.label): \($0.status.label)" }
+    if let first = agents.first { parts.append(first.label + (agents.count > 1 ? " +\(agents.count - 1)" : "")) }
+    parts += problems
+    if let git { parts.append(git.label) }
+    if let subtitle { parts.append(subtitle) }
+    return parts.filter { !$0.isEmpty }.joined(separator: ", ")
+  }
+}
+
+extension WorktreePage {
+  public func rowSummary(now: Date, subtitle: String?, showsGit: Bool) -> WorktreeRowSummary {
+    var seenProblems = Set<String>()
+    let problems = apps.flatMap { $0.rowProblems(now: now).map(\.text) }.filter { seenProblems.insert($0).inserted }
+    var seenTools = Set<String>()
+    let tools = apps.flatMap(\.rowDriverTools).filter { seenTools.insert($0).inserted }
+    return WorktreeRowSummary(
+      title: apps[0].names.title, status: lead(now: now).rowStatus(now: now), active: apps.contains(where: \.isActive),
+      apps: zip(apps, appLabels).map { WorktreeRowSummary.App(label: $1, status: $0.rowStatus(now: now), active: $0.isActive) },
+      agents: agents, problems: problems, drivers: tools.isEmpty ? nil : tools.joined(separator: ", "),
+      remote: apps.reduce(0) { $0 + ($1.remoteDevices?.count ?? 0) },
+      git: showsGit ? GitChip(apps[0].worktree) : nil, subtitle: subtitle)
   }
 }

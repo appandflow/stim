@@ -314,6 +314,76 @@ import Testing
     #expect(list { $0.hiddenProjects = ["/r/app"] } == ["/r/new/.worktrees/c", "/r/zed"])
   }
 
+  @Test func filtersAndSortsMultiAppWorktreesAsOneRowAndCountsThemOnce() throws {
+    let envs = try JSONDecoder().decode(
+      [Workspace].self,
+      from: Data(
+        """
+        [
+          {"path":"/r/app/.worktrees/z/apps/b","live":true,"warnings":[],"memoryMb":600,
+            "worktree":{"path":"/r/app/.worktrees/z","branch":"z"},
+            "supervisor":{"startedAt":"2026-10-05T11:00:00Z"}},
+          {"path":"/r/app/.worktrees/z/apps/a","live":false,"warnings":[],"memoryMb":600,"phase":"warming",
+            "worktree":{"path":"/r/app/.worktrees/z","branch":"z"}},
+          {"path":"/r/app/.worktrees/a","live":true,"warnings":[],"memoryMb":1000,
+            "worktree":{"path":"/r/app/.worktrees/a","branch":"a"},
+            "supervisor":{"startedAt":"2026-10-05T10:00:00Z"}},
+          {"path":"/r/app/.worktrees/idle","live":false,"warnings":[],
+            "worktree":{"path":"/r/app/.worktrees/idle","branch":"idle"}},
+          {"path":"/unknown/a","live":false,"warnings":[],"worktree":{"path":""}},
+          {"path":"/unknown/b","live":false,"warnings":[],"worktree":{"path":""}}
+        ]
+        """.utf8))
+    let project = Project.init(fallbackFor:)
+    var options = SidebarOptions()
+    let tree = try #require(
+      sidebarTrees(environments: envs, unprovisioned: [], project: project, options: options).first {
+        $0.summary.project.root == "/r/app"
+      })
+    #expect(tree.summary == ProjectSummary(project: Project(root: "/r/app"), live: 2, total: 3, settingUp: 1, active: 2))
+    #expect(tree.entries.map(\.path) == [envs[2].path, envs[3].path, envs[1].path])
+    let group = try #require(tree.entries.last)
+    guard case .worktreeGroup(let page) = group else {
+      Issue.record("Expected a multi-app worktree row")
+      return
+    }
+    #expect(page.apps.map(\.path) == [envs[1].path, envs[0].path])
+    #expect(group.active)
+    #expect(group.memoryMb == 1200)
+    #expect(group.lastActivityAt == parseTimestamp("2026-10-05T11:00:00Z"))
+    for sort in [SidebarSort.memory, .lastActivity] {
+      options.sort = sort
+      #expect(sidebarList(environments: envs, unprovisioned: [], project: project, options: options).first?.path == envs[1].path)
+    }
+    options.status = .live
+    #expect(
+      sidebarList(environments: envs, unprovisioned: [], project: project, options: options).map(\.path) == [
+        envs[1].path, envs[2].path,
+      ])
+    options.status = .idle
+    #expect(
+      Set(sidebarList(environments: envs, unprovisioned: [], project: project, options: options).map(\.path))
+        == Set(envs[3...].map(\.path)))
+    options.status = .all
+    options.hiddenProjects = ["/r/app"]
+    #expect(
+      sidebarList(environments: envs, unprovisioned: [], project: project, options: options)
+        == envs[4...].map(SidebarEntry.workspace))
+    #expect(tree.entries.first == .workspace(envs[2]))
+    var changed = envs
+    changed[1].phase = nil
+    options.hiddenProjects = []
+    options.status = .live
+    #expect(
+      sidebarList(environments: changed, unprovisioned: [], project: project, options: options).map(\.path) == [
+        envs[1].path, envs[2].path,
+      ])
+    changed[0].live = false
+    #expect(sidebarList(environments: changed, unprovisioned: [], project: project, options: options) == [.workspace(envs[2])])
+    options.status = .idle
+    #expect(sidebarList(environments: changed, unprovisioned: [], project: project, options: options).first?.path == envs[1].path)
+  }
+
   @Test func keepsTheDefaultSidebarOrderWhenActivityChanges() throws {
     func envs(_ appStarted: String, _ zedStarted: String) throws -> [Workspace] {
       let json = """

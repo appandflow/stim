@@ -16,7 +16,9 @@ struct Sidebar: View {
 
   var body: some View {
     let options = prefs.options
-    List(selection: $selection) {
+    let pages = WorktreePage.groups(environments: store.environments(in: nil)).filter(\.isUnified)
+    let rowSelection = listSelection(pages: pages)
+    List(selection: rowSelection) {
       Section {
         switch options.grouping {
         case .project:
@@ -27,7 +29,7 @@ struct Sidebar: View {
               ForEach(tree.entries) { entry in
                 EntryRow(
                   entry: entry, subtitle: nil, showsFolder: folders.count > 1, showsGit: options.showsGitStatus,
-                  selection: selection, openLogs: openLogs)
+                  selection: rowSelection.wrappedValue, openLogs: openLogs)
               }
             } label: {
               ProjectRow(store: store, summary: tree.summary, selected: selection == .project(tree.summary.project))
@@ -40,7 +42,7 @@ struct Sidebar: View {
           ForEach(entries) { entry in
             EntryRow(
               entry: entry, subtitle: store.title(of: store.project(ofPath: entry.path)), showsFolder: true,
-              showsGit: options.showsGitStatus, selection: selection, openLogs: openLogs)
+              showsGit: options.showsGitStatus, selection: rowSelection.wrappedValue, openLogs: openLogs)
           }
           if entries.isEmpty { emptyText(options) }
         }
@@ -60,6 +62,23 @@ struct Sidebar: View {
     .safeAreaInset(edge: .bottom, spacing: 0) {
       SidebarFooter(store: store, autopilot: autopilot, onboarding: onboarding, actions: actions, selection: $selection)
     }
+  }
+
+  private func listSelection(pages: [WorktreePage]) -> Binding<SidebarItem?> {
+    func rowTag(_ item: SidebarItem?) -> SidebarItem? {
+      guard case .environment(let path) = item,
+        let page = pages.first(where: { $0.apps.contains { $0.path == path } })
+      else { return item }
+      return .environment(page.id)
+    }
+    return Binding(
+      get: { rowTag(selection) },
+      set: { item in
+        if case .environment(let path) = item, pages.contains(where: { $0.id == path }), rowTag(selection) == item {
+          return
+        }
+        selection = item
+      })
   }
 
   private var pinned: some View {
@@ -224,6 +243,8 @@ struct EntryRow: View {
     case .workspace(let env):
       WorkspaceRow(
         env: env, place: place(env.names), showsGit: showsGit, selection: selection, openLogs: openLogs)
+    case .worktreeGroup(let page):
+      SidebarWorktreeRow(page: page, subtitle: subtitle, showsGit: showsGit, selection: selection, openLogs: openLogs)
     case .worktree(let worktree):
       NoEnvironmentRow(worktree: worktree, place: subtitle.map { [$0] } ?? [], showsGit: showsGit, selection: selection)
     }
@@ -351,59 +372,6 @@ private struct WorkspaceRowContent: View {
   }
 }
 
-private struct SessionLine: View {
-  var session: AgentSession
-  var others: Int
-
-  var body: some View {
-    HStack(spacing: Space.xs) {
-      AgentIcon(tool: session.tool, size: 11)
-      Text(session.title.flatMap { $0.isEmpty ? nil : $0 } ?? session.toolName).lineLimit(1).truncationMode(.tail)
-      if others > 0 { Text("+\(others)").foregroundStyle(Palette.tertiary).fixedSize() }
-    }
-    .font(.stim(.caption))
-    .foregroundStyle(Palette.secondary)
-  }
-}
-
-private struct RowDetailLine: View {
-  var context: Text?
-  var git: GitChip?
-
-  static func joined(_ parts: [Text]) -> Text? {
-    guard let first = parts.first else { return nil }
-    return parts.dropFirst().reduce(first) { $0 + Text(" \u{00B7} ").foregroundStyle(Palette.tertiary) + $1 }
-  }
-
-  private var gitText: Text? {
-    guard let git else { return nil }
-    var parts: [Text] = []
-    if let pull = git.pullRequest { parts.append(Text(pull.text).fontWeight(.medium).foregroundStyle(Color(pull.tone))) }
-    for part in git.parts {
-      parts.append(Text(part.text).foregroundStyle(part.tone == .normal ? Palette.secondary : Color(part.tone)))
-    }
-    return Self.joined(parts)
-  }
-
-  var body: some View {
-    let lines = [context, gitText].compactMap { $0 }
-    Group {
-      if lines.count == 2, let joined = Self.joined(lines) {
-        ViewThatFits(in: .horizontal) {
-          joined.lineLimit(1).fixedSize()
-          VStack(alignment: .leading, spacing: Space.xs) {
-            ForEach(lines.indices, id: \.self) { lines[$0].lineLimit(1).truncationMode(.tail) }
-          }
-        }
-      } else if let line = lines.first {
-        line.lineLimit(1).truncationMode(.tail)
-      }
-    }
-    .font(.stim(.caption))
-    .monospacedDigit()
-  }
-}
-
 struct NoEnvironmentRow: View {
   var worktree: UnprovisionedWorktree
   var place: [String]
@@ -472,7 +440,7 @@ private struct PlainSelectionHighlight: NSViewRepresentable {
 }
 
 extension View {
-  fileprivate func sidebarTag(_ item: SidebarItem, selection: SidebarItem?) -> some View {
+  func sidebarTag(_ item: SidebarItem, selection: SidebarItem?) -> some View {
     modifier(SidebarRowBackground(item: item, selection: selection))
   }
 }

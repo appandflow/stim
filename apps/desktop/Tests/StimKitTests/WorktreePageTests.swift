@@ -38,6 +38,10 @@ struct WorktreePageTests {
     formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
     let now = try #require(formatter.date(from: c.input.now))
     #expect(page.apps.map(\.path) == c.expected.apps)
+    let groups = WorktreePage.groups(environments: c.input.environments)
+    let group = try #require(groups.first { $0.apps.contains { $0.path == c.input.path } })
+    #expect(group.apps.map(\.path) == c.expected.apps)
+    #expect(groups.flatMap { $0.apps.map(\.path) }.sorted() == c.input.environments.map(\.path).sorted())
     #expect(page.projects == c.expected.projects)
     #expect(page.lead(now: now).path == c.expected.lead)
     #expect(page.subtitles(entries: c.input.entries) == c.expected.subtitles)

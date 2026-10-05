@@ -170,6 +170,24 @@ struct WorkspaceActionsButton: View {
 struct WorktreeActionsButton: View {
   var page: WorktreePage
   var openLogs: (Workspace) -> Void
+
+  var body: some View {
+    WorktreeActions(page: page, openLogs: openLogs) { menu in
+      Menu {
+        menu
+      } label: {
+        Image(systemName: "ellipsis")
+      }
+      .menuStyle(.button).menuIndicator(.hidden).buttonStyle(.borderless).fixedSize()
+      .help("Worktree actions").accessibilityLabel("Worktree actions")
+    }
+  }
+}
+
+struct WorktreeActions<Content: View>: View {
+  var page: WorktreePage
+  var openLogs: (Workspace) -> Void
+  var content: (WorktreeActionsMenuContent) -> Content
   @EnvironmentObject private var actions: ActionCenter
   @State private var confirmingStop = false
   @State private var stopping: Workspace?
@@ -179,29 +197,11 @@ struct WorktreeActionsButton: View {
 
   var body: some View {
     let firstApp = page.apps[0]
-    let removalAllowed = worktreeRemovalAllowed(git: firstApp.worktree?.git)
-    Menu {
-      ForEach(Array(zip(page.apps, page.appLabels)), id: \.0.path) { app, label in
-        Menu(label) { appMenu(app) }
-      }
-      Divider()
-      Button("Stop all", systemImage: "stop.circle") { confirmingStop = true }
-        .disabled(
-          liveApps.isEmpty || actions.active(for: page.actionKey) != nil
-            || page.apps.contains { actions.active(for: $0.path) != nil })
-      Button("Remove worktree\u{2026}", systemImage: "trash", role: .destructive) {
-        resolveRemovalBranch(at: firstApp.path) { removal = WorktreeRemoval(branch: $0) }
-      }
-      .disabled(
-        !removalAllowed || actions.active(for: page.actionKey) != nil
-          || page.apps.contains { actions.active(for: $0.path) != nil }
-      )
-      .help(removalAllowed ? "" : "Stim refuses to remove a worktree with uncommitted or unpushed work.")
-    } label: {
-      Image(systemName: "ellipsis")
-    }
-    .menuStyle(.button).menuIndicator(.hidden).buttonStyle(.borderless).fixedSize()
-    .help("Worktree actions").accessibilityLabel("Worktree actions")
+    content(
+      WorktreeActionsMenuContent(
+        page: page, openLogs: openLogs, onStop: stop, confirmingStop: $confirmingStop, stopping: $stopping,
+        removal: $removal)
+    )
     .confirmationDialog(
       "Stop this workspace?", isPresented: Binding(get: { stopping != nil }, set: { if !$0 { stopping = nil } }),
       titleVisibility: .visible, presenting: stopping
@@ -237,6 +237,44 @@ struct WorktreeActionsButton: View {
     }
   }
 
+  private func stop(_ app: Workspace) {
+    actions.run("Stop \(app.names.title)", steps: [StimCommand(["stop"], cwd: app.path)], present: false)
+  }
+
+}
+
+struct WorktreeActionsMenuContent: View {
+  var page: WorktreePage
+  var openLogs: (Workspace) -> Void
+  var onStop: (Workspace) -> Void
+  @Binding var confirmingStop: Bool
+  @Binding var stopping: Workspace?
+  @Binding var removal: WorktreeRemoval?
+  @EnvironmentObject private var actions: ActionCenter
+
+  var body: some View {
+    let firstApp = page.apps[0]
+    let removalAllowed = worktreeRemovalAllowed(git: firstApp.worktree?.git)
+    Group {
+      ForEach(Array(zip(page.apps, page.appLabels)), id: \.0.path) { app, label in
+        Menu(label) { appMenu(app) }
+      }
+      Divider()
+      Button("Stop all", systemImage: "stop.circle") { confirmingStop = true }
+        .disabled(
+          !page.apps.contains(where: \.isActive) || actions.active(for: page.actionKey) != nil
+            || page.apps.contains { actions.active(for: $0.path) != nil })
+      Button("Remove worktree\u{2026}", systemImage: "trash", role: .destructive) {
+        resolveRemovalBranch(at: firstApp.path) { removal = WorktreeRemoval(branch: $0) }
+      }
+      .disabled(
+        !removalAllowed || actions.active(for: page.actionKey) != nil
+          || page.apps.contains { actions.active(for: $0.path) != nil }
+      )
+      .help(removalAllowed ? "" : "Stim refuses to remove a worktree with uncommitted or unpushed work.")
+    }
+  }
+
   private func appMenu(_ app: Workspace) -> some View {
     WorkspaceActionsMenu(
       kind: .workspace(
@@ -249,13 +287,9 @@ struct WorktreeActionsButton: View {
       onReload: { actions.run("Reload \(app.names.title)", steps: [StimCommand(["reload"], cwd: app.path)], present: false) },
       onStartDevServer: { actions.run("Start \(app.names.title)", StimCommand(["start"], cwd: app.path)) },
       onStopDevServer: {
-        if app.remoteDevices?.isEmpty == false { stopping = app } else { stop(app) }
+        if app.remoteDevices?.isEmpty == false { stopping = app } else { onStop(app) }
       },
       onShowLogs: { openLogs(app) })
-  }
-
-  private func stop(_ app: Workspace) {
-    actions.run("Stop \(app.names.title)", steps: [StimCommand(["stop"], cwd: app.path)], present: false)
   }
 
 }
