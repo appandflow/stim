@@ -3,9 +3,9 @@ import { isAbsolute } from 'node:path';
 export const ANDROID_COMPILER_CACHE_CHOICES = ['auto', 'ccache', 'cas', 'none'] as const;
 export const ANDROID_PCH_CHOICES = ['auto', 'on', 'off'] as const;
 
-export type TunnelMode = 'auto' | 'off' | 'expo' | 'cloudflared' | 'ngrok';
+export type TunnelMode = 'auto' | 'off' | 'expo' | 'cloudflared' | 'ngrok' | 'tailscale';
 
-export const TUNNEL_MODES: readonly TunnelMode[] = ['auto', 'off', 'expo', 'cloudflared', 'ngrok'];
+export const TUNNEL_MODES: readonly TunnelMode[] = ['auto', 'off', 'expo', 'cloudflared', 'ngrok', 'tailscale'];
 
 export type RemoteDeviceBackend = 'proxy' | 'eas';
 
@@ -213,7 +213,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
     type: { kind: 'choice', choices: TUNNEL_MODES },
     scopes: PROJECT,
     default: 'auto',
-    description: 'How a remote device reaches Metro',
+    description: 'How a remote device reaches Metro; tailscale is tailnet-only and requires explicit selection',
   },
   { key: 'metro.ngrokUrl', type: STRING, scopes: PROJECT, description: 'Stable ngrok URL for the managed tunnel' },
   { key: 'metro.publicUrl', type: STRING, scopes: PROJECT, description: 'Existing public Metro URL' },

@@ -54,7 +54,7 @@ import { formatDuration } from '../command-output.ts';
 import { listLeaseFiles, parseWorkspaceLeases } from '../engine/device-lease.ts';
 import { readIosDevices, type IosDeviceEntry } from '../engine/ios-device.ts';
 import { readEasSessionLedger } from '../engine/eas-session-ledger.ts';
-import { readRemoteSession, readWorkspaceLaunches } from '../supervisor/state.ts';
+import { readMetroTunnel, readRemoteSession, readWorkspaceLaunches } from '../supervisor/state.ts';
 import {
   macosAppState,
   readMacosRecord,
@@ -304,6 +304,10 @@ async function readStatusFacts(gitMaxAgeMs: number, simctlListing: string | null
     );
     const state = states[states.length - 1];
     if (state) {
+      const tunnel = readMetroTunnel(path);
+      if (state.metro && tunnel?.kind === 'managed' && tunnel.port === state.metro.port) {
+        state.metro.tunnel = { provider: tunnel.provider, url: tunnel.url };
+      }
       if (macos) {
         state.macos = macos;
         state.live ||= macos.state === 'running' || macos.state === 'orphaned' || macos.build.state === 'running';
@@ -539,6 +543,10 @@ function renderStatus(
               )
             : chalk.dim('not running');
       out.push(`  metro: port ${state.metro.port} ${label}`);
+      if (state.metro.tunnel) {
+        const { provider, url } = state.metro.tunnel;
+        out.push(`  tunnel: ${provider}${provider === 'tailscale' ? ' (tailnet-only)' : ''} ${url}`);
+      }
     }
     if (state.supervisor) {
       const health = state.supervisor.healthy ? chalk.green('healthy') : chalk.yellow('not answering');

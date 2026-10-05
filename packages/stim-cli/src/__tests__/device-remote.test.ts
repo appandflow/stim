@@ -1346,11 +1346,11 @@ describe('Metro reachability', () => {
   });
 });
 
-async function reach(over: Record<string, unknown> = {}) {
+async function reach(over: Record<string, unknown> = {}, platform: 'ios' | 'android' = 'ios') {
   const context = {
     root,
     label: 'wt',
-    platform: 'ios' as const,
+    platform,
     easBin: '/bin/eas',
     agentDeviceBin: '/bin/agent-device',
     publicMetroUrl: null as string | null,
@@ -1424,6 +1424,57 @@ describe('the Metro refusal comes before anything billable', () => {
 });
 
 describe('a tunnel Stim starts for itself', () => {
+  test.each(['ios', 'android'] as const)(
+    'a recorded tailscale tunnel skips the public bundle gate on %s',
+    async (platform) => {
+      let gated = false;
+      const { result, context } = await reach(
+        {
+          tunnelMode: 'tailscale',
+          available: [],
+          readTunnelRecord: () => ({
+            kind: 'managed',
+            provider: 'tailscale',
+            pid: 4242,
+            processToken: 'linux:100',
+            url: 'https://host.tail123.ts.net:8085',
+            port: 8085,
+            startedAt: 'T',
+          }),
+          isTunnelAlive: () => true,
+          gateOrigin: async () => {
+            gated = true;
+            return { failed: true as const, reason: 'this host cannot reach its own tailnet name' };
+          },
+        },
+        platform,
+      );
+      expect(result).toEqual({ ok: true });
+      expect(context.publicMetroUrl).toBe('https://host.tail123.ts.net:8085');
+      expect(gated).toBe(false);
+    },
+  );
+
+  test.each([{ available: [] }, { available: ['ngrok'] }])(
+    'auto refuses a recorded tailscale tunnel with $available',
+    async ({ available }) => {
+      const { result, context } = await reach({
+        available,
+        readTunnelRecord: () => ({
+          kind: 'managed',
+          provider: 'tailscale',
+          pid: 4242,
+          processToken: 'linux:100',
+          url: 'https://host.tail123.ts.net:8085',
+          port: 8085,
+          startedAt: 'T',
+        }),
+        isTunnelAlive: () => true,
+      });
+      expect(result).toHaveProperty('failed');
+      expect(context.publicMetroUrl).toBeNull();
+    },
+  );
   test('reuses the tunnel recorded by start and gates it', async () => {
     let started = false;
     const { result, context } = await reach({

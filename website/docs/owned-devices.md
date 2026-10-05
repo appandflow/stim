@@ -406,6 +406,34 @@ ends the session and the tunnel.
 An install or launch failure leaves the session running and billed. The remedy
 names the session: rerun the command to reuse it, or run `stim stop` to end it.
 
+### Metro on your tailnet
+
+For a remote device or an agent-device proxy on the same tailnet, install
+Tailscale and sign in on both hosts, then:
+
+```bash
+stim settings set metro.tunnel tailscale --scope workspace
+stim start --remote
+stim status
+```
+
+`tailscale` is an explicit `metro.tunnel` choice; `auto` never selects it.
+Stim runs a foreground `tailscale serve --https=<metro port>
+http://127.0.0.1:<metro port>` process. It never enables Funnel. The printed
+URL is `https://<tailnet-name>:<metro port>`, and status reports the recorded
+provider and URL. The device must be on the same tailnet; the host may not
+reach its own tailnet name, so Stim skips the public bundle probe for its
+recorded Tailscale tunnel.
+
+`stim stop` and `stim worktree remove` verify and stop only the process Stim
+recorded. Ending the foreground process removes its route; a route Stim did
+not create is never touched. If the Metro port already has a serve route,
+Tailscale refuses and Stim prints Tailscale's error message.
+`tailscale serve status --json` lists foreground sessions under the top-level
+`Foreground` key; plain `tailscale serve status` does not list them.
+
+<PromptBox prompt="Set metro.tunnel to tailscale for this workspace and start Metro for my remote agent-device proxy on the same tailnet. Show me its URL with stim status, then use stim stop when finished." />
+
 ## Control from the phone viewer
 
 A phone granted control can use the compact bottom toolbar for Keyboard,

@@ -6,7 +6,7 @@ export const PUBLIC_METRO_ENV = 'STIM_METRO_PUBLIC_URL';
 
 // Prefer ngrok because Cloudflare quick tunnels can take minutes to become routable.
 const MANAGED_PROVIDERS = ['ngrok', 'cloudflared'] as const;
-export type ManagedProvider = (typeof MANAGED_PROVIDERS)[number];
+export type ManagedProvider = (typeof MANAGED_PROVIDERS)[number] | 'tailscale';
 
 export type ReachPlan =
   | { origin: string; gate: boolean }
@@ -25,6 +25,7 @@ export interface ReachInputs {
 const NAMED: Record<string, string> = {
   cloudflared: '`cloudflared` (brew install cloudflared)',
   ngrok: '`ngrok` (brew install ngrok, then `ngrok config add-authtoken <token>`)',
+  tailscale: 'Tailscale and sign in to your tailnet',
 };
 
 export function planMetroReach({ mode, metroPort, publicUrl = null, isExpo, available = [] }: ReachInputs): ReachPlan {
@@ -46,7 +47,7 @@ export function planMetroReach({ mode, metroPort, publicUrl = null, isExpo, avai
     return { expoTunnel: true };
   }
 
-  if (mode === 'cloudflared' || mode === 'ngrok') {
+  if (mode === 'cloudflared' || mode === 'ngrok' || mode === 'tailscale') {
     if (!available.includes(mode)) {
       return {
         failed: `metro.tunnel is "${mode}", but ${mode} is not on PATH.`,
@@ -56,7 +57,7 @@ export function planMetroReach({ mode, metroPort, publicUrl = null, isExpo, avai
     return { start: mode };
   }
 
-  const provider = available[0];
+  const provider = available.find((candidate) => candidate !== 'tailscale');
   if (provider) return { start: provider };
   return {
     failed: `A remote device cannot reach this workspace's Metro on port ${metroPort}, and no tunnel is available to give it one.`,
@@ -67,6 +68,13 @@ export function planMetroReach({ mode, metroPort, publicUrl = null, isExpo, avai
   };
 }
 
-export function detectProviders(onPath: (bin: string) => boolean): ManagedProvider[] {
+export function resolveTailscaleBinary(findExecutable: (bin: string) => string | null): string | null {
+  return findExecutable('tailscale') ?? findExecutable('/Applications/Tailscale.app/Contents/MacOS/Tailscale');
+}
+
+export function detectProviders(onPath: (bin: string) => boolean, mode: TunnelMode = 'auto'): ManagedProvider[] {
+  if (mode === 'tailscale') {
+    return resolveTailscaleBinary((bin) => (onPath(bin) ? bin : null)) ? ['tailscale'] : [];
+  }
   return MANAGED_PROVIDERS.filter((p) => onPath(p));
 }

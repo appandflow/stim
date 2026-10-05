@@ -7,7 +7,7 @@ import { getExecutor } from '../exec.ts';
 import { pidExists, signalProcessTree } from '../metro.ts';
 import { captureProcessToken, inspectProcessIdentity } from '../process-identity.ts';
 import { createLineReader } from '../process-output.ts';
-import type { ManagedProvider } from './metro-reach.ts';
+import { resolveTailscaleBinary, type ManagedProvider } from './metro-reach.ts';
 import { probePublicHttp } from './public-http-probe.ts';
 import { readClaimSet } from '../ownership-claim.ts';
 import {
@@ -33,7 +33,11 @@ export function tunnelArgv(
   port: number,
   ngrokUrl?: string | null,
   logFile?: string | null,
+  tailscaleBinary = 'tailscale',
 ): { bin: string; args: string[] } {
+  if (provider === 'tailscale') {
+    return { bin: tailscaleBinary, args: ['serve', `--https=${port}`, `http://127.0.0.1:${port}`] };
+  }
   if (provider === 'cloudflared') {
     return {
       bin: 'cloudflared',
@@ -73,7 +77,12 @@ export function parseNgrokLine(line: string): string | null {
   return typeof url === 'string' && /^https?:\/\//i.test(url) ? url : null;
 }
 
+export function parseTailscaleLine(line: string): string | null {
+  return /^https:\/\/[^\s/]+\.ts\.net(:\d+)?\/?$/.test(line) ? line : null;
+}
+
 function parserFor(provider: ManagedProvider): (line: string) => string | null {
+  if (provider === 'tailscale') return parseTailscaleLine;
   return provider === 'cloudflared' ? parseCloudflaredLine : parseNgrokLine;
 }
 
@@ -172,9 +181,10 @@ function waitForUrl(
   child: ChildProcess,
   parseLine: (line: string) => string | null,
   timeoutMs: number,
-): Promise<{ url: string | null; exited: boolean }> {
+): Promise<{ url: string | null; exited: boolean; lastLine?: string | null }> {
   return new Promise((resolve) => {
     let settled = false;
+    let lastLine: string | null = null;
     let timer: ReturnType<typeof setTimeout>;
     let onOut: (chunk: unknown) => void;
     let onErr: (chunk: unknown) => void;
@@ -188,10 +198,11 @@ function waitForUrl(
       child.stderr?.removeListener('data', onErr);
       child.removeListener('error', onError);
       child.removeListener('exit', onExit);
-      resolve({ url, exited });
+      resolve({ url, exited, lastLine });
     };
     const onLine = (line: string) => {
       if (settled) return;
+      if (line.trim()) lastLine = line.trim();
       const url = parseLine(line);
       if (url) finish(url);
     };
@@ -200,7 +211,11 @@ function waitForUrl(
     onOut = (chunk: unknown) => outReader.push(chunk);
     onErr = (chunk: unknown) => errReader.push(chunk);
     onError = () => finish(null);
-    onExit = () => finish(null, true);
+    onExit = () => {
+      outReader.flush();
+      errReader.flush();
+      finish(null, true);
+    };
     child.stdout?.setEncoding?.('utf-8');
     child.stderr?.setEncoding?.('utf-8');
     child.stdout?.on('data', onOut);
@@ -216,7 +231,7 @@ function waitForFileUrl(
   logFile: string,
   parseLine: (line: string) => string | null,
   timeoutMs: number,
-): Promise<{ url: string | null; exited: boolean }> {
+): Promise<{ url: string | null; exited: boolean; lastLine?: string | null }> {
   return new Promise((resolve) => {
     let settled = false;
     const finish = (url: string | null, exited = false) => {
@@ -344,11 +359,14 @@ export async function startTunnel({
   logFile = null,
 }: StartTunnelOptions): Promise<StartTunnelResult> {
   const spawn: SpawnFn = spawnFn || ((cmd, args, opts) => getExecutor().spawn(cmd, args, opts));
-  const outputFile = logFile || (spawnFn ? null : createTunnelLogFile(provider));
-  const { bin, args } = tunnelArgv(provider, port, ngrokUrl, outputFile);
+  const outputFile = provider === 'tailscale' ? null : logFile || (spawnFn ? null : createTunnelLogFile(provider));
 
   let child: ChildProcess;
   try {
+    const binary =
+      provider === 'tailscale' ? resolveTailscaleBinary((bin) => getExecutor().findExecutable(bin)) : provider;
+    if (!binary) throw new Error('Install Tailscale and sign in to your tailnet.');
+    const { bin, args } = tunnelArgv(provider, port, ngrokUrl, outputFile, binary);
     child = spawn(bin, args, {
       stdio: outputFile ? ['ignore', 'ignore', 'ignore'] : ['ignore', 'pipe', 'pipe'],
       detached: true,
@@ -404,13 +422,15 @@ export async function startTunnel({
     return failAfterCleanup(`${provider} started but its process identity token could not be read.`);
   }
 
-  const { url, exited } = outputFile
+  const { url, exited, lastLine } = outputFile
     ? await waitForFileUrl(child, outputFile, parserFor(provider), urlTimeoutMs)
     : await waitForUrl(child, parserFor(provider), urlTimeoutMs);
   if (!url) {
     return failAfterCleanup(
       exited
-        ? `${provider} exited before printing a tunnel URL.`
+        ? provider === 'tailscale' && lastLine
+          ? `${provider} exited before printing a tunnel URL: ${lastLine}`
+          : `${provider} exited before printing a tunnel URL.`
         : `${provider} did not print a tunnel URL within ${urlTimeoutMs}ms.`,
       exited || childExited,
     );

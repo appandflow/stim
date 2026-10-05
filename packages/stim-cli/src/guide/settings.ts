@@ -252,14 +252,17 @@ ${ANDROID_AVD_CONFIG_HELP.map((line) => `                          ${line}`).joi
                         shares this machine and is the only mode that needs no
                         tunnel. "expo" lets the Expo dev server tunnel itself.
                         "cloudflared" and "ngrok" name a managed provider
-                        explicitly. Any other value is refused as invalid.
+                        explicitly. "tailscale" explicitly selects a tailnet-only
+                        foreground serve process, never Funnel; "auto" never
+                        selects it. The device must share the tailnet. See
+                        \`guide metro\`. Any other value is refused as invalid.
   metro.ngrokUrl        the stable managed ngrok URL. It requires metro.tunnel
                         "ngrok" and passes --url to ngrok http. Stim owns
                         this process.
   metro.publicUrl       an existing tunnel's URL. Takes precedence over
                         starting one, whatever metro.tunnel says -- Stim
                         did not create it, so a Metro request through it is
-                        still gated the same way a managed tunnel's is. Set it
+                        still gated through a public bundle probe. Set it
                         before Expo start so the manifest advertises it.
   metro.warmupUrl       optional object with per-platform bundle URLs:
   metro.warmupUrl.ios

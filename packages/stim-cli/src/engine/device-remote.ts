@@ -1091,7 +1091,7 @@ export async function ensureMetroReachable({
     gate = true;
   } else {
     const port = Number(metroPort);
-    const providerMatches = tunnelMode === 'auto' || (recorded?.kind === 'managed' && recorded.provider === plan.start);
+    const providerMatches = recorded?.kind === 'managed' && recorded.provider === plan.start;
     if (
       recorded &&
       recorded.kind === 'managed' &&
@@ -1106,7 +1106,7 @@ export async function ensureMetroReachable({
         remedy: 'Run `stim start --remote`, then retry the device command.',
       };
     }
-    gate = true;
+    gate = recorded.provider !== 'tailscale';
   }
 
   if (gate && resolvedUrl) {

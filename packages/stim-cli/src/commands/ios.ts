@@ -697,7 +697,7 @@ async function runIos(
         isExpo,
         tunnelMode: tunnelModeSetting(settings) ?? undefined,
         publicUrl: publicUrlSetting(settings),
-        available: d.detectProviders(binOnPath),
+        available: d.detectProviders(binOnPath, tunnelModeSetting(settings) ?? 'auto'),
       });
       if ('failed' in reachable) {
         fail({

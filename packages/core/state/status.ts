@@ -1,5 +1,5 @@
 import type { MacosAppState } from './macos.ts';
-import type { WebViewport } from './settings-registry.ts';
+import type { TunnelMode, WebViewport } from './settings-registry.ts';
 import type { DeviceIdleShutdownRecord, IdleStopRecord, MetroLastStop } from './workspace-state.ts';
 export type StatsPlatform = 'ios' | 'android';
 
@@ -591,6 +591,7 @@ export interface EnvironmentState {
     port: number;
     running: boolean;
     pid: number | null;
+    tunnel?: { provider: Exclude<TunnelMode, 'auto' | 'off' | 'expo'>; url: string };
     idleStop?: IdleStopRecord;
     lastStop?: MetroLastStop;
     /** The other process that answers Metro on `port`; `cwd` is null when its directory could not be read. */
