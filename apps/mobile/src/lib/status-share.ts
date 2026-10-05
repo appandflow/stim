@@ -1,4 +1,4 @@
-import type { HomeItem } from '@/lib/home';
+import type { HomeEntry } from '@/lib/home';
 import type { StatusPayload } from '@/protocol/types';
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -47,16 +47,16 @@ export function shareStatus(prev: StatusPayload | null, next: StatusPayload): St
 }
 
 /** `next`, reusing each item of `prev` whose fields are all identical, and `prev` itself when every item is. */
-export function shareItems(prev: HomeItem[], next: HomeItem[]): HomeItem[] {
+export function shareItems<T extends HomeEntry>(prev: T[], next: T[]): T[] {
   const byKey = new Map(prev.map((item) => [item.key, item]));
   const out = next.map((item) => {
     const old = byKey.get(item.key);
     return old &&
-      old.env === item.env &&
+      (('env' in old && 'env' in item && old.env === item.env && old.inCheckout === item.inCheckout) ||
+        ('facts' in old && 'facts' in item && old.facts === item.facts)) &&
       old.macName === item.macName &&
       old.project === item.project &&
-      old.title === item.title &&
-      old.inCheckout === item.inCheckout
+      old.title === item.title
       ? old
       : item;
   });

@@ -36,6 +36,12 @@ describe('createMachineStore', () => {
     expect(state.snapshots.a).toEqual({ status, name: 'Mac A', cachedSeenAt: 1234 });
     expect(state.workspaces).toHaveLength(status.environments.length);
     expect(state.workspaces[0].macName).toBe('Mac A');
+    expect(state.worktrees.find((item) => item.facts.path.endsWith('/issue-1097'))).toMatchObject({
+      macId: 'a',
+      macName: 'Mac A',
+      title: '@janic/issue-1097-warm-stale-node-modules',
+      facts: { pullRequest: { number: 1097 } },
+    });
   });
 
   it('changes nothing for a push equal to the live status', () => {
@@ -67,12 +73,13 @@ describe('createMachineStore', () => {
     new StatusCache(store).write('a', { status, name: 'Mac A', seenAt: 1 });
     const machines = createMachineStore({ cache: new StatusCache(store) });
     const { status: hydrated } = machines.store.getState().snapshots.a;
-    const { workspaces } = machines.store.getState();
+    const { workspaces, worktrees } = machines.store.getState();
     machines.receiveStatus('a', clone());
     const snapshot = machines.store.getState().snapshots.a;
     expect(snapshot.cachedSeenAt).toBeNull();
     expect(snapshot.status).toBe(hydrated);
     expect(machines.store.getState().workspaces).toBe(workspaces);
+    expect(machines.store.getState().worktrees).toBe(worktrees);
   });
 
   it('writes the latest live status once per delay, stamped with the time while connected', () => {
@@ -119,5 +126,10 @@ describe('createMachineStore', () => {
     expect(Object.keys(machines.store.getState().snapshots)).toEqual(['b']);
     expect(Object.keys(cached(store))).toEqual(['b']);
     expect(machines.store.getState().workspaces.every((item) => item.macId === 'b')).toBe(true);
+    expect(machines.store.getState().worktrees.find((item) => item.facts.path.endsWith('/issue-1097'))).toMatchObject({
+      macId: 'b',
+      macName: 'Mac b',
+    });
+    expect(machines.store.getState().worktrees.some((item) => item.macId === 'a')).toBe(false);
   });
 });

@@ -12,9 +12,9 @@ import { Switch } from '@/components/switch';
 import { Text } from '@/components/text';
 import { Toggle } from '@/components/toggle';
 import { useHomeFilters } from '@/hooks/home-filters';
-import { useMacs } from '@/hooks/machines';
+import { useMacs, useWorkspaceItems, useWorktreeItems } from '@/hooks/machines';
 import { hapticFeedback } from '@/lib/haptics';
-import { mergeWorkspaces, projectNames, type ActivityFilter } from '@/lib/home';
+import { projectNames, type ActivityFilter } from '@/lib/home';
 
 const toggled = (list: string[], value: string) =>
   list.includes(value) ? list.filter((v) => v !== value) : [...list, value];
@@ -23,10 +23,9 @@ export function Filters() {
   const { theme } = useUnistyles();
   const { connections } = useMacs();
   const { filters, update, reset } = useHomeFilters();
-  const projects = useMemo(
-    () => projectNames(mergeWorkspaces(connections.map((c) => ({ id: c.mac.id, name: c.mac.name, status: c.status })))),
-    [connections],
-  );
+  const workspaces = useWorkspaceItems();
+  const worktrees = useWorktreeItems();
+  const projects = useMemo(() => projectNames([...workspaces, ...worktrees]), [workspaces, worktrees]);
   const activity: { value: ActivityFilter; label: string }[] = [
     { value: 'live', label: t`Live` },
     { value: 'idle', label: t`Idle` },

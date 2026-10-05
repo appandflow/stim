@@ -4,7 +4,7 @@ import type { Tone } from '@/design/tone';
 import { formatDuration } from '@/intl/format';
 import { agentsSummary } from '@/lib/agents';
 import { ACTIVE_WINDOW_MS, activityLabel, spokenDuration } from '@/lib/format';
-import type { HomeItem } from '@/lib/home';
+import type { HomeEntry, HomeItem, HomeWorktree } from '@/lib/home';
 import { STALE_MS } from '@/lib/needs-attention';
 import { buildLabel } from '@/lib/spoken-status';
 import { appPresence, currentPhaseLabel, gitChip } from '@/lib/workspace-view';
@@ -29,29 +29,37 @@ export interface HomeSection {
   project: string;
   live: number;
   idle: number;
-  data: HomeWorkspace[];
+  data: (HomeWorkspace | HomeWorktree)[];
 }
 
 /**
  * The home list by repo: repos with a live workspace first, then by name. In a repo, live workspaces come before idle
- * ones, each keeping the order of `items`, so a row moves only when it turns live or idle.
+ * ones, each by title and machine, so a row moves only when it turns live or idle.
  */
-export function homeSections(items: HomeItem[]): HomeSection[] {
-  const checkouts = new Map<string, HomeWorkspace>();
-  for (const item of items) {
+export function homeSections(items: HomeEntry[]): HomeSection[] {
+  const checkouts = new Map<string, HomeWorkspace | HomeWorktree>();
+  for (const item of [...items].sort(
+    (a, b) =>
+      a.project.localeCompare(b.project) || a.title.localeCompare(b.title) || a.macName.localeCompare(b.macName),
+  )) {
+    if ('facts' in item) {
+      checkouts.set(item.key, item);
+      continue;
+    }
     const checkout = item.env.worktree?.path;
     const key = `${item.macId}\n${checkout ? `checkout\n${checkout}` : `app\n${item.env.path}`}`;
     const workspace = checkouts.get(key) ?? { key, title: item.title, apps: [] };
-    workspace.apps.push(item);
+    if ('apps' in workspace) workspace.apps.push(item);
     checkouts.set(key, workspace);
   }
-  const groups = new Map<string, { live: HomeWorkspace[]; idle: HomeWorkspace[] }>();
+  const groups = new Map<string, { live: HomeWorkspace[]; idle: (HomeWorkspace | HomeWorktree)[] }>();
   for (const workspace of checkouts.values()) {
-    workspace.apps.sort((a, b) => a.env.path.localeCompare(b.env.path));
-    const project = workspace.apps[0].project;
+    if ('apps' in workspace) workspace.apps.sort((a, b) => a.env.path.localeCompare(b.env.path));
+    const project = 'facts' in workspace ? workspace.project : workspace.apps[0].project;
     const group = groups.get(project) ?? { live: [], idle: [] };
     groups.set(project, group);
-    (workspace.apps.some((app) => isShownLive(app.env)) ? group.live : group.idle).push(workspace);
+    if ('apps' in workspace && workspace.apps.some((app) => isShownLive(app.env))) group.live.push(workspace);
+    else group.idle.push(workspace);
   }
   return [...groups]
     .map(([project, { live, idle }]) => ({ project, live: live.length, idle: idle.length, data: [...live, ...idle] }))
@@ -88,6 +96,17 @@ const drivenSince = (devices: DeviceRef[], now: number): number | null => {
   return starts.length ? Math.max(0, now - Math.max(...starts)) : null;
 };
 
+export function offlineRowStatus(now: number, offline: { lastSeenAt: number | null } | null): RowStatus | null {
+  if (offline) {
+    const { lastSeenAt } = offline;
+    if (lastSeenAt === null) return { kind: 'offline', text: t`Offline`, label: t`Offline`, tone: 'tertiary' };
+    const seen = formatDuration(now - lastSeenAt);
+    const spoken = spokenDuration(now - lastSeenAt);
+    return { kind: 'offline', text: t`Last seen ${seen} ago`, label: t`Last seen ${spoken} ago`, tone: 'tertiary' };
+  }
+  return null;
+}
+
 /**
  * What the workspace is doing, for the row's trailing word. It follows the list's own live and idle split, so a row
  * under Live never reads Idle. `lastSeenAt` is set for a machine that is not connected, whose status is stale.
@@ -99,13 +118,8 @@ export function rowStatus(
   now: number,
   offline: { lastSeenAt: number | null } | null,
 ): RowStatus {
-  if (offline) {
-    const { lastSeenAt } = offline;
-    if (lastSeenAt === null) return { kind: 'offline', text: t`Offline`, label: t`Offline`, tone: 'tertiary' };
-    const seen = formatDuration(now - lastSeenAt);
-    const spoken = spokenDuration(now - lastSeenAt);
-    return { kind: 'offline', text: t`Last seen ${seen} ago`, label: t`Last seen ${spoken} ago`, tone: 'tertiary' };
-  }
+  const disconnected = offlineRowStatus(now, offline);
+  if (disconnected) return disconnected;
   const build = runningBuild(env);
   if (build) {
     const platform = platformName(build.platform);

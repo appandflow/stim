@@ -1,6 +1,6 @@
 import vectors from '../../../desktop/Tests/StimKitTests/Fixtures/workspace-row-vectors.json';
 
-import type { HomeItem } from '@/lib/home';
+import type { HomeItem, HomeWorktree } from '@/lib/home';
 import { checkoutProjects, homeSections, rowDevices, rowLabel, rowProblems, rowStatus } from '@/lib/home-list';
 import type { BuildReport, DeviceActivity, EnvironmentState } from '@/protocol/types';
 
@@ -46,18 +46,35 @@ const build = (extra: Partial<BuildReport> = {}): BuildReport =>
   }) as BuildReport;
 
 describe('homeSections', () => {
-  it('puts repos with live work first and live rows before idle ones, keeping the list order within each', () => {
+  it('counts source-only rows as idle and puts live repos and rows before idle apps and worktrees', () => {
     const sections = homeSections([
       item('alpha', 'a-idle', env('/alpha/1')),
       item('beta', 'b-idle', env('/beta/1')),
+      {
+        key: 'source',
+        macId: 'mac',
+        macName: 'Mac mini',
+        project: 'beta',
+        title: 'b-first-source',
+        facts: { path: '/beta/source' },
+      } satisfies HomeWorktree,
+      {
+        key: 'only-source',
+        macId: 'mac',
+        macName: 'Mac mini',
+        project: 'delta',
+        title: 'd-source',
+        facts: { path: '/delta/source' },
+      } satisfies HomeWorktree,
       item('beta', 'b-live', env('/beta/2', { live: true })),
       item('beta', 'b-warming', env('/beta/3', { phase: 'warming' })),
       item('gamma', 'g-live', env('/gamma/1', { live: true })),
     ]);
     expect(sections.map((s) => [s.project, s.live, s.idle, s.data.map((i) => i.title)])).toEqual([
-      ['beta', 2, 1, ['b-live', 'b-warming', 'b-idle']],
+      ['beta', 2, 2, ['b-live', 'b-warming', 'b-first-source', 'b-idle']],
       ['gamma', 1, 0, ['g-live']],
       ['alpha', 0, 1, ['a-idle']],
+      ['delta', 0, 1, ['d-source']],
     ]);
   });
 });
@@ -83,11 +100,7 @@ describe('monorepo workspace grouping', () => {
     expect(sections).toHaveLength(1);
     expect(sections[0]).toMatchObject({ live: 1, idle: 0 });
     expect(sections[0].data).toHaveLength(1);
-    expect(sections[0].data[0].apps).toEqual([desktop, mobile]);
-    expect(sections[0].data[0].apps.map((app) => [app.macId, app.env.path])).toEqual([
-      ['mac', '/checkout/apps/desktop'],
-      ['mac', '/checkout/apps/mobile'],
-    ]);
+    expect(sections[0].data[0]).toMatchObject({ apps: [desktop, mobile] });
   });
 
   it('keeps other checkouts, machines and unknown checkout identities separate', () => {

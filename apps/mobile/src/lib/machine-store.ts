@@ -1,7 +1,7 @@
 import { createStore } from 'zustand/vanilla';
 
 import type { ConnectionState, StimConnection } from '@/lib/connection';
-import { mergeWorkspaces, type HomeItem } from '@/lib/home';
+import { mergeWorkspaces, mergeWorktrees, type HomeItem, type HomeWorktree } from '@/lib/home';
 import type { PairedMac } from '@/lib/macs';
 import type { StatusCache } from '@/lib/status-cache';
 import { shareItems, shareStatus } from '@/lib/status-share';
@@ -34,6 +34,7 @@ export interface MachinesState {
   history: Record<string, StatusUsage>;
   /** Every workspace of every machine, in home's order; an unchanged workspace keeps its item. */
   workspaces: HomeItem[];
+  worktrees: HomeWorktree[];
 }
 
 export const IDLE_LINK: MachineLink = {
@@ -46,12 +47,17 @@ export const IDLE_LINK: MachineLink = {
 
 const CACHE_WRITE_DELAY_MS = 5000;
 
-function workspacesOf(state: Pick<MachinesState, 'macs' | 'snapshots' | 'workspaces'>): HomeItem[] {
+function homeItemsOf(
+  state: Pick<MachinesState, 'macs' | 'snapshots' | 'workspaces' | 'worktrees'>,
+): Pick<MachinesState, 'workspaces' | 'worktrees'> {
   const machines = state.macs
     ? state.macs.map((mac) => ({ id: mac.id, name: mac.name }))
     : Object.entries(state.snapshots).map(([id, snapshot]) => ({ id, name: snapshot.name }));
-  const next = mergeWorkspaces(machines.map((mac) => ({ ...mac, status: state.snapshots[mac.id]?.status ?? null })));
-  return shareItems(state.workspaces, next);
+  const snapshots = machines.map((mac) => ({ ...mac, status: state.snapshots[mac.id]?.status ?? null }));
+  return {
+    workspaces: shareItems(state.workspaces, mergeWorkspaces(snapshots)),
+    worktrees: shareItems(state.worktrees, mergeWorktrees(snapshots)),
+  };
 }
 
 const without = <T>(record: Record<string, T>, id: string): Record<string, T> => {
@@ -80,7 +86,7 @@ export function createMachineStore({
     snapshots,
     usage: {},
     history: {},
-    workspaces: workspacesOf({ macs: null, snapshots, workspaces: [] }),
+    ...homeItemsOf({ macs: null, snapshots, workspaces: [], worktrees: [] }),
   }));
   const timers = new Map<string, ReturnType<typeof setTimeout>>();
 
@@ -132,7 +138,7 @@ export function createMachineStore({
           const snapshot = kept[mac.id];
           if (snapshot && snapshot.name !== mac.name) kept = { ...kept, [mac.id]: { ...snapshot, name: mac.name } };
         }
-        return { macs, snapshots: kept, usage, history, workspaces: workspacesOf({ ...state, macs, snapshots: kept }) };
+        return { macs, snapshots: kept, usage, history, ...homeItemsOf({ ...state, macs, snapshots: kept }) };
       });
     },
     patchLink(id: string, patch: Partial<MachineLink>) {
@@ -157,7 +163,7 @@ export function createMachineStore({
       const snapshots = { ...state.snapshots, [id]: { status, name, cachedSeenAt: null } };
       store.setState({
         snapshots,
-        workspaces: prev?.status === status ? state.workspaces : workspacesOf({ ...state, snapshots }),
+        ...(prev?.status === status ? {} : homeItemsOf({ ...state, snapshots })),
       });
       schedule(id);
     },
