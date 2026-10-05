@@ -1496,7 +1496,7 @@ describe('health', () => {
     expect(rebound).toBe(426);
   });
 
-  it.skipIf(!fakeTailscale)(
+  test.skipIf(!fakeTailscale)(
     'answers the agent route only to tailnet peers and never as a WebSocket upgrade page',
     async () => {
       const port = await start();
