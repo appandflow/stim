@@ -35,8 +35,8 @@ interface Device {
 }
 
 interface Build {
-  platform: 'ios' | 'android';
-  status: 'ok' | 'failed';
+  platform: string;
+  status: string;
   result?: string;
   startedAt: string;
   finishedAt: string | null;
@@ -59,7 +59,7 @@ export interface OversightEnvironment {
     git?: { mergedInto: string | null } | null;
   } | null;
   build?: { state: string; startedAt: string; platform?: string } | null;
-  issues?: { code: string; severity: 'error' | 'warning' | 'info'; message: string; remedy: string; slot?: string }[];
+  issues?: { code: string; severity: string; message: string; remedy: string; slot?: string }[];
   physicalDevices?: {
     platform: string;
     slot: string;
@@ -93,7 +93,7 @@ export interface OversightInput {
   /** Null when the machine's status is not current, so its workspaces are left as they were. */
   status: OversightStatus | null;
   volumes: { freeBytes: number }[] | null;
-  memoryPressure: 'normal' | 'warning' | 'critical' | null;
+  memoryPressure: string | null;
   /** The phone's connection to the machine; null where it is not known, as on the machine itself. */
   link: 'open' | 'offline' | 'refused' | 'unpaired' | null;
   /** Each workspace's pull request by path, null when it has none; a missing path was not looked up. */
@@ -718,17 +718,17 @@ export interface NeedsAttentionInput {
 /** Selected attention facts for rendering a body without repeating the rule that selected the item. */
 export type AttentionMessage =
   | { kind: 'issue'; slot?: string; message: string }
-  | { kind: 'signing'; platform: 'ios' | 'android'; code: string }
+  | { kind: 'signing'; platform: string; code: string }
   | {
       kind: 'diagnostic-loop';
-      platform: 'ios' | 'android';
+      platform: string;
       count: number;
       file: string;
       line: number;
       language: string | undefined;
     }
-  | { kind: 'launch-loop'; platform: 'ios' | 'android'; count: number }
-  | { kind: 'build-loop'; platform: 'ios' | 'android'; count: number; errorCode: string | undefined }
+  | { kind: 'launch-loop'; platform: string; count: number }
+  | { kind: 'build-loop'; platform: string; count: number; errorCode: string | undefined }
   | { kind: 'lease'; leased: string }
   | { kind: 'eas'; minutes: number }
   | {
@@ -788,7 +788,7 @@ function workspaceItems(
   const { now } = input;
   const items: NeedsAttentionItem[] = [];
   for (const issue of env.issues ?? []) {
-    if (issue.severity === 'info' || !PERSON_ISSUES.has(issue.code)) continue;
+    if ((issue.severity !== 'error' && issue.severity !== 'warning') || !PERSON_ISSUES.has(issue.code)) continue;
     items.push({
       id: `issue-${issue.code}-${issue.slot ?? 'default'}:${env.path}`,
       category: 'attention',
@@ -866,7 +866,10 @@ function workspaceItems(
       body: format({
         kind: 'stuck',
         minutes: Math.floor((now - since) / 60_000),
-        green: newest?.status === 'ok' ? newest.platform : null,
+        green:
+          newest?.status === 'ok' && (newest.platform === 'ios' || newest.platform === 'android')
+            ? newest.platform
+            : null,
         model: driven.model,
         modelLabel: driven.modelLabel,
       }),

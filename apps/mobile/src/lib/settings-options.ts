@@ -2,7 +2,6 @@ import { t } from '@lingui/core/macro';
 
 import type { HomeView } from '@/hooks/home-filters';
 import type { NotifyLevel, QuietHours } from '@/lib/notifications';
-import type { OversightCategory } from '@stim-cli/core/oversight';
 import type { Appearance, VideoQuality } from '@/hooks/settings';
 
 export interface Option<T extends string> {
@@ -39,7 +38,7 @@ export const readOnlyFooter = (): string =>
 export const replayFooter = (): string =>
   t`A Mac keeps the last 15 minutes of device screens. Turning this off deletes them.`;
 
-export function notifyCategoryLabel(category: OversightCategory): string {
+export function notifyCategoryLabel(category: string): string {
   switch (category) {
     case 'started':
       return t`Work started`;
@@ -55,6 +54,8 @@ export function notifyCategoryLabel(category: OversightCategory): string {
       return t`Someone takes over your device`;
     case 'attention':
       return t`Needs you`;
+    default:
+      return t`Unknown`;
   }
 }
 
@@ -88,3 +89,7 @@ export function parseQuietHoursValue(value: string): QuietHours | null {
 }
 
 export const notificationsFooter = (): string => t`Background notifications need an iPhone and a Mac that sends push.`;
+
+export function notificationSuppressionLabel(suppressed: string): string {
+  return suppressed === 'muted' ? t`Muted` : suppressed === 'quiet-hours' ? t`Quiet hours` : t`Unknown`;
+}

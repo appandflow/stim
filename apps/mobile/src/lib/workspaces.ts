@@ -115,7 +115,7 @@ function androidDevice(slot: string, avd: AndroidState): DeviceRef {
     id: avd.serial ?? null,
     name: avd.name ?? avd.serial ?? t`Android device`,
     model: avd.physical ? t`Android device` : t`Android Emulator`,
-    state: avd.state ?? t`unknown`,
+    state: avd.state && ['detected', 'not-detected', 'missing', 'unknown'].includes(avd.state) ? avd.state : t`unknown`,
     running: avd.state === 'detected',
     owned: avd.owned,
     physical: avd.physical,
@@ -127,14 +127,14 @@ function androidDevice(slot: string, avd: AndroidState): DeviceRef {
   };
 }
 
-function physicalDevice(device: PhysicalDeviceState): DeviceRef {
+function physicalDevice(device: PhysicalDeviceState & { platform: DevicePlatform }): DeviceRef {
   return {
     platform: device.platform,
     slot: device.slot,
     id: device.id,
     name: device.name ?? device.id,
     model: device.model ?? (device.platform === 'ios' ? t`iOS device` : t`Android device`),
-    state: device.connection,
+    state: ['connected', 'disconnected', 'unknown'].includes(device.connection) ? device.connection : t`unknown`,
     running: device.connection === 'connected',
     owned: false,
     physical: true,
@@ -162,9 +162,9 @@ function webDevice(web: WebBrowserState): DeviceRef {
   };
 }
 
-export function platformName(platform: DevicePlatform): string {
+export function platformName(platform: string): string {
   if (platform === 'macos') return 'macOS';
-  return platform === 'ios' ? 'iOS' : platform === 'web' ? t`Web` : t`Android`;
+  return platform === 'ios' ? 'iOS' : platform === 'web' ? t`Web` : platform === 'android' ? t`Android` : t`Unknown`;
 }
 
 export function deviceSource(device: DeviceRef): string {
@@ -185,7 +185,7 @@ export function devicesOf(env: EnvironmentState): DeviceRef[] {
     if (android) out.push(androidDevice(slot, android));
   };
   add('default', env.ios, env.android);
-  if (env.web) out.push(webDevice(env.web));
+  if (env.web?.browser === 'chrome') out.push(webDevice(env.web));
   if (env.macos)
     out.push({
       platform: 'macos',
@@ -200,7 +200,10 @@ export function devicesOf(env: EnvironmentState): DeviceRef[] {
       host: env.macos.host ? machineName(env.macos.host.machine) : undefined,
     });
   for (const slot of env.slots ?? []) add(slot.slot, slot.ios, slot.android);
-  for (const device of env.physicalDevices ?? []) out.push(physicalDevice(device));
+  for (const device of env.physicalDevices ?? []) {
+    if (device.platform === 'ios' || device.platform === 'android')
+      out.push(physicalDevice({ ...device, platform: device.platform }));
+  }
   return out;
 }
 
@@ -284,7 +287,7 @@ export function attentionGroups(environments: EnvironmentState[]): AttentionGrou
   const groups = environments.flatMap((env): AttentionGroup[] => {
     const items: AttentionItem[] = env.issues
       ? env.issues.flatMap((issue) =>
-          issue.severity === 'info'
+          issue.severity !== 'error' && issue.severity !== 'warning'
             ? []
             : [
                 {

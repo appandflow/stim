@@ -1,9 +1,11 @@
+import type { ControlEndedEvent } from '@/protocol/types';
 import { act, renderHook } from '@testing-library/react-native';
 
 import type { StimConnection } from '@/lib/connection';
 import type { createMachineStore } from '@/lib/machine-store';
 
 import { useDeviceControl } from './device-control';
+import { useAction } from './workspace-actions';
 
 jest.mock('expo-router', () => ({ useLocalSearchParams: () => ({ id: 'm1' }) }));
 jest.mock('@/storage', () => ({ statusStorage: {} }));
@@ -23,6 +25,22 @@ jest.mock('@/lib/machine-store', () => {
 
 const machines = (jest.requireMock('@/lib/machine-store') as { created: ReturnType<typeof createMachineStore>[] })
   .created[0]!;
+
+test('finishes the requested workspace action even when the result names a future action', async () => {
+  const connection = {
+    request: jest.fn().mockResolvedValue({ action: 'future-kind', workspace: '/app', output: {} }),
+    reconnect: jest.fn(),
+  };
+  machines.setMacs([{ id: 'm1', name: 'Mac', endpoint: 'ws://mac', pairedAt: '2026-09-30T00:00:00Z' }], false);
+  machines.patchLink('m1', { connection: connection as unknown as StimConnection });
+  const { result, unmount } = await renderHook(() => useAction('/app'));
+  await act(async () => {
+    expect(await result.current.run('reload')).toBeNull();
+  });
+  expect(result.current.pending).toBeNull();
+  expect(connection.reconnect).not.toHaveBeenCalled();
+  await unmount();
+});
 
 test('ends a control session that begins after the screen unmounted', async () => {
   const begins: ((result: unknown) => void)[] = [];
@@ -47,7 +65,7 @@ test('ends a control session that begins after the screen unmounted', async () =
   const { result, unmount } = await renderHook(() => useDeviceControl('/app', 'ios', 'default'));
   await act(async () => result.current.begin());
   await unmount();
-  await act(async () => begins[0]!({ session: 'c1', lease: null, postures: [] }));
+  await act(async () => begins[0]!({ session: 'c1', platform: 'ios', lease: null, postures: [] }));
 
   expect(request.mock.calls).toEqual([
     ['control.begin', { workspace: '/app', platform: 'ios', slot: 'default' }],
@@ -57,7 +75,13 @@ test('ends a control session that begins after the screen unmounted', async () =
 
 test('ignores simulator options returned by an ended connection with a reused session id', async () => {
   let finish: (value: unknown) => void = () => {};
-  const begun = { session: 'c1', lease: null, postures: [], simulator: { canShake: true, slowAnimations: false } };
+  const begun = {
+    session: 'c1',
+    platform: 'ios',
+    lease: null,
+    postures: [],
+    simulator: { canShake: true, slowAnimations: false },
+  };
   const request = jest.fn((method: string) =>
     method === 'control.begin'
       ? Promise.resolve(begun)
@@ -102,7 +126,7 @@ test('ignores simulator options returned by an ended connection with a reused se
 test('starts native Control only when the server advertises native window input', async () => {
   const request = jest.fn((method: string) =>
     method === 'control.begin'
-      ? Promise.resolve({ session: 'native', lease: null, postures: [] })
+      ? Promise.resolve({ session: 'native', platform: 'macos', lease: null, postures: [] })
       : Promise.resolve({}),
   );
   const connection = { request, onControlEnded: () => () => {}, reconnect: () => {} };
@@ -136,3 +160,59 @@ test('starts native Control only when the server advertises native window input'
   ]);
   await unmount();
 });
+
+test.each(['platform', 'postures', 'reason'])(
+  'handles future control %s without reconnecting or exposing unsupported input',
+  async (field) => {
+    let ended: (event: ControlEndedEvent) => void = () => {};
+    const request = jest.fn((method: string) =>
+      Promise.resolve(
+        method === 'control.begin'
+          ? {
+              session: 'c',
+              platform: field === 'platform' ? 'future-kind' : 'ios',
+              lease: null,
+              postures: ['folded', 'future-kind'],
+            }
+          : {},
+      ),
+    );
+    const reconnect = jest.fn();
+    const connection = {
+      request,
+      reconnect,
+      onControlEnded: (listener: typeof ended) => {
+        ended = listener;
+        return () => {};
+      },
+    };
+    machines.setMacs([{ id: 'm1', name: 'Mac', endpoint: 'ws://mac', pairedAt: '2026-09-27T12:00:00Z' }], false);
+    machines.patchLink('m1', {
+      connection: connection as unknown as StimConnection,
+      state: {
+        kind: 'open',
+        protocol: 1,
+        server: { name: 'Mac', version: '1', stim: '1' },
+        actions: null,
+        capabilities: ['control'],
+        features: [],
+        deviceId: null,
+      },
+    });
+    const { result, unmount } = await renderHook(() => useDeviceControl('/app', 'ios', 'default'));
+    await act(async () => result.current.begin());
+    if (field === 'platform') {
+      expect(result.current.state.kind).toBe('off');
+      expect(request).toHaveBeenCalledWith('control.end', { session: 'c' });
+    } else if (field === 'postures') {
+      expect(result.current.state).toMatchObject({ kind: 'on', postures: ['folded'] });
+    } else {
+      await act(async () =>
+        ended({ event: 'control-ended', session: 'c', reason: 'future-kind', message: 'Control ended' }),
+      );
+      expect(result.current.state).toEqual({ kind: 'off', ended: 'Control ended' });
+    }
+    expect(reconnect).not.toHaveBeenCalled();
+    await unmount();
+  },
+);

@@ -18,34 +18,10 @@ import { formatDuration } from '@/intl/format';
 import { agentWebUrl, workspaceAgentSessions } from '@/lib/agents';
 import { checksSummary, checksTone } from '@/lib/workspace-view';
 import { workspaceTitleAt } from '@/lib/workspace-names';
-import type { PullRequestFacts } from '@/protocol/types';
+import { pullRequestStateName, pullRequestReviewName } from '@/lib/format';
 
 const commits = (n: number) => plural(n, { one: '# commit', other: '# commits' });
 const files = (n: number) => plural(n, { one: '# file', other: '# files' });
-
-function stateName(state: PullRequestFacts['state']): string {
-  switch (state) {
-    case 'open':
-      return t`Open`;
-    case 'draft':
-      return t`Draft`;
-    case 'merged':
-      return t`Merged`;
-    case 'closed':
-      return t`Closed`;
-  }
-}
-
-function reviewName(decision: NonNullable<PullRequestFacts['reviewDecision']>): string {
-  switch (decision) {
-    case 'approved':
-      return t`Approved`;
-    case 'changes-requested':
-      return t`Changes requested`;
-    case 'review-required':
-      return t`Review required`;
-  }
-}
 
 export function WorkspaceWork({ path }: { path: string }) {
   const { theme } = useUnistyles();
@@ -114,7 +90,7 @@ export function WorkspaceWork({ path }: { path: string }) {
               {`#${pr.number} ${pr.title}`}
             </Text>
           </View>
-          <ListRow title={t`State`} value={stateName(pr.state)} />
+          <ListRow title={t`State`} value={pullRequestStateName(pr.state)} />
           {pr.checks ? (
             <ListRow
               title={t`Checks`}
@@ -122,7 +98,7 @@ export function WorkspaceWork({ path }: { path: string }) {
               accessory={checks ? <StatusDot color={toneColor(theme, checks)} /> : undefined}
             />
           ) : null}
-          {pr.reviewDecision ? <ListRow title={t`Review`} value={reviewName(pr.reviewDecision)} /> : null}
+          {pr.reviewDecision ? <ListRow title={t`Review`} value={pullRequestReviewName(pr.reviewDecision)} /> : null}
         </ListSection>
       ) : null}
       {pr ? (

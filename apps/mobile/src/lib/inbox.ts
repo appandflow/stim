@@ -100,7 +100,7 @@ export function inboxItems(
   for (const mac of macs) {
     if (!mac.history || (filters.macIds && !filters.macIds.includes(mac.id))) continue;
     for (const entry of mac.history.entries) {
-      if (filters.categories && !filters.categories.includes(entry.category)) continue;
+      if (filters.categories && !filters.categories.some((category) => category === entry.category)) continue;
       items.push({ ...entry, macId: mac.id, macName: mac.name, read: mac.read ? isRead(mac.read, entry.seq) : false });
     }
   }
@@ -137,5 +137,11 @@ export function byDay(items: InboxItem[], now: number): { title: string; data: I
 /** What tapping the item opens, as its push does. */
 export function itemData(item: InboxItem): NotificationData {
   const { kind, ...target } = item.target;
+  if ('platform' in target) {
+    const { platform } = target;
+    if (platform !== 'ios' && platform !== 'android' && platform !== 'web' && platform !== 'macos')
+      return { ref: item.macId, target: 'machine' };
+    return { ref: item.macId, target: kind, ...target, platform };
+  }
   return { ref: item.macId, target: kind, ...target };
 }

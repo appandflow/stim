@@ -19,7 +19,7 @@ import { useBuildOutput } from '@/hooks/workspace-logs';
 import { useNow } from '@/hooks/use-now';
 import { formatDuration } from '@/intl/format';
 import { agentLabel } from '@/lib/agents';
-import { buildKey, buildTiming, recheckNote } from '@/lib/format';
+import { buildKey, buildTiming, macosBuildLabel, recheckNote } from '@/lib/format';
 import {
   barSteps,
   currentPhaseLabel,
@@ -80,7 +80,7 @@ function SmallCard({
 }
 
 export function MacosBuildCard({ app, onPress }: { app: MacosAppState; onPress: () => void }) {
-  const state = app.build.state === 'running' ? t`Building` : app.build.state === 'failed' ? t`Build failed` : t`Built`;
+  const state = macosBuildLabel(app);
   return (
     <SmallCard
       title={t`Build`}

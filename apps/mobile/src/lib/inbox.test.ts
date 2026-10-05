@@ -1,3 +1,4 @@
+import { notifyCategoryLabel, notificationSuppressionLabel } from '@/lib/settings-options';
 import {
   applyList,
   applyLive,
@@ -108,4 +109,20 @@ describe('the inbox', () => {
     ]);
     expect(itemData(items[1]!)).toEqual({ ref: 'b', target: 'workspace', path: '/w7' });
   });
+});
+
+test('renders future notification categories and suppression reasons with neutral labels', () => {
+  expect(notifyCategoryLabel('future-kind')).toBe('Unknown');
+  expect(notificationSuppressionLabel('future-kind')).toBe('Unknown');
+});
+
+test.each(['device', 'build'] as const)('does not route an unsupported %s platform to a viewer', (kind) => {
+  const item = {
+    ...entry(1, NOON),
+    macId: 'm',
+    macName: 'Mac',
+    read: false,
+    target: { kind, path: '/app', platform: 'future-kind', slot: 'default' },
+  };
+  expect(itemData(item)).toEqual({ ref: 'm', target: 'machine' });
 });

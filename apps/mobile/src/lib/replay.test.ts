@@ -5,6 +5,7 @@ import {
   buildTimeline,
   LONG_GAP_MS,
   markerSeek,
+  markerTitle,
   positionOf,
   replayDuration,
   stepFrom,
@@ -137,4 +138,8 @@ describe('the replay timeline', () => {
     expect(stepFrom(40_000, 30_000, false)).toBe(30_000);
     expect(stepFrom(12_000, null, false)).toBe(12_000);
   });
+});
+
+test('labels a future replay marker neutrally instead of returning no title', () => {
+  expect(markerTitle('future-kind')).toBe('Unknown');
 });

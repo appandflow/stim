@@ -1,3 +1,17 @@
+import capturedStatus from '../../mock-server/fixtures/status.json';
+import { receiveStatus, replaceReceivedField, statusEnumPaths } from '../../mock-server/receive-fixtures';
+import { deviceTileState } from '@/lib/device-tile';
+import { agentLabel } from '@/lib/agents';
+import {
+  historyTitle,
+  outcomeLabel,
+  macosBuildLabel,
+  pullRequestReviewName,
+  nextBuild,
+  recheckNote,
+} from '@/lib/format';
+import { attentionGroups, platformName, runningBuild } from '@/lib/workspaces';
+import type { StatusPayload } from '@/protocol/types';
 import vectors from '../../../desktop/Tests/StimKitTests/Fixtures/workspace-view-vectors.json';
 
 import { activityBadge } from '@/lib/format';
@@ -12,6 +26,7 @@ import {
   buildLine,
   bundleLine,
   currentPhaseLabel,
+  otherPlatformLine,
   deviceTitle,
   deviceUsage,
   fallbackLine,
@@ -21,6 +36,7 @@ import {
   localGitChipFacts,
   localStageFacts,
   namesPhases,
+  metroHealth,
   phaseSteps,
   type PhaseStep,
   processRows,
@@ -527,12 +543,17 @@ describe('workspace view vectors', () => {
     }
   });
 
-  it('decides the stage itself when stim reports a kind this app does not know', () => {
+  it('shows a neutral stage when stim reports a kind this app does not know', () => {
     const e = {
       ...(vectors.stage[0]!.workspace as unknown as EnvironmentState),
       stage: { kind: 'paused', since: null, platform: null, closedApps: [] } as unknown as StageFacts,
     };
-    expect(workspaceStage(e, devicesOf(e), vectorNow).subtitle).toBe(vectors.stage[0]!.stage.subtitle);
+    expect(workspaceStage(e, devicesOf(e), vectorNow)).toEqual({
+      kind: 'unknown',
+      label: 'Unknown',
+      tone: 'tertiary',
+      subtitle: null,
+    });
   });
 
   it.each(vectors.appPresence.map((c) => [c.name, c] as const))('app presence: %s', (_, c) => {
@@ -555,7 +576,9 @@ describe('workspace view vectors', () => {
   });
 
   it.each(vectors.activity.badge.map((c) => [c.name, c] as const))('activity badge: %s', (_, c) => {
-    expect(activityBadge(c.activity as unknown as DeviceActivity, vectorNow)?.text ?? null).toBe(c.text);
+    expect(activityBadge(c.activity as unknown as DeviceActivity, vectorNow)?.text ?? null).toBe(
+      c.name === 'any other state shows nothing' ? 'Activity unknown' : c.text,
+    );
   });
 
   it.each(vectors.bundleLine.map((c) => [c.name, c] as const))('bundle line: %s', (_, c) => {
@@ -599,3 +622,172 @@ describe('usageParts and usageLabel', () => {
     expect(usageLabel({ cpuPercent: null, memoryMb: null, diskBytes: null })).toBe('');
   });
 });
+
+test.each([
+  ...statusEnumPaths.map((path) => [path, 'future-kind'] as const),
+  ['environments.0.build.missProvisional', false] as const,
+])('renders or skips newer status values at %s without an unsafe display', (path, value) => {
+  const payload = replaceReceivedField(receiveStatus(capturedStatus.payload as StatusPayload), path, value);
+  const workspace = payload.environments[0]!;
+  const devices = devicesOf(workspace);
+  const device = (platform: string) => devices.find((entry) => entry.platform === platform)!;
+  const field = path.replace('environments.0.', '');
+  if (path === 'machine.owners.0.kind') {
+    expect(processRows(workspace, devices, payload.machine)[0]).toMatchObject({
+      label: 'Metro',
+      memoryMb: 100,
+      cpuPercent: 10,
+    });
+  } else if (field === 'stage.kind') {
+    expect(workspaceStage(workspace, devices, NOW)).toEqual({
+      kind: 'unknown',
+      label: 'Unknown',
+      tone: 'tertiary',
+      subtitle: null,
+    });
+  } else if (field === 'stage.platform') {
+    expect(
+      workspaceStage({ ...workspace, stage: { ...workspace.stage!, kind: 'building' } }, devices, NOW).subtitle,
+    ).toContain('Unknown');
+  } else if (field === 'stage.closedApps.0.platform') {
+    expect(workspaceStage(workspace, devices, NOW)).toMatchObject({ tone: 'success', subtitle: 'up <1m' });
+  } else if (field.endsWith('.activity.state')) {
+    const platform = field.split('.')[0]!;
+    expect(activityBadge(device(platform).activity, NOW)).toEqual({ kind: 'unknown', text: 'Activity unknown' });
+    expect(deviceTileState(device(platform), { ...workspace, build: null }, NOW)).toEqual({
+      text: 'Activity unknown',
+      tone: 'tertiary',
+    });
+  } else if (field === 'ios.app.state' || field === 'android.app.state') {
+    expect(deviceTileState(device(field.split('.')[0]!), { ...workspace, build: null }, NOW)).toEqual({
+      text: 'Unknown',
+      tone: 'secondary',
+    });
+  } else if (field.endsWith('.appPresence')) {
+    expect(appPresence(workspace, device(field.split('.')[0]!))).toBeNull();
+  } else if (field === 'android.state' || field === 'physicalDevices.0.connection') {
+    expect(field === 'android.state' ? device('android') : devices.find((entry) => entry.physical)).toMatchObject({
+      running: false,
+      state: 'unknown',
+    });
+  } else if (field === 'web.browser') {
+    expect(devices.some((entry) => entry.platform === 'web')).toBe(false);
+  } else if (field === 'macos.state') {
+    expect(deviceTileState(device('macos'), workspace, NOW)).toEqual({ text: 'Unknown', tone: 'secondary' });
+  } else if (field === 'metro.bundle.last.status') {
+    expect(bundleLine(workspace, NOW, true)).toBeNull();
+  } else if (field === 'issues.0.severity') {
+    expect(attentionGroups([workspace])).toEqual([]);
+  } else if (field === 'build.state') {
+    expect(runningBuild(workspace)).toBeNull();
+  } else if (field === 'build.platform') {
+    expect(platformName(workspace.build!.platform)).toBe('Unknown');
+    expect(otherPlatformLine(workspace, workspace.build!.platform, NOW)).toBeNull();
+  } else if (field === 'build.phase' || field === 'build.detail.step') {
+    expect(currentPhaseLabel(workspace.build!).phase).toBe('Unknown');
+  } else if (field === 'build.detail.unit') {
+    expect(currentPhaseLabel(workspace.build!)).toEqual({ phase: 'Compiling', counts: null });
+  } else if (field === 'build.outcome') {
+    expect(outcomeLabel(workspace.build!)).toBeNull();
+  } else if (field === 'build.plannedPhases.0.phase') {
+    expect(barSteps(phaseSteps(workspace.build!, [], NOW)).map((step) => step.phase)).toEqual(['compile']);
+  } else if (field === 'lastBuilds.ios.status' || field === 'lastBuilds.ios.cacheHit') {
+    expect(buildLine('ios', workspace.lastBuilds!.ios, undefined)).toMatchObject({
+      main: 'Unknown',
+      tone: 'secondary',
+    });
+  } else if (field === 'builds.ios.0.result' || field === 'builds.ios.0.cacheHit' || field === 'builds.ios.0.status') {
+    expect(historyTitle(workspace.builds!.ios![0]!)).toBe('Unknown');
+  } else if (field === 'worktree.pullRequest.state') {
+    expect(gitChip(workspace.worktree)!.pr).toMatchObject({ tone: 'tertiary' });
+    expect(gitChip(workspace.worktree)!.label).toContain('PR #1');
+  } else if (field === 'worktree.gitChip.ci') {
+    expect(gitChip(workspace.worktree)!.pr!.ci).toBeNull();
+  } else if (field === 'agents.0.tool' || field === 'endedAgents.0.tool') {
+    const session = field.startsWith('ended') ? workspace.endedAgents![0]! : workspace.agents![0]!;
+    expect(agentLabel(session)).toBe('future-kind');
+  } else if (field === 'physicalDevices.0.platform') {
+    expect(devices.some((entry) => entry.physical)).toBe(false);
+  } else if (field === 'warmStep') {
+    expect(
+      workspaceStage({ ...workspace, stage: { ...workspace.stage!, kind: 'warming' } }, devices, NOW).subtitle,
+    ).toContain('Unknown');
+  } else if (field === 'worktree.pullRequest.reviewDecision') {
+    expect(pullRequestReviewName(workspace.worktree!.pullRequest!.reviewDecision!)).toBe('Unknown');
+  } else if (field === 'macos.build.state') {
+    expect(macosBuildLabel(workspace.macos!)).toBe('Unknown');
+  } else if (field.startsWith('build.missReason')) {
+    expect(
+      nextBuild({
+        platform: 'ios',
+        fingerprint: 'abc',
+        cacheKey: null,
+        cacheHit: false,
+        provider: null,
+        cacheSkipped: false,
+        prebuild: null,
+        outcome: 'cold',
+        expectedMs: null,
+        basis: 0,
+        missReason: workspace.build!.missReason,
+      }),
+    ).toBe('cold build, Native files changed');
+  } else if (field === 'build.missProvisional') {
+    expect(recheckNote({ ...workspace.build!, phase: 'pods' })).toBeNull();
+  } else if (field === 'build.cacheLookupOutcome') {
+    expect(outcomeLabel(workspace.build!)).toBe('Cache miss');
+  } else if (field === 'lastBuilds.ios.platform' || field === 'builds.ios.0.platform') {
+    expect(
+      platformName(
+        field.startsWith('last') ? workspace.lastBuilds!.ios!.platform : workspace.builds!.ios![0]!.platform,
+      ),
+    ).toBe('Unknown');
+  } else if (field.startsWith('remoteDevices')) {
+    expect(devices.some((entry) => entry.id === 'remote')).toBe(false);
+  } else if (field === 'physicalDevices.0.lease.kind') {
+    expect(devices.find((entry) => entry.physical)).toMatchObject({ name: 'Phone', state: 'connected', running: true });
+  } else if (field === 'web.viewport' || field === 'web.page.state') {
+    expect(device('web').page).toEqual({ url: 'https://app', error: null });
+  } else if (field.startsWith('metro.')) {
+    expect(metroHealth(workspace)).toBe('healthy');
+    expect(bundleLine(workspace, NOW, true)?.tone).toBe('tertiary');
+  } else if (field === 'macos.hostLaunched' || field === 'macos.host.agent.setting') {
+    expect(device('macos')).toMatchObject({ name: 'App', running: true });
+  } else if (field === 'phase') {
+    expect(workspaceStage(workspace, devices, NOW).label).toBe('Running');
+  } else {
+    expect(workspaceUsage(workspace, payload.machine)).toEqual({ cpuPercent: 10, memoryMb: 100, diskBytes: null });
+  }
+});
+
+test('does not attribute a future device usage kind to an iOS simulator', () => {
+  const payload = receiveStatus(capturedStatus.payload as StatusPayload);
+  const workspace = payload.environments[0]!;
+  const device = devicesOf(workspace).find((entry) => entry.platform === 'ios')!;
+  expect(
+    workspaceSeries(
+      {
+        intervalMs: 1000,
+        endAt: 1,
+        environments: [{ workspace: '/app', cpuPercent: [10, 20], memoryMb: [100, 200] }],
+        devices: [{ kind: 'future-kind', id: device.id!, workspace: '/app', cpuPercent: [99], memoryMb: [999] }],
+      },
+      workspace.path,
+    ),
+  ).toMatchObject({ peakCpuPercent: 20, memoryChangeMb: 100 });
+});
+
+test.each(['future-kind', '__proto__', 'constructor'])(
+  'keeps unknown record keys %s out of tones and phase groups',
+  (value) => {
+    const payload = receiveStatus(capturedStatus.payload as StatusPayload);
+    const tree = {
+      ...payload.environments[0]!.worktree!,
+      pullRequest: { ...payload.environments[0]!.worktree!.pullRequest!, state: value },
+    };
+    expect(gitChip(tree)?.pr?.tone).toBe('tertiary');
+    expect(barSteps([{ phase: value, state: 'current', elapsedMs: null, expectedMs: null, fraction: null }])).toEqual(
+      [],
+    );
+  },
+);

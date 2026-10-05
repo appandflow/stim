@@ -26,7 +26,7 @@ import type {
 export type StageTone = Extract<Tone, 'success' | 'brand' | 'error' | 'warning' | 'tertiary'>;
 
 export interface WorkspaceStage {
-  kind: 'running' | 'building' | 'build-failed' | 'warming' | 'ready' | 'stopped';
+  kind: 'running' | 'building' | 'build-failed' | 'warming' | 'ready' | 'stopped' | 'unknown';
   label: string;
   tone: StageTone;
   subtitle: string | null;
@@ -48,7 +48,11 @@ function latestBuild(env: EnvironmentState): LastBuild | null {
 /** The app presence `stim` reports on the device, or for an older `stim` the same rule run here. */
 export function appPresence(env: EnvironmentState, device: DeviceRef): 'none' | 'closed' | null {
   if (!env.stage) return localAppPresence(env, device);
-  return device.physical || device.platform === 'web' || device.platform === 'macos' ? null : (device.presence ?? null);
+  return device.physical || device.platform === 'web' || device.platform === 'macos'
+    ? null
+    : device.presence === 'none' || device.presence === 'closed'
+      ? device.presence
+      : null;
 }
 
 /**
@@ -70,15 +74,6 @@ function localAppPresence(env: EnvironmentState, device: DeviceRef): 'none' | 'c
   if (last?.status === 'failed' && !everBuilt) return 'none';
   return device.app?.state === 'stopped' ? 'closed' : null;
 }
-
-const STAGE_KINDS: readonly StageFacts['kind'][] = [
-  'building',
-  'warming',
-  'ready',
-  'build-failed',
-  'running',
-  'stopped',
-];
 
 function stageFacts(
   kind: StageFacts['kind'],
@@ -117,8 +112,7 @@ export function localStageFacts(env: EnvironmentState, devices: DeviceRef[]): St
  * `WorkspaceView.swift`; both replay apps/desktop/Tests/StimKitTests/Fixtures/workspace-view-vectors.json.
  */
 export function workspaceStage(env: EnvironmentState, devices: DeviceRef[], now: number): WorkspaceStage {
-  const reported = env.stage && STAGE_KINDS.includes(env.stage.kind) ? env.stage : null;
-  const facts = reported ?? localStageFacts(env, devices);
+  const facts = env.stage ?? localStageFacts(env, devices);
   const since = ago(now, facts.since);
   const platform = facts.platform === 'macos' ? 'macOS' : facts.platform ? platformName(facts.platform) : '';
   switch (facts.kind) {
@@ -130,7 +124,12 @@ export function workspaceStage(env: EnvironmentState, devices: DeviceRef[], now:
         subtitle: since ? t`${platform} \u00B7 started ${since} ago` : platform,
       };
     case 'warming': {
-      const step = env.warmStep === 'copy' ? t`copying ignored files` : t`installing dependencies`;
+      const step =
+        env.warmStep === 'copy'
+          ? t`copying ignored files`
+          : env.warmStep === undefined || env.warmStep === 'refresh'
+            ? t`installing dependencies`
+            : t`Unknown`;
       return {
         kind: 'warming',
         label: t`Warming`,
@@ -151,10 +150,12 @@ export function workspaceStage(env: EnvironmentState, devices: DeviceRef[], now:
       const errors = env.logs?.errorsSinceMarker ?? 0;
       const problems = [
         errors > 0 ? plural(errors, { one: '# error', other: '# errors' }) : null,
-        ...facts.closedApps.map((app) => {
-          const platform = platformName(app.platform);
-          return t`${platform} app closed`;
-        }),
+        ...facts.closedApps
+          .filter((app) => app.platform === 'ios' || app.platform === 'android')
+          .map((app) => {
+            const platform = platformName(app.platform);
+            return t`${platform} app closed`;
+          }),
       ].filter((p): p is string => p !== null);
       const up = since;
       return {
@@ -168,6 +169,8 @@ export function workspaceStage(env: EnvironmentState, devices: DeviceRef[], now:
       const stopped = since;
       return { kind: 'stopped', label: t`Stopped`, tone: 'tertiary', subtitle: stopped ? t`${stopped} ago` : null };
     }
+    default:
+      return { kind: 'unknown', label: t`Unknown`, tone: 'tertiary', subtitle: null };
   }
 }
 
@@ -423,6 +426,8 @@ export function buildLine(platform: Platform, last: LastBuild | undefined, plan:
   });
   if (last) {
     if (last.status === 'failed') return line(t`Failed`, null, 'error', t`${name} last build failed`);
+    if (last.status !== 'ok' || (last.cacheHit !== false && last.cacheHit !== 'local' && last.cacheHit !== 'remote'))
+      return line(t`Unknown`, null, 'secondary', t`Unknown`);
     let cache = t`cold`;
     if (last.cacheHit) cache = t`hit`;
     else if (last.offloadedTo) {
@@ -434,6 +439,8 @@ export function buildLine(platform: Platform, last: LastBuild | undefined, plan:
     return line(took, cache, 'default', t`${name} last build ${took}, ${cache}`);
   }
   if (plan?.kind === 'done' && !plan.plan.refusal) {
+    if (plan.plan.cacheHit !== false && plan.plan.cacheHit !== 'local' && plan.plan.cacheHit !== 'remote')
+      return line(t`Unknown`, null, 'secondary', t`Unknown`);
     const cache = plan.plan.cacheHit ? t`hit` : t`cold`;
     if (plan.plan.expectedMs === null) {
       return line('\u2014', t`est. ${cache}`, 'secondary', t`${name} next build ${cache}`);
@@ -491,6 +498,8 @@ export function phaseName(phase: BuildPhase): string {
       return t`Install`;
     case 'launch':
       return t`Launch`;
+    default:
+      return t`Unknown`;
   }
 }
 
@@ -569,6 +578,8 @@ function stepName(step: NonNullable<NonNullable<BuildReport['detail']>['step']>)
       return t`Packaging`;
     case 'sign':
       return t`Signing`;
+    default:
+      return t`Unknown`;
   }
 }
 
@@ -587,7 +598,8 @@ const BAR_GROUP: Record<BuildPhase, BuildPhase> = {
 export function barSteps(steps: PhaseStep[]): PhaseStep[] {
   const groups: PhaseStep[] = [];
   for (const step of steps) {
-    const phase = BAR_GROUP[step.phase];
+    const phase = Object.hasOwn(BAR_GROUP, step.phase) ? BAR_GROUP[step.phase] : undefined;
+    if (!phase) continue;
     const group = groups.find((g) => g.phase === phase);
     if (!group) {
       groups.push({ ...step, phase });
@@ -696,7 +708,8 @@ export function currentPhaseLabel(build: BuildReport): { phase: string; counts: 
   const detail = compileDetail(build);
   const remote = remoteBuild(build, 0);
   const phase = detail?.step ? stepName(detail.step) : (remote?.phase ?? phaseName(build.phase));
-  if (!detail?.unit || typeof detail.done !== 'number') return { phase, counts: null };
+  if ((detail?.unit !== 'tasks' && detail?.unit !== 'targets') || typeof detail.done !== 'number')
+    return { phase, counts: null };
   const { done, unit, total } = detail;
   return {
     phase,
@@ -704,7 +717,8 @@ export function currentPhaseLabel(build: BuildReport): { phase: string; counts: 
   };
 }
 
-export function otherPlatformLine(env: EnvironmentState, building: Platform, now: number): string | null {
+export function otherPlatformLine(env: EnvironmentState, building: string, now: number): string | null {
+  if (building !== 'ios' && building !== 'android') return null;
   const other: Platform = building === 'ios' ? 'android' : 'ios';
   if (!usedPlatforms(env).includes(other)) return null;
   const last = env.lastBuilds?.[other];
@@ -736,6 +750,7 @@ export function bundleLine(env: EnvironmentState, now: number, reportsBundles: b
   }
   const last = bundle.last;
   if (!last) return null;
+  if (last.status !== 'ok' && last.status !== 'failed') return null;
   if (last.status === 'failed') {
     const finished = Date.parse(last.finishedAt);
     const since = Number.isFinite(finished) ? formatDuration(now - finished, { seconds: true }) : null;
@@ -852,6 +867,8 @@ function pullRequestLabel(number: number, state: PullRequestFacts['state']): str
       return t`Pull request ${number}, merged`;
     case 'closed':
       return t`Pull request ${number}, closed`;
+    default:
+      return prText(number);
   }
 }
 
@@ -912,7 +929,7 @@ export function gitChip(worktree: WorktreeFacts | null | undefined): GitChip | n
   const pull = worktree.pullRequest;
   const facts = worktree.gitChip ?? localGitChipFacts(git, pull);
   const parts = facts.parts.map(chipPart).filter((part) => part !== null);
-  const ci = pull ? facts.ci : null;
+  const ci = pull && (facts.ci === 'passing' || facts.ci === 'failing' || facts.ci === 'pending') ? facts.ci : null;
   const label = [
     pull ? pullRequestLabel(pull.number, pull.state) : t`Branch`,
     ci ? checksLabel(ci) : null,
@@ -922,7 +939,13 @@ export function gitChip(worktree: WorktreeFacts | null | undefined): GitChip | n
   ]
     .filter(Boolean)
     .join(', ');
-  return { parts, pr: pull ? { text: prText(pull.number), tone: PR_TONE[pull.state], ci } : null, label };
+  return {
+    parts,
+    pr: pull
+      ? { text: prText(pull.number), tone: Object.hasOwn(PR_TONE, pull.state) ? PR_TONE[pull.state]! : 'tertiary', ci }
+      : null,
+    label,
+  };
 }
 
 export function checksSummary(checks: PullRequestFacts['checks']): string | null {
