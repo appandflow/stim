@@ -5,9 +5,9 @@ import { Image } from 'expo-image';
 import { Stack, useIsFocused, useRouter } from 'expo-router';
 import { useCallback, useMemo, useState } from 'react';
 import { ActivityIndicator, Platform, View, type ListViewToken } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
-import { AttentionStrip } from '@/components/attention-strip';
 import { Button } from '@/components/button';
 import { Card } from '@/components/card';
 import { DeviceGridTile } from '@/components/device-grid-tile';
@@ -20,14 +20,12 @@ import { StimJar } from '@/components/stim-jar';
 import { Text } from '@/components/text';
 import { Touch } from '@/components/touch';
 import { useMenuDrawer } from '@/components/menu-drawer';
-import { WorkspaceRow } from '@/components/workspace-row';
+import { WorkspaceGroupRow } from '@/components/workspace-row';
 import { useHomeFilters } from '@/hooks/home-filters';
 import { useInbox } from '@/hooks/inbox';
-import { toAttentionMachine, useMacs, usePairedMacs, useWorkspaceItems } from '@/hooks/machines';
-import { useNotificationPrefs } from '@/hooks/notifications';
+import { useMacs, usePairedMacs, useWorkspaceItems } from '@/hooks/machines';
 import { useNow } from '@/hooks/use-now';
 import { AGENT_PROMPTS, pickPrompts } from '@/lib/agent-prompts';
-import { homeAttention, type HomeAttentionItem } from '@/lib/attention';
 import {
   filtersActive,
   filterWorkspaces,
@@ -94,34 +92,39 @@ export function Home() {
     <>
       <Stack.Screen
         options={{
-          headerTitle: () =>
-            view === 'workspaces' ? (
-              <Image
-                source={WORDMARK}
-                tintColor={theme.colors.primary}
-                style={styles.wordmark}
-                contentFit="contain"
-                accessibilityLabel={t`Stim`}
-              />
-            ) : (
-              <HeaderTitle title={view === 'devices' ? t`Devices` : t`Machines`} subtitle="" />
-            ),
+          headerTitle:
+            view === 'workspaces' && menu.permanent
+              ? ''
+              : () =>
+                  view === 'workspaces' ? (
+                    <Image
+                      source={WORDMARK}
+                      tintColor={theme.colors.primary}
+                      style={styles.wordmark}
+                      contentFit="contain"
+                      accessibilityLabel={t`Stim`}
+                    />
+                  ) : (
+                    <HeaderTitle title={view === 'devices' ? t`Devices` : t`Machines`} subtitle="" />
+                  ),
         }}
       />
-      <Stack.Toolbar placement="left">
-        <Stack.Toolbar.Button
-          icon={Platform.OS === 'ios' ? 'line.3.horizontal' : MENU_ICON}
-          tintColor={theme.colors.text}
-          accessibilityLabel={unread > 0 ? t`Menu, ${unread} unread notifications` : t`Menu`}
-          onPress={menu.open}
-        >
-          {unread > 0 ? (
-            <Stack.Toolbar.Badge style={{ backgroundColor: theme.colors.primary, color: theme.colors.onPrimary }}>
-              {unread > 99 ? '99+' : String(unread)}
-            </Stack.Toolbar.Badge>
-          ) : null}
-        </Stack.Toolbar.Button>
-      </Stack.Toolbar>
+      {menu.permanent ? null : (
+        <Stack.Toolbar placement="left">
+          <Stack.Toolbar.Button
+            icon={Platform.OS === 'ios' ? 'line.3.horizontal' : MENU_ICON}
+            tintColor={theme.colors.text}
+            accessibilityLabel={unread > 0 ? t`Menu, ${unread} unread notifications` : t`Menu`}
+            onPress={menu.open}
+          >
+            {unread > 0 ? (
+              <Stack.Toolbar.Badge style={{ backgroundColor: theme.colors.primary, color: theme.colors.onPrimary }}>
+                {unread > 99 ? '99+' : String(unread)}
+              </Stack.Toolbar.Badge>
+            ) : null}
+          </Stack.Toolbar.Button>
+        </Stack.Toolbar>
+      )}
       <Stack.Toolbar placement="right">
         {view === 'machines' ? (
           <Stack.Toolbar.Button
@@ -150,7 +153,7 @@ export function Home() {
 
   if (macs?.length === 0) {
     return (
-      <View style={styles.screen}>
+      <SafeAreaView style={styles.screen} edges={['left', 'right']}>
         {header}
         <EmptyState
           title={t`No machine paired`}
@@ -158,14 +161,9 @@ export function Home() {
         >
           <Button title={t`Pair a machine`} onPress={() => router.push('/pair')} style={styles.primaryButton} />
         </EmptyState>
-      </View>
+      </SafeAreaView>
     );
   }
-
-  const openAttention = ({ target }: HomeAttentionItem) => {
-    if (target.kind === 'machine') router.push({ pathname: '/mac/[id]', params: { id: target.macId } });
-    else router.push({ pathname: '/mac/[id]/workspace', params: { id: target.macId, path: target.path } });
-  };
 
   const listHeader = (
     <View>
@@ -186,22 +184,21 @@ export function Home() {
           />
         ))}
       </ScrollView>
-      {view === 'workspaces' ? <HomeAttention now={now} onOpen={openAttention} /> : null}
     </View>
   );
 
   if (view === 'machines') {
     return (
-      <View style={styles.screen}>
+      <SafeAreaView style={styles.screen} edges={['left', 'right']}>
         {header}
         <MacList />
-      </View>
+      </SafeAreaView>
     );
   }
 
   if (view === 'devices') {
     return (
-      <View style={styles.screen}>
+      <SafeAreaView style={styles.screen} edges={['left', 'right']}>
         {header}
         <FlatList
           data={rows}
@@ -229,12 +226,12 @@ export function Home() {
             <HomeEmpty view="devices" items={items.length} noFilterSet={noFilterSet} focused={focused} />
           }
         />
-      </View>
+      </SafeAreaView>
     );
   }
 
   return (
-    <View style={styles.screen}>
+    <SafeAreaView style={styles.screen} edges={['left', 'right']}>
       {header}
       <SectionList
         sections={sections}
@@ -245,10 +242,10 @@ export function Home() {
         ListHeaderComponent={listHeader}
         renderSectionHeader={({ section }) => <RepoHeader section={section} />}
         renderItem={({ item }) => (
-          <WorkspaceRow
-            item={item}
+          <WorkspaceGroupRow
+            workspace={item}
             now={now}
-            folder={folders.has(item.project)}
+            folder={folders.has(item.apps[0].project)}
             showsMachine={showsMachine}
             onOpen={openWorkspace}
           />
@@ -260,7 +257,7 @@ export function Home() {
           filters.activity === 'live' && hiddenByActivity > 0 ? (
             <Touch feedback="row" onPress={() => update({ activity: 'all' })} style={styles.footer}>
               <Text tone="secondary">
-                {plural(hiddenByActivity, { one: '# idle workspace hidden.', other: '# idle workspaces hidden.' })}{' '}
+                {plural(hiddenByActivity, { one: '# idle app hidden.', other: '# idle apps hidden.' })}{' '}
                 <Text tone="brand">
                   <Trans>Show all</Trans>
                 </Text>
@@ -269,7 +266,7 @@ export function Home() {
           ) : undefined
         }
       />
-    </View>
+    </SafeAreaView>
   );
 }
 
@@ -292,24 +289,6 @@ function RepoHeader({ section }: { section: HomeSection }) {
         {counts}
       </Text>
     </View>
-  );
-}
-
-function HomeAttention({ now, onOpen }: { now: number; onOpen: (item: HomeAttentionItem) => void }) {
-  const router = useRouter();
-  const inbox = useInbox();
-  const { connections } = useMacs();
-  const { prefs } = useNotificationPrefs();
-  const items = useMemo(
-    () => homeAttention(connections.map(toAttentionMachine), now, prefs.stuckMinutes),
-    [connections, now, prefs.stuckMinutes],
-  );
-  return (
-    <AttentionStrip
-      items={items}
-      onOpen={onOpen}
-      notifications={inbox.supported ? { unread: inbox.unread, onOpen: () => router.push('/inbox') } : undefined}
-    />
   );
 }
 

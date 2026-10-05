@@ -1,5 +1,6 @@
 import { i18n } from '@lingui/core';
 import { t } from '@lingui/core/macro';
+import { KeyboardProvider } from 'react-native-keyboard-controller';
 import { I18nProvider } from '@lingui/react';
 import * as Sentry from '@sentry/react-native';
 import { DarkTheme, DefaultTheme, Stack, ThemeProvider, type ErrorBoundaryProps } from 'expo-router';
@@ -8,11 +9,11 @@ import { NavigationBar } from 'expo-navigation-bar';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect } from 'react';
 import { Platform, View } from 'react-native';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { Button } from '@/components/button';
 import { EmptyState } from '@/components/empty-state';
-import { MenuDrawer } from '@/components/menu-drawer';
 import { SplashOverlay } from '@/components/splash-overlay';
 import { useForegroundUpdateCheck } from '@/hooks/app-update';
 import { DevPairing } from '@/hooks/dev-pairing';
@@ -47,11 +48,15 @@ export const ErrorBoundary = Sentry.wrapExpoRouterErrorBoundary(RootErrorBoundar
 
 export default function RootLayout() {
   return (
-    <I18nProvider i18n={i18n}>
-      <SettingsProvider>
-        <RootLayoutContent />
-      </SettingsProvider>
-    </I18nProvider>
+    <KeyboardProvider statusBarTranslucent navigationBarTranslucent preserveEdgeToEdge preload={false}>
+      <I18nProvider i18n={i18n}>
+        <SettingsProvider>
+          <GestureHandlerRootView style={styles.root}>
+            <RootLayoutContent />
+          </GestureHandlerRootView>
+        </SettingsProvider>
+      </I18nProvider>
+    </KeyboardProvider>
   );
 }
 
@@ -92,67 +97,67 @@ function RootLayoutContent() {
           <NotificationsProvider>
             <HomeFiltersProvider>
               <RecentsProvider>
-                <MenuDrawer>
-                  <Stack
-                    screenOptions={{
-                      orientation: phoneOrientation('portrait_up'),
-                      headerTintColor: colors.primary,
-                      headerTitleStyle: { color: colors.text },
-                      headerBackButtonDisplayMode: 'minimal',
-                      headerShadowVisible: false,
-                      headerTransparent: Platform.OS === 'ios',
-                      headerBlurEffect:
-                        Platform.OS === 'ios' && parseInt(String(Platform.Version), 10) < 26
-                          ? 'systemMaterial'
-                          : undefined,
+                <Stack
+                  screenOptions={{
+                    orientation: phoneOrientation('portrait_up'),
+                    headerTintColor: colors.primary,
+                    headerTitleStyle: { color: colors.text },
+                    headerBackButtonDisplayMode: 'minimal',
+                    headerShadowVisible: false,
+                    headerTransparent: Platform.OS === 'ios',
+                    headerBlurEffect:
+                      Platform.OS === 'ios' && parseInt(String(Platform.Version), 10) < 26
+                        ? 'systemMaterial'
+                        : undefined,
+                  }}
+                >
+                  <Stack.Screen
+                    name="(home)"
+                    options={{ title: t`Stim`, headerShown: false, orientation: phoneOrientation('default') }}
+                  />
+                  <Stack.Screen name="filters" options={sheet([0.6, 1])} />
+                  <Stack.Screen name="about" options={sheet(Platform.OS === 'ios' ? 'fitToContents' : [0.65, 1])} />
+                  <Stack.Screen
+                    name="settings"
+                    options={{
+                      title: t`Settings`,
+                      ...(Platform.OS === 'android'
+                        ? {
+                            contentStyle: { backgroundColor: colors.grouped },
+                            headerStyle: { backgroundColor: colors.grouped },
+                          }
+                        : null),
                     }}
-                  >
-                    <Stack.Screen name="index" options={{ title: t`Stim` }} />
-                    <Stack.Screen name="filters" options={sheet([0.6, 1])} />
-                    <Stack.Screen name="about" options={sheet(Platform.OS === 'ios' ? 'fitToContents' : [0.65, 1])} />
-                    <Stack.Screen
-                      name="settings"
-                      options={{
-                        title: t`Settings`,
-                        ...(Platform.OS === 'android'
-                          ? {
-                              contentStyle: { backgroundColor: colors.grouped },
-                              headerStyle: { backgroundColor: colors.grouped },
-                            }
-                          : null),
-                      }}
-                    />
-                    <Stack.Screen name="licenses" options={{ title: t`Open source licenses` }} />
-                    <Stack.Screen name="license" options={{ title: '' }} />
-                    <Stack.Screen name="inbox" options={{ title: t`Notifications` }} />
-                    <Stack.Screen
-                      name="pair"
-                      options={{ title: t`Pair a machine`, presentation: 'modal', ...opaqueHeader }}
-                    />
-                    <Stack.Screen
-                      name="rename"
-                      options={{ title: t`Rename machine`, presentation: 'modal', ...opaqueHeader }}
-                    />
-                    <Stack.Screen name="mac/[id]/index" options={sheet([0.75, 1])} />
-                    <Stack.Screen name="mac/[id]/workspace" options={{ title: t`Workspace` }} />
-                    <Stack.Screen name="mac/[id]/logs" options={{ title: t`Logs`, ...opaqueHeader }} />
-                    <Stack.Screen
-                      name="mac/[id]/device"
-                      options={{
-                        headerShown: false,
-                        orientation: phoneOrientation('default'),
-                        presentation: 'transparentModal',
-                        animation: 'none',
-                        gestureEnabled: false,
-                        contentStyle: { backgroundColor: 'transparent' },
-                      }}
-                    />
-                    <Stack.Screen name="mac/[id]/build" options={sheet([0.75, 1])} />
-                    <Stack.Screen name="mac/[id]/resources" options={sheet([0.75, 1])} />
-                    <Stack.Screen name="mac/[id]/agent" options={sheet([0.75, 1])} />
-                    <Stack.Screen name="mac/[id]/work" options={sheet([0.65, 1])} />
-                  </Stack>
-                </MenuDrawer>
+                  />
+                  <Stack.Screen name="licenses" options={{ title: t`Open source licenses` }} />
+                  <Stack.Screen name="license" options={{ title: '' }} />
+                  <Stack.Screen
+                    name="pair"
+                    options={{ title: t`Pair a machine`, presentation: 'modal', ...opaqueHeader }}
+                  />
+                  <Stack.Screen
+                    name="rename"
+                    options={{ title: t`Rename machine`, presentation: 'modal', ...opaqueHeader }}
+                  />
+                  <Stack.Screen name="mac/[id]/index" options={sheet([0.75, 1])} />
+                  <Stack.Screen name="mac/[id]/workspace" options={{ title: t`Workspace` }} />
+                  <Stack.Screen name="mac/[id]/logs" options={{ title: t`Logs`, ...opaqueHeader }} />
+                  <Stack.Screen
+                    name="mac/[id]/device"
+                    options={{
+                      headerShown: false,
+                      orientation: phoneOrientation('default'),
+                      presentation: 'transparentModal',
+                      animation: 'none',
+                      gestureEnabled: false,
+                      contentStyle: { backgroundColor: 'transparent' },
+                    }}
+                  />
+                  <Stack.Screen name="mac/[id]/build" options={sheet([0.75, 1])} />
+                  <Stack.Screen name="mac/[id]/resources" options={sheet([0.75, 1])} />
+                  <Stack.Screen name="mac/[id]/agent" options={sheet([0.75, 1])} />
+                  <Stack.Screen name="mac/[id]/work" options={sheet([0.65, 1])} />
+                </Stack>
               </RecentsProvider>
             </HomeFiltersProvider>
           </NotificationsProvider>
@@ -163,5 +168,6 @@ function RootLayoutContent() {
 }
 
 const styles = StyleSheet.create((theme) => ({
+  root: { flex: 1 },
   error: { flex: 1, backgroundColor: theme.colors.background },
 }));

@@ -1,10 +1,11 @@
 import { spawn, type ChildProcess } from 'node:child_process';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { connect, type ClientHttp2Session } from 'node:http2';
 import { join } from 'node:path';
-import type { DeviceLeaseState, StatusPayload } from '@stim-cli/core/state';
-import type { DevicePosture, FrameTarget } from './protocol.ts';
+import type { DeviceLeaseState, MacosAppState, StatusPayload } from '@stim-cli/core/state';
+import type { ClaimHandle } from '@stim-cli/core/ownership-claim';
+import type { DevicePosture, FrameTarget, DeviceFrameArtwork } from './protocol.ts';
 import { serverDir } from './registry.ts';
 import { DEFAULT_FRAME_HINT, HelperSource, RECORD_HINT, type FrameHint } from './frame-helper.ts';
 import { Pending, terminate } from './stim-command.ts';
@@ -20,8 +21,9 @@ import { connectOwnedPage, type OwnedPage } from './web-page.ts';
  */
 export type Device =
   | { platform: 'ios'; udid: string; foldable: boolean; physical?: true; name?: string }
-  | { platform: 'android'; serial: string; physical?: true }
-  | { platform: 'web'; endpoint: string; pid: number; targetId: string };
+  | { platform: 'android'; serial: string; physical?: true; avdName?: string }
+  | { platform: 'web'; endpoint: string; pid: number; targetId: string }
+  | { platform: 'macos'; app: MacosAppState & { app: NonNullable<MacosAppState['app']> } };
 
 export type Posture = 'folded' | 'unfolded';
 
@@ -31,6 +33,7 @@ export interface Frame {
   capturedAt: string;
   data: string;
   posture?: Posture;
+  artworkTurns?: number;
 }
 
 export interface DeviceInput {
@@ -42,6 +45,7 @@ export interface DeviceInput {
 
 export interface FrameListener {
   frame: (frame: Frame) => void;
+  artwork?: (artwork: DeviceFrameArtwork | null) => void;
   /**
    * With `video`, a device the helper streams sends H.264 access units here instead of JPEG frames; a device on
    * screenshots still sends `frame`.
@@ -58,6 +62,7 @@ export interface FrameListener {
    */
   delayed: (delayed: boolean, reason?: string) => void;
   failed: (message: string) => void;
+  inputFailed?: (message: string, session?: string) => void;
 }
 
 /** Tunables for capture timing; a busy Mac makes `xcrun simctl` and the emulator's gRPC call slow, not broken. */
@@ -89,6 +94,7 @@ const MAX_EDGE = 1280;
 const JPEG_QUALITY = 70;
 
 export function deviceKey(device: Device): string {
+  if (device.platform === 'macos') return `macos:${device.app.launchId}:${device.app.app.pid}`;
   if (device.platform === 'web') return `web:${device.pid}:${device.targetId}`;
   if (device.platform === 'ios') return `ios:${device.udid}`;
   return device.physical ? `android-device:${device.serial}` : `android:${device.serial}`;
@@ -148,6 +154,13 @@ export function ownedDevice(
       ? { ios: environment.ios, android: environment.android }
       : environment.slots?.find((candidate) => candidate.slot === slot);
   const where = `${target.platform} in slot ${slot} of ${target.workspace}`;
+  if (target.platform === 'macos') {
+    if (target.physical || slot !== 'default') return 'A native macOS app has only the default owned window target.';
+    const app = environment.macos;
+    if (!app?.app || app.state !== 'running')
+      return `No verified owned macOS app runs for ${target.workspace}. Run stim macos there.`;
+    return { platform: 'macos', app: { ...app, app: app.app } };
+  }
   if (target.physical) {
     if (target.platform === 'web') return 'A web page has no physical device.';
     const lease = workspaceLease(payload, target, lookup);
@@ -181,11 +194,12 @@ export function ownedDevice(
   }
   const emulator = devices?.android;
   if (!emulator?.owned || emulator.physical) return `No emulator Stim owns runs ${where}.`;
+  const avdName = emulator.name && !/[/\\]/.test(emulator.name) ? { avdName: emulator.name } : {};
   if (emulator.state === 'unknown' && attached?.startsWith('android:')) {
-    return { platform: 'android', serial: attached.slice('android:'.length) };
+    return { platform: 'android', serial: attached.slice('android:'.length), ...avdName };
   }
   if (emulator.state !== 'detected' || !emulator.serial) return `The emulator for ${where} is not running.`;
-  return { platform: 'android', serial: emulator.serial };
+  return { platform: 'android', serial: emulator.serial, ...avdName };
 }
 
 function jpegSize(bytes: Buffer): { width: number; height: number } | null {
@@ -567,7 +581,7 @@ export async function devicePostures(
   env: NodeJS.ProcessEnv,
   timeoutMs: number,
 ): Promise<DevicePosture[]> {
-  if (device.platform === 'web') return [];
+  if (device.platform === 'web' || device.platform === 'macos') return [];
   if (device.platform === 'ios') return device.foldable ? ['folded', 'unfolded'] : [];
   if (device.physical) return [];
   const endpoint = emulatorEndpoint(env, device.serial);
@@ -787,17 +801,20 @@ export class FramePool {
   private readonly limits: FrameLimits;
   private readonly helper: () => string | null;
   private readonly viewers: DeviceViewers | null;
+  private readonly claim: ClaimHandle | undefined;
 
   constructor(
     env: NodeJS.ProcessEnv,
     limits: FrameLimits = DEFAULT_FRAME_LIMITS,
     helper: () => string | null = () => null,
     viewers: DeviceViewers | null = null,
+    claim?: ClaimHandle,
   ) {
     this.env = env;
     this.limits = limits;
     this.helper = helper;
     this.viewers = viewers;
+    this.claim = claim;
   }
 
   subscribe(device: Device, listener: FrameListener, hint: FrameHint = DEFAULT_FRAME_HINT): () => void {
@@ -811,10 +828,13 @@ export class FramePool {
 
   private attach(device: Device, listener: FrameListener, hint: FrameHint): () => void {
     const helper = this.helper();
-    const physical = device.platform !== 'web' && device.physical === true;
-    if (helper === null && physical) {
+    const physical = (device.platform === 'ios' || device.platform === 'android') && device.physical === true;
+    const helperOnly = physical || device.platform === 'macos';
+    if (helper === null && helperOnly) {
       queueMicrotask(() =>
-        listener.failed('A physical device streams through the stim-frames helper, which this Mac has not built.'),
+        listener.failed(
+          'This app or physical device streams through the stim-frames helper, which this Mac has not built.',
+        ),
       );
       return () => {};
     }
@@ -836,9 +856,10 @@ export class FramePool {
               },
             }
           : {}),
+        ...(listener.artwork ? { artwork: listener.artwork } : {}),
         delayed: listener.delayed,
         failed: (message) => {
-          if (streamed || cancelled || physical) return listener.failed(message);
+          if (streamed || cancelled || helperOnly || this.claim) return listener.failed(message);
           console.error(`stim-server: ${message} Falling back to screenshots.`);
           detach = this.screenshots(device).add(listener);
         },
@@ -856,6 +877,7 @@ export class FramePool {
    * helper: screenshots are not recorded.
    */
   record(device: Device, listener: FrameListener): (() => void) | null {
+    if (device.platform === 'macos') return null;
     const helper = this.helper();
     return helper === null ? null : this.stream(helper, device).add(listener, RECORD_HINT);
   }
@@ -905,11 +927,31 @@ export class FramePool {
     const helper = this.helper();
     if (helper === null) return null;
     const source = this.stream(helper, device);
-    const detach = source.add({ frame: () => {}, delayed: () => {}, failed }, null);
+    if (!source.active) return null;
+    const controlSession = device.platform === 'macos' ? randomUUID() : null;
+    const detach = source.add(
+      {
+        frame: () => {},
+        delayed: () => {},
+        failed,
+        ...(controlSession
+          ? {
+              inputFailed: (message: string, session?: string) => {
+                if (session === controlSession) failed(message);
+              },
+            }
+          : {}),
+      },
+      null,
+    );
+    if (controlSession) source.send({ control: { session: controlSession, enabled: true } });
     return {
-      send: (command) => source.send(command),
+      send: (command) => source.send(controlSession ? { ...command, controlSession } : command),
       keys: () => source.keyboard === true,
-      detach,
+      detach: () => {
+        if (controlSession) source.send({ control: { session: controlSession, enabled: false } });
+        detach();
+      },
     };
   }
 
@@ -931,17 +973,25 @@ export class FramePool {
       device,
       this.env,
       (stopped) => {
-        if (this.sources.get(key) === created) this.sources.delete(key);
-        void this.stopping.track(stopped);
+        const remove = () => {
+          if (this.sources.get(key) === created) this.sources.delete(key);
+        };
+        if (this.claim) void this.stopping.track(stopped).then(remove, remove);
+        else {
+          remove();
+          void this.stopping.track(stopped);
+        }
       },
       this.limits.lingerMs,
       lit,
+      this.claim,
     );
     this.sources.set(key, created);
     return created;
   }
 
   private screenshots(device: Device): FrameSource {
+    if (device.platform === 'macos') throw new Error('Native macOS capture requires the owned-window helper.');
     const key = deviceKey(device);
     const existing = this.sources.get(key);
     if (existing instanceof FrameSource) return existing;

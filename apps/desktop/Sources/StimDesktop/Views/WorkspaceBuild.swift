@@ -2,77 +2,6 @@ import StimKit
 import StimStores
 import SwiftUI
 
-/// The last lines `stim logs --source build` printed for a slot since a build started.
-@MainActor
-final class BuildOutputModel: ObservableObject {
-  @Published private(set) var lines: [LogRecord] = []
-  private var since: Date = .distantPast
-  private var limit = 1
-  private lazy var follower = LogFollower { [weak self] event in self?.handle(event) }
-
-  func start(cli: StimCLI, workspace: String, slot: String, since: Date, limit: Int) {
-    self.since = since
-    self.limit = limit
-    lines = []
-    var query = LogQuery()
-    query.sources = [.build]
-    query.slot = slot
-    query.tail = 50
-    follower.start(query, cli: cli, cwd: workspace)
-  }
-
-  func stop() {
-    follower.stop()
-    lines = []
-  }
-
-  private func handle(_ event: LogFollower.Event) {
-    guard case .records(let batch) = event else { return }
-    let fresh = batch.filter { $0.date >= since }
-    guard !fresh.isEmpty else { return }
-    lines = Array((lines + fresh).suffix(limit))
-  }
-}
-
-extension BuildOutputModel {
-  /// Follows the build output of `build` until the calling task is cancelled.
-  func follow(cli: Task<StimCLI, Never>, workspace: String, build: Build, limit: Int) async {
-    let cli = await cli.value
-    guard !Task.isCancelled else { return }
-    let started =
-      ISO8601DateFormatter.fractional.date(from: build.startedAt) ?? ISO8601DateFormatter().date(from: build.startedAt)
-    start(cli: cli, workspace: workspace, slot: build.slot, since: started ?? .distantPast, limit: limit)
-  }
-}
-
-/// The latest build output lines, in a box.
-struct BuildOutputTail: View {
-  var lines: [LogRecord]
-
-  var body: some View {
-    VStack(alignment: .leading, spacing: 1) {
-      ForEach(Array(lines.enumerated()), id: \.offset) { _, record in
-        Text(record.msg)
-          .font(.stim(.caption, mono: true))
-          .foregroundStyle(record.level >= .error ? Palette.error : Palette.tertiary)
-          .lineLimit(1)
-          .truncationMode(.middle)
-      }
-    }
-    .padding(Space.md)
-    .frame(maxWidth: .infinity, alignment: .leading)
-    .background(RoundedRectangle(cornerRadius: Radius.control).fill(Palette.sidebar))
-  }
-}
-
-extension ISO8601DateFormatter {
-  static let fractional: ISO8601DateFormatter = {
-    let formatter = ISO8601DateFormatter()
-    formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-    return formatter
-  }()
-}
-
 extension TimelineSchedule where Self == PeriodicTimelineSchedule {
   /// Half way through each second of `build`'s elapsed time, so every view that shows it changes at the same moment.
   static func buildSeconds(_ build: Build) -> PeriodicTimelineSchedule {
@@ -126,9 +55,18 @@ struct PhaseBar: View {
 
 struct PhaseChecklist: View {
   var steps: [PhaseStep]
+  var build: Build
 
   var body: some View {
     VStack(alignment: .leading, spacing: Space.xs) {
+      if !steps.contains(where: { $0.phase == "cache-lookup" }), let outcome = build.cacheLookupOutcome {
+        HStack(spacing: Space.sm) {
+          Image(systemName: "checkmark.circle.fill").foregroundStyle(Palette.success)
+            .font(.system(size: 11))
+          Text("Cache lookup").font(.stim(.footnote)).foregroundStyle(Palette.text)
+          Pill(outcome == "hit" ? "Hit" : "Miss", tone: outcome == "hit" ? .success : .warning, size: .small)
+        }
+      }
       ForEach(steps, id: \.phase) { step in
         HStack(spacing: Space.sm) {
           switch step.state {
@@ -139,6 +77,9 @@ struct PhaseChecklist: View {
           Text(PhaseStep.name(step.phase))
             .font(.stim(.footnote, weight: step.state == .current ? .semibold : nil))
             .foregroundStyle(step.state == .pending ? Palette.tertiary : Palette.text)
+          if step.phase == "cache-lookup", let outcome = build.cacheLookupOutcome {
+            Pill(outcome == "hit" ? "Hit" : "Miss", tone: outcome == "hit" ? .success : .warning, size: .small)
+          }
           Spacer(minLength: Space.sm)
           Text(timing(step)).font(.stim(.caption)).foregroundStyle(Palette.tertiary).monospacedDigit()
         }
@@ -178,7 +119,7 @@ struct WorkspaceActionsButton: View {
         reloadAllowed: env.canReload,
         onShowLastOutput: actions.latest(for: env.path).map { last in { actions.presented = last } },
         onRun: { platform in actions.runApp(env, platform: platform) },
-        onReload: { actions.run("Reload \(env.names.title)", StimCommand(["reload"], cwd: env.path)) },
+        onReload: { actions.run("Reload \(env.names.title)", steps: [StimCommand(["reload"], cwd: env.path)], present: false) },
         onStartDevServer: { actions.run("Start \(env.names.title)", StimCommand(["start"], cwd: env.path)) },
         onStopDevServer: {
           if env.remoteDevices?.isEmpty == false {
@@ -218,6 +159,6 @@ struct WorkspaceActionsButton: View {
   }
 
   private func stop() {
-    actions.run("Stop \(env.names.title)", StimCommand(["stop"], cwd: env.path))
+    actions.run("Stop \(env.names.title)", steps: [StimCommand(["stop"], cwd: env.path)], present: false)
   }
 }

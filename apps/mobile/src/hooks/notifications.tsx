@@ -7,6 +7,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { Alert, AppState, Linking, Platform } from 'react-native';
 import { create } from 'zustand';
 
+import { useAppForeground } from '@/hooks/app-foreground';
 import { markNotificationRead } from '@/hooks/inbox';
 import { toAttentionMachine, useMacs } from '@/hooks/machines';
 import { RequestError, type StimConnection } from '@/lib/connection';
@@ -174,14 +175,11 @@ function LocalNotifier({ prefs }: { prefs: NotificationPrefs }) {
   const pushed = usePushedMacs();
   const [tick, setTick] = useState(0);
   const awakeSince = useRef(0);
-  const [active, setActive] = useState(AppState.currentState === 'active');
-
   useEffect(() => {
     void createChannels().catch(() => {});
     awakeSince.current = Date.now();
     const listener = AppState.addEventListener('change', (state) => {
       if (state === 'active') awakeSince.current = Date.now();
-      setActive(state === 'active');
     });
     const timer = setInterval(() => setTick((n) => n + 1), TICK_MS);
     return () => {
@@ -189,6 +187,8 @@ function LocalNotifier({ prefs }: { prefs: NotificationPrefs }) {
       clearInterval(timer);
     };
   }, []);
+
+  const active = useAppForeground();
 
   useEffect(() => {
     if (!active) return;

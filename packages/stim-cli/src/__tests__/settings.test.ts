@@ -397,6 +397,9 @@ function nestedSetting(path: string, value: unknown): Record<string, unknown> {
 }
 
 const SHAPE_CASES: Record<string, { valid: unknown; invalid: unknown; expected: string }> = {
+  'macos.product': { valid: 'MyApp', invalid: {}, expected: 'a string' },
+  'macos.infoPlist': { valid: 'Support/Info-Development.plist', invalid: {}, expected: 'a string path' },
+  'macos.arguments': { valid: ['--playground'], invalid: ['--playground', 7], expected: 'an array of strings' },
   'ios.deviceType': { valid: 'iPhone 17 Pro', invalid: {}, expected: 'a string' },
   'ios.runtime': { valid: '26.2', invalid: 26.2, expected: 'a string' },
   'ios.configuration': { valid: 'Release', invalid: { name: 'Release' }, expected: 'a string' },
@@ -414,7 +417,11 @@ const SHAPE_CASES: Record<string, { valid: unknown; invalid: unknown; expected: 
   'android.keystore': { valid: 'android/app/release.keystore', invalid: {}, expected: 'a string path' },
   'android.keystorePassword': { valid: 'env:MY_KS_PASS', invalid: 1234, expected: 'a string' },
   'android.remote': { valid: 'eas', invalid: 'cloud', expected: 'one of: proxy, eas' },
-  'metro.tunnel': { valid: 'ngrok', invalid: 'bogus', expected: 'one of: auto, off, expo, cloudflared, ngrok' },
+  'metro.tunnel': {
+    valid: 'tailscale',
+    invalid: 'bogus',
+    expected: 'one of: auto, off, expo, cloudflared, ngrok, tailscale',
+  },
   'metro.idleStopMinutes': { valid: 30, invalid: '30', expected: 'a whole number, 0 or more' },
   'devices.idleShutdownMinutes': { valid: 30, invalid: 1.5, expected: 'a whole number, 0 or more' },
   'metro.ngrokUrl': { valid: 'https://a.ngrok.app', invalid: {}, expected: 'a string' },
@@ -553,6 +560,7 @@ test.each([-1, 1.5, 2 ** 53])(
 describe('tunnelModeSetting', () => {
   test('reads one of the known modes', () => {
     expect(tunnelModeSetting({ metro: { tunnel: 'cloudflared' } })).toBe('cloudflared');
+    expect(tunnelModeSetting({ metro: { tunnel: 'tailscale' } })).toBe('tailscale');
     expect(tunnelModeSetting({ metro: { tunnel: 'off' } })).toBe('off');
   });
 
@@ -596,7 +604,7 @@ describe('ngrokUrlSetting', () => {
   });
 
   test('is unset for auto and every other tunnel mode', () => {
-    for (const tunnel of ['auto', 'expo', 'cloudflared', 'off']) {
+    for (const tunnel of ['auto', 'expo', 'cloudflared', 'tailscale', 'off']) {
       expect(ngrokUrlSetting({ metro: { tunnel, ngrokUrl: 'https://stable.ngrok.app' } })).toBeNull();
     }
   });

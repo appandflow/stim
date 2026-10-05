@@ -3,6 +3,21 @@ import Foundation
 // Field numbers and enum values follow MouseEvent, KeyboardEvent and
 // EmulatorStatus in the emulator's emulator_controller.proto (sdk/emulator/lib).
 enum InputMessages {
+  // ClipData.text is field 1, UTF-8, in emulator_controller.proto.
+  static func clipboard(_ text: String) -> Data {
+    var out = Data()
+    appendBytes(field: 1, Data(text.utf8), to: &out)
+    return out
+  }
+
+  static func clipboardText(_ bytes: Data) -> String? {
+    var reader = ProtoReader(bytes)
+    while let (field, value) = reader.next() {
+      if field == 1, case .bytes(let text) = value { return String(data: text, encoding: .utf8) }
+    }
+    return ""
+  }
+
   static let macKeyCodeType: UInt64 = 4
   static let keyup: UInt64 = 1
   static let keypress: UInt64 = 2
@@ -17,13 +32,19 @@ enum InputMessages {
   /// is false (pressure 0). Unlike a MouseEvent, Android sees a touchscreen
   /// finger, not a mouse or stylus.
   static func touch(x: Int, y: Int, pressed: Bool) -> Data {
-    var touch = Data()
-    for (field, value) in [(1, UInt64(max(x, 0))), (2, UInt64(max(y, 0))), (4, pressed ? 1 : 0)] where value != 0 {
-      ScreenshotMessages.appendVarint(UInt64(field << 3), to: &touch)
-      ScreenshotMessages.appendVarint(value, to: &touch)
-    }
+    touches([(x, y)], pressed: pressed)
+  }
+
+  /// Contacts keep their list index as their tracking identifier until pressure-zero release.
+  static func touches(_ points: [(x: Int, y: Int)], pressed: Bool) -> Data {
     var out = Data()
-    appendBytes(field: 1, touch, to: &out)
+    for (identifier, point) in points.enumerated() {
+      let touch = message([
+        (1, UInt64(max(point.x, 0))), (2, UInt64(max(point.y, 0))),
+        (3, UInt64(identifier)), (4, pressed ? 1 : 0),
+      ])
+      appendBytes(field: 1, touch, to: &out)
+    }
     return out
   }
 

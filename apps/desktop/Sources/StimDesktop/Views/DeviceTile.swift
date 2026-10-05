@@ -20,7 +20,8 @@ struct DeviceTile: View {
   var presence: AppPresence? = nil
   var showsCovers = false
   var focused = false
-  /// The device viewer's canvas: only the screen, with the device's buttons beside it, and Run on a stopped device.
+  var viewerAction: String? = nil
+  /// The device viewer's canvas: only the screen, with the device's buttons below it, and Run on a stopped device.
   /// A tile without it is a preview card with no controls.
   var viewer = false
   /// The card's maximum width, or the viewer's screen width limit; the screen shrinks below `screenHeight` to fit.
@@ -28,38 +29,62 @@ struct DeviceTile: View {
   var maxCardHeight: CGFloat? = nil
   /// False while the device's viewer is open, so the tile does not stream a second copy of its screen.
   var showsScreen = true
+  var pausesWhenOffscreen = false
+  var pixelScale: CGFloat? = nil
+  var framePixelsPerUnit: CGFloat = 1
   /// A physical device's stream stopped taking input.
   var onControlLost: () -> Void = {}
+  @State private var isOnscreen = false
   @State private var pixelSizes: [UInt32: CGSize] = [:]
+  @State private var frameSizes: [UInt32: CGSize] = [:]
+  @State private var showsDeviceFrame = false
   @State private var screenIDs: [UInt32] = [1]
   @State private var lit: [UInt32: Bool] = [:]
   @State private var folding = false
   @State private var hingeAvailable = false
+  @State private var observedHingeAngle: Double?
+  @State private var hingeEditing = false
+  @State private var showsHingeAngle = false
+  @State private var showsSimulatorOptions = false
+  @State private var hingeAngle = 180.0
   @State private var postureTarget: DuoPosture?
   @State private var rotateFailed = false
+  @State private var clipboardRequest: ClipboardRequest?
+  @State private var clipboardError: String?
   @State private var foldError: String?
   @State private var emulatorPosture: EmulatorPosture?
   @State private var postureFailed = false
   @State private var replaySize: CGSize?
   @State private var headerHeight: CGFloat = 0
+  @State private var controlsHeight: CGFloat = 44
   @State private var simulatorButtons = SimulatorButtons()
+  @State private var duoFrame = SimulatorDuoFrame()
   @State private var emulatorButtons = EmulatorButtons()
   @EnvironmentObject private var actions: ActionCenter
 
   private var screenPadding: CGFloat {
     let height = min(screenHeight, maxCardHeight.map { max(0, $0 - headerHeight - 1) } ?? screenHeight)
     let small = height <= TileSize.small.screenHeight || maxWidth.map { $0 <= Self.minimumWidth } == true
+    if framed { return 0 }
     return !viewer && small ? Space.sm : Space.lg
   }
   static let minimumWidth: CGFloat = 240
-  static let buttonStripWidth: CGFloat = 44
+  static let stoppedMaximumWidth: CGFloat = 420
 
   var body: some View {
-    if viewer { canvas } else { card }
+    Group {
+      if viewer { canvas } else { card }
+    }
+    .onAppear { isOnscreen = true }
+    .onDisappear { isOnscreen = false }
+    .onChange(of: device.id) { _, _ in
+      frameSizes = [:]
+      showsDeviceFrame = false
+    }
   }
 
   private var canvas: some View {
-    HStack(alignment: .center, spacing: Space.lg) {
+    VStack(spacing: Space.lg) {
       if let workspace, showsStoppedBar, !replaying {
         stoppedBar(runCommand(for: device, cwd: workspace))
           .frame(maxWidth: 420)
@@ -78,13 +103,83 @@ struct DeviceTile: View {
               .overlay { screenCover }
           }
         }
-        .background(Media.screen)
-        .clipShape(RoundedRectangle(cornerRadius: Radius.card))
-        .overlay { RoundedRectangle(cornerRadius: Radius.card).strokeBorder(frameColor, lineWidth: frameWidth) }
+        .background(framed ? Color.clear : Media.screen)
+        .clipShape(RoundedRectangle(cornerRadius: framed ? 0 : Radius.card))
+        .overlay {
+          if !framed { RoundedRectangle(cornerRadius: Radius.card).strokeBorder(frameColor, lineWidth: frameWidth) }
+        }
         if interactive, Self.hasButtons(device) {
-          buttonStrip
+          buttonBar
+        } else if canShowFrame {
+          controlGroup { frameButton }
+            .onGeometryChange(for: CGFloat.self, of: { $0.size.height }, action: { controlsHeight = $0 })
         }
       }
+    }
+    .task(id: dualSimulatorUDID) {
+      hingeAvailable = false
+      guard let udid = dualSimulatorUDID else { return }
+      while !Task.isCancelled {
+        let available = await SimulatorPosture.isAvailableBounded(udid: udid)
+        guard !Task.isCancelled else { return }
+        hingeAvailable = available
+        if hingeAvailable { return }
+        try? await Task.sleep(for: .seconds(10))
+      }
+    }
+    .task(id: hingeAvailable ? dualSimulatorUDID : nil) {
+      observedHingeAngle = nil
+      guard hingeAvailable, let udid = dualSimulatorUDID else { return }
+      while !Task.isCancelled {
+        let started = ContinuousClock.now
+        var received = false
+        for await angle in SimulatorHingeAngle.angles(udid: udid) {
+          observedHingeAngle = angle
+          received = true
+        }
+        guard !Task.isCancelled, received else {
+          observedHingeAngle = nil
+          return
+        }
+        try? await Task.sleep(for: max(.zero, .seconds(60) - started.duration(to: .now)))
+      }
+    }
+    .onChange(of: observedHingeAngle) { _, angle in
+      if !hingeEditing, let angle { hingeAngle = angle }
+    }
+    .onChange(of: simulatorOptionsUDID) { _, _ in showsSimulatorOptions = false }
+    .onChange(of: clipboardTarget) { _, _ in
+      clipboardRequest = nil
+      clipboardError = nil
+    }
+    .task(id: clipboardRequest) {
+      guard let request = clipboardRequest, request.target == clipboardTarget else { return }
+      defer { if clipboardRequest == request { clipboardRequest = nil } }
+      if let text = request.text {
+        guard case .android = device else { return }
+        let pasted = await emulatorButtons.paste(text)
+        guard !Task.isCancelled, request.target == clipboardTarget else { return }
+        if !pasted { clipboardError = "Could not paste into the device. Check that it is connected and a text field is focused." }
+      } else {
+        let text: String?
+        switch device {
+        case .ios: text = await simulatorButtons.clipboard()
+        case .android: text = await emulatorButtons.clipboard()
+        default: return
+        }
+        guard !Task.isCancelled, request.target == clipboardTarget else { return }
+        guard let text else {
+          clipboardError = "Could not read the device clipboard. Check that the device is connected."
+          return
+        }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+      }
+    }
+    .alert("Clipboard transfer", isPresented: Binding(get: { clipboardError != nil }, set: { if !$0 { clipboardError = nil } })) {
+      Button("OK", role: .cancel) { clipboardError = nil }
+    } message: {
+      Text(clipboardError ?? "")
     }
   }
 
@@ -98,7 +193,7 @@ struct DeviceTile: View {
     return interactive ? 2 : 1
   }
 
-  /// Whether the viewer draws the button column beside the device's screen.
+  /// Whether the viewer offers hardware controls below the device's screen.
   static func hasButtons(_ device: DeviceRef) -> Bool {
     switch device {
     case .ios, .android: return device.isRunning && !device.isPhysical
@@ -127,6 +222,8 @@ struct DeviceTile: View {
           placeholder("Open in the viewer")
             .frame(height: fittedHeight)
             .background(Media.screen)
+        } else if pausesWhenOffscreen && !isOnscreen {
+          Media.screen.frame(height: fittedHeight)
         } else {
           screen
             .frame(height: fittedHeight)
@@ -144,7 +241,9 @@ struct DeviceTile: View {
         RoundedRectangle(cornerRadius: Radius.card).strokeBorder(Palette.accent.opacity(0.45), lineWidth: 1.5)
       }
     }
-    .frame(width: min(maxWidth ?? width, width))
+    .frame(
+      width: showsStoppedBar ? min(maxWidth ?? Self.stoppedMaximumWidth, Self.stoppedMaximumWidth) : min(maxWidth ?? width, width)
+    )
   }
 
   private var header: some View {
@@ -171,6 +270,12 @@ struct DeviceTile: View {
         .lineLimit(1)
         .layoutPriority(1)
         Spacer(minLength: 8)
+        if let viewerAction {
+          Label(viewerAction, systemImage: viewerAction == "Control" ? "cursorarrow.rays" : "arrow.up.right")
+            .font(.stim(.callout, weight: .semibold))
+            .foregroundStyle(Palette.primary)
+            .accessibilityHidden(true)
+        }
         if case .remote = device {
           Pill(tone: .warning) { Text("billable") }
             .help("This remote session is billed while it runs.")
@@ -220,53 +325,110 @@ struct DeviceTile: View {
     }
   }
 
-  private var buttonStrip: some View {
-    VStack(spacing: Space.sm) {
-      switch device {
-      case .ios:
-        hardwareButton("Home", systemImage: "circle") { simulatorButtons.press(.home) }
-        hardwareButton("Lock", systemImage: "lock") { simulatorButtons.press(.lock) }
-      case .android:
-        hardwareButton("Home", systemImage: "circle") { emulatorButtons.press(.home) }
-        hardwareButton("Back", systemImage: "chevron.backward") { emulatorButtons.press(.back) }
-        hardwareButton("Apps", systemImage: "square.on.square") { emulatorButtons.press(.apps) }
-        hardwareButton("Lock", systemImage: "lock") { emulatorButtons.press(.lock) }
-      case .web, .remote:
-        EmptyView()
+  private var canShowFrame: Bool { viewer && !replaying && frameSizes[1] != nil }
+  private var framed: Bool { canShowFrame && showsDeviceFrame }
+
+  private var frameButton: some View {
+    Button(showsDeviceFrame ? "Hide device frame" : "Show device frame", systemImage: "iphone.gen3") {
+      showsDeviceFrame.toggle()
+    }
+    .labelStyle(.iconOnly)
+    .buttonStyle(DeviceControlButtonStyle(active: showsDeviceFrame))
+    .help(showsDeviceFrame ? "Hide device frame" : "Show installed device frame")
+    .accessibilityAddTraits(showsDeviceFrame ? .isSelected : [])
+  }
+
+  private var buttonBar: some View {
+    FlowLayout(spacing: Space.sm, lineSpacing: Space.sm, centered: true) {
+      controlGroup {
+        switch device {
+        case .ios:
+          hardwareButton("Home", systemImage: "circle") { simulatorButtons.press(.home) }
+          hardwareButton("Lock", systemImage: "lock") { simulatorButtons.press(.lock) }
+        case .android:
+          hardwareButton("Home", systemImage: "circle") { emulatorButtons.press(.home) }
+          hardwareButton("Back", systemImage: "chevron.backward") { emulatorButtons.press(.back) }
+          hardwareButton("Apps", systemImage: "square.on.square") { emulatorButtons.press(.apps) }
+          hardwareButton("Lock", systemImage: "lock") { emulatorButtons.press(.lock) }
+        case .web, .remote:
+          EmptyView()
+        }
       }
-      Rectangle().fill(Palette.border).frame(width: 16, height: 1)
-      rotateButton(clockwise: false)
-      rotateButton(clockwise: true)
+      controlGroup {
+        rotateButton(clockwise: false)
+        rotateButton(clockwise: true)
+      }
+      if canShowFrame { controlGroup { frameButton } }
+      if let target = clipboardTarget {
+        controlGroup {
+          if case .android = device {
+            Button("Paste into device", systemImage: "doc.on.clipboard") {
+              guard let text = NSPasteboard.general.string(forType: .string), !text.isEmpty else {
+                clipboardError = "The Mac clipboard has no text to paste."
+                return
+              }
+              clipboardRequest = ClipboardRequest(target: target, text: text)
+            }
+            .labelStyle(.iconOnly)
+            .buttonStyle(DeviceControlButtonStyle())
+            .help("Paste Mac clipboard text into the focused device field")
+          }
+          Button("Copy device clipboard", systemImage: "doc.on.doc") {
+            clipboardRequest = ClipboardRequest(target: target, text: nil)
+          }
+          .labelStyle(.iconOnly)
+          .buttonStyle(DeviceControlButtonStyle())
+          .help("Copy device clipboard text to this Mac")
+        }
+        .disabled(clipboardRequest != nil)
+      }
       if device.formFactor == .dual, screenIDs.count > 1, case .ios(_, let sim) = device {
         if hingeAvailable {
-          Rectangle().fill(Palette.border).frame(width: 16, height: 1)
-          ForEach(DuoPosture.allCases, id: \.self) { postureButton($0, udid: sim.udid) }
+          controlGroup {
+            ForEach(DuoPosture.allCases, id: \.self) { postureButton($0, udid: sim.udid) }
+            hingeAngleControl(udid: sim.udid)
+          }
         } else if SimulatorFold.isAvailable {
-          foldButton(udid: sim.udid)
+          controlGroup { foldButton(udid: sim.udid) }
         }
       }
       if let emulatorPosture, case .android(_, let avd) = device, let serial = avd.serial {
-        postureMenu(serial: serial, current: emulatorPosture)
+        controlGroup { postureMenu(serial: serial, current: emulatorPosture) }
+      }
+      if let udid = simulatorOptionsUDID {
+        controlGroup {
+          Button("Simulator options", systemImage: "slider.horizontal.3") { showsSimulatorOptions = true }
+            .labelStyle(.iconOnly)
+            .buttonStyle(DeviceControlButtonStyle())
+            .help("Appearance and accessibility settings for this simulator")
+            .popover(isPresented: $showsSimulatorOptions) {
+              SimulatorOptionsView(udid: udid, canControl: simulatorOptionsUDID == udid)
+                .id(udid)
+            }
+        }
       }
     }
-    .padding(Space.sm)
-    .frame(width: Self.buttonStripWidth)
-    .task(id: dualSimulatorUDID) {
-      guard let udid = dualSimulatorUDID else { return }
-      while !Task.isCancelled {
-        hingeAvailable = await Task.detached { SimulatorPosture.isAvailable(udid: udid) }.value
-        if hingeAvailable { return }
-        try? await Task.sleep(for: .seconds(10))
+    .frame(width: maxWidth)
+    .onGeometryChange(for: CGFloat.self, of: { $0.size.height }, action: { controlsHeight = $0 })
+  }
+
+  @ViewBuilder private func controlGroup<Content: View>(@ViewBuilder content: () -> Content) -> some View {
+    let group = HStack(spacing: Space.xxs, content: content).padding(Space.xs)
+    #if compiler(>=6.2)
+      if #available(macOS 26, *) {
+        group.glassEffect(.regular, in: Capsule())
+      } else {
+        group.background(Palette.surface, in: Capsule()).overlay(Capsule().strokeBorder(Palette.border))
       }
-    }
-    .background(Palette.surface, in: RoundedRectangle(cornerRadius: Radius.card))
-    .overlay(RoundedRectangle(cornerRadius: Radius.card).strokeBorder(Palette.border))
+    #else
+      group.background(Palette.surface, in: Capsule()).overlay(Capsule().strokeBorder(Palette.border))
+    #endif
   }
 
   private func hardwareButton(_ title: String, systemImage: String, action: @escaping () -> Void) -> some View {
     Button(title, systemImage: systemImage, action: action)
       .labelStyle(.iconOnly)
-      .buttonStyle(.stim())
+      .buttonStyle(DeviceControlButtonStyle())
       .disabled(!interactive)
       .help(interactive ? "Press the device's \(title) button" : "Take over the device to press its \(title) button")
       .accessibilityLabel("Press \(title)")
@@ -296,7 +458,7 @@ struct DeviceTile: View {
     .allowsHitTesting(false)
   }
 
-  private var showsStoppedBar: Bool {
+  var showsStoppedBar: Bool {
     if case .remote = device { return false }
     if isPhysical, workspace != nil { return false }
     return !device.isRunning && build == nil && !["Booting", "unknown"].contains(device.state)
@@ -305,23 +467,28 @@ struct DeviceTile: View {
   private func stoppedBar(_ run: StimCommand?) -> some View {
     HStack(spacing: Space.md) {
       Text(
-        device.platform == "web"
-          ? "Closed. Run stim web to open the page again."
-          : run.map { "Not running. Run stim \($0.arguments.joined(separator: " ")) to boot it and install the app." }
-            ?? (isPhysical ? "Not connected." : "Shut down. Stim does not boot a device it does not own.")
+        viewer
+          ? (device.platform == "web"
+            ? "Closed. Run stim web to open the page again."
+            : run.map { "Not running. Run stim \($0.arguments.joined(separator: " ")) to boot it and install the app." }
+              ?? (isPhysical ? "Not connected." : "Shut down. Stim does not boot a device it does not own."))
+          : (device.platform == "web" ? "Closed." : run == nil ? "Shut down. Not owned by Stim." : "Shut down.")
       )
       .font(.stim(.callout))
       .foregroundStyle(Palette.secondary)
       .fixedSize(horizontal: false, vertical: true)
       Spacer(minLength: 0)
-      if viewer, let run {
-        Button("Run") { actions.run(device.platform == "web" ? "Open web" : "Run \(device.slot)", run) }
-          .buttonStyle(.stim())
-          .fixedSize()
-          .disabled(actions.active(for: run.cwd) != nil)
-          .help(run.displayLine())
+      if let run {
+        Button(viewer ? "Run" : device.platform == "web" ? "Open" : "Boot") {
+          actions.run(device.platform == "web" ? "Open web" : "Run \(device.slot)", run)
+        }
+        .buttonStyle(.stim())
+        .fixedSize()
+        .disabled(actions.active(for: run.cwd) != nil)
+        .help(run.displayLine())
       }
     }
+    .frame(minHeight: viewer ? nil : 24)
     .padding(Space.lg)
   }
 
@@ -342,7 +509,7 @@ struct DeviceTile: View {
       Task {
         switch device {
         case .ios(_, let sim):
-          rotateFailed = !(await Task.detached { SimulatorRotation.rotate(udid: sim.udid, clockwise: clockwise) }.value)
+          rotateFailed = !(await SimulatorRotation.rotateBounded(udid: sim.udid, clockwise: clockwise))
         case .android(_, let avd):
           guard let serial = avd.serial else { return }
           rotateFailed = !(await EmulatorRotation.rotate(serial: serial, clockwise: clockwise))
@@ -352,7 +519,7 @@ struct DeviceTile: View {
     } label: {
       Image(systemName: clockwise ? "rotate.right" : "rotate.left")
     }
-    .buttonStyle(.stim())
+    .buttonStyle(DeviceControlButtonStyle())
     .help(rotateFailed ? "The last rotation did not reach the device." : clockwise ? "Rotate right" : "Rotate left")
     .accessibilityLabel(clockwise ? "Rotate right" : "Rotate left")
   }
@@ -368,7 +535,7 @@ struct DeviceTile: View {
       }
     }
     .labelStyle(.iconOnly)
-    .buttonStyle(.stim())
+    .buttonStyle(DeviceControlButtonStyle())
     .disabled(folding)
     .help(
       foldError.map { "\(title): \($0)" } ?? "\(title): sweeps the hinge to the other posture, which lights the other screen.")
@@ -378,13 +545,16 @@ struct DeviceTile: View {
     let selected = duoPosture == target
     let failed = foldError != nil && postureTarget == target
     return Button(target.label, systemImage: failed ? "exclamationmark.triangle" : target.systemImage) {
+      guard !selected else { return }
+      duoFrame.preparePostureChange()
       folding = true
       postureTarget = target
       foldError = nil
       Task {
-        let from = duoPosture ?? SimulatorPosture.lastPosture(udid: udid) ?? .closed
-        foldError = await SimulatorPosture.move(udid: udid, from: from.hingeAngle, to: target)
+        let from = currentHingeAngle
+        foldError = await SimulatorPosture.moveBounded(udid: udid, from: from, to: target.hingeAngle)
         if foldError == nil {
+          hingeAngle = target.hingeAngle
           try? await Task.sleep(for: .seconds(3))
           if let posture, (posture == "Folded") != target.isFolded {
             foldError = "The hinge moved, but the simulator did not switch screens."
@@ -394,7 +564,7 @@ struct DeviceTile: View {
       }
     }
     .labelStyle(.iconOnly)
-    .buttonStyle(.stim(selected ? .primary : .secondary))
+    .buttonStyle(DeviceControlButtonStyle(active: selected))
     .disabled(folding)
     .help(
       failed
@@ -405,17 +575,77 @@ struct DeviceTile: View {
     .accessibilityAddTraits(selected ? .isSelected : [])
   }
 
+  private func hingeAngleControl(udid: String) -> some View {
+    Button("Hinge angle", systemImage: "angle") {
+      hingeEditing = false
+      hingeAngle = currentHingeAngle
+      showsHingeAngle = true
+    }
+    .labelStyle(.iconOnly)
+    .buttonStyle(DeviceControlButtonStyle())
+    .help("Set the simulated hinge angle")
+    .popover(isPresented: $showsHingeAngle) {
+      VStack(alignment: .leading, spacing: Space.md) {
+        Text("Hinge angle: \(Int(hingeAngle))\u{00B0}").monospacedDigit()
+        Slider(value: $hingeAngle, in: 0...180, step: 1) { editing in
+          hingeEditing = editing
+          guard !editing else { return }
+          let target = hingeAngle
+          let from = currentHingeAngle
+          guard target != from else { return }
+          duoFrame.preparePostureChange()
+          folding = true
+          postureTarget = nil
+          foldError = nil
+          Task {
+            foldError = await SimulatorPosture.moveBounded(udid: udid, from: from, to: target)
+            folding = false
+          }
+        }
+        .disabled(folding)
+        .accessibilityLabel("Hinge angle")
+        .accessibilityValue("\(Int(hingeAngle)) degrees")
+        if let foldError { Text(foldError).foregroundStyle(Palette.warning) }
+      }
+      .frame(width: 220)
+      .padding(Space.lg)
+    }
+  }
+
   private var dualSimulatorUDID: String? {
-    guard device.formFactor == .dual, screenIDs.count > 1, case .ios(_, let sim) = device else { return nil }
+    guard viewer, !replaying, device.isRunning, !device.isPhysical, device.formFactor == .dual,
+      screenIDs.count > 1, case .ios(_, let sim) = device
+    else { return nil }
     return sim.udid
   }
 
-  /// The iPhone Duo's posture: folded when the cover is lit, else the open posture Stim Desktop last set, since the
-  /// lit panel is the same at 120 and 180 degrees.
+  private var clipboardTarget: String? {
+    guard viewer, interactive, !replaying, device.isRunning else { return nil }
+    switch device {
+    case .ios(_, let sim) where sim.owned && !sim.physical: return sim.udid
+    case .android(_, let avd) where avd.owned && !avd.physical: return avd.serial
+    default: return nil
+    }
+  }
+
+  private var simulatorOptionsUDID: String? {
+    guard viewer, interactive, !replaying, device.isRunning, case .ios(_, let sim) = device, !sim.physical else { return nil }
+    return sim.udid
+  }
+
+  private var currentHingeAngle: Double {
+    if let observedHingeAngle { return observedHingeAngle }
+    guard case .ios(_, let sim) = device else { return 180 }
+    return SimulatorPosture.estimatedAngle(udid: sim.udid, folded: posture.map { $0 == "Folded" })
+  }
+
   private var duoPosture: DuoPosture? {
-    guard let posture, case .ios(_, let sim) = device else { return nil }
-    if posture == "Folded" { return .closed }
-    return SimulatorPosture.lastPosture(udid: sim.udid) == .halfOpen ? .halfOpen : .open
+    guard let posture, case .ios = device else { return nil }
+    if let observedHingeAngle {
+      return DuoPosture.allCases.first { $0.hingeAngle == observedHingeAngle.rounded() }
+    }
+    let preset = DuoPosture.allCases.first { $0.hingeAngle == currentHingeAngle }
+    return preset?.isFolded == (posture == "Folded") ? preset : nil
   }
 
   private func postureMenu(serial: String, current: EmulatorPosture) -> some View {
@@ -437,7 +667,7 @@ struct DeviceTile: View {
     }
     .menuStyle(.button)
     .menuIndicator(.hidden)
-    .buttonStyle(.stim())
+    .buttonStyle(DeviceControlButtonStyle())
     .fixedSize()
     .help(postureFailed ? "The last posture change did not reach the emulator." : "Posture: moves the emulator's hinge.")
     .accessibilityLabel(postureFailed ? "Posture failed, retry" : "Posture")
@@ -461,13 +691,25 @@ struct DeviceTile: View {
     pixelSizes[screenID].map { $0.width * $0.height }
   }
 
+  private var displayedScreenIDs: [UInt32] {
+    if framed, device.formFactor == .dual, let mainScreenID { return [mainScreenID] }
+    let litIDs = screenIDs.filter { lit[$0] == true }
+    return litIDs.count == 1 ? litIDs : screenIDs
+  }
+
   private func screenHeight(_ screenID: UInt32) -> CGFloat {
+    if let size = accurateSize(screenID) { return size.height }
     let full = fittedHeight - screenPadding * 2
-    return screenIDs.count > 1 && screenID != mainScreenID ? full * 0.3 : full
+    return displayedScreenIDs.count > 1 && screenID != mainScreenID ? full * 0.3 : full
+  }
+
+  private func layoutSize(_ screenID: UInt32) -> CGSize? {
+    framed ? frameSizes[screenID] ?? pixelSizes[screenID] : pixelSizes[screenID]
   }
 
   private func screenWidth(_ screenID: UInt32) -> CGFloat? {
-    guard let size = pixelSizes[screenID], size.height > 0 else { return nil }
+    if let size = accurateSize(screenID) { return size.width }
+    guard let size = layoutSize(screenID), size.height > 0 else { return nil }
     return screenHeight(screenID) * size.width / size.height
   }
 
@@ -477,9 +719,9 @@ struct DeviceTile: View {
   }
 
   private var width: CGFloat {
-    let widths = screenIDs.compactMap(screenWidth)
-    if widths.count == screenIDs.count {
-      return max(Self.minimumWidth, widths.reduce(0, +) + screenPadding * CGFloat(screenIDs.count + 1))
+    let widths = displayedScreenIDs.compactMap(screenWidth)
+    if widths.count == displayedScreenIDs.count {
+      return max(Self.minimumWidth, widths.reduce(0, +) + screenPadding * CGFloat(displayedScreenIDs.count + 1))
     }
     if case .remote = device { return max(360, fittedHeight * 0.6) }
     switch device.formFactor {
@@ -491,17 +733,22 @@ struct DeviceTile: View {
   }
 
   private var fittedHeight: CGFloat {
-    let screenHeight = min(screenHeight, maxCardHeight.map { max(0, $0 - headerHeight - 1) } ?? screenHeight)
+    if let height = displayedScreenIDs.compactMap({ accurateSize($0)?.height }).max() {
+      return height + screenPadding * 2
+    }
+    let availableHeight =
+      screenHeight - (viewer && (interactive && Self.hasButtons(device) || canShowFrame) ? controlsHeight + Space.lg : 0)
+    let screenHeight = min(availableHeight, maxCardHeight.map { max(0, $0 - headerHeight - 1) } ?? availableHeight)
     guard let maxWidth else { return screenHeight }
     if replaying, let size = replaySize, size.width > 0, size.height > 0 {
       return min(screenHeight, (maxWidth - screenPadding * 2) * size.height / size.width + screenPadding * 2)
     }
-    let ratios = screenIDs.compactMap { screenID -> CGFloat? in
-      guard let size = pixelSizes[screenID], size.height > 0 else { return nil }
-      return size.width / size.height * (screenIDs.count > 1 && screenID != mainScreenID ? 0.3 : 1)
+    let ratios = displayedScreenIDs.compactMap { screenID -> CGFloat? in
+      guard let size = layoutSize(screenID), size.height > 0 else { return nil }
+      return size.width / size.height * (displayedScreenIDs.count > 1 && screenID != mainScreenID ? 0.3 : 1)
     }
-    if ratios.count == screenIDs.count, !ratios.isEmpty {
-      let room = maxWidth - screenPadding * CGFloat(screenIDs.count + 1)
+    if ratios.count == displayedScreenIDs.count, !ratios.isEmpty {
+      let room = maxWidth - screenPadding * CGFloat(displayedScreenIDs.count + 1)
       return min(screenHeight, room / ratios.reduce(0, +) + screenPadding * 2)
     }
     if case .remote = device { return min(screenHeight, maxWidth / 0.6) }
@@ -522,6 +769,17 @@ struct DeviceTile: View {
     }
   }
 
+  private func accurateSize(_ screenID: UInt32) -> CGSize? {
+    guard viewer, !replaying, let pixelScale, let size = layoutSize(screenID) else { return nil }
+    let scale = pixelScale * (framed ? framePixelsPerUnit : 1)
+    return CGSize(width: size.width * scale, height: size.height * scale)
+  }
+
+  private func accurateScreenSize(_ screenID: UInt32) -> CGSize? {
+    guard let pixelScale, let size = pixelSizes[screenID] else { return nil }
+    return CGSize(width: size.width * pixelScale, height: size.height * pixelScale)
+  }
+
   private var identity: String {
     var parts = [[device.label, device.detail].compactMap { $0 }.joined(separator: " "), source]
     if let tool = ActivityBadge(device.activity)?.driverTool { parts.append("Driven by \(tool)") }
@@ -531,16 +789,26 @@ struct DeviceTile: View {
   @ViewBuilder private var screen: some View {
     switch device {
     case .ios(_, let sim) where device.isRunning && !sim.physical:
-      HStack(alignment: .bottom, spacing: screenPadding) {
+      HStack(alignment: .bottom, spacing: displayedScreenIDs.count > 1 ? screenPadding : 0) {
         ForEach(screenIDs, id: \.self) { screenID in
           SimulatorDisplayView(
-            udid: sim.udid, screenID: screenID, interactive: interactive,
+            udid: sim.udid, screenID: screenID, interactive: interactive && displayedScreenIDs.contains(screenID),
             onPixelSizeChange: { pixelSizes[screenID] = $0 },
             onLitChange: screenIDs.count > 1 ? { lit[screenID] = $0 } : nil,
-            buttons: screenID == mainScreenID ? simulatorButtons : nil
+            buttons: screenID == mainScreenID ? simulatorButtons : nil,
+            hingeAngle: viewer && device.formFactor == .dual && posture == "Unfolded" && screenID == mainScreenID
+              ? observedHingeAngle : nil,
+            showsDeviceFrame: viewer && showsDeviceFrame, onFrameSizeChange: viewer ? { frameSizes[screenID] = $0 } : nil,
+            duoFrame: viewer && device.formFactor == .dual ? duoFrame : nil, activeScreenID: mainScreenID,
+            duoHingeAngle: observedHingeAngle, artworkScale: pixelScale.map { $0 * framePixelsPerUnit },
+            accurateScreenSize: accurateScreenSize(screenID)
           )
-          .frame(width: screenWidth(screenID), height: screenHeight(screenID))
-          .opacity(screenID == mainScreenID ? 1 : 0.4)
+          .frame(
+            width: displayedScreenIDs.contains(screenID) ? screenWidth(screenID) : 0,
+            height: displayedScreenIDs.contains(screenID) ? screenHeight(screenID) : 0
+          )
+          .opacity(displayedScreenIDs.contains(screenID) ? 1 : 0)
+          .accessibilityHidden(!displayedScreenIDs.contains(screenID))
         }
       }
       .padding(screenPadding)
@@ -554,15 +822,21 @@ struct DeviceTile: View {
       }
     case .android(_, let avd) where device.isRunning && avd.owned && !avd.physical:
       if let serial = avd.serial {
-        EmulatorScreen(serial: serial, interactive: interactive, buttons: emulatorButtons) { pixelSizes[1] = $0 }
-          .frame(width: screenWidth(1))
-          .padding(screenPadding)
-          .task(id: "\(serial) \(String(describing: pixelSizes[1]))") {
-            while !Task.isCancelled {
-              emulatorPosture = await EmulatorPosture.current(serial: serial)
-              try? await Task.sleep(for: .seconds(emulatorPosture == nil ? 30 : 5))
-            }
+        EmulatorScreen(
+          serial: serial, interactive: interactive, buttons: emulatorButtons, avdName: avd.name,
+          fullResolution: pixelScale != nil,
+          artworkScale: pixelScale,
+          accurateScreenSize: accurateScreenSize(1),
+          showsDeviceFrame: viewer && showsDeviceFrame, onFrameSizeChange: viewer ? { frameSizes[1] = $0 } : nil
+        ) { pixelSizes[1] = $0 }
+        .frame(width: screenWidth(1))
+        .padding(screenPadding)
+        .task(id: "\(serial) \(String(describing: pixelSizes[1]))") {
+          while !Task.isCancelled {
+            emulatorPosture = await EmulatorPosture.current(serial: serial)
+            try? await Task.sleep(for: .seconds(emulatorPosture == nil ? 30 : 5))
           }
+        }
       } else {
         placeholder(device.state)
       }
@@ -600,6 +874,21 @@ struct DeviceTile: View {
 
   private func placeholder(_ text: String) -> some View {
     ScreenMessage(text: text)
+  }
+}
+
+private struct DeviceControlButtonStyle: ButtonStyle {
+  var active = false
+  @Environment(\.isEnabled) private var isEnabled
+
+  func makeBody(configuration: Configuration) -> some View {
+    configuration.label
+      .font(.system(size: 16, weight: .regular))
+      .foregroundStyle(Palette.text)
+      .frame(width: 32, height: 32)
+      .background(Palette.text.opacity(active ? Opacity.pressed : 0), in: Capsule())
+      .hoverHighlight(radius: Radius.round)
+      .opacity(isEnabled ? (configuration.isPressed ? 0.7 : 1) : Opacity.disabled)
   }
 }
 
@@ -671,6 +960,12 @@ private struct EmulatorScreen: View {
   var serial: String
   var interactive: Bool
   var buttons: EmulatorButtons
+  var avdName: String
+  var fullResolution: Bool
+  var artworkScale: CGFloat?
+  var accurateScreenSize: CGSize?
+  var showsDeviceFrame: Bool
+  var onFrameSizeChange: ((CGSize?) -> Void)?
   var onPixelSizeChange: (CGSize) -> Void
   @State private var status = EmulatorStreamStatus.connecting
 
@@ -678,7 +973,9 @@ private struct EmulatorScreen: View {
     EmulatorDisplayView(
       serial: serial, interactive: interactive,
       onStatus: { status in DispatchQueue.main.async { self.status = status } },
-      onPixelSizeChange: { size in DispatchQueue.main.async { onPixelSizeChange(size) } }, buttons: buttons
+      onPixelSizeChange: { size in DispatchQueue.main.async { onPixelSizeChange(size) } }, buttons: buttons,
+      avdName: avdName, showsDeviceFrame: showsDeviceFrame, onFrameSizeChange: onFrameSizeChange, fullResolution: fullResolution,
+      artworkScale: artworkScale, accurateScreenSize: accurateScreenSize
     )
     .overlay {
       switch status {
@@ -779,4 +1076,9 @@ extension ActivityBadge {
     if case .driven(let tool, _) = self { return tool }
     return nil
   }
+}
+
+private struct ClipboardRequest: Equatable {
+  var target: String
+  var text: String?
 }

@@ -96,6 +96,18 @@ describe('active build record', () => {
         rekeyedBy: [],
       });
 
+      expect(buildReport(activeRecord()!, { state: 'running', history: undefined })).toMatchObject({
+        phase: 'prepare',
+        outcome: 'cold',
+        outcomeKnown: true,
+      });
+      progress.hit();
+      expect(buildReport(activeRecord()!, { state: 'running', history: undefined })).toMatchObject({
+        phase: 'prepare',
+        outcome: 'hit',
+        outcomeKnown: true,
+      });
+      expect(activeRecord()?.missReason).toBeUndefined();
       progress.clear();
       expect(readBuildDetail(root, claim.claimId)).toBeNull();
       releaseClaim(claim);
@@ -530,6 +542,7 @@ describe('estimates', () => {
       advance(1_000);
       progress.step('cache-lookup');
       expect(report()).toMatchObject({ outcomeKnown: false, expectedMs: 200_000 });
+      expect(report()).not.toHaveProperty('cacheLookupOutcome');
 
       advance(2_000);
       progress.step('device');
@@ -537,6 +550,7 @@ describe('estimates', () => {
       expect(settled).toMatchObject({
         outcome: 'hit',
         outcomeKnown: true,
+        cacheLookupOutcome: 'hit',
         expectedMs: 22_000,
         basis: 3,
         plannedPhases: [
@@ -572,15 +586,28 @@ describe('estimates', () => {
         outcome: 'cold',
         outcomeKnown: true,
         missProvisional: true,
+        cacheLookupOutcome: 'miss',
         missReason: reason,
       });
 
       progress.hit();
       progress.step('device');
       const hit = report();
-      expect(hit).toMatchObject({ outcome: 'hit', outcomeKnown: true });
+      expect(hit).toMatchObject({ outcome: 'hit', outcomeKnown: true, cacheLookupOutcome: 'hit' });
       expect(hit).not.toHaveProperty('missReason');
       expect(hit).not.toHaveProperty('missProvisional');
+      progress.clear();
+      releaseClaim(claim);
+    });
+
+    test('a run that skips cache lookup reports its outcome without inventing a lookup result', () => {
+      const { claim, progress, report } = live();
+      progress.estimate(projectKey);
+      progress.step('device');
+      expect(report()).not.toHaveProperty('cacheLookupOutcome');
+      progress.step('install');
+      expect(report()).toMatchObject({ outcome: 'hit', outcomeKnown: true });
+      expect(report()).not.toHaveProperty('cacheLookupOutcome');
       progress.clear();
       releaseClaim(claim);
     });

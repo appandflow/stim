@@ -21,6 +21,23 @@ describe('videoPacket', () => {
   });
 });
 
+it('preserves frame-bound artwork rotation in the unchanged video header', () => {
+  for (const artworkTurns of [0, 1, 2, 3]) {
+    const data = Buffer.from([0x65]);
+    const packet = videoPacket('s1', 7, {
+      keyframe: true,
+      capturedAt: 1000,
+      width: 400,
+      height: 800,
+      data,
+      artworkTurns,
+    });
+    expect(packet[1]).toBe(1 | 32 | (artworkTurns << 3));
+    expect(packet.readUInt16BE(2)).toBe(23);
+    expect(packet.subarray(23)).toEqual(data);
+  }
+});
+
 describe('VideoGate', () => {
   const key = { keyframe: true };
   const delta = { keyframe: false };

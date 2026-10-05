@@ -1077,8 +1077,11 @@ export async function acquireIosArtifact(
     await resolveInitialFingerprint();
     if (!easBuild) {
       remote = await resolveRemoteArtifact();
+      if (!appPath) miss(reasonForMiss([]).reason);
       await awaitSharedBuild();
       await prepareCachedArtifact();
+      if (appPath) lateHit();
+      else if (swapFellBack) miss(reasonForMiss([]).reason);
       await buildArtifact();
     }
     const artifact: PreparedIosArtifact = {

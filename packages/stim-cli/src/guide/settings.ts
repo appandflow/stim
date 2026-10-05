@@ -24,7 +24,7 @@ read from, or an unknown key refuses with STIM_BAD_ARG naming the expected
 shape, before anything is written. Writes to the machine file take its lock
 and replace it atomically; a committed write keeps the file's other keys and
 indentation. Run \`stim settings\` from the app directory: workspace and
-committed resolve from the nearest package.json, repo from its Git
+committed resolve from the nearest package.json or Package.swift, repo from its Git
 repository. From a monorepo web package that resolves to its worktree's app
 (see stim guide ports), workspace and committed are that app's entry and
 .stim.json. worktree.exclude and worktree.defaultBranch are read only from
@@ -43,7 +43,7 @@ carries its dotted key, layers, and environment override under "x-stim".
 Resolution order, first match wins:
   1. workspace       ~/.stim/config.json, under this project's entry
   2. repo            ~/.stim/config.json, under this repo's git common dir
-  3. committed       .stim.json beside the app's package.json
+  3. committed       .stim.json beside the app's package.json or Package.swift
   4. machine         ~/.stim/config.json, top-level optimizations,
                      ios.deviceType, ios.runtime, android.systemImage,
                      android.deviceProfile and devices.idleShutdownMinutes
@@ -252,14 +252,17 @@ ${ANDROID_AVD_CONFIG_HELP.map((line) => `                          ${line}`).joi
                         shares this machine and is the only mode that needs no
                         tunnel. "expo" lets the Expo dev server tunnel itself.
                         "cloudflared" and "ngrok" name a managed provider
-                        explicitly. Any other value is refused as invalid.
+                        explicitly. "tailscale" explicitly selects a tailnet-only
+                        foreground serve process, never Funnel; "auto" never
+                        selects it. The device must share the tailnet. See
+                        \`guide metro\`. Any other value is refused as invalid.
   metro.ngrokUrl        the stable managed ngrok URL. It requires metro.tunnel
                         "ngrok" and passes --url to ngrok http. Stim owns
                         this process.
   metro.publicUrl       an existing tunnel's URL. Takes precedence over
                         starting one, whatever metro.tunnel says -- Stim
                         did not create it, so a Metro request through it is
-                        still gated the same way a managed tunnel's is. Set it
+                        still gated through a public bundle probe. Set it
                         before Expo start so the manifest advertises it.
   metro.port            this workspace's Metro port, 1024-65535;
                         STIM_METRO_PORT overrides it. Stim reserves this
@@ -304,6 +307,12 @@ ${ANDROID_AVD_CONFIG_HELP.map((line) => `                          ${line}`).joi
                         shuts it down, never deletes it. Default 0, never.
                         Machine or project layers. Read when the supervisor
                         starts; see \`guide lifecycle budget\`.
+  macos.product         the explicit Swift Package executable product built in
+                        Debug by stim macos
+  macos.infoPlist       development Info.plist relative to Package.swift,
+                        without shared URL schemes or an update feed
+  macos.arguments       string array passed directly to the executable;
+                        see stim guide macos for the prototype's limits
   web.url               the page \`stim web\` opens in the owned Chrome, an
                         http:// or https:// URL. {port:<label>} becomes the
                         workspace's named port (allocated like \`stim ports
@@ -512,6 +521,37 @@ test suites and the end-to-end harness use one -- and a scoped config must not
 leave simulators on the machine it cannot account for. A redirected home that
 wants a pool says so with the variable.
 
+HOSTING MACHINES ARE MACHINE-LEVEL
+\`hosting.machines\` names Macs that may host owned simulator sessions,
+by MagicDNS name with an optional serve port (default 7443). Name each node
+and port once. This is separate from build offloading:
+
+  stim settings set hosting.machines '["janics-mac-mini"]'
+  stim doctor --fix
+
+Only \`doctor --fix\` asks for device-host access. A person on that Mac
+approves the printed id with \`stim-server devices grant <id> --device-host\`.
+Hosting grants include no read, control or build capability.
+$STIM_HOME/device-host-machines.json stores a private token and pinned tailnet
+node. Doctor never prints the token; it reports each machine under deviceHosts
+in JSON. Stim sends tokens only to the pinned node's own tailnet address,
+with its MagicDNS name for TLS and Host routing. A changed node refuses
+access, and uncertain replies or unreadable credentials preserve the pin.
+Invalid hosting settings report an error and preserve every saved credential.
+\`doctor --fix\` forgets entries removed from hosting.machines; remove a
+replaced machine, run it, then re-add the name to request a new approval.
+A definite revoked or lapsed request can be requested again with --fix.
+An in-progress approval inspection reports busy rather than replacing its
+pending token. This configures approval only; \`ios\` and \`android\` do
+not yet place sessions on these machines.
+
+On a hosting Mac, \`hosting.agentDriver\` names the tool it starts so a
+client's coding agent can drive the macOS apps it hosts for that client.
+The default, \`none\`, starts nothing. \`agent-device\` starts its
+daemon only once agent-device can lease a single macOS app. Until then
+agent control reports \`none\` with a notice, and no client is handed the
+Mac's desktop.
+
 BUILD MACHINES ARE MACHINE-LEVEL
 \`offload.machines\` lists the Macs on the tailnet that may build for this one,
 by MagicDNS name, each optionally with the port of its \`tailscale serve\`
@@ -621,6 +661,12 @@ worker root stops it too.
 running as a login LaunchAgent; \`--path-prepend <dir>\` and \`--env KEY=VALUE\`
 pin a PATH entry or variable such as a private CocoaPods that stim-server's
 login-shell environment would otherwise replace.
+Installation alone does not prove readiness; check \`stim-server service status\`
+and its reported log. A read-only recording-directory check refuses startup
+when a read does not return within 10 seconds, plus up to one second to stop
+the check, before status followers or native helpers start. It preserves
+claims and recordings; it does not restore an inaccessible volume or grant
+filesystem access.
 
 THE GC WORKTREE GRACE PERIOD IS MACHINE-LEVEL
 \`gc.worktreeGraceMinutes\` is how long \`gc --delete\` waits before it removes

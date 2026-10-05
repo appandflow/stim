@@ -66,7 +66,7 @@ jobs:
           fi
 
       - name: Select Xcode
-        run: sudo xcode-select -s /Applications/Xcode_16.4.app
+        run: sudo xcode-select -s /Applications/Xcode_26.3.app
 
       - name: Show the toolchain
         run: |

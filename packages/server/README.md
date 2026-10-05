@@ -16,11 +16,11 @@ The design is in
 stim-server [--port <n>]          # serve paired clients, port 7787 by default
 stim-server pair [--port <n>] [--control]
                                   # print a single-use pairing payload
-stim-server devices [list]        # list paired devices, build clients and build requests
-stim-server devices grant <id> --control|--read|--build
+stim-server devices [list]        # list paired devices, approved clients and access requests
+stim-server devices grant <id> --control|--read|--build|--device-host
                                   # let a paired device run actions, or only read;
-                                  # --build approves a Mac's request to build here
-stim-server devices revoke <id>   # revoke a paired device or build client, or deny a request
+                                  # --build approves builds; --device-host approves device hosting
+stim-server devices revoke <id>   # revoke a paired device or client, or deny a request
 stim-server log                   # list the actions paired devices ran
 stim-server service install|status|uninstall
                                   # run stim-server as a macOS LaunchAgent, see below
@@ -32,8 +32,10 @@ serving command: see [Run as a service](#run-as-a-service).
 `pair --json` prints `{ "qr": <payload>, "expiresAt": "<ISO time>" }`, and
 `devices --json` prints `{ "devices": [...] }` with each device's `id`, `name`,
 `identity`, `pairedAt`, `lastSeenAt` and `capabilities`, never its token hash,
-followed by the [build clients](#build-access); a pending build request also
-carries `pendingUntil`.
+followed by the [build clients](#build-access) and [device-host clients](#device-host-approval).
+New client records carry `requestedCapability` (`build` or `device-host`),
+including after approval. Pending records also carry `pendingUntil`; a legacy
+pending record without `requestedCapability` is a build request.
 `log --json` prints `{ "actions": [...] }`, the records described under
 [Actions](#actions).
 
@@ -67,7 +69,12 @@ same tailnet or with the Mac shared to the phone's user.
 addresses, never on every interface. It re-reads the Tailscale state in the
 background, so a server that started before Tailscale was up, or while it did
 not answer, starts listening on the Tailscale addresses once it runs, and stops
-when it goes away. Run this once so clients can use
+when it goes away. In Stim Desktop, choose **Set up connection** in Settings >
+Phones to create and verify the private route without a terminal command. A
+missing or unreadable route keeps Desktop pairing unavailable; HTTPS setup may
+require Tailscale browser approval. Existing routes stay unchanged.
+
+For manual server setup, run this once so clients can use
 `wss://<mac>.<tailnet>.ts.net:7443` with a valid certificate:
 
 ```bash
@@ -87,6 +94,15 @@ Funnel port makes it public, and `pair` refuses.
 
 When Tailscale is not running, `stim-server` listens on loopback only and
 says so on stderr. Start Tailscale, then restart `stim-server`.
+
+Desktop uses `route.setup` with no parameters on its authenticated loopback
+control connection. The result is a verified `ServeRoute`; an existing route is a
+no-op. The server refuses forwarded, browser-origin or tailnet connections,
+read-only clients, unknown configuration and any route exposing this server
+through Funnel. Only the fixed `tailscale serve --bg --https=<free port>
+http://127.0.0.1:<server port>` invocation runs, followed by route verification.
+No LaunchAgent or Funnel configuration is created. Failure output remains
+available for an explicit retry, including Tailscale's HTTPS approval link.
 
 ## Pairing
 
@@ -174,6 +190,349 @@ never grants it.
 `stim-server` release without `build` never reads them and refuses their
 tokens.
 
+## Device-host approval
+
+Device hosting has a separate `device-host` capability. An approved client can
+reserve, boot, reconnect to and stop its own iOS simulator or Android emulator
+through the protocol. It can deliver, install and launch a compatible iOS app
+bundle or Android APK, stream the iOS simulator and control it. The hosted iOS
+app connects back to Metro on the client Mac. Automatic CLI placement, client view/control relays and
+Android Metro and viewing remain in [#2266](https://github.com/appandflow/stim/issues/2266).
+
+The Stim client can name expected hosts with
+`stim settings set hosting.machines '["<mac>"]'` and request access with
+`stim doctor --fix`. It stores a separate private credential in
+`$STIM_HOME/device-host-machines.json`, pins the worker's tailnet node, and
+reports approval under `deviceHosts` in doctor JSON. Plain doctor makes no
+approval request. This setup does not yet place CLI sessions remotely.
+
+A client on the tailnet sends `hello` with
+`auth: { "request": "device-host", "deviceName": "Laptop" }`. As with a build
+request, the server returns a token and pending approval, then closes the
+connection. It binds the token to the peer's tailnet node. Requests expire
+after 15 minutes; each node keeps only its newest pending request of this kind,
+and at most eight device-host requests can be pending. Build requests have a
+separate limit. The same name validation and failed-attempt limit apply.
+
+On the hosting Mac, inspect `stim-server devices`, then approve the matching
+request with `stim-server devices grant <id> --device-host`, or use **Allow**
+in Stim Desktop. Approve only an expected request: it authorizes that Mac to
+reserve session-owned simulators or emulators and run native app code. **Deny**
+or `stim-server devices revoke <id>` removes it; revocation also closes its
+open authenticated connections. The local-process trust boundary described in
+[Build access](#build-access) applies here too.
+
+Hosting clients live in `$STIM_HOME/server/device-host-clients.json`, separate
+from phone pairings and build clients. A hosting token grants no `read`,
+`control` or `build` access, including access to unrelated workspaces. Existing
+read, control and build tokens cannot gain hosting through `devices grant`.
+Loopback requests and `pair --device-host` are refused.
+
+### Hosted availability offers
+
+Before reserving, an approved hosting client can send:
+
+```json
+{ "id": 1, "method": "device-host.offer", "params": { "platform": "ios", "runtime": "27.0" } }
+```
+
+Use `platform: "android"` with optional `systemImage` and `deviceProfile`, or
+`ios` with optional `deviceType` and `runtime`. Omit selectors for the same
+installed defaults used by reserve. The response includes `platform`, the
+selected SDK `choice` (runtime/model/image and host architecture), `resources`,
+`capacity` and a nullable `declined` reason. An unavailable SDK choice is `null`
+with a reason; unknown or elevated memory pressure declines. The query creates
+no session, simulator, AVD or ownership claim.
+
+`capacity.running` counts every reservation not confirmed stopped, including
+unresolved sessions. `max` is `concurrency.maxDevices`; zero means uncapped and
+`available` is then `null`. Android offers also decline when all supported
+console ports are already recorded as occupied. Resource values are advisory:
+`cpus`, five-minute `loadPerCore`, `memoryFreeBytes`, `memoryPressure` (nullable
+when unknown), and `workerDiskFreeBytes` (nullable when unreadable). Disk space
+is measured on the Stim home volume, which can differ from Android AVD storage.
+
+An offer is a snapshot, not a reservation or a boot guarantee. Capacity,
+memory, installed SDKs and local device producers can change before reserve;
+reserve still takes atomic admission and revalidates native preflight. A
+non-null choice with a non-null `declined` reason is currently unavailable.
+This protocol does not select a host for `stim ios` or `stim android`.
+
+### Agent driver route
+
+On the hosting Mac, `hosting.agentDriver` names the tool that lets a client's
+coding agent drive the macOS app hosted for that client. `none` (the default)
+starts nothing. `stim-server` reference-counts the driver's daemon on running
+hosted macOS apps: it starts with the first, stops after the last, on
+revocation and on server shutdown, and restarts if it exits while apps run. The
+daemon is held under an ownership claim at `server/agent-device.claims` whose
+child is the daemon, and its state lives in `server/agent-device`.
+
+Each hosted app gets a grant scoped to one client and one app. The grant's
+token is kept in memory only, is returned to that client in `app.launch` and
+`app.attach` results, and is never journaled or logged. The route
+
+```text
+ANY /device-host/agent/<session>/<driver path>
+```
+
+on the tailnet `serve` route is forwarded to the loopback daemon, with the
+daemon's own token, only when all of these hold: the request carries that
+session's token as a bearer token, it comes from the tailnet node pinned to the
+session's approved device-host client, the client still holds `device-host`, and
+the session's app is running. Loopback requests, browser requests and other
+sessions' tokens are refused with 403, an unknown or stopped session with 404.
+
+The `agent-device` adapter finds the binary at `~/.local/bin/agent-device`,
+`/opt/homebrew/bin/agent-device` or `/usr/local/bin/agent-device` and never
+searches `PATH`. agent-device has no remote lease limited to one macOS app, so
+the adapter does not start and the grant is `{ "driver": "none" }` with a
+notice; Stim never hands out the Mac's desktop.
+
+### Hosted iOS session protocol
+
+An approved client sends `device-host.reserve` with an opaque attempt ID and
+its workspace/slot identity:
+
+```json
+{
+  "id": 1,
+  "method": "device-host.reserve",
+  "params": {
+    "workspace": "/client/app",
+    "slot": "default",
+    "platform": "ios",
+    "attempt": "run-1",
+    "deviceType": "iPhone 17 Pro",
+    "runtime": "27.0"
+  }
+}
+```
+
+Omit `deviceType` and `runtime` to use the worker's installed defaults. The
+response names an opaque session and its `preparing`, `ready`, `stopping`,
+`stopped` or `unknown` state. Native work runs in a separate bounded child, so
+the connection remains available. Poll `device-host.attach` with
+`{"session":"<id>"}` or `{"attempt":"run-1"}`; a ready session includes the
+exact simulator, runtime and architecture selected on the worker.
+
+After a lost reply or connection, replay the same reserve request or attach to
+its attempt. That resolves the same session; a changed request with that attempt
+is refused. Another attempt cannot replace an occupied workspace/slot. The
+client never supplies a worker filesystem path or another client's session.
+`device-host.stop` with `{"session":"<id>"}` shuts down only its recorded,
+ledger-owned simulator. Poll attach for completion. A new attempt may reserve
+after the previous one is confirmed stopped. Stopped device records remain for
+ownership and reconciliation; stop does not delete the simulator.
+
+The worker persists the journal under `$STIM_HOME/server/device-host-sessions/`
+and chooses an isolated worker home under `$STIM_HOME/device-host/sessions/`.
+An uncertain create, child exit, journal or shutdown outcome retains the slot
+as `unknown`. Explicit stop can reconcile a complete record after a server
+restart; a live or unverifiable owner is refused. Missing ownership records
+need operator investigation, never a replacement inferred from a simulator name.
+Revoking this client's approval stops its sessions without granting access to
+the worker's other devices.
+
+`concurrency.maxDevices` bounds hosted reservations atomically, including
+unresolved sessions. Ordinary local producers do not join that reservation
+transaction, so this is not a machine-wide hard capacity guarantee. Unknown
+inventory or elevated/unknown memory pressure refuses native creation. This
+protocol slice does not change `stim ios` placement.
+
+### Hosted Android session protocol
+
+The same reserve/attach/stop methods accept `platform: "android"` with optional
+`systemImage` (an installed `system-images;android-<api>;<tag>;<abi>` package)
+and `deviceProfile` (an installed avdmanager profile). iOS selectors refuse on
+Android requests. The image must match the host architecture. Omitted selectors
+use Stim's existing compatible installed-image and default-profile choice.
+The worker process needs an Android SDK and a JDK that `avdmanager` can use.
+
+```json
+{
+  "id": 1,
+  "method": "device-host.reserve",
+  "params": {
+    "workspace": "/client/worktree",
+    "slot": "default",
+    "platform": "android",
+    "attempt": "android-1",
+    "systemImage": "system-images;android-30;google_apis;arm64-v8a",
+    "deviceProfile": "pixel_6"
+  }
+}
+```
+
+A preparing Android result includes a server-selected `consolePort`. The journal
+reserves distinct ports among hosted sessions and excludes the ports in the
+host's local config. The worker refuses an observed occupied port before
+creation and before boot. Local producers do not participate in this reservation,
+so a racing local launch can still refuse a hosted boot; this is not a
+machine-wide hard port or device-capacity guarantee.
+
+A ready Android `device` has `avdName`, `serial`, `consolePort`, `systemImage`,
+`deviceProfile` and `architecture` (`arm64-v8a` or `x86_64`). The worker verifies
+its exact AVD name and running ABI before reporting ready. Creation remains
+inside the worker's claimed process group. The worker opens no emulator viewer.
+Stop and revocation use centralized teardown only for its private ledger's exact
+AVD. They shut down and retain its AVD data and record; unknown native outcomes
+retain the reservation and require explicit reconciliation. Android Metro
+and screen/input routing remain follow-ups in #2266. Android sessions
+refuse the iOS Metro, view and input routes.
+
+### Hosted iOS app delivery
+
+App offers, chunks and launches require a ready session held by this server.
+After its owner disappears, session attach reports `unknown`; app operations
+refuse until explicit stop reconciles the retained session. A ready journal
+entry alone does not authorize another native operation.
+
+Send `device-host.app.offer` with the ready session, a new opaque app `attempt`,
+the expected `bundleId`, `mode: "development"|"release"`, and
+`manifest: {"sha256":"<digest>","size":<bytes>}`. The manifest is a UTF-8 JSON
+array of `{path, kind, size, sha256}` entries, where `kind` is `file`, `exec` or
+`link`. Paths are relative to the `.app` root. A link's content is its relative
+target; it must resolve inside the bundle. No entry may sit below a file or
+link. Duplicate paths, including Unicode/case aliases, are refused.
+
+An offer returns `{delivery, missing}`. Upload each missing digest with
+`device-host.app.chunk` and `{session, attempt, sha256, offset, data}`; `data` is
+base64 for at most 32 KiB of raw bytes. The reply names the next byte `offset`.
+Replay of the same bytes is safe after a lost reply. Re-offer to learn received
+offsets. Upload the manifest first, then re-offer for its missing file content.
+The manifest is limited to 8 MiB and 20,000 entries, with at most 1 GiB per file,
+1 KiB per link, and 4 GiB of declared bundle content. An app attempt cannot
+change its identity, mode or manifest. Complete a receiving attempt or stop the
+session before starting another transfer.
+
+After every digest is verified, call `device-host.app.launch` with
+`{session, attempt}`. Poll `device-host.app.attach` for `installed` or `unknown`.
+Reconnect to the same app attempt to reconcile a lost launch reply; replay
+does not install or launch twice. Session attach includes the latest
+`appAttempt`. Development offers may include `devClientScheme` for an Expo
+development client; the attempt cannot change that scheme. The worker verifies the plist identity and simulator metadata,
+the executable's Mach-O platform, architecture and minimum OS, then rechecks
+the exact private device ledger before install and launch.
+
+Development launch reports `launched: "unverified"`: a bridge or native process
+alone does not prove bundle delivery. Release launch reports `true` only after observing a live native app
+process; absent evidence remains `"unverified"`. Stop and approval revocation
+cancel an in-flight install before shutting down the owned simulator. Uncertain
+native outcomes retain the session as `unknown`; explicitly stop it before
+retrying. Receipts and artifacts remain in the server-chosen session area;
+artifact retention and session reuse/retirement remain under
+[#2266](https://github.com/appandflow/stim/issues/2266) and
+[#2348](https://github.com/appandflow/stim/issues/2348).
+
+### Hosted Android app delivery
+
+Android sessions use the same app offer/chunk/launch/attach methods, with
+`bundleId` naming the expected Android package. Their manifest has exactly one
+`file` entry named `App.apk`, with the APK's byte size and SHA-256. Upload the
+manifest first, then the APK through the same resumable 32 KiB chunks.
+
+The worker verifies both digests, inspects the APK's package identity, minimum
+SDK and native library ABIs with installed Android build-tools, and rechecks the
+private ledger, exact running AVD and ABI before installation and launch. It
+resolves adb from that SDK even when the worker PATH does not include it. A
+signature or installation conflict refuses; hosting does not uninstall an
+existing app to resolve it.
+
+Release launch reports `true` only after observing a live package process.
+Development launch remains `unverified`; this driver launches the activity but
+does not wire an Android Metro bridge. Replaying an installed app attempt does
+not install or launch again. Owner loss, stop, revocation and uncertain outcomes
+retain the same reconciliation rules as iOS. Android viewing, Metro and client
+placement remain under [#2266](https://github.com/appandflow/stim/issues/2266).
+
+### Private hosted Metro
+
+The client keeps its verified workspace Metro on loopback. It creates a
+`createMetroGateway` from `@stim-cli/core`, binds it only to its own Tailscale
+address, and supplies the pinned worker's literal tailnet address, local Metro
+port and a fresh 32-byte secret encoded as 64 lowercase hex characters. The
+gateway accepts only that worker address and authenticates each connection
+before forwarding to the fixed local Metro port. It never targets a client
+supplied URL. Close the gateway when its session ends.
+
+Call `device-host.metro.open` with `{session, gatewayPort, secret}` on the
+approved hosted connection. The server connects only to that connection's
+authenticated tailnet peer and returns `{port}` for the worker's loopback
+endpoint. Development installation uses that port for `RCT_jsLocation` and,
+when offered, the Expo development-client deep link. HTTP and WebSocket bytes
+stream over WireGuard with socket backpressure; no public tunnel, Funnel or
+Tailscale serve configuration change is needed. The 64 KiB server message
+limit remains unchanged.
+
+Replaying the same open request keeps the port. Client disconnection leaves
+the bridge available for the same session while its server owner lives. Call
+`device-host.metro.close` to replace a gateway, then reopen on the same port;
+an occupied port refuses rather than sending the app to another listener.
+Closing a bridge interrupts its active streams. Stop, revocation and server
+shutdown close its sockets before device shutdown. After a server owner
+disappears, the retained session requires explicit stop, as app delivery does.
+
+Expo dev-launcher and CLI versions that send and honor the `Forwarded` header
+resolve relative manifest URLs against the worker origin. Older versions may
+embed the client's local port instead; this slice does not rewrite manifests
+or claim that those versions work through a different worker port. Client
+placement still needs to check that contract before selecting hosted Metro.
+Bare React Native uses the worker `RCT_jsLocation`. Bridge readiness and
+manifest requests are not launch proof; development remains `unverified` until
+the workspace observes the app's own bundle delivery.
+This is a protocol API for approved clients; automatic CLI placement,
+client view/control relays and Android Metro/viewing remain in [#2266](https://github.com/appandflow/stim/issues/2266).
+
+### Hosted iOS view and input
+
+An approved hosting client can subscribe to its ready session's exact owned
+simulator without access to the worker's registered workspaces:
+
+```json
+{
+  "id": 8,
+  "method": "device-host.frames.subscribe",
+  "params": { "session": "<hosted-session-id>", "fps": 5, "maxEdge": 1280 }
+}
+```
+
+The result contains a subscription ID. JPEG delivery uses the existing `frame`
+events; `video: ["h264"]` selects the existing H.264 binary stream and its
+backpressure/keyframe rules. `device-host.frames.keyframe` and
+`device-host.unsubscribe` take that subscription ID as `params.subscription`.
+Hosted capture requires the compiled `stim-frames` helper and does not support
+replay or screenshot fallback.
+
+Start control with `device-host.control.begin` and
+`{"session":"<hosted-session-id>"}`. Its result returns a connection-bound
+control session ID and `lease: null`: the hosted lifetime claim protects this
+private device. Only one controller can drive the device; `takeOver: true`
+replaces the previous controller. Use the returned control ID with
+`device-host.input.touch|text|button|rotate|posture`, using the same parameters
+as ordinary input. Touch coordinates range from 0 to 1 on the streamed display.
+End it with `device-host.control.end` and `{"session":"<control-id>"}`.
+
+The worker derives the workspace, slot and UDID from its owned session; callers
+cannot select arbitrary worker devices. Every begin and input rechecks session
+ownership and current approval. Hosting approval grants neither ordinary
+`frames.subscribe` nor ordinary `control.begin` access. Disconnecting releases
+that connection's capture and input; reconnect to the same hosted session and
+subscribe again.
+
+Installation, stop, revocation and server close end capture and input before
+native work reuses the session claim. In-flight native input settles before
+teardown even after disconnect or takeover; a timeout waits for its child to
+terminate. Known capture closes even if the journal
+is unreadable or unwritable; unresolved native state and claims remain retained.
+Hosted posture commands hold a separate child-aware input claim. A surviving
+command or unresolved child identity blocks replacement ownership, install and
+stop even after the server and capture helper exit; the refusal names the claim
+and its manual cleanup command. An unknown or lost owner requires explicit stop
+before replacement. This worker
+protocol does not add CLI placement or a local viewer relay; those remain in
+[#2266](https://github.com/appandflow/stim/issues/2266).
+
 ## Run as a service
 
 `stim-server service install` runs stim-server as a per-user LaunchAgent on
@@ -200,9 +559,19 @@ the old plist and job back. `install` and `uninstall` act only on a plist
 that `install` wrote, and refuse a port that another stim-server (Stim
 Desktop's, for example) already answers on. Install from a permanent
 installation, not from an `npx` cache, because the plist stores its paths. It never touches pairings, anything
-under `$STIM_HOME/server` or settings. Start-up reads the login shell's
-environment, which can take a minute, so `install` waits up to 15 seconds for
-`/health` and otherwise tells you to run `status`.
+under `$STIM_HOME/server` or settings. `install` waits up to 15 seconds for
+`/health`; an installed LaunchAgent without a health response reports readiness
+as unavailable and points to `status` and its log. Installation success alone
+does not prove that the server is ready.
+
+Before starting status followers, native helpers or recording, the server checks
+the recording ownership directories in a read-only child process. A directory
+read that does not return fails startup after 10 seconds, plus up to one second
+to stop the child. Returned filesystem errors still go through the recorder's
+existing claim refusal; missing directories are created by that protocol.
+This diagnostic preserves claims and recordings. It does not restore an
+inaccessible volume or change the server's permissions. Loss of filesystem
+access after the check still needs an operating-system access remedy.
 
 The job runs in your GUI login session, so it starts when you log in and not at
 boot. On a Mac with no one at the screen, turn on automatic login. Moving the
@@ -431,7 +800,7 @@ Events are `{ "event", "subscription", ... }`.
   `machine.details` uses the same reader. `settings.get` runs
   `stim settings --json`, which masks sensitive values. Without `workspace`,
   these reads use the home directory as their project context.
-- `frames.subscribe` takes `workspace`, `platform` (`ios`, `android` or `web`),
+- `frames.subscribe` takes `workspace`, `platform` (`ios`, `android`, `web` or `macos`),
   `slot` (`default` when absent), `fps` (1 to 30, 5 by default) and `maxEdge`
   (240 to 2048 pixels, 1280 by default), and sends `frame` events: a JPEG,
   base64 in `data`, with `width`, `height` and `capturedAt`, at most `fps` a
@@ -446,6 +815,33 @@ Events are `{ "event", "subscription", ... }`.
   event, and so does a device that stops or changes owner. A client whose
   socket has more than two frames unsent skips frames and gets the newest
   once it catches up.
+
+  A server advertising `device-frames` accepts `deviceFrame: true` for live
+  ordinary iOS simulators and Android emulators. The existing read permission
+  and registered-workspace/owned-device checks apply. `device-frame` events
+  carry `artwork` (or null): PNG `background` and `foreground` layers, outer
+  `width` and `height`, screen `aperture` (`x`, `y`, `width`, `height`),
+  `cornerRadius`, and clockwise `quarterTurns`. Pixels come from installed
+  DeviceKit or Android skins at runtime; no artwork is bundled and no local
+  file paths are exposed. Layers are sent only to opt-in subscriptions and
+  cleared on replay or device changes. The screen bytes stay unchanged.
+  JPEG `artworkTurns` and live H.264 flag bit 5 with quarter-turns in bits 3-4
+  bind housing to its capture, including same-size rotations. A client shows
+  housing only when that rotation and aperture aspect match its screen.
+  Missing, oversized or unsupported artwork falls back to the existing screen:
+  Duo, Android foldables/circular displays, web and physical devices have no
+  housing in this path. Artwork notices stay within the helper's 16 MiB message
+  limit; the combined PNG layers are limited to 10 MiB before base64 encoding.
+
+  With `macos`, it serves the one visible window of the workspace's verified
+  running native app, in the default slot, when hello advertises `macos-window`.
+  The helper verifies the recorded PID, process start time, executable, bundle
+  identifier and bundle path before starting and while capturing. ScreenCaptureKit
+  selects only that app's window; desktop capture and choosing between multiple
+  windows are unsupported. It requires existing Screen Recording permission and
+  never requests or resets grants. The local health payload sets `nativeViewerOpened` after a verified native view attaches, allowing the Desktop host to present its first-use Screen Recording and Accessibility (called Device Control and Data Access on macOS 27) setup. Only explicit buttons in that host invoke normal OS requests. Capture refusal names setup and System Settings guidance; status and logs remain available. Native windows need the
+  helper, have no screenshot fallback, recording or replay, and consume
+  only the paired device's `read` capability.
 
   Frames come from the `stim-frames` helper. When it starts, the server
   compiles it with `xcrun swiftc` from the Swift sources shipped in
@@ -1002,9 +1398,46 @@ sends reaches any other device.
   `input.posture` takes one of the session's `postures`. A web page takes
   only `back`, its history back, and refuses rotation and posture. Each answers `{}` once the input
   is handed to the device: when it goes through the helper, that is when the
-  helper receives it, so a failure there shows only in the server's log. A connection may send 120 inputs a second and type 40
+  helper receives it, so native macOS input failures end Control with the reason while its view stays available; other helper failures are logged. A connection may send 120 inputs a second and type 40
   characters a second, with a burst of 256, and rotate or change posture twice a
   second; more fail with `limit-exceeded`.
+- When hello advertises `macos-window-control`, `control.begin` accepts
+  `platform: "macos"` for the verified native app in the default slot. It needs
+  `control` and takes one exclusive server session per app, with the same
+  takeover, disconnect, revocation and five-minute idle rules; `lease` is null
+  because CLI device locks do not cover macOS apps. Existing Accessibility
+  permission is required, without permission requests or resets. Before each
+  action the helper verifies PID/start time/executable/bundle and the captured
+  window ID, size and matching sole standard Accessibility window. Modal or
+  disjoint windows, resizing and changed ownership refuse input. Contained
+  nonmodal auxiliaries are allowed; only the focused captured main receives input. Events are
+  posted only to that PID; the desktop and other apps receive no input.
+  `input.touch` maps normalized captured-window coordinates to mouse events.
+  `input.scroll` takes normalized `x`, `y` and `deltaX`, `deltaY` in pixels,
+  each from -1000 to 1000. `input.key` accepts Escape, Tab, Return, Backspace,
+  arrows or `a-z` and `0-9`, with unique optional `command/shift/option/control`
+  modifiers. Hello advertises `macos-keyboard-extended` for the expanded keys;
+  older servers accept only `a/c/v/x/z/s/f` plus navigation. Letter and digit
+  key events require the owned app's selected U.S. or ABC input source because
+  Apple ANSI key codes identify physical U.S. positions. The helper focuses
+  the app and waits up to one second for activation before checking its layout;
+  unavailable activation and other layouts are refused with a specific reason. `input.text` retains the printable ASCII contract,
+  and navigation keys do not depend on that host layout. Native windows
+  reject simulator buttons, rotation and posture. The helper dynamically resolves
+  private CoreGraphics `CGEventSetWindowLocation` to annotate PID-targeted pointer
+  events. This is a macOS compatibility limit outside the phone and Mac App Store
+  binaries: a missing symbol refuses Control while read-only capture remains
+  available. An input refusal sends
+  `control-ended` with its reason without ending read-only capture.
+- On an owned iOS simulator, `control.begin` also reports optional `simulator`
+  capabilities: `canShake` and `slowAnimations` (a boolean, or `null` when
+  unavailable). `input.simulator` takes the session and `action: "shake"`,
+  `action: "read"`, or `action: "slow-animations"` with an explicit boolean
+  `enabled`. It returns the confirmed capabilities and state. Unavailable
+  controls are refused. The native operation times out after 8 seconds and
+  stops when its control session ends; only one option changes per simulator
+  at a time. These controls use the same CoreSimulator guest notifications as
+  Stim Desktop, without opening Device Hub.
 - `control.end` ends a session. The server also ends it with a
   `control-ended` event `{ "session", "reason", "message" }` after 5 minutes
   without input (`idle`), when another client takes the device over

@@ -3,8 +3,6 @@ import Combine
 import StimKit
 import UserNotifications
 
-/// Tells the user when another Mac asks to build on this one: an inbox entry, and a toast or a macOS notification.
-/// Only a person answers a request, in `BuildRequestPrompt`.
 @MainActor
 final class BuildRequestNotifier {
   static let shared = BuildRequestNotifier(server: .shared)
@@ -37,7 +35,9 @@ final class BuildRequestNotifier {
 
   private func announce(_ device: PairedDevice) -> String {
     let notification = OversightNotification(
-      id: Self.notificationID(device.id), category: .buildRequest, title: "\(device.name) wants to build on this Mac",
+      id: Self.notificationID(device.id), category: .buildRequest,
+      title: device.isDeviceHostClient
+        ? "\(device.name) wants to run devices on this Mac" : "\(device.name) wants to build on this Mac",
       body: "From \(device.node). Review it to allow or deny.", quiet: false, thread: "build-requests",
       target: .buildRequest(id: device.id))
     let clock = Calendar.current.dateComponents([.hour, .minute], from: Date())
@@ -64,7 +64,6 @@ final class BuildRequestNotifier {
   }
 }
 
-/// The only place a build request is answered: a dialog naming the requesting Mac and its tailnet node.
 @MainActor
 enum BuildRequestPrompt {
   static func present(id: String) {
@@ -72,28 +71,34 @@ enum BuildRequestPrompt {
     NSApp.activate(ignoringOtherApps: true)
     guard let device = server.devices.first(where: { $0.id == id && $0.pendingUntil != nil }) else {
       let alert = NSAlert()
-      alert.messageText = "This build request is no longer pending"
+      alert.messageText = "This machine request is no longer pending"
       alert.informativeText =
-        "It was allowed or denied, or it lapsed after 15 minutes. Settings > Phones lists the Macs that build here."
+        "It was allowed or denied, or it lapsed after 15 minutes. Settings > Phones lists this Mac's approved clients."
       alert.runModal()
       return
     }
     let alert = NSAlert()
     alert.alertStyle = .warning
-    alert.messageText = "\(device.name) wants to build on this Mac"
+    alert.messageText =
+      device.isDeviceHostClient
+      ? "\(device.name) wants to run devices on this Mac" : "\(device.name) wants to build on this Mac"
     let lapses = device.pendingUntil.map { " It lapses at \($0.formatted(date: .omitted, time: .shortened))." } ?? ""
+    let permission =
+      device.isDeviceHostClient
+      ? "Allow approves this Mac for hosted simulator and emulator sessions. Hosted sessions are not available yet. It does not grant build access or read/control access to unrelated workspaces or devices."
+      : "It can run its project's code on this Mac to build: config plugins, CocoaPods hooks, Xcode script phases and Gradle plugins run as your user. It cannot read your workspaces or control your devices."
     alert.informativeText = """
       Tailnet node: \(device.node)
       Request: \(device.id).\(lapses)
 
-      Allow only a Mac you expect. It can then run its project's code on this Mac to build: config plugins, CocoaPods hooks, Xcode script phases and Gradle plugins run as your user. It cannot read your workspaces or control your devices. Revoke it any time in Settings > Phones.
+      Allow only a Mac you expect. \(permission) Revoke it any time in Settings > Phones.
       """
     let allow = alert.addButton(withTitle: "Allow")
     allow.keyEquivalent = ""
     alert.addButton(withTitle: "Deny")
     alert.addButton(withTitle: "Later").keyEquivalent = "\u{1b}"
     switch alert.runModal() {
-    case .alertFirstButtonReturn: server.allowBuild(device)
+    case .alertFirstButtonReturn: server.allowMachine(device)
     case .alertSecondButtonReturn: server.revoke(device)
     default: break
     }

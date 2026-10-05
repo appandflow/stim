@@ -1,0 +1,22 @@
+name: Windows full validation
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: full Windows unit suite
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-stim
+
+      - name: Typecheck (production)
+        run: pnpm run typecheck
+
+      - name: Unit tests (vitest)
+        run: pnpm test

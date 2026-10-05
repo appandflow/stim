@@ -2,15 +2,13 @@ import StimKit
 import StimStores
 import SwiftUI
 
-/// Shows one `ActionRun`: a spinner and one line while it runs, then a short summary of what it did. Items it
-/// left alone and failures are listed apart from what it did, and the command and raw output sit under Details.
 struct ActivitySheet: View {
   @ObservedObject var run: ActionRun
   @EnvironmentObject private var actions: ActionCenter
   @Environment(\.dismiss) private var dismiss
   @State private var confirmingDelete = false
   @State private var idleDuration: String?
-  @State private var showsDetails = false
+  @State private var showsCommandOutput = false
   @State private var showsKept = false
 
   private var steps: [ProgressStep] { run.progress }
@@ -33,25 +31,14 @@ struct ActivitySheet: View {
     VStack(alignment: .leading, spacing: Space.xl) {
       header
       content
-      if !run.isRunning { details }
+      commandOutput
       footer
     }
     .font(.stim(.callout))
     .padding(Space.xxl)
     .frame(width: 560)
     .background(Palette.background)
-    .onChange(of: run.exitStatus) { _, status in
-      guard status == 0, closesOnSuccess else { return }
-      Task {
-        try? await Task.sleep(for: .seconds(2))
-        if actions.presented?.id == run.id { dismiss() }
-      }
-    }
   }
-
-  /// A plain successful action closes itself after showing that it finished. A preview and a cleanup
-  /// summary stay open to be read.
-  private var closesOnSuccess: Bool { deleteArguments == nil && outcome == nil }
 
   @ViewBuilder private var content: some View {
     if run.isRunning {
@@ -78,7 +65,6 @@ struct ActivitySheet: View {
         }
       }
       Spacer()
-      status
     }
   }
 
@@ -108,10 +94,9 @@ struct ActivitySheet: View {
     }
   }
 
-  /// The latest progress fact the CLI printed, or a plain "Working" when it prints none.
   private var currentStep: String {
     guard let step = steps.last(where: { $0.state != .failed }) else { return "Working\u{2026}" }
-    return abbreviatingHome(step.fact.isEmpty ? step.label : step.fact)
+    return abbreviatingHome(step.statusText)
   }
 
   private var failureMessage: String? {
@@ -154,7 +139,7 @@ struct ActivitySheet: View {
           ForEach(outcome.failed, id: \.self) { item in itemRow(item, icon: "xmark.octagon.fill", tint: Palette.error) }
         }
       } else if outcome.failures > 0 {
-        Text("\(outcome.failures) could not be cleaned up. Open Details for the reason, then run it again.")
+        Text("\(outcome.failures) could not be cleaned up. Open Command output for the reason, then run it again.")
           .foregroundStyle(Palette.error)
       }
       if !outcome.kept.isEmpty {
@@ -194,8 +179,8 @@ struct ActivitySheet: View {
     .textSelection(.enabled)
   }
 
-  private var details: some View {
-    DisclosureGroup("Details", isExpanded: $showsDetails) {
+  private var commandOutput: some View {
+    DisclosureGroup("Command output", isExpanded: $showsCommandOutput) {
       VStack(alignment: .leading, spacing: Space.md) {
         HStack(alignment: .top, spacing: Space.md) {
           CommandText(command: run.steps.map { $0.displayLine() }.joined(separator: "\n"))
@@ -322,22 +307,6 @@ struct ActivitySheet: View {
       text += " (\(Format.fileSize(report.reclaimableBytes)) measured)"
     }
     return text + ". Stim collects the report again when it runs, so it acts on what it finds then."
-  }
-
-  @ViewBuilder private var status: some View {
-    if run.launchError != nil {
-      Pill(tone: .error) { Text("Failed") }
-    } else if let code = run.exitStatus {
-      Pill(tone: code == 0 ? .success : .error) {
-        Image(systemName: code == 0 ? "checkmark.circle.fill" : "xmark.octagon.fill")
-        Text(code == 0 ? "Done" : "Failed")
-      }
-    } else {
-      Pill(tone: .brand) {
-        ProgressView().controlSize(.mini)
-        Text("Running")
-      }
-    }
   }
 
   private var output: some View {

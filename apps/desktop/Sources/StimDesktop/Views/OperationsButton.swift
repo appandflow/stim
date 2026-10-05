@@ -31,7 +31,7 @@ struct OperationsButton: View {
           }
         }
       }
-      .buttonStyle(.icon(tint: running > 0 ? Palette.accent : Palette.secondary, active: shown))
+      .nativeIconStyle(tint: running > 0 ? Palette.accent : Palette.secondary, active: shown)
       .help(Self.tooltip(running: running, attention: attention))
       .accessibilityLabel("Operations")
       .accessibilityValue(Self.summary(running: running, attention: attention))

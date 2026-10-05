@@ -19,6 +19,8 @@ final class ServerController: ObservableObject {
   @Published private(set) var devicesError: String?
   @Published private(set) var changeError: String?
   @Published private(set) var pendingGrants: [String: Bool] = [:]
+  @Published private(set) var settingUpConnection = false
+  @Published private(set) var connectionError: String?
 
   private var environment: Task<[String: String], Never>?
   private var process: Process?
@@ -27,6 +29,7 @@ final class ServerController: ObservableObject {
   private var generation = 0
   private var devicesEpoch = 0
   private var missedProbes = 0
+  private var serverLauncher: (executable: String?, launcher: NodeLauncher?, resolved: Date)?
 
   static let devicesInterval: Duration = .seconds(10)
   static let inactiveDevicesInterval: Duration = .seconds(60)
@@ -45,6 +48,8 @@ final class ServerController: ObservableObject {
 
   /// Build clients, and Macs waiting for approval to build here, newest first.
   var buildClients: [PairedDevice] { devices.filter(\.isBuildClient) }
+
+  var deviceHostClients: [PairedDevice] { devices.filter(\.isDeviceHostClient) }
 
   var phones: [PairedDevice] { devices.filter(\.isPhone) }
 
@@ -72,9 +77,15 @@ final class ServerController: ObservableObject {
   func cli() async -> StimServerCLI {
     var environment = await environment?.value ?? ProcessInfo.processInfo.environment
     if case .running(let health, _) = state { environment["STIM_HOME"] = health.stimHome }
-    return StimServerCLI(
-      environment: environment,
-      override: UserDefaults.standard.string(forKey: AppPreferences.Key.stimServerExecutable))
+    let override = UserDefaults.standard.string(forKey: AppPreferences.Key.stimServerExecutable)
+    let plain = StimServerCLI(environment: environment, override: override)
+    let stale = serverLauncher.map { $0.launcher?.script == nil && Date().timeIntervalSince($0.resolved) > 60 } ?? true
+    if stale || serverLauncher?.executable != plain.executable {
+      let launcher = await NodeLauncher.resolve(
+        executable: plain.executable, name: "stim-server", environment: plain.environment)
+      serverLauncher = (plain.executable, launcher, Date())
+    }
+    return StimServerCLI(environment: environment, override: override, launcher: serverLauncher?.launcher)
   }
 
   func start() {
@@ -140,6 +151,49 @@ final class ServerController: ObservableObject {
     start()
   }
 
+  func setupConnection() {
+    guard !settingUpConnection else { return }
+    settingUpConnection = true
+    connectionError = nil
+    Task {
+      defer { settingUpConnection = false }
+      guard let client = ServerSession.shared.client, client.isOpen else {
+        connectionError = "The local Desktop connection is not ready. Try again."
+        return
+      }
+      do {
+        _ = try await client.request("route.setup", [:])
+        refresh()
+      } catch let error as ServerError where error.code == "unknown-method" {
+        connectionError = "Update stim-server to set up the phone connection from Desktop."
+      } catch {
+        connectionError = error.localizedDescription
+      }
+    }
+  }
+
+  func pairPhone(control: Bool) async throws -> PairingCode {
+    let cli = await cli()
+    guard let before = await StimServerCLI.health(port: port) else {
+      throw ServerError(code: "not-connected", message: "Could not verify the phone connection. Try again.")
+    }
+    if before.tailscale.isRunning && before.route?.state != "routed" {
+      throw ServerError(
+        code: "not-connected",
+        message: "Set up the phone connection in the Phones tab before pairing. A verified tailnet-only route is required.")
+    }
+    let code = try await cli.pair(port: port, control: control)
+    if before.tailscale.isRunning || !code.isLocalOnly {
+      guard let after = await StimServerCLI.health(port: port), after.route?.state == "routed",
+        let dnsName = after.tailscale.dnsName, code.qr.endpoint == after.route?.endpoint(dnsName: dnsName)
+      else {
+        throw ServerError(
+          code: "not-connected", message: "The phone connection changed or could not be verified. Try again in the Phones tab.")
+      }
+    }
+    return code
+  }
+
   func refresh() {
     if case .running(_, let owned) = state {
       let current = generation
@@ -149,6 +203,7 @@ final class ServerController: ObservableObject {
         if let health {
           missedProbes = 0
           state = .running(health, owned: owned)
+          if health.nativeViewerOpened == true { NativeViewerPermissions.shared.viewerOpened(serverOwned: owned) }
         } else if !owned {
           missedProbes += 1
           guard missedProbes >= 2 else { return }
@@ -205,11 +260,16 @@ final class ServerController: ObservableObject {
     control ? ["read", "control"] : ["read"]
   }
 
-  /// Approves a Mac's pending request to build here.
-  func allowBuild(_ device: PairedDevice) {
+  func allowMachine(_ device: PairedDevice) {
     Task {
       let cli = await cli()
-      switch await Result.awaiting({ try await cli.grantBuild(device.id) }) {
+      switch await Result.awaiting({
+        if device.isDeviceHostClient {
+          try await cli.grantDeviceHost(device.id)
+        } else {
+          try await cli.grantBuild(device.id)
+        }
+      }) {
       case .success: changeError = nil
       case .failure(let error): changeError = error.localizedDescription
       }

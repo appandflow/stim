@@ -210,7 +210,7 @@ interface StartOptions {
 }
 
 interface StartCommandDeps {
-  providers(): ManagedProvider[];
+  providers(mode: Parameters<typeof detectProviders>[1]): ManagedProvider[];
   startTunnelSequence(options: StartTunnelSequenceOptions): Promise<StartTunnelSequenceResult>;
   isTunnelAlive(pid: number): boolean;
   writeTunnelRecord(root: string, patch: Parameters<typeof writeWorkspaceState>[1]): unknown;
@@ -243,14 +243,14 @@ function recordedSupervisorProcess(pid: number | undefined): SupervisorProcess {
 
 const RECORDED_SUPERVISOR_WAIT_MS = 15_000;
 
-function providersOnPath(): ManagedProvider[] {
+function providersOnPath(mode: Parameters<typeof detectProviders>[1]): ManagedProvider[] {
   return detectProviders((bin) => {
     try {
       return Boolean(getExecutor().findExecutable(bin));
     } catch {
       return false;
     }
-  });
+  }, mode);
 }
 
 const DEFAULT_START_DEPS: StartCommandDeps = {
@@ -659,13 +659,14 @@ export async function startDevServer(
       };
 
       if (remote && !tunnel && !publicUrl && tunnelMode !== 'off') {
-        const available = d.providers();
+        const available = d.providers(tunnelMode);
         const plan = planMetroReach({ mode: tunnelMode, metroPort: port, publicUrl, isExpo, available });
         if ('failed' in plan) {
           return fail({ code: 'STIM_REMOTE_METRO_UNREACHABLE', message: plan.failed, remedy: plan.remedy });
         }
         if ('start' in plan) {
-          const candidates: readonly ManagedProvider[] = tunnelMode === 'auto' ? available : [plan.start];
+          const candidates: readonly ManagedProvider[] =
+            tunnelMode === 'auto' ? available.filter((provider) => provider !== 'tailscale') : [plan.start];
           const expectedStableUrl = ngrokUrlSetting(settings);
           let acquisition: ManagedTunnelAcquisition;
           try {
@@ -877,6 +878,9 @@ export async function startDevServer(
           }
           publicOrigin = acquisition.origin;
           managedTunnel = acquisition.tunnel;
+          if (managedTunnel.record.provider === 'tailscale') {
+            note(phaseLine('lan', `tailnet-only Metro: ${publicOrigin}`));
+          }
           resolution = await resolveProjectMetro(port, root);
           supervisor = liveSupervisor({ state: readWorkspaceState(root), project: getProject(root), port });
         }

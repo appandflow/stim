@@ -33,6 +33,7 @@ import { compareStimVersions, inspectStimVersions, type StimVersionReport } from
 import { repairCxxLauncherState } from '../diagnostics/doctor-cxx.ts';
 import { budgetLine, inspectBudget, type BudgetReport } from '../budget.ts';
 import { inspectBuildMachines } from '../offload/build-machines.ts';
+import { inspectDeviceHostMachines } from '../device-host/machines.ts';
 import { inspectWatchmanMemory } from './gc/memory.ts';
 
 interface DoctorOptions {
@@ -297,6 +298,8 @@ export default function doctorCommand(
         check: checksIos || checksAndroid ? offloadCheck(root, offloadTargets) : null,
       });
       findings.push(...buildMachines.findings);
+      const deviceHosts = await inspectDeviceHostMachines({ fix: opts.fix === true });
+      findings.push(...deviceHosts.findings);
 
       if (opts.json) {
         console.log(
@@ -306,6 +309,7 @@ export default function doctorCommand(
             stim,
             budget: budget.report,
             buildMachines: buildMachines.machines,
+            deviceHosts: deviceHosts.machines,
             findings,
           }),
         );

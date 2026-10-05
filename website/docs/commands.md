@@ -104,6 +104,19 @@ repair: its cache-lock check cannot detect uncached, release-swap fallback, or
 direct Gradle builds. The next build recreates these files; source, custom launcher settings,
 and shared ccache entries are preserved. See `stim guide lifecycle options`.
 
+When [`hosting.machines`](./settings.md#machine-settings) names hosting Macs,
+doctor reports their separate device-host approval in `deviceHosts`. Only
+`--fix` requests approval, retries a definite revoked or lapsed request, and
+forgets names removed from the setting. A person on the hosting Mac runs the
+printed `stim-server devices grant <id> --device-host` command. Tokens remain
+private and pinned to that tailnet node. A changed node refuses access;
+unreadable credentials and uncertain replies preserve the pin. Invalid hosting
+settings report an error and preserve every saved credential. JSON states
+are `approved`, `pending`, `not-asked`, `revoked`, `node-changed`,
+`not-on-tailnet`, `tailscale-off`, `unreachable`, `invalid`,
+`credentials-unavailable` and `busy`. Hosting approval does not yet change
+`ios` or `android` placement.
+
 When the [`offload.machines`](./settings.md#machine-settings) setting names
 build machines, doctor reports each one this Mac is not approved on: not on the
 tailnet, not asked yet, waiting for approval (with the
@@ -462,6 +475,21 @@ Before building, run `stim ios --plan --json` in this worktree and tell me
 whether the next build is a cache hit, how long it should take, and, on a
 miss, which native change causes it.
 ```
+
+## `macos`
+
+```text
+stim macos [--json]
+```
+
+Builds the explicitly configured Swift Package executable in Debug and launches
+an isolated development `.app`. Run from the `Package.swift` directory with
+`macos.product` and `macos.infoPlist` configured. It uses fixed SwiftPM commands,
+with no Metro or custom build scripts. Workspace logs include compiler output
+and runtime stdout/stderr. `status` reports the app and build, and `stop` signals
+only their verified owners. Stim Desktop can preview one owned window and open
+the verified app for native input on the same Mac using existing permissions. See the [native macOS prototype](./macos.md)
+for metadata, arguments and current limitations.
 
 ## `web`
 
@@ -834,6 +862,11 @@ prints as `metro: port <port> stopped (idle)`. In `--json` that environment's
 known cause prints after `not running`, and `metro.lastStop` carries it; see
 [why the dev server stopped](./dev-server-and-logs.md#why-the-dev-server-stopped).
 
+Status prints the recorded managed Metro tunnel's provider and URL, with
+`tailnet-only` for Tailscale. In `--json`, `metro.tunnel` carries `{ provider, url }`
+when a managed tunnel is recorded on the workspace's reserved port. This reports
+the record without probing reachability. See [Metro on your tailnet](./owned-devices.md#metro-on-your-tailnet).
+
 In `--json`, `metro.bundle` reports the dev server's bundle requests, from the
 metro log: `{ bundling, platform?, startedAt?, percent?, last? }`. `bundling`
 is `true` while an app's request, or Stim's own prefetch before a launch, is in
@@ -917,7 +950,7 @@ and an estimate of the time left:
 ```
 
 In `--json`, each environment carries `build`: `null`, or
-`{ platform, slot, state, phase, startedAt, phaseStartedAt, outcome, outcomeKnown, expectedMs, expectedPhaseMs, basis, plannedPhases }`.
+`{ platform, slot, state, phase, startedAt, phaseStartedAt, outcome, outcomeKnown, cacheLookupOutcome?, expectedMs, expectedPhaseMs, basis, plannedPhases }`.
 `phase` is one of `prepare`, `cache-lookup`, `wait`, `prebuild`, `pods`,
 `compile`, `device`, `install` and `launch`. Creating, adopting or booting the
 owned simulator or emulator before the cache lookup counts as `prepare`.
@@ -926,11 +959,13 @@ boot, adoption cleanup, or a physical device's lease and connection check); a
 boot that finishes during the build adds no `device` time. `state` is `running` while the run's
 `native-run.lock` claim is live, `stale` when that run was killed (the next run
 replaces the record), and `unknown` when the claim cannot be read. `outcome` is
-`cold` once the first cache lookup misses and the run will prebuild or install
-pods, or once it reaches prebuild, pods or compile, and `hit` once it reaches
-`device` after the cache lookup, or install, without them, or once the lookup
-repeated after prebuild or pods hits; before that it follows the project's
-most recent run, and `outcomeKnown` is `false`. `expectedMs` and `expectedPhaseMs` are
+`cold` after the local/provider lookups resolve a miss, and `hit` after a cached
+artifact is ready to reuse, including a shared-build hit or a recheck after
+prebuild or pods. A later recheck can replace the first lookup's outcome.
+Before resolution it follows the project's most recent run and `outcomeKnown`
+is `false`. `cacheLookupOutcome` is `hit` or `miss` after an actual lookup resolves;
+it is absent before resolution and on runs that skip lookup, such as `--eas-profile`.
+`expectedMs` and `expectedPhaseMs` are
 medians of this project's last successful runs with that outcome, and `basis`
 counts the runs behind `expectedMs`. Both are `null` until the project has such
 a run. `plannedPhases` lists, in order, the phases at least half of those runs

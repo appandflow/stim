@@ -7,9 +7,10 @@ import IOSurface
 // stim-frames streams one device's screen as JPEG frames for stim-server.
 //
 //   stim-frames ios <udid>
-//   stim-frames android <serial>
+//   stim-frames android <serial> [owned-avd-name]
 //   stim-frames android-device <serial> <adb> <scrcpy-server>
 //   stim-frames web <cdpEndpoint> <chromePid> <targetId>
+//   stim-frames macos <owned-app-json>
 //   stim-frames iphone <udid> [name]
 //
 // android-device streams any adb device through the scrcpy server jar at <scrcpy-server>,
@@ -39,7 +40,9 @@ import IOSurface
 // {"stalled": message} while frames cannot arrive and {"stalled": null} once they can), 3 is an H.264 access unit (1-byte
 // flags with bit 0 set on a keyframe, 8-byte big-endian float capture time in
 // milliseconds since the epoch, 2-byte width, 2-byte height, Annex-B bytes), and 4 is an
-// access unit of the recording encoder, laid out like 3.
+// access unit of the recording encoder, laid out like 3. Kind 5 adds a clockwise artwork
+// quarter-turn byte after the frame dimensions. Live video bit 5 marks that rotation
+// in bits 3-4; recordings omit it. The deviceFrame config requests PNG artwork notices.
 // The helper exits when stdin closes.
 
 struct Config: Equatable {
@@ -49,6 +52,7 @@ struct Config: Equatable {
   var jpeg = true
   var jpegFps: Double?
   var video = false
+  var deviceFrame = false
   var bitrate = 3_000_000
   var record: Recording?
 }
@@ -69,12 +73,13 @@ enum Output {
   private static let maxPendingVideo = 30
   static var requestKeyframe: () -> Void = {}
 
-  static func frame(jpeg: Data, width: Int, height: Int) {
+  static func frame(jpeg: Data, width: Int, height: Int, artworkTurns: Int? = nil) {
     lock.lock()
     defer { lock.unlock() }
     guard !writing else { return }
     writing = true
-    var body = Data([1, UInt8(width >> 8), UInt8(width & 0xff), UInt8(height >> 8), UInt8(height & 0xff)])
+    var body = Data([artworkTurns == nil ? 1 : 5, UInt8(width >> 8), UInt8(width & 0xff), UInt8(height >> 8), UInt8(height & 0xff)])
+    if let artworkTurns { body.append(UInt8(artworkTurns)) }
     body += jpeg
     writer.async {
       write(body)
@@ -95,7 +100,8 @@ enum Output {
     videoNeedsKeyframe = false
     keyframeRequested = false
     pendingVideo += 1
-    var body = Data([3, unit.keyframe ? 1 : 0])
+    let artwork = unit.artworkTurns.map { UInt8(32 | ($0 << 3)) } ?? 0
+    var body = Data([3, (unit.keyframe ? 1 : 0) | artwork])
     withUnsafeBytes(of: unit.capturedAt.bitPattern.bigEndian) { body.append(contentsOf: $0) }
     body += Data([UInt8(unit.width >> 8), UInt8(unit.width & 0xff), UInt8(unit.height >> 8), UInt8(unit.height & 0xff)])
     body += unit.data
@@ -258,6 +264,8 @@ final class SimulatorSource {
   private let recorder = recordEncoder()
   private let recordGate = RecordGate()
   private let jpegGate = JpegGate()
+  private var frameTurns: Int?
+  private lazy var artwork = FrameArtworkPublisher { SimulatorFrameArtwork.load(udid: self.udid) }
 
   init(udid: String) {
     self.udid = udid
@@ -358,25 +366,31 @@ final class SimulatorSource {
     default: (orientation, quarterTurns) = (.up, 0)
     }
     let ioSurface = unsafeBitCast(surface, to: IOSurfaceRef.self)
+    let artworkTurns = (4 - quarterTurns) % 4
+    if config.deviceFrame, frameTurns != artworkTurns {
+      frameTurns = artworkTurns
+      artwork.send(quarterTurns: artworkTurns)
+    }
     let record = recordGate.admit(config, pacer: pacer)
     if config.video || record {
       var buffer: Unmanaged<CVPixelBuffer>?
       CVPixelBufferCreateWithIOSurface(nil, ioSurface, nil, &buffer)
       if let pixels = buffer?.takeRetainedValue() {
         let capturedAt = now()
-        if config.video { video.encode(pixels, quarterTurns: quarterTurns, capturedAt: capturedAt) }
+        if config.video { video.encode(pixels, quarterTurns: quarterTurns, capturedAt: capturedAt, artworkTurns: artworkTurns) }
         if record { recorder.encode(pixels, quarterTurns: quarterTurns, capturedAt: capturedAt) }
       }
     }
     guard config.jpeg, jpegGate.admit(config, pacer: pacer) else { return }
     let image = CIImage(ioSurface: ioSurface).oriented(orientation)
     guard let (data, width, height) = jpeg(image, config: config) else { return }
-    Output.frame(jpeg: data, width: width, height: height)
+    Output.frame(jpeg: data, width: width, height: height, artworkTurns: artworkTurns)
   }
 }
 
 final class EmulatorSource {
   let serial: String
+  let avdName: String?
   let queue = DispatchQueue(label: "stim.frames.emulator")
   let inputQueue = DispatchQueue(label: "stim.frames.emulator-input")
   var input: EmulatorInput?
@@ -390,9 +404,12 @@ final class EmulatorSource {
   private let recorder = recordEncoder()
   private let recordGate = RecordGate()
   private let jpegGate = JpegGate()
+  private var frameTurns: Int?
+  private lazy var artwork = FrameArtworkPublisher { self.avdName.flatMap { EmulatorFrameArtwork.load(avdName: $0) } }
 
-  init(serial: String) {
+  init(serial: String, avdName: String? = nil) {
     self.serial = serial
+    self.avdName = avdName
     pacer = Pacer { [unowned self] config in
       guard let frame = self.queue.sync(execute: { self.latest }) else { return }
       self.render(frame, config: config)
@@ -461,7 +478,12 @@ final class EmulatorSource {
 
   private func render(_ frame: EmulatorFrame, config: Config) {
     let capturedAt = now()
-    if config.video { video.encode(rgba: frame.rgba, width: frame.width, height: frame.height, capturedAt: capturedAt) }
+    let artworkTurns = (-frame.rotation % 4 + 4) % 4
+    if config.deviceFrame, frameTurns != artworkTurns {
+      frameTurns = artworkTurns
+      artwork.send(quarterTurns: artworkTurns)
+    }
+    if config.video { video.encode(rgba: frame.rgba, width: frame.width, height: frame.height, capturedAt: capturedAt, artworkTurns: artworkTurns) }
     if recordGate.admit(config, pacer: pacer) {
       recorder.encode(rgba: frame.rgba, width: frame.width, height: frame.height, capturedAt: capturedAt)
     }
@@ -472,7 +494,7 @@ final class EmulatorSource {
         provider: provider, decode: nil, shouldInterpolate: false, intent: .defaultIntent),
       let (data, width, height) = jpeg(CIImage(cgImage: image), config: config)
     else { return }
-    Output.frame(jpeg: data, width: width, height: height)
+    Output.frame(jpeg: data, width: width, height: height, artworkTurns: artworkTurns)
   }
 }
 
@@ -564,7 +586,7 @@ extension AndroidDeviceSource: Source {
       stream.send(Scrcpy.keycode(.up, key))
     case .rotate, .posture:
       Output.notice(["inputError": "A physical device rotates and folds only in hand."])
-    case .config, .keyframe, .recordKeyframe:
+    case .config, .keyframe, .recordKeyframe, .control, .scoped, .scroll, .key:
       break
     }
   }
@@ -731,13 +753,17 @@ extension WebSource: Source {
       page.back()
     case .rotate, .posture:
       Output.notice(["inputError": "A web page does not rotate or fold."])
-    case .config, .keyframe, .recordKeyframe:
+    case .config, .keyframe, .recordKeyframe, .control, .scoped, .scroll, .key:
       break
     }
   }
 }
 
-enum Command {
+indirect enum Command {
+  case control(String, enabled: Bool)
+  case scoped(String, Command)
+  case scroll(CGPoint, delta: CGPoint)
+  case key(String, modifiers: [String])
   case config(Config)
   case keyframe
   case recordKeyframe
@@ -750,6 +776,16 @@ enum Command {
 
 func parseCommand(_ line: String, base: Config) -> Command? {
   guard let object = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any] else { return nil }
+  if let control = object["control"] as? [String: Any], let session = control["session"] as? String,
+    let enabled = control["enabled"] as? Bool { return .control(session, enabled: enabled) }
+  if let session = object["controlSession"] as? String {
+    var unscoped = object
+    unscoped.removeValue(forKey: "controlSession")
+    guard let data = try? JSONSerialization.data(withJSONObject: unscoped),
+      let command = parseCommand(String(decoding: data, as: UTF8.self), base: base)
+    else { return nil }
+    return .scoped(session, command)
+  }
   if object["keyframe"] as? Bool == true { return .keyframe }
   if object["recordKeyframe"] as? Bool == true { return .recordKeyframe }
   switch object["input"] as? String {
@@ -759,6 +795,15 @@ func parseCommand(_ line: String, base: Config) -> Command? {
       let x = object["x"] as? Double, let y = object["y"] as? Double, (0...1).contains(x), (0...1).contains(y)
     else { return nil }
     return .touch(phase, CGPoint(x: x, y: y), display: object["display"] as? Int ?? 0)
+  case "scroll":
+    guard let x = object["x"] as? Double, let y = object["y"] as? Double,
+      let dx = object["deltaX"] as? Double, let dy = object["deltaY"] as? Double,
+      (0...1).contains(x), (0...1).contains(y), dx.isFinite, dy.isFinite, abs(dx) <= 1000, abs(dy) <= 1000
+    else { return nil }
+    return .scroll(CGPoint(x: x, y: y), delta: CGPoint(x: dx, y: dy))
+  case "key":
+    guard let key = object["key"] as? String, let modifiers = object["modifiers"] as? [String] else { return nil }
+    return .key(key, modifiers: modifiers)
   case "text":
     return (object["text"] as? String).map { .text($0) }
   case "button":
@@ -777,6 +822,7 @@ func parseCommand(_ line: String, base: Config) -> Command? {
     if let jpeg = object["jpeg"] as? Bool { config.jpeg = jpeg }
     if let jpegFps = object["jpegFps"] as? Double, jpegFps > 0 { config.jpegFps = min(jpegFps, 60) }
     if let video = object["video"] as? Bool { config.video = video }
+    config.deviceFrame = object["deviceFrame"] as? Bool ?? false
     if let bitrate = object["bitrate"] as? Int, bitrate > 0 { config.bitrate = bitrate }
     config.record = (object["record"] as? [String: Any]).flatMap { record in
       guard let edge = record["maxEdge"] as? Int, edge > 0, let bitrate = record["bitrate"] as? Int, bitrate > 0,
@@ -891,7 +937,7 @@ extension SimulatorSource: Source {
       hid.button(button, down: true)
       usleep(100_000)
       hid.button(button, down: false)
-    case .config, .keyframe, .recordKeyframe, .rotate, .posture:
+    case .config, .keyframe, .recordKeyframe, .rotate, .posture, .control, .scoped, .scroll, .key:
       break
     }
   }
@@ -937,7 +983,7 @@ extension EmulatorSource: Source {
       wait("rotation") { await EmulatorRotation.rotate(serial: self.serial, clockwise: clockwise) }
     case .posture(let posture):
       wait("posture") { await posture.apply(serial: self.serial) }
-    case .config, .keyframe, .recordKeyframe:
+    case .config, .keyframe, .recordKeyframe, .control, .scoped, .scroll, .key:
       break
     }
   }
@@ -991,9 +1037,56 @@ let arguments = CommandLine.arguments
 let usage =
   "usage: stim-frames ios <udid> | android <serial> | android-device <serial> <adb> <scrcpy-server> | web <cdpEndpoint> <chromePid> <targetId> | iphone <udid> [name]"
 let terminated = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .global())
-let counts = ["web": [5], "iphone": [3, 4], "android-device": [5]]
+let counts = ["simulator-options": [4, 5], "web": [5], "iphone": [3, 4], "android-device": [5], "android": [3, 4]]
 guard arguments.count > 1, (counts[arguments[1]] ?? [3]).contains(arguments.count) else { fail(usage) }
 switch arguments[1] {
+case "simulator-options":
+  DispatchQueue.global().async {
+    _ = FileHandle.standardInput.readDataToEndOfFile()
+    exit(0)
+  }
+  CoreSimulator.developerDir = CoreSimulator.selectedDeveloperDir()
+  do {
+    let udid = arguments[2]
+    let settings: SimulatorDevelopmentOptions.Settings
+    switch arguments[3] {
+    case "read" where arguments.count == 4:
+      settings = try SimulatorDevelopmentOptions.read(udid: udid)
+    case "shake" where arguments.count == 4:
+      try SimulatorDevelopmentOptions.shake(udid: udid)
+      settings = try SimulatorDevelopmentOptions.read(udid: udid)
+    case "slow-animations" where arguments.count == 5 && ["on", "off"].contains(arguments[4]):
+      settings = try SimulatorDevelopmentOptions.setSlowAnimations(arguments[4] == "on", udid: udid)
+    default:
+      throw NSError(domain: "StimFrames", code: 1, userInfo: [NSLocalizedDescriptionKey: "Invalid simulator option."])
+    }
+    let result: [String: Any] = [
+      "canShake": settings.canShake,
+      "slowAnimations": settings.slowAnimations.map { $0 as Any } ?? NSNull(),
+    ]
+    let data = try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys])
+    FileHandle.standardOutput.write(data)
+    exit(0)
+  } catch {
+    FileHandle.standardError.write(Data("\(error.localizedDescription)\n".utf8))
+    exit(1)
+  }
+case "macos":
+  guard let data = arguments[2].data(using: .utf8),
+    let app = try? JSONDecoder().decode(MacosSource.OwnedApp.self, from: data)
+  else { fail("Invalid owned macOS app target.") }
+  let source = MacosSource(app: app)
+  let stop = source.stop
+  beforeExit = stop
+  signal(SIGTERM, SIG_IGN)
+  terminated.setEventHandler {
+    stop()
+    exit(0)
+  }
+  terminated.resume()
+  Output.requestKeyframe = source.keyframe
+  readCommands(source)
+  source.start()
 case "ios":
   CoreSimulator.developerDir = CoreSimulator.selectedDeveloperDir()
   guard CoreSimulator.deviceSet != nil else { fail("CoreSimulator could not be loaded from \(CoreSimulator.developerDir).") }
@@ -1002,7 +1095,7 @@ case "ios":
   readCommands(source)
   source.queue.async { source.start() }
 case "android":
-  let source = EmulatorSource(serial: arguments[2])
+  let source = EmulatorSource(serial: arguments[2], avdName: arguments.count == 4 ? arguments[3] : nil)
   Output.requestKeyframe = source.keyframe
   readCommands(source)
   source.start()
@@ -1034,4 +1127,10 @@ case "iphone":
 default:
   fail(usage)
 }
-dispatchMain()
+if arguments[1] == "macos" {
+  // AppKit refreshes NSRunningApplication activation during main run-loop turns.
+  RunLoop.main.add(Port(), forMode: .default)
+  CFRunLoopRun()
+} else {
+  dispatchMain()
+}

@@ -316,6 +316,13 @@
    "text": 2
   },
   {
+   "name": "expo-haptics",
+   "version": "58.0.4",
+   "license": "MIT",
+   "url": "https://github.com/expo/expo",
+   "text": 2
+  },
+  {
    "name": "expo-image",
    "version": "58.0.6",
    "license": "MIT",
@@ -547,18 +554,25 @@
    "text": 38
   },
   {
+   "name": "react-native-keyboard-controller",
+   "version": "1.22.4",
+   "license": "MIT",
+   "url": "https://github.com/kirillzyusko/react-native-keyboard-controller",
+   "text": 39
+  },
+  {
    "name": "react-native-mmkv",
    "version": "4.3.2",
    "license": "MIT",
    "url": "https://github.com/mrousavy/react-native-mmkv",
-   "text": 39
+   "text": 40
   },
   {
    "name": "react-native-nitro-modules",
    "version": "0.37.1",
    "license": "MIT",
    "url": "https://github.com/mrousavy/nitro",
-   "text": 39
+   "text": 40
   },
   {
    "name": "react-native-reanimated",
@@ -579,25 +593,25 @@
    "version": "5.9.1",
    "license": "MIT",
    "url": "https://github.com/AppAndFlow/react-native-safe-area-context",
-   "text": 40
+   "text": 41
   },
   {
    "name": "react-native-screens",
    "version": "4.28.0",
    "license": "MIT",
    "url": "https://github.com/software-mansion/react-native-screens",
-   "text": 41
+   "text": 42
   },
   {
    "name": "react-native-transformer-text-input",
    "version": "0.4.2",
    "license": "MIT",
    "url": "https://github.com/appandflow/react-native-transformer-text-input",
-   "text": 42
+   "text": 43
   },
   {
    "name": "react-native-unistyles",
-   "version": "3.3.0",
+   "version": "3.4.0",
    "license": "MIT",
    "url": "https://github.com/jpudysz/react-native-unistyles",
    "text": null
@@ -607,14 +621,14 @@
    "version": "0.13.0",
    "license": "MIT",
    "url": "https://github.com/software-mansion/react-native-reanimated",
-   "text": 43
+   "text": 44
   },
   {
    "name": "regenerator-runtime",
    "version": "0.13.11",
    "license": "MIT",
    "url": "https://github.com/facebook/regenerator/tree/main/packages/runtime",
-   "text": 44
+   "text": 45
   },
   {
    "name": "scheduler",
@@ -628,70 +642,70 @@
    "version": "7.8.5",
    "license": "ISC",
    "url": "https://github.com/npm/node-semver",
-   "text": 45
+   "text": 46
   },
   {
    "name": "split-on-first",
    "version": "1.1.0",
    "license": "MIT",
    "url": "https://github.com/sindresorhus/split-on-first",
-   "text": 46
+   "text": 47
   },
   {
    "name": "stacktrace-parser",
    "version": "0.1.11",
    "license": "MIT",
    "url": "https://github.com/errwischt/stacktrace-parser",
-   "text": 47
+   "text": 48
   },
   {
    "name": "standard-navigation",
    "version": "0.0.5",
    "license": "MIT",
    "url": "https://github.com/react-navigation/standard-navigation",
-   "text": 48
+   "text": 49
   },
   {
    "name": "strict-uri-encode",
    "version": "2.0.0",
    "license": "MIT",
    "url": "https://github.com/kevva/strict-uri-encode",
-   "text": 49
+   "text": 50
   },
   {
    "name": "use-latest-callback",
    "version": "0.2.6",
    "license": "MIT",
    "url": "https://github.com/satya164/use-latest-callback",
-   "text": 50
+   "text": 51
   },
   {
    "name": "warn-once",
    "version": "0.1.1",
    "license": "MIT",
    "url": "https://github.com/satya164/warn-once",
-   "text": 51
+   "text": 52
   },
   {
    "name": "whatwg-fetch",
    "version": "3.6.20",
    "license": "MIT",
    "url": "https://github.com/github/fetch",
-   "text": 52
+   "text": 53
   },
   {
    "name": "whatwg-url-minimum",
    "version": "0.2.0",
    "license": "MIT",
    "url": "https://github.com/expo/whatwg-url-minimum",
-   "text": 53
+   "text": 54
   },
   {
    "name": "zustand",
    "version": "5.0.15",
    "license": "MIT",
    "url": "https://github.com/pmndrs/zustand",
-   "text": 54
+   "text": 55
   }
  ],
  "texts": [
@@ -734,6 +748,7 @@
   "MIT License\n\nCopyright (c) 2026 Janic Duplessis\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to deal\nin the Software without restriction, including without limitation the rights\nto use, copy, modify, merge, publish, distribute, sublicense, and/or sell\ncopies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all\ncopies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\nSOFTWARE.",
   "The MIT License (MIT)\n\nCopyright (c) 2016 Software Mansion <swmansion.com>\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to deal\nin the Software without restriction, including without limitation the rights\nto use, copy, modify, merge, publish, distribute, sublicense, and/or sell\ncopies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all\ncopies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\nSOFTWARE.",
   "MIT License\n\nCopyright (c) 2024 Mathieu Acthernoene\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to deal\nin the Software without restriction, including without limitation the rights\nto use, copy, modify, merge, publish, distribute, sublicense, and/or sell\ncopies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all\ncopies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\nSOFTWARE.",
+  "MIT License\n\nCopyright (c) 2021 Kiryl Ziusko\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to deal\nin the Software without restriction, including without limitation the rights\nto use, copy, modify, merge, publish, distribute, sublicense, and/or sell\ncopies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all\ncopies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\nSOFTWARE.",
   "MIT License\n\nCopyright (c) 2024 Marc Rousavy\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to deal\nin the Software without restriction, including without limitation the rights\nto use, copy, modify, merge, publish, distribute, sublicense, and/or sell\ncopies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all\ncopies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\nSOFTWARE.",
   "MIT License\n\nCopyright (c) 2019 Th3rd Wave\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to deal\nin the Software without restriction, including without limitation the rights\nto use, copy, modify, merge, publish, distribute, sublicense, and/or sell\ncopies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all\ncopies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\nSOFTWARE.",
   "The MIT License (MIT)\n\nCopyright (c) 2018 Software Mansion <swmansion.com>\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to deal\nin the Software without restriction, including without limitation the rights\nto use, copy, modify, merge, publish, distribute, sublicense, and/or sell\ncopies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all\ncopies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\nSOFTWARE.",

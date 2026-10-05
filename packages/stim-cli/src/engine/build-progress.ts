@@ -77,7 +77,7 @@ export interface BuildProgress {
    * pod install will re-check; the run counts as a cold one unless `hit` says otherwise.
    */
   miss(reason: BuildMissReason, provisional?: boolean): void;
-  /** Records that the key re-checked after prebuild or pod install hit the cache, replacing a provisional miss. */
+  /** Records a resolved cache hit, replacing any earlier miss of the lookup or pre-mutation key. */
   hit(): void;
   /** Records whether the run set up its device (created, adopted or cold-booted) rather than reusing a booted one. */
   deviceSetup(setup: boolean | undefined): void;
@@ -240,9 +240,9 @@ export function startBuildProgress({
     },
     miss(reason, provisional = false) {
       record.missReason = reason;
+      settle('cold');
       if (provisional) {
         record.missProvisional = true;
-        settle('cold');
       } else {
         delete record.missProvisional;
       }
@@ -562,6 +562,9 @@ export function buildReport(
     phaseStartedAt: record.phaseStartedAt,
     outcome: estimate.outcome,
     outcomeKnown: record.outcome !== undefined,
+    ...(record.outcome && record.phases.some(({ phase }) => phase === 'cache-lookup')
+      ? { cacheLookupOutcome: record.outcome === 'hit' ? ('hit' as const) : ('miss' as const) }
+      : {}),
     expectedMs: estimate.expectedMs,
     expectedPhaseMs: estimate.phaseMs[record.phase] ?? null,
     basis: estimate.basis,

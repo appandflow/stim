@@ -12,10 +12,13 @@ final class EmulatorInput {
   private static let window: UInt32 = 1 << 30
 
   private struct Call {
+    var id = UUID()
     var method: String
     var message: Data
     var completion: ((Data?) -> Void)?
   }
+
+  var onDisconnect: (() -> Void)?
 
   private let endpoint: EmulatorEndpoint
   private let queue = DispatchQueue(label: "stim.emulator-input")
@@ -31,9 +34,15 @@ final class EmulatorInput {
     self.endpoint = endpoint
   }
 
-  func call(_ method: String, _ message: Data, completion: ((Data?) -> Void)? = nil) {
+  func call(_ method: String, _ message: Data, timeout: TimeInterval? = nil, completion: ((Data?) -> Void)? = nil) {
     queue.async {
-      self.pending.append(Call(method: method, message: message, completion: completion))
+      let call = Call(method: method, message: message, completion: completion)
+      self.pending.append(call)
+      if let timeout {
+        self.queue.asyncAfter(deadline: .now() + timeout) {
+          if self.current?.call.id == call.id || self.pending.contains(where: { $0.id == call.id }) { self.reset() }
+        }
+      }
       self.connect()
       self.sendNext()
     }
@@ -128,6 +137,7 @@ final class EmulatorInput {
   }
 
   private func reset() {
+    let disconnected = connection != nil && !closing
     connection?.cancel()
     connection = nil
     ready = false
@@ -137,5 +147,6 @@ final class EmulatorInput {
     current = nil
     pending = []
     for call in dropped { call.completion?(nil) }
+    if disconnected { onDisconnect?() }
   }
 }

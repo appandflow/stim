@@ -102,7 +102,7 @@ export function statsProjectKey({
   repoRoot: string | null;
 }): string {
   if (commonDir && repoRoot && basename(commonDir) === '.git') {
-    return canonical(join(dirname(commonDir), relative(repoRoot, root)));
+    return canonical(join(canonical(dirname(commonDir)), relative(canonical(repoRoot), canonical(root))));
   }
   return canonical(root);
 }
@@ -398,7 +398,7 @@ function timestamp(value: unknown): string {
 
 function canonical(path: string): string {
   try {
-    return realpathSync(path);
+    return realpathSync.native(path);
   } catch {
     return resolve(path);
   }
@@ -440,7 +440,7 @@ export function findProjectRoot(startDir: string): string | null {
     dir = resolve(startDir);
   }
   while (true) {
-    if (existsSync(join(dir, 'package.json'))) return dir;
+    if (existsSync(join(dir, 'package.json')) || existsSync(join(dir, 'Package.swift'))) return dir;
     const parent = dirname(dir);
     if (parent === dir) return null;
     dir = parent;

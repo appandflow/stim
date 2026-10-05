@@ -7,8 +7,6 @@ import {
   Alert,
   Keyboard,
   PixelRatio,
-  Platform as OS,
-  TextInput,
   useWindowDimensions,
   View,
   type GestureResponderEvent,
@@ -21,14 +19,8 @@ import {
   useExclusiveGestures,
   useTapGesture,
 } from 'react-native-gesture-handler';
-import Animated, {
-  useAnimatedReaction,
-  useAnimatedStyle,
-  useReducedMotion,
-  useSharedValue,
-  withTiming,
-  type SharedValue,
-} from 'react-native-reanimated';
+import Animated, { useAnimatedReaction, useAnimatedStyle, useReducedMotion, withTiming } from 'react-native-reanimated';
+import { useKeyboardState, useReanimatedKeyboardAnimation } from 'react-native-keyboard-controller';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { scheduleOnRN } from 'react-native-worklets';
 import { useHinges } from 'react-native-hinges';
@@ -40,15 +32,17 @@ import { StatusBar } from 'expo-status-bar';
 
 import { Button } from '@/components/button';
 import { AgentFeed } from '@/components/agent-feed';
+import { DeviceFrame } from '@/components/device-frame';
 import { DeviceScreen } from '@/components/device-screen';
 import { Icon } from '@/components/icon';
+import { ViewerToolbar, type ViewerAction } from '@/components/viewer-toolbar';
 import { ScrollView } from '@/components/lists';
 import { Pill } from '@/components/pill';
 import { ReplayBar } from '@/components/replay-bar';
 import { Text } from '@/components/text';
 import { Touch } from '@/components/touch';
+import { ViewerKeyboard } from '@/components/viewer-keyboard';
 import { ViewerBackdrop } from '@/components/viewer-backdrop';
-import { withAlpha } from '@/design/color';
 import { useAutoHide } from '@/hooks/auto-hide';
 import { useDeviceStream, useReplayAt } from '@/hooks/device-stream';
 import { useReplayRange } from '@/hooks/replay-range';
@@ -59,7 +53,8 @@ import { grantCommand, readOnlyReason, allowControlSteps } from '@/components/re
 import { useDeviceControl } from '@/hooks/device-control';
 import { useMacConnection, useWorkspace } from '@/hooks/machines';
 import { useSettings, type VideoQuality } from '@/hooks/settings';
-import { framePoint, keyboardDelta, orientationOf, otherDriver } from '@/lib/device-control';
+import { framePoint, orientationOf, otherDriver } from '@/lib/device-control';
+import { matchingDeviceFrame } from '@/lib/device-frame';
 import { foldOf } from '@/lib/fold';
 import { buildTimeline } from '@/lib/replay';
 import { LIVE_VIEW, replayView } from '@/lib/replay-view';
@@ -75,11 +70,11 @@ const MOVE_INTERVAL_MS = 16;
 const DATA_SAVER_FPS = 10;
 const DATA_SAVER_MAX_EDGE = 640;
 const TYPING_BAR_HEIGHT = 56;
+const MIN_TARGET = 44;
 const ROTATE_WAIT_MS = 2500;
 const ROTATE_NOTE_MS = 4000;
 const ROTATE_NOTE_SCREEN_READER_MS = 16_000;
 const NOTE_INSET = 64;
-const SIDE_WIDTH = 208;
 const CONTROLS_FADE_MS = 200;
 const CONTROLS_MIN_WIDTH = 320;
 
@@ -119,14 +114,16 @@ export function DeviceView({
   const router = useRouter();
   const { theme } = useUnistyles();
   const window = useWindowDimensions();
-  const landscape = window.width > window.height;
   const [rootHeight, setRootHeight] = useState(0);
   const [rootWidth, setRootWidth] = useState(0);
-  const fold = foldOf(useReservedRegions(), rootWidth || window.width, rootHeight || window.height);
+  const paneWidth = rootWidth || window.width;
+  const paneHeight = rootHeight || window.height;
+  const landscape = paneWidth > paneHeight;
+  const fold = foldOf(useReservedRegions(), paneWidth, paneHeight);
   const book = fold?.axis === 'vertical' ? fold : null;
   const halfOpen = useHinges()[0]?.status === 'partiallyOpen';
   const table = fold?.axis === 'horizontal' && halfOpen ? fold : null;
-  const sideBySide = (landscape && !table) || book !== null;
+  const sideBySide = book !== null;
   const { videoQuality } = useSettings();
   const preset = QUALITY_PRESETS[videoQuality];
   const windowMaxEdge = Math.min(MAX_EDGE, Math.round(Math.max(window.width, window.height) * PixelRatio.get()));
@@ -141,7 +138,9 @@ export function DeviceView({
     : undefined;
   const { mac, state: link, connection } = useMacConnection();
   const running = Boolean(device?.running && streamsFrames(device, link.kind === 'open' ? link.features : null));
-  const viewOnly = physical && platform === 'ios';
+  const viewOnly =
+    (physical && platform === 'ios') ||
+    (platform === 'macos' && (link.kind !== 'open' || !link.features.includes('macos-window-control')));
   const slotRange = useReplayRange({ workspace, platform, slot });
   const range = physical ? null : slotRange;
   const replayOff = !physical && env?.recording?.enabled === false;
@@ -151,9 +150,22 @@ export function DeviceView({
   const replayStart = hasFootage ? view.startAt : null;
   const streams = running || replayStart !== null;
   const [scrubbing, setScrubbing] = useState(false);
+  const [showsFrame, setShowsFrame] = useState(false);
+  const frameSupported =
+    !physical &&
+    (platform === 'ios' || platform === 'android') &&
+    link.kind === 'open' &&
+    link.features?.includes('device-frames') === true;
   const streamOptions = useMemo(
-    () => ({ enabled: streams, fps: preset.fps, maxEdge, video: preset.video, startAt: replayStart }),
-    [streams, preset.fps, maxEdge, preset.video, replayStart],
+    () => ({
+      enabled: streams,
+      fps: preset.fps,
+      maxEdge,
+      video: preset.video,
+      startAt: replayStart,
+      deviceFrame: frameSupported,
+    }),
+    [streams, preset.fps, maxEdge, preset.video, replayStart, frameSupported],
   );
   const stream = useDeviceStream({ workspace, platform, slot, physical }, streamOptions);
   const canReplay = hasFootage && stream.replayable !== false;
@@ -168,6 +180,8 @@ export function DeviceView({
   });
   if (synced !== view) setView(synced);
   const source = stream.video ?? stream.frame;
+  const artwork = replaying ? null : matchingDeviceFrame(stream.artwork, source);
+  const activeArtwork = showsFrame ? artwork : null;
   const control = useDeviceControl(workspace, platform, slot, physical);
   const readOnly = !viewOnly && control.allowed === false;
   const [copied, setCopied] = useState(false);
@@ -201,9 +215,9 @@ export function DeviceView({
   const screenGesture = useExclusiveGestures(screenZoom.gesture, revealTap);
   const zoom = useDeviceZoom(
     zoomKey({ macId: mac?.id ?? '', workspace, platform, slot, physical }),
-    aspectOf(source),
-    platform === 'web' ? 1.6 : platform === 'ios' ? 0.46 : 0.45,
-    !controlling && !((sideBySide || table) && readOnly) && !screenZoom.zoomed && !scrubbing,
+    activeArtwork ? activeArtwork.width / activeArtwork.height : aspectOf(source),
+    platform === 'web' || platform === 'macos' ? 1.6 : platform === 'ios' ? 0.46 : 0.45,
+    !controlling && !((landscape || book || table) && readOnly) && !screenZoom.zoomed && !scrubbing,
     root,
     stage,
     screenZoom.lens,
@@ -217,15 +231,18 @@ export function DeviceView({
     },
   );
   const snapshot = zoom.landed && source ? null : zoom.snapshot;
-  const screen = zoom.screenSize;
+  const touchSize = useRef<{ width: number; height: number } | null>(null);
   const keyboard = useRef<TextInputInstance>(null);
   const [typing, setTyping] = useState(false);
-  const [typed, setTyped] = useState('');
+  const [scrolling, setScrolling] = useState(false);
   const [moving, setMoving] = useState<DevicePosture | null>(null);
+  const [changingOption, setChangingOption] = useState(false);
   const [barBottom, setBarBottom] = useState(0);
   const [bannerHeight, setBannerHeight] = useState(0);
   const [barSides, setBarSides] = useState<[number, number]>([0, 0]);
-  const { height: keyboardHeight, shown: keyboardShown } = useKeyboardHeight();
+  const { height: keyboardHeight } = useReanimatedKeyboardAnimation();
+  const keyboardShown = useKeyboardState((state) => state.isVisible);
+  const [typingBarHeight, setTypingBarHeight] = useState(TYPING_BAR_HEIGHT);
   const typingBarShown = typing && keyboardShown;
   useEffect(() => {
     if (!keyboardShown || !controlling) keyboard.current?.blur();
@@ -233,17 +250,16 @@ export function DeviceView({
   const rest = zoom.screenRect;
   const headerGap = theme.space.md;
   const lift = useAnimatedStyle(() => {
-    const covered = keyboardHeight.get();
+    const covered = -keyboardHeight.get();
     if (!rest || covered <= 0 || rootHeight <= 0) return { transform: [{ translateY: 0 }] };
     const shift = liftAbove(
       rest[1],
       rest[3],
-      rootHeight - covered - TYPING_BAR_HEIGHT,
+      rootHeight - covered - typingBarHeight,
       insets.top + barBottom + headerGap,
     );
     return { transform: [{ translateY: -shift }] };
   });
-  const typingBar = useAnimatedStyle(() => ({ transform: [{ translateY: -keyboardHeight.get() }] }));
   const [rotateNote, setRotateNote] = useState<{ text: string; turned: boolean } | null>(null);
   useAnnounce(rest ? rotateNote?.text : null);
   const screenReader = useScreenReaderEnabled();
@@ -279,54 +295,48 @@ export function DeviceView({
 
   const touches = useRef({ active: false, lastMove: 0, pending: null as { x: number; y: number } | null });
   const point = (x: number, y: number, clamp: boolean) =>
-    source && screen ? framePoint(x, y, screen, source, clamp) : null;
+    source && touchSize.current ? framePoint(x, y, touchSize.current, source, clamp) : null;
   const touchHandlers = {
     onStartShouldSetResponder: () => true,
     onMoveShouldSetResponder: () => true,
     onResponderGrant: (event: GestureResponderEvent) => {
       const at = point(event.nativeEvent.locationX, event.nativeEvent.locationY, false);
       touches.current = { active: at !== null, lastMove: Date.now(), pending: at };
-      if (at) control.touch('down', at.x, at.y);
+      if (at && !scrolling) control.touch('down', at.x, at.y);
     },
     onResponderMove: (event: GestureResponderEvent) => {
       if (!touches.current.active) return;
       const at = point(event.nativeEvent.locationX, event.nativeEvent.locationY, true);
       if (!at) return;
-      touches.current.pending = at;
+      const previous = touches.current.pending;
       const now = Date.now();
       if (now - touches.current.lastMove < MOVE_INTERVAL_MS) return;
       touches.current.lastMove = now;
-      control.touch('move', at.x, at.y);
+      touches.current.pending = at;
+      if (scrolling && previous && source) {
+        control.scroll(
+          at.x,
+          at.y,
+          Math.max(-1000, Math.min(1000, (at.x - previous.x) * source.width)),
+          Math.max(-1000, Math.min(1000, (at.y - previous.y) * source.height)),
+        );
+      } else control.touch('move', at.x, at.y);
     },
     onResponderRelease: (event: GestureResponderEvent) => {
       if (!touches.current.active) return;
       const at = point(event.nativeEvent.locationX, event.nativeEvent.locationY, true) ?? touches.current.pending;
       touches.current.active = false;
-      if (at) control.touch('up', at.x, at.y);
+      if (at && !scrolling) control.touch('up', at.x, at.y);
     },
     onResponderTerminate: () => {
       const at = touches.current.pending;
       if (!touches.current.active || !at) return;
       touches.current.active = false;
-      control.touch('up', at.x, at.y);
+      if (!scrolling) control.touch('up', at.x, at.y);
     },
   };
 
-  const takeOver = () => {
-    const driverName = driver ?? t`Another client`;
-    Alert.alert(
-      t`Take over this device?`,
-      t`${driverName} is driving it. Your touches and keys can interfere with its work.`,
-      [
-        { text: t`Cancel`, style: 'cancel' },
-        {
-          text: t`Take over`,
-          style: 'destructive',
-          onPress: () => control.begin(true),
-        },
-      ],
-    );
-  };
+  const takeOver = () => control.begin(true);
   const seek = (at: number, rate: ReplayRate) => {
     if (controlling) control.end();
     setView((current) => replayView(current, { type: 'seek', at, running, hasFootage }));
@@ -339,7 +349,6 @@ export function DeviceView({
   const toggle = () => {
     if (control.state.kind === 'starting') return;
     if (controlling) return control.end();
-    setTyped('');
     if (driver) return takeOver();
     control.begin(false);
   };
@@ -352,6 +361,14 @@ export function DeviceView({
       .posture(posture)
       .catch((cause: Error) => Alert.alert(t`Posture not changed`, cause.message))
       .finally(() => setMoving(null));
+  };
+  const simulator = control.state.kind === 'on' ? control.state.simulator : null;
+  const changeSimulator = (command: Parameters<typeof control.simulator>[0]) => {
+    setChangingOption(true);
+    control
+      .simulator(command)
+      .catch((cause: Error) => Alert.alert(t`Simulator option not changed`, cause.message))
+      .finally(() => setChangingOption(false));
   };
   const readOnlyBanner = readOnly ? (
     <View style={styles.banner(true)}>
@@ -407,55 +424,120 @@ export function DeviceView({
       />
     ) : null;
   const overlayControls = !table && replayBar !== null && streams && rest !== null && rootHeight > 0;
-  const buttons =
-    controlling || readOnly ? (
-      <>
-        {controlling && overlayControls && !controls.shown ? (
-          <ToolButton label={t`Replay`} onPress={controls.reveal} />
-        ) : null}
-        <ToolButton
-          label={typing ? t`Hide keyboard` : t`Keyboard`}
-          disabled={readOnly}
-          onPress={() => (typing ? keyboard.current?.blur() : keyboard.current?.focus())}
-        />
-        {platform !== 'web' ? <ToolButton label={t`Home`} disabled={readOnly} onPress={() => press('home')} /> : null}
-        {platform !== 'ios' ? <ToolButton label={t`Back`} disabled={readOnly} onPress={() => press('back')} /> : null}
-        {platform === 'android' ? (
-          <ToolButton label={t`Apps`} disabled={readOnly} onPress={() => press('app-switch')} />
-        ) : null}
-        {platform !== 'web' ? <ToolButton label={t`Lock`} disabled={readOnly} onPress={() => press('lock')} /> : null}
-        {(platform === 'android' && !physical) || (platform === 'ios' && !postures.length && !shown) ? (
-          <>
-            <ToolButton label={t`Rotate left`} disabled={readOnly} onPress={() => rotate('left')} />
-            <ToolButton label={t`Rotate right`} disabled={readOnly} onPress={() => rotate('right')} />
-          </>
-        ) : null}
-        {postures
-          .filter((posture) => platform === 'android' || posture !== shown)
-          .map((posture) => (
-            <ToolButton
-              key={posture}
-              label={moving === posture ? t`Moving...` : postureLabel(posture)}
-              disabled={moving !== null}
-              onPress={() => move(posture)}
-            />
-          ))}
-      </>
-    ) : null;
-  const toolbars = buttons ? (
-    sideBySide ? (
-      <View style={styles.toolbar}>{buttons}</View>
-    ) : (
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        style={styles.toolScroll}
-        contentContainerStyle={styles.toolRow}
-      >
-        {buttons}
-      </ScrollView>
-    )
-  ) : null;
+  const primary: ViewerAction[] =
+    controlling || readOnly
+      ? [
+          {
+            id: 'keyboard',
+            icon: 'keyboard',
+            label: typing ? t`Hide keyboard` : t`Keyboard`,
+            selected: typing,
+            disabled: readOnly,
+            onPress: () => (typing ? keyboard.current?.blur() : keyboard.current?.focus()),
+          },
+          ...(platform === 'ios'
+            ? [
+                {
+                  id: 'home',
+                  icon: 'circle' as const,
+                  label: t`Home`,
+                  disabled: readOnly,
+                  onPress: () => press('home'),
+                },
+              ]
+            : []),
+          ...(platform === 'web' || platform === 'android'
+            ? [
+                {
+                  id: 'back',
+                  icon: 'chevron.backward' as const,
+                  label: t`Back`,
+                  disabled: readOnly,
+                  onPress: () => press('back'),
+                },
+              ]
+            : []),
+          ...(platform === 'macos'
+            ? [
+                {
+                  id: 'scroll',
+                  icon: 'hand.raised' as const,
+                  label: t`Scroll`,
+                  selected: scrolling,
+                  disabled: readOnly,
+                  onPress: () => setScrolling(!scrolling),
+                },
+              ]
+            : []),
+          ...((platform === 'ios' || platform === 'android') && !physical
+            ? [
+                {
+                  id: 'rotate-left',
+                  icon: 'arrow.counterclockwise' as const,
+                  label: t`Rotate left`,
+                  disabled: readOnly,
+                  onPress: () => rotate('left'),
+                },
+                {
+                  id: 'rotate-right',
+                  icon: 'arrow.clockwise' as const,
+                  label: t`Rotate right`,
+                  disabled: readOnly,
+                  onPress: () => rotate('right'),
+                },
+              ]
+            : []),
+        ]
+      : [];
+  const secondary: ViewerAction[] = [];
+  if (controlling || readOnly) {
+    if (controlling && overlayControls && !controls.shown)
+      secondary.push({ id: 'replay', icon: 'play.circle', label: t`Replay`, onPress: controls.reveal });
+    if (platform === 'android')
+      secondary.push(
+        { id: 'home', icon: 'circle', label: t`Home`, disabled: readOnly, onPress: () => press('home') },
+        { id: 'apps', icon: 'rectangle.stack', label: t`Apps`, disabled: readOnly, onPress: () => press('app-switch') },
+      );
+    if (platform === 'ios' || platform === 'android')
+      secondary.push({ id: 'lock', icon: 'lock', label: t`Lock`, disabled: readOnly, onPress: () => press('lock') });
+    if (simulator?.canShake)
+      secondary.push({
+        id: 'shake',
+        icon: 'arrow.triangle.2.circlepath',
+        label: t`Shake`,
+        disabled: changingOption,
+        onPress: () => changeSimulator({ action: 'shake' }),
+      });
+    if (typeof simulator?.slowAnimations === 'boolean')
+      secondary.push({
+        id: 'slow-animations',
+        icon: 'hourglass',
+        label: t`Slow animations`,
+        selected: simulator.slowAnimations,
+        disabled: changingOption,
+        onPress: () => changeSimulator({ action: 'slow-animations', enabled: !simulator.slowAnimations }),
+      });
+    secondary.push(
+      ...postures.map((posture): ViewerAction => ({
+        id: posture,
+        icon: posture === 'folded' ? 'rectangle.portrait' : posture === 'half-open' ? 'book' : 'rectangle',
+        label: moving === posture ? t`Moving...` : postureLabel(posture),
+        selected: posture === shown,
+        disabled: readOnly || moving !== null || posture === shown,
+        onPress: () => move(posture),
+      })),
+    );
+  }
+  if (artwork)
+    secondary.push({
+      id: 'device-frame',
+      icon: 'rectangle.portrait',
+      label: t`Device frame`,
+      selected: showsFrame,
+      onPress: () => setShowsFrame(!showsFrame),
+    });
+  const toolbars =
+    primary.length || secondary.length ? <ViewerToolbar primary={primary} secondary={secondary} /> : null;
   const model = device?.page
     ? shortUrl(device.page.url)
     : (device?.model ?? (platform === 'ios' ? t`iOS Simulator` : platform === 'web' ? t`Web` : t`Android Emulator`));
@@ -493,7 +575,7 @@ export function DeviceView({
               <View style={styles.root}>
                 <View style={table ? { height: table.start - insets.top } : styles.root}>
                   <View style={{ height: barBottom + headerGap }} />
-                  {sideBySide || table ? null : readOnlyBanner}
+                  {book || table ? null : readOnlyBanner}
                   <View
                     style={book && { width: book.start - insets.left }}
                     onLayout={(event) => setBannerHeight(event.nativeEvent.layout.height)}
@@ -541,17 +623,10 @@ export function DeviceView({
                       <View style={[styles.pane, { marginLeft: book.end - book.start }]}>
                         <ScrollView style={styles.root} contentContainerStyle={styles.sideContent}>
                           {readOnlyBanner}
-                          {toolbars}
                         </ScrollView>
                         {agentFeed}
+                        {toolbars}
                       </View>
-                    ) : landscape && !table ? (
-                      controlling || readOnly ? (
-                        <ScrollView style={styles.side} contentContainerStyle={styles.sideContent}>
-                          {readOnlyBanner}
-                          {toolbars}
-                        </ScrollView>
-                      ) : null
                     ) : table ? null : (
                       toolbars
                     )}
@@ -562,8 +637,8 @@ export function DeviceView({
                     <View style={{ height: table.end - table.start }} />
                     <ScrollView style={styles.root} contentContainerStyle={styles.sideContent}>
                       {readOnlyBanner}
-                      {toolbars}
                     </ScrollView>
+                    {toolbars}
                   </>
                 ) : null}
                 {overlayControls || !replayBar ? null : (
@@ -580,28 +655,33 @@ export function DeviceView({
                 pointerEvents="box-none"
               >
                 <Animated.View style={[styles.flying, zoom.screenStyle, lift]}>
-                  <DeviceScreen
-                    stream={stream}
-                    label={model}
-                    style={StyleSheet.absoluteFill}
-                    requested={{ fps: preset.fps, maxEdge }}
-                  >
-                    {snapshot ? (
-                      <Image
-                        source={{ uri: `data:${snapshot.mime};base64,${snapshot.data}` }}
-                        style={StyleSheet.absoluteFill}
-                        contentFit="contain"
-                        transition={0}
-                      />
-                    ) : null}
-                    {source ? (
-                      <View
-                        style={[styles.overlay, controlling && styles.overlayActive]}
-                        pointerEvents={controlling ? 'auto' : 'none'}
-                        {...(controlling ? touchHandlers : {})}
-                      />
-                    ) : null}
-                  </DeviceScreen>
+                  <DeviceFrame artwork={snapshot ? null : activeArtwork}>
+                    <DeviceScreen
+                      stream={stream}
+                      label={model}
+                      style={StyleSheet.absoluteFill}
+                      requested={{ fps: preset.fps, maxEdge }}
+                    >
+                      {snapshot ? (
+                        <Image
+                          source={{ uri: `data:${snapshot.mime};base64,${snapshot.data}` }}
+                          style={StyleSheet.absoluteFill}
+                          contentFit="contain"
+                          transition={0}
+                        />
+                      ) : null}
+                      {source ? (
+                        <View
+                          onLayout={(event) => {
+                            touchSize.current = event.nativeEvent.layout;
+                          }}
+                          style={[styles.overlay, controlling && styles.overlayActive]}
+                          pointerEvents={controlling ? 'auto' : 'none'}
+                          {...(controlling ? touchHandlers : {})}
+                        />
+                      ) : null}
+                    </DeviceScreen>
+                  </DeviceFrame>
                 </Animated.View>
               </View>
             </GestureDetector>
@@ -627,11 +707,10 @@ export function DeviceView({
                 }}
                 onPress={() => {
                   Keyboard.dismiss();
-                  keyboardHeight.set(withTiming(0, { duration: 200 }));
                   zoom.close();
                 }}
                 accessibilityLabel={t`Close`}
-                hitSlop={10}
+                style={styles.barButton}
               >
                 <Icon name="xmark" size={22} color={theme.media.text} />
               </Touch>
@@ -716,7 +795,7 @@ export function DeviceView({
               style={[
                 styles.controlsLayer,
                 {
-                  ...controlsSpan(rest[0], rest[2], insets.left, book ? book.start : window.width - insets.right),
+                  ...controlsSpan(rest[0], rest[2], insets.left, book ? book.start : paneWidth - insets.right),
                   bottom: rootHeight - rest[1] - rest[3],
                 },
                 zoom.fadeStyle,
@@ -757,51 +836,18 @@ export function DeviceView({
               </Text>
             </Animated.View>
           ) : null}
-          <Animated.View
-            style={[
-              styles.typingBar,
-              { paddingLeft: theme.space.xl + insets.left, paddingRight: theme.space.xl + insets.right },
-              typingBar,
-              !typingBarShown && styles.hidden,
-            ]}
-            pointerEvents={typingBarShown ? 'auto' : 'none'}
-            accessibilityElementsHidden={!typingBarShown}
-            importantForAccessibility={typingBarShown ? 'auto' : 'no-hide-descendants'}
-          >
-            <TextInput
-              ref={keyboard}
-              style={styles.typed}
-              placeholder={t`Type on the device`}
-              placeholderTextColor={withAlpha(theme.media.text, theme.opacity.disabled)}
-              value={typed}
-              autoCapitalize="none"
-              autoCorrect={false}
-              spellCheck={false}
-              keyboardType="ascii-capable"
-              disableFullscreenUI
-              submitBehavior="submit"
-              onChangeText={(next) => {
-                const delta = keyboardDelta(typed, next);
-                setTyped(next);
-                if (delta) control.text(delta);
-              }}
-              onKeyPress={(event) => {
-                if (event.nativeEvent.key === 'Backspace' && typed === '') control.text('\b');
-              }}
-              onSubmitEditing={() => {
-                setTyped('');
-                control.text('\n');
-              }}
-              onFocus={() => setTyping(true)}
-              onBlur={() => setTyping(false)}
-              accessibilityLabel={t`Type on the device`}
-            />
-            <Touch onPress={() => keyboard.current?.blur()} hitSlop={8}>
-              <Text weight="semibold" tone="brand">
-                <Trans>Done</Trans>
-              </Text>
-            </Touch>
-          </Animated.View>
+          <ViewerKeyboard
+            key={control.state.kind === 'on' ? control.state.session : 'off'}
+            keyboard={keyboard}
+            shown={typingBarShown}
+            macos={platform === 'macos'}
+            extendedKeys={link.kind === 'open' && link.features.includes('macos-keyboard-extended')}
+            onFocus={() => setTyping(true)}
+            onBlur={() => setTyping(false)}
+            onHeight={setTypingBarHeight}
+            text={control.text}
+            onKey={control.key}
+          />
         </View>
       </GestureDetector>
     </GestureHandlerRootView>
@@ -845,7 +891,6 @@ function Banner({
           defaultOpacity={readOnly ? theme.opacity.disabled : 1}
           accessibilityHint={readOnly ? readOnlyReason() : undefined}
           style={styles.bannerButton}
-          hitSlop={6}
         >
           <Text weight="semibold" tone="brand" style={readOnly && styles.mutedAction}>
             <Trans>Take over</Trans>
@@ -882,24 +927,6 @@ function ControlButton({ on, disabled, onPress }: { on: boolean; disabled: boole
 function controlsSpan(left: number, width: number, from: number, to: number) {
   const span = Math.min(Math.max(width, CONTROLS_MIN_WIDTH), to - from);
   return { left: Math.min(Math.max(left + width / 2 - span / 2, from), to - span), width: span };
-}
-
-function ToolButton({ label, onPress, disabled }: { label: string; onPress: () => void; disabled?: boolean }) {
-  const { theme } = useUnistyles();
-  return (
-    <Touch
-      onPress={onPress}
-      disabled={disabled}
-      defaultOpacity={disabled ? theme.opacity.disabled : 1}
-      accessibilityState={{ disabled }}
-      style={styles.tool}
-      hitSlop={4}
-    >
-      <Text weight="medium" style={styles.mediaText}>
-        {label}
-      </Text>
-    </Touch>
-  );
 }
 
 const styles = StyleSheet.create((theme) => ({
@@ -963,7 +990,6 @@ const styles = StyleSheet.create((theme) => ({
     textAlign: 'center',
   },
   row: { flex: 1, flexDirection: 'row' },
-  side: { width: SIDE_WIDTH, flexGrow: 0 },
   pane: { flex: 1 },
   sideContent: { flexGrow: 1, justifyContent: 'center', paddingVertical: theme.space.md },
   stage: { flex: 1, alignSelf: 'stretch', alignItems: 'center', justifyContent: 'center' },
@@ -995,29 +1021,19 @@ const styles = StyleSheet.create((theme) => ({
   bannerText: { flex: 1 },
   bannerBody: { flex: 1, gap: theme.space.xs },
   bannerActions: { flexDirection: 'row', gap: theme.space.xxl, paddingTop: theme.space.xs },
-  bannerButton: { paddingHorizontal: theme.space.xs },
+  bannerButton: {
+    minWidth: MIN_TARGET,
+    minHeight: MIN_TARGET,
+    paddingHorizontal: theme.space.xs,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   mutedAction: { color: theme.media.textTertiary },
-  toolbar: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
+  barButton: {
+    width: MIN_TARGET,
+    height: MIN_TARGET,
+    alignItems: 'center',
     justifyContent: 'center',
-    gap: theme.space.md,
-    paddingHorizontal: theme.space.md,
-    paddingVertical: theme.space.sm,
-  },
-  toolScroll: { flexGrow: 0 },
-  toolRow: {
-    flexGrow: 1,
-    justifyContent: 'center',
-    gap: theme.space.md,
-    paddingHorizontal: theme.space.lg,
-    paddingVertical: theme.space.sm,
-  },
-  tool: {
-    paddingHorizontal: theme.space.lg,
-    paddingVertical: theme.space.sm,
-    borderRadius: theme.radius.round,
-    backgroundColor: theme.media.fill,
   },
   control: (on: boolean) => ({
     flexDirection: 'row',
@@ -1029,49 +1045,4 @@ const styles = StyleSheet.create((theme) => ({
     backgroundColor: on ? theme.colors.primary : theme.media.fill,
   }),
   controlText: (on: boolean) => ({ color: on ? theme.colors.onPrimary : theme.media.text }),
-  typingBar: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    bottom: 0,
-    height: TYPING_BAR_HEIGHT,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: theme.space.lg,
-    backgroundColor: theme.media.bar,
-  },
-  hidden: { opacity: 0 },
-  typed: {
-    flex: 1,
-    height: 40,
-    paddingHorizontal: theme.space.lg,
-    borderRadius: theme.radius.control,
-    backgroundColor: theme.media.fill,
-    color: theme.media.text,
-    fontSize: theme.typography.body.fontSize,
-  },
 }));
-
-function useKeyboardHeight(): { height: SharedValue<number>; shown: boolean } {
-  const height = useSharedValue(0);
-  const [shown, setShown] = useState(false);
-  // React Native's Android keyboard events report the IME inset minus the system bars' bottom inset.
-  const { bottom } = useSafeAreaInsets();
-  const barInset = OS.OS === 'android' ? bottom : 0;
-  useEffect(() => {
-    const show = OS.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
-    const hide = OS.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
-    const subscriptions = [
-      Keyboard.addListener(show, (event) => {
-        setShown(true);
-        height.set(withTiming(event.endCoordinates.height + barInset, { duration: event.duration || 250 }));
-      }),
-      Keyboard.addListener(hide, (event) => {
-        setShown(false);
-        height.set(withTiming(0, { duration: event.duration || 250 }));
-      }),
-    ];
-    return () => subscriptions.forEach((subscription) => subscription.remove());
-  }, [height, barInset]);
-  return { height, shown };
-}

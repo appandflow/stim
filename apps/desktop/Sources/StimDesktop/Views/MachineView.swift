@@ -11,6 +11,9 @@ struct MachineView: View {
   @ObservedObject var storage: StorageStore
   @ObservedObject var autopilot: AutopilotRunner
   @EnvironmentObject private var actions: ActionCenter
+  @Environment(\.openSettings) private var openSettings
+  @AppStorage("settingsTab") private var settingsTab = "app"
+  @State private var selectedMachine: String?
   @State private var selection: Set<FreeAction>?
   @State private var confirming: [StimCommand]?
   @State private var removing: WorkspaceStorage?
@@ -21,6 +24,14 @@ struct MachineView: View {
   private static let sizeWidth: CGFloat = 84
   private var compact: Bool { width < 860 }
 
+  private var checkout: String? {
+    doctorCheckouts(status.payload?.environments ?? [], project: status.project(ofPath:)).first?.path
+  }
+
+  private var machine: String? {
+    selectedMachine.flatMap { (buildMachines.entries ?? []).contains($0) ? $0 : nil }
+  }
+
   var body: some View {
     let report = reportCache.value(
       for: StorageReportInputs(
@@ -30,25 +41,53 @@ struct MachineView: View {
     ScrollView {
       VStack(alignment: .leading, spacing: Space.xxxl) {
         header
-        MachineHeading(icon: "laptopcomputer", title: "This Mac", subtitle: Host.current().localizedName) {
-          EmptyView()
+        HStack(spacing: Space.lg) {
+          machineChoices
+            .frame(maxWidth: .infinity, alignment: .leading)
+          Button("Link machine", systemImage: "plus") {
+            settingsTab = "build-machines"
+            openSettings()
+          }
+          .buttonStyle(.stim())
         }
-        NowBand(status: status, metrics: metrics, gc: gc)
-        if let plan = autopilot.pressure { pressureBanner(plan) }
-        ThisMacPlacements(model: buildMachines)
-        MachineBuildMachines(model: buildMachines, status: status)
-        MachineHeading(icon: "internaldrive", title: "Disk on this Mac", subtitle: nil) { EmptyView() }
-        headline(report)
-        safeToFree(report)
-        projects(report)
-        devices(report)
-        runtimes(report)
-        otherTools(report)
+        if let failure = buildMachines.settingsFailure {
+          Text(failure).font(.stim(.footnote)).foregroundStyle(Palette.secondary).textSelection(.enabled)
+        }
+        if let error = buildMachines.stats.error {
+          Text("Could not load build history: \(error)")
+            .font(.stim(.footnote)).foregroundStyle(Palette.secondary).textSelection(.enabled)
+        }
+        if let machine {
+          MachineBuildMachines(model: buildMachines, checkout: checkout, selectedMachine: machine)
+        } else {
+          MachineHeading(icon: "laptopcomputer", title: "This Mac", subtitle: Host.current().localizedName) {
+            EmptyView()
+          }
+          NowBand(status: status, metrics: metrics, gc: gc)
+          if let plan = autopilot.pressure { pressureBanner(plan) }
+          ThisMacPlacements(model: buildMachines)
+          MachineHeading(icon: "internaldrive", title: "Disk on this Mac", subtitle: nil) { EmptyView() }
+          headline(report)
+          safeToFree(report)
+          projects(report)
+          devices(report)
+          runtimes(report)
+          otherTools(report)
+        }
       }
       .padding(compact ? Space.xxl : Space.xxxl)
       .frame(maxWidth: .infinity, alignment: .leading)
     }
     .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { width = $0 }
+    .task(id: checkout) {
+      while !Task.isCancelled {
+        await buildMachines.refresh(checkout: checkout)
+        try? await Task.sleep(for: .seconds(60))
+      }
+    }
+    .onChange(of: buildMachines.entries) { _, entries in
+      if let selectedMachine, !(entries ?? []).contains(selectedMachine) { self.selectedMachine = nil }
+    }
     .onAppear {
       storage.refresh()
       if gc.report == nil { gc.refresh() }
@@ -84,25 +123,60 @@ struct MachineView: View {
 
   // MARK: Header
 
+  private var machineChoices: some View {
+    ViewThatFits(in: .horizontal) {
+      HStack(spacing: Space.sm) {
+        Button {
+          selectedMachine = nil
+        } label: {
+          Label("This Mac", systemImage: "laptopcomputer")
+        }
+        .buttonStyle(.stim(machine == nil ? .primary : .secondary, .regular))
+        .accessibilityAddTraits(machine == nil ? .isSelected : [])
+        ForEach(buildMachines.entries ?? [], id: \.self) { entry in
+          Button {
+            selectedMachine = entry
+          } label: {
+            Label(machineName(entry), systemImage: "desktopcomputer")
+          }
+          .buttonStyle(.stim(machine == entry ? .primary : .secondary, .regular))
+          .accessibilityAddTraits(machine == entry ? .isSelected : [])
+          .help(entry)
+        }
+      }
+      .fixedSize(horizontal: true, vertical: false)
+      Picker("Machine", selection: Binding(get: { machine }, set: { selectedMachine = $0 })) {
+        Text("This Mac").tag(String?.none)
+        ForEach(buildMachines.entries ?? [], id: \.self) { entry in
+          Text(verbatim: machineName(entry)).tag(Optional(entry))
+        }
+      }
+      .pickerStyle(.menu)
+      .frame(maxWidth: 360, alignment: .leading)
+    }
+  }
+
   private var header: some View {
     HStack(alignment: .firstTextBaseline) {
       VStack(alignment: .leading, spacing: Space.xs) {
         Text("Machines").font(.stim(.title))
-        Text("This Mac, the build machines it offloads builds to, then this Mac's disk and what Stim can free.")
+        Text("Choose a machine to see its resources and build activity.")
           .foregroundStyle(Palette.secondary)
       }
       Spacer()
-      if let at = storage.measuredAt, !storage.measuring, !gc.running {
+      if machine == nil, let at = storage.measuredAt, !storage.measuring, !gc.running {
         TimelineView(.periodic(from: .now, by: 30)) { context in
           Text("Measured \(Format.age(context.date.timeIntervalSince(at)))").foregroundStyle(Palette.tertiary)
         }
       }
-      Button("Refresh") {
-        storage.refresh(force: true)
-        gc.refresh()
+      if machine == nil {
+        Button("Refresh") {
+          storage.refresh(force: true)
+          gc.refresh()
+        }
+        .buttonStyle(.stim())
+        .disabled(storage.measuring || gc.running)
       }
-      .buttonStyle(.stim())
-      .disabled(storage.measuring || gc.running)
     }
   }
 
@@ -232,9 +306,13 @@ struct MachineView: View {
         .buttonStyle(.stim())
       } else {
         Button(bytes > 0 ? "Free \(Format.fileSize(bytes))\u{2026}" : "Free space\u{2026}") { free(commands) }
-          .buttonStyle(.stim(.primary))
+          .buttonStyle(.stim(commands.isEmpty ? .secondary : .primary))
+          .saturation(commands.isEmpty ? 0 : 1)
           .disabled(commands.isEmpty)
-          .help(commands.map { "stim " + $0.arguments.joined(separator: " ") }.joined(separator: "\n"))
+          .help(
+            commands.isEmpty
+              ? "Select items to free space."
+              : commands.map { "stim " + $0.arguments.joined(separator: " ") }.joined(separator: "\n"))
       }
     } content: { shown in
       if gc.report == nil {
@@ -244,6 +322,11 @@ struct MachineView: View {
         Text("stim gc found nothing to free.").foregroundStyle(Palette.tertiary)
       } else {
         if let error = gc.error, !gc.running { gcFailed(error) }
+        if commands.isEmpty, actions.active(for: ActionCenter.machineKey) == nil {
+          Text("Select items to free space.")
+            .font(.stim(.footnote, weight: .medium))
+            .foregroundStyle(Palette.secondary)
+        }
         Text(
           "Rows marked stim gc are freed together by one stim gc --delete, which also frees the worktree and build outputs rows. Free previews or confirms its commands first."
         )
@@ -258,7 +341,7 @@ struct MachineView: View {
   private var cleanup: some View {
     Card {
       HStack(spacing: Space.lg) {
-        Image(systemName: "trash").foregroundStyle(Palette.accent)
+        Image(systemName: "trash").foregroundStyle(Palette.accent).accessibilityHidden(true)
         VStack(alignment: .leading, spacing: Space.xxs) {
           Text("Reclaim what Stim left behind")
           Text("Preview the stim gc report, then confirm before anything is deleted.")
@@ -394,6 +477,7 @@ struct MachineView: View {
           .font(.system(size: 11, weight: .semibold))
           .foregroundStyle(Palette.tertiary)
           .frame(width: 12)
+          .accessibilityHidden(true)
         Text(status.title(of: Project(root: repository.path))).font(.stim(.body, weight: .semibold)).lineLimit(1)
         Text("\(repository.worktrees.count) worktrees").foregroundStyle(Palette.tertiary)
         Spacer()
@@ -404,6 +488,7 @@ struct MachineView: View {
       .padding(.vertical, Space.md)
     }
     .buttonStyle(.hoverRow(radius: 0))
+    .accessibilityValue(open ? "Expanded" : "Collapsed")
     .help(abbreviatingHome(repository.path))
   }
 
@@ -657,6 +742,7 @@ struct MachineView: View {
       Image(systemName: runtime.id.hasPrefix("system-images;") ? "square.stack.3d.up" : "cpu")
         .foregroundStyle(runtime.unused ? Palette.warning : Palette.tertiary)
         .frame(width: 16)
+        .accessibilityHidden(true)
       VStack(alignment: .leading, spacing: Space.xxs) {
         Text(runtime.title).lineLimit(1)
         if let detail = runtime.detail { Text(detail).font(.stim(.caption)).foregroundStyle(Palette.secondary).lineLimit(1) }
@@ -701,7 +787,7 @@ struct MachineView: View {
           ForEach(Array(report.unmanaged.enumerated()), id: \.element.id) { index, location in
             if index > 0 { Rectangle().fill(Palette.border).frame(height: 1) }
             HStack(spacing: Space.lg) {
-              Image(systemName: "folder").foregroundStyle(Palette.tertiary).frame(width: 16)
+              Image(systemName: "folder").foregroundStyle(Palette.tertiary).frame(width: 16).accessibilityHidden(true)
               VStack(alignment: .leading, spacing: Space.xxs) {
                 Text(location.title)
                 Text(abbreviatingHome(location.detail ?? location.path ?? "")).font(.stim(.caption))

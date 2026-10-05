@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: auto publishes an update when the latest production build has the same runtime, and builds and submits otherwise. rollback and republish change what channel production serves.
+        description: auto publishes an update when the latest production build has the same runtime, and builds and distributes otherwise. rollback and republish change what channel production serves.
         type: choice
         options: [auto, update, build, rollback, republish]
         default: auto
@@ -80,7 +80,7 @@ jobs:
 
       - uses: expo/expo-github-action@eab7a230208c952974db8c3245cfd78402c7b385 # 9.0.0
         with:
-          eas-version: 24.8.0
+          eas-version: 24.10.0
           token: ${{ secrets.EXPO_TOKEN }}
 
       - name: Choose update or build
@@ -173,9 +173,81 @@ jobs:
             --message "Republish $INPUT_GROUP (run $GITHUB_RUN_ID)" --non-interactive --json > republish.json
           echo "::notice::Channel production on runtime $runtime now serves group $INPUT_GROUP, republished as $(jq -r '.[0].group' republish.json)."
 
-      - name: Build and submit to TestFlight
+      - name: Build for TestFlight
+        id: build
         if: steps.mode.outputs.mode == 'build'
         env:
           EXPO_APPLE_TEAM_ID: R7E8P23K3N
           EXPO_APPLE_TEAM_TYPE: COMPANY_OR_ORGANIZATION
-        run: eas build --platform ios --profile production --non-interactive --auto-submit
+        run: |
+          eas build --platform ios --profile production --non-interactive --json > build.json
+          build_id="$(jq -r '.[0].id // empty' build.json)"
+          build_number="$(jq -r '.[0].appBuildVersion // empty' build.json)"
+          app_version="$(jq -r '.[0].appVersion // empty' build.json)"
+          if [ -z "$build_id" ] || [ -z "$build_number" ] || [ -z "$app_version" ]; then
+            echo "::error::eas build printed no build id, build number or app version."
+            exit 1
+          fi
+          {
+            echo "build_id=$build_id"
+            echo "build_number=$build_number"
+            echo "app_version=$app_version"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Upload to TestFlight and distribute to external testers
+        if: steps.mode.outputs.mode == 'build'
+        env:
+          BUILD_ID: ${{ steps.build.outputs.build_id }}
+          BUILD_NUMBER: ${{ steps.build.outputs.build_number }}
+          APP_VERSION: ${{ steps.build.outputs.app_version }}
+        run: |
+          changelog="$(git log -1 --format='%s (%h)')"
+          testflight_build() {
+            eas submit:status --platform ios --json --non-interactive |
+              jq -c --arg number "$BUILD_NUMBER" --arg version "$APP_VERSION" '[.ios.testFlightBuilds[] | select(.buildNumber == $number and .appVersion == $version)][0] // empty'
+          }
+
+          workflow_status=0
+          eas workflow:run .eas/workflows/testflight.yml --non-interactive --wait \
+            -F "build_id=$BUILD_ID" -F "changelog=$changelog" </dev/null || workflow_status=$?
+
+          read_status=0
+          build="$(testflight_build)" || read_status=$?
+          if [ "$read_status" -eq 0 ] && [ -z "$build" ] && [ "$workflow_status" -eq 11 ]; then
+            echo "::warning::The TestFlight job failed before the upload. Uploading the same build with eas submit; it will reach internal testers only."
+            eas submit --platform ios --profile production --id "$BUILD_ID" --non-interactive --wait || true
+            build="$(testflight_build)" || read_status=$?
+          fi
+          if [ "$read_status" -ne 0 ]; then
+            echo "::warning::Could not read the TestFlight state with eas submit:status. The TestFlight job exited $workflow_status."
+            exit $((workflow_status != 0))
+          fi
+          if [ -z "$build" ]; then
+            if [ "$workflow_status" -eq 0 ]; then
+              echo "::warning::The TestFlight job succeeded but build $BUILD_NUMBER is not listed by eas submit:status. Check the TestFlight tab in App Store Connect."
+              exit 0
+            fi
+            echo "::error::Build $BUILD_NUMBER ($BUILD_ID) did not reach TestFlight (TestFlight job exit $workflow_status). Run mode=build again."
+            exit 1
+          fi
+
+          number="$(jq -r .buildNumber <<<"$build")"
+          processing="$(jq -r .processingState <<<"$build")"
+          external="$(jq -r '.externalState // "unknown"' <<<"$build")"
+          case "$processing/$external" in
+            PROCESSING/*) level=warning; text="uploaded and still processing at Apple" ;;
+            VALID/READY_FOR_BETA_SUBMISSION) level=warning; text="uploaded and processed, not submitted for Beta App Review" ;;
+            VALID/WAITING_FOR_BETA_REVIEW) level=notice; text="awaiting Beta App Review" ;;
+            VALID/IN_BETA_REVIEW) level=notice; text="in Beta App Review" ;;
+            VALID/IN_EXPORT_COMPLIANCE_REVIEW) level=notice; text="in export compliance review" ;;
+            VALID/BETA_REJECTED) level=warning; text="rejected by Beta App Review" ;;
+            VALID/IN_BETA_TESTING | VALID/BETA_APPROVED) level=notice; text="available to external testers" ;;
+            *) level=warning; text="in an unexpected state" ;;
+          esac
+          message="iOS build $number is $text (processing $processing, external $external)."
+          if [ "$workflow_status" -ne 0 ]; then
+            message="$message The TestFlight job exited $workflow_status. Fix the cause in the EAS workflow run, then add the build to the External group in App Store Connect."
+            level=warning
+          fi
+          echo "::$level::$message"
+          echo "$message" >> "$GITHUB_STEP_SUMMARY"

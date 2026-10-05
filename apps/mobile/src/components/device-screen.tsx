@@ -6,7 +6,7 @@ import { StyleSheet } from 'react-native-unistyles';
 
 import { Text } from '@/components/text';
 import type { DeviceStream } from '@/hooks/device-stream';
-import { StimVideoView } from '../../modules/stim-video/src';
+import { StimVideoView, supportsFrameOrientation } from '../../modules/stim-video/src';
 
 /**
  * A device's live `stream`, filling the view, which the caller sizes to the device's aspect ratio: H.264 video
@@ -35,10 +35,12 @@ export function DeviceScreen({
         streamId={stream.streamId}
         style={StyleSheet.absoluteFill}
         onKeyframeNeeded={stream.requestKeyframe}
+        {...(supportsFrameOrientation ? { onOrientationCleared: stream.orientationCleared } : {})}
       />
       {stream.frame && !stream.video ? (
         <Image
           source={{ uri: `data:${stream.frame.mime};base64,${stream.frame.data}` }}
+          recyclingKey={`${stream.streamId}/${stream.frame.artworkTurns ?? ''}/${stream.frame.width}x${stream.frame.height}`}
           style={StyleSheet.absoluteFill}
           contentFit="contain"
           transition={0}

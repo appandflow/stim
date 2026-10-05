@@ -19,6 +19,7 @@ struct WorkspaceDetail: View {
   @State private var viewing: ViewedDevice?
   @State private var logMoment: LogMoment?
   @EnvironmentObject private var actions: ActionCenter
+  @ObservedObject private var server = ServerSession.shared
   @Environment(\.windowSize) private var windowSize
   @State private var logsResizeStart: CGFloat?
   @AppStorage(AppPreferences.Key.logsDrawerHeight) private var logsHeight = Double(WorkspaceDetail.defaultLogsHeight)
@@ -45,7 +46,6 @@ struct WorkspaceDetail: View {
         inspectorPanel
           .frame(width: Self.clampedInspectorWidth(inspectorWidth, detailWidth: width))
           .background(Palette.sidebar)
-          .toolbarBackdrop(Palette.sidebar)
       }
     }
     .onGeometryChange(for: CGFloat.self) {
@@ -57,9 +57,11 @@ struct WorkspaceDetail: View {
       if inspector == .overlay {
         inspectorPanel
           .frame(width: Self.inspectorWidth)
-          .background(Palette.sidebar, ignoresSafeAreaEdges: [])
-          .clipped()
-          .overlay(alignment: .leading) { Rectangle().fill(Palette.border).frame(width: 1) }
+          .background(Palette.sidebar)
+          .overlay(alignment: .leading) {
+            Rectangle().fill(Palette.border).frame(width: 1).ignoresSafeArea(edges: .top)
+          }
+          .compositingGroup()
           .shadow(color: .black.opacity(0.25), radius: 16)
       }
     }
@@ -165,7 +167,12 @@ struct WorkspaceDetail: View {
     Inspector(
       cli: cli, env: env, stats: stats.flatMap { $0.path == env.path ? $0.fetched : nil } ?? Fetched(),
       machine: machine, usage: usage, history: history,
-      reportsBundles: reportsBundles, showsLogs: showsLogs, toggleLogs: { showsLogs.toggle() }
+      reportsBundles: reportsBundles,
+      openLogs: { query in
+        logQuery = query
+        logMoment = nil
+        showsLogs = true
+      }
     )
     .frame(maxHeight: .infinity)
   }
@@ -173,16 +180,18 @@ struct WorkspaceDetail: View {
   private func canvas(devices: [DeviceRef], focused: DeviceRef?) -> some View {
     GeometryReader { geo in
       ScrollView {
-        if devices.isEmpty {
+        if let macos = env.macos {
+          MacosAppCard(app: macos, workspace: env.path).padding(Space.xxl)
+        }
+        if devices.isEmpty && env.macos == nil {
           emptyCanvas.frame(maxWidth: .infinity).padding(Space.xxxl)
-        } else {
+        } else if !devices.isEmpty {
           let availableWidth = max(0, geo.size.width - Space.xxl * 2)
           let cardWidth = min(Self.maximumCardWidth, availableWidth)
           let cardHeight = max(0, geo.size.height - Space.xxl * 2)
           FlowLayout(spacing: Space.xl, lineSpacing: Space.xl, topAligned: true, centered: true) {
             ForEach(devices) { device in
               tile(device, focused: device.id == focused?.id, cardWidth: cardWidth, cardHeight: cardHeight)
-                .frame(width: cardWidth)
             }
           }
           .padding(Space.xxl)
@@ -225,31 +234,41 @@ struct WorkspaceDetail: View {
   }
 
   private func tile(_ device: DeviceRef, focused: Bool, cardWidth: CGFloat, cardHeight: CGFloat) -> some View {
-    DeviceTile(
+    let canControl =
+      device.isInteractive
+      && (!device.isPhysical || PhysicalScreen(device: device, link: server.link, now: Date()).canControl)
+    let viewerAction = canControl ? "Control" : "View"
+    let tile = DeviceTile(
       device: device, screenHeight: 900, workspace: env.path,
       build: env.runningBuild(for: device),
       usage: device.isRunning ? env.usage(of: device, machine: machine) : nil,
       presence: env.appPresence(device),
       showsCovers: true,
       focused: focused,
+      viewerAction: viewerAction,
       maxWidth: cardWidth, maxCardHeight: cardHeight,
       showsScreen: viewing?.id != device.id
     )
-    .overlay {
-      Button {
-        focusedID = device.id
-        viewing = ViewedDevice(id: device.id)
-      } label: {
-        Color.clear.contentShape(Rectangle())
+    return
+      tile
+      .allowsHitTesting(tile.showsStoppedBar)
+      .background {
+        Button {
+          focusedID = device.id
+          viewing = ViewedDevice(id: device.id)
+        } label: {
+          Color.clear.contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(canControl ? "Control \(device.label) or replay what it recorded" : "View \(device.label)")
+        .accessibilityLabel("\(viewerAction) \(device.label)")
       }
-      .buttonStyle(.plain)
-      .help("Open \(device.label) to take it over or replay what it recorded")
-      .accessibilityLabel("Open \(device.label)")
-    }
+      .frame(width: tile.showsStoppedBar ? min(DeviceTile.stoppedMaximumWidth, cardWidth) : cardWidth)
   }
 
   /// Shows the agent source of `slot` in the logs drawer, scrolled to `at` when given.
   private func revealAgentActions(slot: String, at: Double?) {
+    logQuery = LogQuery()
     logQuery.sources = [.agent]
     logQuery.slot = slot
     logQuery.minimumLevel = .debug

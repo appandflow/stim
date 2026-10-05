@@ -43,6 +43,8 @@ reference:
 
 - [Getting started](https://stim.appandflow.com/docs/getting-started): terms,
   the first run, parallel worktrees, and what to do when a run fails.
+- [Native macOS prototype](https://stim.appandflow.com/docs/macos): Swift Package
+  Debug apps, workspace logs and local window viewing in Stim Desktop.
 - [Web in an owned Chrome](https://stim.appandflow.com/docs/web): `stim web`
   for Expo web and other web servers, page logs, and attaching browser tools.
 - [Worktrees](https://stim.appandflow.com/docs/worktrees): `worktree warm`,

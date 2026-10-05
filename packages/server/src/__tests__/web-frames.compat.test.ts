@@ -40,6 +40,7 @@ function sources(): string {
     join(HELPER_DIR, 'main.swift'),
     join(HELPER_DIR, 'VideoEncoder.swift'),
     join(HELPER_DIR, 'PhoneSource.swift'),
+    join(HELPER_DIR, 'FrameArtwork.swift'),
     ...desktop.map((path) => join(DESKTOP_DIR, path)),
   ]) {
     copyFileSync(source, join(dir, basename(source)));

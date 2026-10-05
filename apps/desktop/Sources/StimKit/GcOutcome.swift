@@ -125,6 +125,7 @@ public struct GcOutcome: Hashable, Sendable {
       (["recording", "recordings"], { "Deleted the device recordings of \(count($0, "workspace"))" }),
       (["easSession", "orphanedEasSessions"], { "Stopped \(count($0, "EAS session"))" }),
       (["watchman", "gradleDaemon", "kotlinDaemon"], { "Stopped \(count($0, "helper process", "helper processes"))" }),
+      (["statusCache", "staleStatusCaches"], { _ in "Removed stale status cache entries" }),
       (["watchmanRoot"], { "Removed \(count($0, "stale watchman root"))" }),
       (["project", "deadProjects", "invalidProjects"], { "Pruned \(count($0, "project entry", "project entries"))" }),
     ]

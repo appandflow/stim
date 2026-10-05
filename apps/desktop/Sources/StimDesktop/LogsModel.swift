@@ -2,8 +2,8 @@ import Combine
 import Foundation
 import StimKit
 
-/// The entries of one running `stim logs --follow` query, capped at `limit`
-/// records with the oldest dropped first.
+/// The entries of one running `stim logs --follow` query. Generic queries keep the newest `limit` records;
+/// a scoped build keeps its full retained output.
 @MainActor
 final class LogsModel: ObservableObject {
   static let limit = 50_000
@@ -45,6 +45,17 @@ final class LogsModel: ObservableObject {
   }
 
   private(set) var rows: [Row] = []
+  private(set) var rawRows: [Row] = []
+  @Published var readableBuildLogs = true {
+    didSet {
+      guard readableBuildLogs != oldValue else { return }
+      updateRows(from: 0)
+      pinnedToLatest = true
+      onChange?(.reset)
+    }
+  }
+  private var displayStarts = [0]
+  private var presentation = XcodeLogPresentation()
   @Published private(set) var count = 0
   @Published private(set) var phase = Phase.idle
   @Published var pinnedToLatest = true
@@ -67,6 +78,9 @@ final class LogsModel: ObservableObject {
     if let pending, pending.query != query { self.pending = nil }
     list = LogEntryList()
     rows = []
+    rawRows = []
+    displayStarts = [0]
+    presentation = XcodeLogPresentation()
     root = cwd
     count = 0
     phase = .following
@@ -96,8 +110,9 @@ final class LogsModel: ObservableObject {
 
   private func revealPending() {
     guard let pending, pending.query == following, let record = list.records.firstIndex(where: { $0.ts >= pending.at }),
-      let row = list.entryIndex(ofRecord: record)
+      let entry = list.entryIndex(ofRecord: record), displayStarts[entry] < rows.count
     else { return }
+    let row = displayStarts[entry]
     self.pending = nil
     pinnedToLatest = false
     onChange?(.reveal(row))
@@ -109,20 +124,52 @@ final class LogsModel: ObservableObject {
       preview: stackPreview(entry.lead.stack, root: root, home: home))
   }
 
+  private func updateRows(from: Int) {
+    let shownFrom = displayStarts[from]
+    rows.removeSubrange(shownFrom...)
+    displayStarts.removeSubrange((from + 1)...)
+    for index in from..<rawRows.count {
+      let original = rawRows[index]
+      if !readableBuildLogs {
+        rows.append(original)
+      } else if let message = presentation.messages[index] {
+        if message == original.entry.lead.msg {
+          rows.append(original)
+        } else {
+          var entry = original.entry
+          entry.lead.msg = message
+          var shown = original
+          shown.view = viewEntry(entry, root: root, home: home)
+          rows.append(shown)
+        }
+      }
+      displayStarts.append(rows.count)
+    }
+  }
+
+  func rawRow(for row: Row) -> Row { self.row(row.entry) }
+
   private func handle(_ event: LogFollower.Event) {
     switch event {
     case .records(let batch):
       let width = list.slotWidth
       let from = list.append(batch)
-      let replaced = rows[from...].map(\.lead)
-      rows.removeSubrange(from...)
-      rows += list.entries[from...].map(row)
-      onChange?(.updated(from: from, replaced: replaced))
-      if list.records.count > Self.limit {
+      let shownFrom = displayStarts[from]
+      let replaced = rows[shownFrom...].map(\.lead)
+      rawRows.removeSubrange(from...)
+      rawRows += list.entries[from...].map(row)
+      presentation.update(list.entries, from: from)
+      updateRows(from: from)
+      onChange?(.updated(from: shownFrom, replaced: replaced))
+      if following?.buildRun == nil, list.records.count > Self.limit {
         let dropped = list.dropOldest(list.records.count - Self.limit + Self.limit / 10)
-        let lines = rows[..<dropped].reduce(0) { $0 + $1.lines }
-        rows.removeFirst(dropped)
-        onChange?(.trimmed(rows: dropped, lines: lines))
+        let shownDropped = displayStarts[dropped]
+        let lines = rows[..<shownDropped].reduce(0) { $0 + $1.lines }
+        rawRows.removeFirst(dropped)
+        presentation.dropFirst(dropped)
+        rows.removeFirst(shownDropped)
+        displayStarts = displayStarts.dropFirst(dropped).map { $0 - shownDropped }
+        onChange?(.trimmed(rows: shownDropped, lines: lines))
       }
       if list.slotWidth != width { onChange?(.slotColumnWidened) }
       count = list.records.count

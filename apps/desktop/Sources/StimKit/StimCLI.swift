@@ -27,13 +27,33 @@ public struct StimCLI: Sendable {
   public let executable: String?
   /// The environment every `stim` process runs with.
   public let environment: [String: String]
+  /// Runs `executable`'s script under the home directory's Node; nil runs `executable` through its own shebang.
+  public let launcher: NodeLauncher?
 
-  public init(environment: [String: String], override: String? = nil) {
+  public init(environment: [String: String], override: String? = nil, launcher: NodeLauncher? = nil) {
     var environment = environment
     self.executable = resolveExecutable(
       "stim", override: override.flatMap { $0.isEmpty ? nil : $0 } ?? environment["STIM_BIN"],
       environment: &environment)
     self.environment = environment
+    self.launcher = launcher
+  }
+
+  /// `init(environment:override:)` with a launcher, so a project's Node pin does not choose the Node `stim` runs on.
+  /// `layout` names the package managers' global directories, which only a version-manager shim needs.
+  public static func resolve(
+    environment: [String: String], override: String? = nil,
+    layout: (() async -> PackageManagerLayout)? = nil
+  ) async -> StimCLI {
+    let cli = StimCLI(environment: environment, override: override)
+    let launcher = await NodeLauncher.resolve(
+      executable: cli.executable, name: "stim", environment: cli.environment, layout: layout)
+    return StimCLI(environment: environment, override: override, launcher: launcher)
+  }
+
+  private func command(_ arguments: [String]) throws -> (program: String, arguments: [String]) {
+    guard let executable else { throw Failure.notFound }
+    return try launcher?.command(arguments) ?? (executable, arguments)
   }
 
   /// The directory `stim` keeps its state in: `STIM_HOME` from `environment`, else `~/.stim`. This app's own
@@ -118,8 +138,8 @@ public struct StimCLI: Sendable {
   }
 
   private func execute(_ args: [String], cwd: String?) async throws -> (Int32, Data, String) {
-    guard let executable else { throw Failure.notFound }
-    var request = ProcessRequest(executable, args, cwd: cwd, environment: environment)
+    let command = try command(args)
+    var request = ProcessRequest(command.program, command.arguments, cwd: cwd, environment: environment)
     request.captureStderr = true
     let result = try await request.run()
     return (result.status, result.stdout, stderrTail(result.stderrText))
@@ -149,18 +169,17 @@ public struct StimCLI: Sendable {
     var environment = environment
     environment["NO_COLOR"] = "1"
     environment["FORCE_COLOR"] = "0"
-    let executable: String
+    let launch: (program: String, arguments: [String])
     if command.program == "stim" {
-      guard let stim = self.executable else { throw Failure.notFound }
-      executable = stim
+      launch = try self.command(command.arguments)
     } else {
       guard let tool = resolveExecutable(command.program, override: nil, environment: &environment) else {
         throw Failure.toolNotFound(command.program)
       }
-      executable = tool
+      launch = (tool, command.arguments)
     }
     return try ProcessStream.start(
-      executable: executable, arguments: command.arguments, cwd: command.cwd, environment: environment,
+      executable: launch.program, arguments: launch.arguments, cwd: command.cwd, environment: environment,
       onLine: onLine, onExit: onExit)
   }
 }

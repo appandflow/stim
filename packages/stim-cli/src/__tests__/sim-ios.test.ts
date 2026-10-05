@@ -1033,6 +1033,13 @@ test.each([
   expect(quiet.filter((call) => call.startsWith('open '))).toEqual([command]);
 });
 
+test('hosted boot waits for bootstatus without opening a host viewer', async () => {
+  const { quiet, spawned } = bootstatusExecutor([{ exitCode: 0 }], () => bootSimList('Booted'));
+  await bootIosSim('UDID-A', { openViewer: false });
+  expect(spawned).toContain('xcrun simctl bootstatus UDID-A -b');
+  expect(quiet.some((call) => call.startsWith('open '))).toBe(false);
+});
+
 test('machine config opens the owned simulator in Siniulator', async () => {
   writeFileSync(join(tmpHome, 'config.json'), JSON.stringify({ iosSimulatorApp: 'siniulator' }));
   const { quiet } = bootstatusExecutor([{ exitCode: 0 }], () => bootSimList('Booted'));

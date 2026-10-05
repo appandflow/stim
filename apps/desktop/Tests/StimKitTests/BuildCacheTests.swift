@@ -19,8 +19,9 @@ import Testing
                    "startedAt":"2026-09-25T12:00:00.000Z","finishedAt":null,"errorCode":"STIM_BUILD_FAILED"}}}
       """)
     let ios = try #require(workspace.lastBuilds?.build(for: "ios"))
-    #expect(ios.cacheHit == .none && ios.summary == "Cache miss, compiled in 1m 23s")
-    #expect(workspace.lastBuilds?.build(for: "android")?.summary == "Failed (STIM_BUILD_FAILED) in 0m 4s")
+    #expect(ios.cacheHit == .none && ios.status == "ok" && ios.durationMs == 83123)
+    let android = try #require(workspace.lastBuilds?.build(for: "android"))
+    #expect(android.status == "failed" && android.errorCode == "STIM_BUILD_FAILED" && android.cacheHit == .remote)
   }
 
   @Test func readsTheBuildHistoryOfEachPlatformWithHowEachRunEnded() throws {
@@ -43,12 +44,11 @@ import Testing
       """)
     let ios = try #require(workspace.builds?.builds(for: "ios"))
     #expect(ios.map(\.result) == ["cancelled", "succeeded"])
-    #expect(ios[0].outcome == "Cancelled" && ios[0].detail == nil)
-    #expect(ios[0].phaseLine == "prepare 0m 2s \u{00B7} pods 1m 30s")
-    #expect(ios[1].outcome == "Local cache" && ios[1].slot == "default" && ios[1].phases.isEmpty)
+    #expect(ios[0].phases == ["pods": 90794, "prepare": 2260])
+    #expect(ios[1].build.cacheHit == .local && ios[1].slot == "default" && ios[1].phases.isEmpty)
     let android = try #require(workspace.builds?.builds(for: "android").first)
-    #expect(android.outcome == "Interrupted" && android.detail == "slot tablet" && android.configuration == nil)
-    #expect(android.phaseLine == "prepare 0m 1s \u{00B7} stopped in compile \u{00B7} device 0m 3s")
+    #expect(android.result == "interrupted" && android.slot == "tablet" && android.configuration == nil)
+    #expect(android.phases == ["prepare": 1524, "device": 3000, "compile": 0])
     let failed = try decode(
       BuildHistoryEntry.self,
       """
@@ -57,7 +57,8 @@ import Testing
        "missReason":{"kind":"changed","summary":"android/ added (+2 more)","changes":[],"changeCount":3,
          "baseline":null,"rekeyedBy":[]}}
       """)
-    #expect(failed.outcome == "Failed" && failed.detail == "STIM_BUILD_FAILED \u{00B7} android/ added (+2 more)")
+    #expect(failed.result == "failed" && failed.build.errorCode == "STIM_BUILD_FAILED")
+    #expect(failed.build.missReason?.summary == "android/ added (+2 more)")
     #expect(try decode(Workspace.self, #"{"path":"/w","live":false,"warnings":[]}"#).builds == nil)
   }
 
@@ -73,7 +74,7 @@ import Testing
       """)
     let reason = try #require(last.missReason)
     #expect(reason.changes.first?.category == "native-dependency" && reason.changeCount == 3)
-    #expect(reason.baselineLine == "Compared with 01234567, the last build of this project in another worktree.")
+    #expect(reason.baseline?.fingerprint == "0123456789abcdef" && reason.baseline?.from == "project")
   }
 
   @Test func describesAPlannedHitMissAndRefusal() throws {
@@ -83,8 +84,7 @@ import Testing
       {"platform":"ios","fingerprint":"1b62","cacheKey":"k","cacheHit":"remote","provider":"eas","cacheSkipped":false,
        "prebuild":null,"outcome":"hit","expectedMs":2656,"basis":1}
       """)
-    #expect(hit.nextBuild == "cache hit (remote), ~0m 2s")
-    #expect(hit.detail == "From eas. Median of 1 hit run")
+    #expect(hit.cacheHit == .remote && hit.outcome == "hit" && hit.expectedMs == 2656)
 
     let miss = try decode(
       BuildPlan.self,
@@ -95,9 +95,8 @@ import Testing
          "changes":[{"source":"node_modules/expo-clipboard/android","change":"added","category":"native-dependency"}],
          "changeCount":1,"baseline":{"fingerprint":"0123456789abcdef","from":"workspace"},"rekeyedBy":[]}}
       """)
-    #expect(miss.missReason?.baselineLine == "Compared with 01234567, the last build in this workspace.")
-    #expect(miss.nextBuild == "cold build, regenerates the native dir")
-    #expect(miss.detail == "No cold run of this project recorded yet")
+    #expect(miss.outcome == "cold" && miss.prebuild == "regenerate")
+    #expect(miss.missReason?.baseline?.from == "workspace")
 
     let refused = try decode(
       BuildPlan.self,
@@ -106,18 +105,17 @@ import Testing
        "prebuild":null,"outcome":null,"expectedMs":null,"basis":0,
        "refusal":{"code":"STIM_EAS_BUILD_MISSING","message":"No compatible EAS ios build.","remedy":"Run eas build."}}
       """)
-    #expect(refused.nextBuild == "would refuse (STIM_EAS_BUILD_MISSING)")
-    #expect(refused.detail == nil)
+    #expect(refused.refusal?.code == "STIM_EAS_BUILD_MISSING" && refused.outcome == nil)
   }
 
-  @Test func marksTheRunningOutcomeLikelyUntilTheRunReachesACacheDecidingPhase() throws {
+  @Test func hidesHistoricalOutcomesUntilTheRunKnowsItsCacheResult() throws {
     var build = try decode(
       Build.self,
       """
       {"platform":"ios","slot":"default","state":"running","phase":"cache-lookup","startedAt":"2026-09-25T12:00:00Z",
        "phaseStartedAt":"2026-09-25T12:00:01Z","outcome":"cold","expectedMs":null,"expectedPhaseMs":null,"basis":0}
       """)
-    #expect(build.outcomeLabel == "Likely cold")
+    #expect(build.outcomeLabel == nil && build.cacheLookupOutcome == nil)
     build.phase = "compile"
     #expect(build.outcomeLabel == "Cold build")
     build.outcome = "hit"
@@ -128,9 +126,9 @@ import Testing
     build.outcome = "hit"
     build.phase = "device"
     build.outcomeKnown = false
-    #expect(build.outcomeLabel == "Likely cache hit")
+    #expect(build.outcomeLabel == nil)
     build.outcomeKnown = true
-    #expect(build.outcomeLabel == "Cache hit")
+    #expect(build.outcomeLabel == "Cache hit" && build.cacheLookupOutcome == nil)
   }
 
   @Test func showsAMissBeforePodsAsACacheMissAndNotesTheRecheck() throws {
@@ -138,13 +136,13 @@ import Testing
       Build.self,
       """
       {"platform":"ios","slot":"default","state":"running","phase":"pods","startedAt":"2026-09-25T12:00:00Z",
-       "phaseStartedAt":"2026-09-25T12:00:01Z","outcome":"cold","outcomeKnown":true,"expectedMs":null,
+       "phaseStartedAt":"2026-09-25T12:00:01Z","outcome":"cold","outcomeKnown":true,"cacheLookupOutcome":"miss","expectedMs":null,
        "expectedPhaseMs":null,"basis":0,"missProvisional":true,
        "missReason":{"kind":"changed","summary":"native dependency added: expo-clipboard","changes":[],
                      "changeCount":1,"baseline":null,"rekeyedBy":[]}}
       """)
-    #expect(build.outcomeLabel == "Cache miss")
-    #expect(build.recheckNote == "Checks the cache again after pods")
+    #expect(build.outcomeLabel == "Cache miss" && build.cacheLookupOutcome == "miss")
+    #expect(build.recheckNote != nil)
     var compiling = build
     compiling.phase = "compile"
     compiling.missProvisional = nil

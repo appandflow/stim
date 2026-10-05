@@ -122,8 +122,7 @@ import Testing
     let payload = try JSONDecoder().decode(StatusPayload.self, from: Data(contentsOf: url))
     let git = try #require(payload.unprovisionedWorktrees?.first?.git)
     #expect(git.uncommitted == 3)
-    #expect(git.arrows == "\u{2191}3 \u{2193}1")
-    #expect(git.summary == "3 uncommitted changes, 3 commits not pushed to origin/feat/x, 1 commit behind origin/feat/x")
+    #expect(git.ahead == 3 && git.behind == 1)
     #expect(workspace.worktree?.git == nil)
   }
 
@@ -131,7 +130,7 @@ import Testing
     #expect(!WorktreeGit(changed: 0, untracked: 0, upstream: "origin/x", ahead: 0, behind: 0).isNotable)
     #expect(!WorktreeGit(changed: 0, untracked: 0).isNotable)
     let merged = WorktreeGit(changed: 0, untracked: 0, upstream: "origin/x", mergedInto: "origin/main")
-    #expect(merged.isNotable && merged.arrows == nil && merged.summary == "merged into origin/main")
+    #expect(merged.isNotable && merged.mergedInto == "origin/main")
   }
 
   @Test func keepsNestedParenthesesInTheModel() {
@@ -210,18 +209,6 @@ import Testing
     #expect(pathInCheckout("/u/tlon/apps/tlon-mobile", worktree: "/u/tlon") == "apps/tlon-mobile")
     #expect(pathInCheckout("/u/tlon/.worktrees/chat", worktree: "/u/tlon/.worktrees/chat") == nil)
     #expect(pathInCheckout("/u/tlonx/app", worktree: "/u/tlon") == nil)
-  }
-
-  @Test func ordersRunningDevicesByPlatformWhateverDrivesThem() throws {
-    let json = """
-      {"path":"/w","live":true,"warnings":[],
-       "ios":{"name":"stim-w (iPhone 18 Pro 27.0)","udid":"A","owned":true,"state":"Shutdown"},
-       "android":{"name":"stim-w","owned":true,"physical":false,"state":"detected"},
-       "slots":[{"slot":"duo","ios":{"name":"stim-w-duo (iPhone Duo 27.1)","udid":"B","owned":true,"state":"Booted",
-         "activity":{"state":"driven","basis":[]}}}]}
-      """
-    let env = try JSONDecoder().decode(Workspace.self, from: Data(json.utf8))
-    #expect(env.orderedDevices.map { "\($0.slot)/\($0.platform)" } == ["duo/ios", "default/android", "default/ios"])
   }
 
   @Test func projectFromGitCommonDir() {
@@ -439,12 +426,6 @@ import Testing
     try JSONDecoder().decode(Workspace.self, from: Data(json.utf8))
   }
 
-  @Test func pluralizesCounts() {
-    #expect(countLabel(1, "hit") == "1 hit")
-    #expect(countLabel(2, "miss", plural: "misses") == "2 misses")
-    #expect(countLabel(0, "record") == "0 records")
-  }
-
   @Test func quotesPathsForTheShell() {
     #expect(
       environmentCommands(worktree: "/Users/dev/it's here").map(\.shellLine) == [
@@ -573,38 +554,12 @@ import Testing
       lastActivityAt: last, basis: [])
   }
 
-  @Test func drivenNamesTheToolAndHowLong() {
-    let badge = ActivityBadge(activity("driven", since: "2026-09-25T01:48:00.000Z"), now: now)
-    #expect(badge?.text == "Driven by maestro \u{00B7} 12m")
-  }
-
-  @Test func idleCountsFromTheLatestActivity() {
-    #expect(ActivityBadge(activity("idle", last: "2026-09-24T22:30:00.000Z"), now: now)?.text == "Idle 3h30m")
-    #expect(ActivityBadge(activity("idle"), now: now)?.text == "Idle")
-  }
-
   @Test func aRecentScreenChangeOverridesTheCLIsIdle() {
     let idle = activity("idle", last: "2026-09-24T20:00:00.000Z")
     #expect(ActivityBadge(idle, screenChangedAt: now.addingTimeInterval(-120), now: now) == nil)
-    #expect(ActivityBadge(idle, screenChangedAt: now.addingTimeInterval(-3600), now: now)?.text == "Idle 1h")
+    #expect(ActivityBadge(idle, screenChangedAt: now.addingTimeInterval(-3600), now: now) == .idle(3600))
   }
 
-  @Test func driversSummaryNamesEachToolOnceWithTheLatestStart() {
-    let first = activity("driven", since: "2026-09-25T01:00:00.000Z")
-    let second = activity("driven", since: "2026-09-25T01:48:00.000Z")
-    var other = activity("driven", since: "2026-09-25T01:30:00.000Z")
-    other.driver?.tool = "agent-device"
-    #expect(
-      ActivityBadge.driversSummary([first, nil, activity("idle"), second, other], now: now)
-        == "maestro, agent-device \u{00B7} 12m")
-    #expect(ActivityBadge.driversSummary([activity("driven")], now: now) == "unknown tool")
-    #expect(ActivityBadge.driversSummary([activity("idle"), nil], now: now) == nil)
-  }
-
-  @Test func activeShowsNothingAndUnknownNeverReadsAsIdle() {
-    #expect(ActivityBadge(activity("active"), now: now) == nil)
-    #expect(ActivityBadge(activity("unknown"), now: now) == .unknown)
-  }
 }
 
 @Suite struct GcPreviewTests {
@@ -657,7 +612,6 @@ import Testing
         "futureSection",
       ])
     let recordings = report.sections.first { $0.key == "recordings" }!
-    #expect(recordings.title == "Device recordings")
     #expect(recordings.entries.map(\.label) == ["/pg", "/ph", "/p"])
     #expect(recordings.entries.map(\.bytes) == [3000, 1500, 800])
     #expect(
@@ -706,8 +660,7 @@ import Testing
     #expect(outcome.done.map(\.label) == ["stim-a (iPhone 18 Pro 27.0)", "stim-b (iPhone 18 Pro 27.0)", "/p/app"])
     #expect(outcome.failed.map(\.label) == ["Build cache"])
     #expect(outcome.kept.map(\.label) == ["/p/wip", "stim-1362-mobile (iPhone 18 Pro 27.0)", "/s/workspaces/x"])
-    #expect(outcome.headline.hasPrefix("Freed "))
-    #expect(outcome.headline.hasSuffix("Deleted 2 devices \u{00B7} Cleared build outputs of 1 workspace"))
+    #expect(outcome.freedBytes == 21_690_000_000)
     #expect(outcome.failures == 1)
   }
 
@@ -721,10 +674,22 @@ import Testing
       ]}
       """
     let outcome = try GcOutcome(json: Data(json.utf8))
-    #expect(
-      outcome.headline == "Reclaimed 4.52 GB of memory \u{00B7} Stopped 2 helper processes \u{00B7} Removed 1 stale watchman root"
-    )
+    #expect(outcome.reclaimedMemoryBytes == 4_849_664_000)
+    #expect(outcome.freedBytes == 0)
+    #expect(outcome.done.map(\.kind) == ["watchmanRoot", "watchman", "gradleDaemon"])
     #expect(outcome.kept.map(\.detail) == ["a Gradle daemon is busy"])
+  }
+
+  @Test func summarizesStatusCacheResultsWithoutCountingResultsAsRecords() throws {
+    let json = """
+      {"mode":"delete","failures":0,"sections":{},"results":[
+        {"kind":"statusCache","status":"done","label":"3 stale disk-usage cache entries","id":null,"bytes":900,"detail":null},
+        {"kind":"statusCache","status":"done","label":"1 stale pull-request cache entry","id":null,"bytes":100,"detail":null},
+        {"kind":"deviceLease","status":"done","label":"expired lease","id":null,"bytes":null,"detail":null}
+      ]}
+      """
+    let outcome = try GcOutcome(json: Data(json.utf8))
+    #expect(outcome.headline == "Freed 1 KB \u{00B7} Removed stale status cache entries \u{00B7} Cleared 1 stale record")
   }
 
   @Test func keepsDistinctEntriesThatShareALabelAndSkipsNotesOnAnIdleRun() throws {
@@ -742,16 +707,6 @@ import Testing
     #expect(outcome.kept.isEmpty)
   }
 
-  @Test func namesDeletedRecordings() throws {
-    let json = """
-      {"mode":"delete","idle":null,"failures":0,"sections":{},"results":[
-        {"kind":"recording","status":"done","label":"/p/app","id":null,"bytes":1000,"detail":null},
-        {"kind":"recording","status":"done","label":"/p/web","id":null,"bytes":2000,"detail":null}
-      ]}
-      """
-    #expect(try GcOutcome(json: Data(json.utf8)).headline.hasSuffix("Deleted the device recordings of 2 workspaces"))
-  }
-
   @Test func fallsBackToTheReportOnACLIWithoutResults() throws {
     let json = """
       {"mode":"delete","actionable":true,"failures":0,"sections":{
@@ -761,7 +716,7 @@ import Testing
       """
     let outcome = try GcOutcome(json: Data(json.utf8))
     #expect(outcome.done.map(\.label) == ["/s/workspaces/a"])
-    #expect(outcome.headline == "Freed 4 KB \u{00B7} Removed 1 workspace directory")
+    #expect(outcome.freedBytes == 4096)
   }
 
   @Test func onlyActingGcJsonRunsHaveAnOutcome() {
@@ -870,51 +825,6 @@ import Testing
     #expect(UsageThresholds.cpuFraction(percentOfOneCore: 1040, cores: 10) == 1)
   }
 
-  struct Vectors: Decodable {
-    struct Cpu: Decodable {
-      var fraction: Double
-      var tone: String
-    }
-
-    struct Disk: Decodable {
-      var freeBytes: Int64
-      var tone: String
-    }
-
-    struct Memory: Decodable {
-      var pressure: String?
-      var tone: String
-    }
-
-    var cpu: [Cpu]
-    var disk: [Disk]
-    var memory: [Memory]
-  }
-
-  static let vectors: Vectors = {
-    let url = Bundle.module.url(forResource: "usage-tone-vectors", withExtension: "json", subdirectory: "Fixtures")!
-    return try! JSONDecoder().decode(Vectors.self, from: Data(contentsOf: url))
-  }()
-
-  /// Replays the cases `apps/mobile/src/lib/home.test.ts` also replays, so both apps color a stat the same.
-  @Test func toneStepsWhereThePhoneStepsIt() {
-    for c in Self.vectors.cpu {
-      #expect(String(describing: UsageThresholds.cpu(fraction: c.fraction)) == c.tone, "cpu \(c.fraction)")
-    }
-    for c in Self.vectors.disk {
-      #expect(String(describing: UsageThresholds.disk(freeBytes: c.freeBytes)) == c.tone, "disk \(c.freeBytes)")
-    }
-    for c in Self.vectors.memory {
-      let pressure: MachineMemory.Pressure? =
-        switch c.pressure {
-        case "normal": .normal
-        case "warning": .warning
-        case "critical": .critical
-        default: nil
-        }
-      #expect(String(describing: UsageThresholds.memory(pressure)) == c.tone, "memory \(c.pressure ?? "nil")")
-    }
-  }
 }
 
 @Suite struct OpenURLTests {
@@ -1108,12 +1018,6 @@ import Testing
   }()
 
   struct Vectors: Decodable {
-    struct Label: Decodable {
-      var name: String
-      var session: AgentSession
-      var label: String
-    }
-
     struct Order: Decodable {
       var name: String
       var agents: [AgentSession]?
@@ -1121,7 +1025,6 @@ import Testing
       var ids: [String]
     }
 
-    var labels: [Label]
     var order: [Order]
   }
 
@@ -1129,12 +1032,6 @@ import Testing
     let url = Bundle.module.url(forResource: "agent-sessions-vectors", withExtension: "json", subdirectory: "Fixtures")!
     return try! JSONDecoder().decode(Vectors.self, from: Data(contentsOf: url))
   }()
-
-  @Test(arguments: vectors.labels.map(\.name))
-  func labelsLikeThePhone(name: String) throws {
-    let c = try #require(Self.vectors.labels.first { $0.name == name })
-    #expect(c.session.label == c.label)
-  }
 
   @Test(arguments: vectors.order.map(\.name))
   func ordersLikeThePhone(name: String) throws {

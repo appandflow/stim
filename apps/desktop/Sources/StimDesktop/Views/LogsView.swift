@@ -14,12 +14,14 @@ struct LogsView: View {
 
   private var slots: [String] {
     var seen = Set<String>()
-    return env.devices.map(\.slot).filter { seen.insert($0).inserted }
+    return (env.devices.map(\.slot) + [query.slot].compactMap { $0 }).filter { seen.insert($0).inserted }
   }
 
   private var effectiveQuery: LogQuery {
     var query = query
-    if let slot = query.slot, !slots.contains(slot) { query.slot = nil }
+    if let run = query.buildRun {
+      query.buildRun = run.bounded(history: env.builds?.builds(for: run.platform) ?? [], active: env.build)
+    }
     return query
   }
 
@@ -68,7 +70,7 @@ struct LogsView: View {
 
   private var selectedRow: LogsModel.Row? {
     guard selection.count == 1, let row = selection.first, row < model.rows.count else { return nil }
-    return model.rows[row]
+    return model.rawRow(for: model.rows[row])
   }
 
   private var filterBar: some View {
@@ -88,6 +90,24 @@ struct LogsView: View {
         .accessibilityAddTraits(on ? .isSelected : [])
         .help(Self.help(source))
       }
+      if query.buildRun != nil {
+        Button {
+          query.buildRun = nil
+        } label: {
+          ToggleChip(on: true, tone: .brand) {
+            Text("Build run")
+            Image(systemName: "xmark")
+          }
+        }
+        .buttonStyle(.hoverRow())
+        .help("Clear the build time and platform filter")
+      }
+      MenuPill(
+        label: "Build output",
+        selection: $model.readableBuildLogs,
+        options: [MenuPillOption(value: true, title: "Readable"), MenuPillOption(value: false, title: "Raw")],
+        isActive: !model.readableBuildLogs
+      )
       Rectangle().fill(Palette.border).frame(width: 1, height: 18)
       if !slots.isEmpty {
         MenuPill(
@@ -161,7 +181,8 @@ struct LogsView: View {
       }
       Text(
         countLabel(model.count, "record")
-          + (model.count >= LogsModel.limit * 9 / 10 ? " (oldest dropped past \(LogsModel.limit.formatted()))" : "")
+          + (effectiveQuery.buildRun == nil && model.count >= LogsModel.limit * 9 / 10
+            ? " (oldest dropped past \(LogsModel.limit.formatted()))" : "")
       )
       .foregroundStyle(Palette.tertiary)
       Spacer()
@@ -180,8 +201,11 @@ struct LogsView: View {
   }
 
   private func copy() {
-    let rows = selection.isEmpty ? IndexSet(model.rows.indices) : selection
-    let text = rows.filter { $0 < model.rows.count }.map { model.rows[$0].entry.plainText }.joined(separator: "\n")
+    let entries =
+      selection.isEmpty
+      ? model.rawRows.map(\.entry)
+      : selection.filter { $0 < model.rows.count }.map { model.rows[$0].entry }
+    let text = entries.map(\.plainText).joined(separator: "\n")
     NSPasteboard.general.clearContents()
     NSPasteboard.general.setString(text, forType: .string)
   }

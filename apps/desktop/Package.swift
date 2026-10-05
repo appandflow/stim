@@ -8,6 +8,8 @@ let package = Package(
     .executable(name: "StimDesktop", targets: ["StimDesktop"])
   ],
   dependencies: [
+    .package(url: "https://github.com/cpisciotta/xcbeautify.git", exact: "3.2.1"),
+    .package(url: "https://github.com/pointfreeco/swift-snapshot-testing.git", exact: "1.19.6"),
     .package(url: "https://github.com/airbnb/lottie-spm.git", exact: "4.6.1"),
     .package(url: "https://github.com/sparkle-project/Sparkle", exact: "2.10.0"),
     // 9.29.2, pinned by revision: its Package@swift-6.1 manifest depends on KSCrash by revision, which Swift 6.1's
@@ -15,7 +17,7 @@ let package = Package(
     .package(url: "https://github.com/getsentry/sentry-cocoa", revision: "8689e780a295dfdc6501ac0dbb502461e16d6551"),
   ],
   targets: [
-    .target(name: "StimKit"),
+    .target(name: "StimKit", dependencies: [.product(name: "XcbeautifyLib", package: "xcbeautify")]),
     .target(name: "StimStores", dependencies: ["StimKit"], swiftSettings: [.swiftLanguageMode(.v5)]),
     .target(name: "SimulatorFrames", dependencies: ["StimKit"], swiftSettings: [.swiftLanguageMode(.v5)]),
     .target(name: "EmulatorFrames", dependencies: ["StimKit"], swiftSettings: [.swiftLanguageMode(.v5)]),
@@ -32,6 +34,12 @@ let package = Package(
       name: "StimKitTests",
       dependencies: ["StimKit"],
       resources: [.copy("Fixtures")]
+    ),
+    .testTarget(
+      name: "VisualFixtureTests",
+      dependencies: ["StimDesktop", .product(name: "SnapshotTesting", package: "swift-snapshot-testing")],
+      exclude: ["__Snapshots__"],
+      swiftSettings: [.swiftLanguageMode(.v5)]
     ),
     .testTarget(name: "StimStoresTests", dependencies: ["StimStores", "StimKit"]),
     .testTarget(name: "WebFramesTests", dependencies: ["WebFrames"]),

@@ -1310,92 +1310,104 @@ describe('action: spawning the supervisor', { timeout: 30_000 }, () => {
     ]);
   });
 
-  test('start --remote records a managed tunnel before starting the bare dev server', async () => {
-    const { port, exec } = await managedStartExecutor();
-    const order: string[] = [];
-    const spawn = exec.spawn;
-    exec.spawn = (cmd, args, opts) => {
-      order.push('server');
-      expect(readMetroTunnel(root)).toMatchObject({
-        kind: 'managed',
-        provider: 'ngrok',
-        url: 'https://stable.ngrok.app',
-        port,
+  test.each(['ngrok', 'tailscale'] as const)(
+    'start --remote records %s before starting the bare dev server',
+    async (provider) => {
+      const { port, exec } = await managedStartExecutor();
+      const url = provider === 'tailscale' ? `https://host.tail123.ts.net:${port}` : 'https://stable.ngrok.app';
+      const order: string[] = [];
+      const spawn = exec.spawn;
+      exec.spawn = (cmd, args, opts) => {
+        order.push('server');
+        expect(readMetroTunnel(root)).toMatchObject({
+          kind: 'managed',
+          provider,
+          url,
+          port,
+        });
+        expect(opts.env).toMatchObject({
+          STIM_METRO_PUBLIC_URL: url,
+          EXPO_PACKAGER_PROXY_URL: url,
+        });
+        return spawn(cmd, args, opts);
+      };
+      upsertProject(root, {
+        metroPort: port,
+        settings: { metro: { tunnel: provider, ...(provider === 'ngrok' ? { ngrokUrl: url } : {}) } },
       });
-      expect(opts.env).toMatchObject({
-        STIM_METRO_PUBLIC_URL: 'https://stable.ngrok.app',
-        EXPO_PACKAGER_PROXY_URL: 'https://stable.ngrok.app',
-      });
-      return spawn(cmd, args, opts);
-    };
-    upsertProject(root, {
-      metroPort: port,
-      settings: { metro: { tunnel: 'ngrok', ngrokUrl: 'https://stable.ngrok.app' } },
-    });
 
-    const result = await runAction({ json: true, wait: '10', remote: true }, (cmd) =>
-      registerPosixStart(cmd, {
-        providers: () => ['ngrok', 'cloudflared'],
-        startTunnelSequence: async (options) => {
-          order.push('tunnel');
-          expect(options).toMatchObject({
-            providers: ['ngrok'],
-            port,
-            ngrokUrl: 'https://stable.ngrok.app',
-            requireReachable: false,
-          });
-          return {
-            provider: 'ngrok',
-            url: 'https://stable.ngrok.app',
-            pid: 4242,
-            processToken: 'linux:100',
-            cleanup: successfulTunnelCleanup,
-          };
-        },
-        isTunnelAlive: () => true,
-      }),
-    );
+      const result = await runAction({ json: true, wait: '10', remote: true }, (cmd) =>
+        registerPosixStart(cmd, {
+          providers: () => ['ngrok', 'cloudflared', 'tailscale'],
+          startTunnelSequence: async (options) => {
+            order.push('tunnel');
+            expect(options).toMatchObject({
+              providers: [provider],
+              port,
+              ngrokUrl: provider === 'ngrok' ? url : null,
+              requireReachable: false,
+            });
+            return {
+              provider,
+              url: `${url}/`,
+              pid: 4242,
+              processToken: 'linux:100',
+              cleanup: successfulTunnelCleanup,
+            };
+          },
+          isTunnelAlive: () => true,
+        }),
+      );
 
-    expect(result.exitCode).toBe(null);
-    expect(order).toEqual(['tunnel', 'server']);
-  }, 30_000);
+      expect(result.exitCode).toBe(null);
+      expect(order).toEqual(['tunnel', 'server']);
+      expect(result.errs.some((line) => line.includes(`tailnet-only Metro: ${url}`))).toBe(provider === 'tailscale');
+    },
+    30_000,
+  );
 
-  test('concurrent remote starts acquire and record one managed tunnel', async () => {
-    const { exec } = await managedStartExecutor();
-    const { contended, withWorktreeLock } = contendedRemoteStart();
-    let tunnelStarts = 0;
-    let active = 0;
-    let maxActive = 0;
+  test.each(['ngrok', 'tailscale'] as const)(
+    'concurrent remote starts acquire and reuse one %s tunnel',
+    async (provider) => {
+      const { exec, port } = await managedStartExecutor();
+      const url = provider === 'tailscale' ? `https://host.tail123.ts.net:${port}` : 'https://one.ngrok.app';
+      upsertProject(root, { metroPort: port, settings: { metro: { tunnel: provider } } });
+      const { contended, withWorktreeLock } = contendedRemoteStart();
+      let tunnelStarts = 0;
+      let active = 0;
+      let maxActive = 0;
 
-    const result = await runConcurrentActions({ json: true, wait: '10', remote: true }, (cmd) =>
-      registerPosixStart(cmd, {
-        providers: () => ['ngrok'],
-        withWorktreeLock,
-        startTunnelSequence: async () => {
-          tunnelStarts += 1;
-          active += 1;
-          maxActive = Math.max(maxActive, active);
-          await contended;
-          active -= 1;
-          return {
-            provider: 'ngrok',
-            url: 'https://one.ngrok.app',
-            pid: 4242,
-            processToken: 'linux:100',
-            cleanup: successfulTunnelCleanup,
-          };
-        },
-        isTunnelAlive: () => true,
-      }),
-    );
+      const result = await runConcurrentActions({ json: true, wait: '10', remote: true }, (cmd) =>
+        registerPosixStart(cmd, {
+          providers: () => [provider],
+          withWorktreeLock,
+          startTunnelSequence: async () => {
+            tunnelStarts += 1;
+            active += 1;
+            maxActive = Math.max(maxActive, active);
+            await contended;
+            active -= 1;
+            return {
+              provider,
+              url,
+              pid: 4242,
+              processToken: 'linux:100',
+              cleanup: successfulTunnelCleanup,
+            };
+          },
+          isTunnelAlive: () => true,
+        }),
+      );
 
-    expect(result.exits).toEqual([]);
-    expect(result.logs).toHaveLength(2);
-    expect(tunnelStarts).toBe(1);
-    expect(maxActive).toBe(1);
-    expect(exec.calls.spawn).toHaveLength(1);
-    expect(readMetroTunnel(root)).toMatchObject({ provider: 'ngrok', pid: 4242, url: 'https://one.ngrok.app' });
-  }, 30_000);
+      expect(result.exits).toEqual([]);
+      expect(result.logs).toHaveLength(2);
+      expect(tunnelStarts).toBe(1);
+      expect(maxActive).toBe(1);
+      expect(exec.calls.spawn).toHaveLength(1);
+      expect(readMetroTunnel(root)).toMatchObject({ provider, pid: 4242, url });
+    },
+    30_000,
+  );
 
   test('concurrent managed starts hand off one supervisor spawn inside the tunnel lock', async () => {
     const { port, exec } = await managedStartExecutor();

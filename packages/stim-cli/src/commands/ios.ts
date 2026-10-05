@@ -324,7 +324,11 @@ async function runIos(
   const logsDir = workspaceLogsDir(root);
   const logFile = iosSlotLogFile(root, slot);
   let writer = null as NdjsonWriter | null;
-  const logWriter = () => (writer ||= tapBuildLog(d.createWriter(logFile, { truncate: true }), progress));
+  const logWriter = () =>
+    (writer ||= tapBuildLog(
+      d.createWriter(logFile, { truncate: true, fields: { platform: PLATFORM, slot } }),
+      progress,
+    ));
 
   let leaseHandle: RunLease | null = null;
   let stopLeaseSignals: (() => void) | null = null;
@@ -693,7 +697,7 @@ async function runIos(
         isExpo,
         tunnelMode: tunnelModeSetting(settings) ?? undefined,
         publicUrl: publicUrlSetting(settings),
-        available: d.detectProviders(binOnPath),
+        available: d.detectProviders(binOnPath, tunnelModeSetting(settings) ?? 'auto'),
       });
       if ('failed' in reachable) {
         fail({

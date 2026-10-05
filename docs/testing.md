@@ -33,7 +33,25 @@ pnpm run test:compat engine-ios-device.compat.test.ts
 
 `pnpm run test:e2e` covers the real CLI and cache flow without native tools.
 `pnpm run test:runtime` checks the built packages at their published runtime floor.
+CI also runs `test/runtime-refusal.mjs` under Node 18, below that floor, where
+both built bins must refuse with `STIM_NODE_UNSUPPORTED`.
 The native app workflows remain separate; see [RELEASE.md](../RELEASE.md).
+
+## CI scheduling
+
+Pull requests retain Linux full unit and CLI/cache E2E checks, mobile tests,
+and strict Desktop Swift build/tests plus the frames helper. The Windows PR
+lane builds and typechecks the packages, then runs the existing executor,
+detached launcher, log command, cache provider and build-lock suites. These
+include real Windows subprocesses and filesystem/cache operations. The full
+`test:e2e` command also contains Unix shell fixtures and is not the Windows
+smoke lane.
+
+CI runs the complete Windows unit suite nightly at 06:00 UTC and on manual
+dispatch. The npm Release workflow requires that same suite before publication.
+Desktop release packaging runs nightly at 05:00 UTC and on manual Desktop
+dispatch; the production Desktop release workflow still builds and packages
+its candidate. Scheduled validation never publishes a release.
 
 ## Fixture isolation
 
@@ -65,3 +83,13 @@ pass.
 
 The opt-in [website prompt evaluation](../scripts/prompt-eval/README.md) checks
 real-agent command selection against the shipped guides without native builds.
+
+## Optional mobile AI pilot
+
+The [tester.army pilot](../test/mobile-e2e/README.md) prepares two mock-mobile
+flows with exact assertions and optional AI actions. It is an isolated private
+package outside the pnpm workspace. Root knip covers its dependencies; UI/model
+runs are optional. Its documented native,
+intentional-regression and model-cost gates remain unavailable until an owned
+fixture and an authorized model are available. It does not replace any stage
+above.

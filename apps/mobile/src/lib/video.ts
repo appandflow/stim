@@ -8,6 +8,7 @@ export interface VideoPacket {
   height: number;
   /** An iPhone Duo's posture, from the panel the server streams. */
   posture?: 'folded' | 'unfolded';
+  artworkTurns?: number;
   /** One Annex-B H.264 access unit, a view into the message's buffer. */
   accessUnit: Uint8Array;
 }
@@ -33,6 +34,7 @@ export function parseVideoPacket(buffer: ArrayBuffer): VideoPacket | null {
     subscription: String.fromCharCode(...id),
     keyframe: (flags & KEYFRAME) !== 0,
     ...(posture ? { posture } : {}),
+    ...(flags & 32 ? { artworkTurns: (flags >> 3) & 3 } : {}),
     sequence: view.getUint32(4),
     capturedAt: view.getFloat64(8),
     width: view.getUint16(16),

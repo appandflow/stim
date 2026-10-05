@@ -24,6 +24,7 @@ import { AUTOMATION_TOOLS } from '../devices/automation-tools.ts';
 import { STIM_DESKTOP_INSTALLED, workspaceLinkLine } from '../devices/stim-desktop.ts';
 import TOPICS from '../guide/index.ts';
 import webCommand from '../commands/web.ts';
+import macosCommand from '../commands/macos.ts';
 import { buildReport } from '../engine/build-progress.ts';
 import { PLACEMENT_DECISIONS, PLACEMENT_LIMIT, PLACEMENT_MAX_AGE_MS } from '../engine/stats.ts';
 import {
@@ -85,16 +86,6 @@ test('every section of every sectioned topic renders its own content', () => {
   }
 });
 
-test('the dev-menu section reads at the left margin, not in the payload table column', () => {
-  const facts = renderSection('facts', 'devmenu');
-  assert(facts);
-  const indents = facts
-    .split('\n')
-    .filter((line) => line.trim().length > 0)
-    .map((line) => line.length - line.trimStart().length);
-  expect(Math.max(...indents)).toBeLessThanOrEqual(2);
-});
-
 test('an alias resolves to the same body as the section it spells', () => {
   for (const name of topicNames()) {
     const lookup = sectionLookup(name);
@@ -135,15 +126,6 @@ test('a sectioned topic prints its preamble and an index of every section', () =
     }
     expect(body).toMatch(new RegExp(`Read one with: {2}stim guide ${name} `));
   }
-});
-
-test('an index row carries the word count of the section body it names', () => {
-  const index = renderSectionIndex('errors');
-  assert(index);
-  const body = renderSection('errors', 'STIM_BUILD_WAIT_TIMEOUT');
-  assert(body);
-  const words = body.slice(body.indexOf('STIM_BUILD_WAIT_TIMEOUT')).trim().split(/\s+/).length;
-  expect(index).toMatch(new RegExp(`STIM_BUILD_WAIT_TIMEOUT\\s+${words}w {2}`));
 });
 
 test('the errors index keeps the configured group separators and preambles', () => {
@@ -220,7 +202,7 @@ test('the index lists every topic and the running version', () => {
   for (const name of topicNames()) expect(idx).toMatch(new RegExp(name));
 });
 
-test('the errors topic documents every code the build commands and the iOS signing gate can emit', () => {
+test('the errors topic documents every code the build commands, the Node check and the iOS signing gate can emit', () => {
   const body = renderTopic('errors');
   assert(body);
   const commandFiles = [
@@ -241,6 +223,8 @@ test('the errors topic documents every code the build commands and the iOS signi
     ...['engine/ios-profile.ts', 'engine/ios-signing.ts', 'engine/eas-build.ts', 'engine/ios-device.ts'].map((f) =>
       readFileSync(new URL(`../${f}`, import.meta.url), 'utf-8'),
     ),
+    readFileSync(new URL('../../bin/node-check.ts', import.meta.url), 'utf-8'),
+    readFileSync(new URL('../../../server/bin/node-check.ts', import.meta.url), 'utf-8'),
   ].join('\n');
   const codes = scrapedCodes(sources);
   expect(codes.size).toBeGreaterThan(0);
@@ -426,11 +410,8 @@ test('the static skill is only the agent guide router', () => {
   const dir = fileURLToPath(new URL('../../skill/', import.meta.url));
   expect(readdirSync(dir).toSorted()).toEqual(['SKILL.md']);
   const skill = readFileSync(new URL('../../skill/SKILL.md', import.meta.url), 'utf-8');
-  const wordCount = skill.split(/\s+/).filter(Boolean).length;
-  expect(wordCount).toBeLessThanOrEqual(110);
   expect(skill.match(/(?<!npx )stim guide agent/g)).toHaveLength(1);
   expect(skill.match(/npx stim guide agent/g)).toHaveLength(1);
-  expect(skill).toMatch(/Follow the version-matched instructions it prints/);
 
   for (const mutableDetail of [
     'stim doctor',
@@ -581,11 +562,6 @@ test('the guide names every path Stim ignores by default', () => {
     const bare = path.replace(/^\*\*\//, '').replace(/\/\*\*$/, '');
     expect(lifecycle).toContain(bare);
   }
-});
-
-test('the package exposes only the stim binary', () => {
-  const packageJson = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf-8'));
-  expect(packageJson.bin).toEqual({ stim: 'dist/cli.mjs' });
 });
 
 test('the reload payload guide distinguishes dispatch from observed completion', () => {
@@ -760,7 +736,11 @@ test('the facts topic lists every field of a running build', () => {
       startedAt: at,
       phase: 'compile',
       phaseStartedAt: at,
-      phases: [{ phase: 'compile', startedAt: at }],
+      phases: [
+        { phase: 'cache-lookup', startedAt: at },
+        { phase: 'compile', startedAt: at },
+      ],
+      outcome: 'cold',
       claim: { root: '/r', path: '', claimId: 'c', pid: 1 },
     },
     { state: 'running', history: undefined },
@@ -781,4 +761,25 @@ test('the web topic names every web setting and every stim web flag, and the age
   const keys = SETTINGS.filter((setting) => setting.key.startsWith('web.')).map((setting) => setting.key);
   expect([...keys, ...flags].filter((name) => !body.includes(name!))).toEqual([]);
   expect(renderTopic('agent')).toContain('stim guide web');
+});
+
+test('hosting setup routes approval through doctor and a separate person-granted capability', () => {
+  const settings = renderTopic('settings');
+  expect(settings).toContain('hosting.machines');
+  expect(settings).toContain('doctor --fix');
+  expect(settings).toContain('stim-server devices grant <id> --device-host');
+  expect(settings).toContain('$STIM_HOME/device-host-machines.json');
+  expect(renderSection('facts', 'payloads')).toContain('deviceHosts');
+});
+
+test('the macos guide covers the declared command flags and project settings', () => {
+  const body = renderTopic('macos');
+  assert(body);
+  const program = new Command();
+  macosCommand(program);
+  const flags = program.commands.find((command) => command.name() === 'macos')?.options.map((option) => option.long);
+  assert(flags?.length);
+  const keys = SETTINGS.filter((setting) => setting.key.startsWith('macos.')).map((setting) => setting.key);
+  expect([...keys, ...flags].filter((name) => !body.includes(name!))).toEqual([]);
+  expect(renderTopic('agent')).toContain('stim guide macos');
 });

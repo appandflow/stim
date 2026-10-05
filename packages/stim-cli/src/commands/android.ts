@@ -711,7 +711,10 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
   }
   const logsDir = workspaceLogsDir(root);
   const buildLog = join(logsDir, `build-${deviceSlotFileKey('android', slot)}.ndjson`);
-  const writer = tapBuildLog(createWriter(buildLog, { truncate: true, fields: { slot } }), progress);
+  const writer = tapBuildLog(
+    createWriter(buildLog, { truncate: true, fields: { platform: PLATFORM, slot } }),
+    progress,
+  );
 
   const record: AndroidRecord = {
     fingerprint: null,
@@ -926,7 +929,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
         isExpo,
         tunnelMode: tunnelModeSetting(settings) ?? undefined,
         publicUrl: publicUrlSetting(settings),
-        available: detectRemoteProviders(binOnPath),
+        available: detectRemoteProviders(binOnPath, tunnelModeSetting(settings) ?? 'auto'),
       });
       if ('failed' in reachable) {
         return fail(reachable.code ?? REMOTE_SESSION_ERROR, reachable.failed, reachable.remedy);

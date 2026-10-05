@@ -112,6 +112,7 @@ export function resolveRegisteredProject(arg?: string | null): ResolveResult {
 export function findServerWorkspace(startDir: string): { root: string; from: string | null } | null {
   const nearest = findProjectRoot(startDir);
   if (!nearest) return null;
+  if (existsSync(join(nearest, 'Package.swift'))) return { root: nearest, from: null };
   if (appProjectProblem(nearest)?.kind !== 'not-an-app') return { root: nearest, from: null };
   if (Object.keys(getProject(nearest)?.ports ?? {}).length) return { root: nearest, from: null };
   const top = repoRoot(nearest);

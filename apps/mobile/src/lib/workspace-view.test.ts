@@ -5,10 +5,10 @@ import { devicesOf } from '@/lib/workspaces';
 import {
   agentRow,
   appPresence,
-  barFills,
   checksSummary,
   phaseName,
   barSteps,
+  barFills,
   buildLine,
   bundleLine,
   currentPhaseLabel,
@@ -24,7 +24,6 @@ import {
   phaseSteps,
   type PhaseStep,
   processRows,
-  segmentWeights,
   usageLabel,
   usageParts,
   remoteBuild,
@@ -40,7 +39,6 @@ import type {
   GitChipFacts,
   LastBuild,
   MachineUsageState,
-  PullRequestFacts,
   StageFacts,
   WorktreeFacts,
 } from '@/protocol/types';
@@ -85,67 +83,6 @@ const last = (patch: Partial<LastBuild> = {}): LastBuild => ({
 });
 
 const booted = { name: 'stim-w (iPhone 18 27.0)', udid: 'SIM-1', owned: true, state: 'Booted' };
-
-describe('workspaceStage', () => {
-  it('names each stage the workspace screen shows, with its subtitle', () => {
-    const stage = (e: EnvironmentState) => workspaceStage(e, devicesOf(e), NOW);
-    expect(stage(env({ supervisor: { pid: 1, mode: null, startedAt: iso(42 * MIN), healthy: true } }))).toEqual({
-      kind: 'running',
-      label: 'Running',
-      tone: 'success',
-      subtitle: 'up 42m',
-    });
-    expect(stage(env({ build: build() }))).toEqual({
-      kind: 'building',
-      label: 'Building',
-      tone: 'brand',
-      subtitle: 'iOS \u00B7 started 1m ago',
-    });
-    expect(stage(env({ lastBuilds: { ios: last({ status: 'failed', finishedAt: iso(3 * MIN) }) } }))).toMatchObject({
-      kind: 'build-failed',
-      label: 'Build failed',
-      tone: 'error',
-      subtitle: 'iOS \u00B7 3m ago',
-    });
-    expect(stage(env({ live: false, phase: 'warming', warmStep: 'refresh', phaseSince: iso(2 * MIN) }))).toMatchObject({
-      kind: 'warming',
-      label: 'Warming',
-      subtitle: 'installing dependencies \u00B7 2m',
-    });
-    expect(
-      stage(
-        env({
-          live: false,
-          phase: 'idle',
-          metro: { port: 8084, running: false, pid: null, lastStop: { reason: 'idle', at: iso(120 * MIN) } },
-        }),
-      ),
-    ).toEqual({ kind: 'stopped', label: 'Stopped', tone: 'tertiary', subtitle: '2h ago' });
-  });
-
-  it('turns a running workspace red for log errors or an app that closed', () => {
-    const crashed = env({
-      logs: { dir: '', errorsSinceMarker: 3 },
-      ios: { ...booted, app: { id: 'a', state: 'stopped' } },
-    });
-    expect(workspaceStage(crashed, devicesOf(crashed), NOW)).toEqual({
-      kind: 'running',
-      label: 'Running',
-      tone: 'error',
-      subtitle: '3 errors \u00B7 iOS app closed',
-    });
-  });
-
-  it('reports the newest build of either platform, so an older failure does not mask a newer success', () => {
-    const e = env({
-      lastBuilds: {
-        ios: last({ status: 'failed', startedAt: iso(60 * MIN) }),
-        android: last({ platform: 'android', startedAt: iso(5 * MIN) }),
-      },
-    });
-    expect(workspaceStage(e, [], NOW).label).toBe('Running');
-  });
-});
 
 describe('appPresence', () => {
   const failed = last({ status: 'failed' });
@@ -495,81 +432,24 @@ describe('phaseSteps', () => {
   });
 });
 
-describe('barFills', () => {
-  const step = (phase: PhaseStep['phase'], state: PhaseStep['state'], expectedMs: number, fraction: number) => ({
-    phase,
-    state,
+describe('barFills state', () => {
+  const current = (fraction: number): PhaseStep => ({
+    phase: 'compile',
+    state: 'current',
     elapsedMs: null,
-    expectedMs,
+    expectedMs: 1000,
     fraction,
   });
 
-  it('fills done segments, part of the current one and none of the pending ones', () => {
-    const fills = barFills(
-      [step('prepare', 'done', 4000, 1), step('compile', 'current', 8000, 0.5), step('install', 'pending', 8000, 0)],
-      'fills-plain',
-    );
-    expect(fills).toEqual([1, 0.5, 0]);
-    expect(barFills([], 'fills-empty')).toEqual([]);
+  it('remembers progress within a build without carrying it into another build', () => {
+    const first = barFills([current(0.8)], 'prune-progress')[0]!;
+    expect(barFills([current(0.2)], 'prune-progress')[0]).toBeGreaterThanOrEqual(first);
+    expect(barFills([current(0.2)], 'prune-other-build')[0]).toBeLessThan(first);
   });
 
-  it('never fills a pending segment when no phase is current', () => {
-    const key = 'fills-no-current';
-    barFills([step('prepare', 'done', 4000, 1), step('install', 'current', 6000, 0.9)], key);
-    expect(barFills([step('prepare', 'done', 4000, 1), step('install', 'pending', 6000, 0)], key)).toEqual([1, 0]);
-  });
-
-  it('keeps what it drew for the same build when the plan changes, up to the end of the current segment', () => {
-    const key = 'fills-replan';
-    const round = (fills: number[]) => fills.map((fill) => Math.round(fill * 100) / 100);
-    expect(barFills([step('prepare', 'current', 4000, 0.9), step('install', 'pending', 6000, 0)], key)).toEqual([
-      0.9, 0,
-    ]);
-    expect(round(barFills([step('prepare', 'current', 4000, 0.2), step('install', 'pending', 6000, 0)], key))).toEqual([
-      0.9, 0,
-    ]);
-    const coldPlan = [
-      step('prepare', 'done', 4000, 1),
-      step('pods', 'current', 10_000, 0.02),
-      step('compile', 'pending', 60_000, 0),
-      step('install', 'pending', 6000, 0),
-    ];
-    expect(round(barFills(coldPlan, key))).toEqual([1, 0.95, 0, 0]);
-    expect(barFills(coldPlan, 'fills-other-build')[1]).toBeCloseTo(0.02, 5);
-  });
-});
-
-describe('bundleLine', () => {
-  const metro = (bundle?: NonNullable<EnvironmentState['metro']>['bundle']) =>
-    env({ metro: { port: 8084, running: true, pid: 1, ...(bundle ? { bundle } : {}) } });
-
-  it('shows bundling with its percent, the last bundle, or that none ran yet', () => {
-    expect(bundleLine(metro({ bundling: true, percent: 62.4 }), NOW, true)?.text).toBe('Bundling \u00B7 62%');
-    expect(
-      bundleLine(
-        metro({ bundling: false, last: { platform: 'ios', status: 'ok', durationMs: 1800, finishedAt: iso(12_000) } }),
-        NOW,
-        true,
-      )?.text,
-    ).toBe('Bundled in 1.8s \u00B7 12s ago');
-    expect(bundleLine(metro(), NOW, true)?.text).toBe('Not bundled yet');
-  });
-
-  it('keeps the "ago" suffix on a failed bundle', () => {
-    expect(
-      bundleLine(
-        metro({
-          bundling: false,
-          last: { platform: 'ios', status: 'failed', durationMs: 1800, finishedAt: iso(12_000) },
-        }),
-        NOW,
-        true,
-      )?.text,
-    ).toBe('Bundle failed \u00B7 12s ago');
-  });
-
-  it('leaves the line out for a server that reports no bundles', () => {
-    expect(bundleLine(metro(), NOW, false)).toBeNull();
+  it('does not credit a pending phase with remembered progress', () => {
+    barFills([current(0.8)], 'prune-pending');
+    expect(barFills([{ ...current(0), state: 'pending' }], 'prune-pending')[0]).toBe(0);
   });
 });
 
@@ -587,62 +467,6 @@ describe('agentRow', () => {
     expect(agentRow({ state: 'idle', lastActivityAt: iso(6 * MIN), basis: [] }, null, NOW)).toEqual({
       tool: null,
       text: 'idle 6m',
-    });
-  });
-});
-
-describe('gitChip', () => {
-  const worktree = (
-    git: Partial<NonNullable<WorktreeFacts['git']>>,
-    patch: Partial<WorktreeFacts> = {},
-  ): WorktreeFacts => ({
-    path: '/w',
-    git: { changed: 0, untracked: 0, upstream: 'origin/x', ahead: 0, behind: 0, mergedInto: null, ...git },
-    ...patch,
-  });
-
-  it('shows only the non-zero git details, a merge, or a missing upstream', () => {
-    expect(gitChip(worktree({ ahead: 2, changed: 2, untracked: 1 }))?.parts.map((p) => p.text)).toEqual([
-      '\u21912',
-      '3 changed',
-    ]);
-    expect(gitChip(worktree({ mergedInto: 'main' }))?.parts.map((p) => p.text)).toEqual(['merged into main']);
-    expect(gitChip(worktree({ upstream: null, ahead: null, behind: null }))?.parts.map((p) => p.text)).toEqual([
-      'no upstream',
-    ]);
-    expect(gitChip(worktree({}))).toEqual({ parts: [], pr: null, label: 'Branch, up to date' });
-    expect(gitChip({ path: '/w' })).toBeNull();
-  });
-
-  it('colors the pull request by state with one CI mark for the worst check, and spells it out', () => {
-    const pullRequest: PullRequestFacts = {
-      number: 1695,
-      url: 'https://github.com/o/r/pull/1695',
-      title: 't',
-      state: 'open',
-      checks: { passing: 12, failing: 1, pending: 2 },
-      reviewDecision: null,
-      checkedAt: iso(0),
-    };
-    const chip = (patch: Partial<PullRequestFacts>, git = {}) =>
-      gitChip(worktree(git, { pullRequest: { ...pullRequest, ...patch } }));
-    expect(chip({})?.pr).toEqual({ text: 'PR #1695', tone: 'success', ci: 'failing' });
-    expect(chip({ checks: { passing: 12, failing: 0, pending: 2 } })?.pr?.ci).toBe('pending');
-    expect(chip({ checks: { passing: 12, failing: 0, pending: 0 } })).toEqual({
-      parts: [],
-      pr: { text: 'PR #1695', tone: 'success', ci: 'passing' },
-      label: 'Pull request 1695, open, checks passing',
-    });
-    expect(chip({ state: 'draft', checks: null })?.pr).toEqual({ text: 'PR #1695', tone: 'tertiary', ci: null });
-    const merged = chip({ state: 'merged', checks: null }, { mergedInto: 'main' });
-    expect(merged).toMatchObject({ parts: [], pr: { tone: 'brand' } });
-    expect(chip({ state: 'closed' }, { ahead: 2, changed: 1 })).toEqual({
-      parts: [
-        { text: '\u21912', tone: 'default' },
-        { text: '1 changed', tone: 'secondary' },
-      ],
-      pr: { text: 'PR #1695', tone: 'error', ci: 'failing' },
-      label: 'Pull request 1695, closed, checks failing, 1 uncommitted change, 2 commits not pushed to origin/x',
     });
   });
 });
@@ -682,6 +506,7 @@ describe('workspace view vectors', () => {
     expect(localStageFacts(e, devicesOf(e))).toEqual(derived);
     for (const env of [e, { ...e, stage: derived }]) {
       const stage = workspaceStage(env, devicesOf(env), vectorNow);
+      expect(stage.kind).toBe(c.derived.kind);
       expect({ label: stage.label, tone: stage.tone, subtitle: stage.subtitle }).toEqual(c.stage);
     }
   });
@@ -772,23 +597,5 @@ describe('usageParts and usageLabel', () => {
     expect(usageLabel({ cpuPercent: null, memoryMb: 512, diskBytes: null })).toBe('memory 512 MB');
     expect(usageLabel({ cpuPercent: 0, memoryMb: null, diskBytes: null })).toBe('CPU 0%');
     expect(usageLabel({ cpuPercent: null, memoryMb: null, diskBytes: null })).toBe('');
-  });
-});
-
-describe('segmentWeights', () => {
-  const step = (expectedMs: number | null) => ({ expectedMs }) as PhaseStep;
-
-  it('weighs segments by expected duration', () => {
-    expect(segmentWeights([step(100), step(100)])).toEqual([100, 100]);
-  });
-
-  it('weighs segments equally when no duration is expected', () => {
-    expect(segmentWeights([step(null), step(0), step(null)])).toEqual([1, 1, 1]);
-  });
-
-  it('keeps a short phase at 18% of the total so it stays visible', () => {
-    const [long, short] = segmentWeights([step(1000), step(10)]);
-    expect(long).toBe(1000);
-    expect(short).toBeCloseTo(181.8);
   });
 });

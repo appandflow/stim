@@ -11,6 +11,7 @@ struct Sidebar: View {
   @Binding var selection: SidebarItem?
   var openLogs: (String) -> Void
   @AppStorage(AppPreferences.Key.expandedProjects) private var expandedProjects = Data()
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
   let prefs = SidebarPreferences()
 
   var body: some View {
@@ -125,7 +126,9 @@ struct Sidebar: View {
       set: { expanded in
         var updated = choices
         updated[root] = expanded
-        expandedProjects = (try? JSONEncoder().encode(updated)) ?? expandedProjects
+        withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.2)) {
+          expandedProjects = (try? JSONEncoder().encode(updated)) ?? expandedProjects
+        }
       })
   }
 }
@@ -173,6 +176,7 @@ struct ProjectRow: View {
     HStack(spacing: Space.md) {
       Image(systemName: "folder")
         .foregroundStyle(selected || summary.hasActive ? Palette.primary : Palette.tertiary)
+        .accessibilityHidden(true)
       Text(store.title(of: summary.project)).lineLimit(1).truncationMode(.middle)
       Spacer()
       if summary.live > 0 {
@@ -257,13 +261,13 @@ struct WorkspaceRow: View {
         reloadAllowed: env.canReload,
         onShowLastOutput: actions.latest(for: env.path).map { last in { actions.presented = last } },
         onRun: { platform in actions.runApp(env, platform: platform) },
-        onReload: { actions.run("Reload \(env.names.title)", StimCommand(["reload"], cwd: env.path)) },
+        onReload: { actions.run("Reload \(env.names.title)", steps: [StimCommand(["reload"], cwd: env.path)], present: false) },
         onStartDevServer: { actions.run("Start \(env.names.title)", StimCommand(["start"], cwd: env.path)) },
         onStopDevServer: {
           if env.remoteDevices?.isEmpty == false {
             confirmingStop = true
           } else {
-            actions.run("Stop \(env.names.title)", StimCommand(["stop"], cwd: env.path))
+            actions.run("Stop \(env.names.title)", steps: [StimCommand(["stop"], cwd: env.path)], present: false)
           }
         },
         onShowLogs: { openLogs(env.path) },
@@ -271,7 +275,7 @@ struct WorkspaceRow: View {
     }
     .confirmationDialog("Stop this workspace?", isPresented: $confirmingStop, titleVisibility: .visible) {
       Button("Run stim stop", role: .destructive) {
-        actions.run("Stop \(env.names.title)", StimCommand(["stop"], cwd: env.path))
+        actions.run("Stop \(env.names.title)", steps: [StimCommand(["stop"], cwd: env.path)], present: false)
       }
     } message: {
       Text("This also ends the workspace's billable EAS Simulator session.")

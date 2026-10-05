@@ -7,12 +7,21 @@ struct InboxView: View {
   @ObservedObject var inbox: NotificationInbox
   var openLogs: (String) -> Void
   @EnvironmentObject private var actions: ActionCenter
+  @Environment(\.calendar) private var calendar
+  @Environment(\.timeZone) private var timeZone
+  @Environment(\.locale) private var locale
   @State private var filter = InboxFilter()
   @State private var confirmsClear = false
+  @State private var visibleCount = 50
   @State private var fixing: (title: String, command: StimCommand)?
 
   var body: some View {
-    let days = inbox.inbox.days(filter)
+    let days = inbox.inbox.days(filter, calendar: calendar)
+    let entries = days.flatMap(\.entries)
+    let visibleIDs = Set(entries.prefix(visibleCount).map(\.id))
+    let visibleDays = days.map { day in
+      (day: day.day, entries: day.entries.filter { visibleIDs.contains($0.id) })
+    }.filter { !$0.entries.isEmpty }
     let titles = inbox.inbox.displayTitles
     ScrollView {
       VStack(alignment: .leading, spacing: Space.xxl) {
@@ -27,9 +36,9 @@ struct InboxView: View {
           .frame(maxWidth: .infinity)
           .padding(.top, Space.huge)
         }
-        ForEach(days, id: \.day) { day in
+        ForEach(visibleDays, id: \.day) { day in
           VStack(alignment: .leading, spacing: Space.md) {
-            Text(Self.dayTitle(day.day)).font(.stim(.headline))
+            Text(dayTitle(day.day)).font(.stim(.headline))
             Card {
               VStack(spacing: 0) {
                 ForEach(Array(day.entries.enumerated()), id: \.element.id) { index, entry in
@@ -43,10 +52,16 @@ struct InboxView: View {
             }
           }
         }
+        if visibleCount < entries.count {
+          Button("Show older notifications") { visibleCount += 50 }
+            .buttonStyle(.stim())
+            .frame(maxWidth: .infinity)
+        }
       }
       .padding(Space.xxxl)
       .frame(maxWidth: .infinity, alignment: .leading)
     }
+    .onChange(of: filter) { _, _ in visibleCount = 50 }
     .confirmationDialog(
       "Run stim doctor --fix?", isPresented: Binding(get: { fixing != nil }, set: { if !$0 { fixing = nil } }),
       titleVisibility: .visible, presenting: fixing
@@ -65,7 +80,7 @@ struct InboxView: View {
 
   private func header(empty: Bool) -> some View {
     ViewThatFits(in: .horizontal) {
-      HStack(alignment: .firstTextBaseline, spacing: Space.md) {
+      HStack(spacing: Space.md) {
         title
         Spacer()
         filters(empty: empty)
@@ -120,11 +135,12 @@ struct InboxView: View {
     return listed + [(selected, URL(fileURLWithPath: selected).lastPathComponent)]
   }
 
-  static func dayTitle(_ day: Date) -> String {
-    let calendar = Calendar.current
+  private func dayTitle(_ day: Date) -> String {
     if calendar.isDateInToday(day) { return "Today" }
     if calendar.isDateInYesterday(day) { return "Yesterday" }
-    return day.formatted(.dateTime.weekday(.wide).month(.abbreviated).day())
+    return day.formatted(
+      Date.FormatStyle(locale: locale, calendar: calendar, timeZone: timeZone)
+        .weekday(.wide).month(.abbreviated).day())
   }
 }
 
@@ -136,6 +152,9 @@ private struct InboxRow: View {
   var fix: (String, StimCommand) -> Void
   var open: () -> Void
   @EnvironmentObject private var actions: ActionCenter
+  @Environment(\.calendar) private var calendar
+  @Environment(\.timeZone) private var timeZone
+  @Environment(\.locale) private var locale
 
   var body: some View {
     HStack(alignment: .center, spacing: Space.lg) {
@@ -187,11 +206,11 @@ private struct InboxRow: View {
           NSPasteboard.general.clearContents()
           NSPasteboard.general.setString(command.shellLine, forType: .string)
         }
-        .accessibilityLabel("Copy command, \(command.displayLine())")
+        .accessibilityLabel("Copy command, \(title)")
         .help(command.displayLine())
         if command.isRunnable && command.isFix {
           Button("Fix\u{2026}") { fix(title, command) }
-            .accessibilityLabel("Fix, \(command.displayLine())")
+            .accessibilityLabel("Fix, \(title)")
             .help(command.displayLine())
         } else if command.isRunnable {
           runButton(command)
@@ -214,13 +233,14 @@ private struct InboxRow: View {
       }
     } else {
       Button("Run") { run(title, command) }
-        .accessibilityLabel("Run, \(command.displayLine())")
+        .accessibilityLabel("Run, \(title)")
         .help(command.displayLine())
     }
   }
 
   private var detail: String {
-    let time = entry.date.formatted(date: .omitted, time: .shortened)
+    let time = entry.date.formatted(
+      Date.FormatStyle(date: .omitted, time: .shortened, locale: locale, calendar: calendar, timeZone: timeZone))
     return entry.suppressed.map { "\(time) \u{00B7} \($0.title)" } ?? time
   }
 

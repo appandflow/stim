@@ -28,6 +28,7 @@ import {
   type AboutDevice,
   type AboutMachine,
 } from '@/lib/about';
+import { hapticFeedback } from '@/lib/haptics';
 import { LICENSES } from '@/lib/licenses';
 import { PROTOCOL_VERSION } from '@/protocol/types';
 
@@ -85,6 +86,7 @@ export function About({ onClose }: { onClose?: () => void }) {
   const builtIn = app.embedded || !app.updateId;
   const copy = () =>
     void Clipboard.setStringAsync(diagnosticText(app, connections.map(machineInfo), deviceInfo())).then(() => {
+      hapticFeedback('success');
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     });

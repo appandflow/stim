@@ -294,6 +294,7 @@ export async function acquireAndroidArtifact(
   let storeKey = '';
   let storeSources: FingerprintSource[] = [];
   let apkPath: string | null = null;
+  let swapFellBack = false;
 
   async function resolveInitialFingerprint(): Promise<boolean> {
     if (easBuild?.ok) {
@@ -433,7 +434,10 @@ export async function acquireAndroidArtifact(
     }
   }
 
-  if (!easBuild) await resolveRemoteArtifact();
+  if (!easBuild) {
+    await resolveRemoteArtifact();
+    if (!apkPath) miss(reasonForMiss([]).reason);
+  }
 
   let waitedForBuild: WaitedForBuild | null = null;
   let releasedWait: { facts: WaitedForBuild; who: string } | null = null;
@@ -471,7 +475,6 @@ export async function acquireAndroidArtifact(
   }
 
   let swapDir: string | null = null;
-  let swapFellBack = false;
   const installableCachedApk = async (key: string, cachedPath: string): Promise<string | null> => {
     if (!release) return cachedPath;
     phase('swap', `regenerating this workspace's JS for the cached ${variant} APK`);
@@ -964,6 +967,8 @@ export async function acquireAndroidArtifact(
 
   if (!easBuild) {
     await prepareCachedArtifact();
+    if (apkPath) lateHit();
+    else if (swapFellBack) miss(reasonForMiss([]).reason);
     if (!(await buildArtifact())) return refused();
   }
 

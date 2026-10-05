@@ -2,12 +2,13 @@ import { plural, t } from '@lingui/core/macro';
 import { Trans } from '@lingui/react/macro';
 import * as Clipboard from 'expo-clipboard';
 import { Stack } from 'expo-router';
-import { memo, useCallback, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Share, TextInput, View, type NativeScrollEvent, type NativeSyntheticEvent } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { ConnectionBanner } from '@/components/connection-banner';
+import { Button } from '@/components/button';
 import { HeaderTitle } from '@/components/header-title';
 import { FlatList, ScrollView } from '@/components/lists';
 import { StatusDot } from '@/components/pill';
@@ -39,9 +40,12 @@ import {
   type LogFilterState,
   type Severity,
 } from '@/lib/logs';
+import { hapticFeedback } from '@/lib/haptics';
 import { workspaceTitleAt } from '@/lib/workspace-names';
 import type { Theme } from '@/design/theme';
 import type { EnvironmentState, LogRecord } from '@/protocol/types';
+
+const LOG_WINDOW_STEP = 200;
 
 export function Logs({
   path,
@@ -59,6 +63,8 @@ export function Logs({
   const [filter, setFilter] = useState<LogFilterState>(() => initialFilter(params));
   const [grepDraft, setGrepDraft] = useState('');
   const [records, setRecords] = useState<LogRecord[]>([]);
+  const [tail, setTail] = useState(params.at ? MAX_RECORDS : LOG_WINDOW_STEP);
+  const retained = useRef(0);
   const opened = params.at ? `${params.at}:0` : null;
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set(opened ? [opened] : []));
   const [fetched, setFetched] = useState<Map<string, string[]>>(new Map());
@@ -82,11 +88,15 @@ export function Logs({
           const added = change.records.map(chipOf).filter((c): c is LogChip => c !== null && !existing.has(c));
           return added.length === 0 ? existing : new Set([...existing, ...added]);
         });
-        return setRecords((existing) => appendRecords(existing, change.records));
+        return setRecords((existing) => {
+          const next = appendRecords(existing, change.records);
+          retained.current = Math.max(retained.current, next.length);
+          return next;
+        });
       }
       if (change.kind === 'error') return setProblem(change.message);
+      setTail((current) => Math.max(current, retained.current));
       setRecords([]);
-      setFollowing(true);
       setExpanded(new Set(opened ? [opened] : []));
       setFetched(new Map());
       generation.current += 1;
@@ -95,7 +105,10 @@ export function Logs({
     [opened],
   );
   const active = env && filter.slot !== null && !slots.includes(filter.slot) ? { ...filter, slot: null } : filter;
-  useLogs(logFilter(path, active), onLogs);
+  const listening = useLogs(logFilter(path, active, tail), onLogs);
+  useEffect(() => {
+    if (!listening) setTail((current) => Math.max(current, retained.current));
+  }, [listening]);
 
   const update = (patch: Partial<LogFilterState>) => {
     setFilter((f) => ({ ...f, ...patch }));
@@ -227,6 +240,20 @@ export function Logs({
       <FlatList
         ref={list}
         data={entries}
+        ListHeaderComponent={
+          tail < MAX_RECORDS && records.length >= tail ? (
+            <Button
+              title={t`Load older logs`}
+              variant="secondary"
+              size="small"
+              disabled={!listening}
+              onPress={() => {
+                setFollowing(false);
+                setTail(Math.min(MAX_RECORDS, Math.max(tail, records.length) + LOG_WINDOW_STEP));
+              }}
+            />
+          ) : undefined
+        }
         keyExtractor={(entry) => entry.key}
         contentContainerStyle={{ paddingBottom: insets.bottom + theme.space.xl }}
         onScrollBeginDrag={() => {
@@ -418,7 +445,12 @@ const LogRow = memo(function LogRow({
       {expanded ? (
         <View style={styles.actions}>
           <Touch
-            onPress={() => void Clipboard.setStringAsync(copyText(view)).then(() => setCopied(true))}
+            onPress={() =>
+              void Clipboard.setStringAsync(copyText(view)).then(() => {
+                hapticFeedback('success');
+                setCopied(true);
+              })
+            }
             accessibilityLabel={t`Copy message and location`}
             style={styles.action}
           >

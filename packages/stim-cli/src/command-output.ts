@@ -143,10 +143,6 @@ export const OUTPUT_LABELS: readonly string[] = [
   'worktrees',
 ];
 
-export function isOutputLabel(label: unknown): boolean {
-  return OUTPUT_LABELS.includes(String(label));
-}
-
 export interface LaunchErrorRecord {
   src?: unknown;
   msg?: unknown;

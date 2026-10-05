@@ -89,6 +89,7 @@ export interface StimConfig {
   pool?: { iosParkedMax?: unknown; androidParkedMax?: unknown };
   parked?: { ios?: unknown; android?: unknown };
   caches?: { buildCache?: unknown; metroCache?: unknown };
+  hosting?: { machines?: unknown; agentDriver?: unknown };
   offload?: {
     machines?: unknown;
     mode?: unknown;

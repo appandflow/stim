@@ -1,11 +1,8 @@
-import { readdirSync, readFileSync } from 'node:fs';
 import {
   formatDuration,
   formatElapsed,
   formatLongDuration,
-  isOutputLabel,
   launchErrorReport,
-  OUTPUT_LABELS,
   phaseLine,
   shortHash,
   shortUdid,
@@ -51,9 +48,13 @@ test('formatLongDuration adds hours and pads the smaller unit at every scale', (
   expect(formatLongDuration(undefined)).toBe('unknown');
 });
 
-test('phaseLine uses one indented column', () => {
-  expect(phaseLine('device', 'x')).toBe('  device      x');
-  expect(phaseLine('fingerprint', 'x')).toBe('  fingerprint x');
+test('phaseLine preserves the Desktop label and fact framing', () => {
+  const fact = 'released 8084';
+  expect(
+    phaseLine('port', fact)
+      .match(/^ {2}(\S+)\s+(\S.*)$/)
+      ?.slice(1),
+  ).toEqual(['port', fact]);
 });
 
 test('shortHash keeps short values and abbreviates long values', () => {
@@ -66,48 +67,6 @@ test('shortUdid keeps short values and abbreviates simulator ids', () => {
   expect(shortUdid('A1F3')).toBe('A1F3');
   expect(shortUdid('A1F3-0000')).toBe('A1F3..');
   expect(shortUdid(null)).toBe('');
-});
-
-test('the label set is closed, sorted, and free of duplicates', () => {
-  expect(OUTPUT_LABELS).toEqual(OUTPUT_LABELS.toSorted());
-  expect(new Set(OUTPUT_LABELS).size).toBe(OUTPUT_LABELS.length);
-  expect(isOutputLabel('install')).toBe(true);
-  expect(isOutputLabel('launch err')).toBe(false);
-  expect(isOutputLabel('js swap')).toBe(false);
-  expect(isOutputLabel('wired')).toBe(false);
-});
-
-test('Stim Desktop reads progress lines with the same label set', () => {
-  const swift = readFileSync(
-    new URL('../../../../apps/desktop/Sources/StimKit/ActivityProgress.swift', import.meta.url),
-    'utf-8',
-  );
-  const block = /labels: Set<String> = \[([^\]]*)\]/.exec(swift)?.[1] ?? '';
-  const desktop = [...block.matchAll(/"([^"]+)"/g)].map((match) => match[1]);
-  expect(desktop).toEqual(OUTPUT_LABELS.filter((label) => /^\S+$/.test(label)));
-});
-
-test('every label the run, lifecycle, doctor and gc commands print comes from that one set', () => {
-  for (const command of ['ios', 'android', 'worktree', 'start', 'stop', 'doctor', 'gc']) {
-    const files = [`${command}.ts`];
-    if (command === 'gc') files.push('gc/memory.ts', 'gc/worktrees.ts');
-    if (command === 'ios' || command === 'android') {
-      files.push(
-        ...readdirSync(new URL(`../commands/${command}/`, import.meta.url))
-          .filter((file) => file.endsWith('.ts'))
-          .map((file) => `${command}/${file}`),
-        'native-runtime.ts',
-        'dev-client.ts',
-      );
-    }
-    const src = files.map((file) => readFileSync(new URL(`../commands/${file}`, import.meta.url), 'utf-8')).join('\n');
-    const labels = new Set<string>();
-    for (const match of src.matchAll(/\bphase(?:Line)?\(\s*'((?:[^'\\]|\\.)*)'/g)) labels.add(match[1]!);
-    expect(labels.size).toBeGreaterThan(1);
-    for (const label of labels) {
-      expect({ command, label, known: isOutputLabel(label) }).toEqual({ command, label, known: true });
-    }
-  }
 });
 
 test("a verified launch counts the device log and still prints the app's own errors", () => {

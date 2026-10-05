@@ -11,6 +11,8 @@ struct DeviceViewerToolbar: View {
   var replaying: Bool
   /// Whether the agent action list is shown; nil when the device has none or the sheet is too narrow for it.
   var showsActions: Binding<Bool>?
+  @Binding var scalingMode: DeviceScalingMode
+  var scalingModes: [DeviceScalingMode]
   var close: () -> Void
   @State private var confirmingStop = false
   @EnvironmentObject private var actions: ActionCenter
@@ -26,6 +28,20 @@ struct DeviceViewerToolbar: View {
         EmptyView()
       }
       Spacer(minLength: Space.md)
+      if scalingModes.count > 1 {
+        Menu {
+          ForEach(DeviceScalingMode.allCases, id: \.self) { mode in
+            Toggle(mode.rawValue, isOn: Binding(get: { scalingMode == mode }, set: { _ in scalingMode = mode }))
+              .disabled(!scalingModes.contains(mode))
+          }
+        } label: {
+          Label(scalingMode.rawValue, systemImage: "arrow.up.left.and.arrow.down.right")
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .help("Fit adapts to the viewer. Accurate modes keep their scale; scroll to see the rest of a large device.")
+        .accessibilityLabel("Device scale: \(scalingMode.rawValue)")
+      }
       commands
       Rectangle().fill(Palette.border).frame(width: 1, height: 18)
       if let showsActions {
@@ -35,15 +51,16 @@ struct DeviceViewerToolbar: View {
           showsActions.wrappedValue.toggle()
         }
         .labelStyle(.iconOnly)
-        .buttonStyle(.stim(.plain))
+        .nativeIconStyle()
         .help(showsActions.wrappedValue ? "Hide the agent actions" : "Show the agent actions")
         .accessibilityAddTraits(showsActions.wrappedValue ? .isSelected : [])
       }
       Button("Close", systemImage: "xmark", action: close)
         .labelStyle(.iconOnly)
-        .buttonStyle(.stim(.plain))
+        .nativeIconStyle()
         .help(takenOver ? "Close the viewer and release the device (Escape releases first)" : "Close (Escape)")
     }
+    .font(.stim(.footnote, weight: .medium))
     .padding(.horizontal, Space.xl)
     .padding(.vertical, Space.md)
   }
@@ -147,7 +164,7 @@ struct DeviceViewerToolbar: View {
       Button("Run", systemImage: "play.fill") {
         actions.run("Run on \(platformName(device.platform))", run)
       }
-      .buttonStyle(.stim(.primary))
+      .nativeControlStyle(.primary)
       .fixedSize()
       .disabled(busy || env.runningBuild(for: device) != nil)
       .help((["stim"] + run.arguments).joined(separator: " "))
@@ -161,7 +178,7 @@ struct DeviceViewerToolbar: View {
       Button("Stop") {
         actions.run("Stop \(device.slot)", stopCommand(for: device, cwd: env.path))
       }
-      .buttonStyle(.stim(.destructive))
+      .nativeIconStyle(tint: Palette.error)
       .fixedSize()
       .disabled(busy)
       .help(
@@ -176,13 +193,13 @@ struct DeviceViewerToolbar: View {
     {
       if takenOver {
         Button("Release control", systemImage: "hand.raised.fill") { takenOver = false }
-          .buttonStyle(.stim(.primary))
+          .nativeIconStyle()
           .fixedSize()
           .help("Release control so an agent can drive this device again (Escape).")
           .accessibilityLabel("Release control")
       } else {
-        Button("Control", systemImage: "hand.raised") { takenOver = true }
-          .buttonStyle(.stim())
+        Button("Control", systemImage: "cursorarrow.rays") { takenOver = true }
+          .nativeIconStyle()
           .fixedSize()
           .disabled(replaying)
           .help(
@@ -196,7 +213,7 @@ struct DeviceViewerToolbar: View {
 
   private func remoteStop(busy: Bool) -> some View {
     Button("Stop") { confirmingStop = true }
-      .buttonStyle(.stim(.destructive))
+      .nativeIconStyle(tint: Palette.error)
       .fixedSize()
       .disabled(busy)
       .help("stim stop: ends the remote session with the rest of the workspace")
@@ -215,7 +232,7 @@ struct DeviceViewerToolbar: View {
     if let url = URL(string: browser.currentURL), ["http", "https"].contains(url.scheme) {
       Button("Open in browser", systemImage: "safari") { NSWorkspace.shared.open(url) }
         .labelStyle(.iconOnly)
-        .buttonStyle(.stim())
+        .nativeIconStyle()
         .help("Open \(browser.currentURL) in your default browser. Stim's Chrome and its profile are not involved.")
     }
     if browser.running {
@@ -223,11 +240,11 @@ struct DeviceViewerToolbar: View {
         actions.run("Reload web", StimCommand(["reload", "web"], cwd: env.path))
       }
       .labelStyle(.iconOnly)
-      .buttonStyle(.stim())
+      .nativeIconStyle()
       .disabled(busy)
       .help("stim reload web: reloads the page in Stim's Chrome")
       Button("Close") { actions.run("Close web", stopCommand(for: device, cwd: env.path)) }
-        .buttonStyle(.stim(.destructive))
+        .nativeIconStyle(tint: Palette.error)
         .fixedSize()
         .disabled(busy)
         .help("stim stop --slot web: closes Stim's Chrome and keeps its profile, Metro and every device")

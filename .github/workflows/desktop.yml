@@ -2,6 +2,8 @@ name: Desktop
 
 on:
   workflow_dispatch:
+  schedule:
+    - cron: '0 5 * * *'
   push:
     branches: [main]
     paths:
@@ -21,7 +23,7 @@ on:
       - '.github/workflows/desktop-release.yml'
 
 concurrency:
-  group: desktop-${{ github.ref }}
+  group: desktop-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -37,7 +39,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Select Xcode
         run: |
-          sudo xcode-select -s /Applications/Xcode_16.4.app
+          sudo xcode-select -s /Applications/Xcode_26.3.app
           xcodebuild -version
           xcrun swift-format --version
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
@@ -57,6 +59,8 @@ jobs:
           sed 's|^|Sources/|' ../../packages/server/helper/desktop-sources.txt \
             | xargs xcrun swiftc -O -swift-version 5 -module-name StimFrames -o "$RUNNER_TEMP/stim-frames" \
               ../../packages/server/helper/main.swift ../../packages/server/helper/VideoEncoder.swift \
-              ../../packages/server/helper/PhoneSource.swift
+              ../../packages/server/helper/PhoneSource.swift ../../packages/server/helper/MacosSource.swift \
+              ../../packages/server/helper/FrameArtwork.swift
       - name: Package an ad-hoc release build
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
         run: scripts/release.sh 0.0.0

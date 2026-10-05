@@ -52,3 +52,6 @@ patchedDependencies:
   react-native-nitro-modules@0.37.1: patches/react-native-nitro-modules@0.37.1.patch
   react-native-transformer-text-input@0.4.2: patches/react-native-transformer-text-input@0.4.2.patch
   react-native-screens@4.28.0: patches/react-native-screens@4.28.0.patch
+  # Expo #50052 adds versionless Android publications; later autolinkers also require
+  # a macro package absent from this SDK core. Backport the resolver until the SDK updates.
+  expo-modules-autolinking@58.0.4: patches/expo-modules-autolinking@58.0.4.patch

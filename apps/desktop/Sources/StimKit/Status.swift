@@ -63,6 +63,7 @@ public struct Workspace: Decodable, Identifiable, Hashable, Sendable {
   public var ios: IosDevice?
   public var android: AndroidDevice?
   public var web: WebBrowser?
+  public var macos: MacosApp?
   public var metro: Metro?
   public var supervisor: Supervisor?
   public var logs: Logs?
@@ -89,7 +90,7 @@ public struct Workspace: Decodable, Identifiable, Hashable, Sendable {
 
   enum CodingKeys: String, CodingKey {
     case path, live, phase, phaseSince, warmStep, memoryMb, memorySource, warnings, issues, ios, android, web, metro
-    case supervisor, logs, slots, remoteDevices, physicalDevices, build
+    case macos, supervisor, logs, slots, remoteDevices, physicalDevices, build
     case lastBuilds, builds, worktree, recording
     case agents, endedAgents, disk
     case stageFacts = "stage"
@@ -118,7 +119,7 @@ public struct Workspace: Decodable, Identifiable, Hashable, Sendable {
   /// Whether the Live views show the workspace: something runs, a build runs, an EAS session or a leased phone is
   /// held, or it is being set up.
   public var isActive: Bool {
-    live || build?.isRunning == true || isSettingUp || remoteDevices?.isEmpty == false
+    live || build?.isRunning == true || macos?.build.state == "running" || isSettingUp || remoteDevices?.isEmpty == false
       || physicalDevices?.isEmpty == false
   }
 

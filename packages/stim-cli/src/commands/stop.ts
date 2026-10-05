@@ -1,3 +1,4 @@
+import { stopMacosApp } from '../macos/stop.ts';
 import { withWorkspaceProcessLock } from '../engine/workspace-process-lock.ts';
 import {
   NATIVE_RUN_LOCK,
@@ -218,6 +219,7 @@ interface StopOutcomes {
   collectors: CollectorsOutcome;
   metro: MetroOutcome;
   device: DeviceOutcome;
+  macos?: { status: string; reason?: string };
   port: PortOutcome;
   metroTunnel: TunnelOutcome;
   releasedLeases: ReleasedLease[];
@@ -300,6 +302,7 @@ export async function runStop(options: StopArgs & { slot?: string }): ReturnType
     },
     clearRegistration: async () => true,
     teardownBrowser: null,
+    stopMacos: false,
     releaseLeases: (projectRoot) => releaseWorkspaceLeases(projectRoot, { slot }),
   });
   result.outcomes.port = {
@@ -335,6 +338,22 @@ async function stopBrowserOnly({
   return { ok, outcomes, summary: summarize(root, outcomes, ok) };
 }
 
+async function stopWorkspaceMacos(
+  root: string,
+  failed: (reason: string) => void,
+  enabled: boolean | undefined,
+): Promise<StopOutcomes['macos']> {
+  if (enabled === false || readWorkspaceState(root)?.macos === undefined) return undefined;
+  try {
+    await stopMacosApp(root);
+    return { status: 'stopped' };
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    failed(reason);
+    return { status: 'failed', reason };
+  }
+}
+
 async function stopWorkspace({
   root,
   project = undefined,
@@ -353,6 +372,7 @@ async function stopWorkspace({
   teardownIos = teardownOwnedIosSim,
   teardownAvd = teardownOwnedAvd,
   teardownBrowser = (projectRoot: string) => teardownOwnedBrowser(projectRoot),
+  stopMacos,
   remoteDevice = undefined,
   teardownRemoteSession = defaultTeardownRemoteSession,
   metroTunnel = undefined,
@@ -379,6 +399,7 @@ async function stopWorkspace({
   resolveMetro?: (port: number, root: string) => Promise<MetroResolution>;
   teardownIos?: (udid: string, opts: { del?: boolean; label?: string; workspace?: string }) => TeardownResult;
   teardownAvd?: (avdName: string, opts: { del?: boolean; workspace?: string }) => TeardownResult;
+  stopMacos?: boolean;
   teardownBrowser?: ((root: string) => Promise<TeardownResult>) | null;
   remoteDevice?: RemoteDeviceRecord | null;
   metroTunnel?: ReturnType<typeof readMetroTunnel> | undefined;
@@ -531,6 +552,14 @@ async function stopWorkspace({
 
   outcomes.device.web = await closeBrowser(root, teardownBrowser, report);
   if (outcomes.device.web && outcomes.device.web.status !== 'shut-down') ok = false;
+  outcomes.macos = await stopWorkspaceMacos(
+    root,
+    (reason) => {
+      ok = false;
+      report(reason);
+    },
+    stopMacos,
+  );
 
   const remote = remoteDevice === undefined ? readRemoteSession(root) : remoteDevice;
   const sessionId = typeof remote?.sessionId === 'string' ? remote.sessionId : null;
@@ -912,6 +941,8 @@ async function closeBrowser(
 
 function summarize(root: string, outcomes: StopOutcomes, ok: boolean): string {
   const parts: string[] = [];
+  if (outcomes.macos?.status === 'stopped') parts.push('macOS app stopped');
+  if (outcomes.macos?.status === 'failed') parts.push('macOS app could not be stopped');
   if (outcomes.supervisor.status === 'stopped') parts.push(`supervisor pid ${outcomes.supervisor.pid} stopped`);
   if (outcomes.supervisor.status === 'already-stopped') parts.push('supervisor already stopped');
   if (outcomes.supervisor.status === 'timeout') parts.push(`supervisor pid ${outcomes.supervisor.pid} still running`);
