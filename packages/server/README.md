@@ -496,10 +496,14 @@ from every app attempt, keeping logs and receipts so `app.attach` can still repo
 the recorded state.
 
 Once a macOS app is `installed`, `device-host.app.launch` and
-`device-host.app.attach` return `agent: { driver: 'none' }` only while the session
-is ready, until a driver is configured. The field is built for the response and
-never stored in the receipt or journal; it is absent before installation, after
-stop and for iOS and Android sessions.
+`device-host.app.attach` return the agent grant the host's driver issued for that
+session, or `agent: { driver: 'none' }` while no driver runs or it cannot scope
+the app; the driver's reason, if any, is the result's `notice`. The field is
+built for the response and never stored in the receipt or journal; it is absent
+before installation, after stop and for iOS and Android sessions. The worker
+reports the app's pid, `DeviceHost` registers the running app with the agent
+driver before the receipt reads `installed`, and ends that registration when the
+session stops, is revoked or the server closes.
 
 macOS sessions refuse Metro, viewing and control. Client placement and streaming
 remain follow-ups in [#2403](https://github.com/appandflow/stim/issues/2403).

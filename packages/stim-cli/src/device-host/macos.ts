@@ -241,7 +241,7 @@ export async function runHostedMacosApp(
         inspectProcessIdentity(current.app) === 'same' &&
         inspectProcessIdentity(current.supervisor) === 'same'
       )
-        return { state: 'installed', device, launched: true };
+        return { state: 'installed', device, launched: true, pid: current.app.pid };
       if (child.exitCode !== null || child.signalCode !== null) break;
       await new Promise((resolve) => setTimeout(resolve, 100));
     }

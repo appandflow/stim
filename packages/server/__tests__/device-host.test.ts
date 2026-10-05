@@ -17,10 +17,17 @@ import { WebSocket, WebSocketServer } from 'ws';
 import { createMetroGateway } from '@stim-cli/core';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { deviceHostArea, deviceHostRoot, HOSTED_MACOS_APP_SLOTS, readHostedSessions } from '@stim-cli/core/state';
+import {
+  deviceHostArea,
+  deviceHostRoot,
+  HOSTED_MACOS_APP_SLOTS,
+  readHostedAppMetadata,
+  readHostedSessions,
+} from '@stim-cli/core/state';
 import { processGroupAlive, readClaimSet, tryAcquireClaim, releaseClaim } from '@stim-cli/core/ownership-claim';
 import * as processIdentity from '@stim-cli/core/process-identity';
 import { DeviceHost } from '../src/device-host.ts';
+import { AgentDriverUnavailable, HostedAgentHost, type AgentAccess, type HostedAgentApp } from '../src/agent-driver.ts';
 import { protocolJsonSchema, type ServerMessage } from '../src/protocol.ts';
 import { Ajv2020 } from 'ajv/dist/2020.js';
 import { HostedViews } from '../src/hosted-view.ts';
@@ -77,19 +84,42 @@ if(input.mode === 'prepare') {
   const stored=JSON.parse(readFileSync(join(home,'hosted-device.json'),'utf8'));
   const app=JSON.parse(readFileSync(join(home,'..','apps',input.attempt,'receipt.json'),'utf8'));
   if(input.deviceType === 'install-hang') { process.on('SIGTERM',()=>{}); setInterval(()=>{},1000); }
-  else out({state:'installed',device:stored,launched:app.mode === 'release' ? true : 'unverified'});
+  else out({state:'installed',device:stored,launched:app.mode === 'release' ? true : 'unverified',...(input.platform === 'macos' ? {pid:4242} : {})});
 } else {
   writeFileSync(join(home,'stopped'),String(process.pid));
   const stored=JSON.parse(readFileSync(join(home,'hosted-device.json'),'utf8'));
   out({state:input.deviceType === 'uncertain-stop'?'unknown':'stopped',device:stored});
 }
 `;
+const noAgents = {
+  appRunning: () => Promise.resolve({ grant: { driver: 'none' } as const }),
+  appStopped: () => Promise.resolve(),
+  access: () => undefined,
+};
+const NOAGENTS = "{appRunning:async()=>({grant:{driver:'none'}}),appStopped:async()=>{},access:()=>undefined}";
+type AgentCall = ['running', HostedAgentApp, string] | ['stopped', string];
+let agentCalls: AgentCall[];
+let agentAccess: Map<string, AgentAccess>;
+const agents = {
+  appRunning: (app: HostedAgentApp) => {
+    const attempt = readHostedSessions().find((record) => record.id === app.session)!.appAttempt!;
+    agentCalls.push(['running', app, readHostedAppMetadata(app.session, attempt).state]);
+    return Promise.resolve(agentAccess.get(app.session) ?? { grant: { driver: 'none' } as const });
+  },
+  appStopped: (session: string) => {
+    agentCalls.push(['stopped', session]);
+    return Promise.resolve();
+  },
+  access: (session: string) => agentAccess.get(session),
+};
 let home: string;
 let host: DeviceHost;
 let allowed: Set<string>;
 const request = { workspace: '/client/worktree', slot: 'default', platform: 'ios', attempt: 'first' };
 
 beforeEach(() => {
+  agentCalls = [];
+  agentAccess = new Map();
   home = mkdtempSync(join(tmpdir(), 'stim-hosted-test-'));
   process.env.STIM_HOME = home;
   const worker = join(home, 'worker.mjs');
@@ -98,6 +128,7 @@ beforeEach(() => {
   host = new DeviceHost({
     worker,
     env: { ...process.env, STIM_MAX_DEVICES: '1' },
+    agents,
     allowed: (client) => allowed.has(client),
     limits: { prepareMs: 5000, stopMs: 2000, killGraceMs: 100 },
   });
@@ -510,7 +541,7 @@ require('node:fs').writeFileSync(${JSON.stringify(started)},String(process.pid))
 import {DeviceHost} from ${imports('device-host')};import {HostedViews} from ${imports('hosted-view')};
 import {ControlHub} from ${imports('control')};import {FramePool} from ${imports('frames')};import {FeedPool} from ${imports('feed')};
 const env={...process.env,PATH:${JSON.stringify(home)}+':'+process.env.PATH};
-const host=new DeviceHost({worker:${JSON.stringify(join(home, 'worker.mjs'))},env,allowed:()=>true,limits:{prepareMs:5000,stopMs:2000,killGraceMs:100}});
+const host=new DeviceHost({worker:${JSON.stringify(join(home, 'worker.mjs'))},env,agents:${NOAGENTS},allowed:()=>true,limits:{prepareMs:5000,stopMs:2000,killGraceMs:100}});
 const answer=host.reserve('client',${JSON.stringify(request)});if('error' in answer)throw new Error(answer.error.message);
 let attached;for(let i=0;i<200;i++){attached=host.attach('client',{session:answer.result.id});if(attached.result?.state==='ready')break;await new Promise(r=>setTimeout(r,20));}
 const frames=new FramePool(env),feeds=new FeedPool('unused',env);
@@ -608,6 +639,7 @@ test('another server reports the retained reservation as unknown and cannot stop
   const other = new DeviceHost({
     worker: join(home, 'worker.mjs'),
     env: process.env,
+    agents: noAgents,
     allowed: () => true,
   });
   try {
@@ -761,7 +793,7 @@ test('refuses app mutations after the real session owner disappears until explic
   const source = `
     import {DeviceHost} from ${JSON.stringify(module)};
     import {createHash} from 'node:crypto';
-    const host=new DeviceHost({worker:${JSON.stringify(join(home, 'worker.mjs'))},env:process.env,allowed:()=>true});
+    const host=new DeviceHost({worker:${JSON.stringify(join(home, 'worker.mjs'))},env:process.env,agents:${NOAGENTS},allowed:()=>true});
     const reserved=host.reserve('client',${JSON.stringify(request)});
     if('error' in reserved) throw new Error(reserved.error.message);
     const session=reserved.result.id;
@@ -884,6 +916,113 @@ test.each(['ios', 'android', 'macos'])(
   },
 );
 
+async function installApp(platform: string, access?: AgentAccess) {
+  const first = reserve({ platform });
+  if (access) agentAccess.set(first.id, access);
+  await state(first.id, 'ready');
+  const app = appOffer(first.id, 'app-first', platform);
+  host.appOffer('client', app.params);
+  await uploadManifest(app);
+  await host.appChunk('client', {
+    session: first.id,
+    attempt: app.params.attempt,
+    sha256: app.sha256,
+    offset: 0,
+    data: app.content.toString('base64'),
+  });
+  host.appLaunch('client', app.params);
+  await vi.waitFor(() => expect(host.appAttach('client', app.params)).toHaveProperty('result.state', 'installed'));
+  return { id: first.id, params: app.params };
+}
+
+describe('hosted agent control', () => {
+  const grant = {
+    driver: 'agent-device' as const,
+    path: `/device-host/agent/${randomUUID()}/`,
+    token: 'a'.repeat(43),
+    scope: 'lease-1',
+  };
+
+  test('starts macOS agent control for the installed process before the receipt reads installed and hands out its grant', async () => {
+    const { id, params } = await installApp('macos', { grant });
+    expect(agentCalls).toEqual([
+      ['stopped', id],
+      [
+        'running',
+        {
+          client: 'client',
+          session: id,
+          bundleId: 'dev.stim.fixture.hosted1',
+          pid: 4242,
+        },
+        'installing',
+      ],
+    ]);
+    expect(host.appAttach('client', params)).toHaveProperty('result.agent', grant);
+    const receipt = readFileSync(join(deviceHostArea(id), 'apps', params.attempt, 'receipt.json'), 'utf8');
+    const journal = readFileSync(join(deviceHostRoot(), 'sessions.json'), 'utf8');
+    expect(receipt).not.toContain(grant.token);
+    expect(journal).not.toContain(grant.token);
+  });
+
+  test('reports the notice that explains a missing driver without storing it', async () => {
+    const { id, params } = await installApp('macos', {
+      grant: { driver: 'none' },
+      notice: 'No lease.',
+    });
+    const attached = host.appAttach('client', params);
+    expect(attached).toHaveProperty('result.agent', { driver: 'none' });
+    expect(attached).toHaveProperty('result.notice', 'No lease.');
+    expect(readFileSync(join(deviceHostArea(id), 'apps', params.attempt, 'receipt.json'), 'utf8')).not.toContain(
+      'No lease.',
+    );
+  });
+
+  test.each(['ios', 'android'])('never starts agent control for %s apps', async (platform) => {
+    const { params } = await installApp(platform);
+    expect(host.appAttach('client', params)).not.toHaveProperty('result.agent');
+    expect(agentCalls.filter(([kind]) => kind === 'running')).toEqual([]);
+  });
+
+  test.each(['stop', 'revoke', 'close'])('ends agent control when the session ends by %s', async (how) => {
+    const { id } = await installApp('macos', { grant });
+    agentCalls.length = 0;
+    if (how === 'stop') host.stop('client', { session: id });
+    else if (how === 'revoke') {
+      allowed.delete('client');
+      host.revoke();
+    } else await host.close();
+    expect(agentCalls).toContainEqual(['stopped', id]);
+    await state(id, 'stopped');
+  });
+
+  test('hands out no driver and the host notice while the driver cannot lease one app', async () => {
+    const real = new HostedAgentHost({
+      resolve: () => ({
+        name: 'agent-device',
+        start: () => Promise.reject(new AgentDriverUnavailable('agent-device cannot lease one macOS app yet.')),
+        stop: () => Promise.resolve(),
+        issue: () => Promise.reject(new Error('unreachable')),
+        revoke: () => Promise.resolve(),
+        forward: () => undefined,
+        onExit: () => undefined,
+      }),
+      nodeOf: () => null,
+    });
+    host = new DeviceHost({
+      worker: join(home, 'worker.mjs'),
+      env: { ...process.env, STIM_MAX_DEVICES: '1' },
+      agents: real,
+      allowed: (client) => allowed.has(client),
+      limits: { prepareMs: 5000, stopMs: 2000, killGraceMs: 100 },
+    });
+    const { params } = await installApp('macos');
+    const attached = host.appAttach('client', params);
+    expect(attached).toHaveProperty('result.agent', { driver: 'none' });
+    expect(attached).toHaveProperty('result.notice', 'agent-device cannot lease one macOS app yet.');
+  });
+});
+
 test('discards digest-mismatched app bytes and leaves native installation unstarted', async () => {
   const first = reserve();
   await state(first.id, 'ready');
@@ -955,6 +1094,7 @@ test('Android reservations keep distinct ports and platform slots and reconnect 
   host = new DeviceHost({
     worker: join(home, 'worker.mjs'),
     env: { ...process.env, STIM_MAX_DEVICES: '3' },
+    agents: noAgents,
     allowed: (client) => allowed.has(client),
   });
   const ios = reserve();
@@ -1055,6 +1195,7 @@ test('an uncapped offer still declines exhausted Android journal ports without c
   host = new DeviceHost({
     worker: join(home, 'worker.mjs'),
     env: { ...process.env, STIM_MAX_DEVICES: '0' },
+    agents: noAgents,
     allowed: () => true,
   });
   mkdirSync(deviceHostRoot(), { recursive: true });
@@ -1085,6 +1226,7 @@ test.each(['deadline', 'revoke', 'close'])(
     host = new DeviceHost({
       worker: join(home, 'worker.mjs'),
       env: process.env,
+      agents: noAgents,
       allowed: (client) => allowed.has(client),
       limits: { offerMs: action === 'deadline' ? 1000 : 5000, killGraceMs: 100 },
     });
@@ -1143,6 +1285,7 @@ test('macOS reservations isolate concurrent clients, validate on the wire and re
   host = new DeviceHost({
     worker: join(home, 'worker.mjs'),
     env: { ...process.env, STIM_MAX_DEVICES: '2' },
+    agents: noAgents,
     allowed: (client) => allowed.has(client),
   });
   const validator = new Ajv2020({ strict: false, validateFormats: false });
@@ -1228,6 +1371,7 @@ test('macOS offer and reserve refuse all 64 unresolved app slots without mutatin
   host = new DeviceHost({
     worker: join(home, 'worker.mjs'),
     env: { ...process.env, STIM_MAX_DEVICES: '0' },
+    agents: noAgents,
     allowed: () => true,
   });
   mkdirSync(deviceHostRoot(), { recursive: true });

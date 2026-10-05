@@ -541,7 +541,8 @@ client's coding agent can drive the macOS apps it hosts for that client.
 The default, \`none\`, starts nothing. \`agent-device\` starts its
 daemon only once agent-device can lease a single macOS app. Until then
 agent control reports \`none\` with a notice, and no client is handed the
-Mac's desktop.
+Mac's desktop. \`doctor\` on that Mac notes a hosted macOS app that runs while
+the setting is \`none\`.
 
 BUILD MACHINES ARE MACHINE-LEVEL
 \`offload.machines\` lists the Macs on the tailnet that may build for this one,

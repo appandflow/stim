@@ -46,6 +46,7 @@ import { writeJson } from './registry.ts';
 import { takeHostedInputClaim } from './hosted-input.ts';
 import type { Methods, ProtocolError } from './protocol.ts';
 import { appDelivery, offerHostedApp, chunkHostedApp, changeHostedApp } from './hosted-app.ts';
+import type { HostedAgentHost } from './agent-driver.ts';
 
 export interface DeviceHostLimits {
   prepareMs: number;
@@ -77,6 +78,15 @@ interface OwnedSession {
   viewer?: { close: () => Promise<void> };
 }
 
+export interface DeviceHostOptions {
+  worker: string;
+  env: NodeJS.ProcessEnv;
+  allowed: (client: string) => boolean;
+  /** Issues and revokes the agent control that hosted macOS apps hand their client. */
+  agents: Pick<HostedAgentHost, 'appRunning' | 'appStopped' | 'access'>;
+  limits?: Partial<DeviceHostLimits>;
+}
+
 type Answer = { result: HostedDeviceSession } | { error: ProtocolError };
 type AppAnswer<T> = { result: T } | { error: ProtocolError };
 const refused = (code: ProtocolError['code'], message: string): { error: ProtocolError } => ({
@@ -91,19 +101,9 @@ export class DeviceHost {
   private closed = false;
   private readonly limits: DeviceHostLimits;
 
-  private readonly options: {
-    worker: string;
-    env: NodeJS.ProcessEnv;
-    allowed: (client: string) => boolean;
-    limits?: Partial<DeviceHostLimits>;
-  };
+  private readonly options: DeviceHostOptions;
 
-  constructor(options: {
-    worker: string;
-    env: NodeJS.ProcessEnv;
-    allowed: (client: string) => boolean;
-    limits?: Partial<DeviceHostLimits>;
-  }) {
+  constructor(options: DeviceHostOptions) {
     this.options = options;
     this.limits = { prepareMs: 5 * 60_000, offerMs: 30_000, stopMs: 90_000, killGraceMs: 5000, ...options.limits };
   }
@@ -517,8 +517,11 @@ export class DeviceHost {
       const record = this.appSession(client, params);
       const app = readHostedAppMetadata(record.id, (params as { attempt: string }).attempt);
       const result: HostedAppLaunch = appDelivery(app);
-      if (record.platform === 'macos' && app.state === 'installed' && record.state === 'ready')
-        result.agent = { driver: 'none' };
+      if (record.platform === 'macos' && app.state === 'installed' && record.state === 'ready') {
+        const access = this.options.agents.access(record.id);
+        result.agent = access?.grant ?? { driver: 'none' };
+        if (access?.notice) result.notice = access.notice;
+      }
       if (app.state === 'installing' && this.owned.get(record.id)?.installing?.attempt !== app.attempt) {
         result.state = 'unknown';
         result.notice = 'The install owner is unavailable. Stop this hosted session before retrying.';
@@ -567,6 +570,7 @@ export class DeviceHost {
 
   private async install(record: HostedDeviceSession, owned: OwnedSession, attempt: string): Promise<void> {
     try {
+      if (record.platform === 'macos') await this.stopAgent(record.id);
       await this.closeView(owned);
       if (owned.stopping || this.closed || !this.options.allowed(record.client)) return;
       releaseClaim(takeHostedInputClaim(owned.claim));
@@ -585,6 +589,8 @@ export class DeviceHost {
         record.device !== null &&
         hostedDeviceId(parseHostedPlatformDevice(value.device, record.platform)!) === hostedDeviceId(record.device) &&
         (value.launched === true || value.launched === 'unverified');
+      if (installed && record.platform === 'macos' && Number.isSafeInteger(value.pid) && (value.pid as number) > 0)
+        await this.startAgent(record, attempt, value.pid as number);
       const app = changeHostedApp(record.id, attempt, (current) => {
         current.state = installed ? 'installed' : 'unknown';
         current.launched = installed ? (value as { launched: HostedAppDelivery['launched'] }).launched : null;
@@ -613,6 +619,25 @@ export class DeviceHost {
         process.stderr.write(`Hosted app ${record.id} remains unresolved: ${(journalError as Error).message}\n`);
       }
     }
+  }
+
+  private async startAgent(record: HostedDeviceSession, attempt: string, pid: number): Promise<void> {
+    try {
+      await this.options.agents.appRunning({
+        client: record.client,
+        session: record.id,
+        bundleId: hostedMacosBundleId(readHostedAppMetadata(record.id, attempt).bundleId, record.appSlot!),
+        pid,
+      });
+    } catch (error) {
+      process.stderr.write(`Hosted agent control did not start: ${(error as Error).message}\n`);
+    }
+  }
+
+  private stopAgent(session: string): Promise<void> {
+    return this.options.agents.appStopped(session).catch((error: unknown) => {
+      process.stderr.write(`Hosted agent control did not stop: ${(error as Error).message}\n`);
+    });
   }
 
   private async prepare(record: HostedDeviceSession): Promise<void> {
@@ -659,6 +684,7 @@ export class DeviceHost {
     if (record.state === 'stopped') return;
     const owned = this.acquire(record);
     if (owned.stopping) return;
+    void this.stopAgent(record.id);
     void this.closeMetro(owned).catch((error: unknown) => this.failed(record.id, error));
     void this.closeView(owned).catch((error: unknown) => this.failed(record.id, error));
     this.change(record.id, (current) => {
@@ -758,8 +784,9 @@ export class DeviceHost {
         }
       }
     } catch (error) {
-      for (const owned of this.owned.values()) {
+      for (const [id, owned] of this.owned) {
         owned.run?.cancel();
+        void this.stopAgent(id);
         void this.closeMetro(owned).catch((closeError: unknown) => {
           process.stderr.write(`Hosted Metro close failed: ${(closeError as Error).message}\n`);
         });
@@ -786,7 +813,10 @@ export class DeviceHost {
         }
       }
     } catch {
-      for (const owned of this.owned.values()) owned.run?.cancel();
+      for (const [id, owned] of this.owned) {
+        owned.run?.cancel();
+        void this.stopAgent(id);
+      }
     }
     await Promise.all([...this.owned.values()].map((owned) => owned.stopping ?? owned.run?.done));
     await Promise.all([...this.probes.keys()].map((probe) => probe.done));

@@ -311,6 +311,8 @@ coding agent can drive the macOS apps it hosts for that client. The default,
 `none`, starts nothing. `agent-device` starts its daemon
 only once agent-device can lease a single macOS app. Until then agent control
 reports `none` with a notice, and no client is handed the Mac's desktop.
+`stim doctor` on that Mac notes a hosted macOS app that runs while the setting
+is `none`.
 
 `offload.machines` lists the Macs on your tailnet that may build for this one,
 by MagicDNS name (`janics-mac-mini`), optionally with the port of their
