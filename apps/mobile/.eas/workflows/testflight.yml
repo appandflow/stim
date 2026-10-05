@@ -1,0 +1,24 @@
+name: Distribute to external TestFlight testers
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_id:
+        type: string
+        required: true
+        description: The finished EAS production iOS build to upload and distribute.
+      changelog:
+        type: string
+        required: true
+        description: What to Test notes for testers.
+
+jobs:
+  testflight:
+    name: Upload and distribute to External
+    type: testflight
+    params:
+      build_id: ${{ inputs.build_id }}
+      profile: production
+      external_groups: ['External']
+      changelog: ${{ inputs.changelog }}
+      submit_beta_review: true
