@@ -186,7 +186,7 @@ async function launchHere(root: string, record: MacosAppRecord): Promise<MacosAp
         cwd: root,
         detached: true,
         stdio: ['ignore', fd, fd],
-        env: process.env,
+        env: { ...process.env, STIM_BACKGROUND_LAUNCH: '1' },
       }),
     );
     child.unref();

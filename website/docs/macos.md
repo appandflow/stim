@@ -41,9 +41,10 @@ stim stop`}
 
 Each `macos` run stops the previous owned app and rebuilds using that workspace's
 incremental outputs. It does not start Metro. Local `stim macos` starts the app in
-the background without activating it or changing focus. Stim Desktop honors
-`STIM_BACKGROUND_LAUNCH=1`; an app that activates itself at launch still takes
-focus. Hosted launches (`macos --host`) are unchanged. A failed build keeps the compiler
+the background without activating it or changing focus: it sets
+`STIM_BACKGROUND_LAUNCH=1` in the app's environment, which Stim Desktop honors.
+An app that activates itself at launch still takes focus. Hosted launches
+(`macos --host`) do not set it. A failed build keeps the compiler
 output in workspace logs and does not launch an app. Runtime stdout and stderr
 are client logs; unexpected exits are errors. `macos --json` prints one launch
 record on stdout, with progress on stderr. `status --json` reports
@@ -121,7 +122,7 @@ accepts modified letters `a-z` and digits `0-9` one at a time. Older servers kee
 fixed shortcuts and navigation; the phone explains when a server update is
 needed. Modified multi-character input and symbols are unsupported.
 
-Letter and digit shortcuts require the **owned app's U.S. or ABC keyboard layout**.
+Letter and digit shortcuts require the **Mac's selected U.S. or ABC keyboard layout**.
 Native virtual key codes identify physical U.S. positions; another host layout
 could turn a shortcut into a different command. The helper refuses letter and
 digit key events on other layouts; ordinary typing and navigation still work.
@@ -130,7 +131,7 @@ digit key events on other layouts; ordinary typing and navigation still work.
 Control posts input to the owned process without activating it or raising its
 window. Only when the captured window is not the app's key window (or its
 attached sheet) does Stim activate the app to deliver input, waiting up to one
-second for focus. The stream then carries a `controlActivated` notice explaining why.
+second for focus. The helper then sends a `controlActivated` notice, which stim-server logs.
 Clicks on views that reject the first mouse, such as custom views and SwiftUI
 `onTapGesture` regions, do not land while the app is in the background. Use
 Desktop's **Open app** to bring the app to the front for those views.

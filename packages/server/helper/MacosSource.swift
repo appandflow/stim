@@ -393,7 +393,7 @@ final class MacosSource: NSObject, Source, SCStreamDelegate, SCStreamOutput {
       guard let running = Self.runningApplication(app.app.pid)
       else { throw refusal("The captured owned window could not be focused for Control.") }
       Output.notice([
-        "controlActivated": "The captured window was not the app's key window, so Stim activated the app to deliver input to it."
+        "controlActivated": "The captured window was not the app's key window, so Stim raised it and activated the app to deliver input."
       ])
       let raise = AXUIElementPerformAction(own, kAXRaiseAction as CFString)
       let focus = AXUIElementSetAttributeValue(application, kAXFocusedWindowAttribute as CFString, own)

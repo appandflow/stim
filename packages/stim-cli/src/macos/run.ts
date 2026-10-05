@@ -58,7 +58,7 @@ export async function runMacosSupervisor(root: string, launchId: string): Promis
     const child = getExecutor().spawn(record.executable, record.arguments, {
       cwd: root,
       stdio: ['ignore', 'pipe', 'pipe'],
-      env: { ...process.env, STIM_BACKGROUND_LAUNCH: '1' },
+      env: process.env,
     });
     spawned = child.pid !== undefined;
     const ended = new Promise<void>((resolve, reject) => {

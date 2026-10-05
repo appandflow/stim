@@ -13,14 +13,13 @@ import {
 } from '@stim-cli/core/state';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { buildMacosBundle } from '../macos/build.ts';
-import { runMacosSupervisor } from '../macos/run.ts';
 import { createNdjsonWriter } from '../ndjson.ts';
 import * as offload from '../offload/client.ts';
 import * as machines from '../offload/build-machines.ts';
 import * as slots from '../engine/build-slots.ts';
 import * as spawns from '../engine/spawn-claims.ts';
 import { markClaimChildPending, releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
-import { macosProcess, macosRuntimeClaim, requiredMacosRecord } from '../macos/state.ts';
+import { macosRuntimeClaim, requiredMacosRecord } from '../macos/state.ts';
 import { runStop } from '../commands/stop.ts';
 import { stopMacosApp } from '../macos/stop.ts';
 import { captureProcessToken, inspectProcessIdentity, waitForProcessExit } from '../process-identity.ts';
@@ -72,29 +71,6 @@ async function ownedProcess(): Promise<MacosProcess> {
   expect(processToken).toBeTypeOf('string');
   return { pid, processToken: processToken!, startedAtMicros: 1 };
 }
-
-test('the local supervisor requests a background launch while preserving inherited environment and arguments', async () => {
-  const launch = record({ supervisor: macosProcess(process.pid), arguments: ['sample-argument'] });
-  writeWorkspaceState(root, { macos: launch });
-  const executor = getExecutor();
-  const spawn = vi.fn<typeof executor.spawn>(() => {
-    const child = Object.assign(new EventEmitter(), { pid: process.pid, exitCode: 0 }) as ChildProcess;
-    queueMicrotask(() => child.emit('close', 0));
-    return child;
-  });
-  setExecutor({ ...executor, spawn });
-  try {
-    await runMacosSupervisor(root, launch.launchId);
-    expect(spawn).toHaveBeenCalledWith(launch.executable, ['sample-argument'], {
-      cwd: root,
-      stdio: ['ignore', 'pipe', 'pipe'],
-      env: { ...process.env, STIM_BACKGROUND_LAUNCH: '1' },
-    });
-    expect(readMacosRecord(root)?.arguments).toEqual(['sample-argument']);
-  } finally {
-    resetExecutor();
-  }
-});
 
 test('a Swift package inside a monorepo keeps its own command workspace', () => {
   writeFileSync(join(dir, 'package.json'), '{"name":"monorepo"}');
