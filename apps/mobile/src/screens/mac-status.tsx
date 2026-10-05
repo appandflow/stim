@@ -753,7 +753,7 @@ function OwnerRow({ owner, status }: { owner: MachineOwner; status: StatusPayloa
       trailing={
         <View style={styles.figures}>
           <Text variant="callout" weight="medium" style={styles.tabular}>
-            {formatMemoryMb(owner.memoryMb)}
+            {formatMemoryMb(owner.memoryMb ?? owner.residentMb)}
           </Text>
           <Text variant="footnote" tone="secondary" style={styles.tabular}>
             {t`${cpu} CPU`}

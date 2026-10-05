@@ -339,6 +339,25 @@ describe('RPC receive validation', () => {
     connection.close();
   });
 
+  it('backs off when a server keeps sending an invalid event after a valid hello', async () => {
+    const { connection, sockets, states, timers } = setup();
+    connection.subscribe('logs.subscribe', { workspace: '/current' }, jest.fn());
+    connection.start();
+    const bad = { event: 'logs', subscription: 's', records: [{ ts: 1, src: 'metro', level: 'info', msg: 5 }] };
+    for (const retryInMs of [1000, 2000]) {
+      const socket = sockets.at(-1)!;
+      socket.onopen?.();
+      socket.reply('hello', hello);
+      await flush();
+      socket.reply('logs.subscribe', { subscription: 's' });
+      await flush();
+      socket.emit(bad);
+      expect(states.at(-1)).toMatchObject({ kind: 'waiting', retryInMs });
+      timers.at(-1)!.fn();
+    }
+    connection.close();
+  });
+
   it('ignores unknown future events but closes malformed JSON without exposing its contents', async () => {
     const { connection, sockets, states } = setup();
     connection.start();

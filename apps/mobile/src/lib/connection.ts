@@ -105,6 +105,7 @@ export class StimConnection {
   private controlListeners = new Set<(event: ControlEndedEvent) => void>();
   private notificationListeners = new Set<(event: NotificationEvent) => void>();
   private retryMs = MIN_RETRY_MS;
+  private invalidReconnect = false;
   private timer: unknown = null;
   private stopped = false;
   private open = false;
@@ -216,7 +217,7 @@ export class StimConnection {
         (hello) => {
           if (socket !== this.socket) return;
           this.open = true;
-          this.retryMs = MIN_RETRY_MS;
+          if (!this.invalidReconnect) this.retryMs = MIN_RETRY_MS;
           this.options.onState?.({
             kind: 'open',
             server: hello.server,
@@ -329,6 +330,7 @@ export class StimConnection {
       this.invalidMessage();
       return;
     }
+    this.receivedValid();
     if (message.event === 'control-ended') {
       for (const listener of this.controlListeners) listener(message);
       return;
@@ -345,7 +347,14 @@ export class StimConnection {
     }
   }
 
+  private receivedValid(): void {
+    if (!this.invalidReconnect) return;
+    this.invalidReconnect = false;
+    this.retryMs = MIN_RETRY_MS;
+  }
+
   private invalidMessage(): void {
+    this.invalidReconnect = true;
     const socket = this.socket;
     const reason = t`The Mac sent an invalid RPC message. Reconnecting.`;
     this.detach(reason);

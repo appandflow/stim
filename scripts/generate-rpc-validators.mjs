@@ -23,6 +23,10 @@ const methodDefinition = methods.definitions[decodeURIComponent(methods.$ref.sli
 const results = Object.fromEntries(
   Object.entries(methodDefinition.properties).map(([method, schema]) => [method, schema.properties.result]),
 );
+const emptyResult = JSON.stringify({ type: 'object', additionalProperties: { not: {} } });
+for (const result of Object.values(results)) {
+  if (JSON.stringify(result) === emptyResult) delete result.additionalProperties;
+}
 ajv.addSchema({
   $id: 'stim:receive',
   definitions: {

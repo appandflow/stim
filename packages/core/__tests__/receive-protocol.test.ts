@@ -98,3 +98,19 @@ test('accepts results and web state from servers that predate cpu, buildMachines
   expect(status({ ...web, targetId: null })).toBe(true);
   expect(status({ ...web, targetId: 1 })).toBe(false);
 });
+
+test('accepts status without machine memory fields, null stack frames and extra fields on empty results', () => {
+  const { payload } = JSON.parse(
+    readFileSync(new URL('../../../apps/mobile/mock-server/fixtures/status.json', import.meta.url), 'utf8'),
+  );
+  delete payload.machine.memorySource;
+  for (const owner of payload.machine.owners) delete owner.memoryMb;
+  expect(isRpcEvent({ event: 'status', subscription: 's', payload })).toBe(true);
+
+  const frame = { file: null, line: null, column: null, fn: null };
+  const record = { ts: 1, src: 'web', level: 'error', msg: 'Error', stack: [frame] };
+  expect(isRpcResult('logs.query', { records: [record] })).toBe(true);
+
+  expect(isRpcResult('unsubscribe', { ok: true })).toBe(true);
+  expect(isRpcResult('unsubscribe', [])).toBe(false);
+});

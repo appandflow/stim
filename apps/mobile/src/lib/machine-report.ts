@@ -659,7 +659,10 @@ export function machineReport(status: StatusPayload | null, gc: GcReport | null,
 /** The owners by memory, then CPU, as Stim Desktop's Now band ranks them. */
 export function rankedOwners(owners: readonly MachineOwner[]): MachineOwner[] {
   return [...owners].sort(
-    (a, b) => b.memoryMb - a.memoryMb || b.cpuPercent - a.cpuPercent || a.name.localeCompare(b.name),
+    (a, b) =>
+      (b.memoryMb ?? b.residentMb) - (a.memoryMb ?? a.residentMb) ||
+      b.cpuPercent - a.cpuPercent ||
+      a.name.localeCompare(b.name),
   );
 }
 

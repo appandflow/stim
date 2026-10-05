@@ -66,22 +66,25 @@ export type PhoneLastBuild = State.LastBuildReport;
 export type PhoneBuildDiagnostic = State.BuildDiagnostic;
 export type PhoneDeviceLeaseState = State.DeviceLeaseState;
 export type PhoneStatusPayload = OptionalFields<
-  Omit<State.StatusPayload, 'environments'>,
-  'machine' | 'unprovisionedWorktrees'
+  Omit<State.StatusPayload, 'environments' | 'machine'>,
+  'unprovisionedWorktrees'
 > & {
   environments: PhoneEnvironmentState[];
+  machine?: PhoneMachineUsageState | null;
   ownLeases?: string[];
 };
 export type PhoneMachineOwnerKind = State.MachineOwnerKind;
-export type PhoneMachineOwner = State.MachineOwner;
-export type PhoneMachineUsageState = State.MachineUsageState;
+export type PhoneMachineOwner = OptionalFields<State.MachineOwner, 'memoryMb'>;
+export type PhoneMachineUsageState = OptionalFields<Omit<State.MachineUsageState, 'owners'>, 'memorySource'> & {
+  owners: PhoneMachineOwner[];
+};
 export type PhoneLogSource = Wire.LogSource;
 export type PhoneLogLevel = Wire.LogLevel;
 export interface PhoneStackFrame {
-  file?: string;
-  line?: number;
-  column?: number;
-  fn?: string;
+  file?: string | null;
+  line?: number | null;
+  column?: number | null;
+  fn?: string | null;
 }
 
 export type PhoneLogRecord = Wire.LogRecord & {
