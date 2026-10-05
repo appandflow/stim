@@ -10,6 +10,7 @@ const HELLO_TIMEOUT_MS = 10_000;
 export type HelloReply =
   | {
       result: {
+        host?: { name: string; screenRecording: boolean; accessibility: boolean } | null;
         capabilities: string[];
         device: { id: string; name: string };
         deviceToken?: string;

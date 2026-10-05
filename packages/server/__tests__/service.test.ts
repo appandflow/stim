@@ -12,9 +12,12 @@ import {
   validateServeEnvironment,
   type ServiceSpec,
 } from '../src/service-plist.ts';
+import { statusLines, type ServiceStatus } from '../src/service.ts';
+import { permissionPanes, readHostPermissions } from '../src/stim-host.ts';
 
 const SPEC: ServiceSpec = {
   label: 'dev.stim.server',
+  host: null,
   node: '/opt/homebrew/bin/node',
   script: '/Users/me/stim & co/node_modules/@stim-cli/server/dist/stim-server.mjs',
   port: 7787,
@@ -34,32 +37,36 @@ describe('service plist', () => {
   });
 
   describe.skipIf(process.platform !== 'darwin')('with plutil', () => {
-    it('reads back as the spec it was built from', () => {
-      const dir = mkdtempSync(join(tmpdir(), 'stim-service-plist-'));
-      try {
-        const file = join(dir, 'job.plist');
-        writeFileSync(file, renderPlist(SPEC));
-        const json = JSON.parse(execFileSync('plutil', ['-convert', 'json', '-o', '-', file], { encoding: 'utf8' }));
-        expect(json).toMatchObject({ Label: SPEC.label, RunAtLoad: true, KeepAlive: true, ThrottleInterval: 30 });
-        expect(parseInstalledPlist(json)).toEqual({
-          label: SPEC.label,
-          node: SPEC.node,
-          script: SPEC.script,
-          port: 7787,
-          env: SPEC.env,
-          pathPrepend: SPEC.pathPrepend,
-          stimHome: '/tmp/scratch home',
-          logPath: SPEC.logPath,
-          managed: true,
-          serve: { port: 7443, created: true },
-        });
-        const without = join(dir, 'plain.plist');
-        writeFileSync(without, renderPlist({ ...SPEC, serve: null }));
-        execFileSync('plutil', ['-lint', without]);
-      } finally {
-        rmSync(dir, { recursive: true, force: true });
-      }
-    });
+    it.each([null, '/Users/me/Applications/Stim Host Dev.app/Contents/MacOS/stim-host'])(
+      'reads back the launcher and server arguments for host %s',
+      (host) => {
+        const dir = mkdtempSync(join(tmpdir(), 'stim-service-plist-'));
+        try {
+          const file = join(dir, 'job.plist');
+          writeFileSync(file, renderPlist({ ...SPEC, host }));
+          const json = JSON.parse(execFileSync('plutil', ['-convert', 'json', '-o', '-', file], { encoding: 'utf8' }));
+          expect(json).toMatchObject({ Label: SPEC.label, RunAtLoad: true, KeepAlive: true, ThrottleInterval: 30 });
+          expect(parseInstalledPlist(json)).toEqual({
+            label: SPEC.label,
+            host,
+            node: SPEC.node,
+            script: SPEC.script,
+            port: 7787,
+            env: SPEC.env,
+            pathPrepend: SPEC.pathPrepend,
+            stimHome: '/tmp/scratch home',
+            logPath: SPEC.logPath,
+            managed: true,
+            serve: { port: 7443, created: true },
+          });
+          const without = join(dir, 'plain.plist');
+          writeFileSync(without, renderPlist({ ...SPEC, serve: null }));
+          execFileSync('plutil', ['-lint', without]);
+        } finally {
+          rmSync(dir, { recursive: true, force: true });
+        }
+      },
+    );
   });
 });
 
@@ -162,5 +169,87 @@ describe('service command line', () => {
     expect(stimServer('service', 'install', '--env', 'X').stderr).toContain('KEY=VALUE');
     expect(stimServer('pair', '--label', 'x').stderr).toContain('only to `service`');
     expect(stimServer('service', 'restart').stderr).toContain('unknown command');
+  });
+});
+
+describe('host permissions', () => {
+  it.each([
+    [14, 'Screen Recording', 'Accessibility'],
+    [15, 'Screen & System Audio Recording', 'Accessibility'],
+    [26, 'Screen & System Audio Recording', 'Accessibility'],
+    [27, 'Screen & System Audio Recording', 'Device Control and Data Access'],
+  ])('names the settings panes on macOS %i', (major, screen, control) => {
+    expect(permissionPanes(major)).toEqual({ screen, control });
+  });
+
+  test.skipIf(process.platform === 'win32')(
+    'accepts boolean grants and refuses malformed or failed probes',
+    async () => {
+      const dir = mkdtempSync(join(tmpdir(), 'stim-host-permissions-'));
+      const executable = join(dir, 'permissions');
+      try {
+        for (const [output, expected] of [
+          ['{"screenRecording":true,"accessibility":false}', { screenRecording: true, accessibility: false }],
+          ['{"screenRecording":true,"accessibility":"false"}', null],
+          ['{"screenRecording":true}', null],
+          ['not json', null],
+        ] as const) {
+          writeFileSync(executable, `#!${process.execPath}\nconsole.log(${JSON.stringify(output)});\n`, {
+            mode: 0o755,
+          });
+          expect(await readHostPermissions(executable)).toEqual(expected);
+        }
+        expect(await readHostPermissions(join(dir, 'missing'))).toBeNull();
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    },
+  );
+});
+
+describe('service status permissions', () => {
+  const status: ServiceStatus = {
+    label: SPEC.label,
+    installed: true,
+    plist: '/Users/me/Library/LaunchAgents/dev.stim.server.plist',
+    loaded: false,
+    state: null,
+    pid: null,
+    runs: null,
+    lastExitCode: null,
+    port: SPEC.port,
+    health: null,
+    serve: null,
+    logPath: SPEC.logPath,
+    node: SPEC.node,
+    script: SPEC.script,
+    host: {
+      app: '/Users/me/Applications/Stim Host Dev.app',
+      name: 'Stim Host Dev',
+      screenRecording: true,
+      accessibility: false,
+    },
+    envNames: [],
+    pathPrepend: [],
+    stimBuild: { service: null, cli: null, match: null },
+  };
+
+  it('names the host and the missing permission while keeping the actual node path', () => {
+    const lines = statusLines(status, permissionPanes(27));
+    expect(lines).toContain('  host app: /Users/me/Applications/Stim Host Dev.app');
+    expect(lines).toContain('  Screen & System Audio Recording: allowed');
+    expect(lines).toContain(
+      '  Device Control and Data Access: needed: System Settings > Privacy & Security > Device Control and Data Access > Stim Host Dev',
+    );
+    expect(lines).toContain('  node: /opt/homebrew/bin/node');
+  });
+
+  it('keeps unreported grants unknown instead of claiming access was denied', () => {
+    const lines = statusLines(
+      { ...status, host: { ...status.host!, screenRecording: null, accessibility: null } },
+      permissionPanes(14),
+    );
+    expect(lines).toContain('  Screen Recording: unknown (server did not report permissions)');
+    expect(lines).toContain('  Accessibility: unknown (server did not report permissions)');
   });
 });

@@ -589,14 +589,13 @@ backpressure/keyframe rules. `device-host.frames.keyframe` and
 Hosted capture requires the compiled `stim-frames` helper and does not support
 replay, device artwork or screenshot fallback. macOS frames show only the one
 window of the hosted app. Viewing is refused before launch and after the app
-exits. On the hosting Mac, grant Screen & System Audio Recording (Screen Recording on
-macOS 14) and Device Control and Data Access (Accessibility on macOS 26 and
-earlier) once to the process that spawns `stim-frames`. For a stim-server run by
-`stim-server service install`, that is the `node` that `stim-server service status`
-reports, usually `/opt/homebrew/bin/node`; a Stim Host app that owns these grants
-is tracked in https://github.com/appandflow/stim/issues/2493. Missing Screen & System Audio Recording access ends the
-stream with the helper's refusal message. Missing Device Control and Data Access
-access refuses control while viewing remains available.
+exits. On the hosting Mac, `stim-server service install` runs the server and
+`stim-frames` under Stim Host, whose Screen Recording and control grants they
+need. Install shows macOS's own requests; `stim-server service status` shows the
+grants. Servers launched by Stim Desktop keep Desktop's grants. Missing Screen &
+System Audio Recording ends the stream; missing Device Control and Data Access
+(Accessibility on macOS 26 and earlier) leaves viewing available.
+See [Run as a service](#run-as-a-service) for the settings panes and Dev caveat.
 
 Start control with `device-host.control.begin` and
 `{"session":"<hosted-session-id>"}`. Its result returns a connection-bound
@@ -643,8 +642,9 @@ stim-server service uninstall [--label <name>]
 ```
 
 `install` writes `~/Library/LaunchAgents/<label>.plist` (label `dev.stim.server`
-by default) and starts it with `launchctl bootstrap gui/<uid>`. The job runs the
-absolute `node` and `stim-server.mjs` of the install that ran the command, on
+by default) and starts it with `launchctl bootstrap gui/<uid>`. The job starts
+Stim Host, which stays alive as the parent of the absolute `node` and
+`stim-server.mjs` of the install that ran the command, on
 `--port` (default 7787), with `RunAtLoad`, `KeepAlive` and a 30 second
 `ThrottleInterval`, and logs to `~/Library/Logs/Stim/<label>.log`. When
 `STIM_HOME` or `SHELL` is set in the installing shell, the job carries it. It
@@ -659,6 +659,22 @@ under `$STIM_HOME/server` or settings. `install` waits up to 15 seconds for
 `/health`; an installed LaunchAgent without a health response reports readiness
 as unavailable and points to `status` and its log. Installation success alone
 does not prove that the server is ready.
+
+This version builds **Stim Host Dev** (`dev.stim.host.dev`) locally with Xcode
+Command Line Tools and installs it at `~/Applications/Stim Host Dev.app`. The
+release flavor is named **Stim Host** (`dev.stim.host`) at
+`~/Applications/Stim Host.app`. Install keeps an identical launcher untouched.
+Stim Host Dev is signed ad hoc, so macOS keeps its approvals only while the
+launcher source and Xcode toolchain are unchanged.
+
+After starting the service, install shows macOS's own permission requests on
+this Mac's screen. You only approve them; over SSH, use Screen Sharing to see
+that screen. If a request does not appear, turn Stim Host Dev on in **System
+Settings > Privacy & Security > Screen & System Audio Recording** (**Screen
+Recording** on macOS 14) and **Device Control and Data Access** (**Accessibility**
+on macOS 26 and earlier). Stim never changes these settings itself. Servers
+launched by Stim Desktop keep Desktop's grants. For an older node-first service,
+run `stim-server service install` again to use Stim Host.
 
 Before starting status followers, native helpers or recording, the server checks
 the recording ownership directories in a read-only child process. A directory
@@ -700,13 +716,13 @@ stim-server service install --serve \
 `status` prints whether launchd loaded the job, its state, pid, run count and
 last exit code (a server that exits at start, for example on a port in use,
 restarts every 30 seconds), the `/health` answer, the serve route and whether
-`install` created it, the log path, and the digest of the bundled Stim's build
+`install` created it, the host app and its permission grants, the log path, and the digest of the bundled Stim's build
 next to the `stim` on PATH. Offload needs the same digest on the client, so a
 mismatch there is not an offload match either. `--json` prints the same fields
 as one object.
 
 `uninstall` boots the job out, removes the plist and, when `install` created it,
-the serve route. Logs and pairings stay. Use `--label` and `--port` to run a
+the serve route. Logs, pairings and the host app stay; other labels may use the app. Use `--label` and `--port` to run a
 second service beside the first, for example with another `STIM_HOME`.
 
 To set up a build machine: install Stim and stim-server on the Mac, run

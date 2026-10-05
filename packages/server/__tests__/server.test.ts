@@ -29,7 +29,14 @@ import {
 } from '@stim-cli/core/state';
 import { ownedDevice } from '../src/frames.ts';
 import type { StatusPayload } from '@stim-cli/core/state';
-import type { HelloResult, MachineUsage, ServerMessage, StatusEvent } from '../src/protocol.ts';
+import {
+  protocolJsonSchema,
+  type HelloResult,
+  type MachineUsage,
+  type ServerMessage,
+  type StatusEvent,
+} from '../src/protocol.ts';
+import Ajv2020 from 'ajv/dist/2020.js';
 import { runNodeCommand } from '../src/stim-command.ts';
 import { readAudit } from '../src/actions.ts';
 import {
@@ -261,6 +268,7 @@ let clients: WebSocket[];
 
 async function start(
   overrides: {
+    host?: ServerOptions['host'];
     exit?: boolean;
     whoisDelayMs?: number;
     authTimeoutMs?: number;
@@ -291,6 +299,7 @@ async function start(
   writeFileSync(tailscale, FAKE_TAILSCALE);
   chmodSync(tailscale, 0o755);
   server = await startServer({
+    host: overrides.host,
     hosts: ['127.0.0.1'],
     port: 0,
     stimCli,
@@ -1511,6 +1520,62 @@ test('matches RPC replies without consuming progress events', async () => {
 });
 
 describe('health', () => {
+  test.skipIf(process.platform === 'win32')(
+    'shares a permission probe across concurrent health and authenticated hello, then refreshes grants',
+    async () => {
+      const executable = join(root, 'host-probe');
+      const grants = join(root, 'grants.json');
+      const probes = join(root, 'probes');
+      writeFileSync(grants, JSON.stringify({ screenRecording: false, accessibility: true }));
+      writeFileSync(
+        executable,
+        `#!${process.execPath}
+const fs = require('node:fs');
+fs.appendFileSync(${JSON.stringify(probes)}, 'probe\\n');
+setTimeout(() => console.log(fs.readFileSync(${JSON.stringify(grants)}, 'utf8')), 50);
+`,
+        { mode: 0o755 },
+      );
+      const port = await start({ host: { executable, name: 'Stim Host Dev' } });
+      const health = async () => (await (await fetch(`http://127.0.0.1:${port}/health`)).json()) as { host: unknown };
+      const client = await connect(port);
+      const pairing = createPairingToken();
+      const [first, second, hello] = await Promise.all([
+        health(),
+        health(),
+        client.request('hello', {
+          protocol: 1,
+          client: CLIENT,
+          auth: { pairingToken: pairing.token, deviceName: 'phone' },
+        }),
+      ]);
+      expect(first.host).toEqual({ name: 'Stim Host Dev', screenRecording: false, accessibility: true });
+      expect(second.host).toEqual(first.host);
+      expect(hello).toMatchObject({ result: { host: first.host } });
+      const validator = new Ajv2020({ strict: false, validateFormats: false });
+      validator.addSchema(protocolJsonSchema(), 'protocol');
+      const acceptsHello = validator.compile({ $ref: 'protocol#/$defs/HelloResult' });
+      if (!('result' in hello)) throw new Error(JSON.stringify(hello));
+      expect(acceptsHello(hello.result)).toBe(true);
+      expect(readFileSync(probes, 'utf8').trim().split('\n')).toHaveLength(1);
+      writeFileSync(grants, JSON.stringify({ screenRecording: true, accessibility: true }));
+      expect((await health()).host).toEqual(first.host);
+      const now = Date.now();
+      const date = vi.spyOn(Date, 'now').mockReturnValue(now + 5001);
+      try {
+        expect((await health()).host).toEqual({ name: 'Stim Host Dev', screenRecording: true, accessibility: true });
+        expect(readFileSync(probes, 'utf8').trim().split('\n')).toHaveLength(2);
+      } finally {
+        date.mockRestore();
+      }
+    },
+  );
+
+  it('reports unavailable grants when the host probe fails', async () => {
+    const port = await start({ host: { executable: join(root, 'missing'), name: 'Stim Host Dev' } });
+    expect(await (await fetch(`http://127.0.0.1:${port}/health`)).json()).toHaveProperty('host', null);
+  });
+
   it('answers requests from this Mac in full and tailnet peers with the server version only', async () => {
     const port = await start();
     const local = await fetch(`http://127.0.0.1:${port}/health`);

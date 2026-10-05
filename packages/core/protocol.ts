@@ -222,6 +222,8 @@ export interface HelloParams {
 }
 
 export interface HelloResult {
+  /** Present when the server runs under Stim Host: the grants macOS gives that app, or null if unavailable. */
+  host?: { name: string; screenRecording: boolean; accessibility: boolean } | null;
   protocol: number;
   /**
    * The Mac's name, this package's version, the version of the `stim` it runs, and the home directory of the

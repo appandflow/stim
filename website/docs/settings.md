@@ -313,9 +313,9 @@ Hosting approval is separate from `offload.machines` and grants no read,
 control or build access. [`stim macos --host <machine>`](./macos.md#run-it-on-another-mac)
 runs a macOS app on an approved machine; `stim ios` and `stim android` do not yet
 place sessions on these machines. To view or control a hosted macOS app, a person on
-that Mac grants Screen & System Audio Recording and Device Control and Data Access
-(Accessibility on macOS 26 and earlier) to the `node` that `stim-server service status`
-reports, usually `/opt/homebrew/bin/node`.
+that Mac approves Screen & System Audio Recording and Device Control and Data Access
+(Accessibility on macOS 26 and earlier) for Stim Host, the app
+`stim-server service install` runs the server under.
 
 Credentials stay private in `$STIM_HOME/device-host-machines.json`. Doctor
 reports approval under `deviceHosts` in JSON and never prints the token.

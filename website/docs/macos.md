@@ -147,8 +147,7 @@ Stim connects only to the Mac's pinned tailnet node. If the host refuses or is
 unreachable, the command fails; it never launches the app locally instead.
 
 Phones and Stim Desktop view and control the hosted app through this Mac's
-stim-server, which relays to the host. Viewing needs Screen Recording on the
-host; control needs Accessibility on the host. The phone sends clicks, scrolls,
+stim-server, which relays to the host. The phone sends clicks, scrolls,
 text and keys; Stim Desktop's Control sends clicks, drags and typed text.
 
 <StimTabs
@@ -179,10 +178,19 @@ recorded so a later `stim stop` can finish.
 
 To view or control the hosted app from a phone, grant Screen & System Audio Recording
 and Device Control and Data Access (**Accessibility** on macOS 26 and earlier) once to
-the process that spawns `stim-frames` on the host, not to the hosted app. For a
-stim-server run by `stim-server service install`, that is the `node` that
-`stim-server service status` reports, usually `/opt/homebrew/bin/node`. Add it under
-**System Settings → Privacy & Security** in both panes.
+the app that runs stim-server on the host, not to the hosted app.
+`stim-server service install` runs the server under the Stim Host app and shows
+macOS's own requests on that Mac's screen; a person there approves them.
+If a request does not appear, turn the app on in **System Settings → Privacy &
+Security** in both panes; Stim never changes these settings itself.
+`stim-server service status` shows the grants, and `stim doctor` on this Mac
+reports an approved host that lacks them. A server started by Stim Desktop uses
+Desktop's grants.
+
+Until a signed Stim Host release ships, install builds **Stim Host Dev**
+(`dev.stim.host.dev`, in `~/Applications`) on the host with Xcode Command Line
+Tools and signs it ad hoc, so macOS keeps its approvals only while the launcher
+source and Xcode toolchain are unchanged.
 
 `macos --json` prints `{ platform, product, launchId, build, host }`, and
 `status --json` reports the same `host` under `environments[].macos`: the
