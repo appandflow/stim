@@ -277,7 +277,7 @@ final class MacosSource: NSObject, Source, SCStreamDelegate, SCStreamOutput {
       let focus = AXUIElementSetAttributeValue(application, kAXFocusedWindowAttribute as CFString, own)
       let activated = running.activate(options: [])
       let deadline = ContinuousClock.now.advanced(by: .seconds(1))
-      while !isFocused(own, application: application) {
+      while !(running.isActive && isFocused(own, application: application)) {
         guard isActive(session), matches() else { throw CancellationError() }
         guard activated, ContinuousClock.now < deadline else {
           throw refusal(
