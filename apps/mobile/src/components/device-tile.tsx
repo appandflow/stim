@@ -32,11 +32,13 @@ export function DeviceTile({
   device,
   warnings,
   usage,
+  project,
 }: {
   env: EnvironmentState;
   device: DeviceRef;
   warnings: string[];
   usage: Usage | null;
+  project?: string | null;
 }) {
   const { theme } = useUnistyles();
   const { home, mac, state: link } = useMacConnection();
@@ -78,9 +80,20 @@ export function DeviceTile({
   const { name: deviceName, state: deviceState } = device;
   const header = (
     <View style={styles.header}>
-      <Text variant="callout" weight="semibold" numberOfLines={1} style={styles.name}>
-        {title.name}
-      </Text>
+      {project ? (
+        <View style={styles.name}>
+          <Text variant="callout" weight="semibold" numberOfLines={1}>
+            {title.name}
+          </Text>
+          <Text testID="project-subtitle" variant="caption2" tone="secondary" numberOfLines={1}>
+            {project}
+          </Text>
+        </View>
+      ) : (
+        <Text variant="callout" weight="semibold" numberOfLines={1} style={styles.name}>
+          {title.name}
+        </Text>
+      )}
       <Text variant="caption" tone="tertiary" numberOfLines={1} ellipsizeMode="middle" style={styles.shrink}>
         {title.detail}
       </Text>

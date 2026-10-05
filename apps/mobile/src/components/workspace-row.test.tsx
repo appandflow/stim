@@ -95,6 +95,8 @@ it('shows the branch and git state once while each app opens its original route 
   expect(screen.getAllByText('15 changed')).toHaveLength(1);
   expect(screen.getByText('Ready')).toBeTruthy();
   expect(screen.getByText('Running')).toBeTruthy();
+  await fireEvent.press(screen.getByRole('button', { name: /^feat\/monorepo, / }));
+  expect(open).toHaveBeenLastCalledWith(desktop, false, true);
   await fireEvent.press(screen.getByText('apps/mobile'));
   expect(open).toHaveBeenLastCalledWith(mobile, false);
   await fireEvent.press(screen.getByText('apps/desktop'));

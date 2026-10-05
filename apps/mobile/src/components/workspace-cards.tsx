@@ -36,7 +36,7 @@ import {
   usageParts,
 } from '@/lib/workspace-view';
 import { platformName } from '@/lib/workspaces';
-import type { AgentSession, BuildReport, EnvironmentState, MacosAppState } from '@/protocol/types';
+import type { AgentSession, BuildReport, EnvironmentState, MacosAppState, DevicePlatform } from '@/protocol/types';
 
 const STACK_FONT_SCALE = 1.3;
 const CardColumns = createContext(2);
@@ -143,7 +143,13 @@ export function StatusCard({ stage, usage, onPress }: { stage: WorkspaceStage; u
 
 const LINE_TONE: Record<BuildLine['tone'], TextTone> = { default: 'default', error: 'error', secondary: 'secondary' };
 
-export function BuildCard({ lines, onPress }: { lines: BuildLine[]; onPress: () => void }) {
+export type BuildCardLine = Omit<BuildLine, 'platform'> & {
+  platform: DevicePlatform;
+  key?: string;
+  project?: string | null;
+};
+
+export function BuildCard({ lines, onPress }: { lines: BuildCardLine[]; onPress: () => void }) {
   const spoken = lines.map((line) => line.spoken).join(', ');
   return (
     <SmallCard
@@ -153,27 +159,39 @@ export function BuildCard({ lines, onPress }: { lines: BuildLine[]; onPress: () 
       accessibilityLabel={t`Build: ${spoken}`}
       accessibilityHint={t`Shows the builds`}
     >
-      {lines.map((line) => (
-        <View key={line.platform} style={styles.stat}>
-          <View style={styles.glyphBox}>
-            <PlatformGlyph platform={line.platform} size={line.platform === 'ios' ? 14 : 12} />
+      {lines.map((line) => {
+        const row = (
+          <View key={line.key ?? line.platform} style={styles.stat}>
+            <View style={styles.glyphBox}>
+              <PlatformGlyph platform={line.platform} size={line.platform === 'ios' ? 14 : 12} />
+            </View>
+            <Text
+              variant={VALUE}
+              weight={VALUE_WEIGHT}
+              tone={LINE_TONE[line.tone]}
+              numberOfLines={1}
+              style={[styles.tabular, styles.shrink]}
+            >
+              {line.main}
+              {line.sub ? (
+                <Text variant="caption2" weight="regular" tone="tertiary">
+                  {` ${line.sub}`}
+                </Text>
+              ) : null}
+            </Text>
           </View>
-          <Text
-            variant={VALUE}
-            weight={VALUE_WEIGHT}
-            tone={LINE_TONE[line.tone]}
-            numberOfLines={1}
-            style={[styles.tabular, styles.shrink]}
-          >
-            {line.main}
-            {line.sub ? (
-              <Text variant="caption2" weight="regular" tone="tertiary">
-                {` ${line.sub}`}
-              </Text>
-            ) : null}
-          </Text>
-        </View>
-      ))}
+        );
+        return line.project ? (
+          <View key={line.key ?? line.platform}>
+            {row}
+            <Text testID="project-subtitle" variant="caption2" tone="secondary">
+              {line.project}
+            </Text>
+          </View>
+        ) : (
+          row
+        );
+      })}
     </SmallCard>
   );
 }

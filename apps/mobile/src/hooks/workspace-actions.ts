@@ -1,5 +1,5 @@
 import { t } from '@lingui/core/macro';
-import { useCallback, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 
 import { RequestError } from '@/lib/connection';
 import type { ActionName, ActionParams, ReloadPlatform } from '@/protocol/types';
@@ -11,27 +11,37 @@ export interface WorkspaceActions {
   available: ActionName[] | null;
   pending: ActionName | null;
   /** Resolves null when the action succeeded, and the error message when it failed. */
-  run: (action: ActionName, options?: { platform?: ReloadPlatform }) => Promise<string | null>;
+  run: (
+    action: ActionName,
+    options?: { platform?: ReloadPlatform; workspace?: string | string[] },
+  ) => Promise<string | null>;
 }
 
 export function useAction(workspace: string): WorkspaceActions {
   const { connection, state } = useMacConnection();
+  const busy = useRef(false);
   const [pending, setPending] = useState<ActionName | null>(null);
   const run = useCallback(
-    async (action: ActionName, options: { platform?: ReloadPlatform } = {}) => {
+    async (action: ActionName, options: { platform?: ReloadPlatform; workspace?: string | string[] } = {}) => {
       if (!connection) return t`Not connected.`;
-      const params: ActionParams =
-        action === 'reload'
-          ? { action, workspace, ...(options.platform ? { platform: options.platform } : {}) }
-          : { action, workspace };
+      if (busy.current) return t`An action is already running.`;
+      busy.current = true;
       setPending(action);
+      const targets = options.workspace ?? workspace;
       let error: string | null = null;
-      try {
-        await connection.request('action', params);
-      } catch (cause) {
-        if (cause instanceof RequestError && cause.error.code === 'forbidden') connection.reconnect();
-        error = (cause as Error).message;
+      for (const target of Array.isArray(targets) ? targets : [targets]) {
+        const params: ActionParams =
+          action === 'reload'
+            ? { action, workspace: target, ...(options.platform ? { platform: options.platform } : {}) }
+            : { action, workspace: target };
+        try {
+          await connection.request('action', params);
+        } catch (cause) {
+          if (cause instanceof RequestError && cause.error.code === 'forbidden') connection.reconnect();
+          error = [error, (cause as Error).message].filter(Boolean).join('\n');
+        }
       }
+      busy.current = false;
       setPending(null);
       return error;
     },

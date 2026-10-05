@@ -15,8 +15,9 @@ import { toneColor } from '@/design/tone';
 import { useMacConnection, useStatus } from '@/hooks/machines';
 import { useNow } from '@/hooks/use-now';
 import { formatDuration } from '@/intl/format';
-import { agentWebUrl, workspaceAgentSessions } from '@/lib/agents';
+import { agentWebUrl } from '@/lib/agents';
 import { checksSummary, checksTone } from '@/lib/workspace-view';
+import { worktreeApps, worktreeSessions } from '@/lib/worktree-page';
 import { workspaceTitleAt } from '@/lib/workspace-names';
 import { pullRequestStateName, pullRequestReviewName } from '@/lib/format';
 
@@ -36,7 +37,7 @@ export function WorkspaceWork({ path }: { path: string }) {
   const worktree = env?.worktree;
   const git = worktree?.git;
   const pr = worktree?.pullRequest;
-  const sessions = env ? workspaceAgentSessions(env) : [];
+  const sessions = worktreeSessions(worktreeApps(path, status?.environments ?? []));
   const onlyAgentHasLink = sessions.length === 1 && agentWebUrl(sessions[0]!) !== null;
   const checks = pr ? checksTone(pr.checks) : null;
   const checkedAt = pr ? Date.parse(pr.checkedAt) : NaN;

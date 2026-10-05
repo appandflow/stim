@@ -32,14 +32,24 @@ export const WorkspaceGroupRow = memo(function WorkspaceGroupRow({
   now: number;
   folder: boolean;
   showsMachine: boolean;
-  onOpen: (item: HomeItem, errors: boolean) => void;
+  onOpen: (item: HomeItem, errors: boolean, checkout?: boolean) => void;
 }) {
   const first = workspace.apps[0];
+  const branch = workspace.title;
   const { online, cached } = useMachinePresence(first.macId);
   if (workspace.apps.length === 1) return <WorkspaceRow item={first} {...props} />;
   return (
     <View>
-      <View style={[styles.checkout, (!online || cached) && styles.dimmed]}>
+      <Touch
+        feedback="row"
+        accessibilityRole="button"
+        accessibilityLabel={[branch, props.showsMachine ? first.macName : null, gitChip(first.env.worktree)?.label]
+          .filter(Boolean)
+          .join(', ')}
+        accessibilityHint={t`Opens every app in this checkout`}
+        onPress={() => props.onOpen(first, false, true)}
+        style={[styles.checkout, (!online || cached) && styles.dimmed]}
+      >
         <Text variant="headline" weight="medium" accessibilityRole="header">
           {workspace.title}
         </Text>
@@ -49,7 +59,7 @@ export const WorkspaceGroupRow = memo(function WorkspaceGroupRow({
           </Text>
         ) : null}
         <GitLine item={first} folder={false} />
-      </View>
+      </Touch>
       <View style={styles.apps}>
         {workspace.apps.map((item) => (
           <WorkspaceRow key={item.key} item={item} {...props} app showsMachine={false} />

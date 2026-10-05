@@ -18,6 +18,7 @@ import { useHomeFilters, type HomeView } from '@/hooks/home-filters';
 import { useInbox } from '@/hooks/inbox';
 import { useMacs } from '@/hooks/machines';
 import { useRecents } from '@/hooks/recents';
+import { worktreeApps } from '@/lib/worktree-page';
 import { drawerStatus, type DrawerMachine } from '@/lib/drawer-status';
 import { hapticFeedback } from '@/lib/haptics';
 import { machineStats } from '@/lib/home';
@@ -48,13 +49,15 @@ export function Menu({ onClose }: { onClose: () => void }) {
     onClose();
     if (pathname !== '/') router.replace('/');
   };
+  const shownCheckouts = new Set<string>();
   const recentRows = recents.flatMap((recent) => {
     const connection = connections.find((c) => c.mac.id === recent.macId);
     if (!connection) return [];
-    const env = connection.status?.environments.find((e) => e.path === recent.path);
-    return [
-      { ...recent, title: workspaceTitleAt(recent.path, connection.status), live: env ? isShownLive(env) : false },
-    ];
+    const apps = worktreeApps(recent.path, connection.status?.environments ?? []);
+    const checkout = `${recent.macId}\n${apps[0]?.worktree?.path ?? recent.path}`;
+    if (shownCheckouts.has(checkout)) return [];
+    shownCheckouts.add(checkout);
+    return [{ ...recent, title: workspaceTitleAt(recent.path, connection.status), live: apps.some(isShownLive) }];
   });
   const machines: DrawerMachine[] = connections.map((c) => ({
     id: c.mac.id,

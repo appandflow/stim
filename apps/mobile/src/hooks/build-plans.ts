@@ -10,25 +10,33 @@ const planChecks = new WeakMap<StimConnection, PlanChecks>();
 const NO_PLANS: PlanSnapshot = new Map();
 const noSubscription = () => () => {};
 
-/**
- * `build.plan` for each platform in `builds` (platform to `planKey` of its last build), checked while the
- * calling screen is mounted and no build runs. It builds nothing, so a read-only pairing may ask.
- */
-export function useBuildPlans(
-  workspace: string,
-  builds: Partial<Record<Platform, string>>,
-  building: boolean,
-): (platform: Platform) => PlanState | undefined {
+/** Checks each workspace's platform predictions while it is mounted and has no running build. Builds nothing. */
+export function useWorkspaceBuildPlans(
+  requests: {
+    workspace: string;
+    builds: Partial<Record<Platform, string>>;
+    building: boolean;
+  }[],
+): (workspace: string, platform: Platform) => PlanState | undefined {
   const { checks, snapshot } = usePlanChecks();
   const open = useMacConnection().state.kind === 'open';
-  const wanted = JSON.stringify(builds);
+  const wanted = JSON.stringify(requests);
+  const paths = JSON.stringify(requests.map((request) => request.workspace));
   useEffect(() => {
     if (!checks) return;
-    if (building) checks.cancel(workspace);
-    else checks.check(workspace, JSON.parse(wanted) as Partial<Record<Platform, string>>);
-  }, [checks, workspace, wanted, building, open]);
-  useEffect(() => () => checks?.cancel(workspace), [checks, workspace]);
-  return (platform) => PlanChecks.state(snapshot, workspace, platform);
+    const workspaces = JSON.parse(wanted) as typeof requests;
+    for (const { workspace, builds, building } of workspaces) {
+      if (building) checks.cancel(workspace);
+      else checks.check(workspace, builds);
+    }
+  }, [checks, wanted, open]);
+  useEffect(() => {
+    const workspaces = JSON.parse(paths) as string[];
+    return () => {
+      for (const workspace of workspaces) checks?.cancel(workspace);
+    };
+  }, [checks, paths]);
+  return (workspace, platform) => PlanChecks.state(snapshot, workspace, platform);
 }
 
 /**

@@ -80,10 +80,15 @@ export function Home() {
   const noFilterSet = useMemo(() => !filtersActive(filters, macIds, projectNames(items)), [filters, macIds, items]);
 
   const openWorkspace = useCallback(
-    (item: HomeItem, errors: boolean) =>
+    (item: HomeItem, errors: boolean, checkout = false) =>
       router.push({
         pathname: errors ? '/mac/[id]/logs' : '/mac/[id]/workspace',
-        params: { id: item.macId, path: item.env.path, ...(errors ? { errors: '1' } : {}) },
+        params: {
+          id: item.macId,
+          path: item.env.path,
+          ...(errors ? { errors: '1' } : {}),
+          ...(checkout ? { checkout: '1' } : {}),
+        },
       }),
     [router],
   );

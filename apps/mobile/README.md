@@ -40,7 +40,8 @@ Duo fold detection requires a build made with the iOS 27.1 SDK and an iOS
   counts as live. When status identifies a linked Git checkout, its app projects
   share one workspace heading, with the branch and git state shown once. App
   children show paths such as `apps/mobile` and `apps/desktop`, each with its own
-  status and route to its devices, logs and commands. Children stay visible without
+  status. The checkout heading opens the unified workspace page at the first app;
+  child rows open the same page scrolled to that app's first device. Children stay visible without
   an extra expansion step; filters still apply per app. Repo live/idle counts count
   the shown workspaces, while the hidden-idle footer counts apps. Different Macs
   and checkouts stay separate even when they share a branch name. Primary checkouts
@@ -180,7 +181,18 @@ gc --json` dry run and `stim stats --json`, which the server refreshes at
   type, without moving the cursor. The device token
   the server issues is kept in the phone's secure storage (Keychain on iOS,
   Keystore on Android) and never shown.
-- **Workspace**: under the title, four small cards open more. They use one row
+- **Workspace**: apps with the same linked worktree open one detail page; a
+  single app keeps the same layout. All devices share one grid, with their own
+  app's frames, usage, warnings and actions. Platforms identify builds and devices;
+  only a platform shared by multiple apps adds a small project subtitle. The header
+  keeps the project and machine and omits the app folder. Status uses the most urgent
+  app's stage, CPU and memory sum over apps, and disk counts the worktree and its
+  node_modules once (the largest measurement) plus each app's build output. Logs
+  sum errors and show the worst Metro health with that app's bundle line. Work
+  deduplicates sessions by session id, most recently active first, and shows git
+  once. Logs opens the only app with errors directly, or asks which app; Reload
+  and Stop let you choose an app, and Stop all stops every app. Copy path copies
+  the worktree path. Under the title, four small cards open more. They use one row
   when the content pane can fit four readable cards, a 2x2 grid on compact
   panes, and one column with large text. Device cards below fill the pane up
   to 640 points wide and stay centered; additional columns appear only when
@@ -263,7 +275,12 @@ gc --json` dry run and `stim stats --json`, which the server refreshes at
   `logs.subscribe` with `sources: ["agent"]`, filtered by all, failed, or the
   most used commands; an action opens the logs with it expanded, and **Open in
   logs** opens them on the Agent source and that slot. The **Build** sheet
-  switches between iOS and Android. For the running build it shows the elapsed
+  switches between iOS and Android for one app. A multi-app worktree has segments
+  for every app's iOS and Android builds and each macOS app, in platform order;
+  duplicate platforms show the project below the label. Each segment reads its own
+  app's build and logs. macOS shows the product, state, duration, error and a
+  Build logs row. While any iOS or Android build runs, the summary Build card is
+  replaced by one progress card per running build. For the running build it shows the elapsed
   time against the estimate with the miss reason, a checklist of phases with
   the current phase's time and the estimates of those left (from the last
   comparable run), and the live output tail of this build from the build log.
@@ -883,7 +900,9 @@ the build carries a remote EAS session added by hand (listed under `edits` in
 in the shape of a real miss. `chat-perf-demo` also leases a connected
 iPhone and a disconnected Android phone, added by hand in the
 `physicalDevices` shape. `a4-running` and `a4-ready` carry ended agent
-sessions added by hand in the `endedAgents` shape. `build.plan` answers from
+sessions added by hand in the `endedAgents` shape. `a4-running` and
+`a4-multi-device` also include an `apps/desktop` macOS app sharing the mobile
+app's worktree, so they exercise unified builds and devices. `build.plan` answers from
 `mock-server/fixtures/plans.json`, a local hit for iOS and a cold build that
 generates the native dir for Android, captured from `stim ios|android --plan
 --json`, with a `missReason` added to the Android one by hand.
