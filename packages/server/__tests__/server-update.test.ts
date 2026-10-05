@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parseUpdateStart, ServerUpdates, type ServerUpdateOptions } from '../src/server-update.ts';
@@ -158,6 +158,25 @@ describe('server update requests', () => {
     const { args, files } = ran();
     expect(args.slice(0, 5)).toEqual(['service', 'update', '--label', LABEL, '--from']);
     expect(files).toEqual({ 'server.tgz': 'server', 'stim.tgz': 'stim' });
+  });
+
+  it('clears only uploads an earlier update already used or that sat for an hour', () => {
+    const root = join(dir, 'Library', 'Application Support', 'Stim', 'services', LABEL);
+    const age = (minutes: number) => new Date(Date.now() - minutes * 60_000);
+    for (const [name, minutes] of [
+      ['used', 30],
+      ['stale', 180],
+      ['fresh', 5],
+    ] as const) {
+      mkdirSync(join(root, 'incoming', name), { recursive: true });
+      utimesSync(join(root, 'incoming', name), age(minutes), age(minutes));
+    }
+    writeFileSync(
+      join(root, 'last-update.json'),
+      JSON.stringify({ at: age(10).toISOString(), target: 'x', ok: true, message: 'done' }),
+    );
+    updates();
+    expect(['used', 'stale', 'fresh'].filter((name) => existsSync(join(root, 'incoming', name)))).toEqual(['fresh']);
   });
 
   it('drops an upload whose bytes do not match the sha256 it offered, without draining', async () => {

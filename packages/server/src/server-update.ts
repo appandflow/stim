@@ -180,8 +180,8 @@ export class ServerUpdates {
     const incoming = join(this.root()!, 'incoming');
     const dir = join(incoming, id);
     this.running = { ...base, target: `packages from ${by.name}`, state: 'uploading', missing: [], log: [] };
+    this.sweepIncoming();
     try {
-      rmSync(incoming, { recursive: true, force: true });
       mkdirSync(dir, { recursive: true, mode: 0o700 });
     } catch (error) {
       return this.abandon('action-failed', `Could not write ${dir}: ${(error as Error).message}`);
