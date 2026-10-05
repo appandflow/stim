@@ -175,7 +175,7 @@ test('refuses missing tracked blobs without invoking a configured lazy-fetch tra
   const blob = git('rev-parse', 'HEAD:source.txt').trim();
   rmSync(join(repo, '.git', 'objects', blob.slice(0, 2), blob.slice(2)));
   writeFileSync(join(repo, 'source.txt'), 'updated\n');
-  await expect(read('source.txt')).rejects.toThrow('Workspace diff exited');
+  await expect(read('source.txt')).rejects.toThrow(/Workspace diff exited|Git 2.45 or later/);
   expect(existsSync(marker)).toBe(false);
 });
 
