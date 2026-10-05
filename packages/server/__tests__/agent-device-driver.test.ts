@@ -422,15 +422,15 @@ describe.skipIf(process.platform === 'win32')('agent-device driver', () => {
         },
         input: { text: 'hi' },
       });
-      expect(Object.keys((selected.upstream?.params.flags as object) ?? {}).sort()).toEqual([
+      expect(Object.keys((selected.upstream?.params.flags as object) ?? {}).toSorted()).toEqual([
         'batchSteps',
         'platform',
         'surface',
       ]);
       const bareOpen = await rpc({ method: 'agent_device.command', params: { command: 'open' } });
       expect(bareOpen.upstream?.params.flags).toEqual({ platform: 'macos' });
-      for (const command of ['session_list', 'lease_release', 'install', 'devices', 'diff', undefined])
-        expect((await rpc({ method: 'agent_device.command', params: { command } })).status).toBe(400);
+      for (const denied of ['session_list', 'lease_release', 'install', 'devices', 'diff', undefined])
+        expect((await rpc({ method: 'agent_device.command', params: { command: denied } })).status).toBe(400);
       expect(
         (
           await rpc({
