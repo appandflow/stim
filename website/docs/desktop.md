@@ -190,6 +190,9 @@ leaves the guest unchanged. Disconnects and unavailable native clipboard APIs
 report a failure. Physical devices, remote sessions and replay do not offer
 clipboard actions.
 
+The All devices and project wall creates rows and device tiles as you scroll.
+Offscreen previews pause and reconnect when you return to them.
+
 On the All devices and project wall, active workspaces without running or building
 devices use compact cards labelled **No running devices**, with Metro status,
 warnings and error links. CPU and RAM stay on the workspace page.

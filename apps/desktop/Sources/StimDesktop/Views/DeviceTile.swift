@@ -29,10 +29,12 @@ struct DeviceTile: View {
   var maxCardHeight: CGFloat? = nil
   /// False while the device's viewer is open, so the tile does not stream a second copy of its screen.
   var showsScreen = true
+  var pausesWhenOffscreen = false
   var pixelScale: CGFloat? = nil
   var framePixelsPerUnit: CGFloat = 1
   /// A physical device's stream stopped taking input.
   var onControlLost: () -> Void = {}
+  @State private var isOnscreen = false
   @State private var pixelSizes: [UInt32: CGSize] = [:]
   @State private var frameSizes: [UInt32: CGSize] = [:]
   @State private var showsDeviceFrame = false
@@ -73,6 +75,8 @@ struct DeviceTile: View {
     Group {
       if viewer { canvas } else { card }
     }
+    .onAppear { isOnscreen = true }
+    .onDisappear { isOnscreen = false }
     .onChange(of: device.id) { _, _ in
       frameSizes = [:]
       showsDeviceFrame = false
@@ -218,6 +222,8 @@ struct DeviceTile: View {
           placeholder("Open in the viewer")
             .frame(height: fittedHeight)
             .background(Media.screen)
+        } else if pausesWhenOffscreen && !isOnscreen {
+          Media.screen.frame(height: fittedHeight)
         } else {
           screen
             .frame(height: fittedHeight)

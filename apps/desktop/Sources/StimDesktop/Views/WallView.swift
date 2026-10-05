@@ -27,7 +27,7 @@ struct WallView: View {
       .id(project?.id)
     } else {
       ScrollView {
-        VStack(alignment: .leading, spacing: Space.xl) {
+        LazyVStack(alignment: .leading, spacing: Space.xl) {
           if let project {
             Text(store.title(of: project)).font(.stim(.title))
           }
@@ -58,14 +58,14 @@ struct WallView: View {
                   .labelStyle(.titleAndIcon)
               } else if !devices.isEmpty {
                 ScrollView(.horizontal, showsIndicators: false) {
-                  HStack(alignment: .top, spacing: Space.xl) {
+                  LazyHStack(alignment: .top, spacing: Space.xl) {
                     ForEach(devices) { device in
                       Button {
                         selection = .environment(env.path)
                       } label: {
                         DeviceTile(
                           device: device, screenHeight: tileSize.screenHeight, workspace: env.path,
-                          build: env.runningBuild(for: device))
+                          build: env.runningBuild(for: device), pausesWhenOffscreen: true)
                       }
                       .buttonStyle(.plain)
                     }
