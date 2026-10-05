@@ -123,8 +123,9 @@ digit key events on other layouts; ordinary typing and navigation still work.
 
 Each action rechecks the exact owned
 process and the same single standard window; modal or disjoint windows, changed
-capture or resize refuse input. Contained nonmodal auxiliaries are allowed; only
-the focused captured main receives input. The server holds one exclusive session per app, ending
+capture or resize refuse input. Contained nonmodal auxiliaries are allowed. A sheet
+attached to the captured window takes focus and pointer input; disjoint windows
+still refuse. The server holds one exclusive session per app, ending
 on disconnect, revocation, takeover or five idle minutes, without a CLI device
 lock. Existing **Device Control and Data Access** permission (**Accessibility** on
 macOS 26 and earlier) is required. Stim never requests

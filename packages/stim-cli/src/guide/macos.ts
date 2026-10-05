@@ -115,7 +115,8 @@ revocation, takeover or five minutes without input, and does not take a CLI
 simulator/device lock. Each action rechecks the exact owned process and the
 same single standard app window. Modal or disjoint windows, changed capture or
 resize refuse input until the viewer reconnects. Contained nonmodal auxiliaries
-are allowed; only the focused captured main receives input. Existing Device
+are allowed. A sheet attached to the captured window takes focus and pointer
+input; disjoint windows still refuse. Existing Device
 Control and Data Access permission (Accessibility on macOS 26 and earlier) is
 required. The phone and server never request or reset it. A refusal ends Control
 with its reason while viewing and logs remain usable. Older servers remain

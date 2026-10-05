@@ -263,10 +263,28 @@ final class MacosSource: NSObject, Source, SCStreamDelegate, SCStreamOutput {
     return (current, own)
   }
 
+  private func attachedSheets(_ own: AXUIElement) -> [AXUIElement] {
+    var value: CFTypeRef?
+    guard AXUIElementCopyAttributeValue(own, kAXChildrenAttribute as CFString, &value) == .success,
+      let children = value as? [AXUIElement]
+    else { return [] }
+    var sheets: [AXUIElement] = []
+    for child in children {
+      var role: CFTypeRef?
+      if AXUIElementCopyAttributeValue(child, kAXRoleAttribute as CFString, &role) == .success,
+        role as? String == kAXSheetRole
+      {
+        sheets.append(child)
+        sheets.append(contentsOf: attachedSheets(child))
+      }
+    }
+    return sheets
+  }
+
   private func isFocused(_ own: AXUIElement, application: AXUIElement) -> Bool {
     var focused: CFTypeRef?
     return AXUIElementCopyAttributeValue(application, kAXFocusedWindowAttribute as CFString, &focused) == .success
-      && focused.map { CFEqual($0, own) } == true
+      && focused.map { value in ([own] + attachedSheets(own)).contains { CFEqual(value, $0) } } == true
   }
 
   private func apply(_ command: Command, session: String) async throws {
@@ -293,33 +311,66 @@ final class MacosSource: NSObject, Source, SCStreamDelegate, SCStreamOutput {
         try await Task.sleep(for: .milliseconds(10))
       }
     }
-    var focused: CFTypeRef?
-    guard AXUIElementCopyAttributeValue(application, kAXFocusedWindowAttribute as CFString, &focused) == .success,
-      let focused, CFEqual(focused, own), matches()
+    var focusedValue: CFTypeRef?
+    guard AXUIElementCopyAttributeValue(application, kAXFocusedWindowAttribute as CFString, &focusedValue) == .success,
+      let focusedValue, let focused = ([own] + attachedSheets(own)).first(where: { CFEqual(focusedValue, $0) }), matches()
     else { throw refusal("The captured owned window lost focus before input.") }
+    var sheetWindow: (windowID: CGWindowID, frame: CGRect)?
+    if !CFEqual(focused, own) {
+      var positionValue: CFTypeRef?
+      var sizeValue: CFTypeRef?
+      var position = CGPoint.zero
+      var size = CGSize.zero
+      guard AXUIElementCopyAttributeValue(focused, kAXPositionAttribute as CFString, &positionValue) == .success,
+        AXUIElementCopyAttributeValue(focused, kAXSizeAttribute as CFString, &sizeValue) == .success,
+        let positionValue, let sizeValue, CFGetTypeID(positionValue) == AXValueGetTypeID(),
+        CFGetTypeID(sizeValue) == AXValueGetTypeID(),
+        AXValueGetValue(unsafeDowncast(positionValue, to: AXValue.self), .cgPoint, &position),
+        AXValueGetValue(unsafeDowncast(sizeValue, to: AXValue.self), .cgSize, &size),
+        let entries = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID)
+          as? [[String: Any]]
+      else { throw refusal("The focused owned sheet's window metadata is unavailable.") }
+      let frame = CGRect(origin: position, size: size)
+      guard
+        let entry = entries.first(where: {
+          guard $0[kCGWindowOwnerPID as String] as? Int == Int(app.app.pid),
+            $0[kCGWindowLayer as String] as? Int == 0,
+            let id = $0[kCGWindowNumber as String] as? UInt32, id != window.windowID,
+            let bounds = $0[kCGWindowBounds as String] as? [String: Any]
+          else { return false }
+          return CGRect(dictionaryRepresentation: bounds as CFDictionary) == frame
+        }), let id = entry[kCGWindowNumber as String] as? UInt32
+      else { throw refusal("The focused owned sheet does not match an on-screen app window.") }
+      sheetWindow = (id, frame)
+    }
     let location: (CGPoint) -> CGPoint = {
       CGPoint(x: window.frame.minX + $0.x * (window.frame.width - 1), y: window.frame.minY + $0.y * (window.frame.height - 1))
     }
-    let post: ([CGEvent]) throws -> Void = { events in
+    let pointerWindow: (CGPoint) -> (windowID: CGWindowID, frame: CGRect) = { point in
+      if let sheetWindow, sheetWindow.frame.contains(point) { return sheetWindow }
+      return window
+    }
+    let post: ([CGEvent], (windowID: CGWindowID, frame: CGRect)) throws -> Void = { events, target in
       try self.inputQueue.sync {
         guard self.controlSession == session else { throw CancellationError() }
-        var focused: CFTypeRef?
+        var focusedValue: CFTypeRef?
         guard self.matches(),
-          AXUIElementCopyAttributeValue(application, kAXFocusedWindowAttribute as CFString, &focused) == .success,
-          let focused, CFEqual(focused, own)
+          AXUIElementCopyAttributeValue(application, kAXFocusedWindowAttribute as CFString, &focusedValue) == .success,
+          let focusedValue,
+          let focused = ([own] + self.attachedSheets(own)).first(where: { CFEqual(focusedValue, $0) })
         else { throw self.refusal("The captured owned window changed before input.") }
         for event in events {
           guard self.matches() else { throw self.refusal("The owned macOS app process changed before input.") }
-          event.setIntegerValueField(.mouseEventWindowUnderMousePointer, value: Int64(window.windowID))
-          event.setIntegerValueField(.mouseEventWindowUnderMousePointerThatCanHandleThisEvent, value: Int64(window.windowID))
+          event.setIntegerValueField(.mouseEventWindowUnderMousePointer, value: Int64(target.windowID))
+          event.setIntegerValueField(.mouseEventWindowUnderMousePointerThatCanHandleThisEvent, value: Int64(target.windowID))
           // AppKit PID-targeted pointer events need CoreGraphics' private window-local annotation.
           if [.leftMouseDown, .leftMouseUp, .leftMouseDragged, .scrollWheel].contains(event.type) {
-            setWindowLocation(event, CGPoint(x: event.location.x - window.frame.minX, y: event.location.y - window.frame.minY))
+            setWindowLocation(event, CGPoint(x: event.location.x - target.frame.minX, y: event.location.y - target.frame.minY))
           }
           event.postToPid(self.app.app.pid)
           switch event.type {
           case .leftMouseDown:
-            self.heldMouse = (session, window, own, event.location)
+            self.heldMouse = (session, target, focused, event.location)
           case .leftMouseDragged:
             if self.heldMouse?.session == session { self.heldMouse?.position = event.location }
           case .leftMouseUp:
@@ -342,26 +393,28 @@ final class MacosSource: NSObject, Source, SCStreamDelegate, SCStreamOutput {
         }
         events.append(event)
       }
-      try post(events)
+      try post(events, window)
     }
     switch command {
     case .touch(let phase, let point, _):
       let type: NSEvent.EventType = phase == .down ? .leftMouseDown : phase == .up ? .leftMouseUp : .leftMouseDragged
       let global = location(point)
+      let target = pointerWindow(global)
       guard
         let native = NSEvent.mouseEvent(
-          with: type, location: CGPoint(x: global.x - window.frame.minX, y: window.frame.maxY - global.y),
-          modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: Int(window.windowID),
+          with: type, location: CGPoint(x: global.x - target.frame.minX, y: target.frame.maxY - global.y),
+          modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: Int(target.windowID),
           context: nil, eventNumber: 0, clickCount: 1, pressure: phase == .up ? 0 : 1), let event = native.cgEvent
       else { throw refusal("The native mouse event could not be created.") }
       event.location = global
-      try post([event])
+      try post([event], target)
     case .scroll(let point, let delta):
       let global = location(point)
+      let target = pointerWindow(global)
       guard
         let native = NSEvent.mouseEvent(
-          with: .mouseMoved, location: CGPoint(x: global.x - window.frame.minX, y: window.frame.maxY - global.y),
-          modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: Int(window.windowID),
+          with: .mouseMoved, location: CGPoint(x: global.x - target.frame.minX, y: target.frame.maxY - global.y),
+          modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: Int(target.windowID),
           context: nil, eventNumber: 0, clickCount: 0, pressure: 0), let event = native.cgEvent,
         let wheel = CGEvent(
           scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 2,
@@ -378,7 +431,7 @@ final class MacosSource: NSObject, Source, SCStreamDelegate, SCStreamOutput {
         event.setDoubleValueField(field, value: wheel.getDoubleValueField(field))
       }
       event.location = global
-      try post([event])
+      try post([event], target)
     case .text(let text):
       for character in text {
         let special: [Character: CGKeyCode] = ["\n": 36, "\t": 48, "\u{0008}": 51]
