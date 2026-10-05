@@ -152,7 +152,7 @@ struct StimDesktopApp: App {
       if Bundle.main.bundleURL.pathExtension == "app" { environment["STIM_DESKTOP_APP"] = Bundle.main.bundlePath }
       return environment
     }
-    let cli = Task.detached { StimCLI(environment: await environment.value, override: override) }
+    let cli = Task.detached { await StimCLI.resolve(environment: await environment.value, override: override) }
     self.cli = cli
     ServerController.shared.configure(environment: environment)
     BuildRequestNotifier.shared.start()

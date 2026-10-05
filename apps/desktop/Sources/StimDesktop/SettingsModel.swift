@@ -54,7 +54,8 @@ final class SettingsModel: ObservableObject {
       let schema: Result<[SettingField], Error>? =
         needsSchema
         ? Result {
-          guard let url = SettingsSchema.locate(executable: cli.executable) ?? Self.repositorySchema() else {
+          guard let url = SettingsSchema.locate(executable: cli.launcher?.script ?? cli.executable) ?? Self.repositorySchema()
+          else {
             throw SchemaMissing()
           }
           return try SettingsSchema.fields(from: Data(contentsOf: url))
@@ -73,8 +74,9 @@ final class SettingsModel: ObservableObject {
           self.loadError = nil
         case .failure(let error):
           self.payload = nil
+          let message = "stim settings --json failed: \(error.localizedDescription)"
           self.loadError =
-            "stim settings --json failed: \(error.localizedDescription) It needs a Stim version with the settings command."
+            message.contains("unknown command") ? message + " It needs a Stim version with the settings command." : message
         }
       }
     }

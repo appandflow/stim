@@ -29,6 +29,7 @@ final class ServerController: ObservableObject {
   private var generation = 0
   private var devicesEpoch = 0
   private var missedProbes = 0
+  private var serverLauncher: (executable: String?, launcher: NodeLauncher?, resolved: Date)?
 
   static let devicesInterval: Duration = .seconds(10)
   static let inactiveDevicesInterval: Duration = .seconds(60)
@@ -76,9 +77,15 @@ final class ServerController: ObservableObject {
   func cli() async -> StimServerCLI {
     var environment = await environment?.value ?? ProcessInfo.processInfo.environment
     if case .running(let health, _) = state { environment["STIM_HOME"] = health.stimHome }
-    return StimServerCLI(
-      environment: environment,
-      override: UserDefaults.standard.string(forKey: AppPreferences.Key.stimServerExecutable))
+    let override = UserDefaults.standard.string(forKey: AppPreferences.Key.stimServerExecutable)
+    let plain = StimServerCLI(environment: environment, override: override)
+    let stale = serverLauncher.map { $0.launcher?.script == nil && Date().timeIntervalSince($0.resolved) > 60 } ?? true
+    if stale || serverLauncher?.executable != plain.executable {
+      let launcher = await NodeLauncher.resolve(
+        executable: plain.executable, name: "stim-server", environment: plain.environment)
+      serverLauncher = (plain.executable, launcher, Date())
+    }
+    return StimServerCLI(environment: environment, override: override, launcher: serverLauncher?.launcher)
   }
 
   func start() {
