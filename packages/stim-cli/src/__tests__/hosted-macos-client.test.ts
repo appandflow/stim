@@ -184,6 +184,7 @@ beforeEach(async () => {
   const real = getExecutor();
   setExecutor({
     ...real,
+    findExecutable: (name: string) => (name === 'agent-device' ? null : real.findExecutable(name)),
     spawn: (cmd: string, args: string[], opts: object) => {
       spawned.push(cmd);
       if (cmd !== 'swift') throw new Error(`unexpected spawn ${cmd}`);
@@ -262,12 +263,92 @@ describe.skipIf(process.platform !== 'darwin')('stim macos --host (SwiftPM and c
     expect(host.methods.filter((method) => method === 'device-host.reserve')).toHaveLength(1);
     expect(host.offers.at(-1)!.attempt).not.toBe(host.offers[0]!.attempt);
 
+    const calls: string[][] = [];
+    setExecutor({
+      ...getExecutor(),
+      findExecutable: () => '/fake/agent-device',
+      runFile: (file: string, commandArgs: string[]) => {
+        expect(file).toBe('agent-device');
+        expect(existsSync(config)).toBe(true);
+        expect(host.methods).not.toContain('device-host.stop');
+        calls.push(commandArgs);
+        return JSON.stringify({ success: true, data: { connected: true, session: 'default', remoteConfig: config } });
+      },
+    });
     await stopMacosApp(root);
+    expect(calls).toEqual([
+      ['connection', 'status', '--json'],
+      ['close', '--remote-config', config, '--session', 'default', '--json'],
+      ['disconnect', '--session', 'default', '--json'],
+    ]);
     expect(host.methods).toContain('device-host.stop');
     expect(existsSync(config)).toBe(false);
     expect(readMacosRecord(root)?.host).toBeUndefined();
     expect(macosAppState(readMacosRecord(root))?.state).toBe('stopped');
   });
+
+  test.each(['different config', 'disconnected', 'unavailable', 'close fails', 'canonical config', 'missing config'])(
+    'stop cleans up only its own agent connection, best effort: %s',
+    async (scenario) => {
+      host.grant = GRANT;
+      await runMacos(root, () => {}, 'mini');
+      const config = agentRemoteConfig(root);
+      const otherConfig = join(dir, 'other-config.json');
+      if (scenario === 'canonical config') symlinkSync(config, otherConfig);
+      else writeFileSync(otherConfig, '{}');
+      if (scenario === 'missing config') rmSync(config);
+      const calls: string[][] = [];
+      setExecutor({
+        ...getExecutor(),
+        findExecutable: () => (scenario === 'unavailable' ? null : '/fake/agent-device'),
+        runFile: (file: string, args: string[]) => {
+          expect(file).toBe('agent-device');
+          expect(host.methods).not.toContain('device-host.stop');
+          expect(existsSync(config)).toBe(scenario !== 'missing config');
+          calls.push(args);
+          if (scenario === 'close fails' && args[0] === 'close') throw new Error('app already exited\nclose failed');
+          return JSON.stringify({
+            success: true,
+            data: {
+              connected: scenario !== 'disconnected',
+              session: 'named-session',
+              remoteConfig: ['different config', 'canonical config'].includes(scenario) ? otherConfig : config,
+            },
+          });
+        },
+      });
+      const stderr = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+      try {
+        await stopMacosApp(root);
+        expect(calls).toEqual(
+          scenario === 'unavailable'
+            ? []
+            : [
+                ['connection', 'status', '--json'],
+                ...(['close fails', 'canonical config'].includes(scenario)
+                  ? [
+                      ['close', '--remote-config', config, '--session', 'named-session', '--json'],
+                      ['disconnect', '--session', 'named-session', '--json'],
+                    ]
+                  : []),
+              ],
+        );
+        expect(stderr).toHaveBeenCalledTimes(['close fails', 'canonical config'].includes(scenario) ? 1 : 0);
+        expect(stderr.mock.calls.map(([line]) => line).join('')).toMatch(
+          scenario === 'close fails'
+            ? /app already exited close failed[^\n]*\n$/
+            : scenario === 'canonical config'
+              ? /closed agent-device connection for named-session/
+              : /^$/,
+        );
+        expect(host.methods).toContain('device-host.stop');
+        expect(existsSync(config)).toBe(false);
+        expect(readMacosRecord(root)?.host).toBeUndefined();
+      } finally {
+        stderr.mockRestore();
+      }
+    },
+  );
 
   test('over-limit macos.arguments refuse before the host reserves a session', async () => {
     writeFileSync(

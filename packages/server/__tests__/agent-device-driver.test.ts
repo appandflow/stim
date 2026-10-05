@@ -1,5 +1,6 @@
 import {
   chmodSync,
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -188,6 +189,13 @@ describe.skipIf(process.platform === 'win32')('agent-device driver', () => {
     const driver = driverIn(root, { leaseRenewMs: 50 });
     await driver.start();
     try {
+      const sessionsDir = join(root, 'state', 'sessions');
+      const removed = [`stim.${SESSION}_default`, `stim.${SESSION}_other`];
+      const kept = ['default', 'stim.other_default'];
+      for (const name of [...removed, ...kept]) {
+        mkdirSync(join(sessionsDir, name, 'requests'), { recursive: true });
+        writeFileSync(join(sessionsDir, name, 'session.json'), '{}');
+      }
       const grant = await driver.issue({
         client: 'c',
         session: SESSION,
@@ -214,11 +222,38 @@ describe.skipIf(process.platform === 'win32')('agent-device driver', () => {
       });
       await vi.waitFor(() => expect(calls().filter((call) => call.method === 'PUT').length).toBeGreaterThan(2));
       await driver.revoke(SESSION);
+      for (const name of removed) expect(existsSync(join(sessionsDir, name))).toBe(false);
+      for (const name of kept) expect(existsSync(join(sessionsDir, name, 'session.json'))).toBe(true);
       expect(calls().at(-1)).toMatchObject({ method: 'DELETE', url: `/admin/leases/${grant.scope}` });
       const after = calls().length;
       await new Promise((resolve) => setTimeout(resolve, 200));
       expect(calls()).toHaveLength(after);
       expect((await through(driver, SESSION, 'GET', '/health')).status).toBe(503);
+    } finally {
+      await driver.stop();
+    }
+  });
+
+  test('stop removes the directories of revoked sessions after the daemon is gone and keeps live ones', async () => {
+    install(root);
+    const driver = driverIn(root);
+    await driver.start();
+    const daemonPid = (JSON.parse(readFileSync(join(root, 'state', 'daemon.json'), 'utf8')) as { pid: number }).pid;
+    const identity = captureProcessIdentity(daemonPid);
+    const sessionsDir = join(root, 'state', 'sessions');
+    const live = '22222222-2222-4222-8222-222222222222';
+    const directory = (session: string) => join(sessionsDir, `stim.${session}_default`);
+    try {
+      for (const session of [SESSION, live]) {
+        await driver.issue({ client: 'c', session, bundleId: 'dev.example.app.hosted1', pid: 4242 });
+        mkdirSync(directory(session), { recursive: true });
+      }
+      await driver.revoke(SESSION);
+      mkdirSync(directory(SESSION), { recursive: true });
+      await driver.stop();
+      expect(inspectProcessIdentity({ pid: daemonPid, processToken: identity.ok ? identity.token : '' })).toBe('gone');
+      expect(existsSync(directory(SESSION))).toBe(false);
+      expect(existsSync(directory(live))).toBe(true);
     } finally {
       await driver.stop();
     }
