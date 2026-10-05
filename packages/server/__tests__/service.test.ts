@@ -1,5 +1,6 @@
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import {
@@ -13,7 +14,13 @@ import {
   type ServiceSpec,
 } from '../src/service-plist.ts';
 import { statusLines, type ServiceStatus } from '../src/service.ts';
-import { hostFromExecutable, installHostApp, permissionPanes, readHostPermissions } from '../src/stim-host.ts';
+import {
+  hostFromExecutable,
+  installHostApp,
+  permissionPanes,
+  readHostPermissions,
+  unpackRelease,
+} from '../src/stim-host.ts';
 
 const SPEC: ServiceSpec = {
   label: 'dev.stim.server',
@@ -303,5 +310,23 @@ describe('host app', () => {
       );
       await expect(installHostApp(sources)).rejects.toThrow(/not a Stim Host Dev bundle/);
     }, 120_000);
+
+    it('installs a release only when its zip matches the pin and carries the Developer ID signature', async () => {
+      const app = join(home, 'build', 'Stim Host.app');
+      mkdirSync(join(app, 'Contents', 'MacOS'), { recursive: true });
+      execFileSync('cp', ['/usr/bin/true', join(app, 'Contents', 'MacOS', 'stim-host')]);
+      writeFileSync(
+        join(app, 'Contents', 'Info.plist'),
+        readFileSync(join(import.meta.dirname, '..', 'host', 'Info.plist')),
+      );
+      execFileSync('codesign', ['--force', '--sign', '-', app]);
+      const archive = join(home, 'StimHost.zip');
+      execFileSync('ditto', ['-c', '-k', '--keepParent', app, archive]);
+      const zip = readFileSync(archive);
+      const sha256 = createHash('sha256').update(zip).digest('hex');
+      const unpack = (pin: string) => unpackRelease(zip, pin, mkdtempSync(join(home, 'unpack-')));
+      await expect(unpack('0'.repeat(64))).rejects.toThrow(/SHA-256/);
+      await expect(unpack(sha256)).rejects.toThrow(/not signed by App & Flow's Developer ID/);
+    });
   });
 });
