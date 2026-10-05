@@ -74,6 +74,9 @@ struct MachineBuildMachines: View {
       if ready.remedy != nil || machine.state != .approved {
         Text(machine.detail).foregroundStyle(Palette.secondary).textSelection(.enabled)
       }
+      MachineUpdateLine(phase: model.updates[machine.machine], needed: needsStimUpdate(machine)) {
+        Task { await model.update(machine.machine, checkout: checkout) }
+      }
       if let counts {
         HStack(alignment: .top, spacing: Space.md) {
           tile("Today", "\(counts.today.offloaded)", builds(counts.today))
@@ -112,6 +115,40 @@ struct MachineBuildMachines: View {
 }
 
 /// A Mac's name with an icon, a detail line and trailing content, heading its section of the Machines page.
+/// The Update button of a build machine that runs another Stim build, and the progress of an update Desktop asked for.
+struct MachineUpdateLine: View {
+  var phase: MachineUpdatePhase?
+  var needed: Bool
+  var update: () -> Void
+
+  var body: some View {
+    if phase != nil || needed {
+      HStack(alignment: .firstTextBaseline, spacing: Space.md) {
+        if let phase, !phase.isDone { ProgressView().controlSize(.small) }
+        if let phase {
+          Text(verbatim: phase.line)
+            .font(.stim(.footnote))
+            .foregroundStyle(tone(phase))
+            .lineLimit(3)
+            .textSelection(.enabled)
+        }
+        if needed, phase?.isDone ?? true {
+          Button("Update stim-server", action: update)
+            .help("Installs this Mac's Stim build on it over the tailnet, then restarts its stim-server.")
+        }
+      }
+    }
+  }
+
+  private func tone(_ phase: MachineUpdatePhase) -> Color {
+    switch phase {
+    case .failed: return Palette.error
+    case .finished: return Palette.success
+    default: return Palette.secondary
+    }
+  }
+}
+
 struct MachineHeading<Trailing: View>: View {
   var icon: String
   var title: String

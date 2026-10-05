@@ -39,7 +39,7 @@ function routeOf(message: Event): string | null {
   return null;
 }
 
-class Upstream {
+export class Upstream {
   private readonly socket: WebSocket;
   private nextId = 1;
   private readonly pending = new Map<number, { resolve: (reply: Reply) => void; reject: (error: Error) => void }>();
@@ -120,7 +120,8 @@ class Upstream {
     for (const route of routes) route.closed(this.ended);
   }
 
-  async open(version: string): Promise<void> {
+  /** Connects and says hello with the token; the host must grant `capability` to this Mac. */
+  async open(version: string, capability: 'device-host' | 'build' = 'device-host'): Promise<void> {
     await new Promise<void>((resolve, reject) => {
       const done = (error?: Error) => {
         clearTimeout(timer);
@@ -150,9 +151,9 @@ class Upstream {
     if (
       !isJsonObject(reply.result) ||
       !Array.isArray(reply.result.capabilities) ||
-      !reply.result.capabilities.includes('device-host')
+      !reply.result.capabilities.includes(capability)
     ) {
-      throw new Error('the host did not grant device-host access');
+      throw new Error(`the host did not grant ${capability} access`);
     }
     if (Array.isArray(reply.result.features))
       this.features = reply.result.features.filter((feature): feature is string => typeof feature === 'string');

@@ -879,6 +879,17 @@ The action log records each update as `server.update.started`, and as
 arrives once every package is in gets `action-busy`, and a retried reservation
 of an existing hosted session still answers during the drain.
 
+Stim Desktop starts these updates through its own local stim-server with two
+methods that only the local Desktop control connection may call:
+`machines.update.start` takes `{ "machine" }`, an approved `offload.machines`
+or `hosting.machines` entry. It connects to that machine's pinned node with
+the stored credential and asks it for this server's npm release. When this
+server runs from a Stim checkout, it instead packs the checkout's workspace
+packages as `npm pack` would and sends them. `machines.update.status` takes
+the same `{ "machine" }` and returns `remote` (the machine's
+`server.update.status`), `unreachable` (why it could not be read, also while it
+restarts) and `upload` (`sent`, `total` and `error` of the packages).
+
 ## Offloaded builds
 
 A client with `build` runs its iOS simulator builds and Android emulator

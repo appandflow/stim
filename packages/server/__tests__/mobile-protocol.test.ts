@@ -5,7 +5,15 @@ type BuildMethod = (typeof Server.BUILD_METHODS)[number];
 
 type DeviceHostMethod = (typeof Server.DEVICE_HOST_METHODS)[number];
 type ServerUpdateMethod = (typeof Server.SERVER_UPDATE_METHODS)[number];
-type PhoneMethod = Exclude<keyof Server.Methods, BuildMethod | DeviceHostMethod | ServerUpdateMethod | 'route.setup'>;
+type PhoneMethod = Exclude<
+  keyof Server.Methods,
+  | BuildMethod
+  | DeviceHostMethod
+  | ServerUpdateMethod
+  | 'route.setup'
+  | 'machines.update.start'
+  | 'machines.update.status'
+>;
 
 type SharedMethod = PhoneMethod & keyof Mobile.Methods;
 

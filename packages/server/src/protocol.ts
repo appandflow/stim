@@ -222,6 +222,30 @@ export function protocolJsonSchema(): JsonSchema {
           },
         },
       },
+      MachineUpdateStatus: {
+        type: 'object',
+        required: ['remote', 'unreachable', 'upload'],
+        additionalProperties: false,
+        properties: {
+          remote: { anyOf: [{ $ref: '#/$defs/ServerUpdateStatus' }, { type: 'null' }] },
+          unreachable: { type: ['string', 'null'] },
+          upload: {
+            anyOf: [
+              {
+                type: 'object',
+                required: ['sent', 'total', 'error'],
+                additionalProperties: false,
+                properties: {
+                  sent: { type: 'integer', minimum: 0 },
+                  total: { type: 'integer', minimum: 0 },
+                  error: { type: ['string', 'null'] },
+                },
+              },
+              { type: 'null' },
+            ],
+          },
+        },
+      },
       HostedAppChunkResult: {
         type: 'object',
         required: ['offset'],
@@ -1398,6 +1422,18 @@ export function protocolJsonSchema(): JsonSchema {
           request('build.artifact', buildJob),
           request('build.attach', buildJob),
           request('server.update.status'),
+          request('machines.update.start', {
+            type: 'object',
+            required: ['machine'],
+            additionalProperties: false,
+            properties: { machine: { type: 'string', minLength: 1 } },
+          }),
+          request('machines.update.status', {
+            type: 'object',
+            required: ['machine'],
+            additionalProperties: false,
+            properties: { machine: { type: 'string', minLength: 1 } },
+          }),
           request('server.update.start', {
             oneOf: [
               {
@@ -1464,6 +1500,7 @@ export function protocolJsonSchema(): JsonSchema {
                   { $ref: '#/$defs/HostedAppHandoffResult' },
                   { $ref: '#/$defs/ServerUpdateStatus' },
                   { $ref: '#/$defs/ServerUpdateProgress' },
+                  { $ref: '#/$defs/MachineUpdateStatus' },
                   { $ref: '#/$defs/HelloResult' },
                   { $ref: '#/$defs/ControlBeginResult' },
                   { $ref: '#/$defs/SimulatorOptions' },

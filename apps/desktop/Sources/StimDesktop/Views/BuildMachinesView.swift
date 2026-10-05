@@ -11,6 +11,7 @@ struct BuildMachinesView: View {
   var workspace: String?
 
   @State private var removing: String?
+  @AppStorage(AppPreferences.Key.updatesBuildMachines) private var updatesAutomatically = false
 
   private var checkout: String? {
     doctorCheckout(for: workspace, in: store.payload?.environments ?? [], project: store.project(ofPath:))?.path
@@ -29,12 +30,20 @@ struct BuildMachinesView: View {
           ForEach(entries, id: \.self) { entry in
             MachineRow(
               entry: entry, status: statuses?.first { $0.machine == entry }, checking: statuses == nil,
-              working: model.working == entry, canAsk: checkout != nil
+              working: model.working == entry, canAsk: checkout != nil, update: model.updates[entry]
             ) {
               Task { await model.ask(entry, checkout: checkout) }
             } remove: {
               removing = entry
+            } startUpdate: {
+              Task { await model.update(entry, checkout: checkout) }
             }
+          }
+          if !entries.isEmpty {
+            Toggle("Update build machines automatically", isOn: $updatesAutomatically)
+              .help(
+                "When a build machine runs another Stim build than this Mac, Desktop updates its stim-server the next time it checks the machine."
+              )
           }
         } else {
           ProgressView().frame(maxWidth: .infinity)
@@ -164,8 +173,10 @@ private struct MachineRow: View {
   var checking: Bool
   var working: Bool
   var canAsk: Bool
+  var update: MachineUpdatePhase?
   var ask: () -> Void
   var remove: () -> Void
+  var startUpdate: () -> Void
 
   var body: some View {
     HStack(alignment: .top, spacing: Space.lg) {
@@ -191,6 +202,7 @@ private struct MachineRow: View {
             Text(verbatim: dnsName).font(.stim(.caption, mono: true)).foregroundStyle(Palette.tertiary)
               .lineLimit(1).truncationMode(.middle)
           }
+          MachineUpdateLine(phase: update, needed: needsStimUpdate(status), update: startUpdate)
         }
       }
       Spacer()
