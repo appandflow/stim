@@ -455,7 +455,9 @@ that starts at login and restarts the server if it exits, and `--serve` adds the
 tailnet-only `tailscale serve` route (port 7443, or the next free one). `--path-prepend <dir>` and
 `--env KEY=VALUE` pin a PATH entry or a variable, such as a private CocoaPods
 install, that stim-server's login-shell environment would otherwise replace.
-`stim-server service status` reports the process, its health, the route and
+The service runs under the Stim Host app, which install builds in
+`~/Applications` with Xcode Command Line Tools. `stim-server service status`
+reports the process, its health, the route, Stim Host's permissions and
 whether its Stim build matches the `stim` on PATH. Doctor points to this
 command when a named machine does not answer.
 

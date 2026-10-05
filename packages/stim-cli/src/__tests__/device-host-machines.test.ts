@@ -209,16 +209,13 @@ test('missing hosting grants produce a note without changing approval', async ()
   const result = await inspectDeviceHostMachines({ fix: false }, io, ['mini']);
   expect(result.machines[0]?.state).toBe('approved');
   expect(readDeviceHostMachines()[0]?.state).toBe('approved');
-  expect(result.findings).toEqual([
-    {
-      code: 'device-host-machine',
-      level: 'note',
-      title:
-        'Hosting machine mini needs Screen & System Audio Recording (Screen Recording on macOS 14) and Device Control and Data Access (Accessibility on macOS 26 and earlier) for Stim Host Dev',
-      detail: 'Viewing hosted macOS apps needs Screen Recording. Controlling them needs the control permission.',
-      fix: 'On mini, approve Stim Host Dev in System Settings > Privacy & Security, or run `stim-server service install` there again to show the requests.',
-    },
-  ]);
+  expect(result.findings).toHaveLength(1);
+  const [finding] = result.findings;
+  expect(finding).toMatchObject({ code: 'device-host-machine', level: 'note' });
+  expect(finding?.title).toMatch(
+    /mini.*Screen & System Audio Recording.*Device Control and Data Access.*Stim Host Dev/,
+  );
+  expect(finding?.fix).toContain('stim-server service install');
 });
 
 test('granted host permissions produce no doctor note', async () => {

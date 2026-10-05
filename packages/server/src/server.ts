@@ -480,7 +480,8 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   };
   if (options.frameHelper === undefined) buildHelper();
   let nativeViewerOpened = false;
-  const frames = new FramePool(options.env, frameLimits, frameHelper, new DeviceViewers());
+  const helperEnv = options.host ? { ...options.env, STIM_CAPTURE_HOST: options.host.name } : options.env;
+  const frames = new FramePool(helperEnv, frameLimits, frameHelper, new DeviceViewers());
   const recorder =
     options.record === false
       ? null
@@ -636,7 +637,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     conflict: (deviceId, conflict) => push.control(deviceId, conflict),
     adbEmulators,
   });
-  const hostedViews = new HostedViews(hostedDevices, control, options.env, frameHelper);
+  const hostedViews = new HostedViews(hostedDevices, control, helperEnv, frameHelper);
   const wss = new WebSocketServer({ noServer: true, maxPayload: MAX_PAYLOAD });
   const notificationLog = new NotificationLog(notificationLogFile(serverDir()));
   const push = new PushNotifier({
@@ -801,7 +802,6 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         const result: HelloResult = {
           protocol: PROTOCOL_VERSION,
           server: { name: options.name, version: options.serverVersion, stim: options.stimVersion, home: homedir() },
-          ...(options.host ? { host: await hostHealth() } : {}),
           capabilities: [],
           features: [...FEATURES],
           actions: [],

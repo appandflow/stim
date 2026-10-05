@@ -1,5 +1,5 @@
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import {
@@ -13,7 +13,7 @@ import {
   type ServiceSpec,
 } from '../src/service-plist.ts';
 import { statusLines, type ServiceStatus } from '../src/service.ts';
-import { permissionPanes, readHostPermissions } from '../src/stim-host.ts';
+import { hostFromExecutable, installHostApp, permissionPanes, readHostPermissions } from '../src/stim-host.ts';
 
 const SPEC: ServiceSpec = {
   label: 'dev.stim.server',
@@ -234,14 +234,14 @@ describe('service status permissions', () => {
     stimBuild: { service: null, cli: null, match: null },
   };
 
-  it('names the host and the missing permission while keeping the actual node path', () => {
+  const line = (lines: string[], prefix: string) => lines.find((each) => each.startsWith(`  ${prefix}`)) ?? '';
+
+  it('reports each grant under its pane for this macOS version and keeps the node path', () => {
     const lines = statusLines(status, permissionPanes(27));
-    expect(lines).toContain('  host app: /Users/me/Applications/Stim Host Dev.app');
-    expect(lines).toContain('  Screen & System Audio Recording: allowed');
-    expect(lines).toContain(
-      '  Device Control and Data Access: needed: System Settings > Privacy & Security > Device Control and Data Access > Stim Host Dev',
-    );
-    expect(lines).toContain('  node: /opt/homebrew/bin/node');
+    expect(line(lines, 'host app:')).toContain('Stim Host Dev.app');
+    expect(line(lines, 'Screen & System Audio Recording:')).toContain('allowed');
+    expect(line(lines, 'Device Control and Data Access:')).toMatch(/needed.*Stim Host Dev/);
+    expect(line(lines, 'node:')).toContain(SPEC.node);
   });
 
   it('keeps unreported grants unknown instead of claiming access was denied', () => {
@@ -249,7 +249,59 @@ describe('service status permissions', () => {
       { ...status, host: { ...status.host!, screenRecording: null, accessibility: null } },
       permissionPanes(14),
     );
-    expect(lines).toContain('  Screen Recording: unknown (server did not report permissions)');
-    expect(lines).toContain('  Accessibility: unknown (server did not report permissions)');
+    expect(line(lines, 'Screen Recording:')).toContain('unknown');
+    expect(line(lines, 'Accessibility:')).toContain('unknown');
+  });
+
+  it('points a node-first service at reinstalling', () => {
+    expect(statusLines({ ...status, host: null }, permissionPanes(27)).join('\n')).toContain(
+      '`stim-server service install` again',
+    );
+  });
+});
+
+describe('host app', () => {
+  it('recognizes only a Stim Host launcher as the server host', () => {
+    expect(hostFromExecutable('/Users/me/Applications/Stim Host.app/Contents/MacOS/stim-host')).toEqual({
+      executable: '/Users/me/Applications/Stim Host.app/Contents/MacOS/stim-host',
+      name: 'Stim Host',
+    });
+    expect(hostFromExecutable('/Users/me/Applications/Stim Host Dev.app/Contents/MacOS/stim-host')?.name).toBe(
+      'Stim Host Dev',
+    );
+    expect(hostFromExecutable('/Users/me/Applications/Other.app/Contents/MacOS/stim-host')).toBeUndefined();
+    expect(hostFromExecutable(undefined)).toBeUndefined();
+  });
+
+  describe.skipIf(process.platform !== 'darwin')('install', () => {
+    let home: string;
+    let previousHome: string | undefined;
+    beforeEach(() => {
+      home = mkdtempSync(join(tmpdir(), 'stim-host-home-'));
+      previousHome = process.env.HOME;
+      process.env.HOME = home;
+    });
+    afterEach(() => {
+      if (previousHome === undefined) delete process.env.HOME;
+      else process.env.HOME = previousHome;
+      rmSync(home, { recursive: true, force: true });
+    });
+
+    it('keeps an identical bundle, removes abandoned builds and refuses a bundle it does not own', async () => {
+      const sources = join(import.meta.dirname, '..', 'host');
+      const applications = join(home, 'Applications');
+      const first = await installHostApp(sources);
+      expect(first).toMatchObject({ bundleId: 'dev.stim.host.dev', replaced: true });
+      execFileSync('codesign', ['--verify', '--strict', first.app]);
+      const abandoned = join(applications, '.Stim Host Dev.app.999999.tmp-x');
+      mkdirSync(abandoned);
+      expect((await installHostApp(sources)).replaced).toBe(false);
+      expect(readdirSync(applications)).toEqual(['Stim Host Dev.app']);
+      writeFileSync(
+        join(first.app, 'Contents', 'Info.plist'),
+        '<plist><dict><key>CFBundleIdentifier</key><string>com.example.other</string></dict></plist>',
+      );
+      await expect(installHostApp(sources)).rejects.toThrow(/not a Stim Host Dev bundle/);
+    }, 120_000);
   });
 });

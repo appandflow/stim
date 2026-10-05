@@ -1,5 +1,6 @@
 #include <ApplicationServices/ApplicationServices.h>
 #include <CoreGraphics/CoreGraphics.h>
+#include <errno.h>
 #include <limits.h>
 #include <mach-o/dyld.h>
 #include <signal.h>
@@ -32,16 +33,33 @@ static int run(int argc, char **argv) {
     return 70;
   }
   setenv("STIM_HOST_EXECUTABLE", self, 1);
-  signal(SIGTERM, forward);
-  signal(SIGINT, forward);
-  signal(SIGHUP, forward);
-  int error = posix_spawn(&child, argv[2], NULL, NULL, argv + 2, environ);
+  sigset_t forwarded, empty;
+  sigemptyset(&forwarded);
+  sigaddset(&forwarded, SIGTERM);
+  sigaddset(&forwarded, SIGINT);
+  sigaddset(&forwarded, SIGHUP);
+  sigemptyset(&empty);
+  sigprocmask(SIG_BLOCK, &forwarded, NULL);
+  posix_spawnattr_t attributes;
+  posix_spawnattr_init(&attributes);
+  posix_spawnattr_setsigmask(&attributes, &empty);
+  posix_spawnattr_setflags(&attributes, POSIX_SPAWN_SETSIGMASK);
+  int error = posix_spawn(&child, argv[2], NULL, &attributes, argv + 2, environ);
+  posix_spawnattr_destroy(&attributes);
   if (error) {
     fprintf(stderr, "stim-host: could not start %s: %s\n", argv[2], strerror(error));
     return 127;
   }
+  signal(SIGTERM, forward);
+  signal(SIGINT, forward);
+  signal(SIGHUP, forward);
+  sigprocmask(SIG_UNBLOCK, &forwarded, NULL);
   int status;
   while (waitpid(child, &status, 0) < 0) {
+    if (errno != EINTR) {
+      fprintf(stderr, "stim-host: waitpid failed: %s\n", strerror(errno));
+      return 70;
+    }
   }
   return WIFEXITED(status) ? WEXITSTATUS(status) : 128 + WTERMSIG(status);
 }

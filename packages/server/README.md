@@ -45,8 +45,10 @@ Tailscale state. While Tailscale runs, it also carries `route`, read from
 `tailscale serve status --json` on each request: `routed` with the HTTPS
 `port` that proxies to the server, `funneled` with the Funnel `ports` that do,
 `missing`, or `unknown` with a `reason`; the last three carry the `port` the
-setup command would use. Stim Desktop uses it to find a running server and
-show its route. A request through `tailscale serve` or on a Tailscale address
+setup command would use. When the server runs under Stim Host, it also carries
+`host`: `{ name, screenRecording, accessibility }`, the grants macOS gives that
+app (checked at most every 5 seconds), or `null` when the check fails. Stim
+Desktop uses it to find a running server and show its route. A request through `tailscale serve` or on a Tailscale address
 without an `Origin` or `Sec-Fetch-Site` header, which a web page's request
 carries, gets only `{ "server": "stim-server", "version", "protocol" }`, which Stim
 Desktop's Build machines list uses to find stim-server on the other Macs of the
@@ -152,7 +154,9 @@ and control session, and ends a device's control sessions when it loses
 `control`, so taking control away applies to open connections on the next
 registration check. `hello` reports
 the capabilities and actions of the connection's device when it connects; a
-connection sees a new grant after it reconnects.
+connection sees a new grant after it reconnects. Under Stim Host, an approved
+`hello` also carries the same `host` grants as `/health`, which `stim doctor`
+reports for hosting machines.
 
 Every method other than `hello` needs `read`. A device with only `build`
 gets `forbidden` for all of them.

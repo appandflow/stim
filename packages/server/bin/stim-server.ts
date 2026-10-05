@@ -25,7 +25,7 @@ import {
   revokeDevice,
   type PairedDevice,
 } from '../src/registry.ts';
-import { hostPermissionPanes } from '../src/stim-host.ts';
+import { hostFromExecutable, hostPermissionPanes } from '../src/stim-host.ts';
 import { startServer } from '../src/server.ts';
 import { watchTailscale } from '../src/tailscale-monitor.ts';
 import {
@@ -94,13 +94,10 @@ function macName(tailscale: TailscaleState): string {
 }
 
 async function serve(port: number, extraEnv: string[], pathPrepend: string[]): Promise<void> {
-  const executable = process.env.STIM_HOST_EXECUTABLE;
-  const name = executable && /\/(Stim Host(?: Dev)?)\.app\/Contents\/MacOS\/stim-host$/.exec(executable)?.[1];
-  const captureHost = executable && name ? { executable, name } : undefined;
+  const captureHost = hostFromExecutable(process.env.STIM_HOST_EXECUTABLE);
   const login = loginShellEnvironment();
   if (!login) console.error('stim-server: could not read the login shell environment; using this process environment.');
   const env = applyServeEnvironment(login ?? process.env, extraEnv, pathPrepend);
-  if (captureHost) env.STIM_CAPTURE_HOST = captureHost.name;
   delete env.CLAUDE_CODE_SESSION_ID;
   delete env.CODEX_THREAD_ID;
   if (!process.env.STIM_HOME && env.STIM_HOME) process.env.STIM_HOME = env.STIM_HOME;
