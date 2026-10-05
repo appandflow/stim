@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, realpathSync } from 'node:fs';
-import { dirname, isAbsolute, join, relative } from 'node:path';
+import { basename, dirname, isAbsolute, join, relative } from 'node:path';
 import { isIP, type AddressInfo } from 'node:net';
 import { withDirLock, createMetroBridge, type MetroBridge } from '@stim-cli/core';
 import {
@@ -438,21 +438,38 @@ export class DeviceHost {
         device.macosVersion !== record.device.macosVersion
       )
         throw new Error('The device record no longer matches this session.');
-      const receipt = record.appAttempt ? readHostedAppMetadata(record.id, record.appAttempt) : null;
-      if (!receipt || receipt.state !== 'installed') throw new Error('The hosted macOS app is not installed.');
       const app = macosAppState(readHostedMacosApp(home));
       if (!app || app.state !== 'running' || !app.app) throw new Error('The hosted macOS app is not running.');
+      const foreign = new Error('The macOS app does not belong to this hosted session.');
+      let attempt: string;
+      try {
+        const bundle = realpathSync(app.bundle);
+        attempt = basename(dirname(bundle));
+        const executable = relative(bundle, realpathSync(app.executable));
+        if (
+          !hostedAppAttempt(attempt) ||
+          bundle !== join(realpathSync(join(deviceHostArea(record.id), 'apps')), attempt, 'App.app') ||
+          !executable ||
+          executable === '..' ||
+          executable.startsWith('../') ||
+          isAbsolute(executable)
+        )
+          throw foreign;
+      } catch {
+        throw foreign;
+      }
+      let receipt;
+      try {
+        receipt = readHostedAppMetadata(record.id, attempt);
+      } catch {
+        throw foreign;
+      }
+      if (receipt.state !== 'installed') throw new Error('The hosted macOS app is not installed.');
       if (
         app.bundleId !== hostedMacosBundleId(receipt.bundleId, device.appSlot) ||
         app.bundleId !== readJsonObject(join(home, 'hosted-macos-app.json'))?.bundleId
       )
-        throw new Error('The macOS app does not belong to this hosted session.');
-      const area = realpathSync(join(deviceHostArea(record.id), 'apps', record.appAttempt!));
-      for (const path of [app.bundle, app.executable]) {
-        const contained = relative(area, realpathSync(path));
-        if (!contained || contained === '..' || contained.startsWith('../') || isAbsolute(contained))
-          throw new Error('The macOS app does not belong to this hosted session.');
-      }
+        throw foreign;
       return {
         platform: 'macos',
         session: { ...record, device: record.device },

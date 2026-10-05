@@ -1213,7 +1213,7 @@ test('macOS reservations isolate concurrent clients, validate on the wire and re
     'error.code',
     'device-busy',
   );
-  expect(() => host.viewTarget('client', first.id)).toThrow('not installed');
+  expect(() => host.viewTarget('client', first.id)).toThrow('not running');
   expect(
     await host.metroOpen('client', { session: first.id, gatewayPort: 12345, secret: 'a'.repeat(64) }, '127.0.0.1'),
   ).toHaveProperty('error.message', 'Hosted Metro currently supports iOS sessions only.');
@@ -1377,11 +1377,18 @@ setInterval(()=>{try{process.kill(app.app.pid,0);}catch{process.stderr.write('Th
     const first = reserve({ platform: 'macos' });
     await state(first.id, 'ready');
     const listener = { frame: () => {}, delayed: () => {}, failed: () => {} };
-    expect(() => views.subscribe('client', first.id, listener, { fps: 5, maxEdge: 480 })).toThrow('not installed');
+    expect(() => views.subscribe('client', first.id, listener, { fps: 5, maxEdge: 480 })).toThrow('not running');
     expect(() => views.subscribe('other', first.id, listener, { fps: 5, maxEdge: 480 })).toThrow(
       'Only a ready session',
     );
     expect(() => views.begin('other', first.id, owner, false, () => true)).toThrow('Only a ready session');
+  });
+
+  test('keeps the running app viewable while a replacement attempt is offered', async () => {
+    const { first } = await launch();
+    const replacement = appOffer(first.id, 'app-second', 'macos');
+    expect(host.appOffer('client', replacement.params)).toHaveProperty('result');
+    expect(views.target('client', first.id).device.platform).toBe('macos');
   });
 
   test('captures only the running hosted app and sends scroll and key input, then closes capture and control after exit', async () => {
@@ -1525,33 +1532,28 @@ process.stdin.on('end',()=>process.exit(0));
     expect(readClaimSet(join(deviceHostRoot(), `${first.id}.claims`)).live[0]!.child).not.toBeNull();
   });
 
-  test.each(['Screen Recording access is unavailable for stim-frames.'])(
-    'ends the hosted subscription and control with the helper refusal: %s',
-    async (refusal) => {
-      const { first } = await launch();
-      writeFileSync(
-        helper,
-        `#!${process.execPath}\nprocess.stderr.write(${JSON.stringify(refusal)});process.exit(1);\n`,
-      );
-      const failed: string[] = [];
-      views.subscribe(
-        'client',
-        first.id,
-        { frame: () => {}, delayed: () => {}, failed: (message) => failed.push(message) },
-        { fps: 5, maxEdge: 480 },
-      );
-      const begun = await views.begin('client', first.id, owner, false, () => true);
-      if ('code' in begun) throw new Error(begun.message);
-      await vi.waitFor(() => expect(failed).toEqual([expect.stringContaining(refusal)]));
-      expect(await control.input(owner, begun.session, { input: 'key', key: 'return', modifiers: [] })).toHaveProperty(
-        'code',
-        'unknown-session',
-      );
-      await vi.waitFor(() =>
-        expect(readClaimSet(join(deviceHostRoot(), `${first.id}.claims`)).live[0]!.child).toBeNull(),
-      );
-    },
-  );
+  test('ends the hosted subscription and control with the helper refusal', async () => {
+    const refusal = 'Screen Recording access is unavailable for stim-frames.';
+    const { first } = await launch();
+    writeFileSync(helper, `#!${process.execPath}\nprocess.stderr.write(${JSON.stringify(refusal)});process.exit(1);\n`);
+    const failed: string[] = [];
+    views.subscribe(
+      'client',
+      first.id,
+      { frame: () => {}, delayed: () => {}, failed: (message) => failed.push(message) },
+      { fps: 5, maxEdge: 480 },
+    );
+    const begun = await views.begin('client', first.id, owner, false, () => true);
+    if ('code' in begun) throw new Error(begun.message);
+    await vi.waitFor(() => expect(failed).toEqual([expect.stringContaining(refusal)]));
+    expect(await control.input(owner, begun.session, { input: 'key', key: 'return', modifiers: [] })).toHaveProperty(
+      'code',
+      'unknown-session',
+    );
+    await vi.waitFor(() =>
+      expect(readClaimSet(join(deviceHostRoot(), `${first.id}.claims`)).live[0]!.child).toBeNull(),
+    );
+  });
 });
 
 test('hosted scroll and key requests validate bounded coordinates, deltas, keys and unique modifiers', () => {

@@ -195,7 +195,7 @@ tokens.
 Device hosting has a separate `device-host` capability. An approved client can
 reserve, boot, reconnect to and stop its own iOS simulator or Android emulator
 through the protocol. It can deliver, install and launch a compatible iOS app
-bundle, Android APK or prebuilt macOS app, stream the iOS simulator and control it. The hosted iOS
+bundle, Android APK or prebuilt macOS app, stream the iOS simulator or macOS app and control it. The hosted iOS
 app connects back to Metro on the client Mac. Automatic CLI placement, client view/control relays and
 Android Metro and viewing remain in [#2266](https://github.com/appandflow/stim/issues/2266).
 
