@@ -1,5 +1,6 @@
 import { i18n } from '@lingui/core';
 import { t } from '@lingui/core/macro';
+import { KeyboardProvider } from 'react-native-keyboard-controller';
 import { I18nProvider } from '@lingui/react';
 import * as Sentry from '@sentry/react-native';
 import { DarkTheme, DefaultTheme, Stack, ThemeProvider, type ErrorBoundaryProps } from 'expo-router';
@@ -47,13 +48,15 @@ export const ErrorBoundary = Sentry.wrapExpoRouterErrorBoundary(RootErrorBoundar
 
 export default function RootLayout() {
   return (
-    <I18nProvider i18n={i18n}>
-      <SettingsProvider>
-        <GestureHandlerRootView style={styles.root}>
-          <RootLayoutContent />
-        </GestureHandlerRootView>
-      </SettingsProvider>
-    </I18nProvider>
+    <KeyboardProvider statusBarTranslucent navigationBarTranslucent preserveEdgeToEdge preload={false}>
+      <I18nProvider i18n={i18n}>
+        <SettingsProvider>
+          <GestureHandlerRootView style={styles.root}>
+            <RootLayoutContent />
+          </GestureHandlerRootView>
+        </SettingsProvider>
+      </I18nProvider>
+    </KeyboardProvider>
   );
 }
 

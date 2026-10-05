@@ -613,6 +613,7 @@ describe('pairing', () => {
           'notifications',
           'macos-window',
           'macos-window-control',
+          'macos-keyboard-extended',
           'device-frames',
         ],
         actions: [],
@@ -3389,10 +3390,12 @@ describe('frames.subscribe', () => {
       expect(
         await client.request('input.key', { session, key: 'a', modifiers: ['command', 'command'] }),
       ).toHaveProperty('error.code', 'bad-request');
-      expect(await client.request('input.key', { session, key: 'q', modifiers: ['command'] })).toHaveProperty(
+      expect(await client.request('input.key', { session, key: 'space', modifiers: ['command'] })).toHaveProperty(
         'error.code',
         'bad-request',
       );
+      expect(await client.request('input.key', { session, key: 'q', modifiers: ['command'] })).toHaveProperty('result');
+      expect(await client.request('input.key', { session, key: '7', modifiers: ['shift'] })).toHaveProperty('result');
       expect(await client.request('input.key', { session, key: 'a', modifiers: ['command'] })).toHaveProperty('result');
       for (const [method, params] of [
         ['input.rotate', { direction: 'left' }],
@@ -3419,7 +3422,7 @@ describe('frames.subscribe', () => {
       const active = sent.find((entry) => entry.control && (entry.control as { enabled: boolean }).enabled)!
         .control as { session: string };
       expect(sent.filter((entry) => entry.input).map((entry) => entry.controlSession)).toEqual(
-        Array(5).fill(active.session),
+        Array(7).fill(active.session),
       );
       const resumed = await client.request('control.begin', { workspace, platform: 'macos' });
       const next = (resumed as { result: { session: string } }).result.session;

@@ -906,6 +906,10 @@ msgstr "Back"
 msgid "Background notifications need an iPhone and a Mac that sends push."
 msgstr "Background notifications need an iPhone and a Mac that sends push."
 
+#: src/components/viewer-keyboard.tsx
+msgid "Backspace"
+msgstr "Backspace"
+
 #: src/screens/workspace-work.tsx
 msgid "Behind"
 msgstr "Behind"
@@ -1306,6 +1310,10 @@ msgstr "cold build{off}{native}{why}"
 msgid "Collapses the section"
 msgstr "Collapses the section"
 
+#: src/components/viewer-keyboard.tsx
+msgid "Command"
+msgstr "Command"
+
 #: src/screens/build-details.tsx
 msgid "Compared with {fingerprint}, the last build in this workspace."
 msgstr "Compared with {fingerprint}, the last build in this workspace."
@@ -1344,6 +1352,7 @@ msgstr "Connection closed."
 msgid "Connection lost."
 msgstr "Connection lost."
 
+#: src/components/viewer-keyboard.tsx
 #: src/screens/device-view.tsx
 #: src/screens/device-view.tsx
 msgid "Control"
@@ -1361,6 +1370,7 @@ msgstr "Control ended. {ended}"
 msgid "Copied"
 msgstr "Copied"
 
+#: src/components/viewer-keyboard.tsx
 #: src/screens/about.tsx
 #: src/screens/home.tsx
 #: src/screens/logs.tsx
@@ -1425,6 +1435,10 @@ msgstr "Crash"
 #: src/lib/machine-report.ts
 msgid "Created by this Stim home; no workspace uses it"
 msgstr "Created by this Stim home; no workspace uses it"
+
+#: src/components/viewer-keyboard.tsx
+msgid "Cut"
+msgstr "Cut"
 
 #: src/lib/settings-options.ts
 msgid "Dark"
@@ -1511,9 +1525,13 @@ msgstr "Disk free"
 msgid "Disk use by category"
 msgstr "Disk use by category"
 
-#: src/screens/device-view.tsx
+#: src/components/viewer-keyboard.tsx
 msgid "Done"
 msgstr "Done"
+
+#: src/components/viewer-keyboard.tsx
+msgid "Down"
+msgstr "Down"
 
 #: src/lib/workspace-view.ts
 msgid "Download"
@@ -1613,9 +1631,10 @@ msgstr "Error"
 msgid "Errors"
 msgstr "Errors"
 
-#: src/screens/device-view.tsx
-msgid "Escape"
-msgstr "Escape"
+#: src/components/viewer-keyboard.tsx
+#: src/components/viewer-keyboard.tsx
+msgid "Esc"
+msgstr "Esc"
 
 #: src/lib/workspace-view.ts
 msgid "est."
@@ -1673,6 +1692,10 @@ msgstr "Filters"
 #: src/screens/filters.tsx
 msgid "Filters are saved on this phone."
 msgstr "Filters are saved on this phone."
+
+#: src/components/viewer-keyboard.tsx
+msgid "Find"
+msgstr "Find"
 
 #: src/screens/build-details.tsx
 msgid "fingerprint {fingerprint}"
@@ -1994,6 +2017,10 @@ msgstr "Leased · {leaseLeft} left"
 msgid "Leased devices"
 msgstr "Leased devices"
 
+#: src/components/viewer-keyboard.tsx
+msgid "Left"
+msgstr "Left"
+
 #: src/lib/format.ts
 msgid "less than a minute"
 msgstr "less than a minute"
@@ -2194,6 +2221,10 @@ msgstr "Midnight to 8 AM"
 #: src/lib/format.ts
 msgid "miss: {summary}"
 msgstr "miss: {summary}"
+
+#: src/components/viewer-keyboard.tsx
+msgid "Modifiers apply to one letter or digit at a time. Use the extra keys for navigation."
+msgstr "Modifiers apply to one letter or digit at a time. Use the extra keys for navigation."
 
 #: src/screens/settings.ios.tsx
 #: src/screens/settings.tsx
@@ -2653,6 +2684,10 @@ msgstr "Opens the workspace"
 msgid "Opens this action in the agent log"
 msgstr "Opens this action in the agent log"
 
+#: src/components/viewer-keyboard.tsx
+msgid "Option"
+msgstr "Option"
+
 #: src/lib/build-machines.ts
 msgid "Other CPU"
 msgstr "Other CPU"
@@ -2714,6 +2749,10 @@ msgstr "Parked emulator, kept for reuse"
 #: src/lib/machine-report.ts
 msgid "Parked simulator, kept for reuse"
 msgstr "Parked simulator, kept for reuse"
+
+#: src/components/viewer-keyboard.tsx
+msgid "Paste"
+msgstr "Paste"
 
 #: src/components/replay-bar.tsx
 msgid "Pause"
@@ -3003,6 +3042,10 @@ msgstr "Review required"
 msgid "Revoked"
 msgstr "Revoked"
 
+#: src/components/viewer-keyboard.tsx
+msgid "Right"
+msgstr "Right"
+
 #: src/screens/device-view.tsx
 msgid "Rotate left"
 msgstr "Rotate left"
@@ -3057,7 +3100,7 @@ msgstr "Same {language} error {count}x at {file}:{line}"
 msgid "Same {name} build error {count}x at {file}:{line}"
 msgstr "Same {name} build error {count}x at {file}:{line}"
 
-#: src/screens/device-view.tsx
+#: src/components/viewer-keyboard.tsx
 #: src/screens/pair.tsx
 #: src/screens/rename.tsx
 msgid "Save"
@@ -3092,7 +3135,7 @@ msgstr "Search (regular expression)"
 msgid "Search logs"
 msgstr "Search logs"
 
-#: src/screens/device-view.tsx
+#: src/components/viewer-keyboard.tsx
 msgid "Select all"
 msgstr "Select all"
 
@@ -3129,6 +3172,10 @@ msgstr "Shared by the machine"
 #: src/screens/mac-status.tsx
 msgid "Shared caches builds refill. Empty one on your Mac with stim gc --delete --cache."
 msgstr "Shared caches builds refill. Empty one on your Mac with stim gc --delete --cache."
+
+#: src/components/viewer-keyboard.tsx
+msgid "Shift"
+msgstr "Shift"
 
 #: src/screens/filters.tsx
 msgid "Show"
@@ -3432,7 +3479,7 @@ msgstr "Sync"
 msgid "System"
 msgstr "System"
 
-#: src/screens/device-view.tsx
+#: src/components/viewer-keyboard.tsx
 msgid "Tab"
 msgstr "Tab"
 
@@ -3567,8 +3614,8 @@ msgstr "Try again"
 msgid "Try closing and reopening Stim."
 msgstr "Try closing and reopening Stim."
 
-#: src/screens/device-view.tsx
-#: src/screens/device-view.tsx
+#: src/components/viewer-keyboard.tsx
+#: src/components/viewer-keyboard.tsx
 msgid "Type on the device"
 msgstr "Type on the device"
 
@@ -3584,7 +3631,7 @@ msgstr "under a minute left"
 msgid "Under the {budgetSize} Stim budget"
 msgstr "Under the {budgetSize} Stim budget"
 
-#: src/screens/device-view.tsx
+#: src/components/viewer-keyboard.tsx
 msgid "Undo"
 msgstr "Undo"
 
@@ -3628,6 +3675,10 @@ msgstr "Untracked"
 msgid "Unused"
 msgstr "Unused"
 
+#: src/components/viewer-keyboard.tsx
+msgid "Up"
+msgstr "Up"
+
 #: src/lib/workspace-view.ts
 msgid "up {up}"
 msgstr "up {up}"
@@ -3643,6 +3694,10 @@ msgstr "Up to date"
 #: src/screens/about.tsx
 msgid "Update"
 msgstr "Update"
+
+#: src/components/viewer-keyboard.tsx
+msgid "Update Stim on the Mac to use modifiers with letters and digits. The extra keys and shortcuts still work."
+msgstr "Update Stim on the Mac to use modifiers with letters and digits. The extra keys and shortcuts still work."
 
 #: src/screens/mac-status.tsx
 msgid "Update stim-server on the Mac to see caches, runtimes and what Stim can free."

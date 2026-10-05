@@ -68,8 +68,27 @@ It never captures the desktop or another application, and offers no replay.
 
 A server advertising macos-window-control also supports the phone's Control
 mode on a control pairing. Tap/click and drag act on the displayed window;
-Scroll mode turns a drag into pixel scrolling. Keyboard types printable ASCII,
-and the toolbar offers Tab, Escape, Select all, Undo and Save shortcuts.
+Scroll mode turns a drag into pixel scrolling. The main toolbar offers Keyboard
+and Scroll. Keyboard types printable ASCII and attaches an extra-key strip with
+Tab, Escape, Backspace, arrows and labeled Select all, Undo, Save, Copy, Paste,
+Cut and Find shortcuts. Shift, Control, Option and Command apply to the next
+supported key, then clear; dismissing the keyboard clears them too.
+
+A newly built phone client with Keyboard Controller is required; this native
+change cannot be delivered to an older client by a JavaScript update. Servers
+advertising macos-keyboard-extended accept modified a-z and 0-9 one key at a
+time. Older servers retain fixed shortcuts and navigation but cannot receive
+other modified letters or digits. Multi-character modified input and symbols
+are not supported; ordinary typing keeps using input.text.
+
+Letter and digit shortcuts require the owned app's selected U.S. or ABC input source.
+The helper focuses that app and waits up to one second for activation before
+checking the layout; an app that does not activate refuses the shortcut.
+Apple's ANSI virtual key codes represent physical U.S. positions, not logical
+letters in other host layouts. The helper refuses those key events on other
+layouts with a specific reason; ordinary typing and navigation remain available.
+Logical shortcuts for other host layouts remain tracked in
+https://github.com/appandflow/stim/issues/2422.
 Control holds one exclusive server session per owned app, ends on disconnect,
 revocation, takeover or five minutes without input, and does not take a CLI
 simulator/device lock. Each action rechecks the exact owned process and the

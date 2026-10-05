@@ -367,9 +367,28 @@ shows permission guidance while status and logs stay usable. On the host Mac, St
 app window.
 
 With `macos-window-control` and a control pairing, **Control** enables mouse
-clicks/drags, printable ASCII typing and keyboard shortcuts (Tab, Escape,
-Select all, Undo and Save). Turn on **Scroll** to scroll with a drag instead of
-moving the mouse. Each action verifies the same owned process and captured
+clicks/drags and printable ASCII typing. The main bar offers **Keyboard** and
+**Scroll**. Keyboard attaches one compact, horizontally scrolling extra-key row over a
+subtle material backdrop on iOS and a translucent fallback elsewhere, with
+modifier glyphs, navigation keys and shortcut icons. Every control keeps its accessible name. One-shot
+Shift, Control, Option and Command clear after the next supported key or on
+keyboard dismissal. Scroll turns a drag into scrolling instead of moving the
+mouse.
+
+Keyboard Controller requires a new native client build; an older binary cannot
+receive it through a JavaScript update. A server advertising
+`macos-keyboard-extended` supports modified `a-z` and `0-9` one key at a time.
+Older servers retain fixed shortcuts and navigation but reject other modified
+letters; the phone explains that requirement. Modified symbols and
+multi-character input are unsupported. Letter and digit shortcuts require the
+owned app's selected **U.S. or ABC** layout because native key codes represent
+physical U.S. positions. The helper focuses the app and waits up to one second
+for activation before checking its layout; it refuses unavailable activation
+or other layouts. Ordinary typing and
+navigation remain available. [#2422](https://github.com/appandflow/stim/issues/2422) tracks logical mapping for
+other host layouts.
+
+Each action verifies the same owned process and captured
 standard window. A modal or disjoint window, changed capture or resize refuses
 input. Contained nonmodal auxiliary windows are allowed; input still goes only
 to the focused captured main window. Control

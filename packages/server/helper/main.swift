@@ -1127,4 +1127,10 @@ case "iphone":
 default:
   fail(usage)
 }
-dispatchMain()
+if arguments[1] == "macos" {
+  // AppKit refreshes NSRunningApplication activation during main run-loop turns.
+  RunLoop.main.add(Port(), forMode: .default)
+  CFRunLoopRun()
+} else {
+  dispatchMain()
+}
