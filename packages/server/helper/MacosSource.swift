@@ -356,8 +356,7 @@ final class MacosSource: NSObject, Source, SCStreamDelegate, SCStreamOutput {
         var focusedValue: CFTypeRef?
         guard self.matches(),
           AXUIElementCopyAttributeValue(application, kAXFocusedWindowAttribute as CFString, &focusedValue) == .success,
-          let focusedValue,
-          let focused = ([own] + self.attachedSheets(own)).first(where: { CFEqual(focusedValue, $0) })
+          let focusedValue, CFEqual(focusedValue, focused)
         else { throw self.refusal("The captured owned window changed before input.") }
         for event in events {
           guard self.matches() else { throw self.refusal("The owned macOS app process changed before input.") }
@@ -399,7 +398,10 @@ final class MacosSource: NSObject, Source, SCStreamDelegate, SCStreamOutput {
     case .touch(let phase, let point, _):
       let type: NSEvent.EventType = phase == .down ? .leftMouseDown : phase == .up ? .leftMouseUp : .leftMouseDragged
       let global = location(point)
-      let target = pointerWindow(global)
+      let target = inputQueue.sync {
+        if phase != .down, let held = heldMouse, held.session == session { return held.window }
+        return pointerWindow(global)
+      }
       guard
         let native = NSEvent.mouseEvent(
           with: type, location: CGPoint(x: global.x - target.frame.minX, y: target.frame.maxY - global.y),

@@ -122,10 +122,11 @@ digit key events on other layouts; ordinary typing and navigation still work.
 [#2422](https://github.com/appandflow/stim/issues/2422) tracks logical shortcuts for other host layouts.
 
 Each action rechecks the exact owned
-process and the same single standard window; modal or disjoint windows, changed
+process and the same single standard window; modal dialogs or disjoint windows, changed
 capture or resize refuse input. Contained nonmodal auxiliaries are allowed. A sheet
 attached to the captured window takes focus and pointer input; disjoint windows
-still refuse. The server holds one exclusive session per app, ending
+still refuse. A sheet larger than the captured window is not supported.
+The server holds one exclusive session per app, ending
 on disconnect, revocation, takeover or five idle minutes, without a CLI device
 lock. Existing **Device Control and Data Access** permission (**Accessibility** on
 macOS 26 and earlier) is required. Stim never requests
