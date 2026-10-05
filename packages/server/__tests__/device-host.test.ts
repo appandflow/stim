@@ -44,13 +44,13 @@ if(input.mode === 'offer') {
   ],{stdio:'ignore'});
 
   const declined=request.deviceType==='unavailable'?'SDK unavailable':request.deviceType==='empty-reason'?'':null;
-  const choice=request.platform==='ios' ? {deviceTypeId:'iphone',runtimeId:'ios',deviceType:'iPhone',runtime:'27.1',architecture:'arm64',udid:'not-a-device'} : {systemImage:'system-images;android-30;google_apis;arm64-v8a',deviceProfile:'pixel_6',architecture:'arm64-v8a'};
+  const choice=request.platform==='macos' ? {architecture:'arm64',macosVersion:'27.0'} : request.platform==='ios' ? {deviceTypeId:'iphone',runtimeId:'ios',deviceType:'iPhone',runtime:'27.1',architecture:'arm64',udid:'not-a-device'} : {systemImage:'system-images;android-30;google_apis;arm64-v8a',deviceProfile:'pixel_6',architecture:'arm64-v8a'};
   process.stdout.write(JSON.stringify({platform:request.platform,choice:declined?null:choice,declined,resources:{cpus:4,loadPerCore:0.5,memoryFreeBytes:1000,memoryPressure:'normal',workerDiskFreeBytes:null}}));
   process.exit(0);
 }
 const home = process.env.STIM_HOME;
 const iosDevice = {udid:'12345678-1234-1234-1234-123456789abc',name:'stim-hosted',deviceTypeId:'iphone',runtimeId:'ios',deviceType:'iPhone',runtime:'27.1',architecture:'arm64'};
-const device = input.platform === 'android' ? {avdName:'stim-hosted-'+input.session,serial:'emulator-'+input.consolePort,consolePort:input.consolePort,systemImage:'system-images;android-30;google_apis;arm64-v8a',deviceProfile:'pixel_6',architecture:'arm64-v8a'} : iosDevice;
+const device = input.platform === 'macos' ? {architecture:'arm64',macosVersion:'27.0',appSlot:input.appSlot} : input.platform === 'android' ? {avdName:'stim-hosted-'+input.session,serial:'emulator-'+input.consolePort,consolePort:input.consolePort,systemImage:'system-images;android-30;google_apis;arm64-v8a',deviceProfile:'pixel_6',architecture:'arm64-v8a'} : iosDevice;
 const out = value => process.stdout.write(JSON.stringify(value));
 if(input.mode === 'prepare') {
   writeFileSync(join(home,'entered'),String(process.pid));
@@ -60,7 +60,7 @@ if(input.mode === 'prepare') {
   }
   else {
     writeFileSync(join(home,'hosted-device.json'),JSON.stringify(device));
-    writeFileSync(join(home,'created-devices.json'),JSON.stringify({version:1,ios:input.platform==='android'?[]:[device.udid],android:input.platform==='android'?[device.avdName]:[],web:[]}));
+    if(input.platform !== 'macos') writeFileSync(join(home,'created-devices.json'),JSON.stringify({version:1,ios:input.platform==='android'?[]:[device.udid],android:input.platform==='android'?[device.avdName]:[],web:[]}));
     if(input.deviceType === 'descendant') {
       spawn(process.execPath,['--input-type=module','-e',
         "import {writeFileSync} from 'node:fs'; process.on('SIGTERM',()=>{}); writeFileSync(process.env.STIM_HOME+'/descendant',String(process.pid)); setInterval(()=>{},1000);"
@@ -722,8 +722,14 @@ function appOffer(session: string, attempt = 'app-first', platform = 'ios') {
   const content = Buffer.from('independent content for upload replay');
   const sha256 = createHash('sha256').update(content).digest('hex');
   const files = [
-    { path: platform === 'android' ? 'App.apk' : 'Info.plist', kind: 'file', size: content.length, sha256 },
+    {
+      path: platform === 'android' ? 'App.apk' : platform === 'macos' ? 'Contents/Info.plist' : 'Info.plist',
+      kind: 'file',
+      size: content.length,
+      sha256,
+    },
   ];
+  if (platform === 'macos') files.push({ path: 'Contents/MacOS/Fixture', kind: 'exec', size: content.length, sha256 });
   const manifest = Buffer.from(JSON.stringify(files));
   return {
     content,
@@ -809,7 +815,7 @@ test('refuses app mutations after the real session owner disappears until explic
   await state(retained.session, 'stopped');
 });
 
-test.each(['ios', 'android'])(
+test.each(['ios', 'android', 'macos'])(
   'resumes %s app bytes and reconciles a lost install reply without another native launch',
   async (platform) => {
     const first = reserve({ platform });
@@ -956,7 +962,7 @@ test('offers schema-compatible SDK choices without creating a journal, claim, or
   validator.addSchema(protocolJsonSchema(), 'protocol');
   const acceptsRequest = validator.compile({ $ref: 'protocol#/$defs/ClientRequest' });
   const acceptsOffer = validator.compile({ $ref: 'protocol#/$defs/HostedDeviceOffer' });
-  for (const platform of ['ios', 'android']) {
+  for (const platform of ['ios', 'android', 'macos']) {
     const params = { platform };
     expect(acceptsRequest({ id: 1, method: 'device-host.offer', params })).toBe(true);
     const answer = await host.offer('client', params);
@@ -1099,4 +1105,94 @@ test('app deliveries carry an agent grant for any driver name but only one sessi
     { ...grant, token: 'short' },
   ])
     expect(acceptsDelivery({ ...delivery, agent })).toBe(false);
+});
+
+test('macOS reservations isolate concurrent clients, validate on the wire and reuse only stopped slots', async () => {
+  await host.close();
+  host = new DeviceHost({
+    worker: join(home, 'worker.mjs'),
+    env: { ...process.env, STIM_MAX_DEVICES: '2' },
+    allowed: (client) => allowed.has(client),
+  });
+  const validator = new Ajv2020({ strict: false, validateFormats: false });
+  validator.addSchema(protocolJsonSchema(), 'protocol');
+  const acceptsRequest = validator.compile({ $ref: 'protocol#/$defs/ClientRequest' });
+  const acceptsSession = validator.compile({ $ref: 'protocol#/$defs/HostedDeviceSession' });
+  const params = { ...request, platform: 'macos' };
+  for (const method of ['device-host.reserve', 'device-host.offer']) {
+    const input = method === 'device-host.offer' ? { platform: 'macos' } : params;
+    expect(acceptsRequest({ id: 1, method, params: input })).toBe(true);
+    for (const selector of ['deviceType', 'runtime', 'systemImage', 'deviceProfile']) {
+      expect(acceptsRequest({ id: 1, method, params: { ...input, [selector]: 'invalid' } })).toBe(false);
+    }
+  }
+  const first = reserve(params);
+  const secondAnswer = host.reserve('other', params);
+  if ('error' in secondAnswer) throw new Error(secondAnswer.error.message);
+  const second = secondAnswer.result;
+  expect(first.appSlot).toBe(1);
+  expect(second.appSlot).toBe(2);
+  for (const session of [first, second]) {
+    expect(acceptsSession(session)).toBe(true);
+    expect(acceptsSession(await state(session.id, 'ready'))).toBe(true);
+    expect(existsSync(join(deviceHostArea(session.id), 'home', 'created-devices.json'))).toBe(false);
+  }
+  expect(host.reserve('client', { ...params, attempt: 'full', slot: 'second' })).toHaveProperty(
+    'error.code',
+    'device-busy',
+  );
+  expect(() => host.viewTarget('client', first.id)).toThrow('iOS sessions only');
+  expect(
+    await host.metroOpen('client', { session: first.id, gatewayPort: 12345, secret: 'a'.repeat(64) }, '127.0.0.1'),
+  ).toHaveProperty('error.message', 'Hosted Metro currently supports iOS sessions only.');
+  host.stop('client', { session: first.id });
+  await state(first.id, 'stopped');
+  expect(reserve({ ...params, attempt: 'replacement' }).appSlot).toBe(1);
+  expect(host.attach('other', { session: second.id })).toHaveProperty('result.state', 'ready');
+});
+
+test.each([
+  { mode: 'development' },
+  { mode: 'development', devClientScheme: 'fixture' },
+  { devClientScheme: 'fixture' },
+  { bundleId: 'com.apple.fixture' },
+  { bundleId: 'a'.repeat(255) },
+])('refuses macOS app offer %j before creating a receipt', async (invalid) => {
+  const first = reserve({ platform: 'macos' });
+  await state(first.id, 'ready');
+  const app = appOffer(first.id, 'app-first', 'macos');
+  expect(host.appOffer('client', { ...app.params, ...invalid })).toHaveProperty('error.code', 'action-failed');
+  expect(existsSync(join(deviceHostArea(first.id), 'apps', 'app-first'))).toBe(false);
+});
+
+test('macOS offer and reserve refuse all 64 unresolved app slots without mutating the journal', async () => {
+  await host.close();
+  host = new DeviceHost({
+    worker: join(home, 'worker.mjs'),
+    env: { ...process.env, STIM_MAX_DEVICES: '0' },
+    allowed: () => true,
+  });
+  mkdirSync(deviceHostRoot(), { recursive: true });
+  const sessions = Array.from({ length: 64 }, (_, index) => ({
+    ...request,
+    platform: 'macos',
+    attempt: `occupied-${index}`,
+    id: randomUUID(),
+    client: 'other',
+    state: 'unknown',
+    device: null,
+    appSlot: index + 1,
+    createdAt: new Date().toISOString(),
+  }));
+  const journal = JSON.stringify({ version: 1, sessions });
+  writeFileSync(join(deviceHostRoot(), 'sessions.json'), journal);
+  expect(await host.offer('client', { platform: 'macos' })).toHaveProperty(
+    'result.declined',
+    expect.stringContaining('All hosted macOS app slots are reserved'),
+  );
+  expect(host.reserve('client', { ...request, platform: 'macos' })).toHaveProperty(
+    'error.message',
+    expect.stringContaining('All hosted macOS app slots are reserved'),
+  );
+  expect(readFileSync(join(deviceHostRoot(), 'sessions.json'), 'utf8')).toBe(journal);
 });

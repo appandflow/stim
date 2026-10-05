@@ -5,12 +5,14 @@ import { inspectHostedDevice } from '../device-host/offer.ts';
 import type { SystemImage } from '../devices/android.ts';
 
 const native = vi.hoisted(() => ({
+  runFile: vi.fn<(file: string, args?: string[], options?: unknown) => string>(),
   pressure: vi.fn<() => string | null>(),
   ios: vi.fn<(selectors: unknown) => object>(),
   images: vi.fn<() => SystemImage[]>(),
   create: vi.fn<() => void>(),
   boot: vi.fn<() => void>(),
 }));
+vi.mock('../exec.ts', () => ({ getExecutor: () => ({ runFile: native.runFile }) }));
 vi.mock('../host-memory.ts', () => ({ readHostMemoryPressure: () => native.pressure() }));
 vi.mock('../devices/ios.ts', () => ({
   listAllIosSims: () => [],
@@ -33,6 +35,7 @@ beforeEach(() => {
   home = mkdtempSync(join(tmpdir(), 'stim-host-offer-'));
   process.env.STIM_HOME = home;
   native.pressure.mockReturnValue('normal');
+  native.runFile.mockReturnValue('27.0');
   native.ios.mockImplementation((selectors) => {
     if ((selectors as { runtime?: string }).runtime === 'missing') throw new Error('Runtime not installed.');
     return { deviceTypeId: 'iphone', runtimeId: 'ios', deviceType: 'iPhone', runtime: '27.1' };
@@ -71,6 +74,14 @@ test('reports selected installed SDK metadata without native or filesystem mutat
     choice: null,
     declined: 'The Android device profile is not installed.',
   });
+  expect(inspectHostedDevice({ platform: 'macos' })).toMatchObject({
+    choice: { architecture: 'arm64', macosVersion: '27.0' },
+    declined: null,
+  });
+  expect(native.runFile).toHaveBeenCalledWith('sw_vers', ['-productVersion'], {
+    timeoutMs: 10000,
+    killSignal: 'SIGKILL',
+  });
   expect(native.create).not.toHaveBeenCalled();
   expect(native.boot).not.toHaveBeenCalled();
   expect(readdirSync(home)).toEqual([]);
@@ -80,7 +91,7 @@ test.each([null, 'warning', 'critical'])(
   'unknown or elevated pressure %s declines before SDK selection',
   (pressure) => {
     native.pressure.mockReturnValue(pressure);
-    for (const platform of ['ios', 'android'] as const)
+    for (const platform of ['ios', 'android', 'macos'] as const)
       expect(inspectHostedDevice({ platform })).toMatchObject({
         choice: null,
         declined: 'Host memory pressure is unknown or elevated.',

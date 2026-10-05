@@ -1375,7 +1375,7 @@ export function protocolJsonSchema(): JsonSchema {
         required: ['platform', 'choice', 'resources', 'declined', 'capacity'],
         additionalProperties: false,
         properties: {
-          platform: { enum: ['ios', 'android'] },
+          platform: { enum: ['ios', 'android', 'macos'] },
           choice: {},
           declined: { type: ['string', 'null'], minLength: 1 },
           resources: {
@@ -1445,6 +1445,25 @@ export function protocolJsonSchema(): JsonSchema {
               },
             },
           },
+          {
+            properties: {
+              platform: { const: 'macos' },
+              choice: {
+                anyOf: [
+                  { type: 'null' },
+                  {
+                    type: 'object',
+                    required: ['architecture', 'macosVersion'],
+                    additionalProperties: false,
+                    properties: {
+                      architecture: { enum: ['arm64', 'x86_64'] },
+                      macosVersion: { type: 'string', pattern: '^\\d+(\\.\\d+){0,2}$' },
+                    },
+                  },
+                ],
+              },
+            },
+          },
         ],
       },
       HostedMetroResult: {
@@ -1462,13 +1481,14 @@ export function protocolJsonSchema(): JsonSchema {
           client: { type: 'string' },
           workspace: { type: 'string' },
           slot: { type: 'string' },
-          platform: { enum: ['ios', 'android'] },
+          platform: { enum: ['ios', 'android', 'macos'] },
           attempt: { type: 'string' },
           deviceType: { type: 'string' },
           runtime: { type: 'string' },
           systemImage: { type: 'string' },
           deviceProfile: { type: 'string' },
           consolePort: { type: 'integer', minimum: 5554, maximum: 5584, multipleOf: 2 },
+          appSlot: { type: 'integer', minimum: 1, maximum: 64 },
           state: { enum: ['preparing', 'ready', 'stopping', 'stopped', 'unknown'] },
           device: {
             anyOf: [
@@ -1500,6 +1520,16 @@ export function protocolJsonSchema(): JsonSchema {
                   architecture: { enum: ['arm64-v8a', 'x86_64'] },
                 },
               },
+              {
+                type: 'object',
+                required: ['architecture', 'macosVersion', 'appSlot'],
+                additionalProperties: false,
+                properties: {
+                  architecture: { enum: ['arm64', 'x86_64'] },
+                  macosVersion: { type: 'string', pattern: '^\\d+(\\.\\d+){0,2}$' },
+                  appSlot: { type: 'integer', minimum: 1, maximum: 64 },
+                },
+              },
             ],
           },
           createdAt: { type: 'string' },
@@ -1507,6 +1537,16 @@ export function protocolJsonSchema(): JsonSchema {
           appAttempt: { type: 'string' },
           metroPort: { type: 'integer', minimum: 1, maximum: 65535 },
         },
+        oneOf: [
+          {
+            required: ['appSlot'],
+            properties: {
+              platform: { const: 'macos' },
+              device: { anyOf: [{ type: 'null' }, { required: ['appSlot', 'macosVersion'] }] },
+            },
+          },
+          { properties: { platform: { enum: ['ios', 'android'] } }, not: { required: ['appSlot'] } },
+        ],
       },
       HelloParams: {
         type: 'object',
@@ -1950,7 +1990,7 @@ export function protocolJsonSchema(): JsonSchema {
             required: ['platform'],
             additionalProperties: false,
             properties: {
-              platform: { enum: ['ios', 'android'] },
+              platform: { enum: ['ios', 'android', 'macos'] },
               deviceType: { type: 'string', minLength: 1, maxLength: 256 },
               runtime: { type: 'string', minLength: 1, maxLength: 256 },
               systemImage: { type: 'string', minLength: 1, maxLength: 256 },
@@ -1965,6 +2005,17 @@ export function protocolJsonSchema(): JsonSchema {
                 properties: { platform: { const: 'android' } },
                 not: { anyOf: [{ required: ['deviceType'] }, { required: ['runtime'] }] },
               },
+              {
+                properties: { platform: { const: 'macos' } },
+                not: {
+                  anyOf: [
+                    { required: ['deviceType'] },
+                    { required: ['runtime'] },
+                    { required: ['systemImage'] },
+                    { required: ['deviceProfile'] },
+                  ],
+                },
+              },
             ],
           }),
           request('device-host.reserve', {
@@ -1974,7 +2025,7 @@ export function protocolJsonSchema(): JsonSchema {
             properties: {
               workspace: { type: 'string', minLength: 1, maxLength: 4096 },
               slot: { type: 'string', pattern: '^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$' },
-              platform: { enum: ['ios', 'android'] },
+              platform: { enum: ['ios', 'android', 'macos'] },
               attempt: { type: 'string', pattern: '^[a-zA-Z0-9_-]{1,128}$' },
               deviceType: { type: 'string', minLength: 1, maxLength: 256 },
               runtime: { type: 'string', minLength: 1, maxLength: 256 },
@@ -1989,6 +2040,17 @@ export function protocolJsonSchema(): JsonSchema {
               {
                 properties: { platform: { const: 'android' } },
                 not: { anyOf: [{ required: ['deviceType'] }, { required: ['runtime'] }] },
+              },
+              {
+                properties: { platform: { const: 'macos' } },
+                not: {
+                  anyOf: [
+                    { required: ['deviceType'] },
+                    { required: ['runtime'] },
+                    { required: ['systemImage'] },
+                    { required: ['deviceProfile'] },
+                  ],
+                },
               },
             ],
           }),

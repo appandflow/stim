@@ -22,6 +22,7 @@ import {
   isJsonObject,
   parseHostedPlatformDevice,
   hostedDeviceId,
+  hostedMacosBundleId,
   loadConfig,
   parseHostedRequest,
   readHostedDevice,
@@ -188,9 +189,10 @@ export class DeviceHost {
         (native.resources.memoryPressure !== 'normal' ? 'Host memory pressure is unknown or elevated.' : null);
       if (max > 0 && running >= max)
         declined = 'All configured hosted device reservations are occupied, including unresolved sessions.';
-      if (request.platform === 'android') {
+      if (request.platform === 'android' || request.platform === 'macos') {
         try {
-          reserveAndroidPort(records);
+          if (request.platform === 'android') reserveAndroidPort(records);
+          else reserveMacosSlot(records);
         } catch (error) {
           declined = (error as Error).message;
         }
@@ -214,7 +216,7 @@ export class DeviceHost {
     if (!request)
       return refused(
         'bad-request',
-        'reserve needs an iOS or Android workspace, slot, attempt and valid optional selectors.',
+        'reserve needs an iOS, Android or macOS workspace, slot, attempt and valid optional selectors.',
       );
     let start: HostedDeviceSession | null = null;
     try {
@@ -245,6 +247,7 @@ export class DeviceHost {
           device: null,
           createdAt: new Date().toISOString(),
           ...(request.platform === 'android' ? { consolePort: reserveAndroidPort(records) } : {}),
+          ...(request.platform === 'macos' ? { appSlot: reserveMacosSlot(records) } : {}),
         };
         this.acquire(record);
         records.push(record);
@@ -448,6 +451,15 @@ export class DeviceHost {
 
   appOffer(client: string, params: unknown): AppAnswer<Methods['device-host.app.offer']['result']> {
     if (!this.options.allowed(client)) return refused('forbidden', 'Current device-host approval is required.');
+    if (isJsonObject(params) && params.devClientScheme !== undefined) {
+      try {
+        if (this.appSession(client, params).platform === 'macos')
+          return refused(
+            'action-failed',
+            'Hosted macOS apps require release mode without a development client scheme.',
+          );
+      } catch {}
+    }
     const offer = parseHostedAppOffer(params);
     if (!offer)
       return refused(
@@ -456,6 +468,14 @@ export class DeviceHost {
       );
     try {
       const record = this.appSession(client, offer);
+      if (record.platform === 'macos') {
+        if (offer.mode === 'development' || offer.devClientScheme !== undefined)
+          throw new Error('Hosted macOS apps require release mode without a development client scheme.');
+        if (offer.bundleId.startsWith('com.apple.'))
+          throw new Error('Hosted macOS apps cannot use a com.apple. bundle identity.');
+        if (hostedMacosBundleId(offer.bundleId, record.appSlot!).length > 255)
+          throw new Error('The hosted macOS bundle identity exceeds 255 characters.');
+      }
       if (record.state !== 'ready' || this.closed || !this.owned.has(record.id))
         throw new Error(
           'Only a ready session attached to this server accepts an app. Explicit stop must reconcile a lost owner.',
@@ -790,6 +810,7 @@ export class DeviceHost {
         systemImage: record.systemImage,
         deviceProfile: record.deviceProfile,
         consolePort: record.consolePort,
+        appSlot: record.appSlot,
         session: record.id,
         attempt,
         metroPort: mode === 'install' ? owned.metro?.port : undefined,
@@ -955,7 +976,19 @@ function reserveAndroidPort(records: HostedDeviceSession[]): number {
   throw new Error('All supported hosted Android console ports are reserved. Attach or stop an existing session.');
 }
 
+function reserveMacosSlot(records: HostedDeviceSession[]): number {
+  const slots = new Set(
+    records
+      .filter((record) => record.platform === 'macos' && record.state !== 'stopped')
+      .map((record) => record.appSlot),
+  );
+  for (let slot = 1; slot <= 64; slot++) if (!slots.has(slot)) return slot;
+  throw new Error('All hosted macOS app slots are reserved. Attach or stop an existing session.');
+}
+
 function assertSessionDevice(record: HostedDeviceSession, device: NonNullable<HostedDeviceSession['device']>): void {
+  if (record.platform === 'macos' && (!('appSlot' in device) || device.appSlot !== record.appSlot))
+    throw new Error('The macOS worker app slot does not match its reserved session.');
   if (
     record.platform === 'android' &&
     (!('avdName' in device) ||

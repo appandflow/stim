@@ -19,3 +19,15 @@ test('rejects traversal, aliases and entries below a file or link before any bun
     'Resources/value',
   ]);
 });
+
+test('macOS manifests require a Contents plist and executable while preserving iOS and APK delivery', () => {
+  const plist = file('Contents/Info.plist');
+  const executable = file('Contents/MacOS/Fixture', 'exec');
+  expect(parseHostedAppManifest([plist, executable])).toHaveLength(2);
+  expect(parseHostedAppManifest([plist])).toBeNull();
+  expect(parseHostedAppManifest([executable])).toBeNull();
+  expect(parseHostedAppManifest([plist, file('Contents/MacOS/Fixture')])).toBeNull();
+  expect(parseHostedAppManifest([file('Contents/Info.plist', 'link'), executable])).toBeNull();
+  expect(parseHostedAppManifest([file('Info.plist')])).toHaveLength(1);
+  expect(parseHostedAppManifest([file('App.apk')])).toHaveLength(1);
+});

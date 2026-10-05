@@ -195,7 +195,7 @@ tokens.
 Device hosting has a separate `device-host` capability. An approved client can
 reserve, boot, reconnect to and stop its own iOS simulator or Android emulator
 through the protocol. It can deliver, install and launch a compatible iOS app
-bundle or Android APK, stream the iOS simulator and control it. The hosted iOS
+bundle, Android APK or prebuilt macOS app, stream the iOS simulator and control it. The hosted iOS
 app connects back to Metro on the client Mac. Automatic CLI placement, client view/control relays and
 Android Metro and viewing remain in [#2266](https://github.com/appandflow/stim/issues/2266).
 
@@ -237,7 +237,8 @@ Before reserving, an approved hosting client can send:
 ```
 
 Use `platform: "android"` with optional `systemImage` and `deviceProfile`, or
-`ios` with optional `deviceType` and `runtime`. Omit selectors for the same
+`ios` with optional `deviceType` and `runtime`. Use `macos` without selectors
+for the host architecture and macOS version. Omit selectors for the same
 installed defaults used by reserve. The response includes `platform`, the
 selected SDK `choice` (runtime/model/image and host architecture), `resources`,
 `capacity` and a nullable `declined` reason. An unavailable SDK choice is `null`
@@ -247,7 +248,8 @@ no session, simulator, AVD or ownership claim.
 `capacity.running` counts every reservation not confirmed stopped, including
 unresolved sessions. `max` is `concurrency.maxDevices`; zero means uncapped and
 `available` is then `null`. Android offers also decline when all supported
-console ports are already recorded as occupied. Resource values are advisory:
+console ports are already recorded as occupied. macOS offers decline when all
+64 app slots are reserved. Resource values are advisory:
 `cpus`, five-minute `loadPerCore`, `memoryFreeBytes`, `memoryPressure` (nullable
 when unknown), and `workerDiskFreeBytes` (nullable when unreadable). Disk space
 is measured on the Stim home volume, which can differ from Android AVD storage.
@@ -414,6 +416,48 @@ does not wire an Android Metro bridge. Replaying an installed app attempt does
 not install or launch again. Owner loss, stop, revocation and uncertain outcomes
 retain the same reconciliation rules as iOS. Android viewing, Metro and client
 placement remain under [#2266](https://github.com/appandflow/stim/issues/2266).
+
+### Hosted macOS app sessions
+
+The same offer/reserve/attach/stop methods accept `platform: "macos"` without
+selectors. A macOS reservation counts toward `concurrency.maxDevices` and takes
+the lowest free `appSlot` from 1 through 64. Unresolved sessions retain their
+slot; only a confirmed stop frees it. The ready device describes the host's
+`architecture` (`arm64` or `x86_64`), `macosVersion` and `appSlot`. No simulator,
+emulator or created-device ledger entry is needed.
+
+```json
+{
+  "id": 1,
+  "method": "device-host.reserve",
+  "params": {
+    "workspace": "/client/app",
+    "slot": "default",
+    "platform": "macos",
+    "attempt": "macos-1"
+  }
+}
+```
+
+Deliver a prebuilt `.app` using the same digest manifest and resumable chunks.
+The manifest must include `Contents/Info.plist` as a file and an executable under
+`Contents/MacOS/`. Only release offers are accepted, with no `devClientScheme`
+and no `com.apple.` bundle identity. The host verifies the plist identity,
+contained executable, architecture slice, MACOS Mach-O platform and minimum OS.
+URL registrations (`CFBundleURLTypes`) and update feeds (`SUFeedURL`) refuse.
+
+Before launch the worker stamps `<bundleId>.hosted<appSlot>` and ad hoc signs
+its frameworks and bundle. That identity must fit within 255 characters. The
+existing macOS supervisor owns the app process, with `HOME`, `CFFIXED_USER_HOME`
+and `TMPDIR` pointing into the session's private app home. This is home and
+identity isolation, not an OS sandbox for the client's native code.
+`launched: true` requires matching live app and supervisor process identities.
+Stop and revocation verify and stop those processes, then delete only the last
+recorded hosted bundle identity's preferences domain. macOS preferences use the
+real user's preferences service despite the isolated home.
+
+macOS sessions refuse Metro, viewing and control. Client placement and streaming
+remain follow-ups in [#2403](https://github.com/appandflow/stim/issues/2403).
 
 ### Private hosted Metro
 

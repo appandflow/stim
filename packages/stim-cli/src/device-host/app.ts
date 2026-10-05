@@ -17,6 +17,7 @@ import {
   readHostedApp,
   readHostedDevice,
   type HostedIosDevice,
+  type HostedAppRecord,
 } from '@stim-cli/core/state';
 import { getExecutor } from '../exec.ts';
 import { installIosApp, iosAppProcess, launchIosApp } from '../engine/app-install.ts';
@@ -42,7 +43,7 @@ function version(value: string): number[] {
   return value.split('.').map(Number);
 }
 
-function newer(value: string, supported: string): boolean {
+export function newer(value: string, supported: string): boolean {
   const required = version(value);
   const installed = version(supported);
   for (let index = 0; index < 3; index++) {
@@ -52,14 +53,11 @@ function newer(value: string, supported: string): boolean {
   return false;
 }
 
-/** Materializes only verified manifest content inside the server-selected attempt, then drives its exact device. */
-export async function installHostedApp(
+export async function materializeHostedApp(
   home: string,
   session: string,
   attempt: string,
-  device: HostedIosDevice,
-  metroPort?: number,
-): Promise<true | 'unverified'> {
+): Promise<{ app: string; root: string; record: HostedAppRecord }> {
   const record = readHostedApp(session, attempt, home);
   const area = hostedAppArea(session, attempt, home);
   const app = join(area, 'App.app');
@@ -106,6 +104,18 @@ export async function installHostedApp(
     if (file.kind !== 'link' && (await digest(path)) !== file.sha256)
       throw new Error('App entries alias different content.');
   }
+  return { app, root, record };
+}
+
+/** Materializes only verified manifest content inside the server-selected attempt, then drives its exact device. */
+export async function installHostedApp(
+  home: string,
+  session: string,
+  attempt: string,
+  device: HostedIosDevice,
+  metroPort?: number,
+): Promise<true | 'unverified'> {
+  const { app, root, record } = await materializeHostedApp(home, session, attempt);
   const exec = getExecutor();
   const plist = (key: string) =>
     exec.runFile('/usr/libexec/PlistBuddy', ['-c', `Print :${key}`, join(app, 'Info.plist')], {
