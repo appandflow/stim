@@ -341,7 +341,7 @@ struct MachineView: View {
   private var cleanup: some View {
     Card {
       HStack(spacing: Space.lg) {
-        Image(systemName: "trash").foregroundStyle(Palette.accent)
+        Image(systemName: "trash").foregroundStyle(Palette.accent).accessibilityHidden(true)
         VStack(alignment: .leading, spacing: Space.xxs) {
           Text("Reclaim what Stim left behind")
           Text("Preview the stim gc report, then confirm before anything is deleted.")
@@ -477,6 +477,7 @@ struct MachineView: View {
           .font(.system(size: 11, weight: .semibold))
           .foregroundStyle(Palette.tertiary)
           .frame(width: 12)
+          .accessibilityHidden(true)
         Text(status.title(of: Project(root: repository.path))).font(.stim(.body, weight: .semibold)).lineLimit(1)
         Text("\(repository.worktrees.count) worktrees").foregroundStyle(Palette.tertiary)
         Spacer()
@@ -487,6 +488,7 @@ struct MachineView: View {
       .padding(.vertical, Space.md)
     }
     .buttonStyle(.hoverRow(radius: 0))
+    .accessibilityValue(open ? "Expanded" : "Collapsed")
     .help(abbreviatingHome(repository.path))
   }
 
@@ -740,6 +742,7 @@ struct MachineView: View {
       Image(systemName: runtime.id.hasPrefix("system-images;") ? "square.stack.3d.up" : "cpu")
         .foregroundStyle(runtime.unused ? Palette.warning : Palette.tertiary)
         .frame(width: 16)
+        .accessibilityHidden(true)
       VStack(alignment: .leading, spacing: Space.xxs) {
         Text(runtime.title).lineLimit(1)
         if let detail = runtime.detail { Text(detail).font(.stim(.caption)).foregroundStyle(Palette.secondary).lineLimit(1) }
@@ -784,7 +787,7 @@ struct MachineView: View {
           ForEach(Array(report.unmanaged.enumerated()), id: \.element.id) { index, location in
             if index > 0 { Rectangle().fill(Palette.border).frame(height: 1) }
             HStack(spacing: Space.lg) {
-              Image(systemName: "folder").foregroundStyle(Palette.tertiary).frame(width: 16)
+              Image(systemName: "folder").foregroundStyle(Palette.tertiary).frame(width: 16).accessibilityHidden(true)
               VStack(alignment: .leading, spacing: Space.xxs) {
                 Text(location.title)
                 Text(abbreviatingHome(location.detail ?? location.path ?? "")).font(.stim(.caption))

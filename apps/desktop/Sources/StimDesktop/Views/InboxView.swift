@@ -206,11 +206,11 @@ private struct InboxRow: View {
           NSPasteboard.general.clearContents()
           NSPasteboard.general.setString(command.shellLine, forType: .string)
         }
-        .accessibilityLabel("Copy command, \(command.displayLine())")
+        .accessibilityLabel("Copy command, \(title)")
         .help(command.displayLine())
         if command.isRunnable && command.isFix {
           Button("Fix\u{2026}") { fix(title, command) }
-            .accessibilityLabel("Fix, \(command.displayLine())")
+            .accessibilityLabel("Fix, \(title)")
             .help(command.displayLine())
         } else if command.isRunnable {
           runButton(command)
@@ -233,7 +233,7 @@ private struct InboxRow: View {
       }
     } else {
       Button("Run") { run(title, command) }
-        .accessibilityLabel("Run, \(command.displayLine())")
+        .accessibilityLabel("Run, \(title)")
         .help(command.displayLine())
     }
   }

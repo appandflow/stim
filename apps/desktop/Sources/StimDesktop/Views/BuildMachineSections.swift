@@ -121,6 +121,7 @@ struct MachineHeading<Trailing: View>: View {
   var body: some View {
     HStack(alignment: .center, spacing: Space.md) {
       Image(systemName: icon).font(.stim(.headline)).foregroundStyle(Palette.tertiary).frame(width: 22)
+        .accessibilityHidden(true)
       VStack(alignment: .leading, spacing: Space.xxs) {
         HStack(spacing: Space.md) {
           Text(verbatim: title).font(.stim(.headline, weight: .semibold))

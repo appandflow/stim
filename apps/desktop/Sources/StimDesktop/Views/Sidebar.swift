@@ -176,6 +176,7 @@ struct ProjectRow: View {
     HStack(spacing: Space.md) {
       Image(systemName: "folder")
         .foregroundStyle(selected || summary.hasActive ? Palette.primary : Palette.tertiary)
+        .accessibilityHidden(true)
       Text(store.title(of: summary.project)).lineLimit(1).truncationMode(.middle)
       Spacer()
       if summary.live > 0 {
