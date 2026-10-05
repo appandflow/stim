@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { existsSync, mkdirSync, realpathSync } from 'node:fs';
+import { dirname, isAbsolute, join, relative } from 'node:path';
 import { isIP, type AddressInfo } from 'node:net';
 import { withDirLock, createMetroBridge, type MetroBridge } from '@stim-cli/core';
 import {
@@ -27,6 +27,9 @@ import {
   loadConfig,
   parseHostedRequest,
   readHostedDevice,
+  readHostedMacosApp,
+  macosAppState,
+  readJsonObject,
   readHostedSessions,
   parseHostedOfferRequest,
   parseHostedNativeOffer,
@@ -41,6 +44,8 @@ import {
   type HostedDeviceSession,
   type HostedDeviceOffer,
   type HostedIosDevice,
+  type HostedMacosDevice,
+  type MacosAppState,
 } from '@stim-cli/core/state';
 import { writeJson } from './registry.ts';
 import { takeHostedInputClaim } from './hosted-input.ts';
@@ -76,6 +81,15 @@ interface OwnedSession {
   };
   viewer?: { close: () => Promise<void> };
 }
+
+type HostedViewTarget = { home: string; claim: ClaimHandle } & (
+  | { platform: 'ios'; session: HostedDeviceSession & { device: HostedIosDevice } }
+  | {
+      platform: 'macos';
+      session: HostedDeviceSession & { device: HostedMacosDevice };
+      app: MacosAppState & { app: NonNullable<MacosAppState['app']> };
+    }
+);
 
 type Answer = { result: HostedDeviceSession } | { error: ProtocolError };
 type AppAnswer<T> = { result: T } | { error: ProtocolError };
@@ -401,14 +415,7 @@ export class DeviceHost {
     if (owned.metro === metro) delete owned.metro;
   }
 
-  viewTarget(
-    client: string,
-    session: string,
-  ): {
-    session: HostedDeviceSession & { device: HostedIosDevice };
-    home: string;
-    claim: ClaimHandle;
-  } {
+  viewTarget(client: string, session: string): HostedViewTarget {
     if (this.closed || !this.options.allowed(client)) throw new Error('Current device-host approval is required.');
     const record = readHostedSessions().find((each) => each.client === client && each.id === session);
     const owned = this.owned.get(session);
@@ -416,14 +423,49 @@ export class DeviceHost {
       throw new Error(
         'Only a ready session attached to this server can be viewed. Explicit stop must reconcile a lost owner.',
       );
-    if (record.platform !== 'ios' || !('udid' in record.device))
-      throw new Error('Hosted view and input currently support iOS sessions only.');
+    if (record.platform !== 'ios' && record.platform !== 'macos')
+      throw new Error('Hosted view and input support iOS and macOS sessions only.');
     if (owned.stopping || owned.installing) throw new Error('This hosted session has a native operation in progress.');
     const home = join(deviceHostArea(record.id), 'home');
+    if (record.platform === 'macos') {
+      if (!('appSlot' in record.device) || record.device.appSlot !== record.appSlot)
+        throw new Error('The device record no longer matches this session.');
+      assertHostedDeviceLedger(home, `macos-${record.appSlot}`, 'macos');
+      const device = readHostedDevice(home, 'macos');
+      if (
+        device.appSlot !== record.device.appSlot ||
+        device.architecture !== record.device.architecture ||
+        device.macosVersion !== record.device.macosVersion
+      )
+        throw new Error('The device record no longer matches this session.');
+      const receipt = record.appAttempt ? readHostedAppMetadata(record.id, record.appAttempt) : null;
+      if (!receipt || receipt.state !== 'installed') throw new Error('The hosted macOS app is not installed.');
+      const app = macosAppState(readHostedMacosApp(home));
+      if (!app || app.state !== 'running' || !app.app) throw new Error('The hosted macOS app is not running.');
+      if (
+        app.bundleId !== hostedMacosBundleId(receipt.bundleId, device.appSlot) ||
+        app.bundleId !== readJsonObject(join(home, 'hosted-macos-app.json'))?.bundleId
+      )
+        throw new Error('The macOS app does not belong to this hosted session.');
+      const area = realpathSync(join(deviceHostArea(record.id), 'apps', record.appAttempt!));
+      for (const path of [app.bundle, app.executable]) {
+        const contained = relative(area, realpathSync(path));
+        if (!contained || contained === '..' || contained.startsWith('../') || isAbsolute(contained))
+          throw new Error('The macOS app does not belong to this hosted session.');
+      }
+      return {
+        platform: 'macos',
+        session: { ...record, device: record.device },
+        home,
+        claim: owned.claim,
+        app: { ...app, app: app.app },
+      };
+    }
+    if (!('udid' in record.device)) throw new Error('The device record no longer matches this session.');
     assertHostedDeviceLedger(home, record.device.udid);
     if (readHostedDevice(home).udid !== record.device.udid)
       throw new Error('The device record no longer matches this session.');
-    return { session: { ...record, device: record.device }, home, claim: owned.claim };
+    return { platform: 'ios', session: { ...record, device: record.device }, home, claim: owned.claim };
   }
 
   bindView(client: string, session: string, close: () => Promise<void>): () => void {

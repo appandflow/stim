@@ -1,3 +1,7 @@
+import { realpathSync } from 'node:fs';
+import { join } from 'node:path';
+import { workspaceName } from '../index.ts';
+import { readJsonObject } from './json-file.ts';
 import { inspectProcessIdentity } from '../process-identity.ts';
 import { readWorkspaceState } from './workspace-state.ts';
 
@@ -80,6 +84,15 @@ export function parseMacosRecord(value: unknown): MacosAppRecord | null {
 
 export function readMacosRecord(root: string): MacosAppRecord | null {
   return parseMacosRecord(readWorkspaceState(root)?.macos);
+}
+
+export function readHostedMacosApp(home: string): MacosAppRecord | null {
+  try {
+    const root = realpathSync(join(home, 'macos-app'));
+    return parseMacosRecord(readJsonObject(join(home, 'workspaces', workspaceName(root), 'state.json'))?.macos);
+  } catch {
+    return null;
+  }
 }
 
 export function macosAppState(record: MacosAppRecord | null): MacosAppState | null {

@@ -100,6 +100,8 @@ export const METHODS = [
   'device-host.control.end',
   'device-host.input.touch',
   'device-host.input.text',
+  'device-host.input.scroll',
+  'device-host.input.key',
   'device-host.input.button',
   'device-host.input.rotate',
   'device-host.input.posture',
@@ -134,6 +136,8 @@ export const DEVICE_HOST_METHODS = [
   'device-host.control.end',
   'device-host.input.touch',
   'device-host.input.text',
+  'device-host.input.scroll',
+  'device-host.input.key',
   'device-host.input.button',
   'device-host.input.rotate',
   'device-host.input.posture',
@@ -1046,6 +1050,8 @@ export interface Methods {
   'device-host.control.end': Methods['control.end'];
   'device-host.input.touch': Methods['input.touch'];
   'device-host.input.text': Methods['input.text'];
+  'device-host.input.scroll': Methods['input.scroll'];
+  'device-host.input.key': Methods['input.key'];
   'device-host.input.button': Methods['input.button'];
   'device-host.input.rotate': Methods['input.rotate'];
   'device-host.input.posture': Methods['input.posture'];
@@ -2155,6 +2161,28 @@ export function protocolJsonSchema(): JsonSchema {
                 text: { type: 'string', minLength: 1, maxLength: MAX_INPUT_TEXT, pattern: '^[\\x20-\\x7e\\n\\t\\b]+$' },
               },
               ['text'],
+            ),
+          ),
+          request(
+            'device-host.input.scroll',
+            session(
+              {
+                x: { type: 'number', minimum: 0, maximum: 1 },
+                y: { type: 'number', minimum: 0, maximum: 1 },
+                deltaX: { type: 'number', minimum: -1000, maximum: 1000 },
+                deltaY: { type: 'number', minimum: -1000, maximum: 1000 },
+              },
+              ['x', 'y', 'deltaX', 'deltaY'],
+            ),
+          ),
+          request(
+            'device-host.input.key',
+            session(
+              {
+                key: { enum: [...INPUT_KEYS] },
+                modifiers: { type: 'array', maxItems: 4, uniqueItems: true, items: { enum: [...KEY_MODIFIERS] } },
+              },
+              ['key'],
             ),
           ),
           request('device-host.input.button', session({ button: { enum: [...INPUT_BUTTONS] } }, ['button'])),
