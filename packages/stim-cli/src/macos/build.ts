@@ -14,6 +14,7 @@ import {
   offloadPlacement,
   placementLoad,
   remotePhaseText,
+  type BuildHandoff,
   type OffloadChoice,
 } from '../offload/client.ts';
 import { macosToolchain } from '../offload/toolchain.ts';
@@ -76,7 +77,12 @@ export async function buildMacosBundle({
   record?: MacosBuild;
   resources?: unknown;
   assetCatalog?: unknown;
-}): Promise<{ bundleId: string; offloadedTo: string | null; offloadFallback: string | null }> {
+}): Promise<{
+  bundleId: string;
+  offloadedTo: string | null;
+  offloadFallback: string | null;
+  handoff: BuildHandoff | null;
+}> {
   validateInfoPlist(root, product, infoPlist);
   const repository = realpathSync(repoRoot(root) ?? root);
   const extras = resolveBundleExtras(root, repository, resources, assetCatalog);
@@ -165,7 +171,7 @@ export async function buildMacosBundle({
         getExecutor().runFile('codesign', ['--verify', '--strict', outcome.artifactPath]);
         promote(outcome.artifactPath);
         if (record) record.offloadedTo = outcome.machine;
-        return { bundleId, offloadedTo: outcome.machine, offloadFallback: null };
+        return { bundleId, offloadedTo: outcome.machine, offloadFallback: null, handoff: outcome.handoff ?? null };
       }
       write(`placement: here (${placement.reason})`);
     } catch (error) {
@@ -192,7 +198,7 @@ export async function buildMacosBundle({
       const staged = join(staging, `${product}.app`);
       stageBundle(root, product, infoPlist, bin, staged, bundleId, extras);
       promote(staged);
-      return { bundleId, offloadedTo: null, offloadFallback };
+      return { bundleId, offloadedTo: null, offloadFallback, handoff: null };
     } finally {
       releaseBuildSlot(slot);
     }

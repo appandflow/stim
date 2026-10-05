@@ -239,7 +239,13 @@ stim stop`}
 />
 
 Hosted delivery carries the staged bundle, including declared resources and
-compiled assets. The copied bundle keeps its own `CFBundleIdentifier`. The host runs it as
+compiled assets. When `offload.mode` built the app on the hosting Mac itself
+(the same tailnet node), the host copies the files from the build it kept for
+this Mac instead of receiving them again over the tailnet. It admits only bytes
+that match the digests of the bundle Stim verified here, and it needs both the
+build and the device-host approval for this Mac. Files the host cannot take, an
+older `stim-server`, or a build fetched more than 10 minutes earlier fall back
+to the upload. The copied bundle keeps its own `CFBundleIdentifier`. The host runs it as
 `<id>.hosted<slot>` from a fixed pool of slots, so its bundle ID stays the same
 across rebuilds. Whether macOS keeps the permissions the hosted app asks for itself
 also depends on how the host signs it.

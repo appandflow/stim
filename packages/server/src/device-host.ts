@@ -53,7 +53,7 @@ import {
 import { writeJson } from './registry.ts';
 import { takeHostedInputClaim } from './hosted-input.ts';
 import type { Methods, ProtocolError } from './protocol.ts';
-import { appDelivery, offerHostedApp, chunkHostedApp, changeHostedApp } from './hosted-app.ts';
+import { appDelivery, offerHostedApp, chunkHostedApp, changeHostedApp, handOverHostedApp } from './hosted-app.ts';
 import type { HostedAgentHost } from './agent-driver.ts';
 
 export interface DeviceHostLimits {
@@ -92,6 +92,8 @@ export interface DeviceHostOptions {
   allowed: (client: string) => boolean;
   /** Issues and revokes the agent control that hosted macOS apps hand their client. */
   agents: Pick<HostedAgentHost, 'appRunning' | 'appStopped' | 'access'>;
+  /** Takes the macOS bundle a build on this Mac retained under `handoff`, when `client` may have it, or says why not. */
+  builtBundle?: (client: string, handoff: string, sha256: string) => { bundle: string; release: () => void } | string;
   limits?: Partial<DeviceHostLimits>;
 }
 
@@ -106,6 +108,7 @@ type HostedViewTarget = { home: string; claim: ClaimHandle } & (
 
 type Answer = { result: HostedDeviceSession } | { error: ProtocolError };
 type AppAnswer<T> = { result: T } | { error: ProtocolError };
+const sha256 = (value: unknown): value is string => typeof value === 'string' && /^[0-9a-f]{64}$/.test(value);
 const refused = (code: ProtocolError['code'], message: string): { error: ProtocolError } => ({
   error: { code, message },
 });
@@ -570,6 +573,38 @@ export class DeviceHost {
       const attempt = (params as { attempt: string }).attempt;
       if (owned.app?.attempt !== attempt || !owned.app.files.length) owned.app = readHostedApp(record.id, attempt);
       return { result: await chunkHostedApp(owned.app, params) };
+    } catch (error) {
+      return refused('action-failed', (error as Error).message);
+    }
+  }
+
+  async appHandoff(client: string, params: unknown): Promise<AppAnswer<{ files: number; bytes: number }>> {
+    if (!this.options.allowed(client)) return refused('forbidden', 'Current device-host approval is required.');
+    const build = isJsonObject(params) && isJsonObject(params.build) ? params.build : null;
+    if (!build || !sha256(build.handoff) || !sha256(build.sha256))
+      return refused('bad-request', 'App handoffs need a build handoff token and the artifact sha256.');
+    try {
+      const record = this.appSession(client, params);
+      const attempt = (params as { attempt: string }).attempt;
+      if (record.platform !== 'macos') throw new Error('Only hosted macOS sessions take a build from this Mac.');
+      if (record.state !== 'ready' || this.closed || !this.owned.has(record.id) || record.appAttempt !== attempt)
+        throw new Error(
+          'Only the current app attempt of a ready session attached to this server receives an app. Explicit stop must reconcile a lost owner.',
+        );
+      const owned = this.acquire(record);
+      if (owned.stopping || owned.installing)
+        throw new Error('This hosted session already has a native operation in progress.');
+      const app = readHostedApp(record.id, attempt);
+      if (app.state !== 'receiving' || !app.files.length)
+        throw new Error('Send the app manifest before handing over a build.');
+      const taken =
+        this.options.builtBundle?.(client, build.handoff, build.sha256) ?? 'This server hands over no builds.';
+      if (typeof taken === 'string') throw new Error(taken);
+      try {
+        return { result: await handOverHostedApp(app, taken.bundle) };
+      } finally {
+        taken.release();
+      }
     } catch (error) {
       return refused('action-failed', (error as Error).message);
     }

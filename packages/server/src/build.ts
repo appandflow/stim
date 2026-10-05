@@ -1,5 +1,5 @@
 import { execFile, spawn, type ChildProcess } from 'node:child_process';
-import { createHash, randomUUID, type Hash } from 'node:crypto';
+import { createHash, randomBytes, randomUUID, type Hash } from 'node:crypto';
 import {
   appendFileSync,
   closeSync,
@@ -14,7 +14,7 @@ import {
   statfsSync,
   statSync,
 } from 'node:fs';
-import { dirname, join, resolve as resolvePath } from 'node:path';
+import { basename, dirname, join, resolve as resolvePath } from 'node:path';
 import { createInterface } from 'node:readline';
 import type { WebSocket } from 'ws';
 import {
@@ -70,6 +70,8 @@ export interface BuildLimits {
   minFreeMemoryBytes: number;
   /** How often the idle Gradle daemons of offloaded builds are checked. */
   daemonSweepMs: number;
+  /** How long a fetched macOS bundle stays here for a hosted session on this Mac to take. */
+  handoffMs: number;
 }
 
 const DEFAULT_BUILD_LIMITS: BuildLimits = {
@@ -81,6 +83,7 @@ const DEFAULT_BUILD_LIMITS: BuildLimits = {
   toolchainTtlMs: 60_000,
   minFreeMemoryBytes: 2 * 1024 ** 3,
   daemonSweepMs: 60_000,
+  handoffMs: 10 * 60_000,
 };
 
 const DIGEST_BYTES = 32;
@@ -187,6 +190,7 @@ function listProcesses(): Promise<string> {
 interface Job {
   id: string;
   client: string;
+  platform: unknown;
   child: ChildProcess;
   archive: string;
   /** Whether the job holds one of this Mac's `concurrency.maxBuilds` slots, which `machineCapacity` counts. */
@@ -220,6 +224,10 @@ export class BuildHost {
   readonly limits: BuildLimits;
   private readonly jobs = new Set<Job>();
   private readonly owned = new Map<string, Job>();
+  private readonly retained = new Map<
+    string,
+    { client: string; dir: string; bundle: string; sha256: string; timer: NodeJS.Timeout }
+  >();
   private closed = false;
   private toolchainAt = 0;
   private toolchainValue: Promise<BuildToolchain | null> | null = null;
@@ -494,6 +502,7 @@ export class BuildHost {
     const entry: Job = {
       id,
       client,
+      platform: job.platform,
       child,
       archive: join(area, 'out', id, 'app.tgz'),
       slotted: slot !== null,
@@ -600,17 +609,74 @@ export class BuildHost {
     this.owned.delete(job.id);
   }
 
-  /** Cancels the jobs no connection holds whose client `allowed` no longer accepts, such as a revoked one. */
+  /**
+   * Deletes a fetched job's output. A macOS job keeps its staged bundle for `handoffMs` under a new single-use token,
+   * which this returns, in place of any bundle its client still had retained.
+   */
+  retain(job: Job, artifact: BuildArtifactResult): string | null {
+    const dir = dirname(job.archive);
+    if (this.closed || job.platform !== 'macos' || basename(artifact.name) !== artifact.name) {
+      rmSync(dir, { recursive: true, force: true });
+      return null;
+    }
+    rmSync(job.archive, { force: true });
+    for (const [token, entry] of this.retained) if (entry.client === job.client) this.drop(token);
+    const token = randomBytes(32).toString('hex');
+    const timer = setTimeout(() => this.drop(token), this.limits.handoffMs);
+    timer.unref();
+    this.retained.set(token, {
+      client: job.client,
+      dir,
+      bundle: join(dir, artifact.name),
+      sha256: artifact.sha256,
+      timer,
+    });
+    return token;
+  }
+
+  private drop(token: string): void {
+    const entry = this.retained.get(token);
+    if (!entry) return;
+    clearTimeout(entry.timer);
+    this.retained.delete(token);
+    rmSync(entry.dir, { recursive: true, force: true });
+  }
+
+  /**
+   * Takes the bundle `token` retained once its artifact digest is `sha256` and `accept` admits the client that built it.
+   * `release` deletes it.
+   */
+  takeBundle(
+    token: string,
+    sha256: string,
+    accept: (client: string) => boolean,
+  ): { bundle: string; release: () => void } | string {
+    const entry = this.retained.get(token);
+    if (!entry) return 'This Mac no longer holds that build.';
+    if (entry.sha256 !== sha256) return 'This Mac holds a different build under that handoff.';
+    if (!accept(entry.client))
+      return 'That build belongs to a client without build access from the same tailnet node as this one.';
+    clearTimeout(entry.timer);
+    this.retained.delete(token);
+    return { bundle: entry.bundle, release: () => rmSync(entry.dir, { recursive: true, force: true }) };
+  }
+
+  /**
+   * Cancels the jobs no connection holds, and deletes the retained bundles, of clients `allowed` no longer accepts,
+   * such as a revoked one.
+   */
   abandonDetached(allowed: (client: string) => boolean): void {
     for (const job of this.owned.values()) {
       if (!job.session && !allowed(job.client)) this.abandon(job);
     }
+    for (const [token, entry] of this.retained) if (!allowed(entry.client)) this.drop(token);
   }
 
   async close(): Promise<void> {
     this.closed = true;
     clearInterval(this.sweeper);
     for (const job of this.owned.values()) this.abandon(job);
+    for (const token of this.retained.keys()) this.drop(token);
     await Promise.all([...this.jobs].map((job) => job.done));
     await this.sweeping;
   }
@@ -884,10 +950,10 @@ export class BuildSession {
     } finally {
       closeSync(fd);
     }
-    rmSync(dirname(job.archive), { recursive: true, force: true });
+    const handoff = this.host.retain(job, outcome.artifact);
     this.jobs.delete(job.id);
     this.host.forget(job);
-    return { result: outcome.artifact };
+    return { result: { ...outcome.artifact, ...(handoff ? { handoff } : {}) } };
   }
 
   close(dropped: boolean): void {
