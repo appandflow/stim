@@ -257,6 +257,7 @@ describe('macOS build placement and promotion', () => {
       writer,
       note: () => {},
       record: buildRecord,
+      buildMachine: 'auto',
       ...extras,
     });
   function remoteBundle(valid = true): string {

@@ -157,7 +157,7 @@ async function buildBundle(
       writer,
       note,
       record: record.build,
-      buildMachine: record.build.buildMachine,
+      buildMachine: record.build.buildMachine!,
       resources: extras.resources,
       assetCatalog: extras.assetCatalog,
     });
@@ -250,7 +250,11 @@ export default function macosCommand(program: Command): void {
     .action(async (options: { json?: boolean; host?: string; buildMachine?: string }) => {
       const root = findProjectRoot(process.cwd());
       if (!root) throw new Error('Run stim macos from the Swift Package directory.');
-      const record = await runMacos(root, console.error, options.host, options.buildMachine);
+      const record = await runMacos(root, console.error, options.host, options.buildMachine).catch((error) => {
+        const remedy = (error as { remedy?: unknown }).remedy;
+        if (typeof remedy === 'string') console.error(`remedy: ${remedy}`);
+        throw error;
+      });
       if (options.json) console.log(JSON.stringify(launchPayload(record)));
       else if (record.host)
         console.log(

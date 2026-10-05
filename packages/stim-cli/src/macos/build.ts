@@ -16,7 +16,7 @@ import {
   type BuildHandoff,
   type OffloadChoice,
 } from '../offload/client.ts';
-import { resolveBuildPlacement, namedBuildMachine, OffloadRefusal } from '../offload/selection.ts';
+import { namedBuildMachine, OffloadRefusal } from '../offload/selection.ts';
 import { macosToolchain } from '../offload/toolchain.ts';
 import { getConcurrencyLimits } from '../workspace/config.ts';
 import { logLines } from './run.ts';
@@ -63,7 +63,7 @@ export async function buildMacosBundle({
   writer,
   note,
   record,
-  buildMachine: selected,
+  buildMachine,
   resources,
   assetCatalog,
 }: {
@@ -76,7 +76,7 @@ export async function buildMacosBundle({
   writer: NdjsonWriter;
   note: (line: string) => void;
   record?: MacosBuild;
-  buildMachine?: string;
+  buildMachine: string;
   resources?: unknown;
   assetCatalog?: unknown;
 }): Promise<{
@@ -85,9 +85,6 @@ export async function buildMacosBundle({
   offloadFallback: string | null;
   handoff: BuildHandoff | null;
 }> {
-  const resolved = selected === undefined ? resolveBuildPlacement() : { selected, failure: undefined };
-  if (resolved.failure) throw Object.assign(new Error(resolved.failure.message), resolved.failure);
-  const buildMachine = resolved.selected;
   if (record) record.buildMachine = buildMachine;
   validateInfoPlist(root, product, infoPlist);
   const repository = realpathSync(repoRoot(root) ?? root);
