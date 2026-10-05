@@ -1828,3 +1828,13 @@ test('hosted scroll and key requests validate bounded coordinates, deltas, keys 
     for (const bad of invalid) expect(accepts({ id: 1, method, params: bad })).toBe(false);
   }
 });
+
+test('the congestion notice request names one subscription', () => {
+  const validator = new Ajv2020({ strict: false, validateFormats: false });
+  validator.addSchema(protocolJsonSchema(), 'protocol');
+  const accepts = validator.compile({ $ref: 'protocol#/$defs/ClientRequest' });
+  const method = 'device-host.frames.congested';
+  expect(accepts({ id: 1, method, params: { subscription: 's1' } })).toBe(true);
+  for (const params of [{}, { subscription: 1 }, { subscription: 's1', bitrate: 1 }])
+    expect(accepts({ id: 1, method, params })).toBe(false);
+});

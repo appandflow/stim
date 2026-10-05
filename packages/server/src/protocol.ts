@@ -978,6 +978,12 @@ export function protocolJsonSchema(): JsonSchema {
             additionalProperties: false,
             properties: { subscription: { type: 'string' } },
           }),
+          request('device-host.frames.congested', {
+            type: 'object',
+            required: ['subscription'],
+            additionalProperties: false,
+            properties: { subscription: { type: 'string' } },
+          }),
           request('device-host.unsubscribe', {
             type: 'object',
             required: ['subscription'],

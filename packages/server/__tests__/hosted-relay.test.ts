@@ -44,6 +44,7 @@ let peerNode: string;
 let endpointCalls: Endpoint[];
 let helloError: string | undefined;
 let helloCapabilities: string[];
+let helloFeatures: string[];
 let heldMethods: Set<string>;
 let heldReplies: (() => void)[];
 let endControlOnBegin: boolean;
@@ -87,6 +88,7 @@ beforeEach(async () => {
   endpointCalls = [];
   helloError = undefined;
   helloCapabilities = ['device-host'];
+  helloFeatures = [];
   heldMethods = new Set();
   heldReplies = [];
   endControlOnBegin = false;
@@ -113,7 +115,7 @@ beforeEach(async () => {
         if (params.auth?.deviceToken !== TOKEN || params.protocol !== 1 || params.client?.name !== 'stim-server')
           return refuse('bad hello');
         if (helloError) return refuse(helloError);
-        return answer({ capabilities: helloCapabilities });
+        return answer({ capabilities: helloCapabilities, features: helloFeatures });
       }
       if (method === 'device-host.frames.subscribe') {
         if (params.session !== HOST_SESSION) return refuse('wrong hosted session');
@@ -160,7 +162,11 @@ beforeEach(async () => {
           );
         return;
       }
-      if (method === 'device-host.frames.keyframe' || method === 'device-host.unsubscribe') {
+      if (
+        method === 'device-host.frames.keyframe' ||
+        method === 'device-host.frames.congested' ||
+        method === 'device-host.unsubscribe'
+      ) {
         if (!subscriptions.includes(params.subscription!)) return refuse('wrong subscription');
         return answer({});
       }
@@ -750,4 +756,58 @@ it('drops congested video, requests one recovery keyframe within a second, and r
   } finally {
     relay.close();
   }
+});
+
+async function congestionNotices(features: string[]) {
+  saveCredential();
+  helloFeatures = features;
+  let buffered = 0;
+  const sent: (ServerMessage | Buffer)[] = [];
+  const relay = new HostedRelay(
+    new HostConnections(
+      {
+        status: () => ({
+          Peer: { peer: { ID: peerNode, DNSName: 'mini.tail.ts.net.', TailscaleIPs: ['100.64.0.8'] } },
+        }),
+        endpoint: (pinned) => ({ ...pinned, url: `ws://127.0.0.1:${(host.address() as AddressInfo).port}` }),
+      },
+      '1',
+    ),
+    (message) => sent.push(message),
+    () => buffered,
+    () => 'local-video',
+    () => {},
+    () => {},
+  );
+  const notices = () => requests.filter((request) => request.method === 'device-host.frames.congested');
+  try {
+    await relay.subscribe(1, readMacosRecord(workspace)!.host!, { video: ['h264'] }, () => {});
+    await vi.waitFor(() => expect(sent.filter(Buffer.isBuffer)).toHaveLength(1));
+    const upstream = requests.find((request) => request.method === 'device-host.frames.subscribe')!.socket;
+    buffered = DEFAULT_VIDEO_LIMITS.congestedBytes + 1;
+    upstream.send(
+      videoPacket(UPSTREAM, 8, { keyframe: false, capturedAt: 1000, width: 800, height: 600, data: Buffer.from([0]) }),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    const whileBehind = notices().map((request) => request.params.subscription);
+    buffered = 0;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    const drained = notices().length;
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    return { whileBehind, afterDrain: notices().length - drained };
+  } finally {
+    relay.close();
+  }
+}
+
+it('tells a host with hosted-congestion about local congestion at most every 250 ms until the client drains', async () => {
+  const { whileBehind, afterDrain } = await congestionNotices(['hosted-congestion']);
+  expect(whileBehind.length).toBeGreaterThanOrEqual(2);
+  expect(whileBehind.length).toBeLessThanOrEqual(4);
+  expect(new Set(whileBehind)).toEqual(new Set([UPSTREAM]));
+  expect(afterDrain).toBe(0);
+});
+
+it('sends no congestion notices to a host without hosted-congestion', async () => {
+  expect(await congestionNotices([])).toEqual({ whileBehind: [], afterDrain: 0 });
 });

@@ -35,6 +35,8 @@ export type Capability = (typeof CAPABILITIES)[number];
  * another Mac.
  * `macos-windows` is the `macos-windows` event on a macOS `frames.subscribe`, naming the window capture follows
  * and the app's other windows.
+ * `hosted-congestion` is `device-host.frames.congested`, which lowers the bitrate of a hosted video subscription
+ * whose client is behind.
  */
 export const FEATURES = [
   'physical-ios',
@@ -48,6 +50,7 @@ export const FEATURES = [
   'macos-hosted',
   'duo-frames',
   'workspace-diff',
+  'hosted-congestion',
 ] as const;
 
 export type Feature = (typeof FEATURES)[number];
@@ -107,6 +110,7 @@ export const METHODS = [
   'device-host.metro.close',
   'device-host.frames.subscribe',
   'device-host.frames.keyframe',
+  'device-host.frames.congested',
   'device-host.unsubscribe',
   'device-host.control.begin',
   'device-host.control.end',
@@ -144,6 +148,7 @@ export const DEVICE_HOST_METHODS = [
   'device-host.metro.close',
   'device-host.frames.subscribe',
   'device-host.frames.keyframe',
+  'device-host.frames.congested',
   'device-host.unsubscribe',
   'device-host.control.begin',
   'device-host.control.end',
@@ -1099,6 +1104,7 @@ export interface Methods {
     result: FramesSubscribeResult;
   };
   'device-host.frames.keyframe': Methods['frames.keyframe'];
+  'device-host.frames.congested': Methods['frames.keyframe'];
   'device-host.unsubscribe': Methods['unsubscribe'];
   'device-host.control.begin': { params: { session: string; takeOver?: boolean }; result: ControlBeginResult };
   'device-host.control.end': Methods['control.end'];

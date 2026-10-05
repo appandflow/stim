@@ -602,6 +602,11 @@ Ending a subscription or session sends `device-host.unsubscribe` or
 `device-host.control.end`, and the connection closes when the last one ends.
 The host's per-connection limits, such as its 32 subscriptions and input
 budgets, therefore apply to all of the client's relayed use of that host.
+While a local client is behind on a relayed H.264 subscription, the relay drops
+its packets until the next keyframe and, when the host advertises the
+`hosted-congestion` feature, sends `device-host.frames.congested` at most every
+250 ms, so the host lowers that app's bitrate as it does for a local subscriber
+whose socket backs up.
 Hosted frames and control reject `physical`, a non-default slot, and replay
 (`at`/`rate`).
 `control.begin` still needs the local `control` grant. Screen Recording for
@@ -623,8 +628,12 @@ workspaces:
 
 The result contains a subscription ID. JPEG delivery uses the existing `frame`
 events; `video: ["h264"]` selects the existing H.264 binary stream and its
-backpressure/keyframe rules. `device-host.frames.keyframe` and
-`device-host.unsubscribe` take that subscription ID as `params.subscription`.
+backpressure/keyframe rules. `device-host.frames.keyframe`,
+`device-host.frames.congested` and `device-host.unsubscribe` take that
+subscription ID as `params.subscription`. `device-host.frames.congested`
+(feature `hosted-congestion`) reports that a client further downstream is
+behind on that H.264 subscription; it lowers the bitrate the same way a backed-up
+socket does.
 Hosted capture requires the compiled `stim-frames` helper and does not support
 replay, device artwork or screenshot fallback. macOS frames show only the one
 window of the hosted app. Viewing is refused before launch and after the app
