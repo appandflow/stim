@@ -1,6 +1,15 @@
 import assert from 'node:assert';
 import { spawn, type ChildProcess } from 'node:child_process';
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs';
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+} from 'node:fs';
 import { createServer, type Server } from 'node:http';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
@@ -37,10 +46,10 @@ function sources(): string {
   mkdirSync(dir);
   const desktop = readFileSync(join(HELPER_DIR, 'desktop-sources.txt'), 'utf8').split(/\s+/).filter(Boolean);
   for (const source of [
-    join(HELPER_DIR, 'main.swift'),
-    join(HELPER_DIR, 'VideoEncoder.swift'),
-    join(HELPER_DIR, 'PhoneSource.swift'),
-    join(HELPER_DIR, 'FrameArtwork.swift'),
+    ...readdirSync(HELPER_DIR)
+      .filter((name) => name.endsWith('.swift'))
+      .toSorted()
+      .map((name) => join(HELPER_DIR, name)),
     ...desktop.map((path) => join(DESKTOP_DIR, path)),
   ]) {
     copyFileSync(source, join(dir, basename(source)));
