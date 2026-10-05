@@ -33,11 +33,10 @@ Destinations are non-empty relative paths without empty, . or
 Assets.car when a catalog is set, or a SwiftPM resource bundle. At most 256
 resources are allowed. Sources must exist as regular files or directories;
 their realpaths must stay inside the git repository root, or the Swift Package
-directory when there is no git root. Sources can use ../ to reach other files
+directory when there is no git root, and a source directory cannot contain
+symbolic links. Sources can use ../ to reach other files
 inside that repository. Custom packaging scripts are not run and extra
-executables, including Stim Desktop's sim-fold helper, are not built. Entry paths
-are validated before placement or compilation; collisions with built SwiftPM
-bundles are checked while staging the reported build outputs.
+executables, including Stim Desktop's sim-fold helper, are not built.
 
   stim macos              # fixed SwiftPM Debug build, then launch
   stim macos --json       # one launch record; progress goes to stderr

@@ -32,6 +32,12 @@ function resourceError(key: string, entry: unknown, reason: string): never {
   throw new Error(`${key} entry ${JSON.stringify(entry)}: ${reason}. See stim guide macos.`);
 }
 
+function containsSymlink(dir: string): boolean {
+  return readdirSync(dir, { withFileTypes: true }).some(
+    (entry) => entry.isSymbolicLink() || (entry.isDirectory() && containsSymlink(join(dir, entry.name))),
+  );
+}
+
 function overlaps(a: string, b: string): boolean {
   a = a.normalize('NFC').toLowerCase();
   b = b.normalize('NFC').toLowerCase();
@@ -57,8 +63,11 @@ export function resolveBundleExtras(
     const path = relative(boundary, source);
     if (path === '..' || path.startsWith('../') || isAbsolute(path))
       resourceError(key, entry, 'source leaves the repository');
+    if (path === '') resourceError(key, entry, 'source is the repository root');
     const stat = statSync(source);
     if (!stat.isFile() && !stat.isDirectory()) resourceError(key, entry, 'source must be a regular file or directory');
+    if (stat.isDirectory() && containsSymlink(source))
+      resourceError(key, entry, 'source directory contains a symbolic link');
     return source;
   };
   let catalog: string | undefined;
@@ -97,7 +106,6 @@ export function stageBundle(
   extras: BundleExtras = { resources: {} },
 ): void {
   const { minimumSystemVersion } = validateInfoPlist(root, product, infoPlist);
-  // SwiftPM exposes emitted resource bundle names in its build directory, after compilation.
   for (const entry of readdirSync(bin).filter((name) => name.endsWith('.bundle'))) {
     for (const [destination, source] of Object.entries(extras.resources)) {
       if (overlaps(destination, entry))

@@ -51,16 +51,15 @@ fixed `xcrun actool` invocation. Stim adds these resources before signing:
 ```
 
 Sources must exist and their realpaths must stay inside the git repository root,
-or the Swift Package directory when there is no git root. A source can use `../`
+or the Swift Package directory when there is no git root. A source directory
+cannot contain symbolic links. A source can use `../`
 to reach another directory in the same repository. Destinations are non-empty
 relative paths without empty, `.` or `..` segments, at most 1024 characters.
 They cannot overlap another declared destination, a SwiftPM resource bundle, or
 `Assets.car` when an asset catalog is set. The map allows at most 256 entries.
 Stim does not run packaging scripts or build extra executables. If `actool` does
 not emit `Assets.car`, staging refuses. Set `LSMinimumSystemVersion` in the plist
-when Xcode requires a deployment target. Entry paths are validated before
-placement or compilation; collisions with built SwiftPM bundles are checked
-while staging the reported build outputs.
+when Xcode requires a deployment target.
 
 <StimTabs
 code={`stim macos
