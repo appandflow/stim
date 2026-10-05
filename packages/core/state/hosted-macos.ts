@@ -1,5 +1,5 @@
 import { isJsonObject } from './json-file.ts';
-import type { HostedAppDelivery } from './hosted-app.ts';
+import { hostedAppAttempt, type HostedAppDelivery } from './hosted-app.ts';
 
 /** App slots one host offers; a slot names the host-assigned bundle id `<bundleId>.hosted<slot>`. */
 export const HOSTED_MACOS_APP_SLOTS = 64;
@@ -103,5 +103,48 @@ export function parseHostedAgentGrant(value: unknown): HostedAgentGrant | null {
     path: value.path,
     token: value.token,
     scope: value.scope,
+  };
+}
+
+function parseHostedAgentAccess(value: unknown): HostedAgentAccess | null {
+  if (!isJsonObject(value)) return null;
+  if (value.driver === 'none')
+    return value.setting === 'hosting.agentDriver' && Object.keys(value).length === 2
+      ? { driver: 'none', setting: 'hosting.agentDriver' }
+      : null;
+  if (
+    value.driver !== 'agent-device' ||
+    typeof value.remoteConfig !== 'string' ||
+    !value.remoteConfig.startsWith('/') ||
+    typeof value.command !== 'string' ||
+    !value.command ||
+    Object.keys(value).length !== 3
+  )
+    return null;
+  return { driver: 'agent-device', remoteConfig: value.remoteConfig, command: value.command };
+}
+
+export function parseHostedMacosPlacement(value: unknown): HostedMacosPlacement | null {
+  if (
+    !isJsonObject(value) ||
+    typeof value.machine !== 'string' ||
+    !value.machine ||
+    typeof value.session !== 'string' ||
+    !/^[a-f0-9-]{36}$/.test(value.session) ||
+    !hostedMacosAppSlot(value.appSlot) ||
+    !hostedAppAttempt(value.appAttempt) ||
+    typeof value.bundleId !== 'string' ||
+    !value.bundleId.endsWith(`.hosted${value.appSlot}`)
+  )
+    return null;
+  const agent = parseHostedAgentAccess(value.agent);
+  if (!agent) return null;
+  return {
+    machine: value.machine,
+    session: value.session,
+    appSlot: value.appSlot,
+    appAttempt: value.appAttempt,
+    bundleId: value.bundleId,
+    agent,
   };
 }

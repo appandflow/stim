@@ -1322,8 +1322,14 @@ RULES
     state               running | orphaned | stopped | unverified
     build               { state: running | ok | failed, startedAt,
                           finishedAt?, durationMs?, error? }
+    host?               { machine, session, appSlot, appAttempt, bundleId,
+                          agent } when stim macos --host placed the app on
+                          another Mac; it then has no local app or supervisor
+    hostLaunched?       whether that host reported the app running
   A live app without its supervisor is orphaned. An identity the system cannot
-  verify is unverified. See stim guide macos for local capture and cleanup.
+  verify is unverified. A hosted app is running when its host reported the
+  launch and no placement is in progress; status does not contact the host.
+  See stim guide macos for local capture, hosting and cleanup.
 
   An environment with a recorded run also carries builds, each platform's
   last 10 runs, newest first. Its newest entry that is not "interrupted" is

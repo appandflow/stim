@@ -1,4 +1,5 @@
 import { inspectProcessIdentity } from '../process-identity.ts';
+import { parseHostedMacosPlacement, type HostedMacosPlacement } from './hosted-macos.ts';
 import { readWorkspaceState } from './workspace-state.ts';
 
 export interface MacosProcess {
@@ -25,6 +26,10 @@ export interface MacosAppRecord {
   build: MacosBuild;
   supervisor?: MacosProcess;
   app?: MacosProcess;
+  /** Set when `stim macos --host` reserved a session on another Mac; the app then has no local process. */
+  host?: HostedMacosPlacement;
+  /** Whether the host reported this launch's app running; status never contacts the host. */
+  hostLaunched?: boolean;
 }
 
 export interface MacosAppState extends MacosAppRecord {
@@ -51,6 +56,8 @@ export function parseMacosRecord(value: unknown): MacosAppRecord | null {
     build,
     supervisor,
     app,
+    host,
+    hostLaunched,
   } = value as Record<string, unknown>;
   if (typeof launchId !== 'string' || !Array.isArray(args) || args.some((arg) => typeof arg !== 'string')) return null;
   if ([product, bundle, bundleId, executable].some((field) => typeof field !== 'string')) return null;
@@ -59,6 +66,8 @@ export function parseMacosRecord(value: unknown): MacosAppRecord | null {
   if (!['running', 'ok', 'failed'].includes(String(b.state)) || typeof b.startedAt !== 'string') return null;
   if ((app !== undefined && !processRecord(app)) || (supervisor !== undefined && !processRecord(supervisor)))
     return null;
+  const placement = host === undefined ? undefined : parseHostedMacosPlacement(host);
+  if (placement === null || (hostLaunched !== undefined && typeof hostLaunched !== 'boolean')) return null;
   return {
     launchId,
     arguments: args as string[],
@@ -75,6 +84,8 @@ export function parseMacosRecord(value: unknown): MacosAppRecord | null {
     },
     ...(processRecord(supervisor) ? { supervisor: processRecord(supervisor) } : {}),
     ...(processRecord(app) ? { app: processRecord(app) } : {}),
+    ...(placement ? { host: placement } : {}),
+    ...(typeof hostLaunched === 'boolean' ? { hostLaunched } : {}),
   };
 }
 
@@ -98,8 +109,11 @@ export function macosAppState(record: MacosAppRecord | null): MacosAppState | nu
           },
         }
       : {}),
-    state:
-      app === 'unknown' || supervisor === 'unknown'
+    state: record.host
+      ? record.hostLaunched && !record.supervisor
+        ? 'running'
+        : 'stopped'
+      : app === 'unknown' || supervisor === 'unknown'
         ? 'unverified'
         : app === 'same'
           ? supervisor === 'same'

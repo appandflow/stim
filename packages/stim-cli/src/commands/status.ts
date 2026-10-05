@@ -593,7 +593,10 @@ function renderStatus(
       }
     }
     if (state.macos) {
-      out.push(`  macOS ${state.macos.product}: ${state.macos.state}; build ${state.macos.build.state}`);
+      const host = state.macos.host;
+      const where = host ? ` on ${host.machine} as ${host.bundleId}${chalk.dim(` (session ${host.session})`)}` : '';
+      out.push(`  macOS ${state.macos.product}: ${state.macos.state}${where}; build ${state.macos.build.state}`);
+      if (host?.agent.driver === 'agent-device') out.push(chalk.dim(`    agent: ${host.agent.command}`));
     }
     if (state.web) {
       const browser = state.web.running

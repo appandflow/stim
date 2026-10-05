@@ -1,5 +1,5 @@
 export default {
-  summary: 'Swift Package macOS Debug apps: explicit product, owned bundle, logs and local window viewing',
+  summary: 'Swift Package macOS Debug apps: owned bundle, logs, local window viewing, and --host on another Mac',
   body: () => `MACOS: SWIFT PACKAGE DEVELOPMENT PROTOTYPE
 
 If Stim is not installed globally, replace stim with npx stim.
@@ -109,6 +109,56 @@ outside Desktop uses that launching host's permissions; granting this copy of St
 may not apply to it. The server never requests or resets permissions. Status and logs still work. Tap the build card for
 SwiftPM output or the logs card for native runtime stdout and stderr. Metro is not
 used. Close and reopen the viewer after opening or resizing the app window.
+
+ON ANOTHER MAC
+
+stim macos --host <machine> builds the Debug app on this Mac and runs it on an
+approved hosting Mac over the tailnet, without SSH. The machine must be listed
+in hosting.machines and approved: stim doctor --fix asks it, a person on that
+Mac runs stim-server devices grant <id> --device-host, and stim doctor then
+records the approval. Stim connects only to the machine's pinned tailnet node.
+A refusal or an unreachable host fails the command; it never launches here
+instead.
+
+  stim macos --host mini          # build here, deliver, launch on mini
+  stim macos --host mini --json   # { platform, product, launchId, build, host }
+  stim status --json              # environments[].macos.host
+  stim stop                       # stop the session on mini and confirm it
+  stim worktree remove <path>     # also stops it
+
+The copy keeps the plist's own CFBundleIdentifier. The host runs it as
+<id>.hosted<slot> from a fixed slot pool, so Screen Recording and
+Accessibility approvals for the app on that Mac survive rebuilds. Running the
+command again reuses the session and delivers a new copy. macos.arguments are
+not passed to a hosted app. A workspace has one macOS app: a local stim macos
+refuses while it runs on a host, and --host with a different machine refuses
+until stim stop. When the host cannot be reached or does not confirm the stop,
+the placement stays recorded; restore the connection and run stim stop again.
+
+status --json reports macos.host { machine, session, appSlot, appAttempt,
+bundleId, agent }. state is running when the host reported the launch; status
+does not contact the host. agent says how a coding agent drives the app:
+{ driver: "none", setting: "hosting.agentDriver" } until the hosting Mac's
+owner sets that setting there, or { driver: "agent-device", remoteConfig,
+command }. remoteConfig is a mode 0600 file in the workspace directory that
+holds the credential; run the command it names and never print the file. stop
+deletes it.
+
+Agents use this in place of mini-desktop.sh:
+
+  mini-desktop.sh            stim
+  build                      stim macos --host <mac>
+  launch                     the same command; the host launches it under the
+                             session's own home
+  shot <out.png>             agent-device screenshot --remote-config <path>
+  click, rclick, key, type   agent-device click, press or type --remote-config <path>
+  quit                       stim stop (verified stop; the host frees the slot
+                             and removes the app's defaults)
+  clean                      stim worktree remove
+  3 concurrent slots         concurrency.maxDevices on the host; one bundle id
+                             slot per session
+
+The agent-device rows work once the host's agent field names agent-device.
 
 DESKTOP DOGFOOD
 

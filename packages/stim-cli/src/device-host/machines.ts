@@ -54,7 +54,7 @@ function note(title: string, detail: string, fix: string | null = null): Finding
 const approval = (machine: string, id: string) =>
   `A person on ${machine} approves it with \`stim-server devices grant ${id} --device-host\`.`;
 
-function configuredMachines(): string[] | null {
+export function configuredMachines(): string[] | null {
   const hosting = loadConfig()?.hosting;
   if (hosting !== undefined && !isJsonObject(hosting)) return null;
   const machines = hosting?.machines;
