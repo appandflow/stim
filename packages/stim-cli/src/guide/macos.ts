@@ -127,8 +127,9 @@ instead.
   stim worktree remove <path>     # also stops it
 
 The copy keeps the plist's own CFBundleIdentifier. The host runs it as
-<id>.hosted<slot> from a fixed slot pool, so Screen Recording and
-Accessibility approvals for the app on that Mac survive rebuilds. Running the
+<id>.hosted<slot> from a fixed slot pool, so the bundle id stays the same
+across rebuilds; whether macOS keeps permission approvals for it also depends
+on how the host signs it. Running the
 command again reuses the session and delivers a new copy. macos.arguments are
 not passed to a hosted app. A workspace has one macOS app: a local stim macos
 refuses while it runs on a host, and --host with a different machine refuses
@@ -136,17 +137,19 @@ until stim stop. When the host cannot be reached or does not confirm the stop,
 the placement stays recorded; restore the connection and run stim stop again.
 
 status --json reports macos.host { machine, session, appSlot, appAttempt,
-bundleId, agent }. state is running when the host reported the launch; status
-does not contact the host. agent says how a coding agent drives the app:
+bundleId, agent }. state is running when the host reported a live app and
+unverified when it could not confirm one; status does not contact the host.
+While a placement is recorded, gc treats the workspace as in use. agent says how a coding agent drives the app:
 { driver: "none", setting: "hosting.agentDriver" } until the hosting Mac's
 owner sets that setting there, or { driver: "agent-device", remoteConfig,
 command }. remoteConfig is a mode 0600 file in the workspace directory that
 holds the credential; run the command it names and never print the file. stop
 deletes it.
 
-Agents use this in place of mini-desktop.sh:
+Agents that built, launched and drove test copies on another Mac with an SSH
+script such as mini-desktop.sh use these instead:
 
-  mini-desktop.sh            stim
+  script command             stim
   build                      stim macos --host <mac>
   launch                     the same command; the host launches it under the
                              session's own home

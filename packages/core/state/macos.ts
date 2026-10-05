@@ -28,8 +28,8 @@ export interface MacosAppRecord {
   app?: MacosProcess;
   /** Set when `stim macos --host` reserved a session on another Mac; the app then has no local process. */
   host?: HostedMacosPlacement;
-  /** Whether the host reported this launch's app running; status never contacts the host. */
-  hostLaunched?: boolean;
+  /** What the host reported about this launch: true for a live app; status never contacts the host. */
+  hostLaunched?: boolean | 'unverified';
 }
 
 export interface MacosAppState extends MacosAppRecord {
@@ -67,7 +67,11 @@ export function parseMacosRecord(value: unknown): MacosAppRecord | null {
   if ((app !== undefined && !processRecord(app)) || (supervisor !== undefined && !processRecord(supervisor)))
     return null;
   const placement = host === undefined ? undefined : parseHostedMacosPlacement(host);
-  if (placement === null || (hostLaunched !== undefined && typeof hostLaunched !== 'boolean')) return null;
+  if (
+    placement === null ||
+    (hostLaunched !== undefined && typeof hostLaunched !== 'boolean' && hostLaunched !== 'unverified')
+  )
+    return null;
   return {
     launchId,
     arguments: args as string[],
@@ -85,7 +89,7 @@ export function parseMacosRecord(value: unknown): MacosAppRecord | null {
     ...(processRecord(supervisor) ? { supervisor: processRecord(supervisor) } : {}),
     ...(processRecord(app) ? { app: processRecord(app) } : {}),
     ...(placement ? { host: placement } : {}),
-    ...(typeof hostLaunched === 'boolean' ? { hostLaunched } : {}),
+    ...(hostLaunched !== undefined ? { hostLaunched: hostLaunched as boolean | 'unverified' } : {}),
   };
 }
 
@@ -110,9 +114,11 @@ export function macosAppState(record: MacosAppRecord | null): MacosAppState | nu
         }
       : {}),
     state: record.host
-      ? record.hostLaunched && !record.supervisor
-        ? 'running'
-        : 'stopped'
+      ? record.supervisor || !record.hostLaunched
+        ? 'stopped'
+        : record.hostLaunched === true
+          ? 'running'
+          : 'unverified'
       : app === 'unknown' || supervisor === 'unknown'
         ? 'unverified'
         : app === 'same'

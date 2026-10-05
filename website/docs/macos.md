@@ -133,8 +133,9 @@ stim stop`}
 />
 
 The copied bundle keeps its own `CFBundleIdentifier`. The host runs it as
-`<id>.hosted<slot>` from a fixed pool of slots, so the Screen Recording and
-Accessibility approvals that a person gives the app on that Mac survive rebuilds.
+`<id>.hosted<slot>` from a fixed pool of slots, so its bundle ID stays the same
+across rebuilds. Whether macOS keeps Screen Recording and Accessibility approvals
+for it also depends on how the host signs it.
 Running the command again reuses the session and delivers a new copy.
 `macos.arguments` are not passed to a hosted app. While the app runs on a host, a
 local `stim macos` refuses, and so does `--host` with another machine, until
@@ -145,7 +146,8 @@ recorded so a later `stim stop` can finish.
 `macos --json` prints `{ platform, product, launchId, build, host }`, and
 `status --json` reports the same `host` under `environments[].macos`: the
 machine, session, app slot, app attempt, hosted bundle ID and `agent`. Status
-uses the host's launch reply and does not contact the host. `agent` is
+uses the host's launch reply (`running`, or `unverified` when the host could not
+confirm a live app) and does not contact the host. `agent` is
 `{ "driver": "none", "setting": "hosting.agentDriver" }` until the hosting Mac's
 owner turns on a driver with that setting. With `agent-device`, it names a
 `remoteConfig` file (mode 0600, in the workspace directory) and the `command` to

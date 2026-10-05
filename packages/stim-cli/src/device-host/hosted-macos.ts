@@ -56,7 +56,6 @@ export interface HostConnection {
 const sleep = (ms: number) => new Promise((done) => setTimeout(done, ms));
 const sha256 = (content: Buffer) => createHash('sha256').update(content).digest('hex');
 
-/** The approved hosting credential for `machine`; anything else refuses before any connection. */
 function hostingCredential(machine: string): DeviceHostMachineCredential {
   const configured = configuredMachines();
   if (configured === null) throw new Error('hosting.machines is invalid. Run stim guide settings and correct it.');
@@ -146,7 +145,6 @@ function unknownSession(host: HostConnection, session: HostedSession): Error {
   );
 }
 
-/** Every file and link of an `.app` bundle, relative to it, as the host's app manifest names them. */
 function bundleManifest(bundle: string): { files: ManifestFile[]; content: Map<string, () => Buffer> } {
   const files: ManifestFile[] = [];
   const content = new Map<string, () => Buffer>();
@@ -206,9 +204,14 @@ async function upload(
 
 export const agentRemoteConfig = (root: string): string => join(macosDir(root), 'agent-device-remote.json');
 
-/** Turns the host's grant into what a coding agent uses; a token only ever lands in a 0600 file. */
-function agentAccess(root: string, credential: DeviceHostMachineCredential, grant: unknown): HostedAgentAccess {
+function agentAccess(
+  root: string,
+  credential: DeviceHostMachineCredential,
+  grant: unknown,
+  note: (line: string) => void,
+): HostedAgentAccess {
   const parsed = grant === undefined ? null : parseHostedAgentGrant(grant);
+  if (grant !== undefined && !parsed) note(`${credential.machine} offered agent control this Stim does not support.`);
   const file = agentRemoteConfig(root);
   if (!parsed || parsed.driver === 'none') {
     rmSync(file, { force: true });
@@ -234,7 +237,7 @@ function agentAccess(root: string, credential: DeviceHostMachineCredential, gran
 
 export interface HostedMacosRun {
   placement: HostedMacosPlacement;
-  launched: boolean;
+  launched: true | 'unverified';
 }
 
 /**
@@ -278,24 +281,26 @@ export async function placeHostedMacos(
       }),
     );
   }
+  const appSlot = session.appSlot;
+  if (appSlot === undefined) throw new Error(`${host.machine} reserved a session without a macOS app slot.`);
+  const appAttempt = randomUUID();
+  const placement: HostedMacosPlacement = {
+    machine: host.machine,
+    session: session.id,
+    appSlot,
+    appAttempt,
+    bundleId: hostedMacosBundleId(bundleId, appSlot),
+    agent: { driver: 'none', setting: 'hosting.agentDriver' },
+  };
+  reserved(placement);
   session = await settle(host, session, ['preparing'], SESSION_TIMEOUT_MS);
   if (session.state === 'unknown') throw unknownSession(host, session);
   if (session.state !== 'ready')
     throw new Error(`The hosted session ${session.id} on ${host.machine} is ${session.state}.`);
   const device = parseHostedMacosDevice(session.device);
-  if (!device || (session.appSlot !== undefined && device.appSlot !== session.appSlot)) {
-    throw new Error(`${host.machine} reported a ready session without a macOS app slot.`);
+  if (!device || device.appSlot !== appSlot) {
+    throw new Error(`${host.machine} reported a ready session without its reserved macOS app slot.`);
   }
-  const appAttempt = randomUUID();
-  const placement: HostedMacosPlacement = {
-    machine: host.machine,
-    session: session.id,
-    appSlot: device.appSlot,
-    appAttempt,
-    bundleId: hostedMacosBundleId(bundleId, device.appSlot),
-    agent: { driver: 'none', setting: 'hosting.agentDriver' },
-  };
-  reserved(placement);
   const { files, content } = bundleManifest(bundle);
   const manifest = Buffer.from(JSON.stringify(files));
   content.set(sha256(manifest), () => manifest);
@@ -319,8 +324,8 @@ export async function placeHostedMacos(
   }
   if (typeof delivery.notice === 'string') note(delivery.notice);
   return {
-    placement: { ...placement, agent: agentAccess(root, host.credential, delivery.agent) },
-    launched: delivery.launched === true,
+    placement: { ...placement, agent: agentAccess(root, host.credential, delivery.agent, note) },
+    launched: delivery.launched === true ? true : 'unverified',
   };
 }
 

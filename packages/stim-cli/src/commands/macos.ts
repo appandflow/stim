@@ -134,6 +134,7 @@ export async function runMacos(
             );
           }
           if (host) (await connectHost(host)).connection.close();
+          if (host && macos.arguments?.length) note('macos.arguments are not passed to a hosted app.');
           if (!previous?.host) await stopMacosAppHeld(root);
           upsertProject(root, {});
           recordWorkspaceUse(root);
@@ -151,7 +152,6 @@ export async function runMacos(
           };
           await buildBundle(root, macos.infoPlist!, record, host !== undefined, note);
           if (!host) return launchHere(root, record);
-          if (record.arguments.length) note('macos.arguments are not passed to a hosted app.');
           const connection = await connectHost(host);
           const write = (patch: Partial<MacosAppRecord>) =>
             writeWorkspaceState(root, { macos: { ...record, ...patch } });
@@ -284,7 +284,6 @@ async function launchHere(root: string, record: MacosAppRecord): Promise<MacosAp
   throw new Error('The macOS app did not register. See macos-supervisor.log in the workspace logs.');
 }
 
-/** The single `macos --json` payload; a hosted app reports its placement instead of local processes. */
 function launchPayload(record: MacosAppRecord): Record<string, unknown> {
   if (!record.host) return { platform: 'macos', ...record };
   const { product, launchId, build, host } = record;
@@ -304,7 +303,7 @@ export default function macosCommand(program: Command): void {
       if (options.json) console.log(JSON.stringify(launchPayload(record)));
       else if (record.host)
         console.log(
-          `Started ${record.product} on ${record.host.machine} as ${record.host.bundleId}${record.hostLaunched ? '' : ' (launch not confirmed)'}.`,
+          `Started ${record.product} on ${record.host.machine} as ${record.host.bundleId}${record.hostLaunched === true ? '' : ' (launch not confirmed)'}.`,
         );
       else console.log(`Started ${record.product} (pid ${record.app?.pid}).`);
     });

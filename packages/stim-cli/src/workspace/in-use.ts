@@ -1,6 +1,5 @@
 import { macosAppState, readMacosRecord } from '@stim-cli/core/state';
 import { macosRuntimeClaim } from '../macos/state.ts';
-import { inspectProcessIdentity } from '../process-identity.ts';
 import { lstatSync, readdirSync, rmdirSync, rmSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { isClaimRefusal, isClaimUnavailable, readClaimSet } from '../ownership-claim.ts';
@@ -44,10 +43,8 @@ export function workspaceInUse(
       reasons.push(`its dev server supervisor cannot be verified: ${target.reason ?? 'unknown identity'}`);
     }
     const macos = macosAppState(readMacosRecord(root));
-    if (macos?.host) {
-      if (macos.supervisor && ['same', 'unknown'].includes(inspectProcessIdentity(macos.supervisor)))
-        reasons.push(`its macOS app is being built or placed on ${macos.host.machine}`);
-    } else if (macos?.state === 'running' || macos?.state === 'orphaned' || macos?.build.state === 'running')
+    if (macos?.host) reasons.push(`its macOS app runs on ${macos.host.machine}`);
+    else if (macos?.state === 'running' || macos?.state === 'orphaned' || macos?.build.state === 'running')
       reasons.push('its macOS app or build is running');
     else if (macos?.state === 'unverified' || (!macos && readWorkspaceState(root)?.macos !== undefined))
       reasons.push('its macOS process owner cannot be verified');
