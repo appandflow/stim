@@ -680,6 +680,18 @@ import Testing
     #expect(outcome.kept.map(\.detail) == ["a Gradle daemon is busy"])
   }
 
+  @Test func summarizesStatusCacheResultsWithoutCountingResultsAsRecords() throws {
+    let json = """
+      {"mode":"delete","failures":0,"sections":{},"results":[
+        {"kind":"statusCache","status":"done","label":"3 stale disk-usage cache entries","id":null,"bytes":900,"detail":null},
+        {"kind":"statusCache","status":"done","label":"1 stale pull-request cache entry","id":null,"bytes":100,"detail":null},
+        {"kind":"deviceLease","status":"done","label":"expired lease","id":null,"bytes":null,"detail":null}
+      ]}
+      """
+    let outcome = try GcOutcome(json: Data(json.utf8))
+    #expect(outcome.headline == "Freed 1 KB \u{00B7} Removed stale status cache entries \u{00B7} Cleared 1 stale record")
+  }
+
   @Test func keepsDistinctEntriesThatShareALabelAndSkipsNotesOnAnIdleRun() throws {
     let json = """
       {"mode":"dry-run","idle":3600000,"failures":0,"sections":{
