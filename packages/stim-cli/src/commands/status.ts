@@ -1,3 +1,4 @@
+import { readHostedMacosStatus } from '../device-host/hosted-macos-status.ts';
 import { inspectProcessIdentity } from '../process-identity.ts';
 import { deviceSlotKey, projectDeviceSlots } from '../devices/device-slots.ts';
 import {
@@ -178,6 +179,7 @@ function readStatus(gitMaxAgeMs: number, simctlListing: string | null = null): P
 async function readStatusFacts(gitMaxAgeMs: number, simctlListing: string | null): Promise<StatusSnapshot> {
   const cfg = loadConfig();
   const projects = Object.entries(cfg?.projects || {});
+  const macosReads = projects.map(([path]) => readHostedMacosStatus(readMacosRecord(path)));
   const cwdRoot = findServerWorkspace(process.cwd())?.root ?? null;
   const worktrees = linkedWorktrees([process.cwd(), ...projects.map(([path]) => path)]);
   const orphanWorktrees = unprovisionedWorktrees(
@@ -264,7 +266,8 @@ async function readStatusFacts(gitMaxAgeMs: number, simctlListing: string | null
     const saved = readWorkspaceState(path);
     const builds = workspaceBuilds(path, saved, history);
     const web = webFacts(readWebRecord(path));
-    const macos = macosAppState(readMacosRecord(path));
+    const macosFacts = await macosReads[i]!;
+    const macos = macosAppState(macosFacts.record);
     const activeBuild = parseActiveBuild(saved?.[ACTIVE_BUILD_KEY]);
     roots.push({
       path,
@@ -317,6 +320,7 @@ async function readStatusFacts(gitMaxAgeMs: number, simctlListing: string | null
       }
       if (macos) {
         state.macos = macos;
+        if (macosFacts.warning) state.warnings.push(macosFacts.warning);
         state.live ||= macos.state === 'running' || macos.state === 'orphaned' || macos.build.state === 'running';
       }
       Object.assign(state, builds, workspacePhase(state.live, saved, { now: leaseNow }), {

@@ -208,8 +208,13 @@ Settings entries when you no longer need them.
 `macos --json` prints `{ platform, product, launchId, build, host }`, and
 `status --json` reports the same `host` under `environments[].macos`: the
 machine, session, app slot, app attempt, hosted bundle ID and `agent`. Status
-uses the host's launch reply (`running`, or `unverified` when the host could not
-confirm a live app) and does not contact the host. `agent` is
+asks the host for the session state only for hosted placements, with about a
+3 s timeout per connection and request and a 10 s cache. It reports `stopped`
+when the host says the session stopped, for example after a stim-server restart
+there, and `unverified` when the host is unreachable or cannot confirm. The
+`host` field stays recorded for cleanup. Run `stim macos --host <machine>` to
+launch a stopped app again, or `stim stop` to clear or reconcile the placement.
+`agent` is
 `{ "driver": "none", "setting": "hosting.agentDriver" }` until the hosting Mac's
 owner turns on a driver with that setting. With `agent-device`, it names a
 `remoteConfig` file (mode 0600, in the workspace directory) and the `command` to

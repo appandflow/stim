@@ -86,11 +86,11 @@ function hostingCredential(machine: string): DeviceHostMachineCredential {
 }
 
 /** Connects only to the pinned node of an approved hosting machine, and only when it grants `device-host`. */
-export async function connectHost(machine: string): Promise<HostConnection> {
+export async function connectHost(machine: string, timeoutMs: number = CONNECT_TIMEOUT_MS): Promise<HostConnection> {
   const credential = hostingCredential(machine);
   const target = pinnedEndpoint(credential);
   if (typeof target === 'string') throw new Error(`Stim does not connect to ${machine}: ${target}.`);
-  const opened = await BuildConnection.open(target, credential.deviceToken, CONNECT_TIMEOUT_MS, 'device-host');
+  const opened = await BuildConnection.open(target, credential.deviceToken, timeoutMs, 'device-host');
   if (!(opened instanceof BuildConnection)) {
     throw new Error(
       opened.refused
@@ -101,9 +101,17 @@ export async function connectHost(machine: string): Promise<HostConnection> {
   return { machine, credential, connection: opened };
 }
 
-async function call(host: HostConnection, method: string, params: unknown): Promise<Record<string, unknown>> {
-  const reply = await host.connection.request(method, params);
-  if ('error' in reply) throw new Error(`${host.machine} refused ${method}: ${reply.error.message}`);
+async function call(
+  host: HostConnection,
+  method: string,
+  params: unknown,
+  timeoutMs?: number,
+): Promise<Record<string, unknown>> {
+  const reply = await host.connection.request(method, params, timeoutMs);
+  if ('error' in reply)
+    throw Object.assign(new Error(`${host.machine} refused ${method}: ${reply.error.message}`), {
+      code: reply.error.code,
+    });
   if (!isJsonObject(reply.result)) throw new Error(`${host.machine} answered ${method} without a result.`);
   return reply.result;
 }
@@ -121,8 +129,63 @@ function hostedSession(host: HostConnection, value: Record<string, unknown>): Ho
   };
 }
 
-async function attach(host: HostConnection, session: string): Promise<HostedSession> {
-  return hostedSession(host, await call(host, 'device-host.attach', { session }));
+async function attach(host: HostConnection, session: string, timeoutMs?: number): Promise<HostedSession> {
+  return hostedSession(host, await call(host, 'device-host.attach', { session }, timeoutMs));
+}
+
+export type HostedMacosProbe =
+  | { state: 'ready' }
+  | { state: 'stopped' }
+  | { state: 'unknown'; notice?: string }
+  | { state: 'unreachable'; reason: string };
+
+interface ProbeOptions {
+  timeoutMs?: number;
+  ttlMs?: number;
+}
+
+const probeCache = new Map<string, { expiresAt: number; promise: Promise<HostedMacosProbe> }>();
+
+export function probeHostedMacos(
+  placement: HostedMacosPlacement,
+  { timeoutMs = 3000, ttlMs = 10_000 }: ProbeOptions = {},
+): Promise<HostedMacosProbe> {
+  const key = JSON.stringify([placement.machine, placement.session]);
+  const cached = probeCache.get(key);
+  if (ttlMs > 0 && cached && cached.expiresAt > Date.now()) return cached.promise;
+  const promise = probeSession(placement, timeoutMs);
+  if (ttlMs > 0) {
+    const entry = { expiresAt: Infinity, promise };
+    probeCache.delete(key);
+    probeCache.set(key, entry);
+    if (probeCache.size > 64) probeCache.delete(probeCache.keys().next().value!);
+    void promise.then((result) => {
+      entry.expiresAt = Date.now() + ttlMs;
+      return result;
+    });
+  }
+  return promise;
+}
+
+async function probeSession(placement: HostedMacosPlacement, timeoutMs: number): Promise<HostedMacosProbe> {
+  let host: HostConnection | undefined;
+  try {
+    host = await connectHost(placement.machine, timeoutMs);
+    const session = await attach(host, placement.session, timeoutMs);
+    if (session.state === 'ready' || session.state === 'stopped') return { state: session.state };
+    return {
+      state: 'unknown',
+      notice:
+        session.state === 'unknown'
+          ? session.notice
+          : `The hosted session ${session.id} on ${host.machine} is ${session.state}.${session.notice ? ` ${session.notice}` : ''}`,
+    };
+  } catch (error) {
+    if (error instanceof Error && 'code' in error && error.code === 'unknown-session') return { state: 'stopped' };
+    return { state: 'unreachable', reason: error instanceof Error ? error.message : String(error) };
+  } finally {
+    host?.connection.close();
+  }
 }
 
 async function settle(

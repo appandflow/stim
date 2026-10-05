@@ -16,12 +16,14 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Command } from 'commander';
 import { WebSocketServer } from 'ws';
-import { deviceHostMachinesFile, macosAppState, readMacosRecord } from '@stim-cli/core/state';
+import { deviceHostMachinesFile, macosAppState, readMacosRecord, type MacosAppRecord } from '@stim-cli/core/state';
 import macosCommand, { runMacos } from '../commands/macos.ts';
-import { agentRemoteConfig } from '../device-host/hosted-macos.ts';
+import { agentRemoteConfig, probeHostedMacos, type HostedMacosProbe } from '../device-host/hosted-macos.ts';
+import { applyHostedMacosProbe, readHostedMacosStatus } from '../device-host/hosted-macos-status.ts';
 import { reclaimProject } from '../devices/reclaim.ts';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { stopMacosApp } from '../macos/stop.ts';
+import { BuildConnection } from '../offload/client.ts';
 import { getConfigPath } from '../workspace/config.ts';
 import { workspaceInUse } from '../workspace/in-use.ts';
 
@@ -63,6 +65,8 @@ interface FakeHost {
   grant: unknown;
   applyArguments: boolean;
   installed: { state: string; launched: true | 'unverified' | null; notice?: string };
+  attachReply?: { state: string; notice?: string } | { error: { code: string; message: string } };
+  silentMethods: Set<string>;
   stopSession: () => void;
   close: () => Promise<void>;
 }
@@ -77,6 +81,7 @@ async function fakeHost(): Promise<FakeHost> {
   const partial = new Map<string, Buffer>();
   const host: FakeHost = {
     methods: [],
+    silentMethods: new Set(),
     blobs: new Map(),
     offers: [],
     capabilities: ['device-host'],
@@ -94,6 +99,7 @@ async function fakeHost(): Promise<FakeHost> {
     socket.on('message', (data) => {
       const { id, method, params } = JSON.parse(String(data));
       host.methods.push(method);
+      if (host.silentMethods.has(method)) return;
       const reply = (result: unknown) => socket.send(JSON.stringify({ id, result }));
       if (method === 'hello') {
         if (params.auth.deviceToken !== TOKEN)
@@ -105,6 +111,10 @@ async function fakeHost(): Promise<FakeHost> {
         return reply(session);
       }
       if (method === 'device-host.attach') {
+        if (host.attachReply) {
+          if ('error' in host.attachReply) return socket.send(JSON.stringify({ id, ...host.attachReply }));
+          return reply({ ...session, ...host.attachReply });
+        }
         if (session!.state === 'preparing')
           session = { ...session, state: 'ready', device: { architecture: 'arm64', macosVersion: '27.0', appSlot: 3 } };
         if (session!.state === 'stopping') session = { ...session, state: 'stopped' };
@@ -161,7 +171,7 @@ function credentials(state: 'approved' | 'pending' = 'approved') {
   );
 }
 
-beforeEach(async () => {
+beforeEach(() => {
   dir = realpathSync(mkdtempSync(join(tmpdir(), 'stim-hosted-macos-')));
   process.env.STIM_HOME = join(dir, 'home');
   mkdirSync(process.env.STIM_HOME);
@@ -179,7 +189,6 @@ beforeEach(async () => {
   writeFileSync(getConfigPath(), JSON.stringify({ hosting: { machines: ['mini'] } }));
   credentials();
   tailnet.nodeId = 'nMini';
-  host = await fakeHost();
   spawned = [];
   const real = getExecutor();
   setExecutor({
@@ -201,14 +210,77 @@ beforeEach(async () => {
   });
 });
 
-afterEach(async () => {
+afterEach(() => {
   resetExecutor();
-  await host.close();
   rmSync(dir, { recursive: true, force: true });
   delete process.env.STIM_HOME;
 });
 
+function statusRecord(): MacosAppRecord {
+  return {
+    launchId: 'launch',
+    arguments: [],
+    product: 'Fixture',
+    bundle: '/Fixture.app',
+    bundleId: 'dev.fixture.app',
+    executable: '/Fixture.app/Contents/MacOS/Fixture',
+    build: { state: 'ok', startedAt: 'now' },
+    hostLaunched: true,
+    host: {
+      machine: 'mini',
+      session: '12345678-1234-1234-1234-123456789abc',
+      appSlot: 3,
+      appAttempt: 'attempt',
+      bundleId: 'dev.fixture.app.hosted3',
+      agent: { driver: 'none', setting: 'hosting.agentDriver' },
+    },
+  };
+}
+
+test.each<[HostedMacosProbe, string, boolean | 'unverified']>([
+  [{ state: 'ready' }, 'running', true],
+  [{ state: 'stopped' }, 'stopped', false],
+  [{ state: 'unknown' }, 'unverified', 'unverified'],
+  [{ state: 'unreachable', reason: 'closed' }, 'unverified', 'unverified'],
+])('host evidence changes only the status snapshot: %j', (probe, state, launched) => {
+  const record = statusRecord();
+  const facts = applyHostedMacosProbe(record, probe);
+  expect(macosAppState(facts.record)).toMatchObject({ state, host: record.host, hostLaunched: launched });
+  expect(record.hostLaunched).toBe(true);
+  expect(Boolean(facts.warning)).toBe(probe.state !== 'ready');
+});
+
+test('a ready session does not promote an unconfirmed app launch to running', () => {
+  const record = { ...statusRecord(), hostLaunched: 'unverified' as const };
+  const facts = applyHostedMacosProbe(record, { state: 'ready' });
+  expect(macosAppState(facts.record)?.state).toBe('unverified');
+  expect(facts.record?.host).toEqual(record.host);
+});
+
+test('local, absent, stopped and supervised records never ask a host for status', async () => {
+  const connect = vi.spyOn(BuildConnection, 'open').mockRejectedValue(new Error('unexpected hosting connection'));
+  const local = statusRecord();
+  delete local.host;
+  const supervised = { ...statusRecord(), supervisor: { pid: 1, processToken: 'token', startedAtMicros: 1 } };
+  try {
+    for (const record of [null, local, { ...statusRecord(), hostLaunched: false }, supervised]) {
+      expect(await readHostedMacosStatus(record)).toEqual({ record });
+    }
+    expect(connect).not.toHaveBeenCalled();
+  } finally {
+    connect.mockRestore();
+  }
+});
+
 describe.skipIf(process.platform !== 'darwin')('stim macos --host (SwiftPM and codesign run only on macOS)', () => {
+  beforeEach(async () => {
+    host = await fakeHost();
+  });
+
+  afterEach(async () => {
+    await host.close();
+  });
+
   test('places the bundle on the host, records the session, and stop ends it there', async () => {
     host.grant = GRANT;
     const args = ['-autopilot.enabled', 'true', ''];
@@ -417,6 +489,101 @@ describe.skipIf(process.platform !== 'darwin')('stim macos --host (SwiftPM and c
     expect(host.methods).not.toContain('device-host.reserve');
     expect(readMacosRecord(root)).toBeNull();
   });
+
+  test('status reports a stopped host session without discarding the placement or changing saved state', async () => {
+    await runMacos(root, () => {}, 'mini');
+    const saved = readMacosRecord(root)!;
+    host.stopSession();
+    const facts = await readHostedMacosStatus(saved, { ttlMs: 0 });
+    expect(macosAppState(facts.record)).toMatchObject({ state: 'stopped', host: saved.host });
+    expect(facts.warning).toContain(`session ${saved.host!.session} stopped`);
+    expect(facts.warning).toContain('Run stim macos --host mini');
+    expect(facts.warning).toContain('stim stop to clear the placement');
+    expect(readMacosRecord(root)).toEqual(saved);
+  });
+
+  test('status preserves an unreachable placement as unverified with a cleanup remedy', async () => {
+    await runMacos(root, () => {}, 'mini');
+    const saved = readMacosRecord(root)!;
+    await host.close();
+    const started = performance.now();
+    const facts = await readHostedMacosStatus(saved, { timeoutMs: 100, ttlMs: 0 });
+    expect(performance.now() - started).toBeLessThan(1000);
+    expect(macosAppState(facts.record)).toMatchObject({ state: 'unverified', host: saved.host });
+    expect(facts.warning).toContain('mini did not answer');
+    expect(facts.warning).toContain('run stim stop when the host answers');
+    expect(readMacosRecord(root)).toEqual(saved);
+  });
+
+  test('status carries an unknown host session notice and requires reconciliation', async () => {
+    await runMacos(root, () => {}, 'mini');
+    host.attachReply = { state: 'unknown', notice: 'The previous session owner is not attached to this server.' };
+    const facts = await readHostedMacosStatus(readMacosRecord(root));
+    expect(macosAppState(facts.record)).toMatchObject({ state: 'unverified', host: readMacosRecord(root)!.host });
+    expect(facts.warning).toContain(host.attachReply.notice);
+    expect(facts.warning).toContain('Run stim stop to reconcile it.');
+    const hellos = host.methods.filter((method) => method === 'hello').length;
+    await readHostedMacosStatus(readMacosRecord(root));
+    expect(host.methods.filter((method) => method === 'hello')).toHaveLength(hellos);
+  });
+
+  test('a missing session is stopped, while other attach refusals remain unverified', async () => {
+    await runMacos(root, () => {}, 'mini');
+    const saved = readMacosRecord(root)!;
+    host.attachReply = { error: { code: 'unknown-session', message: 'This client has no such hosted session.' } };
+    const missing = await readHostedMacosStatus(saved, { ttlMs: 0 });
+    expect(macosAppState(missing.record)).toMatchObject({ state: 'stopped', host: saved.host });
+    host.attachReply = { error: { code: 'forbidden', message: 'Current device-host approval is required.' } };
+    const refused = await readHostedMacosStatus(saved, { ttlMs: 0 });
+    expect(macosAppState(refused.record)?.state).toBe('unverified');
+    expect(refused.warning).toContain('Current device-host approval is required.');
+  });
+
+  test.each(['preparing', 'stopping'])('an unsettled %s session cannot report a running app', async (state) => {
+    await runMacos(root, () => {}, 'mini');
+    host.attachReply = { state };
+    const facts = await readHostedMacosStatus(readMacosRecord(root), { ttlMs: 0 });
+    expect(macosAppState(facts.record)?.state).toBe('unverified');
+    expect(facts.warning).toContain(state);
+  });
+
+  test('concurrent and recent probes share a connection, then refresh an expired result', async () => {
+    await runMacos(root, () => {}, 'mini');
+    const placement = readMacosRecord(root)!.host!;
+    const hellos = host.methods.filter((method) => method === 'hello').length;
+    expect(await Promise.all([probeHostedMacos(placement), probeHostedMacos(placement)])).toEqual([
+      { state: 'ready' },
+      { state: 'ready' },
+    ]);
+    host.stopSession();
+    expect(await probeHostedMacos(placement)).toEqual({ state: 'ready' });
+    expect(host.methods.filter((method) => method === 'hello')).toHaveLength(hellos + 1);
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 11_000);
+    try {
+      expect(await probeHostedMacos(placement)).toEqual({ state: 'stopped' });
+      expect(host.methods.filter((method) => method === 'hello')).toHaveLength(hellos + 2);
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
+  test.each(['hello', 'device-host.attach'])(
+    'a silent %s times out, closes the connection and caches failure',
+    async (method) => {
+      await runMacos(root, () => {}, 'mini');
+      host.silentMethods.add(method);
+      const saved = readMacosRecord(root)!;
+      const started = performance.now();
+      const facts = await readHostedMacosStatus(saved, { timeoutMs: 100 });
+      expect(performance.now() - started).toBeLessThan(1000);
+      expect(macosAppState(facts.record)?.state).toBe('unverified');
+      expect(facts.warning).toMatch(/no reply/);
+      const hellos = host.methods.filter((each) => each === 'hello').length;
+      expect(await readHostedMacosStatus(saved, { timeoutMs: 100 })).toEqual(facts);
+      expect(host.methods.filter((each) => each === 'hello')).toHaveLength(hellos);
+      await host.close();
+    },
+  );
 
   test('a session the host stopped is replaced by a new reservation', async () => {
     const first = await runMacos(root, () => {}, 'mini');
