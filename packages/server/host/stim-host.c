@@ -13,6 +13,10 @@
 
 extern char **environ;
 
+#define PROMPT_WAIT_SECONDS 120
+#define PROMPT_POLL_MICROSECONDS 100000
+#define PROMPT_APPEAR_POLLS 100
+
 static pid_t child = 0;
 
 static void forward(int sig) {
@@ -70,12 +74,57 @@ static int permissions(void) {
   return 0;
 }
 
+/* macOS shows one permission dialog at a time; its window belongs to the system process universalAccessAuthWarn. */
+static bool prompt_visible(void) {
+  CFArrayRef windows = CGWindowListCopyWindowInfo(kCGWindowListOptionOnScreenOnly, kCGNullWindowID);
+  if (!windows) return false;
+  bool found = false;
+  for (CFIndex i = 0; !found && i < CFArrayGetCount(windows); i++) {
+    CFDictionaryRef window = CFArrayGetValueAtIndex(windows, i);
+    CFStringRef owner = CFDictionaryGetValue(window, kCGWindowOwnerName);
+    found = owner && CFStringCompare(owner, CFSTR("universalAccessAuthWarn"), 0) == kCFCompareEqualTo;
+  }
+  CFRelease(windows);
+  return found;
+}
+
+static bool wait_for_prompt_to_close(void) {
+  for (int i = 0; i < PROMPT_WAIT_SECONDS && prompt_visible(); i++) sleep(1);
+  return !prompt_visible();
+}
+
+static bool wait_for_prompt(void) {
+  int i = 0;
+  while (i < PROMPT_APPEAR_POLLS && !prompt_visible()) {
+    usleep(PROMPT_POLL_MICROSECONDS);
+    i++;
+  }
+  if (i == PROMPT_APPEAR_POLLS) return false;
+  wait_for_prompt_to_close();
+  return true;
+}
+
+static void open_control_pane(void) {
+  char *args[] = {"open", "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility", NULL};
+  pid_t opener;
+  int status;
+  if (posix_spawn(&opener, "/usr/bin/open", NULL, NULL, args, environ) == 0) waitpid(opener, &status, 0);
+}
+
 static int request_permissions(void) {
   if (getppid() != 1) {
     fprintf(stderr, "stim-host: request-permissions must be launched with `open` so macOS asks about this app.\n");
     return 64;
   }
-  if (!CGPreflightScreenCaptureAccess()) CGRequestScreenCaptureAccess();
+  if (!CGPreflightScreenCaptureAccess()) {
+    CGRequestScreenCaptureAccess();
+    wait_for_prompt();
+  }
+  if (control_allowed()) return 0;
+  if (!wait_for_prompt_to_close()) {
+    open_control_pane();
+    return 0;
+  }
   if (!AXIsProcessTrusted()) {
     const void *keys[] = {kAXTrustedCheckOptionPrompt};
     const void *values[] = {kCFBooleanTrue};
@@ -83,8 +132,14 @@ static int request_permissions(void) {
                                                  &kCFTypeDictionaryValueCallBacks);
     AXIsProcessTrustedWithOptions(options);
     CFRelease(options);
-  } else if (!CGPreflightPostEventAccess()) {
+    if (!wait_for_prompt() && !AXIsProcessTrusted()) {
+      open_control_pane();
+      return 0;
+    }
+  }
+  if (AXIsProcessTrusted() && !CGPreflightPostEventAccess()) {
     CGRequestPostEventAccess();
+    if (!wait_for_prompt() && !control_allowed()) open_control_pane();
   }
   return 0;
 }
