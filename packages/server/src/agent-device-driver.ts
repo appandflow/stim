@@ -150,7 +150,6 @@ export class AgentDeviceDriver implements HostedAgentDriver {
     const invocation = resolveAgentDevice(this.options.env);
     mkdirSync(this.options.stateDir, { recursive: true, mode: 0o700 });
     chmodSync(this.options.stateDir, 0o700);
-    rmSync(join(this.options.stateDir, 'daemon.json'), { force: true });
     const attempt = tryAcquireClaim({ root: this.options.claimRoot, mode: 'exclusive', label: 'agent-device daemon' });
     if (attempt.pending) releaseClaim(attempt.pending);
     if (!attempt.acquired)
@@ -158,6 +157,7 @@ export class AgentDeviceDriver implements HostedAgentDriver {
     const claim = attempt.acquired;
     this.claim = claim;
     this.stopping = false;
+    rmSync(join(this.options.stateDir, 'daemon.json'), { force: true });
     markClaimChildPending(claim);
     const token = newAgentToken();
     let proxy: ChildProcess | undefined;
@@ -199,6 +199,11 @@ export class AgentDeviceDriver implements HostedAgentDriver {
       });
     } catch (error) {
       this.running = null;
+      if (!this.daemonRecord) {
+        try {
+          this.daemonRecord = this.readDaemon();
+        } catch {}
+      }
       await this.teardown(proxy).catch(() => undefined);
       throw error;
     }

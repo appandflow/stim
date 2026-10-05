@@ -27,7 +27,12 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 const args = process.argv.slice(2);
 const stateDir = args[args.indexOf('--state-dir') + 1];
-if (args[0] === 'proxy' && process.env.FAKE_PROXY === 'silent') {
+if (args[0] === 'proxy' && process.env.FAKE_PROXY === 'daemon-only') {
+  const daemon = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { detached: true, stdio: 'ignore' });
+  daemon.unref();
+  writeFileSync(join(stateDir, 'daemon.json'), JSON.stringify({ pid: daemon.pid }));
+  setInterval(() => {}, 1000);
+} else if (args[0] === 'proxy' && process.env.FAKE_PROXY === 'silent') {
   setInterval(() => {}, 1000);
 } else if (args[0] === 'proxy') {
   const code = (process.env.FAKE_DAEMON === 'stubborn' ? "process.on('SIGTERM', () => {});" : '') + 'setInterval(() => {}, 1000)';
@@ -253,6 +258,15 @@ describe.skipIf(process.platform === 'win32')('agent-device driver', () => {
     } finally {
       bystander.kill('SIGKILL');
     }
+  });
+
+  test('stops a daemon the proxy started even when the proxy never reports ready and daemon stop does nothing', async () => {
+    install(root);
+    const driver = driverIn(root, { startTimeoutMs: 500 }, { FAKE_PROXY: 'daemon-only', FAKE_STOP_NOOP: '1' });
+    await expect(driver.start()).rejects.toThrow(/did not report a listening address/);
+    const daemonPid = (JSON.parse(readFileSync(join(root, 'state', 'daemon.json'), 'utf8')) as { pid: number }).pid;
+    await vi.waitFor(() => expect(() => process.kill(daemonPid, 0)).toThrow(/ESRCH/));
+    expect(readClaimSet(join(root, 'agent-device.claims')).live).toHaveLength(0);
   });
 
   test('forwards only the proxy routes and keeps a bare session route to the root', async () => {

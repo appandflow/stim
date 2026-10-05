@@ -562,7 +562,10 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     let known = agentNodes.get(peer);
     if (!known || known.until < Date.now()) {
       const identity = await whois(tailscaleNow().binary, options.env, peer);
-      if (identity?.kind !== 'tailnet') return refuse(403, 'Forbidden.');
+      if (identity?.kind !== 'tailnet') {
+        agentLimiter.record(peer);
+        return refuse(403, 'Forbidden.');
+      }
       known = { node: identity.nodeId, until: Date.now() + 30_000 };
       agentNodes.set(peer, known);
       if (agentNodes.size > 256) agentNodes.delete(agentNodes.keys().next().value!);
