@@ -62,10 +62,14 @@ refuses with STIM_MACOS_OWNER_UNVERIFIED; other apps remain untouched.
 
 Stim Desktop shows this app in its workspace, with Build and run, Refresh preview,
 Open app and Stop. Capture and Open app verify the recorded executable, bundle
-identifier, PID and process start time. Open app rechecks the same captured window and one standard app window, then
-activates that owned app for normal native input.
-A main window with contained utility windows is supported; disjoint app windows
-refuse capture. The viewer never captures its own process recursively.
+identifier, PID and process start time. Open app rechecks that the captured window
+is still the app's front window, then activates that owned app for normal native input.
+The preview follows the app's front standard window, its main window with any
+attached sheet, as the app opens, switches, closes or resizes windows. It never
+captures another process's windows, menus or the desktop. Without Device Control
+and Data Access permission (Accessibility on macOS 26 and earlier) Stim cannot
+tell which window is in front, so the preview shows only an app whose one window
+contains the others. The viewer never captures its own process recursively.
 The captured view is read-only; background mouse/keyboard relay is not included.
 
 Capture requires existing Screen & System Audio Recording permission (Screen
@@ -76,16 +80,20 @@ version, with statuses, Request permissions, Settings and Check again. Settings
 opens the matching System Settings > Privacy & Security pane. You approve normal macOS requests; Stim never resets or grants access
 automatically. Permissions on the app card reopens setup. Builds never prompt.
 If unavailable, use the normal app window and
-read the workspace logs. Use Refresh preview after the app window opens or is
-resized to rebind capture.
+read the workspace logs.
 
 PHONE VIEWING AND CONTROL
 
 A paired phone shows native app and build state in the workspace and home list.
-Tap the app tile to view its one visible window through stim-server. The server
+Tap the app tile to view the app's front window through stim-server. The server
 requires read access and its macos-window feature; it rechecks the recorded PID,
 process start time, executable and bundle before capture and on every frame.
 It never captures the desktop or another application, and offers no replay.
+The view follows the app's front standard window like the Desktop preview. A
+server advertising macos-windows also sends a macos-windows event on the frames
+subscription with the captured window and the app's windows (id, title and frame
+in points), after subscribing and whenever they change. While the app has no
+open window the view reports a delay until one opens.
 
 A server advertising macos-window-control also supports the phone's Control
 mode on a control pairing. Tap/click and drag act on the displayed window;
@@ -112,12 +120,12 @@ Logical shortcuts for other host layouts remain tracked in
 https://github.com/appandflow/stim/issues/2422.
 Control holds one exclusive server session per owned app, ends on disconnect,
 revocation, takeover or five minutes without input, and does not take a CLI
-simulator/device lock. Each action rechecks the exact owned process and the
-same single standard app window. Modal dialogs or disjoint windows, changed capture or
-resize refuse input until the viewer reconnects. Contained nonmodal auxiliaries
-are allowed. A sheet attached to the captured window takes focus and pointer
-input; disjoint windows still refuse. A sheet larger than the captured window
-is not supported. Existing Device
+simulator/device lock. Each action rechecks the exact owned process and that the
+captured window is still the app's front standard window. The app's other windows
+are allowed; input goes to the captured window, and a sheet attached to it takes
+focus and pointer input. Input that arrives while the view moves to another
+window is dropped and Control continues. A modal dialog window refuses input. A
+sheet larger than the captured window is not supported. Existing Device
 Control and Data Access permission (Accessibility on macOS 26 and earlier) is
 required. The phone and server never request or reset it. A refusal ends Control
 with its reason while viewing and logs remain usable. Older servers remain
@@ -134,7 +142,7 @@ native viewer opening, including one initiated by the phone. A server started
 outside Desktop uses that launching host's permissions; granting this copy of Stim
 may not apply to it. The server never requests or resets permissions. Status and logs still work. Tap the build card for
 SwiftPM output or the logs card for native runtime stdout and stderr. Metro is not
-used. Close and reopen the viewer after opening or resizing the app window.
+used.
 
 ON ANOTHER MAC
 

@@ -5,7 +5,7 @@ import { connect, type ClientHttp2Session } from 'node:http2';
 import { join } from 'node:path';
 import type { DeviceLeaseState, MacosAppState, StatusPayload } from '@stim-cli/core/state';
 import type { ClaimHandle } from '@stim-cli/core/ownership-claim';
-import type { DevicePosture, FrameTarget, DeviceFrameArtwork, DuoFramePose } from './protocol.ts';
+import type { DevicePosture, FrameTarget, DeviceFrameArtwork, DuoFramePose, MacosWindow } from './protocol.ts';
 import { serverDir } from './registry.ts';
 import { DEFAULT_FRAME_HINT, HelperSource, RECORD_HINT, type FrameHint } from './frame-helper.ts';
 import { Pending, terminate } from './stim-command.ts';
@@ -47,6 +47,8 @@ export interface DeviceInput {
 export interface FrameListener {
   frame: (frame: Frame) => void;
   artwork?: (artwork: DeviceFrameArtwork | null) => void;
+  /** macOS only. */
+  windows?: (windows: { current: MacosWindow | null; windows: MacosWindow[] }) => void;
   duo?: (frame: Frame) => void;
   /**
    * With `video`, a device the helper streams sends H.264 access units here instead of JPEG frames; a device on
@@ -859,6 +861,7 @@ export class FramePool {
             }
           : {}),
         ...(listener.artwork ? { artwork: listener.artwork } : {}),
+        ...(listener.windows ? { windows: listener.windows } : {}),
         ...(listener.duo
           ? {
               duo: (frame: Frame) => {

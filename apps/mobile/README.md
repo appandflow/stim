@@ -388,11 +388,11 @@ macOS uses no Metro. Stopped and unverified apps retain their status tile.
 
 A running app's tile opens the same viewer with `platform: "macos"`, in the default
 slot, when the server advertises `macos-window`. It has no replay. The server captures only
-one visible window of the app whose PID, process start time, executable and
-bundle match its owned launch record; other apps and the desktop are excluded.
+the front standard window of the app whose PID, process start time, executable and
+bundle match its owned launch record, following it as the app opens, switches, closes
+or resizes windows; other apps and the desktop are excluded.
 Existing Screen & System Audio Recording permission (Screen Recording on macOS 14) is required for the capture host. A denial
-shows permission guidance while status and logs stay usable. On the host Mac, Stim Desktop opens one native viewer setup screen for Screen & System Audio Recording and Device Control and Data Access (Accessibility on macOS 26 and earlier) on first use. Approve the normal macOS requests there, then reconnect the phone viewer. **Permissions** on the Desktop app card reopens setup. The phone and server do not request or reset OS grants. Close and reopen the viewer after opening or resizing the
-app window.
+shows permission guidance while status and logs stay usable. On the host Mac, Stim Desktop opens one native viewer setup screen for Screen & System Audio Recording and Device Control and Data Access (Accessibility on macOS 26 and earlier) on first use. Approve the normal macOS requests there, then reconnect the phone viewer. **Permissions** on the Desktop app card reopens setup. The phone and server do not request or reset OS grants.
 
 With `macos-window-control` and a control pairing, **Control** enables mouse
 clicks/drags and printable ASCII typing. The main bar offers **Keyboard** and
@@ -416,11 +416,12 @@ or other layouts. Ordinary typing and
 navigation remain available. [#2422](https://github.com/appandflow/stim/issues/2422) tracks logical mapping for
 other host layouts.
 
-Each action verifies the same owned process and captured
-standard window. A modal dialog or disjoint window, changed capture or resize refuses
-input. Contained nonmodal auxiliary windows are allowed. A sheet attached to the
-captured window takes focus and pointer input; disjoint windows still refuse.
-A sheet larger than the captured window is not supported. Control
+Each action verifies the same owned process and that the captured
+window is still the app's front standard window. The app's other windows are allowed;
+input that arrives while the view moves to another window is dropped and Control
+continues. A modal dialog window refuses input. A sheet attached to the captured
+window takes focus and pointer input. A sheet larger than the captured window is not
+supported. Control
 uses one exclusive server session per app, with disconnect/revocation/takeover
 and five-minute idle expiry; it takes no CLI simulator lock. Existing
 Device Control and Data Access permission (Accessibility on macOS 26 and earlier) is required. Refusals end Control and show the reason

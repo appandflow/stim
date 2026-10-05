@@ -31,12 +31,15 @@ export type Capability = (typeof CAPABILITIES)[number];
  * the slot's Stim-owned device instead. `notifications` is `notifications.list` and the `notification` event.
  * `macos-hosted` relays `frames.subscribe` and control for a workspace whose macOS app `stim macos --host` placed on
  * another Mac.
+ * `macos-windows` is the `macos-windows` event on a macOS `frames.subscribe`, naming the window capture follows
+ * and the app's other windows.
  */
 export const FEATURES = [
   'physical-ios',
   'physical-android',
   'notifications',
   'macos-window',
+  'macos-windows',
   'macos-window-control',
   'macos-keyboard-extended',
   'device-frames',
@@ -1219,6 +1222,20 @@ export interface DeviceFrameEvent {
   artwork: DeviceFrameArtwork | null;
 }
 
+export interface MacosWindow {
+  id: number;
+  title: string;
+  frame: { x: number; y: number; width: number; height: number };
+}
+
+/** Sent after subscribing and whenever the captured window or the app's window list changes. */
+export interface MacosWindowsEvent {
+  event: 'macos-windows';
+  subscription: string;
+  current: MacosWindow | null;
+  windows: MacosWindow[];
+}
+
 export interface DuoFramePose {
   revision: string;
   screenID: number;
@@ -1300,6 +1317,7 @@ export type ServerEvent =
   | LogsEvent
   | FrameEvent
   | DeviceFrameEvent
+  | MacosWindowsEvent
   | FrameDelayedEvent
   | ReplayEndedEvent
   | ErrorEvent

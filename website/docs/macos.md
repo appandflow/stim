@@ -67,17 +67,20 @@ locally with the same supervisor and ownership checks. The build record carries
 logs show placement and its reason.
 
 Stim Desktop offers **Build and run**, **Refresh preview**, **Open app** and **Stop** on the
-workspace's app card. This prototype supports one visible main window, on the same
-Mac. Contained utility windows are supported; separate app windows refuse capture.
+workspace's app card. The preview follows the app's front standard window, its
+main window with any attached sheet, as the app opens, switches, closes or resizes
+windows. It never captures another process's windows, menus or the desktop. Without
+**Device Control and Data Access** permission Stim cannot tell which window is in
+front, so the preview shows only an app whose one window contains the others.
 A viewer does not capture its own process recursively. Capture and Open app verify the recorded PID, process start time, bundle ID
-and executable. Open app rechecks the captured window and one standard app window, then activates
+and executable. Open app rechecks that the captured window is still the app's front window, then activates
 that owned app for normal native-window input. The captured view is read-only;
 background mouse/keyboard relay is not included.
 
 Capture requires existing **Screen & System Audio Recording** permission (**Screen Recording** on macOS 14);
 Open app also requires **Device Control and Data Access** permission (**Accessibility** on macOS 26 and earlier).
 The first native viewer opening shows one Desktop setup screen for both permissions, named for your macOS version, with status, **Request permissions**, **Settings** and **Check again**. Approve the normal macOS requests; Stim never resets or automatically grants access. **Permissions** on the app card reopens setup. Builds never prompt. If unavailable, use the normal app window and workspace logs.
-Use Refresh preview after the app window opens or is resized to rebind capture. An
+An
 unverifiable owner refuses cleanup rather than signalling another app. `stop`
 affects only this workspace's recorded app and supervisor.
 
@@ -88,16 +91,18 @@ state and runtime state on Home and in the workspace. Tap the build card for
 SwiftPM logs, or the logs card for native runtime output. Metro stays out of this
 workflow.
 
-Tap the app tile to view its one visible window. A server advertising
+Tap the app tile to view the app's front window. A server advertising
 `macos-window` streams that window over the existing authenticated connection with
 read access. It verifies the recorded PID, process start time, executable and
 bundle before capture and on every frame. The view has no replay and never captures the desktop or another app.
+It follows the app's front standard window like the Desktop preview, and reports a
+delay while the app has no open window. A server advertising `macos-windows` also
+names the captured window and the app's other windows.
 
 The capture host requires existing **Screen & System Audio Recording** permission
 (**Screen Recording** on macOS 14). When denied, the viewer names the existing host
 to allow in **System Settings → Privacy & Security → Screen & System Audio Recording**. Open **Permissions** in Stim Desktop on that Mac to request both grants, then reconnect the phone viewer. A phone-first native view asks the running Desktop host to show the same setup. A server started outside Desktop uses that launching host's permissions, so granting this copy of Stim may not apply to it. The phone and server never request or reset permissions.
-Status and logs remain available. Close and reopen the viewer after opening or
-resizing the app window.
+Status and logs remain available.
 
 With `macos-window-control` and a control pairing, tap **Control** for clicks,
 drags and printable ASCII typing. The main bar offers **Keyboard** and **Scroll**;
@@ -122,10 +127,11 @@ digit key events on other layouts; ordinary typing and navigation still work.
 [#2422](https://github.com/appandflow/stim/issues/2422) tracks logical shortcuts for other host layouts.
 
 Each action rechecks the exact owned
-process and the same single standard window; modal dialogs or disjoint windows, changed
-capture or resize refuse input. Contained nonmodal auxiliaries are allowed. A sheet
-attached to the captured window takes focus and pointer input; disjoint windows
-still refuse. A sheet larger than the captured window is not supported.
+process and that the captured window is still the app's front standard window. The
+app's other windows are allowed; input goes to the captured window, and a sheet
+attached to it takes focus and pointer input. Input that arrives while the view
+moves to another window is dropped and Control continues. A modal dialog window
+refuses input. A sheet larger than the captured window is not supported.
 The server holds one exclusive session per app, ending
 on disconnect, revocation, takeover or five idle minutes, without a CLI device
 lock. Existing **Device Control and Data Access** permission (**Accessibility** on

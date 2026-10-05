@@ -28,3 +28,5 @@ SimulatorFrames/DuoScreenHitMesh.swift
 SimulatorFrames/DuoModelView.swift
 SimulatorFrames/SimulatorHingeAngle.swift
 StimKit/ProcessStream.swift
+StimKit/OwnedAppWindows.swift
+StimKit/OwnedAppWindowReader.swift

@@ -492,6 +492,26 @@ export function protocolJsonSchema(): JsonSchema {
           foreground: { type: 'string', contentEncoding: 'base64' },
         },
       },
+      MacosWindow: {
+        type: 'object',
+        required: ['id', 'title', 'frame'],
+        additionalProperties: false,
+        properties: {
+          id: { type: 'integer', minimum: 0 },
+          title: { type: 'string' },
+          frame: {
+            type: 'object',
+            required: ['x', 'y', 'width', 'height'],
+            additionalProperties: false,
+            properties: {
+              x: { type: 'number' },
+              y: { type: 'number' },
+              width: { type: 'number', minimum: 0 },
+              height: { type: 'number', minimum: 0 },
+            },
+          },
+        },
+      },
       FrameTarget: {
         type: 'object',
         required: ['workspace', 'platform'],
@@ -1398,6 +1418,17 @@ export function protocolJsonSchema(): JsonSchema {
       },
       ServerEvent: {
         oneOf: [
+          {
+            type: 'object',
+            required: ['event', 'subscription', 'current', 'windows'],
+            additionalProperties: false,
+            properties: {
+              event: { const: 'macos-windows' },
+              subscription: { type: 'string' },
+              current: { oneOf: [{ type: 'null' }, { $ref: '#/$defs/MacosWindow' }] },
+              windows: { type: 'array', items: { $ref: '#/$defs/MacosWindow' } },
+            },
+          },
           {
             type: 'object',
             required: ['event', 'subscription', 'artwork'],

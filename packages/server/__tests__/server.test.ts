@@ -684,6 +684,7 @@ describe('pairing', () => {
           'physical-android',
           'notifications',
           'macos-window',
+          'macos-windows',
           'macos-window-control',
           'macos-keyboard-extended',
           'device-frames',
@@ -2827,6 +2828,11 @@ const message = (kind, body) => {
 };
 if (env.FAKE_HELPER_KEYBOARD) message(2, Buffer.from(JSON.stringify({ keyboard: env.FAKE_HELPER_KEYBOARD })));
 if (env.FAKE_HELPER_STALLED) message(2, Buffer.from(JSON.stringify({ stalled: env.FAKE_HELPER_STALLED })));
+if (run.args[0] === 'macos') {
+  for (const windows of [env.FAKE_HELPER_MACOS_WINDOWS, env.FAKE_HELPER_MACOS_WINDOWS_MALFORMED]) {
+    if (windows) message(2, Buffer.from(JSON.stringify({ macosWindows: JSON.parse(windows) })));
+  }
+}
 if (env.FAKE_HELPER_STALL_CLEAR_MS) {
   setTimeout(() => message(2, Buffer.from(JSON.stringify({ stalled: null }))), Number(env.FAKE_HELPER_STALL_CLEAR_MS));
 }
@@ -3732,8 +3738,19 @@ describe('frames.subscribe', () => {
   test.skipIf(!fakeTailscale)(
     'streams a verified native app to a read-only phone without control, replay or device tools',
     async () => {
+      const windows = [
+        { id: 12, title: 'MyApp', frame: { x: -100, y: 20, width: 800, height: 600 } },
+        { id: 13, title: '', frame: { x: 100, y: -20, width: 400, height: 300 } },
+      ];
+      const macosWindows = { current: windows[0], windows };
       const port = await startWithTools(
-        { FAKE_STIM_PAYLOADS: statusWith({ macos: OWNED_MACOS }), FAKE_FRAMES: '[]', FAKE_HELPER_INTERVAL_MS: '10' },
+        {
+          FAKE_STIM_PAYLOADS: statusWith({ macos: OWNED_MACOS }),
+          FAKE_FRAMES: '[]',
+          FAKE_HELPER_INTERVAL_MS: '10',
+          FAKE_HELPER_MACOS_WINDOWS: JSON.stringify(macosWindows),
+          FAKE_HELPER_MACOS_WINDOWS_MALFORMED: JSON.stringify({ current: null, windows: [{ id: -1 }] }),
+        },
         undefined,
         fakeHelper(),
       );
@@ -3741,7 +3758,20 @@ describe('frames.subscribe', () => {
       expect(await client.request('frames.subscribe', { workspace, platform: 'macos', video: ['h264'] })).toMatchObject(
         { result: { video: 'h264' } },
       );
-      await new Promise((resolve) => client.socket.once('message', resolve));
+      const event = await client.next();
+      expect(event).toEqual({ event: 'macos-windows', subscription: 's1', ...macosWindows });
+      const validator = new Ajv2020({ strict: false, validateFormats: false });
+      validator.addSchema(protocolJsonSchema(), 'protocol');
+      const acceptsEvent = validator.compile({ $ref: 'protocol#/$defs/ServerEvent' });
+      expect(acceptsEvent(event)).toBe(true);
+      expect(acceptsEvent({ event: 'macos-windows', subscription: 's1', current: null, windows: [] })).toBe(true);
+      expect(await client.next()).toHaveProperty('binary');
+      const again = await authed(port);
+      expect(await again.request('frames.subscribe', { workspace, platform: 'macos', video: ['h264'] })).toMatchObject({
+        result: { subscription: 's1', video: 'h264' },
+      });
+      expect(await again.next()).toEqual({ event: 'macos-windows', subscription: 's1', ...macosWindows });
+      expect(await again.next()).toHaveProperty('binary');
       expect(await client.request('control.begin', { workspace, platform: 'macos' })).toMatchObject({
         error: { code: 'forbidden' },
       });
@@ -3749,6 +3779,7 @@ describe('frames.subscribe', () => {
         error: { code: 'bad-request' },
       });
       client.socket.close();
+      again.socket.close();
       await until(() => helperRuns().length === 1);
       expect(helperRuns()[0]!.args).toEqual(['macos', JSON.stringify(OWNED_MACOS)]);
       expect(toolRuns().filter((run) => run.tool === 'xcrun' || run.tool === 'adb')).toEqual([]);

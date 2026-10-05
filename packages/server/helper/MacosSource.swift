@@ -34,6 +34,10 @@ final class MacosSource: NSObject, Source, SCStreamDelegate, SCStreamOutput {
   private let video = videoEncoder()
   private let jpegGate = JpegGate()
   private var window: SCWindow?
+  private var reported: OwnedAppWindows.Selection??
+  private var switching = false
+  private var followTimer: DispatchSourceTimer?
+  private let followQueue = DispatchQueue(label: "stim.frames.macos.follow")
   private let inputQueue = DispatchQueue(label: "stim.frames.macos.input")
   private var controlSession: String?
   private var heldMouse:
@@ -65,33 +69,14 @@ final class MacosSource: NSObject, Source, SCStreamDelegate, SCStreamOutput {
     }
     Task { [self] in
       do {
-        let content = try await SCShareableContent.excludingDesktopWindows(true, onScreenWindowsOnly: true)
-        guard self.matches() else { fail("The owned macOS app process changed or exited.") }
-        let windows = content.windows.filter {
-          $0.owningApplication?.processID == self.app.app.pid
-            && $0.owningApplication?.bundleIdentifier == self.app.bundleId && $0.windowLayer == 0
-        }
-        let mainWindows = windows.filter { candidate in
-          windows.allSatisfy { candidate.windowID == $0.windowID || candidate.frame.contains($0.frame) }
-        }
-        guard mainWindows.count == 1, let window = mainWindows.first else {
+        guard let selection = try self.currentWindows() else {
           fail(
-            "Open one visible window in the owned macOS app to view it. Stim does not capture the desktop or choose between app windows."
+            AXIsProcessTrusted()
+              ? "Open a window in the owned macOS app to view it. Stim does not capture the desktop or other apps."
+              : "Open one visible window in the owned macOS app to view it. Without \(Self.controlPermission) permission Stim cannot tell which app window is in front, so it views only an app with one window."
           )
         }
-        self.window = window
-        let filter = SCContentFilter(desktopIndependentWindow: window)
-        let configuration = SCStreamConfiguration()
-        configuration.width = Int((filter.contentRect.width * CGFloat(filter.pointPixelScale)).rounded(.up))
-        configuration.height = Int((filter.contentRect.height * CGFloat(filter.pointPixelScale)).rounded(.up))
-        configuration.ignoreShadowsSingleWindow = true
-        configuration.minimumFrameInterval = CMTime(value: 1, timescale: 30)
-        configuration.queueDepth = 3
-        configuration.showsCursor = false
-        let stream = SCStream(filter: filter, configuration: configuration, delegate: self)
-        self.stream = stream
-        try stream.addStreamOutput(self, type: .screen, sampleHandlerQueue: self.pacer.queue)
-        try await stream.startCapture()
+        guard try await self.capture(selection) else { fail("The owned macOS app window closed before capture started.") }
         let timer = DispatchSource.makeTimerSource(queue: self.pacer.queue)
         timer.schedule(deadline: .now() + 1, repeating: 1)
         timer.setEventHandler { [weak self] in
@@ -100,8 +85,123 @@ final class MacosSource: NSObject, Source, SCStreamDelegate, SCStreamOutput {
         }
         self.ownershipTimer = timer
         timer.resume()
+        let follow = DispatchSource.makeTimerSource(queue: self.followQueue)
+        follow.schedule(deadline: .now() + .milliseconds(250), repeating: .milliseconds(250))
+        follow.setEventHandler { [weak self] in self?.follow() }
+        self.followTimer = follow
+        follow.resume()
       } catch { fail("Owned macOS window capture failed: \(error.localizedDescription)") }
     }
+  }
+
+  /// Starts a stream of the selection's current window; false when that window is no longer shareable.
+  private func capture(_ selection: OwnedAppWindows.Selection) async throws -> Bool {
+    guard let window = try await shareable(selection.current.id) else { return false }
+    let filter = SCContentFilter(desktopIndependentWindow: window)
+    let stream = SCStream(filter: filter, configuration: Self.configuration(filter), delegate: self)
+    try stream.addStreamOutput(self, type: .screen, sampleHandlerQueue: pacer.queue)
+    try await stream.startCapture()
+    followQueue.sync {
+      self.stream = stream
+      self.window = window
+      report(selection)
+    }
+    return true
+  }
+
+  private static func configuration(_ filter: SCContentFilter) -> SCStreamConfiguration {
+    let configuration = SCStreamConfiguration()
+    configuration.width = Int((filter.contentRect.width * CGFloat(filter.pointPixelScale)).rounded(.up))
+    configuration.height = Int((filter.contentRect.height * CGFloat(filter.pointPixelScale)).rounded(.up))
+    configuration.ignoreShadowsSingleWindow = true
+    configuration.minimumFrameInterval = CMTime(value: 1, timescale: 30)
+    configuration.queueDepth = 3
+    configuration.showsCursor = false
+    return configuration
+  }
+
+  private func shareable(_ id: CGWindowID) async throws -> SCWindow? {
+    let content = try await SCShareableContent.excludingDesktopWindows(true, onScreenWindowsOnly: true)
+    guard matches() else { fail("The owned macOS app process changed or exited.") }
+    return content.windows.first {
+      $0.windowID == id && $0.owningApplication?.processID == app.app.pid
+        && $0.owningApplication?.bundleIdentifier == app.bundleId && $0.windowLayer == 0
+    }
+  }
+
+  private func currentWindows() throws -> OwnedAppWindows.Selection? {
+    do { return try OwnedAppWindowReader.selection(pid: app.app.pid) } catch {
+      throw refusal("The owned app's current window inventory is unavailable.")
+    }
+  }
+
+  /// Runs on `followQueue`: moves capture to the window the app now shows in front, or to its new size, and
+  /// restarts it after ScreenCaptureKit stopped a stream whose window closed.
+  private func follow() {
+    guard !switching, matches() else { return }
+    let found: OwnedAppWindows.Selection?
+    do { found = try currentWindows() } catch { return }
+    guard let selection = found else { return report(nil) }
+    guard let stream, let captured = window else {
+      switching = true
+      Task {
+        do {
+          _ = try await self.capture(selection)
+        } catch { fail("Owned macOS window capture failed: \(error.localizedDescription)") }
+        self.followQueue.sync { self.switching = false }
+      }
+      return
+    }
+    guard selection.current.id != captured.windowID || selection.current.frame.size != captured.frame.size else {
+      return report(selection)
+    }
+    switching = true
+    Task {
+      var next: SCWindow?
+      do {
+        next = try await self.shareable(selection.current.id)
+        if let next {
+          let filter = SCContentFilter(desktopIndependentWindow: next)
+          try await stream.updateContentFilter(filter)
+          try await stream.updateConfiguration(Self.configuration(filter))
+        }
+      } catch {
+        next = nil
+        try? await stream.stopCapture()
+        self.followQueue.sync { if self.stream === stream { self.stream = nil } }
+      }
+      self.followQueue.sync {
+        self.switching = false
+        guard let next else { return }
+        self.window = next
+        self.report(selection)
+      }
+      guard next != nil else { return }
+      self.inputQueue.sync { if let held = self.heldMouse { self.releaseMouse(held.session) } }
+      self.keyframe()
+    }
+  }
+
+  /// Runs on `followQueue`.
+  private func report(_ found: OwnedAppWindows.Selection?) {
+    let shown: (OwnedAppWindows.Window) -> OwnedAppWindows.Window = { .init(id: $0.id, title: $0.title, frame: $0.frame, accessible: nil) }
+    let selection = found.map { OwnedAppWindows.Selection(current: shown($0.current), windows: $0.windows.map(shown)) }
+    guard reported != .some(selection) else { return }
+    if (reported ?? nil) == nil || selection == nil {
+      Output.notice(["stalled": selection == nil ? "The owned macOS app has no open window." : NSNull()])
+    }
+    reported = .some(selection)
+    let json: (OwnedAppWindows.Window) -> [String: Any] = {
+      [
+        "id": Int($0.id), "title": $0.title,
+        "frame": ["x": $0.frame.minX, "y": $0.frame.minY, "width": $0.frame.width, "height": $0.frame.height],
+      ]
+    }
+    Output.notice([
+      "macosWindows": [
+        "current": selection.map { json($0.current) as Any } ?? NSNull(), "windows": (selection?.windows ?? []).map(json),
+      ]
+    ])
   }
 
   func configure(_ config: Config) {
@@ -143,6 +243,8 @@ final class MacosSource: NSObject, Source, SCStreamDelegate, SCStreamOutput {
           await previous?.value
           guard self.isActive(session) else { return }
           do { try await self.apply(action, session: session) } catch is CancellationError {
+          } catch let changed as WindowChanged {
+            Output.notice(["inputError": changed.localizedDescription])
           } catch {
             if self.endControl(session) { Output.notice(["inputError": error.localizedDescription, "controlSession": session]) }
           }
@@ -205,12 +307,19 @@ final class MacosSource: NSObject, Source, SCStreamDelegate, SCStreamOutput {
     return nil
   }
 
+  /// Input that arrives while capture is moving to another app window is dropped without ending Control.
+  private struct WindowChanged: LocalizedError {
+    var errorDescription: String? { "The owned app's window changed before input, so the input was not sent." }
+  }
+
   private func refusal(_ message: String) -> NSError {
     NSError(domain: "StimFrames", code: 1, userInfo: [NSLocalizedDescriptionKey: message])
   }
 
   private func inputWindow() throws -> ((windowID: CGWindowID, frame: CGRect), AXUIElement) {
-    guard matches(), let captured = window else { throw refusal("The captured owned macOS app window is unavailable.") }
+    guard matches(), let captured = followQueue.sync(execute: { window }) else {
+      throw refusal("The captured owned macOS app window is unavailable.")
+    }
     guard AXIsProcessTrusted(), CGPreflightPostEventAccess() else {
       let permission = Self.controlPermission
       if let host = ProcessInfo.processInfo.environment["STIM_CAPTURE_HOST"] {
@@ -222,64 +331,18 @@ final class MacosSource: NSObject, Source, SCStreamDelegate, SCStreamOutput {
         "Control needs \(permission) permission for the capture host. Open Permissions in Stim Desktop on this Mac, or allow the host in System Settings > Privacy & Security > \(permission), then reconnect. The server never requests or resets permissions; viewing and logs remain available."
       )
     }
-    guard
-      let entries = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID)
-        as? [[String: Any]]
-    else {
+    guard let accessible = OwnedAppWindowReader.accessible(pid: app.app.pid) else {
+      throw refusal("The owned app's accessible windows are unavailable.")
+    }
+    guard !accessible.modal else { throw refusal("Control needs accessible owned app windows without a modal dialog.") }
+    guard let screen = OwnedAppWindowReader.screen(pid: app.app.pid) else {
       throw refusal("The owned app's current window inventory is unavailable.")
     }
-    var windows: [(windowID: CGWindowID, frame: CGRect)] = []
-    for entry in entries
-    where entry[kCGWindowOwnerPID as String] as? Int == Int(app.app.pid) && entry[kCGWindowLayer as String] as? Int == 0 {
-      guard let id = entry[kCGWindowNumber as String] as? UInt32,
-        let bounds = entry[kCGWindowBounds as String] as? [String: Any],
-        let frame = CGRect(dictionaryRepresentation: bounds as CFDictionary)
-      else { throw refusal("The owned app's current window metadata is unavailable.") }
-      windows.append((id, frame))
-    }
-    let main = windows.filter { candidate in windows.allSatisfy { candidate.frame.contains($0.frame) } }
-    guard matches(), main.count == 1, let current = main.first,
-      current.windowID == captured.windowID, current.frame.size == captured.frame.size
-    else {
-      throw refusal("The owned app's captured window changed. Reconnect to its current single window before controlling it.")
-    }
-    let application = AXUIElementCreateApplication(app.app.pid)
-    var value: CFTypeRef?
-    guard AXUIElementCopyAttributeValue(application, kAXWindowsAttribute as CFString, &value) == .success,
-      let owned = value as? [AXUIElement]
-    else { throw refusal("The owned app's accessible windows are unavailable.") }
-    var candidates: [AXUIElement] = []
-    for own in owned {
-      var subrole: CFTypeRef?
-      var modal: CFTypeRef?
-      var positionValue: CFTypeRef?
-      var sizeValue: CFTypeRef?
-      var position = CGPoint.zero
-      var size = CGSize.zero
-      guard AXUIElementCopyAttributeValue(own, kAXSubroleAttribute as CFString, &subrole) == .success,
-        AXUIElementCopyAttributeValue(own, kAXModalAttribute as CFString, &modal) == .success,
-        modal as? Bool == false,
-        AXUIElementCopyAttributeValue(own, kAXPositionAttribute as CFString, &positionValue) == .success,
-        AXUIElementCopyAttributeValue(own, kAXSizeAttribute as CFString, &sizeValue) == .success,
-        let positionValue, let sizeValue, CFGetTypeID(positionValue) == AXValueGetTypeID(),
-        CFGetTypeID(sizeValue) == AXValueGetTypeID(),
-        AXValueGetValue(unsafeDowncast(positionValue, to: AXValue.self), .cgPoint, &position),
-        AXValueGetValue(unsafeDowncast(sizeValue, to: AXValue.self), .cgSize, &size)
-      else { throw refusal("Control needs accessible owned app windows without a modal dialog.") }
-      let frame = CGRect(origin: position, size: size)
-      if subrole as? String == kAXStandardWindowSubrole, frame == current.frame {
-        candidates.append(own)
-      } else {
-        // ScreenCaptureKit adds a contained nonmodal AXDialog sharing indicator on macOS 27.
-        guard subrole as? String != kAXStandardWindowSubrole, current.frame.contains(frame) else {
-          throw refusal("Control needs one captured main window without disjoint app windows.")
-        }
-      }
-    }
-    guard candidates.count == 1, let own = candidates.first, matches() else {
-      throw refusal("The accessible window does not match the captured owned window.")
-    }
-    return (current, own)
+    guard let selection = OwnedAppWindows.select(screen: screen, accessible: accessible.windows), matches(),
+      selection.current.id == captured.windowID,
+      selection.current.frame.size == captured.frame.size, let index = selection.current.accessible
+    else { throw WindowChanged() }
+    return ((selection.current.id, selection.current.frame), accessible.elements[index])
   }
 
   private func attachedSheets(_ own: AXUIElement) -> [AXUIElement] {
@@ -503,7 +566,7 @@ final class MacosSource: NSObject, Source, SCStreamDelegate, SCStreamOutput {
   }
 
   func stream(_ stream: SCStream, didStopWithError error: Error) {
-    fail("Owned macOS window capture stopped: \(error.localizedDescription)")
+    followQueue.async { if self.stream === stream { self.stream = nil } }
   }
 
   func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of type: SCStreamOutputType) {
