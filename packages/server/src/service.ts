@@ -820,22 +820,24 @@ async function switchTo(
       unloaded = false;
     }
     let loadedAgain = false;
-    const deadline = unloaded ? Date.now() + UNLOAD_WAIT_MS : 0;
-    while (!loadedAgain && Date.now() < deadline) {
+    for (const deadline = Date.now() + UNLOAD_WAIT_MS; !loadedAgain && Date.now() < deadline;) {
       loadedAgain =
         (await run('launchctl', ['bootstrap', domain(), path])).ok ||
-        (await loaded(installed.label).catch(() => null)) !== null;
+        (unloaded && (await loaded(installed.label).catch(() => null)) !== null);
       if (!loadedAgain) await sleep(1000);
     }
     const back = loadedAgain ? await waitForHealth(installed.port) : null;
-    const previous = serverBuild(installed.script);
-    const answered = back !== null && (previous ? answersAs(back, previous) : back.startup?.state !== 'degraded');
+    const previous = serverBuild(installed.script) ?? { version: back?.version ?? '', stimBuild: null };
+    const answered = answersAs(back, previous);
+    const answer = back
+      ? `stim-server ${back.version} answers${back.startup && back.startup.state !== 'ready' ? ` (${back.startup.state})` : ''}`
+      : 'nothing answers';
     throw new ServiceError(
       `${describeBuild(expected)} ${why}. ${
         answered
-          ? `Switched back to ${describeBuild(previous ?? { version: back.version, stimBuild: null })}.`
+          ? `Switched back to ${describeBuild(previous)}.`
           : loadedAgain
-            ? `Restored the previous plist, but that server does not answer either; check ${installed.logPath ?? logPath(installed.label)}.`
+            ? `Restored the previous plist, but ${answer} instead of ${describeBuild(previous)}; check ${installed.logPath ?? logPath(installed.label)}.`
             : `Restored the previous plist, but launchd did not load it; run \`launchctl bootout ${domain()}/${installed.label}\` and \`launchctl bootstrap ${domain()} ${path}\`.`
       }`,
     );
