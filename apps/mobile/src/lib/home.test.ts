@@ -166,6 +166,21 @@ describe('filterWorkspaces', () => {
     expect(titles({ activity: 'all' })).toEqual(['building', 'idle-one', 'live-one', 'other', 'source-only', 'source']);
   });
 
+  it('counts the apps of one checkout as one hidden workspace', () => {
+    const worktree = { path: '/u/app/.worktrees/multi', branch: 'multi' };
+    const multi = [
+      {
+        id: 'a',
+        name: 'MacBook Pro',
+        status: status([
+          env('/u/app/.worktrees/multi/apps/mobile', { worktree }),
+          env('/u/app/.worktrees/multi/apps/desktop', { worktree }),
+        ]),
+      },
+    ];
+    expect(filterWorkspaces(mergeWorkspaces(multi), DEFAULT_FILTERS, ['a']).hiddenByActivity).toBe(1);
+  });
+
   it('filters by Mac, project, errors and remote sessions', () => {
     expect(titles({ activity: 'all', macs: ['a'] })).toEqual(['idle-one', 'live-one', 'source-only']);
     expect(titles({ activity: 'all', projects: ['other'] })).toEqual(['other']);

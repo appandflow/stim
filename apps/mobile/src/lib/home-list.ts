@@ -4,7 +4,7 @@ import type { Tone } from '@/design/tone';
 import { formatDuration } from '@/intl/format';
 import { agentsSummary } from '@/lib/agents';
 import { ACTIVE_WINDOW_MS, activityLabel, spokenDuration } from '@/lib/format';
-import type { HomeEntry, HomeItem, HomeWorktree } from '@/lib/home';
+import { workspaceKey, type HomeEntry, type HomeItem, type HomeWorktree } from '@/lib/home';
 import { STALE_MS } from '@/lib/needs-attention';
 import { buildLabel } from '@/lib/spoken-status';
 import { appPresence, currentPhaseLabel, gitChip } from '@/lib/workspace-view';
@@ -46,8 +46,7 @@ export function homeSections(items: HomeEntry[]): HomeSection[] {
       checkouts.set(item.key, item);
       continue;
     }
-    const checkout = item.env.worktree?.path;
-    const key = `${item.macId}\n${checkout ? `checkout\n${checkout}` : `app\n${item.env.path}`}`;
+    const key = workspaceKey(item);
     const workspace = checkouts.get(key) ?? { key, title: item.title, apps: [] };
     if ('apps' in workspace) workspace.apps.push(item);
     checkouts.set(key, workspace);

@@ -59,6 +59,13 @@ export interface HomeWorktree {
 
 export type HomeEntry = HomeItem | HomeWorktree;
 
+/** The home row an entry belongs to: apps of one linked checkout share a row, so they share a key. */
+export function workspaceKey(item: HomeEntry): string {
+  if ('facts' in item) return item.key;
+  const checkout = item.env.worktree?.path;
+  return `${item.macId}\n${checkout ? `checkout\n${checkout}` : `app\n${item.env.path}`}`;
+}
+
 export function mergeWorktrees(macs: MacSnapshot[]): HomeWorktree[] {
   const items: HomeWorktree[] = [];
   for (const mac of macs) {
@@ -160,7 +167,7 @@ export function filterWorkspaces<T extends HomeEntry>(
   const macs = filters.macs.filter((id) => macIds.includes(id));
   const projects = filters.projects.filter((name) => items.some((item) => item.project === name));
   const shown: T[] = [];
-  let hiddenByActivity = 0;
+  const hidden = new Set<string>();
   for (const item of items) {
     if (macs.length && !macs.includes(item.macId)) continue;
     if (projects.length && !projects.includes(item.project)) continue;
@@ -168,12 +175,12 @@ export function filterWorkspaces<T extends HomeEntry>(
     if (filters.remoteOnly && (!('env' in item) || !hasRemote(item.env))) continue;
     const active = 'env' in item && isShownLive(item.env);
     if ((filters.activity === 'live' && !active) || (filters.activity === 'idle' && active)) {
-      hiddenByActivity += 1;
+      hidden.add(workspaceKey(item));
       continue;
     }
     shown.push(item);
   }
-  return { shown, hiddenByActivity };
+  return { shown, hiddenByActivity: hidden.size };
 }
 
 export interface DeviceTileItem {

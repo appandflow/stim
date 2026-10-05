@@ -21,6 +21,9 @@ import { WorkspaceGroupRow, WorktreeRow } from './workspace-row';
 
 let mockPresence = { online: true, cached: false, lastSeenAt: null as number | null };
 let mockStatus = receiveStatus(fixture.payload as StatusPayload);
+afterEach(() => {
+  mockPresence = { online: true, cached: false, lastSeenAt: null };
+});
 jest.mock('expo-router', () => ({ useIsFocused: () => false, useRouter: () => ({ push: jest.fn() }) }));
 jest.mock('@/hooks/machines', () => ({
   useMachinePresence: () => mockPresence,
@@ -148,10 +151,9 @@ it('announces source-only git work without workspace controls and shows last see
   expect(screen.queryByText('MacBook')).toBeNull();
   expect(
     screen.getByLabelText(
-      'feat/source, Not warmed, Pull request 2440, open, 5 uncommitted changes, 2 commits not pushed to origin/main, 1 commit behind origin/main',
+      'feat/source, Not warmed, Last seen 3 minutes ago, Pull request 2440, open, 5 uncommitted changes, 2 commits not pushed to origin/main, 1 commit behind origin/main',
     ),
   ).toBeTruthy();
-  mockPresence = { online: true, cached: false, lastSeenAt: null };
 });
 
 test.each(['platform', 'backend', 'state'])(

@@ -240,7 +240,13 @@ export const WorktreeRow = memo(function WorktreeRow({
   return (
     <View
       accessible
-      accessibilityLabel={[item.title, notWarmed, gitChip(item.facts)?.label, showsMachine ? item.macName : null]
+      accessibilityLabel={[
+        item.title,
+        notWarmed,
+        status?.label,
+        gitChip(item.facts)?.label,
+        showsMachine ? item.macName : null,
+      ]
         .filter(Boolean)
         .join(', ')}
       style={[styles.row, offline && styles.dimmed]}

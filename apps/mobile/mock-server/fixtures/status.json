@@ -3755,10 +3755,7 @@
             "appSlot": 1,
             "appAttempt": "attempt-1",
             "bundleId": "dev.stim.notes.stim.a4md.hosted1",
-            "agent": {
-              "driver": "none",
-              "setting": "hosting.agentDriver"
-            }
+            "agent": { "driver": "none", "setting": "hosting.agentDriver" }
           },
           "hostLaunched": true,
           "state": "running"
