@@ -142,17 +142,9 @@ public struct Workspace: Decodable, Identifiable, Hashable, Sendable {
   /// `devices` running first, then iOS, Android, Web, physical and remote devices, then by slot. The order never
   /// depends on activity or drivers, so a device keeps its place while tools attach and detach.
   public var orderedDevices: [DeviceRef] {
-    func rank(_ device: DeviceRef) -> Int {
-      if case .remote = device { return 4 }
-      if device.isPhysical { return 3 }
-      return ["ios": 0, "android": 1, "web": 2][device.platform] ?? 4
-    }
     return devices.enumerated().sorted { a, b in
-      if a.element.isRunning != b.element.isRunning { return a.element.isRunning }
-      let (ra, rb) = (rank(a.element), rank(b.element))
-      if ra != rb { return ra < rb }
-      let slots = a.element.slot.localizedCompare(b.element.slot)
-      if slots != .orderedSame { return slots == .orderedAscending }
+      if DeviceRef.orderedBefore(a.element, b.element) { return true }
+      if DeviceRef.orderedBefore(b.element, a.element) { return false }
       return a.offset < b.offset
     }.map(\.element)
   }
@@ -501,4 +493,19 @@ public struct Supervisor: Decodable, Hashable, Sendable {
 public struct Logs: Decodable, Hashable, Sendable {
   public var dir: String
   public var errorsSinceMarker: Int?
+}
+
+extension DeviceRef {
+  /// The shared workspace and merged-canvas ordering, with equal devices left in their input order.
+  public static func orderedBefore(_ a: DeviceRef, _ b: DeviceRef) -> Bool {
+    func rank(_ device: DeviceRef) -> Int {
+      if case .remote = device { return 4 }
+      if device.isPhysical { return 3 }
+      return ["ios": 0, "android": 1, "web": 2][device.platform] ?? 4
+    }
+    if a.isRunning != b.isRunning { return a.isRunning }
+    let (ra, rb) = (rank(a), rank(b))
+    if ra != rb { return ra < rb }
+    return a.slot.localizedCompare(b.slot) == .orderedAscending
+  }
 }

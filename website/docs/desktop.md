@@ -12,6 +12,14 @@ agents driving them. It runs `stim` for you, so it needs the CLI from
 
 ![The workspace page in Stim Desktop: two iPhone simulators side by side with the build stage, git branch and pull request above them](/img/desktop/workspace.webp)
 
+Apps in one linked worktree share a detail page; the sidebar keeps a row per
+app and scrolls to its device or macOS preview. The canvas combines all devices,
+with one stage and git chip. Build cards keep platform titles, adding project
+subtitles only for repeated platforms. The inspector aggregates resources,
+labels each Metro and deduplicates agents. The logs drawer follows app selection
+and has an **App** picker. The actions menu keeps each app's commands plus
+**Stop all** and one **Remove worktree** action.
+
 ## Download
 
 <a className="button button--primary button--lg" href="https://github.com/appandflow/stim/releases/download/desktop-latest/Stim.dmg">Download Stim.dmg</a>
@@ -78,7 +86,10 @@ performance traces. Every release is listed under
   run in the same sheet. **Open in logs panel** opens the selected run in the
   logs drawer, filtered by platform, slot and timestamps. Clear the Build run
   chip to return to generic logs. **Run** starts iOS or Android; a failed last
-  build offers **Rebuild**.
+  build offers **Rebuild**. For multi-app worktrees, the sheet switches among
+  all apps' iOS, Android and macOS entries, adding project names only for repeated
+  platforms; checks, runs, history and logs use the selected app. The macOS panel
+  shows the product, build state, duration, error and build logs.
 - **Machines.** Select **This Mac** for local disk, memory and cleanup, or a
   configured build machine for its readiness, capacity and build history.
   Click the toolbar's CPU, memory or disk figure for details; **Open Machines**

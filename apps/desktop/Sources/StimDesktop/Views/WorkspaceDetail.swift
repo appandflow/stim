@@ -6,6 +6,9 @@ struct WorkspaceDetail: View {
   var cli: Task<StimCLI, Never>
   var statsReader: StatsReader
   var env: Workspace
+  var page: WorktreePage
+  var selectedPath: String
+  var sampled: [String: UsageHistory]
   var usage: UsageHistory?
   var machine: MachineUsage?
   var reportsBundles: Bool
@@ -14,7 +17,9 @@ struct WorkspaceDetail: View {
   @Binding var inspectorWidth: CGFloat
   @Binding var focusedID: String?
   @Binding var logQuery: LogQuery
+  @Binding var logWorkspacePath: String?
   @State private var stats: (path: String, fetched: Fetched<ProjectStats>)?
+  @State private var groupStats: [String: Fetched<ProjectStats>] = [:]
   @State private var contentHeight: CGFloat = 0
   @State private var viewing: ViewedDevice?
   @State private var buildSheet: BuildSheetSelection?
@@ -70,35 +75,76 @@ struct WorkspaceDetail: View {
     .navigationTitle(env.names.title)
     .sheet(item: $viewing) { viewed in
       DeviceViewer(
-        cli: cli, env: env, deviceID: viewed.id, machine: machine, windowSize: windowSize,
-        revealInLogs: revealAgentActions, close: { viewing = nil }
+        cli: cli, env: page.apps.first { $0.path == viewed.workspace } ?? env, deviceID: viewed.id, machine: machine,
+        windowSize: windowSize,
+        revealInLogs: { slot, at in
+          logWorkspacePath = viewed.workspace
+          revealAgentActions(slot: slot, at: at)
+        }, close: { viewing = nil }
       )
       .environmentObject(actions)
     }
     .sheet(item: $buildSheet) { selection in
-      BuildSheet(cli: cli, env: env, selection: selection, openLogs: openBuildLogs)
-        .environmentObject(actions)
-        .environmentObject(checks)
+      Group {
+        if page.isUnified {
+          BuildSheet(
+            cli: cli, env: env, selection: selection, page: page,
+            openLogs: openBuildLogs,
+            openAppLogs: { app, query in
+              logWorkspacePath = app.path
+              openBuildLogs(query)
+            })
+        } else {
+          BuildSheet(cli: cli, env: env, selection: selection, openLogs: openBuildLogs)
+        }
+      }
+      .environmentObject(actions)
+      .environmentObject(checks)
     }
     .onQuitRequested {
       viewing = nil
       buildSheet = nil
     }
-    .task(id: "\(env.path)|\(env.finishedRunsStamp)") {
-      let path = env.path
-      if stats?.path == path { try? await Task.sleep(for: .seconds(1)) }
-      let result = await Result.awaiting { try await statsReader.project(workspace: path) }
-      guard !Task.isCancelled else { return }
-      var fetched = Fetched<ProjectStats>()
-      fetched.record(result)
-      stats = (path, fetched)
+    .onAppear {
+      if page.isUnified || !page.apps.contains(where: { $0.path == logWorkspacePath }) { logWorkspacePath = selectedPath }
+    }
+    .onChange(of: selectedPath) {
+      if page.isUnified {
+        logWorkspacePath = selectedPath
+      }
+    }
+    .task(id: page.apps.map { "\($0.path)|\($0.finishedRunsStamp)" }.joined(separator: "\n")) {
+      if page.isUnified {
+        for app in page.apps {
+          let path = app.path
+          if groupStats[path] != nil || stats?.path == path { try? await Task.sleep(for: .seconds(1)) }
+          let result = await Result.awaiting { try await statsReader.project(workspace: path) }
+          guard !Task.isCancelled else { return }
+          var fetched = Fetched<ProjectStats>()
+          fetched.record(result)
+          groupStats[path] = fetched
+        }
+      } else {
+        let path = env.path
+        if stats?.path == path { try? await Task.sleep(for: .seconds(1)) }
+        let result = await Result.awaiting { try await statsReader.project(workspace: path) }
+        guard !Task.isCancelled else { return }
+        var fetched = Fetched<ProjectStats>()
+        fetched.record(result)
+        stats = (path, fetched)
+      }
     }
   }
 
   private func content(devices: [DeviceRef], focused: DeviceRef?) -> some View {
     VStack(spacing: 0) {
       WorkspaceHeaderLine(
-        cli: cli, env: env,
+        cli: cli, env: env, page: page.isUnified ? page : nil,
+        openAppLogs: { app in
+          logWorkspacePath = app.path
+          logQuery.errorsOnly = false
+          showsLogs = true
+        },
         openLogs: {
           logQuery.errorsOnly = false
           showsLogs = true
@@ -109,12 +155,17 @@ struct WorkspaceDetail: View {
       .padding(.vertical, Space.md)
       Rectangle().fill(Palette.border).frame(height: 1)
       VStack(spacing: 0) {
-        canvas(devices: devices, focused: focused)
-          .frame(maxWidth: .infinity, maxHeight: .infinity)
+        Group {
+          if page.isUnified { unifiedCanvas } else { canvas(devices: devices, focused: focused) }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         if showsLogs {
           Rectangle().fill(Palette.border).frame(height: 1).overlay { logsResizeHandle }
-          LogsView(cli: cli, env: env, query: $logQuery, moment: $logMoment)
-            .frame(height: Self.clampedLogsHeight(logsHeight, contentHeight: contentHeight))
+          LogsView(
+            cli: cli, env: page.isUnified ? logsApp : env, query: $logQuery, moment: $logMoment,
+            page: page.isUnified ? page : nil, selectedApp: $logWorkspacePath
+          )
+          .frame(height: Self.clampedLogsHeight(logsHeight, contentHeight: contentHeight))
         }
       }
       .onGeometryChange(for: CGFloat.self) {
@@ -174,15 +225,31 @@ struct WorkspaceDetail: View {
           .onEnded { _ in resizeStartWidth = nil })
   }
 
-  private var inspectorPanel: some View {
-    Inspector(
-      cli: cli, env: env, stats: stats.flatMap { $0.path == env.path ? $0.fetched : nil } ?? Fetched(),
-      machine: machine, usage: usage, history: history,
-      reportsBundles: reportsBundles,
-      openLogs: openBuildLogs,
-      openBuild: { buildSheet = $0 }
-    )
-    .frame(maxHeight: .infinity)
+  private var logsApp: Workspace {
+    page.apps.first { $0.path == logWorkspacePath } ?? page.apps.first { $0.path == selectedPath } ?? env
+  }
+
+  @ViewBuilder private var inspectorPanel: some View {
+    if page.isUnified {
+      WorktreeInspector(
+        cli: cli, page: page, stats: groupStats, machine: machine, sampled: sampled, history: history,
+        reportsBundles: reportsBundles,
+        openLogs: { app, query in
+          if let app { logWorkspacePath = app.path }
+          openBuildLogs(query)
+        },
+        openBuild: { buildSheet = $0 }
+      ).frame(maxHeight: .infinity)
+    } else {
+      Inspector(
+        cli: cli, env: env, stats: stats.flatMap { $0.path == env.path ? $0.fetched : nil } ?? Fetched(),
+        machine: machine, usage: usage, history: history,
+        reportsBundles: reportsBundles,
+        openLogs: openBuildLogs,
+        openBuild: { buildSheet = $0 }
+      )
+      .frame(maxHeight: .infinity)
+    }
   }
 
   private func openBuildLogs(_ query: LogQuery) {
@@ -209,6 +276,54 @@ struct WorkspaceDetail: View {
             }
           }
           .padding(Space.xxl)
+        }
+      }
+    }
+  }
+
+  private var unifiedCanvas: some View {
+    let devices = page.orderedDevices
+    let entries = page.canvasEntries
+    let target = page.canvasScrollTarget(selectedPath: selectedPath, focusedID: focusedID, devices: devices).map {
+      !page.apps.contains { $0.macos != nil } && $0 == devices.first?.id ? "devices" : $0
+    }
+    return GeometryReader { geo in
+      ScrollViewReader { reader in
+        ScrollView {
+          ForEach(page.apps.filter { $0.macos != nil }) { app in
+            VStack(alignment: .leading, spacing: Space.sm) {
+              if let subtitle = page.subtitle(for: .init(path: app.path, platform: "macos"), among: entries) {
+                Text(subtitle).font(.stim(.footnote)).foregroundStyle(Palette.secondary)
+              }
+              MacosAppCard(app: app.macos!, workspace: app.path)
+            }
+            .padding(Space.xxl)
+            .id("macos|\(app.path)")
+          }
+          if entries.isEmpty {
+            TimelineView(.periodic(from: .now, by: 30)) { context in
+              emptyCanvas(stage: page.lead(now: context.date).stage(now: context.date))
+            }.frame(maxWidth: .infinity).padding(Space.xxxl)
+          } else if !devices.isEmpty {
+            let cardWidth = min(Self.maximumCardWidth, max(0, geo.size.width - Space.xxl * 2))
+            let cardHeight = max(0, geo.size.height - Space.xxl * 2)
+            FlowLayout(spacing: Space.xl, lineSpacing: Space.xl, topAligned: true, centered: true) {
+              ForEach(devices) { entry in
+                tile(
+                  entry.device, focused: entry.device.id == focusedID, cardWidth: cardWidth, cardHeight: cardHeight,
+                  owner: entry.workspace, project: page.subtitle(for: entry.entry, among: entries)
+                ).id(entry.id)
+              }
+            }.padding(Space.xxl).id("devices")
+          }
+        }
+        .onChange(of: selectedPath, initial: true) {
+          if let target { reader.scrollTo(target, anchor: .top) }
+        }
+        .onChange(of: focusedID) {
+          if devices.contains(where: { $0.workspace.path == selectedPath && $0.device.id == focusedID }), let target {
+            reader.scrollTo(target, anchor: .top)
+          }
         }
       }
     }
@@ -247,13 +362,16 @@ struct WorkspaceDetail: View {
     }
   }
 
-  private func tile(_ device: DeviceRef, focused: Bool, cardWidth: CGFloat, cardHeight: CGFloat) -> some View {
+  private func tile(
+    _ device: DeviceRef, focused: Bool, cardWidth: CGFloat, cardHeight: CGFloat, owner: Workspace? = nil, project: String? = nil
+  ) -> some View {
+    let env = owner ?? env
     let canControl =
       device.isInteractive
       && (!device.isPhysical || PhysicalScreen(device: device, link: server.link, now: Date()).canControl)
     let viewerAction = canControl ? "Control" : "View"
     let tile = DeviceTile(
-      device: device, screenHeight: 900, workspace: env.path,
+      device: device, screenHeight: 900, workspace: env.path, project: project,
       build: env.runningBuild(for: device),
       usage: device.isRunning ? env.usage(of: device, machine: machine) : nil,
       presence: env.appPresence(device),
@@ -261,7 +379,7 @@ struct WorkspaceDetail: View {
       focused: focused,
       viewerAction: viewerAction,
       maxWidth: cardWidth, maxCardHeight: cardHeight,
-      showsScreen: viewing?.id != device.id
+      showsScreen: viewing?.id != device.id || viewing?.workspace != env.path
     )
     return
       tile
@@ -269,7 +387,7 @@ struct WorkspaceDetail: View {
       .background {
         Button {
           focusedID = device.id
-          viewing = ViewedDevice(id: device.id)
+          viewing = ViewedDevice(id: device.id, workspace: env.path)
         } label: {
           Color.clear.contentShape(Rectangle())
         }
@@ -295,4 +413,5 @@ struct WorkspaceDetail: View {
 
 struct ViewedDevice: Identifiable {
   var id: String
+  var workspace: String
 }

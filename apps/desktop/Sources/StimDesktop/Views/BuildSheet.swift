@@ -13,74 +13,125 @@ struct BuildSheet: View {
   var cli: Task<StimCLI, Never>
   var env: Workspace
   var selection: BuildSheetSelection
+  var page: WorktreePage?
+  var openAppLogs: ((Workspace, LogQuery) -> Void)?
   var openLogs: (LogQuery) -> Void
   @EnvironmentObject private var checks: BuildPlanChecks
   @EnvironmentObject private var actions: ActionCenter
   @Environment(\.dismiss) private var dismiss
-  @State private var platform: String
+  @State private var nativePlatform: String
+  @State private var selectedEntry: WorktreePage.Entry
   @State private var selectedRun: String?
 
-  init(cli: Task<StimCLI, Never>, env: Workspace, selection: BuildSheetSelection, openLogs: @escaping (LogQuery) -> Void) {
+  init(
+    cli: Task<StimCLI, Never>, env: Workspace, selection: BuildSheetSelection, page: WorktreePage? = nil,
+    openLogs: @escaping (LogQuery) -> Void, openAppLogs: ((Workspace, LogQuery) -> Void)? = nil
+  ) {
     self.cli = cli
     self.env = env
     self.selection = selection
+    self.page = page
+    self.openAppLogs = openAppLogs
     self.openLogs = openLogs
-    _platform = State(initialValue: selection.platform)
+    _nativePlatform = State(initialValue: selection.platform)
+    _selectedEntry = State(initialValue: WorktreePage.Entry(path: selection.workspace, platform: selection.platform))
     _selectedRun = State(initialValue: selection.run)
   }
 
-  private var running: Build? { env.build.flatMap { $0.isRunning ? $0 : nil } }
+  private var app: Workspace { page?.apps.first { $0.path == selectedEntry.path } ?? env }
+  private var platform: String { page == nil ? nativePlatform : selectedEntry.platform }
+  private var isMacos: Bool { page != nil && platform == "macos" }
+
+  private var running: Build? { app.build.flatMap { $0.isRunning ? $0 : nil } }
   private var platforms: [String] {
     ["ios", "android"].filter {
-      env.runPlatforms.contains($0) || running?.platform == $0 || !history($0).isEmpty || $0 == platform
+      app.runPlatforms.contains($0) || running?.platform == $0 || !history($0).isEmpty || $0 == platform
     }
   }
-  private func history(_ platform: String) -> [BuildHistoryEntry] { env.builds?.builds(for: platform) ?? [] }
+  private func history(_ platform: String) -> [BuildHistoryEntry] { app.builds?.builds(for: platform) ?? [] }
   private var runs: [BuildRun] {
-    BuildRun.runs(platform: platform, running: running, history: history(platform), last: env.lastBuilds?.build(for: platform))
+    BuildRun.runs(platform: platform, running: running, history: history(platform), last: app.lastBuilds?.build(for: platform))
   }
   private var run: BuildRun? { runs.first { $0.id == selectedRun } ?? runs.first }
-  private var entry: BuildPlanChecks.Entry? { checks.entry(workspace: env.path, platform: platform) }
-  private var buildKey: String { env.lastBuilds?.build(for: platform)?.planKey ?? "" }
-  private var busy: Bool { running != nil || actions.active(for: env.path) != nil }
+  private var entry: BuildPlanChecks.Entry? { checks.entry(workspace: app.path, platform: platform) }
+  private var buildKey: String { app.lastBuilds?.build(for: platform)?.planKey ?? "" }
+  private var busy: Bool { running != nil || actions.active(for: app.path) != nil }
 
   var body: some View {
     VStack(spacing: 0) {
       header
       Divider()
-      HStack(alignment: .top, spacing: 0) {
-        recentBuilds.frame(width: 250)
-        Divider()
-        ScrollView {
-          if let run {
-            BuildRunDetail(cli: cli, env: env, run: run, dismiss: { dismiss() })
-              .id(run.id)
-              .padding(Space.xxl)
-            if run.running == nil, run.id == runs.first?.id { nextBuild }
-          } else {
-            EmptyState(title: "No \(platformName(platform)) build recorded", message: "Run the app to record a build.")
-              .padding(Space.xxl)
-            nextBuild
+      if isMacos {
+        macosPanel
+      } else {
+        HStack(alignment: .top, spacing: 0) {
+          recentBuilds.frame(width: 250)
+          Divider()
+          ScrollView {
+            if let run {
+              BuildRunDetail(cli: cli, env: app, run: run, dismiss: { dismiss() })
+                .id(page == nil ? run.id : "\(app.path)|\(run.id)")
+                .padding(Space.xxl)
+              if run.running == nil, run.id == runs.first?.id { nextBuild }
+            } else {
+              EmptyState(title: "No \(platformName(platform)) build recorded", message: "Run the app to record a build.")
+                .padding(Space.xxl)
+              nextBuild
+            }
           }
+          .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
       }
     }
     .font(.stim(.callout))
     .background(Palette.background)
     .frame(minWidth: 980, idealWidth: 980, minHeight: 720, idealHeight: 720)
-    .task(id: "\(platform)|\(buildKey)|\(running?.key ?? "idle")") {
+    .task(id: (page == nil ? "" : app.path + "|") + "\(platform)|\(buildKey)|\(running?.key ?? "idle")") {
+      guard !isMacos else { return }
       if running == nil {
-        checks.check(workspace: env.path, builds: [platform: buildKey])
+        checks.check(workspace: app.path, builds: [platform: buildKey])
       } else {
-        checks.cancel(workspace: env.path)
+        checks.cancel(workspace: app.path, platforms: page == nil ? ["ios", "android"] : [platform])
       }
     }
     .onAppear { selectedRun = run?.id }
-    .onChange(of: platform) { selectedRun = runs.first?.id }
+    .onChange(of: nativePlatform) { selectedRun = runs.first?.id }
+    .onChange(of: selectedEntry) { selectedRun = runs.first?.id }
     .onChange(of: runs.map(\.id)) {
       if !runs.contains(where: { $0.id == selectedRun }) { selectedRun = runs.first?.id }
     }
+  }
+
+  private func revealLogs(_ query: LogQuery) {
+    if let openAppLogs { openAppLogs(app, query) } else { openLogs(query) }
+  }
+
+  private var macosPanel: some View {
+    ScrollView {
+      if let macos = app.macos {
+        VStack(alignment: .leading, spacing: Space.lg) {
+          Text("macOS \(macos.product)").font(.stim(.title, weight: .semibold))
+          Text("Swift Package Debug: \(macos.build.state)").foregroundStyle(Palette.secondary)
+          if let duration = macos.build.durationMs {
+            Text(Format.elapsed(ms: duration)).monospacedDigit().foregroundStyle(Palette.secondary)
+          }
+          if let error = macos.build.error {
+            Text(error).foregroundStyle(Palette.error).textSelection(.enabled)
+          }
+          if let query = LogQuery.build(
+            platform: "macos", slot: "default", startedAt: macos.build.startedAt, finishedAt: macos.build.finishedAt)
+          {
+            Button("Build logs") {
+              dismiss()
+              revealLogs(query)
+            }.buttonStyle(.stim())
+          }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(Space.xxl)
+      }
+    }
+    .frame(maxWidth: .infinity, maxHeight: .infinity)
   }
 
   private var nextBuild: some View {
@@ -103,10 +154,21 @@ struct BuildSheet: View {
     HStack(spacing: Space.lg) {
       VStack(alignment: .leading, spacing: Space.xxs) {
         Text("Build").font(.stim(.title, weight: .semibold))
-        Text(env.names.title).foregroundStyle(Palette.secondary).lineLimit(1)
+        Text(app.names.title).foregroundStyle(Palette.secondary).lineLimit(1)
       }
-      if platforms.count > 1 {
-        Picker("Platform", selection: $platform) {
+      if let page {
+        let entries = page.buildEntries
+        let titles = entries.map { entry in
+          platformName(entry.platform) + (page.subtitle(for: entry, among: entries).map { " \u{00B7} " + $0 } ?? "")
+        }
+        Picker("Platform", selection: $selectedEntry) {
+          ForEach(Array(zip(entries, titles)), id: \.0) { entry, title in Text(title).tag(entry) }
+        }
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .fixedSize()
+      } else if platforms.count > 1 {
+        Picker("Platform", selection: $nativePlatform) {
           ForEach(platforms, id: \.self) { Text(platformName($0)).tag($0) }
         }
         .pickerStyle(.segmented)
@@ -114,25 +176,27 @@ struct BuildSheet: View {
         .frame(width: 180)
       }
       Spacer(minLength: Space.sm)
-      Button {
-        actions.runApp(env, platform: platform)
-      } label: {
-        Label(env.lastBuilds?.build(for: platform)?.status == "failed" ? "Rebuild" : "Run", systemImage: "play.fill")
-      }
-      .buttonStyle(.stim(.primary, .regular))
-      .disabled(busy)
-      .help("stim \(platform) with no options: the default slot and configuration; builds if needed, installs and launches")
-      checkButton
-      Button("Open in logs panel") {
-        if let query = run.flatMap({
-          LogQuery.build(platform: platform, slot: $0.slot, startedAt: $0.startedAt, finishedAt: $0.finishedAt)
-        }) {
-          dismiss()
-          openLogs(query)
+      if !isMacos {
+        Button {
+          actions.runApp(app, platform: platform)
+        } label: {
+          Label(app.lastBuilds?.build(for: platform)?.status == "failed" ? "Rebuild" : "Run", systemImage: "play.fill")
         }
+        .buttonStyle(.stim(.primary, .regular))
+        .disabled(busy)
+        .help("stim \(platform) with no options: the default slot and configuration; builds if needed, installs and launches")
+        checkButton
+        Button("Open in logs panel") {
+          if let query = run.flatMap({
+            LogQuery.build(platform: platform, slot: $0.slot, startedAt: $0.startedAt, finishedAt: $0.finishedAt)
+          }) {
+            dismiss()
+            revealLogs(query)
+          }
+        }
+        .buttonStyle(.stim())
+        .disabled(run == nil || run?.startedDate == nil)
       }
-      .buttonStyle(.stim())
-      .disabled(run == nil || run?.startedDate == nil)
       Button("Done") { dismiss() }
         .buttonStyle(.stim())
         .keyboardShortcut(.cancelAction)
@@ -142,7 +206,7 @@ struct BuildSheet: View {
 
   private var checkButton: some View {
     Button {
-      checks.check(workspace: env.path, builds: [platform: buildKey], force: true)
+      checks.check(workspace: app.path, builds: [platform: buildKey], force: true)
     } label: {
       Label("Check", systemImage: "magnifyingglass")
     }
