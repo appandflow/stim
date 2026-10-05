@@ -182,8 +182,10 @@ To view or control the hosted app from a phone, grant Screen & System Audio Reco
 and Device Control and Data Access (**Accessibility** on macOS 26 and earlier) once to
 the app that runs stim-server on the host, not to the hosted app.
 `stim-server service install` runs the server under the Stim Host app and shows
-macOS's own requests on that Mac's screen; a person there approves them.
-If a request does not appear, turn the app on in **System Settings → Privacy &
+macOS's own requests on that Mac's screen, one at a time: Stim Host asks for
+Device Control and Data Access after the Screen & System Audio Recording request
+is answered, and opens that pane with Stim Host listed when macOS shows no
+request for it. A person there approves them. If a request does not appear, turn the app on in **System Settings → Privacy &
 Security** in both panes; Stim never changes these settings itself.
 `stim-server service status` shows the grants, and `stim doctor` on this Mac
 reports an approved host that lacks them. A server started by Stim Desktop uses
