@@ -119,8 +119,9 @@ title, checks and review, and **Open on GitHub**. **Review changes** opens a
 read-only diff sheet. **Changed** lists staged and unstaged files; **New** lists
 untracked files. Selecting a file requests only its patches. Lists stop at
 200 files and previews at 256 KiB; binary, oversized and unavailable previews
-are labeled. Built-in viewing needs the existing loopback server to support
-workspace diffs and allow reads for the CLI's same Stim home. An older or
+are labeled. Built-in viewing needs the existing loopback server (turn on **Serve to
+phones** on the Phones page) to support workspace diffs and allow reads for the
+CLI's same Stim home. An older or
 unavailable server shows its reason without a CLI fallback or starting a server.
 
 In **Settings > Integrations > Review changes in**, choose **Built-in** or

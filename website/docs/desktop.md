@@ -89,9 +89,9 @@ performance traces. Every release is listed under
 - **Workspace changes.** Click the workspace header's Git chip, then **Review
   changes**, to browse staged, unstaged and new files. The built-in viewer loads
   each patch when you select its file, with a 200-file list and 256 KiB preview
-  limit. It labels binary, oversized and unavailable previews, and needs an
-  existing read-capable local server with workspace diff support for the same
-  Stim home. In **Settings > Integrations > Review changes in**, choose
+  limit. It labels binary, oversized and unavailable previews, and needs the
+  local server (**Serve to phones** on) to be read-capable with workspace diff
+  support, for the same Stim home. In **Settings > Integrations > Review changes in**, choose
   **Built-in** or **Visual Studio Code**. VS Code opens the local repository for
   review in Source Control, rather than exporting a selected comparison. A
   missing app or failed launch reports an error.

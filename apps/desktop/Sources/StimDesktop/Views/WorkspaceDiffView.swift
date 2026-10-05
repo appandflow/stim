@@ -10,6 +10,7 @@ struct WorkspaceDiffView: View {
   @State private var files: WorkspaceFiles?
   @State private var selected: String?
   @State private var patch: WorkspaceDiff?
+  @State private var rows: [WorkspaceDiffRow] = []
   @State private var listError: String?
   @State private var patchError: String?
   @State private var refresh = 0
@@ -75,13 +76,16 @@ struct WorkspaceDiffView: View {
     }
     .task(id: "\(listKey) \(selected ?? "")") {
       patch = nil
+      rows = []
       patchError = nil
       guard loadedKey == listKey, let connection, let selected else { return }
       do {
+        try await Task.sleep(for: .milliseconds(150))
         let result = try await connection.request("workspace.diff", ["workspace": .string(workspace), "path": .string(selected)])
         let loaded = try JSONDecoder().decode(WorkspaceDiff.self, from: JSONEncoder().encode(result))
         try Task.checkCancellation()
         patch = loaded
+        rows = loaded.rows
       } catch {
         if !Task.isCancelled { patchError = error.localizedDescription }
       }
@@ -154,16 +158,16 @@ struct WorkspaceDiffView: View {
       ScrollView([.horizontal, .vertical]) {
         LazyVStack(alignment: .leading, spacing: 0) {
           Text(patch.path).font(.stim(.headline)).padding(Space.lg)
-          ForEach(Self.rows(of: patch)) { row in
+          ForEach(rows) { row in
             switch row.kind {
             case .title:
               Text(row.text).font(.stim(.callout, weight: .semibold)).padding(Space.lg)
             case .note:
               Text(row.text).foregroundStyle(Palette.secondary).textSelection(.enabled).padding(Space.lg)
-            case .line(let plain):
+            default:
               Text(row.text.isEmpty ? " " : row.text)
                 .font(.system(size: 12, design: .monospaced))
-                .foregroundStyle(lineColor(row.text, plain: plain))
+                .foregroundStyle(color(for: row.kind))
                 .textSelection(.enabled).fixedSize(horizontal: true, vertical: false).padding(.horizontal, Space.lg)
             }
           }
@@ -177,44 +181,12 @@ struct WorkspaceDiffView: View {
     }
   }
 
-  private struct Row: Identifiable {
-    enum Kind {
-      case title, note
-      case line(plain: Bool)
+  private func color(for kind: WorkspaceDiffRow.Kind) -> Color {
+    switch kind {
+    case .added: return Palette.success
+    case .removed: return Palette.error
+    case .hunk: return Palette.accent
+    case .title, .note, .plain, .context: return Palette.text
     }
-    var id: String
-    var kind: Kind
-    var text: String
-  }
-
-  private static func rows(of patch: WorkspaceDiff) -> [Row] {
-    var rows: [Row] = []
-    for (section, part) in patch.patches.enumerated() {
-      rows.append(Row(id: "\(section):title", kind: .title, text: part.section.title))
-      guard part.kind == .text else {
-        let note =
-          part.kind == .binary
-          ? "Binary file: preview unavailable"
-          : part.kind == .tooLarge ? "This patch exceeds the preview limit" : "Diff unavailable for this file"
-        rows.append(Row(id: "\(section):note", kind: .note, text: note))
-        continue
-      }
-      var lines = part.text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
-      if lines.last == "" { lines.removeLast() }
-      let firstHunk = lines.firstIndex { $0.hasPrefix("@@") } ?? lines.count
-      for (index, line) in lines.enumerated() {
-        rows.append(
-          Row(id: "\(section):\(index)", kind: .line(plain: part.section == .untracked || index < firstHunk), text: line))
-      }
-    }
-    return rows
-  }
-
-  private func lineColor(_ line: String, plain: Bool) -> Color {
-    if plain { return Palette.text }
-    if line.hasPrefix("+") { return Palette.success }
-    if line.hasPrefix("-") { return Palette.error }
-    if line.hasPrefix("@@") { return Palette.accent }
-    return Palette.text
   }
 }
