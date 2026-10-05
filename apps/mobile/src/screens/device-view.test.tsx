@@ -277,6 +277,7 @@ it('lets a Duo viewer enable its device frame with Control off', async () => {
       <DeviceView workspace="/fixture" platform="ios" slot="default" />
     </I18nProvider>,
   );
+  await fireEvent.press(screen.getByLabelText('More'));
   const toggle = screen.getByLabelText('Device frame');
   expect(toggle.props.accessibilityState.selected).toBe(false);
   await fireEvent.press(toggle);

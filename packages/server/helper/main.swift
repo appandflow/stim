@@ -298,6 +298,7 @@ final class SimulatorSource {
   private let duoGate = JpegGate()
   private var duo: DuoCaptureSource?
   private var duoRendering = false
+  private var duoMissed = false
   private let stopLock = NSLock()
   private var frameTurns: Int?
   private lazy var artwork = FrameArtworkPublisher { SimulatorFrameArtwork.load(udid: self.udid) }
@@ -424,6 +425,7 @@ final class SimulatorSource {
     }
     let ioSurface = unsafeBitCast(surface, to: IOSurfaceRef.self)
     let artworkTurns = (4 - quarterTurns) % 4
+    if config.duoFrame != nil, duoRendering { duoMissed = true }
     if let requested = config.duoFrame, !duoRendering,
       let properties = display.screenProperties
     {
@@ -445,7 +447,13 @@ final class SimulatorSource {
             self.duo?.render(
               surfaces: surfaces, activeID: properties.screenID,
               orientation: properties.uiOrientation, viewport: viewport, config: config)
-            self.queue.async { self.duoRendering = false }
+            self.queue.async {
+              self.duoRendering = false
+              if self.duoMissed {
+                self.duoMissed = false
+                self.pacer.changed()
+              }
+            }
           }
         }
       }
