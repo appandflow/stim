@@ -12,7 +12,7 @@ export function applyHostedMacosProbe(record: MacosAppRecord, probe: HostedMacos
   if (probe.state === 'stopped') {
     return {
       record: { ...record, hostLaunched: false },
-      warning: `The macOS app on ${machine} is no longer running (the host reports session ${session} stopped, for example after a stim-server restart there). Run stim macos --host ${machine} to launch it again, or stim stop to clear the placement.`,
+      warning: `The macOS app on ${machine} is no longer running (the host reports session ${session} stopped or no longer holds it, for example after a stim-server restart there). Run stim macos --host ${machine} to launch it again, or stim stop to clear the placement.`,
     };
   }
   return {
@@ -20,7 +20,7 @@ export function applyHostedMacosProbe(record: MacosAppRecord, probe: HostedMacos
     warning:
       probe.state === 'unknown'
         ? `${probe.notice ?? `The host cannot confirm session ${session} on ${machine}.`} Run stim stop to reconcile it.`
-        : `${machine} did not answer (${probe.reason}), so the macOS app there is unverified. The placement stays recorded; run stim stop when the host answers.`,
+        : `${machine} could not be checked (${probe.reason}), so the macOS app there is unverified. The placement stays recorded; run stim stop when the host answers.`,
   };
 }
 

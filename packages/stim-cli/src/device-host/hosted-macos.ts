@@ -129,6 +129,9 @@ function hostedSession(host: HostConnection, value: Record<string, unknown>): Ho
   };
 }
 
+const heldNoLonger = (error: unknown): boolean =>
+  error instanceof Error && 'code' in error && error.code === 'unknown-session';
+
 async function attach(host: HostConnection, session: string, timeoutMs?: number): Promise<HostedSession> {
   return hostedSession(host, await call(host, 'device-host.attach', { session }, timeoutMs));
 }
@@ -181,7 +184,7 @@ async function probeSession(placement: HostedMacosPlacement, timeoutMs: number):
           : `The hosted session ${session.id} on ${host.machine} is ${session.state}.${session.notice ? ` ${session.notice}` : ''}`,
     };
   } catch (error) {
-    if (error instanceof Error && 'code' in error && error.code === 'unknown-session') return { state: 'stopped' };
+    if (heldNoLonger(error)) return { state: 'stopped' };
     return { state: 'unreachable', reason: error instanceof Error ? error.message : String(error) };
   } finally {
     host?.connection.close();
@@ -340,9 +343,13 @@ export async function placeHostedMacos(
 ): Promise<HostedMacosRun> {
   let session: HostedSession | null = null;
   if (recorded) {
-    session = await settle(host, await attach(host, recorded.session), ['preparing', 'stopping'], SESSION_TIMEOUT_MS);
-    if (session.state === 'unknown') throw unknownSession(host, session);
-    if (session.state === 'stopped') session = null;
+    try {
+      session = await settle(host, await attach(host, recorded.session), ['preparing', 'stopping'], SESSION_TIMEOUT_MS);
+    } catch (error) {
+      if (!heldNoLonger(error)) throw error;
+    }
+    if (session?.state === 'unknown') throw unknownSession(host, session);
+    if (session?.state === 'stopped') session = null;
   }
   if (!session) {
     note(`Reserving a macOS session on ${host.machine}`);
@@ -419,9 +426,13 @@ export async function stopHostedMacos(root: string, placement: HostedMacosPlacem
   if (placement.agent.driver === 'agent-device') closeAgentConnection(placement.agent.remoteConfig);
   const host = await connectHost(placement.machine);
   try {
-    let session = hostedSession(host, await call(host, 'device-host.stop', { session: placement.session }));
-    session = await settle(host, session, ['stopping'], SESSION_TIMEOUT_MS);
-    if (session.state !== 'stopped') throw unknownSession(host, session);
+    try {
+      let session = hostedSession(host, await call(host, 'device-host.stop', { session: placement.session }));
+      session = await settle(host, session, ['stopping'], SESSION_TIMEOUT_MS);
+      if (session.state !== 'stopped') throw unknownSession(host, session);
+    } catch (error) {
+      if (!heldNoLonger(error)) throw error;
+    }
   } finally {
     host.connection.close();
   }

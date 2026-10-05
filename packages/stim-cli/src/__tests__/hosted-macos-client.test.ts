@@ -67,6 +67,7 @@ interface FakeHost {
   installed: { state: string; launched: true | 'unverified' | null; notice?: string };
   attachReply?: { state: string; notice?: string } | { error: { code: string; message: string } };
   silentMethods: Set<string>;
+  forgetSession: string | null;
   stopSession: () => void;
   close: () => Promise<void>;
 }
@@ -82,6 +83,7 @@ async function fakeHost(): Promise<FakeHost> {
   const host: FakeHost = {
     methods: [],
     silentMethods: new Set(),
+    forgetSession: null,
     blobs: new Map(),
     offers: [],
     capabilities: ['device-host'],
@@ -105,6 +107,14 @@ async function fakeHost(): Promise<FakeHost> {
         if (params.auth.deviceToken !== TOKEN)
           return socket.send(JSON.stringify({ id, error: { code: 'unauthorized', message: 'no' } }));
         return reply({ capabilities: host.capabilities, device: { id: 'client1', name: 'laptop' } });
+      }
+      if (host.forgetSession === params.session && (method === 'device-host.attach' || method === 'device-host.stop')) {
+        return socket.send(
+          JSON.stringify({
+            id,
+            error: { code: 'unknown-session', message: 'This client has no such hosted session.' },
+          }),
+        );
       }
       if (method === 'device-host.reserve') {
         session = { id: randomUUID(), platform: 'macos', state: 'preparing', appSlot: 3, device: null, ...params };
@@ -510,7 +520,7 @@ describe.skipIf(process.platform !== 'darwin')('stim macos --host (SwiftPM and c
     const facts = await readHostedMacosStatus(saved, { timeoutMs: 100, ttlMs: 0 });
     expect(performance.now() - started).toBeLessThan(1000);
     expect(macosAppState(facts.record)).toMatchObject({ state: 'unverified', host: saved.host });
-    expect(facts.warning).toContain('mini did not answer');
+    expect(facts.warning).toContain('mini could not be checked');
     expect(facts.warning).toContain('run stim stop when the host answers');
     expect(readMacosRecord(root)).toEqual(saved);
   });
@@ -591,6 +601,16 @@ describe.skipIf(process.platform !== 'darwin')('stim macos --host (SwiftPM and c
     const second = await runMacos(root, () => {}, 'mini');
     expect(host.methods.filter((method) => method === 'device-host.reserve')).toHaveLength(2);
     expect(second.host?.session).not.toBe(first.host?.session);
+  });
+
+  test('a session the host no longer holds is replaced on launch and released by stop', async () => {
+    const first = await runMacos(root, () => {}, 'mini');
+    host.forgetSession = first.host!.session;
+    const second = await runMacos(root, () => {}, 'mini');
+    expect(second.host?.session).not.toBe(first.host?.session);
+    host.forgetSession = second.host!.session;
+    await stopMacosApp(root);
+    expect(readMacosRecord(root)?.host).toBeUndefined();
   });
 
   test('a launch the host cannot confirm or complete is reported, and the session stays recorded', async () => {
