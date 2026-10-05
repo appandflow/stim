@@ -220,6 +220,7 @@ async function client(control = true, controlLimits?: Parameters<typeof startSer
       },
     },
   });
+  await server.ready;
   const socket = new WebSocket(`ws://127.0.0.1:${server.addresses[0]!.port}`);
   sockets.push(socket);
   const inbox: (Json | Buffer)[] = [];

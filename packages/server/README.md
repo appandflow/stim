@@ -40,8 +40,10 @@ pending record without `requestedCapability` is a build request.
 [Actions](#actions).
 
 `GET http://127.0.0.1:7787/health` answers requests from this Mac with the
-server's name, versions, protocol, `stimHome`, and the current
-Tailscale state. While Tailscale runs, it also carries `route`, read from
+server's name, versions, protocol, `stimHome`, `startup` and the current
+Tailscale state. It answers HTTP 200 once `startup.state` is `ready`; while the
+state is `pending` or `degraded` (see the LaunchAgent notes below) it answers
+HTTP 503 with the same body. While Tailscale runs, it also carries `route`, read from
 `tailscale serve status --json` on each request: `routed` with the HTTPS
 `port` that proxies to the server, `funneled` with the Funnel `ports` that do,
 `missing`, or `unknown` with a `reason`; the last three carry the `port` the
@@ -673,10 +675,11 @@ the old plist and job back. `install` and `uninstall` act only on a plist
 that `install` wrote, and refuse a port that another stim-server (Stim
 Desktop's, for example) already answers on. Install from a permanent
 installation, not from an `npx` cache, because the plist stores its paths. It never touches pairings, anything
-under `$STIM_HOME/server` or settings. `install` waits up to 15 seconds for
-`/health`; an installed LaunchAgent without a health response reports readiness
-as unavailable and points to `status` and its log. Installation success alone
-does not prove that the server is ready.
+under `$STIM_HOME/server` or settings. `install` waits up to 15 seconds for a
+`/health` answer that is no longer `pending`. An installed LaunchAgent with no
+answer reports readiness as unavailable, and one that answers `degraded` reports
+the reason; both point to `status` and its log. Installation success alone does
+not prove that the server is ready.
 
 Install downloads the Stim Host release this package pins from the
 `host-v<version>` GitHub release, checks the pinned SHA-256 and App & Flow's
@@ -699,14 +702,26 @@ on macOS 26 and earlier). Stim never changes these settings itself. Servers
 launched by Stim Desktop keep Desktop's grants. For an older node-first service,
 run `stim-server service install` again to use Stim Host.
 
-Before starting status followers, native helpers or recording, the server checks
-the recording ownership directories in a read-only child process. A directory
-read that does not return fails startup after 10 seconds, plus up to one second
-to stop the child. Returned filesystem errors still go through the recorder's
-existing claim refusal; missing directories are created by that protocol.
-This diagnostic preserves claims and recordings. It does not restore an
-inaccessible volume or change the server's permissions. Loss of filesystem
-access after the check still needs an operating-system access remedy.
+The server binds its port before it touches the Stim home. It then reads the
+Stim home, its `server` and `workspaces` directories and the recording
+ownership directories in a read-only child process, so a read that never
+returns, such as one on a stalled external volume, cannot block the server's
+event loop. Until that read returns, `/health` answers HTTP 503 with
+`startup: { "state": "pending" }`, WebSocket upgrades and device-host agent
+requests get 503, and no status follower, native helper, file watcher or
+recorder starts. A read that does not return within 10 seconds, plus up to one
+second to stop the child, leaves the server listening with
+`startup: { "state": "degraded", "reason": "..." }` and HTTP 503 on `/health`,
+logs the reason once, and reads again every 30 seconds. When a read returns,
+the server starts its watchers and recorder, `/health` answers 200 with
+`startup: { "state": "ready" }`, and no restart is needed. `service status`
+prints `health: degraded` or `health: starting` and the reason, and `service
+install` reports a listening but degraded server instead of success. Returned
+filesystem errors still go through the recorder's existing claim refusal;
+missing directories are created by that protocol. The check preserves claims and
+recordings. It does not restore an inaccessible volume or change the server's
+permissions, and a stall that starts after the check passes still blocks the
+server until the operating system returns.
 
 The job runs in your GUI login session, so it starts when you log in and not at
 boot. On a Mac with no one at the screen, turn on automatic login. Moving the

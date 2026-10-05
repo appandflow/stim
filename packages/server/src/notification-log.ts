@@ -63,12 +63,19 @@ function parseLog(value: Record<string, unknown> | null): LogFile | null {
 export class NotificationLog {
   private readonly file: string;
   private readonly now: () => number;
-  private state: LogFile;
+  private loaded: LogFile | null = null;
 
   constructor(file: string, now: () => number = Date.now) {
     this.file = file;
     this.now = now;
-    this.state = parseLog(readJsonObject(file)) ?? { log: randomBytes(8).toString('hex'), nextSeq: 1, entries: [] };
+  }
+
+  private get state(): LogFile {
+    return (this.loaded ??= parseLog(readJsonObject(this.file)) ?? {
+      log: randomBytes(8).toString('hex'),
+      nextSeq: 1,
+      entries: [],
+    });
   }
 
   /** Appends `entries` in order and returns them as stored; the write reads the file first, under its lock. */
@@ -86,7 +93,7 @@ export class NotificationLog {
           entries: this.bounded([...current.entries, ...added]),
         };
         writeJson(this.file, { version: 1, ...next });
-        this.state = next;
+        this.loaded = next;
         return added;
       },
       { ensureParent: () => mkdirSync(dirname(this.file), { recursive: true, mode: 0o700 }) },

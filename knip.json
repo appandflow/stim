@@ -14,7 +14,7 @@
       "entry": ["apps/desktop/scripts/*.mjs", "packaging/store/assemble.mjs"]
     },
     "packages/server": {
-      "ignoreBinaries": ["plutil", "ditto"]
+      "ignoreBinaries": ["plutil", "ditto", "mkfifo"]
     },
     "apps/mobile": {
       "entry": ["plugins/*.js", "scripts/*.mjs", "mock-server/*.mjs", "fingerprint.config.js", "lingui.config.js"],
