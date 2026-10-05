@@ -548,17 +548,20 @@ setting applies only to a newly created AVD; recreate the environment to adopt
 a changed value.
 
 WORKSPACE BUILD OUTPUTS
-  Each workspace directory holds derived-data/, gradle-build/, android-cas/
-  and cache-provider/. \`gc\` reports them as one detected cache, "Workspace
-  build outputs", with a per-workspace size, last use and verdict. Plain
+  Each workspace directory holds derived-data/, gradle-build/, android-cas/,
+  cache-provider/, macos/build, the staged macos/<Product>.app and macos/staging-*
+  leftovers. \`gc\` reports them as one detected cache, "Workspace build
+  outputs", with a per-workspace size, last use and verdict. Plain
   \`gc --delete\` clears them for every workspace not in use (see \`guide
   cleanup gc\`), before anything else. \`--older-than <days>\` limits that to
   workspaces idle at least that long, and keeps one whose last use is
   unknown. \`--cache workspaces\` acts on them alone, except in the workspace
   directories that plain \`gc --delete\` removes whole (dead projects and
-  orphaned directories); \`--cache all\` includes them. Only those four
-  directories go: workspace.json, state.json, logs/, locks and device records
-  stay, so the workspace keeps its devices and ports.
+  orphaned directories); \`--cache all\` includes them. macos/ itself,
+  macos/runtime.lock and its claim set, workspace.json, state.json, logs/,
+  other macOS files, locks and device records stay, as does the project's
+  own .build. The workspace keeps its devices and ports. A running, building,
+  unverified or hosted macOS app keeps its workspace untouched.
     stim gc --delete --cache workspaces --older-than 7
   Last use is the newest of the lastUsedAt that start, ios, android, reload
   and worktree warm record in state.json, lastBuild.startedAt,
@@ -569,7 +572,8 @@ WORKSPACE BUILD OUTPUTS
   The next build of an unchanged app installs from the shared build cache.
   After a native change the Xcode compilation cache speeds the rebuild, but on
   React Native 0.86 Swift does not use it (explicit modules are off), so that
-  build recompiles Swift.
+  build recompiles Swift. The next \`stim macos\` rebuilds its scratch from
+  nothing (a full Swift build) and restages the app.
 
 WORKSPACE LOGS
   \`gc\` reports the size of each workspace's logs/ (the workspaceLogs

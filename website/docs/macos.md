@@ -47,6 +47,14 @@ record on stdout, with progress on stderr. `status --json` reports
 `environments[].macos`, its build and process state. This command does not
 support `--plan`, `--slot` or `reload`.
 
+SwiftPM scratch outputs and dependencies in `macos/build`, the staged
+`macos/<Product>.app` and interrupted-build `macos/staging-*` directories can
+use substantial disk space under `$STIM_HOME/workspaces/<id>/`. Clear them
+with `stim gc --delete --cache workspaces` after stopping the app. Running,
+building, unverified and hosted macOS apps keep their workspace untouched.
+Runtime locks, state, logs and the project's own `.build` stay; the next
+`stim macos` performs a full Swift build and restages the app.
+
 `offload.mode` also places these SwiftPM Debug builds: `auto` builds here while
 this Mac has capacity, `force` uses an approved build machine when one accepts,
 and `off` always builds here. Configure `offload.machines` and approve build
