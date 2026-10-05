@@ -415,8 +415,13 @@ app to the front. Ordinary typing and
 navigation remain available. [#2422](https://github.com/appandflow/stim/issues/2422) tracks logical mapping for
 other host layouts.
 
+With `macos-window-select`, Control adds a **Window** toolbar menu when the app has
+more than one window: **Follow front window**, or a window by title, which pins the
+view and input to that window (`input.window`) until it closes, Control ends or the
+menu follows the front window again.
+
 Each action verifies the same owned process and that the captured
-window is still the app's front standard window. The app's other windows are allowed;
+window is still the app's front standard window, or the window Control pinned. The app's other windows are allowed;
 input that arrives while the view moves to another window is dropped and Control
 continues. A modal dialog window refuses input. A sheet attached to the captured
 window takes focus and pointer input. A sheet larger than the captured window is not

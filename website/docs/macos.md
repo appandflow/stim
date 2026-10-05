@@ -120,7 +120,7 @@ windows. It never captures another process's windows, menus or the desktop. With
 **Device Control and Data Access** permission Stim cannot tell which window is in
 front, so the preview shows only an app whose one window contains the others.
 A viewer does not capture its own process recursively. Capture and Open app verify the recorded PID, process start time, bundle ID
-and executable. Open app rechecks that the captured window is still the app's front window, then activates
+and executable. Open app rechecks the captured window, raising a pinned one, then activates
 that owned app for normal native-window input. The captured view is read-only;
 background mouse/keyboard relay is not included.
 
@@ -143,7 +143,14 @@ Tap the app tile to view the app's front window. A server advertising
 read access. It verifies the recorded PID, process start time, executable and
 bundle before capture and on every frame. The view has no replay and never captures the desktop or another app.
 It follows the app's front standard window like the Desktop preview. After the app
-closes its last window the view reports a delay until another opens. A server advertising `macos-windows` also
+closes its last window the view reports a delay until another opens.
+
+During Control, a server advertising `macos-window-select` adds a **Window** menu to
+the phone's toolbar: **Follow front window**, or one of the app's windows by title.
+Picking a window pins the view to it and brings it to the front of the app, so
+input lands there even when another window comes forward on the Mac. The pin ends
+when you choose Follow front window, when the window closes, or when Control ends.
+Stim Desktop's app card and hosted viewer show the same menu above the preview. A server advertising `macos-windows` also
 names the captured window and the app's other windows.
 
 The capture host requires existing **Screen & System Audio Recording** permission
@@ -180,7 +187,8 @@ Clicks on views that reject the first mouse, such as custom views and SwiftUI
 Desktop's **Open app** to bring the app to the front for those views.
 
 Each action rechecks the exact owned
-process and that the captured window is still the app's front standard window. The
+process and that the captured window is still the app's front standard window, or
+the window you pinned. The
 app's other windows are allowed; input goes to the captured window, and a sheet
 attached to it takes focus and pointer input. Input that arrives while the view
 moves to another window is dropped and Control continues. A modal dialog window

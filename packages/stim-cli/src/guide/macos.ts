@@ -90,7 +90,8 @@ refuses with STIM_MACOS_OWNER_UNVERIFIED; other apps remain untouched.
 Stim Desktop shows this app in its workspace, with Build and run, Refresh preview,
 Open app and Stop. Capture and Open app verify the recorded executable, bundle
 identifier, PID and process start time. Open app rechecks that the captured window
-is still the app's front window, then activates that owned app for normal native input.
+is still the app's front window, or raises the pinned one, then activates that
+owned app for normal native input.
 The preview follows the app's front standard window, its main window with any
 attached sheet, as the app opens, switches, closes or resizes windows. It never
 captures another process's windows, menus or the desktop. Without Device Control
@@ -122,6 +123,21 @@ subscription with the captured window and the app's windows (id, title and frame
 in points), after subscribing and whenever they change. Viewing starts only with
 an open window; after the app closes its last one the view reports a delay until
 another opens.
+
+WINDOWS
+
+The view follows the app's front window by default. A controller can pin it to
+one of the app's windows instead: with a server advertising macos-window-select,
+input.window { session, window: <id from macos-windows> } brings that window to
+the front of the app, and capture and input stay on it while another window
+comes forward on the Mac. input.window { session, window: null } follows the
+front window again. The pin also ends when its window closes or minimizes, or
+when the Control session that set it ends; macos-windows reports pinned true
+while it holds. The phone's Control toolbar and Stim Desktop's app card and
+hosted viewer offer the same choice as a Window menu: Follow front window, or a
+window by title. Stim Desktop's local preview pins without Control because it
+only raises the window among the app's own windows. An agent that drives the app
+through the stim-server protocol sends the same input.window.
 
 A server advertising macos-window-control also supports the phone's Control
 mode on a control pairing. Tap/click and drag act on the displayed window;
@@ -155,8 +171,8 @@ Desktop's Open app to bring the app to the front for those views.
 Control holds one exclusive server session per owned app, ends on disconnect,
 revocation, takeover or five minutes without input, and does not take a CLI
 simulator/device lock. Each action rechecks the exact owned process and that the
-captured window is still the app's front standard window. The app's other windows
-are allowed; input goes to the captured window, and a sheet attached to it takes
+captured window is still the app's front standard window, or the pinned one. The
+app's other windows are allowed; input goes to the captured window, and a sheet attached to it takes
 focus and pointer input. Input that arrives while the view moves to another
 window is dropped and Control continues. A modal dialog window refuses input. A
 sheet larger than the captured window is not supported. Existing Device
