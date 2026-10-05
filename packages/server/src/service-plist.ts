@@ -1,4 +1,4 @@
-import { delimiter, isAbsolute } from 'node:path';
+import { delimiter, isAbsolute, join, relative } from 'node:path';
 import { isJsonObject } from '@stim-cli/core/state';
 import type { ServeRoute } from './tailscale.ts';
 
@@ -328,4 +328,22 @@ export function signatureProblem(output: string): string | null {
     return `npm found invalid registry signatures or attestations: ${packageNames(report.invalid)}`;
   if (report.missing.length) return `npm found packages without registry signatures: ${packageNames(report.missing)}`;
   return null;
+}
+
+/**
+ * The directory an install of `build` gets: its version, the digest of its `stim` build and the digest of the server's
+ * own code, so a server-only change of one version and Stim build gets a directory of its own.
+ */
+export function installDirName(build: ServerBuild, serverDigest: string): string {
+  return `${build.version}-${build.stimBuild}-${serverDigest}`;
+}
+
+/** The entries of `versions` that hold none of the `keep` scripts, so removing them leaves both servers intact. */
+export function unusedInstalls(versions: string, entries: string[], keep: string[]): string[] {
+  return entries.filter((entry) =>
+    keep.every((script) => {
+      const inside = relative(join(versions, entry), script);
+      return inside.startsWith('..') || isAbsolute(inside);
+    }),
+  );
 }

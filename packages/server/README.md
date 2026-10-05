@@ -784,29 +784,30 @@ as one object.
 
 `update` installs another stim-server beside the one the job runs and switches
 the job to it. `--release <version>` takes an exact version from the public npm
-registry (`https://registry.npmjs.org/`, never a registry `.npmrc` names): npm
-checks each package against the registry's integrity, and `npm audit signatures`
-must verify the registry signature of every installed package and the
-provenance attestation of each one that has it, or the update stops before it
-touches the job. `--from <dir>` installs
-the `.tgz` packages in that directory, such as `pnpm pack` output of the
-`@stim-cli/core`, `@stim-cli/cache`, `@stim-cli/metro`, `stim` and
+registry (`https://registry.npmjs.org/`, never a registry `.npmrc` names), and
+npm checks each package against the registry's integrity. `--from <dir>`
+installs the `.tgz` packages in that directory, such as `pnpm pack` output of
+the `@stim-cli/core`, `@stim-cli/cache`, `@stim-cli/metro`, `stim` and
 `@stim-cli/server` packages of a checkout, and records each file's sha256.
-Install scripts never run. Each install goes to
-`~/Library/Application Support/Stim/services/<label>/versions/<version>-<stimBuild>`,
-named by its version and Stim build, and must start with the job's `node`
-before the switch. `update` then waits up to 30 minutes for `/health` to report
-no offloaded build and no hosted session, rewrites only the server script in
-the plist (recording the previous one), restarts the job and waits up to 90
-seconds for `/health` to answer with the new version and Stim build. When it
-does not, `update` puts the previous plist back and restarts it. A second
-update to the same build reuses its directory, and after a switch `update`
-removes the installs neither the current nor the previous script uses.
-`rollback` switches the job back to the previous script under the same checks,
-and running it again returns to the newer one. Neither touches the node, the
-host app, the `--env` and `--path-prepend` pins, pairings, approvals,
-`$STIM_HOME` or the serve route. One update or rollback of a label runs at a
-time.
+Either way, `npm audit signatures` must verify the registry signature of every
+package that came from the registry, and the provenance attestation of each one
+that has it, or the update stops before it touches the job. Install scripts
+never run. Each install goes to
+`~/Library/Application Support/Stim/services/<label>/versions/`, in a directory
+named by its version, Stim build and server code, and must start with the job's
+`node` before the switch. `update` then waits up to 30 minutes for `/health` to
+report no offloaded build and no hosted session (a server older than `busy` in
+`/health` restarts without waiting), rewrites only the server script in the
+plist (recording the previous one), restarts the job and waits up to 90 seconds
+for `/health` to answer with the new version and Stim build. When it does not,
+`update` puts the previous plist back and restarts it. Interrupt signals wait
+for the switch to finish. A second update to the same build reuses its
+directory, and after a switch `update` removes the installs neither the current
+nor the previous script uses. `rollback` switches the job back to the previous
+script under the same checks, and running it again returns to the newer one.
+Neither touches the node, the host app, the `--env` and `--path-prepend` pins,
+pairings, approvals, `$STIM_HOME` or the serve route. Install, update, rollback
+and uninstall of one label run one at a time.
 
 `uninstall` boots the job out, removes the plist, the servers `update`
 installed and, when `install` created it, the serve route. Logs, pairings and the host app stay; other labels may use the app. Use `--label` and `--port` to run a

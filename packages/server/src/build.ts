@@ -339,7 +339,6 @@ export class BuildHost {
     };
   }
 
-  /** How many offloaded builds run now. */
   running(): number {
     return this.jobs.size;
   }

@@ -880,7 +880,6 @@ export class DeviceHost {
     }
   }
 
-  /** How many hosted sessions this server holds now. */
   active(): number {
     return this.owned.size;
   }

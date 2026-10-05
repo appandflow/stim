@@ -6,6 +6,8 @@ import { delimiter, join } from 'node:path';
 import {
   answersAs,
   applyServeEnvironment,
+  installDirName,
+  unusedInstalls,
   parseEnvAssignment,
   parseInstalledPlist,
   parseLaunchctlPrint,
@@ -181,6 +183,24 @@ describe('service update checks', () => {
     expect(answersAs({ version: '1.13.0', stimBuild: 'aaaaaaaaaaaaaaaa' }, expected)).toBe(false);
     expect(answersAs({ version: '1.14.0' }, expected)).toBe(true);
     expect(answersAs(null, expected)).toBe(false);
+  });
+
+  it('gives a server-only change of one version and Stim build its own directory', () => {
+    const build = { version: '1.14.0', stimBuild: 'aaaaaaaaaaaaaaaa' };
+    expect(installDirName(build, '1111111111111111')).not.toBe(installDirName(build, '2222222222222222'));
+  });
+
+  it('prunes only installs that hold neither the current nor the previous server', () => {
+    const versions = '/Users/me/Library/Application Support/Stim/services/dev.stim.server/versions';
+    const script = (dir: string) => `${versions}/${dir}/node_modules/@stim-cli/server/dist/stim-server.mjs`;
+    expect(
+      unusedInstalls(
+        versions,
+        ['1.14.0-a-1', '1.14.0-a-10', '1.15.0-b-2', '.install-123'],
+        [script('1.14.0-a-1'), '/Users/me/stim/packages/server/dist/stim-server.mjs'],
+      ),
+    ).toEqual(['1.14.0-a-10', '1.15.0-b-2', '.install-123']);
+    expect(unusedInstalls(versions, ['1.15.0-b-2'], [script('1.15.0-b-2'), script('1.14.0-a-1')])).toEqual([]);
   });
 
   it('accepts only an npm signature report that vouches for every package', () => {

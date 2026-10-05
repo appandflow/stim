@@ -467,7 +467,7 @@ Offload needs the same Stim build on both Macs. To move the build machine's
 service to another build, run one of these there:
 
 ```bash
-stim-server service update --release 1.15.0   # an exact release from npm
+stim-server service update --release 1.14.0   # an exact release from npm
 stim-server service update --from ./packed     # pnpm pack output of a checkout
 stim-server service rollback                   # back to the previous server
 ```
