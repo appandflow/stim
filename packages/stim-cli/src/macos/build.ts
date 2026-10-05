@@ -121,7 +121,7 @@ export async function buildMacosBundle({
           choice,
           request: { platform: 'macos', product, infoPlist: relative(root, resolve(root, infoPlist)), bundleId },
           stagingDir: join(staging, 'offload'),
-          onPhase: (phase, line) => write(remotePhaseText(phase, line, choice!.machine)),
+          onPhase: (phase, line) => note(remotePhaseText(phase, line, choice!.machine)),
           onEnter: () => {},
           onRecord: (entry) => writer.write({ ...entry, offloadedTo: choice!.machine }),
           note: write,

@@ -1116,7 +1116,7 @@ Events are `{ "event", "subscription", ... }`.
   [action](#actions) with `action` `recording.set`, and returns `enabled` and
   `recordingsDeleted`, the workspaces whose recordings turning recording off
   deleted.
-- `build.plan` takes `workspace`, `platform` (`ios`, `android` or `macos`) and `slot`
+- `build.plan` takes `workspace`, `platform` (`ios` or `android`) and `slot`
   (`default` when absent), and returns the payload of
   `stim <platform> --plan --json` run in the workspace: the fingerprint, the
   cache result the next build would get (`local`, `remote` or `false`), the
@@ -1411,10 +1411,10 @@ server starts is not logged, as it is not pushed.
 
 A device with `control` can send `action` with params `{ "action", "workspace" }`:
 
-| Action   | Params                                                                        | Runs in the workspace           |
-| -------- | ----------------------------------------------------------------------------- | ------------------------------- |
-| `reload` | `platform` (`ios`, `android` or `macos`), optional; needed when both are live | `stim reload [platform] --json` |
-| `stop`   | none                                                                          | `stim stop --json`              |
+| Action   | Params                                                               | Runs in the workspace           |
+| -------- | -------------------------------------------------------------------- | ------------------------------- |
+| `reload` | `platform` (`ios` or `android`), optional; needed when both are live | `stim reload [platform] --json` |
+| `stop`   | none                                                                 | `stim stop --json`              |
 
 Each action is one fixed argument list passed to the bundled `stim`, never
 through a shell. `workspace` must be a project path Stim has registered, the

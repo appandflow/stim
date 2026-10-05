@@ -43,7 +43,8 @@ and approve build access as described in stim guide settings. The worker needs
 matching Stim, CPU architecture, Xcode and macOS SDK, plus network access to
 fetch package dependencies the first time. It keeps SwiftPM dependencies in a
 per-client cache and incremental outputs per repository. It runs fixed swift
-build commands without JavaScript installs, prebuild or pods.
+build commands without JavaScript installs, prebuild or pods. It receives only
+the files git lists (tracked and untracked, not ignored).
 
 The client validates the development plist before asking a machine. It verifies
 the returned archive's sha256, bundle identifier, executable and ad hoc signature

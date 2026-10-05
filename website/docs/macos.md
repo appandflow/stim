@@ -54,7 +54,9 @@ access as described in [settings](./settings.md). The worker needs matching Stim
 CPU architecture, Xcode and macOS SDK, and network access to fetch package
 dependencies the first time. It keeps SwiftPM dependencies per client and
 incremental outputs per repository; macOS artifacts are not cached. It runs no
-JavaScript install, prebuild or pod install for this job.
+JavaScript install, prebuild or pod install for this job. It receives the files
+git lists (tracked and untracked, not ignored), so a build input that is
+gitignored is missing there.
 
 Stim validates the development plist before asking a machine and verifies the
 returned archive digest, bundle ID, executable and ad hoc signature before
