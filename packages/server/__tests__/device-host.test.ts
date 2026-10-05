@@ -638,6 +638,17 @@ writeFileSync(${JSON.stringify(ready)},JSON.stringify(answer.result));void contr
   },
 );
 
+test('takes no new hosted session while the server drains for an update, and still answers a retry', async () => {
+  const first = reserve();
+  host.drain('stim-server is updating to release 1.15.0');
+  expect(reserve().id).toBe(first.id);
+  expect(host.reserve('client', { ...request, attempt: 'second', workspace: '/other' })).toMatchObject({
+    error: { code: 'device-busy', message: expect.stringContaining('updating to release 1.15.0') },
+  });
+  host.drain(null);
+  await state(first.id, 'ready');
+});
+
 test('reserves once across reconnect and attempt replay, isolates clients, and stops only the owned session', async () => {
   const first = reserve();
   expect(first.state).toBe('preparing');

@@ -119,6 +119,7 @@ export class DeviceHost {
   private readonly revoked = new Set<string>();
   private readonly probes = new Map<WorkerRun, string>();
   private closed = false;
+  private draining: string | null = null;
   private readonly limits: DeviceHostLimits;
 
   private readonly options: DeviceHostOptions;
@@ -208,6 +209,7 @@ export class DeviceHost {
       const running = records.filter((record) => record.state !== 'stopped').length;
       const max = getConcurrencyLimits({ env: this.options.env }).maxDevices;
       let declined =
+        this.draining ??
         native.declined ??
         (native.resources.memoryPressure !== 'normal' ? 'Host memory pressure is unknown or elevated.' : null);
       if (max > 0 && running >= max)
@@ -259,6 +261,7 @@ export class DeviceHost {
         );
         if (occupied)
           throw new Error(`This workspace slot already has session ${occupied.id}; attach or stop it first.`);
+        if (this.draining) throw new Error(`This Mac takes no new hosted sessions: ${this.draining}.`);
         const max = getConcurrencyLimits({ env: this.options.env }).maxDevices;
         if (max > 0 && records.filter((record) => record.state !== 'stopped').length >= max)
           throw new Error('All configured hosted device reservations are occupied, including unresolved sessions.');
@@ -917,6 +920,10 @@ export class DeviceHost {
 
   active(): number {
     return this.owned.size;
+  }
+
+  drain(reason: string | null): void {
+    this.draining = reason;
   }
 
   async close(): Promise<void> {

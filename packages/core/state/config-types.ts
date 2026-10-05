@@ -90,6 +90,7 @@ export interface StimConfig {
   parked?: { ios?: unknown; android?: unknown };
   caches?: { buildCache?: unknown; metroCache?: unknown };
   hosting?: { machines?: unknown; agentDriver?: unknown };
+  server?: { acceptClientBuilds?: unknown };
   offload?: {
     machines?: unknown;
     mode?: unknown;

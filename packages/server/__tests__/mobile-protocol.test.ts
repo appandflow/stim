@@ -4,7 +4,8 @@ import type * as Server from '../src/protocol.ts';
 type BuildMethod = (typeof Server.BUILD_METHODS)[number];
 
 type DeviceHostMethod = (typeof Server.DEVICE_HOST_METHODS)[number];
-type PhoneMethod = Exclude<keyof Server.Methods, BuildMethod | DeviceHostMethod | 'route.setup'>;
+type ServerUpdateMethod = (typeof Server.SERVER_UPDATE_METHODS)[number];
+type PhoneMethod = Exclude<keyof Server.Methods, BuildMethod | DeviceHostMethod | ServerUpdateMethod | 'route.setup'>;
 
 type SharedMethod = PhoneMethod & keyof Mobile.Methods;
 

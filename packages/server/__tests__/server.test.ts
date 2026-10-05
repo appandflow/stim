@@ -304,6 +304,7 @@ async function start(
     startupProbeMs?: number;
     startupRetryMs?: number;
     settle?: boolean;
+    service?: ServerOptions['service'];
   } = {},
 ): Promise<number> {
   const stimCli = join(root, 'fake-stim.mjs');
@@ -334,6 +335,7 @@ async function start(
       ...overrides.env,
     },
     tailscaleMonitor: overrides.tailscaleMonitor,
+    service: overrides.service,
     listenRetryMs: overrides.listenRetryMs,
     authTimeoutMs: overrides.authTimeoutMs,
     maxAuthFailures: overrides.maxAuthFailures,
@@ -817,6 +819,7 @@ describe('pairing', () => {
           'duo-frames',
           'workspace-diff',
           'hosted-congestion',
+          'server-update',
         ],
         actions: [],
       },
@@ -1302,6 +1305,82 @@ describe('offloaded builds', () => {
       expect(await viewer.request('device-host.offer', { platform: 'ios' })).toHaveProperty('error.code', 'forbidden');
     },
   );
+
+  test.skipIf(!fakeTailscale)(
+    'lets only a Mac approved for builds or device hosting ask the server to update itself',
+    async () => {
+      const port = await start({
+        service: {
+          label: 'dev.stim.test',
+          node: process.execPath,
+          script: '/nowhere',
+          runsAsService: async () => true,
+        },
+      });
+      const { client } = await buildClient(port);
+      expect(await client.request('server.update.status')).toMatchObject({
+        result: {
+          server: { version: '1.2.3' },
+          service: 'dev.stim.test',
+          acceptsClientBuilds: false,
+          running: null,
+        },
+      });
+      expect(
+        await client.request('server.update.start', { packages: [{ name: 'a.tgz', size: 1, sha256: sha('a') }] }),
+      ).toMatchObject({ error: { code: 'forbidden', message: expect.stringContaining('server.acceptClientBuilds') } });
+      expect(await client.request('server.update.start', { release: 'latest' })).toMatchObject({
+        error: { code: 'bad-request' },
+      });
+      const asking = await connect(port, '100.64.0.3');
+      const reply = await asking.request('hello', {
+        protocol: 1,
+        client: CLIENT,
+        auth: { request: 'device-host', deviceName: 'Host client' },
+      });
+      const { device, deviceToken } = (reply as { result: HelloResult }).result;
+      grantDevice(device.id, ['device-host']);
+      const host = await connect(port, '100.64.0.3');
+      await host.request('hello', { protocol: 1, client: CLIENT, auth: { deviceToken } });
+      expect(await host.request('server.update.status')).toMatchObject({ result: { service: 'dev.stim.test' } });
+      const viewer = await authed(port);
+      expect(await viewer.request('server.update.status')).toMatchObject({ error: { code: 'forbidden' } });
+      expect(await viewer.request('server.update.start', { release: '1.15.0' })).toMatchObject({
+        error: { code: 'forbidden' },
+      });
+    },
+  );
+
+  test.skipIf(!fakeTailscale)('declines offloaded builds while an update of this server runs', async () => {
+    const home = process.env.HOME;
+    process.env.HOME = root;
+    try {
+      const updater = join(root, 'updater.mjs');
+      const release = join(root, 'release-updater');
+      writeFileSync(
+        updater,
+        `const { existsSync } = await import('node:fs'); const wait = setInterval(() => { if (existsSync(${JSON.stringify(release)})) { clearInterval(wait); process.exit(1); } }, 50);`,
+      );
+      const port = await start({
+        service: { label: 'dev.stim.drain', node: process.execPath, script: updater, runsAsService: async () => true },
+      });
+      const { client } = await buildClient(port);
+      expect(await client.request('server.update.start', { release: '1.15.0' })).toMatchObject({
+        result: { state: 'installing' },
+      });
+      expect(await client.request('build.offer', { repo: 'app-1' })).toMatchObject({
+        result: { capacity: { declined: 'stim-server is updating to release 1.15.0' } },
+      });
+      writeFileSync(release, '');
+      await eventually(() => readAudit().some((record) => record.action === 'server.update.ended'));
+      expect(await client.request('build.offer', { repo: 'app-1' })).toMatchObject({
+        result: { capacity: { declined: null } },
+      });
+    } finally {
+      if (home === undefined) delete process.env.HOME;
+      else process.env.HOME = home;
+    }
+  });
 
   test.skipIf(!fakeTailscale)(
     "builds an Android job with its Gradle options in the client's own Gradle home",
