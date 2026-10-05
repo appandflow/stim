@@ -46,7 +46,8 @@ import {
 import { watchTailscale } from '../src/tailscale-monitor.ts';
 import type { TailscaleState } from '../src/tailscale.ts';
 import { startServer, type RunningServer, type ServerOptions } from '../src/server.ts';
-import { workspaceStateDir } from '@stim-cli/core';
+import { workspaceName, workspaceStateDir } from '@stim-cli/core';
+import { captureProcessToken, processStartMicros } from '@stim-cli/core/process-identity';
 import { readClaimSet, releaseClaim, tryAcquireClaim } from '@stim-cli/core/ownership-claim';
 
 const registryWatch = vi.hoisted(() => ({ dropEvents: false }));
@@ -3189,6 +3190,163 @@ describe('frames.subscribe', () => {
       framed.socket.close();
       plain.socket.close();
       again.socket.close();
+    },
+  );
+
+  test.skipIf(process.platform !== 'darwin')(
+    'routes hosted macOS frames and native input without local viewer permission setup',
+    async () => {
+      const captureHelper = fakeHelper();
+      writeFileSync(
+        captureHelper,
+        readFileSync(captureHelper, 'utf8').replace('run.configs.push(line);', 'run.configs.push(line); record();'),
+      );
+      const port = await startWithTools({ FAKE_STIM_PAYLOADS: '[]' }, undefined, captureHelper);
+      writeFileSync(
+        join(root, 'device-host-worker.mjs'),
+        `
+        import {writeFileSync} from 'node:fs';import {join} from 'node:path';
+        const chunks=[];for await(const chunk of process.stdin)chunks.push(chunk);
+        const input=JSON.parse(Buffer.concat(chunks));
+        const device={architecture:'arm64',macosVersion:'27.0',appSlot:input.appSlot};
+        if(input.mode==='prepare')writeFileSync(join(process.env.STIM_HOME,'hosted-device.json'),JSON.stringify(device));
+        process.stdout.write(JSON.stringify({state:input.mode==='prepare'?'ready':'stopped',device}));
+      `,
+      );
+      const pending = requestDeviceHostAccess('Hosting Mac client', {
+        kind: 'tailnet',
+        nodeId: 'nPhoneA',
+        nodeName: 'phone',
+        user: 'u',
+      });
+      if (!pending.ok) throw new Error(pending.reason);
+      grantDevice(pending.device.id, ['device-host']);
+      const client = await connect(port, '100.64.0.2');
+      await client.request('hello', { protocol: 1, client: CLIENT, auth: { deviceToken: pending.deviceToken } });
+      const reserved = await client.request('device-host.reserve', {
+        workspace: '/client/not-worker-registered',
+        slot: 'default',
+        platform: 'macos',
+        attempt: 'hosted-macos-view',
+      });
+      if (!('result' in reserved)) throw new Error(JSON.stringify(reserved));
+      const session = (reserved.result as { id: string }).id;
+      await vi.waitFor(async () =>
+        expect(await client.request('device-host.attach', { session })).toHaveProperty('result.state', 'ready'),
+      );
+      const appProcess = spawn(process.execPath, ['-e', 'setInterval(()=>{},1000)'], {
+        detached: true,
+        stdio: 'ignore',
+      });
+      try {
+        const appAttempt = 'app-first';
+        const area = join(deviceHostArea(session), 'apps', appAttempt);
+        const workerHome = join(deviceHostArea(session), 'home');
+        const bundle = join(area, 'App.app');
+        mkdirSync(join(bundle, 'Contents', 'MacOS'), { recursive: true });
+        const executable = join(bundle, 'Contents', 'MacOS', 'Fixture');
+        writeFileSync(executable, 'fixture');
+        mkdirSync(join(workerHome, 'macos-app'));
+        const state = join(workerHome, 'workspaces', workspaceName(realpathSync(join(workerHome, 'macos-app'))));
+        mkdirSync(state, { recursive: true });
+        const appStart = processStartMicros(appProcess.pid!);
+        const processToken = captureProcessToken(appProcess.pid!);
+        if (appStart.status !== 'running' || !processToken) throw new Error('Cannot identify fake macOS app');
+        const identity = { pid: appProcess.pid!, processToken, startedAtMicros: appStart.startedAtMicros };
+        const bundleId = 'dev.stim.fixture.hosted1';
+        writeFileSync(
+          join(state, 'state.json'),
+          JSON.stringify({
+            macos: {
+              launchId: 'launch-1',
+              arguments: [],
+              product: 'Fixture',
+              bundle,
+              bundleId,
+              executable,
+              build: { state: 'ok', startedAt: new Date().toISOString() },
+              app: identity,
+              supervisor: identity,
+            },
+          }),
+        );
+        writeFileSync(join(workerHome, 'hosted-macos-app.json'), JSON.stringify({ bundleId }));
+        writeFileSync(
+          join(area, 'receipt.json'),
+          JSON.stringify({
+            session,
+            attempt: appAttempt,
+            bundleId: 'dev.stim.fixture',
+            mode: 'release',
+            manifest: { size: 1, sha256: 'a'.repeat(64) },
+            state: 'installed',
+            launched: true,
+          }),
+        );
+        const journal = join(deviceHostRoot(), 'sessions.json');
+        const stored = JSON.parse(readFileSync(journal, 'utf8'));
+        stored.sessions[0].appAttempt = appAttempt;
+        writeFileSync(journal, JSON.stringify(stored));
+        expect(await client.request('device-host.frames.subscribe', { session, at: 1 })).toHaveProperty(
+          'error.code',
+          'bad-request',
+        );
+        expect(await client.request('device-host.frames.subscribe', { session })).toHaveProperty(
+          'result.subscription',
+          's1',
+        );
+        expect(await client.next()).toMatchObject({ event: 'frame', subscription: 's1', platform: 'macos' });
+        expect(await (await fetch(`http://127.0.0.1:${port}/health`)).json()).toHaveProperty(
+          'nativeViewerOpened',
+          false,
+        );
+        const begun = await client.request('device-host.control.begin', { session });
+        if (!('result' in begun)) throw new Error(JSON.stringify(begun));
+        const controlSession = (begun.result as { session: string }).session;
+        expect(
+          await client.request('device-host.input.scroll', {
+            session: controlSession,
+            x: 0.25,
+            y: 0.75,
+            deltaX: -5,
+            deltaY: 10,
+          }),
+        ).toHaveProperty('result');
+        expect(
+          await client.request('device-host.input.key', { session: controlSession, key: 'a', modifiers: ['command'] }),
+        ).toHaveProperty('result');
+        expect(
+          await client.request('device-host.input.key', { session: controlSession, key: 'invalid' }),
+        ).toHaveProperty('error.code', 'bad-request');
+        expect(
+          await client.request('device-host.input.scroll', {
+            session: controlSession,
+            x: 2,
+            y: 0,
+            deltaX: 0,
+            deltaY: 0,
+          }),
+        ).toHaveProperty('error.code', 'bad-request');
+        await vi.waitFor(() => {
+          const configs = helperRuns().flatMap((run) => run.configs);
+          expect(configs).toEqual(
+            expect.arrayContaining([
+              expect.objectContaining({ input: 'scroll', deltaX: -5, deltaY: 10 }),
+              expect.objectContaining({ input: 'key', key: 'a', modifiers: ['command'] }),
+            ]),
+          );
+          const args = helperRuns()[0]!.args;
+          expect(args[0]).toBe('macos');
+          expect(JSON.parse(args[1]!)).toMatchObject({ bundleId, app: { pid: appProcess.pid } });
+        });
+        expect(await client.request('device-host.stop', { session })).toHaveProperty('result.state', 'stopping');
+        await vi.waitFor(async () =>
+          expect(await client.request('device-host.attach', { session })).toHaveProperty('result.state', 'stopped'),
+        );
+      } finally {
+        appProcess.kill('SIGKILL');
+        await new Promise<void>((resolve) => appProcess.once('exit', () => resolve()));
+      }
     },
   );
 

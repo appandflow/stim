@@ -195,7 +195,7 @@ tokens.
 Device hosting has a separate `device-host` capability. An approved client can
 reserve, boot, reconnect to and stop its own iOS simulator or Android emulator
 through the protocol. It can deliver, install and launch a compatible iOS app
-bundle, Android APK or prebuilt macOS app, stream the iOS simulator and control it. The hosted iOS
+bundle, Android APK or prebuilt macOS app, stream the iOS simulator or macOS app and control it. The hosted iOS
 app connects back to Metro on the client Mac. Automatic CLI placement, client view/control relays and
 Android Metro and viewing remain in [#2266](https://github.com/appandflow/stim/issues/2266).
 
@@ -505,8 +505,8 @@ reports the app's pid, `DeviceHost` registers the running app with the agent
 driver before the receipt reads `installed`, and ends that registration when the
 session stops, is revoked or the server closes.
 
-macOS sessions refuse Metro, viewing and control. Client placement and streaming
-remain follow-ups in [#2403](https://github.com/appandflow/stim/issues/2403).
+macOS sessions refuse Metro. Viewing and control are supported while the hosted
+app is running. CLI placement and client view/control relays remain follow-ups in [#2403](https://github.com/appandflow/stim/issues/2403).
 
 ### Private hosted Metro
 
@@ -546,10 +546,11 @@ the workspace observes the app's own bundle delivery.
 This is a protocol API for approved clients; automatic CLI placement,
 client view/control relays and Android Metro/viewing remain in [#2266](https://github.com/appandflow/stim/issues/2266).
 
-### Hosted iOS view and input
+### Hosted iOS and macOS view and input
 
 An approved hosting client can subscribe to its ready session's exact owned
-simulator without access to the worker's registered workspaces:
+iOS simulator or running macOS app without access to the worker's registered
+workspaces:
 
 ```json
 {
@@ -564,19 +565,26 @@ events; `video: ["h264"]` selects the existing H.264 binary stream and its
 backpressure/keyframe rules. `device-host.frames.keyframe` and
 `device-host.unsubscribe` take that subscription ID as `params.subscription`.
 Hosted capture requires the compiled `stim-frames` helper and does not support
-replay or screenshot fallback.
+replay, device artwork or screenshot fallback. macOS frames show only the one
+window of the hosted app. Viewing is refused before launch and after the app
+exits. On the hosting Mac, grant Screen Recording and Accessibility once to the
+process that spawns `stim-frames`. Missing Screen Recording access ends the
+stream with the helper's refusal message. Missing Accessibility access refuses
+control while viewing remains available.
 
 Start control with `device-host.control.begin` and
 `{"session":"<hosted-session-id>"}`. Its result returns a connection-bound
 control session ID and `lease: null`: the hosted lifetime claim protects this
 private device. Only one controller can drive the device; `takeOver: true`
 replaces the previous controller. Use the returned control ID with
-`device-host.input.touch|text|button|rotate|posture`, using the same parameters
-as ordinary input. Touch coordinates range from 0 to 1 on the streamed display.
+`device-host.input.touch|text`, using the same parameters as ordinary input.
+iOS also supports `device-host.input.button|rotate|posture`. macOS also supports
+`device-host.input.scroll|key`; these two methods are for macOS sessions only.
+Touch coordinates range from 0 to 1 on the streamed display.
 End it with `device-host.control.end` and `{"session":"<control-id>"}`.
 
-The worker derives the workspace, slot and UDID from its owned session; callers
-cannot select arbitrary worker devices. Every begin and input rechecks session
+The worker derives the workspace, slot and device or app identity from its owned
+session; callers cannot select arbitrary worker devices. Every begin and input rechecks session
 ownership and current approval. Hosting approval grants neither ordinary
 `frames.subscribe` nor ordinary `control.begin` access. Disconnecting releases
 that connection's capture and input; reconnect to the same hosted session and

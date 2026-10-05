@@ -1127,7 +1127,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       let latest: StatusPayload | null = null;
       const attach = (resolved: Device) => {
         if (wantsArtwork) send(socket, { event: 'device-frame', subscription, artwork: null });
-        if (resolved.platform === 'macos') nativeViewerOpened = true;
+        if (!hosted && resolved.platform === 'macos') nativeViewerOpened = true;
         detach?.();
         gate.reset();
         streamed = resolved;
@@ -1651,7 +1651,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
             const view = hostedViews.target(session.id, hostedSession);
             return subscribeFrames(
               id,
-              { ...params, workspace: view.workspace, platform: 'ios', slot: view.slot },
+              { ...params, workspace: view.workspace, platform: view.device.platform, slot: view.slot },
               { client: session.id, session: hostedSession, view },
             );
           }
@@ -1690,12 +1690,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         return send(socket, { id, result: {} });
       }
       if (method.startsWith('device-host.input.')) {
-        const inputMethod = method.slice('device-host.'.length) as
-          | 'input.touch'
-          | 'input.text'
-          | 'input.button'
-          | 'input.rotate'
-          | 'input.posture';
+        const inputMethod = method.slice('device-host.'.length) as (typeof INPUT_METHODS)[number];
         return input(id, inputMethod, raw, session);
       }
       const answer =

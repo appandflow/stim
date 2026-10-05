@@ -6,7 +6,7 @@ import type { FrameHint } from './frame-helper.ts';
 import type { ControlBeginResult, ProtocolError } from './protocol.ts';
 
 interface HostedView {
-  device: Extract<Device, { platform: 'ios' }>;
+  device: Extract<Device, { platform: 'ios' | 'macos' }>;
   frames: FramePool;
   home: string;
   claim: ClaimHandle;
@@ -16,6 +16,16 @@ interface HostedView {
   closed: boolean;
   unbind: () => void;
   closing?: Promise<void>;
+}
+
+function sameTarget(device: HostedView['device'], target: ReturnType<DeviceHost['viewTarget']>): boolean {
+  if (device.platform === 'ios') return target.platform === 'ios' && device.udid === target.session.device.udid;
+  return (
+    target.platform === 'macos' &&
+    device.app.launchId === target.app.launchId &&
+    device.app.app.pid === target.app.app.pid &&
+    device.app.app.startedAtMicros === target.app.app.startedAtMicros
+  );
 }
 
 export class HostedViews {
@@ -37,17 +47,20 @@ export class HostedViews {
     const existing = this.views.get(session);
     if (existing) {
       if (existing.closed) throw new Error('Hosted capture is stopping; retry after it has closed.');
-      if (existing.device.udid !== target.session.device!.udid)
+      if (!sameTarget(existing.device, target))
         throw new Error('The hosted device changed; stop this session before retrying.');
       return existing;
     }
     const helper = this.helper();
     if (!helper) throw new Error('Hosted view and input need the stim-frames helper, which this Mac has not built.');
-    const device: Extract<Device, { platform: 'ios' }> = {
-      platform: 'ios',
-      udid: target.session.device!.udid,
-      foldable: /\bDuo\b/.test(target.session.device!.name),
-    };
+    const device: HostedView['device'] =
+      target.platform === 'macos'
+        ? { platform: 'macos', app: target.app }
+        : {
+            platform: 'ios',
+            udid: target.session.device.udid,
+            foldable: /\bDuo\b/.test(target.session.device.name),
+          };
     const view: HostedView = {
       device,
       frames: new FramePool(
@@ -101,14 +114,19 @@ export class HostedViews {
     const view = this.target(client, session);
     return this.control.beginHosted(
       owner,
-      { workspace: view.workspace, platform: 'ios', slot: view.slot, ...(takeOver ? { takeOver: true } : {}) },
+      {
+        workspace: view.workspace,
+        platform: view.device.platform,
+        slot: view.slot,
+        ...(takeOver ? { takeOver: true } : {}),
+      },
       view.home,
       view.device,
       view.frames,
       () => {
         if (!connected() || view.closed) return false;
         try {
-          return this.host.viewTarget(client, session).session.device!.udid === view.device.udid;
+          return sameTarget(view.device, this.host.viewTarget(client, session));
         } catch {
           return false;
         }

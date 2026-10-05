@@ -1,3 +1,8 @@
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { workspaceName } from '../index.ts';
+import { readHostedMacosApp } from '../state/macos.ts';
 import { parseHostedAgentGrant, parseHostedMacosDevice } from '../state/hosted-macos.ts';
 
 test('a hosted macOS identity names exactly the host and one reserved app slot', () => {
@@ -31,4 +36,48 @@ test('an agent grant is usable only for a known driver, one session route, and a
     { ...grant, extra: true },
   ])
     expect(parseHostedAgentGrant(value)).toBeNull();
+});
+
+describe('hosted macOS app state', () => {
+  let home: string;
+  beforeEach(() => {
+    home = mkdtempSync(join(tmpdir(), 'stim-hosted-macos-state-'));
+    process.env.STIM_HOME = join(home, 'server-home');
+  });
+  afterEach(() => {
+    delete process.env.STIM_HOME;
+    rmSync(home, { recursive: true, force: true });
+  });
+
+  test('finds the worker record through a symlink using the canonical workspace hash and not the server home', () => {
+    const worker = join(home, 'worker');
+    mkdirSync(join(worker, 'macos-app'), { recursive: true });
+    const alias = join(home, 'alias');
+    symlinkSync(worker, alias, process.platform === 'win32' ? 'junction' : 'dir');
+    const state = join(worker, 'workspaces', workspaceName(realpathSync(join(alias, 'macos-app'))));
+    mkdirSync(state, { recursive: true });
+    const record = {
+      launchId: 'launch-1',
+      arguments: [],
+      product: 'Fixture',
+      bundle: '/app/Fixture.app',
+      bundleId: 'dev.stim.fixture.hosted1',
+      executable: '/app/Fixture.app/Contents/MacOS/Fixture',
+      build: { state: 'ok', startedAt: '2026-10-05T00:00:00Z' },
+    };
+    writeFileSync(join(state, 'state.json'), JSON.stringify({ macos: record }));
+    expect(readHostedMacosApp(alias)).toEqual(record);
+  });
+
+  test('missing or malformed worker state cannot supply a capture target', () => {
+    expect(readHostedMacosApp(home)).toBeNull();
+    mkdirSync(join(home, 'macos-app'));
+    expect(readHostedMacosApp(home)).toBeNull();
+    const state = join(home, 'workspaces', workspaceName(realpathSync(join(home, 'macos-app'))));
+    mkdirSync(state, { recursive: true });
+    for (const text of ['broken', 'null', '[]', '{}', '{"macos":{"launchId":"incomplete"}}']) {
+      writeFileSync(join(state, 'state.json'), text);
+      expect(readHostedMacosApp(home)).toBeNull();
+    }
+  });
 });

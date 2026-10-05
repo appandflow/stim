@@ -664,7 +664,8 @@ Stop and revocation stop only the recorded processes and remove the last hosted
 identity's preferences domain and plist, the private app home and delivered bytes,
 keeping logs and receipts. Unresolved sessions retain their app slots.
 Until a driver runs, the host reports `agent: { driver: 'none' }` for installed macOS apps, and `stim doctor` on the host names `hosting.agentDriver`.
-macOS hosting has no Metro, viewing, control or CLI placement in this slice.
+macOS hosting supports viewing and control of the running app on the host. Metro
+is refused; CLI placement and client view/control relays remain pending.
 See the [macOS session protocol](https://github.com/appandflow/stim/blob/main/packages/server/README.md#hosted-macos-app-sessions).
 
 Development launches remain `unverified` until a Metro bridge proves a bundle
@@ -685,9 +686,12 @@ This protocol slice does not change where `stim ios` or `stim android` runs.
 Hosting approval grants no access to unrelated
 workspaces, phone control or build offloading.
 
-The [hosted view and input protocol](https://github.com/appandflow/stim/blob/main/packages/server/README.md#hosted-ios-view-and-input)
-streams and controls only the approved client's ready, owned iOS session. The
-worker derives the exact simulator from its private ledger and keeps the
+The [hosted view and input protocol](https://github.com/appandflow/stim/blob/main/packages/server/README.md#hosted-ios-and-macos-view-and-input)
+streams and controls only the approved client's ready, owned iOS simulator or
+running macOS app. macOS frames show only the hosted app's window. Viewing is
+refused before launch and after exit. On the host, grant Screen Recording and
+Accessibility once to the process that spawns `stim-frames`. The worker derives
+the exact simulator or app identity from its private records and keeps the
 capture helper under the session's ownership claim. Reconnect preserves the
 native session; subscribe and begin control again. Installation, stop and
 revocation close capture and input before native work. An uncertain journal

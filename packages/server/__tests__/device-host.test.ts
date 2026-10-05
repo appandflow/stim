@@ -7,6 +7,9 @@ import {
   renameSync,
   mkdirSync,
   chmodSync,
+  realpathSync,
+  readdirSync,
+  symlinkSync,
 } from 'node:fs';
 import { createHash, randomUUID } from 'node:crypto';
 import { execFile, spawn } from 'node:child_process';
@@ -14,7 +17,7 @@ import { pathToFileURL } from 'node:url';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { WebSocket, WebSocketServer } from 'ws';
-import { createMetroGateway } from '@stim-cli/core';
+import { workspaceName, createMetroGateway } from '@stim-cli/core';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import {
@@ -23,6 +26,7 @@ import {
   HOSTED_MACOS_APP_SLOTS,
   readHostedAppMetadata,
   readHostedSessions,
+  readHostedMacosApp,
 } from '@stim-cli/core/state';
 import { processGroupAlive, readClaimSet, tryAcquireClaim, releaseClaim } from '@stim-cli/core/ownership-claim';
 import * as processIdentity from '@stim-cli/core/process-identity';
@@ -37,7 +41,9 @@ import { FeedPool } from '../src/feed.ts';
 
 const WORKER = `
 import { spawn, spawnSync } from 'node:child_process';
-import { writeFileSync, readFileSync, appendFileSync } from 'node:fs';
+import { writeFileSync, readFileSync, appendFileSync, mkdirSync, realpathSync } from 'node:fs';
+import { workspaceName } from ${JSON.stringify(pathToFileURL(join(import.meta.dirname, '../../core/index.ts')).href)};
+import { captureProcessToken, processStartMicros } from ${JSON.stringify(pathToFileURL(join(import.meta.dirname, '../../core/process-identity.ts')).href)};
 import { join } from 'node:path';
 const chunks = [];
 for await (const chunk of process.stdin) chunks.push(chunk);
@@ -84,7 +90,28 @@ if(input.mode === 'prepare') {
   const stored=JSON.parse(readFileSync(join(home,'hosted-device.json'),'utf8'));
   const app=JSON.parse(readFileSync(join(home,'..','apps',input.attempt,'receipt.json'),'utf8'));
   if(input.deviceType === 'install-hang') { process.on('SIGTERM',()=>{}); setInterval(()=>{},1000); }
-  else out({state:'installed',device:stored,launched:app.mode === 'release' ? true : 'unverified',...(input.platform === 'macos' ? {pid:4242} : {})});
+  else {
+    if(input.platform === 'macos' && process.platform === 'darwin') {
+      const child=spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{detached:true,stdio:'ignore'});
+      child.unref();
+      writeFileSync(join(home,'fake-app-pid'),String(child.pid));
+      const processToken=captureProcessToken(child.pid);
+      const start=processStartMicros(child.pid);
+      if(!processToken || start.status !== 'running') throw new Error('Cannot identify fake macOS app');
+      const runRoot=join(home,'macos-app');mkdirSync(runRoot,{recursive:true});
+      const bundle=join(home,'..','apps',input.attempt,'App.app');
+      const executable=join(bundle,'Contents','MacOS','Fixture');
+      mkdirSync(join(bundle,'Contents','MacOS'),{recursive:true});writeFileSync(executable,'fixture');
+      const bundleId=app.bundleId+'.hosted'+stored.appSlot;
+      const identity={pid:child.pid,processToken,startedAtMicros:start.startedAtMicros};
+      const macos={launchId:input.attempt,arguments:[],product:'Fixture',bundle,bundleId,executable,
+        build:{state:'ok',startedAt:new Date().toISOString()},app:identity,supervisor:identity};
+      const workspace=join(home,'workspaces',workspaceName(realpathSync(runRoot)));mkdirSync(workspace,{recursive:true});
+      writeFileSync(join(workspace,'state.json'),JSON.stringify({macos}));
+      writeFileSync(join(home,'hosted-macos-app.json'),JSON.stringify({bundleId}));
+    }
+    out({state:'installed',device:stored,launched:app.mode === 'release' ? true : 'unverified',...(input.platform === 'macos' ? {pid:4242} : {})});
+  }
 } else {
   writeFileSync(join(home,'stopped'),String(process.pid));
   const stored=JSON.parse(readFileSync(join(home,'hosted-device.json'),'utf8'));
@@ -139,6 +166,15 @@ beforeEach(() => {
 });
 afterEach(async () => {
   await host.close();
+  const areas = join(home, 'device-host', 'sessions');
+  for (const id of existsSync(areas) ? readdirSync(areas) : []) {
+    const file = join(areas, id, 'home', 'fake-app-pid');
+    if (existsSync(file)) {
+      try {
+        process.kill(Number(readFileSync(file, 'utf8')), 'SIGKILL');
+      } catch {}
+    }
+  }
   delete process.env.STIM_HOME;
   rmSync(home, { recursive: true, force: true });
 });
@@ -1117,7 +1153,7 @@ test('Android reservations keep distinct ports and platform slots and reconnect 
   expect(reserve(androidRequest).id).toBe(android.id);
   const journal = readFileSync(join(deviceHostRoot(), 'sessions.json'), 'utf8');
   expect(() => host.viewTarget('client', android.id)).toThrow(
-    'Hosted view and input currently support iOS sessions only.',
+    'Hosted view and input support iOS and macOS sessions only.',
   );
   expect(
     await host.metroOpen('client', { session: android.id, gatewayPort: 12345, secret: 'a'.repeat(64) }, '127.0.0.1'),
@@ -1318,7 +1354,7 @@ test('macOS reservations isolate concurrent clients, validate on the wire and re
     'error.code',
     'device-busy',
   );
-  expect(() => host.viewTarget('client', first.id)).toThrow('iOS sessions only');
+  expect(() => host.viewTarget('client', first.id)).toThrow('not running');
   expect(
     await host.metroOpen('client', { session: first.id, gatewayPort: 12345, secret: 'a'.repeat(64) }, '127.0.0.1'),
   ).toHaveProperty('error.message', 'Hosted Metro currently supports iOS sessions only.');
@@ -1400,4 +1436,297 @@ test('macOS offer and reserve refuse all 64 unresolved app slots without mutatin
     expect.stringContaining('All hosted macOS app slots are reserved'),
   );
   expect(readFileSync(join(deviceHostRoot(), 'sessions.json'), 'utf8')).toBe(journal);
+});
+
+describe.skipIf(process.platform !== 'darwin')('hosted macOS view and input', () => {
+  let frames: FramePool;
+  let feeds: FeedPool;
+  let control: ControlHub;
+  let views: HostedViews;
+  let helper: string;
+  const sent: ServerMessage[] = [];
+  const owner = { device: { id: 'client', name: 'Client' }, send: (message: ServerMessage) => sent.push(message) };
+
+  beforeEach(() => {
+    sent.length = 0;
+    helper = join(home, 'macos-capture');
+    writeFileSync(
+      helper,
+      `#!${process.execPath}
+const {writeFileSync,appendFileSync}=require('node:fs');
+writeFileSync(process.env.STIM_HOME+'/capture-argv',JSON.stringify(process.argv));
+const app=JSON.parse(process.argv[3]);
+const header=Buffer.alloc(9);header.writeUInt32BE(6);header[4]=1;header.writeUInt16BE(1,5);header.writeUInt16BE(1,7);
+process.stdout.write(Buffer.concat([header,Buffer.from('x')]));
+require('node:readline').createInterface({input:process.stdin}).on('line',line=>appendFileSync(process.env.STIM_HOME+'/capture-input',line+'\\n'));
+process.stdin.on('end',()=>process.exit(0));
+setInterval(()=>{try{process.kill(app.app.pid,0);}catch{process.stderr.write('The owned macOS app exited.');process.exit(1);}},20);
+`,
+    );
+    chmodSync(helper, 0o755);
+    frames = new FramePool(process.env);
+    feeds = new FeedPool(join(home, 'unused-cli.mjs'), process.env);
+    control = new ControlHub({
+      frameHelper: () => null,
+      env: process.env,
+      stimCli: join(home, 'unused-cli.mjs'),
+      feeds,
+      frames,
+      statusFeed: { args: [], cwd: home, keep: 1, label: 'unused hosted status' },
+      audit: () => {},
+      lockLimits: { timeoutMs: 1000, maxOutputBytes: 1024 },
+      idleMs: 60_000,
+      renewMs: 60_000,
+      leaseFor: '1m',
+      foldHelper: async () => helper,
+      foldTimeoutMs: 1000,
+      conflict: () => {},
+    });
+    views = new HostedViews(host, control, process.env, () => helper);
+  });
+  afterEach(async () => {
+    await host.close();
+    await control.close();
+    await frames.close();
+    await feeds.close();
+  });
+
+  async function launch() {
+    const first = reserve({ platform: 'macos' });
+    await state(first.id, 'ready');
+    const app = appOffer(first.id, 'app-first', 'macos');
+    expect(host.appOffer('client', app.params)).toHaveProperty('result');
+    await uploadManifest(app);
+    await host.appChunk('client', {
+      ...app.params,
+      sha256: app.sha256,
+      offset: 0,
+      data: app.content.toString('base64'),
+    });
+    expect(host.appLaunch('client', app.params)).toHaveProperty('result.state', 'installing');
+    await vi.waitFor(() => expect(host.appAttach('client', app.params)).toHaveProperty('result.state', 'installed'));
+    const workerHome = join(deviceHostArea(first.id), 'home');
+    const file = join(
+      workerHome,
+      'workspaces',
+      workspaceName(realpathSync(join(workerHome, 'macos-app'))),
+      'state.json',
+    );
+    return { first, workerHome, file, app: readHostedMacosApp(workerHome)! };
+  }
+
+  test('refuses viewing before app launch and a different hosting client', async () => {
+    const first = reserve({ platform: 'macos' });
+    await state(first.id, 'ready');
+    const listener = { frame: () => {}, delayed: () => {}, failed: () => {} };
+    expect(() => views.subscribe('client', first.id, listener, { fps: 5, maxEdge: 480 })).toThrow('not running');
+    expect(() => views.subscribe('other', first.id, listener, { fps: 5, maxEdge: 480 })).toThrow(
+      'Only a ready session',
+    );
+    expect(() => views.begin('other', first.id, owner, false, () => true)).toThrow('Only a ready session');
+  });
+
+  test('keeps the running app viewable while a replacement attempt is offered', async () => {
+    const { first } = await launch();
+    const replacement = appOffer(first.id, 'app-second', 'macos');
+    expect(host.appOffer('client', replacement.params)).toHaveProperty('result');
+    expect(views.target('client', first.id).device.platform).toBe('macos');
+  });
+
+  test('captures only the running hosted app and sends scroll and key input, then closes capture and control after exit', async () => {
+    const { first, workerHome, app } = await launch();
+    const failed: string[] = [];
+    const captured: unknown[] = [];
+    views.subscribe(
+      'client',
+      first.id,
+      { frame: (frame) => captured.push(frame), delayed: () => {}, failed: (message) => failed.push(message) },
+      { fps: 5, maxEdge: 480 },
+    );
+    await vi.waitFor(() => expect(captured).toHaveLength(1));
+    const argv = JSON.parse(readFileSync(join(workerHome, 'capture-argv'), 'utf8'));
+    expect(argv[2]).toBe('macos');
+    expect(JSON.parse(argv[3])).toMatchObject({ bundleId: 'dev.stim.fixture.hosted1', app: { pid: app.app!.pid } });
+    const claims = join(deviceHostRoot(), `${first.id}.claims`);
+    expect(readClaimSet(claims).live[0]!.child).not.toBeNull();
+    const begun = await views.begin('client', first.id, owner, false, () => true);
+    if ('code' in begun) throw new Error(begun.message);
+    expect(begun.lease).toBeNull();
+    const scroll = { input: 'scroll' as const, x: 0.25, y: 0.75, deltaX: -5, deltaY: 10 };
+    const key = { input: 'key' as const, key: 'a' as const, modifiers: ['command' as const] };
+    expect(await control.input(owner, begun.session, scroll)).toBeNull();
+    expect(await control.input(owner, begun.session, key)).toBeNull();
+    await vi.waitFor(() => {
+      const input = readFileSync(join(workerHome, 'capture-input'), 'utf8')
+        .trim()
+        .split('\n')
+        .map((line) => JSON.parse(line));
+      expect(input).toEqual(expect.arrayContaining([expect.objectContaining(scroll), expect.objectContaining(key)]));
+    });
+    expect(() => views.target('other', first.id)).toThrow('Only a ready session');
+    process.kill(app.app!.pid, 'SIGKILL');
+    await vi.waitFor(() => expect(failed).toEqual([expect.stringContaining('The owned macOS app exited.')]));
+    await vi.waitFor(() => expect(readClaimSet(claims).live[0]!.child).toBeNull());
+    expect(await control.input(owner, begun.session, key)).toHaveProperty('code', 'unknown-session');
+    expect(() => views.target('client', first.id)).toThrow('not running');
+    expect(sent).toEqual(
+      expect.arrayContaining([expect.objectContaining({ event: 'control-ended', session: begun.session })]),
+    );
+  });
+
+  test.each(['bundleId', 'stored bundleId', 'bundle', 'executable', 'symlinked executable', 'appSlot', 'supervisor'])(
+    'refuses capture when %s does not belong to the running hosted session',
+    async (field) => {
+      const { first, workerHome, file, app } = await launch();
+      const changed = { ...app };
+      const outside = join(home, 'outside');
+      writeFileSync(outside, 'outside');
+      if (field === 'bundleId') changed.bundleId = 'dev.other.hosted1';
+      if (field === 'stored bundleId')
+        writeFileSync(join(workerHome, 'hosted-macos-app.json'), JSON.stringify({ bundleId: 'dev.other.hosted1' }));
+      if (field === 'bundle') changed.bundle = home;
+      if (field === 'executable') changed.executable = outside;
+      if (field === 'symlinked executable') {
+        rmSync(app.executable);
+        symlinkSync(outside, app.executable);
+      }
+      if (field === 'appSlot') {
+        const device = JSON.parse(readFileSync(join(workerHome, 'hosted-device.json'), 'utf8'));
+        writeFileSync(join(workerHome, 'hosted-device.json'), JSON.stringify({ ...device, appSlot: 2 }));
+      }
+      if (field === 'supervisor') delete changed.supervisor;
+      writeFileSync(file, JSON.stringify({ macos: changed }));
+      expect(() => views.target('client', first.id)).toThrow(
+        field === 'supervisor'
+          ? 'The hosted macOS app is not running.'
+          : field === 'appSlot'
+            ? 'The device record no longer matches this session.'
+            : 'The macOS app does not belong to this hosted session.',
+      );
+      expect(existsSync(join(workerHome, 'capture-argv'))).toBe(false);
+    },
+  );
+
+  test.each(['launchId', 'startedAtMicros', 'pid'])(
+    'refuses an existing view and input when the hosted app %s changes',
+    async (field) => {
+      const { first, file, app } = await launch();
+      const begun = await views.begin('client', first.id, owner, false, () => true);
+      if ('code' in begun) throw new Error(begun.message);
+      const changed = { ...app, app: { ...app.app! } };
+      if (field === 'launchId') changed.launchId = 'replacement';
+      if (field === 'startedAtMicros') changed.app.startedAtMicros += 1;
+      if (field === 'pid') {
+        const processToken = processIdentity.captureProcessToken(process.pid)!;
+        const start = processIdentity.processStartMicros(process.pid);
+        if (start.status !== 'running') throw new Error('Cannot identify test process');
+        changed.app = { pid: process.pid, processToken, startedAtMicros: start.startedAtMicros };
+      }
+      writeFileSync(file, JSON.stringify({ macos: changed }));
+      expect(() => views.target('client', first.id)).toThrow('The hosted device changed');
+      expect(await control.input(owner, begun.session, { input: 'key', key: 'return', modifiers: [] })).toHaveProperty(
+        'code',
+        'forbidden',
+      );
+    },
+  );
+
+  test('an Accessibility refusal ends hosted control while the app window remains viewable', async () => {
+    const { first } = await launch();
+    const refusal = 'Control needs Accessibility permission for the capture host.';
+    writeFileSync(
+      helper,
+      `#!${process.execPath}
+const message=(kind,body)=>{const header=Buffer.alloc(5);header.writeUInt32BE(body.length+1);header[4]=kind;process.stdout.write(Buffer.concat([header,body]));};
+message(1,Buffer.from([0,1,0,1,120]));
+require('node:readline').createInterface({input:process.stdin}).on('line',line=>{
+  const command=JSON.parse(line);
+  if(command.input)message(2,Buffer.from(JSON.stringify({inputError:${JSON.stringify(refusal)},controlSession:command.controlSession})));
+});
+process.stdin.on('end',()=>process.exit(0));
+`,
+    );
+    const failed: string[] = [];
+    const captured: unknown[] = [];
+    views.subscribe(
+      'client',
+      first.id,
+      { frame: (frame) => captured.push(frame), delayed: () => {}, failed: (message) => failed.push(message) },
+      { fps: 5, maxEdge: 480 },
+    );
+    const begun = await views.begin('client', first.id, owner, false, () => true);
+    if ('code' in begun) throw new Error(begun.message);
+    expect(await control.input(owner, begun.session, { input: 'key', key: 'return', modifiers: [] })).toBeNull();
+    await vi.waitFor(() =>
+      expect(sent).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ event: 'control-ended', session: begun.session, message: refusal }),
+        ]),
+      ),
+    );
+    expect(await control.input(owner, begun.session, { input: 'key', key: 'return', modifiers: [] })).toHaveProperty(
+      'code',
+      'unknown-session',
+    );
+    expect(captured).toHaveLength(1);
+    expect(failed).toEqual([]);
+    expect(views.target('client', first.id).device.platform).toBe('macos');
+    expect(readClaimSet(join(deviceHostRoot(), `${first.id}.claims`)).live[0]!.child).not.toBeNull();
+  });
+
+  test('ends the hosted subscription and control with the helper refusal', async () => {
+    const refusal = 'Screen Recording access is unavailable for stim-frames.';
+    const { first } = await launch();
+    writeFileSync(helper, `#!${process.execPath}\nprocess.stderr.write(${JSON.stringify(refusal)});process.exit(1);\n`);
+    const failed: string[] = [];
+    views.subscribe(
+      'client',
+      first.id,
+      { frame: () => {}, delayed: () => {}, failed: (message) => failed.push(message) },
+      { fps: 5, maxEdge: 480 },
+    );
+    const begun = await views.begin('client', first.id, owner, false, () => true);
+    if ('code' in begun) throw new Error(begun.message);
+    await vi.waitFor(() => expect(failed).toEqual([expect.stringContaining(refusal)]));
+    expect(await control.input(owner, begun.session, { input: 'key', key: 'return', modifiers: [] })).toHaveProperty(
+      'code',
+      'unknown-session',
+    );
+    await vi.waitFor(() =>
+      expect(readClaimSet(join(deviceHostRoot(), `${first.id}.claims`)).live[0]!.child).toBeNull(),
+    );
+  });
+});
+
+test('hosted scroll and key requests validate bounded coordinates, deltas, keys and unique modifiers', () => {
+  const validator = new Ajv2020({ strict: false, validateFormats: false });
+  validator.addSchema(protocolJsonSchema(), 'protocol');
+  const accepts = validator.compile({ $ref: 'protocol#/$defs/ClientRequest' });
+  const scroll = { session: 'c1', x: 0, y: 1, deltaX: -1000, deltaY: 1000 };
+  const key = { session: 'c1', key: 'a', modifiers: ['command', 'shift'] };
+  for (const [method, params, invalid] of [
+    [
+      'device-host.input.scroll',
+      scroll,
+      [
+        { ...scroll, x: -0.1 },
+        { ...scroll, deltaY: 1001 },
+        { ...scroll, deltaX: undefined },
+        { ...scroll, session: undefined },
+      ],
+    ],
+    [
+      'device-host.input.key',
+      key,
+      [
+        { ...key, key: 'invalid' },
+        { ...key, modifiers: ['command', 'command'] },
+        { ...key, modifiers: ['invalid'] },
+        { ...key, session: undefined },
+      ],
+    ],
+  ] as const) {
+    expect(accepts({ id: 1, method, params })).toBe(true);
+    for (const bad of invalid) expect(accepts({ id: 1, method, params: bad })).toBe(false);
+  }
 });
