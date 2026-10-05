@@ -191,7 +191,13 @@ how a coding agent drives the app: { driver: "none", setting:
 "hosting.agentDriver" } until the hosting Mac's owner sets that setting there,
 or { driver: "agent-device", remoteConfig, command }. remoteConfig is a mode
 0600 file in the workspace directory that holds the credential; run the command
-it names and never print the file. stop deletes it. Start with agent-device open
+it names and never print the file. stop, worktree remove and gc first run
+agent-device close and disconnect for the connection that agent-device reports
+as connected to that remote config, then delete the file, so the next hosted
+workspace needs no manual disconnect. Any other connection stays untouched, and
+a failure there is reported without blocking the stop. When the hosted session
+ends, stim-server removes its agent-device session directories under its own
+state directory. Start with agent-device open
 <bundleId> --remote-config <path>, using macos.host.bundleId; the lease allows
 open, close, snapshot, wait, find, get, is, click, fill, press, type, focus,
 scroll, screenshot and batch on that app only. The agent-device on this Mac must

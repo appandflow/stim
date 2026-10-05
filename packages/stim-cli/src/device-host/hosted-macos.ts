@@ -26,6 +26,7 @@ import {
 import { macosDir } from '../macos/state.ts';
 import { BuildConnection } from '../offload/client.ts';
 import { parseMachine, pinnedEndpoint } from '../offload/tailnet.ts';
+import { closeAgentConnection } from './agent-connection.ts';
 import { configuredMachines } from './machines.ts';
 
 const CONNECT_TIMEOUT_MS = 10_000;
@@ -352,6 +353,7 @@ export async function placeHostedMacos(
 
 /** Stops a recorded hosted session and waits until the host confirms it stopped; anything else is a failure. */
 export async function stopHostedMacos(root: string, placement: HostedMacosPlacement): Promise<void> {
+  if (placement.agent.driver === 'agent-device') closeAgentConnection(placement.agent.remoteConfig);
   const host = await connectHost(placement.machine);
   try {
     let session = hostedSession(host, await call(host, 'device-host.stop', { session: placement.session }));

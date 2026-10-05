@@ -6,6 +6,7 @@ import {
   constants,
   mkdirSync,
   readFileSync,
+  readdirSync,
   realpathSync,
   rmSync,
   writeFileSync,
@@ -177,6 +178,7 @@ export class AgentDeviceDriver implements HostedAgentDriver {
   private daemonRecord: ProcessRecord | null = null;
   private listener: (() => void) | null = null;
   private readonly leases = new Map<string, Lease>();
+  private readonly released = new Set<string>();
 
   constructor(options: AgentDeviceDriverOptions) {
     this.options = {
@@ -342,13 +344,15 @@ export class AgentDeviceDriver implements HostedAgentDriver {
   async stop(): Promise<void> {
     this.stopping = true;
     await this.starting?.catch(() => undefined);
+    const sessions = [...this.leases.keys(), ...this.released];
+    this.released.clear();
     for (const lease of this.leases.values()) clearInterval(lease.renew);
     this.leases.clear();
     const running = this.running;
-    if (!running && !this.claim) return;
     this.running = null;
     if (running) clearInterval(running.watch);
-    await this.teardown(running?.proxy, running ?? undefined);
+    if (running || this.claim) await this.teardown(running?.proxy, running ?? undefined);
+    for (const session of sessions) this.removeSessionDirectories(session);
   }
 
   private async teardown(proxy?: ChildProcess, running?: Running): Promise<void> {
@@ -438,6 +442,27 @@ export class AgentDeviceDriver implements HostedAgentDriver {
     clearInterval(lease.renew);
     await lease.renewing;
     if (this.running) await adminRequest(this.running.admin, 'DELETE', lease.id);
+    this.released.add(session);
+    this.removeSessionDirectories(session);
+  }
+
+  private removeSessionDirectories(session: string): void {
+    const sessionsDir = join(this.options.stateDir, 'sessions');
+    try {
+      for (const entry of readdirSync(sessionsDir, { withFileTypes: true })) {
+        if (!entry.isDirectory() || !entry.name.startsWith(`stim.${session}_`)) continue;
+        try {
+          rmSync(join(sessionsDir, entry.name), { recursive: true, force: true });
+        } catch (error) {
+          process.stderr.write(
+            `Hosted agent session cleanup failed: ${(error as Error).message.replace(/\s+/g, ' ')}\n`,
+          );
+        }
+      }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT')
+        process.stderr.write(`Hosted agent session cleanup failed: ${(error as Error).message.replace(/\s+/g, ' ')}\n`);
+    }
   }
 
   forward(session: string, request: IncomingMessage, response: ServerResponse): void {
