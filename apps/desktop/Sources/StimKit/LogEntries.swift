@@ -268,7 +268,7 @@ private func replaceRoot(_ text: String, root: String, under: String, bare: Stri
       from = found.upperBound
     }
   }
-  return out + text[from...]
+  return from == text.startIndex ? text : out + text[from...]
 }
 
 private func trimmingTrailingSlashes(_ path: String?) -> String? {
@@ -398,6 +398,7 @@ private func group(_ match: NSTextCheckingResult, _ name: String, in text: Strin
 }
 
 private func mayNameFile(_ head: String) -> Bool {
+  guard head.range(of: ": ", options: .literal) != nil else { return false }
   let parts = head.split(separator: ": ", maxSplits: 2, omittingEmptySubsequences: false)
   let isFile = { (part: Substring) in
     !part.contains(where: \.isWhitespace) && (part.contains("/") || part.contains("."))
@@ -408,9 +409,12 @@ private func mayNameFile(_ head: String) -> Bool {
 
 public func viewEntry(_ entry: LogEntry, root: String, home: String?) -> LogEntryView {
   let clean = { (text: String) in tildeHome(relativeTo(text, root: root), home: home) }
-  var lines = entry.lead.msg.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+  var lines =
+    entry.lead.msg.utf8.contains(10)
+    ? entry.lead.msg.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+    : [entry.lead.msg]
   var head = lines.isEmpty ? "" : lines.removeFirst()
-  if head.contains("ERROR") {
+  if head.range(of: "ERROR", options: .literal) != nil {
     head = expoErrorPrefix.stringByReplacingMatches(
       in: head, range: NSRange(head.startIndex..., in: head), withTemplate: "")
   }

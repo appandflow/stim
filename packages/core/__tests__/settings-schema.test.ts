@@ -1,5 +1,12 @@
 import { SETTINGS } from '../state/settings-registry.ts';
 import { settingsJsonSchema } from '../state/settings-schema.ts';
+import Ajv from 'ajv/dist/2020.js';
+
+test('the editor schema accepts the tailnet-only Metro mode and refuses an unknown provider', () => {
+  const validate = new Ajv({ strict: false }).compile(settingsJsonSchema());
+  expect(validate({ metro: { tunnel: 'tailscale' } })).toBe(true);
+  expect(validate({ metro: { tunnel: 'funnel' } })).toBe(false);
+});
 
 test('the published schema covers every setting once, at the scope files it may live in', () => {
   const schema = settingsJsonSchema();

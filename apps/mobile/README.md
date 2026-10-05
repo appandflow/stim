@@ -5,6 +5,26 @@ the Stim server on a Mac (`stim-server`, from the `@stim-cli/server` package)
 and shows what Stim Desktop shows. A phone the Mac grants control can also
 reload and stop a workspace:
 
+On supported iOS and Android phones, haptics mark opening the compact menu,
+changing primary sections or custom filters, and successfully copying diagnostics
+or a log entry. Re-selecting the current section or filter, scrolling and live
+updates stay silent. System settings and hardware can suppress feedback.
+
+On wide iPad and Duo windows, the main screen shows its navigation menu
+in the leading third. A book fold places the menu and content on opposite
+panels, leaving the division clear. Detail screens and the device viewer
+use the whole window. The narrow cover screen uses the menu drawer, retaining
+its open or closed state when rotating through a wide layout. Each pane
+uses its own safe area. Pane widths transition when the fold changes;
+Reduce Motion disables that transition. The home scene keeps its split behind
+pushed details and bottom sheets, so Back reveals the existing split. Notifications
+uses the same content pane and sidebar as Workspaces, Devices and Machines. Opening
+Pair or another overlay retains an open compact drawer beneath it. Choosing primary
+content closes the compact drawer. A sheet opened from a detail screen keeps that
+screen full width.
+Duo fold detection requires a build made with the iOS 27.1 SDK and an iOS
+27.1 runtime.
+
 - **Home**: one screen for every paired machine; the app keeps a connection
   to each. The **Machines** row has a chip per machine with its connection dot and basic
   usage: live workspaces, the machine's memory used of total (as Activity
@@ -17,7 +37,16 @@ reload and stop a workspace:
   repo, live workspaces come before idle ones, each by name and machine, so a
   workspace moves only when it turns live or idle, not while builds run and
   agents attach. A workspace `stim worktree warm` is preparing or has prepared
-  counts as live. Each row is titled by its worktree's branch, or the
+  counts as live. When status identifies a linked Git checkout, its app projects
+  share one workspace heading, with the branch and git state shown once. App
+  children show paths such as `apps/mobile` and `apps/desktop`, each with its own
+  status and route to its devices, logs and commands. Children stay visible without
+  an extra expansion step; filters still apply per app. Repo live/idle counts count
+  the shown workspaces, while the hidden-idle footer counts apps. Different Macs
+  and checkouts stay separate even when they share a branch name. Primary checkouts
+  and older servers without an explicit checkout identity retain separate app rows;
+  [#2418](https://github.com/appandflow/stim/issues/2418) tracks that payload addition.
+  Each single-app row is titled by its worktree's branch, or the
   worktree's folder when it has no branch, or the project for a main checkout,
   truncated in the middle when long. At the trailing edge, a word says what the
   workspace is doing: **Building iOS**, **Warming** with how long, **Ready**
@@ -144,7 +173,9 @@ gc --json` dry run and `stim stats --json`, which the server refreshes at
   locale, on the clipboard for a bug report. A tap on home, a swipe left, or Android's back button closes the
   menu. Pairing scans the QR code Stim Desktop
   shows under **Pair a phone**, or takes the endpoint and pairing token typed
-  in; the token field is masked, with a button that shows it, and drops
+  in. A failed QR pairing keeps its error visible and pauses scanning until
+  **Retry** or manual entry is chosen; unrelated QR codes do not pause scanning.
+  The token field is masked, with a button that shows it, and drops
   what a token cannot hold, such as the spaces and line breaks of a paste, as you
   type, without moving the cursor. The device token
   the server issues is kept in the phone's secure storage (Keychain on iOS,
@@ -256,9 +287,18 @@ gc --json` dry run and `stim stats --json`, which the server refreshes at
   workspace runs or that sent records; none selected shows every source. iOS,
   Android and Web split the device logs by their platform. The server does not
   filter by platform or warnings alone, so the phone filters those within the
-  newest 5,000 records it loaded. A slot row and a regular expression search
-  complete the filters. The list follows new records until you scroll up, and
-  again after a filter change. It keeps the newest 5,000, and a tap on a record
+  records it loaded. A slot row and a regular expression search complete the
+  filters. It starts with the newest 200 records. **Load older logs** reloads a
+  recent window with another 200 records, up to 5,000; these requests repeat
+  recent records rather than use a history cursor. Opening a particular agent
+  action keeps the 5,000-record window so that action can be found.
+  Log followers pause when another route covers the screen or the app enters
+  the background. Returning replaces the snapshot using the retained display
+  window, then follows new records. History outside that window requires
+  **Load older logs**. This bounds the phone's initial transfer; the server's
+  existing CLI reader still reads its captured timeline.
+  The list follows new records until you scroll up, and again after a filter
+  change. It keeps the newest 5,000, and a tap on a record
   shows its whole message and stack. Each entry shows a severity dot, its
   source and time, then the message; a record with a stack shows its top
   frames, the workspace's own frames in bold, one framework frame dimmed as its
@@ -312,6 +352,72 @@ says the phone is read-only and how to allow control, with **Copy command**
 and **Reconnect** (see [Read-only pairings](#read-only-pairings)). The same
 banner appears when the server refuses `control.begin` with `forbidden`, or
 ends a session because the Mac took control away.
+
+The compact bottom toolbar keeps common icons visible: **Keyboard**, **Home** on iOS or
+**Back** on Android and web, and both rotation directions on simulators and
+emulators. **More** (the ellipsis button) opens
+a native menu for Lock, Android Home and Apps, supported foldable postures,
+and simulator options. **Device frame** appears in More when matching frame artwork
+is available; this display toggle does not require control permission. Unavailable
+device commands stay disabled.
+
+On iOS simulators whose server advertises them, **More** includes
+**Shake** and **Slow animations**. Slow animations shows its confirmed state;
+its buttons wait for the current change to finish. Ending control stops a
+pending change. Older servers and unavailable simulator capabilities leave
+these controls hidden. These options do not appear for physical phones,
+Android or web.
+
+### Native macOS apps
+
+Native workspaces from `stim macos` appear on Home with app/build/runtime state.
+The workspace shows the owned app tile, a build card opening SwiftPM logs and a
+logs card opening native runtime stdout/stderr in the existing log viewer.
+macOS uses no Metro. Stopped and unverified apps retain their status tile.
+
+A running app's tile opens the same viewer with `platform: "macos"`, in the default
+slot, when the server advertises `macos-window`. It has no replay. The server captures only
+one visible window of the app whose PID, process start time, executable and
+bundle match its owned launch record; other apps and the desktop are excluded.
+Existing Screen Recording permission is required for the capture host. A denial
+shows permission guidance while status and logs stay usable. On the host Mac, Stim Desktop opens one native viewer setup screen for Screen Recording and Accessibility (called Device Control and Data Access on macOS 27) on first use. Approve the normal macOS requests there, then reconnect the phone viewer. **Permissions** on the Desktop app card reopens setup. The phone and server do not request or reset OS grants. Close and reopen the viewer after opening or resizing the
+app window.
+
+With `macos-window-control` and a control pairing, **Control** enables mouse
+clicks/drags and printable ASCII typing. The main bar offers **Keyboard** and
+**Scroll**. Keyboard attaches one compact, horizontally scrolling extra-key row over a
+subtle material backdrop on iOS and a translucent fallback elsewhere, with
+modifier glyphs, navigation keys and shortcut icons. Every control keeps its accessible name. One-shot
+Shift, Control, Option and Command clear after the next supported key or on
+keyboard dismissal. Scroll turns a drag into scrolling instead of moving the
+mouse.
+
+Keyboard Controller requires a new native client build; an older binary cannot
+receive it through a JavaScript update. A server advertising
+`macos-keyboard-extended` supports modified `a-z` and `0-9` one key at a time.
+Older servers retain fixed shortcuts and navigation but reject other modified
+letters; the phone explains that requirement. Modified symbols and
+multi-character input are unsupported. Letter and digit shortcuts require the
+owned app's selected **U.S. or ABC** layout because native key codes represent
+physical U.S. positions. The helper focuses the app and waits up to one second
+for activation before checking its layout; it refuses unavailable activation
+or other layouts. Ordinary typing and
+navigation remain available. [#2422](https://github.com/appandflow/stim/issues/2422) tracks logical mapping for
+other host layouts.
+
+Each action verifies the same owned process and captured
+standard window. A modal or disjoint window, changed capture or resize refuses
+input. Contained nonmodal auxiliary windows are allowed; input still goes only
+to the focused captured main window. Control
+uses one exclusive server session per app, with disconnect/revocation/takeover
+and five-minute idle expiry; it takes no CLI simulator lock. Existing
+Accessibility permission is required. Refusals end Control and show the reason
+while the live view remains available. Older servers keep the viewer read-only.
+
+Native Control uses dynamically resolved private CoreGraphics input SPI in the
+server helper, outside the phone and Mac App Store app binaries. A macOS update
+can make it unavailable; then Control refuses while viewing and logs remain
+available.
 
 ### Replay
 
@@ -397,7 +503,7 @@ the same viewer, streamed from the page's DevTools screencast as H.264 through
 types into the page; the toolbar has **Keyboard** and **Back** (the page's
 history back) only, since a page has no home, lock, rotation or hinge. A web
 session holds no `stim device lock` lease; a browser tool attached to the
-page, such as Playwright MCP, shows as its driver, and Control asks before
+page, such as Playwright MCP, shows as its driver, and Control explicitly
 taking over from it. Reload in the workspace menu reloads the page with
 `stim reload web`.
 
@@ -431,13 +537,12 @@ simulator or emulator instead, so while connected to one the tile asks for a
 
 The viewer is the one screen on a phone that turns to landscape with the
 phone; every other screen stays portrait. In landscape the title stays on
-top, and the Control toolbars and the read-only banner move to a column right
-of the screen. Turning the phone does not restart the stream, and
+top, and the Control toolbar stays below the screen. Turning the phone does not restart the stream, and
 touches keep landing where they are drawn once the screen settles into its new
 size. The phone does not turn by itself when the device is landscape. On iPad
 every screen follows the iPad's orientation; Android tablets follow the phone
 rules. On a read-only pairing in landscape, dragging down does not close the
-viewer, so the column can scroll.
+viewer.
 
 On a foldable folded like a book, such as an iPhone Duo or a Pixel Fold
 half open, the viewer splits at the fold: the device screen and its replay
@@ -460,21 +565,33 @@ comes from the reserved regions. The hinge readings need the same iOS SDK
 support. Without both readings, the viewer keeps its default layout. Every
 control stays available in every posture.
 
+The **Device frame** button in the bottom toolbar shows installed iPhone or
+Android emulator housing around the live screen. Frames start off and do not
+require Control. The paired Mac supplies PNG layers from its installed DeviceKit
+or Android skin; artwork is not bundled in the app or repository. Touches stay
+inside the screen aperture, and taps on the bezel send no device input. Rotation
+metadata must match the current capture; otherwise the viewer shows the screen
+without its housing. Replay, physical phones, web pages, Duo and Android foldable
+or circular devices remain frameless. Missing artwork or an older server also
+keeps the frameless viewer.
+
+Framed H.264 needs a mobile build containing the native orientation-clear acknowledgement; older clients stay frameless. Rotation clears old screen pixels before matching housing is shown. JPEG and housing images reset their displayed content on orientation changes.
+
 With **Control** on, the server starts a control session (`control.begin`)
 and holds a `stim device lock` lease on the device, so agents see it as
 driven. Touches on the frame go to the device as a touch that follows your
 finger: a tap, a drag or swipe, or a long press. The toolbar under the screen
-is one row that scrolls sideways in portrait. It has **Keyboard**,
+is a compact icon bar that scrolls sideways when needed in either orientation.
+Each button has a spoken label and a 44-point touch target. It has **Keyboard**,
 which opens the phone's keyboard and types what you type (printable ASCII;
 Return and Delete included), **Home**, **Lock**, and on Android **Back** and
 **Apps**. While the keyboard is open, a bar above it shows what you typed
 since the last Return, with **Done** to close it, and the screen keeps its
 size and moves up until its bottom meets that bar, stopping below the title.
-It continues with **Rotate left** and **Rotate right**, except that
-mobile hides both on an iPhone Duo. When the device
-has a hinge, posture buttons follow: **Fold** or **Unfold** on an iPhone Duo,
-whichever its latest frame or video shows it is not, and **Fold**, **Half
-open** and **Unfold** on a foldable emulator. On an unfolded Duo, touches go
+It continues with **Rotate left** and **Rotate right** for simulators and
+emulators, including iPhone Duo. Physical devices turn only in hand. When the device
+has a hinge, posture buttons follow: **Fold**, **Half open** and **Unfold**, as supported by that device. The current
+posture is selected and disabled. On an unfolded Duo, touches go
 to the inner panel the screen shows. The session ends when you turn
 Control off, leave the view, lose the connection, or after 5 minutes without
 input; the banner says why.
@@ -487,12 +604,11 @@ did not apply.
 
 When status reports the device driven by something else, such as
 agent-device, a `stim device lock`, or another phone, a small chip with a
-cursor icon next to the model names it. **Control** then asks for confirmation before it
-takes over, and starts control anyway; the Mac records the takeover in its
+cursor icon next to the model names it. **Control** takes over immediately on that explicit tap; the Mac records the takeover in its
 action log. The chip stays while you have control, because that driver can
 still send input to the device. When the server refuses
 Control because of a driver that status did not show yet, a banner gives its reason
-with **Take over**, which asks the same confirmation.
+with **Take over**, which also starts control immediately when tapped.
 
 ## Actions
 
@@ -1248,12 +1364,13 @@ or prefix each command with `npx`).
     project (`npx expo-updates fingerprint:generate --platform ios`) and
     compares it with the runtime of the latest finished `production` build.
     The same runtime publishes an update; a different one, or no build with a
-    runtime, builds and submits.
+    runtime, builds and distributes.
   - `update`: publishes an update to channel `production` with the commit
     subject as the message. Use it only when you know the change is
     JS-only; an update for a runtime no build has reaches no one.
-  - `build`: builds with the `production` profile and submits to
-    TestFlight (`eas build --auto-submit`).
+  - `build`: builds with the `production` profile, uploads the build to
+    TestFlight and adds it to the `External` group. See
+    [External testers](#external-testers).
   - `rollback`: points channel `production` back at the JS embedded in the
     build (`eas update:roll-back-to-embedded`). By default it uses the runtime
     of the latest finished production build; the `runtime` input names
@@ -1261,7 +1378,7 @@ or prefix each command with `npx`).
   - `republish`: publishes the update group named by the `group` input again
     on channel `production` (`eas update:republish`), so installed builds go
     back to that update.
-- A `mobile-v<version>` tag on `main` always builds and submits. The version
+- A `mobile-v<version>` tag on `main` always builds and distributes. The version
   must equal `version` in `app.config.ts`, so raise it first.
 
 Every mode except `rollback` and `republish` runs the unit tests, the boot test
@@ -1277,7 +1394,7 @@ the two disagree, `auto` would build for a JS-only change. `auto` compares
 with the newest production build from any branch, so start production builds
 only from `main`.
 
-`--auto-submit` and `eas submit` read the App Store Connect API key from EAS
+The upload and `eas submit` read the App Store Connect API key from EAS
 credentials, not from GitHub. Store it once, from `apps/mobile`:
 
 ```bash
@@ -1297,10 +1414,71 @@ eas build --platform ios --profile production --auto-submit
 eas update --channel production --environment production --platform ios --message "<what changed>"
 ```
 
+A hand build with `--auto-submit` reaches the internal testers only; add it to
+the `External` group in App Store Connect. To distribute a hand build to
+external testers from the start, build without `--auto-submit` and run the
+workflow with the build's id:
+
+```bash
+eas build --platform ios --profile production
+eas workflow:run .eas/workflows/testflight.yml -F build_id=<build id> -F "changelog=<what to test>"
+```
+
 The build appears in TestFlight after Apple finishes processing it, usually
-within 30 minutes. Add testers under the app's **TestFlight** tab. Raise
-`version` in `app.config.ts` for a new marketing version; build numbers need no
-change.
+within 30 minutes. Raise `version` in `app.config.ts` for a new marketing
+version; build numbers need no change.
+
+### External testers
+
+The `build` mode does not use `eas build --auto-submit`. After `eas build`
+finishes, it starts the EAS workflow `.eas/workflows/testflight.yml` with
+`eas workflow:run --wait` and the finished build's id. The workflow's
+`testflight` job uploads that exact build with the `production` submit
+profile, waits for Apple to process it, adds it to the `External` TestFlight
+group, sets What to Test and submits the build for Beta App Review. Internal
+testers still get it through the groups that have automatic distribution
+turned on. The job is expected to need no GitHub secret beyond `EXPO_TOKEN`; it reads the same
+App Store Connect API key from EAS credentials as the upload did before.
+
+What to Test is the commit subject and short hash of the commit being
+released, for example `feat: add pairing retry (#123) (1a2b3c4)`.
+
+Apple requires Beta App Review for the first build of each marketing version
+(`version` in `app.config.ts`) before external testers can install it, and
+the beta app description and feedback email in App Store Connect must be
+filled in. The first build of a new version is therefore not installable
+for external testers until Apple approves it. Apple reviews the first build
+of each version; later builds usually need no new review.
+
+The last step of the run reads `eas submit:status` for the build and reports
+one state in the run's annotations and summary:
+
+| Message                                        | Meaning                                                       |
+| ---------------------------------------------- | ------------------------------------------------------------- |
+| still processing at Apple                      | uploaded; Apple has not finished processing it                |
+| not submitted for Beta App Review              | uploaded and processed, but the job did not add it for review |
+| awaiting Beta App Review or in Beta App Review | submitted; external testers cannot install it yet             |
+| available to external testers                  | approved and in the `External` group                          |
+| in export compliance review                    | Apple is reviewing the export compliance answers              |
+| rejected by Beta App Review                    | open the build in App Store Connect for Apple's reason        |
+| in an unexpected state                         | the message prints Apple's processing and external states     |
+
+A failure after the upload, such as missing test information or a rejected
+review submission, is a warning and does not fail the release: the build
+is in TestFlight and the update channel and runtime are unaffected. The run
+fails only when the build never reaches TestFlight. If the `testflight` job
+exits with code 11 and the build is not in TestFlight, the step uploads the same build with `eas submit`,
+which reaches internal testers only and is reported as a warning. If that fails
+too, run `mode=build` again, which makes a new build.
+
+There is no retry that distributes an already uploaded build without
+uploading again: the `build_id` form of the `testflight` job uploads the
+build each time, and Apple refuses a second upload of the same build number.
+For a warning, fix the cause in App Store Connect and add the existing build
+to `External` there. The job's other form takes the id of a build already in
+App Store Connect (`asc_build_id`) and needs an App Store Connect connection
+under the Expo project's settings, **Connections**; the workflow does not use
+it.
 
 ### Roll back a bad update
 

@@ -1,11 +1,12 @@
 import { isAbsolute } from 'node:path';
+import { HOSTED_AGENT_DRIVERS } from './hosted-macos.ts';
 
 export const ANDROID_COMPILER_CACHE_CHOICES = ['auto', 'ccache', 'cas', 'none'] as const;
 export const ANDROID_PCH_CHOICES = ['auto', 'on', 'off'] as const;
 
-export type TunnelMode = 'auto' | 'off' | 'expo' | 'cloudflared' | 'ngrok';
+export type TunnelMode = 'auto' | 'off' | 'expo' | 'cloudflared' | 'ngrok' | 'tailscale';
 
-export const TUNNEL_MODES: readonly TunnelMode[] = ['auto', 'off', 'expo', 'cloudflared', 'ngrok'];
+export const TUNNEL_MODES: readonly TunnelMode[] = ['auto', 'off', 'expo', 'cloudflared', 'ngrok', 'tailscale'];
 
 export type RemoteDeviceBackend = 'proxy' | 'eas';
 
@@ -213,7 +214,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
     type: { kind: 'choice', choices: TUNNEL_MODES },
     scopes: PROJECT,
     default: 'auto',
-    description: 'How a remote device reaches Metro',
+    description: 'How a remote device reaches Metro; tailscale is tailnet-only and requires explicit selection',
   },
   { key: 'metro.ngrokUrl', type: STRING, scopes: PROJECT, description: 'Stable ngrok URL for the managed tunnel' },
   { key: 'metro.publicUrl', type: STRING, scopes: PROJECT, description: 'Existing public Metro URL' },
@@ -243,6 +244,24 @@ export const SETTINGS: readonly SettingDefinition[] = [
     default: 0,
     description:
       'Minutes an owned simulator or emulator stays idle before the workspace supervisor shuts it down; 0 never',
+  },
+  {
+    key: 'macos.product',
+    type: { kind: 'string', pattern: '^[A-Za-z0-9_-]+$', patternHelp: 'a Swift Package executable product name' },
+    scopes: PROJECT,
+    description: 'The Swift Package executable product stim macos builds in Debug.',
+  },
+  {
+    key: 'macos.infoPlist',
+    type: RELATIVE_PATH,
+    scopes: PROJECT,
+    description: 'Development Info.plist relative to the Swift Package directory.',
+  },
+  {
+    key: 'macos.arguments',
+    type: { kind: 'strings' },
+    scopes: PROJECT,
+    description: 'Arguments passed directly to the owned macOS development executable.',
   },
   {
     key: 'web.url',
@@ -386,6 +405,21 @@ export const SETTINGS: readonly SettingDefinition[] = [
     env: 'STIM_POOL_ANDROID_PARKED_MAX',
     scopedHomeValue: 0,
     description: 'Parked emulators kept for adoption; 0 turns parking off',
+  },
+  {
+    key: 'hosting.machines',
+    type: { kind: 'strings' },
+    scopes: MACHINE,
+    description:
+      'Tailscale names of the Macs that may host owned simulator sessions for this one, each optionally with :<port> of its tailscale serve route (default 7443); doctor --fix asks for separate device-host approval',
+  },
+  {
+    key: 'hosting.agentDriver',
+    type: { kind: 'choice', choices: HOSTED_AGENT_DRIVERS },
+    scopes: MACHINE,
+    default: 'none',
+    description:
+      "Tool this Mac starts so a client's coding agent can drive the macOS apps it hosts for that client; none starts nothing",
   },
   {
     key: 'offload.machines',

@@ -3,9 +3,13 @@ import { basename } from 'node:path';
 import { defineConfig } from 'tsdown';
 import { PROTOCOL_SCHEMA_FILE, protocolJsonSchema } from './src/protocol.ts';
 
+const { engines } = JSON.parse(readFileSync(new URL('package.json', import.meta.url), 'utf8'));
+const nodeFloor = /^>=(\d+\.\d+\.\d+)$/.exec(engines.node)?.[1];
+if (!nodeFloor) throw new Error(`engines.node must have the form >=X.Y.Z, got ${engines.node}`);
+
 export default defineConfig({
   entry: {
-    'stim-server': 'bin/stim-server.ts',
+    'stim-server': 'bin/node-check.ts',
     protocol: 'src/protocol.ts',
     'stats-read': 'src/stats-read.ts',
   },
@@ -14,6 +18,7 @@ export default defineConfig({
   outDir: 'dist',
   target: 'node22.12',
   platform: 'node',
+  define: { NODE_FLOOR: JSON.stringify(nodeFloor) },
   tsconfig: 'tsconfig.json',
   fixedExtension: true,
   hooks: {
@@ -26,10 +31,13 @@ export default defineConfig({
         'helper/main.swift',
         'helper/VideoEncoder.swift',
         'helper/PhoneSource.swift',
+        'helper/FrameArtwork.swift',
+        'helper/MacosSource.swift',
         ...desktop.map((path) => `../../apps/desktop/Sources/${path}`),
       ]) {
         copyFileSync(source, `dist/stim-frames/${basename(source)}`);
       }
+      copyFileSync('../../apps/desktop/Support/Siniulator-LICENSE.txt', 'dist/stim-frames/Siniulator-LICENSE.txt');
       copyFileSync('../../apps/desktop/Support/SimFold/main.m', 'dist/stim-frames/sim-fold.m');
       copyFileSync('../../apps/desktop/Support/SimFold/entitlements.plist', 'dist/stim-frames/sim-fold.entitlements');
       rmSync('dist/scrcpy', { recursive: true, force: true });

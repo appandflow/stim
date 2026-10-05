@@ -79,12 +79,6 @@ private let warning = PressurePlan(
     #expect(driven == [DrivenDevice(workspaceTitle: "wide-insets", deviceLabel: "ipad")])
   }
 
-  @Test func ignoresIdleAndRemoteDevices() {
-    let driven = DrivenDevice.all(in: [workspace])
-    #expect(!driven.contains { $0.deviceLabel == "Android emulator" })
-    #expect(!driven.contains { $0.deviceLabel == "EAS iOS" })
-  }
-
   @Test func emptyWhenNoWorkspaceHasADrivenDevice() {
     var undriven = workspace
     undriven.slots = nil

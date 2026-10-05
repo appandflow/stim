@@ -477,6 +477,14 @@ leased until <time>" for each one.`,
                   null when off; plan lists what the next start, ios or
                   android would reclaim, in the \`reclaimed\` shape without
                   freedMb, and is empty while under budget
+  deviceHosts     one { machine, state, dnsName?, deviceId?, requestedAt? }
+                  per hosting.machines entry. state is "approved", "pending",
+                  "not-asked", "revoked", "node-changed", "not-on-tailnet",
+                  "tailscale-off", "unreachable", "invalid",
+                  "credentials-unavailable" or "busy". Tokens stay private.
+                  Only --fix asks for access or forgets removed names.
+                  An approved hosting machine does not imply build approval
+                  or change ios/android placement; see \`guide settings\`.
   buildMachines   one { machine, state, dnsName?, deviceId?, requestedAt?,
                   offloadable?, reasons?, problems?, capacity? } per
                   offload.machines entry; state is "approved", "pending", "not-asked",
@@ -519,7 +527,8 @@ ON FAILURE
   lease, Ctrl-C with no build tool running) exits 130 with no payload.
 
   \`stop --json\` prints { root, ok, supervisor, collectors, metro, device,
-  port, metroTunnel, releasedLeases }. When it cannot end the \`ios\` or
+  port, metroTunnel, releasedLeases, macos? }. macos is { status: stopped | failed,
+  reason? } when a macOS app is recorded. When it cannot end the \`ios\` or
   \`android\` run holding the workspace, it prints the error contract with
   root and ok: false instead, plus device.remote when it ended a recorded EAS
   session first, and exits 1:
@@ -1133,6 +1142,11 @@ RULES
   status appends "<id> running", "<id> not running" or "<id> process
   unknown" to the device line.
 
+  An environment's metro carries tunnel { provider, url } for a recorded
+  managed tunnel on its reserved port: ngrok, cloudflared or tailscale.
+  Plain status prints the provider and URL, with "tailnet-only" for tailscale.
+  This describes the record, not a reachability check (\`guide metro\`).
+
   An environment's metro carries idleStop { reason: "idle", at, idleMinutes }
   when its supervisor stopped the dev server for idleness and nothing serves
   the port since; plain \`status\` prints "stopped (idle)" (\`guide metro\`).
@@ -1167,7 +1181,7 @@ RULES
   run that holds this workspace's native-run.lock:
 
   build   { platform, slot, state, phase, startedAt, phaseStartedAt,
-            outcome, outcomeKnown, expectedMs, expectedPhaseMs, basis,
+            outcome, outcomeKnown, cacheLookupOutcome?, expectedMs, expectedPhaseMs, basis,
             plannedPhases, missReason?, missProvisional?, detail?, placement,
             waitingOn? }
 
@@ -1189,15 +1203,17 @@ RULES
                    --eas-profile run has no cache lookup, so its outcome
                    stays the project's most recent one until install.
   startedAt        when the run started; phaseStartedAt when its phase did
-  outcome          "cold" once the first cache lookup missed and the run
-                   will prebuild or install pods, or once it reached
-                   prebuild, pods or compile; "hit" once it reached device
-                   after the cache lookup, or install, without them, or
-                   once the lookup repeated after prebuild or pods hit.
-                   Before that, the outcome of this project's most recent
-                   run.
+  outcome          "cold" after the local/provider lookups resolve a miss;
+                   "hit" after a cached artifact is ready to reuse, including
+                   a shared-build hit or a recheck after prebuild or pods.
+                   A later recheck can replace the first lookup's outcome.
+                   Before resolution, the outcome of this project's most
+                   recent run.
   outcomeKnown     true once outcome is this run's own, false while it is
                    the project's most recent one
+  cacheLookupOutcome  "hit" or "miss" once an actual cache lookup resolves;
+                   absent before resolution and on runs that skip lookup,
+                   such as --eas-profile
   expectedMs       the median duration of this project's last successful
                    runs with that outcome on that platform, or null with
                    no history. The run estimates twice: when it starts,
@@ -1299,6 +1315,15 @@ RULES
 
   Plain status prints "last build: ios local cache in 12s, android compiled
   in 7m02s". To predict the next run instead, see \`guide facts plan\`.
+
+  Swift Package development carries macos, separate from simulator devices:
+    product, bundle, bundleId, executable, launchId, arguments
+    app?, supervisor?   { pid, processToken, startedAtMicros }
+    state               running | orphaned | stopped | unverified
+    build               { state: running | ok | failed, startedAt,
+                          finishedAt?, durationMs?, error? }
+  A live app without its supervisor is orphaned. An identity the system cannot
+  verify is unverified. See stim guide macos for local capture and cleanup.
 
   An environment with a recorded run also carries builds, each platform's
   last 10 runs, newest first. Its newest entry that is not "interrupted" is
@@ -1419,7 +1444,8 @@ RULES
             slot?, id, owned, cpuPercent, residentMb, memoryMb,
             processes }] }
 
-  kind         simulator  a booted simulator's launchd_sim tree
+  kind         macos      the owned Swift Package app and supervisor
+               simulator  a booted simulator's launchd_sim tree
                emulator   an emulator's launcher and qemu tree, by its -avd
                metro      a workspace's supervisor and Metro trees
                build      a running ios or android run's process tree,

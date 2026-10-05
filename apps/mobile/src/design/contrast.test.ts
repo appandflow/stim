@@ -1,4 +1,9 @@
+import { processColor } from 'react-native';
+
+import { withAlpha } from '@/design/color';
 import { colorsHighContrast, type ColorToken } from '@/design/tokens';
+import { highContrastThemes } from '@/design/theme';
+import { toneColor } from '@/design/tone';
 
 type Mode = 'light' | 'dark';
 
@@ -24,12 +29,22 @@ describe.each<Mode>(['light', 'dark'])('Increase Contrast palette, %s', (mode) =
   const palette = colorsHighContrast[mode];
   const surface = (name: ColorToken) => channels(palette[name]);
 
+  it('keeps returned brand text at 7:1 on every surface', () => {
+    const foreground = channels(toneColor(highContrastThemes[mode], 'brand'));
+    for (const name of surfaces) {
+      expect(ratio(foreground, surface(name))).toBeGreaterThanOrEqual(7);
+    }
+  });
+
   it('keeps text and tone colors at 7:1 on every surface and on their own tints', () => {
     for (const token of [...textTokens, ...tones]) {
       for (const name of surfaces) {
         expect(ratio(surface(token), surface(name))).toBeGreaterThanOrEqual(7);
         if (tones.includes(token)) {
-          const tint = over(surface(token), surface(name), 0.16);
+          const native = processColor(withAlpha(palette[token], highContrastThemes[mode].opacity.tint));
+          expect(typeof native).toBe('number');
+          const rgba = native as number;
+          const tint = over([(rgba >>> 16) & 255, (rgba >>> 8) & 255, rgba & 255], surface(name), (rgba >>> 24) / 255);
           expect(ratio(surface(token), tint)).toBeGreaterThanOrEqual(7);
         }
       }

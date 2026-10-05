@@ -81,10 +81,12 @@ validation, never a compatibility pass.
 
 ## Tests and abstractions
 
-Before adding a test, name the concrete failure it catches. Assert observable
-results at the narrowest useful boundary: parser output, state transitions,
-ownership decisions, emitted payloads, or real command behavior. Check existing
-coverage first; extend a relevant case instead of repeating it in another suite.
+Before adding a test, name the independent requirement or bug and the concrete
+failure it catches. Its expected result must be able to disagree with the
+implementation. Assert observable results at the lowest stable boundary that
+provides confidence: parser output, state transitions, ownership decisions,
+emitted payloads, or real command behavior. Check existing coverage first;
+extend a relevant case instead of repeating it at another layer.
 
 Do not add tests that only check a constant, a pass-through call, import spelling,
 or implementation source text. A mock returning the expected result does not
@@ -98,6 +100,23 @@ contract being protected. Do not copy explanatory paragraphs, website prose, or
 examples into regex assertions; documentation edits do not need matching tests
 unless they change one of those contracts. Narrow source scans for documented
 identifiers are allowed; they do not replace tests of the behavior behind them.
+
+During test cleanup, classify individual candidates as DELETE, REWRITE, or KEEP.
+Default suspect tests to DELETE. Adding a test or choosing KEEP or REWRITE
+requires evidence for all six:
+an independent requirement, a recognizable user/caller failure, an expectation
+independent of the implementation, a stable behavioral seam, survival through
+internal refactors and incidental copy/layout changes, and the lowest stable
+seam without redundant nearby or higher-layer coverage. Rewriting is an
+exception for a real contract that would otherwise be lost; do not invent a
+requirement to preserve a test.
+Treat search matches as leads, not verdicts. Remove unused test support, keep
+production behavior and test configuration unchanged, and record dispositions
+and validation. Mock echoes, private call shapes, inventory counts, generated
+markup and incidental prose or geometry do not meet this bar. Keep explicitly
+required guide contracts and device input/frame-routing geometry; justify the
+specific contract instead of exempting the whole suite. Use screenshots for
+appearance review unless an approved contract requires automated visual coverage.
 
 Use a direct call or re-export when a wrapper only forwards the same arguments
 and result. Keep helpers that own policy, coordinate effects, or remove meaningful
@@ -238,6 +257,40 @@ outside it moves to its own issue and pull request.
   which stim-server and the builds it runs own, and the build slot
   stim-server takes under `build-slots/` for each offloaded build it runs,
   through core's `tryAcquireBuildSlotClaim`.
+- **Hosted devices.** `device-host` approval is separate from read, control and
+  build, and permits the client's native app code in its own hosted simulator.
+  The server owns its opaque journal under `server/device-host-sessions/` and
+  app receipts under `device-host/sessions/<id>/apps/`; core owns the readers. A hosted native worker
+  uses a server-chosen private home under `device-host/sessions/` and the CLI's
+  existing created-device ledger, ownership checks and centralized teardown.
+  Keep a child-aware ownership claim across native work and a claim for the
+  session lifetime. Serialize hosted admission, including unresolved sessions;
+  ordinary local producers do not participate, so it is not a machine-wide hard
+  capacity guarantee. Reconnect to the recorded attempt/session after a lost
+  reply. Unknown creation, journal, owner or shutdown state refuses replacement;
+  never identify a device by name or guess an empty inventory. Stop and
+  revocation touch only that client's recorded owned device.
+  A session's Metro endpoint listens only on worker loopback and reaches only the
+  authenticated client's peer address. The client gateway listens only on its own
+  tailnet address, pins the worker peer, requires a fresh secret and forwards only
+  to its verified loopback Metro. Stop and revocation close the bridge and active
+  streams. Keep the recorded worker port on reconnect; refuse an occupied port.
+  App transfer uses bounded digest chunks, including the manifest itself. The
+  worker validates content, contained links, simulator platform, architecture
+  and minimum OS before installing on the exact ledger-owned device. Hold the
+  session's child claim across installation and launch, and reconcile a repeated
+  app attempt without launching it again. Development launch remains unverified
+  until the client's Metro bridge provides bundle evidence; a release launch
+  needs positive native process evidence for true.
+  Hosted view and input resolve only a ready session's exact private ledger-owned
+  iOS device while this server holds its session claim. Track the capture helper
+  as that claim's child. Give native posture input its own core child-aware claim
+  and refuse restarted ownership or native work while that input is live or
+  unresolved. Close capture and control before installation or
+  native teardown. Wait for native input still running after disconnect or
+  takeover, including termination of timed-out children. Revocation and server close end known transports even when
+  the journal cannot be read or written; retain unresolved native claims.
+  Hosting approval never widens ordinary workspace read or phone control.
 
 ## Comment policy
 

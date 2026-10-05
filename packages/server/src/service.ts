@@ -258,7 +258,7 @@ export async function installService(options: ServiceOptions): Promise<string[]>
   notes.push(
     health
       ? `stim-server ${health.version} answers on 127.0.0.1:${options.port}.`
-      : `stim-server does not answer on 127.0.0.1:${options.port} yet. Its start reads the login shell's environment and can take a minute; run \`stim-server service status --label ${options.label}\` to check.`,
+      : `LaunchAgent installed, but server readiness is unavailable on 127.0.0.1:${options.port}. Run \`stim-server service status --label ${options.label}\` and check ${spec.logPath}.`,
   );
   if (serve) {
     notes.push(

@@ -68,6 +68,15 @@ enum DuoHinge {
   static let coverRestAngle = 40.0
   static let innerRestAngle = 110.0
 
+  static func estimatedAngle(remembered: Double?, folded: Bool?) -> Double {
+    if folded == true {
+      let openPreset = DuoPosture.allCases.contains { !$0.isFolded && $0.hingeAngle == remembered }
+      return openPreset ? 0 : remembered ?? 0
+    }
+    if folded == false, remembered == 0 { return 180 }
+    return remembered ?? 180
+  }
+
   static func sweep(from: Double, to: Double, interval: Double = 1.0 / 60) -> [Double] {
     var spring = Spring(phase(for: from), maximumSpeed: 1)
     spring.target = phase(for: to)
@@ -175,7 +184,7 @@ enum DuoHinge {
 public enum SimulatorPosture {
   private static let lock = NSLock()
   private static var connections: [String: CoreDeviceHID] = [:]
-  private static var postures: [String: DuoPosture] = [:]
+  private static var angles: [String: Double] = [:]
 
   /// Whether the simulator takes hinge input. Blocks on a CoreSimulator lookup;
   /// call it off the main thread.
@@ -183,27 +192,45 @@ public enum SimulatorPosture {
 
   /// The posture Stim Desktop last moved this simulator to, if any.
   public static func lastPosture(udid: String) -> DuoPosture? {
+    guard let angle = lastAngle(udid: udid) else { return nil }
+    return DuoPosture.allCases.first { $0.hingeAngle == angle }
+  }
+
+  /// The hinge angle Stim Desktop last moved this simulator to, in degrees.
+  public static func lastAngle(udid: String) -> Double? {
     lock.lock()
     defer { lock.unlock() }
-    return postures[udid]
+    return angles[udid]
+  }
+
+  /// Estimates the hinge angle from the observed active panel and the last
+  /// requested angle. An observed panel change overrides a conflicting cache.
+  public static func estimatedAngle(udid: String, folded: Bool?) -> Double {
+    DuoHinge.estimatedAngle(remembered: lastAngle(udid: udid), folded: folded)
   }
 
   /// Sweeps the hinge from `angle`, where it is now, to `posture`, about one
   /// second for a full fold. Returns an error message when the input service
   /// is missing or closes.
   public static func move(udid: String, from angle: Double, to posture: DuoPosture) async -> String? {
+    await move(udid: udid, from: angle, to: posture.hingeAngle)
+  }
+
+  /// Sweeps the simulated hinge to an angle in 0...180 degrees. Returns an
+  /// error message when the input service is missing or closes.
+  public static func move(udid: String, from angle: Double, to target: Double) async -> String? {
     guard let hid = await Task.detached(operation: { connection(udid: udid) }).value else {
       return "This simulator has no hinge input service."
     }
     while !hid.isReady, hid.isConnected { try? await Task.sleep(for: .milliseconds(50)) }
     guard hid.isConnected else { return "The simulator's input connection closed. Try again." }
-    for angle in DuoHinge.sweep(from: angle, to: posture.hingeAngle) {
+    for angle in DuoHinge.sweep(from: angle, to: target) {
       guard let report = DuoHinge.report(angle: angle) else { return "IOKit could not serialize the hinge report." }
       hid.vendorDefined(report)
       try? await Task.sleep(for: .milliseconds(16))
     }
     guard hid.isConnected else { return "The simulator's input connection closed. Try again." }
-    remember(posture, udid: udid)
+    remember(target, udid: udid)
     return nil
   }
 
@@ -223,9 +250,9 @@ public enum SimulatorPosture {
     return hid.isConnected
   }
 
-  private static func remember(_ posture: DuoPosture, udid: String) {
+  private static func remember(_ angle: Double, udid: String) {
     lock.lock()
-    postures[udid] = posture
+    angles[udid] = angle
     lock.unlock()
   }
 
@@ -236,7 +263,7 @@ public enum SimulatorPosture {
         lock.unlock()
         return hid
       }
-      postures[udid] = nil
+      angles[udid] = nil
     }
     lock.unlock()
     guard let device = CoreSimulator.device(udid: udid),

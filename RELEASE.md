@@ -350,6 +350,12 @@ repeat the affected gate rather than waiving it.
    test "$(git rev-parse HEAD)" = "$release_commit"
    ```
 
+   Dispatch the CI workflow against the release branch as well and wait for
+   its full Windows job on the same candidate SHA before tagging. Routine PR
+   and main runs cover Windows build/typecheck and CLI/cache smoke; nightly
+   and manual CI runs cover the complete Windows unit suite. The Release
+   workflow repeats the full Windows gate before npm publication.
+
    A fix creates a new commit and repeats this step. Never tag a commit that
    has not passed this exact-commit check.
 

@@ -224,7 +224,7 @@ test.each([
   ],
   [
     ['set', 'metro.tunnel', 'wormhole', '--scope', 'workspace'],
-    'Expected one of: auto, off, expo, cloudflared, ngrok.',
+    'Expected one of: auto, off, expo, cloudflared, ngrok, tailscale.',
   ],
   [['set', 'worktree.exclude', 'node_modules', '--scope', 'repo'], 'Expected an array of strings, written as JSON.'],
   [

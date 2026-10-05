@@ -10,8 +10,6 @@ import {
   commandAtCursor,
   formatSeconds,
   initialAuditSelection,
-  timelineZoomDimensions,
-  timelineZoomFromPinch,
   timeBreakdown,
   type BenchmarkData,
   type BenchmarkCommand,
@@ -226,37 +224,6 @@ describe('comparisonOutcome', () => {
   });
 });
 
-describe('timelineZoomFromPinch', () => {
-  it('scales from the gesture start and clamps to the supported range', () => {
-    expect(timelineZoomFromPinch(2, 100, 150)).toBe(3);
-    expect(timelineZoomFromPinch(3, 100, 200)).toBe(4);
-    expect(timelineZoomFromPinch(2, 100, 20)).toBe(1);
-  });
-});
-
-describe('timelineZoomDimensions', () => {
-  it('keeps the label fixed while scaling the full time track', () => {
-    expect(timelineZoomDimensions(1200, 16, 1)).toEqual({
-      labelWidth: 112,
-      trackWidth: 1088,
-      totalWidth: 1200,
-    });
-    expect(timelineZoomDimensions(1200, 16, 2)).toEqual({
-      labelWidth: 112,
-      trackWidth: 2176,
-      totalWidth: 2288,
-    });
-  });
-
-  it('preserves the minimum track width on a narrow viewport', () => {
-    expect(timelineZoomDimensions(600, 16, 2)).toEqual({
-      labelWidth: 112,
-      trackWidth: 1440,
-      totalWidth: 1552,
-    });
-  });
-});
-
 describe('initialAuditSelection', () => {
   it('returns an empty audit state when an invalid run has no events or proof', () => {
     const run = {
@@ -268,7 +235,6 @@ describe('initialAuditSelection', () => {
     } as unknown as BenchmarkRun;
 
     expect(initialAuditSelection(run)).toBeNull();
-    expect(run.proof).toBeNull();
   });
 });
 

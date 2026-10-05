@@ -5,8 +5,8 @@ import { frameTarget } from '@/hooks/frame-target';
 import { useMacConnection } from '@/hooks/machines';
 import { SeekQueue, type Seek } from '@/lib/replay-seek';
 import { VideoMeter } from '@/lib/video';
-import type { DevicePlatform, FrameEvent, ReplayRate } from '@/protocol/types';
-import { pushAccessUnit } from '../../modules/stim-video/src';
+import type { DeviceFrameArtwork, DevicePlatform, FrameEvent, ReplayRate } from '@/protocol/types';
+import { pushAccessUnit, supportsFrameOrientation } from '../../modules/stim-video/src';
 
 export interface DeviceStream {
   /** The id the `StimVideoView` showing this stream must carry. */
@@ -14,7 +14,8 @@ export interface DeviceStream {
   /** The latest JPEG frame, while the server sends images instead of video. */
   frame: FrameEvent | null;
   /** The size of the latest video frame, and an iPhone Duo's posture, once the first H.264 keyframe arrives. */
-  video: { width: number; height: number; posture?: 'folded' | 'unfolded' } | null;
+  video: { width: number; height: number; posture?: 'folded' | 'unfolded'; artworkTurns?: number } | null;
+  artwork: DeviceFrameArtwork | null;
   error: string | null;
   delayed: boolean;
   /** Why frames stopped, such as a locked iPhone, when the server says. */
@@ -22,6 +23,7 @@ export interface DeviceStream {
   meter: VideoMeter;
   /** Asks the server for a keyframe, after the decoder lost its state. */
   requestKeyframe: () => void;
+  orientationCleared: (event: { nativeEvent: { generation: number } }) => void;
   /** Null while the stream shows the live screen; otherwise how the recording plays. */
   replay: Replay | null;
   /** The recorded frame shown, which moves several times a second during playback; read it with `useReplayAt`. */
@@ -45,7 +47,8 @@ export interface Replay {
 interface StreamState {
   key: string;
   frame: FrameEvent | null;
-  video: { width: number; height: number; posture?: 'folded' | 'unfolded' } | null;
+  video: { width: number; height: number; posture?: 'folded' | 'unfolded'; artworkTurns?: number } | null;
+  artwork: DeviceFrameArtwork | null;
   error: string | null;
   delayed: boolean;
   replay: Replay | null;
@@ -57,6 +60,7 @@ interface StreamState {
 const EMPTY: Omit<StreamState, 'key'> = {
   frame: null,
   video: null,
+  artwork: null,
   error: null,
   delayed: false,
   replay: null,
@@ -65,6 +69,11 @@ const EMPTY: Omit<StreamState, 'key'> = {
   seeking: false,
 };
 const POSITION_MS = 200;
+let nextOrientationGeneration = 0;
+function orientationGeneration(): number {
+  nextOrientationGeneration += 1;
+  return nextOrientationGeneration;
+}
 
 type Shown = Replay & { at: number | null };
 type Update = Partial<Omit<StreamState, 'key' | 'replay'>> & { replay?: Shown | null };
@@ -88,21 +97,34 @@ export function useReplayAt(playhead: ReplayPlayhead | null): number | null {
  */
 export function useDeviceStream(
   target: { workspace: string; platform: DevicePlatform; slot: string; physical?: boolean },
-  options: { enabled: boolean; fps: number; maxEdge: number; video: 'h264'[]; startAt?: number | null },
+  options: {
+    enabled: boolean;
+    fps: number;
+    maxEdge: number;
+    video: 'h264'[];
+    startAt?: number | null;
+    deviceFrame?: boolean;
+  },
 ): DeviceStream {
   const { connection } = useMacConnection();
   const streamId = useId();
   const { workspace, platform, slot, physical } = target;
   const { fps, maxEdge, video } = options;
+  const deviceFrame = options.deviceFrame === true;
   const startAt = options.startAt ?? null;
   const [latest, setLatest] = useState<StreamState | null>(null);
   const subscription = useRef<string | null>(null);
   const replaying = useRef<(Shown & { timer: ReturnType<typeof setTimeout> | null }) | null>(null);
   const updateRef = useRef<((patch: Update) => void) | null>(null);
   const seeks = useRef(new SeekQueue());
+  const orientation = useRef<{ generation: number; video: NonNullable<DeviceStream['video']> } | null>(null);
+  const orientationCleared = useCallback(({ nativeEvent }: { nativeEvent: { generation: number } }) => {
+    const current = orientation.current;
+    if (current?.generation === nativeEvent.generation) updateRef.current?.({ video: current.video });
+  }, []);
   const key =
     connection && options.enabled
-      ? frameTarget({ workspace, platform, slot, physical }, { fps, maxEdge, video, startAt }).key
+      ? frameTarget({ workspace, platform, slot, physical }, { fps, maxEdge, video, startAt, deviceFrame }).key
       : null;
   const [meter] = useState(() => new VideoMeter());
   const [playhead] = useState<ReplayPlayhead>(() => createStore(() => ({ at: null })));
@@ -142,6 +164,7 @@ export function useDeviceStream(
   useEffect(() => {
     if (!connection || key === null) return;
     let size = '';
+    orientation.current = null;
     const queue = seeks.current;
     subscription.current = null;
     const update = ({ replay, ...patch }: Update) => {
@@ -158,12 +181,16 @@ export function useDeviceStream(
         fps,
         maxEdge,
         video,
+        ...(deviceFrame ? { deviceFrame: true } : {}),
         ...(startAt !== null ? { at: startAt, rate: 0 as const } : {}),
       },
       (event) => {
         if (event.event === 'frame') {
           size = '';
+          orientation.current = null;
           update({ frame: event, video: null, error: null, delayed: false, delayedReason: null });
+        } else if (event.event === 'device-frame') {
+          update({ artwork: event.artwork });
         } else if (event.event === 'frame-delayed') {
           update({ delayed: event.delayed, delayedReason: event.delayed ? (event.reason ?? null) : null });
         } else if (event.event === 'replay-ended') {
@@ -171,6 +198,7 @@ export function useDeviceStream(
           update({ replay: { at: event.at, rate: 0, ended: true } });
         } else if (event.event === 'error') {
           size = '';
+          orientation.current = null;
           update({ frame: null, video: null, error: event.error.message, delayed: false, delayedReason: null });
         }
       },
@@ -178,6 +206,7 @@ export function useDeviceStream(
         subscription.current = result.subscription;
         queue.interrupt();
         size = '';
+        orientation.current = null;
         replaying.current = startAt !== null ? { at: null, rate: 0, ended: false, timer: null } : null;
         update({
           replay: startAt !== null ? { at: null, rate: 0, ended: false } : null,
@@ -187,7 +216,6 @@ export function useDeviceStream(
         pumpSeeks(connection);
       },
       (packet) => {
-        pushAccessUnit(streamId, packet.accessUnit, packet.width, packet.height);
         meter.add(packet, Date.now());
         const shown = replaying.current;
         if (shown && queue.settled) {
@@ -199,12 +227,20 @@ export function useDeviceStream(
             }, POSITION_MS);
           }
         }
-        if (!size && !packet.keyframe) return;
-        const next = `${packet.width}x${packet.height} ${packet.posture ?? ''}`;
-        if (next === size) return;
+        const push = () =>
+          pushAccessUnit(streamId, packet.accessUnit, packet.width, packet.height, orientation.current?.generation);
+        if (!size && !packet.keyframe) return push();
+        const next = `${packet.width}x${packet.height} ${packet.posture ?? ''} ${packet.artworkTurns ?? ''}`;
+        if (next === size) return push();
         size = next;
-        const { width, height, posture } = packet;
-        update({ frame: null, video: { width, height, ...(posture ? { posture } : {}) }, error: null });
+        const { width, height, posture, artworkTurns } = packet;
+        const video = { width, height, ...(posture ? { posture } : {}) };
+        orientation.current =
+          deviceFrame && supportsFrameOrientation && artworkTurns !== undefined
+            ? { generation: orientationGeneration(), video: { ...video, artworkTurns } }
+            : null;
+        update({ frame: null, video, error: null });
+        push();
       },
     );
     return () => {
@@ -212,10 +248,26 @@ export function useDeviceStream(
       if (replaying.current?.timer) clearTimeout(replaying.current.timer);
       replaying.current = null;
       updateRef.current = null;
+      orientation.current = null;
       queue.clear();
       unsubscribe();
     };
-  }, [connection, key, streamId, workspace, platform, slot, physical, fps, maxEdge, video, meter, playhead, startAt]);
+  }, [
+    connection,
+    key,
+    streamId,
+    workspace,
+    platform,
+    slot,
+    physical,
+    fps,
+    maxEdge,
+    video,
+    meter,
+    playhead,
+    startAt,
+    deviceFrame,
+  ]);
   const requestKeyframe = useCallback(() => {
     const current = subscription.current;
     if (connection && current) connection.request('frames.keyframe', { subscription: current }).catch(() => {});
@@ -241,5 +293,5 @@ export function useDeviceStream(
     );
   }, [connection]);
   const state = latest && latest.key === key ? latest : EMPTY;
-  return { ...state, streamId, meter, playhead, requestKeyframe, seek, live };
+  return { ...state, streamId, meter, playhead, requestKeyframe, orientationCleared, seek, live };
 }

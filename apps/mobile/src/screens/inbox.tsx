@@ -7,6 +7,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { EmptyState } from '@/components/empty-state';
 import { Icon, type IconName } from '@/components/icon';
 import { SectionList } from '@/components/lists';
+import { useMenuDrawer } from '@/components/menu-drawer';
 import { Text } from '@/components/text';
 import { Touch } from '@/components/touch';
 import { withAlpha } from '@/design/color';
@@ -20,6 +21,7 @@ import { NOTIFY_CATEGORIES, notificationRoute } from '@/lib/notifications';
 import type { OversightCategory } from '@stim-cli/core/oversight';
 import { notifyCategoryLabel } from '@/lib/settings-options';
 
+const MENU_ICON = require('@/assets/icons/menu.png');
 const SLIDERS_ICON = require('@/assets/icons/sliders.png');
 
 /** The same symbols as Stim Desktop's inbox (#1746). */
@@ -57,6 +59,7 @@ function suppressedText(suppressed: NonNullable<InboxItem['suppressed']>): strin
 export function Inbox() {
   const { theme } = useUnistyles();
   const router = useRouter();
+  const menu = useMenuDrawer();
   const macs = usePairedMacs();
   const [category, setCategory] = useState<OversightCategory | null>(null);
   const [macId, setMacId] = useState<string | null>(null);
@@ -74,12 +77,22 @@ export function Inbox() {
     inbox.markRead(item);
     const route = notificationRoute(itemData(item), macIds);
     if ('url' in route) void Linking.openURL(route.url);
-    else if (route.pathname === '/') router.navigate('/');
+    else if (route.pathname === '/') router.replace('/');
     else router.push(route);
   };
 
   return (
     <View style={styles.screen}>
+      {menu.permanent ? null : (
+        <Stack.Toolbar placement="left">
+          <Stack.Toolbar.Button
+            icon={Platform.OS === 'ios' ? 'line.3.horizontal' : MENU_ICON}
+            tintColor={theme.colors.text}
+            accessibilityLabel={t`Menu`}
+            onPress={menu.open}
+          />
+        </Stack.Toolbar>
+      )}
       <Stack.Toolbar placement="right">
         <Stack.Toolbar.Menu
           icon={Platform.OS === 'ios' ? 'slider.vertical.3' : SLIDERS_ICON}

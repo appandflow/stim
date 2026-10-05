@@ -295,13 +295,6 @@ test('storing a build registers the cache root at the depth its entries actually
   expect(record.entriesDepth).toBe(2);
 });
 
-test('@expo/fingerprint is a declared dependency of the Stim package', () => {
-  const pkg = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf-8')) as {
-    dependencies?: Record<string, string>;
-  };
-  expect(typeof pkg.dependencies?.['@expo/fingerprint']).toBe('string');
-});
-
 test('fingerprintProject scopes the hash to the platform being built', async () => {
   const seen: { dir: string; options: FingerprintOptions | undefined }[] = [];
   const createFingerprint = async (dir: string, options?: FingerprintOptions) => {

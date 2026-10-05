@@ -20,6 +20,15 @@ public struct ProgressStep: Hashable, Sendable, Identifiable {
   public var duration: String?
   public var state: State
 
+  /// The action sheet's primary status, with launch identifiers kept in command output.
+  public var statusText: String {
+    switch label {
+    case "launch": return "Launching app"
+    case "verify": return "Verifying launch"
+    default: return fact.isEmpty ? label : fact
+    }
+  }
+
   public init(label: String, fact: String, duration: String?, state: State) {
     self.label = label
     self.fact = fact

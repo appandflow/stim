@@ -64,7 +64,11 @@ export function readMetroTunnel(root: string): MetroTunnelRecord | null {
     const startedAt = (record as { startedAt?: unknown }).startedAt;
     const processToken = (record as { processToken?: unknown }).processToken;
     const logFile = (record as { logFile?: unknown }).logFile;
-    if ((provider !== 'ngrok' && provider !== 'cloudflared') || typeof pid !== 'number' || typeof port !== 'number') {
+    if (
+      (provider !== 'ngrok' && provider !== 'cloudflared' && provider !== 'tailscale') ||
+      typeof pid !== 'number' ||
+      typeof port !== 'number'
+    ) {
       return null;
     }
     return {

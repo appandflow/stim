@@ -151,14 +151,6 @@ extension SetupChecks {
     var environment = environment
     return resolveExecutable(name, override: nil, environment: &environment)
   }
-
-  /// `name --version` from `environment`'s PATH: the executable, and what it printed, nil when it failed.
-  public static func version(of name: String, environment: [String: String]) async -> (path: String?, output: String?) {
-    var environment = environment
-    guard let path = resolveExecutable(name, override: nil, environment: &environment) else { return (nil, nil) }
-    let result = try? await ProcessRequest(path, ["--version"], environment: environment, timeout: 10).run()
-    return (path, result.flatMap { $0.succeeded ? $0.stdoutText : nil })
-  }
 }
 
 /// Reads the output of the read-only commands the guide runs to check this Mac's build tools.

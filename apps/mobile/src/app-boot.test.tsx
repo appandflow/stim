@@ -10,6 +10,8 @@ import statusFixture from '../mock-server/fixtures/status.json';
 
 // expo-router/testing-library mocks Reanimated with `react-native-reanimated/mock`, which throws while loading under
 // Reanimated 4.7 and leaves an empty module, so the mock it loads is replaced.
+jest.mock('react-native-keyboard-controller', () => jest.requireActual('react-native-keyboard-controller/jest'));
+
 jest.mock('react-native-reanimated/mock', () => {
   const inert: () => unknown = () =>
     new Proxy(() => {}, { get: (_, key) => (key === 'value' ? 0 : inert()), apply: () => inert() });
@@ -249,4 +251,28 @@ it("clears the previous release's derived data, keeps the pairing, and renders t
   expect(JSON.parse(mockStore('stim.notifications').get('prefs')!)).toMatchObject({ enabled: true });
   const state = JSON.parse(mockStore('stim.notifications').get('state')!) as Record<string, { workspaces?: object }>;
   expect(state[`status:${MAC_ID}`]?.workspaces).toBeDefined();
+}, 60_000);
+
+it('opens a workspace directly without relying on Home to provide the gesture root', async () => {
+  jest.restoreAllMocks();
+  mockStores.clear();
+  (globalThis as { WebSocket?: unknown }).WebSocket = FakeSocket;
+  seedPreviousInstall();
+  const activate = launchInactive();
+  const errors: string[] = [];
+  const consoleError = jest
+    .spyOn(console, 'error')
+    .mockImplementation((...args) => void errors.push(args.map(String).join(' ')));
+  const path = statusFixture.payload.environments[0]!.path;
+
+  await renderRouter('./src/app', { initialUrl: `/mac/${MAC_ID}/workspace?path=${encodeURIComponent(path)}` });
+  await act(() => jest.advanceTimersByTimeAsync(1000));
+  await act(async () => {
+    activate();
+    await jest.advanceTimersByTimeAsync(1000);
+  });
+  consoleError.mockRestore();
+
+  expect(errors).toEqual([]);
+  expect(screen.getByText('Work')).toBeTruthy();
 }, 60_000);

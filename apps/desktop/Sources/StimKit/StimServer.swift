@@ -49,9 +49,10 @@ public struct ServerHealth: Decodable, Equatable, Sendable {
   public var tailscale: TailscaleState
   /// The `tailscale serve` route read on this request, present while Tailscale runs.
   public var route: ServeRoute?
+  public var nativeViewerOpened: Bool?
 
   enum CodingKeys: String, CodingKey {
-    case server, name, version, stim, stimHome, tailscale, route
+    case server, name, version, stim, stimHome, tailscale, route, nativeViewerOpened
     case protocolVersion = "protocol"
   }
 
@@ -100,14 +101,23 @@ public struct PairedDevice: Decodable, Equatable, Identifiable, Sendable {
   public var pairedAt: Date
   public var lastSeenAt: Date?
   public var capabilities: [String]
-  /// When a Mac's request to build here lapses; set only while it waits for approval.
+  public var requestedCapability: String?
+  /// When a Mac's request lapses; set only while it waits for approval.
   public var pendingUntil: Date?
 
   /// Whether the device may run actions and drive devices, not only read.
   public var canControl: Bool { capabilities.contains("control") }
 
   /// A Mac that asked to build here or may build here, rather than a phone or app that reads.
-  public var isBuildClient: Bool { pendingUntil != nil || capabilities.contains("build") }
+  public var isBuildClient: Bool {
+    requestedCapability == "build" || capabilities.contains("build")
+      || (pendingUntil != nil && requestedCapability == nil)
+  }
+
+  /// A Mac that asked to run hosted devices here or may run them here.
+  public var isDeviceHostClient: Bool {
+    requestedCapability == "device-host" || capabilities.contains("device-host")
+  }
 
   /// The name the release Stim Desktop pairs under.
   public static let desktopName = "Stim Desktop"
@@ -121,7 +131,7 @@ public struct PairedDevice: Decodable, Equatable, Identifiable, Sendable {
   }
 
   /// A paired phone or app that reads and may control, as the Phones list shows it.
-  public var isPhone: Bool { !isBuildClient && !isDesktopClient }
+  public var isPhone: Bool { !isBuildClient && !isDeviceHostClient && !isDesktopClient }
 
   /// The tailnet node the device paired from, or this Mac for a loopback pairing.
   public var node: String {
@@ -142,11 +152,31 @@ public struct StimServerCLI: Sendable {
   /// The override or the first `stim-server` on the environment's `PATH`.
   public let executable: String?
   public let environment: [String: String]
+  /// Runs `executable`'s script under the home directory's Node; nil runs `executable` through its own shebang.
+  public let launcher: NodeLauncher?
 
-  public init(environment: [String: String], override: String? = nil) {
+  public init(environment: [String: String], override: String? = nil, launcher: NodeLauncher? = nil) {
     var environment = environment
     self.executable = resolveExecutable("stim-server", override: override, environment: &environment)
     self.environment = environment
+    self.launcher = launcher
+  }
+
+  /// `init(environment:override:)` with a launcher, so a project's Node pin does not choose the Node it runs on.
+  /// `layout` names the package managers' global directories, which only a version-manager shim needs.
+  public static func resolve(
+    environment: [String: String], override: String? = nil,
+    layout: (() async -> PackageManagerLayout)? = nil
+  ) async -> StimServerCLI {
+    let cli = StimServerCLI(environment: environment, override: override)
+    let launcher = await NodeLauncher.resolve(
+      executable: cli.executable, name: "stim-server", environment: cli.environment, layout: layout)
+    return StimServerCLI(environment: environment, override: override, launcher: launcher)
+  }
+
+  private func command(_ arguments: [String]) throws -> (program: String, arguments: [String]) {
+    guard let executable else { throw Failure.notFound }
+    return try launcher?.command(arguments) ?? (executable, arguments)
   }
 
   public enum Failure: LocalizedError {
@@ -200,6 +230,11 @@ public struct StimServerCLI: Sendable {
     _ = try await run(["devices", "grant", id, "--build"])
   }
 
+  /// Approves a Mac's request to run hosted devices here.
+  public func grantDeviceHost(_ id: String) async throws {
+    _ = try await run(["devices", "grant", id, "--device-host"])
+  }
+
   public func revoke(_ id: String) async throws {
     _ = try await run(["devices", "revoke", id])
   }
@@ -210,9 +245,9 @@ public struct StimServerCLI: Sendable {
     onLine: @escaping @Sendable (OutputLine) -> Void,
     onExit: @escaping @Sendable (Int32) -> Void
   ) throws -> Process {
-    guard let executable else { throw Failure.notFound }
+    let command = try command(["--port", String(port)])
     return try ProcessStream.start(
-      executable: executable, arguments: ["--port", String(port)], cwd: NSHomeDirectory(),
+      executable: command.program, arguments: command.arguments, cwd: NSHomeDirectory(),
       environment: environment, onLine: onLine, onExit: onExit)
   }
 
@@ -229,8 +264,8 @@ public struct StimServerCLI: Sendable {
   }
 
   private func run(_ args: [String]) async throws -> Data {
-    guard let executable else { throw Failure.notFound }
-    var request = ProcessRequest(executable, args, environment: environment)
+    let command = try command(args)
+    var request = ProcessRequest(command.program, command.arguments, environment: environment)
     request.captureStderr = true
     let result = try await request.run()
     guard result.status == 0 else {

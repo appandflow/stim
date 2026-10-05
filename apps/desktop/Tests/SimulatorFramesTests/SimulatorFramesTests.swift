@@ -76,9 +76,80 @@ import Testing
     }
   }
 
+  @Test func externalPanelChangesOverrideConflictingRememberedAngles() {
+    let folded = DuoHinge.estimatedAngle(remembered: 180, folded: true)
+    let halfOpen = DuoHinge.estimatedAngle(remembered: 120, folded: true)
+    let unfolded = DuoHinge.estimatedAngle(remembered: 0, folded: false)
+    #expect(folded == 0)
+    #expect(halfOpen == 0)
+    #expect(unfolded == 180)
+    #expect(DuoHinge.sweep(from: folded, to: 180).last == 180)
+    let reopening = DuoHinge.sweep(from: halfOpen, to: 120)
+    #expect(!reopening.isEmpty)
+    #expect(abs(reopening.last! - 120) < 0.001)
+    #expect(DuoHinge.sweep(from: unfolded, to: 0).last == 0)
+  }
+
+  @Test func preservesIntermediateAnglesWithoutInferringDegreesFromThePanel() {
+    #expect(DuoHinge.estimatedAngle(remembered: 73, folded: true) == 73)
+    #expect(DuoHinge.estimatedAngle(remembered: 93, folded: false) == 93)
+    #expect(DuoHinge.estimatedAngle(remembered: 147, folded: nil) == 147)
+    #expect(DuoHinge.estimatedAngle(remembered: nil, folded: nil) == 180)
+    #expect(DuoHinge.estimatedAngle(remembered: nil, folded: false) == 180)
+    #expect(DuoHinge.estimatedAngle(remembered: nil, folded: true) == 0)
+  }
+
+  @Test func arbitraryAnglesSweepToTheSelectedAngleInBothDirections() {
+    for (from, to) in [(0.0, 73.0), (180.0, 93.0), (93.0, 147.0)] {
+      let angles = DuoHinge.sweep(from: from, to: to)
+      #expect(abs(angles.last! - to) < 0.001)
+      #expect(angles.allSatisfy { (min(from, to) - 0.001)...(max(from, to) + 0.001) ~= $0 })
+    }
+  }
+
   @Test func halfOpeningFromFoldedEndsAtTheHalfOpenAngle() {
     let angles = DuoHinge.sweep(from: 0, to: DuoPosture.halfOpen.hingeAngle)
     #expect(abs(angles.last! - 120) < 0.001)
     #expect(zip(angles, angles.dropFirst()).allSatisfy { $0 <= $1 })
   }
+}
+
+@Suite struct SimulatorHingeAngleTests {
+  @Test func readsTheValidAngleRatherThanTheMechanicalAngle() {
+    let sample =
+      "\u{2022} +0.500s : Angle: 73.2\u{00B0} Mech: 71.8\u{00B0} Velocity:+0.0\u{00B0}/s AngleValid:Y VelocityValid:N Range:0-180\u{00B0}"
+    #expect(SimulatorHingeAngle.parse(sample) == 73.2)
+    #expect(SimulatorHingeAngle.parse("\u{1B}[38;5;46m" + sample + "\u{1B}[0m") == 73.2)
+  }
+
+  @Test func readsCompactAndPaddedNativeAngles() {
+    for (field, expected) in [
+      ("Angle:  0.0\u{00B0}", 0.0),
+      ("Angle: 98.1\u{00B0}", 98.1),
+      ("Angle:120.0\u{00B0}", 120.0),
+      ("Angle:180.0\u{00B0}", 180.0),
+    ] {
+      let sample =
+        "\u{2022} +0.000s : \(field)  Mech:119.2\u{00B0}  Velocity:+0.0\u{00B0}/s  AngleValid:Y  VelocityValid:N  Range:0-180\u{00B0}"
+      #expect(SimulatorHingeAngle.parse(sample) == expected)
+    }
+  }
+
+  @Test func ignoresUnavailableInvalidAndUnrecognizedSamples() {
+    for sample in [
+      "Hinge angle monitoring started. 55 seconds remaining:",
+      "Angle: 73.2\u{00B0} AngleValid:N",
+      "Angle: nan\u{00B0} AngleValid:Y",
+      "Angle: inf\u{00B0} AngleValid:Y",
+      "Angle: -1.0\u{00B0} AngleValid:Y",
+      "Angle: 181.0\u{00B0} AngleValid:Y",
+      "Angle: 73.2 AngleValid:Y",
+      "Angle: AngleValid:Y",
+      "Mech: 73.2\u{00B0} AngleValid:Y",
+      "Angle: 73.2\u{00B0} AngleValid:Yunknown",
+    ] {
+      #expect(SimulatorHingeAngle.parse(sample) == nil)
+    }
+  }
+
 }

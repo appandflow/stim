@@ -4,17 +4,65 @@ import { msg } from '@lingui/core/macro';
 import fixture from '../../../desktop/Tests/StimKitTests/Fixtures/needs-attention-vectors.json';
 import { messages } from '../../locales/en';
 
-import { needsAttention, type NeedsAttentionInput, type NeedsAttentionItem } from '@/lib/needs-attention';
+import { needsAttention, type NeedsAttentionInput } from '@/lib/needs-attention';
 
 const vectors = fixture as unknown as {
-  cases: { name: string; input: Omit<NeedsAttentionInput, 'now'> & { now: string }; items: NeedsAttentionItem[] }[];
+  cases: { name: string; input: Omit<NeedsAttentionInput, 'now'> & { now: string } }[];
 };
 
 describe('needsAttention', () => {
   afterEach(() => i18n.loadAndActivate({ locale: 'en', messages }));
 
-  it.each(vectors.cases.map((c) => [c.name, c] as const))('%s', (_, { input, items }) => {
-    expect(needsAttention({ ...input, now: Date.parse(input.now) })).toEqual(items);
+  it.each([
+    {
+      name: 'names the signing platform and refusal code',
+      fixture: 'keeps signing and provisioning failures for a day or while live, not refusals an agent retries',
+      id: 'run-ios:/w/sign',
+      details: ['iOS', 'STIM_CODESIGN_FAILED'],
+    },
+    {
+      name: 'identifies the issue slot and affected device',
+      fixture: 'keeps a port held by another app and processes Stim cannot verify',
+      id: 'issue-avd-unchecked-tablet:/w/a',
+      details: ['tablet', 'stim-b', 'adb timed out'],
+    },
+    {
+      name: 'identifies the leased physical device',
+      fixture: 'keeps an expired lease',
+      id: 'lease-android-default:/w/a',
+      details: ['Pixel 9'],
+    },
+    {
+      name: 'reports how long the unattended billable EAS session ran',
+      fixture: 'keeps a billable EAS session nobody drives',
+      id: 'eas-s-1:/w/left',
+      details: ['EAS', /\b45\b/, 'min'],
+    },
+    {
+      name: 'identifies the stuck device, elapsed inactivity and last green platform',
+      fixture: 'keeps an agent that went quiet past the stuck threshold',
+      id: 'stuck:/w/stuck',
+      details: [/\b20\b/, 'min', 'iOS', 'iPhone 17 Pro 26.0'],
+    },
+    {
+      name: 'identifies the repeated build failure platform, count and code',
+      fixture: 'forgets an idle repeated failure after a day, not a live one',
+      id: 'looping-ios:/w/old-live',
+      details: ['iOS', /\b3(?:x)?\b/, 'STIM_BUILD_FAILED'],
+    },
+  ])('$name', ({ fixture, id, details }) => {
+    const { input } = vectors.cases.find((entry) => entry.name === fixture)!;
+    const environments = input.environments.map((environment) => ({
+      ...environment,
+      issues: environment.issues?.map((issue) =>
+        issue.code === 'avd-unchecked' ? { ...issue, slot: 'tablet' } : issue,
+      ),
+    }));
+    const item = needsAttention({ ...input, environments, now: Date.parse(input.now) }).find((item) => item.id === id);
+    for (const detail of details) {
+      if (detail instanceof RegExp) expect(item?.body).toMatch(detail);
+      else expect(item?.body).toContain(detail);
+    }
   });
 
   it('localizes selected messages and decimal sizes without changing the items', () => {

@@ -80,6 +80,15 @@ import Testing
 }
 
 @Suite struct InputMessageTests {
+  @Test func exchangesUtf8ClipboardTextThroughTheEmulatorProtocol() {
+    let text = "\u{00E9}\n\u{65E5}"
+    let wire = Data([0x0a, 0x06, 0xc3, 0xa9, 0x0a, 0xe6, 0x97, 0xa5])
+    #expect(InputMessages.clipboard(text) == wire)
+    #expect(InputMessages.clipboardText(wire) == text)
+    #expect(InputMessages.clipboardText(Data()) == "")
+    #expect(InputMessages.clipboardText(Data([0x0a, 0x01, 0xff])) == nil)
+  }
+
   @Test func encodesAPressedMouseEventWithVarintCoordinates() {
     #expect(
       [UInt8](InputMessages.mouse(x: 378, y: 2208, pressed: true))
@@ -88,6 +97,34 @@ import Testing
 
   @Test func releasesTheMouseByOmittingButtons() {
     #expect([UInt8](InputMessages.mouse(x: 0, y: 5, pressed: false)) == [0x10, 0x05])
+  }
+
+  @Test func twoFingerGesturesKeepDistinctTrackingIDsAndReleaseBothSlots() {
+    func contacts(_ bytes: Data) -> [[Int: UInt64]] {
+      var reader = ProtoReader(bytes)
+      var contacts: [[Int: UInt64]] = []
+      while let (field, value) = reader.next() {
+        guard field == 1, case .bytes(let bytes) = value else { continue }
+        var touch = ProtoReader(bytes)
+        var fields: [Int: UInt64] = [:]
+        while let (field, value) = touch.next() {
+          if case .varint(let value) = value { fields[field] = value }
+        }
+        contacts.append(fields)
+      }
+      return contacts
+    }
+    for (points, pressed) in [
+      ([(x: 20, y: 40), (x: 80, y: 60)], true),
+      ([(x: 30, y: 45), (x: 70, y: 55)], true), ([(x: 30, y: 45), (x: 70, y: 55)], false),
+    ] {
+      let touches = contacts(InputMessages.touches(points, pressed: pressed))
+      #expect(touches.count == 2)
+      #expect(touches.map { $0[3, default: 0] } == [0, 1])
+      #expect(touches.map { $0[4, default: 0] } == [pressed ? 1 : 0, pressed ? 1 : 0])
+      #expect(touches.map { $0[1, default: 0] } == points.map { UInt64($0.x) })
+      #expect(touches.map { $0[2, default: 0] } == points.map { UInt64($0.y) })
+    }
   }
 
   @Test func encodesMacKeyCodesWithTheirEventType() {

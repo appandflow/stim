@@ -381,7 +381,7 @@ test('reclaim clears a verified terminal record without issuing stop', async () 
   rmSync(root, { recursive: true, force: true });
 });
 
-function workspaceWithManagedTunnel(pid: number): string {
+function workspaceWithManagedTunnel(pid: number, provider: 'ngrok' | 'tailscale' = 'ngrok'): string {
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'stim-ws-')));
   ensureWorkspaceStorage(root);
   writeFileSync(
@@ -389,9 +389,9 @@ function workspaceWithManagedTunnel(pid: number): string {
     JSON.stringify({
       metroTunnel: {
         kind: 'managed',
-        provider: 'ngrok',
+        provider,
         pid,
-        url: 'https://abc.ngrok.app',
+        url: provider === 'tailscale' ? 'https://host.tail123.ts.net:8082' : 'https://abc.ngrok.app',
         port: 8082,
         startedAt: 'T',
         processToken: 'linux:100',
@@ -402,8 +402,8 @@ function workspaceWithManagedTunnel(pid: number): string {
   return root;
 }
 
-test('reclaim ends the managed tunnel recorded for the workspace', async () => {
-  const root = workspaceWithManagedTunnel(4242);
+test.each(['ngrok', 'tailscale'] as const)('reclaim ends the recorded %s tunnel', async (provider) => {
+  const root = workspaceWithManagedTunnel(4242, provider);
   const stopped: number[] = [];
   const r = await reclaimProject(root, {
     stopMetroTunnel: async (record) => {
@@ -412,7 +412,7 @@ test('reclaim ends the managed tunnel recorded for the workspace', async () => {
     },
   });
   expect(stopped).toEqual([4242]);
-  expect(r.stoppedTunnel).toBe('ngrok');
+  expect(r.stoppedTunnel).toBe(provider);
   rmSync(root, { recursive: true, force: true });
 });
 

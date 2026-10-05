@@ -92,40 +92,40 @@ Explicit machine project/repository overrides keep their existing precedence.
 
 `.stim.json` supports these keys:
 
-| Key                           | Purpose                                                              |
-| ----------------------------- | -------------------------------------------------------------------- |
-| `ios.deviceType`              | iOS Simulator device type                                            |
-| `ios.runtime`                 | iOS Simulator runtime                                                |
-| `ios.configuration`           | Xcode configuration, such as `Debug` or `Release`                    |
-| `ios.remote`                  | Default remote backend, `proxy` or `eas`                             |
-| `ios.simslimProfile`          | SimSlim profile for local iOS devices                                |
-| `ios.signingIdentity`         | Keychain identity used to re-seal a device build                     |
-| `ios.signingIdentitySha1`     | SHA-1 of that identity, when two share a name                        |
-| `ios.lanHost`                 | Address a phone uses to reach this workspace's Metro                 |
-| `android.systemImage`         | Android SDK system image                                             |
-| `android.deviceProfile`       | AVD hardware profile, such as `pixel_tablet` or `pixel_fold`         |
-| `android.dataPartitionSizeGb` | AVD data partition size                                              |
-| `android.avdConfigFile`       | Additional AVD config file                                           |
-| `android.avdConfig`           | Validated AVD config values                                          |
-| `android.variant`             | Gradle build variant                                                 |
-| `android.keystore`            | Release keystore path                                                |
-| `android.keystorePassword`    | Release keystore password source                                     |
-| `android.remote`              | Default remote backend, `proxy` or `eas`                             |
-| `metro.tunnel`                | Remote tunnel mode: `auto`, `off`, `expo`, `cloudflared`, or `ngrok` |
-| `metro.ngrokUrl`              | Existing ngrok URL                                                   |
-| `metro.publicUrl`             | Existing public Metro URL                                            |
-| `metro.warmupUrl.ios`         | Bundle URL `stim ios` prefetches to warm Metro                       |
-| `metro.warmupUrl.android`     | Bundle URL `stim android` prefetches to warm Metro                   |
-| `metro.idleStopMinutes`       | Minutes of no use before the dev server stops; `0` never, default 60 |
-| `devices.idleShutdownMinutes` | Minutes idle before an owned device shuts down; `0` never, default 0 |
-| `web.url`                     | Page `stim web` opens; `{port:<label>}` is a named or the Metro port |
-| `web.ignoreCertificateErrors` | Accept self-signed dev certificates in the owned Chrome profile      |
-| `web.viewport`                | Owned Chrome viewport: `desktop` (default) or `phone`                |
-| `worktree.exclude`            | Ignored paths skipped by `worktree warm`                             |
-| `worktree.defaultBranch`      | Branch `worktree warm --refresh` expects the source checkout on      |
-| `cache.provider`              | Optional second-tier cache provider module                           |
-| `cache.options`               | Options passed to that provider                                      |
-| `optimizations`               | [Build optimization switches and defaults](./build-optimizations.md) |
+| Key                           | Purpose                                                                                                    |
+| ----------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `ios.deviceType`              | iOS Simulator device type                                                                                  |
+| `ios.runtime`                 | iOS Simulator runtime                                                                                      |
+| `ios.configuration`           | Xcode configuration, such as `Debug` or `Release`                                                          |
+| `ios.remote`                  | Default remote backend, `proxy` or `eas`                                                                   |
+| `ios.simslimProfile`          | SimSlim profile for local iOS devices                                                                      |
+| `ios.signingIdentity`         | Keychain identity used to re-seal a device build                                                           |
+| `ios.signingIdentitySha1`     | SHA-1 of that identity, when two share a name                                                              |
+| `ios.lanHost`                 | Address a phone uses to reach this workspace's Metro                                                       |
+| `android.systemImage`         | Android SDK system image                                                                                   |
+| `android.deviceProfile`       | AVD hardware profile, such as `pixel_tablet` or `pixel_fold`                                               |
+| `android.dataPartitionSizeGb` | AVD data partition size                                                                                    |
+| `android.avdConfigFile`       | Additional AVD config file                                                                                 |
+| `android.avdConfig`           | Validated AVD config values                                                                                |
+| `android.variant`             | Gradle build variant                                                                                       |
+| `android.keystore`            | Release keystore path                                                                                      |
+| `android.keystorePassword`    | Release keystore password source                                                                           |
+| `android.remote`              | Default remote backend, `proxy` or `eas`                                                                   |
+| `metro.tunnel`                | Remote tunnel mode: `auto`, `off`, `expo`, `cloudflared`, `ngrok`, or `tailscale` (explicit, tailnet-only) |
+| `metro.ngrokUrl`              | Existing ngrok URL                                                                                         |
+| `metro.publicUrl`             | Existing public Metro URL                                                                                  |
+| `metro.warmupUrl.ios`         | Bundle URL `stim ios` prefetches to warm Metro                                                             |
+| `metro.warmupUrl.android`     | Bundle URL `stim android` prefetches to warm Metro                                                         |
+| `metro.idleStopMinutes`       | Minutes of no use before the dev server stops; `0` never, default 60                                       |
+| `devices.idleShutdownMinutes` | Minutes idle before an owned device shuts down; `0` never, default 0                                       |
+| `web.url`                     | Page `stim web` opens; `{port:<label>}` is a named or the Metro port                                       |
+| `web.ignoreCertificateErrors` | Accept self-signed dev certificates in the owned Chrome profile                                            |
+| `web.viewport`                | Owned Chrome viewport: `desktop` (default) or `phone`                                                      |
+| `worktree.exclude`            | Ignored paths skipped by `worktree warm`                                                                   |
+| `worktree.defaultBranch`      | Branch `worktree warm --refresh` expects the source checkout on                                            |
+| `cache.provider`              | Optional second-tier cache provider module                                                                 |
+| `cache.options`               | Options passed to that provider                                                                            |
+| `optimizations`               | [Build optimization switches and defaults](./build-optimizations.md)                                       |
 
 `worktree warm` reads repository-wide copy settings from the source checkout's
 root `.stim.json`, not individual app files. Keep `worktree.exclude` and
@@ -286,6 +286,32 @@ workspace to adopt. Absent means 3; `0` turns parking and adoption off. When
 `pool.androidParkedMax` and `STIM_POOL_ANDROID_PARKED_MAX` apply the same rules
 to Android emulators. See [owned devices](/docs/owned-devices) for adoption cleanup.
 
+`hosting.machines` names Macs that may host owned simulator sessions, by
+MagicDNS name and optional serve port (default 7443). Name each node and port
+once. Set it with
+`stim settings set hosting.machines '["janics-mac-mini"]'`, then run
+`stim doctor --fix` in an app directory. A person on the hosting Mac approves
+the printed id with `stim-server devices grant <id> --device-host`.
+Hosting approval is separate from `offload.machines` and grants no read,
+control or build access. This configures approval only; `stim ios` and
+`stim android` do not yet place sessions on these machines.
+
+Credentials stay private in `$STIM_HOME/device-host-machines.json`. Doctor
+reports approval under `deviceHosts` in JSON and never prints the token.
+Connections use the pinned node's own tailnet address and MagicDNS TLS name;
+a changed node refuses access. Uncertain replies or unreadable credentials
+preserve the pin. To approve a replacement node, remove the name, run
+`stim doctor --fix` to forget it, then re-add it and run `--fix` again.
+Only `--fix` requests access, retries a definite revoked or lapsed request,
+or forgets names removed from the setting. A concurrent approval inspection
+reports `busy` instead of rotating a pending token.
+
+On a hosting Mac, `hosting.agentDriver` names the tool it starts so a client's
+coding agent can drive the macOS apps it hosts for that client. The default,
+`none`, starts nothing. `agent-device` starts its daemon
+only once agent-device can lease a single macOS app. Until then agent control
+reports `none` with a notice, and no client is handed the Mac's desktop.
+
 `offload.machines` lists the Macs on your tailnet that may build for this one,
 by MagicDNS name (`janics-mac-mini`), optionally with the port of their
 `tailscale serve` route (`janics-mac-mini:7444`; default 7443). Set it with
@@ -404,6 +430,14 @@ install, that stim-server's login-shell environment would otherwise replace.
 `stim-server service status` reports the process, its health, the route and
 whether its Stim build matches the `stim` on PATH. Doctor points to this
 command when a named machine does not answer.
+
+An installed LaunchAgent does not prove server readiness: check its health in
+`stim-server service status` and the reported log when readiness is unavailable.
+Before creating status followers or native helpers, the server bounds a
+read-only recording-directory check to 10 seconds, plus up to one second to
+stop the check. A stalled read fails startup without changing ownership claims
+or recordings. It does not restore an inaccessible volume or grant filesystem
+access; the underlying access problem still needs to be resolved.
 
 `gc.worktreeGraceMinutes` is how long `stim gc --delete` waits before it
 removes a merged or idle linked worktree, counted from the worktree's latest

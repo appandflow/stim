@@ -8,6 +8,7 @@ import SwiftUI
 struct BuildSection: View {
   var cli: Task<StimCLI, Never>
   var env: Workspace
+  var openLogs: (LogQuery) -> Void
   @EnvironmentObject private var checks: BuildPlanChecks
   @EnvironmentObject private var actions: ActionCenter
 
@@ -16,8 +17,8 @@ struct BuildSection: View {
   private func buildKey(_ platform: String) -> String { env.lastBuilds?.build(for: platform)?.planKey ?? "" }
 
   private var platforms: [String] {
-    guard let running, !env.runPlatforms.contains(running.platform) else { return env.runPlatforms }
-    return env.runPlatforms + [running.platform]
+    guard let running, !env.runPlatforms.contains(running.platform) else { return env.runPlatforms.filter { $0 != "macos" } }
+    return env.runPlatforms.filter { $0 != "macos" } + [running.platform]
   }
 
   private var trigger: [String] {
@@ -27,6 +28,24 @@ struct BuildSection: View {
   var body: some View {
     VStack(alignment: .leading, spacing: Space.md) {
       SectionLabel(title: "Build")
+      if let macos = env.macos {
+        HStack {
+          Text("macOS \(macos.product)").font(.stim(.callout, weight: .semibold))
+          Spacer()
+          if let query = LogQuery.build(
+            platform: "macos", slot: "default", startedAt: macos.build.startedAt,
+            finishedAt: macos.build.finishedAt)
+          {
+            Button("Build logs") { openLogs(query) }
+              .buttonStyle(.stim())
+              .fixedSize()
+          }
+        }
+        Text("Swift Package Debug: \(macos.build.state)").font(.stim(.footnote)).foregroundStyle(Palette.secondary)
+        if let error = macos.build.error {
+          Text(error).font(.stim(.footnote)).foregroundStyle(Palette.error).textSelection(.enabled)
+        }
+      }
       ForEach(platforms, id: \.self) { platform in
         card(platform)
       }
@@ -44,31 +63,48 @@ struct BuildSection: View {
   private func card(_ platform: String) -> some View {
     let entry = checks.entry(workspace: env.path, platform: platform)
     let building = running.flatMap { $0.platform == platform ? $0 : nil }
-    return VStack(alignment: .leading, spacing: Space.sm) {
+    return VStack(alignment: .leading, spacing: Space.lg) {
       HStack(spacing: Space.sm) {
         PlatformGlyph(platform: platform, size: 12, color: building == nil ? Palette.text : Palette.primary)
         Text(building == nil ? platformName(platform) : "Building \(platformName(platform))")
           .font(.stim(.callout, weight: .semibold))
           .lineLimit(1)
-        if let building { BuildOutcomeBadge(build: building) }
         Spacer()
-        if building == nil { buttons(platform, entry: entry) }
+        if let query = buildLogs(platform, running: building) {
+          Button("Build logs") { openLogs(query) }
+            .buttonStyle(.stim())
+            .fixedSize()
+            .help("Open this build's full retained raw output")
+        }
+        if building == nil { runButton(platform) }
       }
       if let host = building?.remote(at: Date())?.host {
         Label("on \(host)", systemImage: "desktopcomputer").foregroundStyle(Palette.secondary).lineLimit(1)
       }
       if let building {
-        RunningBuildDetail(cli: cli, env: env, build: building)
+        RunningBuildDetail(env: env, build: building)
       } else {
-        lastBuild(platform)
-        if running != nil {
-          Text("Next build: checked after the running build").foregroundStyle(Palette.tertiary)
-        } else {
-          nextBuild(entry)
+        VStack(alignment: .leading, spacing: Space.sm) {
+          Text("Last build").font(.stim(.footnote, weight: .semibold)).foregroundStyle(Palette.secondary)
+          lastBuild(platform)
+        }
+        Divider().overlay(Palette.border)
+        VStack(alignment: .leading, spacing: Space.sm) {
+          HStack {
+            Text("Next build").font(.stim(.footnote, weight: .semibold)).foregroundStyle(Palette.secondary)
+            Spacer(minLength: Space.sm)
+            checkButton(platform, entry: entry)
+          }
+          if running != nil {
+            Text("Checked after the running build").foregroundStyle(Palette.tertiary)
+          } else {
+            nextBuild(entry)
+          }
         }
       }
       let history = env.builds?.builds(for: platform) ?? []
       if !history.isEmpty {
+        Divider().overlay(Palette.border)
         BuildHistoryList(entries: history, workspace: env.path)
       }
     }
@@ -78,7 +114,15 @@ struct BuildSection: View {
       RoundedRectangle(cornerRadius: Radius.control).fill(building == nil ? Palette.surface : Palette.primary.opacity(0.06)))
   }
 
-  @ViewBuilder private func buttons(_ platform: String, entry: BuildPlanChecks.Entry?) -> some View {
+  private func buildLogs(_ platform: String, running: Build?) -> LogQuery? {
+    if let running {
+      return .build(platform: platform, slot: running.slot, startedAt: running.startedAt)
+    }
+    guard let entry = env.builds?.builds(for: platform).first else { return nil }
+    return .build(platform: platform, slot: entry.slot, startedAt: entry.build.startedAt, finishedAt: entry.build.finishedAt)
+  }
+
+  @ViewBuilder private func checkButton(_ platform: String, entry: BuildPlanChecks.Entry?) -> some View {
     Button {
       checks.check(workspace: env.path, builds: [platform: buildKey(platform)], force: true)
     } label: {
@@ -88,13 +132,16 @@ struct BuildSection: View {
     .fixedSize()
     .disabled(running != nil || entry?.state == .checking || actions.active(for: env.path) != nil)
     .help("stim \(platform) --plan: predict the next build from the fingerprint and caches, without building")
+  }
+
+  @ViewBuilder private func runButton(_ platform: String) -> some View {
     let failed = env.lastBuilds?.build(for: platform)?.status == "failed"
     Button {
       actions.runApp(env, platform: platform)
     } label: {
       Label(failed ? "Rebuild" : "Run", systemImage: "play.fill")
     }
-    .buttonStyle(.stim(.primary))
+    .buttonStyle(.stim(.primary, .regular))
     .fixedSize()
     .disabled(running != nil || actions.active(for: env.path) != nil)
     .help("stim \(platform) with no options: the default slot and configuration; builds if needed, installs and launches")
@@ -103,11 +150,18 @@ struct BuildSection: View {
   @ViewBuilder private func lastBuild(_ platform: String) -> some View {
     if let last = env.lastBuilds?.build(for: platform) {
       TimelineView(.periodic(from: .now, by: 30)) { context in
-        Text(
-          "Last: \(last.summary)\(last.endedAt.map { " \u{00B7} \(Format.age(context.date.timeIntervalSince($0)))" } ?? "")"
-        )
-        .foregroundStyle(last.status == "ok" ? Palette.secondary : Palette.error)
-        .help(last.fingerprint.map { "Fingerprint \($0)" } ?? "")
+        VStack(alignment: .leading, spacing: Space.xs) {
+          Text(last.summary)
+            .font(.stim(.callout, weight: .semibold))
+            .foregroundStyle(last.status == "ok" ? Palette.text : Palette.error)
+            .fixedSize(horizontal: false, vertical: true)
+            .help(last.fingerprint.map { "Fingerprint \($0)" } ?? "")
+          if let endedAt = last.endedAt {
+            Text(Format.age(context.date.timeIntervalSince(endedAt)))
+              .font(.stim(.footnote))
+              .foregroundStyle(Palette.tertiary)
+          }
+        }
       }
       OffloadFallbackLine(build: last)
       if let diagnostics = last.diagnostics, !diagnostics.isEmpty {
@@ -125,7 +179,8 @@ struct BuildSection: View {
   private func checkedAt(_ date: Date?) -> some View {
     if let date {
       TimelineView(.periodic(from: .now, by: 30)) { context in
-        Text("Checked \(Format.age(context.date.timeIntervalSince(date)))").foregroundStyle(Palette.tertiary)
+        Text("Checked \(Format.age(context.date.timeIntervalSince(date)))")
+          .font(.stim(.footnote)).foregroundStyle(Palette.tertiary)
       }
     }
   }
@@ -140,7 +195,9 @@ struct BuildSection: View {
       }
     case .done(.plan(let plan)):
       VStack(alignment: .leading, spacing: Space.xxs) {
-        Text("Next build: \(plan.nextBuild)")
+        Text(plan.nextBuild)
+          .font(.stim(.callout, weight: .semibold))
+          .fixedSize(horizontal: false, vertical: true)
           .foregroundStyle(plan.refusal != nil || plan.cacheHit == .none ? Palette.warning : Palette.success)
           .help(plan.detail ?? "")
         checkedAt(entry?.checkedAt)
@@ -161,7 +218,7 @@ struct BuildSection: View {
     case .failed(let message):
       Text(message).foregroundStyle(Palette.error)
     case nil:
-      EmptyView()
+      Text("Not checked yet").foregroundStyle(Palette.tertiary)
     }
   }
 }
@@ -187,12 +244,10 @@ extension EnvironmentValues {
 }
 
 /// A running build: the phase and its counts, elapsed over the estimate, the phase bar and checklist, why the
-/// cache missed, and the latest output.
+/// cache missed.
 private struct RunningBuildDetail: View {
-  var cli: Task<StimCLI, Never>
   var env: Workspace
   var build: Build
-  @StateObject private var output = BuildOutputModel()
 
   var body: some View {
     TimelineView(.buildSeconds(build)) { context in
@@ -210,27 +265,26 @@ private struct RunningBuildDetail: View {
             .monospacedDigit()
         }
         PhaseBar(steps: barSteps(steps), key: build.key)
-        if namesPhases(steps) {
-          PhaseChecklist(steps: steps)
+        if namesPhases(steps) || build.cacheLookupOutcome != nil {
+          PhaseChecklist(steps: steps, build: build)
         }
       }
       .accessibilityElement(children: .combine)
     }
-    .task(id: "\(env.path)|\(build.slot)|\(build.startedAt)") {
-      await output.follow(cli: cli, workspace: env.path, build: build, limit: 6)
-    }
-    .onDisappear { output.stop() }
     if build.phase == "wait", let holder = build.waitingOn {
       WaitingOnButton(path: holder.path, current: env.path)
     }
+    if build.phase == "compile", let line = build.detail?.line {
+      Text(line).font(.stim(.footnote)).foregroundStyle(Palette.secondary)
+        .fixedSize(horizontal: false, vertical: true)
+    }
     if let miss = build.missReason {
+      Text(miss.summary).font(.stim(.footnote)).foregroundStyle(Palette.secondary)
+        .fixedSize(horizontal: false, vertical: true)
       MissReasonButton(reason: miss, help: "Why this build missed the cache")
       if let note = build.recheckNote {
         Text(note).font(.stim(.footnote)).foregroundStyle(Palette.tertiary)
       }
-    }
-    if !output.lines.isEmpty {
-      BuildOutputTail(lines: output.lines)
     }
   }
 }
@@ -241,7 +295,25 @@ private struct BuildHistoryList: View {
   @State private var expanded = false
 
   var body: some View {
-    DisclosureGroup(isExpanded: $expanded) {
+    AnimatedDisclosure(isExpanded: expanded) {
+      Button {
+        expanded.toggle()
+      } label: {
+        HStack(spacing: Space.sm) {
+          Image(systemName: "chevron.right")
+            .font(.system(size: 11, weight: .semibold))
+            .foregroundStyle(Palette.tertiary)
+            .rotationEffect(.degrees(expanded ? 90 : 0))
+            .frame(width: 12)
+          Text("Recent builds (\(entries.count))").foregroundStyle(Palette.secondary)
+          Spacer(minLength: 0)
+        }
+        .padding(.vertical, Space.sm)
+        .contentShape(Rectangle())
+      }
+      .buttonStyle(.hoverRow())
+      .accessibilityValue(expanded ? "Expanded" : "Collapsed")
+    } content: {
       TimelineView(.periodic(from: .now, by: 30)) { context in
         VStack(alignment: .leading, spacing: Space.xxs) {
           ForEach(entries, id: \.self) { entry in
@@ -250,8 +322,6 @@ private struct BuildHistoryList: View {
         }
         .padding(.top, Space.xs)
       }
-    } label: {
-      Text("Recent builds (\(entries.count))").foregroundStyle(Palette.secondary)
     }
   }
 }
@@ -262,6 +332,15 @@ struct BuildHistoryRow: View {
   var now: Date
   @State private var expanded = false
 
+  #if DEBUG
+    init(entry: BuildHistoryEntry, workspace: String, now: Date, expanded: Bool = false) {
+      self.entry = entry
+      self.workspace = workspace
+      self.now = now
+      _expanded = State(initialValue: expanded)
+    }
+  #endif
+
   private var color: Color {
     switch entry.result {
     case "succeeded": return Palette.success
@@ -271,7 +350,7 @@ struct BuildHistoryRow: View {
   }
 
   var body: some View {
-    VStack(alignment: .leading, spacing: Space.xs) {
+    AnimatedDisclosure(isExpanded: expanded) {
       Button {
         expanded.toggle()
       } label: {
@@ -282,43 +361,50 @@ struct BuildHistoryRow: View {
               .foregroundStyle(entry.result == "succeeded" ? Palette.secondary : color)
               .lineLimit(1)
             Spacer(minLength: 4)
-            Text(
-              [
-                entry.build.durationMs.map { Format.elapsed(ms: $0) },
-                entry.build.endedAt.map { Format.age(now.timeIntervalSince($0)) },
-              ]
-              .compactMap { $0 }.joined(separator: " \u{00B7} ")
-            )
-            .foregroundStyle(Palette.tertiary)
-            .fixedSize()
-            Image(systemName: expanded ? "chevron.down" : "chevron.right").foregroundStyle(Palette.tertiary)
+            Text(entry.build.durationMs.map { Format.elapsed(ms: $0) } ?? "")
+              .foregroundStyle(Palette.tertiary)
+              .font(.stim(.footnote))
+              .monospacedDigit()
+              .fixedSize()
+            Image(systemName: "chevron.right").foregroundStyle(Palette.tertiary)
+              .rotationEffect(.degrees(expanded ? 90 : 0))
           }
-          if let detail = entry.detail {
-            Text(detail).foregroundStyle(Palette.tertiary).lineLimit(1).padding(.leading, Space.lg)
+          if entry.result == "failed", let code = entry.build.errorCode {
+            Text(code).font(.stim(.caption, mono: true)).foregroundStyle(Palette.error)
+              .padding(.leading, Space.lg)
+          }
+          if let endedAt = entry.build.endedAt {
+            Text(Format.age(now.timeIntervalSince(endedAt)))
+              .font(.stim(.caption)).foregroundStyle(Palette.tertiary).padding(.leading, Space.lg)
           }
         }
       }
       .buttonStyle(.hoverRow(outset: Space.xs))
-      if expanded {
-        VStack(alignment: .leading, spacing: Space.xs) {
-          let facts = [entry.configuration, entry.build.fingerprint.map { "fingerprint \($0.prefix(8))" }]
-            .compactMap { $0 }
-          if !facts.isEmpty {
-            Text(facts.joined(separator: " \u{00B7} ")).foregroundStyle(Palette.tertiary)
-          }
-          if let phases = entry.phaseLine {
-            Text(phases).foregroundStyle(Palette.tertiary)
-          }
-          OffloadFallbackLine(build: entry.build)
-          if let diagnostics = entry.build.diagnostics, !diagnostics.isEmpty {
-            BuildDiagnosticsView(diagnostics: diagnostics, workspace: workspace)
-          }
-          if let reason = entry.build.missReason {
-            MissReasonButton(reason: reason, help: "Why this build missed the cache")
-          }
+    } content: {
+      VStack(alignment: .leading, spacing: Space.sm) {
+        if let detail = entry.detail {
+          Text(detail).foregroundStyle(Palette.secondary).textSelection(.enabled)
         }
-        .padding(.leading, Space.lg)
+        let facts = [entry.configuration, entry.build.fingerprint.map { "fingerprint \($0.prefix(8))" }]
+          .compactMap { $0 }
+        if !facts.isEmpty {
+          Text(facts.joined(separator: " \u{00B7} ")).foregroundStyle(Palette.tertiary)
+        }
+        if let phases = entry.phaseLine {
+          Text(phases).foregroundStyle(Palette.tertiary)
+        }
+        OffloadFallbackLine(build: entry.build)
+        if let diagnostics = entry.build.diagnostics, !diagnostics.isEmpty {
+          BuildDiagnosticsView(diagnostics: diagnostics, workspace: workspace)
+        }
+        if let reason = entry.build.missReason {
+          MissReasonButton(reason: reason, help: "Why this build missed the cache")
+        }
       }
+      .font(.stim(.footnote))
+      .fixedSize(horizontal: false, vertical: true)
+      .padding(.leading, Space.lg)
+      .padding(.vertical, Space.xs)
     }
   }
 }
@@ -402,13 +488,14 @@ struct MissReasonButton: View {
       shown.toggle()
     } label: {
       HStack(spacing: Space.xs) {
-        Text("Why: \(reason.summary)").multilineTextAlignment(.leading).fixedSize(horizontal: false, vertical: true)
+        Text("Cache miss details")
         Image(systemName: "info.circle")
       }
       .foregroundStyle(Palette.warning)
     }
     .buttonStyle(.hoverRow(outset: Space.xs))
-    .help(help)
+    .accessibilityLabel("Cache miss details: \(reason.summary)")
+    .help("\(help)\n\(reason.summary)")
     .popover(isPresented: $shown, arrowEdge: .bottom) {
       VStack(alignment: .leading, spacing: Space.md) {
         Text(reason.summary).font(.stim(.body, weight: .semibold)).textSelection(.enabled)

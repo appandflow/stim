@@ -63,6 +63,17 @@ import Testing
     #expect(built.runPlatforms == ["ios"])
   }
 
+  @Test func aSwiftPackageAppDoesNotOfferMetroOrPhoneCommands() throws {
+    let app = try workspace(
+      #","macos":{"launchId":"one","product":"Sample","bundle":"/w/Sample.app","bundleId":"dev.sample","executable":"/w/Sample.app/Contents/MacOS/Sample","state":"stopped","build":{"state":"ok","startedAt":"2026-10-04T00:00:00Z"}}"#
+    )
+    #expect(app.runPlatforms == ["macos"])
+    let menu = workspaceMenuItems(for: .workspace(metroRunning: false, platforms: app.runPlatforms, linkedWorktree: false))
+    #expect(menu.contains(.run(platform: "macos")))
+    #expect(!menu.contains(.startDevServer))
+    #expect(!menu.contains(.reload))
+  }
+
   @Test func reloadNeedsTheDevServerAndARunningLocalDevice() throws {
     let metro = #","metro":{"port":8081,"running":true,"pid":1}"#
     let booted = #","ios":{"name":"stim-w (iPhone 18 Pro 27.0)","udid":"A","owned":true,"state":"Booted"}"#

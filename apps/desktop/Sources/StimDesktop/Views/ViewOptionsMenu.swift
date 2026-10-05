@@ -55,7 +55,7 @@ struct ViewOptionsButton: View {
           }
         }
     }
-    .buttonStyle(.icon(tint: differs ? Palette.primary : Palette.secondary, active: isPresented))
+    .nativeIconStyle(tint: differs ? Palette.primary : Palette.secondary, active: isPresented)
     .accessibilityLabel("View options")
     .help(differs ? "View options (filtered)" : "View options")
     .popover(isPresented: $isPresented, arrowEdge: .bottom) {

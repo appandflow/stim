@@ -7,7 +7,7 @@ import {
   type NeedsAttentionInput,
 } from '@stim-cli/core/oversight';
 
-export { STALE_MS, type NeedsAttentionInput, type NeedsAttentionItem } from '@stim-cli/core/oversight';
+export { STALE_MS, type NeedsAttentionInput } from '@stim-cli/core/oversight';
 
 function languageName(language: string | undefined): string | undefined {
   switch (language) {

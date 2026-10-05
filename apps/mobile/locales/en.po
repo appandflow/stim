@@ -154,10 +154,6 @@ msgstr "{days}d ago"
 msgid "{done} of {total} {unit}"
 msgstr "{done} of {total} {unit}"
 
-#: src/screens/device-view.tsx
-msgid "{driverName} is driving it. Your touches and keys can interfere with its work."
-msgstr "{driverName} is driving it. Your touches and keys can interfere with its work."
-
 #: src/screens/mac-status.tsx
 msgid "{duration} saved"
 msgstr "{duration} saved"
@@ -215,8 +211,8 @@ msgid "{hidden, plural, one {# more source changed.} other {# more sources chang
 msgstr "{hidden, plural, one {# more source changed.} other {# more sources changed.}}"
 
 #: src/screens/home.tsx
-msgid "{hiddenByActivity, plural, one {# idle workspace hidden.} other {# idle workspaces hidden.}}"
-msgstr "{hiddenByActivity, plural, one {# idle workspace hidden.} other {# idle workspaces hidden.}}"
+msgid "{hiddenByActivity, plural, one {# idle app hidden.} other {# idle apps hidden.}}"
+msgstr "{hiddenByActivity, plural, one {# idle app hidden.} other {# idle apps hidden.}}"
 
 #: src/intl/format.ts
 #: src/lib/replay.ts
@@ -338,10 +334,6 @@ msgstr "{minutesLeft} min left"
 #: src/screens/device-view.tsx
 msgid "{model} · {slot}"
 msgstr "{model} · {slot}"
-
-#: src/components/attention-strip.tsx
-msgid "{more} more"
-msgstr "{more} more"
 
 #: src/lib/workspace-view.ts
 msgid "{msg} · {elapsed} ago"
@@ -860,10 +852,6 @@ msgstr "Android Emulator"
 msgid "Android platform missing"
 msgstr "Android platform missing"
 
-#: src/screens/device-view.tsx
-msgid "Another client"
-msgstr "Another client"
-
 #: src/lib/machine-report.ts
 msgid "Another Stim home"
 msgstr "Another Stim home"
@@ -918,6 +906,10 @@ msgstr "Back"
 msgid "Background notifications need an iPhone and a Mac that sends push."
 msgstr "Background notifications need an iPhone and a Mac that sends push."
 
+#: src/components/viewer-keyboard.tsx
+msgid "Backspace"
+msgstr "Backspace"
+
 #: src/screens/workspace-work.tsx
 msgid "Behind"
 msgstr "Behind"
@@ -940,12 +932,15 @@ msgid "Budgets"
 msgstr "Budgets"
 
 #: src/components/workspace-cards.tsx
+#: src/components/workspace-cards.tsx
 #: src/lib/logs.ts
 #: src/lib/workspace-view.ts
 #: src/screens/build-details.tsx
 msgid "Build"
 msgstr "Build"
 
+#: src/components/workspace-cards.tsx
+#: src/lib/device-tile.ts
 #: src/lib/workspace-view.ts
 msgid "Build failed"
 msgstr "Build failed"
@@ -970,6 +965,8 @@ msgstr "Build-tools missing"
 msgid "Build: {spoken}"
 msgstr "Build: {spoken}"
 
+#: src/components/workspace-cards.tsx
+#: src/lib/device-tile.ts
 #: src/lib/workspace-view.ts
 msgid "Building"
 msgstr "Building"
@@ -998,6 +995,10 @@ msgstr "Building {platform}, slot {slot}"
 #: src/screens/mac-status.tsx
 msgid "Builds for other Macs"
 msgstr "Builds for other Macs"
+
+#: src/components/workspace-cards.tsx
+msgid "Built"
+msgstr "Built"
 
 #: src/lib/build-machines.ts
 msgid "Built here"
@@ -1123,7 +1124,6 @@ msgid "Can control"
 msgstr "Can control"
 
 #: src/hooks/app-update.ts
-#: src/screens/device-view.tsx
 #: src/screens/mac-list.tsx
 #: src/screens/workspace-detail.tsx
 #: src/screens/workspace-detail.tsx
@@ -1310,6 +1310,10 @@ msgstr "cold build{off}{native}{why}"
 msgid "Collapses the section"
 msgstr "Collapses the section"
 
+#: src/components/viewer-keyboard.tsx
+msgid "Command"
+msgstr "Command"
+
 #: src/screens/build-details.tsx
 msgid "Compared with {fingerprint}, the last build in this workspace."
 msgstr "Compared with {fingerprint}, the last build in this workspace."
@@ -1348,6 +1352,7 @@ msgstr "Connection closed."
 msgid "Connection lost."
 msgstr "Connection lost."
 
+#: src/components/viewer-keyboard.tsx
 #: src/screens/device-view.tsx
 #: src/screens/device-view.tsx
 msgid "Control"
@@ -1365,6 +1370,7 @@ msgstr "Control ended. {ended}"
 msgid "Copied"
 msgstr "Copied"
 
+#: src/components/viewer-keyboard.tsx
 #: src/screens/about.tsx
 #: src/screens/home.tsx
 #: src/screens/logs.tsx
@@ -1430,6 +1436,10 @@ msgstr "Crash"
 msgid "Created by this Stim home; no workspace uses it"
 msgstr "Created by this Stim home; no workspace uses it"
 
+#: src/components/viewer-keyboard.tsx
+msgid "Cut"
+msgstr "Cut"
+
 #: src/lib/settings-options.ts
 msgid "Dark"
 msgstr "Dark"
@@ -1455,6 +1465,10 @@ msgstr "Dependencies"
 #: src/screens/mac-status.tsx
 msgid "Device"
 msgstr "Device"
+
+#: src/screens/device-view.tsx
+msgid "Device frame"
+msgstr "Device frame"
 
 #: src/screens/settings.ios.tsx
 #: src/screens/settings.tsx
@@ -1511,9 +1525,13 @@ msgstr "Disk free"
 msgid "Disk use by category"
 msgstr "Disk use by category"
 
-#: src/screens/device-view.tsx
+#: src/components/viewer-keyboard.tsx
 msgid "Done"
 msgstr "Done"
+
+#: src/components/viewer-keyboard.tsx
+msgid "Down"
+msgstr "Down"
 
 #: src/lib/workspace-view.ts
 msgid "Download"
@@ -1609,13 +1627,14 @@ msgstr "Enter the pairing token Stim Desktop shows."
 msgid "Error"
 msgstr "Error"
 
-#: src/components/attention-strip.tsx
-msgid "Error: {title} on {macName}, {detail}"
-msgstr "Error: {title} on {macName}, {detail}"
-
 #: src/screens/logs.tsx
 msgid "Errors"
 msgstr "Errors"
+
+#: src/components/viewer-keyboard.tsx
+#: src/components/viewer-keyboard.tsx
+msgid "Esc"
+msgstr "Esc"
 
 #: src/lib/workspace-view.ts
 msgid "est."
@@ -1673,6 +1692,10 @@ msgstr "Filters"
 #: src/screens/filters.tsx
 msgid "Filters are saved on this phone."
 msgstr "Filters are saved on this phone."
+
+#: src/components/viewer-keyboard.tsx
+msgid "Find"
+msgstr "Find"
 
 #: src/screens/build-details.tsx
 msgid "fingerprint {fingerprint}"
@@ -1792,6 +1815,7 @@ msgstr "High"
 msgid "hit"
 msgstr "hit"
 
+#: src/screens/device-view.tsx
 #: src/screens/device-view.tsx
 #: src/screens/settings.ios.tsx
 #: src/screens/settings.tsx
@@ -1994,6 +2018,10 @@ msgstr "Leased · {leaseLeft} left"
 msgid "Leased devices"
 msgstr "Leased devices"
 
+#: src/components/viewer-keyboard.tsx
+msgid "Left"
+msgstr "Left"
+
 #: src/lib/format.ts
 msgid "less than a minute"
 msgstr "less than a minute"
@@ -2044,6 +2072,10 @@ msgstr "Live workspaces"
 #: src/components/replay-bar.tsx
 msgid "Live, device stopped"
 msgstr "Live, device stopped"
+
+#: src/screens/logs.tsx
+msgid "Load older logs"
+msgstr "Load older logs"
 
 #: src/components/mac-chip.tsx
 #: src/components/mac-chip.tsx
@@ -2109,6 +2141,14 @@ msgstr "Machine status"
 msgid "Machines"
 msgstr "Machines"
 
+#: src/lib/workspaces.ts
+msgid "macOS app"
+msgstr "macOS app"
+
+#: src/components/workspace-cards.tsx
+msgid "macOS build: {state}"
+msgstr "macOS build: {state}"
+
 #: src/screens/about.tsx
 msgid "Made by App&Flow"
 msgstr "Made by App&Flow"
@@ -2139,6 +2179,7 @@ msgid "Memory budget"
 msgstr "Memory budget"
 
 #: src/screens/home.tsx
+#: src/screens/inbox.tsx
 msgid "Menu"
 msgstr "Menu"
 
@@ -2186,6 +2227,11 @@ msgstr "Midnight to 8 AM"
 msgid "miss: {summary}"
 msgstr "miss: {summary}"
 
+#: src/components/viewer-keyboard.tsx
+msgid "Modifiers apply to one letter or digit at a time. Use the extra keys for navigation."
+msgstr "Modifiers apply to one letter or digit at a time. Use the extra keys for navigation."
+
+#: src/components/viewer-toolbar.tsx
 #: src/screens/settings.ios.tsx
 #: src/screens/settings.tsx
 #: src/screens/workspace-detail.tsx
@@ -2454,10 +2500,6 @@ msgstr "Not on the tailnet"
 msgid "Not paired"
 msgstr "Not paired"
 
-#: src/lib/attention.ts
-msgid "Not paired: pair again"
-msgstr "Not paired: pair again"
-
 #: src/components/device-tile.tsx
 msgid "Not running · {deviceState}"
 msgstr "Not running · {deviceState}"
@@ -2495,9 +2537,7 @@ msgstr "Nothing Stim tracks is using CPU or memory."
 msgid "nothing yet"
 msgstr "nothing yet"
 
-#: src/app/_layout.tsx
-#: src/components/attention-strip.tsx
-#: src/components/attention-strip.tsx
+#: src/app/(home)/_layout.tsx
 #: src/screens/menu.tsx
 #: src/screens/settings.ios.tsx
 #: src/screens/settings.tsx
@@ -2507,10 +2547,6 @@ msgstr "Notifications"
 #: src/hooks/notifications.tsx
 msgid "Notifications are off for Stim"
 msgstr "Notifications are off for Stim"
-
-#: src/components/attention-strip.tsx
-msgid "Notifications, {unread} unread"
-msgstr "Notifications, {unread} unread"
 
 #: src/screens/settings.ios.tsx
 #: src/screens/settings.tsx
@@ -2546,15 +2582,10 @@ msgstr "off"
 msgid "Off"
 msgstr "Off"
 
-#: src/lib/attention.ts
 #: src/lib/home-list.ts
 #: src/lib/home-list.ts
 msgid "Offline"
 msgstr "Offline"
-
-#: src/lib/attention.ts
-msgid "Offline · last seen {ago} ago"
-msgstr "Offline · last seen {ago} ago"
 
 #: src/components/mac-chip.tsx
 msgid "Offline · retrying in {seconds}s"
@@ -2640,6 +2671,10 @@ msgid "Opens {name}"
 msgstr "Opens {name}"
 
 #: src/components/workspace-cards.tsx
+msgid "Opens build logs"
+msgstr "Opens build logs"
+
+#: src/components/workspace-cards.tsx
 msgid "Opens the logs"
 msgstr "Opens the logs"
 
@@ -2654,6 +2689,10 @@ msgstr "Opens the workspace"
 #: src/screens/agent-actions.tsx
 msgid "Opens this action in the agent log"
 msgstr "Opens this action in the agent log"
+
+#: src/components/viewer-keyboard.tsx
+msgid "Option"
+msgstr "Option"
 
 #: src/lib/build-machines.ts
 msgid "Other CPU"
@@ -2716,6 +2755,10 @@ msgstr "Parked emulator, kept for reuse"
 #: src/lib/machine-report.ts
 msgid "Parked simulator, kept for reuse"
 msgstr "Parked simulator, kept for reuse"
+
+#: src/components/viewer-keyboard.tsx
+msgid "Paste"
+msgstr "Paste"
 
 #: src/components/replay-bar.tsx
 msgid "Pause"
@@ -2902,14 +2945,6 @@ msgstr "Recording timeline"
 msgid "Recordings"
 msgstr "Recordings"
 
-#: src/lib/attention.ts
-msgid "Refused the connection: needs an update"
-msgstr "Refused the connection: needs an update"
-
-#: src/lib/attention.ts
-msgid "Refused the connection: pair again"
-msgstr "Refused the connection: pair again"
-
 #: src/lib/home.ts
 msgid "Refuses to run"
 msgstr "Refuses to run"
@@ -2997,6 +3032,10 @@ msgstr "Restart to update"
 msgid "Restart to update?"
 msgstr "Restart to update?"
 
+#: src/screens/pair.tsx
+msgid "Retry"
+msgstr "Retry"
+
 #: src/screens/workspace-work.tsx
 msgid "Review"
 msgstr "Review"
@@ -3008,6 +3047,10 @@ msgstr "Review required"
 #: src/lib/build-machines.ts
 msgid "Revoked"
 msgstr "Revoked"
+
+#: src/components/viewer-keyboard.tsx
+msgid "Right"
+msgstr "Right"
 
 #: src/screens/device-view.tsx
 msgid "Rotate left"
@@ -3063,6 +3106,7 @@ msgstr "Same {language} error {count}x at {file}:{line}"
 msgid "Same {name} build error {count}x at {file}:{line}"
 msgstr "Same {name} build error {count}x at {file}:{line}"
 
+#: src/components/viewer-keyboard.tsx
 #: src/screens/pair.tsx
 #: src/screens/rename.tsx
 msgid "Save"
@@ -3082,6 +3126,10 @@ msgid "Screen updates delayed"
 msgstr "Screen updates delayed"
 
 #: src/screens/device-view.tsx
+msgid "Scroll"
+msgstr "Scroll"
+
+#: src/screens/device-view.tsx
 msgid "Scrub below to replay what it recorded."
 msgstr "Scrub below to replay what it recorded."
 
@@ -3092,6 +3140,10 @@ msgstr "Search (regular expression)"
 #: src/screens/logs.tsx
 msgid "Search logs"
 msgstr "Search logs"
+
+#: src/components/viewer-keyboard.tsx
+msgid "Select all"
+msgstr "Select all"
 
 #: src/lib/build-machines.ts
 #: src/lib/build-machines.ts
@@ -3106,6 +3158,10 @@ msgstr "Set by STIM_RECORDING on the Mac"
 #: src/screens/menu.tsx
 msgid "Settings"
 msgstr "Settings"
+
+#: src/screens/device-view.tsx
+msgid "Shake"
+msgstr "Shake"
 
 #: src/screens/logs.tsx
 msgid "Share"
@@ -3122,6 +3178,10 @@ msgstr "Shared by the machine"
 #: src/screens/mac-status.tsx
 msgid "Shared caches builds refill. Empty one on your Mac with stim gc --delete --cache."
 msgstr "Shared caches builds refill. Empty one on your Mac with stim gc --delete --cache."
+
+#: src/components/viewer-keyboard.tsx
+msgid "Shift"
+msgstr "Shift"
 
 #: src/screens/filters.tsx
 msgid "Show"
@@ -3144,7 +3204,6 @@ msgstr "Show all {count} {title}"
 msgid "Show errors"
 msgstr "Show errors"
 
-#: src/components/attention-strip.tsx
 #: src/lib/sections.ts
 msgid "Show fewer"
 msgstr "Show fewer"
@@ -3200,6 +3259,10 @@ msgstr "Silent"
 msgid "Simulator"
 msgstr "Simulator"
 
+#: src/screens/device-view.tsx
+msgid "Simulator option not changed"
+msgstr "Simulator option not changed"
+
 #: src/lib/build-machines.ts
 msgid "Simulator SDK differs"
 msgstr "Simulator SDK differs"
@@ -3215,6 +3278,10 @@ msgstr "Simulators and emulators appear here while they run, on every paired mac
 #: src/lib/format.ts
 msgid "slot {slot}"
 msgstr "slot {slot}"
+
+#: src/screens/device-view.tsx
+msgid "Slow animations"
+msgstr "Slow animations"
 
 #: src/lib/settings-options.ts
 msgid "Someone takes over your device"
@@ -3253,6 +3320,7 @@ msgid "Status"
 msgstr "Status"
 
 #: src/app/_layout.tsx
+#: src/app/(home)/_layout.tsx
 #: src/lib/notifications.ts
 #: src/screens/about.tsx
 #: src/screens/home.tsx
@@ -3417,18 +3485,17 @@ msgstr "Sync"
 msgid "System"
 msgstr "System"
 
+#: src/components/viewer-keyboard.tsx
+msgid "Tab"
+msgstr "Tab"
+
 #: src/lib/build-machines.ts
 msgid "Tailscale is off"
 msgstr "Tailscale is off"
 
 #: src/screens/device-view.tsx
-#: src/screens/device-view.tsx
 msgid "Take over"
 msgstr "Take over"
-
-#: src/screens/device-view.tsx
-msgid "Take over this device?"
-msgstr "Take over this device?"
 
 #: src/screens/home.tsx
 msgid "Tap a prompt to copy it for your coding agent."
@@ -3553,8 +3620,8 @@ msgstr "Try again"
 msgid "Try closing and reopening Stim."
 msgstr "Try closing and reopening Stim."
 
-#: src/screens/device-view.tsx
-#: src/screens/device-view.tsx
+#: src/components/viewer-keyboard.tsx
+#: src/components/viewer-keyboard.tsx
 msgid "Type on the device"
 msgstr "Type on the device"
 
@@ -3569,6 +3636,10 @@ msgstr "under a minute left"
 #: src/screens/mac-status.tsx
 msgid "Under the {budgetSize} Stim budget"
 msgstr "Under the {budgetSize} Stim budget"
+
+#: src/components/viewer-keyboard.tsx
+msgid "Undo"
+msgstr "Undo"
 
 #: src/screens/device-view.tsx
 msgid "Unfold"
@@ -3610,6 +3681,10 @@ msgstr "Untracked"
 msgid "Unused"
 msgstr "Unused"
 
+#: src/components/viewer-keyboard.tsx
+msgid "Up"
+msgstr "Up"
+
 #: src/lib/workspace-view.ts
 msgid "up {up}"
 msgstr "up {up}"
@@ -3626,6 +3701,10 @@ msgstr "Up to date"
 msgid "Update"
 msgstr "Update"
 
+#: src/components/viewer-keyboard.tsx
+msgid "Update Stim on the Mac to use modifiers with letters and digits. The extra keys and shortcuts still work."
+msgstr "Update Stim on the Mac to use modifiers with letters and digits. The extra keys and shortcuts still work."
+
 #: src/screens/mac-status.tsx
 msgid "Update stim-server on the Mac to see caches, runtimes and what Stim can free."
 msgstr "Update stim-server on the Mac to see caches, runtimes and what Stim can free."
@@ -3633,6 +3712,10 @@ msgstr "Update stim-server on the Mac to see caches, runtimes and what Stim can 
 #: src/lib/workspaces.ts
 msgid "Update stim-server on the Mac to see this device's screen."
 msgstr "Update stim-server on the Mac to see this device's screen."
+
+#: src/lib/workspaces.ts
+msgid "Update stim-server on the Mac to view this app window."
+msgstr "Update stim-server on the Mac to view this app window."
 
 #: src/screens/inbox.tsx
 msgid "Update stim-server on your Macs to keep a history of their notifications."
@@ -3725,10 +3808,6 @@ msgstr "Warming the workspace"
 #: src/screens/logs.tsx
 msgid "Warning"
 msgstr "Warning"
-
-#: src/components/attention-strip.tsx
-msgid "Warning: {title} on {macName}, {detail}"
-msgstr "Warning: {title} on {macName}, {detail}"
 
 #: src/screens/logs.tsx
 msgid "Warnings"

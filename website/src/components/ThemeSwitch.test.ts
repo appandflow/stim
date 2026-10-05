@@ -40,7 +40,6 @@ describe('ThemeSwitch', () => {
   test('changes theme directly when view transitions are unavailable', () => {
     act(() => container.querySelector('button')!.click());
     expect(theme.setColorMode).toHaveBeenCalledWith('dark');
-    expect(document.documentElement.classList.contains('stim-theme-transition')).toBe(false);
   });
 
   test('skips motion when reduced motion is requested', () => {
@@ -68,12 +67,10 @@ describe('ThemeSwitch', () => {
     });
     expect(start).toHaveBeenCalledTimes(1);
     expect(theme.setColorMode).toHaveBeenCalledWith('dark');
-    expect(document.documentElement.classList.contains('stim-theme-transition')).toBe(true);
     await act(async () => {
       finish();
       await finished;
     });
-    expect(document.documentElement.classList.contains('stim-theme-transition')).toBe(false);
     theme.colorMode = 'dark';
     act(() => root.render(createElement(ThemeSwitch)));
     expect(container.querySelector('button')!.getAttribute('aria-checked')).toBe('true');

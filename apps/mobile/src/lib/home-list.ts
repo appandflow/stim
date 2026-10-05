@@ -19,11 +19,17 @@ import {
 } from '@/lib/workspaces';
 import type { AgentSession, EnvironmentState, Platform } from '@/protocol/types';
 
+export interface HomeWorkspace {
+  key: string;
+  title: string;
+  apps: HomeItem[];
+}
+
 export interface HomeSection {
   project: string;
   live: number;
   idle: number;
-  data: HomeItem[];
+  data: HomeWorkspace[];
 }
 
 /**
@@ -31,11 +37,21 @@ export interface HomeSection {
  * ones, each keeping the order of `items`, so a row moves only when it turns live or idle.
  */
 export function homeSections(items: HomeItem[]): HomeSection[] {
-  const groups = new Map<string, { live: HomeItem[]; idle: HomeItem[] }>();
+  const checkouts = new Map<string, HomeWorkspace>();
   for (const item of items) {
-    const group = groups.get(item.project) ?? { live: [], idle: [] };
-    groups.set(item.project, group);
-    (isShownLive(item.env) ? group.live : group.idle).push(item);
+    const checkout = item.env.worktree?.path;
+    const key = `${item.macId}\n${checkout ? `checkout\n${checkout}` : `app\n${item.env.path}`}`;
+    const workspace = checkouts.get(key) ?? { key, title: item.title, apps: [] };
+    workspace.apps.push(item);
+    checkouts.set(key, workspace);
+  }
+  const groups = new Map<string, { live: HomeWorkspace[]; idle: HomeWorkspace[] }>();
+  for (const workspace of checkouts.values()) {
+    workspace.apps.sort((a, b) => a.env.path.localeCompare(b.env.path));
+    const project = workspace.apps[0].project;
+    const group = groups.get(project) ?? { live: [], idle: [] };
+    groups.set(project, group);
+    (workspace.apps.some((app) => isShownLive(app.env)) ? group.live : group.idle).push(workspace);
   }
   return [...groups]
     .map(([project, { live, idle }]) => ({ project, live: live.length, idle: idle.length, data: [...live, ...idle] }))

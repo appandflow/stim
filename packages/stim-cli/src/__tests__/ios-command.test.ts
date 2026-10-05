@@ -1967,6 +1967,11 @@ describe('single-flight builds', () => {
         acquireBuildLock: () => heldBy(),
         waitForBuild: async ({ out }) => {
           out?.('build       waiting on /w/app-999 (pid 41233, 4m elapsed) -- tail /w/app-999/x.ndjson');
+          expect(parseActiveBuild(readWorkspaceState(root)?.[ACTIVE_BUILD_KEY])).toMatchObject({
+            phase: 'wait',
+            outcome: 'cold',
+            missReason: { kind: 'no-baseline' },
+          });
           return { hit: '/cache/Fixture.app', waitedMs: 240000 };
         },
       },
@@ -6627,7 +6632,7 @@ describe('run statistics', () => {
     expect(runs).toHaveLength(1);
     expect(runs[0]?.run).toEqual({
       platform: 'ios',
-      projectKey: root,
+      projectKey: realpathSync.native(root),
       failed: false,
       cacheHit: false,
       waitedForBuild: false,
@@ -7186,7 +7191,7 @@ describe('--plan', () => {
       recordRunStats(
         {
           platform: 'ios',
-          projectKey: root,
+          projectKey: realpathSync.native(root),
           failed: false,
           cacheHit: outcome === 'hit' ? 'local' : false,
           waitedForBuild: false,

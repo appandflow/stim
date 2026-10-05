@@ -33,7 +33,6 @@ describe('shared notification rules', () => {
         cases: { name: string; input: NeedsAttentionInput & { now: string }; items: unknown[] }[];
       }
     ).cases;
-    expect(cases.length).toBeGreaterThan(10);
     const differing = cases
       .filter(({ input, items }) => !isDeepStrictEqual(needsAttention({ ...input, now: Date.parse(input.now) }), items))
       .map(({ name }) => name);

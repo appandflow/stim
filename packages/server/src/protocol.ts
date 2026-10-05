@@ -1,4 +1,16 @@
-import type { BuildPlanPayload, NdjsonRecord, StatusPayload } from '@stim-cli/core/state';
+import type {
+  BuildPlanPayload,
+  HostedDeviceRequest,
+  HostedDeviceOfferRequest,
+  HostedDeviceOffer,
+  HostedDeviceSession,
+  HostedAppOffer,
+  HostedAppDelivery,
+  HostedAppLaunch,
+  NdjsonRecord,
+  StatusPayload,
+} from '@stim-cli/core/state';
+import type { ServeRoute } from './tailscale.ts';
 
 export const PROTOCOL_VERSION = 1;
 
@@ -7,8 +19,9 @@ export const PROTOCOL_SCHEMA_FILE = 'protocol.schema.json';
 /**
  * `read` serves state. `control` also runs {@link ACTIONS}; only the Mac grants it. `build` lets another Mac run
  * project code here to build for it; it never comes with `read` or `control`, and only the Mac approves it.
+ * `device-host` permits a client's native app code in its own hosted sessions, and grants no other capability.
  */
-export const CAPABILITIES = ['read', 'control', 'build'] as const;
+export const CAPABILITIES = ['read', 'control', 'build', 'device-host'] as const;
 
 export type Capability = (typeof CAPABILITIES)[number];
 
@@ -18,12 +31,21 @@ export type Capability = (typeof CAPABILITIES)[number];
  * Android phone also on `control.begin`. An older server ignores `physical` on `frames.subscribe` and would stream
  * the slot's Stim-owned device instead. `notifications` is `notifications.list` and the `notification` event.
  */
-export const FEATURES = ['physical-ios', 'physical-android', 'notifications'] as const;
+export const FEATURES = [
+  'physical-ios',
+  'physical-android',
+  'notifications',
+  'macos-window',
+  'macos-window-control',
+  'macos-keyboard-extended',
+  'device-frames',
+] as const;
 
 export type Feature = (typeof FEATURES)[number];
 
 export const METHODS = [
   'hello',
+  'route.setup',
   'status.subscribe',
   'logs.query',
   'logs.subscribe',
@@ -49,6 +71,9 @@ export const METHODS = [
   'input.button',
   'input.rotate',
   'input.posture',
+  'input.simulator',
+  'input.scroll',
+  'input.key',
   'push.register',
   'push.unregister',
   'notifications.list',
@@ -58,6 +83,26 @@ export const METHODS = [
   'build.cancel',
   'build.artifact',
   'build.attach',
+  'device-host.offer',
+  'device-host.reserve',
+  'device-host.attach',
+  'device-host.stop',
+  'device-host.app.offer',
+  'device-host.app.chunk',
+  'device-host.app.launch',
+  'device-host.app.attach',
+  'device-host.metro.open',
+  'device-host.metro.close',
+  'device-host.frames.subscribe',
+  'device-host.frames.keyframe',
+  'device-host.unsubscribe',
+  'device-host.control.begin',
+  'device-host.control.end',
+  'device-host.input.touch',
+  'device-host.input.text',
+  'device-host.input.button',
+  'device-host.input.rotate',
+  'device-host.input.posture',
 ] as const;
 
 /** The methods a connection with the `build` capability may call; they need `build`, not `read`. */
@@ -68,6 +113,30 @@ export const BUILD_METHODS = [
   'build.cancel',
   'build.artifact',
   'build.attach',
+] as const;
+
+/** Methods restricted to explicitly approved device-host clients. */
+export const DEVICE_HOST_METHODS = [
+  'device-host.offer',
+  'device-host.reserve',
+  'device-host.attach',
+  'device-host.stop',
+  'device-host.app.offer',
+  'device-host.app.chunk',
+  'device-host.app.launch',
+  'device-host.app.attach',
+  'device-host.metro.open',
+  'device-host.metro.close',
+  'device-host.frames.subscribe',
+  'device-host.frames.keyframe',
+  'device-host.unsubscribe',
+  'device-host.control.begin',
+  'device-host.control.end',
+  'device-host.input.touch',
+  'device-host.input.text',
+  'device-host.input.button',
+  'device-host.input.rotate',
+  'device-host.input.posture',
 ] as const;
 
 export type Method = (typeof METHODS)[number];
@@ -130,10 +199,16 @@ export interface BuildRequestAuth {
   deviceName: string;
 }
 
+/** Requests explicit device hosting approval; grants no read, control or build access. */
+export interface DeviceHostRequestAuth {
+  request: 'device-host';
+  deviceName: string;
+}
+
 export interface HelloParams {
   protocol: number;
   client: { name: string; version: string };
-  auth: PairingAuth | DeviceAuth | BuildRequestAuth;
+  auth: PairingAuth | DeviceAuth | BuildRequestAuth | DeviceHostRequestAuth;
 }
 
 export interface HelloResult {
@@ -149,9 +224,9 @@ export interface HelloResult {
   actions: ActionName[];
   /** The paired device this connection authenticated as, as `stim-server devices` lists it. */
   device: { id: string; name: string };
-  /** Present only when the hello spent a pairing token or requested build access. The server keeps only its hash. */
+  /** Present only when the hello spent a pairing token or requested build or device-host access. The server keeps only its hash. */
   deviceToken?: string;
-  /** Present only on a build request, which the server then closes; the request lapses at `expiresAt`. */
+  /** Present only on a build or device-host request, which the server then closes; the request lapses at `expiresAt`. */
   approval?: { state: 'pending'; expiresAt: string };
 }
 
@@ -207,12 +282,13 @@ export type StatsResult = Record<string, unknown>;
 export type SettingsResult = Record<string, unknown>;
 
 /** `web` is the workspace's Stim-owned Chrome page, from `stim web`; it has only the default slot. */
-export const PLATFORMS = ['ios', 'android', 'web'] as const;
+export const PLATFORMS = ['ios', 'android', 'web', 'macos'] as const;
 
 export type Platform = (typeof PLATFORMS)[number];
 
 /** The platforms `build.plan` predicts builds for. */
-export type BuildPlatform = Exclude<Platform, 'web'>;
+export type BuildPlatform = Extract<Platform, 'ios' | 'android'>;
+export type ControlPlatform = Platform;
 
 /** `reload` also reaches the workspace's Stim-owned Chrome page. */
 export const RELOAD_PLATFORMS = ['ios', 'android', 'web'] as const;
@@ -233,6 +309,8 @@ export const FRAME_EDGE = { min: 240, default: 1280, max: 2048 } as const;
  * frames, and larger ones while another subscriber of the same device asks for more.
  */
 export interface FrameTarget {
+  /** Requests installed ordinary-device artwork for this live subscription. */
+  deviceFrame?: boolean;
   workspace: string;
   platform: Platform;
   slot?: string;
@@ -379,9 +457,12 @@ export const VIDEO_KEYFRAME = 1;
 export const VIDEO_FOLDED = 2;
 export const VIDEO_UNFOLDED = 4;
 
+/** Bit 5 marks clockwise artwork quarter-turns in bits 3-4; absent on recordings and unsupported sources. */
+export const VIDEO_ARTWORK = 32;
+
 /**
  * The layout of a binary video message, big-endian: u8 version ({@link VIDEO_HEADER_VERSION}), u8 flags
- * ({@link VIDEO_KEYFRAME}, and on an iPhone Duo {@link VIDEO_FOLDED} or {@link VIDEO_UNFOLDED}), u16 header length, u32 sequence number of the messages sent on this subscription, f64 capture time in milliseconds since the
+ * ({@link VIDEO_KEYFRAME}, posture bits and {@link VIDEO_ARTWORK}), u16 header length, u32 sequence number of the messages sent on this subscription, f64 capture time in milliseconds since the
  * epoch on the Mac's clock, u16 width, u16 height, u8 subscription id length N, N bytes of ASCII subscription
  * id. After the header comes one Annex-B H.264 access unit; a keyframe carries its SPS and PPS. The stream has
  * no B-frames, so each access unit is shown as it arrives.
@@ -394,6 +475,7 @@ export interface VideoPacket {
   width: number;
   height: number;
   posture?: 'folded' | 'unfolded';
+  artworkTurns?: number;
   accessUnit: Uint8Array;
 }
 
@@ -426,7 +508,7 @@ export interface ActionResult {
  */
 export interface ControlBeginParams {
   workspace: string;
-  platform: Platform;
+  platform: ControlPlatform;
   slot?: string;
   physical?: boolean;
   takeOver?: boolean;
@@ -434,7 +516,7 @@ export interface ControlBeginParams {
 
 /**
  * `lease` is the `stim device lock` lease the server holds for the session, or null when it holds none, such
- * as after taking over a device another workspace leases, and always for a web page, which `stim device lock`
+ * as after taking over a device another workspace leases, and always for a web page or native macOS app, which `stim device lock`
  * does not cover. For a physical device it is the workspace's own lease, which the session ends with. `postures` lists what `input.posture` accepts for
  * the device: `folded` and `unfolded` for an iPhone Duo, all three for an emulator with a hinge, and none
  * otherwise.
@@ -444,7 +526,18 @@ export interface ControlBeginResult {
   platform: Platform;
   lease: { grantedAt: string | null; expiresAt: string } | null;
   postures: DevicePosture[];
+  simulator?: SimulatorOptions;
 }
+
+/** Available simulator controls and the current guest animation setting; null means unsupported. */
+export interface SimulatorOptions {
+  canShake: boolean;
+  slowAnimations: boolean | null;
+}
+
+export type SimulatorCommand = { action: 'read' | 'shake' } | { action: 'slow-animations'; enabled: boolean };
+
+export type InputSimulatorParams = SimulatorCommand & { session: string };
 
 export interface ControlEndParams {
   session: string;
@@ -465,6 +558,72 @@ export interface InputTouchParams {
   x: number;
   y: number;
   display?: number;
+}
+
+/** Native macOS pixel scrolling at a normalized point of the captured window. Deltas are capped at 1000 pixels. */
+export interface InputScrollParams {
+  session: string;
+  x: number;
+  y: number;
+  deltaX: number;
+  deltaY: number;
+}
+
+export const INPUT_KEYS = [
+  'escape',
+  'tab',
+  'return',
+  'backspace',
+  'left',
+  'right',
+  'up',
+  'down',
+  'a',
+  'b',
+  'c',
+  'd',
+  'e',
+  'f',
+  'g',
+  'h',
+  'i',
+  'j',
+  'k',
+  'l',
+  'm',
+  'n',
+  'o',
+  'p',
+  'q',
+  'r',
+  's',
+  't',
+  'u',
+  'v',
+  'w',
+  'x',
+  'y',
+  'z',
+  '0',
+  '1',
+  '2',
+  '3',
+  '4',
+  '5',
+  '6',
+  '7',
+  '8',
+  '9',
+] as const;
+export type InputKey = (typeof INPUT_KEYS)[number];
+export const KEY_MODIFIERS = ['command', 'shift', 'option', 'control'] as const;
+export type KeyModifier = (typeof KEY_MODIFIERS)[number];
+
+/** A fixed native macOS key and optional modifiers, sent only to the captured owned app window. */
+export interface InputKeyParams {
+  session: string;
+  key: InputKey;
+  modifiers?: KeyModifier[];
 }
 
 export const MAX_INPUT_TEXT = 256;
@@ -857,6 +1016,39 @@ export interface NotificationsListResult {
 }
 
 export interface Methods {
+  'device-host.offer': { params: HostedDeviceOfferRequest; result: HostedDeviceOffer };
+  'route.setup': { params?: Record<string, never>; result: ServeRoute };
+  'device-host.reserve': { params: HostedDeviceRequest; result: HostedDeviceSession };
+  'device-host.attach': { params: { session: string } | { attempt: string }; result: HostedDeviceSession };
+  'device-host.stop': { params: { session: string }; result: HostedDeviceSession };
+  'device-host.app.offer': {
+    params: HostedAppOffer;
+    result: { delivery: HostedAppDelivery; missing: { sha256: string; size: number; offset: number }[] };
+  };
+  'device-host.app.chunk': {
+    params: { session: string; attempt: string; sha256: string; offset: number; data: string };
+    result: { offset: number };
+  };
+  'device-host.app.launch': { params: { session: string; attempt: string }; result: HostedAppLaunch };
+  'device-host.app.attach': { params: { session: string; attempt: string }; result: HostedAppLaunch };
+  'device-host.metro.open': {
+    params: { session: string; gatewayPort: number; secret: string };
+    result: { port: number };
+  };
+  'device-host.metro.close': { params: { session: string }; result: { port: null } };
+  'device-host.frames.subscribe': {
+    params: { session: string; fps?: number; maxEdge?: number; video?: string[] };
+    result: FramesSubscribeResult;
+  };
+  'device-host.frames.keyframe': Methods['frames.keyframe'];
+  'device-host.unsubscribe': Methods['unsubscribe'];
+  'device-host.control.begin': { params: { session: string; takeOver?: boolean }; result: ControlBeginResult };
+  'device-host.control.end': Methods['control.end'];
+  'device-host.input.touch': Methods['input.touch'];
+  'device-host.input.text': Methods['input.text'];
+  'device-host.input.button': Methods['input.button'];
+  'device-host.input.rotate': Methods['input.rotate'];
+  'device-host.input.posture': Methods['input.posture'];
   hello: { params: HelloParams; result: HelloResult };
   'status.subscribe': { params?: Record<string, never>; result: SubscribeResult };
   'logs.query': { params: LogFilter; result: LogsQueryResult };
@@ -883,6 +1075,9 @@ export interface Methods {
   'input.button': { params: InputButtonParams; result: Record<string, never> };
   'input.rotate': { params: InputRotateParams; result: Record<string, never> };
   'input.posture': { params: InputPostureParams; result: Record<string, never> };
+  'input.simulator': { params: InputSimulatorParams; result: SimulatorOptions };
+  'input.scroll': { params: InputScrollParams; result: Record<string, never> };
+  'input.key': { params: InputKeyParams; result: Record<string, never> };
   'push.register': { params: PushRegisterParams; result: Record<string, never> };
   'push.unregister': { params?: Record<string, never>; result: Record<string, never> };
   'notifications.list': { params?: NotificationsListParams; result: NotificationsListResult };
@@ -961,6 +1156,23 @@ export interface ErrorEvent {
 }
 
 /** A frame of the device's screen, sent when the screen changed, at most `fps` times a second. */
+/** Installed device artwork rasterized on the Mac; layers contain PNG bytes, never a local path. */
+export interface DeviceFrameArtwork {
+  width: number;
+  height: number;
+  aperture: { x: number; y: number; width: number; height: number };
+  cornerRadius: number;
+  quarterTurns: number;
+  background: string;
+  foreground: string;
+}
+
+export interface DeviceFrameEvent {
+  event: 'device-frame';
+  subscription: string;
+  artwork: DeviceFrameArtwork | null;
+}
+
 export interface FrameEvent {
   event: 'frame';
   subscription: string;
@@ -978,6 +1190,8 @@ export interface FrameEvent {
    * outer display, and `unfolded` otherwise, including half open.
    */
   posture?: 'folded' | 'unfolded';
+  /** Clockwise artwork rotation captured with this frame. */
+  artworkTurns?: number;
 }
 
 /**
@@ -1031,6 +1245,7 @@ export type ServerEvent =
   | StatusEvent
   | LogsEvent
   | FrameEvent
+  | DeviceFrameEvent
   | FrameDelayedEvent
   | ReplayEndedEvent
   | ErrorEvent
@@ -1096,6 +1311,203 @@ export function protocolJsonSchema(): JsonSchema {
     'x-stim-protocol': PROTOCOL_VERSION,
     $defs: {
       ProtocolError: protocolError,
+      HostedAppDelivery: {
+        type: 'object',
+        required: ['session', 'attempt', 'bundleId', 'mode', 'state', 'launched'],
+        additionalProperties: false,
+        properties: {
+          session: { type: 'string' },
+          attempt: { type: 'string' },
+          bundleId: { type: 'string' },
+          mode: { enum: ['development', 'release'] },
+          devClientScheme: { type: 'string', pattern: '^[a-zA-Z][a-zA-Z0-9+.-]{0,127}$' },
+          state: { enum: ['receiving', 'installing', 'installed', 'unknown'] },
+          launched: { enum: [true, 'unverified', null] },
+          notice: { type: 'string' },
+          agent: {
+            oneOf: [
+              {
+                type: 'object',
+                required: ['driver'],
+                additionalProperties: false,
+                properties: { driver: { const: 'none' } },
+              },
+              {
+                type: 'object',
+                required: ['driver', 'path', 'token', 'scope'],
+                additionalProperties: false,
+                properties: {
+                  driver: { type: 'string', pattern: '^[a-z][a-z0-9-]{0,31}$', not: { const: 'none' } },
+                  path: { type: 'string', pattern: '^/device-host/agent/[a-f0-9-]{36}/$' },
+                  token: { type: 'string', pattern: '^[A-Za-z0-9_-]{32,256}$' },
+                  scope: { type: 'string', pattern: '^[A-Za-z0-9._:-]{1,256}$' },
+                },
+              },
+            ],
+          },
+        },
+      },
+      HostedAppOfferResult: {
+        type: 'object',
+        required: ['delivery', 'missing'],
+        additionalProperties: false,
+        properties: {
+          delivery: { $ref: '#/$defs/HostedAppDelivery' },
+          missing: {
+            type: 'array',
+            items: {
+              type: 'object',
+              required: ['sha256', 'size', 'offset'],
+              additionalProperties: false,
+              properties: { sha256, size: { type: 'integer', minimum: 0 }, offset: { type: 'integer', minimum: 0 } },
+            },
+          },
+        },
+      },
+      HostedAppChunkResult: {
+        type: 'object',
+        required: ['offset'],
+        additionalProperties: false,
+        properties: { offset: { type: 'integer', minimum: 0 } },
+      },
+      HostedDeviceOffer: {
+        type: 'object',
+        required: ['platform', 'choice', 'resources', 'declined', 'capacity'],
+        additionalProperties: false,
+        properties: {
+          platform: { enum: ['ios', 'android'] },
+          choice: {},
+          declined: { type: ['string', 'null'], minLength: 1 },
+          resources: {
+            type: 'object',
+            required: ['cpus', 'loadPerCore', 'memoryFreeBytes', 'memoryPressure', 'workerDiskFreeBytes'],
+            additionalProperties: false,
+            properties: {
+              cpus: { type: 'integer', minimum: 1 },
+              loadPerCore: { type: 'number', minimum: 0 },
+              memoryFreeBytes: { type: 'number', minimum: 0 },
+              memoryPressure: { enum: ['normal', 'warning', 'critical', null] },
+              workerDiskFreeBytes: { type: ['number', 'null'], minimum: 0 },
+            },
+          },
+          capacity: {
+            type: 'object',
+            required: ['running', 'max', 'available'],
+            additionalProperties: false,
+            properties: {
+              running: { type: 'integer', minimum: 0 },
+              max: { type: 'integer', minimum: 0 },
+              available: { type: ['integer', 'null'], minimum: 0 },
+            },
+          },
+        },
+        not: { properties: { choice: { type: 'null' }, declined: { type: 'null' } } },
+        oneOf: [
+          {
+            properties: {
+              platform: { const: 'ios' },
+              choice: {
+                anyOf: [
+                  { type: 'null' },
+                  {
+                    type: 'object',
+                    required: ['deviceTypeId', 'runtimeId', 'deviceType', 'runtime', 'architecture'],
+                    additionalProperties: false,
+                    properties: {
+                      deviceTypeId: { type: 'string' },
+                      runtimeId: { type: 'string' },
+                      deviceType: { type: 'string' },
+                      runtime: { type: 'string' },
+                      architecture: { enum: ['arm64', 'x86_64'] },
+                    },
+                  },
+                ],
+              },
+            },
+          },
+          {
+            properties: {
+              platform: { const: 'android' },
+              choice: {
+                anyOf: [
+                  { type: 'null' },
+                  {
+                    type: 'object',
+                    required: ['systemImage', 'deviceProfile', 'architecture'],
+                    additionalProperties: false,
+                    properties: {
+                      systemImage: { type: 'string' },
+                      deviceProfile: { type: 'string' },
+                      architecture: { enum: ['arm64-v8a', 'x86_64'] },
+                    },
+                  },
+                ],
+              },
+            },
+          },
+        ],
+      },
+      HostedMetroResult: {
+        type: 'object',
+        required: ['port'],
+        additionalProperties: false,
+        properties: { port: { type: ['integer', 'null'], minimum: 1, maximum: 65535 } },
+      },
+      HostedDeviceSession: {
+        type: 'object',
+        required: ['id', 'client', 'workspace', 'slot', 'platform', 'attempt', 'state', 'device', 'createdAt'],
+        additionalProperties: false,
+        properties: {
+          id: { type: 'string' },
+          client: { type: 'string' },
+          workspace: { type: 'string' },
+          slot: { type: 'string' },
+          platform: { enum: ['ios', 'android'] },
+          attempt: { type: 'string' },
+          deviceType: { type: 'string' },
+          runtime: { type: 'string' },
+          systemImage: { type: 'string' },
+          deviceProfile: { type: 'string' },
+          consolePort: { type: 'integer', minimum: 5554, maximum: 5584, multipleOf: 2 },
+          state: { enum: ['preparing', 'ready', 'stopping', 'stopped', 'unknown'] },
+          device: {
+            anyOf: [
+              { type: 'null' },
+              {
+                type: 'object',
+                required: ['udid', 'name', 'deviceTypeId', 'runtimeId', 'deviceType', 'runtime', 'architecture'],
+                additionalProperties: false,
+                properties: {
+                  udid: { type: 'string' },
+                  name: { type: 'string' },
+                  deviceTypeId: { type: 'string' },
+                  runtimeId: { type: 'string' },
+                  deviceType: { type: 'string' },
+                  runtime: { type: 'string' },
+                  architecture: { enum: ['arm64', 'x86_64'] },
+                },
+              },
+              {
+                type: 'object',
+                required: ['avdName', 'serial', 'consolePort', 'systemImage', 'deviceProfile', 'architecture'],
+                additionalProperties: false,
+                properties: {
+                  avdName: { type: 'string' },
+                  serial: { type: 'string' },
+                  consolePort: { type: 'integer', minimum: 5554, maximum: 5584, multipleOf: 2 },
+                  systemImage: { type: 'string' },
+                  deviceProfile: { type: 'string' },
+                  architecture: { enum: ['arm64-v8a', 'x86_64'] },
+                },
+              },
+            ],
+          },
+          createdAt: { type: 'string' },
+          notice: { type: 'string' },
+          appAttempt: { type: 'string' },
+          metroPort: { type: 'integer', minimum: 1, maximum: 65535 },
+        },
+      },
       HelloParams: {
         type: 'object',
         required: ['protocol', 'client', 'auth'],
@@ -1125,7 +1537,10 @@ export function protocolJsonSchema(): JsonSchema {
                 type: 'object',
                 required: ['request', 'deviceName'],
                 additionalProperties: false,
-                properties: { request: { const: 'build' }, deviceName: { type: 'string', minLength: 1 } },
+                properties: {
+                  request: { enum: ['build', 'device-host'] },
+                  deviceName: { type: 'string', minLength: 1 },
+                },
               },
             ],
           },
@@ -1199,6 +1614,30 @@ export function protocolJsonSchema(): JsonSchema {
           tail: { type: 'integer', minimum: 1, maximum: MAX_LOG_TAIL, default: MAX_LOG_TAIL },
         },
       },
+      DeviceFrameArtwork: {
+        type: 'object',
+        required: ['width', 'height', 'aperture', 'cornerRadius', 'quarterTurns', 'background', 'foreground'],
+        additionalProperties: false,
+        properties: {
+          width: { type: 'number', exclusiveMinimum: 0 },
+          height: { type: 'number', exclusiveMinimum: 0 },
+          aperture: {
+            type: 'object',
+            required: ['x', 'y', 'width', 'height'],
+            additionalProperties: false,
+            properties: {
+              x: { type: 'number', minimum: 0 },
+              y: { type: 'number', minimum: 0 },
+              width: { type: 'number', exclusiveMinimum: 0 },
+              height: { type: 'number', exclusiveMinimum: 0 },
+            },
+          },
+          cornerRadius: { type: 'number', minimum: 0 },
+          quarterTurns: { type: 'integer', minimum: 0, maximum: 3 },
+          background: { type: 'string', contentEncoding: 'base64' },
+          foreground: { type: 'string', contentEncoding: 'base64' },
+        },
+      },
       FrameTarget: {
         type: 'object',
         required: ['workspace', 'platform'],
@@ -1208,6 +1647,7 @@ export function protocolJsonSchema(): JsonSchema {
           platform: { enum: [...PLATFORMS] },
           slot: { type: 'string', minLength: 1, default: 'default' },
           physical: { type: 'boolean', default: false },
+          deviceFrame: { type: 'boolean', default: false },
           fps: {
             type: 'integer',
             minimum: 1,
@@ -1271,6 +1711,12 @@ export function protocolJsonSchema(): JsonSchema {
           takeOver: { type: 'boolean', default: false },
         },
       },
+      SimulatorOptions: {
+        type: 'object',
+        required: ['canShake', 'slowAnimations'],
+        additionalProperties: false,
+        properties: { canShake: { type: 'boolean' }, slowAnimations: { type: ['boolean', 'null'] } },
+      },
       ControlBeginResult: {
         type: 'object',
         required: ['session', 'platform', 'lease', 'postures'],
@@ -1293,6 +1739,7 @@ export function protocolJsonSchema(): JsonSchema {
             ],
           },
           postures: { type: 'array', items: { enum: [...DEVICE_POSTURES] }, uniqueItems: true },
+          simulator: { $ref: '#/$defs/SimulatorOptions' },
         },
       },
       BuildPlanParams: {
@@ -1498,7 +1945,161 @@ export function protocolJsonSchema(): JsonSchema {
       },
       ClientRequest: {
         oneOf: [
+          request('device-host.offer', {
+            type: 'object',
+            required: ['platform'],
+            additionalProperties: false,
+            properties: {
+              platform: { enum: ['ios', 'android'] },
+              deviceType: { type: 'string', minLength: 1, maxLength: 256 },
+              runtime: { type: 'string', minLength: 1, maxLength: 256 },
+              systemImage: { type: 'string', minLength: 1, maxLength: 256 },
+              deviceProfile: { type: 'string', minLength: 1, maxLength: 256 },
+            },
+            oneOf: [
+              {
+                properties: { platform: { const: 'ios' } },
+                not: { anyOf: [{ required: ['systemImage'] }, { required: ['deviceProfile'] }] },
+              },
+              {
+                properties: { platform: { const: 'android' } },
+                not: { anyOf: [{ required: ['deviceType'] }, { required: ['runtime'] }] },
+              },
+            ],
+          }),
+          request('device-host.reserve', {
+            type: 'object',
+            required: ['workspace', 'slot', 'platform', 'attempt'],
+            additionalProperties: false,
+            properties: {
+              workspace: { type: 'string', minLength: 1, maxLength: 4096 },
+              slot: { type: 'string', pattern: '^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$' },
+              platform: { enum: ['ios', 'android'] },
+              attempt: { type: 'string', pattern: '^[a-zA-Z0-9_-]{1,128}$' },
+              deviceType: { type: 'string', minLength: 1, maxLength: 256 },
+              runtime: { type: 'string', minLength: 1, maxLength: 256 },
+              systemImage: { type: 'string', minLength: 1, maxLength: 256 },
+              deviceProfile: { type: 'string', minLength: 1, maxLength: 256 },
+            },
+            oneOf: [
+              {
+                properties: { platform: { const: 'ios' } },
+                not: { anyOf: [{ required: ['systemImage'] }, { required: ['deviceProfile'] }] },
+              },
+              {
+                properties: { platform: { const: 'android' } },
+                not: { anyOf: [{ required: ['deviceType'] }, { required: ['runtime'] }] },
+              },
+            ],
+          }),
+          request('device-host.attach', {
+            oneOf: [
+              {
+                type: 'object',
+                required: ['session'],
+                additionalProperties: false,
+                properties: { session: { type: 'string' } },
+              },
+              {
+                type: 'object',
+                required: ['attempt'],
+                additionalProperties: false,
+                properties: { attempt: { type: 'string' } },
+              },
+            ],
+          }),
+          request('device-host.stop', session({})),
+          request(
+            'device-host.app.offer',
+            session(
+              {
+                attempt: { type: 'string', pattern: '^[a-zA-Z0-9_-]{1,128}$' },
+                bundleId: { type: 'string' },
+                mode: { enum: ['development', 'release'] },
+                devClientScheme: { type: 'string', pattern: '^[a-zA-Z][a-zA-Z0-9+.-]{0,127}$' },
+                manifest: {
+                  type: 'object',
+                  required: ['sha256', 'size'],
+                  additionalProperties: false,
+                  properties: { sha256, size: { type: 'integer', minimum: 1, maximum: 8 * 1024 ** 2 } },
+                },
+              },
+              ['attempt', 'bundleId', 'mode', 'manifest'],
+            ),
+          ),
+          request(
+            'device-host.app.chunk',
+            session(
+              {
+                attempt: { type: 'string' },
+                sha256,
+                offset: { type: 'integer', minimum: 0 },
+                data: { type: 'string', maxLength: 43692 },
+              },
+              ['attempt', 'sha256', 'offset', 'data'],
+            ),
+          ),
+          request('device-host.app.launch', session({ attempt: { type: 'string' } }, ['attempt'])),
+          request('device-host.app.attach', session({ attempt: { type: 'string' } }, ['attempt'])),
+          request(
+            'device-host.metro.open',
+            session(
+              {
+                gatewayPort: { type: 'integer', minimum: 1, maximum: 65535 },
+                secret: { type: 'string', pattern: '^[a-f0-9]{64}$' },
+              },
+              ['gatewayPort', 'secret'],
+            ),
+          ),
+          request('device-host.metro.close', session({})),
+          request(
+            'device-host.frames.subscribe',
+            session({
+              fps: { type: 'integer', minimum: 1, maximum: FRAME_FPS.video },
+              maxEdge: { type: 'integer', minimum: FRAME_EDGE.min, maximum: FRAME_EDGE.max },
+              video: { type: 'array', items: { type: 'string' } },
+            }),
+          ),
+          request('device-host.frames.keyframe', {
+            type: 'object',
+            required: ['subscription'],
+            additionalProperties: false,
+            properties: { subscription: { type: 'string' } },
+          }),
+          request('device-host.unsubscribe', {
+            type: 'object',
+            required: ['subscription'],
+            additionalProperties: false,
+            properties: { subscription: { type: 'string' } },
+          }),
+          request('device-host.control.begin', session({ takeOver: { type: 'boolean' } })),
+          request('device-host.control.end', session({})),
+          request(
+            'device-host.input.touch',
+            session(
+              {
+                phase: { enum: [...TOUCH_PHASES] },
+                x: { type: 'number', minimum: 0, maximum: 1 },
+                y: { type: 'number', minimum: 0, maximum: 1 },
+                display: { type: 'integer', minimum: 0, maximum: 3 },
+              },
+              ['phase', 'x', 'y'],
+            ),
+          ),
+          request(
+            'device-host.input.text',
+            session(
+              {
+                text: { type: 'string', minLength: 1, maxLength: MAX_INPUT_TEXT, pattern: '^[\\x20-\\x7e\\n\\t\\b]+$' },
+              },
+              ['text'],
+            ),
+          ),
+          request('device-host.input.button', session({ button: { enum: [...INPUT_BUTTONS] } }, ['button'])),
+          request('device-host.input.rotate', session({ direction: { enum: [...ROTATE_DIRECTIONS] } }, ['direction'])),
+          request('device-host.input.posture', session({ posture: { enum: [...DEVICE_POSTURES] } }, ['posture'])),
           request('hello', { $ref: '#/$defs/HelloParams' }),
+          optionalParams('route.setup', { type: 'object', maxProperties: 0 }),
           request('status.subscribe'),
           request('logs.query', { $ref: '#/$defs/LogFilter' }),
           request('logs.subscribe', { $ref: '#/$defs/LogFilter' }),
@@ -1531,7 +2132,7 @@ export function protocolJsonSchema(): JsonSchema {
             additionalProperties: false,
             properties: {
               workspace: { type: 'string' },
-              platform: { enum: [...PLATFORMS] },
+              platform: { enum: [...RELOAD_PLATFORMS] },
               slot: { type: 'string', minLength: 1 },
             },
           }),
@@ -1541,7 +2142,7 @@ export function protocolJsonSchema(): JsonSchema {
             additionalProperties: false,
             properties: {
               workspace: { type: 'string' },
-              platform: { enum: [...PLATFORMS] },
+              platform: { enum: [...RELOAD_PLATFORMS] },
               slot: { type: 'string', minLength: 1 },
               at: { type: 'number', description: 'Epoch milliseconds on the Mac clock.' },
             },
@@ -1592,9 +2193,37 @@ export function protocolJsonSchema(): JsonSchema {
               ['text'],
             ),
           ),
+          request(
+            'input.scroll',
+            session(
+              {
+                x: { type: 'number', minimum: 0, maximum: 1 },
+                y: { type: 'number', minimum: 0, maximum: 1 },
+                deltaX: { type: 'number', minimum: -1000, maximum: 1000 },
+                deltaY: { type: 'number', minimum: -1000, maximum: 1000 },
+              },
+              ['x', 'y', 'deltaX', 'deltaY'],
+            ),
+          ),
+          request(
+            'input.key',
+            session(
+              {
+                key: { enum: [...INPUT_KEYS] },
+                modifiers: { type: 'array', maxItems: 4, uniqueItems: true, items: { enum: [...KEY_MODIFIERS] } },
+              },
+              ['key'],
+            ),
+          ),
           request('input.button', session({ button: { enum: [...INPUT_BUTTONS] } }, ['button'])),
           request('input.rotate', session({ direction: { enum: [...ROTATE_DIRECTIONS] } }, ['direction'])),
           request('input.posture', session({ posture: { enum: [...DEVICE_POSTURES] } }, ['posture'])),
+          request('input.simulator', {
+            oneOf: [
+              session({ action: { enum: ['read', 'shake'] } }, ['action']),
+              session({ action: { const: 'slow-animations' }, enabled: { type: 'boolean' } }, ['action', 'enabled']),
+            ],
+          }),
           request('push.register', {
             type: 'object',
             required: ['token', 'events', 'ref'],
@@ -1719,8 +2348,15 @@ export function protocolJsonSchema(): JsonSchema {
               id: requestId,
               result: {
                 anyOf: [
+                  { $ref: '#/$defs/HostedDeviceOffer' },
+                  { $ref: '#/$defs/HostedDeviceSession' },
+                  { $ref: '#/$defs/HostedAppDelivery' },
+                  { $ref: '#/$defs/HostedMetroResult' },
+                  { $ref: '#/$defs/HostedAppOfferResult' },
+                  { $ref: '#/$defs/HostedAppChunkResult' },
                   { $ref: '#/$defs/HelloResult' },
                   { $ref: '#/$defs/ControlBeginResult' },
+                  { $ref: '#/$defs/SimulatorOptions' },
                   { $ref: '#/$defs/ActionResult' },
                   { $ref: '#/$defs/MachineUsage' },
                   { $ref: '#/$defs/MachineHistory' },
@@ -1833,6 +2469,16 @@ export function protocolJsonSchema(): JsonSchema {
         oneOf: [
           {
             type: 'object',
+            required: ['event', 'subscription', 'artwork'],
+            additionalProperties: false,
+            properties: {
+              event: { const: 'device-frame' },
+              subscription: { type: 'string' },
+              artwork: { oneOf: [{ type: 'null' }, { $ref: '#/$defs/DeviceFrameArtwork' }] },
+            },
+          },
+          {
+            type: 'object',
             required: ['event', 'job'],
             additionalProperties: false,
             properties: {
@@ -1891,6 +2537,7 @@ export function protocolJsonSchema(): JsonSchema {
               capturedAt: { type: 'string', format: 'date-time' },
               data: { type: 'string', contentEncoding: 'base64' },
               posture: { enum: ['folded', 'unfolded'] },
+              artworkTurns: { type: 'integer', minimum: 0, maximum: 3 },
             },
           },
           {

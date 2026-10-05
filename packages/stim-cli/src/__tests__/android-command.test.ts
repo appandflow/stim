@@ -1205,6 +1205,7 @@ describe('explicit remote backend behavior', () => {
       progress: {
         step: (phase: string) => log.push(phase),
         miss: () => {},
+        hit: () => {},
         output: () => {},
         deviceSetup: () => {},
         deviceSetupKnown: () => undefined,
@@ -5893,7 +5894,7 @@ describe('run statistics', () => {
     expect(runs).toHaveLength(1);
     expect(runs[0]?.run).toEqual({
       platform: 'android',
-      projectKey: realpathSync(root),
+      projectKey: realpathSync.native(root),
       failed: false,
       cacheHit: false,
       waitedForBuild: false,
@@ -5956,9 +5957,11 @@ describe('run statistics', () => {
 
   test('the run enters each phase at its real step, and a cache hit skips compile', async () => {
     const steps: string[] = [];
+    const outcomes: string[] = [];
     const progress = {
       step: (phase: string) => steps.push(phase),
-      miss: () => {},
+      miss: () => outcomes.push(`${steps.at(-1)}:miss`),
+      hit: () => outcomes.push(`${steps.at(-1)}:hit`),
       output: () => {},
       deviceSetup: () => {},
       deviceSetupKnown: () => undefined,
@@ -5969,12 +5972,15 @@ describe('run statistics', () => {
     };
     expect((await harness({ progress }).run()).ok).toBe(true);
     expect(steps).toEqual(['cache-lookup', 'compile', 'device', 'install', 'launch']);
+    expect(outcomes[0]).toBe('cache-lookup:miss');
 
     steps.length = 0;
+    outcomes.length = 0;
     expect((await harness({ progress, resolveCached: () => fakeApk(), build: never('the build') }).run()).ok).toBe(
       true,
     );
     expect(steps).toEqual(['cache-lookup', 'device', 'install', 'launch']);
+    expect(outcomes).toEqual(['cache-lookup:hit']);
   });
 
   test('the run tells its progress whether it set up its device or found it running', async () => {
@@ -5982,6 +5988,7 @@ describe('run statistics', () => {
     const progress = {
       step: () => {},
       miss: () => {},
+      hit: () => {},
       output: () => {},
       deviceSetup: (setup: unknown) => seen.push(setup),
       deviceSetupKnown: () => undefined,

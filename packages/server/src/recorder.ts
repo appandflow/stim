@@ -346,7 +346,8 @@ export class Recorder {
         if (!driven && !this.viewers.has(key)) continue;
         const current = this.sessions.get(key);
         const device = ownedDevice(payload, target, current ? deviceKey(current.device) : null);
-        if (typeof device !== 'string' && RECORDING_PLATFORMS.includes(device.platform)) wanted.set(key, device);
+        if (typeof device !== 'string' && device.platform !== 'macos' && RECORDING_PLATFORMS.includes(device.platform))
+          wanted.set(key, device);
       }
     }
     const now = this.now();

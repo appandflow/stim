@@ -12,7 +12,7 @@ export default function DeviceRoute() {
     slot: string;
     physical?: string;
   }>();
-  const known = platform === 'android' || platform === 'web' ? platform : 'ios';
+  const known = platform === 'android' || platform === 'web' || platform === 'macos' ? platform : 'ios';
   return (
     <ReservedRegionsProvider style={styles.root}>
       <DeviceView workspace={path} platform={known} slot={slot ?? 'default'} physical={physical === '1'} />

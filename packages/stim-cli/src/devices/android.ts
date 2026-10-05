@@ -1061,7 +1061,11 @@ export function suppressEmulatorCrashConsent({
 export function bootAndroidEmulator(
   avdName: string,
   consolePort: number,
-  { logFile, platform = process.platform }: { logFile?: string | null; platform?: NodeJS.Platform } = {},
+  {
+    logFile,
+    platform = process.platform,
+    openViewer = true,
+  }: { logFile?: string | null; platform?: NodeJS.Platform; openViewer?: boolean } = {},
 ): number | null {
   const exec = getExecutor();
   const app = configuredAndroidEmulatorApp(platform);
@@ -1075,7 +1079,7 @@ export function bootAndroidEmulator(
       '-grpc',
       String(consolePort + 3000),
       '-grpc-use-token',
-      ...headlessEmulatorArgs(process.env, platform, app),
+      ...headlessEmulatorArgs(process.env, platform, openViewer ? app : 'stim-desktop'),
       ...suppressEmulatorCrashConsent({ platform }),
     ],
     {
@@ -1086,7 +1090,7 @@ export function bootAndroidEmulator(
   );
   child?.unref?.();
   const pid = child?.pid ?? null;
-  if (pid !== null && platform === 'darwin' && app === 'stim-desktop') {
+  if (openViewer && pid !== null && platform === 'darwin' && app === 'stim-desktop') {
     openEmulatorInStimDesktop(`emulator-${consolePort}`);
   }
   return pid;

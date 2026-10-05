@@ -1091,7 +1091,14 @@ export async function ensureMetroReachable({
     gate = true;
   } else {
     const port = Number(metroPort);
-    const providerMatches = tunnelMode === 'auto' || (recorded?.kind === 'managed' && recorded.provider === plan.start);
+    if (plan.start === 'tailscale' && ctx.backend === 'eas') {
+      return {
+        failed: 'metro.tunnel is "tailscale", but an EAS Simulator is not on your tailnet and cannot reach it.',
+        remedy: 'Use the proxy backend with a device on the same tailnet, or set metro.tunnel to "auto" or "ngrok".',
+        code: REMOTE_METRO_ERROR,
+      };
+    }
+    const providerMatches = recorded?.kind === 'managed' && recorded.provider === plan.start;
     if (
       recorded &&
       recorded.kind === 'managed' &&
@@ -1106,7 +1113,7 @@ export async function ensureMetroReachable({
         remedy: 'Run `stim start --remote`, then retry the device command.',
       };
     }
-    gate = true;
+    gate = recorded.provider !== 'tailscale';
   }
 
   if (gate && resolvedUrl) {
