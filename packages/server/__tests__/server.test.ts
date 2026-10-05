@@ -1503,6 +1503,7 @@ describe('health', () => {
       fetch(`http://127.0.0.1:${port}/device-host/agent/${session}/rpc`, { method: 'POST', body: '{}', headers });
     expect((await agent({})).status).toBe(403);
     expect((await agent({ 'x-forwarded-for': '100.64.0.2', origin: 'http://attacker.example' })).status).toBe(403);
+    expect((await agent({ 'x-forwarded-for': '100.64.0.2', 'sec-fetch-site': 'cross-site' })).status).toBe(403);
     expect((await agent({ 'x-forwarded-for': '100.64.0.2', authorization: 'Bearer nothing' })).status).toBe(404);
     expect((await fetch(`http://127.0.0.1:${port}/device-host/agent/not-a-session/rpc`)).status).toBe(426);
   });

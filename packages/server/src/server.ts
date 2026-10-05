@@ -547,25 +547,27 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       return identity?.kind === 'tailnet' ? identity.nodeId : null;
     },
   });
-  const agentNodes = new Map<string, { node: string | null; until: number }>();
+  const agentNodes = new Map<string, { node: string; until: number }>();
+  const agentLimiter = new FailureLimiter(30, options.failureWindowMs ?? 60_000);
   async function answerAgent(request: IncomingMessage, response: ServerResponse, session: string): Promise<void> {
     const peer = peerAddress(request);
     const refuse = (status: number, text: string) =>
       void response.writeHead(status, { 'content-type': 'text/plain' }).end(`${text}\n`);
     if (!peer || !isIP(peer) || request.headers.origin !== undefined || request.headers['sec-fetch-site'] !== undefined)
       return refuse(403, 'Forbidden.');
-    if (limiter.blocked(peer)) return refuse(429, 'Too many attempts. Try again in a minute.');
+    if (agentLimiter.blocked(peer)) return refuse(429, 'Too many attempts. Try again in a minute.');
     const bearer = /^bearer (.+)$/i.exec(request.headers.authorization ?? '')?.[1];
     const header = request.headers['x-agent-device-token'];
     const token = bearer ?? (typeof header === 'string' ? header : null);
     let known = agentNodes.get(peer);
     if (!known || known.until < Date.now()) {
       const identity = await whois(tailscaleNow().binary, options.env, peer);
-      known = { node: identity?.kind === 'tailnet' ? identity.nodeId : null, until: Date.now() + 30_000 };
+      if (identity?.kind !== 'tailnet') return refuse(403, 'Forbidden.');
+      known = { node: identity.nodeId, until: Date.now() + 30_000 };
       agentNodes.set(peer, known);
       if (agentNodes.size > 256) agentNodes.delete(agentNodes.keys().next().value!);
     }
-    if (agentDrivers.forward(session, token, known.node, request, response) === 'forbidden') limiter.record(peer);
+    if (agentDrivers.forward(session, token, known.node, request, response) === 'forbidden') agentLimiter.record(peer);
   }
   const builds = new BuildHost({
     worker: join(dirname(options.stimCli), 'offload-worker.mjs'),
@@ -1969,7 +1971,10 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       }
       const agent = /^\/device-host\/agent\/([a-f0-9-]{36})(?:[/?]|$)/.exec(request.url ?? '');
       if (agent) {
-        void answerAgent(request, response, agent[1]!);
+        answerAgent(request, response, agent[1]!).catch(() => {
+          if (response.headersSent) response.destroy();
+          else response.writeHead(500, { 'content-type': 'text/plain' }).end('Agent control failed.\n');
+        });
         return;
       }
       response.writeHead(426, { 'content-type': 'text/plain' }).end('stim-server speaks WebSocket only.\n');

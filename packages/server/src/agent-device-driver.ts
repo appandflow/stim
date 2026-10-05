@@ -1,9 +1,10 @@
 import { execFile, spawn, type ChildProcess } from 'node:child_process';
-import { accessSync, chmodSync, constants, mkdirSync, readFileSync, realpathSync } from 'node:fs';
+import { accessSync, chmodSync, constants, mkdirSync, readFileSync, realpathSync, rmSync } from 'node:fs';
 import { request as httpRequest, type IncomingMessage, type ServerResponse } from 'node:http';
 import { homedir } from 'node:os';
 import { delimiter, dirname, join } from 'node:path';
 import {
+  claimRemoveCommand,
   clearClaimChild,
   markClaimChildPending,
   releaseClaim,
@@ -31,7 +32,7 @@ import {
  * client that opens an app on a Mac gets the whole desktop or nothing. Until agent-device can lease one
  * macOS app, this adapter refuses to start and to issue, and never hands out unscoped desktop access.
  */
-export const AGENT_DEVICE_SCOPED_MACOS_LEASE = false;
+const AGENT_DEVICE_SCOPED_MACOS_LEASE = false;
 
 const UNSCOPED =
   'Agent control is unavailable: agent-device has no remote lease limited to one macOS app yet, and Stim never hands a client the hosting Mac desktop.';
@@ -79,6 +80,7 @@ export interface AgentDeviceDriverOptions {
 }
 
 interface Running {
+  reported: boolean;
   proxy: ChildProcess;
   proxyRecord: ProcessRecord;
   daemon: ProcessRecord;
@@ -109,15 +111,16 @@ export class AgentDeviceDriver implements HostedAgentDriver {
   private claim: ClaimHandle | null = null;
   private starting: Promise<void> | null = null;
   private stopping = false;
+  private daemonRecord: ProcessRecord | null = null;
   private listener: (() => void) | null = null;
 
   constructor(options: AgentDeviceDriverOptions) {
     this.options = {
-      scopedMacosLease: AGENT_DEVICE_SCOPED_MACOS_LEASE,
       startTimeoutMs: 60_000,
       stopTimeoutMs: 20_000,
       watchMs: 5000,
       ...options,
+      scopedMacosLease: options.scopedMacosLease ?? AGENT_DEVICE_SCOPED_MACOS_LEASE,
     };
   }
 
@@ -135,10 +138,19 @@ export class AgentDeviceDriver implements HostedAgentDriver {
   }
 
   private async launch(): Promise<void> {
-    if (this.claim) throw new Error(`The previous agent-device daemon is unresolved; its claim is ${this.claim.path}.`);
+    if (this.claim) {
+      try {
+        await this.teardown();
+      } catch {
+        throw new Error(
+          `The previous agent-device daemon is unresolved. Once it is gone, clear its claim with: ${claimRemoveCommand(this.claim.path)}`,
+        );
+      }
+    }
     const invocation = resolveAgentDevice(this.options.env);
     mkdirSync(this.options.stateDir, { recursive: true, mode: 0o700 });
     chmodSync(this.options.stateDir, 0o700);
+    rmSync(join(this.options.stateDir, 'daemon.json'), { force: true });
     const attempt = tryAcquireClaim({ root: this.options.claimRoot, mode: 'exclusive', label: 'agent-device daemon' });
     if (attempt.pending) releaseClaim(attempt.pending);
     if (!attempt.acquired)
@@ -166,12 +178,14 @@ export class AgentDeviceDriver implements HostedAgentDriver {
       );
       const url = await this.listening(proxy);
       const daemon = this.readDaemon();
+      this.daemonRecord = daemon;
       const proxyIdentity = proxy.pid === undefined ? null : captureProcessIdentity(proxy.pid);
       if (!proxyIdentity?.ok) throw new Error('The agent-device proxy identity could not be captured.');
       setClaimChild(claim, daemon);
       const watch = setInterval(() => this.watchDaemon(), this.options.watchMs);
       watch.unref();
       const running: Running = {
+        reported: false,
         proxy,
         proxyRecord: { pid: proxy.pid, processToken: proxyIdentity.token },
         daemon,
@@ -234,8 +248,10 @@ export class AgentDeviceDriver implements HostedAgentDriver {
   }
 
   private exited(): void {
-    if (this.stopping || !this.running) return;
-    clearInterval(this.running.watch);
+    const running = this.running;
+    if (this.stopping || !running || running.reported) return;
+    running.reported = true;
+    clearInterval(running.watch);
     this.listener?.();
   }
 
@@ -254,7 +270,7 @@ export class AgentDeviceDriver implements HostedAgentDriver {
       const record = running?.proxyRecord ?? this.captured(proxy.pid);
       if (record) await this.signalAndWait(record, true);
     }
-    await this.stopDaemon(running?.daemon);
+    await this.stopDaemon();
     if (!this.claim) return;
     clearClaimChild(this.claim);
     if (!releaseClaim(this.claim)) throw new Error(`The agent-device claim could not be released: ${this.claim.path}`);
@@ -266,7 +282,7 @@ export class AgentDeviceDriver implements HostedAgentDriver {
     return identity.ok ? { pid, processToken: identity.token } : null;
   }
 
-  private async stopDaemon(known?: ProcessRecord): Promise<void> {
+  private async stopDaemon(): Promise<void> {
     try {
       const invocation = resolveAgentDevice(this.options.env);
       await new Promise<void>((resolve) => {
@@ -278,19 +294,11 @@ export class AgentDeviceDriver implements HostedAgentDriver {
         );
       });
     } catch {}
-    let daemon = known;
-    if (!daemon) {
-      try {
-        daemon = this.readDaemon();
-      } catch {
-        return;
-      }
-    }
-    if (!(await this.signalAndWait(daemon, false)))
+    if (this.daemonRecord && !(await this.signalAndWait(this.daemonRecord, false)))
       throw new Error('The agent-device daemon did not stop; its claim was kept.');
+    this.daemonRecord = null;
   }
 
-  /** SIGTERM then SIGKILL, only while the recorded identity is still the same process. */
   private async signalAndWait(record: ProcessRecord, group: boolean): Promise<boolean> {
     for (const signal of ['SIGTERM', 'SIGKILL'] as const) {
       const status = inspectProcessIdentity(record);
@@ -319,8 +327,11 @@ export class AgentDeviceDriver implements HostedAgentDriver {
       response.writeHead(503, { 'content-type': 'text/plain' }).end('Agent control is not running.\n');
       return;
     }
-    const prefix = `${AGENT_ROUTE_PREFIX}${session}`;
-    const target = (request.url ?? '/').slice(prefix.length) || '/';
+    const target = daemonPath(session, request.url ?? '');
+    if (!target) {
+      response.writeHead(404, { 'content-type': 'text/plain' }).end('Not found.\n');
+      return;
+    }
     const headers: Record<string, string> = { authorization: `Bearer ${running.token}` };
     for (const name of FORWARDED) {
       const value = request.headers[name];
@@ -346,4 +357,16 @@ export class AgentDeviceDriver implements HostedAgentDriver {
     });
     request.pipe(upstream);
   }
+}
+
+const DAEMON_PATHS = /^\/(?:rpc|health|upload|artifacts|sessions)(?:\/[\w.~-]+)*\/?$/;
+
+/** The proxy path behind a session route, only for the routes agent-device's proxy serves; null otherwise. */
+function daemonPath(session: string, url: string): string | null {
+  const prefix = `${AGENT_ROUTE_PREFIX}${session}`;
+  if (!url.startsWith(prefix)) return null;
+  const rest = url.slice(prefix.length);
+  const query = rest.indexOf('?');
+  const path = query < 0 ? rest : rest.slice(0, query);
+  return DAEMON_PATHS.test(path) && !path.includes('..') ? rest : null;
 }

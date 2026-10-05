@@ -23,16 +23,17 @@ class FakeDriver implements HostedAgentDriver {
   failStart: Error | null = null;
   failIssue: Error | null = null;
   startFailures = 0;
+  startDelayMs = 0;
   private listener: (() => void) | null = null;
-  start(): Promise<void> {
+  async start(): Promise<void> {
     this.starts += 1;
-    if (this.failStart) return Promise.reject(this.failStart);
+    if (this.startDelayMs) await new Promise((resolve) => setTimeout(resolve, this.startDelayMs));
+    if (this.failStart) throw this.failStart;
     if (this.startFailures > 0) {
       this.startFailures -= 1;
-      return Promise.reject(new Error('daemon would not start'));
+      throw new Error('daemon would not start');
     }
     this.running = true;
-    return Promise.resolve();
   }
   stop(): Promise<void> {
     this.stops += 1;
@@ -174,7 +175,7 @@ describe('hosted agent driver lifecycle', () => {
     await agents.close();
   });
 
-  test('does not leak a driver failure message that could carry a secret', async () => {
+  test('shows a client only a generic message for an unexpected driver failure', async () => {
     const driver = new FakeDriver();
     driver.failStart = new Error('spawn failed with token abc');
     const write = vi.spyOn(process.stderr, 'write').mockReturnValue(true);
@@ -198,6 +199,39 @@ describe('hosted agent driver lifecycle', () => {
     expect(tokenOf(after.grant)).not.toBe(tokenOf(before.grant));
     expect(agents.authorize(A, tokenOf(before.grant), 'node-1')).toBe('forbidden');
     expect(agents.authorize(A, tokenOf(after.grant), 'node-1')).toBe('ok');
+    await agents.close();
+  });
+
+  test('restarts once when the daemon exit is reported twice', async () => {
+    const driver = new FakeDriver();
+    const agents = host(driver);
+    await agents.appRunning(app(A, 10, 'client-1'));
+    driver.crash();
+    driver.crash();
+    await vi.waitFor(() => expect(driver.starts).toBe(2));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(driver.starts).toBe(2);
+    await agents.close();
+  });
+
+  test('leaves no daemon running when it closes during a restart', async () => {
+    const driver = new FakeDriver();
+    const agents = host(driver);
+    await agents.appRunning(app(A, 10, 'client-1'));
+    driver.startDelayMs = 30;
+    driver.crash();
+    await vi.waitFor(() => expect(driver.starts).toBe(2));
+    await agents.close();
+    expect(driver.running).toBe(false);
+  });
+
+  test('re-evaluates an app that has no driver grant when its session attaches again', async () => {
+    const driver = new FakeDriver();
+    driver.failStart = new AgentDriverUnavailable('not yet');
+    const agents = host(driver);
+    expect((await agents.appRunning(app(A, 10, 'client-1'))).grant.driver).toBe('none');
+    driver.failStart = null;
+    expect((await agents.appRunning(app(A, 10, 'client-1'))).grant.driver).toBe('agent-device');
     await agents.close();
   });
 

@@ -10,13 +10,14 @@ import {
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
+import { spawn } from 'node:child_process';
 import { createServer, request as httpRequest } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { readClaimSet } from '@stim-cli/core/ownership-claim';
 import { inspectProcessIdentity, captureProcessIdentity } from '@stim-cli/core/process-identity';
-import { AgentDeviceDriver, AGENT_DEVICE_SCOPED_MACOS_LEASE, resolveAgentDevice } from '../src/agent-device-driver.ts';
+import { AgentDeviceDriver, resolveAgentDevice } from '../src/agent-device-driver.ts';
 import { AgentDriverUnavailable } from '../src/agent-driver.ts';
 
 const FAKE_AGENT_DEVICE = `#!/usr/bin/env node
@@ -26,8 +27,11 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 const args = process.argv.slice(2);
 const stateDir = args[args.indexOf('--state-dir') + 1];
-if (args[0] === 'proxy') {
-  const daemon = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { detached: true, stdio: 'ignore' });
+if (args[0] === 'proxy' && process.env.FAKE_PROXY === 'silent') {
+  setInterval(() => {}, 1000);
+} else if (args[0] === 'proxy') {
+  const code = (process.env.FAKE_DAEMON === 'stubborn' ? "process.on('SIGTERM', () => {});" : '') + 'setInterval(() => {}, 1000)';
+  const daemon = spawn(process.execPath, ['-e', code], { detached: true, stdio: 'ignore' });
   daemon.unref();
   writeFileSync(join(stateDir, 'daemon.json'), JSON.stringify({ pid: daemon.pid, httpPort: 1, token: 'daemon-secret' }));
   const server = createServer((request, response) => {
@@ -41,7 +45,7 @@ if (args[0] === 'proxy') {
   });
   server.listen(0, '127.0.0.1', () => console.log('Proxy listening at http://127.0.0.1:' + server.address().port));
 } else if (args[0] === 'daemon' && args[1] === 'stop') {
-  try { process.kill(JSON.parse(readFileSync(join(stateDir, 'daemon.json'), 'utf8')).pid, 'SIGTERM'); } catch {}
+  if (!process.env.FAKE_STOP_NOOP) try { process.kill(JSON.parse(readFileSync(join(stateDir, 'daemon.json'), 'utf8')).pid, 'SIGTERM'); } catch {}
   console.log('Daemon stopped (graceful).');
 }
 `;
@@ -58,9 +62,13 @@ function install(home: string): string {
   return real;
 }
 
-function driverIn(home: string, extra: Partial<ConstructorParameters<typeof AgentDeviceDriver>[0]> = {}) {
+function driverIn(
+  home: string,
+  extra: Partial<ConstructorParameters<typeof AgentDeviceDriver>[0]> = {},
+  env: Record<string, string> = {},
+) {
   return new AgentDeviceDriver({
-    env: { HOME: home, PATH: '/usr/bin:/bin' },
+    env: { HOME: home, PATH: '/usr/bin:/bin', ...env },
     stateDir: join(home, 'state'),
     claimRoot: join(home, 'agent-device.claims'),
     scopedMacosLease: true,
@@ -116,9 +124,12 @@ afterEach(() => {
 
 describe('agent-device driver', () => {
   test('ships disabled until agent-device can lease one macOS app', async () => {
-    expect(AGENT_DEVICE_SCOPED_MACOS_LEASE).toBe(false);
     install(root);
-    const driver = driverIn(root, { scopedMacosLease: undefined });
+    const driver = new AgentDeviceDriver({
+      env: { HOME: root, PATH: '/usr/bin:/bin' },
+      stateDir: join(root, 'state'),
+      claimRoot: join(root, 'agent-device.claims'),
+    });
     await expect(driver.start()).rejects.toThrow(AgentDriverUnavailable);
     await expect(driver.start()).rejects.toThrow(/Stim never hands a client the hosting Mac desktop/);
     expect(existsSync(join(root, 'state'))).toBe(false);
@@ -211,6 +222,63 @@ describe('agent-device driver', () => {
     expect(inspectProcessIdentity({ pid: daemonPid, processToken: identity.ok ? identity.token : '' })).toBe('gone');
     expect(readClaimSet(join(root, 'agent-device.claims')).live).toHaveLength(0);
     await driver.start();
+    await driver.stop();
+  });
+
+  test('stops a daemon that ignores SIGTERM and one that agent-device did not stop, by recorded identity', async () => {
+    install(root);
+    const driver = driverIn(root, {}, { FAKE_DAEMON: 'stubborn', FAKE_STOP_NOOP: '1' });
+    await driver.start();
+    const daemonPid = (JSON.parse(readFileSync(join(root, 'state', 'daemon.json'), 'utf8')) as { pid: number }).pid;
+    const record = {
+      pid: daemonPid,
+      processToken: readClaimSet(join(root, 'agent-device.claims')).live[0]!.child!.processToken,
+    };
+    await driver.stop();
+    expect(inspectProcessIdentity(record)).toBe('gone');
+    expect(readClaimSet(join(root, 'agent-device.claims')).live).toHaveLength(0);
+  }, 15_000);
+
+  test('never signals a pid it read from a stale daemon record', async () => {
+    install(root);
+    mkdirSync(join(root, 'state'), { recursive: true });
+    const bystander = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });
+    try {
+      writeFileSync(join(root, 'state', 'daemon.json'), JSON.stringify({ pid: bystander.pid }));
+      const driver = driverIn(root, { startTimeoutMs: 500 }, { FAKE_PROXY: 'silent' });
+      await expect(driver.start()).rejects.toThrow(/did not report a listening address/);
+      await driver.stop();
+      expect(bystander.exitCode).toBeNull();
+      expect(bystander.signalCode).toBeNull();
+    } finally {
+      bystander.kill('SIGKILL');
+    }
+  });
+
+  test('forwards only the proxy routes and keeps a bare session route to the root', async () => {
+    install(root);
+    const driver = driverIn(root);
+    await driver.start();
+    try {
+      expect((await through(driver, SESSION, 'GET', '/health')).status).toBe(200);
+      expect((await through(driver, SESSION, 'GET', '/admin/human-control/holds')).status).toBe(404);
+      expect((await through(driver, SESSION, 'GET', '/rpc/../admin')).status).toBe(404);
+    } finally {
+      await driver.stop();
+    }
+  });
+
+  test('reports a daemon exit once even when the proxy and the watcher both notice it', async () => {
+    install(root);
+    const driver = driverIn(root);
+    let exits = 0;
+    driver.onExit(() => (exits += 1));
+    await driver.start();
+    const daemonPid = (JSON.parse(readFileSync(join(root, 'state', 'daemon.json'), 'utf8')) as { pid: number }).pid;
+    process.kill(daemonPid, 'SIGKILL');
+    await vi.waitFor(() => expect(exits).toBe(1));
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(exits).toBe(1);
     await driver.stop();
   });
 });
