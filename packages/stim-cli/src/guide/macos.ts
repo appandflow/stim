@@ -55,6 +55,8 @@ macOS artifacts are not cached. This prototype has no --plan, --slot, or reload 
 A failed build records its error and compiler output without launching an app.
 Runtime stdout and stderr become client records; build output becomes build
 records, all with platform "macos". Unexpected app exits are error records.
+Stim runs the app with NSUnbufferedIO=YES, so Swift print output arrives per
+line instead of when the app exits.
 
 BUILD OFFLOAD
 
@@ -185,6 +187,17 @@ Mac runs stim-server devices grant <id> --device-host, and stim doctor then
 records the approval. Stim connects only to the machine's pinned tailnet node.
 A refusal or an unreachable host fails the command; it never launches here
 instead.
+
+Logs: the host records the hosted app's stdout, stderr and exit like a local run.
+stim logs, including --errors, --json and --follow, asks the host over the same
+approved connection, copies the records it has not copied yet into the
+workspace's logs/macos-host.ndjson and prints them with the local records.
+stim stop copies the last ones, including the exit record, before it forgets the
+placement, so the logs stay readable after stop. A host that cannot answer, because
+it is unreachable or runs a stim-server that predates this, costs one stderr
+warning (after up to 10 seconds of connecting); stdout still carries the records already copied, so logs --json stays
+valid NDJSON. The host's unified log is not collected: os.Logger output that is
+not written to stderr does not appear.
 
 Phones and Stim Desktop view and control the hosted app through this Mac's
 stim-server, which relays to the host. The phone sends clicks, scrolls,

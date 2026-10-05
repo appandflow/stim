@@ -4,6 +4,7 @@ import {
   rmSync,
   writeFileSync,
   existsSync,
+  appendFileSync,
   renameSync,
   mkdirSync,
   chmodSync,
@@ -1444,6 +1445,62 @@ test.each([
   expect(host.attach('client', { session: first.id })).toHaveProperty('result.state', 'ready');
   expect(host.appAttach('client', params)).toHaveProperty('result.state', 'receiving');
   expect(existsSync(join(deviceHostArea(first.id), 'home', 'installed'))).toBe(false);
+});
+
+test('returns the hosted macOS app logs to its own client only, in pages, also after the session stopped', async () => {
+  await host.close();
+  host = new DeviceHost({
+    worker: join(home, 'worker.mjs'),
+    env: { ...process.env, STIM_MAX_DEVICES: '2' },
+    agents: noAgents,
+    allowed: (client) => allowed.has(client),
+  });
+  const validator = new Ajv2020({ strict: false, validateFormats: false });
+  validator.addSchema(protocolJsonSchema(), 'protocol');
+  const acceptsRequest = validator.compile({ $ref: 'protocol#/$defs/ClientRequest' });
+  const macos = reserve({ platform: 'macos' });
+  await state(macos.id, 'ready');
+  const logs = join(
+    deviceHostArea(macos.id),
+    'home',
+    'workspaces',
+    workspaceName(realpathSync(mkdirSync(join(deviceHostArea(macos.id), 'home', 'macos-app'), { recursive: true })!)),
+    'logs',
+  );
+  const query = (params: object, client = 'client') => host.logsQuery(client, { session: macos.id, ...params });
+  expect(query({})).toEqual({ result: { records: [], cursor: {}, more: false } });
+  mkdirSync(logs, { recursive: true });
+  const line = (n: number) =>
+    `${JSON.stringify({ ts: n, src: 'client', platform: 'macos', level: 'info', msg: `line ${n}` })}\n`;
+  writeFileSync(join(logs, 'macos.ndjson'), line(1) + line(2) + '{"ts":3,"msg":"half');
+  const first = query({});
+  if ('error' in first) throw new Error(first.error.message);
+  expect(first.result.records.map((record) => record.msg)).toEqual(['line 1', 'line 2']);
+  expect(first.result.more).toBe(false);
+  appendFileSync(join(logs, 'macos.ndjson'), ` written"}\n${line(4)}`);
+  const second = query({ cursor: first.result.cursor });
+  if ('error' in second) throw new Error(second.error.message);
+  expect(second.result.records.map((record) => record.msg)).toEqual(['half written', 'line 4']);
+  renameSync(join(logs, 'macos.ndjson'), join(logs, 'macos.ndjson.1'));
+  appendFileSync(join(logs, 'macos.ndjson.1'), line(5));
+  writeFileSync(join(logs, 'macos.ndjson'), line(6));
+  const third = query({ cursor: second.result.cursor });
+  if ('error' in third) throw new Error(third.error.message);
+  expect(third.result.records.map((record) => record.msg)).toEqual(['line 5', 'line 6']);
+  expect(query({}, 'other')).toHaveProperty('error.code', 'unknown-session');
+  expect(query({ cursor: { '../escape.ndjson': 0 } })).toHaveProperty('error.code', 'bad-request');
+  expect(query({ cursor: { 'macos.ndjson': -1 } })).toHaveProperty('error.code', 'bad-request');
+  expect(acceptsRequest({ id: 1, method: 'device-host.logs.query', params: { session: macos.id } })).toBe(true);
+  expect(
+    acceptsRequest({ id: 1, method: 'device-host.logs.query', params: { session: macos.id, cursor: { a: 1.5 } } }),
+  ).toBe(false);
+  host.stop('client', { session: macos.id });
+  await state(macos.id, 'stopped');
+  expect(query({})).toHaveProperty('result.records.length', 1);
+  allowed.delete('client');
+  expect(query({})).toHaveProperty('error.code', 'forbidden');
+  allowed.add('client');
+  await host.close();
 });
 
 test('macOS offer and reserve refuse all 64 unresolved app slots without mutating the journal', async () => {

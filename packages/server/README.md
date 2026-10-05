@@ -537,6 +537,17 @@ reports the app's pid, `DeviceHost` registers the running app with the agent
 driver before the receipt reads `installed`, and ends that registration when the
 session stops, is revoked or the server closes.
 
+`device-host.logs.query` with `{session, cursor?}` returns `{records, cursor, more}`:
+the NDJSON records the session's macOS app wrote to its captured log (stdout and
+stderr as `client` records, and its exit). `cursor` maps each log file name to the
+byte offset after the last complete line read; pass the previous result's cursor to
+receive only newer records, and repeat while `more` is true. Without a cursor, each
+file starts at most 4 MiB before its end. A page holds at most 1 MiB; a file that
+rotated since the cursor is read from the end of its previous generation. The
+session's own client only, for macOS sessions, and also after the session stopped,
+because stop keeps logs. Servers that predate it answer `forbidden` or
+`unknown-method`.
+
 macOS sessions refuse Metro. Viewing and control are supported while the hosted
 app is running. CLI placement and client view/control relays remain follow-ups in [#2403](https://github.com/appandflow/stim/issues/2403).
 
