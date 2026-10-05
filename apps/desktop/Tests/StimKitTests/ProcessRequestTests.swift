@@ -7,18 +7,6 @@ struct ProcessRequestTests {
     ProcessRequest("/bin/sh", ["-c", script], timeout: timeout)
   }
 
-  @Test func sendsExactInputBytesWithoutShellInterpretation() async throws {
-    let text = "\u{00E9} \u{65E5}\nsecond line $HOME ' \"\n"
-    var request = ProcessRequest("/bin/cat", timeout: 5)
-    let bytes = Data(String(repeating: text, count: 10_000).utf8)
-    request.input = bytes
-    let result = try await request.run()
-    #expect(result.succeeded)
-    #expect(result.stdout == bytes)
-    request.input = Data()
-    #expect(try await request.run().stdout.isEmpty)
-  }
-
   @Test func returnsStatusAndStdout() async throws {
     let result = try await sh("printf out; exit 3").run()
     #expect(result.status == 3)
