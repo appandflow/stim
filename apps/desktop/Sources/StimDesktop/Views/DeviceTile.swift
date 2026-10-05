@@ -485,7 +485,8 @@ struct DeviceTile: View {
       if let run {
         Button(viewer ? "Run" : device.platform == "web" ? "Open" : "Boot") {
           actions.run(
-            device.platform == "web" ? "Open web" : "Run \(device.slot)", steps: [run], present: device.platform == "web")
+            device.platform == "web" ? "Open web" : "Run \(device.slot)", steps: [run],
+            present: viewer || device.platform == "web")
         }
         .buttonStyle(.stim())
         .fixedSize()
