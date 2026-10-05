@@ -46,6 +46,8 @@ performance traces. Every release is listed under
   out after 10 seconds; Desktop stays responsive and waits for CoreSimulator's
   blocked call to return before trying again. Rotation, hinge input and
   development controls share that per-device guard.
+  Legacy input stays usable during background retries. Cancelling a development
+  request stops waiting while its lookup guard remains held until CoreSimulator returns.
 - **Replay.** Scrub back through a device's recent screen, with agent actions
   and errors marked on the timeline. Needs **Serve to phones** in **Stim >
   Settings > Phones**.

@@ -8,6 +8,7 @@ struct SimulatorLookupState {
   private struct Attempt {
     let id: UUID
     var timedOut = false
+    var waiting = true
   }
 
   private var attempts: [String: Attempt] = [:]
@@ -26,13 +27,20 @@ struct SimulatorLookupState {
   mutating func timeout(udid: String, id: UUID) -> Bool {
     guard let attempt = attempts[udid], attempt.id == id, !attempt.timedOut else { return false }
     attempts[udid]?.timedOut = true
+    attempts[udid]?.waiting = false
+    return attempt.waiting
+  }
+
+  mutating func cancel(udid: String, id: UUID) -> Bool {
+    guard let attempt = attempts[udid], attempt.id == id, attempt.waiting else { return false }
+    attempts[udid]?.waiting = false
     return true
   }
 
   mutating func finish(udid: String, id: UUID) -> Bool {
     guard let attempt = attempts[udid], attempt.id == id else { return false }
     attempts[udid] = nil
-    return !attempt.timedOut
+    return attempt.waiting
   }
 }
 
@@ -58,17 +66,26 @@ enum SimulatorLookup {
     guard state.begin(udid: udid, id: id) else {
       throw state.phase(udid: udid) == .failed ? Failure.timeout : Failure.busy
     }
-    return try await withCheckedThrowingContinuation { continuation in
-      DispatchQueue.global(qos: .userInitiated).async {
-        let result = Result(catching: operation)
-        DispatchQueue.main.async {
-          if state.finish(udid: udid, id: id) { continuation.resume(with: result) }
+    var cancelWait: (@MainActor () -> Void)?
+    return try await withTaskCancellationHandler {
+      try await withCheckedThrowingContinuation { continuation in
+        cancelWait = {
+          if state.cancel(udid: udid, id: id) { continuation.resume(throwing: CancellationError()) }
+        }
+        if Task.isCancelled { cancelWait?() }
+        DispatchQueue.global(qos: .userInitiated).async {
+          let result = Result(catching: operation)
+          DispatchQueue.main.async {
+            if state.finish(udid: udid, id: id) { continuation.resume(with: result) }
+          }
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 10) {
+          // CoreSimulator's synchronous XPC lookup keeps its thread until the reply, even after our timeout.
+          if state.timeout(udid: udid, id: id) { continuation.resume(throwing: Failure.timeout) }
         }
       }
-      DispatchQueue.main.asyncAfter(deadline: .now() + 10) {
-        // CoreSimulator's synchronous XPC lookup keeps its thread until the reply, even after our timeout.
-        if state.timeout(udid: udid, id: id) { continuation.resume(throwing: Failure.timeout) }
-      }
+    } onCancel: {
+      Task { @MainActor in cancelWait?() }
     }
   }
 }

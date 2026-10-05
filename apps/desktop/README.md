@@ -597,6 +597,9 @@ A lookup times out after 10 seconds without blocking Desktop. CoreSimulator
 cannot cancel that lookup, so Desktop waits for it to return before trying again,
 including when the viewer is reopened. Rotation, hinge input and development
 controls share this per-device lookup guard. Input reconnects after a disconnect.
+Legacy input stays usable while Desktop retries the CoreDevice service in the
+background. Cancelling a development request stops waiting immediately; its
+lookup guard remains held until CoreSimulator returns.
 
 The viewer's scale menu defaults to **Fit**. **Point Accurate** shows one iOS
 point or Android profile dp per Mac point; **Pixel Accurate** shows one guest

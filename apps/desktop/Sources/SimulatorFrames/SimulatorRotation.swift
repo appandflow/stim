@@ -13,14 +13,15 @@ public enum SimulatorRotation {
   }
 
   private static func sendRotation(udid: String, clockwise: Bool) -> Bool {
-    lock.lock()
-    defer { lock.unlock() }
     guard let device = CoreSimulator.device(udid: udid) else { return false }
     let displays = CoreSimulator.displays(udid: udid).filter { $0.screenProperties?.screenType == 0 }
     let duo = displays.count > 1
     let display = duo ? displays.first { $0.framebufferSurface.map { !isBlack($0) } ?? false } : displays.first
+    lock.lock()
+    let remembered = sent[udid]
+    lock.unlock()
     let current =
-      sent[udid]
+      remembered
       ?? deviceOrientation(
         interface: display?.screenProperties?.uiOrientation ?? 1,
         innerPanel: duo && display?.screenProperties?.screenID == displays.last?.screenProperties?.screenID)
@@ -30,7 +31,9 @@ public enum SimulatorRotation {
     } else {
       guard send(orientation: next, to: device) else { return false }
     }
+    lock.lock()
     sent[udid] = next
+    lock.unlock()
     return true
   }
 

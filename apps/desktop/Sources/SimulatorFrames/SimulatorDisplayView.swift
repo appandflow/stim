@@ -126,6 +126,10 @@ public final class SimulatorButtons {
   }
 }
 
+private final class SimulatorInputStatusLabel: NSTextField {
+  override func hitTest(_ point: NSPoint) -> NSView? { nil }
+}
+
 public final class SimulatorDisplayNSView: NSView {
   var onPixelSizeChange: (CGSize) -> Void = { _ in }
   var onOrientationChange: (UInt32) -> Void = { _ in }
@@ -148,7 +152,7 @@ public final class SimulatorDisplayNSView: NSView {
   private var inputTask: Task<Void, Never>?
   private var inputTimer: Timer?
   private var nextInputAttempt = Date.distantPast
-  private let inputStatus = NSTextField(wrappingLabelWithString: "")
+  private let inputStatus = SimulatorInputStatusLabel(wrappingLabelWithString: "")
   private var touchPoint: CGPoint?
   private var keyboardModifiers = SimulatorKeyboardModifiers()
   private lazy var twoFinger = TwoFingerGesture(
@@ -157,7 +161,7 @@ public final class SimulatorDisplayNSView: NSView {
     project: { [weak self] point in self?.viewPoint(point) },
     send: { [weak self] phase, first, second in
       guard let self else { return false }
-      if phase == .move, self.hid?.isConnected != true {
+      if phase == .move, self.hid?.isReady != true {
         self.releaseInput()
         return false
       }
@@ -203,6 +207,7 @@ public final class SimulatorDisplayNSView: NSView {
     layer?.addSublayer(surfaceLayer)
     layer?.addSublayer(foldedScreen.layer)
     inputStatus.isHidden = true
+    inputStatus.isSelectable = false
     inputStatus.alignment = .center
     inputStatus.textColor = .white
     inputStatus.backgroundColor = .black.withAlphaComponent(0.8)
@@ -252,10 +257,14 @@ public final class SimulatorDisplayNSView: NSView {
   }
 
   private func connect() {
-    watchInput()
-    guard let udid, display == nil, retryTimer == nil else { return }
+    guard let udid else { return }
+    guard display == nil, retryTimer == nil else {
+      watchInput()
+      return
+    }
     guard let display = CoreSimulator.displays(udid: udid).first(where: { $0.screenProperties?.screenID == screenID })
     else {
+      watchInput()
       retryTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: false) { [weak self] _ in
         self?.retryTimer = nil
         self?.connect()
@@ -263,6 +272,7 @@ public final class SimulatorDisplayNSView: NSView {
       return
     }
     self.display = display
+    watchInput()
     showSurface()
     display.registerSurfacesCallback(callbackID) { [weak self] _ in
       DispatchQueue.main.async { self?.showSurface() }
@@ -386,8 +396,10 @@ public final class SimulatorDisplayNSView: NSView {
   private var acceptsInput: Bool { interactive && display != nil && hid?.isReady == true }
 
   private func watchInput() {
-    guard interactive, udid != nil, window != nil, inputTimer == nil else { return }
-    inputTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in self?.connectInput() }
+    guard interactive, udid != nil, window != nil else { return }
+    if inputTimer == nil {
+      inputTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in self?.connectInput() }
+    }
     connectInput()
   }
 
@@ -406,18 +418,18 @@ public final class SimulatorDisplayNSView: NSView {
     guard interactive, let udid else { return }
     if hid?.isReady == true {
       inputStatus.isHidden = true
-      return
+      if hid?.isConnected == true { return }
     }
-    if hid != nil {
+    if let hid, !hid.isReady {
       releaseInput()
-      hid = nil
+      self.hid = nil
     }
     guard display != nil else {
       showInputStatus("Input unavailable. Waiting for the simulator.")
       return
     }
     guard inputTask == nil, Date() >= nextInputAttempt else { return }
-    showInputStatus("Connecting input...")
+    if !acceptsInput { showInputStatus("Connecting input...") }
     inputTask = Task { [weak self] in
       do {
         let hid = try await SimulatorLookup.run(udid: udid) {
@@ -434,7 +446,7 @@ public final class SimulatorDisplayNSView: NSView {
         guard let self, !Task.isCancelled, self.udid == udid, self.interactive else { return }
         self.inputTask = nil
         self.nextInputAttempt = Date().addingTimeInterval(2)
-        self.showInputStatus("Input unavailable. \(error.localizedDescription)")
+        if !self.acceptsInput { self.showInputStatus("Input unavailable. \(error.localizedDescription)") }
       }
     }
   }

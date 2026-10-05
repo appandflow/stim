@@ -63,4 +63,36 @@ import Testing
     ]
     #expect(trace == [true, false, false, false, true])
   }
+
+  @Test func cancellationStopsWaitingWithoutReleasingTheNativeLookup() {
+    var state = SimulatorLookupState()
+    let first = UUID()
+    let trace = [
+      state.begin(udid: "device", id: first),
+      state.cancel(udid: "device", id: first),
+      state.cancel(udid: "device", id: first),
+      state.begin(udid: "device", id: UUID()),
+      state.timeout(udid: "device", id: first),
+      state.finish(udid: "device", id: first),
+    ]
+    #expect(trace == [true, true, false, false, false, false])
+    let replacement = UUID()
+    let started = state.begin(udid: "device", id: replacement)
+    let staleCancellation = state.cancel(udid: "device", id: first)
+    let delivered = state.finish(udid: "device", id: replacement)
+    #expect(started && !staleCancellation && delivered)
+  }
+
+  @Test func cancellationAfterTimeoutCannotDeliverASecondResult() {
+    var state = SimulatorLookupState()
+    let id = UUID()
+    let trace = [
+      state.begin(udid: "device", id: id),
+      state.timeout(udid: "device", id: id),
+      state.cancel(udid: "device", id: id),
+      state.finish(udid: "device", id: id),
+    ]
+    #expect(trace == [true, true, false, false])
+    #expect(state.phase(udid: "device") == .idle)
+  }
 }
