@@ -332,6 +332,15 @@ struct BuildHistoryRow: View {
   var now: Date
   @State private var expanded = false
 
+  #if DEBUG
+    init(entry: BuildHistoryEntry, workspace: String, now: Date, expanded: Bool = false) {
+      self.entry = entry
+      self.workspace = workspace
+      self.now = now
+      _expanded = State(initialValue: expanded)
+    }
+  #endif
+
   private var color: Color {
     switch entry.result {
     case "succeeded": return Palette.success

@@ -19,9 +19,44 @@
       try await check(screen: .simulator, scenario: .error, dark: false, width: 380)
     }
 
+    @MainActor func testBuildHistoryCollapsed() async throws {
+      try await checkBuild(expanded: false)
+    }
+
+    @MainActor func testBuildHistoryExpanded() async throws {
+      try await checkBuild(expanded: true)
+    }
+
+    @MainActor private func checkBuild(
+      expanded: Bool, file: StaticString = #filePath, testName: String = #function, line: UInt = #line
+    ) async throws {
+      let now = Date(timeIntervalSince1970: 946728000)
+      let fixture = try PlaygroundFixtures.make(.longText, now: now)
+      let entry = try XCTUnwrap(fixture.environment.builds?.builds(for: "ios").first)
+      try await check(
+        content: BuildHistoryRow(entry: entry, workspace: PlaygroundFixtures.workspace, now: now, expanded: expanded)
+          .font(.stim(.callout))
+          .padding(Space.lg)
+          .background(RoundedRectangle(cornerRadius: Radius.control).fill(Palette.surface))
+          .padding(Space.xxl)
+          .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+          .background(Palette.sidebar),
+        dark: false, width: WorkspaceDetail.inspectorWidth, retinaOnly: true, file: file, testName: testName, line: line)
+    }
+
     @MainActor private func check(
       screen: PlaygroundScreen, scenario: PlaygroundScenario, dark: Bool, width: CGFloat,
       file: StaticString = #filePath, testName: String = #function, line: UInt = #line
+    ) async throws {
+      try await check(
+        content: PlaygroundScreenView(
+          screen: screen, scenario: scenario, fixtureDate: Date(timeIntervalSince1970: 946728000)),
+        dark: dark, width: width, file: file, testName: testName, line: line)
+    }
+
+    @MainActor private func check<Content: View>(
+      content: Content, dark: Bool, width: CGFloat, retinaOnly: Bool = false,
+      file: StaticString, testName: String, line: UInt
     ) async throws {
       #if !arch(arm64)
         throw XCTSkip("Visual references require arm64.")
@@ -45,22 +80,23 @@
       let appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
       window.appearance = appearance
       let view = NSHostingView(
-        rootView: PlaygroundScreenView(
-          screen: screen, scenario: scenario, fixtureDate: Date(timeIntervalSince1970: 946728000)
-        )
-        .frame(width: size.width, height: size.height)
-        .environment(\.locale, Locale(identifier: "en_US"))
-        .environment(\.calendar, calendar)
-        .environment(\.timeZone, zone)
-        .environment(\.colorScheme, dark ? .dark : .light)
-        .environment(\.dynamicTypeSize, .large)
-        .transaction { $0.disablesAnimations = true })
+        rootView:
+          content
+          .frame(width: size.width, height: size.height)
+          .environment(\.locale, Locale(identifier: "en_US"))
+          .environment(\.calendar, calendar)
+          .environment(\.timeZone, zone)
+          .environment(\.colorScheme, dark ? .dark : .light)
+          .environment(\.dynamicTypeSize, .large)
+          .transaction { $0.disablesAnimations = true })
       view.frame = CGRect(origin: .zero, size: size)
       view.appearance = appearance
       window.contentView = view
       window.setFrameOrigin(CGPoint(x: 40, y: 40))
       window.orderFront(nil)
-      try XCTSkipUnless(window.backingScaleFactor == 1, "Visual references require a 1x native window backing scale.")
+      let scale = window.backingScaleFactor
+      try XCTSkipUnless(scale == 1 || scale == 2, "Visual references require a 1x or 2x native window backing scale.")
+      try XCTSkipUnless(!retinaOnly || scale == 2, "Build row references currently cover only native 2x windows.")
       try await Task.sleep(for: .seconds(1))
       view.layoutSubtreeIfNeeded()
       guard let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds) else {
@@ -68,12 +104,13 @@
         return
       }
       view.cacheDisplay(in: view.bounds, to: bitmap)
-      XCTAssertEqual(bitmap.pixelsWide, Int(width))
-      XCTAssertEqual(bitmap.pixelsHigh, 640)
+      XCTAssertEqual(bitmap.pixelsWide, Int(width * scale))
+      XCTAssertEqual(bitmap.pixelsHigh, Int(size.height * scale))
       let image = NSImage(size: size)
       image.addRepresentation(bitmap)
       assertSnapshot(
-        of: image, as: .image, record: ProcessInfo.processInfo.environment["STIM_RECORD_VISUAL_FIXTURES"] == "1" ? .all : .never,
+        of: image, as: .image, named: scale == 2 ? "2x" : nil,
+        record: ProcessInfo.processInfo.environment["STIM_RECORD_VISUAL_FIXTURES"] == "1" ? .all : .never,
         file: file, testName: testName, line: line)
     }
   }
