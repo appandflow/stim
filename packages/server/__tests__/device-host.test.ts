@@ -995,6 +995,7 @@ describe('hosted agent control', () => {
     path: `/device-host/agent/${randomUUID()}/`,
     token: 'a'.repeat(43),
     scope: 'lease-1',
+    lease: { tenant: 'stim.s', runId: 'run-1', clientId: 'agent', deviceKey: 'dev.fixture.app.hosted1@4242' },
   };
 
   test('starts macOS agent control for the installed process before the receipt reads installed and hands out its grant', async () => {
@@ -1321,6 +1322,7 @@ test('app deliveries carry an agent grant for any driver name but only one sessi
     path: '/device-host/agent/12345678-1234-1234-1234-123456789abc/',
     token: 'a'.repeat(43),
     scope: 'lease-1',
+    lease: { tenant: 'stim.s', runId: 'run-1', clientId: 'agent', deviceKey: 'dev.fixture.app.hosted1@4242' },
   };
   expect(acceptsDelivery({ ...delivery, agent: { driver: 'none' } })).toBe(true);
   expect(acceptsDelivery({ ...delivery, agent: grant })).toBe(true);
@@ -1329,6 +1331,7 @@ test('app deliveries carry an agent grant for any driver name but only one sessi
     { ...grant, driver: 'none' },
     { ...grant, path: '/device-host/agent/../12345678-1234-1234-1234-123456789abc/' },
     { ...grant, token: 'short' },
+    { ...grant, lease: { ...grant.lease, deviceKey: 'dev.fixture.app.hosted1' } },
   ])
     expect(acceptsDelivery({ ...delivery, agent })).toBe(false);
 });

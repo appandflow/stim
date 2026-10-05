@@ -47,6 +47,12 @@ class FakeDriver implements HostedAgentDriver {
       path: agentRoute(app.session),
       token: newAgentToken(),
       scope: `lease-${app.session.slice(0, 8)}-${app.pid}`,
+      lease: {
+        tenant: `stim.${app.session}`,
+        runId: app.session,
+        clientId: 'agent',
+        deviceKey: `${app.bundleId}@${app.pid}`,
+      },
     });
   }
   revoke(session: string): Promise<void> {
@@ -265,7 +271,13 @@ describe('hosted agent grants', () => {
   test('are 256-bit tokens the client parser accepts', () => {
     const token = newAgentToken();
     expect(
-      parseHostedAgentGrant({ driver: 'agent-device', path: agentRoute(A), token, scope: 'lease-1' }),
+      parseHostedAgentGrant({
+        driver: 'agent-device',
+        path: agentRoute(A),
+        token,
+        scope: 'lease-1',
+        lease: { tenant: `stim.${A}`, runId: A, clientId: 'agent', deviceKey: 'dev.example.app@5' },
+      }),
     ).not.toBeNull();
     expect(newAgentToken()).not.toBe(token);
   });

@@ -1,5 +1,15 @@
 import { execFile, spawn, type ChildProcess } from 'node:child_process';
-import { accessSync, chmodSync, constants, mkdirSync, readFileSync, realpathSync, rmSync } from 'node:fs';
+import { randomBytes } from 'node:crypto';
+import {
+  accessSync,
+  chmodSync,
+  constants,
+  mkdirSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { request as httpRequest, type IncomingMessage, type ServerResponse } from 'node:http';
 import { homedir } from 'node:os';
 import { delimiter, dirname, join } from 'node:path';
@@ -18,30 +28,66 @@ import {
   waitForProcessExit,
   type ProcessRecord,
 } from '@stim-cli/core/process-identity';
-import { isJsonObject, type HostedAgentGrant } from '@stim-cli/core/state';
+import { isJsonObject, type HostedAgentGrant, type HostedAgentLease } from '@stim-cli/core/state';
 import {
   AGENT_ROUTE_PREFIX,
   AgentDriverUnavailable,
+  agentRoute,
   newAgentToken,
   type HostedAgentApp,
   type HostedAgentDriver,
 } from './agent-driver.ts';
 
-/**
- * agent-device (0.21.x, upstream main) maps no remote lease backend to the macOS desktop host, so a proxy
- * client that opens an app on a Mac gets the whole desktop or nothing. Until agent-device can lease one
- * macOS app, this adapter refuses to start and to issue, and never hands out unscoped desktop access.
- */
-const AGENT_DEVICE_SCOPED_MACOS_LEASE = false;
-
 const UNSCOPED =
-  'Agent control is unavailable: agent-device has no remote lease limited to one macOS app yet, and Stim never hands a client the hosting Mac desktop.';
+  'Agent control is unavailable: the agent-device on the hosting Mac has no macos-app lease to limit a client to one app, and Stim never hands a client the hosting Mac desktop.';
+
+/** Names an agent-device binary to use instead of the fixed install locations. */
+const AGENT_DEVICE_BIN_ENV = 'STIM_AGENT_DEVICE_BIN';
 
 const CANDIDATES = (home: string): string[] => [
   join(home, '.local', 'bin', 'agent-device'),
   '/opt/homebrew/bin/agent-device',
   '/usr/local/bin/agent-device',
 ];
+
+/**
+ * The daemon policy Stim starts agent-device with (agent-device ADR 0029): every request must run under a
+ * host-allocated `macos-app` lease, and only these commands run at all.
+ */
+const POLICY = {
+  version: 1,
+  leases: { require: 'macos-app' },
+  commands: {
+    allow: [
+      'open',
+      'close',
+      'snapshot',
+      'wait',
+      'find',
+      'get',
+      'is',
+      'click',
+      'fill',
+      'press',
+      'type',
+      'focus',
+      'scroll',
+      'screenshot',
+      'batch',
+    ],
+  },
+};
+
+/** agent-device caps a lease's inactivity window at ten minutes; the host renews well inside it. */
+const LEASE_TTL_MS = 600_000;
+const MAX_RPC_BYTES = 1024 * 1024;
+const COMMAND_METHODS = new Set(['agent_device.command', 'agent-device.command']);
+const LEASE_METHODS = new Set([
+  'agent_device.lease.heartbeat',
+  'agent-device.lease.heartbeat',
+  'agent_device.lease.release',
+  'agent-device.lease.release',
+]);
 
 export interface AgentDeviceInvocation {
   command: string;
@@ -54,7 +100,8 @@ export interface AgentDeviceInvocation {
  * server's own Node.
  */
 export function resolveAgentDevice(env: NodeJS.ProcessEnv): AgentDeviceInvocation {
-  const candidates = CANDIDATES(env.HOME || homedir());
+  const explicit = env[AGENT_DEVICE_BIN_ENV]?.trim();
+  const candidates = explicit ? [explicit] : CANDIDATES(env.HOME || homedir());
   for (const candidate of candidates) {
     try {
       const real = realpathSync(candidate);
@@ -63,7 +110,9 @@ export function resolveAgentDevice(env: NodeJS.ProcessEnv): AgentDeviceInvocatio
     } catch {}
   }
   throw new AgentDriverUnavailable(
-    `agent-device is not installed on the hosting Mac (looked in ${candidates.join(', ')}). Install it with: npm install --global --prefix "$HOME/.local" agent-device`,
+    explicit
+      ? `${AGENT_DEVICE_BIN_ENV} names ${explicit}, which is not a readable agent-device on the hosting Mac.`
+      : `agent-device is not installed on the hosting Mac (looked in ${candidates.join(', ')}). Install it with: npm install --global --prefix "$HOME/.local" agent-device`,
   );
 }
 
@@ -73,10 +122,10 @@ export interface AgentDeviceDriverOptions {
   stateDir: string;
   /** Ownership claim root held for as long as the daemon runs. */
   claimRoot: string;
-  scopedMacosLease?: boolean;
   startTimeoutMs?: number;
   stopTimeoutMs?: number;
   watchMs?: number;
+  leaseRenewMs?: number;
 }
 
 interface Running {
@@ -86,7 +135,21 @@ interface Running {
   daemon: ProcessRecord;
   url: URL;
   token: string;
+  admin: DaemonAdmin;
   watch: NodeJS.Timeout;
+}
+
+/** The daemon's own loopback listener and token, which serve agent-device's host-only `/admin` routes. */
+interface DaemonAdmin {
+  port: number;
+  token: string;
+}
+
+interface Lease {
+  id: string;
+  scope: HostedAgentLease;
+  renew: NodeJS.Timeout;
+  renewing: Promise<unknown>;
 }
 
 const FORWARDED = [
@@ -113,14 +176,15 @@ export class AgentDeviceDriver implements HostedAgentDriver {
   private stopping = false;
   private daemonRecord: ProcessRecord | null = null;
   private listener: (() => void) | null = null;
+  private readonly leases = new Map<string, Lease>();
 
   constructor(options: AgentDeviceDriverOptions) {
     this.options = {
       startTimeoutMs: 60_000,
       stopTimeoutMs: 20_000,
       watchMs: 5000,
+      leaseRenewMs: 120_000,
       ...options,
-      scopedMacosLease: options.scopedMacosLease ?? AGENT_DEVICE_SCOPED_MACOS_LEASE,
     };
   }
 
@@ -129,7 +193,6 @@ export class AgentDeviceDriver implements HostedAgentDriver {
   }
 
   start(): Promise<void> {
-    if (!this.options.scopedMacosLease) return Promise.reject(new AgentDriverUnavailable(UNSCOPED));
     if (this.running) return Promise.resolve();
     this.starting ??= this.launch().finally(() => {
       this.starting = null;
@@ -158,6 +221,8 @@ export class AgentDeviceDriver implements HostedAgentDriver {
     this.claim = claim;
     this.stopping = false;
     rmSync(join(this.options.stateDir, 'daemon.json'), { force: true });
+    const policy = join(this.options.stateDir, 'policy.json');
+    writeFileSync(policy, `${JSON.stringify(POLICY)}\n`, { mode: 0o600 });
     markClaimChildPending(claim);
     const token = newAgentToken();
     let proxy: ChildProcess | undefined;
@@ -170,6 +235,8 @@ export class AgentDeviceDriver implements HostedAgentDriver {
             ...this.options.env,
             PATH: [dirname(process.execPath), this.options.env.PATH].filter(Boolean).join(delimiter),
             AGENT_DEVICE_DAEMON_AUTH_TOKEN: token,
+            AGENT_DEVICE_DAEMON_POLICY: policy,
+            AGENT_DEVICE_MACOS_APP_BACKEND: 'native',
             AGENT_DEVICE_NO_UPDATE_NOTIFIER: '1',
           },
           detached: true,
@@ -177,11 +244,12 @@ export class AgentDeviceDriver implements HostedAgentDriver {
         },
       );
       const url = await this.listening(proxy);
-      const daemon = this.readDaemon();
+      const { record: daemon, admin } = this.readDaemon();
       this.daemonRecord = daemon;
       const proxyIdentity = proxy.pid === undefined ? null : captureProcessIdentity(proxy.pid);
       if (!proxyIdentity?.ok) throw new Error('The agent-device proxy identity could not be captured.');
       setClaimChild(claim, daemon);
+      if (!(await leasesMacosApps(url))) throw new AgentDriverUnavailable(UNSCOPED);
       const watch = setInterval(() => this.watchDaemon(), this.options.watchMs);
       watch.unref();
       const running: Running = {
@@ -191,6 +259,7 @@ export class AgentDeviceDriver implements HostedAgentDriver {
         daemon,
         url,
         token,
+        admin,
         watch,
       };
       this.running = running;
@@ -201,7 +270,7 @@ export class AgentDeviceDriver implements HostedAgentDriver {
       this.running = null;
       if (!this.daemonRecord) {
         try {
-          this.daemonRecord = this.readDaemon();
+          this.daemonRecord = this.readDaemon().record;
         } catch {}
       }
       await this.teardown(proxy).catch(() => undefined);
@@ -238,13 +307,23 @@ export class AgentDeviceDriver implements HostedAgentDriver {
     });
   }
 
-  private readDaemon(): ProcessRecord {
+  private readDaemon(): { record: ProcessRecord; admin: DaemonAdmin } {
     const value: unknown = JSON.parse(readFileSync(join(this.options.stateDir, 'daemon.json'), 'utf8'));
     if (!isJsonObject(value) || typeof value.pid !== 'number' || !Number.isInteger(value.pid) || value.pid < 2)
       throw new Error('The agent-device daemon record has no pid.');
     const identity = captureProcessIdentity(value.pid);
     if (!identity.ok) throw new Error('The agent-device daemon identity could not be captured.');
-    return { pid: value.pid, processToken: identity.token };
+    const record = { pid: value.pid, processToken: identity.token };
+    if (
+      typeof value.httpPort !== 'number' ||
+      !Number.isInteger(value.httpPort) ||
+      typeof value.token !== 'string' ||
+      !value.token
+    ) {
+      this.daemonRecord = record;
+      throw new Error('The agent-device daemon record has no HTTP listener.');
+    }
+    return { record, admin: { port: value.httpPort, token: value.token } };
   }
 
   private watchDaemon(): void {
@@ -263,6 +342,8 @@ export class AgentDeviceDriver implements HostedAgentDriver {
   async stop(): Promise<void> {
     this.stopping = true;
     await this.starting?.catch(() => undefined);
+    for (const lease of this.leases.values()) clearInterval(lease.renew);
+    this.leases.clear();
     const running = this.running;
     if (!running && !this.claim) return;
     this.running = null;
@@ -318,30 +399,102 @@ export class AgentDeviceDriver implements HostedAgentDriver {
     return false;
   }
 
-  issue(_app: HostedAgentApp): Promise<HostedAgentGrant> {
-    return Promise.reject(new AgentDriverUnavailable(UNSCOPED));
+  /**
+   * Allocates a `macos-app` lease for exactly this app process over agent-device's host-only admin route, and
+   * renews it for as long as the app is hosted. The client names the lease; the forward pins it.
+   */
+  async issue(app: HostedAgentApp): Promise<HostedAgentGrant> {
+    const running = this.running;
+    if (!running) throw new Error('The agent-device daemon is not running.');
+    const scope: HostedAgentLease = {
+      tenant: `stim.${app.session}`,
+      runId: app.session,
+      clientId: 'agent',
+      deviceKey: `${app.bundleId}@${app.pid}`,
+    };
+    await this.revoke(app.session);
+    const id = randomBytes(16).toString('hex');
+    await putLease(running.admin, id, scope);
+    const lease: Lease = {
+      id,
+      scope,
+      renewing: Promise.resolve(),
+      renew: setInterval(() => {
+        if (this.running !== running) return;
+        lease.renewing = putLease(running.admin, id, scope).catch((error: unknown) =>
+          process.stderr.write(`Hosted agent lease renewal failed: ${(error as Error).message}\n`),
+        );
+      }, this.options.leaseRenewMs),
+    };
+    lease.renew.unref();
+    this.leases.set(app.session, lease);
+    return { driver: 'agent-device', path: agentRoute(app.session), token: newAgentToken(), scope: id, lease: scope };
   }
 
-  revoke(): Promise<void> {
-    return Promise.resolve();
+  async revoke(session: string): Promise<void> {
+    const lease = this.leases.get(session);
+    if (!lease) return;
+    this.leases.delete(session);
+    clearInterval(lease.renew);
+    await lease.renewing;
+    if (this.running) await adminRequest(this.running.admin, 'DELETE', lease.id);
   }
 
   forward(session: string, request: IncomingMessage, response: ServerResponse): void {
     const running = this.running;
-    if (!running) {
+    const lease = this.leases.get(session);
+    if (!running || !lease) {
       response.writeHead(503, { 'content-type': 'text/plain' }).end('Agent control is not running.\n');
       return;
     }
-    const target = daemonPath(session, request.url ?? '');
+    const target = daemonPath(session, request.url ?? '', request.method);
     if (!target) {
       response.writeHead(404, { 'content-type': 'text/plain' }).end('Not found.\n');
       return;
     }
-    const headers: Record<string, string> = { authorization: `Bearer ${running.token}` };
+    if (!target.startsWith('/rpc')) {
+      this.relay(running, lease, request, response, target);
+      return;
+    }
+    void this.relayPinned(running, lease, request, response, target);
+  }
+
+  private async relayPinned(
+    running: Running,
+    lease: Lease,
+    request: IncomingMessage,
+    response: ServerResponse,
+    target: string,
+  ): Promise<void> {
+    let body: Buffer | null;
+    try {
+      body = await readBody(request, MAX_RPC_BYTES);
+    } catch {
+      response.destroy();
+      return;
+    }
+    const pinned = body === null ? null : pinLease(body, lease);
+    if (pinned === null) response.writeHead(400, { 'content-type': 'text/plain' }).end('Unsupported request.\n');
+    else this.relay(running, lease, request, response, target, pinned);
+  }
+
+  private relay(
+    running: Running,
+    lease: Lease,
+    request: IncomingMessage,
+    response: ServerResponse,
+    target: string,
+    body?: Buffer,
+  ): void {
+    const headers: Record<string, string> = {
+      authorization: `Bearer ${running.token}`,
+      'x-agent-device-tenant': lease.scope.tenant,
+    };
     for (const name of FORWARDED) {
       const value = request.headers[name];
       if (typeof value === 'string') headers[name] = value;
     }
+    if (body) headers['content-length'] = String(body.length);
     const upstream = httpRequest(
       { host: running.url.hostname, port: running.url.port, method: request.method, path: target, headers },
       (answer) => {
@@ -360,18 +513,187 @@ export class AgentDeviceDriver implements HostedAgentDriver {
     response.once('close', () => {
       if (!response.writableFinished) upstream.destroy();
     });
-    request.pipe(upstream);
+    if (body) upstream.end(body);
+    else request.pipe(upstream);
   }
 }
 
-const DAEMON_PATHS = /^\/(?:rpc|health|upload|artifacts|sessions)(?:\/[\w.~-]+)*\/?$/;
+/**
+ * Rewrites one JSON-RPC body so it can act only under the session's lease. The proxy token is one credential
+ * for every client, so the lease, its owner scope and tenant session isolation come from the host, never from
+ * the client. Methods other than commands and lease renewal or release are refused.
+ */
+function pinLease(body: Buffer, lease: Lease): Buffer | null {
+  let rpc: unknown;
+  try {
+    rpc = JSON.parse(body.toString('utf8'));
+  } catch {
+    return null;
+  }
+  if (!isJsonObject(rpc) || typeof rpc.method !== 'string' || !isJsonObject(rpc.params)) return null;
+  const { tenant, runId, clientId, deviceKey } = lease.scope;
+  const owner = { runId, leaseId: lease.id, clientId, deviceKey, leaseProvider: 'proxy' };
+  if (COMMAND_METHODS.has(rpc.method)) {
+    const { runtime: _runtime, meta, flags, input, ...params } = rpc.params;
+    if (!isAllowedCommand(params.command)) return null;
+    const steps = isJsonObject(flags) && Array.isArray(flags.batchSteps) ? flags.batchSteps : [];
+    if (steps.some((step) => !isJsonObject(step) || !isAllowedCommand(step.command))) return null;
+    rpc.params = {
+      ...params,
+      flags: {
+        ...withoutDeviceSelectors(flags),
+        platform: 'macos',
+        ...(steps.length ? { batchSteps: steps.map(pinStep) } : {}),
+      },
+      ...(isJsonObject(input) ? { input: withoutDeviceSelectors(input) } : {}),
+      meta: {
+        ...pickClientMeta(meta),
+        ...owner,
+        tenantId: tenant,
+        leaseBackend: 'macos-app',
+        sessionIsolation: 'tenant',
+      },
+    };
+  } else if (LEASE_METHODS.has(rpc.method)) {
+    const { tenant: _tenant, provider: _provider, ...params } = rpc.params;
+    rpc.params = { ...params, ...owner, tenantId: tenant, backend: 'macos-app' };
+  } else return null;
+  return Buffer.from(JSON.stringify(rpc));
+}
 
-/** The proxy path behind a session route, only for the routes agent-device's proxy serves; null otherwise. */
-function daemonPath(session: string, url: string): string | null {
+/**
+ * Flags that pick a device. The host forces `platform: macos` so a first `open` cannot resolve to a host
+ * simulator, emulator or phone; agent-device's `macos-app` admission enforces the same rule.
+ */
+const DEVICE_SELECTORS = ['device', 'udid', 'serial', 'target', 'iosSimulatorDeviceSet', 'androidDeviceAllowlist'];
+
+function withoutDeviceSelectors(fields: unknown): Record<string, unknown> {
+  if (!isJsonObject(fields)) return {};
+  return Object.fromEntries(Object.entries(fields).filter(([key]) => !DEVICE_SELECTORS.includes(key)));
+}
+
+function pinStep(step: unknown): unknown {
+  if (!isJsonObject(step)) return step;
+  const { runtime: _runtime, flags, input, ...rest } = step;
+  return {
+    ...rest,
+    flags: { ...withoutDeviceSelectors(flags), platform: 'macos' },
+    ...(isJsonObject(input) ? { input: withoutDeviceSelectors(input) } : {}),
+  };
+}
+
+function isAllowedCommand(command: unknown): boolean {
+  return typeof command === 'string' && POLICY.commands.allow.includes(command);
+}
+
+/**
+ * The request metadata a client may set: reporting preferences and the local paths its own artifacts land
+ * at. Host paths (`cwd`, `developerDir`), install sources, lock and lease options and runtime hints stay with
+ * the host.
+ */
+const CLIENT_META = ['requestId', 'debug', 'includeCost', 'responseLevel', 'sessionExplicit', 'clientArtifactPaths'];
+
+function pickClientMeta(meta: unknown): Record<string, unknown> {
+  if (!isJsonObject(meta)) return {};
+  return Object.fromEntries(CLIENT_META.filter((key) => meta[key] !== undefined).map((key) => [key, meta[key]]));
+}
+
+function readBody(request: IncomingMessage, limit: number): Promise<Buffer | null> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    let size = 0;
+    request.on('data', (chunk: Buffer) => {
+      size += chunk.length;
+      if (size <= limit) chunks.push(chunk);
+    });
+    request.once('end', () => resolve(size > limit ? null : Buffer.concat(chunks)));
+    request.once('error', reject);
+  });
+}
+
+/** Whether the daemon behind a proxy advertises agent-device's `macos-app` lease backend in `/health`. */
+function leasesMacosApps(url: URL): Promise<boolean> {
+  return new Promise((resolve) => {
+    const probe = httpRequest(
+      { host: url.hostname, port: url.port, method: 'GET', path: '/health', timeout: 10_000 },
+      (answer) => {
+        let text = '';
+        answer.on('data', (chunk: Buffer) => (text += chunk.toString()));
+        answer.once('end', () => {
+          try {
+            const health: unknown = JSON.parse(text);
+            const backends =
+              isJsonObject(health) && isJsonObject(health.upstream) ? health.upstream.leaseBackends : null;
+            resolve(Array.isArray(backends) && backends.includes('macos-app'));
+          } catch {
+            resolve(false);
+          }
+        });
+      },
+    );
+    probe.once('timeout', () => probe.destroy());
+    probe.once('error', () => resolve(false));
+    probe.end();
+  });
+}
+
+function putLease(admin: DaemonAdmin, id: string, scope: HostedAgentLease): Promise<void> {
+  return adminRequest(admin, 'PUT', id, {
+    tenantId: scope.tenant,
+    runId: scope.runId,
+    clientId: scope.clientId,
+    leaseBackend: 'macos-app',
+    leaseProvider: 'proxy',
+    deviceKey: scope.deviceKey,
+    ttlMs: LEASE_TTL_MS,
+  });
+}
+
+/** One call to agent-device's host-only `/admin/leases` route on the daemon's loopback listener. */
+function adminRequest(admin: DaemonAdmin, method: 'PUT' | 'DELETE', id: string, body?: object): Promise<void> {
+  const payload = body ? Buffer.from(JSON.stringify(body)) : undefined;
+  return new Promise((resolve, reject) => {
+    const call = httpRequest(
+      {
+        host: '127.0.0.1',
+        port: admin.port,
+        method,
+        path: `/admin/leases/${id}`,
+        timeout: 10_000,
+        headers: {
+          authorization: `Bearer ${admin.token}`,
+          ...(payload ? { 'content-type': 'application/json', 'content-length': String(payload.length) } : {}),
+        },
+      },
+      (answer) => {
+        let text = '';
+        answer.on('data', (chunk: Buffer) => (text += chunk.toString()));
+        answer.once('end', () =>
+          answer.statusCode === 200
+            ? resolve()
+            : reject(new Error(`agent-device refused the lease (${String(answer.statusCode)}): ${text.slice(0, 200)}`)),
+        );
+      },
+    );
+    call.once('timeout', () => call.destroy(new Error('agent-device did not answer the lease request.')));
+    call.once('error', reject);
+    call.end(payload);
+  });
+}
+
+const DAEMON_PATHS = /^\/(?:rpc|health|artifacts)(?:\/[\w.~-]+)*\/?$/;
+
+/**
+ * The proxy path behind a session route, only for commands (`/rpc`), health and artifact downloads; null
+ * otherwise. Uploads serve installs, which a macos-app lease refuses, and session diagnostics are not scoped
+ * to one client.
+ */
+function daemonPath(session: string, url: string, method: string | undefined): string | null {
   const prefix = `${AGENT_ROUTE_PREFIX}${session}`;
   if (!url.startsWith(prefix)) return null;
   const rest = url.slice(prefix.length);
   const query = rest.indexOf('?');
   const path = query < 0 ? rest : rest.slice(0, query);
-  return DAEMON_PATHS.test(path) && !path.includes('..') ? rest : null;
+  if (!DAEMON_PATHS.test(path) || path.includes('..')) return null;
+  return (path.startsWith('/rpc') ? method === 'POST' : method === 'GET') ? rest : null;
 }

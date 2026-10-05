@@ -126,6 +126,20 @@ export function protocolJsonSchema(): JsonSchema {
                   path: { type: 'string', pattern: '^/device-host/agent/[a-f0-9-]{36}/$' },
                   token: { type: 'string', pattern: '^[A-Za-z0-9_-]{32,256}$' },
                   scope: { type: 'string', pattern: '^[A-Za-z0-9._:-]{1,256}$' },
+                  lease: {
+                    type: 'object',
+                    required: ['tenant', 'runId', 'clientId', 'deviceKey'],
+                    additionalProperties: false,
+                    properties: {
+                      tenant: { type: 'string', pattern: '^[A-Za-z0-9._-]{1,128}$' },
+                      runId: { type: 'string', pattern: '^[A-Za-z0-9._-]{1,128}$' },
+                      clientId: { type: 'string', pattern: '^[A-Za-z0-9._-]{1,128}$' },
+                      deviceKey: {
+                        type: 'string',
+                        pattern: '^[A-Za-z0-9_-]+(?:\\.[A-Za-z0-9_-]+)+@[1-9][0-9]{0,9}$',
+                      },
+                    },
+                  },
                 },
               },
             ],

@@ -560,9 +560,11 @@ Access (Accessibility on macOS 26 and earlier) for Stim Host, the app
 On a hosting Mac, \`hosting.agentDriver\` names the tool it starts so a
 client's coding agent can drive the macOS apps it hosts for that client.
 The default, \`none\`, starts nothing. \`agent-device\` starts its
-daemon only once agent-device can lease a single macOS app. Until then
-agent control reports \`none\` with a notice, and no client is handed the
-Mac's desktop. \`doctor\` on that Mac notes a hosted macOS app that runs while
+daemon only when that agent-device can lease a single macOS app (its
+\`macos-app\` lease backend); otherwise agent control reports \`none\` with a
+notice, and no client is handed the Mac's desktop. STIM_AGENT_DEVICE_BIN in
+stim-server's environment names an agent-device binary to use instead of
+~/.local/bin/agent-device. \`doctor\` on that Mac notes a hosted macOS app that runs while
 the setting is \`none\`.
 
 BUILD MACHINES ARE MACHINE-LEVEL
