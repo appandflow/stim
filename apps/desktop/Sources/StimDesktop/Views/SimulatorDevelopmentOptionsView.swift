@@ -58,9 +58,9 @@ struct SimulatorDevelopmentOptionsView: View {
         try Task.checkCancellation()
         let updated: SimulatorDevelopmentOptions.Settings
         switch action {
-        case .read: updated = try await SimulatorDevelopmentOptions.read(udid: udid)
-        case .slow(let enabled): updated = try await SimulatorDevelopmentOptions.setSlowAnimations(enabled, udid: udid)
-        case .shake: updated = try await SimulatorDevelopmentOptions.shake(udid: udid)
+        case .read: updated = try await SimulatorDevelopmentOptions.readBounded(udid: udid)
+        case .slow(let enabled): updated = try await SimulatorDevelopmentOptions.setSlowAnimationsBounded(enabled, udid: udid)
+        case .shake: updated = try await SimulatorDevelopmentOptions.shakeBounded(udid: udid)
         }
         try Task.checkCancellation()
         settings = updated

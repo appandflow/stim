@@ -3,16 +3,12 @@ import Foundation
 
 /// Turns a booted simulator a quarter turn, as Simulator.app's Rotate Left and
 /// Rotate Right do. Returns false when the simulator cannot be reached.
-/// CoreSimulator lookup and input activation run in a bounded background attempt.
+/// A CoreSimulator lookup and input activation can block; call this off the main thread.
 public enum SimulatorRotation {
   private static let lock = NSLock()
   private static var sent: [String: UInt32] = [:]
 
-  public static func rotate(udid: String, clockwise: Bool) async -> Bool {
-    (try? await SimulatorLookup.run(udid: udid) { sendRotation(udid: udid, clockwise: clockwise) }) ?? false
-  }
-
-  private static func sendRotation(udid: String, clockwise: Bool) -> Bool {
+  public static func rotate(udid: String, clockwise: Bool) -> Bool {
     guard let device = CoreSimulator.device(udid: udid) else { return false }
     let displays = CoreSimulator.displays(udid: udid).filter { $0.screenProperties?.screenType == 0 }
     let duo = displays.count > 1

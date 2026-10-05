@@ -61,6 +61,28 @@ enum SimulatorLookup {
   }
 
   static func run<Value>(udid: String, operation: @escaping () throws -> Value) async throws -> Value {
+    try await wait(udid: udid) { completion in
+      DispatchQueue.global(qos: .userInitiated).async {
+        completion(Result(catching: operation))
+      }
+    }
+  }
+
+  fileprivate static func runAsync<Value>(udid: String, operation: @escaping () async throws -> Value) async throws -> Value {
+    try await wait(udid: udid) { completion in
+      Task.detached {
+        do {
+          completion(.success(try await operation()))
+        } catch {
+          completion(.failure(error))
+        }
+      }
+    }
+  }
+
+  private static func wait<Value>(
+    udid: String, start: (@escaping (Result<Value, Error>) -> Void) -> Void
+  ) async throws -> Value {
     try Task.checkCancellation()
     let id = UUID()
     guard state.begin(udid: udid, id: id) else {
@@ -73,8 +95,7 @@ enum SimulatorLookup {
           if state.cancel(udid: udid, id: id) { continuation.resume(throwing: CancellationError()) }
         }
         if Task.isCancelled { cancelWait?() }
-        DispatchQueue.global(qos: .userInitiated).async {
-          let result = Result(catching: operation)
+        start { result in
           DispatchQueue.main.async {
             if state.finish(udid: udid, id: id) { continuation.resume(with: result) }
           }
@@ -86,6 +107,43 @@ enum SimulatorLookup {
       }
     } onCancel: {
       Task { @MainActor in cancelWait?() }
+    }
+  }
+}
+
+extension SimulatorRotation {
+  public static func rotateBounded(udid: String, clockwise: Bool) async -> Bool {
+    (try? await SimulatorLookup.run(udid: udid) { rotate(udid: udid, clockwise: clockwise) }) ?? false
+  }
+}
+
+extension SimulatorDevelopmentOptions {
+  public static func readBounded(udid: String) async throws -> Settings {
+    try await SimulatorLookup.run(udid: udid) { try read(udid: udid) }
+  }
+
+  public static func setSlowAnimationsBounded(_ enabled: Bool, udid: String) async throws -> Settings {
+    try await SimulatorLookup.run(udid: udid) { try setSlowAnimations(enabled, udid: udid) }
+  }
+
+  public static func shakeBounded(udid: String) async throws -> Settings {
+    try await SimulatorLookup.run(udid: udid) {
+      try shake(udid: udid)
+      return try read(udid: udid)
+    }
+  }
+}
+
+extension SimulatorPosture {
+  public static func isAvailableBounded(udid: String) async -> Bool {
+    (try? await SimulatorLookup.run(udid: udid) { isAvailable(udid: udid) }) ?? false
+  }
+
+  public static func moveBounded(udid: String, from angle: Double, to target: Double) async -> String? {
+    do {
+      return try await SimulatorLookup.runAsync(udid: udid) { await move(udid: udid, from: angle, to: target) }
+    } catch {
+      return error.localizedDescription
     }
   }
 }
