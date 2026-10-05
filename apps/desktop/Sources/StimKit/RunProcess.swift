@@ -165,7 +165,7 @@ public struct ProcessRequest: Sendable {
 
   private static func createTemporaryFile(_ label: String) throws -> URL {
     let url = FileManager.default.temporaryDirectory.appendingPathComponent("stim-\(label)-\(UUID().uuidString)")
-    guard FileManager.default.createFile(atPath: url.path, contents: nil) else { throw CocoaError(.fileWriteUnknown) }
+    guard FileManager.default.createFile(atPath: url.path, contents: nil, attributes: [.posixPermissions: 0o600]) else { throw CocoaError(.fileWriteUnknown) }
     return url
   }
 

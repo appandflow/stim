@@ -195,8 +195,8 @@ These gestures are not available for physical devices, remote previews or web pa
 
 With **Control** on an owned local simulator or emulator, **Paste into device**
 copies Mac clipboard text and pastes it into the focused guest field. An iOS
-simulator shows its own "Allow Paste" prompt for the text; click **Allow Paste**
-in the viewer to insert it. Owned local iOS simulators and Android emulators also offer
+simulator shows its own "Allow Paste" prompt for the text (seen on iOS 27.1, and
+again for each new text); click **Allow Paste** in the viewer to insert it. Owned local iOS simulators and Android emulators also offer
 **Copy device clipboard**, which copies guest text back to this Mac, including empty text.
 Unicode and line breaks are preserved. Transfers happen only when pressed; there
 is no automatic clipboard synchronization. An empty or non-text Mac clipboard
