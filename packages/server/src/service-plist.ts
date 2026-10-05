@@ -298,15 +298,16 @@ export interface ServerBuild {
 }
 
 /**
- * Whether a `/health` answer comes from a server running `expected`: the same version and, when both sides know it,
- * the same Stim build digest. Two builds of one checkout share a version, so the digest tells them apart; a server
+ * Whether a `/health` answer comes from a ready server running `expected`: the same version and, when both sides know
+ * it, the same Stim build digest. Two builds of one checkout share a version, so the digest tells them apart; a server
  * older than the digest in `/health` is matched on its version alone.
  */
 export function answersAs(
-  health: { version: string; stimBuild?: string | null } | null,
+  health: { version: string; stimBuild?: string | null; startup?: { state: string } } | null,
   expected: ServerBuild,
 ): boolean {
   if (!health || health.version !== expected.version) return false;
+  if (health.startup && health.startup.state !== 'ready') return false;
   return !health.stimBuild || !expected.stimBuild || health.stimBuild === expected.stimBuild;
 }
 

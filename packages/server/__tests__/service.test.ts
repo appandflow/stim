@@ -182,6 +182,9 @@ describe('service update checks', () => {
     expect(answersAs({ version: '1.14.0', stimBuild: 'bbbbbbbbbbbbbbbb' }, expected)).toBe(false);
     expect(answersAs({ version: '1.13.0', stimBuild: 'aaaaaaaaaaaaaaaa' }, expected)).toBe(false);
     expect(answersAs({ version: '1.14.0' }, expected)).toBe(true);
+    expect(
+      answersAs({ version: '1.14.0', stimBuild: 'aaaaaaaaaaaaaaaa', startup: { state: 'degraded' } }, expected),
+    ).toBe(false);
     expect(answersAs(null, expected)).toBe(false);
   });
 
