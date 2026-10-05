@@ -7,6 +7,7 @@ import {
   readFileSync,
   realpathSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
@@ -237,6 +238,8 @@ if (process.argv[2] === 'offer') {
       mkdirSync(join(contents, 'MacOS'), { recursive: true });
       writeFileSync(join(contents, 'Info.plist'), 'plist bytes');
       writeFileSync(join(contents, 'MacOS', 'Sample'), 'binary bytes');
+      writeFileSync(join(contents, 'PkgInfo'), 'APPL????');
+      writeFileSync(join(contents, 'data'), 'data bytes');
       symlinkSync('MacOS', join(contents, 'Current'));
     }
     const sha256 = createHash('sha256').update(archive).digest('hex');
@@ -1385,7 +1388,7 @@ describe('offloaded builds', () => {
     const fetched = await client.request('build.artifact', { job });
     const { handoff, sha256 } = (fetched as { result: { handoff?: string; sha256: string } }).result;
     const out = join(process.env.STIM_HOME!, 'build-worker', id, 'repos', 'app-1', 'out', job);
-    return { out, build: { handoff: handoff!, sha256 } };
+    return { id, out, build: { handoff: handoff!, sha256 } };
   }
 
   test.skipIf(!fakeTailscale)(
@@ -1404,6 +1407,7 @@ describe('offloaded builds', () => {
       `,
       );
       const elsewhere = await macosBuild(port, '100.64.0.3');
+      const revoked = await macosBuild(port, '100.64.0.2');
       const own = await macosBuild(port, '100.64.0.2');
       expect(own.build.handoff).toMatch(/^[0-9a-f]{64}$/);
       expect(existsSync(join(own.out, 'app.tgz'))).toBe(false);
@@ -1434,6 +1438,8 @@ describe('offloaded builds', () => {
         entry('Contents/Current', 'link', 'MacOS'),
         entry('Contents/Info.plist', 'file', 'plist bytes'),
         entry('Contents/MacOS/Sample', 'exec', 'binary bytes'),
+        entry('Contents/PkgInfo', 'file', 'APPL????'),
+        entry('Contents/data', 'file', 'data bytes'),
       ];
       const manifest = JSON.stringify(files);
       const app = {
@@ -1454,26 +1460,39 @@ describe('offloaded builds', () => {
         offset: 0,
         data: Buffer.from(manifest).toString('base64'),
       });
-      expect(await hosting.request('device-host.app.offer', app)).toHaveProperty('result.missing.length', 3);
+      expect(await hosting.request('device-host.app.offer', app)).toHaveProperty('result.missing.length', 5);
 
       expect(await handoff(elsewhere.build)).toMatchObject({
         error: { code: 'action-failed', message: expect.stringContaining('same tailnet node') },
       });
       expect(existsSync(join(elsewhere.out, 'App.app'))).toBe(true);
+      expect(revokeDevice(revoked.id)).toBe(true);
+      await eventually(() => !existsSync(revoked.out));
+      expect(await handoff(revoked.build)).toHaveProperty('error.code', 'action-failed');
       expect(await handoff({ ...own.build, sha256: 'c'.repeat(64) })).toHaveProperty('error.code', 'action-failed');
-      writeFileSync(join(own.out, 'App.app', 'Contents', 'MacOS', 'Sample'), 'binary BYTES');
+      const contents = join(own.out, 'App.app', 'Contents');
+      const outside = join(root, 'outside');
+      mkdirSync(outside);
+      writeFileSync(join(outside, 'Info.plist'), 'plist bytes');
+      writeFileSync(join(outside, 'Sample'), 'binary bytes');
+      rmSync(join(contents, 'Info.plist'));
+      symlinkSync(join(outside, 'Info.plist'), join(contents, 'Info.plist'));
+      rmSync(join(contents, 'MacOS'), { recursive: true });
+      symlinkSync(outside, join(contents, 'MacOS'));
+      writeFileSync(join(contents, 'data'), 'DATA bytes');
       expect(await handoff(own.build)).toHaveProperty('result', {
         files: 2,
-        bytes: 'MacOS'.length + 'plist bytes'.length,
+        bytes: 'MacOS'.length + 'APPL????'.length,
       });
       expect(existsSync(own.out)).toBe(false);
       expect(await handoff(own.build)).toHaveProperty('error.message', expect.stringContaining('no longer holds'));
       const blobs = join(deviceHostArea(session), 'apps', 'app', 'blobs');
-      expect(readFileSync(join(blobs, sha('plist bytes')), 'utf8')).toBe('plist bytes');
+      expect(readFileSync(join(blobs, sha('APPL????')), 'utf8')).toBe('APPL????');
       expect(readFileSync(join(blobs, sha('MacOS')), 'utf8')).toBe('MacOS');
-      expect(await hosting.request('device-host.app.offer', app)).toHaveProperty('result.missing', [
-        { sha256: sha('binary bytes'), size: 'binary bytes'.length, offset: 0 },
-      ]);
+      const offered = await hosting.request('device-host.app.offer', app);
+      expect(
+        (offered as { result: { missing: { sha256: string }[] } }).result.missing.map((each) => each.sha256).toSorted(),
+      ).toEqual([sha('plist bytes'), sha('binary bytes'), sha('data bytes')].toSorted());
     },
   );
 

@@ -607,7 +607,7 @@ export class BuildHost {
 
   /**
    * Deletes a fetched job's output. A macOS job keeps its staged bundle for `handoffMs` under a new single-use token,
-   * which this returns.
+   * which this returns, in place of any bundle its client still had retained.
    */
   retain(job: Job, artifact: BuildArtifactResult): string | null {
     const dir = dirname(job.archive);
@@ -616,6 +616,7 @@ export class BuildHost {
       return null;
     }
     rmSync(job.archive, { force: true });
+    for (const [token, entry] of this.retained) if (entry.client === job.client) this.drop(token);
     const token = randomBytes(32).toString('hex');
     const timer = setTimeout(() => this.drop(token), this.limits.handoffMs);
     timer.unref();
@@ -656,11 +657,15 @@ export class BuildHost {
     return { bundle: entry.bundle, release: () => rmSync(entry.dir, { recursive: true, force: true }) };
   }
 
-  /** Cancels the jobs no connection holds whose client `allowed` no longer accepts, such as a revoked one. */
+  /**
+   * Cancels the jobs no connection holds, and deletes the retained bundles, of clients `allowed` no longer accepts,
+   * such as a revoked one.
+   */
   abandonDetached(allowed: (client: string) => boolean): void {
     for (const job of this.owned.values()) {
       if (!job.session && !allowed(job.client)) this.abandon(job);
     }
+    for (const [token, entry] of this.retained) if (!allowed(entry.client)) this.drop(token);
   }
 
   async close(): Promise<void> {

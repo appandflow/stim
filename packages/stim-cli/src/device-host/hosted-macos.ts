@@ -411,7 +411,7 @@ export async function placeHostedMacos(
         { ...ids, build: { handoff: handoff.token, sha256: handoff.sha256 } },
         HANDOFF_TIMEOUT_MS,
       );
-      note(`${host.machine} took ${String(taken.files)} files from the build it ran`);
+      if (taken.files) note(`${host.machine} took ${String(taken.files)} files from the build it ran`);
     } catch (error) {
       note(`${error instanceof Error ? error.message : String(error)}; uploading the app instead`);
     }

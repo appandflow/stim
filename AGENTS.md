@@ -239,8 +239,8 @@ outside it moves to its own issue and pull request.
   writes the cache. A hosted macOS session takes a build the same Mac ran for
   it, instead of an upload, only when the build client and the device-host
   client are approved on the same tailnet node, and only bytes matching the
-  client's verified bundle manifest. The worker builds each client and repository in its own
-  area and Stim home under `offload.workerRoot`, guarded by an ownership
+  client's verified bundle manifest. The worker builds each client and
+  repository in its own area and Stim home under `offload.workerRoot`, guarded by an ownership
   claim whose child is the build's process group. A Gradle daemon leaves
   that group, so it never holds a claim or build slot. The client's daemon
   stays warm after an Android build for `offload.gradleDaemonIdleMinutes`,

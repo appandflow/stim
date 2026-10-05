@@ -939,7 +939,8 @@ closes its connections and cancels its builds.
   answers `{ "name", "size", "sha256" }`, and deletes it here. For a macOS
   job the answer also carries `handoff`, a single-use token, and the staged
   `.app` stays for 10 minutes so a hosted session on this Mac can take it with
-  `device-host.app.handoff`. An archive nobody fetched is deleted when its job
+  `device-host.app.handoff`. A client keeps at most one such bundle; its next
+  fetched macOS build or a revoked approval deletes it. An archive nobody fetched is deleted when its job
   is cancelled; one left by a server that crashed stays under
   `repos/<repo>/out/` until you delete it.
 
