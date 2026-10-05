@@ -101,6 +101,7 @@ import {
   validStuckMinutes,
 } from './registry.ts';
 import { runStats } from './stats.ts';
+import { readWorkspaceDiff } from './workspace-diff.ts';
 import { Pending, runStim, type CommandLimits } from './stim-command.ts';
 import {
   readRawTailscaleStatus,
@@ -231,6 +232,10 @@ const CLOSE_ABNORMAL = 1006;
 const MAX_PAYLOAD = 64 * 1024;
 const MAX_SUBSCRIPTIONS = 32;
 const MAX_COMMANDS = 4;
+
+function isWorkspaceChangeMethod(method: string): method is 'workspace.files' | 'workspace.diff' {
+  return method === 'workspace.files' || method === 'workspace.diff';
+}
 const MAX_KEYFRAME_READS = 8;
 const LOG_LIMITS: LogLimits = { maxBufferedBytes: 4 * 1024 * 1024, maxPendingRecords: 20_000 };
 const HELPER_RETRY_MS = 5 * 60_000;
@@ -1320,6 +1325,61 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       }));
     }
 
+    function workspaceChanges(id: RequestId, method: 'workspace.files' | 'workspace.diff', params: unknown): void {
+      const needsPath = method === 'workspace.diff';
+      if (
+        !isJsonObject(params) ||
+        typeof params.workspace !== 'string' ||
+        !params.workspace.length ||
+        params.workspace.length > 4096 ||
+        params.workspace.includes('\0') ||
+        (!needsPath && params.group !== 'changed' && params.group !== 'untracked') ||
+        (needsPath &&
+          (typeof params.path !== 'string' ||
+            !params.path.length ||
+            params.path.length > 4096 ||
+            params.path.includes('\0'))) ||
+        Object.keys(params).some((key) => key !== 'workspace' && !(needsPath ? key === 'path' : key === 'group'))
+      ) {
+        return error(id, 'bad-request', 'Workspace diff requires workspace and, for a patch, a file path.');
+      }
+      const cwd = workspaceDir(id, params.workspace, true);
+      if (!cwd) return;
+      if (commands.size >= MAX_COMMANDS) {
+        return error(id, 'limit-exceeded', `A connection can run ${MAX_COMMANDS} requests at a time.`);
+      }
+      const abort = new AbortController();
+      let task: Promise<void>;
+      const cancel = async () => {
+        abort.abort();
+        await task;
+      };
+      commands.add(cancel);
+      running.add(cancel);
+      task = readWorkspaceDiff(
+        cwd,
+        needsPath ? (params.path as string) : undefined,
+        options.env,
+        abort.signal,
+        !needsPath ? (params.group as 'changed' | 'untracked') : undefined,
+      )
+        .then(
+          (result) => {
+            if (!abort.signal.aborted) send(socket, { id, result });
+            return undefined;
+          },
+          (cause: Error) => {
+            if (!abort.signal.aborted) error(id, 'stim-failed', cause.message);
+            return undefined;
+          },
+        )
+        .finally(() => {
+          commands.delete(cancel);
+          running.delete(cancel);
+        });
+      return;
+    }
+
     function workspaceCommand(id: RequestId, method: 'stats.get' | 'settings.get', params: unknown): void {
       if (params !== undefined && !isJsonObject(params)) return error(id, 'bad-request', 'params must be an object.');
       const cwd = workspaceDir(id, params?.workspace, false);
@@ -1862,6 +1922,9 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
           return error(id, 'bad-request', 'machine.history takes an optional numeric sinceMs.');
         }
         return send(socket, { id, result: sampler.history(sinceMs) });
+      }
+      if (isWorkspaceChangeMethod(message.method)) {
+        return workspaceChanges(id, message.method, message.params);
       }
       if (message.method === 'stats.get' || message.method === 'settings.get') {
         return workspaceCommand(id, message.method, message.params);

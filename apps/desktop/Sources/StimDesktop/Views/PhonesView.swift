@@ -20,7 +20,7 @@ struct PhonesView: View {
         serverState
       } footer: {
         Text(
-          "Runs stim-server on port \(String(server.port)) while Stim Desktop is open, or uses one that is already running. Phones connect through Tailscale. A read-only phone sees workspaces, devices and logs; a phone allowed to control can also drive simulators and emulators and run reload and stop."
+          "Runs stim-server on port \(String(server.port)) while Stim Desktop is open, or uses one that is already running. Phones connect through Tailscale. A read-only phone sees workspaces, devices and logs, and with workspace diff support the changed and untracked text files of registered workspaces, including unignored .env files; a phone allowed to control can also drive simulators and emulators and run reload and stop."
         )
         .foregroundStyle(Palette.tertiary)
         .multilineTextAlignment(.leading)

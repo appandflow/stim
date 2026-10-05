@@ -923,6 +923,10 @@ msgstr "below {v} GB free"
 msgid "billable"
 msgstr "billable"
 
+#: src/screens/workspace-diff.tsx
+msgid "Binary file: preview unavailable."
+msgstr "Binary file: preview unavailable."
+
 #: src/lib/workspace-view.ts
 msgid "Branch"
 msgstr "Branch"
@@ -1162,6 +1166,14 @@ msgstr "Change the filters to see more workspaces."
 msgid "Changed"
 msgstr "Changed"
 
+#: src/screens/workspace-diff.tsx
+msgid "Changed files"
+msgstr "Changed files"
+
+#: src/app/_layout.tsx
+msgid "Changes"
+msgstr "Changes"
+
 #: src/screens/workspace-work.tsx
 msgid "Changes requested"
 msgstr "Changes requested"
@@ -1334,6 +1346,10 @@ msgstr "Compiling"
 #: src/lib/workspace-view.ts
 msgid "Configuring"
 msgstr "Configuring"
+
+#: src/screens/workspace-diff.tsx
+msgid "Connect to the Mac to view changes."
+msgstr "Connect to the Mac to view changes."
 
 #: src/components/mac-chip.tsx
 msgid "Connected"
@@ -1604,6 +1620,10 @@ msgstr "EAS Simulator"
 #: src/components/remote-tile.tsx
 msgid "EAS Simulator · {platformLabel}"
 msgstr "EAS Simulator · {platformLabel}"
+
+#: src/screens/workspace-diff.tsx
+msgid "Empty new file."
+msgstr "Empty new file."
 
 #: src/lib/device-tile.ts
 #: src/lib/workspace-view.ts
@@ -2082,6 +2102,10 @@ msgstr "Load older logs"
 msgid "Loading"
 msgstr "Loading"
 
+#: src/screens/workspace-diff.tsx
+msgid "Loading changes..."
+msgstr "Loading changes..."
+
 #: src/components/replay-bar.tsx
 msgid "Loading..."
 msgstr "Loading..."
@@ -2274,6 +2298,15 @@ msgstr "Needs you"
 msgid "never"
 msgstr "never"
 
+#: src/screens/workspace-diff.tsx
+#: src/screens/workspace-diff.tsx
+msgid "New file"
+msgstr "New file"
+
+#: src/screens/workspace-diff.tsx
+msgid "New files"
+msgstr "New files"
+
 #: src/components/replay-bar.tsx
 msgid "Next agent action"
 msgstr "Next agent action"
@@ -2368,6 +2401,18 @@ msgstr "No device recordings are kept."
 #: src/screens/home.tsx
 msgid "No device running"
 msgstr "No device running"
+
+#: src/screens/workspace-diff.tsx
+msgid "No diff remains in this section. Refresh the file list if the file changed on the Mac."
+msgstr "No diff remains in this section. Refresh the file list if the file changed on the Mac."
+
+#: src/screens/workspace-diff.tsx
+msgid "No diff remains. Refresh the file list."
+msgstr "No diff remains. Refresh the file list."
+
+#: src/screens/workspace-diff.tsx
+msgid "No files remain in this group."
+msgstr "No files remain in this group."
 
 #: src/components/workspace-cards.tsx
 msgid "no git state"
@@ -3033,6 +3078,7 @@ msgid "Restart to update?"
 msgstr "Restart to update?"
 
 #: src/screens/pair.tsx
+#: src/screens/workspace-diff.tsx
 msgid "Retry"
 msgstr "Retry"
 
@@ -3221,6 +3267,10 @@ msgstr "Show the first 10 {title}"
 msgid "Show token"
 msgstr "Show token"
 
+#: src/screens/workspace-diff.tsx
+msgid "Showing up to 200 files within the preview size limit. More changes are available on the Mac."
+msgstr "Showing up to 200 files within the preview size limit. More changes are available on the Mac."
+
 #: src/components/agent-feed.tsx
 msgid "Shows every agent action on this device"
 msgstr "Shows every agent action on this device"
@@ -3290,6 +3340,11 @@ msgstr "Someone takes over your device"
 #: src/app/_layout.tsx
 msgid "Something went wrong"
 msgstr "Something went wrong"
+
+#: src/screens/workspace-diff.tsx
+#: src/screens/workspace-diff.tsx
+msgid "Staged"
+msgstr "Staged"
 
 #: src/lib/machine-report.ts
 msgid "Stale {idleDays}d"
@@ -3565,6 +3620,10 @@ msgstr "This package does not include a license file."
 msgid "This pairing code needs a newer version of the app."
 msgstr "This pairing code needs a newer version of the app."
 
+#: src/screens/workspace-diff.tsx
+msgid "This patch exceeds the 256 KiB preview limit."
+msgstr "This patch exceeds the 256 KiB preview limit."
+
 #: src/screens/about.tsx
 msgid "This phone"
 msgstr "This phone"
@@ -3673,6 +3732,11 @@ msgstr "Unreachable"
 msgid "Unread, {title}, {body}, {detail}, {ago} ago"
 msgstr "Unread, {title}, {body}, {detail}, {ago} ago"
 
+#: src/screens/workspace-diff.tsx
+#: src/screens/workspace-diff.tsx
+msgid "Unstaged"
+msgstr "Unstaged"
+
 #: src/screens/workspace-work.tsx
 msgid "Untracked"
 msgstr "Untracked"
@@ -3704,6 +3768,10 @@ msgstr "Update"
 #: src/components/viewer-keyboard.tsx
 msgid "Update Stim on the Mac to use modifiers with letters and digits. The extra keys and shortcuts still work."
 msgstr "Update Stim on the Mac to use modifiers with letters and digits. The extra keys and shortcuts still work."
+
+#: src/screens/workspace-diff.tsx
+msgid "Update Stim on the Mac to view workspace diffs."
+msgstr "Update Stim on the Mac to view workspace diffs."
 
 #: src/screens/mac-status.tsx
 msgid "Update stim-server on the Mac to see caches, runtimes and what Stim can free."

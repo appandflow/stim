@@ -229,7 +229,18 @@ gc --json` dry run and `stim stats --json`, which the server refreshes at
     running or ended, shows as a link that opens it in the Claude app, or
     claude.ai/code without the app. Below come the upstream, ahead, behind, changed and untracked
     files, merged into, and the pull request's title, state, checks and review
-    with **Open in GitHub**.
+    with **Open in GitHub**. **Changed** and **Untracked** open a file list on a
+    Mac that supports workspace diffs. Select a file to read its staged and
+    unstaged patches or new text. These requests run only when opening the list
+    or selecting a file; home and status updates fetch no diff data. The list
+    shows up to 200 files and each preview is limited to 256 KiB. Binary files,
+    larger patches, symlinks and submodules show why a preview is unavailable.
+    Changed lists include submodules only when their recorded commit differs;
+    uncommitted edits inside submodules are not listed.
+    Repositories using active Git clean/process filters (including Git LFS)
+    refuse rather than run them. Lists and patch lines are virtualized. This is
+    read-only; edit, stage and commit on the Mac. Older servers keep the Git
+    counts visible.
 
   A card with a problem turns red; there is no separate banner. While a build
   runs, the Build card gives its place to a full-width card: the platform and
@@ -642,7 +653,9 @@ that predates actions shows neither entry.
 
 `hello` returns the pairing's `capabilities` and the phone's device id. A
 pairing without `control` is read-only: Stim Desktop's **Pair a phone** makes
-read-only pairings. The machine row, the machine sheet and the **Machines**
+read-only pairings. With workspace diff support, a read-only pairing can read
+changed and untracked text files in registered workspaces, including
+non-ignored `.env` files. The machine row, the machine sheet and the **Machines**
 section in Settings show the scope while connected: **Can control**,
 **Read-only**, or the connection state. In Settings, tapping a read-only
 machine explains how to allow control, and tapping any other machine opens

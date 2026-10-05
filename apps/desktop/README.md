@@ -836,7 +836,9 @@ there. This happens when Stim Desktop was launched with another `STIM_HOME`, or
 adopted a server started with one. Those phones stop working once Stim Desktop
 serves `~/.stim` again.
 
-A read-only phone sees workspaces, devices and logs. A phone allowed to control
+A read-only phone sees workspaces, devices and logs. With workspace diff support,
+it can also read changed and untracked text files in registered workspaces,
+including non-ignored `.env` files. A phone allowed to control
 can also drive simulators and emulators and run reload and stop.
 An iPhone that turns on notifications gets push notifications from the server
 while **Serve to phones** is on, even when the app on the phone is closed; see

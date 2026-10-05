@@ -855,7 +855,33 @@ export interface NotificationsListResult {
   notifications: NotificationEntry[];
 }
 
+export interface WorkspaceFile {
+  path: string;
+  staged: boolean;
+  unstaged: boolean;
+  untracked: boolean;
+  status: string;
+}
+
+export interface WorkspaceFiles {
+  files: WorkspaceFile[];
+  truncated: boolean;
+}
+
+export interface WorkspacePatch {
+  section: 'staged' | 'unstaged' | 'untracked';
+  kind: 'text' | 'binary' | 'too-large' | 'unavailable';
+  text: string;
+}
+
+export interface WorkspaceDiff {
+  path: string;
+  patches: WorkspacePatch[];
+}
+
 export interface Methods {
+  'workspace.files': { params: { workspace: string; group: 'changed' | 'untracked' }; result: WorkspaceFiles };
+  'workspace.diff': { params: { workspace: string; path: string }; result: WorkspaceDiff };
   hello: {
     params: { protocol: number; client: { name: string; version: string }; auth: ClientAuth };
     result: {

@@ -156,6 +156,7 @@ function RootLayoutContent() {
                   <Stack.Screen name="mac/[id]/build" options={sheet([0.75, 1])} />
                   <Stack.Screen name="mac/[id]/resources" options={sheet([0.75, 1])} />
                   <Stack.Screen name="mac/[id]/agent" options={sheet([0.75, 1])} />
+                  <Stack.Screen name="mac/[id]/diff" options={{ title: t`Changes`, ...opaqueHeader }} />
                   <Stack.Screen name="mac/[id]/work" options={sheet([0.65, 1])} />
                 </Stack>
               </RecentsProvider>

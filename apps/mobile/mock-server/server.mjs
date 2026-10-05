@@ -336,6 +336,36 @@ server.on('connection', (socket) => {
       );
       return { result: { subscription } };
     },
+    'workspace.files'(params) {
+      const files =
+        params.group === 'untracked'
+          ? [{ path: 'src/new-screen.tsx', status: '??', staged: false, unstaged: false, untracked: true }]
+          : [
+              { path: 'src/app.tsx', status: 'MM', staged: true, unstaged: true, untracked: false },
+              { path: 'assets/logo.png', status: ' M', staged: false, unstaged: true, untracked: false },
+            ];
+      return { result: { files, truncated: false } };
+    },
+    'workspace.diff'(params) {
+      const patches =
+        params.path === 'assets/logo.png'
+          ? [{ section: 'unstaged', kind: 'binary', text: '' }]
+          : params.path === 'src/new-screen.tsx'
+            ? [{ section: 'untracked', kind: 'text', text: 'export const NewScreen = () => null;\n' }]
+            : [
+                {
+                  section: 'staged',
+                  kind: 'text',
+                  text: 'diff --git a/src/app.tsx b/src/app.tsx\n--- a/src/app.tsx\n+++ b/src/app.tsx\n@@ -1 +1 @@\n-export const title = "Old title";\n+export const title = "Staged title";\n',
+                },
+                {
+                  section: 'unstaged',
+                  kind: 'text',
+                  text: 'diff --git a/src/app.tsx b/src/app.tsx\n--- a/src/app.tsx\n+++ b/src/app.tsx\n@@ -1 +1 @@\n-export const title = "Staged title";\n+export const title = "Current title";\n',
+                },
+              ];
+      return { result: { path: params.path, patches } };
+    },
     'stats.get'() {
       return { error: ['not-implemented', 'The mock server does not serve stats.'] };
     },
@@ -473,7 +503,7 @@ function hello(deviceToken, deviceName) {
     protocol: 1,
     server: { name: values.name, version: '0.0.0-mock', stim: fixtures.stimVersion, home: fixtures.home },
     capabilities: values.read ? ['read'] : ['read', 'control'],
-    features: ['physical-ios', 'physical-android', 'notifications'],
+    features: ['physical-ios', 'physical-android', 'notifications', 'workspace-diff'],
     actions: values.read ? [] : ACTIONS,
     device: { id: hash(deviceToken).slice(0, 8), name: deviceName },
   };

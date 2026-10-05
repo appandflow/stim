@@ -1,6 +1,7 @@
 import { plural, t } from '@lingui/core/macro';
 import { Trans } from '@lingui/react/macro';
 import * as Linking from 'expo-linking';
+import { useRouter } from 'expo-router';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
@@ -11,7 +12,7 @@ import { StatusDot } from '@/components/pill';
 import { SheetScreen } from '@/components/sheet-screen';
 import { Text } from '@/components/text';
 import { toneColor } from '@/design/tone';
-import { useStatus } from '@/hooks/machines';
+import { useMacConnection, useStatus } from '@/hooks/machines';
 import { useNow } from '@/hooks/use-now';
 import { formatDuration } from '@/intl/format';
 import { agentWebUrl, workspaceAgentSessions } from '@/lib/agents';
@@ -49,6 +50,11 @@ function reviewName(decision: NonNullable<PullRequestFacts['reviewDecision']>): 
 export function WorkspaceWork({ path }: { path: string }) {
   const { theme } = useUnistyles();
   const status = useStatus();
+  const router = useRouter();
+  const { mac, state } = useMacConnection();
+  const canDiff = state.kind === 'open' && state.features.includes('workspace-diff');
+  const openDiff = (group: 'changed' | 'untracked') =>
+    router.push({ pathname: '/mac/[id]/diff', params: { id: mac?.id ?? '', path, group } });
   const now = useNow(30_000);
   const env = status?.environments.find((e) => e.path === path);
   const worktree = env?.worktree;
@@ -80,11 +86,19 @@ export function WorkspaceWork({ path }: { path: string }) {
           />
           <ListRow title={t`Ahead`} value={git.ahead === null ? '\u2014' : commits(git.ahead)} />
           <ListRow title={t`Behind`} value={git.behind === null ? '\u2014' : commits(git.behind)} />
-          <ListRow title={t`Changed`} value={files(git.changed)} valueTone={git.changed ? 'warning' : 'default'} />
+          <ListRow
+            title={t`Changed`}
+            value={files(git.changed)}
+            valueTone={git.changed ? 'warning' : 'default'}
+            accessory={canDiff ? 'chevron' : undefined}
+            onPress={canDiff ? () => openDiff('changed') : undefined}
+          />
           <ListRow
             title={t`Untracked`}
             value={files(git.untracked)}
             valueTone={git.untracked ? 'warning' : 'default'}
+            accessory={canDiff ? 'chevron' : undefined}
+            onPress={canDiff ? () => openDiff('untracked') : undefined}
           />
           {git.mergedInto ? <ListRow title={t`Merged into`} value={git.mergedInto} valueTone="brand" /> : null}
         </ListSection>
