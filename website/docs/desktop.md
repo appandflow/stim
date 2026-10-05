@@ -94,9 +94,11 @@ performance traces. Every release is listed under
   **Untracked** open a file list; choosing a file shows staged/unstaged patches
   or new text. Diffs load only on demand, with virtualized lists, up to 200 files
   and a 256 KiB preview limit. Binary files and unsupported previews are labeled.
+  Changed lists include submodules only when their recorded commit differs;
+  uncommitted edits inside submodules are not listed.
   Active Git clean/process filters, including Git LFS, refuse without running
-  them. Viewing needs a Mac server with workspace diff support; edits and staging stay
-  on the Mac. Different machines and checkouts remain separate.
+  them. Viewing needs a Mac server with workspace diff support; edits and staging
+  stay on the Mac. Different machines and checkouts remain separate.
   Primary checkouts and older servers lacking checkout identity still show separate
   app rows; [#2418](https://github.com/appandflow/stim/issues/2418) tracks that addition.
   The phone's Logs screen starts with 200 recent records. **Load older logs**

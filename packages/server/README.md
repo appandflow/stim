@@ -1181,17 +1181,24 @@ Events are `{ "event", "subscription", ... }`.
   `status`, and `staged`, `unstaged`, `untracked` flags. It needs `read` and the
   `workspace-diff` feature. The registered app project resolves to its canonical
   Git worktree, including changes elsewhere in that worktree. At most 200 files
-  and 256 KiB are returned; a raw Git status exceeding 1 MiB refuses.
+  and 256 KiB are returned; raw Git status/list output exceeding 1 MiB refuses.
+  Changed lists include submodules only when their recorded commit differs;
+  uncommitted edits inside submodules are not listed. Each Git call has a
+  5-second deadline; a request runs several calls in sequence, with no overall
+  deadline. Closing the connection stops a running request.
 - `workspace.diff` takes `{ "workspace", "path" }` for a current changed file
   and returns `{ "path", "patches" }`. Each patch has a `section` (`staged`,
   `unstaged`, `untracked`), `kind` (`text`, `binary`, `too-large`, `unavailable`)
   and `text`. Text previews total at most 256 KiB. New files must be regular
   UTF-8 files within the worktree; symlinks, submodules and conflicts report
-  unavailable. Fixed Git arguments disable external diff, text conversion and
-  fsmonitor commands, use literal paths and never edit or stage files. Each Git
-  call has a 5-second deadline. Tracked files attributed to configured clean or
-  process filters refuse before status or diff; unused filter configuration
-  alone does not refuse. Git LFS previews are unavailable in this version. Disconnecting stops a running child.
+  unavailable. Each Git call has a 5-second deadline; a request runs several
+  calls in sequence, with no overall deadline. Raw status/list output is capped
+  at 1 MiB and patches at 256 KiB. Closing the connection stops a running request.
+  Git reads disable color, external diff, text conversion, fsmonitor
+  commands and lazy fetches, use literal paths and never edit or stage files.
+  Tracked files attributed to configured clean or process filters refuse before
+  status or diff; unused filter configuration alone does not refuse. Git LFS
+  previews are unavailable in this version.
 - `machine.get` returns cheap machine usage, read in the server process
   without running `stim`: `volumes`, one per volume that holds a Stim
   workspace, Stim home, or the simulators, with `mount`, `holds`, `freeBytes`
@@ -1265,11 +1272,12 @@ Events are `{ "event", "subscription", ... }`.
 `workspace` is an environment `path` from a status payload. Any other path is
 refused with `unknown-workspace` and runs nothing. A connection holds at most
 32 subscriptions and runs at most 4 `logs.query`, `stats.get`,
-`settings.get`, `build.plan`, `workspace.files` and `workspace.diff` requests at a time. Those requests fail after
-60 seconds, `build.plan` after 150, or at 32 MiB of output, and closing the
-connection stops them. When the command refuses with Stim's error contract on
-stdout, the `stim-failed` message is its code, message and remedy; otherwise
-it is the exit status and the end of stderr. A `stim` child that
+`settings.get`, `build.plan`, `workspace.files` and `workspace.diff` requests at
+a time. `logs.query`, `stats.get` and `settings.get` fail after 60 seconds,
+`build.plan` after 150; these four fail at 32 MiB of output. Closing the
+connection stops running requests. When the command refuses with Stim's error
+contract on stdout, the `stim-failed` message is its code, message and remedy;
+otherwise it is the exit status and the end of stderr. A `stim` child that
 ignores SIGTERM gets SIGKILL a second later. A log subscriber whose socket has more than
 4 MiB unsent gets no more batches until it catches up; past 20,000
 waiting records the server ends that subscription with `slow-client`.

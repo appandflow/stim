@@ -34,7 +34,12 @@ export async function readWorkspaceDiff(
   group?: 'changed' | 'untracked',
 ): Promise<WorkspaceFiles | WorkspaceDiff> {
   const gitEnv: NodeJS.ProcessEnv = Object.fromEntries(Object.entries(env).filter(([key]) => !key.startsWith('GIT_')));
-  Object.assign(gitEnv, { GIT_OPTIONAL_LOCKS: '0', GIT_LITERAL_PATHSPECS: '1', GIT_TERMINAL_PROMPT: '0' });
+  Object.assign(gitEnv, {
+    GIT_OPTIONAL_LOCKS: '0',
+    GIT_LITERAL_PATHSPECS: '1',
+    GIT_TERMINAL_PROMPT: '0',
+    GIT_NO_LAZY_FETCH: '1',
+  });
   let cwd = await realpath(workspace);
   const git = async (args: string[], maxOutputBytes = LIST_BYTES, emptyConfig = false): Promise<string | null> => {
     signal.throwIfAborted();
@@ -109,7 +114,14 @@ export async function readWorkspaceDiff(
       }
     }
   }
-  const status = await git(['status', '--porcelain=v1', '-z', '--untracked-files=all', '--no-renames']);
+  const status = await git([
+    'status',
+    '--porcelain=v1',
+    '-z',
+    '--untracked-files=all',
+    '--no-renames',
+    '--ignore-submodules=dirty',
+  ]);
   if (status === null) throw new Error('The file list is too large to view.');
   const files = parseWorkspaceFiles(status);
   if (path === undefined) {
@@ -184,6 +196,7 @@ export async function readWorkspaceDiff(
       if (!file[section]) continue;
       const args = [
         'diff',
+        '--no-color',
         '--no-ext-diff',
         '--no-textconv',
         '--no-renames',

@@ -235,9 +235,12 @@ gc --json` dry run and `stim stats --json`, which the server refreshes at
     or selecting a file; home and status updates fetch no diff data. The list
     shows up to 200 files and each preview is limited to 256 KiB. Binary files,
     larger patches, symlinks and submodules show why a preview is unavailable.
+    Changed lists include submodules only when their recorded commit differs;
+    uncommitted edits inside submodules are not listed.
     Repositories using active Git clean/process filters (including Git LFS)
-    refuse rather than run them. Lists and patch lines are virtualized. This is read-only; edit, stage and
-    commit on the Mac. Older servers keep the Git counts visible.
+    refuse rather than run them. Lists and patch lines are virtualized. This is
+    read-only; edit, stage and commit on the Mac. Older servers keep the Git
+    counts visible.
 
   A card with a problem turns red; there is no separate banner. While a build
   runs, the Build card gives its place to a full-width card: the platform and
