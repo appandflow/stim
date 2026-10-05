@@ -19,11 +19,6 @@ export default {
   },
 } satisfies ExportedHandler<Env>;
 
-/**
- * Every phone shares one object, so one machine's state and one object's duration count against the free plan.
- * Sockets use the hibernation API: the paired device rides in the socket attachment, and subscriptions, which
- * hold timers, are rebuilt by the phone after a reconnect.
- */
 export class DemoServer extends DurableObject<Env> {
   private readonly machine: DemoMachine = new DemoMachine(bundledFixtures(), MACHINE_NAME, this.env.DEMO_TOKEN);
   private readonly connections = new Map<WebSocket, DemoConnection>();

@@ -9,7 +9,6 @@ on:
       - 'apps/mobile/mock-server/payloads.mjs'
       - '.github/workflows/demo-server-deploy.yml'
 
-# A deploy restarts the Durable Object and drops every connected phone, so deploys never overlap.
 concurrency:
   group: demo-server-deploy
   cancel-in-progress: false

@@ -98,9 +98,14 @@ it('pairs, streams, takes Control and keeps the pairing across reconnects', asyn
   expect(frameEvents().at(-1)?.data).not.toBe(tapped);
 
   const control = await first.request('control.begin', target);
-  await first.request('input.touch', { session: control.result?.session, phase: 'up', x: 0.5, y: 0.4 });
+  const tap = async (): Promise<void> => {
+    for (const phase of ['down', 'up']) {
+      await first.request('input.touch', { session: control.result?.session, phase, x: 0.5, y: 0.4 });
+    }
+  };
+  await tap();
   await vi.waitFor(() => expect(frameEvents().at(-1)?.data).toBe(tapped));
-  await first.request('input.touch', { session: control.result?.session, phase: 'up', x: 0.5, y: 0.4 });
+  await tap();
   first.socket.close();
 
   const second = await open();

@@ -87,8 +87,10 @@ describe('pairing', () => {
       expect((await client.request('hello', { protocol: 1, auth: { deviceToken } })).error?.code).toBe('unauthorized');
     }
 
-    const unset = new DemoMachine(fixtures, 'Demo Mac', undefined);
-    expect((await pair(unset).hello).error?.code).toBe('pairing-expired');
+    for (const token of [undefined, '']) {
+      const unset = new DemoMachine(fixtures, 'Demo Mac', token);
+      expect((await pair(unset, '').hello).error?.code).toBe('pairing-expired');
+    }
   });
 
   it('answers nothing but hello before pairing', async () => {
@@ -117,10 +119,10 @@ describe('the phone protocol', () => {
       ['replay.range', { workspace: SEARCH, platform: 'ios' }],
       ['machine.get', {}],
       ['machine.history', {}],
+      ['machine.details', {}],
       ['notifications.list', {}],
     ];
     for (const [method, params] of calls) expect((await client.request(method, params)).result).toBeDefined();
-    expect((await client.request('machine.details')).error?.code).toBe('not-implemented');
   });
 
   it('streams status, logs and frames as events the phone accepts', async () => {
@@ -153,10 +155,32 @@ describe('the phone protocol', () => {
     const reply = await client.request('action', { action: 'reload', workspace: SEARCH, platform: 'ios' });
     expect(reply.result).toMatchObject({ action: 'reload', workspace: SEARCH });
   });
+
+  it('sends nothing to a phone that disconnected before a reload finished', async () => {
+    const machine = new DemoMachine(fixtures, 'Demo Mac', TOKEN);
+    let open = true;
+    const connection = machine.connect(
+      {
+        send: () => {
+          if (!open) throw new Error('send after close');
+        },
+        close: () => {},
+        remember: () => {},
+      },
+      { id: 'abcd1234', name: 'Phone' },
+    );
+    await connection.receive(
+      JSON.stringify({ id: 1, method: 'action', params: { action: 'stop', workspace: SEARCH } }),
+    );
+    open = false;
+    connection.close();
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+    expect(machine.busy.size).toBe(0);
+  });
 });
 
 describe('Control', () => {
-  it('switches the device to its other screen on each tap, for every phone watching it', async () => {
+  it('switches the device to its other screen on each tap, but not on a drag, for every phone watching it', async () => {
     const machine = new DemoMachine(fixtures, 'Demo Mac', TOKEN);
     const driver = pair(machine);
     const watcher = pair(machine);
@@ -170,11 +194,17 @@ describe('Control', () => {
     const begin = await driver.request('control.begin', target);
     expect(begin.result).toMatchObject({ platform: 'ios', lease: null, postures: [] });
     const session = begin.result?.session;
-    await driver.request('input.touch', { session, phase: 'down', x: 0.5, y: 0.3 });
-    expect(watcher.events('frame')).toHaveLength(1);
-    await driver.request('input.touch', { session, phase: 'up', x: 0.5, y: 0.3 });
+    const touch = (phase: string, x: number, y: number) => driver.request('input.touch', { session, phase, x, y });
+    await touch('down', 0.5, 0.3);
+    expect(watcher.events('frame').at(-1)?.data).toBe(list);
+    await touch('up', 0.5, 0.3);
     expect(watcher.events('frame').at(-1)?.data).toBe(detail);
-    await driver.request('input.touch', { session, phase: 'up', x: 0.1, y: 0.1 });
+    await touch('down', 0.5, 0.8);
+    await touch('move', 0.5, 0.5);
+    await touch('up', 0.5, 0.2);
+    expect(watcher.events('frame').at(-1)?.data).toBe(detail);
+    await touch('down', 0.1, 0.1);
+    await touch('up', 0.11, 0.1);
     expect(watcher.events('frame').at(-1)?.data).toBe(list);
 
     for (const [method, params] of [

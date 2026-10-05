@@ -5,7 +5,6 @@ import { assembleFixtures, type FixtureFiles, type Fixtures } from '../src/demo.
 const fixture = (name: string): URL => new URL(`../fixtures/${name}`, import.meta.url);
 const json = <T>(name: string): T => JSON.parse(readFileSync(fixture(name), 'utf8')) as T;
 
-/** The fixtures `src/fixtures.ts` bundles, read from disk: `frame-<key>-tapped.jpg` is a key's second screen. */
 export function loadFixtures(): Fixtures {
   const frames: FixtureFiles['frames'] = {};
   for (const name of readdirSync(fixture(''))) {
@@ -18,6 +17,7 @@ export function loadFixtures(): Fixtures {
     status: json('status.json'),
     logs: readFileSync(fixture('logs.ndjson'), 'utf8'),
     plans: json('plans.json'),
+    machineDetails: json('machine-details.json'),
     frames,
   });
 }

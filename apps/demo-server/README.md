@@ -31,7 +31,7 @@ Render frames again with `frame-sources/render.sh [name...]` (macOS, Google Chro
 
 ## Deploy
 
-`.github/workflows/demo-server-deploy.yml` deploys on every push to `main` that changes this package, and on manual dispatch. It runs in the `demo-server` GitHub environment and skips with a notice when the Cloudflare secrets are missing. A deploy restarts the Durable Object and disconnects every phone; the app reconnects by itself.
+`.github/workflows/demo-server-deploy.yml` deploys on every push to `main` that changes this package, and on manual dispatch. It runs in the `demo-server` GitHub environment and skips with a notice when the Cloudflare secrets are missing. Limit that environment's deployment branches to `main` (Settings, Environments) so a manual run from another branch cannot deploy. A deploy restarts the Durable Object and disconnects every phone; the app reconnects by itself.
 
 Secrets, on the repository or on the `demo-server` environment:
 

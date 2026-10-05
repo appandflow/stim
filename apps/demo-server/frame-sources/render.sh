@@ -1,6 +1,4 @@
 #!/bin/bash
-# Renders pages with headless Chrome into ../fixtures/frame-<name>.jpg (macOS: needs Google Chrome and sips).
-# Usage: render.sh [name...]; renders every page when no name is given.
 set -e
 cd "$(dirname "$0")"
 C="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"

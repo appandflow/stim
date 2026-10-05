@@ -30,14 +30,15 @@ export interface Fixtures {
   stimVersion: string;
   home: string;
   status: StatusPayload;
+  machineDetails: Record<string, unknown>;
   logs: LogRecord[];
   plans: Record<string, Record<string, unknown>>;
-  /** Each device's screens, keyed like `ios` or `notes-ios`; a tap under Control shows the next one. */
   frames: Record<string, Frame[]>;
 }
 
 export interface FixtureFiles {
   status: { capturedAt: string; stimVersion: string; home: string; payload: StatusPayload };
+  machineDetails: Record<string, unknown>;
   logs: string;
   plans: Record<string, Record<string, unknown>>;
   frames: Record<string, { meta: Omit<Frame, 'data'>; images: Uint8Array[] }>;
@@ -58,6 +59,7 @@ export function assembleFixtures(files: FixtureFiles): Fixtures {
     stimVersion: files.status.stimVersion,
     home: files.status.home,
     status: files.status.payload,
+    machineDetails: files.machineDetails,
     logs: files.logs
       .split('\n')
       .filter(Boolean)
@@ -75,7 +77,6 @@ function base64(bytes: Uint8Array): string {
   return btoa(binary);
 }
 
-/** What a socket keeps across Durable Object hibernation: the paired phone, once `hello` succeeds. */
 export interface Device {
   id: string;
   name: string;
@@ -104,6 +105,8 @@ const FREE_GB = 212;
 const NOTIFICATION_LOG = 'demo';
 const CONTROL_PLATFORMS = ['ios', 'android', 'web', 'macos'];
 const TOUCH_PHASES = ['down', 'move', 'up'];
+const TAP_SLOP = 0.03;
+const MAX_DEVICE_NAME = 64;
 const SIMULATOR = { canShake: false, slowAnimations: null };
 const DEVICE_TOKEN_CONTEXT = 'stim-demo-device:';
 const ROOT = '/Users/demo/Developer';
@@ -117,10 +120,6 @@ interface FrameFeed {
   slot: string;
 }
 
-/**
- * One fictional Mac shared by every connected phone. `token` is the fixed pairing token; device tokens are
- * derived from it, so a phone stays paired across restarts and redeploys until the token changes.
- */
 export class DemoMachine {
   readonly startedAt: number = Date.now();
   readonly shiftMs: number;
@@ -137,7 +136,7 @@ export class DemoMachine {
   constructor(fixtures: Fixtures, name: string, token: string | undefined) {
     this.fixtures = fixtures;
     this.name = name;
-    this.token = token;
+    this.token = token || undefined;
     this.shiftMs = this.startedAt - Date.parse(fixtures.capturedAt);
     this.logs = fixtures.logs.map((record) => Object.assign({}, record, { ts: record.ts + this.shiftMs }));
     this.notifications = notificationSamples(name)
@@ -163,7 +162,6 @@ export class DemoMachine {
     return screens?.[(this.screens.get(feed.target) ?? 0) % screens.length];
   }
 
-  /** Shows the device's next pre-rendered screen on every phone watching it. */
   tap(target: string, key: string): void {
     const count = this.fixtures.frames[key]?.length ?? 0;
     if (count < 2) return;
@@ -203,8 +201,12 @@ export class DemoConnection {
   private nextSubscription = 1;
   private nextSession = 1;
   private readonly timers = new Map<string, Timer>();
-  private readonly sessions = new Map<string, { target: string; key: string; platform: string }>();
+  private readonly sessions = new Map<
+    string,
+    { target: string; key: string; platform: string; down?: { x: number; y: number } }
+  >();
   private queue: Promise<void> = Promise.resolve();
+  private closed = false;
   private readonly machine: DemoMachine;
   private readonly peer: Peer;
   private device: Device | null;
@@ -215,13 +217,13 @@ export class DemoConnection {
     this.device = device;
   }
 
-  /** Handles one JSON-RPC message; messages are handled in arrival order. */
   receive(text: string): Promise<void> {
-    this.queue = this.queue.then(() => this.handle(text));
+    this.queue = this.queue.then(() => this.handle(text)).catch(() => {});
     return this.queue;
   }
 
   close(): void {
+    this.closed = true;
     for (const subscription of this.timers.keys()) this.stop(subscription);
     for (const feed of this.machine.feeds) if (feed.connection === this) this.machine.feeds.delete(feed);
     this.sessions.clear();
@@ -241,7 +243,7 @@ export class DemoConnection {
   }
 
   private send(message: unknown): void {
-    this.peer.send(JSON.stringify(message));
+    if (!this.closed) this.peer.send(JSON.stringify(message));
   }
 
   private async handle(text: string): Promise<void> {
@@ -283,7 +285,7 @@ export class DemoConnection {
       return { error: ['pairing-expired', 'This pairing code was used or expired. Show a new one in Stim Desktop.'] };
     }
     const deviceToken = await this.machine.issueDeviceToken();
-    const name = typeof auth.deviceName === 'string' ? auth.deviceName : 'Phone';
+    const name = typeof auth.deviceName === 'string' ? auth.deviceName.slice(0, MAX_DEVICE_NAME) : 'Phone';
     return { result: { ...(await this.welcome(deviceToken, name)), deviceToken } };
   }
 
@@ -294,7 +296,12 @@ export class DemoConnection {
     const { fixtures } = this.machine;
     return {
       protocol: PROTOCOL,
-      server: { name: this.machine.name, version: '0.0.0-mock', stim: fixtures.stimVersion, home: fixtures.home },
+      server: {
+        name: this.machine.name,
+        version: fixtures.stimVersion,
+        stim: fixtures.stimVersion,
+        home: fixtures.home,
+      },
       capabilities: ['read', 'control'],
       features: ['physical-ios', 'physical-android', 'notifications', 'workspace-diff', 'macos-window'],
       actions: ACTIONS,
@@ -357,7 +364,7 @@ export class DemoConnection {
       case 'frames.subscribe': {
         const target = deviceTarget(params);
         if (!machine.fixtures.frames[target.key]) {
-          return { error: ['no-frames', `The mock server has no ${String(params.platform)} frame fixture.`] };
+          return { error: ['no-frames', `The demo server has no ${String(params.platform)} screen.`] };
         }
         const subscription = this.every(FRAME_MS, () => this.sendFrame(feed));
         const feed: FrameFeed = { connection: this, subscription, ...target };
@@ -388,10 +395,10 @@ export class DemoConnection {
       case 'workspace.diff':
         return { result: { path: params.path, patches: diffPatches(params.path) } };
       case 'stats.get':
-        return { error: ['not-implemented', 'The mock server does not serve stats.'] };
+        return { error: ['not-implemented', 'The demo server does not serve stats.'] };
       case 'build.plan': {
         const plan = machine.fixtures.plans[String(params.platform)];
-        if (!plan) return { error: ['stim-failed', `The mock server has no ${String(params.platform)} plan fixture.`] };
+        if (!plan) return { error: ['stim-failed', `The demo server has no ${String(params.platform)} build plan.`] };
         return {
           result: { ...plan, ...(params.slot && params.slot !== 'default' ? { slot: params.slot } : {}) },
         };
@@ -422,7 +429,7 @@ export class DemoConnection {
       case 'machine.get':
         return { result: usage(machine.fixtures.status.capacity.totalMemoryMb) };
       case 'machine.details':
-        return { error: ['not-implemented', 'The demo server does not serve machine details.'] };
+        return { result: shiftTimestamps(machine.fixtures.machineDetails, machine.shiftMs) };
       case 'machine.history':
         return { result: history(typeof params.sinceMs === 'number' ? params.sinceMs : -Infinity) };
       case 'notifications.list': {
@@ -479,7 +486,10 @@ export class DemoConnection {
         if (typeof phase !== 'string' || !TOUCH_PHASES.includes(phase) || !fraction(x) || !fraction(y)) {
           return { error: ['bad-request', 'input.touch needs phase (down, move or up), and x and y from 0 to 1.'] };
         }
-        if (phase === 'up') this.machine.tap(session.target, session.key);
+        if (phase === 'down') session.down = { x, y };
+        if (phase === 'up' && session.down && Math.hypot(x - session.down.x, y - session.down.y) < TAP_SLOP) {
+          this.machine.tap(session.target, session.key);
+        }
         return { result: {} };
       }
       case 'input.simulator':
@@ -520,7 +530,7 @@ export class DemoConnection {
     machine.busy.add(workspace);
     setTimeout(() => {
       machine.busy.delete(workspace);
-      this.send({ id, result: { action: params.action, workspace, output: { mock: true } } });
+      this.send({ id, result: { action: params.action, workspace, output: { demo: true } } });
     }, ACTION_MS);
     return { deferred: true };
   }
@@ -538,7 +548,7 @@ function deviceTarget(params: Params): { target: string; key: string; platform: 
   };
 }
 
-function fraction(value: unknown): boolean {
+function fraction(value: unknown): value is number {
   return typeof value === 'number' && value >= 0 && value <= 1;
 }
 
