@@ -27,6 +27,10 @@ brew install --cask appandflow/tap/stim
   App**. See [Install Stim](./getting-started.md#install-stim).
 - Xcode 27 for live simulator screens.
 
+Desktop uses the non-empty launch `STIM_HOME`, then the login shell's value, then
+`~/.stim`; **Settings > App > Stim CLI** shows the home, and private-home copies
+refuse servers for another home.
+
 The app updates itself. Release builds report crashes to Sentry with file paths,
 host names, addresses and credentials removed, and send no screenshots or
 performance traces. Every release is listed under

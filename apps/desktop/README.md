@@ -830,7 +830,9 @@ ended), Control turns off and the tile says why.
 **Stim > Settings > Phones** serves Stim to the phone app through
 `stim-server` from `@stim-cli/server`. With **Serve to phones** on, the app
 checks `http://127.0.0.1:7787/health` at launch. When a server answers, the app
-uses it and never starts a second one. Otherwise it runs `stim-server --port
+uses it if Desktop uses the default home or the server serves Desktop's resolved
+home; otherwise it names both homes and asks you to stop that server or launch
+Desktop with `-stimServerPort <port>`. If no server answers, it runs `stim-server --port
 7787` and stops it with SIGTERM when the app quits, or when you turn the
 preference off, followed by SIGKILL if it has not exited after 3 seconds. A
 killed server leaves its `stim status --watch` child running until that child's
@@ -844,8 +846,8 @@ seconds. When a server the app did not start misses two checks in a row, the app
 own while **Serve to phones** is on. The pairing and device commands use the
 `STIM_HOME` its health reports, so they act on that server's pairing state. When that `STIM_HOME` is
 not `~/.stim`, the tab names it and warns that phones paired now are stored
-there. This happens when Stim Desktop was launched with another `STIM_HOME`, or
-adopted a server started with one. Those phones stop working once Stim Desktop
+there. This warning appears when Desktop uses the default home and
+has adopted a server started with another home. Those phones stop working once Stim Desktop
 serves `~/.stim` again.
 
 A read-only phone sees workspaces, devices and logs. With workspace diff support,
@@ -1072,7 +1074,10 @@ replaces its card. With the main window closed, the link reopens it.
   preview needs a `stim` with `gc --json`. At launch the app reads the
   environment of `zsh -lic` once and runs every `stim` command with it, so
   commands see the same `PATH` and variables such as `ANDROID_HOME` as a
-  terminal. It adds `STIM_DESKTOP_APP`, set to the app's bundle path, which
+  terminal. A non-empty launch `STIM_HOME` overrides the login shell's value for
+  the CLI and servers Desktop starts; **Settings > App > Stim CLI** shows the
+  resolved home, and the sidebar shows non-default homes.
+  It adds `STIM_DESKTOP_APP`, set to the app's bundle path, which
   tells `stim` that Stim Desktop is installed without a Launch Services lookup.
   It runs `stim` and `stim-server` as their JavaScript file under the Node that
   `node` resolves to in the home folder, with the directory holding `stim`

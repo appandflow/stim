@@ -104,7 +104,13 @@ final class ServerController: ObservableObject {
       }
       guard current == generation else { return }
       if let health = await StimServerCLI.health(port: port) {
-        if current == generation { state = .running(health, owned: false) }
+        let resolved = StimHome.path(environment: await environment?.value ?? ProcessInfo.processInfo.environment)
+        guard current == generation else { return }
+        if let failure = StimHome.adoptionFailure(serverHome: health.stimHome, resolved: resolved, port: port) {
+          state = .failed(failure)
+        } else {
+          state = .running(health, owned: false)
+        }
         return
       }
       let cli = await cli()
@@ -199,8 +205,9 @@ final class ServerController: ObservableObject {
       let current = generation
       Task {
         let health = await StimServerCLI.health(port: port)
+        let resolved = StimHome.path(environment: await environment?.value ?? ProcessInfo.processInfo.environment)
         guard current == generation, isRunning else { return }
-        if let health {
+        if let health, owned || StimHome.adopts(serverHome: health.stimHome, resolved: resolved) {
           missedProbes = 0
           state = .running(health, owned: owned)
           if health.nativeViewerOpened == true { NativeViewerPermissions.shared.viewerOpened(serverOwned: owned) }

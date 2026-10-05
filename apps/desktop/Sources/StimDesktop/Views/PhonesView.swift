@@ -7,6 +7,7 @@ import SwiftUI
 struct PhonesView: View {
   @ObservedObject var server: ServerController
   var settings: MachineSettingsStore
+  let stimHome: String
   @AppStorage(AppPreferences.Key.servesPhones) private var servesPhones = false
   @AppStorage(AppPreferences.Key.stimServerExecutable) private var executable = ""
   @State private var pairing = false
@@ -186,7 +187,7 @@ struct PhonesView: View {
             .font(.stim(.caption, mono: true))
             .foregroundStyle(Palette.tertiary)
         }
-        if !health.servesDefaultHome() {
+        if StimHome.isDefault(stimHome), !health.servesDefaultHome() {
           Text(
             "This server keeps pairings in \(abbreviatingHome(health.stimHome)), not ~/.stim. Phones paired now stop working when Stim Desktop serves ~/.stim again."
           )
