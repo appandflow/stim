@@ -327,7 +327,7 @@ export class BuildHost {
         warm: {
           checkout: existsSync(join(area, 'src')),
           dependencies: typeof params.lockfile === 'string' && lockfile === params.lockfile,
-          build: nonEmptyDir(join(area, 'home', 'workspaces')),
+          build: nonEmptyDir(join(area, 'home', 'workspaces')) || nonEmptyDir(join(area, 'macos')),
         },
       },
     };
@@ -476,6 +476,7 @@ export class BuildHost {
         job: id,
         area,
         blobs: join(clientDir, 'blobs'),
+        swiftpmCache: join(clientDir, 'cache', 'swiftpm'),
         gradleDaemonIdleMs: gradleDaemonIdleMs(),
       }),
     );
@@ -725,8 +726,8 @@ export class BuildSession {
       return refusal('bad-request', `build.start needs params.${strings.join(', params.')}.`);
     }
     const platform = params.platform;
-    if (platform !== 'ios' && platform !== 'android') {
-      return refusal('bad-request', 'params.platform must be ios or android.');
+    if (platform !== 'ios' && platform !== 'android' && platform !== 'macos') {
+      return refusal('bad-request', 'params.platform must be ios, android or macos.');
     }
     if (platform === 'ios' && (typeof params.runtime !== 'string' || !params.runtime)) {
       return refusal('bad-request', 'An ios build needs params.runtime.');
@@ -737,6 +738,24 @@ export class BuildSession {
         'bad-request',
         'An android build needs params.android: variant and abi (string or null), gradleBuildCache, pch and compilerCache.',
       );
+    }
+    let macos: { product: string; infoPlist: string; bundleId: string } | null = null;
+    if (platform === 'macos') {
+      const options = params.macos;
+      if (
+        !isJsonObject(options) ||
+        typeof options.product !== 'string' ||
+        !/^[A-Za-z0-9_.-]{1,100}$/.test(options.product) ||
+        !validBuildPath(options.infoPlist) ||
+        typeof options.bundleId !== 'string' ||
+        !/^[A-Za-z0-9][A-Za-z0-9.-]{0,199}$/.test(options.bundleId)
+      ) {
+        return refusal(
+          'bad-request',
+          'A macos build needs a valid product, relative infoPlist path and bundleId in params.macos.',
+        );
+      }
+      macos = { product: options.product, infoPlist: options.infoPlist, bundleId: options.bundleId };
     }
     if (params.project !== '' && !validBuildPath(params.project)) {
       return refusal('bad-request', 'params.project must be a relative path inside the repository.');
@@ -766,6 +785,7 @@ export class BuildSession {
         manifest: [...this.files.values()],
         platform,
         android,
+        macos,
         project: params.project,
         packageName: optional(params.packageName),
         isExpo: params.isExpo === true,

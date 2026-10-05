@@ -10,7 +10,13 @@ import { resolveSettings } from '../workspace/settings.ts';
 import { iosRuntimeMatches, listIosRuntimes, pickDefaultIosCreation } from '../devices/ios.ts';
 import { bundlerPin } from '../engine/bundler.ts';
 import { offloadCheck, simulatorRuntime } from '../offload/client.ts';
-import { androidRequirements, androidToolchain, iosToolchain, type BuildTarget } from '../offload/toolchain.ts';
+import {
+  androidRequirements,
+  androidToolchain,
+  iosToolchain,
+  macosToolchain,
+  type BuildTarget,
+} from '../offload/toolchain.ts';
 import { resolveDeviceType, resolveRuntime } from './ios/support.ts';
 import {
   allowanceSearchPaths,
@@ -279,6 +285,7 @@ export default function doctorCommand(
       const checksAndroid =
         opts.platform === 'android' ||
         (opts.platform === undefined && (existsSync(join(root, 'android')) || detectIsExpo(root)));
+      const checksMacos = host === 'darwin' && opts.platform === undefined && existsSync(join(root, 'Package.swift'));
       const offloadTargets = (): BuildTarget[] => [
         ...(checksIos
           ? [
@@ -293,10 +300,11 @@ export default function doctorCommand(
         ...(checksAndroid
           ? [{ platform: 'android' as const, local: androidToolchain(), requires: androidRequirements(root) }]
           : []),
+        ...(checksMacos ? [{ platform: 'macos' as const, local: macosToolchain() }] : []),
       ];
       const buildMachines = await inspectBuildMachines({
         fix: opts.fix === true,
-        check: checksIos || checksAndroid ? offloadCheck(root, offloadTargets) : null,
+        check: checksIos || checksAndroid || checksMacos ? offloadCheck(root, offloadTargets) : null,
       });
       findings.push(...buildMachines.findings);
       const deviceHosts = await inspectDeviceHostMachines({ fix: opts.fix === true });

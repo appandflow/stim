@@ -1,11 +1,13 @@
+import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { WebSocketServer, type WebSocket } from 'ws';
 import type { BuildMachineCredential, MachineCapacity } from '@stim-cli/core/state';
 import { chooseBuildMachine, offloadBuild, type BuildOffer } from '../offload/client.ts';
+import { manifestDigest } from '../offload/manifest.ts';
 import type { BuildTarget } from '../offload/toolchain.ts';
 
 const ports = new Map<string, number>();
@@ -24,6 +26,7 @@ const TOOLCHAIN = {
   arch: 'arm64',
   xcode: 'Xcode 27.0',
   simulatorSdk: '27.0',
+  macosSdk: '27.0',
   cocoapods: '1.16.2',
   bundler: null,
   runtimes: ['iOS-27-0'],
@@ -42,6 +45,7 @@ const HERE: MachineCapacity = { cpus: 10, loadPerCore: 0.1, builds: 1, maxBuilds
 
 interface FakeMachine {
   methods: string[];
+  requests: Array<{ method: string; params: Record<string, unknown> }>;
   closed: Promise<void>;
   stop: () => Promise<void>;
 }
@@ -62,32 +66,57 @@ async function fakeMachine(
     hello = () => ({ result: { capabilities: ['build'] } }),
     dropOnSync = false,
     attach = { result: { outcome: null } },
+    artifact = null,
   }: {
     drop?: boolean;
     closeAfterStart?: number | null;
     dropOnSync?: boolean;
     attach?: object;
     hello?: () => object;
+    artifact?: { archive: Buffer; digest: string } | null;
   } = {},
 ): Promise<FakeMachine> {
   const server = new WebSocketServer({ port: 0, host: '127.0.0.1' });
   await new Promise((resolve) => server.once('listening', resolve));
   ports.set(machine, (server.address() as AddressInfo).port);
   const methods: string[] = [];
+  const requests: Array<{ method: string; params: Record<string, unknown> }> = [];
   let closed!: () => void;
   const done = new Promise<void>((resolve) => (closed = resolve));
   server.on('connection', (socket: WebSocket) => {
     socket.on('close', () => closed());
     socket.on('message', (data, isBinary) => {
       if (isBinary) return;
-      const { id, method } = JSON.parse(String(data)) as { id: number; method: string };
+      const { id, method, params } = JSON.parse(String(data)) as {
+        id: number;
+        method: string;
+        params: Record<string, unknown>;
+      };
+      requests.push({ method, params });
       methods.push(method);
       const reply = (body: object) => socket.send(JSON.stringify({ id, ...body }));
       if (method === 'hello') return reply(hello());
       if (method === 'build.cancel') return;
       if (method === 'build.offer') return reply({ result: offer });
       if (method === 'build.sync') return dropOnSync ? socket.terminate() : reply({ result: { missing: [] } });
-      const fail = (job: string) => socket.send(JSON.stringify({ event: 'build.progress', job, outcome: FAILED }));
+      const fail = (job: string) =>
+        socket.send(
+          JSON.stringify({
+            event: 'build.progress',
+            job,
+            outcome: artifact
+              ? {
+                  ok: true,
+                  artifact: { name: 'Sample.app', size: artifact.archive.length, sha256: artifact.digest },
+                  compilationCache: {},
+                }
+              : FAILED,
+          }),
+        );
+      if (method === 'build.artifact' && artifact) {
+        socket.send(Buffer.concat([Buffer.from(artifact.digest, 'hex'), artifact.archive]));
+        return reply({ result: { size: artifact.archive.length, sha256: artifact.digest } });
+      }
       if (method === 'build.start') {
         reply(start);
         if ('result' in start && closeAfterStart !== null) return socket.close(closeAfterStart, 'device revoked');
@@ -103,6 +132,7 @@ async function fakeMachine(
   });
   return {
     methods,
+    requests,
     closed: done,
     stop: () => new Promise((resolve) => server.close(() => resolve())),
   };
@@ -389,4 +419,79 @@ describe('offloadBuild', () => {
     });
     expect(hellos).toBe(2);
   });
+});
+
+describe('macOS artifact transfer', () => {
+  it.each(['valid', 'missing-plist', 'missing-executable', 'bad-digest'])(
+    'accepts only a complete macOS app with the verified archive digest: %s',
+    async (kind) => {
+      const contents = join(repo, 'archive-source', 'Sample.app', 'Contents');
+      mkdirSync(join(contents, 'MacOS'), { recursive: true });
+      if (kind !== 'missing-plist') writeFileSync(join(contents, 'Info.plist'), '{}');
+      if (kind !== 'missing-executable') writeFileSync(join(contents, 'MacOS', 'Sample'), 'binary');
+      const archivePath = join(repo, 'artifact.tgz');
+      execFileSync('tar', ['-czf', archivePath, '-C', join(repo, 'archive-source'), 'Sample.app']);
+      const archive = readFileSync(archivePath);
+      const digest = kind === 'bad-digest' ? '00'.repeat(32) : createHash('sha256').update(archive).digest('hex');
+      const machine = await fakeMachine(
+        'mini',
+        offer(0.1),
+        { result: { job: 'j1' } },
+        { artifact: { archive, digest } },
+      );
+      machines.push(machine);
+      const choice = await chooseBuildMachine({
+        projectRoot: repo,
+        target: { platform: 'macos', local: { stimBuild: 'b1', arch: 'arm64', xcode: 'Xcode 27.0', macosSdk: '27.0' } },
+        mode: 'force',
+        here: HERE,
+        machines: [credential('mini')],
+        note: () => {},
+      });
+      if (typeof choice === 'string') throw new Error(choice);
+      const outcome = await offloadBuild({
+        choice,
+        request: { platform: 'macos', product: 'Sample', infoPlist: 'Info.plist', bundleId: 'dev.sample.stim.test' },
+        stagingDir: join(repo, 'fetched'),
+        onPhase: () => {},
+        onEnter: () => {},
+        onRecord: () => {},
+        note: () => {},
+      });
+      const start = machine.requests.find((entry) => entry.method === 'build.start')!.params;
+      const files = machine.requests
+        .filter((entry) => entry.method === 'build.sync')
+        .flatMap((entry) => entry.params.files as Array<{ path: string; kind: string; sha256: string }>);
+      expect(start).toEqual({
+        repo: choice.identity.repo,
+        project: '',
+        platform: 'macos',
+        macos: { product: 'Sample', infoPlist: 'Info.plist', bundleId: 'dev.sample.stim.test' },
+        fingerprint: manifestDigest(files),
+        stimBuild: 'b1',
+      });
+      expect(outcome.ok).toBe(kind === 'valid');
+      const observed = outcome.ok
+        ? {
+            binary: readFileSync(join(outcome.artifactPath, 'Contents', 'MacOS', 'Sample'), 'utf8'),
+            compilationCache: outcome.compilationCache.status,
+            ccache: outcome.ccache.status,
+          }
+        : { reason: outcome.reason };
+      const failureReason = expect.stringContaining(
+        kind === 'bad-digest' ? 'sha256' : kind === 'missing-plist' ? 'Contents/Info.plist' : 'Contents/MacOS/Sample',
+      );
+      expect(observed).toEqual(
+        kind === 'valid'
+          ? {
+              binary: 'binary',
+              compilationCache: 'unavailable',
+              ccache: 'unavailable',
+            }
+          : {
+              reason: failureReason,
+            },
+      );
+    },
+  );
 });

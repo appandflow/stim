@@ -493,11 +493,13 @@ leased until <time>" for each one.`,
                   "invalid". An approved machine also carries offloadable,
                   true when it would take this app's builds now (iOS
                   simulator unless --platform android, Android emulator when
-                  --platform android or the app has android/ or uses Expo),
-                  and reasons, each reason it would not, prefixed "iOS: " or
-                  "Android: " when only one platform has it, with a finding
+                  --platform android or the app has android/ or uses Expo,
+                  plus macOS SwiftPM when Package.swift exists and no platform
+                  is selected on a Mac), and reasons, each reason it would not,
+                  prefixed "iOS: ", "Android: " or "macOS: " when only one platform
+                  has it, with a finding
                   per reason (code build-machine-<reason>: unreachable,
-                  checkout, stim-build, arch, xcode, simulator-sdk,
+                  checkout, stim-build, arch, xcode, simulator-sdk, macos-sdk,
                   cocoapods, bundler, runtime, jdk, android-sdk, ndk,
                   build-tools, compile-sdk, disk or busy). problems lists the same
                   reasons as { code, reason } with that code. capacity
@@ -1321,7 +1323,8 @@ RULES
     app?, supervisor?   { pid, processToken, startedAtMicros }
     state               running | orphaned | stopped | unverified
     build               { state: running | ok | failed, startedAt,
-                          finishedAt?, durationMs?, error? }
+                          finishedAt?, durationMs?, error?,
+                          offloadedTo?, offloadFallback? }
     host?               { machine, session, appSlot, appAttempt, bundleId,
                           agent } when stim macos --host placed the app on
                           another Mac; it then has no local app or supervisor

@@ -234,7 +234,7 @@ outside it moves to its own issue and pull request.
   `devices.json`. The client names its build machines in `offload.machines`,
   pins each one's tailnet node in `build-machines.json`, and sends its token
   only to that node. `offload.mode` places iOS simulator Debug builds and Android emulator
-  debug builds;
+  debug builds and macOS SwiftPM Debug builds;
   every offload failure falls back to a local build, and no failure path
   writes the cache. The worker builds each client and repository in its own
   area and Stim home under `offload.workerRoot`, guarded by an ownership

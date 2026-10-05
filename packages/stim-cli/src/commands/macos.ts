@@ -1,102 +1,27 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { closeSync, cpSync, existsSync, mkdirSync, openSync, readdirSync, realpathSync, rmSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { closeSync, existsSync, openSync, realpathSync } from 'node:fs';
+import { join } from 'node:path';
 import type { Command } from 'commander';
 import { LOG_ROTATE_BYTES } from '@stim-cli/core';
 import { readMacosRecord, type MacosAppRecord } from '@stim-cli/core/state';
 import { connectHost, placeHostedMacos } from '../device-host/hosted-macos.ts';
 import { withNativeBuildRun } from '../engine/native-run.ts';
-import { acquireBuildSlot, releaseBuildSlot } from '../engine/build-slots.ts';
 import { spawnDeclared } from '../engine/spawn-claims.ts';
 import { withWorkspaceProcessLock } from '../engine/workspace-process-lock.ts';
 import { getExecutor } from '../exec.ts';
 import { inspectProcessIdentity } from '../process-identity.ts';
 import { macosDir, macosLogFile, macosProcess, requiredMacosRecord } from '../macos/state.ts';
-import { logLines } from '../macos/run.ts';
+import { buildMacosBundle } from '../macos/build.ts';
+import { validateInfoPlist } from '../macos/stage.ts';
 import { stopMacosAppHeld } from '../macos/stop.ts';
-import { createNdjsonWriter, type NdjsonWriter } from '../ndjson.ts';
+import { createNdjsonWriter } from '../ndjson.ts';
 import { spawnEntry } from '../spawn-entry.ts';
-import { getConcurrencyLimits, upsertProject } from '../workspace/config.ts';
+import { upsertProject } from '../workspace/config.ts';
 import { ensureWorkspaceStorage, workspaceDir, workspaceLogsDir } from '../workspace/paths.ts';
 import { findProjectRoot } from '../workspace/project.ts';
 import { resolveSettings, settingShapeErrors, SETTING_SHAPE_REMEDY } from '../workspace/settings.ts';
 import { recordWorkspaceUse, writeWorkspaceState } from '../workspace/workspace-state.ts';
 import { gitCommonDir, repoRoot } from '../workspace/worktree.ts';
-
-async function tool(
-  root: string,
-  args: string[],
-  writer: NdjsonWriter,
-  note: (line: string) => void,
-  capture = false,
-): Promise<string> {
-  const child = spawnDeclared(() =>
-    getExecutor().spawn('swift', args, { cwd: root, detached: true, stdio: ['ignore', 'pipe', 'pipe'] }),
-  );
-  let stdout = '';
-  child.stdout?.on('data', (chunk: Buffer) => {
-    if (capture) stdout += chunk.toString('utf8');
-  });
-  const write = (msg: string) => {
-    writer.write({ src: 'build', platform: 'macos', level: 'debug', msg });
-    note(msg);
-  };
-  if (child.stdout) logLines(child.stdout, write);
-  if (child.stderr) logLines(child.stderr, write);
-  await new Promise<void>((done, reject) => {
-    child.once('error', reject);
-    child.once('close', (code) =>
-      code === 0 ? done() : reject(new Error(`swift ${args[0]} failed (${code}). See stim logs --source build.`)),
-    );
-  });
-  return stdout.trim();
-}
-
-function stageBundle(
-  root: string,
-  product: string,
-  infoPlist: string,
-  bin: string,
-  bundle: string,
-  hosted: boolean,
-): string {
-  const exec = getExecutor();
-  const plist = JSON.parse(
-    exec.runFile('plutil', ['-convert', 'json', '-o', '-', realpathSync(resolve(root, infoPlist))]),
-  );
-  if (typeof plist.CFBundleIdentifier !== 'string' || plist.CFBundleExecutable !== product) {
-    throw new Error('macos.infoPlist must name a CFBundleIdentifier and the selected product as CFBundleExecutable.');
-  }
-  if (plist.CFBundleURLTypes || plist.SUFeedURL) {
-    throw new Error('Use a development Info.plist without shared URL schemes or an update feed.');
-  }
-  const bundleId = hosted
-    ? plist.CFBundleIdentifier
-    : `${plist.CFBundleIdentifier}.stim.${createHash('sha256').update(root).digest('hex').slice(0, 12)}`;
-  rmSync(bundle, { recursive: true, force: true });
-  const contents = join(bundle, 'Contents');
-  mkdirSync(join(contents, 'MacOS'), { recursive: true });
-  mkdirSync(join(contents, 'Resources'), { recursive: true });
-  mkdirSync(join(contents, 'Frameworks'), { recursive: true });
-  const executable = join(contents, 'MacOS', product);
-  cpSync(join(bin, product), executable);
-  cpSync(resolve(root, infoPlist), join(contents, 'Info.plist'));
-  exec.runFile('/usr/libexec/PlistBuddy', ['-c', `Set :CFBundleIdentifier ${bundleId}`, join(contents, 'Info.plist')]);
-  for (const entry of readdirSync(bin)) {
-    if (entry.endsWith('.framework')) {
-      const target = join(contents, 'Frameworks', entry);
-      cpSync(join(bin, entry), target, { recursive: true, dereference: false, verbatimSymlinks: true });
-      exec.runFile('codesign', ['--force', '--sign', '-', target]);
-    } else if (entry.endsWith('.bundle'))
-      cpSync(join(bin, entry), join(contents, 'Resources', entry), { recursive: true });
-  }
-  const frameworkPath = '@executable_path/../Frameworks';
-  if (!exec.runFile('otool', ['-l', executable]).includes(frameworkPath)) {
-    exec.runFile('install_name_tool', ['-add_rpath', frameworkPath, executable]);
-  }
-  exec.runFile('codesign', ['--force', '--sign', '-', bundle]);
-  return bundleId;
-}
 
 /**
  * Builds the Debug app and launches it here, or with `host` on that approved hosting Mac. A named host never falls
@@ -201,24 +126,21 @@ async function buildBundle(
   const scratch = join(macosDir(root), 'build');
   writeWorkspaceState(root, { macos: record });
   const writer = createNdjsonWriter(macosLogFile(root), { maxBytes: LOG_ROTATE_BYTES });
-  let slot: Awaited<ReturnType<typeof acquireBuildSlot>> | undefined;
   try {
-    slot = await acquireBuildSlot({
-      max: getConcurrencyLimits().maxBuilds,
+    const base = validateInfoPlist(root, record.product, infoPlist);
+    const bundleId = hosted ? base : `${base}.stim.${createHash('sha256').update(root).digest('hex').slice(0, 12)}`;
+    const built = await buildMacosBundle({
       root,
-      logFile: writer.file,
-      out: note,
-    });
-    const args = ['build', '-c', 'debug', '--product', record.product, '--scratch-path', scratch, '--jobs', '2'];
-    await tool(root, args, writer, note);
-    const bin = await tool(
-      root,
-      ['build', '-c', 'debug', '--scratch-path', scratch, '--show-bin-path'],
+      product: record.product,
+      infoPlist,
+      bundle: record.bundle,
+      bundleId,
+      scratch,
       writer,
-      () => {},
-      true,
-    );
-    record.bundleId = stageBundle(root, record.product, infoPlist, bin, record.bundle, hosted);
+      note,
+      record: record.build,
+    });
+    record.bundleId = built.bundleId;
     record.bundle = realpathSync(record.bundle);
     record.executable = realpathSync(join(record.bundle, 'Contents', 'MacOS', record.product));
     record.build = {
@@ -246,7 +168,6 @@ async function buildBundle(
     });
     throw error;
   } finally {
-    releaseBuildSlot(slot);
     writer.close();
   }
 }

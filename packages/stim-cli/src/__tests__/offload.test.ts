@@ -1,6 +1,8 @@
+import { manifestDigest } from '../offload/manifest.ts';
 import type { MachineCapacity, OffloadMode } from '@stim-cli/core/state';
 import { offerProblems, offloadPlacement, pickOffer, type BuildOffer } from '../offload/client.ts';
 import {
+  toolchainMismatches,
   iphoneRuntimes,
   jdkMajor,
   parseAndroidRequirements,
@@ -38,6 +40,7 @@ function offer(
     ...overrides,
     toolchain: {
       ...LOCAL,
+      macosSdk: '27.0',
       bundler: 'Bundler version 4.0.8',
       runtimes: [RUNTIME],
       jdk: '17',
@@ -279,4 +282,40 @@ describe('iphoneRuntimes', () => {
       }),
     ).toEqual([RUNTIME]);
   });
+});
+
+describe('macOS build compatibility', () => {
+  const target: BuildTarget = {
+    platform: 'macos',
+    local: { stimBuild: 'b1', arch: 'arm64', xcode: LOCAL.xcode, macosSdk: '27.0' },
+  };
+  it.each([
+    ['stim-build', { stimBuild: 'b2' }],
+    ['arch', { arch: 'x64' }],
+    ['xcode', { xcode: 'Xcode 26.0' }],
+    ['macos-sdk', { macosSdk: '26.0' }],
+  ] as const)('refuses a macOS worker with another %s', (code, mismatch) => {
+    expect(toolchainMismatches(target, offer({ toolchain: mismatch }).toolchain)).toEqual([
+      { code, reason: expect.any(String) },
+    ]);
+  });
+  it('accepts matching macOS tools without CocoaPods, runtimes or a JDK', () => {
+    expect(
+      toolchainMismatches(
+        target,
+        offer({ toolchain: { cocoapods: null, bundler: null, runtimes: [], jdk: null, androidSdk: null } }).toolchain,
+      ),
+    ).toEqual([]);
+  });
+});
+
+it('fingerprints the same manifest in any order but detects changed content and executable kind', () => {
+  const entries = [
+    { path: 'a', kind: 'file', sha256: 'aa' },
+    { path: 'b', kind: 'exec', sha256: 'bb' },
+  ];
+  const digest = manifestDigest(entries);
+  expect(manifestDigest(entries.toReversed())).toBe(digest);
+  expect(manifestDigest([{ ...entries[0]!, sha256: 'cc' }, entries[1]!])).not.toBe(digest);
+  expect(manifestDigest([{ ...entries[0]!, kind: 'link' }, entries[1]!])).not.toBe(digest);
 });

@@ -206,7 +206,7 @@ import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 const print = (value) => process.stdout.write(JSON.stringify(value) + '\\n');
 if (process.argv[2] === 'offer') {
-  print({ stimBuild: 'b1', arch: 'arm64', xcode: 'Xcode 27.0', simulatorSdk: '27.0', cocoapods: '1.16.2', runtimes: ['iOS-27-0'] });
+  print({ stimBuild: 'b1', arch: 'arm64', xcode: 'Xcode 27.0', simulatorSdk: '27.0', macosSdk: '27.0', cocoapods: '1.16.2', runtimes: ['iOS-27-0'] });
 } else {
   const job = JSON.parse(readFileSync(0, 'utf8'));
   writeFileSync(join(process.env.FAKE_STIM_PIDS, '..', 'job.json'), JSON.stringify({ job, home: process.env.STIM_HOME, gradle: process.env.GRADLE_USER_HOME, pid: process.pid }));
@@ -1041,7 +1041,7 @@ describe('offloaded builds', () => {
       const { client, id } = await buildClient(port);
       expect(await client.request('build.offer', { repo: 'app-1' })).toMatchObject({
         result: {
-          toolchain: { stimBuild: 'b1', runtimes: ['iOS-27-0'] },
+          toolchain: { stimBuild: 'b1', runtimes: ['iOS-27-0'], macosSdk: '27.0' },
           capacity: { running: 0, max: 1 },
           warm: { checkout: false, dependencies: false, build: false },
         },
@@ -1128,6 +1128,45 @@ describe('offloaded builds', () => {
       const ran = JSON.parse(readFileSync(join(root, 'job.json'), 'utf8'));
       expect(ran.job).toMatchObject({ platform: 'android', runtime: null, android });
       expect(ran.gradle).toBe(join(process.env.STIM_HOME!, 'build-worker', id, 'cache', 'gradle'));
+    },
+  );
+
+  test.skipIf(!fakeTailscale)(
+    'refuses malformed macOS jobs and launches valid jobs with a private SwiftPM cache',
+    async () => {
+      const port = await start();
+      const { client, id } = await buildClient(port);
+      await client.request('build.sync', { repo: 'app-1', files: [file('Package.swift', 'x')], done: true });
+      client.socket.send(blob('x'));
+      const base = { repo: 'app-1', project: '', platform: 'macos', fingerprint: 'f00d', stimBuild: 'b1' };
+      const macos = { product: 'Sample', infoPlist: 'Support/Info.plist', bundleId: 'dev.sample.stim.test' };
+      for (const options of [
+        undefined,
+        { ...macos, product: '../Sample' },
+        { ...macos, infoPlist: '../Info.plist' },
+        { ...macos, bundleId: '-bad' },
+      ]) {
+        expect(await client.request('build.start', { ...base, macos: options })).toMatchObject({
+          error: { code: 'bad-request' },
+        });
+      }
+      expect(await client.request('build.start', { ...base, macos })).toMatchObject({
+        result: { job: expect.any(String) },
+      });
+      await progress(client);
+      const ran = JSON.parse(readFileSync(join(root, 'job.json'), 'utf8'));
+      expect(ran.job).toMatchObject({
+        platform: 'macos',
+        project: '',
+        macos,
+        swiftpmCache: join(process.env.STIM_HOME!, 'build-worker', id, 'cache', 'swiftpm'),
+      });
+      const scratch = join(process.env.STIM_HOME!, 'build-worker', id, 'repos', 'app-1', 'macos', 'root');
+      mkdirSync(scratch, { recursive: true });
+      writeFileSync(join(scratch, 'output'), 'built');
+      expect(await client.request('build.offer', { repo: 'app-1' })).toMatchObject({
+        result: { warm: { build: true } },
+      });
     },
   );
 
