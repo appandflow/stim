@@ -52,7 +52,7 @@ function allBodies(): string[] {
   return bodies;
 }
 
-const NOT_A_REFUSAL_CODE = new Set(['STIM_HOME', 'STIM_ANDROID_CAS_TOOLCHAIN']);
+const NOT_A_REFUSAL_CODE = new Set(['STIM_HOME', 'STIM_ANDROID_CAS_TOOLCHAIN', 'STIM_BACKGROUND_LAUNCH']);
 
 function scrapedCodes(source: string): Set<string> {
   return new Set(

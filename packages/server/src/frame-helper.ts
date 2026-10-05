@@ -558,6 +558,8 @@ export class HelperSource {
         for (const listener of this.listeners.keys())
           listener.inputFailed?.(inputError, typeof session === 'string' ? session : undefined);
       }
+      const controlActivated = (notice as { controlActivated?: unknown } | null)?.controlActivated;
+      if (typeof controlActivated === 'string') console.error(`stim-server: stim-frames: ${controlActivated}`);
       const stalled = (notice as { stalled?: unknown } | null)?.stalled;
       if (stalled === null || typeof stalled === 'string') this.stall(stalled);
       const display = (notice as { display?: unknown } | null)?.display;

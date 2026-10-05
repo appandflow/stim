@@ -29,6 +29,10 @@ extra app assets and custom packaging scripts are not supported.
 
 Each invocation stops its previous owned app, rebuilds and launches. SwiftPM
 keeps incremental outputs in the workspace's runtime directory under STIM_HOME.
+Local stim macos starts the app in the background without activating it or
+changing focus: it sets STIM_BACKGROUND_LAUNCH=1 in the app's environment, which
+Stim Desktop honors. An app that activates itself at launch still takes focus.
+Hosted launches (macos --host) do not set it.
 macOS artifacts are not cached. This prototype has no --plan, --slot, or reload command.
 A failed build records its error and compiler output without launching an app.
 Runtime stdout and stderr become client records; build output becomes build
@@ -111,14 +115,20 @@ time. Older servers retain fixed shortcuts and navigation but cannot receive
 other modified letters or digits. Multi-character modified input and symbols
 are not supported; ordinary typing keeps using input.text.
 
-Letter and digit shortcuts require the owned app's selected U.S. or ABC input source.
-The helper focuses that app and waits up to one second for activation before
-checking the layout; an app that does not activate refuses the shortcut.
+Letter and digit shortcuts require the Mac's selected U.S. or ABC input source.
 Apple's ANSI virtual key codes represent physical U.S. positions, not logical
 letters in other host layouts. The helper refuses those key events on other
 layouts with a specific reason; ordinary typing and navigation remain available.
 Logical shortcuts for other host layouts remain tracked in
 https://github.com/appandflow/stim/issues/2422.
+Control posts input to the owned process without activating it or raising its
+window. Only when the captured window is not the app's key window (or its
+attached sheet) does Stim activate the app to deliver input, waiting up to one
+second for focus. The helper then sends a controlActivated notice, which stim-server
+logs.
+Clicks on views that reject the first mouse, such as custom views and SwiftUI
+onTapGesture regions, do not land while the app is in the background. Use
+Desktop's Open app to bring the app to the front for those views.
 Control holds one exclusive server session per owned app, ends on disconnect,
 revocation, takeover or five minutes without input, and does not take a CLI
 simulator/device lock. Each action rechecks the exact owned process and that the
