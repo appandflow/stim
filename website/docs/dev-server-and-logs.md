@@ -36,6 +36,17 @@ workspace reserves the port or another process holds it.
 
 <StimTabs code={`stim settings set metro.port 25062 --scope workspace`} />
 
+Changing the pin while this workspace's dev server runs is refused until
+`stim stop`; an unverified supervisor also blocks the change. You can also
+unset or restore the pin. A foreign process on the pin is refused before
+anything starts or the port is reserved. This project's own Metro already
+on the pin is attached to. `stim web` follows the same rules when its page
+uses Metro.
+
+For `stim ios` and `stim android`, `--no-metro-check` uses the pin, then the
+recorded port, then 8081, without probing, reserving or writing the registry.
+An invalid pin still refuses with `STIM_BAD_ARG`. Release builds skip Metro.
+
 ## Idle stop
 
 A dev server holds about 450 MB. The supervisor stops it after

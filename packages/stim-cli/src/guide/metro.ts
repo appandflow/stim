@@ -105,7 +105,14 @@ IDEMPOTENT
   the reserved port moves the RESERVATION instead, so the project is never
   stranded on a port it can never use. A port pinned with metro.port or
   STIM_METRO_PORT never moves: \`start\` refuses with STIM_BAD_ARG and names
-  the holder.
+  the holder before anything starts or the pin is reserved. This project's
+  own Metro already on the pin is attached to. Changing the pin while this
+  workspace's dev server runs or its supervisor cannot be verified refuses;
+  run stim stop before retrying, or unset or restore the pin. stim web follows
+  the same rules when its page uses Metro.
+  ios and android with --no-metro-check use the pin, then the recorded port,
+  then 8081, without probing, reserving or writing the registry. An invalid
+  pin still refuses with STIM_BAD_ARG. Release builds still skip Metro.
 
 WHAT THE SUPERVISOR IS
   One detached process per workspace. There is no machine-wide daemon, nothing

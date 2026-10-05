@@ -1112,44 +1112,65 @@ async function resolvePort(
   note: (line: string) => void,
   fail: (refusal: StartRefusalArgs) => never,
 ): Promise<number> {
+  const result = await resolveWorkspaceMetroPort(root, note, 'start');
+  return typeof result === 'number' ? result : fail(result);
+}
+
+export async function resolveWorkspaceMetroPort(
+  root: string,
+  note: (line: string) => void,
+  command: 'start' | 'web',
+): Promise<number | StartError> {
   const setting = metroPortSetting(root);
-  if (setting.error) fail({ code: 'STIM_BAD_ARG', message: setting.error, remedy: SETTING_SHAPE_REMEDY });
+  if (setting.error) return { code: 'STIM_BAD_ARG', message: setting.error, remedy: SETTING_SHAPE_REMEDY };
   const pinned = setting.port;
-  const reservePinned = async () => {
-    try {
-      return await reserveMetroPort(root, undefined, undefined, pinned);
-    } catch (error) {
-      return fail({
-        code: 'STIM_BAD_ARG',
-        message: (error as Error).message,
-        remedy: 'Give each workspace its own metro.port, in the workspace layer or the environment.',
-      });
-    }
-  };
   const project = getProject(root);
   const recorded = project?.metroPort;
-  if (!recorded || (pinned !== null && recorded !== pinned)) return await reservePinned();
-  const supervisor = resolveSupervisorTarget({
-    state: readWorkspaceState(root)?.supervisor,
-    record: project.supervisor,
-    reservedPort: recorded,
-  });
-  if (supervisor.status !== 'none' && supervisor.status !== 'stale') return recorded;
-  const held = await resolveProjectMetro(recorded, root);
-  if (!held.notOurs) return recorded;
-  if (pinned !== null) {
-    fail({
-      code: 'STIM_BAD_ARG',
-      message: `Port ${pinned} is held by something else (${held.notOurs}), and metro.port pins this workspace's Metro to it.`,
-      remedy: 'Stop the process on that port, or set another metro.port.',
+  if (pinned === null && command === 'web') return recorded ?? (await reserveMetroPort(root));
+  if (recorded) {
+    const supervisor = resolveSupervisorTarget({
+      state: readWorkspaceState(root)?.supervisor,
+      record: project.supervisor,
+      reservedPort: recorded,
     });
+    if (supervisor.status !== 'none' && supervisor.status !== 'stale') {
+      if (pinned === null || recorded === pinned) return recorded;
+      return {
+        code: 'STIM_BAD_ARG',
+        message: `This workspace's dev server is running on port ${recorded} or cannot be verified, and metro.port pins it to ${pinned}.`,
+        remedy: 'Run `stim stop`, then retry, or unset or restore metro.port.',
+      };
+    }
   }
-  const fresh = await reserveMetroPort(root);
-  if (fresh !== recorded) {
-    note(chalk.yellow(`Port ${recorded} is held by something else (${held.notOurs}).`));
-    note(chalk.dim(`Reserved port ${fresh} for this project instead.`));
+  if (pinned !== null) {
+    const held = await resolveProjectMetro(pinned, root);
+    if (held.notOurs) {
+      return {
+        code: 'STIM_BAD_ARG',
+        message: `Port ${pinned} is held by something else (${held.notOurs}), and metro.port pins this workspace's Metro to it.`,
+        remedy: 'Stop the process on that port, or set another metro.port.',
+      };
+    }
+    if (recorded === pinned) return recorded;
+  } else if (recorded) {
+    const held = await resolveProjectMetro(recorded, root);
+    if (!held.notOurs) return recorded;
+    const fresh = await reserveMetroPort(root);
+    if (fresh !== recorded) {
+      note(chalk.yellow(`Port ${recorded} is held by something else (${held.notOurs}).`));
+      note(chalk.dim(`Reserved port ${fresh} for this project instead.`));
+    }
+    return fresh;
   }
-  return fresh;
+  try {
+    return await reserveMetroPort(root, undefined, undefined, pinned);
+  } catch (error) {
+    return {
+      code: 'STIM_BAD_ARG',
+      message: (error as Error).message,
+      remedy: 'Give each workspace its own metro.port, in the workspace layer or the environment.',
+    };
+  }
 }
 
 async function waitForMetro({

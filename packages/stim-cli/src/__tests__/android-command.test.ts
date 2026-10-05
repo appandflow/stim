@@ -1,3 +1,4 @@
+import { SETTING_SHAPE_REMEDY } from '../workspace/settings.ts';
 import { hashFile } from '../engine/installed-artifact.ts';
 import { vi } from 'vitest';
 import * as crashDiagnostics from '../diagnostics/native-crash.ts';
@@ -25,6 +26,7 @@ import { join, parse } from 'node:path';
 import { Command } from 'commander';
 import { collectorProcessTitle } from '../collector/ownership.ts';
 import {
+  getProject,
   loadConfig,
   saveConfig,
   setDevice,
@@ -1953,6 +1955,54 @@ const devServerStarted = (port = 8082, alreadyRunning = false) => ({
 });
 
 describe('metro is verified before any build work', () => {
+  afterEach(() => vi.unstubAllEnvs());
+
+  test.each(['25062', '80'])('pin %s bypasses the healthy old port and surfaces the start refusal', async (pin) => {
+    vi.stubEnv('STIM_METRO_PORT', pin);
+    const start = vi.fn<typeof import('../commands/start.ts').startDevServer>(async () => ({
+      ok: false as const,
+      error: { code: 'STIM_BAD_ARG', message: 'The old dev server is running.', remedy: 'Run `stim stop`.' },
+      lines: [],
+      reclaimed: [],
+    }));
+    const h = harness({ startServer: start });
+    const result = await h.run();
+    expect(start).toHaveBeenCalledOnce();
+    expect(result.error?.code).toBe('STIM_BAD_ARG');
+    expect(h.calls.metro).toEqual([]);
+    expect(h.calls.build).toEqual([]);
+  });
+
+  test('the same pin reuses a healthy recorded Metro', async () => {
+    vi.stubEnv('STIM_METRO_PORT', '8082');
+    const h = harness({ startServer: never('the dev server start') });
+    const result = await h.run();
+    expect(result.ok).toBe(true);
+    expect(h.calls.launch[0]?.metroPort).toBe(8082);
+  });
+
+  test.each([true, false])(
+    '--no-metro-check wires the pin without changing a reservation (recorded: %s)',
+    async (recorded) => {
+      if (!recorded) upsertProject(root, { metroPort: null });
+      vi.stubEnv('STIM_METRO_PORT', '25062');
+      const h = harness({ metroCheck: false, startServer: never('the dev server start') });
+      const result = await h.run();
+      expect(result.ok).toBe(true);
+      expect(h.calls.launch[0]?.metroPort).toBe(25062);
+      expect(h.calls.metro).toEqual([]);
+      expect(getProject(root)?.metroPort).toBe(recorded ? 8082 : null);
+    },
+  );
+
+  test('--no-metro-check refuses an invalid pin before building', async () => {
+    vi.stubEnv('STIM_METRO_PORT', '80');
+    const h = harness({ metroCheck: false });
+    const result = await h.run();
+    expect(result.error).toMatchObject({ code: 'STIM_BAD_ARG', remedy: SETTING_SHAPE_REMEDY });
+    expect(h.calls.build).toEqual([]);
+  });
+
   test('a dead port starts the dev server through the start path, then builds against it', async () => {
     const starts: { root: string; remote?: boolean }[] = [];
     const h = harness({

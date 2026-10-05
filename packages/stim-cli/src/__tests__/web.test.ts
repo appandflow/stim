@@ -1,3 +1,8 @@
+import { writeWorkspaceState } from '../workspace/workspace-state.ts';
+import * as chromeLookup from '../web/chrome.ts';
+import { resetExecutor, setExecutor, type Executor } from '../exec.ts';
+import { makeExecutor } from './_factories.ts';
+import { SETTING_SHAPE_REMEDY } from '../workspace/settings.ts';
 import { spawn, type ChildProcess } from 'node:child_process';
 import {
   existsSync,
@@ -16,7 +21,7 @@ import { teardownOwnedBrowser } from '../devices/teardown.ts';
 import { getNamedPort, clearNamedPorts, reserveBrowserPort } from '../named-ports.ts';
 import { captureProcessToken, inspectProcessIdentity } from '../process-identity.ts';
 import { environmentState, withWebFacts } from '../status.ts';
-import { resolveWebUrl } from '../commands/web.ts';
+import { runWeb, resolveWebUrl } from '../commands/web.ts';
 import { chromeArgs, findChrome } from '../web/chrome.ts';
 import { consoleRecord, exceptionRecord, logEntryRecord, networkFailureRecord } from '../web/events.ts';
 import { parseInputBatch, webAgentRecords } from '../web/input.ts';
@@ -56,6 +61,89 @@ afterEach(() => {
   }
   rmSync(home, { recursive: true, force: true });
   delete process.env.STIM_HOME;
+});
+
+describe('web Metro pin', () => {
+  beforeEach(() => {
+    setExecutor(makeExecutor());
+    upsertProject(root, { settings: { web: { url: 'http://localhost:{port:metro}/' } } });
+  });
+
+  afterEach(() => {
+    resetExecutor();
+    vi.unstubAllEnvs();
+    vi.restoreAllMocks();
+  });
+
+  test('an invalid pin returns a structured refusal before Chrome lookup or reservation', async () => {
+    vi.stubEnv('STIM_METRO_PORT', '80');
+    const chrome = vi.spyOn(chromeLookup, 'findChrome').mockReturnValue(null);
+
+    const result = await runWeb({ root, headed: false, note: () => {} });
+
+    expect(result).toMatchObject({ ok: false, error: { code: 'STIM_BAD_ARG', remedy: SETTING_SHAPE_REMEDY } });
+    expect(chrome).not.toHaveBeenCalled();
+    expect(getProject(root)?.metroPort).toBe(null);
+  });
+
+  test('a changed pin refuses with the old live supervisor reservation intact', async () => {
+    vi.stubEnv('STIM_METRO_PORT', '25062');
+    upsertProject(root, { metroPort: 8082 });
+    writeWorkspaceState(root, {
+      supervisor: {
+        pid: process.pid,
+        processToken: captureProcessToken(process.pid),
+        port: 8082,
+        mode: 'bare-inproc',
+        startedAt: 'T',
+      },
+    });
+    vi.spyOn(chromeLookup, 'findChrome').mockReturnValue('/chrome');
+    const launch = vi.fn<Executor['spawn']>();
+    setExecutor(makeExecutor({ spawn: launch }));
+
+    const result = await runWeb({ root, headed: false, note: () => {} });
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: { code: 'STIM_BAD_ARG', remedy: expect.stringContaining('stim stop') },
+    });
+    expect(getProject(root)?.metroPort).toBe(8082);
+    expect(launch).not.toHaveBeenCalled();
+  });
+
+  test('a page without Metro ignores an invalid pin', async () => {
+    vi.stubEnv('STIM_METRO_PORT', '80');
+    upsertProject(root, { settings: { web: { url: 'http://localhost:8901/' } } });
+    vi.spyOn(chromeLookup, 'findChrome').mockReturnValue(null);
+
+    const result = await runWeb({ root, headed: false, note: () => {} });
+
+    expect(result).toMatchObject({ ok: false, error: { code: 'STIM_WEB_NO_CHROME' } });
+    expect(getProject(root)?.metroPort).toBe(null);
+  });
+
+  test('a pin reserved by another workspace returns a structured refusal without launching', async () => {
+    vi.stubEnv('STIM_METRO_PORT', '25062');
+    upsertProject(join(home, 'other'), { metroPort: 25062 });
+    vi.spyOn(chromeLookup, 'findChrome').mockReturnValue('/chrome');
+    const launch = vi.fn<Executor['spawn']>();
+    setExecutor(makeExecutor({ spawn: launch }));
+
+    const result = await runWeb({ root, headed: false, note: () => {} });
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        code: 'STIM_BAD_ARG',
+        message: expect.stringContaining('already reserved'),
+        remedy: 'Give each workspace its own metro.port, in the workspace layer or the environment.',
+      },
+    });
+    expect(launch).not.toHaveBeenCalled();
+    expect(getProject(root)?.metroPort).toBe(null);
+    expect(getProject(join(home, 'other'))?.metroPort).toBe(25062);
+  });
 });
 
 describe('Chrome launch', () => {

@@ -1,7 +1,7 @@
 ---
-title: "Settings reference"
+title: 'Settings reference'
 sidebar_position: 2
-description: "Project, repository, machine, and environment settings"
+description: 'Project, repository, machine, and environment settings'
 ---
 
 :::note[Command examples]
@@ -127,6 +127,17 @@ Explicit machine project/repository overrides keep their existing precedence.
 | `cache.provider`              | Optional second-tier cache provider module                                                                 |
 | `cache.options`               | Options passed to that provider                                                                            |
 | `optimizations`               | [Build optimization switches and defaults](./build-optimizations.md)                                       |
+
+`metro.port` and `STIM_METRO_PORT` pin Metro for `stim start`, `stim ios`,
+`stim android` and pages using Metro in `stim web`. Changing the pin while
+this workspace's dev server runs is refused until `stim stop`; an unverified
+supervisor also blocks the change. You can also unset or restore the pin.
+A foreign holder is refused before anything starts or the port is reserved.
+This project's own Metro already on the pin is attached to. With
+`--no-metro-check`, iOS and Android use the pin, then the recorded port, then
+8081, without probing, reserving or writing the registry. An invalid pin
+still refuses with `STIM_BAD_ARG`. Release builds skip Metro. A `web.url`
+without `{port:metro}` ignores the pin.
 
 `worktree warm` reads repository-wide copy settings from the source checkout's
 root `.stim.json`, not individual app files. Keep `worktree.exclude` and

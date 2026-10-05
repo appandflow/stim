@@ -1,3 +1,4 @@
+import { SETTING_SHAPE_REMEDY } from '../workspace/settings.ts';
 import assert from 'node:assert';
 import { vi } from 'vitest';
 import * as crashDiagnostics from '../diagnostics/native-crash.ts';
@@ -503,6 +504,57 @@ const devServerStarted = (port = 8082, alreadyRunning = false) => ({
 });
 
 describe('the Metro gate', () => {
+  afterEach(() => vi.unstubAllEnvs());
+
+  test.each(['25062', '80'])('pin %s bypasses the healthy old port and surfaces the start refusal', async (pin) => {
+    reserve();
+    vi.stubEnv('STIM_METRO_PORT', pin);
+    const start = vi.fn<typeof import('../commands/start.ts').startDevServer>(async () => ({
+      ok: false as const,
+      error: { code: 'STIM_BAD_ARG', message: 'The old dev server is running.', remedy: 'Run `stim stop`.' },
+      lines: [],
+      reclaimed: [],
+    }));
+    const { exitCode, calls, logs } = await run({ json: true }, { startDevServer: start });
+    expect(start).toHaveBeenCalledOnce();
+    expect(exitCode).toBe(1);
+    expect(parseFirst(logs).code).toBe('STIM_BAD_ARG');
+    expect(calls.order).not.toContain('resolveProjectMetro');
+    expect(calls.order).not.toContain('buildIos');
+  });
+
+  test('the same pin reuses a healthy recorded Metro', async () => {
+    reserve();
+    vi.stubEnv('STIM_METRO_PORT', '8082');
+    const { exitCode, calls } = await run();
+    expect(exitCode).toBe(null);
+    expect(calls.order).not.toContain('startDevServer');
+    expect(calls.args.launchIosApp.metroPort).toBe(8082);
+  });
+
+  test.each([true, false])(
+    '--no-metro-check wires the pin without changing a reservation (recorded: %s)',
+    async (recorded) => {
+      if (recorded) reserve();
+      vi.stubEnv('STIM_METRO_PORT', '25062');
+      const { exitCode, calls } = await run({ metroCheck: false });
+      expect(exitCode).toBe(null);
+      expect(calls.args.launchIosApp.metroPort).toBe(25062);
+      expect(calls.order).not.toContain('resolveProjectMetro');
+      expect(calls.order).not.toContain('startDevServer');
+      expect(getProject(root)?.metroPort).toBe(recorded ? 8082 : null);
+    },
+  );
+
+  test('--no-metro-check refuses an invalid pin before building', async () => {
+    reserve();
+    vi.stubEnv('STIM_METRO_PORT', '80');
+    const { exitCode, calls, logs } = await run({ json: true, metroCheck: false });
+    expect(exitCode).toBe(1);
+    expect(parseFirst(logs)).toMatchObject({ code: 'STIM_BAD_ARG', remedy: SETTING_SHAPE_REMEDY });
+    expect(calls.order).not.toContain('buildIos');
+  });
+
   test('a healthy dev server is used as is: no start and no devServer fact', async () => {
     reserve();
     const { exitCode, calls, logs } = await run({ json: true });

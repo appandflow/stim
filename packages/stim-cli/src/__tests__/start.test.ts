@@ -1,3 +1,4 @@
+import * as portProbes from '../ports.ts';
 import assert from 'node:assert';
 import { captureProcessToken } from '../process-identity.ts';
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
@@ -2105,6 +2106,99 @@ describe('global workspace storage', { timeout: 30_000 }, () => {
 });
 
 describe('action: the reserved port', { timeout: 30_000 }, () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.restoreAllMocks();
+  });
+
+  test.each(['live', 'unverified'])(
+    'a changed pin preserves the old reservation for a %s supervisor',
+    async (status) => {
+      const port = 8158;
+      vi.stubEnv('STIM_METRO_PORT', '25062');
+      const exec = metroExecutor();
+      setExecutor(exec);
+      upsertProject(root, { metroPort: port });
+      writeWorkspaceState(root, {
+        supervisor: {
+          pid: process.pid,
+          ...(status === 'live' ? { processToken: captureProcessToken(process.pid) } : {}),
+          port,
+          mode: 'bare-inproc',
+          startedAt: 'T',
+        },
+      });
+
+      const result = await runAction({ json: true });
+
+      expect(result.exitCode).toBe(1);
+      expect(JSON.parse(result.logs[0]!)).toMatchObject({
+        code: 'STIM_BAD_ARG',
+        remedy: expect.stringContaining('stim stop'),
+      });
+      expect(getProject(root)?.metroPort).toBe(port);
+      expect(exec.calls.spawn).toEqual([]);
+    },
+  );
+
+  test('a first-use pin held by a foreign listener refuses before reserving or spawning', async () => {
+    const port = 25063;
+    vi.spyOn(portProbes, 'isMetroRunning').mockResolvedValue(true);
+    vi.stubEnv('STIM_METRO_PORT', String(port));
+    const exec = metroExecutor({ listeners: { [port]: DEAD_LISTENER_PID }, cwd: '/somewhere/else' });
+    setExecutor(exec);
+
+    const result = await runAction({ json: true });
+
+    expect(result.exitCode).toBe(1);
+    expect(JSON.parse(result.logs[0]!)).toMatchObject({
+      code: 'STIM_BAD_ARG',
+      message: expect.stringContaining('held by something else'),
+    });
+    expect(getProject(root)?.metroPort).toBe(null);
+    expect(exec.calls.spawn).toEqual([]);
+  });
+
+  test('a Metro started outside Stim on the old port does not block moving the pin', async () => {
+    const port = 25063;
+    vi.spyOn(portProbes, 'isMetroRunning').mockResolvedValue(true);
+    vi.stubEnv('STIM_METRO_PORT', '25062');
+    const exec = metroExecutor({ listeners: { [port]: DEAD_LISTENER_PID } });
+    setExecutor(exec);
+    upsertProject(root, { metroPort: port });
+
+    await runAction({ json: true, wait: '1' });
+
+    expect(getProject(root)?.metroPort).toBe(25062);
+    expect(exec.calls.spawn[0]?.args[4]).toBe('25062');
+  });
+
+  test('a free first-use pin reserves and spawns on the pinned port', async () => {
+    vi.stubEnv('STIM_METRO_PORT', '25062');
+    const exec = metroExecutor();
+    setExecutor(exec);
+
+    await runAction({ json: true, wait: '1' });
+
+    expect(getProject(root)?.metroPort).toBe(25062);
+    expect(exec.calls.spawn[0]?.args[4]).toBe('25062');
+  });
+
+  test("a first-use pin held by this project's Metro is reserved and attached to", async () => {
+    const port = 25063;
+    vi.spyOn(portProbes, 'isMetroRunning').mockResolvedValue(true);
+    vi.stubEnv('STIM_METRO_PORT', String(port));
+    const exec = metroExecutor({ listeners: { [port]: DEAD_LISTENER_PID } });
+    setExecutor(exec);
+
+    const result = await runAction({ json: true });
+
+    expect(result.exitCode).toBe(null);
+    expect(JSON.parse(result.logs[0]!)).toMatchObject({ port, alreadyRunning: true });
+    expect(getProject(root)?.metroPort).toBe(port);
+    expect(exec.calls.spawn).toEqual([]);
+  });
+
   test('a FOREIGN holder of the reserved port moves the reservation instead of counting as healthy', async () => {
     const { server, port } = await metroListener();
     const exec = metroExecutor({ listeners: { [port]: DEAD_LISTENER_PID }, cwd: '/somewhere/else' });

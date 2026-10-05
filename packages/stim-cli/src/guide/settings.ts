@@ -272,7 +272,14 @@ ${ANDROID_AVD_CONFIG_HELP.map((line) => `                          ${line}`).joi
                         worktree its own in the workspace layer or the
                         environment. start refuses with STIM_BAD_ARG when
                         another workspace reserves it or another process
-                        holds it.
+                        holds it. start, ios, android and web refuse a
+                        changed pin while this workspace's dev server runs
+                        or its supervisor cannot be verified; run stim stop
+                        before retrying. A foreign holder is refused before
+                        anything starts; this project's Metro on the pin is
+                        attached to. --no-metro-check uses the pin, then the
+                        recorded port, then 8081, without probing or reserving;
+                        an invalid pin still refuses.
   metro.warmupUrl       optional object with per-platform bundle URLs:
   metro.warmupUrl.ios
   metro.warmupUrl.android
