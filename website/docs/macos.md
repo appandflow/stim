@@ -180,7 +180,7 @@ digit key events on other layouts; ordinary typing and navigation still work.
 [#2422](https://github.com/appandflow/stim/issues/2422) tracks logical shortcuts for other host layouts.
 
 Control posts input to the owned process without activating it or raising its
-window. Only when the captured window is not the app's key window (or its
+window; only choosing a window to pin raises it among the app's windows. Only when the captured window is not the app's key window (or its
 attached sheet) does Stim activate the app to deliver input, waiting up to one
 second for focus. The helper then sends a `controlActivated` notice, which stim-server logs.
 Clicks on views that reject the first mouse, such as custom views and SwiftUI

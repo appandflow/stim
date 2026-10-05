@@ -164,7 +164,7 @@ layouts with a specific reason; ordinary typing and navigation remain available.
 Logical shortcuts for other host layouts remain tracked in
 https://github.com/appandflow/stim/issues/2422.
 Control posts input to the owned process without activating it or raising its
-window. Only when the captured window is not the app's key window (or its
+window; only choosing a window to pin raises it among the app's windows. Only when the captured window is not the app's key window (or its
 attached sheet) does Stim activate the app to deliver input, waiting up to one
 second for focus. The helper then sends a controlActivated notice, which stim-server
 logs.

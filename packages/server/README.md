@@ -1703,7 +1703,8 @@ sends reaches any other device.
   older servers accept only `a/c/v/x/z/s/f` plus navigation. Letter and digit
   key events require the Mac's selected U.S. or ABC input source because
   Apple ANSI key codes identify physical U.S. positions; other layouts are refused with a specific reason.
-  The helper posts input to the owned process without activating it or raising its window.
+  The helper posts input to the owned process without activating it or raising its window,
+  except that `input.window` raises the window it pins among the app's windows.
   Only when the captured window is not the app's key window does it activate the app (waiting up to one
   second for focus) and send a `controlActivated` notice, which stim-server logs. Clicks on views that
   reject the first mouse, such as custom views and SwiftUI `onTapGesture` regions, do not land while the app

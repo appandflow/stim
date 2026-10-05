@@ -42,7 +42,7 @@ struct MacosAppCard: View {
         .help(
           app.host == nil
             ? "Builds the Swift package and launches the app"
-            : "Builds the Swift package and launches the app on \(app.host?.machine ?? "the host")"
+            : "Builds the Swift package and launches the app on \(machineName(app.host?.machine ?? "the host"))"
         )
         .disabled(app.build.state == "running" || actions.active(for: workspace) != nil)
       }
