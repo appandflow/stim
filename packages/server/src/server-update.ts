@@ -28,10 +28,6 @@ export interface ServerUpdateOptions {
   env: NodeJS.ProcessEnv;
   acceptsClientBuilds: () => boolean;
   drain: (reason: string | null) => void;
-  /**
-   * Called when an update starts, and when one ends while this server still runs: a refused upload, a failed start,
-   * or an update that left this server in place. An update that restarts the server ends after it, in `last`.
-   */
   audit: (record: {
     by: ServerUpdateProgress['by'];
     target: string;
@@ -112,9 +108,11 @@ export class ServerUpdates {
     } catch {
       return;
     }
+    const finished = Date.parse(readLastUpdate(this.options.label!)?.at ?? '') || 0;
     for (const entry of entries) {
       try {
-        if (Date.now() - statSync(join(incoming, entry)).mtimeMs > STALE_INCOMING_MS) {
+        const written = statSync(join(incoming, entry)).mtimeMs;
+        if (written < finished || Date.now() - written > STALE_INCOMING_MS) {
           rmSync(join(incoming, entry), { recursive: true, force: true });
         }
       } catch {}

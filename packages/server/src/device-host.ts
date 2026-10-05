@@ -209,6 +209,7 @@ export class DeviceHost {
       const running = records.filter((record) => record.state !== 'stopped').length;
       const max = getConcurrencyLimits({ env: this.options.env }).maxDevices;
       let declined =
+        this.draining ??
         native.declined ??
         (native.resources.memoryPressure !== 'normal' ? 'Host memory pressure is unknown or elevated.' : null);
       if (max > 0 && running >= max)

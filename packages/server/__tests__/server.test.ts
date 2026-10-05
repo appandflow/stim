@@ -1351,6 +1351,32 @@ describe('offloaded builds', () => {
     },
   );
 
+  test.skipIf(!fakeTailscale)('declines offloaded builds while an update of this server runs', async () => {
+    const home = process.env.HOME;
+    process.env.HOME = root;
+    try {
+      const updater = join(root, 'updater.mjs');
+      writeFileSync(updater, 'setTimeout(() => process.exit(1), 1500);');
+      const port = await start({
+        service: { label: 'dev.stim.drain', node: process.execPath, script: updater, runsAsService: async () => true },
+      });
+      const { client } = await buildClient(port);
+      expect(await client.request('server.update.start', { release: '1.15.0' })).toMatchObject({
+        result: { state: 'installing' },
+      });
+      expect(await client.request('build.offer', { repo: 'app-1' })).toMatchObject({
+        result: { capacity: { declined: 'stim-server is updating to release 1.15.0' } },
+      });
+      await eventually(() => readAudit().some((record) => record.action === 'server.update.ended'));
+      expect(await client.request('build.offer', { repo: 'app-1' })).toMatchObject({
+        result: { capacity: { declined: null } },
+      });
+    } finally {
+      if (home === undefined) delete process.env.HOME;
+      else process.env.HOME = home;
+    }
+  });
+
   test.skipIf(!fakeTailscale)(
     "builds an Android job with its Gradle options in the client's own Gradle home",
     async () => {
