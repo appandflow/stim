@@ -1,0 +1,20 @@
+{
+  "name": "stim-demo-server",
+  "version": "0.0.0",
+  "private": true,
+  "description": "The App Review demo Mac: a Cloudflare Worker that serves fictional Stim data to the phone app.",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.test.json",
+    "test": "vitest run",
+    "test:live": "vitest run --config vitest.live.config.ts"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "5.20261001.1",
+    "@stim-cli/core": "workspace:^",
+    "wrangler": "4.147.0"
+  }
+}

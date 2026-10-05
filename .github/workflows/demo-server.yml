@@ -1,0 +1,63 @@
+name: Demo server
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'apps/demo-server/**'
+      - 'apps/mobile/mock-server/payloads.mjs'
+      - 'packages/core/**'
+      - '.github/workflows/demo-server.yml'
+      - 'knip.json'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
+  pull_request:
+    paths:
+      - 'apps/demo-server/**'
+      - 'apps/mobile/mock-server/payloads.mjs'
+      - 'packages/core/**'
+      - '.github/workflows/demo-server.yml'
+      - 'knip.json'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
+
+concurrency:
+  group: demo-server-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-stim
+        with:
+          install: 'false'
+          build: 'false'
+      - run: pnpm install --frozen-lockfile --filter stim-demo-server... --filter stim-monorepo
+      - run: pnpm --filter @stim-cli/core run build
+      - run: pnpm run format:check
+      - run: pnpm run lint
+      - working-directory: apps/demo-server
+        run: pnpm run typecheck
+      - working-directory: apps/demo-server
+        run: pnpm test
+      - working-directory: apps/demo-server
+        run: pnpm run test:live
+      - working-directory: apps/demo-server
+        run: pnpm exec wrangler deploy --dry-run --outdir "$RUNNER_TEMP/demo-server"
+
+  knip:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-stim
+        with:
+          build: 'false'
+      - run: pnpm run knip

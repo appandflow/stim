@@ -1,0 +1,18 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "stim-demo",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-01",
+  "workers_dev": true,
+  "preview_urls": false,
+  "rules": [
+    { "type": "Data", "globs": ["**/*.jpg"], "fallthrough": false },
+    { "type": "Text", "globs": ["**/*.ndjson"], "fallthrough": false },
+  ],
+  "durable_objects": {
+    "bindings": [{ "name": "DEMO", "class_name": "DemoServer" }],
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["DemoServer"] }],
+  "observability": { "enabled": false },
+  "send_metrics": false,
+}

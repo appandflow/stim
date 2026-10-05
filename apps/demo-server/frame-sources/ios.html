@@ -1,0 +1,190 @@
+<!doctype html><meta charset="utf-8" /><style>
+  * {
+    box-sizing: border-box;
+    margin: 0;
+  }
+  body {
+    width: 440px;
+    height: 956px;
+    font-family: -apple-system, 'SF Pro Text', system-ui;
+    background: #f6f8f5;
+    color: #16231c;
+    overflow: hidden;
+    position: relative;
+  }
+  .sb {
+    height: 62px;
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+    padding: 0 34px 8px;
+    font-weight: 600;
+    font-size: 17px;
+  }
+  h1 {
+    font-size: 32px;
+    font-weight: 700;
+    padding: 14px 20px 10px;
+  }
+  .search {
+    margin: 4px 20px 14px;
+    height: 44px;
+    border-radius: 12px;
+    background: #e5ebe6;
+    display: flex;
+    align-items: center;
+    padding: 0 12px;
+    gap: 8px;
+    color: #16231c;
+    font-size: 17px;
+  }
+  .search i {
+    color: #6a7b70;
+    font-style: normal;
+  }
+  .chips {
+    display: flex;
+    gap: 8px;
+    padding: 0 20px 14px;
+  }
+  .chip {
+    padding: 6px 12px;
+    border-radius: 16px;
+    background: #fff;
+    border: 1px solid #d6dfd8;
+    font-size: 14px;
+  }
+  .chip.on {
+    background: #2f7d5b;
+    color: #fff;
+    border-color: #2f7d5b;
+  }
+  .sec {
+    padding: 8px 20px;
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: #6a7b70;
+    font-weight: 600;
+  }
+  .card {
+    margin: 0 20px 10px;
+    background: #fff;
+    border-radius: 14px;
+    padding: 14px 16px;
+    display: flex;
+    gap: 14px;
+    align-items: center;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+  }
+  .ic {
+    width: 44px;
+    height: 44px;
+    border-radius: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 22px;
+  }
+  .t {
+    font-size: 17px;
+    font-weight: 600;
+  }
+  .s {
+    font-size: 14px;
+    color: #6a7b70;
+    margin-top: 2px;
+  }
+  .streak {
+    margin-left: auto;
+    font-size: 14px;
+    font-weight: 600;
+    color: #2f7d5b;
+  }
+  .tab {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 92px;
+    background: rgba(255, 255, 255, 0.94);
+    border-top: 1px solid #dde4de;
+    display: flex;
+    justify-content: space-around;
+    padding-top: 10px;
+    font-size: 11px;
+    color: #6a7b70;
+  }
+  .tab div {
+    text-align: center;
+  }
+  .tab b {
+    display: block;
+    font-size: 22px;
+    margin-bottom: 2px;
+    font-weight: 400;
+  }
+  .tab .on {
+    color: #2f7d5b;
+  }
+</style>
+<body>
+  <div class="sb"><span>4:56</span><span></span></div>
+  <h1>Search</h1>
+  <div class="search"><i>&#9906;</i> water</div>
+  <div class="chips">
+    <span class="chip on">All</span><span class="chip">Daily</span><span class="chip">Weekly</span
+    ><span class="chip">Archived</span>
+  </div>
+  <div class="sec">5 results</div>
+  <div class="card">
+    <div class="ic" style="background: #d9efe4">&#128167;</div>
+    <div>
+      <div class="t">Drink water</div>
+      <div class="s">Daily &middot; 8 glasses</div>
+    </div>
+    <div class="streak">12 days</div>
+  </div>
+  <div class="card">
+    <div class="ic" style="background: #e4ecfa">&#127807;</div>
+    <div>
+      <div class="t">Water the plants</div>
+      <div class="s">Weekly &middot; Sundays</div>
+    </div>
+    <div class="streak">6 weeks</div>
+  </div>
+  <div class="card">
+    <div class="ic" style="background: #fbeed5">&#128694;</div>
+    <div>
+      <div class="t">Evening walk</div>
+      <div class="s">Daily &middot; 30 minutes</div>
+    </div>
+    <div class="streak">4 weeks</div>
+  </div>
+  <div class="card">
+    <div class="ic" style="background: #f6e0e0">&#129371;</div>
+    <div>
+      <div class="t">Refill water bottle</div>
+      <div class="s">Daily &middot; Morning</div>
+    </div>
+    <div class="streak">21 days</div>
+  </div>
+  <div class="card">
+    <div class="ic" style="background: #e9e4f7">&#127958;</div>
+    <div>
+      <div class="t">Beach cleanup</div>
+      <div class="s">Monthly &middot; First Saturday</div>
+    </div>
+    <div class="streak">3 months</div>
+  </div>
+  <div class="sec">Recent searches</div>
+  <div class="card" style="padding: 10px 16px">
+    <div class="s" style="font-size: 16px; margin: 0">stretch &nbsp;&middot;&nbsp; read &nbsp;&middot;&nbsp; walk</div>
+  </div>
+  <div class="tab">
+    <div class="on"><b>&#9679;</b>Today</div>
+    <div><b>&#9906;</b>Search</div>
+    <div><b>&#9776;</b>Habits</div>
+    <div><b>&#9881;</b>Settings</div>
+  </div>
+</body>
