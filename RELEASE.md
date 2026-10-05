@@ -450,6 +450,37 @@ repeat the affected gate rather than waiving it.
   bumps them as part of its own section 2, step 1; we don't carry a `-dev`
   suffix between releases.
 
+## Stim Host releases
+
+`stim-server service install` installs the Stim Host app on a hosting Mac
+(`packages/server/host/`). Its signed build ships apart from the npm packages,
+because macOS keys the person's Screen Recording and control grants to its
+signature, and it only needs a new version when the launcher changes.
+
+1. Tag a commit on `main` with `host-v<version>` and push the tag. The
+   `Stim Host release` workflow builds it universal, signs it with the Desktop
+   Developer ID certificate, notarizes and staples it, and attaches
+   `StimHost-<version>.zip` and `SHA256SUMS` to a `host-v<version>` GitHub
+   release. It uses the `release` environment and the Desktop signing and App
+   Store Connect secrets, so a person approves the run. A tag refuses to publish
+   a build that is not signed and notarized; a dispatched run is a dry run.
+2. Pin the release in `RELEASE` in `packages/server/src/stim-host.ts`: the
+   version and the SHA-256 from the workflow's `SHA256SUMS`. From the next
+   `@stim-cli/server` release (or checkout build), `install` downloads that zip,
+   checks the digest and the team's Developer ID signature, and installs
+   `~/Applications/Stim Host.app` (`dev.stim.host`) instead of building
+   Stim Host Dev. In the same change, update the text that says a signed
+   release has not shipped yet: the Stim Host Dev paragraphs in
+   `packages/server/README.md` ("Run as a service"), `website/docs/macos.md`
+   and `stim guide macos` (`packages/stim-cli/src/guide/macos.ts`). A Mac that
+   had Stim Host Dev keeps that bundle in `~/Applications`; its owner can
+   delete it and its System Settings entries after the switch.
+3. Never replace a published zip: its pinned digest would stop matching. Fix a
+   bad release with a new version.
+
+`packages/server/host/release.sh <version>` builds the same zip locally, ad hoc
+signed unless `HOST_SIGNING_IDENTITY` is set.
+
 ## Don't
 
 - Force-push tags. Cut a new version.

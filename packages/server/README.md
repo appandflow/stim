@@ -664,12 +664,14 @@ under `$STIM_HOME/server` or settings. `install` waits up to 15 seconds for
 as unavailable and points to `status` and its log. Installation success alone
 does not prove that the server is ready.
 
-This version builds **Stim Host Dev** (`dev.stim.host.dev`) locally with Xcode
-Command Line Tools and installs it at `~/Applications/Stim Host Dev.app`. The
-release flavor is named **Stim Host** (`dev.stim.host`) at
-`~/Applications/Stim Host.app`. Install keeps an identical launcher untouched.
-Stim Host Dev is signed ad hoc, so macOS keeps its approvals only while the
-launcher source and Xcode toolchain are unchanged.
+When this package pins a Stim Host release, install downloads it from the
+`host-v<version>` GitHub release, checks the pinned SHA-256 and App & Flow's
+Developer ID signature, and installs **Stim Host** (`dev.stim.host`) at
+`~/Applications/Stim Host.app`; grants then survive Stim Host updates. Until one
+is pinned, install builds **Stim Host Dev** (`dev.stim.host.dev`) locally with
+Xcode Command Line Tools at `~/Applications/Stim Host Dev.app`, signed ad hoc,
+so macOS keeps its approvals only while the launcher source and Xcode toolchain
+are unchanged. Install keeps an identical bundle untouched either way.
 
 After starting the service, install shows macOS's own permission requests on
 this Mac's screen. You only approve them; over SSH, use Screen Sharing to see
