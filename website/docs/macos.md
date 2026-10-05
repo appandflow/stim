@@ -207,11 +207,12 @@ owner turns on a driver with that setting. With `agent-device`, it names a
 run, such as `agent-device screenshot --remote-config <path>`. The credential stays
 in that file and never appears in command output. `stop`, `worktree remove` and
 `gc` first run `agent-device close` and `disconnect` for the connection that
-agent-device reports as connected to that remote config, then delete the file, so
-the next hosted workspace needs no manual disconnect. Any other connection stays
-untouched, and a failure there is reported without blocking the stop. When the
-hosted session ends, stim-server removes its agent-device session directories
-under its own state directory. Start with
+agent-device reports as connected to that remote config (the default or active
+session), then delete the file, so the next hosted workspace needs no manual
+disconnect. Any other connection, including one under another session name, stays
+untouched, and a failure or a missing agent-device is reported without blocking
+the stop. When the hosted session ends, stim-server removes its agent-device
+session directories under its own state directory. Start with
 `agent-device open <host bundleId> --remote-config <path>`; the lease allows only
 commands that drive that one app (`snapshot`, `click`, `fill`, `type`, `press`,
 `scroll`, `screenshot` and similar), and the agent-device on the client needs the

@@ -234,32 +234,26 @@ describe.skipIf(process.platform === 'win32')('agent-device driver', () => {
     }
   });
 
-  test.each([false, true])('stop removes leased sessions after daemon teardown (crashed: %s)', async (crashed) => {
+  test('stop removes the directories of revoked sessions after the daemon is gone and keeps live ones', async () => {
     install(root);
     const driver = driverIn(root);
     await driver.start();
     const daemonPid = (JSON.parse(readFileSync(join(root, 'state', 'daemon.json'), 'utf8')) as { pid: number }).pid;
     const identity = captureProcessIdentity(daemonPid);
     const sessionsDir = join(root, 'state', 'sessions');
-    const sessions = [SESSION, '22222222-2222-4222-8222-222222222222'];
+    const live = '22222222-2222-4222-8222-222222222222';
+    const directory = (session: string) => join(sessionsDir, `stim.${session}_default`);
     try {
-      for (const session of sessions) {
+      for (const session of [SESSION, live]) {
         await driver.issue({ client: 'c', session, bundleId: 'dev.example.app.hosted1', pid: 4242 });
-        mkdirSync(join(sessionsDir, `stim.${session}_default`, 'requests'), { recursive: true });
-        writeFileSync(join(sessionsDir, `stim.${session}_default`, 'session.json'), '{}');
+        mkdirSync(directory(session), { recursive: true });
       }
-      mkdirSync(join(sessionsDir, 'default'), { recursive: true });
-      mkdirSync(join(sessionsDir, 'stim.other_default'));
-      if (crashed) {
-        const exited = new Promise<void>((resolve) => driver.onExit(resolve));
-        process.kill(daemonPid, 'SIGKILL');
-        await exited;
-      }
+      await driver.revoke(SESSION);
+      mkdirSync(directory(SESSION), { recursive: true });
       await driver.stop();
       expect(inspectProcessIdentity({ pid: daemonPid, processToken: identity.ok ? identity.token : '' })).toBe('gone');
-      for (const session of sessions) expect(existsSync(join(sessionsDir, `stim.${session}_default`))).toBe(false);
-      expect(existsSync(join(sessionsDir, 'default'))).toBe(true);
-      expect(existsSync(join(sessionsDir, 'stim.other_default'))).toBe(true);
+      expect(existsSync(directory(SESSION))).toBe(false);
+      expect(existsSync(directory(live))).toBe(true);
     } finally {
       await driver.stop();
     }

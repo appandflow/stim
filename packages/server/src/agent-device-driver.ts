@@ -344,7 +344,7 @@ export class AgentDeviceDriver implements HostedAgentDriver {
   async stop(): Promise<void> {
     this.stopping = true;
     await this.starting?.catch(() => undefined);
-    const sessions = [...this.leases.keys(), ...this.released];
+    const sessions = [...this.released];
     this.released.clear();
     for (const lease of this.leases.values()) clearInterval(lease.renew);
     this.leases.clear();
@@ -439,11 +439,14 @@ export class AgentDeviceDriver implements HostedAgentDriver {
     const lease = this.leases.get(session);
     if (!lease) return;
     this.leases.delete(session);
-    clearInterval(lease.renew);
-    await lease.renewing;
-    if (this.running) await adminRequest(this.running.admin, 'DELETE', lease.id);
     this.released.add(session);
-    this.removeSessionDirectories(session);
+    clearInterval(lease.renew);
+    try {
+      await lease.renewing;
+      if (this.running) await adminRequest(this.running.admin, 'DELETE', lease.id);
+    } finally {
+      this.removeSessionDirectories(session);
+    }
   }
 
   private removeSessionDirectories(session: string): void {
