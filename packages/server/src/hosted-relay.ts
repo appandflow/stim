@@ -15,6 +15,7 @@ import { DEFAULT_VIDEO_LIMITS, rewriteVideoSubscription, videoSubscription, Vide
 
 const TIMEOUT_MS = 10_000;
 const KEYFRAME_RETRY_MS = 1000;
+const CONGESTION_NOTICE_MS = 250;
 type Reply = { result: unknown } | { error: ProtocolError };
 type Event = Record<string, unknown> | Buffer;
 
@@ -47,6 +48,7 @@ class Upstream {
   private holding: NodeJS.Immediate | null = null;
   private ended: Error | null = null;
   private users = 0;
+  private features: unknown[] = [];
   onClose: (() => void) | null = null;
 
   private readonly token: string;
@@ -152,6 +154,7 @@ class Upstream {
     ) {
       throw new Error('the host did not grant device-host access');
     }
+    if (Array.isArray(reply.result.features)) this.features = reply.result.features;
   }
 
   request(method: string, params: unknown): Promise<Reply> {
@@ -182,6 +185,10 @@ class Upstream {
     return () => {
       if (this.routes.get(name) === route) this.routes.delete(name);
     };
+  }
+
+  supports(feature: string): boolean {
+    return this.features.includes(feature);
   }
 
   lease(): Lease {
@@ -362,6 +369,7 @@ export class HostedRelay {
       const leased = lease;
       const gate = new VideoGate(DEFAULT_VIDEO_LIMITS.congestedBytes);
       let askedAt = -Infinity;
+      let congestedAt = -Infinity;
       let keyframeRetry: NodeJS.Timeout | null = null;
       let unroute: (() => void) | null = null;
       const delivery = new LatestFrames<Record<string, unknown> & { data: string }>(
@@ -376,6 +384,10 @@ export class HostedRelay {
         keyframeRetry = null;
         if (!this.frames.has(subscription)) return;
         if (this.buffered() > DEFAULT_VIDEO_LIMITS.congestedBytes) {
+          if (connection.supports('hosted-congestion') && Date.now() - congestedAt >= CONGESTION_NOTICE_MS) {
+            congestedAt = Date.now();
+            void connection.request('device-host.frames.congested', { subscription: hostSubscription }).catch(() => {});
+          }
           keyframeRetry = setTimeout(requestKeyframe, FRAME_RETRY_MS);
           return;
         }

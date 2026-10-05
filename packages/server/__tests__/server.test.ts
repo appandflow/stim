@@ -805,6 +805,7 @@ describe('pairing', () => {
           'macos-hosted',
           'duo-frames',
           'workspace-diff',
+          'hosted-congestion',
         ],
         actions: [],
       },
@@ -3772,6 +3773,16 @@ describe('frames.subscribe', () => {
       let streamed = await first.next();
       while (!('binary' in streamed)) streamed = await first.next();
       expect(await first.request('device-host.frames.keyframe', { subscription: 's2' })).toHaveProperty('result');
+      expect(await first.request('device-host.frames.congested', { subscription: 's1' })).toHaveProperty(
+        'error.code',
+        'unknown-subscription',
+      );
+      expect(await first.request('device-host.frames.congested', { subscription: 's2' })).toHaveProperty('result');
+      await vi.waitFor(() =>
+        expect(helperRuns().flatMap((run) => run.configs)).toContainEqual(
+          expect.objectContaining({ video: true, bitrate: 1_500_000 }),
+        ),
+      );
       expect(await first.request('device-host.unsubscribe', { subscription: 's2' })).toHaveProperty('result');
       const claimRoot = join(deviceHostRoot(), `${session}.claims`);
       const helper = readClaimSet(claimRoot).live[0]!.child;

@@ -728,6 +728,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     const limitKey = peer ?? 'local';
     const subscriptions = new Map<string, () => void>();
     const keyframes = new Map<string, () => void>();
+    const congestion = new Map<string, () => void>();
     const replays = new Map<string, Replayable>();
     let keyframeReads = 0;
     const commands = new Set<() => Promise<void>>();
@@ -1176,6 +1177,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         replays.delete(subscription);
         stopViewing?.();
         keyframes.delete(subscription);
+        congestion.delete(subscription);
         delivery.stop();
         if (draining) clearTimeout(draining);
         detach?.();
@@ -1266,6 +1268,9 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         return null;
       };
       if (offersVideo) {
+        congestion.set(subscription, () => {
+          if (streamed && !player) framePool.congested(streamed);
+        });
         keyframes.set(subscription, () => {
           if (player) return player.resend();
           gate.reset();
@@ -1825,6 +1830,13 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         const keyframe = typeof name === 'string' ? keyframes.get(name) : undefined;
         if (!keyframe) return error(id, 'unknown-subscription', `No video subscription ${String(name)}.`);
         keyframe();
+        return send(socket, { id, result: {} });
+      }
+      if (method === 'device-host.frames.congested') {
+        const name = params.subscription;
+        const congested = typeof name === 'string' ? congestion.get(name) : undefined;
+        if (!congested) return error(id, 'unknown-subscription', `No video subscription ${String(name)}.`);
+        congested();
         return send(socket, { id, result: {} });
       }
       if (method === 'device-host.unsubscribe') {
