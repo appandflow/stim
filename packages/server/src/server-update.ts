@@ -1,18 +1,18 @@
 import { spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
-import { appendFileSync, closeSync, mkdirSync, openSync, readFileSync, rmSync } from 'node:fs';
+import { appendFileSync, closeSync, mkdirSync, openSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { isJsonObject } from '@stim-cli/core/state';
 import type { ProtocolError, ServerUpdatePackage, ServerUpdateProgress, ServerUpdateStatus } from './protocol.ts';
 import { validateRelease, type ServerBuild } from './service-plist.ts';
 import { describeSource, readLastUpdate, runsAsService, serviceRoot, type UpdateSource } from './service.ts';
 
-/** `ws` refuses frames over the server's 64 KiB payload limit, so a chunk carries at most 32 KiB of base64. */
 const UPDATE_CHUNK_CHARS = 32 * 1024;
 const MAX_PACKAGES = 8;
 const MAX_PACKAGE_BYTES = 64 * 1024 ** 2;
 const MAX_UPLOAD_BYTES = 128 * 1024 ** 2;
 const UPLOAD_IDLE_MS = 10 * 60_000;
+const STALE_INCOMING_MS = 60 * 60_000;
 const LOG_LINES = 20;
 const PACKAGE_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}\.tgz$/;
 const SHA256 = /^[0-9a-f]{64}$/;
@@ -20,16 +20,13 @@ const SHA256 = /^[0-9a-f]{64}$/;
 type Answer = { result: ServerUpdateProgress } | { error: ProtocolError };
 
 export interface ServerUpdateOptions {
-  /** The launchd label the server runs under, from `XPC_SERVICE_NAME`; null outside launchd. */
   label: string | null;
   port: number;
   build: ServerBuild;
-  /** The node and `stim-server.mjs` this server runs, which run the update. */
   node: string;
   script: string;
   env: NodeJS.ProcessEnv;
   acceptsClientBuilds: () => boolean;
-  /** Stops new offloaded builds and hosted sessions while `reason` is set, so the update can wait them out. */
   drain: (reason: string | null) => void;
   /**
    * Called when an update starts, and when one ends while this server still runs: a refused upload, a failed start,
@@ -78,7 +75,9 @@ export function parseUpdateStart(params: unknown): { release: string } | { packa
     ) {
       return `Each package needs a .tgz name, a size of at most ${MAX_PACKAGE_BYTES / 1024 ** 2} MiB and a sha256.`;
     }
-    if (packages.some((each) => each.name === entry.name)) return `${entry.name} is listed twice.`;
+    if (packages.some((each) => each.name.toLowerCase() === (entry.name as string).toLowerCase())) {
+      return `${entry.name} is listed twice.`;
+    }
     packages.push({ name: entry.name, size: entry.size as number, sha256: entry.sha256 });
   }
   if (packages.reduce((sum, each) => sum + each.size, 0) > MAX_UPLOAD_BYTES) {
@@ -100,6 +99,26 @@ export class ServerUpdates {
 
   constructor(options: ServerUpdateOptions) {
     this.options = options;
+    this.sweepIncoming();
+  }
+
+  private sweepIncoming(): void {
+    const root = this.root();
+    if (!root) return;
+    const incoming = join(root, 'incoming');
+    let entries: string[];
+    try {
+      entries = readdirSync(incoming);
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      try {
+        if (Date.now() - statSync(join(incoming, entry)).mtimeMs > STALE_INCOMING_MS) {
+          rmSync(join(incoming, entry), { recursive: true, force: true });
+        }
+      } catch {}
+    }
   }
 
   private root(): string | null {
@@ -158,13 +177,17 @@ export class ServerUpdates {
     const base = { id, by, startedAt: new Date().toISOString() };
     if ('release' in parsed) {
       this.running = { ...base, target: `release ${parsed.release}`, state: 'installing', missing: [], log: [] };
-      this.launch(parsed);
-      return { result: this.progress()! };
+      return this.launch(parsed) ?? { result: this.progress()! };
     }
     const incoming = join(this.root()!, 'incoming');
-    rmSync(incoming, { recursive: true, force: true });
     const dir = join(incoming, id);
-    mkdirSync(dir, { recursive: true, mode: 0o700 });
+    this.running = { ...base, target: `packages from ${by.name}`, state: 'uploading', missing: [], log: [] };
+    try {
+      rmSync(incoming, { recursive: true, force: true });
+      mkdirSync(dir, { recursive: true, mode: 0o700 });
+    } catch (error) {
+      return this.abandon('action-failed', `Could not write ${dir}: ${(error as Error).message}`);
+    }
     this.upload = {
       dir,
       touched: Date.now(),
@@ -176,7 +199,6 @@ export class ServerUpdates {
         hash: createHash('sha256'),
       })),
     };
-    this.running = { ...base, target: `packages from ${by.name}`, state: 'uploading', missing: [], log: [] };
     this.watchIdle();
     return { result: this.progress()! };
   }
@@ -185,6 +207,9 @@ export class ServerUpdates {
     const upload = this.upload;
     if (!upload || !this.running || this.running.by.id !== client) {
       return refused('bad-request', 'No package upload from this Mac is running; call server.update.start first.');
+    }
+    if (this.running.state !== 'uploading') {
+      return refused('action-busy', 'Every package arrived; the update is installing them.');
     }
     if (
       !isJsonObject(params) ||
@@ -208,10 +233,15 @@ export class ServerUpdates {
       );
     }
     const bytes = Buffer.from(params.data, 'base64');
-    if (bytes.length === 0 || entry.received + bytes.length > entry.size) {
+    if (bytes.length === 0) return refused('bad-request', 'A chunk carries at least one byte.');
+    if (entry.received + bytes.length > entry.size) {
       return this.abandon('bad-request', `${entry.name} is larger than the ${entry.size} bytes it offered.`);
     }
-    appendFileSync(join(upload.dir, entry.name), bytes, { mode: 0o600 });
+    try {
+      appendFileSync(join(upload.dir, entry.name), bytes, { mode: 0o600 });
+    } catch (error) {
+      return this.abandon('action-failed', `Could not write ${entry.name}: ${(error as Error).message}`);
+    }
     entry.hash.update(bytes);
     entry.received += bytes.length;
     upload.touched = Date.now();
@@ -220,7 +250,8 @@ export class ServerUpdates {
     }
     if (upload.packages.every((each) => each.received === each.size)) {
       this.running.state = 'installing';
-      this.launch({ from: upload.dir });
+      const refusal = this.launch({ from: upload.dir });
+      if (refusal) return refusal;
     }
     return { result: this.progress()! };
   }
@@ -249,7 +280,7 @@ export class ServerUpdates {
     this.idle.unref();
   }
 
-  private launch(source: UpdateSource): void {
+  private launch(source: UpdateSource): { error: ProtocolError } | null {
     const running = this.running!;
     const target = describeSource(source);
     const log = this.logFile();
@@ -258,8 +289,7 @@ export class ServerUpdates {
       mkdirSync(this.root()!, { recursive: true });
       out = openSync(log, 'w', 0o600);
     } catch (error) {
-      this.abandon('action-failed', `Could not write ${log}: ${(error as Error).message}`);
-      return;
+      return this.abandon('action-failed', `Could not write ${log}: ${(error as Error).message}`);
     }
     this.options.drain(`stim-server is updating to ${running.target}`);
     this.options.audit({
@@ -288,6 +318,7 @@ export class ServerUpdates {
       const fresh = last && Date.parse(last.at) >= Date.parse(running.startedAt);
       settle(code === 0, fresh ? last.message : `The update exited with code ${String(code)}; see ${log}.`);
     });
+    return null;
   }
 
   close(): void {

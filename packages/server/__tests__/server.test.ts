@@ -1332,6 +1332,17 @@ describe('offloaded builds', () => {
       expect(await client.request('server.update.start', { release: 'latest' })).toMatchObject({
         error: { code: 'bad-request' },
       });
+      const asking = await connect(port, '100.64.0.3');
+      const reply = await asking.request('hello', {
+        protocol: 1,
+        client: CLIENT,
+        auth: { request: 'device-host', deviceName: 'Host client' },
+      });
+      const { device, deviceToken } = (reply as { result: HelloResult }).result;
+      grantDevice(device.id, ['device-host']);
+      const host = await connect(port, '100.64.0.3');
+      await host.request('hello', { protocol: 1, client: CLIENT, auth: { deviceToken } });
+      expect(await host.request('server.update.status')).toMatchObject({ result: { service: 'dev.stim.test' } });
       const viewer = await authed(port);
       expect(await viewer.request('server.update.status')).toMatchObject({ error: { code: 'forbidden' } });
       expect(await viewer.request('server.update.start', { release: '1.15.0' })).toMatchObject({

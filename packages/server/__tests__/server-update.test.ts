@@ -85,7 +85,12 @@ describe('server update requests', () => {
     expect(parseUpdateStart({ packages: [{ name: '../stim.tgz', size: 1, sha256: sha('x') }] })).toContain('.tgz name');
     expect(parseUpdateStart({ packages: [{ name: 'stim.tgz', size: 1, sha256: 'x' }] })).toContain('sha256');
     const entry = { name: 'stim.tgz', size: 1, sha256: sha('x') };
-    expect(parseUpdateStart({ packages: [entry, entry] })).toContain('listed twice');
+    expect(parseUpdateStart({ packages: [entry, { ...entry, name: 'STIM.tgz' }] })).toContain('listed twice');
+    expect(parseUpdateStart({ packages: [{ ...entry, size: 64 * 1024 ** 2 + 1 }] })).toContain('64 MiB');
+    const many = Array.from({ length: 9 }, (_, index) => ({ ...entry, name: `p${index}.tgz` }));
+    expect(parseUpdateStart({ packages: many })).toContain('1 to 8');
+    const large = Array.from({ length: 3 }, (_, index) => ({ ...entry, name: `p${index}.tgz`, size: 50 * 1024 ** 2 }));
+    expect(parseUpdateStart({ packages: large })).toContain('128 MiB');
   });
 
   it('runs the update of a release detached, draining new work until it ends', async () => {
@@ -148,6 +153,7 @@ describe('server update requests', () => {
     expect(chunk('server.tgz', 0, 'ser')).toMatchObject({ error: { message: expect.stringContaining('offset 3') } });
     expect(chunk('server.tgz', 3, 'ver')).toMatchObject({ result: { missing: [{ name: 'stim.tgz', offset: 0 }] } });
     expect(chunk('stim.tgz', 0, 'stim')).toMatchObject({ result: { state: 'installing', missing: [] } });
+    expect(chunk('stim.tgz', 0, 'stim')).toMatchObject({ error: { code: 'action-busy' } });
     expect(await settled()).toMatchObject([{ ok: true }]);
     const { args, files } = ran();
     expect(args.slice(0, 5)).toEqual(['service', 'update', '--label', LABEL, '--from']);

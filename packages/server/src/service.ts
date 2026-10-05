@@ -997,9 +997,17 @@ export async function rollbackService(label: string, log: (line: string) => void
     if (!previous) throw new ServiceError(`${label} has no previous server; \`service update\` records one.`);
     const build = existsSync(previous) ? serverBuild(previous) : null;
     if (!build) throw new ServiceError(`The previous server ${previous} is no longer installed.`);
-    await waitForIdle(installed.port, log);
-    log(`Switching ${label} back to ${describeBuild(build)}.`);
-    await switchTo(installed, previous, build);
-    return [`${label} now runs ${describeBuild(build)} again: ${previous}.`];
+    const at = new Date().toISOString();
+    try {
+      await waitForIdle(installed.port, log);
+      log(`Switching ${label} back to ${describeBuild(build)}.`);
+      await switchTo(installed, previous, build);
+    } catch (error) {
+      recordOutcome(label, { at, target: 'rollback', ok: false, message: (error as Error).message });
+      throw error;
+    }
+    const message = `${label} now runs ${describeBuild(build)} again: ${previous}.`;
+    recordOutcome(label, { at, target: 'rollback', ok: true, message });
+    return [message];
   });
 }

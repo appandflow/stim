@@ -352,7 +352,6 @@ export class BuildHost {
     return this.jobs.size;
   }
 
-  /** While `reason` is set, the Mac declines new offloaded builds with it. */
   drain(reason: string | null): void {
     this.draining = reason;
   }

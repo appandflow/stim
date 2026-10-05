@@ -190,10 +190,6 @@ export interface ServerOptions {
   buildLimits?: Partial<BuildLimits>;
   deviceHostLimits?: Partial<DeviceHostLimits>;
   hostedRelay?: HostedRelayOptions;
-  /**
-   * The `stim-server service` label this server runs under and the node and script that run its update; without
-   * it the server cannot update itself.
-   */
   service?: {
     label: string | null;
     node: string;
@@ -691,10 +687,9 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       auditSafely({
         at: new Date().toISOString(),
         device: by,
-        action: 'server.update',
+        action: `server.update.${phase}`,
         workspace: target,
         ok,
-        reason: phase,
         ...(ok ? {} : { error: { code: 'action-failed', message: message.slice(0, AUDIT_FIELD_CHARS) } }),
       }),
   });

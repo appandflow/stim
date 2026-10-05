@@ -1404,7 +1404,9 @@ export function protocolJsonSchema(): JsonSchema {
                 type: 'object',
                 required: ['release'],
                 additionalProperties: false,
-                properties: { release: { type: 'string' } },
+                properties: {
+                  release: { type: 'string', pattern: '^\\d+\\.\\d+\\.\\d+(?:-[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?$' },
+                },
               },
               {
                 type: 'object',
@@ -1421,7 +1423,7 @@ export function protocolJsonSchema(): JsonSchema {
                       additionalProperties: false,
                       properties: {
                         name: { type: 'string', pattern: '^[A-Za-z0-9][A-Za-z0-9._-]{0,127}\\.tgz$' },
-                        size: { type: 'integer', minimum: 1 },
+                        size: { type: 'integer', minimum: 1, maximum: 64 * 1024 ** 2 },
                         sha256,
                       },
                     },

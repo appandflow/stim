@@ -236,7 +236,6 @@ export class DeviceHost {
   reserve(client: string, params: unknown): Answer {
     if (this.closed || !this.options.allowed(client))
       return refused('forbidden', 'Current device-host approval is required.');
-    if (this.draining) return refused('device-busy', `This Mac takes no new hosted sessions: ${this.draining}.`);
     const request = parseHostedRequest(params);
     if (!request)
       return refused(
@@ -261,6 +260,7 @@ export class DeviceHost {
         );
         if (occupied)
           throw new Error(`This workspace slot already has session ${occupied.id}; attach or stop it first.`);
+        if (this.draining) throw new Error(`This Mac takes no new hosted sessions: ${this.draining}.`);
         const max = getConcurrencyLimits({ env: this.options.env }).maxDevices;
         if (max > 0 && records.filter((record) => record.state !== 'stopped').length >= max)
           throw new Error('All configured hosted device reservations are occupied, including unresolved sessions.');
@@ -921,7 +921,6 @@ export class DeviceHost {
     return this.owned.size;
   }
 
-  /** While `reason` is set, new hosted sessions are refused with it. */
   drain(reason: string | null): void {
     this.draining = reason;
   }

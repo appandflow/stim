@@ -845,7 +845,8 @@ Approve the request on the build machine with
 
 A Mac this one approved for builds (`--build`) or device hosting
 (`--device-host`) can update this Mac's `stim-server service` over its tailnet
-connection, so the build machine keeps up with the client without ssh. A paired
+connection, so the build machine keeps up with the client without ssh. A
+server that offers it lists `server-update` in its `hello` features. A paired
 phone, a `read` or `control` device and a connection from this Mac cannot. The
 methods need that approval, not `read`:
 
@@ -873,8 +874,10 @@ and writes to `~/Library/Application Support/Stim/services/<label>/update.log`.
 The connection closes when the job restarts. The client reconnects and reads the
 outcome from `hello` and `server.update.status`. An update that ends while this
 server still runs (a refused upload, a failed install) takes new work again.
-The action log records each update's start, and its end when this server sees
-it.
+The action log records each update as `server.update.started`, and as
+`server.update.ended` when it ends while this server still runs. A chunk that
+arrives once every package is in gets `action-busy`, and a retried reservation
+of an existing hosted session still answers during the drain.
 
 ## Offloaded builds
 
