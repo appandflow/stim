@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import StimKit
 import SwiftUI
 
@@ -16,7 +17,7 @@ struct Toast: Identifiable {
   var body: String?
   var action: Action?
   /// A sticky toast stays until the user acts on it or dismisses it; any other one leaves after
-  /// `ToastCenter.lifetime`, unless the pointer is over it, its action holds keyboard focus, or VoiceOver is running.
+  /// six seconds, unless the pointer is over it, its action holds keyboard focus, or VoiceOver is running.
   var sticky = false
   /// Showing a toast replaces any shown one with the same key.
   var key: String?
@@ -24,13 +25,24 @@ struct Toast: Identifiable {
 
 @MainActor
 final class ToastCenter: ObservableObject {
-  static let shared = ToastCenter()
-  static let lifetime: TimeInterval = 6
+  static let shared: ToastCenter = {
+    let center = ToastCenter()
+    center.followVoiceOver()
+    return center
+  }()
   static let maxVisible = 4
 
   @Published private(set) var toasts: [Toast] = []
+  private let lifetime: TimeInterval
+  private var voiceOver: Bool
+  private var voiceOverObservation: AnyCancellable?
   private var timers: [Toast.ID: Timer] = [:]
   private var holds: [Toast.ID: Set<Hold>] = [:]
+
+  init(lifetime: TimeInterval = 6, voiceOver: Bool = NSWorkspace.shared.isVoiceOverEnabled) {
+    self.lifetime = lifetime
+    self.voiceOver = voiceOver
+  }
 
   enum Hold {
     case pointer
@@ -47,8 +59,27 @@ final class ToastCenter: ObservableObject {
     announce(toast)
   }
 
+  /// VoiceOver users need time to reach a toast, so no toast auto-dismisses while it runs, including one that
+  /// was already showing when it turned on.
+  func voiceOverChanged(_ on: Bool) {
+    guard on != voiceOver else { return }
+    voiceOver = on
+    if on {
+      for timer in timers.values { timer.invalidate() }
+      timers = [:]
+    } else {
+      for toast in toasts { schedule(toast) }
+    }
+  }
+
+  private func followVoiceOver() {
+    voiceOverObservation = NSWorkspace.shared.publisher(for: \.isVoiceOverEnabled)
+      .receive(on: DispatchQueue.main)
+      .sink { [weak self] on in MainActor.assumeIsolated { self?.voiceOverChanged(on) } }
+  }
+
   private func announce(_ toast: Toast) {
-    guard NSWorkspace.shared.isVoiceOverEnabled else { return }
+    guard voiceOver else { return }
     let text = [toast.title, toast.body, toast.action.map { "Action: \($0.title)" }].compactMap { $0 }
       .joined(separator: ". ")
     NSAccessibility.post(
@@ -82,11 +113,11 @@ final class ToastCenter: ObservableObject {
   }
 
   private func schedule(_ toast: Toast) {
-    guard !toast.sticky, holds[toast.id]?.isEmpty ?? true, !NSWorkspace.shared.isVoiceOverEnabled else { return }
+    guard !toast.sticky, holds[toast.id]?.isEmpty ?? true, !voiceOver else { return }
     let id = toast.id
     timers[id]?.invalidate()
-    timers[id] = Timer.scheduledTimer(withTimeInterval: Self.lifetime, repeats: false) { _ in
-      MainActor.assumeIsolated { ToastCenter.shared.dismiss(id) }
+    timers[id] = Timer.scheduledTimer(withTimeInterval: lifetime, repeats: false) { [weak self] _ in
+      MainActor.assumeIsolated { self?.dismiss(id) }
     }
   }
 }
