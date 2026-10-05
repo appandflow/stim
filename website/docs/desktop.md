@@ -27,6 +27,10 @@ brew install --cask appandflow/tap/stim
   App**. See [Install Stim](./getting-started.md#install-stim).
 - Xcode 27 for live simulator screens.
 
+Desktop uses the non-empty launch `STIM_HOME`, then the login shell's value, then
+`~/.stim`; **Settings > App > Stim CLI** shows the home, and private-home copies
+refuse servers for another home.
+
 The app updates itself. Release builds report crashes to Sentry with file paths,
 host names, addresses and credentials removed, and send no screenshots or
 performance traces. Every release is listed under
@@ -65,10 +69,16 @@ performance traces. Every release is listed under
   viewer with their source filters selected. Filters remain editable; repeated
   errors are grouped. **Build output > Readable** simplifies Xcode output; **Raw** restores
   every line. Copying and record details retain the original output.
-- **Builds.** Structured progress, a resolved Hit/Miss badge beside an actual Cache lookup,
-  the reason for a miss, and a prediction of the next build. **Build logs** opens
-  all retained raw output for that run, filtered by platform, slot and timestamps.
-  Clear the Build run chip to return to generic logs. Run iOS or Android from a menu.
+- **Builds.** The inspector card keeps progress and the last and next build
+  summaries. **Details** opens a sheet with a platform switch, recent runs,
+  elapsed time and estimate, phase timings, the wait holder, cache lookup and
+  full miss reason with changed sources and baseline, build machine and offload
+  fallback reason, compiler diagnostics, retained output, and the next-build
+  plan with **Check**. The header's running-build progress opens the current
+  run in the same sheet. **Open in logs panel** opens the selected run in the
+  logs drawer, filtered by platform, slot and timestamps. Clear the Build run
+  chip to return to generic logs. **Run** starts iOS or Android; a failed last
+  build offers **Rebuild**.
 - **Machines.** Select **This Mac** for local disk, memory and cleanup, or a
   configured build machine for its readiness, capacity and build history.
   Click the toolbar's CPU, memory or disk figure for details; **Open Machines**
@@ -231,8 +241,9 @@ warnings and error links. CPU and RAM stay on the workspace page.
 Run, Reload app and Stop from the workspace or sidebar menus keep you on the
 workspace page. Open **Last output** or **Operations** for command details,
 including failed runs. Click the **Recent builds** label or chevron to expand
-the build history. Disclosure content and chevrons animate unless Reduce Motion
-is enabled.
+the build history. Each row shows outcome, duration and age; click a row to
+open that run in the build details sheet. Disclosure content and chevrons animate
+unless Reduce Motion is enabled.
 
 An empty workspace shows a purple device floating above a round plinth and a
 short launch hint. Reduce Motion stops the illustration's animation.

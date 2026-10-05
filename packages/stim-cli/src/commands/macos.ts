@@ -44,7 +44,10 @@ export async function runMacos(
     | { product?: string; infoPlist?: string; arguments?: string[]; resources?: unknown; assetCatalog?: unknown }
     | undefined;
   if (!macos?.product || !macos.infoPlist) {
-    throw new Error('Set macos.product and macos.infoPlist explicitly. See stim guide macos.');
+    throw Object.assign(
+      new Error('Set macos.product and macos.infoPlist explicitly in .stim.json. See stim guide macos.'),
+      { code: 'STIM_BAD_ARG' },
+    );
   }
   return withNativeBuildRun(
     root,

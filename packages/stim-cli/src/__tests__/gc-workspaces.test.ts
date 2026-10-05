@@ -384,13 +384,17 @@ describe('workspaceInUse', () => {
 });
 
 const DAY_MS = 24 * 60 * 60 * 1000;
-const OUTPUTS = ['derived-data', 'gradle-build', 'android-cas', 'cache-provider'];
+const MACOS_OUTPUTS = ['macos/build', 'macos/Sample.app', 'macos/staging-x'];
+const OUTPUTS = ['derived-data', 'gradle-build', 'android-cas', 'cache-provider', ...MACOS_OUTPUTS];
 
-function builtWorkspace(name: string, { usedDaysAgo = 0 }: { usedDaysAgo?: number } = {}) {
+function builtWorkspace(
+  name: string,
+  { usedDaysAgo = 0, outputs = OUTPUTS }: { usedDaysAgo?: number; outputs?: readonly string[] } = {},
+) {
   const root = join(projects, name);
   mkdirSync(root, { recursive: true });
   const dir = ensureWorkspaceStorage(root);
-  for (const output of OUTPUTS) {
+  for (const output of outputs) {
     mkdirSync(join(dir, output, 'nested'), { recursive: true });
     writeFileSync(join(dir, output, 'nested', 'blob'), 'x'.repeat(64 * 1024));
   }
@@ -444,8 +448,16 @@ describe('planning workspace build output clearing', () => {
   });
 });
 
-test('gc --delete --cache workspaces clears only the build outputs and keeps the workspace registered', async () => {
+test('gc --delete --cache workspaces measures and clears macOS outputs while preserving runtime and workspace state', async () => {
   const { root, dir } = builtWorkspace('app', { usedDaysAgo: 1 });
+  mkdirSync(join(dir, 'macos', 'runtime.lock'));
+  writeFileSync(join(dir, 'macos', 'runtime.lock', 'marker'), 'runtime');
+  mkdirSync(join(dir, 'macos', 'runtime.lock.claims'));
+  mkdirSync(join(dir, 'macos', 'other'));
+  writeFileSync(join(dir, 'macos', 'other', 'Nested.app'), 'keep');
+  writeFileSync(join(dir, 'macos', 'staging-note'), 'keep');
+  mkdirSync(join(root, '.build'));
+  writeFileSync(join(root, '.build', 'blob'), 'project build');
   const cacheDir = join(projects, 'shared-cache');
   mkdirSync(join(cacheDir, 'entry'), { recursive: true });
   writeFileSync(join(cacheDir, 'entry', 'blob'), 'x'.repeat(4096));
@@ -458,13 +470,84 @@ test('gc --delete --cache workspaces clears only the build outputs and keeps the
   expect(report).toContain('would be CLEARED');
   expect(report).not.toContain('Shared cache');
 
+  const { payload } = await gcJson({ cache: 'workspaces' });
+  expect(payload.sections.workspaceBuildOutputs).toEqual([
+    expect.objectContaining({ projectRoot: root, willClear: true, bytes: expect.any(Number) }),
+  ]);
+  expect(payload.sections.workspaceBuildOutputs[0].bytes).toBeGreaterThanOrEqual(OUTPUTS.length * 64 * 1024);
+
   await captureLog(() => runGc({ cache: 'workspaces', delete: true }));
   for (const output of OUTPUTS) expect(existsSync(join(dir, output))).toBe(false);
+  expect(statSync(join(dir, 'macos')).isDirectory()).toBe(true);
+  expect(readFileSync(join(dir, 'macos', 'runtime.lock', 'marker'), 'utf8')).toBe('runtime');
+  expect(existsSync(join(dir, 'macos', 'runtime.lock.claims'))).toBe(true);
+  expect(readFileSync(join(dir, 'macos', 'other', 'Nested.app'), 'utf8')).toBe('keep');
+  expect(readFileSync(join(dir, 'macos', 'staging-note'), 'utf8')).toBe('keep');
+  expect(readFileSync(join(root, '.build', 'blob'), 'utf8')).toBe('project build');
   expect(existsSync(join(dir, 'workspace.json'))).toBe(true);
   expect(existsSync(join(dir, 'state.json'))).toBe(true);
   expect(existsSync(join(dir, 'logs', 'build-ios.ndjson'))).toBe(true);
   expect(getProject(root)?.platforms?.ios).toEqual({ deviceUdid: 'U-app', owned: true });
   expect(existsSync(join(cacheDir, 'entry', 'blob'))).toBe(true);
+});
+
+test.each(['running', 'building', 'unverified', 'claimed'])(
+  'gc --delete --cache workspaces keeps all outputs of a %s macOS session',
+  async (session) => {
+    const { root, dir } = builtWorkspace('macos-busy', { usedDaysAgo: 30 });
+    const owner = { ...liveClaimOwner(), startedAtMicros: 1 };
+    writeWorkspaceState(root, {
+      macos: {
+        launchId: 'test-launch',
+        arguments: [],
+        product: 'Sample',
+        bundle: join(dir, 'macos', 'Sample.app'),
+        bundleId: 'dev.sample.stim.test',
+        executable: join(dir, 'macos', 'Sample.app', 'Contents', 'MacOS', 'Sample'),
+        build: { state: session === 'building' ? 'running' : 'ok', startedAt: new Date().toISOString() },
+        ...(session === 'running' || session === 'building' ? { supervisor: owner } : {}),
+        ...(session === 'running' ? { app: owner } : {}),
+        ...(session === 'unverified' ? { app: { ...owner, processToken: 'invalid' } } : {}),
+      },
+    });
+    if (session === 'claimed') plantClaim(join(dir, 'macos', 'runtime.lock'), 'exclusive', liveClaimOwner());
+
+    const { payload } = await gcJson({ cache: 'workspaces', delete: true });
+    expect(payload.sections.workspaceBuildOutputs).toEqual([
+      expect.objectContaining({ projectRoot: root, willClear: false, reason: 'in-use' }),
+    ]);
+    expect(payload.results).toContainEqual(
+      expect.objectContaining({ kind: 'workspaceOutputs', status: 'kept', label: root }),
+    );
+    for (const output of OUTPUTS) expect(existsSync(join(dir, output, 'nested', 'blob'))).toBe(true);
+  },
+);
+
+test('gc --delete --cache workspaces never follows a symlinked macos directory', async () => {
+  const { dir } = builtWorkspace('macos-linked', { outputs: ['derived-data'] });
+  const target = join(projects, 'macos-target');
+  mkdirSync(join(target, 'build'), { recursive: true });
+  writeFileSync(join(target, 'build', 'blob'), 'keep');
+  symlinkSync(target, join(dir, 'macos'), 'junction');
+
+  await captureLog(() => runGc({ cache: 'workspaces', delete: true }));
+  expect(existsSync(join(dir, 'derived-data'))).toBe(false);
+  expect(lstatSync(join(dir, 'macos')).isSymbolicLink()).toBe(true);
+  expect(readFileSync(join(target, 'build', 'blob'), 'utf8')).toBe('keep');
+});
+
+test('gc --cache workspaces lists and clears a workspace with only macOS outputs', async () => {
+  const { root, dir } = builtWorkspace('macos-only', { outputs: MACOS_OUTPUTS });
+
+  const { payload } = await gcJson({ cache: 'workspaces' });
+  expect(payload.sections.workspaceBuildOutputs).toEqual([
+    expect.objectContaining({ projectRoot: root, willClear: true, bytes: expect.any(Number) }),
+  ]);
+  expect(payload.sections.workspaceBuildOutputs[0].bytes).toBeGreaterThanOrEqual(3 * 64 * 1024);
+
+  await captureLog(() => runGc({ cache: 'workspaces', delete: true }));
+  for (const output of MACOS_OUTPUTS) expect(existsSync(join(dir, output))).toBe(false);
+  expect(existsSync(join(dir, 'workspace.json'))).toBe(true);
 });
 
 test('plain gc --delete clears idle workspaces, and --older-than limits it by last use', async () => {
@@ -473,15 +556,19 @@ test('plain gc --delete clears idle workspaces, and --older-than limits it by la
   const busy = builtWorkspace('busy', { usedDaysAgo: 30 });
   holdNativeRun(busy.root);
 
-  const output = await captureLog(() => runGc({ delete: true, olderThan: 3 }));
-  expect(existsSync(join(stale.dir, 'derived-data'))).toBe(false);
-  expect(existsSync(join(recent.dir, 'derived-data'))).toBe(true);
-  expect(existsSync(join(busy.dir, 'derived-data'))).toBe(true);
-  expect(output).toMatch(/Kept the build outputs of .*busy: in use/);
+  const report = await captureLog(() => runGc({ delete: true, olderThan: 3 }));
+  for (const output of OUTPUTS) {
+    expect(existsSync(join(stale.dir, output))).toBe(false);
+    expect(existsSync(join(recent.dir, output))).toBe(true);
+    expect(existsSync(join(busy.dir, output))).toBe(true);
+  }
+  expect(report).toMatch(/Kept the build outputs of .*busy: in use/);
 
   await captureLog(() => runGc({ delete: true }));
-  expect(existsSync(join(recent.dir, 'derived-data'))).toBe(false);
-  expect(existsSync(join(busy.dir, 'derived-data'))).toBe(true);
+  for (const output of OUTPUTS) {
+    expect(existsSync(join(recent.dir, output))).toBe(false);
+    expect(existsSync(join(busy.dir, output))).toBe(true);
+  }
 });
 
 function loggedWorkspace(name: string): { root: string; logs: string } {

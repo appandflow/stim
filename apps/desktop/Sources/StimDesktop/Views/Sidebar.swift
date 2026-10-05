@@ -518,7 +518,19 @@ struct SidebarFooter: View {
 
   var body: some View {
     HStack(spacing: Space.sm) {
-      leftStatus
+      if StimHome.isDefault(store.stimHome) {
+        leftStatus
+      } else {
+        VStack(alignment: .leading, spacing: 0) {
+          leftStatus
+          Text(abbreviatingHome(store.stimHome))
+            .font(.stim(.caption, mono: true))
+            .foregroundStyle(Palette.tertiary)
+            .lineLimit(1)
+            .truncationMode(.head)
+            .help(store.stimHome)
+        }
+      }
       Spacer(minLength: 8)
       OperationsButton(log: actions.operations, actions: actions, store: store)
       if !drivenDevices.isEmpty { agentsButton }

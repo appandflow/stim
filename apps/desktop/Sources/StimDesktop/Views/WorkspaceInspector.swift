@@ -11,13 +11,14 @@ struct Inspector: View {
   var history: OwnerHistory
   var reportsBundles: Bool
   var openLogs: (LogQuery) -> Void
+  var openBuild: (BuildSheetSelection) -> Void
 
   private var agentSessions: [AgentSession] { AgentSession.associated(agents: env.agents, endedAgents: env.endedAgents) }
 
   var body: some View {
     ScrollView {
       VStack(alignment: .leading, spacing: Space.xxxl) {
-        BuildSection(cli: cli, env: env, openLogs: openLogs)
+        BuildSection(cli: cli, env: env, openLogs: openLogs, openBuild: openBuild)
           .id(env.path)
 
         ResourcesSection(env: env, machine: machine, history: history, sampled: usage)

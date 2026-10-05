@@ -4,6 +4,7 @@ import StimKit
 import SwiftUI
 
 struct AppPreferencesView: View {
+  let stimHome: String
   @AppStorage(AppPreferences.Key.appearance) private var appearance = Appearance.auto
   @AppStorage(AppPreferences.Key.sidebarStatus) private var status = StatusFilter.all
   @AppStorage(AppPreferences.Key.defaultView) private var defaultView = DefaultView.allDevices
@@ -202,6 +203,15 @@ struct AppPreferencesView: View {
       }
 
       Section("Stim CLI") {
+        LabeledContent("Stim home") {
+          Text(abbreviatingHome(stimHome))
+            .font(.stim(.body, mono: true))
+            .textSelection(.enabled)
+        }
+        if !StimHome.isDefault(stimHome) {
+          Text("Set by STIM_HOME. Workspaces, devices, settings and stim-server in this window all use this home.")
+            .foregroundStyle(Palette.tertiary)
+        }
         stimVersionRow
         HStack {
           TextField("stim on the login shell's PATH", text: $stimExecutable)

@@ -211,6 +211,8 @@ export interface BuildHostOptions {
   finished?: (record: { client: string; repo: string; ok: boolean; error?: ProtocolError; durationMs: number }) => void;
   /** Whether a client still holds `build`; the Gradle daemons of one that does not are stopped. */
   allowed?: (client: string) => boolean;
+  /** Whether the periodic daemon sweep may read the Stim home yet; it runs unconditionally when absent. */
+  ready?: () => boolean;
 }
 
 /** Runs other Macs' iOS and Android builds here for clients with `build`, each in its own area under the worker root. */
@@ -230,7 +232,9 @@ export class BuildHost {
   constructor(options: BuildHostOptions) {
     this.options = options;
     this.limits = { ...DEFAULT_BUILD_LIMITS, ...options.limits };
-    this.sweeper = setInterval(() => void this.sweepDaemons(), this.limits.daemonSweepMs);
+    this.sweeper = setInterval(() => {
+      if (this.options.ready?.() ?? true) void this.sweepDaemons();
+    }, this.limits.daemonSweepMs);
     this.sweeper.unref();
   }
 

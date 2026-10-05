@@ -8,6 +8,75 @@ import Testing
     try JSONDecoder().decode(type, from: Data(json.utf8))
   }
 
+  @Test func runListKeepsOrderAndIdentityAcrossCompletionWithoutDuplicatingTheActiveSlot() throws {
+    let workspace = try decode(
+      Workspace.self,
+      """
+      {"path":"/w","live":true,"warnings":[],"build":{
+        "platform":"ios","slot":"default","state":"running","phase":"compile",
+        "startedAt":"2026-09-25T12:00:00Z","phaseStartedAt":"2026-09-25T12:00:01Z","basis":0},
+       "builds":{"ios":[
+        {"platform":"ios","status":"ok","cacheHit":false,"startedAt":"2026-09-25T12:00:00Z",
+         "result":"succeeded","slot":"default","phases":{"compile":1000}},
+        {"platform":"ios","status":"ok","cacheHit":"local","startedAt":"2026-09-25T12:00:00Z",
+         "result":"succeeded","slot":"fold","phases":{}},
+        {"platform":"ios","status":"ok","cacheHit":"remote","startedAt":"2026-09-25T11:00:00Z",
+         "result":"succeeded","slot":"default","phases":{}}]}}
+      """)
+    let history = try #require(workspace.builds?.ios)
+    let active = BuildRun.runs(platform: "ios", running: workspace.build, history: history, last: nil)
+    #expect(active.map(\.slot) == ["default", "fold", "default"])
+    #expect(active.map(\.startedAt) == ["2026-09-25T12:00:00Z", "2026-09-25T12:00:00Z", "2026-09-25T11:00:00Z"])
+    #expect(active.first?.running == workspace.build)
+    #expect(Set(active.map(\.id)).count == 3)
+    let finished = BuildRun.runs(platform: "ios", running: nil, history: history, last: history[0].build)
+    #expect(active.map(\.id) == finished.map(\.id))
+    #expect(finished.first?.history == history[0])
+    #expect(BuildRun.runs(platform: "android", running: workspace.build, history: [], last: nil).isEmpty)
+  }
+
+  @Test func runListUsesLastBuildOnlyWithoutHistoryAndDoesNotRepeatAnActiveRun() throws {
+    let last = try decode(
+      LastBuild.self,
+      #"{"platform":"ios","status":"ok","cacheHit":"local","startedAt":"2026-09-25T12:00:00Z"}"#)
+    let fallback = BuildRun.runs(platform: "ios", running: nil, history: [], last: last)
+    #expect(fallback.count == 1 && fallback.first?.last == last)
+    #expect(fallback.first?.slot == "default")
+    let running = try decode(
+      Build.self,
+      #"{"platform":"ios","slot":"default","state":"running","phase":"compile","startedAt":"2026-09-25T12:00:00Z","phaseStartedAt":"2026-09-25T12:00:01Z","basis":0}"#
+    )
+    #expect(BuildRun.runs(platform: "ios", running: running, history: [], last: last).count == 1)
+    var older = last
+    older.startedAt = "2026-09-25T11:00:00Z"
+    #expect(
+      BuildRun.runs(platform: "ios", running: running, history: [], last: older).map(\.startedAt) == [
+        running.startedAt, older.startedAt,
+      ])
+    #expect(BuildRun.runs(platform: "ios", running: nil, history: [], last: nil).isEmpty)
+  }
+
+  @Test func finishedStepsUseBuildOrderAndActualTimesAndIdentifyWhereAnInterruptedRunStopped() throws {
+    var entry = try decode(
+      BuildHistoryEntry.self,
+      #"{"platform":"ios","status":"ok","cacheHit":false,"startedAt":"2026-09-25T12:00:00Z","result":"succeeded","slot":"default","phases":{"launch":100,"compile":9000,"prepare":200,"pods":0,"unknown":42}}"#
+    )
+    #expect(
+      entry.finishedSteps == [
+        PhaseStep(phase: "prepare", state: .done, elapsedMs: 200, expectedMs: nil, fraction: 1),
+        PhaseStep(phase: "pods", state: .done, elapsedMs: 0, expectedMs: nil, fraction: 1),
+        PhaseStep(phase: "compile", state: .done, elapsedMs: 9000, expectedMs: nil, fraction: 1),
+        PhaseStep(phase: "launch", state: .done, elapsedMs: 100, expectedMs: nil, fraction: 1),
+      ])
+    #expect(entry.stoppedPhase == nil)
+    entry.result = "interrupted"
+    #expect(entry.stoppedPhase == "pods")
+    entry.phases["pods"] = 500
+    #expect(entry.stoppedPhase == "launch")
+    entry.phases = [:]
+    #expect(entry.finishedSteps.isEmpty && entry.stoppedPhase == nil)
+  }
+
   @Test func readsEachPlatformsLastBuildIncludingACompiledOneWhoseCacheHitIsFalse() throws {
     let workspace = try decode(
       Workspace.self,

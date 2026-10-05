@@ -194,9 +194,10 @@ nothing, so `gc --delete` on its own remains the way to prune stale entries.
 
 ### Workspace build outputs
 
-Each workspace keeps its own `derived-data/`, `gradle-build/`, `android-cas/`
-and `cache-provider/` under `$STIM_HOME/workspaces/<name>/`. They usually take
-most of the disk Stim uses. `gc` reports them as one cache, "Workspace build
+Each workspace keeps its own `derived-data/`, `gradle-build/`, `android-cas/`,
+`cache-provider/`, SwiftPM scratch directory `macos/build`, staged
+`macos/<Product>.app` and interrupted-build `macos/staging-*` directories under
+`$STIM_HOME/workspaces/<name>/`. They usually take most of the disk Stim uses. `gc` reports them as one cache, "Workspace build
 outputs", with the size, last use and verdict of each workspace.
 
 <StimTabs
@@ -208,17 +209,22 @@ stim gc --delete --cache workspaces`}
 Plain `gc --delete` clears the build outputs of every workspace that is not in
 use. A workspace is in use while its dev server runs, a `stim ios` or
 `stim android` run holds it, a build names it, or a tunnel or remote lock is
-held. `--older-than <days>` clears only workspaces no Stim command has used for
-that many days. `--cache workspaces` clears the outputs and nothing else, and
+held. A running, building, unverified or hosted macOS app also keeps its
+workspace untouched. `--older-than <days>` clears only workspaces no Stim
+command has used for that many days. `--cache workspaces` clears the outputs and nothing else, and
 `--cache all` includes them. `--cache parked` is the one reserved name that
 `all` leaves out: it erases parked simulators and emulators (see
 [owned devices](./owned-devices.md)). The workspace keeps its `workspace.json`,
-`state.json`, logs, devices and ports.
+`state.json`, logs, devices and ports, along with `macos/` itself,
+`macos/runtime.lock`, its claim set and other macOS files. The project's own
+`.build` stays.
 
 The next build of an unchanged app installs from the shared build cache. After
 a native change, the Xcode compilation cache speeds up the rebuild. On React
 Native 0.86, Swift does not use that cache because explicit modules are off,
-so the first iOS build after a native change recompiles Swift.
+so the first iOS build after a native change recompiles Swift. The next
+`stim macos` recreates its scratch directory with a full Swift build and
+restages the app.
 
 ### Device recordings
 

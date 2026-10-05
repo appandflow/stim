@@ -17,8 +17,10 @@ struct WorkspaceDetail: View {
   @State private var stats: (path: String, fetched: Fetched<ProjectStats>)?
   @State private var contentHeight: CGFloat = 0
   @State private var viewing: ViewedDevice?
+  @State private var buildSheet: BuildSheetSelection?
   @State private var logMoment: LogMoment?
   @EnvironmentObject private var actions: ActionCenter
+  @EnvironmentObject private var checks: BuildPlanChecks
   @ObservedObject private var server = ServerSession.shared
   @Environment(\.windowSize) private var windowSize
   @State private var logsResizeStart: CGFloat?
@@ -73,7 +75,15 @@ struct WorkspaceDetail: View {
       )
       .environmentObject(actions)
     }
-    .onQuitRequested { viewing = nil }
+    .sheet(item: $buildSheet) { selection in
+      BuildSheet(cli: cli, env: env, selection: selection, openLogs: openBuildLogs)
+        .environmentObject(actions)
+        .environmentObject(checks)
+    }
+    .onQuitRequested {
+      viewing = nil
+      buildSheet = nil
+    }
     .task(id: "\(env.path)|\(env.finishedRunsStamp)") {
       let path = env.path
       if stats?.path == path { try? await Task.sleep(for: .seconds(1)) }
@@ -92,7 +102,8 @@ struct WorkspaceDetail: View {
         openLogs: {
           logQuery.errorsOnly = false
           showsLogs = true
-        }
+        },
+        openBuild: { buildSheet = $0 }
       )
       .padding(.horizontal, Space.xxl)
       .padding(.vertical, Space.md)
@@ -168,13 +179,16 @@ struct WorkspaceDetail: View {
       cli: cli, env: env, stats: stats.flatMap { $0.path == env.path ? $0.fetched : nil } ?? Fetched(),
       machine: machine, usage: usage, history: history,
       reportsBundles: reportsBundles,
-      openLogs: { query in
-        logQuery = query
-        logMoment = nil
-        showsLogs = true
-      }
+      openLogs: openBuildLogs,
+      openBuild: { buildSheet = $0 }
     )
     .frame(maxHeight: .infinity)
+  }
+
+  private func openBuildLogs(_ query: LogQuery) {
+    logQuery = query
+    logMoment = nil
+    showsLogs = true
   }
 
   private func canvas(devices: [DeviceRef], focused: DeviceRef?) -> some View {
