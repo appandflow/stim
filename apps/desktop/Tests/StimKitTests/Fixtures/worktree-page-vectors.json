@@ -33,20 +33,11 @@
         ]
       },
       "expected": {
-        "apps": [
-          "/w/one/apps/mobile"
-        ],
-        "projects": [
-          "apps/mobile"
-        ],
+        "apps": ["/w/one/apps/mobile"],
+        "projects": ["apps/mobile"],
         "lead": "/w/one/apps/mobile",
-        "subtitles": [
-          null,
-          null
-        ],
-        "appLabels": [
-          "iOS \u00b7 Android"
-        ]
+        "subtitles": [null, null],
+        "appLabels": ["iOS \u00b7 Android"]
       }
     },
     {
@@ -123,25 +114,11 @@
         ]
       },
       "expected": {
-        "apps": [
-          "/w/wt/apps/desktop",
-          "/w/wt/apps/mobile"
-        ],
-        "projects": [
-          "apps/desktop",
-          "apps/mobile"
-        ],
+        "apps": ["/w/wt/apps/desktop", "/w/wt/apps/mobile"],
+        "projects": ["apps/desktop", "apps/mobile"],
         "lead": "/w/wt/apps/mobile",
-        "subtitles": [
-          null,
-          null,
-          null,
-          null
-        ],
-        "appLabels": [
-          "macOS",
-          "iOS \u00b7 Android \u00b7 Web"
-        ]
+        "subtitles": [null, null, null, null],
+        "appLabels": ["macOS", "iOS \u00b7 Android \u00b7 Web"]
       }
     },
     {
@@ -195,24 +172,11 @@
         ]
       },
       "expected": {
-        "apps": [
-          "/w/wt/apps/a",
-          "/w/wt/apps/b"
-        ],
-        "projects": [
-          "apps/a",
-          "apps/b"
-        ],
+        "apps": ["/w/wt/apps/a", "/w/wt/apps/b"],
+        "projects": ["apps/a", "apps/b"],
         "lead": "/w/wt/apps/a",
-        "subtitles": [
-          "apps/a",
-          "apps/b",
-          null
-        ],
-        "appLabels": [
-          "iOS \u00b7 Android",
-          "iOS"
-        ]
+        "subtitles": ["apps/a", "apps/b", null],
+        "appLabels": ["iOS \u00b7 Android", "iOS"]
       }
     },
     {
@@ -262,23 +226,11 @@
         ]
       },
       "expected": {
-        "apps": [
-          "/w/wt/apps/a",
-          "/w/wt/apps/b"
-        ],
-        "projects": [
-          "apps/a",
-          "apps/b"
-        ],
+        "apps": ["/w/wt/apps/a", "/w/wt/apps/b"],
+        "projects": ["apps/a", "apps/b"],
         "lead": "/w/wt/apps/a",
-        "subtitles": [
-          "apps/a",
-          "apps/b"
-        ],
-        "appLabels": [
-          "iOS \u00b7 apps/a",
-          "iOS \u00b7 apps/b"
-        ]
+        "subtitles": ["apps/a", "apps/b"],
+        "appLabels": ["iOS \u00b7 apps/a", "iOS \u00b7 apps/b"]
       }
     },
     {
@@ -324,22 +276,11 @@
         ]
       },
       "expected": {
-        "apps": [
-          "/w/wt/apps/a",
-          "/w/wt/apps/b"
-        ],
-        "projects": [
-          "apps/a",
-          "apps/b"
-        ],
+        "apps": ["/w/wt/apps/a", "/w/wt/apps/b"],
+        "projects": ["apps/a", "apps/b"],
         "lead": "/w/wt/apps/a",
-        "subtitles": [
-          null
-        ],
-        "appLabels": [
-          "apps/a",
-          "Android"
-        ]
+        "subtitles": [null],
+        "appLabels": ["apps/a", "Android"]
       }
     },
     {
@@ -379,19 +320,11 @@
         ]
       },
       "expected": {
-        "apps": [
-          "/repo/apps/mobile"
-        ],
-        "projects": [
-          "mobile"
-        ],
+        "apps": ["/repo/apps/mobile"],
+        "projects": ["mobile"],
         "lead": "/repo/apps/mobile",
-        "subtitles": [
-          null
-        ],
-        "appLabels": [
-          "iOS"
-        ]
+        "subtitles": [null],
+        "appLabels": ["iOS"]
       }
     },
     {
@@ -455,23 +388,11 @@
         ]
       },
       "expected": {
-        "apps": [
-          "/w/root",
-          "/w/root/packages/app"
-        ],
-        "projects": [
-          "root",
-          "packages/app"
-        ],
+        "apps": ["/w/root", "/w/root/packages/app"],
+        "projects": ["root", "packages/app"],
         "lead": "/w/root",
-        "subtitles": [
-          "root",
-          "packages/app"
-        ],
-        "appLabels": [
-          "Android \u00b7 root",
-          "Android \u00b7 packages/app"
-        ]
+        "subtitles": ["root", "packages/app"],
+        "appLabels": ["Android \u00b7 root", "Android \u00b7 packages/app"]
       }
     },
     {
@@ -530,23 +451,11 @@
         "entries": []
       },
       "expected": {
-        "apps": [
-          "/w/wt/apps/a",
-          "/w/wt/apps/b",
-          "/w/wt/apps/c"
-        ],
-        "projects": [
-          "apps/a",
-          "apps/b",
-          "apps/c"
-        ],
+        "apps": ["/w/wt/apps/a", "/w/wt/apps/b", "/w/wt/apps/c"],
+        "projects": ["apps/a", "apps/b", "apps/c"],
         "lead": "/w/wt/apps/b",
         "subtitles": [],
-        "appLabels": [
-          "apps/a",
-          "apps/b",
-          "apps/c"
-        ]
+        "appLabels": ["apps/a", "apps/b", "apps/c"]
       }
     }
   ]
