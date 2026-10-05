@@ -292,11 +292,23 @@ session's approved device-host client, the client still holds `device-host`, and
 the session's app is running. Loopback requests, browser requests and other
 sessions' tokens are refused with 403, an unknown or stopped session with 404.
 
-The `agent-device` adapter finds the binary at `~/.local/bin/agent-device`,
-`/opt/homebrew/bin/agent-device` or `/usr/local/bin/agent-device` and never
-searches `PATH`. agent-device has no remote lease limited to one macOS app, so
-the adapter does not start and the grant is `{ "driver": "none" }` with a
-notice; Stim never hands out the Mac's desktop.
+The `agent-device` adapter runs the binary that `STIM_AGENT_DEVICE_BIN` names
+in `stim-server`'s environment, or else the first of
+`~/.local/bin/agent-device`, `/opt/homebrew/bin/agent-device` and
+`/usr/local/bin/agent-device`; it never searches `PATH`. It starts
+`agent-device proxy` with the native macOS app backend and a daemon policy that
+admits only requests under a `macos-app` lease and only the commands that drive
+one app. It starts only when the daemon's `/health` lists the `macos-app` lease
+backend (callstack/agent-device#3229); otherwise the grant is
+`{ "driver": "none" }` with a notice, and Stim never hands out the Mac's desktop.
+
+For each running hosted app, the adapter allocates a `macos-app` lease for
+`<bundleId>@<pid>` over agent-device's loopback `/admin/leases` route with the
+daemon token, renews it while the app runs and releases it when the app stops
+or the grant is revoked. The grant carries the lease id and owner scope. The
+forward passes only `POST /rpc`, `GET /health` and `GET /artifacts/...`, and it
+rewrites every command and lease call to that session's lease, tenant and
+tenant session isolation, so a client cannot name another lease or session.
 
 ### Hosted iOS session protocol
 

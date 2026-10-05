@@ -222,7 +222,14 @@ function agentAccess(
   const config = {
     daemonBaseUrl: `https://${credential.dnsName}${port === 443 ? '' : `:${port}`}${parsed.path}`,
     daemonAuthToken: parsed.token,
+    tenant: parsed.lease.tenant,
+    sessionIsolation: 'tenant',
+    runId: parsed.lease.runId,
     leaseId: parsed.scope,
+    leaseBackend: 'macos-app',
+    leaseProvider: 'proxy',
+    clientId: parsed.lease.clientId,
+    deviceKey: parsed.lease.deviceKey,
     platform: 'macos',
   };
   mkdirSync(macosDir(root), { recursive: true });

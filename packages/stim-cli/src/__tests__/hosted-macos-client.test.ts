@@ -50,7 +50,8 @@ const GRANT = {
   driver: 'agent-device',
   path: '/device-host/agent/12345678-1234-1234-1234-123456789abc/',
   token: GRANT_TOKEN,
-  scope: 'lease-1',
+  scope: 'a1b2c3d4e5f60718293a4b5c6d7e8f90',
+  lease: { tenant: 'stim.s', runId: 'run-1', clientId: 'agent', deviceKey: 'dev.fixture.app.hosted3@4242' },
 };
 const sha256 = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex');
 
@@ -244,7 +245,14 @@ describe.skipIf(process.platform !== 'darwin')('stim macos --host (SwiftPM and c
     expect(JSON.parse(readFileSync(config, 'utf8'))).toEqual({
       daemonBaseUrl: `https://mini.tail1.ts.net:7443${GRANT.path}`,
       daemonAuthToken: GRANT_TOKEN,
-      leaseId: 'lease-1',
+      tenant: 'stim.s',
+      sessionIsolation: 'tenant',
+      runId: 'run-1',
+      leaseId: 'a1b2c3d4e5f60718293a4b5c6d7e8f90',
+      leaseBackend: 'macos-app',
+      leaseProvider: 'proxy',
+      clientId: 'agent',
+      deviceKey: 'dev.fixture.app.hosted3@4242',
       platform: 'macos',
     });
     expect(workspaceInUse(root, { managedLocks: false, nativeRun: false })).toEqual(['its macOS app runs on mini']);

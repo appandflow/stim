@@ -1,6 +1,5 @@
 import {
   chmodSync,
-  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -19,11 +18,12 @@ import { readClaimSet } from '@stim-cli/core/ownership-claim';
 import { inspectProcessIdentity, captureProcessIdentity } from '@stim-cli/core/process-identity';
 import { AgentDeviceDriver, resolveAgentDevice } from '../src/agent-device-driver.ts';
 import { AgentDriverUnavailable } from '../src/agent-driver.ts';
+import { parseHostedAgentGrant } from '@stim-cli/core/state';
 
 const FAKE_AGENT_DEVICE = `#!/usr/bin/env node
 import { spawn } from 'node:child_process';
 import { createServer } from 'node:http';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { appendFileSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 const args = process.argv.slice(2);
 const stateDir = args[args.indexOf('--state-dir') + 1];
@@ -38,17 +38,38 @@ if (args[0] === 'proxy' && process.env.FAKE_PROXY === 'daemon-only') {
   const code = (process.env.FAKE_DAEMON === 'stubborn' ? "process.on('SIGTERM', () => {});" : '') + 'setInterval(() => {}, 1000)';
   const daemon = spawn(process.execPath, ['-e', code], { detached: true, stdio: 'ignore' });
   daemon.unref();
-  writeFileSync(join(stateDir, 'daemon.json'), JSON.stringify({ pid: daemon.pid, httpPort: 1, token: 'daemon-secret' }));
-  const server = createServer((request, response) => {
+  writeFileSync(join(stateDir, 'proxy-env.json'), JSON.stringify({
+    policy: readFileSync(process.env.AGENT_DEVICE_DAEMON_POLICY, 'utf8'),
+    backend: process.env.AGENT_DEVICE_MACOS_APP_BACKEND,
+  }));
+  const admin = createServer((request, response) => {
     const chunks = [];
     request.on('data', (chunk) => chunks.push(chunk));
     request.on('end', () => {
-      const authorized = request.headers.authorization === 'Bearer ' + process.env.AGENT_DEVICE_DAEMON_AUTH_TOKEN;
-      response.writeHead(authorized ? 200 : 401, { 'content-type': 'application/json', connection: 'close' });
-      response.end(JSON.stringify({ authorized, method: request.method, url: request.url, body: Buffer.concat(chunks).toString(), seen: Object.keys(request.headers) }));
+      const ok = request.headers.authorization === 'Bearer daemon-secret' && process.env.FAKE_ADMIN !== 'refuse';
+      appendFileSync(join(stateDir, 'admin.log'), JSON.stringify({ method: request.method, url: request.url, body: Buffer.concat(chunks).toString() }) + '\\n');
+      response.writeHead(ok ? 200 : 400, { 'content-type': 'application/json', connection: 'close' });
+      response.end(JSON.stringify({ ok }));
     });
   });
-  server.listen(0, '127.0.0.1', () => console.log('Proxy listening at http://127.0.0.1:' + server.address().port));
+  admin.listen(0, '127.0.0.1', () => {
+    writeFileSync(join(stateDir, 'daemon.json'), JSON.stringify({ pid: daemon.pid, httpPort: admin.address().port, token: 'daemon-secret' }));
+    const server = createServer((request, response) => {
+      const chunks = [];
+      request.on('data', (chunk) => chunks.push(chunk));
+      request.on('end', () => {
+        if (request.url === '/health') {
+          const leaseBackends = (process.env.FAKE_LEASE_BACKENDS ?? 'ios-instance,macos-app').split(',');
+          response.writeHead(200, { 'content-type': 'application/json', connection: 'close' });
+          return response.end(JSON.stringify({ ok: true, service: 'agent-device-proxy', upstream: { leaseBackends } }));
+        }
+        const authorized = request.headers.authorization === 'Bearer ' + process.env.AGENT_DEVICE_DAEMON_AUTH_TOKEN;
+        response.writeHead(authorized ? 200 : 401, { 'content-type': 'application/json', connection: 'close' });
+        response.end(JSON.stringify({ authorized, method: request.method, url: request.url, body: Buffer.concat(chunks).toString(), seen: Object.keys(request.headers), tenant: request.headers['x-agent-device-tenant'] }));
+      });
+    });
+    server.listen(0, '127.0.0.1', () => console.log('Proxy listening at http://127.0.0.1:' + server.address().port));
+  });
 } else if (args[0] === 'daemon' && args[1] === 'stop') {
   if (!process.env.FAKE_STOP_NOOP) try { process.kill(JSON.parse(readFileSync(join(stateDir, 'daemon.json'), 'utf8')).pid, 'SIGTERM'); } catch {}
   console.log('Daemon stopped (graceful).');
@@ -76,7 +97,6 @@ function driverIn(
     env: { HOME: home, PATH: '/usr/bin:/bin', ...env },
     stateDir: join(home, 'state'),
     claimRoot: join(home, 'agent-device.claims'),
-    scopedMacosLease: true,
     watchMs: 50,
     ...extra,
   });
@@ -128,19 +148,89 @@ afterEach(() => {
 });
 
 describe.skipIf(process.platform === 'win32')('agent-device driver', () => {
-  test('ships disabled until agent-device can lease one macOS app', async () => {
+  test('refuses to start an agent-device that cannot lease one macOS app, and leaves nothing running', async () => {
     install(root);
-    const driver = new AgentDeviceDriver({
-      env: { HOME: root, PATH: '/usr/bin:/bin' },
-      stateDir: join(root, 'state'),
-      claimRoot: join(root, 'agent-device.claims'),
-    });
+    const driver = driverIn(root, {}, { FAKE_LEASE_BACKENDS: 'ios-instance,android-instance' });
     await expect(driver.start()).rejects.toThrow(AgentDriverUnavailable);
     await expect(driver.start()).rejects.toThrow(/Stim never hands a client the hosting Mac desktop/);
-    expect(existsSync(join(root, 'state'))).toBe(false);
-    await expect(driver.issue({ client: 'c', session: SESSION, bundleId: 'dev.example.app', pid: 5 })).rejects.toThrow(
-      AgentDriverUnavailable,
-    );
+    const daemonPid = (JSON.parse(readFileSync(join(root, 'state', 'daemon.json'), 'utf8')) as { pid: number }).pid;
+    await vi.waitFor(() => expect(() => process.kill(daemonPid, 0)).toThrow(/ESRCH/));
+    expect(readClaimSet(join(root, 'agent-device.claims')).live).toHaveLength(0);
+  });
+
+  test('starts agent-device confined to host-allocated macos-app leases on the native backend', async () => {
+    install(root);
+    const driver = driverIn(root);
+    await driver.start();
+    try {
+      const seen = JSON.parse(readFileSync(join(root, 'state', 'proxy-env.json'), 'utf8')) as {
+        policy: string;
+        backend: string;
+      };
+      expect(seen.backend).toBe('native');
+      const policy = JSON.parse(seen.policy) as { leases: unknown; commands: { allow: string[] } };
+      expect(policy.leases).toEqual({ require: 'macos-app' });
+      expect(policy.commands.allow).toContain('snapshot');
+      expect(policy.commands.allow).not.toContain('install');
+      expect(statSync(join(root, 'state', 'policy.json')).mode & 0o777).toBe(0o600);
+    } finally {
+      await driver.stop();
+    }
+  });
+
+  test('allocates a lease for exactly the hosted app process, renews it and releases it on revoke', async () => {
+    install(root);
+    const driver = driverIn(root, { leaseRenewMs: 50 });
+    await driver.start();
+    try {
+      const grant = await driver.issue({
+        client: 'c',
+        session: SESSION,
+        bundleId: 'dev.example.app.hosted1',
+        pid: 4242,
+      });
+      expect(parseHostedAgentGrant(grant)).toEqual(grant);
+      if (grant.driver === 'none') throw new Error('expected a grant');
+      expect(grant.lease.deviceKey).toBe('dev.example.app.hosted1@4242');
+      const calls = () =>
+        readFileSync(join(root, 'state', 'admin.log'), 'utf8')
+          .trim()
+          .split('\n')
+          .map((line) => JSON.parse(line) as { method: string; url: string; body: string });
+      expect(calls()[0]).toMatchObject({ method: 'PUT', url: `/admin/leases/${grant.scope}` });
+      expect(JSON.parse(calls()[0]!.body)).toEqual({
+        tenantId: grant.lease.tenant,
+        runId: grant.lease.runId,
+        clientId: grant.lease.clientId,
+        leaseBackend: 'macos-app',
+        leaseProvider: 'proxy',
+        deviceKey: 'dev.example.app.hosted1@4242',
+        ttlMs: 600_000,
+      });
+      await vi.waitFor(() => expect(calls().filter((call) => call.method === 'PUT').length).toBeGreaterThan(2));
+      await driver.revoke(SESSION);
+      expect(calls().at(-1)).toMatchObject({ method: 'DELETE', url: `/admin/leases/${grant.scope}` });
+      const after = calls().length;
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      expect(calls()).toHaveLength(after);
+      expect((await through(driver, SESSION, 'GET', '/health')).status).toBe(503);
+    } finally {
+      await driver.stop();
+    }
+  });
+
+  test('issues no grant when agent-device refuses the lease', async () => {
+    install(root);
+    const driver = driverIn(root, {}, { FAKE_ADMIN: 'refuse' });
+    await driver.start();
+    try {
+      await expect(
+        driver.issue({ client: 'c', session: SESSION, bundleId: 'dev.example.app.hosted1', pid: 4242 }),
+      ).rejects.toThrow(/refused the lease/);
+      expect((await through(driver, SESSION, 'GET', '/health')).status).toBe(503);
+    } finally {
+      await driver.stop();
+    }
   });
 
   test('resolves agent-device by explicit path and runs a script under the server Node', () => {
@@ -154,6 +244,21 @@ describe.skipIf(process.platform === 'win32')('agent-device driver', () => {
   test('refuses with the places it looked when agent-device is missing', () => {
     expect(() => resolveAgentDevice({ HOME: root })).toThrow(
       /\.local\/bin\/agent-device.*npm install --global --prefix/s,
+    );
+  });
+
+  test('uses only the agent-device that STIM_AGENT_DEVICE_BIN names when it is set', () => {
+    const real = install(root);
+    const elsewhere = join(root, 'other', 'agent-device.mjs');
+    mkdirSync(join(root, 'other'));
+    writeFileSync(elsewhere, FAKE_AGENT_DEVICE);
+    expect(resolveAgentDevice({ HOME: root, STIM_AGENT_DEVICE_BIN: elsewhere })).toEqual({
+      command: process.execPath,
+      args: [realpathSync(elsewhere)],
+    });
+    expect(realpathSync(real)).not.toBe(realpathSync(elsewhere));
+    expect(() => resolveAgentDevice({ HOME: root, STIM_AGENT_DEVICE_BIN: join(root, 'missing') })).toThrow(
+      /STIM_AGENT_DEVICE_BIN names .*missing/,
     );
   });
 
@@ -193,18 +298,101 @@ describe.skipIf(process.platform === 'win32')('agent-device driver', () => {
     const driver = driverIn(root);
     await driver.start();
     try {
-      const answer = await through(driver, SESSION, 'POST', '/rpc?x=1', '{"method":"snapshot"}', {
+      await driver.issue({ client: 'c', session: SESSION, bundleId: 'dev.example.app.hosted1', pid: 4242 });
+      const answer = await through(driver, SESSION, 'GET', '/health?x=1', undefined, {
         authorization: 'Bearer client-grant-token',
         'x-agent-device-token': 'client-grant-token',
-        'content-type': 'application/json',
         cookie: 'a=b',
       });
       expect(answer.status).toBe(200);
-      const seen = JSON.parse(answer.text) as Record<string, unknown>;
-      expect(seen).toMatchObject({ authorized: true, method: 'POST', url: '/rpc?x=1', body: '{"method":"snapshot"}' });
+      const answerRpc = await through(
+        driver,
+        SESSION,
+        'POST',
+        '/rpc?x=1',
+        '{"method":"agent_device.command","params":{}}',
+        {
+          'x-agent-device-tenant': 'stim.other',
+          authorization: 'Bearer client-grant-token',
+          'x-agent-device-token': 'client-grant-token',
+          'content-type': 'application/json',
+          cookie: 'a=b',
+        },
+      );
+      const seen = JSON.parse(answerRpc.text) as Record<string, unknown>;
+      expect(seen).toMatchObject({ authorized: true, method: 'POST', url: '/rpc?x=1', tenant: `stim.${SESSION}` });
       expect(seen.seen).not.toContain('x-agent-device-token');
       expect(seen.seen).not.toContain('cookie');
-      expect(answer.text).not.toContain('client-grant-token');
+      expect(answerRpc.text).not.toContain('client-grant-token');
+    } finally {
+      await driver.stop();
+    }
+  });
+
+  test('pins every command and lease call to the session lease, whatever the client names', async () => {
+    install(root);
+    const driver = driverIn(root);
+    await driver.start();
+    try {
+      const grant = await driver.issue({
+        client: 'c',
+        session: SESSION,
+        bundleId: 'dev.example.app.hosted1',
+        pid: 4242,
+      });
+      if (grant.driver === 'none') throw new Error('expected a grant');
+      const rpc = (body: object) =>
+        through(driver, SESSION, 'POST', '/rpc', JSON.stringify(body), { 'content-type': 'application/json' }).then(
+          (answer) => ({
+            status: answer.status,
+            upstream:
+              answer.status === 200
+                ? (JSON.parse((JSON.parse(answer.text) as { body: string }).body) as {
+                    params: Record<string, unknown>;
+                  })
+                : null,
+          }),
+        );
+      const command = await rpc({
+        jsonrpc: '2.0',
+        method: 'agent_device.command',
+        params: {
+          command: 'open',
+          session: 'other-client',
+          meta: { tenantId: 'stim.other', leaseId: 'f'.repeat(32), sessionIsolation: 'none', requestId: 'r1' },
+        },
+      });
+      expect(command.upstream?.params.meta).toEqual({
+        requestId: 'r1',
+        tenantId: grant.lease.tenant,
+        runId: grant.lease.runId,
+        leaseId: grant.scope,
+        clientId: grant.lease.clientId,
+        deviceKey: 'dev.example.app.hosted1@4242',
+        leaseProvider: 'proxy',
+        leaseBackend: 'macos-app',
+        sessionIsolation: 'tenant',
+      });
+      const heartbeat = await rpc({
+        method: 'agent_device.lease.heartbeat',
+        params: { tenant: 'stim.other', leaseId: 'f'.repeat(32), backend: 'ios-instance', provider: 'x' },
+      });
+      expect(heartbeat.upstream?.params).toEqual({
+        tenantId: grant.lease.tenant,
+        runId: grant.lease.runId,
+        leaseId: grant.scope,
+        clientId: grant.lease.clientId,
+        deviceKey: 'dev.example.app.hosted1@4242',
+        leaseProvider: 'proxy',
+        backend: 'macos-app',
+      });
+      for (const body of [
+        { method: 'agent_device.lease.allocate', params: {} },
+        { method: 'agent_device.install_from_source', params: {} },
+        { method: 'agent_device.command' },
+      ])
+        expect((await rpc(body)).status).toBe(400);
+      expect((await through(driver, SESSION, 'POST', '/rpc', 'not json')).status).toBe(400);
     } finally {
       await driver.stop();
     }
@@ -274,9 +462,14 @@ describe.skipIf(process.platform === 'win32')('agent-device driver', () => {
     const driver = driverIn(root);
     await driver.start();
     try {
+      await driver.issue({ client: 'c', session: SESSION, bundleId: 'dev.example.app.hosted1', pid: 4242 });
       expect((await through(driver, SESSION, 'GET', '/health')).status).toBe(200);
       expect((await through(driver, SESSION, 'GET', '/admin/human-control/holds')).status).toBe(404);
+      expect((await through(driver, SESSION, 'GET', '/admin/leases')).status).toBe(404);
       expect((await through(driver, SESSION, 'GET', '/rpc/../admin')).status).toBe(404);
+      expect((await through(driver, SESSION, 'GET', '/rpc')).status).toBe(404);
+      expect((await through(driver, SESSION, 'POST', '/upload', 'x')).status).toBe(404);
+      expect((await through(driver, SESSION, 'GET', `/sessions/${SESSION}/requests/r1/diagnostics`)).status).toBe(404);
     } finally {
       await driver.stop();
     }

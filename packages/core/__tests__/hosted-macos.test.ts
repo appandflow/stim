@@ -24,7 +24,8 @@ test('an agent grant is usable only for a known driver, one session route, and a
     driver: 'agent-device',
     path: '/device-host/agent/12345678-1234-1234-1234-123456789abc/',
     token: 'a'.repeat(43),
-    scope: 'lease-1',
+    scope: 'a1b2c3d4e5f60718293a4b5c6d7e8f90',
+    lease: { tenant: 'stim.t', runId: 'run-1', clientId: 'agent', deviceKey: 'dev.example.app.hosted1@4242' },
   };
   expect(parseHostedAgentGrant(grant)).toEqual(grant);
   expect(parseHostedAgentGrant({ driver: 'none' })).toEqual({ driver: 'none' });
@@ -34,6 +35,9 @@ test('an agent grant is usable only for a known driver, one session route, and a
     { ...grant, path: '/device-host/agent/../other/' },
     { ...grant, token: 'short' },
     { ...grant, extra: true },
+    { ...grant, lease: undefined },
+    { ...grant, lease: { ...grant.lease, deviceKey: 'dev.example.app.hosted1' } },
+    { ...grant, lease: { ...grant.lease, tenant: 'a tenant' } },
   ])
     expect(parseHostedAgentGrant(value)).toBeNull();
 });
