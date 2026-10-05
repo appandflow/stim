@@ -1364,12 +1364,13 @@ or prefix each command with `npx`).
     project (`npx expo-updates fingerprint:generate --platform ios`) and
     compares it with the runtime of the latest finished `production` build.
     The same runtime publishes an update; a different one, or no build with a
-    runtime, builds and submits.
+    runtime, builds and distributes.
   - `update`: publishes an update to channel `production` with the commit
     subject as the message. Use it only when you know the change is
     JS-only; an update for a runtime no build has reaches no one.
-  - `build`: builds with the `production` profile and submits to
-    TestFlight (`eas build --auto-submit`).
+  - `build`: builds with the `production` profile, uploads the build to
+    TestFlight and adds it to the `External` group. See
+    [External testers](#external-testers).
   - `rollback`: points channel `production` back at the JS embedded in the
     build (`eas update:roll-back-to-embedded`). By default it uses the runtime
     of the latest finished production build; the `runtime` input names
@@ -1377,7 +1378,7 @@ or prefix each command with `npx`).
   - `republish`: publishes the update group named by the `group` input again
     on channel `production` (`eas update:republish`), so installed builds go
     back to that update.
-- A `mobile-v<version>` tag on `main` always builds and submits. The version
+- A `mobile-v<version>` tag on `main` always builds and distributes. The version
   must equal `version` in `app.config.ts`, so raise it first.
 
 Every mode except `rollback` and `republish` runs the unit tests, the boot test
@@ -1393,7 +1394,7 @@ the two disagree, `auto` would build for a JS-only change. `auto` compares
 with the newest production build from any branch, so start production builds
 only from `main`.
 
-`--auto-submit` and `eas submit` read the App Store Connect API key from EAS
+The upload and `eas submit` read the App Store Connect API key from EAS
 credentials, not from GitHub. Store it once, from `apps/mobile`:
 
 ```bash
@@ -1413,10 +1414,69 @@ eas build --platform ios --profile production --auto-submit
 eas update --channel production --environment production --platform ios --message "<what changed>"
 ```
 
+A hand build with `--auto-submit` reaches the internal testers only; add it to
+the `External` group in App Store Connect. To distribute a hand build to
+external testers from the start, build without `--auto-submit` and run the
+workflow with the build's id:
+
+```bash
+eas build --platform ios --profile production
+eas workflow:run .eas/workflows/testflight.yml -F build_id=<build id> -F "changelog=<what to test>"
+```
+
 The build appears in TestFlight after Apple finishes processing it, usually
-within 30 minutes. Add testers under the app's **TestFlight** tab. Raise
-`version` in `app.config.ts` for a new marketing version; build numbers need no
-change.
+within 30 minutes. Raise `version` in `app.config.ts` for a new marketing
+version; build numbers need no change.
+
+### External testers
+
+The `build` mode does not use `eas build --auto-submit`. After `eas build`
+finishes, it starts the EAS workflow `.eas/workflows/testflight.yml` with
+`eas workflow:run --wait` and the finished build's id. The workflow's
+`testflight` job uploads that exact build with the `production` submit
+profile, waits for Apple to process it, adds it to the `External` TestFlight
+group, sets What to Test and submits the build for Beta App Review. Internal
+testers still get it through the groups that have automatic distribution
+turned on. The job needs no secret beyond `EXPO_TOKEN`; it reads the same
+App Store Connect API key from EAS credentials as the upload did before.
+
+What to Test is the commit subject and short hash of the commit being
+released, for example `feat: add pairing retry (#123) (1a2b3c4)`.
+
+Apple requires Beta App Review for the first build of each marketing version
+(`version` in `app.config.ts`) before external testers can install it, and
+the beta app description and feedback email in App Store Connect must be
+filled in. The first build of a new version is therefore not installable
+for external testers until Apple approves it. Apple reviews only the first
+build of each version.
+
+The last step of the run reads `eas submit:status` for the build and reports
+one state in the run's annotations and summary:
+
+| Message                                        | Meaning                                                       |
+| ---------------------------------------------- | ------------------------------------------------------------- |
+| still processing at Apple                      | uploaded; Apple has not finished processing it                |
+| not submitted for Beta App Review              | uploaded and processed, but the job did not add it for review |
+| awaiting Beta App Review or in Beta App Review | submitted; external testers cannot install it yet             |
+| available to external testers                  | approved and in the `External` group                          |
+| rejected by Beta App Review                    | open the build in App Store Connect for Apple's reason        |
+
+A failure after the upload, such as missing test information or a rejected
+review submission, is a warning and does not fail the release: the build
+is in TestFlight and the update channel and runtime are unaffected. The run
+fails only when the build never reaches TestFlight. If the `testflight` job
+fails before the upload, the step uploads the same build with `eas submit`,
+which reaches internal testers only and is reported as a warning. If that fails
+too, run `mode=build` again, which makes a new build.
+
+There is no retry that distributes an already uploaded build without
+uploading again: the `build_id` form of the `testflight` job uploads the
+build each time, and Apple refuses a second upload of the same build number.
+For a warning, fix the cause in App Store Connect and add the existing build
+to `External` there. The job's other form takes the id of a build already in
+App Store Connect (`asc_build_id`) and needs an App Store Connect connection
+under the Expo project's settings, **Connections**; the workflow does not use
+it.
 
 ### Roll back a bad update
 
