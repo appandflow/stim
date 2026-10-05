@@ -955,8 +955,6 @@ msgstr "Build"
 #: src/lib/device-tile.ts
 #: src/lib/format.ts
 #: src/lib/workspace-view.ts
-#: src/screens/build-details.tsx
-#: src/screens/workspace-detail.tsx
 msgid "Build failed"
 msgstr "Build failed"
 
@@ -987,8 +985,6 @@ msgstr "Build: {spoken}"
 #: src/lib/device-tile.ts
 #: src/lib/format.ts
 #: src/lib/workspace-view.ts
-#: src/screens/build-details.tsx
-#: src/screens/workspace-detail.tsx
 msgid "Building"
 msgstr "Building"
 
@@ -1018,8 +1014,6 @@ msgid "Builds for other Macs"
 msgstr "Builds for other Macs"
 
 #: src/lib/format.ts
-#: src/screens/build-details.tsx
-#: src/screens/workspace-detail.tsx
 msgid "Built"
 msgstr "Built"
 

@@ -30,6 +30,7 @@ import {
   nextBuild,
   planDetail,
   buildTiming,
+  macosBuildLabel,
   recheckNote,
 } from '@/lib/format';
 import { relativeTo, tildeHome } from '@/lib/paths';
@@ -122,8 +123,7 @@ function WorktreeBuildDetails({ path, platform }: { path: string; platform: Plat
   const remote = running ? remoteBuild(running, now) : null;
   const remoteHost = remote?.host ?? '';
   const startedAge = running ? formatDuration(Math.max(0, now - Date.parse(running.startedAt))) : '';
-  const state =
-    app?.build.state === 'running' ? t`Building` : app?.build.state === 'failed' ? t`Build failed` : t`Built`;
+  const state = app ? macosBuildLabel(app) : '';
   return (
     <SheetScreen
       title={t`Build`}

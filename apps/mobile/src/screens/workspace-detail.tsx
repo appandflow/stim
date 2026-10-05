@@ -40,6 +40,7 @@ import { useAction } from '@/hooks/workspace-actions';
 import { useNow } from '@/hooks/use-now';
 import { useRecents } from '@/hooks/recents';
 import { formatDuration } from '@/intl/format';
+import { macosBuildLabel } from '@/lib/format';
 import {
   buildEntries,
   sumMeasured,
@@ -616,7 +617,7 @@ function WorktreeContent({
       return { ...line, key, project, spoken: project ? `${line.spoken}, ${project}` : line.spoken };
     }
     const build = entry.env.macos!.build;
-    const state = build.state === 'running' ? t`Building` : build.state === 'failed' ? t`Build failed` : t`Built`;
+    const state = macosBuildLabel(entry.env.macos!);
     return {
       platform: 'macos',
       key,
