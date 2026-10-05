@@ -76,6 +76,7 @@ test('a Swift package inside a monorepo keeps its own command workspace', () => 
 test('malformed app ownership is a refusal, never treated as no owned app', async () => {
   writeWorkspaceState(root, { macos: { ...record(), app: { pid: 42 } } });
   expect(parseMacosRecord({ ...record(), app: { pid: 42 } })).toBeNull();
+  expect(parseMacosRecord({ ...record(), host: { machine: 'mini', session: 'not-a-session' } })).toBeNull();
   expect(() => requiredMacosRecord(root)).toThrow('owner is malformed');
   await expect(stopMacosApp(root)).rejects.toThrow('owner is malformed');
   expect(workspaceInUse(root)).toContain('its macOS process owner cannot be verified');

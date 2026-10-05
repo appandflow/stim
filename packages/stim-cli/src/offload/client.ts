@@ -178,7 +178,7 @@ export function pickOffer({
   return { order: ranked.map((each) => each.index), reasons };
 }
 
-type Reply = { result: unknown } | { error: { code: string; message: string } };
+export type Reply = { result: unknown } | { error: { code: string; message: string } };
 
 type ProgressEvent = {
   job: string;
@@ -207,11 +207,11 @@ function closeOnExit(socket: WebSocket): void {
 }
 
 /**
- * One authenticated connection to a build machine's stim-server. Closing it cancels its jobs there; a connection
- * that drops, or that stays silent for `SILENT_MS` after `watch()`, leaves them running for a while so a new
- * connection can `build.attach` to them.
+ * One authenticated connection to another Mac's stim-server, for build offload or device hosting. Closing it cancels
+ * its build jobs there; a connection that drops, or that stays silent for `SILENT_MS` after `watch()`, leaves them
+ * running for a while so a new connection can `build.attach` to them.
  */
-class BuildConnection {
+export class BuildConnection {
   private nextId = 2;
   private readonly pending = new Map<number, (reply: Reply) => void>();
   private progress: ((event: ProgressEvent) => void) | null = null;
@@ -266,6 +266,7 @@ class BuildConnection {
     target: Endpoint,
     token: string,
     timeoutMs: number,
+    capability: 'build' | 'device-host' = 'build',
   ): Promise<BuildConnection | { failure: string; refused: boolean }> {
     return new Promise((resolve) => {
       const options: ClientOptions & ConnectionOptions = {
@@ -312,8 +313,8 @@ class BuildConnection {
           return fail(String(reply.error.message), TURNED_AWAY.has(String(reply.error.code)));
         }
         const capabilities = isJsonObject(reply) && isJsonObject(reply.result) ? reply.result.capabilities : null;
-        if (!Array.isArray(capabilities) || !capabilities.includes('build')) {
-          return fail('it has not granted this Mac build access', true);
+        if (!Array.isArray(capabilities) || !capabilities.includes(capability)) {
+          return fail(`it has not granted this Mac ${capability === 'build' ? 'build' : 'hosting'} access`, true);
         }
         resolve(new BuildConnection(socket));
       });

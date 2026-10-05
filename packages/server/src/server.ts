@@ -524,13 +524,6 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   const controllers = new Map<WebSocket, Controller>();
   const controlLimits: ControlLimits = { ...CONTROL_LIMITS, ...options.controlLimits };
   const adbEmulators = options.env[ADB_EMULATORS_SWITCH] === '1';
-  const hostedDevices = new DeviceHost({
-    worker: join(dirname(options.stimCli), 'device-host-worker.mjs'),
-    env: options.env,
-    limits: options.deviceHostLimits,
-    allowed: (client) =>
-      readDeviceHostClients().some((entry) => entry.id === client && entry.capabilities.includes('device-host')),
-  });
   const agentDrivers = new HostedAgentHost({
     resolve: () =>
       loadConfig()?.hosting?.agentDriver === 'agent-device'
@@ -546,6 +539,14 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       )?.identity;
       return identity?.kind === 'tailnet' ? identity.nodeId : null;
     },
+  });
+  const hostedDevices = new DeviceHost({
+    worker: join(dirname(options.stimCli), 'device-host-worker.mjs'),
+    env: options.env,
+    agents: agentDrivers,
+    limits: options.deviceHostLimits,
+    allowed: (client) =>
+      readDeviceHostClients().some((entry) => entry.id === client && entry.capabilities.includes('device-host')),
   });
   const agentNodes = new Map<string, { node: string; until: number }>();
   const agentLimiter = new FailureLimiter(30, options.failureWindowMs ?? 60_000);

@@ -20,6 +20,8 @@ export type HostedWorkerResult = {
   device: HostedDevice | null;
   notice?: string;
   launched?: true | 'unverified';
+  /** The registered hosted macOS app process, for the host's agent driver. */
+  pid?: number;
 };
 
 function inventory(): ReturnType<typeof listAllIosSims> {

@@ -663,7 +663,7 @@ runs it with a private home and temporary directory; this is not an OS sandbox.
 Stop and revocation stop only the recorded processes and remove the last hosted
 identity's preferences domain and plist, the private app home and delivered bytes,
 keeping logs and receipts. Unresolved sessions retain their app slots.
-Until a driver is configured, the host reports `agent: { driver: 'none' }` for installed macOS apps.
+Until a driver runs, the host reports `agent: { driver: 'none' }` for installed macOS apps, and `stim doctor` on the host names `hosting.agentDriver`.
 macOS hosting supports viewing and control of the running app on the host. Metro
 is refused; CLI placement and client view/control relays remain pending.
 See the [macOS session protocol](https://github.com/appandflow/stim/blob/main/packages/server/README.md#hosted-macos-app-sessions).

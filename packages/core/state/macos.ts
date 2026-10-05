@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { workspaceName } from '../index.ts';
 import { readJsonObject } from './json-file.ts';
 import { inspectProcessIdentity } from '../process-identity.ts';
+import { parseHostedMacosPlacement, type HostedMacosPlacement } from './hosted-macos.ts';
 import { readWorkspaceState } from './workspace-state.ts';
 
 export interface MacosProcess {
@@ -29,6 +30,10 @@ export interface MacosAppRecord {
   build: MacosBuild;
   supervisor?: MacosProcess;
   app?: MacosProcess;
+  /** Set when `stim macos --host` reserved a session on another Mac; the app then has no local process. */
+  host?: HostedMacosPlacement;
+  /** What the host reported about this launch: true for a live app; status never contacts the host. */
+  hostLaunched?: boolean | 'unverified';
 }
 
 export interface MacosAppState extends MacosAppRecord {
@@ -55,6 +60,8 @@ export function parseMacosRecord(value: unknown): MacosAppRecord | null {
     build,
     supervisor,
     app,
+    host,
+    hostLaunched,
   } = value as Record<string, unknown>;
   if (typeof launchId !== 'string' || !Array.isArray(args) || args.some((arg) => typeof arg !== 'string')) return null;
   if ([product, bundle, bundleId, executable].some((field) => typeof field !== 'string')) return null;
@@ -62,6 +69,12 @@ export function parseMacosRecord(value: unknown): MacosAppRecord | null {
   const b = build as Record<string, unknown>;
   if (!['running', 'ok', 'failed'].includes(String(b.state)) || typeof b.startedAt !== 'string') return null;
   if ((app !== undefined && !processRecord(app)) || (supervisor !== undefined && !processRecord(supervisor)))
+    return null;
+  const placement = host === undefined ? undefined : parseHostedMacosPlacement(host);
+  if (
+    placement === null ||
+    (hostLaunched !== undefined && typeof hostLaunched !== 'boolean' && hostLaunched !== 'unverified')
+  )
     return null;
   return {
     launchId,
@@ -79,6 +92,8 @@ export function parseMacosRecord(value: unknown): MacosAppRecord | null {
     },
     ...(processRecord(supervisor) ? { supervisor: processRecord(supervisor) } : {}),
     ...(processRecord(app) ? { app: processRecord(app) } : {}),
+    ...(placement ? { host: placement } : {}),
+    ...(hostLaunched !== undefined ? { hostLaunched: hostLaunched as boolean | 'unverified' } : {}),
   };
 }
 
@@ -111,8 +126,13 @@ export function macosAppState(record: MacosAppRecord | null): MacosAppState | nu
           },
         }
       : {}),
-    state:
-      app === 'unknown' || supervisor === 'unknown'
+    state: record.host
+      ? record.supervisor || !record.hostLaunched
+        ? 'stopped'
+        : record.hostLaunched === true
+          ? 'running'
+          : 'unverified'
+      : app === 'unknown' || supervisor === 'unknown'
         ? 'unverified'
         : app === 'same'
           ? supervisor === 'same'

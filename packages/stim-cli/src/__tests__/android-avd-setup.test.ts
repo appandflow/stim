@@ -16,6 +16,7 @@ import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { prepareOwnedAvd } from '../engine/android-avd-setup.ts';
 import { deleteProjectDevices } from '../commands/gc/devices.ts';
 import { acquireAvdClaim } from '../devices/avd-claim.ts';
+import { createOwnedAvd, deleteAvd, ownedAvdDirectory } from '../devices/android.ts';
 import { processGroupAlive, readClaimSet, releaseClaim } from '@stim-cli/core/ownership-claim';
 import { teardownOwnedAvd } from '../devices/teardown.ts';
 import { makeExitingChild } from './_factories.ts';
@@ -37,6 +38,7 @@ const envKeys = [
   'ANDROID_SDK_HOME',
   'ANDROID_USER_HOME',
   'ANDROID_EMULATOR_HOME',
+  'XDG_CONFIG_HOME',
 ];
 
 function createFiles(): void {
@@ -381,6 +383,46 @@ test.each([false, true])(
     releaseClaim(acquireAvdClaim(avdName));
   },
 );
+
+test('avdmanager creates the AVD where the emulator reads it, not under XDG_CONFIG_HOME', async () => {
+  for (const key of ['ANDROID_AVD_HOME', 'ANDROID_SDK_HOME']) delete process.env[key];
+  process.env.XDG_CONFIG_HOME = join(home, '.config');
+  let env: NodeJS.ProcessEnv | undefined;
+  await createOwnedAvd('setup', {
+    spawn: (_file, _args, options) => {
+      env = options?.env;
+      return makeExitingChild();
+    },
+  });
+  expect(env?.ANDROID_AVD_HOME).toBe(join(home, '.android', 'avd'));
+});
+
+test('an AVD created with only ANDROID_EMULATOR_HOME set resolves and deletes from the same root', async () => {
+  for (const key of ['ANDROID_AVD_HOME', 'ANDROID_SDK_HOME', 'ANDROID_USER_HOME']) delete process.env[key];
+  process.env.ANDROID_EMULATOR_HOME = join(home, 'emulator-prefs');
+  process.env.XDG_CONFIG_HOME = join(home, '.config');
+  const created = await createOwnedAvd('setup', {
+    spawn: (_file, _args, options) => {
+      const pinned = options?.env?.ANDROID_AVD_HOME ?? '';
+      const root = existsSync(pinned) ? pinned : join(home, '.config', '.android', 'avd');
+      const directory = join(root, `${avdName}.avd`);
+      mkdirSync(directory, { recursive: true });
+      writeFileSync(join(root, `${avdName}.ini`), `path=${directory}\n`);
+      return makeExitingChild();
+    },
+  });
+  expect(ownedAvdDirectory(created.avdName)).toBe(realpathSync(join(home, '.android', 'avd', `${avdName}.avd`)));
+  let deleteEnv: Record<string, string> | undefined;
+  setExecutor({
+    ...getExecutor(),
+    run(command, options) {
+      if (command.includes('delete avd')) deleteEnv = options?.env;
+      return '';
+    },
+  });
+  deleteAvd(created.avdName);
+  expect(deleteEnv).toEqual({ ANDROID_AVD_HOME: join(home, '.android', 'avd') });
+});
 
 test.each(['throw', 'error'])('a spawn %s releases the claim and retains the incomplete reservation', async (kind) => {
   setExecutor({

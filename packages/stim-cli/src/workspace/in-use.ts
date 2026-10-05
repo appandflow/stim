@@ -43,7 +43,8 @@ export function workspaceInUse(
       reasons.push(`its dev server supervisor cannot be verified: ${target.reason ?? 'unknown identity'}`);
     }
     const macos = macosAppState(readMacosRecord(root));
-    if (macos?.state === 'running' || macos?.state === 'orphaned' || macos?.build.state === 'running')
+    if (macos?.host) reasons.push(`its macOS app runs on ${macos.host.machine}`);
+    else if (macos?.state === 'running' || macos?.state === 'orphaned' || macos?.build.state === 'running')
       reasons.push('its macOS app or build is running');
     else if (macos?.state === 'unverified' || (!macos && readWorkspaceState(root)?.macos !== undefined))
       reasons.push('its macOS process owner cannot be verified');

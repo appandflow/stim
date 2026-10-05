@@ -293,8 +293,9 @@ once. Set it with
 `stim doctor --fix` in an app directory. A person on the hosting Mac approves
 the printed id with `stim-server devices grant <id> --device-host`.
 Hosting approval is separate from `offload.machines` and grants no read,
-control or build access. This configures approval only; `stim ios` and
-`stim android` do not yet place sessions on these machines.
+control or build access. [`stim macos --host <machine>`](./macos.md#run-it-on-another-mac)
+runs a macOS app on an approved machine; `stim ios` and `stim android` do not yet
+place sessions on these machines.
 
 Credentials stay private in `$STIM_HOME/device-host-machines.json`. Doctor
 reports approval under `deviceHosts` in JSON and never prints the token.
@@ -311,6 +312,8 @@ coding agent can drive the macOS apps it hosts for that client. The default,
 `none`, starts nothing. `agent-device` starts its daemon
 only once agent-device can lease a single macOS app. Until then agent control
 reports `none` with a notice, and no client is handed the Mac's desktop.
+`stim doctor` on that Mac notes a hosted macOS app that runs while the setting
+is `none`.
 
 `offload.machines` lists the Macs on your tailnet that may build for this one,
 by MagicDNS name (`janics-mac-mini`), optionally with the port of their
