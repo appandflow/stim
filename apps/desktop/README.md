@@ -236,7 +236,9 @@ the list, and the app remembers it; a sheet too narrow for the list and a
 Escape releases a device that is taken over, and otherwise closes the viewer;
 closing it releases the device too. While the viewer is open, the device's
 tile stops streaming and says "Open in the viewer". Tiles on the All devices
-wall are previews too; clicking one opens its workspace. Active workspaces without
+wall are previews too; clicking one opens its workspace. The wall creates workspace
+rows and device tiles as you scroll, and pauses previews after they leave the
+scrolling area. Returning to a tile reconnects its preview. Active workspaces without
 running or building devices use compact cards with Metro status, warnings and
 positive-error log links; CPU and RAM stay on the workspace page.
 
