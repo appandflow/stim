@@ -217,15 +217,15 @@ valid observed hinge angle enable genuine posed hardware around its live panels.
 Missing model data retains the frameless view. Stim ships no Apple or Android
 artwork; mobile asset delivery is not included.
 
-While **Control** is active for an owned local Android emulator,
+While **Control** is active for an owned local simulator or emulator,
 **Paste into device** copies the Mac's text clipboard and pastes it into the
-focused guest field. Owned local iOS simulators and Android emulators offer
-**Copy device clipboard**, which replaces the Mac's text clipboard
-with the guest's current text, including an empty clipboard. iOS Paste remains
-unavailable while [#2331](https://github.com/appandflow/stim/issues/2331) tracks
-the simulator pasteboard provider's failed insertion. Transfers preserve
-Unicode and line breaks and happen only when pressed; there is no background
-clipboard synchronization. Empty or non-text Mac clipboards are reported without
+focused guest field. On an iOS simulator it runs `simctl pbcopy` and presses
+Command-V, and iOS asks "Allow Paste" for text that came from another source;
+the field stays empty until that prompt is accepted in the viewer. Owned local iOS
+simulators and Android emulators also offer **Copy device clipboard**, which replaces
+the Mac's text clipboard with the guest's current text, including an empty clipboard.
+Transfers preserve Unicode and line breaks and happen only when pressed; there is no
+background clipboard synchronization. Empty or non-text Mac clipboards are reported without
 changing the guest. Disconnects and unavailable native clipboard APIs report a
 failure. Physical devices, remote sessions and replay do not offer these actions.
 

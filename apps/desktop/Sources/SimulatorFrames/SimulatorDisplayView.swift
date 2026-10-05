@@ -118,6 +118,9 @@ public final class SimulatorButtons {
 
   public init() {}
 
+  /// Copies text to the controlled guest pasteboard and presses Command-V.
+  public func paste(_ text: String) async -> Bool { await view?.paste(text) ?? false }
+
   /// Reads the controlled guest clipboard only when explicitly requested.
   public func clipboard() async -> String? { await view?.clipboard() }
 
@@ -468,6 +471,27 @@ public final class SimulatorDisplayNSView: NSView {
   private func inputClient() -> SimulatorHID? {
     guard acceptsInput else { return nil }
     return hid
+  }
+
+  func paste(_ text: String) async -> Bool {
+    guard acceptsInput, let udid, let hid = inputClient(), hid.isConnected,
+      (SimulatorKit.usageForKeyCode?(0x37) ?? 0) != 0, (SimulatorKit.usageForKeyCode?(0x09) ?? 0) != 0
+    else { return false }
+    var environment = ProcessInfo.processInfo.environment
+    environment["DEVELOPER_DIR"] = CoreSimulator.developerDir
+    environment["LC_ALL"] = "en_US.UTF-8"
+    var request = ProcessRequest("/usr/bin/xcrun", ["simctl", "pbcopy", udid], environment: environment, timeout: 10)
+    request.input = Data(text.utf8)
+    guard let result = try? await request.run(), result.succeeded, !Task.isCancelled,
+      acceptsInput, self.udid == udid, self.hid === hid, hid.isConnected
+    else { return false }
+    let command: UInt16 = 0x37
+    let v: UInt16 = 0x09
+    hid.hardwareKey(code: command, down: true)
+    hid.hardwareKey(code: v, down: true)
+    hid.hardwareKey(code: v, down: false)
+    hid.hardwareKey(code: command, down: false)
+    return true
   }
 
   func clipboard() async -> String? {
