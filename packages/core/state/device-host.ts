@@ -2,6 +2,13 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { configDir } from '../index.ts';
 import { isJsonObject } from './json-file.ts';
+import {
+  hostedMacosAppSlot,
+  parseHostedMacosChoice,
+  parseHostedMacosDevice,
+  type HostedMacosChoice,
+  type HostedMacosDevice,
+} from './hosted-macos.ts';
 export type HostedDevicePlatform = 'ios' | 'android' | 'macos';
 
 export interface HostedIosChoice {
@@ -27,15 +34,6 @@ export interface HostedAndroidDevice extends HostedAndroidChoice {
   avdName: string;
   serial: string;
   consolePort: number;
-}
-
-export interface HostedMacosChoice {
-  architecture: 'arm64' | 'x86_64';
-  macosVersion: string;
-}
-
-export interface HostedMacosDevice extends HostedMacosChoice {
-  appSlot: number;
 }
 
 export type HostedDevice = HostedIosDevice | HostedAndroidDevice | HostedMacosDevice;
@@ -136,36 +134,6 @@ export function parseHostedAndroidDevice(value: unknown): HostedAndroidDevice | 
   )
     return null;
   return value as unknown as HostedAndroidDevice;
-}
-
-export function hostedMacosAppSlot(value: unknown): value is number {
-  return typeof value === 'number' && Number.isInteger(value) && value >= 1 && value <= 64;
-}
-
-function parseHostedMacosChoice(value: unknown): HostedMacosChoice | null {
-  if (
-    !isJsonObject(value) ||
-    (value.architecture !== 'arm64' && value.architecture !== 'x86_64') ||
-    typeof value.macosVersion !== 'string' ||
-    !/^\d+(\.\d+){0,2}$/.test(value.macosVersion)
-  )
-    return null;
-  return { architecture: value.architecture, macosVersion: value.macosVersion };
-}
-
-export function parseHostedMacosDevice(value: unknown): HostedMacosDevice | null {
-  if (
-    !isJsonObject(value) ||
-    !parseHostedMacosChoice(value) ||
-    !hostedMacosAppSlot(value.appSlot) ||
-    Object.keys(value).some((key) => !['architecture', 'macosVersion', 'appSlot'].includes(key))
-  )
-    return null;
-  return value as unknown as HostedMacosDevice;
-}
-
-export function hostedMacosBundleId(bundleId: string, appSlot: number): string {
-  return `${bundleId}.hosted${appSlot}`;
 }
 
 /** Android Emulator -help-port defines the supported even console ports as 5554 through 5584. */
