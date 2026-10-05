@@ -87,8 +87,8 @@ The supervisor owns a process-identity claim with the app as its child. Stop
 signals only verified recorded identities. An unverifiable or malformed owner
 refuses with STIM_MACOS_OWNER_UNVERIFIED; other apps remain untouched.
 
-Stim Desktop shows this app in its workspace, with Build and run, Refresh preview,
-Open app and Stop. Capture and Open app verify the recorded executable, bundle
+Stim Desktop shows this app in its workspace, with Build and run, Open app (local
+apps only) and Stop, and a live preview that updates itself while the app runs. Capture and Open app verify the recorded executable, bundle
 identifier, PID and process start time. Open app rechecks that the captured window
 is still the app's front window, or raises the pinned one, then activates that
 owned app for normal native input.

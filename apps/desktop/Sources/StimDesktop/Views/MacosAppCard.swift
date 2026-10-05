@@ -22,18 +22,16 @@ struct MacosAppCard: View {
           .font(.stim(.headline))
         Spacer()
         if app.host == nil, app.state == "running" || app.state == "orphaned" {
-          IconButton(systemImage: "arrow.clockwise", help: "Refresh preview \u{2014} capture the app's window again") {
-            previewRequest += 1
-          }
-          .disabled(refreshing)
           IconButton(
-            systemImage: "arrow.up.forward.app",
-            help: "Open app \u{2014} bring the captured window to the front for normal input"
-          ) { Task { await capture.openApp() } }
+            systemImage: "arrow.up.forward.app", help: "Open app \u{2014} brings the app's window to the front on this Mac"
+          ) {
+            Task { await capture.openApp() }
+          }
           .disabled(capture.image == nil || refreshing)
         }
         if app.host != nil || app.state == "running" || app.state == "orphaned" {
-          IconButton(systemImage: "stop.fill", tint: Palette.error, help: "Stop \u{2014} quit this workspace's app") {
+          IconButton(systemImage: "stop.fill", tint: Palette.error, help: "Stop \u{2014} runs stim stop for this workspace's app")
+          {
             actions.run("Stop \(app.product)", StimCommand(["stop"], cwd: workspace))
           }
         }
@@ -41,6 +39,11 @@ struct MacosAppCard: View {
           actions.run("Build \(app.product)", StimCommand(runArguments, cwd: workspace))
         }
         .nativeControlStyle(.primary)
+        .help(
+          app.host == nil
+            ? "Builds the Swift package and launches the app"
+            : "Builds the Swift package and launches the app on \(app.host?.machine ?? "the host")"
+        )
         .disabled(app.build.state == "running" || actions.active(for: workspace) != nil)
       }
       HStack(spacing: Space.sm) {
@@ -273,6 +276,7 @@ private struct MacosWindowMenu: View {
   private var app: MacosApp?
   private var window: SCWindow?
   private var follower: Task<Void, Never>?
+  private var retryAt: ContinuousClock.Instant?
   private let context = CIContext()
 
   func start(_ app: MacosApp) async {
@@ -304,6 +308,7 @@ private struct MacosWindowMenu: View {
 
   private func follow(_ app: MacosApp) async {
     guard self.app?.launchId == app.launchId, let pid = app.app?.pid else { return }
+    if stream == nil, let retryAt, ContinuousClock.now < retryAt { return }
     let read = await Task.detached { Result { try OwnedAppWindowReader.selection(pid: pid) } }.value
     guard self.app?.launchId == app.launchId, matches(app) else { return }
     guard case .success(let read) = read else { return }
@@ -337,10 +342,11 @@ private struct MacosWindowMenu: View {
       else { return }
       let filter = SCContentFilter(desktopIndependentWindow: next)
       let configuration = SCStreamConfiguration()
-      configuration.width = Int((filter.contentRect.width * CGFloat(filter.pointPixelScale)).rounded(.up))
-      configuration.height = Int((filter.contentRect.height * CGFloat(filter.pointPixelScale)).rounded(.up))
+      let scale = min(CGFloat(filter.pointPixelScale), 1280 / max(filter.contentRect.width, 1))
+      configuration.width = Int((filter.contentRect.width * scale).rounded(.up))
+      configuration.height = Int((filter.contentRect.height * scale).rounded(.up))
       configuration.ignoreShadowsSingleWindow = true
-      configuration.minimumFrameInterval = CMTime(value: 1, timescale: 15)
+      configuration.minimumFrameInterval = CMTime(value: 1, timescale: 5)
       configuration.queueDepth = 3
       configuration.showsCursor = false
       if let stream {
@@ -363,6 +369,7 @@ private struct MacosWindowMenu: View {
     } catch {
       if OwnedAppWindowReader.screen(pid: pid)?.contains(where: { $0.id == selection.current.id }) == true {
         self.error = error.localizedDescription
+        retryAt = .now.advanced(by: .seconds(5))
       }
     }
   }
@@ -412,7 +419,7 @@ private struct MacosWindowMenu: View {
       self.stream = nil
       self.image = nil
       if let id = self.window?.windowID, OwnedAppWindowReader.screen(pid: pid)?.contains(where: { $0.id == id }) == true {
-        self.follower?.cancel()
+        self.retryAt = .now.advanced(by: .seconds(5))
         self.error = error.localizedDescription
       }
     }

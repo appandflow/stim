@@ -113,8 +113,8 @@ locally with the same supervisor and ownership checks. The build record carries
 `offloadedTo` for a remote build or `offloadFallback` for a fallback, and build
 logs show placement and its reason.
 
-Stim Desktop offers **Build and run**, **Refresh preview**, **Open app** and **Stop** on the
-workspace's app card. The preview follows the app's front standard window, its
+Stim Desktop offers **Build and run**, **Open app** (for an app on this Mac) and **Stop** on the
+workspace's app card, with a live preview that updates itself while the app runs. The preview follows the app's front standard window, its
 main window with any attached sheet, as the app opens, switches, closes or resizes
 windows. It never captures another process's windows, menus or the desktop. Without
 **Device Control and Data Access** permission Stim cannot tell which window is in
