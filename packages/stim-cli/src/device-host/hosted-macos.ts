@@ -238,6 +238,7 @@ function agentAccess(
 export interface HostedMacosRun {
   placement: HostedMacosPlacement;
   launched: true | 'unverified';
+  arguments: string[];
 }
 
 /**
@@ -251,6 +252,7 @@ export async function placeHostedMacos(
     root,
     bundle,
     bundleId,
+    arguments: requestedArguments,
     recorded,
     reserved,
     note,
@@ -258,6 +260,7 @@ export async function placeHostedMacos(
     root: string;
     bundle: string;
     bundleId: string;
+    arguments: string[];
     recorded: HostedMacosPlacement | undefined;
     reserved: (placement: HostedMacosPlacement) => void;
     note: (line: string) => void;
@@ -305,7 +308,13 @@ export async function placeHostedMacos(
   const manifest = Buffer.from(JSON.stringify(files));
   content.set(sha256(manifest), () => manifest);
   const ids = { session: session.id, attempt: appAttempt };
-  const offer = { ...ids, bundleId, mode: 'release', manifest: { sha256: sha256(manifest), size: manifest.length } };
+  const offer = {
+    ...ids,
+    bundleId,
+    mode: 'release',
+    ...(requestedArguments.length ? { arguments: requestedArguments } : {}),
+    manifest: { sha256: sha256(manifest), size: manifest.length },
+  };
   note(`Delivering ${files.length} files to ${host.machine} (macOS ${device.macosVersion}, ${device.architecture})`);
   await upload(host, ids, (await call(host, 'device-host.app.offer', offer)).missing, content);
   await upload(host, ids, (await call(host, 'device-host.app.offer', offer)).missing, content);
@@ -322,10 +331,14 @@ export async function placeHostedMacos(
     await sleep(POLL_MS);
     delivery = await call(host, 'device-host.app.attach', ids);
   }
+  const appliedArguments = (delivery.arguments as string[] | undefined) ?? [];
+  if (JSON.stringify(appliedArguments) !== JSON.stringify(requestedArguments))
+    note(`${host.machine} did not apply macos.arguments. Update stim-server on that host.`);
   if (typeof delivery.notice === 'string') note(delivery.notice);
   return {
     placement: { ...placement, agent: agentAccess(root, host.credential, delivery.agent, note) },
     launched: delivery.launched === true ? true : 'unverified',
+    arguments: appliedArguments,
   };
 }
 

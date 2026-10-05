@@ -59,7 +59,6 @@ export async function runMacos(
             );
           }
           if (host) (await connectHost(host)).connection.close();
-          if (host && macos.arguments?.length) note('macos.arguments are not passed to a hosted app.');
           if (!previous?.host) await stopMacosAppHeld(root);
           upsertProject(root, {});
           recordWorkspaceUse(root);
@@ -86,6 +85,7 @@ export async function runMacos(
               root,
               bundle: record.bundle,
               bundleId: record.bundleId,
+              arguments: macos.arguments ?? [],
               recorded: previous?.host,
               reserved: (reserved) => {
                 placement = reserved;
@@ -96,6 +96,7 @@ export async function runMacos(
             const placed: MacosAppRecord = {
               ...record,
               supervisor: undefined,
+              arguments: run.arguments,
               host: run.placement,
               hostLaunched: run.launched,
             };

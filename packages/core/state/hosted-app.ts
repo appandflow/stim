@@ -16,6 +16,7 @@ export interface HostedAppOffer {
   bundleId: string;
   mode: 'development' | 'release';
   devClientScheme?: string;
+  arguments?: string[];
   manifest: { sha256: string; size: number };
 }
 
@@ -64,12 +65,24 @@ export function parseHostedAppOffer(value: unknown): HostedAppOffer | null {
     value.manifest.size > 8 * 1024 ** 2
   )
     return null;
+  if (value.arguments !== undefined) {
+    if (
+      !Array.isArray(value.arguments) ||
+      value.arguments.length > 32 ||
+      value.arguments.some(
+        (argument) => typeof argument !== 'string' || argument.length > 1024 || /[\0\r\n]/.test(argument),
+      ) ||
+      value.arguments.reduce((total, argument) => total + argument.length, 0) > 8192
+    )
+      return null;
+  }
   return {
     session: value.session,
     attempt: value.attempt,
     bundleId: value.bundleId,
     mode: value.mode,
     ...(typeof value.devClientScheme === 'string' ? { devClientScheme: value.devClientScheme } : {}),
+    ...(value.arguments?.length ? { arguments: value.arguments } : {}),
     manifest: { sha256: value.manifest.sha256, size: value.manifest.size },
   };
 }
