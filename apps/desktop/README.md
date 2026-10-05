@@ -960,7 +960,7 @@ follows `machines.update.status` every 2 seconds:
 - the restart;
 - the outcome, or the refusal (for example, the setting the machine needs).
 
-If the machine stops answering for 5 minutes, or answers for 90 seconds without an update running or an outcome, the update shows as failed with the reason.
+If the machine stops answering for 5 minutes, or answers for 4 minutes without an update running or an outcome, the update shows as failed with the reason.
 Then the row checks the machine again. **Install this Mac's build on build
 machines automatically** (off by default) does the same the next time Desktop
 checks a machine that reports another Stim build. It runs once per machine and

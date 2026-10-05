@@ -84,14 +84,17 @@ final class BuildMachinesModel {
         if status.remote != nil, phase == .restarting {
           let since = idleSince ?? ContinuousClock.now
           idleSince = since
-          if ContinuousClock.now - since > .seconds(90) {
-            phase = .failed("\(entry) ended the update without recording an outcome; check its update.log.")
+          if ContinuousClock.now - since > .seconds(240) {
+            phase = .failed(
+              "\(entry) ended the update without recording an outcome. There, see ~/Library/Application Support/Stim/services/<label>/update.log."
+            )
           }
         } else {
           idleSince = nil
         }
       } catch {
         phase = .restarting
+        idleSince = nil
         unreachable = error.localizedDescription
       }
       if let unreachable, !phase.isDone {
