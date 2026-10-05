@@ -17,7 +17,7 @@ struct Toast: Identifiable {
   var body: String?
   var action: Action?
   /// A sticky toast stays until the user acts on it or dismisses it; any other one leaves after
-  /// six seconds, unless the pointer is over it, its action holds keyboard focus, or VoiceOver is running.
+  /// the toast lifetime, unless the pointer is over it, its action holds keyboard focus, or VoiceOver is running.
   var sticky = false
   /// Showing a toast replaces any shown one with the same key.
   var key: String?
@@ -59,8 +59,6 @@ final class ToastCenter: ObservableObject {
     announce(toast)
   }
 
-  /// VoiceOver users need time to reach a toast, so no toast auto-dismisses while it runs, including one that
-  /// was already showing when it turned on.
   func voiceOverChanged(_ on: Bool) {
     guard on != voiceOver else { return }
     voiceOver = on
