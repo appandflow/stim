@@ -16,6 +16,7 @@ import type { BuildHandoff } from '../offload/client.ts';
 import { validateInfoPlist } from '../macos/stage.ts';
 import { stopMacosAppHeld } from '../macos/stop.ts';
 import { createNdjsonWriter } from '../ndjson.ts';
+import { resolveBuildPlacement, parseBuildMachineOption } from '../offload/selection.ts';
 import { spawnEntry } from '../spawn-entry.ts';
 import { upsertProject } from '../workspace/config.ts';
 import { ensureWorkspaceStorage, workspaceDir, workspaceLogsDir } from '../workspace/paths.ts';
@@ -32,15 +33,18 @@ export async function runMacos(
   root: string,
   note: (line: string) => void = console.error,
   host?: string,
+  buildMachineFlag?: string,
 ): Promise<MacosAppRecord> {
   if (process.platform !== 'darwin') throw new Error('stim macos requires a Mac with Swift installed.');
   root = realpathSync(root);
   if (!existsSync(join(root, 'Package.swift')))
     throw new Error('Run stim macos from the directory containing Package.swift.');
-  ensureWorkspaceStorage(root);
   const settings = resolveSettings({ projectPath: root, gitCommonDir: gitCommonDir(root), repoRoot: repoRoot(root) });
   const [shape] = settingShapeErrors(settings);
   if (shape) throw new Error(`${shape} ${SETTING_SHAPE_REMEDY}`);
+  const selected = resolveBuildPlacement(buildMachineFlag);
+  if (selected.failure) throw Object.assign(new Error(selected.failure.message), selected.failure);
+  const buildMachine = selected.selected;
   const macos = settings.macos as
     | { product?: string; infoPlist?: string; arguments?: string[]; resources?: unknown; assetCatalog?: unknown }
     | undefined;
@@ -50,6 +54,7 @@ export async function runMacos(
       { code: 'STIM_BAD_ARG' },
     );
   }
+  ensureWorkspaceStorage(root);
   return withNativeBuildRun(
     root,
     { command: 'macos', platform: 'macos' },
@@ -81,7 +86,7 @@ export async function runMacos(
             launchId: randomUUID(),
             arguments: macos.arguments ?? [],
             supervisor: macosProcess(process.pid),
-            build: { state: 'running', startedAt: new Date().toISOString() },
+            build: { state: 'running', startedAt: new Date().toISOString(), buildMachine },
             ...(previous?.host ? { host: previous.host, hostLaunched: previous.hostLaunched ?? false } : {}),
           };
           const handoff = await buildBundle(root, macos.infoPlist!, record, host !== undefined, note, macos);
@@ -152,6 +157,7 @@ async function buildBundle(
       writer,
       note,
       record: record.build,
+      buildMachine: record.build.buildMachine!,
       resources: extras.resources,
       assetCatalog: extras.assetCatalog,
     });
@@ -179,6 +185,9 @@ async function buildBundle(
           finishedAt: new Date().toISOString(),
           durationMs: Date.now() - started,
           error: message,
+          ...('code' in Object(error) && typeof (error as { code?: unknown }).code === 'string'
+            ? { errorCode: (error as { code: string }).code }
+            : {}),
         },
       },
     });
@@ -231,12 +240,21 @@ export default function macosCommand(program: Command): void {
   program
     .command('macos')
     .description('Build and launch an owned Swift Package macOS Debug app.')
+    .option(
+      '--build-machine <value>',
+      'Build on auto, local, or one named machine; a name refuses without fallback',
+      parseBuildMachineOption,
+    )
     .option('--json', 'print one launch payload; build output goes to stderr')
     .option('--host <machine>', 'run it on this approved hosting Mac from hosting.machines')
-    .action(async (options: { json?: boolean; host?: string }) => {
+    .action(async (options: { json?: boolean; host?: string; buildMachine?: string }) => {
       const root = findProjectRoot(process.cwd());
       if (!root) throw new Error('Run stim macos from the Swift Package directory.');
-      const record = await runMacos(root, console.error, options.host);
+      const record = await runMacos(root, console.error, options.host, options.buildMachine).catch((error) => {
+        const remedy = (error as { remedy?: unknown }).remedy;
+        if (typeof remedy === 'string') console.error(`remedy: ${remedy}`);
+        throw error;
+      });
       if (options.json) console.log(JSON.stringify(launchPayload(record)));
       else if (record.host)
         console.log(

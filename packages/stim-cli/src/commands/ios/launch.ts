@@ -618,6 +618,8 @@ export async function finishIosRun({
   const {
     hit: cacheHit,
     providerName,
+    buildMachine,
+    builtOn,
     offloadedTo,
     offloadFallback,
     readEnabled: useBuildCache,
@@ -976,6 +978,8 @@ export async function finishIosRun({
     launchState,
     launchWarning,
     providerName,
+    buildMachine,
+    builtOn,
     offloadedTo,
     offloadFallback,
     closeWriter,

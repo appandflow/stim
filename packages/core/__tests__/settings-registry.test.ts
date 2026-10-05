@@ -1,4 +1,4 @@
-import { coerceSettingText, settingValueError, type SettingDefinition } from '../state/settings-registry.ts';
+import { coerceSettingText, settingValueError, SETTINGS, type SettingDefinition } from '../state/settings-registry.ts';
 
 const BOOLEAN_SETTING: SettingDefinition = {
   key: 'test.enabled',
@@ -41,4 +41,12 @@ test('a string-kind setting is left as text, never JSON-decoded', () => {
     env: 'STIM_TEST_NAME',
   };
   expect(coerceSettingText(STRING_SETTING, 'auto')).toBe('auto');
+});
+
+test('offload.machine validates placement text and rejects empty or non-string settings', () => {
+  const setting = SETTINGS.find((entry) => entry.key === 'offload.machine')!;
+  for (const value of ['auto', 'local', 'mini', 'mini.tail.ts.net:8443'])
+    expect(settingValueError(setting, value)).toBeNull();
+  for (const value of ['', ' ', 'bad name', 'mini:abc', 'mini:0', 'mini:65536', 12, false])
+    expect(settingValueError(setting, value)).not.toBeNull();
 });

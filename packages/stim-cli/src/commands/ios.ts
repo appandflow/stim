@@ -52,6 +52,7 @@ import { chooseLanAddress, lanOriginUrlFor } from '../engine/ios-lan.ts';
 import { ownedSessionName } from '../engine/eas-simulator.ts';
 import { createRunRecorder, statsProjectKey, type RunEstimates } from '../engine/stats.ts';
 import { COMPILATION_CACHE_NOT_RUN } from '../engine/xcode.ts';
+import { resolveBuildPlacement, parseBuildMachineOption } from '../offload/selection.ts';
 import type { NdjsonWriter } from '../ndjson.ts';
 import type { ReclaimedStep } from '../budget.ts';
 import { workspaceLogsDir } from '../workspace/paths.ts';
@@ -122,6 +123,11 @@ export function registerIos(program: Command, deps: Partial<IosDeps> = {}): void
       'Download a matching EAS development build; on a miss, print the build command without running it',
     )
     .option('--slot <name>', 'Reusable device slot within this workspace (default: default)', parseDeviceSlotOption)
+    .option(
+      '--build-machine <value>',
+      'Build on auto, local, or one named machine; a name refuses without fallback',
+      parseBuildMachineOption,
+    )
     .option('--json', 'Emit the facts as a single JSON line on stdout; every other line goes to stderr')
     .option(
       '--plan',
@@ -247,6 +253,22 @@ function explicitSchemeRefusal(root: string, scheme: string | undefined, isExpo:
   return d.resolveScheme(project, { scheme }).error ?? null;
 }
 
+function resolveIosBuildSetup(
+  flag: string | undefined,
+  settings: ReturnType<IosDeps['resolveSettings']>,
+): { ok: true; buildMachine: string; optimizations: Optimizations } | { ok: false; failure: FailArgs } {
+  const placement = resolveBuildPlacement(flag);
+  if (placement.failure) return { ok: false, failure: { ...placement.failure, setup: true } };
+  try {
+    return { ok: true, buildMachine: placement.selected, optimizations: resolveOptimizations(settings) };
+  } catch (error) {
+    return {
+      ok: false,
+      failure: { code: 'STIM_BAD_ARG', message: (error as Error).message, remedy: SETTING_SHAPE_REMEDY },
+    };
+  }
+}
+
 function iosSlotLogFile(root: string, slot: string): string {
   return slot === 'default'
     ? buildLogFile(root)
@@ -358,9 +380,19 @@ async function runIos(
 
   let compilationCache: CompilationCacheActivity = COMPILATION_CACHE_NOT_RUN;
   let reclaimed: ReclaimedStep[] = [];
+  let buildMachine = 'auto';
   let builtConfiguration: string | null = null;
 
-  const fail = ({ code, message, remedy = null, lines = [], logPath = null, build = null, lease }: FailArgs): null => {
+  const fail = ({
+    code,
+    message,
+    remedy = null,
+    lines = [],
+    logPath = null,
+    build = null,
+    lease,
+    setup = false,
+  }: FailArgs): null => {
     ({ code, message, remedy, lines } = cancelledFailure(PLATFORM, { code, message }) ?? {
       code,
       message,
@@ -376,6 +408,7 @@ async function runIos(
       writeLastBuild(
         root,
         lastBuildRecord({
+          buildMachine,
           ...build,
           configuration: builtConfiguration,
           startedAt,
@@ -385,7 +418,7 @@ async function runIos(
         }),
       );
     note(chalk.red(phaseLine('failed', code)));
-    recordRun({ failed: true, durationMs: elapsed() });
+    if (!setup) recordRun({ failed: true, durationMs: elapsed() });
     if (json) {
       console.log(
         JSON.stringify({
@@ -424,12 +457,10 @@ async function runIos(
       remedy: SETTING_SHAPE_REMEDY,
     });
   }
-  let optimizations: Optimizations;
-  try {
-    optimizations = resolveOptimizations(settings);
-  } catch (error) {
-    return fail({ code: 'STIM_BAD_ARG', message: (error as Error).message, remedy: SETTING_SHAPE_REMEDY });
-  }
+  const setup = resolveIosBuildSetup(opts.buildMachine, settings);
+  if (!setup.ok) return fail(setup.failure);
+  buildMachine = setup.buildMachine;
+  const { optimizations } = setup;
   const buildProfile = optimizationBuildProfile('ios', optimizations);
   const cacheProviderConfig = d.resolveCacheProviderConfig(settingsContext);
   for (const key of unknownSettingKeys(settings)) {
@@ -823,6 +854,7 @@ async function runIos(
           configuration,
           buildScheme,
           buildProfile,
+          buildMachine,
           isExpo,
           remoteDestination: Boolean(remoteDevice),
           simulatorArch: simulatorBuildArch({ physical, remoteArch, hostArch: d.hostSimulatorArch(), configuration }),

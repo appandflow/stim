@@ -1,3 +1,5 @@
+import { registerIos } from '../commands/ios.ts';
+import { registerAndroid } from '../commands/android.ts';
 import { Command } from 'commander';
 import {
   AGENT_TOOLS,
@@ -52,7 +54,12 @@ function allBodies(): string[] {
   return bodies;
 }
 
-const NOT_A_REFUSAL_CODE = new Set(['STIM_HOME', 'STIM_ANDROID_CAS_TOOLCHAIN', 'STIM_BACKGROUND_LAUNCH']);
+const NOT_A_REFUSAL_CODE = new Set([
+  'STIM_HOME',
+  'STIM_ANDROID_CAS_TOOLCHAIN',
+  'STIM_BACKGROUND_LAUNCH',
+  ...SETTINGS.flatMap((setting) => (setting.env ? [setting.env] : [])),
+]);
 
 function scrapedCodes(source: string): Set<string> {
   return new Set(
@@ -254,6 +261,7 @@ test('the errors topic documents every code the engine can emit under a command'
   const body = renderTopic('errors');
   assert(body);
   const sources = [
+    'offload/selection.ts',
     'workspace/config.ts',
     'engine/workspace-process-lock.ts',
     'engine/build-slots.ts',
@@ -264,7 +272,9 @@ test('the errors topic documents every code the engine can emit under a command'
     .map((f) => readFileSync(new URL(`../${f}`, import.meta.url), 'utf-8'))
     .join('\n');
   const codes = new Set(
-    [...sources.matchAll(/(?:code:\s*|\.code\s*=\s*)'(STIM_[A-Z_]+)'/g)].map((m) => m[1] as string),
+    [...sources.matchAll(/(?:code:\s*|\.code\s*=\s*|readonly code\s*=\s*)'(STIM_[A-Z_]+)'/g)].map(
+      (m) => m[1] as string,
+    ),
   );
   expect(codes.size).toBeGreaterThan(0);
   for (const code of codes) {
@@ -784,3 +794,18 @@ test('the macos guide covers the declared command flags and project settings', (
   expect([...keys, ...flags].filter((name) => !body.includes(name!))).toEqual([]);
   expect(renderTopic('agent')).toContain('stim guide macos');
 });
+
+test.each([registerIos, registerAndroid, macosCommand])(
+  'build command %s parses placement and rejects empty names',
+  (register) => {
+    const program = new Command().exitOverride().configureOutput({ writeErr: () => {} });
+    register(program);
+    const command = program.commands[0]!;
+    command.parseOptions(['--build-machine', 'mini']);
+    expect(command.opts().buildMachine).toBe('mini');
+    expect(() => command.parseOptions(['--build-machine', ''])).toThrow(
+      expect.objectContaining({ code: 'commander.invalidArgument' }),
+    );
+    expect(renderSection('lifecycle', 'options')).toContain('--build-machine');
+  },
+);

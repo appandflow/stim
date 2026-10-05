@@ -1061,3 +1061,47 @@ test('status lists worktrees with no environment for every registered repository
     rmSync(base, { recursive: true, force: true });
   }
 });
+
+test.each([
+  ['mini', 'mini', false, 'ok', undefined, 'mini'],
+  ['local', 'here', false, 'ok', undefined, 'here'],
+  ['mini', undefined, 'local', 'ok', undefined, 'none (cache)'],
+  ['mini', undefined, false, 'failed', 'STIM_OFFLOAD_REFUSED', 'none'],
+])(
+  'status exposes selected %s and actual %s placement in plain text and JSON',
+  async (buildMachine, builtOn, cacheHit, status, errorCode, actual) => {
+    const root = join(tmpHome, 'placement-app');
+    mkdirSync(root);
+    writeFileSync(join(root, 'package.json'), '{}');
+    saveConfig(makeConfig({ version: 2, projects: { [root]: { metroPort: null, platforms: {} } } }));
+    writeWorkspaceState(root, {
+      lastIosBuild: {
+        platform: 'ios',
+        startedAt: '2026-10-01T12:00:00.000Z',
+        status,
+        cacheHit,
+        buildMachine,
+        ...(builtOn ? { builtOn } : {}),
+        ...(errorCode ? { errorCode } : {}),
+      },
+    });
+    const logs = await runStatus();
+    expect(logs.join('\n')).toContain(`build machine ${buildMachine}, built on ${actual}`);
+    const program = new Command();
+    statusCommand(program);
+    const lines: string[] = [];
+    const log = vi.spyOn(console, 'log').mockImplementation((line) => {
+      lines.push(String(line));
+    });
+    try {
+      await program.parseAsync(['node', 'stim', 'status', '--json']);
+    } finally {
+      log.mockRestore();
+    }
+    const report = JSON.parse(lines[0]!).environments.find((env: { path: string }) => env.path === root)?.lastBuilds
+      .ios;
+    expect(report).toMatchObject({ buildMachine });
+    expect(report.builtOn).toBe(builtOn);
+    expect(report.errorCode).toBe(errorCode);
+  },
+);

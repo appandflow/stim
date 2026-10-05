@@ -92,6 +92,7 @@ export interface StimConfig {
   hosting?: { machines?: unknown; agentDriver?: unknown };
   server?: { acceptClientBuilds?: unknown };
   offload?: {
+    machine?: unknown;
     machines?: unknown;
     mode?: unknown;
     workerRoot?: unknown;

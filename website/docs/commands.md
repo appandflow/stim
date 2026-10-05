@@ -245,6 +245,16 @@ build can compile on a paired build machine instead: see `offload.mode` in
 [machine settings](./settings.md#machine-settings).
 
 - `--configuration <name>` selects an Xcode configuration. The default is Debug.
+- `--build-machine <auto|local|name>` overrides `STIM_OFFLOAD_MACHINE` and
+  `offload.machine`. A name requires that configured, paired worker and fails
+  with `STIM_OFFLOAD_REFUSED` without local fallback. Unlisted or unpaired names refuse at setup before checking the cache, without
+  a build record or failed-run stats. A listed paired name with a cache hit
+  contacts no worker. Prebuild and pod install still run on this Mac before
+  a named offload. A refusal starts no local xcodebuild, Gradle or SwiftPM compile.
+  Run `stim doctor --fix` to ask for build access if not paired; a person on
+  the worker finds the id with `stim-server devices` and approves it with
+  `stim-server devices grant <id> --build`.
+  See [machine settings](./settings.md#machine-settings) for supported builds and remedies.
 - `--scheme <name>` selects an exact shared Xcode scheme when the automatic
   app selection is not the one you need. Explicit schemes have separate build
   caches and DerivedData. This is a build scheme, not the app's URL scheme.
@@ -289,7 +299,9 @@ build can compile on a paired build machine instead: see `offload.mode` in
 - `--no-build-cache` ignores cached artifacts and replaces the matching entry.
 - `--plan` predicts the next build instead of running it. See
   [Predict the next build](#predict-the-next-build).
-- `--json` prints one stable result object on stdout.
+- `--json` prints one stable result object on stdout. It includes `buildMachine`
+  (the selected `auto`, `local`, or machine name) and `builtOn` (`here` or the
+  worker name, absent when no build ran, including cache hits).
 
 A Debug run starts the workspace's dev server as `stim start` would when it is
 not running, including after an idle stop. With `--remote`, it starts it as
@@ -355,6 +367,16 @@ the app, opens it, and checks launch logs. An emulator debug build can compile
 on a paired build machine instead: see `offload.mode` in
 [machine settings](./settings.md#machine-settings).
 
+- `--build-machine <auto|local|name>` overrides `STIM_OFFLOAD_MACHINE` and
+  `offload.machine`. A name requires that configured, paired worker and fails
+  with `STIM_OFFLOAD_REFUSED` without local fallback. Unlisted or unpaired names refuse at setup before checking the cache, without
+  a build record or failed-run stats. A listed paired name with a cache hit
+  contacts no worker. Prebuild and pod install still run on this Mac before
+  a named offload. A refusal starts no local xcodebuild, Gradle or SwiftPM compile.
+  Run `stim doctor --fix` to ask for build access if not paired; a person on
+  the worker finds the id with `stim-server devices` and approves it with
+  `stim-server devices grant <id> --build`.
+  See [machine settings](./settings.md#machine-settings) for supported builds and remedies.
 - `--variant <name>` selects a Gradle variant. The default is `debug`.
 - `--system-image <id>` creates this workspace's owned AVD from that sdkmanager
   package id, overriding `android.systemImage` for one invocation; an id this
@@ -405,7 +427,9 @@ on a paired build machine instead: see `offload.mode` in
 - `--no-build-cache` ignores cached artifacts and replaces the matching entry.
 - `--plan` predicts the next build instead of running it. See
   [Predict the next build](#predict-the-next-build).
-- `--json` prints one stable result object on stdout.
+- `--json` prints one stable result object on stdout. It includes `buildMachine`
+  (the selected `auto`, `local`, or machine name) and `builtOn` (`here` or the
+  worker name, absent when no build ran, including cache hits).
 
 A Debug variant starts the workspace's dev server when it is not running, as
 described for `ios`.
@@ -479,7 +503,7 @@ miss, which native change causes it.
 ## `macos`
 
 ```text
-stim macos [--host <machine>] [--json]
+stim macos [--build-machine <auto|local|name>] [--host <machine>] [--json]
 ```
 
 Builds the explicitly configured Swift Package executable in Debug and launches
@@ -489,7 +513,11 @@ with no Metro or custom build scripts. Workspace logs include compiler output
 and runtime stdout/stderr. `status` reports the app and build, and `stop` signals
 only their verified owners. Stim Desktop can preview one owned window and open
 the verified app for native input on the same Mac using existing permissions.
-`--host <machine>` builds here and runs the app on an approved
+`--build-machine <auto|local|name>` selects build placement as described in
+[machine settings](./settings.md#machine-settings). A name refuses with
+`STIM_OFFLOAD_REFUSED` without fallback; `local` compiles here.
+
+`--host <machine>` runs the built app on an approved
 [`hosting.machines`](./settings.md#machine-settings) Mac over the tailnet; it never
 falls back to a local launch, and `stop` or `worktree remove` stop it there. See the
 [native macOS prototype](./macos.md) for metadata, arguments, hosting and current
@@ -785,7 +813,11 @@ and the setting's entry after the write.
 stim status [--json] [--watch]
 ```
 
-Shows every Stim environment on the machine. The output includes worktrees,
+Shows every Stim environment on the machine. Last builds include `buildMachine`
+(the selection) and `builtOn` (`here` or the worker name, absent when no build
+ran, including cache hits and refusals after setup). Configuration refusals
+create no build record or failed-run stats. Older records may lack
+these additive fields. The output includes worktrees,
 ports, devices, supervisors, builds, logs, capacity, and free disk space.
 Each linked worktree shows its uncommitted changes, commits ahead of and
 behind its upstream, and whether its branch is merged, as a
@@ -1038,9 +1070,13 @@ Each workspace also shows its last build per platform:
 
 In `--json`, an environment with a recorded run carries
 `lastBuilds: { ios?, android? }`, each
-`{ platform, status, cacheHit, cacheSkipped, durationMs, fingerprint, startedAt, finishedAt, errorCode?, missReason?, offloadedTo?, offloadFallback?, diagnostics? }`.
+`{ platform, status, cacheHit, cacheSkipped, durationMs, fingerprint, startedAt, finishedAt, errorCode?, missReason?, buildMachine?, builtOn?, offloadedTo?, offloadFallback?, diagnostics? }`.
 `status` is `ok` or `failed`, and `cacheHit` is `local`, `remote`, or `false`
-when the run compiled or failed before finding an app. `offloadedTo` names the
+when the run compiled or failed before finding an app. `buildMachine` records the
+selected `auto`, `local`, or machine name. `builtOn` records `here` or the worker
+name when a build ran; it is absent on a cache hit or a refusal before building.
+Invalid, unlisted or unpaired selections refuse at setup without a build record.
+`offloadedTo` names the
 build machine that compiled the app; `offloadFallback` is why a run that
 considered offloading built here instead, such as
 `janics-mac-mini: busy (load at or above 2/core; load 8.2/core, 2 builds)`. A failed run whose

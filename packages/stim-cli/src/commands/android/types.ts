@@ -56,6 +56,7 @@ export interface VerifyLaunchResultLike {
 }
 
 export interface FailExtra {
+  setup?: boolean;
   lastBuildStatus?: boolean;
   diagnostics?: string[];
   buildDiagnostics?: readonly unknown[];
@@ -65,6 +66,8 @@ export interface FailExtra {
 }
 
 export interface AndroidRecord {
+  buildMachine?: string;
+  builtOn?: string;
   configuration?: string | null;
   missReason?: BuildMissReason | null;
   fingerprint?: string | null;

@@ -32,9 +32,13 @@ export function lastBuildRecord({
   missReason = null,
   diagnostics = null,
   configuration = null,
+  buildMachine = 'auto',
+  builtOn,
   offloadedTo = null,
   offloadFallback = null,
 }: {
+  buildMachine?: string;
+  builtOn?: string;
   offloadedTo?: string | null;
   offloadFallback?: string | null;
   configuration?: string | null;
@@ -65,6 +69,8 @@ export function lastBuildRecord({
     configuration,
   };
   if (errorCode) record.errorCode = errorCode;
+  record.buildMachine = buildMachine;
+  if (builtOn) record.builtOn = builtOn;
   if (offloadedTo) record.offloadedTo = offloadedTo;
   if (offloadFallback) record.offloadFallback = offloadFallback;
   if (missReason && !cacheLevel(cacheHit)) record.missReason = missReason;
@@ -97,9 +103,13 @@ export function iosFacts({
   webPreviewUrl = null,
   lease,
   devServer = null,
+  buildMachine = 'auto',
+  builtOn,
   offloadedTo = null,
   offloadFallback = null,
 }: {
+  buildMachine?: string;
+  builtOn?: string;
   offloadedTo?: string | null;
   offloadFallback?: string | null;
   slot?: string;
@@ -139,6 +149,8 @@ export function iosFacts({
     cacheKey,
     cacheHit: cacheLevel(cacheHit),
     cacheSkipped: Boolean(cacheSkipped),
+    buildMachine,
+    ...(builtOn ? { builtOn } : {}),
     ...(offloadedTo ? { offloadedTo } : {}),
     ...(offloadFallback ? { offloadFallback } : {}),
     compilationCache,
@@ -224,6 +236,8 @@ export interface ReportIosResultArgs {
   launchState: boolean | string;
   launchWarning?: string;
   providerName: string | null;
+  buildMachine?: string;
+  builtOn?: string;
   offloadedTo?: string | null;
   offloadFallback?: string | null;
   closeWriter: () => void;
@@ -262,6 +276,8 @@ export function reportIosResult({
   launchState,
   launchWarning,
   providerName,
+  buildMachine = 'auto',
+  builtOn,
   offloadedTo = null,
   offloadFallback = null,
   closeWriter,
@@ -288,6 +304,8 @@ export function reportIosResult({
       startedAt,
       status: 'ok',
       configuration: configuration ?? 'Debug',
+      buildMachine,
+      builtOn,
       offloadedTo,
       offloadFallback,
     }),
@@ -318,6 +336,8 @@ export function reportIosResult({
     webPreviewUrl,
     lease,
     devServer,
+    buildMachine,
+    builtOn,
     offloadedTo,
     offloadFallback,
   });

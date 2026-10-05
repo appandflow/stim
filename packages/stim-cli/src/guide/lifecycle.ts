@@ -1330,8 +1330,8 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
         'every flag per command, Android variants and flavors, the per-run simulator model, runtime and system image',
       body: () => `THE OPTION SURFACE, IN FULL
   start           --json --wait <seconds> --remote --reset-cache
-  ios             --slot <name> --json --plan --no-metro-check --no-build-cache --scheme <name> --configuration <name> --device-type <name> --runtime <version> --simulator-app <xcode|siniulator|stim-desktop> --device [udid] --wait <seconds> --no-wait --remote <proxy|eas>
-  android         --slot <name> --json --plan --no-metro-check --no-build-cache --variant <name> --system-image <id> --device-profile <id> --device [serial] --wait <seconds> --no-wait --remote <proxy|eas>
+  ios             --build-machine <auto|local|name> --slot <name> --json --plan --no-metro-check --no-build-cache --scheme <name> --configuration <name> --device-type <name> --runtime <version> --simulator-app <xcode|siniulator|stim-desktop> --device [udid] --wait <seconds> --no-wait --remote <proxy|eas>
+  android         --build-machine <auto|local|name> --slot <name> --json --plan --no-metro-check --no-build-cache --variant <name> --system-image <id> --device-profile <id> --device [serial] --wait <seconds> --no-wait --remote <proxy|eas>
   reload          [ios|android] --json
   device          lock <ios|android> [id] --slot <name> --for <duration> --wait <seconds> --json;
                   unlock [ios|android] --slot <name> --json

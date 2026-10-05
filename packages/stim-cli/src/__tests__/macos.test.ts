@@ -1,3 +1,4 @@
+import { writeConfigSetting } from '../workspace/config.ts';
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import type { ChildProcess } from 'node:child_process';
@@ -23,6 +24,7 @@ import {
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { resolveBundleExtras, stageBundle } from '../macos/stage.ts';
 import * as worktree from '../workspace/worktree.ts';
+import * as stopping from '../macos/stop.ts';
 import { buildMacosBundle } from '../macos/build.ts';
 import { createNdjsonWriter } from '../ndjson.ts';
 import * as offload from '../offload/client.ts';
@@ -195,7 +197,7 @@ describe('macOS build placement and promotion', () => {
     previousDuringBuild = [];
     plist = { CFBundleIdentifier: 'dev.sample', CFBundleExecutable: 'Sample' };
     buildRecord = { state: 'running', startedAt: new Date().toISOString() };
-    vi.spyOn(offload, 'offloadMode').mockReturnValue('force');
+    writeConfigSetting({ scope: 'machine' }, 'offload.mode', 'force');
     vi.spyOn(machines, 'pairedMachines').mockReturnValue([
       { machine: 'mini' } as ReturnType<typeof machines.pairedMachines>[number],
     ]);
@@ -244,7 +246,7 @@ describe('macOS build placement and promotion', () => {
     vi.restoreAllMocks();
   });
 
-  const build = (extras: { resources?: unknown; assetCatalog?: unknown } = {}) =>
+  const build = (extras: { buildMachine?: string; resources?: unknown; assetCatalog?: unknown } = {}) =>
     buildMacosBundle({
       root,
       product: 'Sample',
@@ -255,6 +257,7 @@ describe('macOS build placement and promotion', () => {
       writer,
       note: () => {},
       record: buildRecord,
+      buildMachine: 'auto',
       ...extras,
     });
   function remoteBundle(valid = true): string {
@@ -319,6 +322,84 @@ describe('macOS build placement and promotion', () => {
     },
   );
 
+  it.each(['unreachable', 'approval-pending', 'forbidden', 'incompatible', 'busy', 'disk too low'])(
+    'a named worker refusal %s starts no Swift compiler or local slot',
+    async (reason) => {
+      writeConfigSetting({ scope: 'machine' }, 'offload.machines', ['mini', 'other']);
+      vi.mocked(offload.chooseBuildMachine).mockResolvedValue(`mini: ${reason}`);
+      writeConfigSetting({ scope: 'machine' }, 'offload.mode', 'off');
+      await expect(build({ buildMachine: 'mini' })).rejects.toMatchObject({
+        code: 'STIM_OFFLOAD_REFUSED',
+        message: expect.stringContaining(reason),
+      });
+      expect(localBuilds).toBe(0);
+      expect(slots.acquireBuildSlot).not.toHaveBeenCalled();
+      expect(buildRecord).toMatchObject({ buildMachine: 'mini' });
+      expect(buildRecord.builtOn).toBeUndefined();
+      expect(offload.chooseBuildMachine).toHaveBeenCalledWith(
+        expect.objectContaining({ selected: 'mini', machines: [expect.objectContaining({ machine: 'mini' })] }),
+      );
+    },
+  );
+
+  it.each(['swift-failed', 'sync failed', 'start: busy', 'fetch: digest mismatch'])(
+    'a failed strict remote build %s never starts swift locally',
+    async (reason) => {
+      writeConfigSetting({ scope: 'machine' }, 'offload.machines', ['mini']);
+      vi.spyOn(offload, 'offloadBuild').mockResolvedValue({ ok: false, machine: 'mini', reason });
+      await expect(build({ buildMachine: 'mini' })).rejects.toMatchObject({
+        code: 'STIM_OFFLOAD_REFUSED',
+        message: expect.stringContaining(reason),
+      });
+      expect(localBuilds).toBe(0);
+      expect(slots.acquireBuildSlot).not.toHaveBeenCalled();
+      expect(readFileSync(join(bundle, 'previous'), 'utf8')).toBe('old');
+    },
+  );
+
+  it('a strict unpaired worker refuses before asking for an offer or running Swift', async () => {
+    writeConfigSetting({ scope: 'machine' }, 'offload.machines', ['mini']);
+    vi.mocked(machines.pairedMachines).mockReturnValue([]);
+    await expect(build({ buildMachine: 'mini' })).rejects.toMatchObject({ code: 'STIM_OFFLOAD_REFUSED' });
+    expect(offload.chooseBuildMachine).not.toHaveBeenCalled();
+    expect(localBuilds).toBe(0);
+    expect(slots.acquireBuildSlot).not.toHaveBeenCalled();
+  });
+
+  it('local overrides force placement and persists actual compilation', async () => {
+    await build({ buildMachine: 'local' });
+    expect(offload.chooseBuildMachine).not.toHaveBeenCalled();
+    expect(localBuilds).toBe(1);
+    expect(buildRecord).toMatchObject({ buildMachine: 'local', builtOn: 'here' });
+  });
+
+  test.each(['invalid', 'not listed', 'not paired'])(
+    'the macos setup refusal %s leaves the running app and its record untouched',
+    async (reason) => {
+      if (process.platform !== 'darwin') return;
+      writeFileSync(join(root, 'Package.swift'), '// swift-tools-version:6.0\n');
+      writeFileSync(
+        join(root, '.stim.json'),
+        JSON.stringify({ macos: { product: 'Sample', infoPlist: 'Info.plist' } }),
+      );
+      const previous = record();
+      writeWorkspaceState(root, { macos: previous });
+      const before = readMacosRecord(root);
+      if (reason === 'not paired') {
+        writeConfigSetting({ scope: 'machine' }, 'offload.machines', ['mini']);
+        vi.mocked(machines.pairedMachines).mockReturnValue([]);
+      }
+      const stop = vi.spyOn(stopping, 'stopMacosAppHeld');
+      await expect(runMacos(root, () => {}, undefined, reason === 'invalid' ? '' : 'mini')).rejects.toMatchObject({
+        code: reason === 'invalid' ? 'STIM_BAD_ARG' : 'STIM_OFFLOAD_REFUSED',
+      });
+      expect(readMacosRecord(root)).toEqual(before);
+      expect(stop).not.toHaveBeenCalled();
+      expect(offload.chooseBuildMachine).not.toHaveBeenCalled();
+      expect(localBuilds).toBe(0);
+      expect(slots.acquireBuildSlot).not.toHaveBeenCalled();
+    },
+  );
   it.each(['icon.icns', 'Assets.car'])('falls back when an older worker omits declared %s', async (missing) => {
     writeFileSync(join(root, 'icon'), 'icon bytes');
     mkdirSync(join(root, 'Assets.xcassets'));
@@ -415,7 +496,7 @@ describe('macOS build placement and promotion', () => {
   });
 
   it('builds locally without asking a machine when offload is off', async () => {
-    vi.mocked(offload.offloadMode).mockReturnValue('off');
+    writeConfigSetting({ scope: 'machine' }, 'offload.mode', 'off');
     expect(await build()).toEqual({ bundleId, offloadedTo: null, offloadFallback: null, handoff: null });
     expect(offload.chooseBuildMachine).not.toHaveBeenCalled();
     expect(localBuilds).toBe(1);
@@ -438,7 +519,7 @@ describe('macOS build placement and promotion', () => {
   });
 
   it('refuses a plist changed by the local build before replacing the previous bundle', async () => {
-    vi.mocked(offload.offloadMode).mockReturnValue('off');
+    writeConfigSetting({ scope: 'machine' }, 'offload.mode', 'off');
     const spawn = getExecutor().spawn;
     setExecutor({
       ...getExecutor(),

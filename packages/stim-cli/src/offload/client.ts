@@ -29,6 +29,7 @@ import { getExecutor } from '../exec.ts';
 import { loadConfig } from '../workspace/config.ts';
 import { pairedMachines, pinnedEndpoint, type Endpoint } from './build-machines.ts';
 import { manifestDigest } from './manifest.ts';
+import { namedBuildMachine, OffloadRefusal } from './selection.ts';
 import { toolchainMismatches, type BuildTarget, type OffloadProblem, type WorkerToolchain } from './toolchain.ts';
 
 const CONNECT_TIMEOUT_MS = 10_000;
@@ -48,9 +49,21 @@ const CHUNK_BYTES = 60 * 1024;
 const MAX_BUFFERED = 8 * 1024 * 1024;
 const DIGEST_BYTES = 32;
 
-export function offloadMode(env: NodeJS.ProcessEnv = process.env): OffloadMode {
+function offloadMode(env: NodeJS.ProcessEnv = process.env): OffloadMode {
   const raw = env.STIM_OFFLOAD_MODE || loadConfig()?.offload?.mode;
   return OFFLOAD_MODES.includes(raw as OffloadMode) ? (raw as OffloadMode) : 'auto';
+}
+
+export function buildPlacementCandidates(selected: string): { mode: OffloadMode; machines: BuildMachineCredential[] } {
+  return {
+    mode: selected === 'local' ? 'off' : offloadMode(),
+    machines:
+      selected === 'local'
+        ? []
+        : namedBuildMachine(selected)
+          ? pairedMachines([selected]).slice(0, 1)
+          : pairedMachines(),
+  };
 }
 
 export function remotePhaseText(name: string, msg: string, machine: string): string {
@@ -77,18 +90,27 @@ export function placementLoad(choice: { offer: BuildOffer }): string {
 /**
  * Whether a build may go to a build machine at all, before any machine is asked. `auto` keeps the build here while
  * this Mac has a free `concurrency.maxBuilds` slot and its load per core is under `offload.maxLoadPerCore`.
+ * A named selection ignores local capacity and mode, and refuses an unsupported build or missing pairing.
  */
 export function offloadPlacement({
   mode,
   machines,
   here,
   unsupported,
+  selected = 'auto',
 }: {
+  selected?: string;
   mode: OffloadMode;
   machines: number;
   here: MachineCapacity;
   unsupported: string | null;
 }): { offload: boolean; reason: string } {
+  if (namedBuildMachine(selected)) {
+    if (unsupported) throw new OffloadRefusal(selected, `${unsupported}, so a named build machine cannot take it`);
+    if (machines === 0) throw new OffloadRefusal(selected, 'no build machine is paired');
+    return { offload: true, reason: `selected with --build-machine ${selected}` };
+  }
+  if (selected === 'local') return { offload: false, reason: '--build-machine local' };
   if (mode === 'off') return { offload: false, reason: 'offload.mode is off' };
   if (machines === 0) return { offload: false, reason: 'no build machine is paired' };
   if (unsupported) return { offload: false, reason: unsupported };
@@ -140,7 +162,8 @@ export function offerProblems(offer: BuildOffer, target: BuildTarget): OffloadPr
  * The asked machines that can take the build, best first, and one reason per machine that cannot. A machine with any
  * `offerProblems` never takes it. In `auto`, a machine must also be expected to build faster than this Mac: while
  * every local build slot is busy any machine that accepts will do, otherwise its load per core must be lower than
- * this Mac's. A machine that reports no load (a stim-server older than capacity) takes an `auto` build only while
+ * this Mac's. A named selection considers only that machine and skips this local-capacity gating.
+ * A machine that reports no load (a stim-server older than capacity) takes an `auto` build only while
  * every local slot is busy. The rest rank warmest first, then least loaded.
  */
 export function pickOffer({
@@ -148,9 +171,11 @@ export function pickOffer({
   here,
   offers,
   target,
+  selected = 'auto',
 }: {
   mode: OffloadMode;
   here: MachineCapacity;
+  selected?: string;
   offers: Array<{ machine: string; offer: BuildOffer | null; failure?: string }>;
   target: BuildTarget;
 }): { order: number[]; reasons: string[] } {
@@ -158,13 +183,14 @@ export function pickOffer({
   const reasons: string[] = [];
   const ranked: Array<{ index: number; score: number; load: number }> = [];
   offers.forEach(({ machine, offer, failure }, index) => {
+    if (namedBuildMachine(selected) && machine !== selected) return;
     if (!offer) return void reasons.push(`${machine}: ${failure ?? 'no offer'}`);
     const problems = offerProblems(offer, target);
     if (problems.length) {
       return void reasons.push(`${machine}: ${problems.map((problem) => problem.reason).join('; ')}`);
     }
     const load = offer.capacity.loadPerCore;
-    if (mode === 'auto' && !slotsFull) {
+    if (selected === 'auto' && mode === 'auto' && !slotsFull) {
       if (typeof load !== 'number') {
         return void reasons.push(`${machine}: capacity unknown (older stim-server) while this Mac has a free slot`);
       }
@@ -502,7 +528,8 @@ interface OfferingMachine {
 
 /**
  * The machine a build goes to, and the other machines that can take it, best first, whose connections stay open
- * until one of them starts the build. When a machine refuses `build.start`, `offloadBuild` moves this choice to the next one in place.
+ * until one of them starts the build. A strict choice has no runners up and never moves; otherwise, when a machine
+ * refuses `build.start`, `offloadBuild` moves this choice to the next one in place.
  */
 export interface OffloadChoice extends OfferingMachine {
   target: BuildTarget;
@@ -546,7 +573,7 @@ async function probeMachine(
 
 /**
  * Asks every paired machine for an offer in parallel and keeps the connection to the one `pickOffer` chooses, or
- * returns why none takes the build.
+ * returns why none takes the build. A named selection probes only its credential and skips auto load gating.
  */
 export async function chooseBuildMachine({
   projectRoot,
@@ -555,6 +582,7 @@ export async function chooseBuildMachine({
   here,
   note,
   machines = pairedMachines(),
+  selected = 'auto',
 }: {
   projectRoot: string;
   target: BuildTarget;
@@ -562,6 +590,7 @@ export async function chooseBuildMachine({
   here: MachineCapacity;
   note: (line: string) => void;
   machines?: BuildMachineCredential[];
+  selected?: string;
 }): Promise<OffloadChoice | string> {
   const started = Date.now();
   let identity: RepoIdentity;
@@ -570,8 +599,10 @@ export async function chooseBuildMachine({
   } catch (error) {
     return `this app is not in a git checkout (${(error as Error).message.split('\n')[0]})`;
   }
+  if (namedBuildMachine(selected)) machines = machines.filter((each) => each.machine === selected).slice(0, 1);
   const asked = await Promise.all(machines.map((credential) => probeMachine(credential, identity)));
   const { order, reasons } = pickOffer({
+    selected,
     mode,
     here,
     target,
@@ -595,7 +626,13 @@ export async function chooseBuildMachine({
       offer: pick.offer,
     };
   });
-  return { ...first!, target, offerMs: Date.now() - started, identity, runnersUp: rest };
+  return {
+    ...first!,
+    target,
+    offerMs: Date.now() - started,
+    identity,
+    runnersUp: rest,
+  };
 }
 
 /** The Gradle choices that shape the APK, so the machine builds what this Mac's cache key describes. */

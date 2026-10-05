@@ -128,6 +128,7 @@ function iosSlotPayload(workspace, slot, deviceType) {
     cacheKey,
     cacheHit: 'local',
     cacheSkipped: false,
+    buildMachine: 'auto',
     compilationCache: { status: 'not-run', hits: null, cacheableTasks: null, hitRatePercent: null },
     waitedForBuild: null,
     appPath: join(stimHome, 'build-cache', cacheKey, 'PromptFixture.app'),

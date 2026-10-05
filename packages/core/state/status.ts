@@ -112,6 +112,10 @@ export interface LastBuildReport {
   finishedAt: string | null;
   errorCode?: string;
   missReason?: BuildMissReason;
+  /** The selected auto, local, or configured machine entry; present on new build records, including cache hits. */
+  buildMachine?: string;
+  /** Where compilation ran: here or a machine name; absent when no build ran. */
+  builtOn?: string;
   /** The build machine that compiled the app when the build was offloaded. */
   offloadedTo?: string;
   /** Why the run built here after it considered offloading; absent when it offloaded or never considered it. */

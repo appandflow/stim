@@ -237,6 +237,8 @@ leased until <time>" for each one.`,
                   the device; it is a page, not a deep link.
   cacheSkipped    true only when --no-build-cache was passed: "nothing was
                   looked up", which is a different fact from "nothing was found"
+  buildMachine    selected auto, local or machine name, including cache hits
+  builtOn         here or machine name when a build ran; absent otherwise
   offloadedTo     only on an app a build machine compiled: its
                   offload.machines entry (see \`guide settings\`). cacheHit is
                   false for it. The Android payload carries it too
@@ -342,7 +344,8 @@ leased until <time>" for each one.`,
                   hw.device.name. Null where systemImage is null, and on an
                   AVD of the old generic profile, which has no hw.device.name
   fingerprint / cacheKey / cacheHit / cacheSkipped / waitedForBuild /
-  appPath / installSkipped / launched
+  appPath / installSkipped / launched / buildMachine / builtOn /
+  offloadedTo / offloadFallback
                   as above -- cacheKey keys on the VARIANT here
                   (<fingerprint>-productionrelease-sim). A Debug artifact for
                   a proven target ABI also ends in that ABI
@@ -1290,7 +1293,7 @@ RULES
 
   lastBuilds   { ios?, android? }, each { platform, status, cacheHit,
                cacheSkipped, durationMs, fingerprint, startedAt, finishedAt,
-               errorCode?, missReason?, offloadedTo?, offloadFallback?,
+               errorCode?, missReason?, buildMachine?, builtOn?, offloadedTo?, offloadFallback?,
                diagnostics? }
 
   status       "ok" or "failed"
@@ -1316,6 +1319,10 @@ RULES
                diagnostic with a file and a line, keyed "<file>:<line>",
                else the errorCode (or "failed") with null file and line.
                Failed runs in a row with the same key failed the same way.
+  Invalid, unlisted or unpaired selections refuse during setup, before cache
+  lookup, and create no lastBuild record or failed-run stats.
+  buildMachine selected auto, local or configured machine entry; always on new build records
+  builtOn      here or machine name; absent when no build ran (cache/refusal)
   offloadedTo  only on a run a build machine compiled: its name
   offloadFallback
                only on a run that considered offloading and built here: one
@@ -1331,7 +1338,7 @@ RULES
     state               running | orphaned | stopped | unverified
     build               { state: running | ok | failed, startedAt,
                           finishedAt?, durationMs?, error?,
-                          offloadedTo?, offloadFallback? }
+                          buildMachine?, builtOn?, errorCode?, offloadedTo?, offloadFallback? }
     host?               { machine, session, appSlot, appAttempt, bundleId,
                           agent } when stim macos --host placed the app on
                           another Mac; it then has no local app or supervisor

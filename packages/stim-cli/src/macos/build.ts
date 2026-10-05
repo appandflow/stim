@@ -5,18 +5,18 @@ import { acquireBuildSlot, releaseBuildSlot } from '../engine/build-slots.ts';
 import { spawnDeclared } from '../engine/spawn-claims.ts';
 import { getExecutor } from '../exec.ts';
 import type { NdjsonWriter } from '../ndjson.ts';
-import { pairedMachines } from '../offload/build-machines.ts';
 import {
   chooseBuildMachine,
   closeOffload,
   offloadBuild,
-  offloadMode,
+  buildPlacementCandidates,
   offloadPlacement,
   placementLoad,
   remotePhaseText,
   type BuildHandoff,
   type OffloadChoice,
 } from '../offload/client.ts';
+import { namedBuildMachine, OffloadRefusal } from '../offload/selection.ts';
 import { macosToolchain } from '../offload/toolchain.ts';
 import { getConcurrencyLimits } from '../workspace/config.ts';
 import { logLines } from './run.ts';
@@ -63,6 +63,7 @@ export async function buildMacosBundle({
   writer,
   note,
   record,
+  buildMachine,
   resources,
   assetCatalog,
 }: {
@@ -75,6 +76,7 @@ export async function buildMacosBundle({
   writer: NdjsonWriter;
   note: (line: string) => void;
   record?: MacosBuild;
+  buildMachine: string;
   resources?: unknown;
   assetCatalog?: unknown;
 }): Promise<{
@@ -83,6 +85,7 @@ export async function buildMacosBundle({
   offloadFallback: string | null;
   handoff: BuildHandoff | null;
 }> {
+  if (record) record.buildMachine = buildMachine;
   validateInfoPlist(root, product, infoPlist);
   const repository = realpathSync(repoRoot(root) ?? root);
   const extras = resolveBundleExtras(root, repository, resources, assetCatalog);
@@ -92,6 +95,7 @@ export async function buildMacosBundle({
   };
   let offloadFallback: string | null = null;
   const fallBack = (reason: string) => {
+    if (namedBuildMachine(buildMachine)) throw new OffloadRefusal(buildMachine, reason);
     offloadFallback = reason;
     if (record) record.offloadFallback = reason;
     writer.write({ src: 'build', platform: 'macos', level: 'warn', event: 'offload_failed', msg: reason });
@@ -114,10 +118,15 @@ export async function buildMacosBundle({
   let choice: OffloadChoice | null = null;
   try {
     try {
-      const mode = offloadMode();
-      const machines = pairedMachines();
+      const { mode, machines } = buildPlacementCandidates(buildMachine);
       const here = machineCapacity();
-      const placement = offloadPlacement({ mode, machines: machines.length, here, unsupported: null });
+      const placement = offloadPlacement({
+        mode,
+        machines: machines.length,
+        here,
+        unsupported: null,
+        selected: buildMachine,
+      });
       if (placement.offload) {
         const chosen = await chooseBuildMachine({
           projectRoot: root,
@@ -125,6 +134,7 @@ export async function buildMacosBundle({
           mode,
           here,
           machines,
+          selected: buildMachine,
           note: (line) => write(`offload: ${line}`),
         });
         if (typeof chosen === 'string') throw new Error(chosen);
@@ -147,7 +157,9 @@ export async function buildMacosBundle({
           },
           stagingDir: join(staging, 'offload'),
           onPhase: (phase, line) => note(remotePhaseText(phase, line, choice!.machine)),
-          onEnter: () => {},
+          onEnter: (phase) => {
+            if (record && ['compile', 'build', 'prebuild', 'pods'].includes(phase)) record.builtOn = choice!.machine;
+          },
           onRecord: (entry) => writer.write({ ...entry, offloadedTo: choice!.machine }),
           note: write,
         });
@@ -170,7 +182,10 @@ export async function buildMacosBundle({
         }
         getExecutor().runFile('codesign', ['--verify', '--strict', outcome.artifactPath]);
         promote(outcome.artifactPath);
-        if (record) record.offloadedTo = outcome.machine;
+        if (record) {
+          record.offloadedTo = outcome.machine;
+          record.builtOn = outcome.machine;
+        }
         return { bundleId, offloadedTo: outcome.machine, offloadFallback: null, handoff: outcome.handoff ?? null };
       }
       write(`placement: here (${placement.reason})`);
@@ -182,6 +197,7 @@ export async function buildMacosBundle({
     let slot: Awaited<ReturnType<typeof acquireBuildSlot>> | undefined;
     try {
       slot = await acquireBuildSlot({ max: getConcurrencyLimits().maxBuilds, root, logFile: writer.file, out: note });
+      if (record) record.builtOn = 'here';
       await tool(
         root,
         ['build', '-c', 'debug', '--product', product, '--scratch-path', scratch, '--jobs', '2'],

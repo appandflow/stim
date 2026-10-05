@@ -268,6 +268,8 @@ function lastBuildReport(platform: StatsPlatform, value: unknown): LastBuildRepo
     finishedAt: Number.isNaN(finished.getTime()) ? null : finished.toISOString(),
     ...(typeof record.errorCode === 'string' ? { errorCode: record.errorCode } : {}),
     ...(reason ? { missReason: reason } : {}),
+    ...(typeof record.buildMachine === 'string' ? { buildMachine: record.buildMachine } : {}),
+    ...(typeof record.builtOn === 'string' ? { builtOn: record.builtOn } : {}),
     ...(typeof record.offloadedTo === 'string' ? { offloadedTo: record.offloadedTo } : {}),
     ...(typeof record.offloadFallback === 'string' ? { offloadFallback: record.offloadFallback } : {}),
     ...(diagnostics.length ? { diagnostics } : {}),
