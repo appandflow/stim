@@ -304,6 +304,7 @@ async function start(
     startupProbeMs?: number;
     startupRetryMs?: number;
     settle?: boolean;
+    service?: ServerOptions['service'];
   } = {},
 ): Promise<number> {
   const stimCli = join(root, 'fake-stim.mjs');
@@ -334,6 +335,7 @@ async function start(
       ...overrides.env,
     },
     tailscaleMonitor: overrides.tailscaleMonitor,
+    service: overrides.service,
     listenRetryMs: overrides.listenRetryMs,
     authTimeoutMs: overrides.authTimeoutMs,
     maxAuthFailures: overrides.maxAuthFailures,
@@ -817,6 +819,7 @@ describe('pairing', () => {
           'duo-frames',
           'workspace-diff',
           'hosted-congestion',
+          'server-update',
         ],
         actions: [],
       },
@@ -1300,6 +1303,40 @@ describe('offloaded builds', () => {
       const viewer = await authed(port);
       expect(await viewer.request('build.offer', { repo: 'app-1' })).toMatchObject({ error: { code: 'forbidden' } });
       expect(await viewer.request('device-host.offer', { platform: 'ios' })).toHaveProperty('error.code', 'forbidden');
+    },
+  );
+
+  test.skipIf(!fakeTailscale)(
+    'lets only a Mac approved for builds or device hosting ask the server to update itself',
+    async () => {
+      const port = await start({
+        service: {
+          label: 'dev.stim.test',
+          node: process.execPath,
+          script: '/nowhere',
+          runsAsService: async () => true,
+        },
+      });
+      const { client } = await buildClient(port);
+      expect(await client.request('server.update.status')).toMatchObject({
+        result: {
+          server: { version: '1.2.3' },
+          service: 'dev.stim.test',
+          acceptsClientBuilds: false,
+          running: null,
+        },
+      });
+      expect(
+        await client.request('server.update.start', { packages: [{ name: 'a.tgz', size: 1, sha256: sha('a') }] }),
+      ).toMatchObject({ error: { code: 'forbidden', message: expect.stringContaining('server.acceptClientBuilds') } });
+      expect(await client.request('server.update.start', { release: 'latest' })).toMatchObject({
+        error: { code: 'bad-request' },
+      });
+      const viewer = await authed(port);
+      expect(await viewer.request('server.update.status')).toMatchObject({ error: { code: 'forbidden' } });
+      expect(await viewer.request('server.update.start', { release: '1.15.0' })).toMatchObject({
+        error: { code: 'forbidden' },
+      });
     },
   );
 

@@ -163,6 +163,65 @@ export function protocolJsonSchema(): JsonSchema {
           },
         },
       },
+      ServerUpdateProgress: {
+        type: 'object',
+        required: ['id', 'by', 'target', 'state', 'startedAt', 'missing', 'log'],
+        additionalProperties: false,
+        properties: {
+          id: { type: 'string' },
+          by: {
+            type: 'object',
+            required: ['id', 'name'],
+            additionalProperties: false,
+            properties: { id: { type: 'string' }, name: { type: 'string' } },
+          },
+          target: { type: 'string' },
+          state: { enum: ['uploading', 'installing'] },
+          startedAt: { type: 'string' },
+          missing: {
+            type: 'array',
+            items: {
+              type: 'object',
+              required: ['name', 'offset'],
+              additionalProperties: false,
+              properties: { name: { type: 'string' }, offset: { type: 'integer', minimum: 0 } },
+            },
+          },
+          log: { type: 'array', items: { type: 'string' } },
+        },
+      },
+      ServerUpdateStatus: {
+        type: 'object',
+        required: ['server', 'service', 'acceptsClientBuilds', 'running', 'last'],
+        additionalProperties: false,
+        properties: {
+          server: {
+            type: 'object',
+            required: ['version', 'stimBuild'],
+            additionalProperties: false,
+            properties: { version: { type: 'string' }, stimBuild: { type: ['string', 'null'] } },
+          },
+          service: { type: ['string', 'null'] },
+          acceptsClientBuilds: { type: 'boolean' },
+          running: { anyOf: [{ $ref: '#/$defs/ServerUpdateProgress' }, { type: 'null' }] },
+          last: {
+            anyOf: [
+              {
+                type: 'object',
+                required: ['at', 'target', 'ok', 'message'],
+                additionalProperties: false,
+                properties: {
+                  at: { type: 'string' },
+                  target: { type: 'string' },
+                  ok: { type: 'boolean' },
+                  message: { type: 'string' },
+                },
+              },
+              { type: 'null' },
+            ],
+          },
+        },
+      },
       HostedAppChunkResult: {
         type: 'object',
         required: ['offset'],
@@ -1338,6 +1397,50 @@ export function protocolJsonSchema(): JsonSchema {
           request('build.cancel', buildJob),
           request('build.artifact', buildJob),
           request('build.attach', buildJob),
+          request('server.update.status'),
+          request('server.update.start', {
+            oneOf: [
+              {
+                type: 'object',
+                required: ['release'],
+                additionalProperties: false,
+                properties: { release: { type: 'string' } },
+              },
+              {
+                type: 'object',
+                required: ['packages'],
+                additionalProperties: false,
+                properties: {
+                  packages: {
+                    type: 'array',
+                    minItems: 1,
+                    maxItems: 8,
+                    items: {
+                      type: 'object',
+                      required: ['name', 'size', 'sha256'],
+                      additionalProperties: false,
+                      properties: {
+                        name: { type: 'string', pattern: '^[A-Za-z0-9][A-Za-z0-9._-]{0,127}\\.tgz$' },
+                        size: { type: 'integer', minimum: 1 },
+                        sha256,
+                      },
+                    },
+                  },
+                },
+              },
+            ],
+          }),
+          request('server.update.chunk', {
+            type: 'object',
+            required: ['id', 'name', 'offset', 'data'],
+            additionalProperties: false,
+            properties: {
+              id: { type: 'string' },
+              name: { type: 'string' },
+              offset: { type: 'integer', minimum: 0 },
+              data: { type: 'string', maxLength: 32768 },
+            },
+          }),
         ],
       },
       ServerResponse: {
@@ -1357,6 +1460,8 @@ export function protocolJsonSchema(): JsonSchema {
                   { $ref: '#/$defs/HostedAppOfferResult' },
                   { $ref: '#/$defs/HostedAppChunkResult' },
                   { $ref: '#/$defs/HostedAppHandoffResult' },
+                  { $ref: '#/$defs/ServerUpdateStatus' },
+                  { $ref: '#/$defs/ServerUpdateProgress' },
                   { $ref: '#/$defs/HelloResult' },
                   { $ref: '#/$defs/ControlBeginResult' },
                   { $ref: '#/$defs/SimulatorOptions' },

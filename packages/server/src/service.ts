@@ -16,7 +16,7 @@ import { createRequire } from 'node:module';
 import { homedir } from 'node:os';
 import { basename, delimiter, dirname, join } from 'node:path';
 import { clearFreeClaimSet, releaseClaim, tryAcquireClaim } from '@stim-cli/core/ownership-claim';
-import { stimBuildDigest } from '@stim-cli/core/state';
+import { isJsonObject, stimBuildDigest } from '@stim-cli/core/state';
 import {
   answersAs,
   DEFAULT_LABEL,
@@ -573,9 +573,57 @@ const REGISTRY = 'https://registry.npmjs.org/';
 const SERVER_PACKAGE = '@stim-cli/server';
 const SERVER_SCRIPT = ['node_modules', '@stim-cli', 'server', 'dist', 'stim-server.mjs'];
 
-const serviceRoot = (label: string) => join(homedir(), 'Library', 'Application Support', 'Stim', 'services', label);
+export const serviceRoot = (label: string): string =>
+  join(homedir(), 'Library', 'Application Support', 'Stim', 'services', label);
 
 export type UpdateSource = { release: string } | { from: string };
+
+/** How the last `service update` of a label ended, whoever ran it. */
+export interface UpdateOutcome {
+  at: string;
+  target: string;
+  ok: boolean;
+  message: string;
+}
+
+const outcomeFile = (label: string) => join(serviceRoot(label), 'last-update.json');
+
+function recordOutcome(label: string, outcome: UpdateOutcome): void {
+  const file = outcomeFile(label);
+  const partial = `${file}.${process.pid}.tmp`;
+  writeFileSync(partial, `${JSON.stringify(outcome)}\n`);
+  renameSync(partial, file);
+}
+
+export function readLastUpdate(label: string): UpdateOutcome | null {
+  try {
+    const value: unknown = JSON.parse(readFileSync(outcomeFile(label), 'utf8'));
+    if (!isJsonObject(value)) return null;
+    const { at, target, ok, message } = value;
+    return typeof at === 'string' &&
+      typeof target === 'string' &&
+      typeof ok === 'boolean' &&
+      typeof message === 'string'
+      ? { at, target, ok, message }
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Whether `label` names a LaunchAgent that `service install` wrote and that serves `port`. */
+export async function runsAsService(label: string, port: number): Promise<boolean> {
+  if (process.platform !== 'darwin') return false;
+  try {
+    const installed = await readInstalled(label);
+    return installed?.managed === true && installed.port === port;
+  } catch {
+    return false;
+  }
+}
+
+export const describeSource = (source: UpdateSource): string =>
+  'release' in source ? `release ${source.release}` : `packages in ${source.from}`;
 
 function serverBuild(script: string): ServerBuild | null {
   try {
@@ -905,22 +953,39 @@ export async function updateService(
   requireMacOs();
   if (!existsSync(plistPath(label))) throw new ServiceError(`${label} is not installed.`);
   return withUpdateClaim(label, async (installed) => {
-    const versions = join(serviceRoot(label), 'versions');
-    const target = await installServer(versions, source, installed.node, log);
-    if (sameFile(installed.script, target.script)) {
-      return [`${label} already runs ${describeBuild(target.build)}.`];
+    const at = new Date().toISOString();
+    try {
+      const notes = await switchToSource(label, installed, source, log);
+      recordOutcome(label, { at, target: describeSource(source), ok: true, message: notes[0]! });
+      return notes;
+    } catch (error) {
+      recordOutcome(label, { at, target: describeSource(source), ok: false, message: (error as Error).message });
+      throw error;
     }
-    await waitForIdle(installed.port, log);
-    log(`Switching ${label} to ${describeBuild(target.build)}.`);
-    const script = realpathSync(target.script);
-    await switchTo(installed, script, target.build);
-    prune(versions, [script, installed.script]);
-    const flag = label === DEFAULT_LABEL ? '' : ` --label ${label}`;
-    return [
-      `${label} now runs ${describeBuild(target.build)} from ${target.dir}.`,
-      `The previous server stays installed: ${installed.script}. \`stim-server service rollback${flag}\` switches back to it.`,
-    ];
   });
+}
+
+async function switchToSource(
+  label: string,
+  installed: InstalledService & { script: string; node: string; port: number },
+  source: UpdateSource,
+  log: (line: string) => void,
+): Promise<string[]> {
+  const versions = join(serviceRoot(label), 'versions');
+  const target = await installServer(versions, source, installed.node, log);
+  if (sameFile(installed.script, target.script)) {
+    return [`${label} already runs ${describeBuild(target.build)}.`];
+  }
+  await waitForIdle(installed.port, log);
+  log(`Switching ${label} to ${describeBuild(target.build)}.`);
+  const script = realpathSync(target.script);
+  await switchTo(installed, script, target.build);
+  prune(versions, [script, installed.script]);
+  const flag = label === DEFAULT_LABEL ? '' : ` --label ${label}`;
+  return [
+    `${label} now runs ${describeBuild(target.build)} from ${target.dir}.`,
+    `The previous server stays installed: ${installed.script}. \`stim-server service rollback${flag}\` switches back to it.`,
+  ];
 }
 
 /** Switches the job back to the server it ran before the last update or rollback, under the same checks. */

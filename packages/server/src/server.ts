@@ -66,6 +66,7 @@ import {
   PUSH_EVENTS,
   PUSH_TOKEN_PATTERN,
   REPLAY_RATES,
+  SERVER_UPDATE_METHODS,
   type BuildPlanResult,
   type DeviceFrameArtwork,
   type MacosWindow,
@@ -105,6 +106,7 @@ import {
 } from './registry.ts';
 import { runStats } from './stats.ts';
 import { readWorkspaceDiff } from './workspace-diff.ts';
+import { ServerUpdates } from './server-update.ts';
 import { Pending, runStim, type CommandLimits } from './stim-command.ts';
 import { readHostPermissions } from './stim-host.ts';
 import {
@@ -188,6 +190,16 @@ export interface ServerOptions {
   buildLimits?: Partial<BuildLimits>;
   deviceHostLimits?: Partial<DeviceHostLimits>;
   hostedRelay?: HostedRelayOptions;
+  /**
+   * The `stim-server service` label this server runs under and the node and script that run its update; without
+   * it the server cannot update itself.
+   */
+  service?: {
+    label: string | null;
+    node: string;
+    script: string;
+    runsAsService?: (label: string, port: number) => Promise<boolean>;
+  };
   /** Looks up the worktrees' pull requests; tests replace GitHub. */
   pullRequests?: PushNotifierOptions['pullRequests'];
 }
@@ -661,6 +673,31 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     adbEmulators,
   });
   const hostedViews = new HostedViews(hostedDevices, control, helperEnv, frameHelper);
+  const ownStimBuild = stimBuildDigest(dirname(options.stimCli));
+  const updates = new ServerUpdates({
+    label: options.service?.label ?? null,
+    port: options.port,
+    build: { version: options.serverVersion, stimBuild: ownStimBuild },
+    node: options.service?.node ?? process.execPath,
+    script: options.service?.script ?? '',
+    env: process.env,
+    runsAsService: options.service?.runsAsService,
+    acceptsClientBuilds: () => loadConfig()?.server?.acceptClientBuilds === true,
+    drain: (reason) => {
+      builds.drain(reason);
+      hostedDevices.drain(reason);
+    },
+    audit: ({ by, target, phase, ok, message }) =>
+      auditSafely({
+        at: new Date().toISOString(),
+        device: by,
+        action: 'server.update',
+        workspace: target,
+        ok,
+        reason: phase,
+        ...(ok ? {} : { error: { code: 'action-failed', message: message.slice(0, AUDIT_FIELD_CHARS) } }),
+      }),
+  });
   const wss = new WebSocketServer({ noServer: true, maxPayload: MAX_PAYLOAD });
   const notificationLog = new NotificationLog(notificationLogFile(serverDir()));
   const push = new PushNotifier({
@@ -1806,6 +1843,40 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       send(socket, 'error' in answer ? { id, error: answer.error } : { id, result: answer.result });
     }
 
+    function machineMethod(
+      id: RequestId,
+      method: string,
+      params: unknown,
+      session: PairedDevice,
+    ): Promise<void> | null {
+      if ((BUILD_METHODS as readonly string[]).includes(method)) return buildMethod(id, method, params, session);
+      if ((SERVER_UPDATE_METHODS as readonly string[]).includes(method))
+        return updateMethod(id, method, params, session);
+      return null;
+    }
+
+    async function updateMethod(id: RequestId, method: string, params: unknown, session: PairedDevice): Promise<void> {
+      const approved =
+        session.identity.kind === 'tailnet' &&
+        (readBuildClients().some((entry) => entry.id === session.id && entry.capabilities.includes('build')) ||
+          readDeviceHostClients().some(
+            (entry) => entry.id === session.id && entry.capabilities.includes('device-host'),
+          ));
+      if (!approved) {
+        return error(
+          id,
+          'forbidden',
+          `${method} needs this Mac's build or device-host approval of the requesting Mac.`,
+        );
+      }
+      if (method === 'server.update.status') return send(socket, { id, result: await updates.status() });
+      const answer =
+        method === 'server.update.start'
+          ? await updates.start({ id: session.id, name: session.name }, params)
+          : updates.chunk(session.id, params);
+      send(socket, 'error' in answer ? { id, error: answer.error } : { id, result: answer.result });
+    }
+
     function handleBinary(frame: Buffer): void {
       if (socket.readyState !== socket.OPEN) return;
       if (!device || !buildSession) {
@@ -1930,9 +2001,8 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
           return error(id, 'forbidden', 'Explicit device-host approval is required.');
         return hostedMethod(id, message.method, message.params, device);
       }
-      if ((BUILD_METHODS as readonly string[]).includes(message.method)) {
-        return buildMethod(id, message.method, message.params, device);
-      }
+      const approvedMachine = machineMethod(id, message.method, message.params, device);
+      if (approvedMachine) return approvedMachine;
       if (!device.capabilities.includes('read')) {
         return error(id, 'forbidden', `${message.method} needs read access, which this connection does not have.`);
       }
@@ -2122,7 +2192,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     name: options.name,
     version: options.serverVersion,
     stim: options.stimVersion,
-    stimBuild: stimBuildDigest(dirname(options.stimCli)),
+    stimBuild: ownStimBuild,
     protocol: PROTOCOL_VERSION,
     stimHome: configDir(),
   } as const;
@@ -2164,6 +2234,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       await control.close();
       await agentDrivers.close();
       await hostedDevices.close();
+      updates.close();
       recorder?.close();
       await Promise.all([
         frames.close(),

@@ -39,6 +39,7 @@ export type Capability = (typeof CAPABILITIES)[number];
  * whose client is behind.
  * `macos-window-select` is `input.window`, which pins the view to a macOS app window named by `macos-windows`,
  * bringing it to the front, or with null resumes following the front window.
+ * `server-update` is `server.update.status`, `server.update.start` and `server.update.chunk`.
  */
 export const FEATURES = [
   'physical-ios',
@@ -54,6 +55,7 @@ export const FEATURES = [
   'duo-frames',
   'workspace-diff',
   'hosted-congestion',
+  'server-update',
 ] as const;
 
 export type Feature = (typeof FEATURES)[number];
@@ -127,7 +129,16 @@ export const METHODS = [
   'device-host.input.rotate',
   'device-host.input.posture',
   'device-host.input.window',
+  'server.update.status',
+  'server.update.start',
+  'server.update.chunk',
 ] as const;
+
+/**
+ * The methods that update this server's `stim-server service`. A Mac this one approved for `build` or
+ * `device-host` may call them; they need neither `read` nor `control`.
+ */
+export const SERVER_UPDATE_METHODS = ['server.update.status', 'server.update.start', 'server.update.chunk'] as const;
 
 /** The methods a connection with the `build` capability may call; they need `build`, not `read`. */
 export const BUILD_METHODS = [
@@ -1094,7 +1105,61 @@ export interface WorkspaceDiff {
   patches: WorkspacePatch[];
 }
 
+/** A `.tgz` package of a client-supplied stim-server build: its file name, size in bytes and sha256. */
+export interface ServerUpdatePackage {
+  name: string;
+  size: number;
+  sha256: string;
+}
+
+/**
+ * What `server.update.start` installs: an exact stim-server `release` from the public npm registry, or the
+ * `packages` of a client's own build, which the Mac takes only while its `server.acceptClientBuilds` is true.
+ */
+export type ServerUpdateStartParams = { release: string } | { packages: ServerUpdatePackage[] };
+
+/**
+ * An update this server runs. `uploading` waits for the rest of the packages; `installing` runs
+ * `stim-server service update`, whose last `log` lines say how far it got. The connection closes when the job
+ * restarts; the new server's `hello` and `server.update.status` then tell how it ended.
+ */
+export interface ServerUpdateProgress {
+  id: string;
+  by: { id: string; name: string };
+  target: string;
+  state: 'uploading' | 'installing';
+  startedAt: string;
+  missing: { name: string; offset: number }[];
+  log: string[];
+}
+
+export interface ServerUpdateOutcome {
+  at: string;
+  target: string;
+  ok: boolean;
+  message: string;
+}
+
+/**
+ * Whether this server can update itself, and how. `service` is the `stim-server service` label it runs under, or
+ * null when it does not run as a service and so cannot update itself. `last` is how the last `service update`
+ * of that label ended, whoever ran it.
+ */
+export interface ServerUpdateStatus {
+  server: { version: string; stimBuild: string | null };
+  service: string | null;
+  acceptsClientBuilds: boolean;
+  running: ServerUpdateProgress | null;
+  last: ServerUpdateOutcome | null;
+}
+
 export interface Methods {
+  'server.update.status': { params?: Record<string, never>; result: ServerUpdateStatus };
+  'server.update.start': { params: ServerUpdateStartParams; result: ServerUpdateProgress };
+  'server.update.chunk': {
+    params: { id: string; name: string; offset: number; data: string };
+    result: ServerUpdateProgress;
+  };
   'workspace.files': { params: { workspace: string; group: 'changed' | 'untracked' }; result: WorkspaceFiles };
   'workspace.diff': { params: { workspace: string; path: string }; result: WorkspaceDiff };
   'device-host.offer': { params: HostedDeviceOfferRequest; result: HostedDeviceOffer };

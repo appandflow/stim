@@ -229,6 +229,7 @@ export class BuildHost {
     { client: string; dir: string; bundle: string; sha256: string; timer: NodeJS.Timeout }
   >();
   private closed = false;
+  private draining: string | null = null;
   private toolchainAt = 0;
   private toolchainValue: Promise<BuildToolchain | null> | null = null;
   private readonly options: BuildHostOptions;
@@ -351,17 +352,23 @@ export class BuildHost {
     return this.jobs.size;
   }
 
+  /** While `reason` is set, the Mac declines new offloaded builds with it. */
+  drain(reason: string | null): void {
+    this.draining = reason;
+  }
+
   capacity(): BuildCapacity {
     const machine = machineCapacity();
     const running = this.jobs.size;
     const diskFreeBytes = freeBytes(this.root());
     const builds = machine.builds + [...this.jobs].filter((job) => !job.slotted).length;
     const declined =
-      running >= this.limits.maxJobs
+      this.draining ??
+      (running >= this.limits.maxJobs
         ? `already running ${running} offloaded build(s), its limit`
         : diskFreeBytes !== null && diskFreeBytes < this.limits.minFreeBytes
           ? `${gb(diskFreeBytes)} GB free, builds need ${gb(this.limits.minFreeBytes)} GB`
-          : saturation({ ...machine, builds });
+          : saturation({ ...machine, builds }));
     return {
       running,
       max: this.limits.maxJobs,

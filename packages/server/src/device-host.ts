@@ -119,6 +119,7 @@ export class DeviceHost {
   private readonly revoked = new Set<string>();
   private readonly probes = new Map<WorkerRun, string>();
   private closed = false;
+  private draining: string | null = null;
   private readonly limits: DeviceHostLimits;
 
   private readonly options: DeviceHostOptions;
@@ -235,6 +236,7 @@ export class DeviceHost {
   reserve(client: string, params: unknown): Answer {
     if (this.closed || !this.options.allowed(client))
       return refused('forbidden', 'Current device-host approval is required.');
+    if (this.draining) return refused('device-busy', `This Mac takes no new hosted sessions: ${this.draining}.`);
     const request = parseHostedRequest(params);
     if (!request)
       return refused(
@@ -917,6 +919,11 @@ export class DeviceHost {
 
   active(): number {
     return this.owned.size;
+  }
+
+  /** While `reason` is set, new hosted sessions are refused with it. */
+  drain(reason: string | null): void {
+    this.draining = reason;
   }
 
   async close(): Promise<void> {
