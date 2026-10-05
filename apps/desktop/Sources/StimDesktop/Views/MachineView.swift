@@ -428,7 +428,7 @@ struct MachineView: View {
         Text("stim status reports no workspaces.").foregroundStyle(Palette.tertiary)
       } else {
         Card {
-          VStack(spacing: 0) {
+          LazyVStack(spacing: 0) {
             if !compact { columnHeader }
             ForEach(Array(shown.enumerated()), id: \.element.id) { index, repository in
               if index > 0 || !compact { Rectangle().fill(Palette.border).frame(height: 1) }
@@ -618,7 +618,7 @@ struct MachineView: View {
         inventoryMissing("simulator and AVD")
       } else {
         Card {
-          VStack(spacing: 0) {
+          LazyVStack(spacing: 0) {
             ForEach(Array(shown.enumerated()), id: \.element.id) { index, device in
               if index > 0 { Rectangle().fill(Palette.border).frame(height: 1) }
               deviceRow(device)
@@ -726,7 +726,7 @@ struct MachineView: View {
         Text("No simulator runtime or Android system image is installed.").foregroundStyle(Palette.tertiary)
       } else {
         Card {
-          VStack(spacing: 0) {
+          LazyVStack(spacing: 0) {
             ForEach(Array(shown.enumerated()), id: \.element.id) { index, runtime in
               if index > 0 { Rectangle().fill(Palette.border).frame(height: 1) }
               runtimeRow(runtime)
