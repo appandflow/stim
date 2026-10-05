@@ -389,9 +389,12 @@ final class MacosSource: NSObject, Source, SCStreamDelegate, SCStreamOutput {
     let (window, own) = try inputWindow()
     guard isActive(session) else { throw CancellationError() }
     let application = AXUIElementCreateApplication(app.app.pid)
-    guard let running = Self.runningApplication(app.app.pid)
-    else { throw refusal("The captured owned window could not be focused for Control.") }
-    if !running.isActive || !isFocused(own, application: application) {
+    if !isFocused(own, application: application) {
+      guard let running = Self.runningApplication(app.app.pid)
+      else { throw refusal("The captured owned window could not be focused for Control.") }
+      Output.notice([
+        "controlActivated": "The captured window was not the app's key window, so Stim activated the app to deliver input to it."
+      ])
       let raise = AXUIElementPerformAction(own, kAXRaiseAction as CFString)
       let focus = AXUIElementSetAttributeValue(application, kAXFocusedWindowAttribute as CFString, own)
       let activated = running.activate(options: [])
@@ -548,19 +551,10 @@ final class MacosSource: NSObject, Source, SCStreamDelegate, SCStreamOutput {
       ]
       guard let code = codes[name], modifiers.allSatisfy({ flags[$0] != nil }) else { throw refusal("Unsupported native key.") }
       if name.count == 1 {
-        // NSRunningApplication activation is asynchronous and may never complete; bound the shortcut wait.
-        let deadline = ContinuousClock.now.advanced(by: .seconds(1))
-        while !running.isActive {
-          guard isActive(session), matches() else { throw CancellationError() }
-          guard ContinuousClock.now < deadline else {
-            throw refusal("The captured owned app did not activate for keyboard shortcuts. Reconnect Control and try again.")
-          }
-          try await Task.sleep(for: .milliseconds(10))
-        }
         // Apple TextInputSources requires main-thread access; ANSI key codes identify physical U.S. positions.
         let layout: String? = try DispatchQueue.main.sync {
-          guard running.isActive, isActive(session), matches() else {
-            throw refusal("The captured owned app lost focus before reading its keyboard layout.")
+          guard isActive(session), matches() else {
+            throw refusal("The Control session or owned app changed before reading its keyboard layout.")
           }
           guard let source = TISCopyCurrentKeyboardInputSource()?.takeRetainedValue(),
             let property = TISGetInputSourceProperty(source, kTISPropertyInputSourceID)

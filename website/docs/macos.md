@@ -40,7 +40,10 @@ stim stop`}
 />
 
 Each `macos` run stops the previous owned app and rebuilds using that workspace's
-incremental outputs. It does not start Metro. A failed build keeps the compiler
+incremental outputs. It does not start Metro. Local `stim macos` starts the app in
+the background without activating it or changing focus. Stim Desktop honors
+`STIM_BACKGROUND_LAUNCH=1`; an app that activates itself at launch still takes
+focus. Hosted launches (`macos --host`) are unchanged. A failed build keeps the compiler
 output in workspace logs and does not launch an app. Runtime stdout and stderr
 are client logs; unexpected exits are errors. `macos --json` prints one launch
 record on stdout, with progress on stderr. `status --json` reports
@@ -119,12 +122,18 @@ fixed shortcuts and navigation; the phone explains when a server update is
 needed. Modified multi-character input and symbols are unsupported.
 
 Letter and digit shortcuts require the **owned app's U.S. or ABC keyboard layout**.
-Stim focuses that app and waits up to one second for activation before checking
-the layout. If it does not activate, the shortcut is refused.
 Native virtual key codes identify physical U.S. positions; another host layout
 could turn a shortcut into a different command. The helper refuses letter and
 digit key events on other layouts; ordinary typing and navigation still work.
 [#2422](https://github.com/appandflow/stim/issues/2422) tracks logical shortcuts for other host layouts.
+
+Control posts input to the owned process without activating it or raising its
+window. Only when the captured window is not the app's key window (or its
+attached sheet) does Stim activate the app to deliver input, waiting up to one
+second for focus. The stream then carries a `controlActivated` notice explaining why.
+Clicks on views that reject the first mouse, such as custom views and SwiftUI
+`onTapGesture` regions, do not land while the app is in the background. Use
+Desktop's **Open app** to bring the app to the front for those views.
 
 Each action rechecks the exact owned
 process and that the captured window is still the app's front standard window. The
