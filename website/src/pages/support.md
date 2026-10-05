@@ -19,7 +19,7 @@ The app shows the workspaces, builds, devices and logs that Stim manages on your
 
 ## Pairing
 
-1. On the Mac, open **Pair a Phone** in Stim Desktop.
+1. On the Mac, open **Stim > Settings > Phones** in Stim Desktop, turn on **Serve to phones**, then choose **Pair a Phone…**.
 2. In the app, scan the QR code, or enter the displayed address and pairing token by hand. Manual entry works without camera access.
 3. A pairing token expires after five minutes. If it expired, create a new one.
 
@@ -31,7 +31,7 @@ A new pairing can look at workspaces, devices and logs. To tap and type on a dev
 
 ## Notifications
 
-Notifications are off until you turn them on in the app and allow them in iOS Settings. Check the categories you want and the quiet hours. An event set to Silent goes to the notification list without a sound. Remote notifications also need the Mac's push service configured and able to reach Expo's push service.
+Notifications are off until you turn them on in the app and allow them in iOS Settings. Check the categories you want and the quiet hours. An event set to Silent goes to the notification list without a sound. Remote notifications also need the Mac to be awake, connected to the phone's pairing and able to reach Expo's push service.
 
 ## Disconnecting a phone
 
