@@ -422,7 +422,7 @@ final class MacosSource: NSObject, Source, SCStreamDelegate, SCStreamOutput {
     let element = accessible.elements[index]
     _ = AXUIElementSetAttributeValue(element, kAXMainAttribute as CFString, kCFBooleanTrue)
     _ = AXUIElementPerformAction(element, kAXRaiseAction as CFString)
-    _ = NSRunningApplication(processIdentifier: app.app.pid)?.activate(options: [])
+    _ = Self.runningApplication(app.app.pid)?.activate(options: [])
     guard isActive(session) else { throw CancellationError() }
     followQueue.sync {
       pinned = (id, session)
