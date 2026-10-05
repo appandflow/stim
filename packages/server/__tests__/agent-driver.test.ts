@@ -202,15 +202,15 @@ describe('hosted agent driver lifecycle', () => {
     await agents.close();
   });
 
-  test('restarts once when the daemon exit is reported twice', async () => {
+  test('restarts again when the new daemon exits while grants are being reissued', async () => {
     const driver = new FakeDriver();
     const agents = host(driver);
     await agents.appRunning(app(A, 10, 'client-1'));
     driver.crash();
-    driver.crash();
     await vi.waitFor(() => expect(driver.starts).toBe(2));
-    await new Promise((resolve) => setTimeout(resolve, 50));
-    expect(driver.starts).toBe(2);
+    driver.crash();
+    await vi.waitFor(() => expect(driver.starts).toBe(3));
+    await vi.waitFor(() => expect(agents.access(A)?.grant.driver).toBe('agent-device'));
     await agents.close();
   });
 

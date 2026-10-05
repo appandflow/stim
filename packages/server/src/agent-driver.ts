@@ -26,7 +26,7 @@ export interface HostedAgentDriver {
   revoke(session: string): Promise<void>;
   /** Forwards one request the host already authenticated to the loopback daemon. */
   forward(session: string, request: IncomingMessage, response: ServerResponse): void;
-  /** Calls `listener` when the daemon exits without `stop()`; a driver keeps one listener. */
+  /** Calls `listener` once for each daemon run that exits without `stop()`; a driver keeps one listener. */
   onExit(listener: () => void): void;
 }
 
@@ -77,7 +77,6 @@ export class HostedAgentHost {
   private readonly entries = new Map<string, Entry>();
   private active: HostedAgentDriver | null = null;
   private chain: Promise<unknown> = Promise.resolve();
-  private recovering: HostedAgentDriver | null = null;
   private closed = false;
 
   constructor(options: HostedAgentHostOptions) {
@@ -122,13 +121,7 @@ export class HostedAgentHost {
           return this.remember(app, none(this.reason(error)));
         }
         this.active = driver;
-        driver.onExit(() => {
-          if (this.recovering === driver) return;
-          this.recovering = driver;
-          void this.lost(driver).finally(() => {
-            this.recovering = null;
-          });
-        });
+        driver.onExit(() => void this.lost(driver));
       }
       try {
         const grant = await driver.issue(app);
