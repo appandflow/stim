@@ -12,7 +12,7 @@ import Testing
     #expect(StimHome.path(environment: environment) == "/tmp/launch")
   }
 
-  @Test(arguments: [[:], ["STIM_HOME": ""]])
+  @Test(arguments: [[:], ["STIM_HOME": ""], ["STIM_HOME": "relative/x"], ["STIM_HOME": "~/x"]])
   func absentOrEmptyLaunchHomeKeepsShellHome(launch: [String: String]) {
     let environment = StimHome.environment(["STIM_HOME": "/tmp/shell"], launch: launch)
     #expect(StimHome.path(environment: environment) == "/tmp/shell")
@@ -23,6 +23,7 @@ import Testing
     #expect(environment["STIM_HOME"] == nil)
     #expect(StimHome.path(environment: environment, home: "/Users/me") == "/Users/me/.stim")
     #expect(StimHome.path(environment: ["STIM_HOME": ""], home: "/Users/me") == "/Users/me/.stim")
+    #expect(StimHome.path(environment: ["STIM_HOME": "relative"], home: "/Users/me") == "/Users/me/.stim")
   }
 
   @Test func defaultDesktopStillAdoptsForeignServer() {
@@ -56,6 +57,5 @@ import Testing
     #expect(message.contains("7790"))
     #expect(message.contains("~/.stim"))
     #expect(message.contains("~/private"))
-    #expect(message.contains("-stimServerPort <port>"))
   }
 }

@@ -2,7 +2,7 @@ import Foundation
 
 public enum StimHome {
   public static func path(environment: [String: String], home: String = NSHomeDirectory()) -> String {
-    if let path = environment["STIM_HOME"], !path.isEmpty { return path }
+    if let path = absolute(environment["STIM_HOME"]) { return path }
     return "\(home)/.stim"
   }
 
@@ -11,7 +11,7 @@ public enum StimHome {
   }
 
   public static func environment(_ shell: [String: String], launch: [String: String]) -> [String: String] {
-    guard let path = launch["STIM_HOME"], !path.isEmpty else { return shell }
+    guard let path = absolute(launch["STIM_HOME"]) else { return shell }
     var environment = shell
     environment["STIM_HOME"] = path
     return environment
@@ -26,7 +26,11 @@ public enum StimHome {
   ) -> String? {
     guard !adopts(serverHome: serverHome, resolved: resolved, home: home) else { return nil }
     return
-      "stim-server on port \(port) uses \(abbreviatingHome(serverHome, home: home)), but this Desktop uses \(abbreviatingHome(resolved, home: home)). Stop that server or start Stim Desktop with -stimServerPort <port> to use a different port."
+      "stim-server on port \(port) uses \(abbreviatingHome(serverHome, home: home)), but this Desktop uses \(abbreviatingHome(resolved, home: home)). Stop that server, run it with the same STIM_HOME, or start Stim Desktop with -stimServerPort <port> to use a different port."
+  }
+
+  private static func absolute(_ path: String?) -> String? {
+    path.flatMap { $0.hasPrefix("/") ? $0 : nil }
   }
 
   private static func canonical(_ path: String) -> String {
