@@ -3602,6 +3602,30 @@
       },
       {
         "path": "/Users/dev/Developer/stim/.worktrees/a4-multi-device/apps/mobile",
+        "macos": {
+          "launchId": "6f1d2c7a-3b8e-4c55-9a0e-5d7b1c2e9f10",
+          "arguments": [],
+          "product": "Notes",
+          "bundle": "/Users/dev/.stim/workspaces/a4-multi-device/macos/Notes.app",
+          "bundleId": "dev.stim.notes.stim.a4md",
+          "executable": "/Users/dev/.stim/workspaces/a4-multi-device/macos/Notes.app/Contents/MacOS/Notes",
+          "build": {
+            "state": "ok",
+            "startedAt": "2026-09-25T04:20:11.000Z",
+            "finishedAt": "2026-09-25T04:20:38.000Z",
+            "durationMs": 27000
+          },
+          "host": {
+            "machine": "janics-mac-mini:7443",
+            "session": "0b6c1f3e-7a42-4d19-8c65-2f9e4a1b7d30",
+            "appSlot": 1,
+            "appAttempt": "attempt-1",
+            "bundleId": "dev.stim.notes.stim.a4md.hosted1",
+            "agent": { "driver": "none", "setting": "hosting.agentDriver" }
+          },
+          "hostLaunched": true,
+          "state": "running"
+        },
         "live": true,
         "phase": "live",
         "phaseSince": null,
@@ -4151,6 +4175,7 @@
     }
   },
   "edits": [
+    "environments[path*=a4-multi-device].macos: added by hand in the MacosAppState shape stim status --json reports for `stim macos --host janics-mac-mini`, with a hosted placement and a running app; the capture predates hosted macOS apps",
     "environments[path*=1123-mobile-app].remoteDevices: added by hand in the RemoteDeviceState shape; the capture machine had no EAS session",
     "environments[path*=chat-perf-demo].android: added by hand, so one workspace runs both platforms and reload needs a platform",
     "environments[path*=react-native-reserved-regions].lastBuilds and environments[path*=wide-insets].lastBuilds: added by hand in the LastBuild shape; the capture predates the field; the reserved-regions Android missReason follows the shape of a real miss recorded by stim ios after adding expo-clipboard",
