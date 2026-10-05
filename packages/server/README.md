@@ -1573,9 +1573,11 @@ sends reaches any other device.
   because CLI device locks do not cover macOS apps. Existing Device Control and
   Data Access permission (Accessibility on macOS 26 and earlier) is required, without permission requests or resets. Before each
   action the helper verifies PID/start time/executable/bundle and the captured
-  window ID, size and matching sole standard Accessibility window. Modal or
+  window ID, size and matching sole standard Accessibility window. Modal dialogs or
   disjoint windows, resizing and changed ownership refuse input. Contained
-  nonmodal auxiliaries are allowed; only the focused captured main receives input. Events are
+  nonmodal auxiliaries are allowed. A sheet attached to the captured window takes focus
+  and pointer input; disjoint windows still refuse. A sheet larger than the captured
+  window is not supported. Events are
   posted only to that PID; the desktop and other apps receive no input.
   `input.touch` maps normalized captured-window coordinates to mouse events.
   `input.scroll` takes normalized `x`, `y` and `deltaX`, `deltaY` in pixels,

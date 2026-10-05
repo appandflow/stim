@@ -417,9 +417,10 @@ navigation remain available. [#2422](https://github.com/appandflow/stim/issues/2
 other host layouts.
 
 Each action verifies the same owned process and captured
-standard window. A modal or disjoint window, changed capture or resize refuses
-input. Contained nonmodal auxiliary windows are allowed; input still goes only
-to the focused captured main window. Control
+standard window. A modal dialog or disjoint window, changed capture or resize refuses
+input. Contained nonmodal auxiliary windows are allowed. A sheet attached to the
+captured window takes focus and pointer input; disjoint windows still refuse.
+A sheet larger than the captured window is not supported. Control
 uses one exclusive server session per app, with disconnect/revocation/takeover
 and five-minute idle expiry; it takes no CLI simulator lock. Existing
 Device Control and Data Access permission (Accessibility on macOS 26 and earlier) is required. Refusals end Control and show the reason
