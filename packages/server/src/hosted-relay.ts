@@ -11,7 +11,7 @@ import type { AuditRecord } from './actions.ts';
 import type { SessionTarget } from './control.ts';
 import { LatestFrames, FRAME_RETRY_MS } from './frame-delivery.ts';
 import { FRAME_FPS, VIDEO_KEYFRAME, type ProtocolError, type RequestId, type ServerMessage } from './protocol.ts';
-import { DEFAULT_VIDEO_LIMITS, rewriteVideoSubscription, VideoGate } from './video.ts';
+import { DEFAULT_VIDEO_LIMITS, rewriteVideoSubscription, videoSubscription, VideoGate } from './video.ts';
 
 const TIMEOUT_MS = 10_000;
 const KEYFRAME_RETRY_MS = 1000;
@@ -23,14 +23,32 @@ export interface HostedRelayOptions {
   endpoint?: (pinned: Endpoint) => Endpoint;
 }
 
+interface Route {
+  event: (event: Event) => void;
+  closed: (error: Error) => void;
+}
+
+function routeOf(message: Event): string | null {
+  if (Buffer.isBuffer(message)) {
+    const subscription = videoSubscription(message);
+    return subscription === null ? null : `s:${subscription}`;
+  }
+  if (typeof message.subscription === 'string') return `s:${message.subscription}`;
+  if (message.event === 'control-ended' && typeof message.session === 'string') return `c:${message.session}`;
+  return null;
+}
+
+/** One connection to a host, shared by every relayed subscription and control session; events go to their route. */
 class Upstream {
   private readonly socket: WebSocket;
   private nextId = 1;
   private readonly pending = new Map<number, { resolve: (reply: Reply) => void; reject: (error: Error) => void }>();
-  private buffered: Event[] = [];
-  private event: ((event: Event) => void) | null = null;
+  private readonly routes = new Map<string, Route>();
+  private held: { route: string; event: Event }[] = [];
+  private holding: NodeJS.Immediate | null = null;
   private ended: Error | null = null;
-  onClose: ((error: Error) => void) | null = null;
+  users = 0;
+  onClose: (() => void) | null = null;
 
   private readonly token: string;
 
@@ -72,9 +90,20 @@ class Upstream {
             message.error.message = this.safe(message.error.message);
           if (typeof message.message === 'string') message.message = this.safe(message.message);
         }
-        if (this.event) this.event(message);
-        else this.buffered.push(message);
+        const route = routeOf(message);
+        if (route) this.dispatch(route, message);
       }
+    });
+  }
+
+  /** An event can arrive in the same read as the reply that names its route; it waits one turn for that route. */
+  private dispatch(route: string, event: Event): void {
+    const found = this.routes.get(route);
+    if (found) return found.event(event);
+    this.held.push({ route, event });
+    this.holding ??= setImmediate(() => {
+      this.held = [];
+      this.holding = null;
     });
   }
 
@@ -85,10 +114,9 @@ class Upstream {
   private fail(message: string): void {
     if (this.ended) return;
     this.ended = new Error(this.safe(message));
-    for (const pending of this.pending.values()) pending.reject(this.ended);
-    this.pending.clear();
-    this.onClose?.(this.ended);
+    const routes = [...this.routes.values()];
     this.close();
+    for (const route of routes) route.closed(this.ended);
   }
 
   async open(version: string): Promise<void> {
@@ -131,7 +159,10 @@ class Upstream {
     if (this.ended) return Promise.reject(this.ended);
     return new Promise((resolve, reject) => {
       const id = this.nextId++;
-      const timer = setTimeout(() => this.fail(`the host did not answer ${method} in time`), TIMEOUT_MS);
+      const timer = setTimeout(() => {
+        this.pending.delete(id);
+        reject(new Error(this.safe(`the host did not answer ${method} in time`)));
+      }, TIMEOUT_MS);
       this.pending.set(id, {
         resolve: (reply) => {
           clearTimeout(timer);
@@ -146,37 +177,112 @@ class Upstream {
     });
   }
 
-  listen(event: (event: Event) => void, closed: (error: Error) => void): void {
+  /** Delivers a subscription's (`s:<id>`) or control session's (`c:<id>`) events until the returned function runs. */
+  route(name: string, route: Route): () => void {
     if (this.ended) throw this.ended;
-    this.onClose = closed;
-    this.event = event;
-    for (const message of this.buffered) event(message);
-    this.buffered = [];
+    this.routes.set(name, route);
+    const held = this.held.filter((entry) => entry.route === name);
+    this.held = this.held.filter((entry) => entry.route !== name);
+    for (const entry of held) route.event(entry.event);
+    return () => {
+      if (this.routes.get(name) === route) this.routes.delete(name);
+    };
   }
 
   close(): void {
-    this.onClose = null;
-    this.event = null;
-    this.buffered = [];
+    this.routes.clear();
+    this.held = [];
+    if (this.holding) clearImmediate(this.holding);
+    this.holding = null;
     this.ended ??= new Error('the host connection closed');
     for (const pending of this.pending.values()) pending.reject(this.ended);
     this.pending.clear();
+    const closed = this.onClose;
+    this.onClose = null;
+    closed?.();
     if (this.socket.readyState === WebSocket.CONNECTING) this.socket.terminate();
     else this.socket.close();
   }
 }
 
+interface Lease {
+  connection: Upstream;
+  release: () => void;
+}
+
+/**
+ * The client's connections to its hosts, one per host credential and pinned endpoint, shared by every local socket.
+ * Each subscription and control session holds a lease; the connection closes when the last lease is released.
+ */
+export class HostConnections {
+  private readonly open = new Map<string, { connection: Upstream; ready: Promise<void> }>();
+  private readonly options: HostedRelayOptions;
+  private readonly version: string;
+
+  constructor(options: HostedRelayOptions, version: string) {
+    this.options = options;
+    this.version = version;
+  }
+
+  /** Checks the credential and pinned node on every call, then joins or opens the connection to that endpoint. */
+  async acquire(host: HostedMacosPlacement): Promise<Lease> {
+    let token = '';
+    try {
+      const credential = readDeviceHostMachines().find((entry) => entry.machine === host.machine);
+      if (!credential || credential.state !== 'approved') throw new Error('no approved device-host credential');
+      token = credential.deviceToken;
+      const pinned = pinnedEndpoint(credential, await this.options.status());
+      if (typeof pinned === 'string') throw new Error(pinned);
+      const endpoint = this.options.endpoint?.(pinned) ?? pinned;
+      const key = JSON.stringify([host.machine, token, endpoint.url, endpoint.servername, endpoint.host]);
+      let entry = this.open.get(key);
+      if (!entry) {
+        const connection = new Upstream(endpoint, token);
+        const opened = { connection, ready: connection.open(this.version) };
+        connection.onClose = () => {
+          if (this.open.get(key) === opened) this.open.delete(key);
+        };
+        opened.ready.catch(() => connection.close());
+        this.open.set(key, opened);
+        entry = opened;
+      }
+      const { connection } = entry;
+      connection.users++;
+      let released = false;
+      const release = () => {
+        if (released) return;
+        released = true;
+        if (--connection.users === 0) connection.close();
+      };
+      try {
+        await entry.ready;
+      } catch (cause) {
+        release();
+        throw cause;
+      }
+      return { connection, release };
+    } catch (cause) {
+      const reason = (cause as Error).message;
+      throw new Error(token ? reason.replaceAll(token, '[redacted]') : reason, { cause });
+    }
+  }
+
+  close(): void {
+    for (const { connection } of this.open.values()) connection.close();
+  }
+}
+
 export class HostedRelay {
-  private readonly connections = new Set<Upstream>();
   private readonly frames = new Map<
     string,
-    { connection: Upstream; subscription: string; reset: () => void; stop: () => void }
+    { lease: Lease; subscription: string; reset: () => void; stop: () => void }
   >();
   private readonly controls = new Map<
     string,
     {
-      connection: Upstream;
+      lease: Lease;
       hostSession: string;
+      unroute: () => void;
       startedAt: number;
       workspace: string;
       device: { id: string; name: string };
@@ -185,8 +291,7 @@ export class HostedRelay {
   private nextControl = 1;
   private closed = false;
 
-  private readonly options: HostedRelayOptions;
-  private readonly version: string;
+  private readonly hosts: HostConnections;
   private readonly send: (message: ServerMessage | Buffer) => void;
   private readonly buffered: () => number;
   private readonly openSubscription: (id: RequestId, result: { video?: 'h264' }) => string | null;
@@ -194,16 +299,14 @@ export class HostedRelay {
   private readonly audit: (record: AuditRecord) => void;
 
   constructor(
-    options: HostedRelayOptions,
-    version: string,
+    hosts: HostConnections,
     send: (message: ServerMessage | Buffer) => void,
     buffered: () => number,
     openSubscription: (id: RequestId, result: { video?: 'h264' }) => string | null,
     dropSubscription: (subscription: string) => void,
     audit: (record: AuditRecord) => void,
   ) {
-    this.options = options;
-    this.version = version;
+    this.hosts = hosts;
     this.send = send;
     this.buffered = buffered;
     this.openSubscription = openSubscription;
@@ -211,31 +314,22 @@ export class HostedRelay {
     this.audit = audit;
   }
 
-  private async connect(host: HostedMacosPlacement): Promise<Upstream> {
-    let connection: Upstream | undefined;
-    let token = '';
-    try {
-      const credential = readDeviceHostMachines().find((entry) => entry.machine === host.machine);
-      if (!credential || credential.state !== 'approved') throw new Error('no approved device-host credential');
-      token = credential.deviceToken;
-      const pinned = pinnedEndpoint(credential, await this.options.status());
-      if (typeof pinned === 'string') throw new Error(pinned);
-      if (this.closed) throw new Error('the local connection closed');
-      connection = new Upstream(this.options.endpoint?.(pinned) ?? pinned, token);
-      this.connections.add(connection);
-      await connection.open(this.version);
-      if (this.closed) throw new Error('the local connection closed');
-      return connection;
-    } catch (cause) {
-      if (connection) this.release(connection);
-      const reason = (cause as Error).message;
-      throw new Error(token ? reason.replaceAll(token, '[redacted]') : reason, { cause });
+  private async connect(host: HostedMacosPlacement): Promise<Lease> {
+    if (this.closed) throw new Error('the local connection closed');
+    const lease = await this.hosts.acquire(host);
+    if (this.closed) {
+      lease.release();
+      throw new Error('the local connection closed');
     }
+    return lease;
   }
 
-  private release(connection: Upstream): void {
-    this.connections.delete(connection);
-    connection.close();
+  /** Sends `method` to the host and releases `lease` once the host answered or the connection ended. */
+  private releaseAfter(lease: Lease, method: string, params: unknown): void {
+    void lease.connection
+      .request(method, params)
+      .catch(() => {})
+      .finally(lease.release);
   }
 
   async subscribe(
@@ -244,10 +338,12 @@ export class HostedRelay {
     params: Record<string, unknown>,
     register: (id: string, stop: () => void) => void,
   ): Promise<void> {
-    let connection: Upstream | undefined;
+    let lease: Lease | undefined;
+    let upstream: string | undefined;
     let local: string | null = null;
     try {
-      connection = await this.connect(host);
+      lease = await this.connect(host);
+      const connection = lease.connection;
       const reply = await connection.request('device-host.frames.subscribe', {
         session: host.session,
         fps: params.fps,
@@ -257,14 +353,17 @@ export class HostedRelay {
       if ('error' in reply) throw new Error(reply.error.message);
       if (!isJsonObject(reply.result) || typeof reply.result.subscription !== 'string')
         throw new Error('the host sent no subscription');
-      const upstream = reply.result.subscription;
+      upstream = reply.result.subscription;
       if (this.closed) throw new Error('the local connection closed');
       local = this.openSubscription(id, reply.result.video === 'h264' ? { video: 'h264' } : {});
-      if (!local) return this.release(connection);
+      if (!local) return this.releaseAfter(lease, 'device-host.unsubscribe', { subscription: upstream });
       const subscription = local;
+      const hostSubscription = upstream;
+      const leased = lease;
       const gate = new VideoGate(DEFAULT_VIDEO_LIMITS.congestedBytes);
       let askedAt = -Infinity;
       let keyframeRetry: NodeJS.Timeout | null = null;
+      let unroute: (() => void) | null = null;
       const delivery = new LatestFrames<Record<string, unknown> & { data: string }>(
         Math.min(
           (params.fps as number | undefined) ?? FRAME_FPS.default,
@@ -282,14 +381,16 @@ export class HostedRelay {
         }
         if (Date.now() - askedAt < KEYFRAME_RETRY_MS) return;
         askedAt = Date.now();
-        void connection!.request('device-host.frames.keyframe', { subscription: upstream }).catch(() => {});
+        void connection.request('device-host.frames.keyframe', { subscription: hostSubscription }).catch(() => {});
       };
-      const stop = () => {
+      const end = (hostEnded: boolean) => {
+        if (!this.frames.delete(subscription)) return;
         delivery.stop();
         if (keyframeRetry) clearTimeout(keyframeRetry);
-        this.frames.delete(subscription);
+        unroute?.();
         this.dropSubscription(subscription);
-        this.release(connection!);
+        if (hostEnded) leased.release();
+        else this.releaseAfter(leased, 'device-host.unsubscribe', { subscription: hostSubscription });
       };
       const failed = (message: string) => {
         if (!this.frames.has(subscription)) return;
@@ -300,11 +401,12 @@ export class HostedRelay {
           slot: 'default',
           error: { code: 'frames-failed', message: `${host.machine}: ${message}` },
         } as ServerMessage);
-        stop();
+        end(true);
       };
+      const stop = () => end(false);
       this.frames.set(subscription, {
-        connection,
-        subscription: upstream,
+        lease,
+        subscription: hostSubscription,
         stop,
         reset: () => {
           gate.reset();
@@ -314,19 +416,16 @@ export class HostedRelay {
         },
       });
       register(subscription, stop);
-      connection.listen(
-        (event) => {
+      unroute = connection.route(`s:${hostSubscription}`, {
+        event: (event) => {
           if (!this.frames.has(subscription)) return;
           if (Buffer.isBuffer(event)) {
-            const packet = rewriteVideoSubscription(event, upstream, subscription);
+            const packet = rewriteVideoSubscription(event, hostSubscription, subscription);
             if (!packet) return;
             const keyframe = (packet[1]! & VIDEO_KEYFRAME) !== 0;
             if (gate.admit({ keyframe }, this.buffered()) === 'send') return this.send(packet);
             if (!keyframeRetry) requestKeyframe();
-          } else if (
-            event.subscription === upstream &&
-            ['frame', 'frame-delayed', 'macos-windows', 'error'].includes(String(event.event))
-          ) {
+          } else if (['frame', 'frame-delayed', 'macos-windows', 'error'].includes(String(event.event))) {
             if (event.event === 'error')
               return failed(isJsonObject(event.error) ? String(event.error.message) : 'host frames failed');
             if (event.event === 'macos-windows')
@@ -338,20 +437,21 @@ export class HostedRelay {
             } else this.send(forwarded as unknown as ServerMessage);
           }
         },
-        (error) => failed(error.message),
-      );
+        closed: (error) => failed(error.message),
+      });
     } catch (cause) {
-      if (connection) this.release(connection);
-      const message = (cause as Error).message;
+      const message = `${host.machine}: ${(cause as Error).message}`;
+      if (local && this.frames.has(local)) {
+        this.send({ event: 'error', subscription: local, error: { code: 'frames-failed', message } });
+        this.frames.get(local)!.stop();
+        return;
+      }
+      if (lease && upstream) this.releaseAfter(lease, 'device-host.unsubscribe', { subscription: upstream });
+      else lease?.release();
       if (local) {
-        this.frames.get(local)?.stop();
         this.dropSubscription(local);
-        this.send({
-          event: 'error',
-          subscription: local,
-          error: { code: 'frames-failed', message: `${host.machine}: ${message}` },
-        });
-      } else this.send({ id, error: { code: 'frames-failed', message: `${host.machine}: ${message}` } });
+        this.send({ event: 'error', subscription: local, error: { code: 'frames-failed', message } });
+      } else this.send({ id, error: { code: 'frames-failed', message } });
     }
   }
 
@@ -359,7 +459,7 @@ export class HostedRelay {
     const frame = this.frames.get(subscription);
     if (!frame) return false;
     frame.reset();
-    void this.forward(id, frame.connection, 'device-host.frames.keyframe', { subscription: frame.subscription });
+    void this.forward(id, frame.lease.connection, 'device-host.frames.keyframe', { subscription: frame.subscription });
     return true;
   }
 
@@ -370,7 +470,8 @@ export class HostedRelay {
     allowed: () => boolean,
     context: { workspace: string; device: { id: string; name: string } },
   ): Promise<void> {
-    let connection: Upstream | undefined;
+    let lease: Lease | undefined;
+    let hostSession: string | undefined;
     let opened: string | undefined;
     const record = (outcome: { ok: boolean; error?: ProtocolError }) =>
       this.audit({
@@ -381,52 +482,48 @@ export class HostedRelay {
         ...outcome,
       });
     try {
-      connection = await this.connect(host);
+      lease = await this.connect(host);
+      const connection = lease.connection;
       const reply = await connection.request('device-host.control.begin', { session: host.session, takeOver });
       if ('error' in reply) {
-        this.release(connection);
+        lease.release();
         record({ ok: false, error: reply.error });
         return this.send({ id, error: reply.error });
       }
       if (!isJsonObject(reply.result) || typeof reply.result.session !== 'string')
         throw new Error('the host sent no control session');
+      hostSession = reply.result.session;
       if (this.closed || !allowed()) throw new Error('local control access ended');
-      const hostSession = reply.result.session;
       const session = `h${this.nextControl++}`;
-      this.controls.set(session, { connection, hostSession, startedAt: Date.now(), ...context });
-      opened = session;
-      record({ ok: true });
-      this.send({ id, result: { ...reply.result, session } });
-      connection.listen(
-        (event) => {
-          if (
-            this.controls.has(session) &&
-            !Buffer.isBuffer(event) &&
-            event.event === 'control-ended' &&
-            event.session === hostSession
-          ) {
+      const unroute = connection.route(`c:${hostSession}`, {
+        event: (event) => {
+          if (this.controls.has(session) && !Buffer.isBuffer(event) && event.event === 'control-ended') {
             this.send({ ...event, session } as unknown as ServerMessage);
-            this.endControl(session, String(event.reason), String(event.message));
+            this.endControl(session, String(event.reason), String(event.message), 'ended');
           }
         },
-        (error) => {
+        closed: (error) => {
           if (!this.controls.has(session)) return;
           const message = `${host.machine}: ${error.message}`;
           this.send({ event: 'control-ended', session, reason: 'failed', message });
-          this.endControl(session, 'failed', message);
+          this.endControl(session, 'failed', message, 'ended');
         },
-      );
+      });
+      this.controls.set(session, { lease, hostSession, unroute, startedAt: Date.now(), ...context });
+      opened = session;
+      record({ ok: true });
+      this.send({ id, result: { ...reply.result, session } });
     } catch (cause) {
-      if (connection) this.release(connection);
       const message = `${host.machine}: ${(cause as Error).message}`;
       if (opened) {
         this.send({ event: 'control-ended', session: opened, reason: 'failed', message });
-        this.endControl(opened, 'failed', message);
-      } else {
-        const error: ProtocolError = { code: 'action-failed', message };
-        record({ ok: false, error });
-        this.send({ id, error });
+        return this.endControl(opened, 'failed', message, 'end');
       }
+      if (lease && hostSession) this.releaseAfter(lease, 'device-host.control.end', { session: hostSession });
+      else lease?.release();
+      const error: ProtocolError = { code: 'action-failed', message };
+      record({ ok: false, error });
+      this.send({ id, error });
     }
   }
 
@@ -438,21 +535,28 @@ export class HostedRelay {
     if (!isJsonObject(params) || typeof params.session !== 'string') return false;
     const entry = this.controls.get(params.session);
     if (!entry) return false;
-    const response = this.forward(id, entry.connection, `device-host.${method}`, {
+    const response = this.forward(id, entry.lease.connection, `device-host.${method}`, {
       ...params,
       session: entry.hostSession,
     });
-    if (method === 'control.end') {
-      this.endControl(params.session, null, 'The client ended the session.', false);
-      void response.finally(() => this.release(entry.connection));
-    }
+    if (method === 'control.end') this.endControl(params.session, null, 'The client ended the session.', response);
     return true;
   }
 
-  private endControl(session: string, reason: string | null, message: string, release = true): void {
+  /**
+   * `host` says how the host's session ends: it already `ended`, the relay must `end` it, or a forwarded
+   * `control.end` is in flight. The connection lease is released only after that.
+   */
+  private endControl(
+    session: string,
+    reason: string | null,
+    message: string,
+    host: 'ended' | 'end' | Promise<void>,
+  ): void {
     const entry = this.controls.get(session);
     if (!entry) return;
     this.controls.delete(session);
+    entry.unroute();
     this.audit({
       at: new Date().toISOString(),
       device: entry.device,
@@ -463,7 +567,9 @@ export class HostedRelay {
       durationMs: Date.now() - entry.startedAt,
       reason: `${reason ?? 'ended'}: ${message}`,
     });
-    if (release) this.release(entry.connection);
+    if (host === 'ended') entry.lease.release();
+    else if (host === 'end') this.releaseAfter(entry.lease, 'device-host.control.end', { session: entry.hostSession });
+    else void host.finally(entry.lease.release);
   }
 
   private async forward(id: RequestId, connection: Upstream, method: string, params: unknown): Promise<void> {
@@ -478,15 +584,13 @@ export class HostedRelay {
     for (const session of this.controls.keys()) {
       const message = 'Local control access ended.';
       this.send({ event: 'control-ended', session, reason: 'forbidden', message });
-      this.endControl(session, 'forbidden', message);
+      this.endControl(session, 'forbidden', message, 'end');
     }
   }
 
   close(): void {
     this.closed = true;
-    for (const session of this.controls.keys()) this.endControl(session, null, 'The client disconnected.');
+    for (const session of this.controls.keys()) this.endControl(session, null, 'The client disconnected.', 'end');
     for (const frame of this.frames.values()) frame.stop();
-    for (const connection of this.connections) connection.close();
-    this.connections.clear();
   }
 }

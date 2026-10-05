@@ -33,21 +33,20 @@ export function videoPacket(subscription: string, sequence: number, unit: Access
   return Buffer.concat([header, unit.data]);
 }
 
-export function rewriteVideoSubscription(packet: Buffer, upstream: string, subscription: string): Buffer | null {
+export function videoSubscription(packet: Buffer): string | null {
   if (packet.length < FIXED_HEADER_BYTES || packet[0] !== VIDEO_HEADER_VERSION) return null;
-  const length = packet[20]!;
-  const headerBytes = FIXED_HEADER_BYTES + length;
-  if (
-    packet.length < headerBytes ||
-    packet.readUInt16BE(2) !== headerBytes ||
-    packet.toString('ascii', FIXED_HEADER_BYTES, headerBytes) !== upstream
-  )
-    return null;
+  const headerBytes = FIXED_HEADER_BYTES + packet[20]!;
+  if (packet.length < headerBytes || packet.readUInt16BE(2) !== headerBytes) return null;
+  return packet.toString('ascii', FIXED_HEADER_BYTES, headerBytes);
+}
+
+export function rewriteVideoSubscription(packet: Buffer, upstream: string, subscription: string): Buffer | null {
+  if (videoSubscription(packet) !== upstream) return null;
   const id = Buffer.from(subscription, 'ascii');
   const header = Buffer.from(packet.subarray(0, FIXED_HEADER_BYTES));
   header.writeUInt16BE(FIXED_HEADER_BYTES + id.length, 2);
   header.writeUInt8(id.length, 20);
-  return Buffer.concat([header, id, packet.subarray(headerBytes)]);
+  return Buffer.concat([header, id, packet.subarray(FIXED_HEADER_BYTES + upstream.length)]);
 }
 
 export interface VideoLimits {
