@@ -17,6 +17,8 @@ final class EmulatorInput {
     var completion: ((Data?) -> Void)?
   }
 
+  var onDisconnect: (() -> Void)?
+
   private let endpoint: EmulatorEndpoint
   private let queue = DispatchQueue(label: "stim.emulator-input")
   private var connection: NWConnection?
@@ -128,6 +130,7 @@ final class EmulatorInput {
   }
 
   private func reset() {
+    let disconnected = connection != nil && !closing
     connection?.cancel()
     connection = nil
     ready = false
@@ -137,5 +140,6 @@ final class EmulatorInput {
     current = nil
     pending = []
     for call in dropped { call.completion?(nil) }
+    if disconnected { onDisconnect?() }
   }
 }

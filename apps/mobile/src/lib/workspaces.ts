@@ -18,6 +18,9 @@ export function isActive(env: EnvironmentState): boolean {
   return (
     env.live ||
     env.build?.state === 'running' ||
+    env.macos?.build.state === 'running' ||
+    env.macos?.state === 'running' ||
+    env.macos?.state === 'orphaned' ||
     (env.remoteDevices?.length ?? 0) > 0 ||
     (env.physicalDevices?.length ?? 0) > 0
   );
@@ -70,12 +73,14 @@ type ServedDevice = Pick<DeviceRef, 'platform' | 'owned' | 'physical' | 'running
  * connected, when nothing streams and the tile waits for it like any other.
  */
 export function streamsFrames(device: ServedDevice, features: readonly string[] | null): boolean {
+  if (device.platform === 'macos') return device.running && (features === null || features.includes('macos-window'));
   if (!device.physical) return device.owned;
   return device.running && (features === null || features.includes(`physical-${device.platform}`));
 }
 
 /** Why a device {@link streamsFrames} does not serve shows no screen. */
 export function unservedReason(device: ServedDevice): string {
+  if (device.platform === 'macos') return t`Update stim-server on the Mac to view this app window.`;
   if (!device.physical) return t`Frames are only served for devices Stim owns.`;
   if (!device.running) return device.state;
   return t`Update stim-server on the Mac to see this device's screen.`;
@@ -155,10 +160,12 @@ function webDevice(web: WebBrowserState): DeviceRef {
 }
 
 export function platformName(platform: DevicePlatform): string {
+  if (platform === 'macos') return 'macOS';
   return platform === 'ios' ? 'iOS' : platform === 'web' ? t`Web` : t`Android`;
 }
 
 export function deviceSource(device: DeviceRef): string {
+  if (device.platform === 'macos') return t`macOS app`;
   if (device.platform === 'web') return t`Chrome`;
   if (device.platform === 'ios') return device.physical ? t`iOS device` : t`iOS Simulator`;
   return device.physical ? t`Android device` : t`Android Emulator`;
@@ -176,6 +183,18 @@ export function devicesOf(env: EnvironmentState): DeviceRef[] {
   };
   add('default', env.ios, env.android);
   if (env.web) out.push(webDevice(env.web));
+  if (env.macos)
+    out.push({
+      platform: 'macos',
+      slot: 'default',
+      id: env.macos.launchId,
+      name: env.macos.product,
+      model: 'macOS',
+      state: env.macos.state,
+      running: env.macos.state === 'running',
+      owned: true,
+      physical: false,
+    });
   for (const slot of env.slots ?? []) add(slot.slot, slot.ios, slot.android);
   for (const device of env.physicalDevices ?? []) out.push(physicalDevice(device));
   return out;
@@ -201,8 +220,8 @@ export function runningBuild(
   return build;
 }
 
-const PLATFORM_RANK: Record<DevicePlatform, number> = { ios: 0, android: 1, web: 2 };
-const platformRank = (d: DeviceRef) => (d.physical ? 3 : PLATFORM_RANK[d.platform]);
+const PLATFORM_RANK: Record<DevicePlatform, number> = { ios: 0, android: 1, web: 2, macos: 3 };
+const platformRank = (d: DeviceRef) => (d.physical ? 4 : PLATFORM_RANK[d.platform]);
 
 /**
  * Running devices before stopped ones, then iOS, Android, Web and physical devices, then by slot name. The order

@@ -18,6 +18,12 @@ Stim creates and records its local simulators and emulators. Their names start
 with `stim-`. It never creates, boots, or deletes a simulator or emulator that
 another tool made.
 
+The Stim phone viewer's control toolbar offers **Shake** and **Slow animations**
+for owned iOS simulators when the paired server supports them. Slow animations
+shows the confirmed simulator state. These options require control access and
+are hidden on older servers or devices that do not support them. They use
+Stim's viewer and never open Device Hub.
+
 A `stim-` name alone does not make a device Stim's. Stim lists every device it
 creates in `~/.stim/created-devices.json`, or in `$STIM_HOME/created-devices.json`
 when `STIM_HOME` points somewhere else. For devices created before that ledger,
@@ -400,6 +406,19 @@ ends the session and the tunnel.
 An install or launch failure leaves the session running and billed. The remedy
 names the session: rerun the command to reuse it, or run `stim stop` to end it.
 
+## Control from the phone viewer
+
+A phone granted control can use the bottom icon toolbar for Home, Lock,
+Keyboard, rotation and supported foldable postures. The bar stays below the
+screen in portrait and landscape and scrolls sideways when needed. Duo
+simulators include Rotate left and Rotate right; the app in front still needs
+to support the requested orientation. Physical devices rotate only in hand.
+
+Tapping Control explicitly takes over from the displayed driver immediately.
+If the server reports a driver conflict after that tap, the Take over action
+also starts control immediately. The server keeps its exclusive control lease
+and records the takeover. Viewing replay remains read-only.
+
 ## Replay device screens
 
 `stim-server` records owned simulators, emulators and the Stim-owned Chrome
@@ -544,7 +563,12 @@ deleted when removed.
 
 ## Paired Mac hosting approval
 
-Device-host approval is separate from build offloading and phone control.
+Device-host approval is separate from build offloading and phone control. On the
+client Mac, set `hosting.machines` to the expected tailnet names, then run
+`stim doctor --fix` in an app directory to request approval. Doctor stores a
+separate private, node-pinned credential and reports its state under
+`deviceHosts` in JSON. This setup does not yet place CLI sessions remotely.
+See [machine settings](/docs/settings#machine-settings).
 Stim Desktop can show and approve an expected `device-host` request from
 another Mac on your tailnet. The server command is
 `stim-server devices grant <id> --device-host`; inspect `stim-server devices`
@@ -573,16 +597,36 @@ unique owned AVD and a journal-reserved console port, verifies the exact running
 AVD and ABI, and reconnects to that same record. Explicit stop and revocation
 shut down only that ledger-owned AVD and retain its data. Ports are coordinated
 among hosted sessions; ordinary local producers can still race a reservation.
-Android app delivery and screen/input routing remain follow-ups in #2266; Android
-sessions refuse the iOS app-delivery routes. The protocol details are in the
+Android app delivery, Metro and screen/input routing remain follow-ups in #2266;
+Android sessions refuse the iOS app-delivery, Metro, view and input routes. The
+protocol details are in the
 [hosted Android session protocol](https://github.com/appandflow/stim/blob/main/packages/server/README.md#hosted-android-session-protocol).
 
 Development launches remain `unverified` until a Metro bridge proves a bundle
 request. Release launches report success only after positive native process
 evidence; absent evidence remains `unverified`.
 
-Metro and screen/control relays, automatic placement and
-Android app delivery/viewing remain in [#2266](https://github.com/appandflow/stim/issues/2266).
+The [private Metro protocol](https://github.com/appandflow/stim/blob/main/packages/server/README.md#private-hosted-metro)
+routes the hosted iOS app through worker loopback to its client's verified Metro
+over the tailnet. The client gateway accepts only the pinned worker and a
+session secret. Reconnect keeps the worker port while its session owner lives;
+stop and revocation close the streams. No public tunnel or Funnel is needed.
+Expo development clients need the forwarded-origin manifest contract described
+in that protocol; older client/CLI versions are not covered by this slice.
+
+Client screen/control relays, automatic placement and
+Android app delivery, Metro and viewing remain in [#2266](https://github.com/appandflow/stim/issues/2266).
 This protocol slice does not change where `stim ios` or `stim android` runs.
 Hosting approval grants no access to unrelated
 workspaces, phone control or build offloading.
+
+The [hosted view and input protocol](https://github.com/appandflow/stim/blob/main/packages/server/README.md#hosted-ios-view-and-input)
+streams and controls only the approved client's ready, owned iOS session. The
+worker derives the exact simulator from its private ledger and keeps the
+capture helper under the session's ownership claim. Reconnect preserves the
+native session; subscribe and begin control again. Installation, stop and
+revocation close capture and input before native work. An uncertain journal
+retains native ownership while ending known capture. Surviving or unresolved
+posture input blocks native replacement and teardown after a server crash.
+Client viewer relays and
+automatic CLI placement remain under #2266.

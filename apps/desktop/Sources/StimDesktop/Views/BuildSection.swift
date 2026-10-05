@@ -17,8 +17,8 @@ struct BuildSection: View {
   private func buildKey(_ platform: String) -> String { env.lastBuilds?.build(for: platform)?.planKey ?? "" }
 
   private var platforms: [String] {
-    guard let running, !env.runPlatforms.contains(running.platform) else { return env.runPlatforms }
-    return env.runPlatforms + [running.platform]
+    guard let running, !env.runPlatforms.contains(running.platform) else { return env.runPlatforms.filter { $0 != "macos" } }
+    return env.runPlatforms.filter { $0 != "macos" } + [running.platform]
   }
 
   private var trigger: [String] {
@@ -28,6 +28,24 @@ struct BuildSection: View {
   var body: some View {
     VStack(alignment: .leading, spacing: Space.md) {
       SectionLabel(title: "Build")
+      if let macos = env.macos {
+        HStack {
+          Text("macOS \(macos.product)").font(.stim(.callout, weight: .semibold))
+          Spacer()
+          if let query = LogQuery.build(
+            platform: "macos", slot: "default", startedAt: macos.build.startedAt,
+            finishedAt: macos.build.finishedAt)
+          {
+            Button("Build logs") { openLogs(query) }
+              .buttonStyle(.stim())
+              .fixedSize()
+          }
+        }
+        Text("Swift Package Debug: \(macos.build.state)").font(.stim(.footnote)).foregroundStyle(Palette.secondary)
+        if let error = macos.build.error {
+          Text(error).font(.stim(.footnote)).foregroundStyle(Palette.error).textSelection(.enabled)
+        }
+      }
       ForEach(platforms, id: \.self) { platform in
         card(platform)
       }

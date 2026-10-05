@@ -2,7 +2,8 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { withDirLock } from '@stim-cli/core';
+import { isIP, type AddressInfo } from 'node:net';
+import { withDirLock, createMetroBridge, type MetroBridge } from '@stim-cli/core';
 import {
   clearClaimChild,
   markClaimChildPending,
@@ -32,8 +33,10 @@ import {
   type HostedAppRecord,
   type HostedDeviceRequest,
   type HostedDeviceSession,
+  type HostedIosDevice,
 } from '@stim-cli/core/state';
 import { writeJson } from './registry.ts';
+import { takeHostedInputClaim } from './hosted-input.ts';
 import type { Methods, ProtocolError } from './protocol.ts';
 import { appDelivery, offerHostedApp, chunkHostedApp, changeHostedApp } from './hosted-app.ts';
 
@@ -54,6 +57,16 @@ interface OwnedSession {
   stopping?: Promise<void>;
   installing?: { attempt: string; done: Promise<void> };
   app?: HostedAppRecord;
+  metro?: {
+    bridge: MetroBridge;
+    ready: Promise<number>;
+    peer: string;
+    gatewayPort: number;
+    secret: string;
+    port?: number;
+    closing?: boolean;
+  };
+  viewer?: { close: () => Promise<void> };
 }
 
 type Answer = { result: HostedDeviceSession } | { error: ProtocolError };
@@ -125,6 +138,12 @@ export class DeviceHost {
     if (attempt.pending) releaseClaim(attempt.pending);
     if (!attempt.acquired)
       throw new Error(`Hosted session is held by another process: ${join(deviceHostRoot(), `${record.id}.claims`)}`);
+    try {
+      releaseClaim(takeHostedInputClaim(attempt.acquired));
+    } catch (error) {
+      releaseClaim(attempt.acquired);
+      throw error;
+    }
     const owned = { claim: attempt.acquired };
     this.owned.set(record.id, owned);
     return owned;
@@ -224,6 +243,143 @@ export class DeviceHost {
     }
   }
 
+  async metroOpen(client: string, params: unknown, peer: string | null): Promise<AppAnswer<{ port: number }>> {
+    if (!this.options.allowed(client)) return refused('forbidden', 'Current device-host approval is required.');
+    if (
+      !isJsonObject(params) ||
+      typeof params.session !== 'string' ||
+      !peer ||
+      !isIP(peer) ||
+      typeof params.gatewayPort !== 'number' ||
+      !Number.isInteger(params.gatewayPort) ||
+      params.gatewayPort < 1 ||
+      params.gatewayPort > 65535 ||
+      typeof params.secret !== 'string' ||
+      !/^[a-f0-9]{64}$/.test(params.secret)
+    )
+      return refused(
+        'bad-request',
+        'Metro needs its session, client gateway port and 256-bit secret on a tailnet connection.',
+      );
+    try {
+      const record = readHostedSessions().find((each) => each.client === client && each.id === params.session);
+      if (!record || record.state !== 'ready' || this.closed || !this.owned.has(record.id))
+        throw new Error('Only a ready session attached to this owner can open Metro.');
+      if (record.platform !== 'ios') throw new Error('Hosted Metro currently supports iOS sessions only.');
+      const owned = this.owned.get(record.id)!;
+      if (owned.stopping) throw new Error('This hosted session is stopping.');
+      if (owned.metro) {
+        if (owned.metro.closing) throw new Error('This session Metro bridge is closing.');
+        if (
+          owned.metro.peer !== peer ||
+          owned.metro.gatewayPort !== params.gatewayPort ||
+          owned.metro.secret !== params.secret
+        )
+          throw new Error('Close this session Metro bridge before replacing its gateway.');
+        return { result: { port: await owned.metro.ready } };
+      }
+      const bridge = createMetroBridge({ peer, gatewayPort: params.gatewayPort, secret: params.secret });
+      const ready = new Promise<number>((resolve, reject) => {
+        bridge.server.once('error', reject);
+        bridge.server.listen(record.metroPort ?? 0, '127.0.0.1', () =>
+          resolve((bridge.server.address() as AddressInfo).port),
+        );
+      });
+      const metro: NonNullable<OwnedSession['metro']> = {
+        bridge,
+        ready,
+        peer,
+        gatewayPort: params.gatewayPort,
+        secret: params.secret,
+      };
+      owned.metro = metro;
+      try {
+        const port = await ready;
+        if (owned.stopping || this.closed || !this.options.allowed(client))
+          throw new Error('The session lost its Metro approval while opening.');
+        this.change(record.id, (current) => {
+          current.metroPort = port;
+        });
+        metro.port = port;
+        return { result: { port } };
+      } catch (error) {
+        await bridge.close();
+        if (owned.metro === metro) delete owned.metro;
+        throw error;
+      }
+    } catch (error) {
+      return refused('action-failed', (error as Error).message);
+    }
+  }
+
+  async metroClose(client: string, params: unknown): Promise<AppAnswer<{ port: null }>> {
+    if (!this.options.allowed(client)) return refused('forbidden', 'Current device-host approval is required.');
+    if (!isJsonObject(params) || typeof params.session !== 'string')
+      return refused('bad-request', 'Metro close needs a session.');
+    try {
+      const record = readHostedSessions().find((each) => each.client === client && each.id === params.session);
+      if (!record) return refused('unknown-session', 'This client has no such hosted session.');
+      const owned = this.owned.get(record.id);
+      if (owned?.installing) throw new Error('Wait for this session native launch before closing its Metro bridge.');
+      if (owned) await this.closeMetro(owned);
+      return { result: { port: null } };
+    } catch (error) {
+      return refused('action-failed', (error as Error).message);
+    }
+  }
+
+  private async closeMetro(owned: OwnedSession): Promise<void> {
+    const metro = owned.metro;
+    if (!metro) return;
+    metro.closing = true;
+    await metro.ready.catch(() => {});
+    await metro.bridge.close();
+    if (owned.metro === metro) delete owned.metro;
+  }
+
+  viewTarget(
+    client: string,
+    session: string,
+  ): {
+    session: HostedDeviceSession & { device: HostedIosDevice };
+    home: string;
+    claim: ClaimHandle;
+  } {
+    if (this.closed || !this.options.allowed(client)) throw new Error('Current device-host approval is required.');
+    const record = readHostedSessions().find((each) => each.client === client && each.id === session);
+    const owned = this.owned.get(session);
+    if (!record || record.state !== 'ready' || !record.device || !owned)
+      throw new Error(
+        'Only a ready session attached to this server can be viewed. Explicit stop must reconcile a lost owner.',
+      );
+    if (record.platform !== 'ios' || !('udid' in record.device))
+      throw new Error('Hosted view and input currently support iOS sessions only.');
+    if (owned.stopping || owned.installing) throw new Error('This hosted session has a native operation in progress.');
+    const home = join(deviceHostArea(record.id), 'home');
+    assertHostedDeviceLedger(home, record.device.udid);
+    if (readHostedDevice(home).udid !== record.device.udid)
+      throw new Error('The device record no longer matches this session.');
+    return { session: { ...record, device: record.device }, home, claim: owned.claim };
+  }
+
+  bindView(client: string, session: string, close: () => Promise<void>): () => void {
+    this.viewTarget(client, session);
+    const owned = this.owned.get(session)!;
+    if (owned.viewer) throw new Error('This hosted session already has a viewer pool.');
+    const viewer = { close };
+    owned.viewer = viewer;
+    return () => {
+      if (owned.viewer === viewer) delete owned.viewer;
+    };
+  }
+
+  private async closeView(owned: OwnedSession): Promise<void> {
+    const viewer = owned.viewer;
+    if (!viewer) return;
+    await viewer.close();
+    if (owned.viewer === viewer) delete owned.viewer;
+  }
+
   private appSession(client: string, params: unknown): HostedDeviceSession {
     if (!isJsonObject(params) || typeof params.session !== 'string' || !hostedAppAttempt(params.attempt))
       throw new Error('App requests need a session and app attempt.');
@@ -313,6 +469,8 @@ export class DeviceHost {
       if (app.state !== 'receiving') return this.appAttach(client, params);
       if (owned.stopping || owned.installing)
         throw new Error('This hosted session already has a native operation in progress.');
+      if (owned.metro && (!owned.metro.port || owned.metro.closing))
+        throw new Error('This session Metro bridge is opening or closing.');
       if (offerHostedApp(app).missing.length) throw new Error('The app manifest still has missing content.');
       const result = appDelivery(
         changeHostedApp(record.id, app.attempt, (current) => {
@@ -331,6 +489,9 @@ export class DeviceHost {
 
   private async install(record: HostedDeviceSession, owned: OwnedSession, attempt: string): Promise<void> {
     try {
+      await this.closeView(owned);
+      if (owned.stopping || this.closed || !this.options.allowed(record.client)) return;
+      releaseClaim(takeHostedInputClaim(owned.claim));
       const run = this.run(record, owned, 'install', attempt);
       owned.run = run;
       const outcome = await run.done;
@@ -420,6 +581,8 @@ export class DeviceHost {
     if (record.state === 'stopped') return;
     const owned = this.acquire(record);
     if (owned.stopping) return;
+    void this.closeMetro(owned).catch((error: unknown) => this.failed(record.id, error));
+    void this.closeView(owned).catch((error: unknown) => this.failed(record.id, error));
     this.change(record.id, (current) => {
       current.state = 'stopping';
     });
@@ -432,6 +595,10 @@ export class DeviceHost {
 
   private async finishStop(record: HostedDeviceSession, owned: OwnedSession): Promise<void> {
     const home = join(deviceHostArea(record.id), 'home');
+    owned.run?.cancel();
+    await this.closeMetro(owned);
+    await this.closeView(owned);
+    releaseClaim(takeHostedInputClaim(owned.claim));
     if (owned.run) {
       owned.run.cancel();
       const outcome = await owned.run.done;
@@ -512,13 +679,23 @@ export class DeviceHost {
         }
       }
     } catch (error) {
-      for (const owned of this.owned.values()) owned.run?.cancel();
+      for (const owned of this.owned.values()) {
+        owned.run?.cancel();
+        void this.closeMetro(owned).catch((closeError: unknown) => {
+          process.stderr.write(`Hosted Metro close failed: ${(closeError as Error).message}\n`);
+        });
+        void this.closeView(owned).catch((closeError: unknown) => {
+          process.stderr.write(`Hosted view close failed: ${(closeError as Error).message}\n`);
+        });
+      }
       process.stderr.write(`Hosted device revocation could not read its journal: ${(error as Error).message}\n`);
     }
   }
 
   async close(): Promise<void> {
     this.closed = true;
+    await Promise.all([...this.owned.values()].map((owned) => this.closeMetro(owned)));
+    await Promise.all([...this.owned.values()].map((owned) => this.closeView(owned)));
     try {
       for (const record of readHostedSessions()) {
         if (!this.owned.has(record.id)) continue;
@@ -663,6 +840,7 @@ export class DeviceHost {
             consolePort: record.consolePort,
             session: record.id,
             attempt,
+            metroPort: mode === 'install' ? owned.metro?.port : undefined,
           }),
         );
       } catch (error) {

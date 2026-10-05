@@ -286,6 +286,26 @@ workspace to adopt. Absent means 3; `0` turns parking and adoption off. When
 `pool.androidParkedMax` and `STIM_POOL_ANDROID_PARKED_MAX` apply the same rules
 to Android emulators. See [owned devices](/docs/owned-devices) for adoption cleanup.
 
+`hosting.machines` names Macs that may host owned simulator sessions, by
+MagicDNS name and optional serve port (default 7443). Name each node and port
+once. Set it with
+`stim settings set hosting.machines '["janics-mac-mini"]'`, then run
+`stim doctor --fix` in an app directory. A person on the hosting Mac approves
+the printed id with `stim-server devices grant <id> --device-host`.
+Hosting approval is separate from `offload.machines` and grants no read,
+control or build access. This configures approval only; `stim ios` and
+`stim android` do not yet place sessions on these machines.
+
+Credentials stay private in `$STIM_HOME/device-host-machines.json`. Doctor
+reports approval under `deviceHosts` in JSON and never prints the token.
+Connections use the pinned node's own tailnet address and MagicDNS TLS name;
+a changed node refuses access. Uncertain replies or unreadable credentials
+preserve the pin. To approve a replacement node, remove the name, run
+`stim doctor --fix` to forget it, then re-add it and run `--fix` again.
+Only `--fix` requests access, retries a definite revoked or lapsed request,
+or forgets names removed from the setting. A concurrent approval inspection
+reports `busy` instead of rotating a pending token.
+
 `offload.machines` lists the Macs on your tailnet that may build for this one,
 by MagicDNS name (`janics-mac-mini`), optionally with the port of their
 `tailscale serve` route (`janics-mac-mini:7444`; default 7443). Set it with

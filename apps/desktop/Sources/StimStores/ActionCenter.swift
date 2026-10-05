@@ -127,6 +127,15 @@ public final class ActionCenter: ObservableObject {
   public var onFinish: ((ActionRun) -> Void)?
   private let cli: Task<StimCLI, Never>
 
+  #if DEBUG
+    private var fixtureAction: ((String) -> Void)?
+
+    public convenience init(fixtureAction: @escaping (String) -> Void) {
+      self.init(cli: Task { StimCLI(environment: [:]) })
+      self.fixtureAction = fixtureAction
+    }
+  #endif
+
   public init(cli: Task<StimCLI, Never>) {
     self.cli = cli
   }
@@ -148,6 +157,12 @@ public final class ActionCenter: ObservableObject {
     _ title: String, steps: [StimCommand], key: String? = nil, present: Bool = true,
     completion: ((ActionRun) -> Void)? = nil
   ) -> ActionRun? {
+    #if DEBUG
+      if let fixtureAction {
+        fixtureAction(title)
+        return nil
+      }
+    #endif
     let key = key ?? steps[0].cwd
     if let active = active(for: key) {
       if present { presented = active }

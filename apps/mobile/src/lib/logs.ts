@@ -7,7 +7,7 @@ import type { EnvironmentState, LogFilter, LogRecord, LogSource, StackFrame } fr
  * The source chips of the Logs screen. iOS, Android and Web split the `device` source by the records' `platform`,
  * which the server cannot filter on, so the screen filters those on the phone.
  */
-export type LogChip = 'metro' | 'client' | 'ios' | 'android' | 'web' | 'build' | 'agent';
+export type LogChip = 'metro' | 'client' | 'ios' | 'android' | 'web' | 'macos' | 'build' | 'agent';
 
 const CHIPS: { chip: LogChip; source: LogSource }[] = [
   { chip: 'metro', source: 'metro' },
@@ -15,6 +15,7 @@ const CHIPS: { chip: LogChip; source: LogSource }[] = [
   { chip: 'ios', source: 'device' },
   { chip: 'android', source: 'device' },
   { chip: 'web', source: 'device' },
+  { chip: 'macos', source: 'client' },
   { chip: 'build', source: 'build' },
   { chip: 'agent', source: 'agent' },
 ];
@@ -31,6 +32,8 @@ export function chipLabel(chip: LogChip): string {
       return t`Android`;
     case 'web':
       return t`Web`;
+    case 'macos':
+      return 'macOS';
     case 'build':
       return t`Build`;
     case 'agent':
@@ -87,6 +90,7 @@ function recordPlatform(record: LogRecord): string | null {
 
 /** The chip a record belongs to; null for a device record with no platform Stim knows. */
 export function chipOf(record: LogRecord): LogChip | null {
+  if (record.src === 'client' && recordPlatform(record) === 'macos') return 'macos';
   if (record.src !== 'device') return CHIPS.find((c) => c.source === record.src)?.chip ?? null;
   const platform = recordPlatform(record);
   return DEVICE_CHIPS.find((c) => c === platform) ?? null;
@@ -96,6 +100,8 @@ export function chipOf(record: LogRecord): LogChip | null {
 export function showsEntry(state: LogFilterState, entry: LogEntry): boolean {
   const { lead } = entry;
   if (state.severity === 'warnings' && lead.level !== 'warn') return false;
+  if (lead.src === 'client' && state.chips.includes('macos') && !state.chips.includes('client'))
+    return recordPlatform(lead) === 'macos';
   if (lead.src !== 'device' || state.chips.length === 0) return true;
   const chip = chipOf(lead);
   return chip === null || state.chips.includes(chip);
@@ -115,6 +121,7 @@ export function presentChips(
   if (env?.ios || env?.slots?.some((s) => s.ios)) present.add('ios');
   if (env?.android || env?.slots?.some((s) => s.android)) present.add('android');
   if (env?.web) present.add('web');
+  if (env?.macos) present.add('macos').add('build');
   if (env?.build || env?.lastBuilds?.ios || env?.lastBuilds?.android) present.add('build');
   return CHIPS.map((c) => c.chip).filter((c) => present.has(c));
 }

@@ -81,7 +81,7 @@ type PushTarget =
   | { target: 'home' }
   | { target: 'machine' }
   | { target: 'workspace'; path: string }
-  | { target: 'device'; path: string; platform: 'ios' | 'android' | 'web'; slot: string }
+  | { target: 'device'; path: string; platform: 'ios' | 'android' | 'web' | 'macos'; slot: string }
   | { target: 'build'; path: string; platform: 'ios' | 'android' }
   | { target: 'url'; path: string; url: string };
 
@@ -106,7 +106,7 @@ export interface ControlConflict {
   workspace: string;
   title: string;
   body: string;
-  platform: 'ios' | 'android' | 'web';
+  platform: 'ios' | 'android' | 'web' | 'macos';
   slot: string;
 }
 

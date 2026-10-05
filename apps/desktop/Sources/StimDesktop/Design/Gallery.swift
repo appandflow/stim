@@ -2,16 +2,70 @@
   import StimKit
   import SwiftUI
 
-  /// Every design token and kit component, in light and dark side by side.
   struct ComponentGallery: View {
     static let windowID = "gallery"
+    @State private var screen = PlaygroundScreen.notifications
+    @State private var scenario = PlaygroundScenario.ready
+    @State private var compact = false
+    @State private var dark = false
+    @State private var highContrast = false
+    @State private var largeText = false
+    @State private var reset = 0
+
+    private var appearance: NSAppearance.Name {
+      if highContrast { return dark ? .accessibilityHighContrastDarkAqua : .accessibilityHighContrastAqua }
+      return dark ? .darkAqua : .aqua
+    }
 
     var body: some View {
-      HStack(spacing: 0) {
-        AppearanceHost(appearance: .aqua) { GalleryColumn() }
-        AppearanceHost(appearance: .darkAqua) { GalleryColumn() }
+      VStack(spacing: 0) {
+        ScrollView(.horizontal) {
+          HStack(spacing: Space.md) {
+            Picker("Screen", selection: $screen) {
+              ForEach(PlaygroundScreen.allCases) { Text($0.rawValue).tag($0) }
+            }
+            .frame(width: 250)
+            Picker("Scenario", selection: $scenario) {
+              ForEach(screen.scenarios) { Text($0.rawValue).tag($0) }
+            }
+            .frame(width: 190)
+            Toggle("Compact", isOn: $compact)
+            Toggle("Dark", isOn: $dark)
+            Button("Reset") { reset += 1 }
+          }
+          .padding(Space.md)
+        }
+        HStack(spacing: Space.lg) {
+          Toggle("Large text", isOn: $largeText)
+          Toggle("Increase contrast", isOn: $highContrast)
+          Spacer()
+          Text("DEBUG fixtures").foregroundStyle(Palette.secondary)
+        }
+        .font(.stim(.caption)).padding(.horizontal, Space.md).padding(.bottom, Space.md)
+        Divider()
+        ScrollView(.horizontal) {
+          AppearanceHost(appearance: appearance) {
+            Group {
+              if screen == .tokens {
+                GalleryColumn()
+              } else {
+                PlaygroundScreenView(screen: screen, scenario: scenario)
+                  .id("\(screen.rawValue)-\(scenario.rawValue)-\(reset)")
+              }
+            }
+            .environment(\.colorScheme, dark ? .dark : .light)
+            .environment(\.dynamicTypeSize, largeText ? .accessibility3 : .large)
+          }
+          .frame(width: compact ? 380 : 900)
+          .frame(maxHeight: .infinity)
+          .overlay(Rectangle().strokeBorder(Palette.border))
+          .padding(Space.lg)
+        }
       }
-      .frame(minWidth: 1000, minHeight: 700)
+      .frame(minWidth: 640, minHeight: 640)
+      .onChange(of: screen) { _, screen in
+        if !screen.scenarios.contains(scenario) { scenario = .ready }
+      }
     }
   }
 
@@ -28,6 +82,7 @@
     }
 
     func updateNSView(_ view: NSHostingView<Content>, context: Context) {
+      view.appearance = NSAppearance(named: appearance)
       view.rootView = content
     }
   }
