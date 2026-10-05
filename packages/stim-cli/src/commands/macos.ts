@@ -42,7 +42,10 @@ export async function runMacos(
   if (shape) throw new Error(`${shape} ${SETTING_SHAPE_REMEDY}`);
   const macos = settings.macos as { product?: string; infoPlist?: string; arguments?: string[] } | undefined;
   if (!macos?.product || !macos.infoPlist) {
-    throw new Error('Set macos.product and macos.infoPlist explicitly. See stim guide macos.');
+    throw Object.assign(
+      new Error('Set macos.product and macos.infoPlist explicitly in .stim.json. See stim guide macos.'),
+      { code: 'STIM_BAD_ARG' },
+    );
   }
   return withNativeBuildRun(
     root,

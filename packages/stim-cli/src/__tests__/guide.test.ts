@@ -208,6 +208,7 @@ test('the errors topic documents every code the build commands, the Node check a
   const commandFiles = [
     'ios.ts',
     'android.ts',
+    'macos.ts',
     'settings.ts',
     'start.ts',
     'native-runtime.ts',
