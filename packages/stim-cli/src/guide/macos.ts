@@ -139,12 +139,12 @@ the placement stays recorded; restore the connection and run stim stop again.
 status --json reports macos.host { machine, session, appSlot, appAttempt,
 bundleId, agent }. state is running when the host reported a live app and
 unverified when it could not confirm one; status does not contact the host.
-While a placement is recorded, gc treats the workspace as in use. agent says how a coding agent drives the app:
-{ driver: "none", setting: "hosting.agentDriver" } until the hosting Mac's
-owner sets that setting there, or { driver: "agent-device", remoteConfig,
-command }. remoteConfig is a mode 0600 file in the workspace directory that
-holds the credential; run the command it names and never print the file. stop
-deletes it.
+While a placement is recorded, gc treats the workspace as in use. agent says
+how a coding agent drives the app: { driver: "none", setting:
+"hosting.agentDriver" } until the hosting Mac's owner sets that setting there,
+or { driver: "agent-device", remoteConfig, command }. remoteConfig is a mode
+0600 file in the workspace directory that holds the credential; run the command
+it names and never print the file. stop deletes it.
 
 Agents that built, launched and drove test copies on another Mac with an SSH
 script such as mini-desktop.sh use these instead:

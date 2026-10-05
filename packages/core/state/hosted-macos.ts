@@ -1,5 +1,5 @@
 import { isJsonObject } from './json-file.ts';
-import { hostedAppAttempt, type HostedAppDelivery } from './hosted-app.ts';
+import type { HostedAppDelivery } from './hosted-app.ts';
 
 /** App slots one host offers; a slot names the host-assigned bundle id `<bundleId>.hosted<slot>`. */
 export const HOSTED_MACOS_APP_SLOTS = 64;
@@ -132,7 +132,8 @@ export function parseHostedMacosPlacement(value: unknown): HostedMacosPlacement 
     typeof value.session !== 'string' ||
     !/^[a-f0-9-]{36}$/.test(value.session) ||
     !hostedMacosAppSlot(value.appSlot) ||
-    !hostedAppAttempt(value.appAttempt) ||
+    typeof value.appAttempt !== 'string' ||
+    !/^[a-zA-Z0-9_-]{1,128}$/.test(value.appAttempt) ||
     typeof value.bundleId !== 'string' ||
     !value.bundleId.endsWith(`.hosted${value.appSlot}`)
   )
