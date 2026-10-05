@@ -597,10 +597,17 @@ unique owned AVD and a journal-reserved console port, verifies the exact running
 AVD and ABI, and reconnects to that same record. Explicit stop and revocation
 shut down only that ledger-owned AVD and retain its data. Ports are coordinated
 among hosted sessions; ordinary local producers can still race a reservation.
-Android app delivery, Metro and screen/input routing remain follow-ups in #2266;
-Android sessions refuse the iOS app-delivery, Metro, view and input routes. The
+Android Metro and screen/input routing remain follow-ups in #2266;
+Android sessions refuse the iOS Metro, view and input routes. The
 protocol details are in the
 [hosted Android session protocol](https://github.com/appandflow/stim/blob/main/packages/server/README.md#hosted-android-session-protocol).
+
+Android app delivery uses the same resumable transfer methods with a single
+`App.apk` file and the expected package identity. The worker checks byte digests,
+minimum SDK, native ABI and its exact ledger-owned running AVD before install
+and launch. An installed app attempt replays without launching twice. An install
+or signature conflict refuses without uninstalling an existing app. See the
+[Android app delivery protocol](https://github.com/appandflow/stim/blob/main/packages/server/README.md#hosted-android-app-delivery).
 
 Development launches remain `unverified` until a Metro bridge proves a bundle
 request. Release launches report success only after positive native process
@@ -615,7 +622,7 @@ Expo development clients need the forwarded-origin manifest contract described
 in that protocol; older client/CLI versions are not covered by this slice.
 
 Client screen/control relays, automatic placement and
-Android app delivery, Metro and viewing remain in [#2266](https://github.com/appandflow/stim/issues/2266).
+Android Metro and viewing remain in [#2266](https://github.com/appandflow/stim/issues/2266).
 This protocol slice does not change where `stim ios` or `stim android` runs.
 Hosting approval grants no access to unrelated
 workspaces, phone control or build offloading.

@@ -34,12 +34,16 @@ async function main(): Promise<void> {
     throw new Error('Invalid hosted Metro port.');
   const result =
     input.platform === 'android'
-      ? await runHostedAndroidDevice(input.mode as 'prepare' | 'stop' | 'install', {
-          session: typeof input.session === 'string' ? input.session : '',
-          consolePort: input.consolePort,
-          ...(typeof input.systemImage === 'string' ? { systemImage: input.systemImage } : {}),
-          ...(typeof input.deviceProfile === 'string' ? { deviceProfile: input.deviceProfile } : {}),
-        })
+      ? await runHostedAndroidDevice(
+          input.mode as 'prepare' | 'stop' | 'install',
+          {
+            session: typeof input.session === 'string' ? input.session : '',
+            consolePort: input.consolePort,
+            ...(typeof input.systemImage === 'string' ? { systemImage: input.systemImage } : {}),
+            ...(typeof input.deviceProfile === 'string' ? { deviceProfile: input.deviceProfile } : {}),
+          },
+          input.mode === 'install' ? { attempt: input.attempt as string } : undefined,
+        )
       : await runHostedDevice(
           input.mode as 'prepare' | 'stop' | 'install',
           {

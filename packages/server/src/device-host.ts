@@ -385,7 +385,6 @@ export class DeviceHost {
       throw new Error('App requests need a session and app attempt.');
     const record = readHostedSessions().find((each) => each.client === client && each.id === params.session);
     if (!record) throw new Error('This client has no such hosted session.');
-    if (record.platform !== 'ios') throw new Error('Hosted app delivery currently supports iOS sessions only.');
     return record;
   }
 

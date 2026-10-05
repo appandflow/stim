@@ -683,10 +683,12 @@ test('a lost journal directory cannot admit another device while a worker area r
   renameSync(backup, deviceHostRoot());
 });
 
-function appOffer(session: string, attempt = 'app-first') {
+function appOffer(session: string, attempt = 'app-first', platform = 'ios') {
   const content = Buffer.from('independent content for upload replay');
   const sha256 = createHash('sha256').update(content).digest('hex');
-  const files = [{ path: 'Info.plist', kind: 'file', size: content.length, sha256 }];
+  const files = [
+    { path: platform === 'android' ? 'App.apk' : 'Info.plist', kind: 'file', size: content.length, sha256 },
+  ];
   const manifest = Buffer.from(JSON.stringify(files));
   return {
     content,
@@ -772,40 +774,43 @@ test('refuses app mutations after the real session owner disappears until explic
   await state(retained.session, 'stopped');
 });
 
-test('resumes verified app bytes and reconciles a lost install reply without another native launch', async () => {
-  const first = reserve();
-  await state(first.id, 'ready');
-  const app = appOffer(first.id);
-  const { content, params, sha256 } = app;
-  expect(host.appOffer('other', params)).toHaveProperty('error');
-  expect(host.appOffer('client', params)).toHaveProperty('result.missing.0.offset', 0);
-  expect(host.appLaunch('client', params)).toHaveProperty('error');
-  expect(host.appOffer('client', { ...params, attempt: 'second-transfer' })).toHaveProperty('error');
-  await uploadManifest(app);
-  const firstChunk = {
-    session: first.id,
-    attempt: params.attempt,
-    sha256,
-    offset: 0,
-    data: content.subarray(0, 10).toString('base64'),
-  };
-  expect(await host.appChunk('client', firstChunk)).toHaveProperty('result.offset', 10);
-  expect(await host.appChunk('client', firstChunk)).toHaveProperty('result.offset', 10);
-  expect(await host.appChunk('client', { ...firstChunk, data: Buffer.alloc(10).toString('base64') })).toHaveProperty(
-    'error',
-  );
-  expect(host.appOffer('client', params)).toHaveProperty('result.missing.0.offset', 10);
-  expect(
-    await host.appChunk('client', { ...firstChunk, offset: 10, data: content.subarray(10).toString('base64') }),
-  ).toHaveProperty('result.offset', content.length);
-  expect(host.appOffer('client', params)).toHaveProperty('result.missing', []);
-  expect(host.appOffer('client', { ...params, bundleId: 'different.app' })).toHaveProperty('error');
-  expect(host.appLaunch('client', params)).toHaveProperty('result.state', 'installing');
-  await vi.waitFor(() => expect(host.appAttach('client', params)).toHaveProperty('result.state', 'installed'));
-  expect(host.appLaunch('client', params)).toHaveProperty('result.launched', true);
-  expect(readFileSync(join(deviceHostArea(first.id), 'home', 'installed'), 'utf8')).toBe('app-first\n');
-  expect(host.attach('client', { session: first.id })).toHaveProperty('result.appAttempt', params.attempt);
-});
+test.each(['ios', 'android'])(
+  'resumes %s app bytes and reconciles a lost install reply without another native launch',
+  async (platform) => {
+    const first = reserve({ platform });
+    await state(first.id, 'ready');
+    const app = appOffer(first.id, 'app-first', platform);
+    const { content, params, sha256 } = app;
+    expect(host.appOffer('other', params)).toHaveProperty('error');
+    expect(host.appOffer('client', params)).toHaveProperty('result.missing.0.offset', 0);
+    expect(host.appLaunch('client', params)).toHaveProperty('error');
+    expect(host.appOffer('client', { ...params, attempt: 'second-transfer' })).toHaveProperty('error');
+    await uploadManifest(app);
+    const firstChunk = {
+      session: first.id,
+      attempt: params.attempt,
+      sha256,
+      offset: 0,
+      data: content.subarray(0, 10).toString('base64'),
+    };
+    expect(await host.appChunk('client', firstChunk)).toHaveProperty('result.offset', 10);
+    expect(await host.appChunk('client', firstChunk)).toHaveProperty('result.offset', 10);
+    expect(await host.appChunk('client', { ...firstChunk, data: Buffer.alloc(10).toString('base64') })).toHaveProperty(
+      'error',
+    );
+    expect(host.appOffer('client', params)).toHaveProperty('result.missing.0.offset', 10);
+    expect(
+      await host.appChunk('client', { ...firstChunk, offset: 10, data: content.subarray(10).toString('base64') }),
+    ).toHaveProperty('result.offset', content.length);
+    expect(host.appOffer('client', params)).toHaveProperty('result.missing', []);
+    expect(host.appOffer('client', { ...params, bundleId: 'different.app' })).toHaveProperty('error');
+    expect(host.appLaunch('client', params)).toHaveProperty('result.state', 'installing');
+    await vi.waitFor(() => expect(host.appAttach('client', params)).toHaveProperty('result.state', 'installed'));
+    expect(host.appLaunch('client', params)).toHaveProperty('result.launched', true);
+    expect(readFileSync(join(deviceHostArea(first.id), 'home', 'installed'), 'utf8')).toBe('app-first\n');
+    expect(host.attach('client', { session: first.id })).toHaveProperty('result.appAttempt', params.attempt);
+  },
+);
 
 test('discards digest-mismatched app bytes and leaves native installation unstarted', async () => {
   const first = reserve();
@@ -858,7 +863,7 @@ test.each(['stop', 'revoke'])(
   },
 );
 
-test('Android reservations keep distinct ports and platform slots, reconnect without recreation and refuse iOS app routes', async () => {
+test('Android reservations keep distinct ports and platform slots and reconnect without recreation', async () => {
   const validator = new Ajv2020({ strict: false, validateFormats: false });
   validator.addSchema(protocolJsonSchema(), 'protocol');
   const acceptsRequest = validator.compile({ $ref: 'protocol#/$defs/ClientRequest' });
@@ -895,15 +900,6 @@ test('Android reservations keep distinct ports and platform slots, reconnect wit
     `stim-hosted-${android.id}`,
   );
   expect(reserve(androidRequest).id).toBe(android.id);
-  expect(
-    host.appOffer('client', {
-      session: android.id,
-      attempt: 'app',
-      bundleId: 'dev.fixture',
-      mode: 'release',
-      manifest: { sha256: 'a'.repeat(64), size: 2 },
-    }),
-  ).toHaveProperty('error.message', 'Hosted app delivery currently supports iOS sessions only.');
   const journal = readFileSync(join(deviceHostRoot(), 'sessions.json'), 'utf8');
   expect(() => host.viewTarget('client', android.id)).toThrow(
     'Hosted view and input currently support iOS sessions only.',
