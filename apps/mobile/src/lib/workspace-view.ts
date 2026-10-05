@@ -546,6 +546,8 @@ export function phaseSteps(build: BuildReport, history: readonly BuildHistoryEnt
   const phases = PHASE_ORDER.filter((phase, i) => i === currentIndex || reference[phase] !== undefined);
   const phaseStart = Date.parse(build.phaseStartedAt);
   const inPhase = Number.isFinite(phaseStart) ? Math.max(0, now - phaseStart) : null;
+  if (currentIndex < 0)
+    return [{ phase: 'unknown', state: 'current', elapsedMs: inPhase, expectedMs: null, fraction: null }];
   return phases.map((phase) => {
     const i = PHASE_ORDER.indexOf(phase);
     const expectedMs =
@@ -598,7 +600,11 @@ const BAR_GROUP: Record<BuildPhase, BuildPhase> = {
 export function barSteps(steps: PhaseStep[]): PhaseStep[] {
   const groups: PhaseStep[] = [];
   for (const step of steps) {
-    const phase = Object.hasOwn(BAR_GROUP, step.phase) ? BAR_GROUP[step.phase] : undefined;
+    const phase = Object.hasOwn(BAR_GROUP, step.phase)
+      ? BAR_GROUP[step.phase]
+      : step.state === 'current'
+        ? 'unknown'
+        : undefined;
     if (!phase) continue;
     const group = groups.find((g) => g.phase === phase);
     if (!group) {
@@ -695,7 +701,7 @@ export interface RemoteBuild {
 /** The build machine a running build was offloaded to, and the step it runs there; null for a local build. */
 export function remoteBuild(build: BuildReport, now: number): RemoteBuild | null {
   const placement = build.placement;
-  if (!placement || placement === 'local') return null;
+  if (!placement || typeof placement === 'string') return null;
   const started = Date.parse(placement.phaseStartedAt);
   return {
     host: machineName(placement.host),
@@ -728,6 +734,7 @@ export function otherPlatformLine(env: EnvironmentState, building: string, now: 
   if (last.status === 'failed') {
     return since ? t`${name} \u00B7 last build failed, ${since} ago` : t`${name} \u00B7 last build failed`;
   }
+  if (last.status !== 'ok') return t`${name} \u00B7 Unknown`;
   const took = last.durationMs === null ? null : clockDuration(last.durationMs);
   const list = [took, since ? t`${since} ago` : null].filter(Boolean).join(', ');
   return t`${name} \u00B7 last build ${list}`;
@@ -908,10 +915,12 @@ function chipPart(part: GitChipFacts['parts'][number]): GitChip['parts'][number]
       return arrows ? { text: arrows, tone: 'default' } : null;
     }
     case 'changed': {
+      if (part.count === undefined) return null;
       const uncommitted = part.count;
       return { text: t`${uncommitted} changed`, tone: 'secondary' };
     }
     case 'merged': {
+      if (part.into === undefined) return null;
       const mergedInto = part.into;
       return { text: t`merged into ${mergedInto}`, tone: 'brand' };
     }

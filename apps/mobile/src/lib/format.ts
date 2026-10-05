@@ -240,12 +240,7 @@ export function nextBuild(plan: BuildPlan, withReason = true): string {
   }
   if (plan.cacheHit === 'local') return t`cache hit (local)`;
   if (plan.cacheHit === 'remote') return t`cache hit (remote)`;
-  if (
-    plan.cacheHit !== false ||
-    (plan.outcome !== null && plan.outcome !== 'cold' && plan.outcome !== 'hit') ||
-    (plan.prebuild !== null && !['none', 'generate', 'regenerate', 'refuse'].includes(plan.prebuild))
-  )
-    return t`Unknown`;
+  if (plan.cacheHit !== false) return t`Unknown`;
   const off = plan.cacheSkipped ? t` (cache reads off)` : '';
   const prebuilds = plan.missReason?.kind !== 'prebuild-pending';
   const native =

@@ -342,9 +342,7 @@ describe('orderDevices and deviceWarnings', () => {
   });
 
   it('keeps the others in place when a device is added or removed', () => {
-    const web = devicesOf(
-      env('/w', { web: { browser: 'chrome', running: true, url: 'http://localhost:8081' } as WebBrowserState }),
-    );
+    const web = devicesOf(env('/w', { web: { running: true, url: 'http://localhost:8081' } as WebBrowserState }));
     const phone = devicesOf(
       env('/w', {
         slots: [

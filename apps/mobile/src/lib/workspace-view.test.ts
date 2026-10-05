@@ -631,7 +631,10 @@ test.each([
   const workspace = payload.environments[0]!;
   const devices = devicesOf(workspace);
   const device = (platform: string) => devices.find((entry) => entry.platform === platform)!;
-  const field = path.replace('environments.0.', '');
+  const worktree = path.startsWith('unprovisionedWorktrees.')
+    ? payload.unprovisionedWorktrees![0]!
+    : workspace.worktree;
+  const field = path.replace('environments.0.', '').replace('unprovisionedWorktrees.0.', 'worktree.');
   if (path === 'machine.owners.0.kind') {
     expect(processRows(workspace, devices, payload.machine)[0]).toMatchObject({
       label: 'Metro',
@@ -671,13 +674,17 @@ test.each([
       state: 'unknown',
     });
   } else if (field === 'web.browser') {
-    expect(devices.some((entry) => entry.platform === 'web')).toBe(false);
+    expect(device('web')).toMatchObject({ running: true, page: { url: 'https://app', error: null } });
   } else if (field === 'macos.state') {
     expect(deviceTileState(device('macos'), workspace, NOW)).toEqual({ text: 'Unknown', tone: 'secondary' });
   } else if (field === 'metro.bundle.last.status') {
     expect(bundleLine(workspace, NOW, true)).toBeNull();
   } else if (field === 'issues.0.severity') {
-    expect(attentionGroups([workspace])).toEqual([]);
+    expect(attentionGroups([workspace])[0]!.items).toEqual([
+      expect.objectContaining({ message: 'Device missing', severity: 'warning' }),
+    ]);
+  } else if (field === 'build.placement') {
+    expect(remoteBuild(workspace.build!, NOW)).toBeNull();
   } else if (field === 'build.state') {
     expect(runningBuild(workspace)).toBeNull();
   } else if (field === 'build.platform') {
@@ -685,6 +692,10 @@ test.each([
     expect(otherPlatformLine(workspace, workspace.build!.platform, NOW)).toBeNull();
   } else if (field === 'build.phase' || field === 'build.detail.step') {
     expect(currentPhaseLabel(workspace.build!).phase).toBe('Unknown');
+    if (field === 'build.phase')
+      expect(barSteps(phaseSteps(workspace.build!, [], NOW))).toEqual([
+        { phase: 'unknown', state: 'current', elapsedMs: 0, expectedMs: null, fraction: null },
+      ]);
   } else if (field === 'build.detail.unit') {
     expect(currentPhaseLabel(workspace.build!)).toEqual({ phase: 'Compiling', counts: null });
   } else if (field === 'build.outcome') {
@@ -696,13 +707,17 @@ test.each([
       main: 'Unknown',
       tone: 'secondary',
     });
+    if (field === 'lastBuilds.ios.status')
+      expect(otherPlatformLine(workspace, 'android', NOW)).toBe('iOS \u00B7 Unknown');
   } else if (field === 'builds.ios.0.result' || field === 'builds.ios.0.cacheHit' || field === 'builds.ios.0.status') {
     expect(historyTitle(workspace.builds!.ios![0]!)).toBe('Unknown');
   } else if (field === 'worktree.pullRequest.state') {
-    expect(gitChip(workspace.worktree)!.pr).toMatchObject({ tone: 'tertiary' });
-    expect(gitChip(workspace.worktree)!.label).toContain('PR #1');
+    expect(gitChip(worktree)!.pr).toMatchObject({ tone: 'tertiary' });
+    expect(gitChip(worktree)!.label).toContain('PR #1');
+  } else if (field === 'worktree.gitChip.parts.0.kind') {
+    expect(gitChip(worktree)!.parts).toEqual([]);
   } else if (field === 'worktree.gitChip.ci') {
-    expect(gitChip(workspace.worktree)!.pr!.ci).toBeNull();
+    expect(gitChip(worktree)!.pr!.ci).toBeNull();
   } else if (field === 'agents.0.tool' || field === 'endedAgents.0.tool') {
     const session = field.startsWith('ended') ? workspace.endedAgents![0]! : workspace.agents![0]!;
     expect(agentLabel(session)).toBe('future-kind');
@@ -713,7 +728,7 @@ test.each([
       workspaceStage({ ...workspace, stage: { ...workspace.stage!, kind: 'warming' } }, devices, NOW).subtitle,
     ).toContain('Unknown');
   } else if (field === 'worktree.pullRequest.reviewDecision') {
-    expect(pullRequestReviewName(workspace.worktree!.pullRequest!.reviewDecision!)).toBe('Unknown');
+    expect(pullRequestReviewName(worktree!.pullRequest!.reviewDecision!)).toBe('Unknown');
   } else if (field === 'macos.build.state') {
     expect(macosBuildLabel(workspace.macos!)).toBe('Unknown');
   } else if (field.startsWith('build.missReason')) {
@@ -751,7 +766,11 @@ test.each([
   } else if (field.startsWith('metro.')) {
     expect(metroHealth(workspace)).toBe('healthy');
     expect(bundleLine(workspace, NOW, true)?.tone).toBe('tertiary');
-  } else if (field === 'macos.hostLaunched' || field === 'macos.host.agent.setting') {
+  } else if (
+    field === 'macos.hostLaunched' ||
+    field === 'macos.host.agent.setting' ||
+    field === 'macos.host.agent.driver'
+  ) {
     expect(device('macos')).toMatchObject({ name: 'App', running: true });
   } else if (field === 'phase') {
     expect(workspaceStage(workspace, devices, NOW).label).toBe('Running');
@@ -786,8 +805,8 @@ test.each(['future-kind', '__proto__', 'constructor'])(
       pullRequest: { ...payload.environments[0]!.worktree!.pullRequest!, state: value },
     };
     expect(gitChip(tree)?.pr?.tone).toBe('tertiary');
-    expect(barSteps([{ phase: value, state: 'current', elapsedMs: null, expectedMs: null, fraction: null }])).toEqual(
-      [],
-    );
+    expect(barSteps([{ phase: value, state: 'current', elapsedMs: null, expectedMs: null, fraction: null }])).toEqual([
+      { phase: 'unknown', state: 'current', elapsedMs: null, expectedMs: null, fraction: null },
+    ]);
   },
 );

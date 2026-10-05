@@ -129,7 +129,6 @@ const vectorNow = Date.parse(vectors.now);
 describe('workspace row vectors', () => {
   it.each(vectors.cases.map((c) => [c.name, c] as const))('%s', (_, c) => {
     const e = c.workspace as unknown as EnvironmentState;
-    if (e.web) e.web = { ...e.web, browser: 'chrome' };
     const { kind, text, label, tone } = rowStatus(e, vectorNow, null);
     expect({ kind, text, label, tone }).toEqual(c.status);
     expect(rowProblems(e, vectorNow)).toEqual(c.problems);

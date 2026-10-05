@@ -24,7 +24,7 @@ const last = {
 };
 
 export function receiveStatus(captured: StatusPayload): StatusPayload {
-  return {
+  const payload: StatusPayload = {
     ...captured,
     machine: {
       memorySource: 'footprint',
@@ -194,11 +194,16 @@ export function receiveStatus(captured: StatusPayload): StatusPayload {
       },
     ],
   };
+  payload.unprovisionedWorktrees = [{ ...payload.environments[0]!.worktree!, path: '/unprovisioned' }];
+  return payload;
 }
 
 export const statusEnumPaths: string[] = [
   'machine.memorySource',
   'machine.owners.0.kind',
+  ...['pullRequest.state', 'pullRequest.reviewDecision', 'gitChip.ci', 'gitChip.parts.0.kind'].map(
+    (path) => `unprovisionedWorktrees.0.${path}`,
+  ),
   ...[
     'phase',
     'warmStep',
@@ -221,6 +226,7 @@ export const statusEnumPaths: string[] = [
     'macos.build.state',
     'macos.hostLaunched',
     'macos.host.agent.setting',
+    'macos.host.agent.driver',
     'metro.tunnel.provider',
     'metro.idleStop.reason',
     'metro.bundle.platform',
@@ -229,6 +235,7 @@ export const statusEnumPaths: string[] = [
     'issues.0.severity',
     'build.platform',
     'build.state',
+    'build.placement',
     'build.phase',
     'build.outcome',
     'build.cacheLookupOutcome',
@@ -249,6 +256,7 @@ export const statusEnumPaths: string[] = [
     'worktree.pullRequest.state',
     'worktree.pullRequest.reviewDecision',
     'worktree.gitChip.ci',
+    'worktree.gitChip.parts.0.kind',
     'agents.0.tool',
     'endedAgents.0.tool',
     'remoteDevices.0.platform',
@@ -359,7 +367,7 @@ export const resultEnumCases: [Method, unknown, string, unknown][] = [
   ['action', { action: 'reload', workspace: '/app', output: {} }, 'action', 'future-kind'],
   ['control.begin', { session: 'c', platform: 'ios', lease: null, postures: ['folded'] }, 'platform', 'future-kind'],
   ['control.begin', { session: 'c', platform: 'ios', lease: null, postures: ['folded'] }, 'postures.0', 'future-kind'],
-  ...['category', 'suppressed', 'target.platform'].map((path): [Method, unknown, string, unknown] => [
+  ...['category', 'suppressed', 'target.platform', 'target.kind'].map((path): [Method, unknown, string, unknown] => [
     'notifications.list',
     { log: 'l', cursor: 1, notifications: [notification] },
     `notifications.0.${path}`,
@@ -394,7 +402,7 @@ export const eventEnumCases: [unknown, string][] = [
     path,
   ]),
   [{ event: 'control-ended', session: 'c', reason: 'idle', message: 'Control ended' }, 'reason'],
-  ...['category', 'suppressed', 'target.platform'].map((path): [unknown, string] => [
+  ...['category', 'suppressed', 'target.platform', 'target.kind'].map((path): [unknown, string] => [
     { event: 'notification', log: 'l', notification },
     `notification.${path}`,
   ]),

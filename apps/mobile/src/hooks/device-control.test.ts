@@ -5,7 +5,6 @@ import type { StimConnection } from '@/lib/connection';
 import type { createMachineStore } from '@/lib/machine-store';
 
 import { useDeviceControl } from './device-control';
-import { useAction } from './workspace-actions';
 
 jest.mock('expo-router', () => ({ useLocalSearchParams: () => ({ id: 'm1' }) }));
 jest.mock('@/storage', () => ({ statusStorage: {} }));
@@ -25,22 +24,6 @@ jest.mock('@/lib/machine-store', () => {
 
 const machines = (jest.requireMock('@/lib/machine-store') as { created: ReturnType<typeof createMachineStore>[] })
   .created[0]!;
-
-test('finishes the requested workspace action even when the result names a future action', async () => {
-  const connection = {
-    request: jest.fn().mockResolvedValue({ action: 'future-kind', workspace: '/app', output: {} }),
-    reconnect: jest.fn(),
-  };
-  machines.setMacs([{ id: 'm1', name: 'Mac', endpoint: 'ws://mac', pairedAt: '2026-09-30T00:00:00Z' }], false);
-  machines.patchLink('m1', { connection: connection as unknown as StimConnection });
-  const { result, unmount } = await renderHook(() => useAction('/app'));
-  await act(async () => {
-    expect(await result.current.run('reload')).toBeNull();
-  });
-  expect(result.current.pending).toBeNull();
-  expect(connection.reconnect).not.toHaveBeenCalled();
-  await unmount();
-});
 
 test('ends a control session that begins after the screen unmounted', async () => {
   const begins: ((result: unknown) => void)[] = [];

@@ -185,7 +185,7 @@ const LOOP_COUNT = 3;
 /** A workspace absent this long is forgotten; a shorter gap is a status that briefly left it out. */
 const FORGET_MS = 2 * 60_000;
 
-const platformName = (platform: string) => (platform === 'ios' ? 'iOS' : 'Android');
+const platformName = (platform: string) => (platform === 'ios' ? 'iOS' : platform === 'android' ? 'Android' : platform);
 const basename = (path: string) => path.split('/').findLast(Boolean) ?? path;
 const time = (text: string | null | undefined) => (text ? Date.parse(text) : Number.NaN);
 
@@ -788,11 +788,11 @@ function workspaceItems(
   const { now } = input;
   const items: NeedsAttentionItem[] = [];
   for (const issue of env.issues ?? []) {
-    if ((issue.severity !== 'error' && issue.severity !== 'warning') || !PERSON_ISSUES.has(issue.code)) continue;
+    if (issue.severity === 'info' || !PERSON_ISSUES.has(issue.code)) continue;
     items.push({
       id: `issue-${issue.code}-${issue.slot ?? 'default'}:${env.path}`,
       category: 'attention',
-      severity: issue.severity,
+      severity: issue.severity === 'error' ? 'error' : 'warning',
       workspace: env.path,
       body: format({ kind: 'issue', slot: issue.slot, message: issue.message }),
       remedy: issue.remedy,

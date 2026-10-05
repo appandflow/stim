@@ -126,3 +126,9 @@ test.each(['device', 'build'] as const)('does not route an unsupported %s platfo
   };
   expect(itemData(item)).toEqual({ ref: 'm', target: 'machine' });
 });
+
+test('routes an unknown notification target to the machine instead of an unsupported screen', () => {
+  expect(
+    itemData({ ...entry(1, NOON), macId: 'm', macName: 'Mac', read: false, target: { kind: 'future-target' } }),
+  ).toEqual({ ref: 'm', target: 'machine' });
+});

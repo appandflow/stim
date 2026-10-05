@@ -58,7 +58,7 @@ export type PhoneBuildReport = Omit<
   missReason?: PhoneBuildMissReason;
   detail?: PhoneBuildDetail;
 };
-export type PhoneBuildPlacement = State.BuildPlacement;
+export type PhoneBuildPlacement = string | Exclude<State.BuildPlacement, string>;
 export type PhoneBuildDetail = Omit<State.BuildDetail, 'step' | 'unit'> & { step: string | null; unit: string | null };
 export type PhoneBuildCacheHit = string | false;
 export type PhoneBuildMissCategory = string;
@@ -97,8 +97,14 @@ export type PhoneWorktreeFacts = Omit<State.WorktreeFacts, 'pullRequest' | 'gitC
   pullRequest?: PhonePullRequestFacts | null;
   gitChip?: PhoneGitChipFacts;
 };
-export type PhoneGitChipPart = State.GitChipPart;
-export type PhoneGitChipFacts = Omit<State.GitChip, 'ci'> & { ci: string | null };
+export type PhoneGitChipPart = {
+  kind: string;
+  ahead?: number;
+  behind?: number;
+  count?: number;
+  into?: string;
+};
+export type PhoneGitChipFacts = Omit<State.GitChip, 'ci' | 'parts'> & { ci: string | null; parts: PhoneGitChipPart[] };
 export type PhoneStageFacts = Omit<State.WorkspaceStage, 'kind' | 'platform' | 'closedApps'> & {
   kind: string;
   platform: string | null;
@@ -123,7 +129,7 @@ export type PhoneMacosAppState = Omit<State.MacosAppRecord, 'build' | 'hostLaunc
   build: Omit<State.MacosBuild, 'state'> & { state: string };
   hostLaunched?: boolean | string;
   host?: Omit<State.HostedMacosPlacement, 'agent'> & {
-    agent: Exclude<State.HostedAgentAccess, { driver: 'none' }> | { driver: 'none'; setting: string };
+    agent: { driver: string; setting?: string; remoteConfig?: string; command?: string };
   };
 };
 export type PhoneEnvironmentState = Omit<
@@ -276,10 +282,13 @@ export type PhonePushEvent = Wire.PushEvent;
 export type PhoneNotificationLevel = Wire.NotificationLevel;
 export type PhonePushRegisterParams = Wire.PushRegisterParams;
 export type PhoneNotificationSuppression = Wire.NotificationSuppression;
-export type PhoneNotificationTarget =
-  | Exclude<Wire.NotificationTarget, { kind: 'device' | 'build' }>
-  | { kind: 'device'; path: string; platform: string; slot: string }
-  | { kind: 'build'; path: string; platform: string };
+export type PhoneNotificationTarget = {
+  kind: string;
+  path?: string;
+  platform?: string;
+  slot?: string;
+  url?: string;
+};
 export type PhoneWorkspaceFile = Wire.WorkspaceFile;
 export type PhoneWorkspaceFiles = Wire.WorkspaceFiles;
 export type PhoneWorkspacePatch = Omit<Wire.WorkspacePatch, 'section' | 'kind'> & { section: string; kind: string };

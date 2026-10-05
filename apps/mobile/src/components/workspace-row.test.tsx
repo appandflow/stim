@@ -104,7 +104,7 @@ it('shows the branch and git state once while each app opens its original route 
 });
 
 test.each(['platform', 'backend', 'state'])(
-  'skips unsupported remote %s or shows a neutral claim label',
+  'keeps billable remote sessions visible with a neutral %s label',
   async (field) => {
     const session = receiveStatus(fixture.payload as StatusPayload).environments[0]!.remoteDevices![0]!;
     const screen = await render(
@@ -113,7 +113,9 @@ test.each(['platform', 'backend', 'state'])(
       </I18nProvider>,
     );
     if (field === 'state') expect(screen.getByText(/Claim unknown/)).toBeTruthy();
-    else expect(screen.toJSON()).toBeNull();
+    else expect(screen.getByText('EAS Simulator')).toBeTruthy();
+    expect(screen.getByText('billable')).toBeTruthy();
+    expect(screen.getByText(session.sessionId)).toBeTruthy();
   },
 );
 

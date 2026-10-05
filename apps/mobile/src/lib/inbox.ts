@@ -136,12 +136,19 @@ export function byDay(items: InboxItem[], now: number): { title: string; data: I
 
 /** What tapping the item opens, as its push does. */
 export function itemData(item: InboxItem): NotificationData {
-  const { kind, ...target } = item.target;
-  if ('platform' in target) {
-    const { platform } = target;
-    if (platform !== 'ios' && platform !== 'android' && platform !== 'web' && platform !== 'macos')
-      return { ref: item.macId, target: 'machine' };
-    return { ref: item.macId, target: kind, ...target, platform };
+  const { kind, path, platform, slot, url } = item.target;
+  const ref = item.macId;
+  if (kind === 'workspace' && path !== undefined) return { ref, target: 'workspace', path };
+  if (kind === 'url' && path !== undefined && url !== undefined) return { ref, target: 'url', path, url };
+  if (path !== undefined) {
+    if (kind === 'build' && (platform === 'ios' || platform === 'android'))
+      return { ref, target: 'build', path, platform };
+    if (
+      kind === 'device' &&
+      slot !== undefined &&
+      (platform === 'ios' || platform === 'android' || platform === 'web' || platform === 'macos')
+    )
+      return { ref, target: 'device', path, platform, slot };
   }
-  return { ref: item.macId, target: kind, ...target };
+  return { ref, target: 'machine' };
 }

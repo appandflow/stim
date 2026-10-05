@@ -379,6 +379,10 @@ msgstr "{name} · last build failed, {since} ago"
 msgid "{name} · no build recorded"
 msgstr "{name} · no build recorded"
 
+#: src/lib/workspace-view.ts
+msgid "{name} · Unknown"
+msgstr "{name} · Unknown"
+
 #: src/lib/home-list.ts
 msgid "{name} app closed"
 msgstr "{name} app closed"

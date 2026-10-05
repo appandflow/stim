@@ -341,7 +341,8 @@ test.each(resultEnumCases.filter(([method]) => method === 'build.plan'))(
   (_method, fixture, path, value) => {
     const plan = replaceReceivedField(fixture, path, value) as BuildPlan;
     if (path === 'platform') expect(platformName(plan.platform)).toBe('Unknown');
-    else if (path.startsWith('missReason.')) expect(nextBuild(plan)).toBe('cold build, Native files changed');
+    else if (path.startsWith('missReason.') || path === 'prebuild' || path === 'outcome')
+      expect(nextBuild(plan)).toBe('cold build, Native files changed');
     else expect(nextBuild(plan)).toBe('Unknown');
   },
 );

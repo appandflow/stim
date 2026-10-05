@@ -158,13 +158,9 @@ test.each(eventEnumCases)('a newer server does not invalidate event %j at %s', (
 
 test('unknown structural tags and malformed fields still reject', () => {
   expect(isRpcEvent({ ...statusFixture, event: 'future-event' })).toBe(false);
+  expect(isRpcEvent(replaceReceivedField(statusFixture, 'payload.environments.0.path', 1))).toBe(false);
   expect(
-    isRpcEvent(
-      replaceReceivedField(statusFixture, 'payload.environments.0.worktree.gitChip.parts.0.kind', 'future-kind'),
-    ),
-  ).toBe(false);
-  expect(
-    isRpcResult('notifications.list', { log: 'l', cursor: 1, notifications: [{ target: { kind: 'future-target' } }] }),
+    isRpcEvent(replaceReceivedField(statusFixture, 'payload.environments.0.worktree.gitChip.parts.0.count', 'wrong')),
   ).toBe(false);
 });
 
@@ -192,10 +188,23 @@ test('opening display enums preserves validation of nested app, agent and owners
     expect(isRpcEvent(replaceReceivedField(statusFixture, path, 1))).toBe(false);
   }
   for (const [path, value] of [
-    ['payload.environments.0.macos.host.agent.driver', 'future-driver'],
     ['payload.environments.0.physicalDevices.0.owned', true],
-    ['payload.environments.0.build.placement', 'future-placement'],
+    ['payload.environments.0.physicalDevices.0.physical', false],
+    ['payload.environments.0.macos.host.agent.command', 1],
+    ['payload.environments.0.build.placement', { host: 1 }],
   ]) {
     expect(isRpcEvent(replaceReceivedField(statusFixture, path as string, value))).toBe(false);
   }
+});
+
+test('accepts new display kinds without requiring the known kind details', () => {
+  const payload = replaceReceivedField(statusFixture, 'payload.environments.0.worktree.gitChip.parts', [
+    { kind: 'future-kind' },
+  ]);
+  expect(isRpcEvent(payload)).toBe(true);
+  const [fixture] = eventEnumCases.find(([, path]) => path === 'notification.target.kind')!;
+  expect(isRpcEvent(replaceReceivedField(fixture, 'notification.target', { kind: 'future-target' }))).toBe(true);
+  expect(isRpcEvent(replaceReceivedField(fixture, 'notification.target', { kind: 'future-target', path: 1 }))).toBe(
+    false,
+  );
 });

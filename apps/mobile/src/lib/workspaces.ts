@@ -185,7 +185,7 @@ export function devicesOf(env: EnvironmentState): DeviceRef[] {
     if (android) out.push(androidDevice(slot, android));
   };
   add('default', env.ios, env.android);
-  if (env.web?.browser === 'chrome') out.push(webDevice(env.web));
+  if (env.web) out.push(webDevice(env.web));
   if (env.macos)
     out.push({
       platform: 'macos',
@@ -287,12 +287,12 @@ export function attentionGroups(environments: EnvironmentState[]): AttentionGrou
   const groups = environments.flatMap((env): AttentionGroup[] => {
     const items: AttentionItem[] = env.issues
       ? env.issues.flatMap((issue) =>
-          issue.severity !== 'error' && issue.severity !== 'warning'
+          issue.severity === 'info'
             ? []
             : [
                 {
                   message: issue.slot ? slotMessage(issue.slot, issue.message) : issue.message,
-                  severity: issue.severity,
+                  severity: issue.severity === 'error' ? 'error' : 'warning',
                   remedy: issue.remedy,
                   command: `cd ${shellQuote(issue.workspace)} && ${issue.remedy}`,
                 },
