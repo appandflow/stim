@@ -275,7 +275,16 @@ export async function createOwnedAvd(
   recordCreatedDevice('android', avdName);
   const tool = androidToolPath('avdmanager');
   const args = ['create', 'avd', '-n', avdName, '-k', pick.pkg, '--device', deviceProfile];
-  const child = spawn(tool, args, { detached: true, stdio: ['pipe', 'pipe', 'pipe'] });
+  // avdmanager (cmdline-tools 19.0) writes to $XDG_CONFIG_HOME/.android/avd when XDG_CONFIG_HOME is set, and
+  // ignores ANDROID_AVD_HOME when that directory does not exist. Create the root ownedAvdDirectory searches
+  // first, where the emulator also reads it.
+  let env = process.env;
+  if (!env.ANDROID_AVD_HOME) {
+    const root = avdLookupRoots(env, homedir())[0]!;
+    mkdirSync(root, { recursive: true });
+    env = { ...env, ANDROID_AVD_HOME: root };
+  }
+  const child = spawn(tool, args, { detached: true, stdio: ['pipe', 'pipe', 'pipe'], env });
   let stderr = '';
   child.stdout?.on('data', () => {});
   child.stderr?.on('data', (chunk) => {
@@ -373,9 +382,13 @@ export function deleteAvd(avdName: string): void {
   if (!isStimOwnedAvd(avdName)) {
     throw new Error(`Refusing to delete AVD "${avdName}": not a Stim-owned AVD; Stim has no record of creating it.`);
   }
+  const root = process.env.ANDROID_AVD_HOME
+    ? undefined
+    : avdStorageRoots().find((candidate) => avdPathExists(join(candidate, `${avdName}.ini`)));
   getExecutor().run(`${androidTool('avdmanager')} delete avd -n "${avdName}"`, {
     timeoutMs: AVDMANAGER_DELETE_TIMEOUT_MS,
     killSignal: 'SIGKILL',
+    ...(root ? { env: { ANDROID_AVD_HOME: root } } : {}),
   });
   forgetCreatedDevice('android', avdName);
 }
@@ -745,6 +758,15 @@ export function listOrphanedAvdDirectories(avdName?: string): OrphanedAvdDirecto
   return orphaned;
 }
 
+function avdLookupRoots(env: NodeJS.ProcessEnv, home: string): string[] {
+  const roots = [
+    env.ANDROID_AVD_HOME,
+    env.ANDROID_SDK_HOME ? join(env.ANDROID_SDK_HOME, 'avd') : null,
+    join(home, '.android', 'avd'),
+  ];
+  return [...new Set(roots.filter((value): value is string => Boolean(value)))];
+}
+
 export function ownedAvdDirectory(
   avdName: string,
   {
@@ -762,12 +784,7 @@ export function ownedAvdDirectory(
   } = {},
 ): string | null {
   if (!/^stim-[A-Za-z0-9._-]+$/.test(avdName)) return null;
-  const roots = [
-    env.ANDROID_AVD_HOME,
-    env.ANDROID_SDK_HOME ? join(env.ANDROID_SDK_HOME, 'avd') : null,
-    join(home, '.android', 'avd'),
-  ];
-  for (const root of new Set(roots.filter((value): value is string => Boolean(value)))) {
+  for (const root of avdLookupRoots(env, home)) {
     let ini: string;
     try {
       ini = readFile(join(root, `${avdName}.ini`));
