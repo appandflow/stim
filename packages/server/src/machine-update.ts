@@ -201,16 +201,13 @@ export class MachineUpdates {
   }
 
   async start(machine: string): Promise<Answer<ServerUpdateProgress>> {
-    if (this.uploads.get(machine)?.active)
-      return failed('action-busy', `This Mac is still sending its build to ${machine}.`);
-    let upstream: Upstream;
-    try {
-      upstream = await this.connect(machine);
-    } catch (error) {
-      return failed('action-failed', (error as Error).message);
-    }
+    if (this.uploads.get(machine)?.active) return failed('action-busy', `This Mac is already updating ${machine}.`);
+    const upload: Upload = { sent: 0, total: 0, error: null, active: true };
+    this.uploads.set(machine, upload);
+    let upstream: Upstream | null = null;
     let uploading = false;
     try {
+      upstream = await this.connect(machine);
       const workspace = workspacePackages(this.options.serverDir);
       if (!workspace) {
         const reply = await upstream.request('server.update.start', { release: this.options.version });
@@ -222,20 +219,19 @@ export class MachineUpdates {
       });
       if ('error' in reply) return reply;
       const progress = reply.result as ServerUpdateProgress;
-      const upload: Upload = {
-        sent: 0,
-        total: packages.reduce((sum, each) => sum + each.bytes.length, 0),
-        error: null,
-        active: true,
-      };
-      this.uploads.set(machine, upload);
+      upload.total = packages.reduce((sum, each) => sum + each.bytes.length, 0);
       uploading = true;
-      void this.send(upstream, progress.id, packages, upload).finally(() => upstream.close());
+      const connection = upstream;
+      void this.send(connection, progress.id, packages, upload).finally(() => connection.close());
       return { result: progress };
     } catch (error) {
       return failed('action-failed', (error as Error).message);
     } finally {
-      if (!uploading) upstream.close();
+      if (!uploading) {
+        upload.active = false;
+        this.uploads.delete(machine);
+        upstream?.close();
+      }
     }
   }
 

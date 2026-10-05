@@ -114,8 +114,7 @@ struct MachineBuildMachines: View {
   }
 }
 
-/// A Mac's name with an icon, a detail line and trailing content, heading its section of the Machines page.
-/// The Update button of a build machine that runs another Stim build, and the progress of an update Desktop asked for.
+/// The install button of a build machine that runs another Stim build, and the progress of an update Desktop asked for.
 struct MachineUpdateLine: View {
   var phase: MachineUpdatePhase?
   var needed: Bool
@@ -133,7 +132,7 @@ struct MachineUpdateLine: View {
             .textSelection(.enabled)
         }
         if needed, phase?.isDone ?? true {
-          Button("Update stim-server", action: update)
+          Button("Install This Mac's Build", action: update)
             .help("Installs this Mac's Stim build on it over the tailnet, then restarts its stim-server.")
         }
       }
@@ -149,6 +148,7 @@ struct MachineUpdateLine: View {
   }
 }
 
+/// A Mac's name with an icon, a detail line and trailing content, heading its section of the Machines page.
 struct MachineHeading<Trailing: View>: View {
   var icon: String
   var title: String

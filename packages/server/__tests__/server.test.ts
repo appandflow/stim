@@ -787,6 +787,10 @@ describe.skipIf(!fakeTailscale)('Desktop route setup', () => {
     expect(await remote.request('machines.update.start', { machine: 'mini' })).toMatchObject({
       error: { code: 'forbidden' },
     });
+    const reader = await authed(fixture.port);
+    expect(await reader.request('machines.update.start', { machine: 'mini' })).toMatchObject({
+      error: { code: 'forbidden' },
+    });
     const local = await authed(fixture.port, true);
     expect(await local.request('machines.update.start', {})).toMatchObject({ error: { code: 'bad-request' } });
     expect(await local.request('machines.update.start', { machine: 'mini' })).toMatchObject({

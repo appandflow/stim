@@ -40,9 +40,9 @@ struct BuildMachinesView: View {
             }
           }
           if !entries.isEmpty {
-            Toggle("Update build machines automatically", isOn: $updatesAutomatically)
+            Toggle("Install this Mac's build on build machines automatically", isOn: $updatesAutomatically)
               .help(
-                "When a build machine runs another Stim build than this Mac, Desktop updates its stim-server the next time it checks the machine."
+                "When a build machine runs another Stim build than this Mac, Desktop installs this Mac's build there the next time it checks the machine."
               )
           }
         } else {

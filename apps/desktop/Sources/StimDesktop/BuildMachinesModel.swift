@@ -32,16 +32,18 @@ final class BuildMachinesModel {
   @ObservationIgnored private var autoUpdated: Set<String> = []
   private let request: @MainActor (String, [String: JSONValue]) async throws -> JSONValue
   private let pollInterval: Duration
+  private let unreachableLimit: Duration
 
   init(
     cli: Task<StimCLI, Never>, settings: MachineSettingsStore, statsReader: StatsReader,
-    pollInterval: Duration = .seconds(2),
+    pollInterval: Duration = .seconds(2), unreachableLimit: Duration = .seconds(180),
     request: @escaping @MainActor (String, [String: JSONValue]) async throws -> JSONValue = BuildMachinesModel.localRequest
   ) {
     self.cli = cli
     self.settings = settings
     self.statsReader = statsReader
     self.pollInterval = pollInterval
+    self.unreachableLimit = unreachableLimit
     self.request = request
   }
 
@@ -68,15 +70,28 @@ final class BuildMachinesModel {
       return
     }
     let deadline = ContinuousClock.now + .seconds(45 * 60)
+    var unreachableSince: ContinuousClock.Instant?
     while !Task.isCancelled {
       try? await Task.sleep(for: pollInterval)
-      let phase: MachineUpdatePhase
+      var phase: MachineUpdatePhase
+      var unreachable: String?
       do {
         let result = try await request("machines.update.status", ["machine": .string(entry)])
         let status = try JSONDecoder().decode(MachineUpdateStatus.self, from: JSONEncoder().encode(result))
         phase = MachineUpdatePhase.from(status, startedAt: startedAt)
+        unreachable = status.remote == nil ? status.unreachable : nil
       } catch {
         phase = .restarting
+        unreachable = error.localizedDescription
+      }
+      if let unreachable, !phase.isDone {
+        let since = unreachableSince ?? ContinuousClock.now
+        unreachableSince = since
+        if ContinuousClock.now - since > unreachableLimit {
+          phase = .failed("\(entry) stopped answering: \(unreachable)")
+        }
+      } else {
+        unreachableSince = nil
       }
       updates[entry] = phase
       if phase.isDone { break }
