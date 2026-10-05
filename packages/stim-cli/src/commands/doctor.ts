@@ -33,6 +33,7 @@ import { compareStimVersions, inspectStimVersions, type StimVersionReport } from
 import { repairCxxLauncherState } from '../diagnostics/doctor-cxx.ts';
 import { budgetLine, inspectBudget, type BudgetReport } from '../budget.ts';
 import { inspectBuildMachines } from '../offload/build-machines.ts';
+import { inspectHostedAgentDriver } from '../device-host/agent-driver.ts';
 import { inspectDeviceHostMachines } from '../device-host/machines.ts';
 import { inspectWatchmanMemory } from './gc/memory.ts';
 
@@ -300,6 +301,8 @@ export default function doctorCommand(
       findings.push(...buildMachines.findings);
       const deviceHosts = await inspectDeviceHostMachines({ fix: opts.fix === true });
       findings.push(...deviceHosts.findings);
+      const agentDriver = inspectHostedAgentDriver();
+      if (agentDriver) findings.push(agentDriver);
 
       if (opts.json) {
         console.log(

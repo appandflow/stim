@@ -170,6 +170,7 @@ test('stamps and signs verified bytes, launches with an isolated home, and delet
     state: 'installed',
     device,
     launched: true,
+    pid: 102,
   });
   const bundle = join(area, 'App.app');
   expect(native.runFile).toHaveBeenCalledWith(
