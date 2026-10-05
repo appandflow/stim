@@ -505,8 +505,11 @@ export async function startDevServer(
       };
       if (resetCache) {
         await gateBudget();
-        const pinCheck = await resolveWorkspaceMetroPort(root, note, 'start');
-        if (typeof pinCheck !== 'number') return fail(pinCheck);
+        const pin = metroPortSetting(root);
+        if (pin.port !== null || pin.error) {
+          const pinCheck = await resolveWorkspaceMetroPort(root, note, 'start', false);
+          if (typeof pinCheck !== 'number') return fail(pinCheck);
+        }
         try {
           await stopOwnedMetroForReset(root);
         } catch (error) {
@@ -1122,6 +1125,7 @@ export async function resolveWorkspaceMetroPort(
   root: string,
   note: (line: string) => void,
   command: 'start' | 'web',
+  reserve = true,
 ): Promise<number | StartError> {
   const setting = metroPortSetting(root);
   if (setting.error) return { code: 'STIM_BAD_ARG', message: setting.error, remedy: SETTING_SHAPE_REMEDY };
@@ -1171,6 +1175,7 @@ export async function resolveWorkspaceMetroPort(
     }
     return fresh;
   }
+  if (!reserve && pinned !== null) return pinned;
   try {
     return await reserveMetroPort(root, undefined, undefined, pinned);
   } catch (error) {

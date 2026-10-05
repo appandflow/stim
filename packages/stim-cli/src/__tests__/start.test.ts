@@ -558,6 +558,21 @@ describe('action: already running', { timeout: 30_000 }, () => {
     expect(getProject(root)?.metroPort).toBe(port);
   });
 
+  test('cache reset without a pin leaves the reservation when a foreign process holds it', async () => {
+    const { server, port } = await metroListener();
+    setExecutor(metroExecutor({ listeners: { [port]: DEAD_LISTENER_PID }, cwd: '/somewhere/else' }));
+    upsertProject(root, { metroPort: port });
+    let result;
+    try {
+      result = await runAction({ json: true, resetCache: true });
+    } finally {
+      server.close();
+    }
+    expect(result.exitCode).toBe(1);
+    expect(JSON.parse(result.logs[0] ?? '').message).toContain('externally started');
+    expect(getProject(root)?.metroPort).toBe(port);
+  });
+
   test('cache reset refuses an unverifiable live supervisor without spawning anything', async () => {
     const exec = metroExecutor({ listeners: {} });
     setExecutor(exec);
