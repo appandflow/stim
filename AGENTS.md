@@ -249,7 +249,14 @@ outside it moves to its own issue and pull request.
   whose Gradle home is deleted. `stim-server service` installs,
   reports and removes the worker's per-user LaunchAgent and, only when asked, a
   tailnet-only serve route; it never enables Funnel and never touches
-  pairings, `$STIM_HOME/server` or settings.
+  pairings, `$STIM_HOME/server` or settings. `stim-server service update` and
+  `rollback` install each server version beside the running one under
+  `services/<label>/versions/` and repoint only the LaunchAgent's server
+  script; a failed health check switches back. A client approved for `build` or
+  `device-host` can run the same update on this Mac over the tailnet, and no
+  other connection can. An exact npm release is always accepted; a client's own
+  packages only while `server.acceptClientBuilds` is `true`, its default being
+  `false`.
 - **Shared state reads.** `@stim-cli/core/state` owns the `$STIM_HOME` path
   layout, the state and payload types, and the readers of config, workspace
   state, ledgers, and logs. The CLI owns every write to that state and imports
