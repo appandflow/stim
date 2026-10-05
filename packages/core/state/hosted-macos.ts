@@ -1,4 +1,5 @@
 import { isJsonObject } from './json-file.ts';
+import type { HostedAppDelivery } from './hosted-app.ts';
 
 /** App slots one host offers; a slot names the host-assigned bundle id `<bundleId>.hosted<slot>`. */
 export const HOSTED_MACOS_APP_SLOTS = 64;
@@ -19,16 +20,21 @@ export interface HostedMacosDevice extends HostedMacosChoice {
 }
 
 /**
- * Agent control the host grants a client for one hosted app, sent only over that client's approved
- * device-host connection. `none` means the host's `hosting.agentDriver` starts no driver.
+ * Agent control the host grants a client for one installed hosted app, sent only over that client's approved
+ * device-host connection and never journaled. `none` means the host's `hosting.agentDriver` starts no driver.
+ * `path` is the session's base route on the host, `scope` the driver's handle that limits it to this one app.
  */
 export type HostedAgentGrant =
   | { driver: 'none' }
-  | { driver: 'agent-device'; path: string; token: string; leaseId: string };
+  | { driver: Exclude<HostedAgentDriverName, 'none'>; path: string; token: string; scope: string };
+
+/** `app.launch` and `app.attach` results; a host includes `agent` once the app is installed. */
+export type HostedAppLaunch = HostedAppDelivery & { agent?: HostedAgentGrant };
 
 /**
  * Agent control as the client hands it to a coding agent: secrets stay in files Stim writes with mode
- * 0600, and `command` shows how to address the hosted app. Never carries a token inline.
+ * 0600, and `command` shows how to address the hosted app. Never carries a token inline. `setting` names
+ * the hosting Mac's setting that turns a driver on.
  */
 export type HostedAgentAccess =
   | { driver: 'none'; setting: 'hosting.agentDriver' }
@@ -40,6 +46,7 @@ export interface HostedMacosPlacement {
   session: string;
   appSlot: number;
   appAttempt: string;
+  /** The host-assigned id the running app uses, `hostedMacosBundleId(<offered id>, appSlot)`. */
   bundleId: string;
   agent: HostedAgentAccess;
 }
@@ -72,4 +79,29 @@ export function parseHostedMacosDevice(value: unknown): HostedMacosDevice | null
   )
     return null;
   return value as unknown as HostedMacosDevice;
+}
+
+const AGENT_PATH = /^\/device-host\/agent\/[a-f0-9-]{36}\/$/;
+
+/** A grant naming a driver this client does not know is not usable; it parses as null. */
+export function parseHostedAgentGrant(value: unknown): HostedAgentGrant | null {
+  if (!isJsonObject(value)) return null;
+  if (value.driver === 'none') return Object.keys(value).length === 1 ? { driver: 'none' } : null;
+  if (
+    !HOSTED_AGENT_DRIVERS.includes(value.driver as HostedAgentDriverName) ||
+    typeof value.path !== 'string' ||
+    !AGENT_PATH.test(value.path) ||
+    typeof value.token !== 'string' ||
+    !/^[A-Za-z0-9_-]{32,256}$/.test(value.token) ||
+    typeof value.scope !== 'string' ||
+    !/^[A-Za-z0-9._:-]{1,256}$/.test(value.scope) ||
+    Object.keys(value).length !== 4
+  )
+    return null;
+  return {
+    driver: value.driver as Exclude<HostedAgentDriverName, 'none'>,
+    path: value.path,
+    token: value.token,
+    scope: value.scope,
+  };
 }

@@ -296,11 +296,6 @@ Hosting approval is separate from `offload.machines` and grants no read,
 control or build access. This configures approval only; `stim ios` and
 `stim android` do not yet place sessions on these machines.
 
-On a hosting Mac, `hosting.agentDriver` names the tool it starts so a client's
-coding agent can drive the macOS apps it hosts, scoped to that client's own
-apps. The default, `none`, starts nothing. This version does not host macOS
-apps yet, so `agent-device` has no effect.
-
 Credentials stay private in `$STIM_HOME/device-host-machines.json`. Doctor
 reports approval under `deviceHosts` in JSON and never prints the token.
 Connections use the pinned node's own tailnet address and MagicDNS TLS name;
@@ -310,6 +305,11 @@ preserve the pin. To approve a replacement node, remove the name, run
 Only `--fix` requests access, retries a definite revoked or lapsed request,
 or forgets names removed from the setting. A concurrent approval inspection
 reports `busy` instead of rotating a pending token.
+
+On a hosting Mac, `hosting.agentDriver` names the tool it starts so a client's
+coding agent can drive the macOS apps it hosts for that client. The default,
+`none`, starts nothing. This version does not host macOS
+apps yet, so `agent-device` has no effect.
 
 `offload.machines` lists the Macs on your tailnet that may build for this one,
 by MagicDNS name (`janics-mac-mini`), optionally with the port of their
