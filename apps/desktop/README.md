@@ -102,7 +102,7 @@ spells it out.
 
 Apps in the same linked worktree share one detail page. The sidebar keeps one
 row per app; selecting an app scrolls its first device or macOS preview into
-view unless it already starts the canvas. A device deep link scrolls to that
+view. A device deep link scrolls to that
 device. Single-app worktrees keep the same layout. The shared canvas puts
 macOS previews above one ordered grid of all apps' devices. Build cards keep
 platform titles, with a small project subtitle only when multiple apps share

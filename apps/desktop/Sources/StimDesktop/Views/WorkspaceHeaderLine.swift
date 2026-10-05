@@ -27,6 +27,7 @@ struct WorkspaceHeaderLine: View {
           cli: cli, env: lead, now: context.date,
           inlineBuild: page == nil ? nil : (lead.build?.isRunning == true ? lead.build : running),
           inlineWorkspace: page == nil ? nil : (lead.build?.isRunning == true ? lead.path : buildingApp?.path),
+          gitWorkspace: page?.apps[0].path,
           openBuild: openBuild)
       }
       Spacer(minLength: Space.md)
@@ -113,6 +114,7 @@ struct StageLine: View {
   var now: Date
   var inlineBuild: Build? = nil
   var inlineWorkspace: String? = nil
+  var gitWorkspace: String? = nil
   var openBuild: (BuildSheetSelection) -> Void
 
   var body: some View {
@@ -140,7 +142,7 @@ struct StageLine: View {
       }
       if let chip = GitChip(env.worktree) {
         Rectangle().fill(Palette.border).frame(width: 1, height: 14)
-        GitChipButton(cli: cli, chip: chip, worktree: env.worktree!, workspace: env.path).layoutPriority(1)
+        GitChipButton(cli: cli, chip: chip, worktree: env.worktree!, workspace: gitWorkspace ?? env.path).layoutPriority(1)
       }
     }
   }

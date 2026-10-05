@@ -50,7 +50,7 @@ struct LogsView: View {
     }
     .background(Palette.background)
     .onAppear { search = query.search }
-    .onChange(of: env.path) { selection = [] }
+    .onChange(of: env.path) { if page != nil { selection = [] } }
     .onChange(of: query.search) { _, text in search = text }
     .onChange(of: moment?.id, initial: true) {
       guard let moment else { return }

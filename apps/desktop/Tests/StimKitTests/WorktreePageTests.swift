@@ -159,7 +159,7 @@ struct WorktreePageTests {
     let page = try #require(WorktreePage(path: "/w/a", environments: environments))
     let devices = page.orderedDevices
     #expect(page.canvasScrollTarget(selectedPath: "/w/a", focusedID: nil, devices: devices) == "/w/a|android:default:a")
-    #expect(page.canvasScrollTarget(selectedPath: "/w/b", focusedID: nil, devices: devices) == nil)
+    #expect(page.canvasScrollTarget(selectedPath: "/w/b", focusedID: nil, devices: devices) == devices.first?.id)
     #expect(page.canvasScrollTarget(selectedPath: "/w/b", focusedID: "ios:other", devices: devices) == "/w/b|ios:other")
     #expect(page.canvasScrollTarget(selectedPath: "/w/a", focusedID: "ios:other", devices: devices) == "/w/a|android:default:a")
     let macos = try JSONDecoder().decode(
@@ -178,7 +178,7 @@ struct WorktreePageTests {
     environments[1].slots = nil
     environments[1].macos = macos
     let cardsOnly = try #require(WorktreePage(path: "/w/b", environments: environments))
-    #expect(cardsOnly.canvasScrollTarget(selectedPath: "/w/a", focusedID: nil, devices: []) == nil)
+    #expect(cardsOnly.canvasScrollTarget(selectedPath: "/w/a", focusedID: nil, devices: []) == "macos|/w/a")
     #expect(cardsOnly.canvasScrollTarget(selectedPath: "/w/b", focusedID: nil, devices: []) == "macos|/w/b")
 
   }

@@ -106,7 +106,7 @@ struct WorkspaceDetail: View {
       buildSheet = nil
     }
     .onAppear {
-      if !page.apps.contains(where: { $0.path == logWorkspacePath }) { logWorkspacePath = selectedPath }
+      if page.isUnified || !page.apps.contains(where: { $0.path == logWorkspacePath }) { logWorkspacePath = selectedPath }
     }
     .onChange(of: selectedPath) {
       if page.isUnified {

@@ -127,9 +127,7 @@ public struct WorktreePage: Sendable {
     let selectedDevices = devices.filter { $0.workspace.path == selectedPath }
     let device = selectedDevices.first { $0.device.id == focusedID } ?? selectedDevices.first
     let card = apps.first { $0.path == selectedPath && $0.macos != nil }.map { "macos|\($0.path)" }
-    let target = device?.id ?? card
-    let first = apps.first { $0.macos != nil }.map { "macos|\($0.path)" } ?? devices.first?.id
-    return target == first ? nil : target
+    return device?.id ?? card
   }
 
   public var soleErrorApp: Workspace? {
