@@ -264,7 +264,6 @@ test('reports window selection mode and clears it when the subscription or targe
       subscription: 's2',
       current: null,
       windows: [],
-      pinned: false,
     }),
   );
   expect(result.current.windows).toEqual({ current: null, windows: [], pinned: false });

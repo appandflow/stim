@@ -219,7 +219,7 @@ export function useDeviceStream(
             ...(changed ? { displayedDuoRevision: null } : {}),
           });
         } else if (event.event === 'macos-windows') {
-          update({ windows: { current: event.current, windows: event.windows, pinned: event.pinned } });
+          update({ windows: { current: event.current, windows: event.windows, pinned: event.pinned ?? false } });
         } else if (event.event === 'device-frame') {
           update({ artwork: event.artwork });
         } else if (event.event === 'frame-delayed') {

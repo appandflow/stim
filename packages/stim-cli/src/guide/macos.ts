@@ -132,8 +132,11 @@ input.window { session, window: <id from macos-windows> } brings that window to
 the front of the app, and capture and input stay on it while another window
 comes forward on the Mac. input.window { session, window: null } follows the
 front window again. The pin also ends when its window closes or minimizes, or
-when the Control session that set it ends; macos-windows reports pinned true
-while it holds. The phone's Control toolbar and Stim Desktop's app card and
+when the Control session that set it ends for any reason, including release,
+takeover, disconnect and the five-minute idle timeout, since viewers without
+Control cannot unpin; macos-windows reports pinned true while it holds. Choosing
+a window while the app shows a modal dialog, or one that just closed, is dropped
+without ending Control. The phone's Control toolbar and Stim Desktop's app card and
 hosted viewer offer the same choice as a Window menu: Follow front window, or a
 window by title. Stim Desktop's local preview pins without Control because it
 only raises the window among the app's own windows. An agent that drives the app

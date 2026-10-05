@@ -1692,9 +1692,10 @@ sends reaches any other device.
   app's on-screen standard windows, makes it the app's main window, raises and
   activates it, and capture stays on it while another window comes to the front.
   `window: null` follows the front window again. A pin also ends when its window
-  closes or leaves the screen, or when the Control session that set it ends. A
-  window that is gone by then is dropped with a logged reason without ending
-  Control. The hosted relay forwards it as `device-host.input.window`.
+  closes or leaves the screen, or when the Control session that set it ends,
+  including takeover, disconnect and the idle timeout. A window that is gone by
+  then, or a modal dialog in the app, drops the input with a logged reason
+  without ending Control. The hosted relay forwards it as `device-host.input.window`.
   `input.key` accepts Escape, Tab, Return, Backspace,
   arrows or `a-z` and `0-9`, with unique optional `command/shift/option/control`
   modifiers. Hello advertises `macos-keyboard-extended` for the expanded keys;

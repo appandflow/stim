@@ -81,11 +81,19 @@ public enum OwnedAppWindows {
     return current.map { Selection(current: $0, windows: windows) }
   }
 
-  /// The selection with `pinned` as its current window while that window is still one of the app's open windows;
-  /// nil `pinned` in the result means the pin is gone and capture follows the front window again.
-  public static func pin(_ selection: Selection, to pinned: UInt32?) -> (selection: Selection, pinned: UInt32?) {
-    guard let pinned, let window = selection.windows.first(where: { $0.id == pinned }) else { return (selection, nil) }
-    return (Selection(current: window, windows: selection.windows), pinned)
+  /// The selection with `pinned` as its current window while that window is still on screen; nil `pinned` in the
+  /// result means the pin is gone and capture follows the front window again. A pinned window that the two
+  /// inventories briefly disagree on stays pinned from its on-screen entry, without an Accessibility match.
+  public static func pin(_ selection: Selection, to pinned: UInt32?, screen: [Screen]) -> (
+    selection: Selection, pinned: UInt32?
+  ) {
+    guard let pinned else { return (selection, nil) }
+    if let window = selection.windows.first(where: { $0.id == pinned }) {
+      return (Selection(current: window, windows: selection.windows), pinned)
+    }
+    guard let shown = screen.first(where: { $0.id == pinned && $0.layer == 0 }) else { return (selection, nil) }
+    let window = Window(id: shown.id, title: shown.title, frame: shown.frame, accessible: nil)
+    return (Selection(current: window, windows: selection.windows + [window]), pinned)
   }
 
   /// Without Accessibility, the one layer-0 window that contains every other one, such as a main window with its

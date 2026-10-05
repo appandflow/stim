@@ -149,7 +149,8 @@ During Control, a server advertising `macos-window-select` adds a **Window** men
 the phone's toolbar: **Follow front window**, or one of the app's windows by title.
 Picking a window pins the view to it and brings it to the front of the app, so
 input lands there even when another window comes forward on the Mac. The pin ends
-when you choose Follow front window, when the window closes, or when Control ends.
+when you choose Follow front window, when the window closes, or when Control ends
+for any reason, including five idle minutes.
 Stim Desktop's app card and hosted viewer show the same menu above the preview. A server advertising `macos-windows` also
 names the captured window and the app's other windows.
 

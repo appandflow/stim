@@ -318,7 +318,7 @@ private struct MacosWindowMenu: View {
       pinned = nil
       return
     }
-    let pin = OwnedAppWindows.pin(found, to: pinned)
+    let pin = OwnedAppWindows.pin(found, to: pinned, screen: pinned == nil ? [] : OwnedAppWindowReader.screen(pid: pid) ?? [])
     let selection = pin.selection
     if pinned != pin.pinned { pinned = pin.pinned }
     if windows != selection.windows { windows = selection.windows }
@@ -371,12 +371,11 @@ private struct MacosWindowMenu: View {
   /// front window again.
   func select(_ id: UInt32?) async {
     guard let app, let pid = app.app?.pid, matches(app) else { return }
-    pinned = nil
     if let id {
       let raised = await Task.detached { Self.raise(id, pid: pid) }.value
       guard raised, self.app?.launchId == app.launchId else { return }
-      pinned = id
     }
+    pinned = id
     await follow(app)
   }
 
@@ -388,8 +387,8 @@ private struct MacosWindowMenu: View {
     else { return false }
     let element = accessible.elements[index]
     let main = AXUIElementSetAttributeValue(element, kAXMainAttribute as CFString, kCFBooleanTrue)
-    _ = AXUIElementPerformAction(element, kAXRaiseAction as CFString)
-    return main == .success
+    let raise = AXUIElementPerformAction(element, kAXRaiseAction as CFString)
+    return main == .success || raise == .success
   }
 
   func stop() async {

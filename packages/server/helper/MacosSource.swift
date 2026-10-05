@@ -149,8 +149,10 @@ final class MacosSource: NSObject, Source, SCStreamDelegate, SCStreamOutput {
     OwnedAppWindowReader.screen(pid: app.app.pid)?.contains { $0.id == id } == true
   }
 
-  private func applyPin(_ selection: OwnedAppWindows.Selection) -> OwnedAppWindows.Selection {
-    let result = OwnedAppWindows.pin(selection, to: pinned?.window)
+  private func applyPin(_ selection: OwnedAppWindows.Selection, screen: [OwnedAppWindows.Screen]?) -> OwnedAppWindows.Selection {
+    guard pinned != nil else { return selection }
+    guard let screen = screen ?? OwnedAppWindowReader.screen(pid: app.app.pid) else { return selection }
+    let result = OwnedAppWindows.pin(selection, to: pinned?.window, screen: screen)
     if result.pinned == nil { pinned = nil }
     return result.selection
   }
@@ -163,7 +165,7 @@ final class MacosSource: NSObject, Source, SCStreamDelegate, SCStreamOutput {
       pinned = nil
       return report(nil)
     }
-    let selection = applyPin(found)
+    let selection = applyPin(found, screen: nil)
     guard let stream, let captured = window else {
       switching = true
       Task {
@@ -272,7 +274,7 @@ final class MacosSource: NSObject, Source, SCStreamDelegate, SCStreamOutput {
           await previous?.value
           guard self.isActive(session) else { return }
           do { try await self.apply(action, session: session) } catch is CancellationError {
-          } catch let changed as WindowChanged {
+          } catch let changed as Dropped {
             Output.notice(["inputError": changed.localizedDescription])
           } catch {
             if self.endControl(session) { Output.notice(["inputError": error.localizedDescription, "controlSession": session]) }
@@ -342,8 +344,8 @@ final class MacosSource: NSObject, Source, SCStreamDelegate, SCStreamOutput {
     return nil
   }
 
-  private struct WindowChanged: LocalizedError {
-    var errorDescription: String? { "The owned app's window changed before input, so the input was not sent." }
+  private struct Dropped: LocalizedError {
+    var errorDescription: String? = "The owned app's window changed before input, so the input was not sent."
   }
 
   private func refusal(_ message: String) -> NSError {
@@ -373,12 +375,12 @@ final class MacosSource: NSObject, Source, SCStreamDelegate, SCStreamOutput {
       throw refusal("The owned app's current window inventory is unavailable.")
     }
     guard let found = OwnedAppWindows.select(screen: screen, accessible: accessible.windows), matches() else {
-      throw WindowChanged()
+      throw Dropped()
     }
-    let selection = followQueue.sync { applyPin(found) }
+    let selection = followQueue.sync { applyPin(found, screen: screen) }
     guard selection.current.id == captured.windowID,
       selection.current.frame.size == captured.frame.size, let index = selection.current.accessible
-    else { throw WindowChanged() }
+    else { throw Dropped() }
     return ((selection.current.id, selection.current.frame), accessible.elements[index])
   }
 
@@ -414,11 +416,13 @@ final class MacosSource: NSObject, Source, SCStreamDelegate, SCStreamOutput {
     }
     guard matches(), AXIsProcessTrusted(), let accessible = OwnedAppWindowReader.accessible(pid: app.app.pid),
       let screen = OwnedAppWindowReader.screen(pid: app.app.pid)
-    else { throw refusal("The owned app's accessible windows are unavailable.") }
-    guard !accessible.modal else { throw refusal("Control needs accessible owned app windows without a modal dialog.") }
+    else { throw Dropped(errorDescription: "The owned app's windows are unavailable, so the window was not chosen.") }
+    guard !accessible.modal else {
+      throw Dropped(errorDescription: "The owned app shows a modal dialog, so the window was not chosen.")
+    }
     guard let selection = OwnedAppWindows.select(screen: screen, accessible: accessible.windows),
       let index = selection.windows.first(where: { $0.id == id })?.accessible, matches()
-    else { throw WindowChanged() }
+    else { throw Dropped() }
     let element = accessible.elements[index]
     _ = AXUIElementSetAttributeValue(element, kAXMainAttribute as CFString, kCFBooleanTrue)
     _ = AXUIElementPerformAction(element, kAXRaiseAction as CFString)

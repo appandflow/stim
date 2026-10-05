@@ -417,7 +417,7 @@ other host layouts.
 
 With `macos-window-select`, Control adds a **Window** toolbar menu when the app has
 more than one window: **Follow front window**, or a window by title, which pins the
-view and input to that window (`input.window`) until it closes, Control ends or the
+view and input to that window (`input.window`) until it closes, Control ends (including the idle timeout) or the
 menu follows the front window again.
 
 Each action verifies the same owned process and that the captured
