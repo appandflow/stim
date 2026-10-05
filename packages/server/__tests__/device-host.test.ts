@@ -1071,3 +1071,32 @@ test.each(['deadline', 'revoke', 'close'])(
     }
   },
 );
+
+test('app deliveries carry an agent grant for any driver name but only one session route and bounded secrets', () => {
+  const validator = new Ajv2020({ strict: false, validateFormats: false });
+  validator.addSchema(protocolJsonSchema(), 'protocol');
+  const acceptsDelivery = validator.compile({ $ref: 'protocol#/$defs/HostedAppDelivery' });
+  const delivery = {
+    session: '12345678-1234-1234-1234-123456789abc',
+    attempt: 'app',
+    bundleId: 'dev.stim.fixture',
+    mode: 'release',
+    state: 'installed',
+    launched: true,
+  };
+  const grant = {
+    driver: 'later-driver',
+    path: '/device-host/agent/12345678-1234-1234-1234-123456789abc/',
+    token: 'a'.repeat(43),
+    scope: 'lease-1',
+  };
+  expect(acceptsDelivery({ ...delivery, agent: { driver: 'none' } })).toBe(true);
+  expect(acceptsDelivery({ ...delivery, agent: grant })).toBe(true);
+  for (const agent of [
+    { driver: 'none', token: grant.token },
+    { ...grant, driver: 'none' },
+    { ...grant, path: '/device-host/agent/../12345678-1234-1234-1234-123456789abc/' },
+    { ...grant, token: 'short' },
+  ])
+    expect(acceptsDelivery({ ...delivery, agent })).toBe(false);
+});

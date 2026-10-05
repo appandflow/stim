@@ -306,6 +306,11 @@ Only `--fix` requests access, retries a definite revoked or lapsed request,
 or forgets names removed from the setting. A concurrent approval inspection
 reports `busy` instead of rotating a pending token.
 
+On a hosting Mac, `hosting.agentDriver` names the tool it starts so a client's
+coding agent can drive the macOS apps it hosts for that client. The default,
+`none`, starts nothing. This version does not host macOS
+apps yet, so `agent-device` has no effect.
+
 `offload.machines` lists the Macs on your tailnet that may build for this one,
 by MagicDNS name (`janics-mac-mini`), optionally with the port of their
 `tailscale serve` route (`janics-mac-mini:7444`; default 7443). Set it with

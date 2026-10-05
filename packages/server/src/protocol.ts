@@ -6,6 +6,7 @@ import type {
   HostedDeviceSession,
   HostedAppOffer,
   HostedAppDelivery,
+  HostedAppLaunch,
   NdjsonRecord,
   StatusPayload,
 } from '@stim-cli/core/state';
@@ -1028,8 +1029,8 @@ export interface Methods {
     params: { session: string; attempt: string; sha256: string; offset: number; data: string };
     result: { offset: number };
   };
-  'device-host.app.launch': { params: { session: string; attempt: string }; result: HostedAppDelivery };
-  'device-host.app.attach': { params: { session: string; attempt: string }; result: HostedAppDelivery };
+  'device-host.app.launch': { params: { session: string; attempt: string }; result: HostedAppLaunch };
+  'device-host.app.attach': { params: { session: string; attempt: string }; result: HostedAppLaunch };
   'device-host.metro.open': {
     params: { session: string; gatewayPort: number; secret: string };
     result: { port: number };
@@ -1323,6 +1324,27 @@ export function protocolJsonSchema(): JsonSchema {
           state: { enum: ['receiving', 'installing', 'installed', 'unknown'] },
           launched: { enum: [true, 'unverified', null] },
           notice: { type: 'string' },
+          agent: {
+            oneOf: [
+              {
+                type: 'object',
+                required: ['driver'],
+                additionalProperties: false,
+                properties: { driver: { const: 'none' } },
+              },
+              {
+                type: 'object',
+                required: ['driver', 'path', 'token', 'scope'],
+                additionalProperties: false,
+                properties: {
+                  driver: { type: 'string', pattern: '^[a-z][a-z0-9-]{0,31}$', not: { const: 'none' } },
+                  path: { type: 'string', pattern: '^/device-host/agent/[a-f0-9-]{36}/$' },
+                  token: { type: 'string', pattern: '^[A-Za-z0-9_-]{32,256}$' },
+                  scope: { type: 'string', pattern: '^[A-Za-z0-9._:-]{1,256}$' },
+                },
+              },
+            ],
+          },
         },
       },
       HostedAppOfferResult: {
