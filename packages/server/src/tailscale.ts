@@ -43,6 +43,27 @@ function parseTailscaleStatus(value: unknown): TailscaleState {
   return { state: 'running', ips, dnsName, hostName };
 }
 
+/** Raw status for pinned peer resolution; unavailable or invalid output returns null. */
+export function readRawTailscaleStatus(binary: string | null, env: NodeJS.ProcessEnv): Promise<unknown> {
+  if (!binary) return Promise.resolve(null);
+  return new Promise((resolve) => {
+    execFile(
+      binary,
+      ['status', '--json'],
+      { env, timeout: TIMEOUT_MS, killSignal: 'SIGKILL', encoding: 'utf8' },
+      (error, stdout) => {
+        if (error) return resolve(null);
+        try {
+          const status: unknown = JSON.parse(stdout);
+          return resolve(isJsonObject(status) && status.BackendState === 'Running' ? status : null);
+        } catch {
+          resolve(null);
+        }
+      },
+    );
+  });
+}
+
 export function readTailscaleStatus(
   binary: string | null,
   env: NodeJS.ProcessEnv,

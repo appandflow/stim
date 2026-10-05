@@ -30,6 +30,8 @@ export type Capability = (typeof CAPABILITIES)[number];
  * `physical-android` are `physical: true` on `frames.subscribe` for that platform's leased device, and for an
  * Android phone also on `control.begin`. An older server ignores `physical` on `frames.subscribe` and would stream
  * the slot's Stim-owned device instead. `notifications` is `notifications.list` and the `notification` event.
+ * `macos-hosted` relays `frames.subscribe` and control for a workspace whose macOS app `stim macos --host` placed on
+ * another Mac.
  */
 export const FEATURES = [
   'physical-ios',
@@ -39,6 +41,7 @@ export const FEATURES = [
   'macos-window-control',
   'macos-keyboard-extended',
   'device-frames',
+  'macos-hosted',
 ] as const;
 
 export type Feature = (typeof FEATURES)[number];

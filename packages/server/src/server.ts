@@ -9,6 +9,7 @@ import {
   isJsonObject,
   listSegments,
   loadConfig,
+  readMacosRecord,
   parseNdjsonLine,
   RECORDING_PLATFORMS,
   type RecordingPlatform,
@@ -20,6 +21,7 @@ import { AgentDeviceDriver } from './agent-device-driver.ts';
 import { HostedAgentHost } from './agent-driver.ts';
 import { DeviceHost, type DeviceHostLimits } from './device-host.ts';
 import { HostedViews } from './hosted-view.ts';
+import { HostedRelay, type HostedRelayOptions } from './hosted-relay.ts';
 import { BuildHost, type BuildLimits, type BuildSession } from './build.ts';
 import { ControlHub, parseControlBegin, parseInput, SLOT_NAME, type Controller } from './control.ts';
 import { Recorder, type RecordLimits } from './recorder.ts';
@@ -99,7 +101,14 @@ import {
 } from './registry.ts';
 import { runStats } from './stats.ts';
 import { Pending, runStim, type CommandLimits } from './stim-command.ts';
-import { serveRoute, setupServeRoute, whois, type ServeRoute, type TailscaleState } from './tailscale.ts';
+import {
+  readRawTailscaleStatus,
+  serveRoute,
+  setupServeRoute,
+  whois,
+  type ServeRoute,
+  type TailscaleState,
+} from './tailscale.ts';
 import type { TailscaleMonitor, TailscaleSnapshot } from './tailscale-monitor.ts';
 import { DEFAULT_VIDEO_LIMITS, videoPacket, VideoGate, type AccessUnit } from './video.ts';
 import { DeviceViewers } from './viewers.ts';
@@ -164,6 +173,7 @@ export interface ServerOptions {
   /** How many offloaded builds run, and for how long; tests shorten them. */
   buildLimits?: Partial<BuildLimits>;
   deviceHostLimits?: Partial<DeviceHostLimits>;
+  hostedRelay?: HostedRelayOptions;
   /** Looks up the worktrees' pull requests; tests replace GitHub. */
   pullRequests?: PushNotifierOptions['pullRequests'];
 }
@@ -634,6 +644,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   });
 
   mkdirSync(serverDir(), { recursive: true, mode: 0o700 });
+  const relays = new Map<WebSocket, HostedRelay>();
   let revocationCheck: NodeJS.Timeout | null = null;
   let checkedRegistry: string | null = null;
   const checkRevocations = () => {
@@ -653,6 +664,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       const capabilities = paired.get(controller.device.id)?.capabilities;
       if (!capabilities?.includes('control') && !capabilities?.includes('device-host')) {
         control.endFor(controller, 'forbidden', 'This device can no longer control devices.');
+        relays.get(socket)?.endControls();
         controllers.delete(socket);
       }
     }
@@ -680,6 +692,19 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     let device: PairedDevice | null = null;
     let buildSession: BuildSession | null = null;
     let queue = Promise.resolve();
+    const relay = new HostedRelay(
+      options.hostedRelay ?? { status: () => readRawTailscaleStatus(tailscaleNow().binary, options.env) },
+      options.serverVersion,
+      (message) => {
+        if (Buffer.isBuffer(message)) {
+          if (socket.readyState === socket.OPEN) socket.send(message);
+        } else send(socket, message);
+      },
+      () => socket.bufferedAmount,
+      openSubscription,
+      (subscription) => subscriptions.delete(subscription),
+    );
+    relays.set(socket, relay);
 
     const refuse = (id: RequestId | null, code: ErrorCode, message: string, closeCode: number) => {
       if (!device) limiter.record(limitKey);
@@ -823,7 +848,22 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       if ('code' in parsed) return refuseControl(parsed.code, parsed.message);
       const resolved = registeredWorkspace(parsed.value.workspace);
       if ('code' in resolved) return refuseControl(resolved.code, resolved.message);
+      const host = parsed.value.platform === 'macos' ? readMacosRecord(resolved.dir)?.host : undefined;
       const owner = controller(session);
+      if (host) {
+        if (parsed.value.physical || (parsed.value.slot !== undefined && parsed.value.slot !== 'default')) {
+          return refuseControl('bad-request', 'Hosted macOS control requires the default, non-physical target.');
+        }
+        return relay.begin(
+          id,
+          host,
+          parsed.value.takeOver === true,
+          () =>
+            socket.readyState === socket.OPEN &&
+            controllers.get(socket) === owner &&
+            readDevices().some((entry) => entry.id === session.id && entry.capabilities.includes('control')),
+        );
+      }
       const outcome = await control.begin(
         owner,
         { ...parsed.value, workspace: resolved.dir },
@@ -964,11 +1004,11 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       });
     }
 
-    function subscribeFrames(
+    async function subscribeFrames(
       id: RequestId,
       params: unknown,
       hosted?: { client: string; session: string; view: ReturnType<HostedViews['target']> },
-    ): void {
+    ): Promise<void> {
       const framePool = hosted?.view.frames ?? frames;
       const target = isJsonObject(params) ? params : {};
       const { workspace, platform, slot, physical, fps, maxEdge, video, at, rate, deviceFrame } = target;
@@ -993,7 +1033,6 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         return error(id, 'bad-request', 'video must be a list of codec names.');
       }
       const wantsVideo = (video as string[] | undefined)?.includes('h264') === true;
-      const offersVideo = wantsVideo && frameHelper() !== null;
       const maxFps = wantsVideo ? FRAME_FPS.video : FRAME_FPS.max;
       if (fps !== undefined && (!Number.isInteger(fps) || (fps as number) < 1 || (fps as number) > maxFps)) {
         return error(id, 'bad-request', `fps must be a whole number from 1 to ${maxFps}.`);
@@ -1008,6 +1047,20 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
           `maxEdge must be a whole number of pixels from ${FRAME_EDGE.min} to ${FRAME_EDGE.max}.`,
         );
       }
+      const resolvedDir = hosted ? null : workspaceDir(id, workspace, true);
+      if (!hosted && !resolvedDir) return;
+      const host = !hosted && platform === 'macos' && resolvedDir ? readMacosRecord(resolvedDir)?.host : undefined;
+      if (host) {
+        if ((slot !== undefined && slot !== 'default') || physical || at !== undefined || rate !== undefined) {
+          return error(
+            id,
+            'bad-request',
+            'Hosted macOS frames require the default, non-physical target without replay.',
+          );
+        }
+        return relay.subscribe(id, host, target, (subscription, stop) => subscriptions.set(subscription, stop));
+      }
+      const offersVideo = wantsVideo && frameHelper() !== null;
       const replayAt = parseReplay(at, rate);
       if (typeof replayAt === 'string') return error(id, 'bad-request', replayAt);
       if (replayAt && !offersVideo) {
@@ -1017,7 +1070,6 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         fps: Math.min((fps as number | undefined) ?? FRAME_FPS.default, offersVideo ? FRAME_FPS.video : FRAME_FPS.max),
         maxEdge: (maxEdge as number | undefined) ?? FRAME_EDGE.default,
       };
-      if (!hosted && !workspaceDir(id, workspace, true)) return;
       const replayDir =
         platform === 'macos'
           ? null
@@ -1770,6 +1822,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       if (message.method === 'frames.subscribe') return subscribeFrames(id, message.params);
       if (message.method === 'frames.keyframe') {
         const name = isJsonObject(message.params) ? message.params.subscription : undefined;
+        if (typeof name === 'string' && (await relay.keyframe(id, name))) return;
         const keyframe = typeof name === 'string' ? keyframes.get(name) : undefined;
         if (!keyframe) {
           return send(socket, {
@@ -1825,6 +1878,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         return;
       }
       if (message.method === 'control.end') {
+        if (await relay.control(id, message.method, message.params)) return;
         const name = isJsonObject(message.params) ? message.params.session : undefined;
         if (typeof name !== 'string' || !control.endById(controller(device), name)) {
           return error(id, 'unknown-session', `No control session ${String(name)} on this connection.`);
@@ -1833,6 +1887,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       }
       const inputMethod = INPUT_METHODS.find((method) => method === message.method);
       if (inputMethod) {
+        if (await relay.control(id, inputMethod, message.params)) return;
         void input(id, inputMethod, message.params, device);
         return;
       }
@@ -1877,6 +1932,8 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       queue = queue.then(() => handle(raw)).catch(() => socket.close(1011, 'internal error'));
     });
     socket.on('close', (code) => {
+      relay.close();
+      relays.delete(socket);
       clearTimeout(timer);
       buildSession?.close(code === CLOSE_ABNORMAL && device !== null && buildAllowed(device));
       sessions.delete(socket);

@@ -1,4 +1,4 @@
-import { Bitrate, DEFAULT_VIDEO_LIMITS, videoPacket, VideoGate } from '../src/video.ts';
+import { Bitrate, DEFAULT_VIDEO_LIMITS, rewriteVideoSubscription, videoPacket, VideoGate } from '../src/video.ts';
 
 describe('videoPacket', () => {
   it('writes the header the mobile app parses, then the access unit', () => {
@@ -95,4 +95,26 @@ describe('Bitrate', () => {
     expect(value).toBe(1_500_000);
     expect(bitrate.tick(now + limits.recoverMs)).toBeNull();
   });
+});
+
+it('rewrites the subscription without changing video flags, geometry, timing or encoded bytes', () => {
+  const payload = Buffer.from([0, 0, 1, 0x65, 0xaa]);
+  const original = videoPacket('host-subscription', 19, {
+    keyframe: true,
+    capturedAt: 1234.5,
+    width: 800,
+    height: 600,
+    posture: 'folded',
+    artworkTurns: 3,
+    data: payload,
+  });
+  const rewritten = rewriteVideoSubscription(original, 'host-subscription', 's12')!;
+  expect(rewritten.subarray(0, 2)).toEqual(original.subarray(0, 2));
+  expect(rewritten.readUInt16BE(2)).toBe(24);
+  expect(rewritten.subarray(4, 20)).toEqual(original.subarray(4, 20));
+  expect(rewritten[20]).toBe(3);
+  expect(rewritten.toString('ascii', 21, 24)).toBe('s12');
+  expect(rewritten.subarray(24)).toEqual(payload);
+  expect(rewriteVideoSubscription(original, 'another-subscription', 's12')).toBeNull();
+  expect(original.toString('ascii', 21, 21 + original[20]!)).toBe('host-subscription');
 });

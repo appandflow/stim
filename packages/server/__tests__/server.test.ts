@@ -676,6 +676,7 @@ describe('pairing', () => {
           'macos-window-control',
           'macos-keyboard-extended',
           'device-frames',
+          'macos-hosted',
         ],
         actions: [],
       },

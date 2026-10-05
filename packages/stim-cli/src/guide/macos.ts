@@ -140,6 +140,10 @@ records the approval. Stim connects only to the machine's pinned tailnet node.
 A refusal or an unreachable host fails the command; it never launches here
 instead.
 
+Phones and Stim Desktop view and control the hosted app through this Mac's
+stim-server, which relays to the host. Viewing needs Screen Recording and
+Accessibility capture permissions on the host.
+
   stim macos --host mini          # build here, deliver, launch on mini
   stim macos --host mini --json   # { platform, product, launchId, build, host }
   stim status --json              # environments[].macos.host

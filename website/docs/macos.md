@@ -144,6 +144,10 @@ a person on that Mac approves the request with
 Stim connects only to the Mac's pinned tailnet node. If the host refuses or is
 unreachable, the command fails; it never launches the app locally instead.
 
+Phones and Stim Desktop view and control the hosted app through this Mac's
+stim-server, which relays to the host. Viewing needs Screen Recording and
+Accessibility capture permissions on the host.
+
 <StimTabs
 code={`stim macos --host janics-mac-mini
 stim macos --host janics-mac-mini --json
