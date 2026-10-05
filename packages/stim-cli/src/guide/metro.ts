@@ -18,9 +18,32 @@ another worktree's bundler.
                     --wait, it does not wait for a device lease.
   --remote          expose Metro for a remote device
 
-Plain \`stim start\` is local and does not create a public tunnel. Remote intent
+Plain \`stim start\` is local and does not create a tunnel. Remote intent
 comes from \`start --remote\`, \`ios.remote\`, or \`android.remote\`. The
 \`metro.tunnel\` setting selects the provider after remote intent exists.
+
+TAILNET-ONLY METRO
+  Install Tailscale and sign in on this machine and the remote device or
+  agent-device daemon's host, then select the mode explicitly:
+
+    stim settings set metro.tunnel tailscale --scope workspace
+    stim start --remote
+
+  The device must be on the same tailnet, so the eas backend refuses it. "auto"
+  never selects tailscale.
+  Stim runs a foreground \`tailscale serve --https=<metro port>
+  http://127.0.0.1:<metro port>\` process, never Funnel. It prints
+  https://<tailnet-name>:<metro port> and \`status\` reports the recorded
+  provider and URL. Stim reads the URL from the child's pipes, without a log
+  file, and skips the public bundle probe for this recorded tunnel: this
+  machine may not reach its own tailnet name.
+
+  \`stop\` and \`worktree remove\` stop only the recorded process after
+  verifying its identity; ending that foreground session removes its route.
+  A route Stim did not create is never touched. If the port already has a
+  serve route, Tailscale refuses and Stim prints Tailscale's error message.
+  \`tailscale serve status --json\` shows foreground sessions under the
+  top-level Foreground key; plain \`tailscale serve status\` does not.
 
 BUNDLE WARMUP
   After verifying Metro, \`stim ios\` and \`stim android\` prefetch the
@@ -49,7 +72,7 @@ BUNDLE WARMUP
 REMOTE DEVICE BACKENDS
   Metro exposure and device selection are separate:
 
-    stim start --remote          prepare public Metro
+    stim start --remote          prepare remote Metro
     stim ios --remote proxy      use an agent-device daemon
     stim android --remote eas    create an EAS Simulator session
 

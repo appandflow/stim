@@ -1093,16 +1093,16 @@ test('a remote session is stopped even when something still holds the port', asy
   expect(r.outcomes.device?.remote?.status).toBe('torn-down');
 });
 
-function withManagedTunnel() {
+function withManagedTunnel(provider: 'ngrok' | 'tailscale' = 'ngrok') {
   saveConfig(makeConfig({ projects: { [tmpRoot]: { label: 'agent-1', metroPort: 8083, platforms: {} } } }));
   writeFileSync(
     workspaceStateFile(tmpRoot),
     JSON.stringify({
       metroTunnel: {
         kind: 'managed',
-        provider: 'ngrok',
+        provider,
         pid: 4242,
-        url: 'https://abc.ngrok.app',
+        url: provider === 'tailscale' ? 'https://host.tail123.ts.net:8083' : 'https://abc.ngrok.app',
         port: 8083,
         startedAt: 'T',
         processToken: 'linux:100',
@@ -1112,8 +1112,8 @@ function withManagedTunnel() {
   );
 }
 
-test('stopping reaps a managed tunnel this workspace started', async () => {
-  withManagedTunnel();
+test.each(['ngrok', 'tailscale'] as const)('stopping reaps a %s tunnel this workspace started', async (provider) => {
+  withManagedTunnel(provider);
   const stopped: unknown[] = [];
   const r = await runStop({
     root: tmpRoot,
@@ -1131,15 +1131,15 @@ test('stopping reaps a managed tunnel this workspace started', async () => {
   expect(stopped).toEqual([
     {
       kind: 'managed',
-      provider: 'ngrok',
+      provider,
       pid: 4242,
-      url: 'https://abc.ngrok.app',
+      url: provider === 'tailscale' ? 'https://host.tail123.ts.net:8083' : 'https://abc.ngrok.app',
       port: 8083,
       startedAt: 'T',
       processToken: 'linux:100',
     },
   ]);
-  expect(r.outcomes.metroTunnel).toEqual({ status: 'stopped', provider: 'ngrok', reason: undefined });
+  expect(r.outcomes.metroTunnel).toEqual({ status: 'stopped', provider, reason: undefined });
   const state = JSON.parse(readFileSync(workspaceStateFile(tmpRoot), 'utf-8'));
   expect(state.metroTunnel).toBeUndefined();
   expect(state.lastBuild.hash).toBe('keepme');

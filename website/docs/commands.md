@@ -862,6 +862,11 @@ prints as `metro: port <port> stopped (idle)`. In `--json` that environment's
 known cause prints after `not running`, and `metro.lastStop` carries it; see
 [why the dev server stopped](./dev-server-and-logs.md#why-the-dev-server-stopped).
 
+Status prints the recorded managed Metro tunnel's provider and URL, with
+`tailnet-only` for Tailscale. In `--json`, `metro.tunnel` carries `{ provider, url }`
+when a managed tunnel is recorded on the workspace's reserved port. This reports
+the record without probing reachability. See [Metro on your tailnet](./owned-devices.md#metro-on-your-tailnet).
+
 In `--json`, `metro.bundle` reports the dev server's bundle requests, from the
 metro log: `{ bundling, platform?, startedAt?, percent?, last? }`. `bundling`
 is `true` while an app's request, or Stim's own prefetch before a launch, is in

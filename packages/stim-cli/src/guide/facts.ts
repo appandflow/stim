@@ -1142,6 +1142,11 @@ RULES
   status appends "<id> running", "<id> not running" or "<id> process
   unknown" to the device line.
 
+  An environment's metro carries tunnel { provider, url } for a recorded
+  managed tunnel on its reserved port: ngrok, cloudflared or tailscale.
+  Plain status prints the provider and URL, with "tailnet-only" for tailscale.
+  This describes the record, not a reachability check (\`guide metro\`).
+
   An environment's metro carries idleStop { reason: "idle", at, idleMinutes }
   when its supervisor stopped the dev server for idleness and nothing serves
   the port since; plain \`status\` prints "stopped (idle)" (\`guide metro\`).

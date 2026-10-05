@@ -4,11 +4,15 @@ import {
   stopTunnel,
   parseCloudflaredLine,
   parseNgrokLine,
+  parseTailscaleLine,
   terminateChild,
   tunnelArgv,
   type TunnelRecord,
 } from '../engine/tunnel.ts';
 import { resetExecutor, setExecutor } from '../exec.ts';
+import { writeWorkspaceState } from '../workspace/workspace-state.ts';
+import { readMetroTunnel } from '../supervisor/state.ts';
+import assert from 'node:assert';
 import { resolve4 } from 'node:dns/promises';
 import { EventEmitter } from 'node:events';
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -23,6 +27,7 @@ vi.mock('node:dns/promises', () => ({ resolve4: vi.fn<typeof resolve4>() }));
 vi.mock('node:https', () => ({ request: vi.fn<typeof httpsRequest>() }));
 
 afterEach(() => {
+  resetExecutor();
   vi.unstubAllGlobals();
   vi.mocked(resolve4).mockReset();
   vi.mocked(httpsRequest).mockReset();
@@ -40,6 +45,12 @@ function startVerified(options: Parameters<typeof startTunnel>[0]) {
 }
 
 describe('tunnelArgv', () => {
+  test('tailscale: foreground HTTPS Serve uses the Metro port and the resolved binary', () => {
+    expect(tunnelArgv('tailscale', 8081, 'https://stable.ngrok.app', '/tmp/tunnel.log', '/app/Tailscale')).toEqual({
+      bin: '/app/Tailscale',
+      args: ['serve', '--https=8081', 'http://127.0.0.1:8081'],
+    });
+  });
   test('cloudflared: a quick tunnel at the local port', () => {
     expect(tunnelArgv('cloudflared', 8081)).toEqual({
       bin: 'cloudflared',
@@ -123,7 +134,80 @@ describe('parseNgrokLine', () => {
   });
 });
 
+describe('parseTailscaleLine', () => {
+  test('accepts the MagicDNS HTTPS line, including its port and trailing slash', () => {
+    expect(parseTailscaleLine('https://host.tail123.ts.net:8081/')).toBe('https://host.tail123.ts.net:8081/');
+    expect(parseTailscaleLine('https://host.tail123.ts.net')).toBe('https://host.tail123.ts.net');
+  });
+
+  test.each([
+    '|-- proxy http://127.0.0.1:8081',
+    'Available within your tailnet:',
+    'https://example.com:8081/',
+    'see https://host.tail123.ts.net:8081/',
+    'https://host.tail123.ts.net:8081/status',
+  ])('ignores non-origin output: %s', (line) => {
+    expect(parseTailscaleLine(line)).toBeNull();
+  });
+});
+
 describe('startTunnel: the happy path', () => {
+  test.each(['tailscale', '/Applications/Tailscale.app/Contents/MacOS/Tailscale'])(
+    'tailscale resolves %s and reads piped output without creating a log file',
+    async (binary) => {
+      const resolvedBinary = binary === 'tailscale' ? '/usr/local/bin/tailscale' : binary;
+      const home = mkdtempSync(join(tmpdir(), 'stim-tailscale-test-'));
+      const previousHome = process.env.STIM_HOME;
+      process.env.STIM_HOME = home;
+      const child = makeChildProcess();
+      const spawn = vi.fn<NonNullable<Parameters<typeof startTunnel>[0]['spawnFn']>>(() => child);
+      const probe = vi.fn<(url: string, signal: AbortSignal) => Promise<boolean>>(async () => false);
+      setExecutor({ findExecutable: (bin: string) => (bin === binary ? resolvedBinary : null), spawn });
+      try {
+        const promise = startVerified({
+          provider: 'tailscale',
+          port: 8081,
+          requireReachable: false,
+          probeReachable: probe,
+        });
+        child.stdout?.emit(
+          'data',
+          'Available within your tailnet:\n\nhttps://host.tail123.ts.net:8081/\n|-- proxy http://127.0.0.1:8081\n',
+        );
+        const result = await promise;
+        expect(result).toMatchObject({ url: 'https://host.tail123.ts.net:8081/', pid: IMPOSSIBLE_PID, logFile: null });
+        expect(spawn).toHaveBeenCalledExactlyOnceWith(
+          resolvedBinary,
+          ['serve', '--https=8081', 'http://127.0.0.1:8081'],
+          {
+            stdio: ['ignore', 'pipe', 'pipe'],
+            detached: true,
+          },
+        );
+        expect(existsSync(join(home, 'tunnel-logs'))).toBe(false);
+        expect(probe).not.toHaveBeenCalled();
+        assert(!('failed' in result));
+        const root = join(home, 'project');
+        mkdirSync(root);
+        const record = {
+          kind: 'managed' as const,
+          provider: 'tailscale' as const,
+          pid: result.pid,
+          processToken: result.processToken,
+          url: result.url,
+          port: 8081,
+          startedAt: 'T',
+        };
+        writeWorkspaceState(root, { metroTunnel: { ...record, logFile: result.logFile } });
+        expect(readMetroTunnel(root)).toEqual(record);
+        await expect(result.cleanup()).resolves.toEqual({ status: 'stopped' });
+      } finally {
+        if (previousHome === undefined) delete process.env.STIM_HOME;
+        else process.env.STIM_HOME = previousHome;
+        rmSync(home, { recursive: true, force: true });
+      }
+    },
+  );
   test('cloudflared checks HTTPS through a fresh DNS answer when system lookup is stale', async () => {
     const child = makeChildProcess();
     const fetchError = new TypeError('fetch failed', {
@@ -301,6 +385,18 @@ describe('startTunnel: the happy path', () => {
 });
 
 describe('startTunnel: nothing here throws -- every failure is a returned value', () => {
+  test.each(['\n\n', ''])('tailscale reports the last trimmed conflict line with suffix %j on exit', async (suffix) => {
+    const child = makeChildProcess();
+    setExecutor({ findExecutable: () => 'tailscale' });
+    const promise = startVerified({ provider: 'tailscale', port: 8081, spawnFn: () => child });
+    const conflict = 'sending serve config: updating config: listener already exists for port 8081';
+    child.stderr?.emit('data', `first line\n  ${conflict}  ${suffix}`);
+    child.emit('exit', 1, null);
+    await expect(promise).resolves.toEqual({
+      failed: true,
+      reason: `tailscale exited before printing a tunnel URL: ${conflict}`,
+    });
+  });
   test('a binary that will not even start', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'stim-tunnel-spawn-test-'));
     const logFile = join(dir, 'ngrok.log');
@@ -683,7 +779,7 @@ describe('stopTunnel: idempotent, never throws', () => {
     expect(kill).not.toHaveBeenCalled();
   });
 
-  test.each(['ngrok', 'cloudflared'] as const)('stops the recorded %s instance', async (provider) => {
+  test.each(['ngrok', 'cloudflared', 'tailscale'] as const)('stops the recorded %s instance', async (provider) => {
     let alive = true;
     const kill = vi.fn<(pid: number) => void>(() => {
       alive = false;

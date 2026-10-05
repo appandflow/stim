@@ -929,7 +929,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
         isExpo,
         tunnelMode: tunnelModeSetting(settings) ?? undefined,
         publicUrl: publicUrlSetting(settings),
-        available: detectRemoteProviders(binOnPath),
+        available: detectRemoteProviders(binOnPath, tunnelModeSetting(settings) ?? 'auto'),
       });
       if ('failed' in reachable) {
         return fail(reachable.code ?? REMOTE_SESSION_ERROR, reachable.failed, reachable.remedy);

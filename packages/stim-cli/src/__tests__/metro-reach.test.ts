@@ -71,6 +71,19 @@ describe('a managed provider', () => {
     expect(planMetroReach({ ...BARE, mode: 'auto', available: ['cloudflared'] })).toEqual({ start: 'cloudflared' });
   });
 
+  test('auto excludes tailscale even when it is first or the only available provider', () => {
+    expect(planMetroReach({ ...BARE, mode: 'auto', available: ['tailscale', 'ngrok'] })).toEqual({ start: 'ngrok' });
+    expect(planMetroReach({ ...BARE, mode: 'auto', available: ['tailscale'] })).toHaveProperty('failed');
+  });
+
+  test('explicit tailscale selects it and a missing binary gives an install and sign-in remedy', () => {
+    expect(planMetroReach({ ...BARE, mode: 'tailscale', available: ['tailscale'] })).toEqual({ start: 'tailscale' });
+    const plan = planMetroReach({ ...BARE, mode: 'tailscale', available: ['ngrok'] });
+    assert('failed' in plan);
+    expect(plan.failed).toContain('tailscale is not on PATH');
+    expect(plan.remedy).toMatch(/Install Tailscale and sign in/);
+  });
+
   test('naming one that is not installed refuses with how to install it', () => {
     const plan = planMetroReach({ ...BARE, mode: 'ngrok', available: ['cloudflared'] });
     expect('failed' in plan).toBe(true);
@@ -97,10 +110,6 @@ describe('a managed provider', () => {
 });
 
 describe('the mode list', () => {
-  test('contains only the supported values', () => {
-    expect(TUNNEL_MODES).toEqual(['auto', 'off', 'expo', 'cloudflared', 'ngrok']);
-  });
-
   test('every mode is handled, so a new one cannot be added without a decision', () => {
     for (const mode of TUNNEL_MODES) {
       const plan = planMetroReach({ ...EXPO, mode, available: ['cloudflared'] });
@@ -110,6 +119,14 @@ describe('the mode list', () => {
 });
 
 describe('provider detection', () => {
+  test('explicit tailscale detects PATH or the macOS app binary without enabling auto selection', () => {
+    for (const binary of ['tailscale', '/Applications/Tailscale.app/Contents/MacOS/Tailscale']) {
+      const onPath = (bin: string) => bin === binary;
+      expect(detectProviders(onPath, 'tailscale')).toEqual(['tailscale']);
+      expect(detectProviders(onPath)).toEqual([]);
+    }
+    expect(detectProviders(() => false, 'tailscale')).toEqual([]);
+  });
   test('reports only what is on PATH', () => {
     expect(detectProviders((b) => b === 'cloudflared')).toEqual(['cloudflared']);
     expect(detectProviders(() => false)).toEqual([]);

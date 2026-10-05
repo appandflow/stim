@@ -493,6 +493,30 @@ test('status counts a device-only noise storm as zero errors', async () => {
   }
 });
 
+test('status reports the recorded tailscale Metro URL as tailnet-only', async () => {
+  const root = join(tmpHome, 'tailnet-project');
+  mkdirSync(root);
+  writeFileSync(join(root, 'package.json'), '{}');
+  saveConfig(makeConfig({ projects: { [root]: { label: 'tailnet', metroPort: 8083, platforms: {} } } }));
+  writeWorkspaceState(root, {
+    metroTunnel: {
+      kind: 'managed',
+      provider: 'tailscale',
+      pid: process.pid,
+      processToken: 'linux:100',
+      url: 'https://host.tail123.ts.net:8083',
+      port: 8083,
+      startedAt: 'T',
+    },
+  });
+  const payload = await runStatusJson();
+  expect(payload.environments[0].metro.tunnel).toEqual({
+    provider: 'tailscale',
+    url: 'https://host.tail123.ts.net:8083',
+  });
+  expect((await runStatus()).join('\n')).toContain('tunnel: tailscale (tailnet-only) https://host.tail123.ts.net:8083');
+});
+
 test('status drops a supervisor record whose process is gone and reports it vanished', async () => {
   const root = mkdtempSync(join(tmpdir(), 'stim-proj-'));
   try {

@@ -821,6 +821,7 @@ so a Debug run on one is wired to a LAN origin instead of localhost.`,
   The gate that proves a tunnel still reaches THIS workspace's Metro failed --
   before a session or a build, whether the tunnel is Expo's own, one Stim
   started (metro.tunnel: cloudflared/ngrok/auto), or a named metro.publicUrl.
+  A recorded tailscale tunnel skips this public probe (\`guide metro\`).
   The usual cause: the tunnel was built for a port this workspace no longer
   holds (a stale one survived a \`stop\`/\`start\` that reserved a different
   port), and it now serves ANOTHER workspace's dev server -- healthy, and
