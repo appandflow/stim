@@ -99,10 +99,11 @@ test('starts with 200 records and explicitly reloads an older recent window with
 });
 
 test('unsubscribes while covered and backgrounded, retains the display window, and ignores late callbacks', async () => {
-  let change: ((state: 'active' | 'background') => void) | undefined;
+  let change: ((state: 'active' | 'inactive' | 'background') => void) | undefined;
+  const remove = jest.fn();
   jest.spyOn(AppState, 'addEventListener').mockImplementation((_type, listener) => {
     change = listener;
-    return { remove: jest.fn() };
+    return { remove };
   });
   const screen = await render(body());
   await push(Array.from({ length: 240 }, (_, i) => record(i + 1)));
@@ -121,14 +122,18 @@ test('unsubscribes while covered and backgrounded, retains the display window, a
   expect(latest().filter.tail).toBe(240);
   await push(Array.from({ length: 240 }, (_, i) => record(i + 41)));
   expect(mockEntries.map((entry) => entry.lead.ts)).toEqual(Array.from({ length: 240 }, (_, i) => i + 41));
-  await act(async () => change!('background'));
+  await act(async () => change!('inactive'));
   expect(latest().stop).toHaveBeenCalledTimes(1);
   const count = mockSubscriptions.length;
+  await act(async () => change!('background'));
   await screen.rerender(body());
   expect(mockSubscriptions).toHaveLength(count);
   await act(async () => change!('active'));
   expect(mockSubscriptions).toHaveLength(count + 1);
   expect(latest().filter.tail).toBe(240);
+  await screen.unmount();
+  expect(latest().stop).toHaveBeenCalledTimes(1);
+  expect(remove).toHaveBeenCalledTimes(1);
 });
 
 test('does not subscribe until a covered route becomes focused', async () => {
@@ -137,6 +142,20 @@ test('does not subscribe until a covered route becomes focused', async () => {
   expect(mockSubscriptions).toHaveLength(0);
   mockFocused = true;
   await screen.rerender(body());
+  expect(latest().filter.tail).toBe(200);
+});
+
+test('does not subscribe when mounted in the background and starts on foreground', async () => {
+  jest.replaceProperty(AppState, 'currentState', 'background');
+  let change: ((state: 'active') => void) | undefined;
+  jest.spyOn(AppState, 'addEventListener').mockImplementation((_type, listener) => {
+    change = listener;
+    return { remove: jest.fn() };
+  });
+  await render(body());
+  expect(mockSubscriptions).toHaveLength(0);
+  await act(async () => change!('active'));
+  expect(mockSubscriptions).toHaveLength(1);
   expect(latest().filter.tail).toBe(200);
 });
 

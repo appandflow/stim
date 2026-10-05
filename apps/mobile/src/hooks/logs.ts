@@ -1,9 +1,9 @@
 import { useIsFocused } from 'expo-router';
-import { useEffect, useState } from 'react';
-import { AppState } from 'react-native';
+import { useEffect } from 'react';
 
 import type { LogFilter, LogRecord } from '@/protocol/types';
 
+import { useAppForeground } from './app-foreground';
 import { useMacConnection } from './machines';
 
 export type LogsChange =
@@ -14,13 +14,9 @@ export type LogsChange =
 export function useLogs(filter: LogFilter | null, onChange: (change: LogsChange) => void): boolean {
   const { connection } = useMacConnection();
   const focused = useIsFocused();
-  const [foreground, setForeground] = useState(AppState.currentState === 'active');
+  const foreground = useAppForeground();
   const active = focused && foreground;
   const key = filter ? JSON.stringify(filter) : null;
-  useEffect(() => {
-    const listener = AppState.addEventListener('change', (state) => setForeground(state === 'active'));
-    return () => listener.remove();
-  }, []);
   useEffect(() => {
     if (!connection || !key || !active) return;
     let stopped = false;
