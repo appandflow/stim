@@ -135,11 +135,15 @@ test('starts native Control only when the server advertises native window input'
   await act(async () => {
     result.current.scroll(0.5, 0.6, 0, -40);
     result.current.key('a', ['command']);
+    result.current.selectWindow(12);
+    result.current.selectWindow(null);
   });
   expect(request.mock.calls).toEqual([
     ['control.begin', { workspace: '/app', platform: 'macos', slot: 'default' }],
     ['input.scroll', { session: 'native', x: 0.5, y: 0.6, deltaX: 0, deltaY: -40 }],
     ['input.key', { session: 'native', key: 'a', modifiers: ['command'] }],
+    ['input.window', { session: 'native', window: 12 }],
+    ['input.window', { session: 'native', window: null }],
   ]);
   await unmount();
 });

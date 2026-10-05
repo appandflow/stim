@@ -1745,6 +1745,10 @@ msgstr "Folded"
 msgid "Folder gone"
 msgstr "Folder gone"
 
+#: src/screens/device-view.tsx
+msgid "Follow front window"
+msgstr "Follow front window"
+
 #: src/screens/mac-list.tsx
 #: src/screens/mac-list.tsx
 msgid "Forget"
@@ -3783,6 +3787,10 @@ msgstr "Unread, {title}, {body}, {detail}, {ago} ago"
 msgid "Unstaged"
 msgstr "Unstaged"
 
+#: src/screens/device-view.tsx
+msgid "Untitled window"
+msgstr "Untitled window"
+
 #: src/screens/workspace-work.tsx
 msgid "Untracked"
 msgstr "Untracked"
@@ -3950,6 +3958,10 @@ msgstr "What your Macs notify about, such as an agent that looks stuck or work t
 #: src/screens/mac-status.tsx
 msgid "Where builds ran"
 msgstr "Where builds ran"
+
+#: src/screens/device-view.tsx
+msgid "Window"
+msgstr "Window"
 
 #: src/components/workspace-cards.tsx
 #: src/components/workspace-cards.tsx

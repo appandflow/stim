@@ -679,7 +679,7 @@ extension AndroidDeviceSource: Source {
       stream.send(Scrcpy.keycode(.up, key))
     case .rotate, .posture:
       Output.notice(["inputError": "A physical device rotates and folds only in hand."])
-    case .config, .keyframe, .recordKeyframe, .control, .scoped, .scroll, .key, .duoTouch, .duoRelease:
+    case .config, .keyframe, .recordKeyframe, .control, .scoped, .scroll, .key, .window, .duoTouch, .duoRelease:
       break
     }
   }
@@ -846,7 +846,7 @@ extension WebSource: Source {
       page.back()
     case .rotate, .posture:
       Output.notice(["inputError": "A web page does not rotate or fold."])
-    case .config, .keyframe, .recordKeyframe, .control, .scoped, .scroll, .key, .duoTouch, .duoRelease:
+    case .config, .keyframe, .recordKeyframe, .control, .scoped, .scroll, .key, .window, .duoTouch, .duoRelease:
       break
     }
   }
@@ -857,6 +857,7 @@ indirect enum Command {
   case scoped(String, Command)
   case scroll(CGPoint, delta: CGPoint)
   case key(String, modifiers: [String])
+  case window(UInt32?)
   case config(Config)
   case keyframe
   case recordKeyframe
@@ -904,6 +905,10 @@ func parseCommand(_ line: String, base: Config) -> Command? {
   case "key":
     guard let key = object["key"] as? String, let modifiers = object["modifiers"] as? [String] else { return nil }
     return .key(key, modifiers: modifiers)
+  case "window":
+    if object["window"] is NSNull { return .window(nil) }
+    guard let id = object["window"] as? Int, let window = UInt32(exactly: id) else { return nil }
+    return .window(window)
   case "text":
     return (object["text"] as? String).map { .text($0) }
   case "button":
@@ -1064,7 +1069,7 @@ extension SimulatorSource: Source {
       hid.button(button, down: true)
       usleep(100_000)
       hid.button(button, down: false)
-    case .config, .keyframe, .recordKeyframe, .rotate, .posture, .control, .scoped, .scroll, .key, .duoTouch, .duoRelease:
+    case .config, .keyframe, .recordKeyframe, .rotate, .posture, .control, .scoped, .scroll, .key, .window, .duoTouch, .duoRelease:
       break
     }
   }
@@ -1110,7 +1115,7 @@ extension EmulatorSource: Source {
       wait("rotation") { await EmulatorRotation.rotate(serial: self.serial, clockwise: clockwise) }
     case .posture(let posture):
       wait("posture") { await posture.apply(serial: self.serial) }
-    case .config, .keyframe, .recordKeyframe, .control, .scoped, .scroll, .key, .duoTouch, .duoRelease:
+    case .config, .keyframe, .recordKeyframe, .control, .scoped, .scroll, .key, .window, .duoTouch, .duoRelease:
       break
     }
   }

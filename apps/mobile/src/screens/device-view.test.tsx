@@ -18,6 +18,9 @@ let mockControlling = true;
 let mockAllowed = true;
 let mockPhysical = false;
 let mockFeatures = ['frames'];
+const mockSelectWindow = jest.fn();
+const mockWindow = { id: 12, title: 'App', frame: { x: 0, y: 0, width: 800, height: 600 } };
+let mockWindows: import('@/hooks/device-stream').DeviceStream['windows'] = null;
 const mockKey = jest.fn();
 const mockButton = jest.fn();
 const mockSimulator = jest.fn();
@@ -81,6 +84,7 @@ jest.mock('@/hooks/device-control', () => ({
     rotate: mockRotate,
     touch: mockTouch,
     key: mockKey,
+    selectWindow: mockSelectWindow,
     button: mockButton,
     simulator: mockSimulator,
   }),
@@ -88,6 +92,7 @@ jest.mock('@/hooks/device-control', () => ({
 jest.mock('@/hooks/device-stream', () => ({
   useReplayAt: () => null,
   useDeviceStream: () => ({
+    windows: mockWindows,
     frame: { width: 400, height: 800, ...(mockArtwork ? { artworkTurns: 0 } : { posture: 'folded' }) },
     replay: null,
     video: null,
@@ -185,6 +190,7 @@ beforeEach(() => {
   mockPhysical = false;
   mockArtwork = false;
   mockFeatures = ['frames', 'device-frames'];
+  mockWindows = null;
   jest.clearAllMocks();
 });
 
@@ -337,8 +343,9 @@ it('keeps the frame presentation toggle available without a control lease or con
   }
 });
 
-it('keeps native mouse scrolling in the main bar without simulator buttons', async () => {
-  mockFeatures = ['macos-window', 'macos-window-control'];
+it.each([false, true])('keeps native mouse and window selection in the main bar (pinned: %s)', async (pinned) => {
+  mockFeatures = ['macos-window', 'macos-window-control', 'macos-window-select'];
+  mockWindows = { current: mockWindow, windows: [mockWindow, { ...mockWindow, id: 13, title: '' }], pinned };
   const screen = await render(
     <I18nProvider i18n={i18n}>
       <DeviceView workspace="/fixture" platform="macos" slot="default" />
@@ -351,4 +358,39 @@ it('keeps native mouse scrolling in the main bar without simulator buttons', asy
   expect(screen.queryByLabelText('Back')).toBeNull();
   expect(screen.getByLabelText('Keyboard')).toBeTruthy();
   expect(screen.queryByLabelText('Select all')).toBeNull();
+  await fireEvent.press(screen.getByLabelText('Window'));
+  expect(screen.getByLabelText('Follow front window').props.accessibilityState.selected).toBe(!pinned);
+  expect(screen.getByLabelText('App').props.accessibilityState.selected).toBe(pinned);
+  expect(screen.getByLabelText('Untitled window').props.accessibilityState.selected).toBe(false);
+  await fireEvent.press(screen.getByLabelText('Untitled window'));
+  await fireEvent.press(screen.getByLabelText('Follow front window'));
+  expect(mockSelectWindow.mock.calls).toEqual([[13], [null]]);
 });
+
+it.each([
+  ['macos', true, true, 1, true, true],
+  ['macos', true, true, 1, false, false],
+  ['macos', true, true, 0, false, false],
+  ['macos', true, false, 2, false, false],
+  ['macos', false, true, 2, false, false],
+  ['ios', true, true, 2, false, false],
+  ['android', true, true, 2, false, false],
+  ['web', true, true, 2, false, false],
+] as const)(
+  'gates Window by platform, control, feature and window mode (%s, %s, %s, %s, %s)',
+  async (platform, controlling, supported, count, pinned, visible) => {
+    mockControlling = controlling;
+    mockFeatures = ['macos-window-control', ...(supported ? ['macos-window-select'] : [])];
+    mockWindows = {
+      current: mockWindow,
+      windows: Array.from({ length: count }, (_, id) => ({ ...mockWindow, id: mockWindow.id + id })),
+      pinned,
+    };
+    const screen = await render(
+      <I18nProvider i18n={i18n}>
+        <DeviceView workspace="/fixture" platform={platform} slot="default" />
+      </I18nProvider>,
+    );
+    expect(screen.queryByLabelText('Window') !== null).toBe(visible);
+  },
+);

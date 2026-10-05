@@ -1353,6 +1353,10 @@ The preview follows the app's front standard window, with any attached sheet, as
 app opens, switches, closes or resizes windows; without Device Control and Data Access
 permission it shows only an app whose one window contains the others. The selection
 is shared with stim-server's helper (`OwnedAppWindows` and `OwnedAppWindowReader` in StimKit).
+When the app has more than one window, a **Window** menu above the preview offers **Follow
+front window** or one window by title; picking a window raises it among the app's windows
+and pins the preview to it until it closes or the menu follows the front window again. The
+hosted viewer has the same menu during Control, sent as `input.window`.
 The viewer skips its own process to prevent recursive previews.
 **Open app** verifies and activates that owned app using existing Device Control and
 Data Access permission (Accessibility on macOS 26 and earlier) for normal native input;

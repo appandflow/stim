@@ -87,10 +87,11 @@ The supervisor owns a process-identity claim with the app as its child. Stop
 signals only verified recorded identities. An unverifiable or malformed owner
 refuses with STIM_MACOS_OWNER_UNVERIFIED; other apps remain untouched.
 
-Stim Desktop shows this app in its workspace, with Build and run, Refresh preview,
-Open app and Stop. Capture and Open app verify the recorded executable, bundle
+Stim Desktop shows this app in its workspace, with Build and run, Open app (local
+apps only) and Stop, and a live preview that updates itself while the app runs. Capture and Open app verify the recorded executable, bundle
 identifier, PID and process start time. Open app rechecks that the captured window
-is still the app's front window, then activates that owned app for normal native input.
+is still the app's front window, or raises the pinned one, then activates that
+owned app for normal native input.
 The preview follows the app's front standard window, its main window with any
 attached sheet, as the app opens, switches, closes or resizes windows. It never
 captures another process's windows, menus or the desktop. Without Device Control
@@ -123,6 +124,24 @@ in points), after subscribing and whenever they change. Viewing starts only with
 an open window; after the app closes its last one the view reports a delay until
 another opens.
 
+WINDOWS
+
+The view follows the app's front window by default. A controller can pin it to
+one of the app's windows instead: with a server advertising macos-window-select,
+input.window { session, window: <id from macos-windows> } brings that window to
+the front of the app, and capture and input stay on it while another window
+comes forward on the Mac. input.window { session, window: null } follows the
+front window again. The pin also ends when its window closes or minimizes, or
+when the Control session that set it ends for any reason, including release,
+takeover, disconnect and the five-minute idle timeout, since viewers without
+Control cannot unpin; macos-windows reports pinned true while it holds. Choosing
+a window while the app shows a modal dialog, or one that just closed, is dropped
+without ending Control. The phone's Control toolbar and Stim Desktop's app card and
+hosted viewer offer the same choice as a Window menu: Follow front window, or a
+window by title. Stim Desktop's local preview pins without Control because it
+only raises the window among the app's own windows. An agent that drives the app
+through the stim-server protocol sends the same input.window.
+
 A server advertising macos-window-control also supports the phone's Control
 mode on a control pairing. Tap/click and drag act on the displayed window;
 Scroll mode turns a drag into pixel scrolling. The main toolbar offers Keyboard
@@ -145,7 +164,7 @@ layouts with a specific reason; ordinary typing and navigation remain available.
 Logical shortcuts for other host layouts remain tracked in
 https://github.com/appandflow/stim/issues/2422.
 Control posts input to the owned process without activating it or raising its
-window. Only when the captured window is not the app's key window (or its
+window; only choosing a window to pin raises it among the app's windows. Only when the captured window is not the app's key window (or its
 attached sheet) does Stim activate the app to deliver input, waiting up to one
 second for focus. The helper then sends a controlActivated notice, which stim-server
 logs.
@@ -155,8 +174,8 @@ Desktop's Open app to bring the app to the front for those views.
 Control holds one exclusive server session per owned app, ends on disconnect,
 revocation, takeover or five minutes without input, and does not take a CLI
 simulator/device lock. Each action rechecks the exact owned process and that the
-captured window is still the app's front standard window. The app's other windows
-are allowed; input goes to the captured window, and a sheet attached to it takes
+captured window is still the app's front standard window, or the pinned one. The
+app's other windows are allowed; input goes to the captured window, and a sheet attached to it takes
 focus and pointer input. Input that arrives while the view moves to another
 window is dropped and Control continues. A modal dialog window refuses input. A
 sheet larger than the captured window is not supported. Existing Device

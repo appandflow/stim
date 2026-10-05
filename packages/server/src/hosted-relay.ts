@@ -442,7 +442,7 @@ export class HostedRelay {
             if (event.event === 'error')
               return failed(isJsonObject(event.error) ? String(event.error.message) : 'host frames failed');
             if (event.event === 'macos-windows')
-              return this.send({ ...event, subscription } as unknown as ServerMessage);
+              return this.send({ ...event, subscription, pinned: event.pinned === true } as unknown as ServerMessage);
             const forwarded = { ...event, subscription, platform: 'macos', slot: 'default' };
             if (event.event === 'frame') {
               if (typeof event.data !== 'string') return failed('the host sent an invalid JPEG frame');

@@ -17,32 +17,50 @@ struct MacosAppCard: View {
 
   var body: some View {
     VStack(alignment: .leading, spacing: Space.md) {
-      HStack {
+      HStack(spacing: Space.sm) {
         Label(app.product, systemImage: "macwindow")
           .font(.stim(.headline))
         Spacer()
-        Button("Build and run") { actions.run("Build \(app.product)", StimCommand(runArguments, cwd: workspace)) }
-          .nativeControlStyle()
-          .disabled(app.build.state == "running" || actions.active(for: workspace) != nil)
-        if app.host != nil {
-          Button("Stop") { actions.run("Stop \(app.product)", StimCommand(["stop"], cwd: workspace)) }
-            .nativeControlStyle(.destructive)
-        } else if app.state == "running" || app.state == "orphaned" {
-          Button("Refresh preview") { previewRequest += 1 }
-            .nativeControlStyle()
-            .disabled(refreshing)
-          Button("Open app") { Task { await capture.openApp() } }
-            .nativeControlStyle()
-            .disabled(capture.image == nil || refreshing)
-          Button("Stop") { actions.run("Stop \(app.product)", StimCommand(["stop"], cwd: workspace)) }
-            .nativeControlStyle(.destructive)
+        if app.host == nil, app.state == "running" || app.state == "orphaned" {
+          IconButton(
+            systemImage: "arrow.up.forward.app", help: "Open app \u{2014} brings the app's window to the front on this Mac"
+          ) {
+            Task { await capture.openApp() }
+          }
+          .disabled(capture.image == nil || refreshing)
         }
+        if app.host != nil || app.state == "running" || app.state == "orphaned" {
+          IconButton(systemImage: "stop.fill", tint: Palette.error, help: "Stop \u{2014} runs stim stop for this workspace's app")
+          {
+            actions.run("Stop \(app.product)", StimCommand(["stop"], cwd: workspace))
+          }
+        }
+        Button("Build and run", systemImage: "play.fill") {
+          actions.run("Build \(app.product)", StimCommand(runArguments, cwd: workspace))
+        }
+        .nativeControlStyle(.primary)
+        .help(
+          app.host == nil
+            ? "Builds the Swift package and launches the app"
+            : "Builds the Swift package and launches the app on \(machineName(app.host?.machine ?? "the host"))"
+        )
+        .disabled(app.build.state == "running" || actions.active(for: workspace) != nil)
       }
-      HStack {
+      HStack(spacing: Space.sm) {
         Text("Swift Package Debug \u{00B7} build \(app.build.state) \u{00B7} app \(app.state)")
           .font(.stim(.footnote)).foregroundStyle(Palette.secondary)
         Spacer()
-        if app.host == nil { Button("Permissions") { permissions.openSetup() }.nativeControlStyle() }
+        if app.host == nil, permissionsMissing {
+          Button {
+            permissions.openSetup()
+          } label: {
+            Label("Allow viewer permissions", systemImage: "exclamationmark.triangle.fill")
+          }
+          .buttonStyle(.borderless)
+          .foregroundStyle(Palette.warning)
+          .font(.stim(.footnote))
+          .help("Viewing needs \(permissions.screenPermissionTitle); Open app also needs \(permissions.controlPermissionTitle).")
+        }
       }
       if let host = app.host {
         Label("on \(machineName(host.machine))", systemImage: "desktopcomputer")
@@ -56,6 +74,12 @@ struct MacosAppCard: View {
         if app.state == "running" || app.state == "unverified" { HostedMacosWindow(app: app, workspace: workspace) }
       } else if let error = capture.error {
         Text(error).foregroundStyle(Palette.secondary).textSelection(.enabled)
+      }
+      if app.host == nil, capture.image != nil, capture.windows.count > 1 || capture.pinned != nil {
+        MacosWindowMenu(
+          windows: capture.windows.map { MacosWindows.Window(id: Int($0.id), title: $0.title) },
+          current: capture.current.map { Int($0.id) }, pinned: capture.pinned != nil, enabled: true
+        ) { id in Task { await capture.select(id.map(UInt32.init)) } }
       }
       if app.host == nil, let image = capture.image {
         MacosWindowCanvas(image: image)
@@ -82,6 +106,11 @@ extension MacosAppCard {
   fileprivate var runArguments: [String] {
     guard let host = app.host else { return ["macos"] }
     return ["macos", "--host", host.machine]
+  }
+
+  fileprivate var permissionsMissing: Bool {
+    _ = permissions.revision
+    return !CGPreflightScreenCaptureAccess() || !AXIsProcessTrusted()
   }
 }
 
@@ -142,6 +171,12 @@ private struct HostedMacosWindow: View {
             }
             .nativeControlStyle()
           }
+          if let windows = stream.windows, windows.windows.count > 1 || windows.pinned {
+            MacosWindowMenu(
+              windows: windows.windows, current: windows.current, pinned: windows.pinned,
+              enabled: readOnly == nil && isControlling
+            ) { stream.selectWindow($0) }
+          }
           if readOnly == nil {
             Button(controlling ? "Release" : "Control") { controlling.toggle() }
               .nativeControlStyle()
@@ -188,15 +223,60 @@ private struct HostedMacosWindow: View {
   }
 }
 
+/// Chooses between following the app's front window and pinning the view to one of its windows.
+private struct MacosWindowMenu: View {
+  var windows: [MacosWindows.Window]
+  var current: Int?
+  var pinned: Bool
+  var enabled: Bool
+  var select: (Int?) -> Void
+
+  var body: some View {
+    Menu {
+      Toggle("Follow front window", isOn: Binding(get: { !pinned }, set: { if $0 { select(nil) } }))
+      Divider()
+      ForEach(windows) { window in
+        Toggle(
+          title(window),
+          isOn: Binding(get: { pinned && window.id == current }, set: { if $0 { select(window.id) } }))
+      }
+    } label: {
+      Label(
+        pinned ? "Pinned to \(currentTitle)" : "Following the front window, \(currentTitle)",
+        systemImage: pinned ? "pin.fill" : "macwindow.on.rectangle")
+    }
+    .menuStyle(.borderlessButton)
+    .font(.stim(.caption))
+    .tint(Palette.secondary)
+    .fixedSize()
+    .disabled(!enabled)
+    .help(
+      enabled
+        ? "Follow the app's front window, or pin the view to one window and bring it to the front."
+        : "Take control to choose a window.")
+  }
+
+  private var currentTitle: String {
+    windows.first { $0.id == current }.map(title) ?? "no window"
+  }
+
+  private func title(_ window: MacosWindows.Window) -> String {
+    window.title.isEmpty ? "Untitled window" : window.title
+  }
+}
+
 @MainActor private final class MacosWindowCapture: NSObject, ObservableObject, SCStreamDelegate, SCStreamOutput {
   @Published var image: CGImage?
   @Published var error: String?
   @Published var windows: [OwnedAppWindows.Window] = []
   @Published var current: OwnedAppWindows.Window?
+  /// The window the preview stays on until it closes or the menu follows the front window again.
+  @Published var pinned: UInt32?
   private var stream: SCStream?
   private var app: MacosApp?
   private var window: SCWindow?
   private var follower: Task<Void, Never>?
+  private var retryAt: ContinuousClock.Instant?
   private let context = CIContext()
 
   func start(_ app: MacosApp) async {
@@ -228,10 +308,11 @@ private struct HostedMacosWindow: View {
 
   private func follow(_ app: MacosApp) async {
     guard self.app?.launchId == app.launchId, let pid = app.app?.pid else { return }
+    if stream == nil, let retryAt, ContinuousClock.now < retryAt { return }
     let read = await Task.detached { Result { try OwnedAppWindowReader.selection(pid: pid) } }.value
     guard self.app?.launchId == app.launchId, matches(app) else { return }
-    guard case .success(let found) = read else { return }
-    guard let selection = found else {
+    guard case .success(let read) = read else { return }
+    guard let found = read else {
       windows = []
       current = nil
       image = nil
@@ -239,8 +320,12 @@ private struct HostedMacosWindow: View {
         AXIsProcessTrusted()
         ? "The app has no open window."
         : "Without \(NativeViewerPermissions.shared.controlPermissionTitle), the preview needs one visible app window."
+      pinned = nil
       return
     }
+    let pin = OwnedAppWindows.pin(found, to: pinned, screen: pinned == nil ? [] : OwnedAppWindowReader.screen(pid: pid) ?? [])
+    let selection = pin.selection
+    if pinned != pin.pinned { pinned = pin.pinned }
     if windows != selection.windows { windows = selection.windows }
     if stream != nil, let window, window.windowID == selection.current.id,
       window.frame.size == selection.current.frame.size
@@ -257,10 +342,11 @@ private struct HostedMacosWindow: View {
       else { return }
       let filter = SCContentFilter(desktopIndependentWindow: next)
       let configuration = SCStreamConfiguration()
-      configuration.width = Int((filter.contentRect.width * CGFloat(filter.pointPixelScale)).rounded(.up))
-      configuration.height = Int((filter.contentRect.height * CGFloat(filter.pointPixelScale)).rounded(.up))
+      let scale = min(CGFloat(filter.pointPixelScale), 1280 / max(filter.contentRect.width, 1))
+      configuration.width = Int((filter.contentRect.width * scale).rounded(.up))
+      configuration.height = Int((filter.contentRect.height * scale).rounded(.up))
       configuration.ignoreShadowsSingleWindow = true
-      configuration.minimumFrameInterval = CMTime(value: 1, timescale: 15)
+      configuration.minimumFrameInterval = CMTime(value: 1, timescale: 5)
       configuration.queueDepth = 3
       configuration.showsCursor = false
       if let stream {
@@ -283,8 +369,33 @@ private struct HostedMacosWindow: View {
     } catch {
       if OwnedAppWindowReader.screen(pid: pid)?.contains(where: { $0.id == selection.current.id }) == true {
         self.error = error.localizedDescription
+        retryAt = .now.advanced(by: .seconds(5))
       }
     }
+  }
+
+  /// Pins the preview to window `id` and brings it to the front among the app's windows, or with nil follows the
+  /// front window again.
+  func select(_ id: UInt32?) async {
+    guard let app, let pid = app.app?.pid, matches(app) else { return }
+    if let id {
+      let raised = await Task.detached { Self.raise(id, pid: pid) }.value
+      guard raised, self.app?.launchId == app.launchId else { return }
+    }
+    pinned = id
+    await follow(app)
+  }
+
+  private nonisolated static func raise(_ id: UInt32, pid: pid_t) -> Bool {
+    guard AXIsProcessTrusted(), let screen = OwnedAppWindowReader.screen(pid: pid),
+      let accessible = OwnedAppWindowReader.accessible(pid: pid),
+      let index = OwnedAppWindows.select(screen: screen, accessible: accessible.windows)?.windows
+        .first(where: { $0.id == id })?.accessible
+    else { return false }
+    let element = accessible.elements[index]
+    let main = AXUIElementSetAttributeValue(element, kAXMainAttribute as CFString, kCFBooleanTrue)
+    let raise = AXUIElementPerformAction(element, kAXRaiseAction as CFString)
+    return main == .success || raise == .success
   }
 
   func stop() async {
@@ -297,6 +408,7 @@ private struct HostedMacosWindow: View {
     image = nil
     windows = []
     current = nil
+    pinned = nil
     try? await old?.stopCapture()
   }
 
@@ -307,7 +419,7 @@ private struct HostedMacosWindow: View {
       self.stream = nil
       self.image = nil
       if let id = self.window?.windowID, OwnedAppWindowReader.screen(pid: pid)?.contains(where: { $0.id == id }) == true {
-        self.follower?.cancel()
+        self.retryAt = .now.advanced(by: .seconds(5))
         self.error = error.localizedDescription
       }
     }
@@ -360,11 +472,14 @@ private struct HostedMacosWindow: View {
       error = "Allow \(NativeViewerPermissions.shared.controlPermissionTitle) in Permissions to open the captured app window."
       return
     }
-    let read = await Task.detached { try? OwnedAppWindowReader.selection(pid: process.pid) }.value
-    guard self.app?.launchId == app.launchId, self.window?.windowID == window.windowID, read?.current.id == window.windowID,
-      matches(app)
-    else {
-      error = "Open app needs the captured window in front."
+    let pinned = pinned
+    let captured = window.windowID
+    let raised = await Task.detached { () -> Bool in
+      if let pinned { return Self.raise(pinned, pid: process.pid) }
+      return (try? OwnedAppWindowReader.selection(pid: process.pid))?.current.id == captured
+    }.value
+    guard raised, self.app?.launchId == app.launchId, self.window?.windowID == window.windowID, matches(app) else {
+      error = "Open app needs the captured window."
       return
     }
     guard running.activate(options: [])

@@ -1036,6 +1036,12 @@ export function protocolJsonSchema(): JsonSchema {
               ['key'],
             ),
           ),
+          request(
+            'device-host.input.window',
+            session({ window: { oneOf: [{ type: 'null' }, { type: 'integer', minimum: 0, maximum: 4294967295 }] } }, [
+              'window',
+            ]),
+          ),
           request('device-host.input.button', session({ button: { enum: [...INPUT_BUTTONS] } }, ['button'])),
           request('device-host.input.rotate', session({ direction: { enum: [...ROTATE_DIRECTIONS] } }, ['direction'])),
           request('device-host.input.posture', session({ posture: { enum: [...DEVICE_POSTURES] } }, ['posture'])),
@@ -1173,6 +1179,12 @@ export function protocolJsonSchema(): JsonSchema {
               },
               ['key'],
             ),
+          ),
+          request(
+            'input.window',
+            session({ window: { oneOf: [{ type: 'null' }, { type: 'integer', minimum: 0, maximum: 4294967295 }] } }, [
+              'window',
+            ]),
           ),
           request('input.button', session({ button: { enum: [...INPUT_BUTTONS] } }, ['button'])),
           request('input.rotate', session({ direction: { enum: [...ROTATE_DIRECTIONS] } }, ['direction'])),
@@ -1438,13 +1450,14 @@ export function protocolJsonSchema(): JsonSchema {
         oneOf: [
           {
             type: 'object',
-            required: ['event', 'subscription', 'current', 'windows'],
+            required: ['event', 'subscription', 'current', 'windows', 'pinned'],
             additionalProperties: false,
             properties: {
               event: { const: 'macos-windows' },
               subscription: { type: 'string' },
               current: { oneOf: [{ type: 'null' }, { $ref: '#/$defs/MacosWindow' }] },
               windows: { type: 'array', items: { $ref: '#/$defs/MacosWindow' } },
+              pinned: { type: 'boolean' },
             },
           },
           {

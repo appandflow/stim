@@ -36,6 +36,7 @@ export interface DeviceControl {
   text: (text: string) => void;
   scroll: (x: number, y: number, deltaX: number, deltaY: number) => void;
   key: (key: InputKey, modifiers?: KeyModifier[]) => void;
+  selectWindow: (id: number | null) => void;
   button: (button: InputButton) => void;
   rotate: (direction: RotateDirection) => void;
   /** Rejects with the server's reason; a Duo fold takes a few seconds to settle. */
@@ -136,7 +137,16 @@ export function useDeviceControl(
   );
   const end = useCallback(() => setHeld({ kind: 'off' }), []);
   const send = useCallback(
-    <M extends 'input.touch' | 'input.text' | 'input.button' | 'input.rotate' | 'input.scroll' | 'input.key'>(
+    <
+      M extends
+        | 'input.touch'
+        | 'input.text'
+        | 'input.button'
+        | 'input.rotate'
+        | 'input.scroll'
+        | 'input.key'
+        | 'input.window',
+    >(
       method: M,
       params: Omit<Methods[M]['params'], 'session'>,
     ) => {
@@ -167,6 +177,7 @@ export function useDeviceControl(
     (key: InputKey, modifiers: KeyModifier[] = []) => send('input.key', { key, modifiers }),
     [send],
   );
+  const selectWindow = useCallback((window: number | null) => send('input.window', { window }), [send]);
   const rotate = useCallback((direction: RotateDirection) => send('input.rotate', { direction }), [send]);
   const posture = useCallback(
     async (value: DevicePosture) => {
@@ -188,5 +199,5 @@ export function useDeviceControl(
     },
     [connection, session, link],
   );
-  return { allowed, state, begin, end, touch, text, scroll, key, button, rotate, posture, simulator };
+  return { allowed, state, begin, end, touch, text, scroll, key, selectWindow, button, rotate, posture, simulator };
 }

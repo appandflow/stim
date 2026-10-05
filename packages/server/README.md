@@ -1057,8 +1057,9 @@ Events are `{ "event", "subscription", ... }`.
   when the app has no open window at start; after the app closes its last window
   the subscription gets `frame-delayed` until another opens. When hello
   advertises `macos-windows`, the subscription also gets
-  `{ event: "macos-windows", subscription, current, windows }` after it starts and
-  whenever the windows change: `current` is the captured window or null, and
+  `{ event: "macos-windows", subscription, current, windows, pinned }` after it
+  starts and whenever the windows or the pin change: `current` is the captured
+  window or null, `pinned` says whether `input.window` holds the view on it, and
   `windows` lists the app's on-screen standard windows front to back, each
   `{ id, title, frame: { x, y, width, height } }` in points with a top-left global
   origin. A hosted app's relay forwards the event with the local subscription. It requires existing Screen & System Audio Recording permission (Screen Recording on macOS 14) and
@@ -1675,7 +1676,8 @@ sends reaches any other device.
   because CLI device locks do not cover macOS apps. Existing Device Control and
   Data Access permission (Accessibility on macOS 26 and earlier) is required, without permission requests or resets. Before each
   action the helper verifies PID/start time/executable/bundle and that the
-  captured window ID and size are still the app's front standard window. The app's
+  captured window ID and size are still the app's front standard window, or the
+  window `input.window` pinned. The app's
   other windows are allowed. A modal dialog window and changed ownership refuse
   input. Input that arrives while capture moves to another window is dropped with a
   logged reason and Control continues. A sheet attached to the captured window
@@ -1684,13 +1686,25 @@ sends reaches any other device.
   posted only to that PID; the desktop and other apps receive no input.
   `input.touch` maps normalized captured-window coordinates to mouse events.
   `input.scroll` takes normalized `x`, `y` and `deltaX`, `deltaY` in pixels,
-  each from -1000 to 1000. `input.key` accepts Escape, Tab, Return, Backspace,
+  each from -1000 to 1000. When hello advertises `macos-window-select`,
+  `input.window` takes `window`, an id from the `macos-windows` event, to pin the
+  view and input to that window of the app: the helper verifies it is one of the
+  app's on-screen standard windows, makes it the app's main window and raises it
+  among the app's windows without activating the app, and capture stays on it
+  while another window comes to the front.
+  `window: null` follows the front window again. A pin also ends when its window
+  closes or leaves the screen, or when the Control session that set it ends,
+  including takeover, disconnect and the idle timeout. A window that is gone by
+  then, or a modal dialog in the app, drops the input with a logged reason
+  without ending Control. The hosted relay forwards it as `device-host.input.window`.
+  `input.key` accepts Escape, Tab, Return, Backspace,
   arrows or `a-z` and `0-9`, with unique optional `command/shift/option/control`
   modifiers. Hello advertises `macos-keyboard-extended` for the expanded keys;
   older servers accept only `a/c/v/x/z/s/f` plus navigation. Letter and digit
   key events require the Mac's selected U.S. or ABC input source because
   Apple ANSI key codes identify physical U.S. positions; other layouts are refused with a specific reason.
-  The helper posts input to the owned process without activating it or raising its window.
+  The helper posts input to the owned process without activating it or raising its window,
+  except that `input.window` raises the window it pins among the app's windows.
   Only when the captured window is not the app's key window does it activate the app (waiting up to one
   second for focus) and send a `controlActivated` notice, which stim-server logs. Clicks on views that
   reject the first mouse, such as custom views and SwiftUI `onTapGesture` regions, do not land while the app

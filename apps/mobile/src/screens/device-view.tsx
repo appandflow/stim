@@ -36,7 +36,7 @@ import { DeviceFrame } from '@/components/device-frame';
 import { DeviceScreen } from '@/components/device-screen';
 import { Icon } from '@/components/icon';
 import { HostLabel } from '@/components/host-label';
-import { ViewerToolbar, type ViewerAction } from '@/components/viewer-toolbar';
+import { ViewerToolbar, type ViewerAction, type ViewerToolbarAction } from '@/components/viewer-toolbar';
 import { ScrollView } from '@/components/lists';
 import { Pill } from '@/components/pill';
 import { ReplayBar } from '@/components/replay-bar';
@@ -455,7 +455,39 @@ export function DeviceView({
       />
     ) : null;
   const overlayControls = !table && replayBar !== null && streams && rest !== null && rootHeight > 0;
-  const primary: ViewerAction[] =
+  const windows = stream.windows;
+  const windowActions: ViewerToolbarAction[] =
+    platform === 'macos' &&
+    controlling &&
+    link.kind === 'open' &&
+    link.features.includes('macos-window-select') &&
+    windows &&
+    (windows.windows.length > 1 || windows.pinned)
+      ? [
+          {
+            id: 'window',
+            icon: 'macwindow.on.rectangle',
+            label: t`Window`,
+            actions: [
+              {
+                id: 'follow',
+                icon: 'macwindow.on.rectangle',
+                label: t`Follow front window`,
+                selected: !windows.pinned,
+                onPress: () => control.selectWindow(null),
+              },
+              ...windows.windows.map((window): ViewerAction => ({
+                id: String(window.id),
+                icon: 'macwindow.on.rectangle',
+                label: window.title || t`Untitled window`,
+                selected: windows.pinned && window.id === windows.current?.id,
+                onPress: () => control.selectWindow(window.id),
+              })),
+            ],
+          },
+        ]
+      : [];
+  const primary: ViewerToolbarAction[] =
     controlling || readOnly
       ? [
           {
@@ -500,6 +532,7 @@ export function DeviceView({
                 },
               ]
             : []),
+          ...windowActions,
           ...((platform === 'ios' || platform === 'android') && !physical
             ? [
                 {

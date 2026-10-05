@@ -22,6 +22,8 @@ import Foundation
   @Published public private(set) var control = Control.off(ended: nil)
   /// Whether a frame arrived since the subscription opened.
   @Published public private(set) var receiving = false
+  /// A macOS app's windows from the server's `macos-windows` event; nil before one arrives.
+  @Published public private(set) var windows: MacosWindows?
   public var onVideo: (@MainActor (VideoPacket) -> Void)?
   /// A JPEG frame, from a server that falls back to screenshots for this device.
   public var onImage: (@MainActor (Data) -> Void)?
@@ -80,6 +82,8 @@ import Foundation
         case "frame":
           self.received()
           if let base64 = event.fields["data"]?.string, let data = Data(base64Encoded: base64) { self.onImage?(data) }
+        case "macos-windows":
+          self.windows = MacosWindows(event.fields)
         case "frame-delayed":
           self.problem =
             event.fields["delayed"] == .bool(true)
@@ -163,6 +167,11 @@ import Foundation
     send("input.text", ["text": .string(text)])
   }
 
+  /// Pins the view to a macOS app's window `id`, bringing it to the front, or with nil follows its front window.
+  public func selectWindow(_ id: Int?) {
+    send("input.window", ["window": id.map { .number(Double($0)) } ?? .null])
+  }
+
   /// `home`, `back`, `app-switch` or `lock`.
   public func button(_ button: String) {
     send("input.button", ["button": .string(button)])
@@ -189,6 +198,35 @@ import Foundation
     subscriptionID = nil
     problem = nil
     receiving = false
+    windows = nil
+  }
+}
+
+/// The windows of a macOS app that a frames subscription shows, front to back. `current` is the captured one: the
+/// front window, or while `pinned` the one a controller chose.
+public struct MacosWindows: Equatable, Sendable {
+  public struct Window: Equatable, Sendable, Identifiable {
+    public var id: Int
+    public var title: String
+
+    public init(id: Int, title: String) {
+      self.id = id
+      self.title = title
+    }
+  }
+
+  public var current: Int?
+  public var windows: [Window]
+  public var pinned: Bool
+
+  init(_ fields: [String: JSONValue]) {
+    let window = { (value: JSONValue?) -> Window? in
+      guard case .object(let object)? = value, case .number(let id)? = object["id"] else { return nil }
+      return Window(id: Int(id), title: object["title"]?.string ?? "")
+    }
+    current = window(fields["current"])?.id
+    if case .array(let list)? = fields["windows"] { windows = list.compactMap(window) } else { windows = [] }
+    pinned = fields["pinned"] == .bool(true)
   }
 }
 

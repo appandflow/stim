@@ -799,6 +799,7 @@ describe('pairing', () => {
           'notifications',
           'macos-window',
           'macos-windows',
+          'macos-window-select',
           'macos-window-control',
           'macos-keyboard-extended',
           'device-frames',
@@ -3648,6 +3649,12 @@ describe('frames.subscribe', () => {
         expect(
           await client.request('device-host.input.key', { session: controlSession, key: 'a', modifiers: ['command'] }),
         ).toHaveProperty('result');
+        expect(await client.request('device-host.input.window', { session: controlSession, window: 7 })).toHaveProperty(
+          'result',
+        );
+        expect(
+          await client.request('device-host.input.window', { session: controlSession, window: null }),
+        ).toHaveProperty('result');
         expect(
           await client.request('device-host.input.key', { session: controlSession, key: 'invalid' }),
         ).toHaveProperty('error.code', 'bad-request');
@@ -3666,6 +3673,8 @@ describe('frames.subscribe', () => {
             expect.arrayContaining([
               expect.objectContaining({ input: 'scroll', deltaX: -5, deltaY: 10 }),
               expect.objectContaining({ input: 'key', key: 'a', modifiers: ['command'] }),
+              expect.objectContaining({ input: 'window', window: 7, controlSession: expect.any(String) }),
+              expect.objectContaining({ input: 'window', window: null, controlSession: expect.any(String) }),
             ]),
           );
           const args = helperRuns()[0]!.args;
@@ -3920,21 +3929,26 @@ describe('frames.subscribe', () => {
     10_000,
   );
 
-  test.skipIf(!fakeTailscale)(
-    'streams a verified native app to a read-only phone without control, replay or device tools',
-    async () => {
+  test.each([undefined, false, true])(
+    'streams a verified native app to a read-only phone without control, replay or device tools (pinned: %s)',
+    { skip: !fakeTailscale, timeout: 10_000 },
+    async (pinned) => {
       const windows = [
         { id: 12, title: 'MyApp', frame: { x: -100, y: 20, width: 800, height: 600 } },
         { id: 13, title: '', frame: { x: 100, y: -20, width: 400, height: 300 } },
       ];
-      const macosWindows = { current: windows[0], windows };
+      const macosWindows = { current: windows[0], windows, pinned: pinned ?? false };
       const port = await startWithTools(
         {
           FAKE_STIM_PAYLOADS: statusWith({ macos: OWNED_MACOS }),
           FAKE_FRAMES: '[]',
           FAKE_HELPER_INTERVAL_MS: '10',
-          FAKE_HELPER_MACOS_WINDOWS: JSON.stringify(macosWindows),
-          FAKE_HELPER_MACOS_WINDOWS_MALFORMED: JSON.stringify({ current: null, windows: [{ id: -1 }] }),
+          FAKE_HELPER_MACOS_WINDOWS: JSON.stringify({ ...macosWindows, pinned }),
+          FAKE_HELPER_MACOS_WINDOWS_MALFORMED: JSON.stringify(
+            pinned === undefined
+              ? { current: null, windows: [{ id: -1 }] }
+              : { current: null, windows: [], pinned: 'yes' },
+          ),
         },
         undefined,
         fakeHelper(),
@@ -3949,7 +3963,11 @@ describe('frames.subscribe', () => {
       validator.addSchema(protocolJsonSchema(), 'protocol');
       const acceptsEvent = validator.compile({ $ref: 'protocol#/$defs/ServerEvent' });
       expect(acceptsEvent(event)).toBe(true);
-      expect(acceptsEvent({ event: 'macos-windows', subscription: 's1', current: null, windows: [] })).toBe(true);
+      expect(
+        acceptsEvent({ event: 'macos-windows', subscription: 's1', current: null, windows: [], pinned: false }),
+      ).toBe(true);
+      expect(acceptsEvent({ event: 'macos-windows', subscription: 's1', current: null, windows: [] })).toBe(false);
+      expect(acceptsEvent({ ...event, pinned: 'yes' })).toBe(false);
       expect(await client.next()).toHaveProperty('binary');
       const again = await authed(port);
       expect(await again.request('frames.subscribe', { workspace, platform: 'macos', video: ['h264'] })).toMatchObject({
@@ -3970,7 +3988,6 @@ describe('frames.subscribe', () => {
       expect(toolRuns().filter((run) => run.tool === 'xcrun' || run.tool === 'adb')).toEqual([]);
       expect(readViewedDevices()).toEqual([]);
     },
-    10_000,
   );
 
   test.skipIf(!fakeTailscale)(
@@ -4037,6 +4054,10 @@ describe('frames.subscribe', () => {
       expect(await client.request('input.key', { session, key: 'q', modifiers: ['command'] })).toHaveProperty('result');
       expect(await client.request('input.key', { session, key: '7', modifiers: ['shift'] })).toHaveProperty('result');
       expect(await client.request('input.key', { session, key: 'a', modifiers: ['command'] })).toHaveProperty('result');
+      expect(await client.request('input.window', { session, window: 12 })).toHaveProperty('result');
+      expect(await client.request('input.window', { session, window: null })).toHaveProperty('result');
+      for (const window of [undefined, -1, 0x100000000, 1.5, '12'])
+        expect(await client.request('input.window', { session, window })).toHaveProperty('error.code', 'bad-request');
       for (const [method, params] of [
         ['input.rotate', { direction: 'left' }],
         ['input.button', { button: 'home' }],
@@ -4062,8 +4083,12 @@ describe('frames.subscribe', () => {
       const active = sent.find((entry) => entry.control && (entry.control as { enabled: boolean }).enabled)!
         .control as { session: string };
       expect(sent.filter((entry) => entry.input).map((entry) => entry.controlSession)).toEqual(
-        Array(7).fill(active.session),
+        Array(9).fill(active.session),
       );
+      expect(sent.filter((entry) => entry.input === 'window')).toEqual([
+        { input: 'window', window: 12, controlSession: active.session },
+        { input: 'window', window: null, controlSession: active.session },
+      ]);
       const resumed = await client.request('control.begin', { workspace, platform: 'macos' });
       const next = (resumed as { result: { session: string } }).result.session;
       expect(await client.request('input.key', { session: next, key: 'a', modifiers: ['command'] })).toHaveProperty(
@@ -4696,6 +4721,9 @@ describe('frames.subscribe', () => {
       expect(await client.request('input.rotate', { session, direction: 'left' })).toMatchObject({ result: {} });
       expect(await client.request('input.rotate', { session, direction: 'right' })).toMatchObject({
         error: { code: 'limit-exceeded', message: expect.stringContaining('rotate or fold') },
+      });
+      expect(await client.request('input.window', { session, window: null })).toMatchObject({
+        error: { code: 'bad-request' },
       });
       expect(await client.request('input.button', { session, button: 'back' })).toMatchObject({
         error: { code: 'bad-request' },
