@@ -474,7 +474,9 @@ public final class SimulatorDisplayNSView: NSView {
   }
 
   func paste(_ text: String) async -> Bool {
-    guard acceptsInput, let udid, let hid = inputClient(), hid.isConnected else { return false }
+    guard acceptsInput, let udid, let hid = inputClient(), hid.isConnected,
+      (SimulatorKit.usageForKeyCode?(0x37) ?? 0) != 0, (SimulatorKit.usageForKeyCode?(0x09) ?? 0) != 0
+    else { return false }
     var environment = ProcessInfo.processInfo.environment
     environment["DEVELOPER_DIR"] = CoreSimulator.developerDir
     environment["LC_ALL"] = "en_US.UTF-8"
