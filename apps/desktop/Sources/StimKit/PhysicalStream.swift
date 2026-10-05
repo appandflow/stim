@@ -15,6 +15,8 @@ import Foundation
   static let fps = 30.0
 
   public let target: ReplayTarget
+  /// False for a hosted macOS app, which stim-server relays rather than reading a leased device.
+  public let physical: Bool
   /// Why no frames arrive: a refused or failed subscription, or the server's `frame-delayed` reason.
   @Published public private(set) var problem: String?
   @Published public private(set) var control = Control.off(ended: nil)
@@ -32,8 +34,9 @@ import Foundation
   private var beginGeneration = 0
   private var pressed: (x: Double, y: Double)?
 
-  public init(target: ReplayTarget) {
+  public init(target: ReplayTarget, physical: Bool = true) {
     self.target = target
+    self.physical = physical
   }
 
   /// Subscribes to the device's frames on `server`, or with nil stops. A new server ends the control session.
@@ -59,9 +62,9 @@ import Foundation
     }
     unsubscribe = server.subscribe(
       "frames.subscribe",
-      params: { [target] in
+      params: { [target, physical] in
         var params = target.params
-        params["physical"] = .bool(true)
+        if physical { params["physical"] = .bool(true) }
         params["video"] = .array([.string("h264")])
         params["fps"] = .number(Self.fps)
         return params
@@ -117,7 +120,7 @@ import Foundation
     let current = beginGeneration
     control = .starting
     var params = target.params
-    params["physical"] = .bool(true)
+    if physical { params["physical"] = .bool(true) }
     params["takeOver"] = .bool(true)
     Task {
       do {

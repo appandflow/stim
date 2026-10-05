@@ -543,8 +543,18 @@ placement still needs to check that contract before selecting hosted Metro.
 Bare React Native uses the worker `RCT_jsLocation`. Bridge readiness and
 manifest requests are not launch proof; development remains `unverified` until
 the workspace observes the app's own bundle delivery.
-This is a protocol API for approved clients; automatic CLI placement,
-client view/control relays and Android Metro/viewing remain in [#2266](https://github.com/appandflow/stim/issues/2266).
+This is a protocol API for approved clients; automatic iOS CLI placement,
+client iOS view/control relays and Android Metro/viewing remain in [#2266](https://github.com/appandflow/stim/issues/2266).
+
+### Hosted macOS relay
+
+The client's stim-server relays a hosted workspace's macOS view and input to
+its host using the client's approved device-host credential over the pinned
+tailnet connection. Stim Desktop and phones keep talking only to their own
+server. The `macos-hosted` feature advertises this relay. Hosted frames and
+control reject `physical`, a non-default slot, and replay (`at`/`rate`).
+`control.begin` still needs the local `control` grant. Screen Recording for
+viewing and Accessibility for control are granted on the host, not the client.
 
 ### Hosted iOS and macOS view and input
 

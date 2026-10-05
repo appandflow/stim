@@ -281,6 +281,7 @@ async function start(
     history?: boolean;
     pushEndpoint?: string;
     buildLimits?: ServerOptions['buildLimits'];
+    hostedRelay?: ServerOptions['hostedRelay'];
   } = {},
 ): Promise<number> {
   const stimCli = join(root, 'fake-stim.mjs');
@@ -326,6 +327,7 @@ async function start(
     pushEndpoint: overrides.pushEndpoint ?? 'http://127.0.0.1:9/push',
     pullRequests: async () => new Map(),
     buildLimits: overrides.buildLimits,
+    hostedRelay: overrides.hostedRelay,
   });
   return server.addresses[0]!.port;
 }
@@ -676,6 +678,7 @@ describe('pairing', () => {
           'macos-window-control',
           'macos-keyboard-extended',
           'device-frames',
+          'macos-hosted',
         ],
         actions: [],
       },
@@ -4130,6 +4133,7 @@ describe('frames.subscribe', () => {
     env: Record<string, string> = {},
     controlLimits?: ServerOptions['controlLimits'],
     pushEndpoint?: string,
+    hostedRelay?: ServerOptions['hostedRelay'],
   ) {
     const bin = join(root, 'bin');
     mkdirSync(bin);
@@ -4156,6 +4160,7 @@ describe('frames.subscribe', () => {
       foldHelper: join(root, 'sim-fold'),
       controlLimits,
       pushEndpoint,
+      hostedRelay,
     });
   }
 
@@ -4304,6 +4309,146 @@ describe('frames.subscribe', () => {
       await until(() => lockCalls().length === 2);
       expect(lockCalls()).toEqual(['device lock ios SIM-1 --for 2m --wait 0 --json', 'device unlock ios --json']);
       expect(readAudit().map((record) => record.action)).toEqual(['control.begin', 'control.end']);
+    },
+    10_000,
+  );
+
+  test.skipIf(!fakeTailscale)(
+    'isolates two hosts returning c1 from each other and from local c1',
+    async () => {
+      const hosts: WebSocketServer[] = [];
+      const seen: { method: string; params: Record<string, unknown> }[][] = [[], []];
+      const sessions = ['12345678-1234-1234-1234-123456789abc', '12345678-1234-1234-1234-123456789def'];
+      const paths = [join(root, 'hosted-a'), join(root, 'hosted-b')];
+      try {
+        for (const [index, session] of sessions.entries()) {
+          const host = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+          hosts.push(host);
+          await new Promise<void>((resolve, reject) => {
+            host.once('listening', resolve);
+            host.once('error', reject);
+          });
+          host.on('connection', (socket) =>
+            socket.on('message', (data) => {
+              const request = JSON.parse(data.toString()) as {
+                id: number;
+                method: string;
+                params: Record<string, unknown>;
+              };
+              seen[index]!.push(request);
+              let result: Record<string, unknown> = {};
+              if (request.method === 'hello') {
+                const auth = request.params.auth as { deviceToken: string };
+                if (auth.deviceToken !== `token-${index}`) return socket.close();
+                result = { capabilities: ['device-host'] };
+              } else if (request.method === 'device-host.control.begin') {
+                if (request.params.session !== session) return socket.close();
+                result = { session: 'c1', platform: 'macos', lease: null, postures: [] };
+              } else if (request.params.session !== 'c1') return socket.close();
+              socket.send(JSON.stringify({ id: request.id, result }));
+            }),
+          );
+          const path = paths[index]!;
+          mkdirSync(path);
+          mkdirSync(workspaceStateDir(path), { recursive: true });
+          writeFileSync(
+            join(workspaceStateDir(path), 'state.json'),
+            JSON.stringify({
+              macos: {
+                ...OWNED_MACOS,
+                app: undefined,
+                host: {
+                  machine: `mini-${index}`,
+                  session,
+                  appSlot: 1,
+                  appAttempt: 'app',
+                  bundleId: 'com.app.hosted1',
+                  agent: { driver: 'none', setting: 'hosting.agentDriver' },
+                },
+              },
+            }),
+          );
+        }
+        writeFileSync(
+          join(process.env.STIM_HOME!, 'config.json'),
+          JSON.stringify({ projects: { [workspace]: {}, [paths[0]!]: {}, [paths[1]!]: {} } }),
+        );
+        writeFileSync(
+          join(process.env.STIM_HOME!, 'device-host-machines.json'),
+          JSON.stringify({
+            version: 1,
+            machines: sessions.map((_, index) => ({
+              machine: `mini-${index}`,
+              nodeId: `node-${index}`,
+              dnsName: `mini-${index}.tail.ts.net`,
+              deviceId: `device-${index}`,
+              deviceToken: `token-${index}`,
+              state: 'approved',
+              requestedAt: new Date().toISOString(),
+            })),
+          }),
+        );
+        const port = await startControl(
+          { FAKE_STIM_PAYLOADS: statusWith({ macos: OWNED_MACOS }) },
+          undefined,
+          undefined,
+          {
+            status: () => ({
+              Peer: Object.fromEntries(
+                sessions.map((_, index) => [
+                  index,
+                  {
+                    ID: `node-${index}`,
+                    DNSName: `mini-${index}.tail.ts.net.`,
+                    TailscaleIPs: [`100.64.0.${index + 8}`],
+                  },
+                ]),
+              ),
+            }),
+            endpoint: (pinned) => ({
+              ...pinned,
+              url: `ws://127.0.0.1:${(hosts[pinned.servername.startsWith('mini-0.') ? 0 : 1]!.address() as { port: number }).port}`,
+            }),
+          },
+        );
+        const client = await authed(port, true);
+        const ids: string[] = [];
+        for (const path of [...paths, workspace]) {
+          const reply = await client.request('control.begin', { workspace: path, platform: 'macos' });
+          expect(reply).toHaveProperty('result.session');
+          ids.push((reply as { result: { session: string } }).result.session);
+        }
+        expect(ids).toEqual(['h1', 'h2', 'c1']);
+        for (const [index, session] of ids.entries()) {
+          expect(await client.request('input.text', { session, text: `target-${index}` })).toMatchObject({
+            result: {},
+          });
+          expect(await client.request('control.end', { session })).toMatchObject({ result: {} });
+        }
+        for (const index of [0, 1]) {
+          expect(
+            seen[index]!.filter((request) => request.method === 'device-host.input.text').map(
+              (request) => request.params,
+            ),
+          ).toEqual([{ session: 'c1', text: `target-${index}` }]);
+          expect(
+            seen[index]!.filter((request) => request.method === 'device-host.control.end').map(
+              (request) => request.params,
+            ),
+          ).toEqual([{ session: 'c1' }]);
+        }
+        expect(
+          readAudit()
+            .filter((record) => record.action === 'control.end')
+            .map((record) => record.workspace)
+            .toSorted(),
+        ).toEqual([...paths, workspace].toSorted());
+      } finally {
+        for (const host of hosts) {
+          for (const socket of host.clients) socket.terminate();
+          await new Promise<void>((resolve) => host.close(() => resolve()));
+        }
+      }
     },
     10_000,
   );

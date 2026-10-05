@@ -21,10 +21,13 @@ struct MacosAppCard: View {
         Label(app.product, systemImage: "macwindow")
           .font(.stim(.headline))
         Spacer()
-        Button("Build and run") { actions.run("Build \(app.product)", StimCommand(["macos"], cwd: workspace)) }
+        Button("Build and run") { actions.run("Build \(app.product)", StimCommand(runArguments, cwd: workspace)) }
           .nativeControlStyle()
           .disabled(app.build.state == "running" || actions.active(for: workspace) != nil)
-        if app.state == "running" || app.state == "orphaned" {
+        if app.host != nil {
+          Button("Stop") { actions.run("Stop \(app.product)", StimCommand(["stop"], cwd: workspace)) }
+            .nativeControlStyle(.destructive)
+        } else if app.state == "running" || app.state == "orphaned" {
           Button("Refresh preview") { previewRequest += 1 }
             .nativeControlStyle()
             .disabled(refreshing)
@@ -36,14 +39,18 @@ struct MacosAppCard: View {
         }
       }
       HStack {
-        Text("Swift Package Debug \u{00B7} build \(app.build.state) \u{00B7} app \(app.state)")
+        Text("Swift Package Debug \u{00B7} build \(app.build.state) \u{00B7} app \(app.state)\(hostNote)")
           .font(.stim(.footnote)).foregroundStyle(Palette.secondary)
         Spacer()
-        Button("Permissions") { permissions.openSetup() }.nativeControlStyle()
+        if app.host == nil { Button("Permissions") { permissions.openSetup() }.nativeControlStyle() }
       }
       if let error = app.build.error { Text(error).foregroundStyle(Palette.error).textSelection(.enabled) }
-      if let error = capture.error { Text(error).foregroundStyle(Palette.secondary).textSelection(.enabled) }
-      if let image = capture.image {
+      if app.host != nil {
+        if app.state == "running" || app.state == "unverified" { HostedMacosWindow(app: app, workspace: workspace) }
+      } else if let error = capture.error {
+        Text(error).foregroundStyle(Palette.secondary).textSelection(.enabled)
+      }
+      if app.host == nil, let image = capture.image {
         MacosWindowCanvas(image: image)
           .aspectRatio(CGFloat(image.width) / CGFloat(image.height), contentMode: .fit)
           .frame(maxWidth: .infinity)
@@ -60,6 +67,119 @@ struct MacosAppCard: View {
     .onChange(of: permissions.revision) { previewRequest += 1 }
     .onDisappear {
       Task { await capture.stop() }
+    }
+  }
+}
+
+extension MacosAppCard {
+  fileprivate var runArguments: [String] {
+    guard let host = app.host else { return ["macos"] }
+    return ["macos", "--host", host.machine]
+  }
+
+  fileprivate var hostNote: String {
+    guard let host = app.host else { return "" }
+    return " on \(host.machine) as \(host.bundleId)"
+  }
+}
+
+/// The window of an app that `stim macos --host` runs on another Mac, through this Mac's stim-server, which relays
+/// frames and input to the host. Control takes clicks and typed text.
+private struct HostedMacosWindow: View {
+  var app: MacosApp
+  var workspace: String
+  @ObservedObject private var session = ServerSession.shared
+  @StateObject private var stream: PhysicalStream
+  @State private var controlling = false
+  @State private var pixelSize: CGSize?
+
+  init(app: MacosApp, workspace: String) {
+    self.app = app
+    self.workspace = workspace
+    _stream = StateObject(
+      wrappedValue: PhysicalStream(
+        target: ReplayTarget(workspace: workspace, platform: "macos", slot: "default"), physical: false))
+  }
+
+  var body: some View {
+    let screen = PhysicalScreen(hostedMacosOn: session.link)
+    content(screen)
+      .onChange(of: screen, initial: true) { _, screen in follow(screen) }
+      .onChange(of: app.launchId) {
+        controlling = false
+        stream.stop()
+        follow(screen)
+      }
+      .onChange(of: controlling) { _, controlling in
+        if controlling { stream.begin() } else { stream.end() }
+      }
+      .onChange(of: stream.control) { _, control in
+        switch control {
+        case .off, .failed: controlling = false
+        case .starting, .on: break
+        }
+      }
+      .onDisappear { stream.stop() }
+  }
+
+  @ViewBuilder private func content(_ screen: PhysicalScreen) -> some View {
+    switch screen {
+    case .message(let text, let remedy):
+      PhysicalMessage(text: text, remedy: remedy).frame(minHeight: 160)
+    case .stream(let readOnly):
+      VStack(alignment: .leading, spacing: Space.sm) {
+        HStack {
+          Text(controlNote ?? readOnly ?? "Window on \(app.host?.machine ?? "the host")")
+            .font(.stim(.caption)).foregroundStyle(Palette.secondary).lineLimit(2)
+          Spacer()
+          if stream.problem != nil {
+            Button("Reconnect") {
+              controlling = false
+              stream.stop()
+              follow(screen)
+            }
+            .nativeControlStyle()
+          }
+          if readOnly == nil {
+            Button(controlling ? "Release" : "Control") { controlling.toggle() }
+              .nativeControlStyle()
+          }
+        }
+        PhysicalDisplay(
+          stream: stream, activityKey: nil, interactive: controlling && isControlling,
+          onPixelSizeChange: { pixelSize = $0 }
+        )
+        .aspectRatio(pixelSize.map { $0.width / max($0.height, 1) } ?? 1.6, contentMode: .fit)
+        .frame(maxWidth: .infinity)
+        .overlay {
+          if let problem = stream.problem ?? (stream.receiving ? nil : "Connecting to \(app.host?.machine ?? "the host")") {
+            PhysicalMessage(text: problem)
+          }
+        }
+        .accessibilityLabel("\(app.product) window on \(app.host?.machine ?? "the host")")
+      }
+    }
+  }
+
+  private var isControlling: Bool {
+    if case .on = stream.control { return true }
+    return false
+  }
+
+  private var controlNote: String? {
+    switch stream.control {
+    case .starting: return "Taking control"
+    case .failed(let message): return message
+    case .off(ended: let ended?): return "Control ended. \(ended)"
+    case .off, .on: return nil
+    }
+  }
+
+  private func follow(_ screen: PhysicalScreen) {
+    if case .stream = screen, session.isOpen {
+      stream.connect(session.client)
+    } else {
+      stream.stop()
     }
   }
 }

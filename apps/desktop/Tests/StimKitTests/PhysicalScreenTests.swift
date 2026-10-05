@@ -54,6 +54,19 @@ import Testing
         == .message("Stim cannot tell whether this device is connected."))
   }
 
+  @Test func showsAHostedMacosAppOnlyThroughAServerThatRelaysIt() {
+    let relaying = ServerLink.open(features: ["macos-window", "macos-hosted"], capabilities: ["read", "control"])
+    #expect(PhysicalScreen(hostedMacosOn: relaying).canControl)
+    let readOnly = ServerLink.open(features: ["macos-hosted"], capabilities: ["read"])
+    #expect(
+      PhysicalScreen(hostedMacosOn: readOnly) == .stream(control: "Stim Desktop's stim-server pairing is read only."))
+    let older = ServerLink.open(features: ["macos-window"], capabilities: ["read", "control"])
+    #expect(
+      PhysicalScreen(hostedMacosOn: older)
+        == .message(
+          "Update stim-server to see this app's window.", remedy: "npm install --global @stim-cli/server@latest"))
+  }
+
   @Test func mapsKeysToTheProtocolsText() {
     #expect(physicalInputText(characters: "a", keyCode: 0) == "a")
     #expect(physicalInputText(characters: "\r", keyCode: 0x24) == "\n")
