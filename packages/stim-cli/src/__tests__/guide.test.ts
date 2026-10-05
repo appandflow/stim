@@ -202,7 +202,7 @@ test('the index lists every topic and the running version', () => {
   for (const name of topicNames()) expect(idx).toMatch(new RegExp(name));
 });
 
-test('the errors topic documents every code the build commands and the iOS signing gate can emit', () => {
+test('the errors topic documents every code the build commands, the Node check and the iOS signing gate can emit', () => {
   const body = renderTopic('errors');
   assert(body);
   const commandFiles = [
@@ -223,6 +223,8 @@ test('the errors topic documents every code the build commands and the iOS signi
     ...['engine/ios-profile.ts', 'engine/ios-signing.ts', 'engine/eas-build.ts', 'engine/ios-device.ts'].map((f) =>
       readFileSync(new URL(`../${f}`, import.meta.url), 'utf-8'),
     ),
+    readFileSync(new URL('../../bin/node-check.ts', import.meta.url), 'utf-8'),
+    readFileSync(new URL('../../../server/bin/node-check.ts', import.meta.url), 'utf-8'),
   ].join('\n');
   const codes = scrapedCodes(sources);
   expect(codes.size).toBeGreaterThan(0);
