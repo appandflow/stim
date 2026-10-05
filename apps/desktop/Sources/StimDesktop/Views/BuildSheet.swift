@@ -56,24 +56,11 @@ struct BuildSheet: View {
             BuildRunDetail(cli: cli, env: env, run: run, dismiss: { dismiss() })
               .id(run.id)
               .padding(Space.xxl)
-            if run.running == nil, run.id == runs.first?.id {
-              VStack(alignment: .leading, spacing: Space.md) {
-                HStack {
-                  SectionLabel(title: "Next build")
-                  Spacer()
-                  checkButton
-                }
-                if running != nil {
-                  Text("Checked after the running build").foregroundStyle(Palette.tertiary)
-                } else {
-                  NextBuildView(entry: entry, inlineDetails: true)
-                }
-              }
-              .padding([.horizontal, .bottom], Space.xxl)
-            }
+            if run.running == nil, run.id == runs.first?.id { nextBuild }
           } else {
             EmptyState(title: "No \(platformName(platform)) build recorded", message: "Run the app to record a build.")
               .padding(Space.xxl)
+            nextBuild
           }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -94,6 +81,22 @@ struct BuildSheet: View {
     .onChange(of: runs.map(\.id)) {
       if !runs.contains(where: { $0.id == selectedRun }) { selectedRun = runs.first?.id }
     }
+  }
+
+  private var nextBuild: some View {
+    VStack(alignment: .leading, spacing: Space.md) {
+      HStack {
+        SectionLabel(title: "Next build")
+        Spacer()
+        checkButton
+      }
+      if running != nil {
+        Text("Checked after the running build").foregroundStyle(Palette.tertiary)
+      } else {
+        NextBuildView(entry: entry, inlineDetails: true)
+      }
+    }
+    .padding([.horizontal, .bottom], Space.xxl)
   }
 
   private var header: some View {

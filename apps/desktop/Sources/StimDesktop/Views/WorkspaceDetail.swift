@@ -80,7 +80,10 @@ struct WorkspaceDetail: View {
         .environmentObject(actions)
         .environmentObject(checks)
     }
-    .onQuitRequested { viewing = nil }
+    .onQuitRequested {
+      viewing = nil
+      buildSheet = nil
+    }
     .task(id: "\(env.path)|\(env.finishedRunsStamp)") {
       let path = env.path
       if stats?.path == path { try? await Task.sleep(for: .seconds(1)) }
