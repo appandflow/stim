@@ -57,6 +57,24 @@ public enum PhysicalScreen: Equatable, Sendable {
     }
   }
 
+  /// A macOS app that `stim macos --host` runs on another Mac, which this Mac's stim-server relays.
+  public init(hostedMacosOn link: ServerLink) {
+    switch link {
+    case .off:
+      self = .message("Turn on Serve to phones on the Phones page to see this app's window.")
+    case .connecting:
+      self = .message("Connecting to stim-server")
+    case .unavailable(let reason):
+      self = .message(reason)
+    case .open(let features, let capabilities):
+      guard features?.contains("macos-hosted") == true else {
+        self = .message("Update stim-server to see this app's window.", remedy: "npm install --global @stim-cli/server@latest")
+        return
+      }
+      self = .stream(control: capabilities.contains("control") ? nil : "Stim Desktop's stim-server pairing is read only.")
+    }
+  }
+
   public var canControl: Bool { self == .stream(control: nil) }
 }
 

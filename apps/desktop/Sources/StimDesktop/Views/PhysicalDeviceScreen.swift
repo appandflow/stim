@@ -114,7 +114,7 @@ struct PhysicalDeviceScreen: View {
   }
 }
 
-private struct PhysicalMessage: View {
+struct PhysicalMessage: View {
   var text: String
   var remedy: String? = nil
 
@@ -137,7 +137,7 @@ private struct PhysicalMessage: View {
   }
 }
 
-private struct PhysicalDisplay: NSViewRepresentable {
+struct PhysicalDisplay: NSViewRepresentable {
   @ObservedObject var stream: PhysicalStream
   var activityKey: String?
   var interactive: Bool
