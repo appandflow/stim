@@ -1,6 +1,7 @@
 import AppKit
 import CoreImage
 import IOSurface
+import SceneKit
 
 @MainActor
 final class DuoFrameRenderer {
@@ -57,6 +58,10 @@ final class DuoFrameRenderer {
     for surface in surfaces where surface.screenID == model.coverID || surface.screenID == model.innerID {
       model.updateSurface(surface.surface, screenID: surface.screenID)
     }
+    // A hidden SCNView can return the previous skinned frame after a pose change; flush and
+    // discard one snapshot first. https://github.com/kmagiera/Siniulator/pull/9
+    SCNTransaction.flush()
+    _ = model.snapshot()
     guard let image = model.snapshot().cgImage(forProposedRect: nil, context: nil, hints: nil),
       let (data, width, height) = jpeg(CIImage(cgImage: image), config: config)
     else { return nil }
