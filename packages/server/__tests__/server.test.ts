@@ -444,6 +444,66 @@ afterEach(async () => {
   rmSync(root, { recursive: true, force: true });
 });
 
+describe('recorder startup', () => {
+  test('serves health when recording claim directories do not exist yet', async () => {
+    const port = await start({ record: true, env: { FAKE_STIM_PAYLOADS: '[]' } });
+    const response = await fetch(`http://127.0.0.1:${port}/health`);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ server: 'stim-server' });
+  });
+
+  test.skipIf(process.platform === 'win32')(
+    'keeps serving after the recorder refuses an unreadable claim directory',
+    async () => {
+      const exclusive = join(process.env.STIM_HOME!, 'server', 'recorder', 'exclusive');
+      mkdirSync(exclusive, { recursive: true });
+      chmodSync(exclusive, 0o000);
+      const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+      try {
+        const port = await start({ record: true, env: { FAKE_STIM_PAYLOADS: '[]' } });
+        expect((await fetch(`http://127.0.0.1:${port}/health`)).status).toBe(200);
+        expect(error).toHaveBeenCalledWith(expect.stringContaining('its directory could not be read'));
+      } finally {
+        chmodSync(exclusive, 0o700);
+        error.mockRestore();
+      }
+    },
+  );
+
+  test('bounds a blocked directory read before spawning status followers', async () => {
+    const pidFile = join(root, 'probe.pid');
+    const preload = join(root, 'blocked-read.cjs');
+    writeFileSync(
+      preload,
+      `const fs = require('node:fs');
+const { syncBuiltinESMExports } = require('node:module');
+fs.readdirSync = () => {
+  fs.writeFileSync(process.env.PROBE_PID_FILE, String(process.pid));
+  process.on('SIGTERM', () => {});
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0);
+};
+syncBuiltinESMExports();
+`,
+    );
+    let responsive = false;
+    const timer = setTimeout(() => {
+      responsive = true;
+    }, 20);
+    try {
+      await expect(
+        start({ record: true, env: { NODE_OPTIONS: `--require ${JSON.stringify(preload)}`, PROBE_PID_FILE: pidFile } }),
+      ).rejects.toThrow('Reading recorder ownership directories did not finish within 10 s.');
+      expect(responsive).toBe(true);
+      expect(existsSync(calls)).toBe(false);
+      expect(existsSync(join(process.env.STIM_HOME!, 'server', 'recorder'))).toBe(false);
+      const pid = Number(readFileSync(pidFile, 'utf8'));
+      expect(() => process.kill(pid, 0)).toThrow('ESRCH');
+    } finally {
+      clearTimeout(timer);
+    }
+  }, 20_000);
+});
+
 describe.skipIf(!fakeTailscale)('Desktop route setup', () => {
   async function routeServer(config: unknown = {}, env: Record<string, string> = {}) {
     const status = join(root, 'serve.json');

@@ -528,9 +528,19 @@ the old plist and job back. `install` and `uninstall` act only on a plist
 that `install` wrote, and refuse a port that another stim-server (Stim
 Desktop's, for example) already answers on. Install from a permanent
 installation, not from an `npx` cache, because the plist stores its paths. It never touches pairings, anything
-under `$STIM_HOME/server` or settings. Start-up reads the login shell's
-environment, which can take a minute, so `install` waits up to 15 seconds for
-`/health` and otherwise tells you to run `status`.
+under `$STIM_HOME/server` or settings. `install` waits up to 15 seconds for
+`/health`; an installed LaunchAgent without a health response reports readiness
+as unavailable and points to `status` and its log. Installation success alone
+does not prove that the server is ready.
+
+Before starting status followers, native helpers or recording, the server checks
+the recording ownership directories in a read-only child process. A directory
+read that does not return fails startup after 10 seconds, plus up to one second
+to stop the child. Returned filesystem errors still go through the recorder's
+existing claim refusal; missing directories are created by that protocol.
+This diagnostic preserves claims and recordings. It does not restore an
+inaccessible volume or change the server's permissions. Loss of filesystem
+access after the check still needs an operating-system access remedy.
 
 The job runs in your GUI login session, so it starts when you log in and not at
 boot. On a Mac with no one at the screen, turn on automatic login. Moving the

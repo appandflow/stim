@@ -425,6 +425,14 @@ install, that stim-server's login-shell environment would otherwise replace.
 whether its Stim build matches the `stim` on PATH. Doctor points to this
 command when a named machine does not answer.
 
+An installed LaunchAgent does not prove server readiness: check its health in
+`stim-server service status` and the reported log when readiness is unavailable.
+Before creating status followers or native helpers, the server bounds a
+read-only recording-directory check to 10 seconds, plus up to one second to
+stop the check. A stalled read fails startup without changing ownership claims
+or recordings. It does not restore an inaccessible volume or grant filesystem
+access; the underlying access problem still needs to be resolved.
+
 `gc.worktreeGraceMinutes` is how long `stim gc --delete` waits before it
 removes a merged or idle linked worktree, counted from the worktree's latest
 git or Stim activity, the merge of its branch, or when its pull request was

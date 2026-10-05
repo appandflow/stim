@@ -642,6 +642,12 @@ worker root stops it too.
 running as a login LaunchAgent; \`--path-prepend <dir>\` and \`--env KEY=VALUE\`
 pin a PATH entry or variable such as a private CocoaPods that stim-server's
 login-shell environment would otherwise replace.
+Installation alone does not prove readiness; check \`stim-server service status\`
+and its reported log. A read-only recording-directory check refuses startup
+when a read does not return within 10 seconds, plus up to one second to stop
+the check, before status followers or native helpers start. It preserves
+claims and recordings; it does not restore an inaccessible volume or grant
+filesystem access.
 
 THE GC WORKTREE GRACE PERIOD IS MACHINE-LEVEL
 \`gc.worktreeGraceMinutes\` is how long \`gc --delete\` waits before it removes

@@ -21,6 +21,7 @@ import { HostedViews } from './hosted-view.ts';
 import { BuildHost, type BuildLimits, type BuildSession } from './build.ts';
 import { ControlHub, parseControlBegin, parseInput, SLOT_NAME, type Controller } from './control.ts';
 import { Recorder, type RecordLimits } from './recorder.ts';
+import { checkRecorderStartup } from './recorder-startup.ts';
 import { Player, recordedSpans, recordingDir, segmentKeyframe, timelineMarkers } from './replay.ts';
 import { FeedPool, type JsonObject } from './feed.ts';
 import { buildFoldHelper, buildFrameHelper, type FrameHint } from './frame-helper.ts';
@@ -415,6 +416,7 @@ const closeListener = ({ server, sockets }: { server: Server; sockets: Set<Socke
   });
 
 export async function startServer(options: ServerOptions): Promise<RunningServer> {
+  if (options.record !== false) await checkRecorderStartup(join(serverDir(), 'recorder'), options.env);
   const limiter = new FailureLimiter(options.maxAuthFailures ?? 5, options.failureWindowMs ?? 60_000);
   const authTimeoutMs = options.authTimeoutMs ?? 5000;
   const feeds = new FeedPool(options.stimCli, options.env);
