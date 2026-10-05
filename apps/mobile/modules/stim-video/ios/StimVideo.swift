@@ -9,8 +9,14 @@ class StimVideo: Module {
       view.push(Data(bytes: accessUnit.rawPointer, count: accessUnit.byteLength))
     }
 
+    Function("pushWithOrientation") {
+      (streamId: String, accessUnit: Uint8Array, _: Int, _: Int, generation: Int) in
+      guard let view = StimVideoRegistry.view(streamId) else { return }
+      view.push(Data(bytes: accessUnit.rawPointer, count: accessUnit.byteLength), generation: generation)
+    }
+
     View(StimVideoView.self) {
-      Events("onKeyframeNeeded")
+      Events("onKeyframeNeeded", "onOrientationCleared")
 
       Prop("streamId") { (view: StimVideoView, streamId: String?) in
         view.streamId = streamId

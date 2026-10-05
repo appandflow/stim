@@ -11,6 +11,7 @@ struct AccessUnit {
   var capturedAt: Double
   var width: Int
   var height: Int
+  var artworkTurns: Int?
 }
 
 /// A low-latency hardware H.264 encoder: real time, no frame reordering, a keyframe at least every 2 s.
@@ -74,13 +75,13 @@ final class VideoEncoder {
   }
 
   /// `quarterTurns` counter-clockwise quarter turns make the source upright.
-  func encode(_ source: CVPixelBuffer, quarterTurns: Int, capturedAt: Double) {
-    queue.sync { self.encodeOnQueue(source, quarterTurns: quarterTurns, capturedAt: capturedAt) }
+  func encode(_ source: CVPixelBuffer, quarterTurns: Int, capturedAt: Double, artworkTurns: Int? = nil) {
+    queue.sync { self.encodeOnQueue(source, quarterTurns: quarterTurns, capturedAt: capturedAt, artworkTurns: artworkTurns) }
   }
 
   /// Encodes an upright RGBA8888 image, as the emulator's `streamScreenshot` sends it. CoreVideo has no
   /// RGBA pixel format, so the bytes are swizzled into a BGRA buffer.
-  func encode(rgba: Data, width: Int, height: Int, capturedAt: Double) {
+  func encode(rgba: Data, width: Int, height: Int, capturedAt: Double, artworkTurns: Int? = nil) {
     queue.sync {
       if bgra == nil || bgraSize != (width, height) {
         let attributes: [CFString: Any] = [
@@ -109,11 +110,11 @@ final class VideoEncoder {
           == kvImageNoError
       }
       CVPixelBufferUnlockBaseAddress(buffer, [])
-      if swizzled { encodeOnQueue(buffer, quarterTurns: 0, capturedAt: capturedAt) }
+      if swizzled { encodeOnQueue(buffer, quarterTurns: 0, capturedAt: capturedAt, artworkTurns: artworkTurns) }
     }
   }
 
-  private func encodeOnQueue(_ source: CVPixelBuffer, quarterTurns: Int, capturedAt: Double) {
+  private func encodeOnQueue(_ source: CVPixelBuffer, quarterTurns: Int, capturedAt: Double, artworkTurns: Int?) {
     let sideways = quarterTurns % 2 != 0
     let width = sideways ? CVPixelBufferGetHeight(source) : CVPixelBufferGetWidth(source)
     let height = sideways ? CVPixelBufferGetWidth(source) : CVPixelBufferGetHeight(source)
@@ -143,7 +144,8 @@ final class VideoEncoder {
       }
       output(
         AccessUnit(
-          data: unit.data, keyframe: unit.keyframe, capturedAt: capturedAt, width: target.width, height: target.height))
+          data: unit.data, keyframe: unit.keyframe, capturedAt: capturedAt, width: target.width, height: target.height,
+          artworkTurns: artworkTurns))
     }
   }
 

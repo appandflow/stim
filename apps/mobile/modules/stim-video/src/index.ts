@@ -8,11 +8,22 @@ export interface StimVideoViewProps {
   style?: StyleProp<ViewStyle>;
   /** The decoder lost its state, as after the app was in the background, and waits for a keyframe. */
   onKeyframeNeeded?: (event: NativeSyntheticEvent<Record<string, never>>) => void;
+  /** Old pixels have been cleared for this orientation generation; newly decoded pixels belong to it. */
+  onOrientationCleared?: (event: NativeSyntheticEvent<{ generation: number }>) => void;
 }
 
 const StimVideo = requireNativeModule<{
   push: (streamId: string, accessUnit: Uint8Array, width: number, height: number) => void;
+  pushWithOrientation?: (
+    streamId: string,
+    accessUnit: Uint8Array,
+    width: number,
+    height: number,
+    generation: number,
+  ) => void;
 }>('StimVideo');
+
+export const supportsFrameOrientation = typeof StimVideo.pushWithOrientation === 'function';
 
 export const StimVideoView: ComponentType<StimVideoViewProps> = requireNativeView('StimVideo');
 
@@ -22,6 +33,16 @@ export const StimVideoView: ComponentType<StimVideoViewProps> = requireNativeVie
  * and fills its bounds, so the caller sizes it to the video's aspect ratio. The bytes are copied before this
  * returns.
  */
-export function pushAccessUnit(streamId: string, accessUnit: Uint8Array, width: number, height: number): void {
-  StimVideo.push(streamId, accessUnit, width, height);
+export function pushAccessUnit(
+  streamId: string,
+  accessUnit: Uint8Array,
+  width: number,
+  height: number,
+  generation?: number,
+): void {
+  if (generation !== undefined && StimVideo.pushWithOrientation) {
+    StimVideo.pushWithOrientation(streamId, accessUnit, width, height, generation);
+  } else {
+    StimVideo.push(streamId, accessUnit, width, height);
+  }
 }

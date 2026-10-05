@@ -13,7 +13,13 @@ import {
 import { captureProcessIdentity } from '@stim-cli/core/process-identity';
 import { isJsonObject } from '@stim-cli/core/state';
 import type { Device, Frame, FrameListener, Posture } from './frames.ts';
-import { FRAME_EDGE, FRAME_FPS, type SimulatorCommand, type SimulatorOptions } from './protocol.ts';
+import {
+  FRAME_EDGE,
+  FRAME_FPS,
+  type DeviceFrameArtwork,
+  type SimulatorCommand,
+  type SimulatorOptions,
+} from './protocol.ts';
 import { serverDir } from './registry.ts';
 import { terminate } from './stim-command.ts';
 import { Bitrate, DEFAULT_VIDEO_LIMITS, type AccessUnit } from './video.ts';
@@ -37,6 +43,7 @@ const BUILD_TIMEOUT_MS = 180_000;
 const VERSION_TIMEOUT_MS = 30_000;
 const MAX_MESSAGE_BYTES = 16 * 1024 * 1024;
 const FRAME_MESSAGE = 1;
+const ARTWORK_FRAME_MESSAGE = 5;
 const NOTICE_MESSAGE = 2;
 const VIDEO_MESSAGE = 3;
 const RECORD_MESSAGE = 4;
@@ -56,7 +63,9 @@ function helperArgs(device: Device, env: NodeJS.ProcessEnv): string[] {
   if (device.platform === 'ios' && device.physical)
     return ['iphone', device.udid, ...(device.name ? [device.name] : [])];
   if (device.platform === 'ios') return ['ios', device.udid];
-  return device.physical ? ['android-device', device.serial, adbPath(env), SCRCPY_SERVER] : ['android', device.serial];
+  return device.physical
+    ? ['android-device', device.serial, adbPath(env), SCRCPY_SERVER]
+    : ['android', device.serial, ...(device.avdName ? [device.avdName] : [])];
 }
 
 /** Runs the compiler in its own process group, so a timeout or `signal` also stops `swift-frontend` and `ld`. */
@@ -212,6 +221,7 @@ export class HelperSource {
   private readonly listeners = new Map<FrameListener, FrameHint | null>();
   private readonly child: ChildProcess;
   private last: Frame | null = null;
+  private artwork: DeviceFrameArtwork | null | undefined;
   private config = '';
   private stopped = false;
   private notice: string | null = null;
@@ -275,6 +285,7 @@ export class HelperSource {
     this.lingerTimer = null;
     this.listeners.set(listener, hint);
     this.configure();
+    if (this.artwork !== undefined) listener.artwork?.(this.artwork);
     if (listener.video) this.keyframe();
     else if (this.last && !listener.record) listener.frame(this.last);
     if (this.stalled) listener.delayed(true, this.stalled);
@@ -342,6 +353,7 @@ export class HelperSource {
       fps: Math.max(0, ...hints.map((hint) => hint.fps)),
       maxEdge: Math.max(FRAME_EDGE.min, ...hints.map((hint) => hint.maxEdge)),
       jpeg: jpegFps.length > 0,
+      ...(viewers.some(({ listener }) => listener.artwork !== undefined) ? { deviceFrame: true } : {}),
       ...(jpegFps.length ? { jpegFps: Math.max(...jpegFps) } : {}),
       video: jpegFps.length < viewers.length,
       bitrate: this.bitrate.current,
@@ -373,7 +385,8 @@ export class HelperSource {
         if (buffer.length < 4 + length) break;
         const body = buffer.subarray(4, 4 + length);
         buffer = buffer.subarray(4 + length);
-        if (body[0] === FRAME_MESSAGE && body.length > 5) this.frame(body);
+        if ((body[0] === FRAME_MESSAGE && body.length > 5) || (body[0] === ARTWORK_FRAME_MESSAGE && body.length > 6))
+          this.frame(body);
         else if (body[0] === VIDEO_MESSAGE && body.length > VIDEO_HEADER_BYTES) this.video(body);
         else if (body[0] === RECORD_MESSAGE && body.length > VIDEO_HEADER_BYTES) this.record(body);
         else if (body[0] === NOTICE_MESSAGE) this.readNotice(body.subarray(1).toString('utf8'));
@@ -387,7 +400,8 @@ export class HelperSource {
       width: body.readUInt16BE(1),
       height: body.readUInt16BE(3),
       capturedAt: new Date().toISOString(),
-      data: body.subarray(5).toString('base64'),
+      data: body.subarray(body[0] === ARTWORK_FRAME_MESSAGE ? 6 : 5).toString('base64'),
+      ...(body[0] === ARTWORK_FRAME_MESSAGE ? { artworkTurns: body[5]! } : {}),
       ...(this.posture ? { posture: this.posture } : {}),
     };
     for (const listener of this.listeners.keys()) if (!listener.video) listener.frame(this.last);
@@ -396,6 +410,7 @@ export class HelperSource {
   private unit(body: Buffer): AccessUnit {
     return {
       keyframe: (body[1]! & 1) !== 0,
+      ...(body[1]! & 32 ? { artworkTurns: (body[1]! >> 3) & 3 } : {}),
       capturedAt: body.readDoubleBE(2),
       width: body.readUInt16BE(10),
       height: body.readUInt16BE(12),
@@ -429,6 +444,10 @@ export class HelperSource {
   private readNotice(text: string): void {
     try {
       const notice: unknown = JSON.parse(text);
+      if (notice && typeof notice === 'object' && 'deviceFrame' in notice) {
+        this.artwork = (notice as { deviceFrame: DeviceFrameArtwork | null }).deviceFrame;
+        for (const listener of this.listeners.keys()) listener.artwork?.(this.artwork);
+      }
       const error = (notice as { error?: unknown } | null)?.error;
       if (typeof error === 'string') this.notice = error;
       const keyboard = (notice as { keyboard?: unknown } | null)?.keyboard;

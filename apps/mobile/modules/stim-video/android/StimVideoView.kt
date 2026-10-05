@@ -8,6 +8,7 @@ import android.os.Handler
 import android.os.HandlerThread
 import android.view.SurfaceHolder
 import android.view.SurfaceView
+import android.view.View
 import expo.modules.kotlin.AppContext
 import expo.modules.kotlin.viewevent.EventDispatcher
 import expo.modules.kotlin.views.ExpoView
@@ -19,7 +20,10 @@ class StimVideoView(context: Context, appContext: AppContext) : ExpoView(context
   override val shouldUseAndroidLayout = true
 
   private val onKeyframeNeeded by EventDispatcher()
+  private val onOrientationCleared by EventDispatcher()
   private val surfaceView = SurfaceView(context)
+  private val cover = View(context).apply { setBackgroundColor(android.graphics.Color.BLACK); visibility = View.GONE }
+  @Volatile private var generation: Int? = null
   private val thread = HandlerThread("stim.video.decode").apply { start() }
   private val handler = Handler(thread.looper)
 
@@ -43,6 +47,7 @@ class StimVideoView(context: Context, appContext: AppContext) : ExpoView(context
     setBackgroundColor(android.graphics.Color.BLACK)
     surfaceView.holder.addCallback(this)
     addView(surfaceView, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
+    addView(cover, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
   }
 
   fun destroy() {
@@ -73,11 +78,19 @@ class StimVideoView(context: Context, appContext: AppContext) : ExpoView(context
     if (posted) done.await(1, java.util.concurrent.TimeUnit.SECONDS)
   }
 
-  fun push(accessUnit: ByteArray, width: Int, height: Int) {
-    handler.post { decode(accessUnit, width, height) }
+  fun push(accessUnit: ByteArray, width: Int, height: Int, generation: Int? = null) {
+    handler.post { decode(accessUnit, width, height, generation) }
   }
 
-  private fun decode(accessUnit: ByteArray, width: Int, height: Int) {
+  private fun decode(accessUnit: ByteArray, width: Int, height: Int, generation: Int?) {
+    if (this.generation != generation) {
+      this.generation = generation
+      release()
+      post {
+        cover.visibility = View.VISIBLE
+        if (generation != null) onOrientationCleared(mapOf("generation" to generation))
+      }
+    }
     var keyframe = false
     var parametersChanged = false
     for (unit in AnnexB.units(accessUnit)) {
@@ -128,6 +141,13 @@ class StimVideoView(context: Context, appContext: AppContext) : ExpoView(context
     return try {
       created = MediaCodec.createDecoderByType(MediaFormat.MIMETYPE_VIDEO_AVC)
       created.setCallback(Callbacks(), handler)
+      val configuredGeneration = generation
+      created.setOnFrameRenderedListener({ rendered, _, _ ->
+        if (rendered === codec && configuredGeneration == generation) {
+          rendered.setOnFrameRenderedListener(null, handler)
+          post { if (configuredGeneration == generation) cover.visibility = View.GONE }
+        }
+      }, handler)
       created.configure(format, surfaceView.holder.surface, null, 0)
       created.start()
       codec = created
