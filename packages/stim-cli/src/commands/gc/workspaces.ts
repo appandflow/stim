@@ -152,7 +152,7 @@ export function collectOrphanedWorkspaces(
 export const REBUILD_COST: string =
   'The next build of an unchanged app installs from the shared build cache; after a native change the ' +
   'compilation cache speeds the rebuild, but on React Native 0.86 Swift does not use it (explicit modules ' +
-  'are off), so that build recompiles Swift.';
+  'are off), so that build recompiles Swift. The next stim macos in a cleared workspace is a full Swift build.';
 
 export const WORKSPACE_OUTPUT_DIRS: readonly string[] = [
   'derived-data',
@@ -209,7 +209,21 @@ function sizeOf(dir: string): number | null {
 }
 
 function outputPaths(dir: string): string[] {
-  return WORKSPACE_OUTPUT_DIRS.map((name) => join(dir, name)).filter((path) => existsSync(path));
+  const paths = WORKSPACE_OUTPUT_DIRS.map((name) => join(dir, name)).filter((path) => existsSync(path));
+  const macos = join(dir, 'macos');
+  try {
+    if (!lstatSync(macos).isDirectory()) return paths;
+    for (const entry of readdirSync(macos, { withFileTypes: true })) {
+      if (
+        entry.name === 'build' ||
+        entry.name.endsWith('.app') ||
+        (entry.name.startsWith('staging-') && entry.isDirectory())
+      ) {
+        paths.push(join(macos, entry.name));
+      }
+    }
+  } catch {}
+  return paths;
 }
 
 function outputBytes(paths: readonly string[]): number | null {
@@ -275,7 +289,7 @@ export async function clearWorkspaceOutputs(
             { olderThan, now },
           );
           if (again?.keptReason) return again.keptReason;
-          for (const name of WORKSPACE_OUTPUT_DIRS) rmSync(join(entry.dir, name), { recursive: true, force: true });
+          for (const path of outputPaths(entry.dir)) rmSync(path, { recursive: true, force: true });
           return null;
         },
         { purpose: 'gc' },

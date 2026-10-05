@@ -844,7 +844,8 @@ RULES
                               its workspace directory
     workspaceBuildOutputs   { dir, projectRoot, bytes, idleDays, willClear,
                               reason, detail }  derived-data, gradle-build,
-                              android-cas and cache-provider of each
+                              android-cas, cache-provider, macos/build,
+                              macos/<Product>.app and macos/staging-* of each
                               workspace; willClear marks the ones --delete
                               would clear; --cache workspaces omits the
                               directories that --delete removes whole (dead

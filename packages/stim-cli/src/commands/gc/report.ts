@@ -410,7 +410,7 @@ function workspaceOutputLines(outputs: WorkspaceOutputsReport, bytes: number): s
   const lines = [
     `  ${formatBytes(bytes).padStart(10)}  Workspace build outputs (detected)`,
     `              ${outputs.root}`,
-    `              ${WORKSPACE_OUTPUT_DIRS.join(', ')} of each workspace; workspace.json, state.json, logs and device records stay`,
+    `              ${WORKSPACE_OUTPUT_DIRS.join(', ')}, macOS Swift scratch and staged app bundles of each workspace; workspace.json, state.json, logs and device records stay`,
     `              ${REBUILD_COST}`,
   ];
   for (const w of outputs.workspaces) {
