@@ -477,6 +477,14 @@ leased until <time>" for each one.`,
                   null when off; plan lists what the next start, ios or
                   android would reclaim, in the \`reclaimed\` shape without
                   freedMb, and is empty while under budget
+  deviceHosts     one { machine, state, dnsName?, deviceId?, requestedAt? }
+                  per hosting.machines entry. state is "approved", "pending",
+                  "not-asked", "revoked", "node-changed", "not-on-tailnet",
+                  "tailscale-off", "unreachable", "invalid",
+                  "credentials-unavailable" or "busy". Tokens stay private.
+                  Only --fix asks for access or forgets removed names.
+                  An approved hosting machine does not imply build approval
+                  or change ios/android placement; see \`guide settings\`.
   buildMachines   one { machine, state, dnsName?, deviceId?, requestedAt?,
                   offloadable?, reasons?, problems?, capacity? } per
                   offload.machines entry; state is "approved", "pending", "not-asked",

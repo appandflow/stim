@@ -1,12 +1,15 @@
 import type {
   BuildPlanPayload,
   HostedDeviceRequest,
+  HostedDeviceOfferRequest,
+  HostedDeviceOffer,
   HostedDeviceSession,
   HostedAppOffer,
   HostedAppDelivery,
   NdjsonRecord,
   StatusPayload,
 } from '@stim-cli/core/state';
+import type { ServeRoute } from './tailscale.ts';
 
 export const PROTOCOL_VERSION = 1;
 
@@ -40,6 +43,7 @@ export type Feature = (typeof FEATURES)[number];
 
 export const METHODS = [
   'hello',
+  'route.setup',
   'status.subscribe',
   'logs.query',
   'logs.subscribe',
@@ -77,6 +81,7 @@ export const METHODS = [
   'build.cancel',
   'build.artifact',
   'build.attach',
+  'device-host.offer',
   'device-host.reserve',
   'device-host.attach',
   'device-host.stop',
@@ -108,8 +113,9 @@ export const BUILD_METHODS = [
   'build.attach',
 ] as const;
 
-/** Methods restricted to explicitly approved device-host clients and their own sessions. */
+/** Methods restricted to explicitly approved device-host clients. */
 export const DEVICE_HOST_METHODS = [
+  'device-host.offer',
   'device-host.reserve',
   'device-host.attach',
   'device-host.stop',
@@ -979,6 +985,8 @@ export interface NotificationsListResult {
 }
 
 export interface Methods {
+  'device-host.offer': { params: HostedDeviceOfferRequest; result: HostedDeviceOffer };
+  'route.setup': { params?: Record<string, never>; result: ServeRoute };
   'device-host.reserve': { params: HostedDeviceRequest; result: HostedDeviceSession };
   'device-host.attach': { params: { session: string } | { attempt: string }; result: HostedDeviceSession };
   'device-host.stop': { params: { session: string }; result: HostedDeviceSession };
@@ -1310,6 +1318,83 @@ export function protocolJsonSchema(): JsonSchema {
         additionalProperties: false,
         properties: { offset: { type: 'integer', minimum: 0 } },
       },
+      HostedDeviceOffer: {
+        type: 'object',
+        required: ['platform', 'choice', 'resources', 'declined', 'capacity'],
+        additionalProperties: false,
+        properties: {
+          platform: { enum: ['ios', 'android'] },
+          choice: {},
+          declined: { type: ['string', 'null'], minLength: 1 },
+          resources: {
+            type: 'object',
+            required: ['cpus', 'loadPerCore', 'memoryFreeBytes', 'memoryPressure', 'workerDiskFreeBytes'],
+            additionalProperties: false,
+            properties: {
+              cpus: { type: 'integer', minimum: 1 },
+              loadPerCore: { type: 'number', minimum: 0 },
+              memoryFreeBytes: { type: 'number', minimum: 0 },
+              memoryPressure: { enum: ['normal', 'warning', 'critical', null] },
+              workerDiskFreeBytes: { type: ['number', 'null'], minimum: 0 },
+            },
+          },
+          capacity: {
+            type: 'object',
+            required: ['running', 'max', 'available'],
+            additionalProperties: false,
+            properties: {
+              running: { type: 'integer', minimum: 0 },
+              max: { type: 'integer', minimum: 0 },
+              available: { type: ['integer', 'null'], minimum: 0 },
+            },
+          },
+        },
+        not: { properties: { choice: { type: 'null' }, declined: { type: 'null' } } },
+        oneOf: [
+          {
+            properties: {
+              platform: { const: 'ios' },
+              choice: {
+                anyOf: [
+                  { type: 'null' },
+                  {
+                    type: 'object',
+                    required: ['deviceTypeId', 'runtimeId', 'deviceType', 'runtime', 'architecture'],
+                    additionalProperties: false,
+                    properties: {
+                      deviceTypeId: { type: 'string' },
+                      runtimeId: { type: 'string' },
+                      deviceType: { type: 'string' },
+                      runtime: { type: 'string' },
+                      architecture: { enum: ['arm64', 'x86_64'] },
+                    },
+                  },
+                ],
+              },
+            },
+          },
+          {
+            properties: {
+              platform: { const: 'android' },
+              choice: {
+                anyOf: [
+                  { type: 'null' },
+                  {
+                    type: 'object',
+                    required: ['systemImage', 'deviceProfile', 'architecture'],
+                    additionalProperties: false,
+                    properties: {
+                      systemImage: { type: 'string' },
+                      deviceProfile: { type: 'string' },
+                      architecture: { enum: ['arm64-v8a', 'x86_64'] },
+                    },
+                  },
+                ],
+              },
+            },
+          },
+        ],
+      },
       HostedMetroResult: {
         type: 'object',
         required: ['port'],
@@ -1325,10 +1410,13 @@ export function protocolJsonSchema(): JsonSchema {
           client: { type: 'string' },
           workspace: { type: 'string' },
           slot: { type: 'string' },
-          platform: { const: 'ios' },
+          platform: { enum: ['ios', 'android'] },
           attempt: { type: 'string' },
           deviceType: { type: 'string' },
           runtime: { type: 'string' },
+          systemImage: { type: 'string' },
+          deviceProfile: { type: 'string' },
+          consolePort: { type: 'integer', minimum: 5554, maximum: 5584, multipleOf: 2 },
           state: { enum: ['preparing', 'ready', 'stopping', 'stopped', 'unknown'] },
           device: {
             anyOf: [
@@ -1345,6 +1433,19 @@ export function protocolJsonSchema(): JsonSchema {
                   deviceType: { type: 'string' },
                   runtime: { type: 'string' },
                   architecture: { enum: ['arm64', 'x86_64'] },
+                },
+              },
+              {
+                type: 'object',
+                required: ['avdName', 'serial', 'consolePort', 'systemImage', 'deviceProfile', 'architecture'],
+                additionalProperties: false,
+                properties: {
+                  avdName: { type: 'string' },
+                  serial: { type: 'string' },
+                  consolePort: { type: 'integer', minimum: 5554, maximum: 5584, multipleOf: 2 },
+                  systemImage: { type: 'string' },
+                  deviceProfile: { type: 'string' },
+                  architecture: { enum: ['arm64-v8a', 'x86_64'] },
                 },
               },
             ],
@@ -1792,6 +1893,28 @@ export function protocolJsonSchema(): JsonSchema {
       },
       ClientRequest: {
         oneOf: [
+          request('device-host.offer', {
+            type: 'object',
+            required: ['platform'],
+            additionalProperties: false,
+            properties: {
+              platform: { enum: ['ios', 'android'] },
+              deviceType: { type: 'string', minLength: 1, maxLength: 256 },
+              runtime: { type: 'string', minLength: 1, maxLength: 256 },
+              systemImage: { type: 'string', minLength: 1, maxLength: 256 },
+              deviceProfile: { type: 'string', minLength: 1, maxLength: 256 },
+            },
+            oneOf: [
+              {
+                properties: { platform: { const: 'ios' } },
+                not: { anyOf: [{ required: ['systemImage'] }, { required: ['deviceProfile'] }] },
+              },
+              {
+                properties: { platform: { const: 'android' } },
+                not: { anyOf: [{ required: ['deviceType'] }, { required: ['runtime'] }] },
+              },
+            ],
+          }),
           request('device-host.reserve', {
             type: 'object',
             required: ['workspace', 'slot', 'platform', 'attempt'],
@@ -1799,11 +1922,23 @@ export function protocolJsonSchema(): JsonSchema {
             properties: {
               workspace: { type: 'string', minLength: 1, maxLength: 4096 },
               slot: { type: 'string', pattern: '^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$' },
-              platform: { const: 'ios' },
+              platform: { enum: ['ios', 'android'] },
               attempt: { type: 'string', pattern: '^[a-zA-Z0-9_-]{1,128}$' },
               deviceType: { type: 'string', minLength: 1, maxLength: 256 },
               runtime: { type: 'string', minLength: 1, maxLength: 256 },
+              systemImage: { type: 'string', minLength: 1, maxLength: 256 },
+              deviceProfile: { type: 'string', minLength: 1, maxLength: 256 },
             },
+            oneOf: [
+              {
+                properties: { platform: { const: 'ios' } },
+                not: { anyOf: [{ required: ['systemImage'] }, { required: ['deviceProfile'] }] },
+              },
+              {
+                properties: { platform: { const: 'android' } },
+                not: { anyOf: [{ required: ['deviceType'] }, { required: ['runtime'] }] },
+              },
+            ],
           }),
           request('device-host.attach', {
             oneOf: [
@@ -1912,6 +2047,7 @@ export function protocolJsonSchema(): JsonSchema {
           request('device-host.input.rotate', session({ direction: { enum: [...ROTATE_DIRECTIONS] } }, ['direction'])),
           request('device-host.input.posture', session({ posture: { enum: [...DEVICE_POSTURES] } }, ['posture'])),
           request('hello', { $ref: '#/$defs/HelloParams' }),
+          optionalParams('route.setup', { type: 'object', maxProperties: 0 }),
           request('status.subscribe'),
           request('logs.query', { $ref: '#/$defs/LogFilter' }),
           request('logs.subscribe', { $ref: '#/$defs/LogFilter' }),
@@ -2160,6 +2296,7 @@ export function protocolJsonSchema(): JsonSchema {
               id: requestId,
               result: {
                 anyOf: [
+                  { $ref: '#/$defs/HostedDeviceOffer' },
                   { $ref: '#/$defs/HostedDeviceSession' },
                   { $ref: '#/$defs/HostedAppDelivery' },
                   { $ref: '#/$defs/HostedMetroResult' },

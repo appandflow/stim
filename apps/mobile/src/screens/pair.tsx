@@ -35,7 +35,7 @@ const tokenTransformer = new Transformer(({ value, selection }) => {
 });
 
 type Step =
-  | { kind: 'scan' }
+  | { kind: 'scan'; paused?: boolean }
   | { kind: 'manual' }
   | { kind: 'connecting'; endpoint: string }
   | { kind: 'name'; id: string; name: string };
@@ -75,11 +75,12 @@ export function Pair() {
       reload();
       setName(saved.name);
       setStep({ kind: 'name', ...saved });
+      busy.current = false;
     } catch (e) {
       setError((e as Error).message);
-      setStep({ kind: from });
+      setStep(from === 'scan' ? { kind: 'scan', paused: true } : { kind: 'manual' });
+      busy.current = from === 'scan';
     }
-    busy.current = false;
   };
 
   const onScanned = (result: BarcodeScanningResult) => {
@@ -116,7 +117,7 @@ export function Pair() {
         }}
       />
       <ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
-        {step.kind === 'scan' ? <Scanner onScanned={onScanned} /> : null}
+        {step.kind === 'scan' ? <Scanner onScanned={step.paused ? undefined : onScanned} /> : null}
         {step.kind === 'manual' ? (
           <View style={styles.form}>
             <Field
@@ -166,9 +167,20 @@ export function Pair() {
             {error}
           </Text>
         ) : null}
+        {step.kind === 'scan' && step.paused ? (
+          <Button
+            title={t`Retry`}
+            onPress={() => {
+              busy.current = false;
+              setError(null);
+              setStep({ kind: 'scan' });
+            }}
+          />
+        ) : null}
         {step.kind === 'scan' || step.kind === 'manual' ? (
           <Touch
             onPress={() => {
+              busy.current = false;
               setError(null);
               setStep(step.kind === 'scan' ? { kind: 'manual' } : { kind: 'scan' });
             }}
@@ -190,7 +202,7 @@ export function Pair() {
   );
 }
 
-function Scanner({ onScanned }: { onScanned: (result: BarcodeScanningResult) => void }) {
+function Scanner({ onScanned }: { onScanned?: (result: BarcodeScanningResult) => void }) {
   const [permission, requestPermission] = useCameraPermissions();
   if (!permission) return <View style={[styles.camera, styles.cameraPending]} />;
   if (!permission.granted) {

@@ -202,7 +202,7 @@ test('the index lists every topic and the running version', () => {
   for (const name of topicNames()) expect(idx).toMatch(new RegExp(name));
 });
 
-test('the errors topic documents every code the build commands and the iOS signing gate can emit', () => {
+test('the errors topic documents every code the build commands, the Node check and the iOS signing gate can emit', () => {
   const body = renderTopic('errors');
   assert(body);
   const commandFiles = [
@@ -223,6 +223,8 @@ test('the errors topic documents every code the build commands and the iOS signi
     ...['engine/ios-profile.ts', 'engine/ios-signing.ts', 'engine/eas-build.ts', 'engine/ios-device.ts'].map((f) =>
       readFileSync(new URL(`../${f}`, import.meta.url), 'utf-8'),
     ),
+    readFileSync(new URL('../../bin/node-check.ts', import.meta.url), 'utf-8'),
+    readFileSync(new URL('../../../server/bin/node-check.ts', import.meta.url), 'utf-8'),
   ].join('\n');
   const codes = scrapedCodes(sources);
   expect(codes.size).toBeGreaterThan(0);
@@ -759,6 +761,15 @@ test('the web topic names every web setting and every stim web flag, and the age
   const keys = SETTINGS.filter((setting) => setting.key.startsWith('web.')).map((setting) => setting.key);
   expect([...keys, ...flags].filter((name) => !body.includes(name!))).toEqual([]);
   expect(renderTopic('agent')).toContain('stim guide web');
+});
+
+test('hosting setup routes approval through doctor and a separate person-granted capability', () => {
+  const settings = renderTopic('settings');
+  expect(settings).toContain('hosting.machines');
+  expect(settings).toContain('doctor --fix');
+  expect(settings).toContain('stim-server devices grant <id> --device-host');
+  expect(settings).toContain('$STIM_HOME/device-host-machines.json');
+  expect(renderSection('facts', 'payloads')).toContain('deviceHosts');
 });
 
 test('the macos guide covers the declared command flags and project settings', () => {

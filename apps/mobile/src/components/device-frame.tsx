@@ -40,14 +40,16 @@ export function DeviceFrame({ artwork, children }: { artwork: DeviceFrameArtwork
         {children}
       </View>
       {artwork ? (
-        <Image
-          pointerEvents="none"
-          recyclingKey={`${artwork.quarterTurns}/${artwork.width}x${artwork.height}`}
-          source={{ uri: `data:image/png;base64,${artwork.foreground}` }}
-          style={StyleSheet.absoluteFill}
-          contentFit="fill"
-          transition={0}
-        />
+        <View pointerEvents="none" style={StyleSheet.absoluteFill}>
+          <Image
+            pointerEvents="none"
+            recyclingKey={`${artwork.quarterTurns}/${artwork.width}x${artwork.height}`}
+            source={{ uri: `data:image/png;base64,${artwork.foreground}` }}
+            style={StyleSheet.absoluteFill}
+            contentFit="fill"
+            transition={0}
+          />
+        </View>
       ) : null}
     </View>
   );

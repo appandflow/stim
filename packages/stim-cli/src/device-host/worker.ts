@@ -5,6 +5,7 @@ import {
   assertHostedDeviceLedger,
   readHostedDevice,
   type HostedDeviceSelectors,
+  type HostedDevice,
   type HostedIosChoice,
   type HostedIosDevice,
 } from '@stim-cli/core/state';
@@ -16,7 +17,7 @@ import { installHostedApp } from './app.ts';
 
 export type HostedWorkerResult = {
   state: 'ready' | 'stopped' | 'installed' | 'unknown';
-  device: HostedIosDevice | null;
+  device: HostedDevice | null;
   notice?: string;
   launched?: true | 'unverified';
 };
@@ -25,7 +26,7 @@ function inventory(): ReturnType<typeof listAllIosSims> {
   return listAllIosSims({ includeUnavailable: true });
 }
 
-function choice(selectors: HostedDeviceSelectors): HostedIosChoice {
+export function selectHostedIosDevice(selectors: HostedDeviceSelectors): HostedIosChoice {
   inventory();
   if (readHostMemoryPressure(getExecutor()) !== 'normal')
     throw new Error('Host memory pressure is unknown or elevated.');
@@ -56,7 +57,7 @@ export async function runHostedDevice(
       creationStarted = existsSync(join(home, 'hosted-device.json')) || existsSync(join(home, 'created-devices.json'));
       if (creationStarted)
         throw new Error('This hosted worker home already has a device record. Attach or stop its existing session.');
-      const selected = choice(selectors);
+      const selected = selectHostedIosDevice(selectors);
       creationStarted = true;
       const created = createOwnedIosSim('hosted', {}, selected);
       device = { ...selected, udid: created.udid, name: created.name };

@@ -205,6 +205,18 @@ valid observed hinge angle enable genuine posed hardware around its live panels.
 Missing model data retains the frameless view. Stim ships no Apple or Android
 artwork; mobile asset delivery is not included.
 
+While **Control** is active for an owned local Android emulator,
+**Paste into device** copies the Mac's text clipboard and pastes it into the
+focused guest field. Owned local iOS simulators and Android emulators offer
+**Copy device clipboard**, which replaces the Mac's text clipboard
+with the guest's current text, including an empty clipboard. iOS Paste remains
+unavailable while [#2331](https://github.com/appandflow/stim/issues/2331) tracks
+the simulator pasteboard provider's failed insertion. Transfers preserve
+Unicode and line breaks and happen only when pressed; there is no background
+clipboard synchronization. Empty or non-text Mac clipboards are reported without
+changing the guest. Disconnects and unavailable native clipboard APIs report a
+failure. Physical devices, remote sessions and replay do not offer these actions.
+
 On the right, 360 points wide, the **agent actions** list what agents did on
 the device (`stim logs --source agent`), oldest first, with filter chips (All,
 Failed and the two most used commands) and a divider for a pause of more than
@@ -840,21 +852,19 @@ host simulator or emulator sessions here. **Review...** opens the request;
 **Revoke** removes it. It grants no read, control or build access. Hosted
 sessions are not available yet; an approval does not start a device.
 
-When the server reports that Tailscale is not running, the tab shows the
-steps: `tailscale up`, restart the server (a button when the app started it),
-then run the `tailscale serve` command the tab shows next. The server reports the
-Tailscale state it started with, so the steps stay until it restarts. Until then, the pairing
-endpoint is `ws://127.0.0.1:7787` and works only on this Mac, for example from
-an iOS Simulator.
+When Tailscale is not running, start it on this Mac. Pairing then works only on
+this Mac, such as in an iOS Simulator, until the private connection is ready.
 
-While Tailscale runs, the tab shows the route the server's health reports from
-`tailscale serve status`, re-read every 5 seconds. A tailnet-only route shows the
-endpoint phones connect to, such as `wss://<mac>.<tailnet>.ts.net:7443`.
-Without a route, the tab shows the command that serves the server on a
-dedicated tailnet-only port, `tailscale serve --bg --https=7443
-http://127.0.0.1:7787`, or the next free port when 7443 is taken. When a route
-to the server is on a port with Funnel on, the tab says the server is public
-and pairing fails with the same explanation; it never suggests a Funnel port.
+While Tailscale runs, **Set up connection** in the Phones tab configures and
+verifies a dedicated tailnet-only HTTPS proxy to the server's loopback port.
+It uses port 7443 or the next free port, keeps an existing route unchanged and
+never enables Funnel. This action uses Desktop's authenticated local control
+connection; a phone or forwarded connection cannot configure the Mac.
+Tailscale may ask you to enable HTTPS in your browser. Setup errors remain
+visible with **Try Again**. An unreadable or timed-out route probe changes
+nothing. A route exposing this server through Funnel refuses setup and pairing.
+**Pair a Phone** verifies the connection before showing its QR code; it no longer
+shows an assumed endpoint when the route is missing or unknown.
 
 ## Build machines
 
@@ -1038,6 +1048,31 @@ replaces its card. With the main window closed, the link reopens it.
   commands see the same `PATH` and variables such as `ANDROID_HOME` as a
   terminal. It adds `STIM_DESKTOP_APP`, set to the app's bundle path, which
   tells `stim` that Stim Desktop is installed without a Launch Services lookup.
+  It runs `stim` and `stim-server` as their JavaScript file under the Node that
+  `node` resolves to in the home folder, with the directory holding `stim`
+  first on the `PATH` so a Node installed beside it, as nvm does, wins. It does
+  not run them through the files' `#!/usr/bin/env node` line in the workspace. A version manager that follows
+  the working directory (asdf, mise, Volta) would otherwise run them on the
+  Node a project pins, which can be older than Stim supports. When `stim` on
+  the `PATH` is a shim in a version manager's `shims` folder (asdf, mise,
+  nodenv), the app runs the global install that npm, pnpm or bun reports from
+  the home folder; any other script, such as a wrapper, runs as it is. Each
+  command follows the executable's links again, so an update takes effect
+  without a restart. When the Node binary disappears, as after a Homebrew
+  upgrade, the next command finds the home folder's Node again first, waiting
+  at most 2 seconds for it. If the initial probe or redetection fails, the
+  managed launcher refuses the command rather than falling back to a project's
+  Node, and retries detection on later commands without requiring an app restart.
+  A recognized version-manager shim whose global CLI cannot be located also
+  refuses to run. Once Check Again resolves that install, it offers a restart
+  when the app's cached launcher still points to the unresolved shim. The server's
+  unresolved launcher is detected again on a later command after 60 seconds.
+  A Node older than 22.12.0 refuses every command
+  with its version and path; when that is why `stim` reports no version, a
+  popup asks for a newer default instead of a newer Stim. The app looks for
+  the Node again at most every 10 seconds, so the next command after a new
+  default runs without a restart. Without a launcher for `stim-server`, it
+  tries again at most once a minute.
 
 At launch the app runs `stim --version` and needs 1.11.0 or later. When
 `stim` is missing, too old, or reports no version, a banner explains Stim and
@@ -1085,8 +1120,8 @@ button, or **Continue** once the step is done, and never skips a step; Escape is
 Later**.
 
 1. **Welcome**.
-2. **Install the CLI**: `node --version` from the login shell must report
-   22.12.0 or later. Without it, the step offers `brew install node` when
+2. **Install the CLI**: `node` from the login shell, run in the home folder,
+   must report 22.12.0 or later; an older one is shown with its path. Without it, the step offers `brew install node` when
    `brew` is on the `PATH`, else a link to nodejs.org. Then it
    shows tabs for npm, pnpm and bun, only for the managers on the `PATH`
    (the default is pnpm or bun when its global bin directory is on the `PATH`,
@@ -1280,8 +1315,20 @@ Contained utility windows are supported; disjoint app windows refuse capture.
 The viewer skips its own process to prevent recursive previews.
 **Open app** verifies and activates that owned app using existing Accessibility
 permission for normal native input;
-the captured view is read-only. Background input relay is not included. Use **Refresh preview** after the app window opens or is resized. No permission changes or custom packaging
-script is part of this flow. For an unreleased CLI, run `pnpm run build` at the
+the captured view is read-only. Background input relay is not included. Use **Refresh preview** after the app window opens or is resized. No permission requests or custom packaging
+script is part of the build flow.
+
+On the first native viewer opening, one **Native app viewer** setup screen explains
+Screen Recording and Accessibility (called Device Control and Data Access on macOS 27),
+shows their status and offers **Request permissions**, **Settings** and **Check again**.
+You approve normal macOS requests; Stim never resets or automatically grants access.
+Use **Permissions** on the app card to reopen setup. A phone-first native viewer
+asks the running Desktop host to show the same setup on its next local health refresh.
+Grant access to the signed Stim app that started the server, then reconnect the phone
+viewer. A server started elsewhere uses that host's permissions; this app's status
+alone does not prove that server has access.
+
+For an unreleased CLI, run `pnpm run build` at the
 repository root, then set `STIM_BIN` to the absolute `packages/stim-cli/dist/cli.mjs`
 path and invoke that executable's `macos` command from `apps/desktop`. The app
 inherits the override without changing the installed app's preferences. See [the macOS guide](../../website/docs/macos.md)

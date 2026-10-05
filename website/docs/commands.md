@@ -104,6 +104,19 @@ repair: its cache-lock check cannot detect uncached, release-swap fallback, or
 direct Gradle builds. The next build recreates these files; source, custom launcher settings,
 and shared ccache entries are preserved. See `stim guide lifecycle options`.
 
+When [`hosting.machines`](./settings.md#machine-settings) names hosting Macs,
+doctor reports their separate device-host approval in `deviceHosts`. Only
+`--fix` requests approval, retries a definite revoked or lapsed request, and
+forgets names removed from the setting. A person on the hosting Mac runs the
+printed `stim-server devices grant <id> --device-host` command. Tokens remain
+private and pinned to that tailnet node. A changed node refuses access;
+unreadable credentials and uncertain replies preserve the pin. Invalid hosting
+settings report an error and preserve every saved credential. JSON states
+are `approved`, `pending`, `not-asked`, `revoked`, `node-changed`,
+`not-on-tailnet`, `tailscale-off`, `unreachable`, `invalid`,
+`credentials-unavailable` and `busy`. Hosting approval does not yet change
+`ios` or `android` placement.
+
 When the [`offload.machines`](./settings.md#machine-settings) setting names
 build machines, doctor reports each one this Mac is not approved on: not on the
 tailnet, not asked yet, waiting for approval (with the

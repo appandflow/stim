@@ -33,6 +33,8 @@ pnpm run test:compat engine-ios-device.compat.test.ts
 
 `pnpm run test:e2e` covers the real CLI and cache flow without native tools.
 `pnpm run test:runtime` checks the built packages at their published runtime floor.
+CI also runs `test/runtime-refusal.mjs` under Node 18, below that floor, where
+both built bins must refuse with `STIM_NODE_UNSUPPORTED`.
 The native app workflows remain separate; see [RELEASE.md](../RELEASE.md).
 
 ## CI scheduling

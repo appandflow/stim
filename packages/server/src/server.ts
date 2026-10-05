@@ -96,7 +96,7 @@ import {
 } from './registry.ts';
 import { runStats } from './stats.ts';
 import { Pending, runStim, type CommandLimits } from './stim-command.ts';
-import { serveRoute, whois, type ServeRoute, type TailscaleState } from './tailscale.ts';
+import { serveRoute, setupServeRoute, whois, type ServeRoute, type TailscaleState } from './tailscale.ts';
 import type { TailscaleMonitor, TailscaleSnapshot } from './tailscale-monitor.ts';
 import { DEFAULT_VIDEO_LIMITS, videoPacket, VideoGate, type AccessUnit } from './video.ts';
 import { DeviceViewers } from './viewers.ts';
@@ -185,6 +185,7 @@ interface ServerHealth {
   stimHome: string;
   tailscale: { state: TailscaleState['state']; dnsName?: string | null; backendState?: string; reason?: string };
   route?: ServeRoute;
+  nativeViewerOpened: boolean;
 }
 
 function healthTailscale(tailscale: TailscaleState): ServerHealth['tailscale'] {
@@ -444,6 +445,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     return helperPath;
   };
   if (options.frameHelper === undefined) buildHelper();
+  let nativeViewerOpened = false;
   const frames = new FramePool(options.env, frameLimits, frameHelper, new DeviceViewers());
   const recorder =
     options.record === false
@@ -619,7 +621,9 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   const revocationPoll = setInterval(checkRevocations, 1000);
   revocationPoll.unref();
 
-  function connection(socket: WebSocket, peer: string | null): void {
+  let settingUpRoute: Promise<ServeRoute> | null = null;
+
+  function connection(socket: WebSocket, peer: string | null, localControl: boolean): void {
     const limitKey = peer ?? 'local';
     const subscriptions = new Map<string, () => void>();
     const keyframes = new Map<string, () => void>();
@@ -1077,6 +1081,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       let latest: StatusPayload | null = null;
       const attach = (resolved: Device) => {
         if (wantsArtwork) send(socket, { event: 'device-frame', subscription, artwork: null });
+        if (resolved.platform === 'macos') nativeViewerOpened = true;
         detach?.();
         gate.reset();
         streamed = resolved;
@@ -1648,23 +1653,25 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         return input(id, inputMethod, raw, session);
       }
       const answer =
-        method === 'device-host.reserve'
-          ? hostedDevices.reserve(session.id, raw)
-          : method === 'device-host.attach'
-            ? hostedDevices.attach(session.id, raw)
-            : method === 'device-host.stop'
-              ? hostedDevices.stop(session.id, raw)
-              : method === 'device-host.app.offer'
-                ? hostedDevices.appOffer(session.id, raw)
-                : method === 'device-host.app.chunk'
-                  ? await hostedDevices.appChunk(session.id, raw)
-                  : method === 'device-host.app.launch'
-                    ? hostedDevices.appLaunch(session.id, raw)
-                    : method === 'device-host.app.attach'
-                      ? hostedDevices.appAttach(session.id, raw)
-                      : method === 'device-host.metro.open'
-                        ? await hostedDevices.metroOpen(session.id, raw, peer)
-                        : await hostedDevices.metroClose(session.id, raw);
+        method === 'device-host.offer'
+          ? await hostedDevices.offer(session.id, raw)
+          : method === 'device-host.reserve'
+            ? hostedDevices.reserve(session.id, raw)
+            : method === 'device-host.attach'
+              ? hostedDevices.attach(session.id, raw)
+              : method === 'device-host.stop'
+                ? hostedDevices.stop(session.id, raw)
+                : method === 'device-host.app.offer'
+                  ? hostedDevices.appOffer(session.id, raw)
+                  : method === 'device-host.app.chunk'
+                    ? await hostedDevices.appChunk(session.id, raw)
+                    : method === 'device-host.app.launch'
+                      ? hostedDevices.appLaunch(session.id, raw)
+                      : method === 'device-host.app.attach'
+                        ? hostedDevices.appAttach(session.id, raw)
+                        : method === 'device-host.metro.open'
+                          ? await hostedDevices.metroOpen(session.id, raw, peer)
+                          : await hostedDevices.metroClose(session.id, raw);
       return send(socket, 'error' in answer ? { id, error: answer.error } : { id, result: answer.result });
     }
 
@@ -1694,6 +1701,27 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       }
       if (!device.capabilities.includes('read')) {
         return error(id, 'forbidden', `${message.method} needs read access, which this connection does not have.`);
+      }
+      if (message.method === 'route.setup') {
+        if (!localControl || device.identity.kind !== 'local' || !device.capabilities.includes('control')) {
+          return error(
+            id,
+            'forbidden',
+            'Phone connection setup requires an authenticated local Desktop control connection.',
+          );
+        }
+        if (message.params !== undefined && (!isJsonObject(message.params) || Object.keys(message.params).length)) {
+          return error(id, 'bad-request', 'route.setup takes no parameters.');
+        }
+        const { binary, state } = tailscaleNow();
+        settingUpRoute ??= setupServeRoute(binary, options.env, addresses[0]!.port, state).finally(() => {
+          settingUpRoute = null;
+        });
+        try {
+          return send(socket, { id, result: await settingUpRoute });
+        } catch (cause) {
+          return error(id, 'action-failed', (cause as Error).message);
+        }
       }
       if (message.method === 'status.subscribe') return subscribeStatus(id);
       if (message.method === 'logs.subscribe') return subscribeLogs(id, message.params);
@@ -1832,7 +1860,14 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       socket.end('HTTP/1.1 429 Too Many Requests\r\nConnection: close\r\nContent-Length: 0\r\n\r\n');
       return;
     }
-    wss.handleUpgrade(request, socket, head, (ws) => connection(ws, peer));
+    const host = request.headers.host?.replace(/:\d+$/, '');
+    const localControl =
+      isLoopback(request.socket.remoteAddress) &&
+      (host === '127.0.0.1' || host === 'localhost') &&
+      ['origin', 'sec-fetch-site', 'forwarded', 'x-forwarded-for', 'x-forwarded-host', 'x-forwarded-proto'].every(
+        (header) => request.headers[header] === undefined,
+      );
+    wss.handleUpgrade(request, socket, head, (ws) => connection(ws, peer, localControl));
   }
 
   const tailscaleNow = (): TailscaleSnapshot =>
@@ -1851,7 +1886,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       tailscale.state === 'running' && tailscale.dnsName
         ? await serveRoute(binary, options.env, addresses[0]!.port, tailscale.ips, HEALTH_ROUTE_TIMEOUT_MS)
         : undefined;
-    const body: ServerHealth = { ...health, tailscale: healthTailscale(tailscale), route };
+    const body: ServerHealth = { ...health, tailscale: healthTailscale(tailscale), route, nativeViewerOpened };
     response.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify(body));
   };
   const servers = new Map<string, { server: Server; sockets: Set<Socket> }>();

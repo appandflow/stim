@@ -25,9 +25,14 @@ struct OnboardingBanner: View {
 
   private func currentKind(_ report: Onboarding.Report) -> Onboarding.PopupKind? {
     if onboarding.showsGuide { return nil }
-    if !report.stim.isCompatible, !onboarding.dismissedPopups.contains(.stim) { return .stim }
+    if report.nodeBlocksStim || report.nodeBlocksServer, !onboarding.dismissedPopups.contains(.node) { return .node }
+    if !report.stim.isCompatible, !report.nodeBlocksStim, !onboarding.dismissedPopups.contains(.stim) {
+      return .stim
+    }
     if report.needsRelaunch, !onboarding.dismissedPopups.contains(.relaunch) { return .relaunch }
-    if let server = report.server, !server.isCompatible, !onboarding.dismissedPopups.contains(.server) {
+    if let server = report.server, !server.isCompatible, !report.nodeBlocksServer,
+      !onboarding.dismissedPopups.contains(.server)
+    {
       return .server
     }
     if report.stim.isCompatible, !report.needsRelaunch, !report.viewerKeys.isEmpty,
@@ -41,6 +46,7 @@ struct OnboardingBanner: View {
   @ViewBuilder
   private func popup(_ kind: Onboarding.PopupKind, _ report: Onboarding.Report) -> some View {
     switch kind {
+    case .node: nodePopup(report)
     case .stim: stimPopup(report)
     case .relaunch: relaunchPopup(report)
     case .server: serverPopup(report)
@@ -66,6 +72,22 @@ struct OnboardingBanner: View {
           missing ? "Install stim" : "Update stim", variant: .primary, key: .stim, action: onboarding.installStim)
       }
       Button("Choose stim executable\u{2026}", action: onboarding.chooseStim).buttonStyle(.stim())
+    }
+  }
+
+  private func nodePopup(_ report: Onboarding.Report) -> some View {
+    let runtime = report.nodeBlockingStim ?? report.nodeBlockingServer
+    return popupCard(kind: .node, icon: "exclamationmark.triangle", tone: .warning) {
+      Text("Update Node.js to use Stim Desktop").font(.stim(.headline))
+      Text(
+        "stim and stim-server need Node.js \(SetupChecks.nodeMinimum.description) or later. Make a newer Node your version manager's default, or reinstall the CLI under one when an older Node sits beside it, then check again."
+      )
+      .foregroundStyle(Palette.secondary)
+      if let runtime {
+        disclosure { Text("\(abbreviatingHome(runtime.path)) is \(runtime.version).") }
+      }
+    } buttons: {
+      Button("Check Again", action: onboarding.check).buttonStyle(.stim(.primary))
     }
   }
 

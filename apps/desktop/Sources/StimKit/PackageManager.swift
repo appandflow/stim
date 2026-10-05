@@ -69,17 +69,32 @@ public struct PackageManagerLayout: Equatable, Sendable {
     }
     return (String(line.dropFirst(marker.count)) as NSString).resolvingSymlinksInPath
   }
+
+  /// `target(ofExecutable:contents:)` with the head of the file at `executable`.
+  public static func target(ofExecutable executable: String) -> String {
+    let handle = FileHandle(forReadingAtPath: executable)
+    let head = handle.flatMap { try? $0.read(upToCount: 65536) }.flatMap { String(data: $0, encoding: .utf8) }
+    try? handle?.close()
+    return target(ofExecutable: executable, contents: head?.hasPrefix("#!") == true ? head : nil)
+  }
+
+  /// Where each manager's global install puts the executable `name`.
+  public func globalExecutables(_ name: String) -> [String] {
+    [npmPrefix.map { "\($0)/bin/\(name)" }, pnpmBin.map { "\($0)/\(name)" }, bunBin.map { "\($0)/\(name)" }]
+      .compactMap { $0 }
+  }
 }
 
 extension PackageManagerLayout {
-  /// Asks each installed manager where it keeps global packages. A query that fails leaves its fields nil.
-  public static func probe(environment: [String: String]) async -> PackageManagerLayout {
+  /// Asks each installed manager, in `home` where no project pins a Node, where it keeps global packages. A query
+  /// that fails leaves its fields nil.
+  public static func probe(environment: [String: String], home: String) async -> PackageManagerLayout {
     var layout = PackageManagerLayout()
     func query(_ manager: PackageManager, _ arguments: [String]) async -> String? {
       var environment = environment
       guard let path = resolveExecutable(manager.rawValue, override: nil, environment: &environment) else { return nil }
       guard
-        let result = try? await ProcessRequest(path, arguments, environment: environment, timeout: 10).run(),
+        let result = try? await ProcessRequest(path, arguments, cwd: home, environment: environment, timeout: 10).run(),
         result.succeeded
       else { return nil }
       let line = result.stdoutText.split(whereSeparator: \.isNewline).last.map { String($0) }
@@ -102,10 +117,6 @@ extension PackageManagerLayout {
 
   /// The manager that owns the `stim` at `executable`, nil when none does.
   public func owner(ofExecutable executable: String) -> PackageManager? {
-    let handle = FileHandle(forReadingAtPath: executable)
-    let head = handle.flatMap { try? $0.read(upToCount: 65536) }.flatMap { String(data: $0, encoding: .utf8) }
-    try? handle?.close()
-    let contents = head?.hasPrefix("#!") == true ? head : nil
-    return owner(ofTarget: Self.target(ofExecutable: executable, contents: contents))
+    owner(ofTarget: Self.target(ofExecutable: executable))
   }
 }

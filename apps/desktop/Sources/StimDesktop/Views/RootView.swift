@@ -37,6 +37,7 @@ struct RootView: View {
   @State private var sidebarWidth: CGFloat = 0
   @State private var detailWidth: CGFloat = 0
   @State private var columnVisibility = NavigationSplitViewVisibility.all
+  @ObservedObject private var nativePermissions = NativeViewerPermissions.shared
   @ObservedObject private var openRequests = OpenRequests.shared
   private let toasts = ToastCenter.shared
   private let notices = NoticeCenter.shared
@@ -137,6 +138,9 @@ struct RootView: View {
     }
     .onQuitRequested { actions.presented = nil }
     .modifier(SetupGuidePresenter(onboarding: onboarding, actions: actions))
+    .sheet(isPresented: $nativePermissions.showsSetup) {
+      NativeViewerPermissionsView(permissions: nativePermissions)
+    }
     .onAppear {
       store.start()
       openRequests.openMainWindow = { [openWindow] in openWindow(id: "main") }

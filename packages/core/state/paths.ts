@@ -113,6 +113,19 @@ export function buildMachinesLock(): string {
   return join(configDir(), 'build-machines.lock');
 }
 
+/** The hosting machines this Mac asked for access, separate from build credentials. */
+export function deviceHostMachinesFile(): string {
+  return join(configDir(), 'device-host-machines.json');
+}
+
+export function deviceHostMachinesLock(): string {
+  return join(configDir(), 'device-host-machines.lock');
+}
+
+export function deviceHostMachinesClaims(): string {
+  return join(configDir(), 'device-host-machines.claims');
+}
+
 export function createdDevicesLock(): string {
   return join(configDir(), 'created-devices.lock');
 }
