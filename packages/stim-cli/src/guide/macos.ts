@@ -92,8 +92,9 @@ It never captures the desktop or another application, and offers no replay.
 The view follows the app's front standard window like the Desktop preview. A
 server advertising macos-windows also sends a macos-windows event on the frames
 subscription with the captured window and the app's windows (id, title and frame
-in points), after subscribing and whenever they change. While the app has no
-open window the view reports a delay until one opens.
+in points), after subscribing and whenever they change. Viewing starts only with
+an open window; after the app closes its last one the view reports a delay until
+another opens.
 
 A server advertising macos-window-control also supports the phone's Control
 mode on a control pairing. Tap/click and drag act on the displayed window;

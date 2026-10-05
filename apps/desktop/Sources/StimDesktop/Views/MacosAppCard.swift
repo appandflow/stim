@@ -238,11 +238,11 @@ private struct HostedMacosWindow: View {
         : "Without \(NativeViewerPermissions.shared.controlPermissionTitle), the preview needs one visible app window."
       return
     }
-    windows = selection.windows
+    if windows != selection.windows { windows = selection.windows }
     if stream != nil, let window, window.windowID == selection.current.id,
       window.frame.size == selection.current.frame.size
     {
-      current = selection.current
+      if current != selection.current { current = selection.current }
       return
     }
     do {
@@ -263,6 +263,7 @@ private struct HostedMacosWindow: View {
       if let stream {
         try await stream.updateContentFilter(filter)
         try await stream.updateConfiguration(configuration)
+        guard self.app?.launchId == app.launchId, self.stream === stream else { return }
       } else {
         let stream = SCStream(filter: filter, configuration: configuration, delegate: self)
         try stream.addStreamOutput(self, type: .screen, sampleHandlerQueue: .main)
@@ -294,9 +295,14 @@ private struct HostedMacosWindow: View {
 
   nonisolated func stream(_ stream: SCStream, didStopWithError error: Error) {
     Task { @MainActor in
-      guard self.stream === stream else { return }
+      try? await Task.sleep(for: .milliseconds(500))
+      guard self.stream === stream, let pid = self.app?.app?.pid else { return }
       self.stream = nil
       self.image = nil
+      if let id = self.window?.windowID, OwnedAppWindowReader.screen(pid: pid)?.contains(where: { $0.id == id }) == true {
+        self.follower?.cancel()
+        self.error = error.localizedDescription
+      }
     }
   }
 

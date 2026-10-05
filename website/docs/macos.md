@@ -95,8 +95,8 @@ Tap the app tile to view the app's front window. A server advertising
 `macos-window` streams that window over the existing authenticated connection with
 read access. It verifies the recorded PID, process start time, executable and
 bundle before capture and on every frame. The view has no replay and never captures the desktop or another app.
-It follows the app's front standard window like the Desktop preview, and reports a
-delay while the app has no open window. A server advertising `macos-windows` also
+It follows the app's front standard window like the Desktop preview. After the app
+closes its last window the view reports a delay until another opens. A server advertising `macos-windows` also
 names the captured window and the app's other windows.
 
 The capture host requires existing **Screen & System Audio Recording** permission

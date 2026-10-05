@@ -69,7 +69,17 @@ final class MacosSource: NSObject, Source, SCStreamDelegate, SCStreamOutput {
     }
     Task { [self] in
       do {
-        guard let selection = try self.currentWindows() else {
+        var found: OwnedAppWindows.Selection?
+        for attempt in 1... {
+          do {
+            found = try self.currentWindows()
+            break
+          } catch {
+            if attempt == 4 { throw error }
+            try await Task.sleep(for: .milliseconds(250))
+          }
+        }
+        guard let selection = found else {
           fail(
             AXIsProcessTrusted()
               ? "Open a window in the owned macOS app to view it. Stim does not capture the desktop or other apps."
@@ -94,7 +104,6 @@ final class MacosSource: NSObject, Source, SCStreamDelegate, SCStreamOutput {
     }
   }
 
-  /// Starts a stream of the selection's current window; false when that window is no longer shareable.
   private func capture(_ selection: OwnedAppWindows.Selection) async throws -> Bool {
     guard let window = try await shareable(selection.current.id) else { return false }
     let filter = SCContentFilter(desktopIndependentWindow: window)
@@ -135,8 +144,10 @@ final class MacosSource: NSObject, Source, SCStreamDelegate, SCStreamOutput {
     }
   }
 
-  /// Runs on `followQueue`: moves capture to the window the app now shows in front, or to its new size, and
-  /// restarts it after ScreenCaptureKit stopped a stream whose window closed.
+  private func isOpen(_ id: CGWindowID) -> Bool {
+    OwnedAppWindowReader.screen(pid: app.app.pid)?.contains { $0.id == id } == true
+  }
+
   private func follow() {
     guard !switching, matches() else { return }
     let found: OwnedAppWindows.Selection?
@@ -147,7 +158,9 @@ final class MacosSource: NSObject, Source, SCStreamDelegate, SCStreamOutput {
       Task {
         do {
           _ = try await self.capture(selection)
-        } catch { fail("Owned macOS window capture failed: \(error.localizedDescription)") }
+        } catch {
+          if self.isOpen(selection.current.id) { fail("Owned macOS window capture failed: \(error.localizedDescription)") }
+        }
         self.followQueue.sync { self.switching = false }
       }
       return
@@ -176,19 +189,20 @@ final class MacosSource: NSObject, Source, SCStreamDelegate, SCStreamOutput {
         self.window = next
         self.report(selection)
       }
-      guard next != nil else { return }
-      self.inputQueue.sync { if let held = self.heldMouse { self.releaseMouse(held.session) } }
-      self.keyframe()
+      if next != nil { self.keyframe() }
     }
   }
 
-  /// Runs on `followQueue`.
   private func report(_ found: OwnedAppWindows.Selection?) {
     let shown: (OwnedAppWindows.Window) -> OwnedAppWindows.Window = { .init(id: $0.id, title: $0.title, frame: $0.frame, accessible: nil) }
     let selection = found.map { OwnedAppWindows.Selection(current: shown($0.current), windows: $0.windows.map(shown)) }
     guard reported != .some(selection) else { return }
     if (reported ?? nil) == nil || selection == nil {
-      Output.notice(["stalled": selection == nil ? "The owned macOS app has no open window." : NSNull()])
+      let reason =
+        AXIsProcessTrusted()
+        ? "The owned macOS app has no open window."
+        : "Without \(Self.controlPermission) permission Stim views only an owned app whose one window contains the others."
+      Output.notice(["stalled": selection == nil ? reason : NSNull()])
     }
     reported = .some(selection)
     let json: (OwnedAppWindows.Window) -> [String: Any] = {
@@ -307,7 +321,6 @@ final class MacosSource: NSObject, Source, SCStreamDelegate, SCStreamOutput {
     return nil
   }
 
-  /// Input that arrives while capture is moving to another app window is dropped without ending Control.
   private struct WindowChanged: LocalizedError {
     var errorDescription: String? { "The owned app's window changed before input, so the input was not sent." }
   }
@@ -566,7 +579,13 @@ final class MacosSource: NSObject, Source, SCStreamDelegate, SCStreamOutput {
   }
 
   func stream(_ stream: SCStream, didStopWithError error: Error) {
-    followQueue.async { if self.stream === stream { self.stream = nil } }
+    followQueue.asyncAfter(deadline: .now() + .milliseconds(500)) {
+      guard self.stream === stream else { return }
+      if let id = self.window?.windowID, self.isOpen(id) {
+        fail("Owned macOS window capture stopped: \(error.localizedDescription)")
+      }
+      self.stream = nil
+    }
   }
 
   func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of type: SCStreamOutputType) {

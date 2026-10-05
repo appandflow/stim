@@ -1002,8 +1002,9 @@ Events are `{ "event", "subscription", ... }`.
   frontmost), with any attached sheet, by matching Accessibility windows to the
   process's on-screen windows; it moves the stream when the app opens, switches,
   closes or resizes windows. Without Device Control and Data Access permission it
-  serves only an app whose one window contains the others. While the app has no
-  open window the subscription gets `frame-delayed` until one opens. When hello
+  serves only an app whose one window contains the others. A subscription fails
+  when the app has no open window at start; after the app closes its last window
+  the subscription gets `frame-delayed` until another opens. When hello
   advertises `macos-windows`, the subscription also gets
   `{ event: "macos-windows", subscription, current, windows }` after it starts and
   whenever the windows change: `current` is the captured window or null, and
