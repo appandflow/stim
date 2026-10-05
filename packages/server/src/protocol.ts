@@ -169,6 +169,12 @@ export function protocolJsonSchema(): JsonSchema {
         additionalProperties: false,
         properties: { offset: { type: 'integer', minimum: 0 } },
       },
+      HostedAppHandoffResult: {
+        type: 'object',
+        required: ['files', 'bytes'],
+        additionalProperties: false,
+        properties: { files: { type: 'integer', minimum: 0 }, bytes: { type: 'integer', minimum: 0 } },
+      },
       HostedDeviceOffer: {
         type: 'object',
         required: ['platform', 'choice', 'resources', 'declined', 'capacity'],
@@ -941,6 +947,21 @@ export function protocolJsonSchema(): JsonSchema {
               ['attempt', 'sha256', 'offset', 'data'],
             ),
           ),
+          request(
+            'device-host.app.handoff',
+            session(
+              {
+                attempt: { type: 'string' },
+                build: {
+                  type: 'object',
+                  required: ['handoff', 'sha256'],
+                  additionalProperties: false,
+                  properties: { handoff: sha256, sha256 },
+                },
+              },
+              ['attempt', 'build'],
+            ),
+          ),
           request('device-host.app.launch', session({ attempt: { type: 'string' } }, ['attempt'])),
           request('device-host.app.attach', session({ attempt: { type: 'string' } }, ['attempt'])),
           request(
@@ -1335,6 +1356,7 @@ export function protocolJsonSchema(): JsonSchema {
                   { $ref: '#/$defs/HostedMetroResult' },
                   { $ref: '#/$defs/HostedAppOfferResult' },
                   { $ref: '#/$defs/HostedAppChunkResult' },
+                  { $ref: '#/$defs/HostedAppHandoffResult' },
                   { $ref: '#/$defs/HelloResult' },
                   { $ref: '#/$defs/ControlBeginResult' },
                   { $ref: '#/$defs/SimulatorOptions' },

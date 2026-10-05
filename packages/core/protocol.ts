@@ -107,6 +107,7 @@ export const METHODS = [
   'device-host.stop',
   'device-host.app.offer',
   'device-host.app.chunk',
+  'device-host.app.handoff',
   'device-host.app.launch',
   'device-host.app.attach',
   'device-host.logs.query',
@@ -146,6 +147,7 @@ export const DEVICE_HOST_METHODS = [
   'device-host.stop',
   'device-host.app.offer',
   'device-host.app.chunk',
+  'device-host.app.handoff',
   'device-host.app.launch',
   'device-host.app.attach',
   'device-host.logs.query',
@@ -836,6 +838,11 @@ export interface BuildArtifactResult {
   name: string;
   size: number;
   sha256: string;
+  /**
+   * For a macOS job, a single-use token for the staged bundle this Mac keeps for a while, which a hosted session of a
+   * device-host client on the same tailnet node can take with `device-host.app.handoff`.
+   */
+  handoff?: string;
 }
 
 export type BuildJobOutcome =
@@ -1102,6 +1109,10 @@ export interface Methods {
   'device-host.app.chunk': {
     params: { session: string; attempt: string; sha256: string; offset: number; data: string };
     result: { offset: number };
+  };
+  'device-host.app.handoff': {
+    params: { session: string; attempt: string; build: { handoff: string; sha256: string } };
+    result: { files: number; bytes: number };
   };
   'device-host.app.launch': { params: { session: string; attempt: string }; result: HostedAppLaunch };
   'device-host.app.attach': { params: { session: string; attempt: string }; result: HostedAppLaunch };

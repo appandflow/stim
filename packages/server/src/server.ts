@@ -584,6 +584,17 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     limits: options.deviceHostLimits,
     allowed: (client) =>
       readDeviceHostClients().some((entry) => entry.id === client && entry.capabilities.includes('device-host')),
+    builtBundle: (client, handoff, sha256) => {
+      const host = readDeviceHostClients().find(
+        (entry) => entry.id === client && entry.capabilities.includes('device-host'),
+      )?.identity;
+      return builds.takeBundle(handoff, sha256, (builder) => {
+        const build = readBuildClients().find(
+          (entry) => entry.id === builder && entry.capabilities.includes('build'),
+        )?.identity;
+        return host?.kind === 'tailnet' && build?.kind === 'tailnet' && host.nodeId === build.nodeId;
+      });
+    },
   });
   const agentNodes = new Map<string, { node: string; until: number }>();
   const agentLimiter = new FailureLimiter(30, options.failureWindowMs ?? 60_000);
@@ -1879,15 +1890,17 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
                   ? hostedDevices.appOffer(session.id, raw)
                   : method === 'device-host.app.chunk'
                     ? await hostedDevices.appChunk(session.id, raw)
-                    : method === 'device-host.app.launch'
-                      ? hostedDevices.appLaunch(session.id, raw)
-                      : method === 'device-host.app.attach'
-                        ? hostedDevices.appAttach(session.id, raw)
-                        : method === 'device-host.logs.query'
-                          ? hostedDevices.logsQuery(session.id, raw)
-                          : method === 'device-host.metro.open'
-                            ? await hostedDevices.metroOpen(session.id, raw, peer)
-                            : await hostedDevices.metroClose(session.id, raw);
+                    : method === 'device-host.app.handoff'
+                      ? await hostedDevices.appHandoff(session.id, raw)
+                      : method === 'device-host.app.launch'
+                        ? hostedDevices.appLaunch(session.id, raw)
+                        : method === 'device-host.app.attach'
+                          ? hostedDevices.appAttach(session.id, raw)
+                          : method === 'device-host.logs.query'
+                            ? hostedDevices.logsQuery(session.id, raw)
+                            : method === 'device-host.metro.open'
+                              ? await hostedDevices.metroOpen(session.id, raw, peer)
+                              : await hostedDevices.metroClose(session.id, raw);
       return send(socket, 'error' in answer ? { id, error: answer.error } : { id, result: answer.result });
     }
 

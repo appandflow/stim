@@ -210,7 +210,7 @@ const RECORDS = [
 ];
 
 const FAKE_WORKER = `
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 const print = (value) => process.stdout.write(JSON.stringify(value) + '\\n');
@@ -232,6 +232,13 @@ if (process.argv[2] === 'offer') {
     mkdirSync(join(job.area, 'out', job.job), { recursive: true });
     const archive = Buffer.from('app archive bytes');
     writeFileSync(join(job.area, 'out', job.job, 'app.tgz'), archive);
+    if (job.platform === 'macos') {
+      const contents = join(job.area, 'out', job.job, 'App.app', 'Contents');
+      mkdirSync(join(contents, 'MacOS'), { recursive: true });
+      writeFileSync(join(contents, 'Info.plist'), 'plist bytes');
+      writeFileSync(join(contents, 'MacOS', 'Sample'), 'binary bytes');
+      symlinkSync('MacOS', join(contents, 'Current'));
+    }
     const sha256 = createHash('sha256').update(archive).digest('hex');
     print({ type: 'result', ok: true, artifact: { name: 'App.app', size: archive.length, sha256 }, fingerprint: job.expectedFingerprint, compilationCache: { status: 'reported', hits: 3, cacheableTasks: 4, hitRatePercent: 75 }, timings: { buildMs: 5 } });
   }
@@ -1360,6 +1367,121 @@ describe('offloaded builds', () => {
       });
     },
   );
+
+  async function macosBuild(port: number, peer: string) {
+    const { client, id } = await buildClient(port, peer);
+    await client.request('build.sync', { repo: 'app-1', files: [file('Package.swift', 'x')], done: true });
+    client.socket.send(blob('x'));
+    const started = await client.request('build.start', {
+      repo: 'app-1',
+      project: '',
+      platform: 'macos',
+      fingerprint: 'f00d',
+      stimBuild: 'b1',
+      macos: { product: 'Sample', infoPlist: 'Support/Info.plist', bundleId: 'dev.sample.stim.test' },
+    });
+    const job = (started as { result: { job: string } }).result.job;
+    await progress(client);
+    const fetched = await client.request('build.artifact', { job });
+    const { handoff, sha256 } = (fetched as { result: { handoff?: string; sha256: string } }).result;
+    const out = join(process.env.STIM_HOME!, 'build-worker', id, 'repos', 'app-1', 'out', job);
+    return { out, build: { handoff: handoff!, sha256 } };
+  }
+
+  test.skipIf(!fakeTailscale)(
+    'hands a fetched macOS build once, and only to a hosted session of a device-host client on its node',
+    async () => {
+      const port = await start();
+      writeFileSync(
+        join(root, 'device-host-worker.mjs'),
+        `
+        import {writeFileSync} from 'node:fs';import {join} from 'node:path';
+        const chunks=[];for await(const chunk of process.stdin)chunks.push(chunk);
+        const input=JSON.parse(Buffer.concat(chunks));
+        const device={architecture:'arm64',macosVersion:'27.0',appSlot:input.appSlot};
+        if(input.mode==='prepare')writeFileSync(join(process.env.STIM_HOME,'hosted-device.json'),JSON.stringify(device));
+        process.stdout.write(JSON.stringify({state:input.mode==='prepare'?'ready':'stopped',device}));
+      `,
+      );
+      const elsewhere = await macosBuild(port, '100.64.0.3');
+      const own = await macosBuild(port, '100.64.0.2');
+      expect(own.build.handoff).toMatch(/^[0-9a-f]{64}$/);
+      expect(existsSync(join(own.out, 'app.tgz'))).toBe(false);
+      expect(existsSync(join(own.out, 'App.app'))).toBe(true);
+
+      const pending = requestDeviceHostAccess('Hosting client', {
+        kind: 'tailnet',
+        nodeId: 'nPhoneA',
+        nodeName: 'phone',
+        user: 'u',
+      });
+      if (!pending.ok) throw new Error(pending.reason);
+      grantDevice(pending.device.id, ['device-host']);
+      const hosting = await connect(port, '100.64.0.2');
+      await hosting.request('hello', { protocol: 1, client: CLIENT, auth: { deviceToken: pending.deviceToken } });
+      const reserved = await hosting.request('device-host.reserve', {
+        workspace: '/client/app',
+        slot: 'default',
+        platform: 'macos',
+        attempt: 'handoff',
+      });
+      const session = (reserved as { result: { id: string } }).result.id;
+      await vi.waitFor(async () =>
+        expect(await hosting.request('device-host.attach', { session })).toHaveProperty('result.state', 'ready'),
+      );
+      const entry = (path: string, kind: string, text: string) => ({ ...file(path, text), kind });
+      const files = [
+        entry('Contents/Current', 'link', 'MacOS'),
+        entry('Contents/Info.plist', 'file', 'plist bytes'),
+        entry('Contents/MacOS/Sample', 'exec', 'binary bytes'),
+      ];
+      const manifest = JSON.stringify(files);
+      const app = {
+        session,
+        attempt: 'app',
+        bundleId: 'dev.sample.stim.test',
+        mode: 'release',
+        manifest: { sha256: sha(manifest), size: manifest.length },
+      };
+      const handoff = (build: { handoff: string; sha256: string }) =>
+        hosting.request('device-host.app.handoff', { session, attempt: 'app', build });
+      await hosting.request('device-host.app.offer', app);
+      expect(await handoff(own.build)).toHaveProperty('error.message', expect.stringContaining('manifest'));
+      await hosting.request('device-host.app.chunk', {
+        session,
+        attempt: 'app',
+        sha256: sha(manifest),
+        offset: 0,
+        data: Buffer.from(manifest).toString('base64'),
+      });
+      expect(await hosting.request('device-host.app.offer', app)).toHaveProperty('result.missing.length', 3);
+
+      expect(await handoff(elsewhere.build)).toMatchObject({
+        error: { code: 'action-failed', message: expect.stringContaining('same tailnet node') },
+      });
+      expect(existsSync(join(elsewhere.out, 'App.app'))).toBe(true);
+      expect(await handoff({ ...own.build, sha256: 'c'.repeat(64) })).toHaveProperty('error.code', 'action-failed');
+      writeFileSync(join(own.out, 'App.app', 'Contents', 'MacOS', 'Sample'), 'binary BYTES');
+      expect(await handoff(own.build)).toHaveProperty('result', {
+        files: 2,
+        bytes: 'MacOS'.length + 'plist bytes'.length,
+      });
+      expect(existsSync(own.out)).toBe(false);
+      expect(await handoff(own.build)).toHaveProperty('error.message', expect.stringContaining('no longer holds'));
+      const blobs = join(deviceHostArea(session), 'apps', 'app', 'blobs');
+      expect(readFileSync(join(blobs, sha('plist bytes')), 'utf8')).toBe('plist bytes');
+      expect(readFileSync(join(blobs, sha('MacOS')), 'utf8')).toBe('MacOS');
+      expect(await hosting.request('device-host.app.offer', app)).toHaveProperty('result.missing', [
+        { sha256: sha('binary bytes'), size: 'binary bytes'.length, offset: 0 },
+      ]);
+    },
+  );
+
+  test.skipIf(!fakeTailscale)('deletes a fetched macOS build nobody takes once its handoff lapses', async () => {
+    const port = await start({ buildLimits: { handoffMs: 50 } });
+    const { out } = await macosBuild(port, '100.64.0.2');
+    await eventually(() => !existsSync(out));
+  });
 
   test.skipIf(!fakeTailscale)(
     'declines an offer and a start while its own native builds fill concurrency.maxBuilds',

@@ -256,6 +256,11 @@ approved host that lacks them. A server started by Stim Desktop uses Desktop's
 grants.
 
 Hosted delivery carries the staged bundle with declared resources and compiled assets.
+When offload built it on the host's own tailnet node, the host copies the files
+from the build it kept for this Mac instead of receiving them again, admitting
+only bytes that match the bundle's digests here. That needs both the build and
+the device-host approval for this Mac. Files the host cannot take, an older
+host, or a build fetched more than 10 minutes earlier are uploaded as before.
 
 status --json reports macos.host { machine, session, appSlot, appAttempt,
 bundleId, agent }. For hosted placements only, status asks the host for the

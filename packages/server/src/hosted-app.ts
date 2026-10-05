@@ -1,17 +1,23 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import {
+  constants,
   createReadStream,
   existsSync,
+  lstatSync,
   mkdirSync,
   openSync,
   closeSync,
+  readlinkSync,
   readSync,
+  realpathSync,
   statSync,
   appendFileSync,
   renameSync,
   rmSync,
+  writeFileSync,
 } from 'node:fs';
-import { join } from 'node:path';
+import { copyFile } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
 import { withDirLock } from '@stim-cli/core';
 import {
   HOSTED_APP_CHUNK_BYTES,
@@ -166,4 +172,49 @@ export async function chunkHostedApp(record: HostedAppRecord, params: unknown): 
     }
   }
   return { offset };
+}
+
+/**
+ * Fills the attempt's missing content from `bundle`, a build this Mac staged: only a regular file, or a link where the
+ * manifest declares one, whose directory resolves inside the bundle and whose copied bytes match the manifest digest.
+ * Anything else stays missing for the client to send.
+ */
+export async function handOverHostedApp(
+  record: HostedAppRecord,
+  bundle: string,
+): Promise<{ files: number; bytes: number }> {
+  const area = hostedAppArea(record.session, record.attempt);
+  const root = realpathSync(bundle);
+  let files = 0;
+  let bytes = 0;
+  for (const file of record.files) {
+    const blob = join(area, 'blobs', file.sha256);
+    if (existsSync(blob)) continue;
+    const source = join(root, file.path);
+    const temp = `${blob}.handoff-${randomUUID()}`;
+    try {
+      const stat = lstatSync(source, { throwIfNoEntry: false });
+      if (!stat || (file.kind === 'link' ? !stat.isSymbolicLink() : !stat.isFile()) || stat.size !== file.size)
+        continue;
+      const parent = realpathSync(dirname(source));
+      if (parent !== root && !parent.startsWith(`${root}/`)) continue;
+      if (file.kind === 'link') writeFileSync(temp, readlinkSync(source, { encoding: 'buffer' }), { mode: 0o600 });
+      else await copyFile(source, temp, constants.COPYFILE_FICLONE);
+      if (statSync(temp).size !== file.size || (await digest(temp)) !== file.sha256) continue;
+      const placed = withDirLock(`${area}.lock`, () => {
+        if (existsSync(blob)) return false;
+        if (readHostedAppMetadata(record.session, record.attempt).state !== 'receiving')
+          throw new Error('This app attempt is no longer receiving content.');
+        renameSync(temp, blob);
+        return true;
+      });
+      if (placed) {
+        files++;
+        bytes += file.size;
+      }
+    } finally {
+      rmSync(temp, { force: true });
+    }
+  }
+  return { files, bytes };
 }

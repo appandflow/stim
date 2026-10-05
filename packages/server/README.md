@@ -440,6 +440,18 @@ The manifest is limited to 8 MiB and 20,000 entries, with at most 1 GiB per file
 change its identity, mode, arguments or manifest. Complete a receiving attempt or stop the
 session before starting another transfer.
 
+A macOS session can take its content from a build this Mac ran instead: after
+the manifest arrives, send `device-host.app.handoff` with
+`{session, attempt, build: {handoff, sha256}}`, where `handoff` is the token
+and `sha256` the archive digest from that job's `build.artifact` answer. The
+server hands the build over only when the build client that ran it still has
+`build`, the caller has `device-host`, and both approvals belong to the same
+tailnet node. It copies only regular files, and links where the manifest
+declares links, whose directory resolves inside the staged bundle and whose
+bytes match their manifest digest; it answers `{files, bytes}` for what it
+took. The token is spent once the handoff starts. Re-offer and upload whatever
+is still missing; an older server answers `unknown-method`.
+
 After every digest is verified, call `device-host.app.launch` with
 `{session, attempt}`. Poll `device-host.app.attach` for `installed` or `unknown`.
 Reconnect to the same app attempt to reconcile a lost launch reply; replay
@@ -924,9 +936,12 @@ closes its connections and cancels its builds.
   another client, gets `bad-request`.
 - `build.artifact` takes the `job` of a successful build and sends the archive
   as binary frames, each 32 bytes of its sha256 and then the next bytes, then
-  answers `{ "name", "size", "sha256" }`, and deletes it here. An archive
-  nobody fetched is deleted when its job is cancelled; one left by a server
-  that crashed stays under `repos/<repo>/out/` until you delete it.
+  answers `{ "name", "size", "sha256" }`, and deletes it here. For a macOS
+  job the answer also carries `handoff`, a single-use token, and the staged
+  `.app` stays for 10 minutes so a hosted session on this Mac can take it with
+  `device-host.app.handoff`. An archive nobody fetched is deleted when its job
+  is cancelled; one left by a server that crashed stays under
+  `repos/<repo>/out/` until you delete it.
 
 The worker root is `offload.workerRoot` in this Mac's Stim settings, or
 `$STIM_HOME/build-worker`. Each client gets `<root>/<device id>/`, with its
