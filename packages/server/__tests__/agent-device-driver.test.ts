@@ -359,9 +359,20 @@ describe.skipIf(process.platform === 'win32')('agent-device driver', () => {
         params: {
           command: 'open',
           session: 'other-client',
-          meta: { tenantId: 'stim.other', leaseId: 'f'.repeat(32), sessionIsolation: 'none', requestId: 'r1' },
+          runtime: { launchUrl: 'other://open' },
+          meta: {
+            tenantId: 'stim.other',
+            leaseId: 'f'.repeat(32),
+            sessionIsolation: 'none',
+            requestId: 'r1',
+            cwd: '/Users/someone',
+            developerDir: '/Applications/Xcode.app',
+            installSource: { kind: 'path', path: '/etc' },
+            lockPolicy: 'strip',
+          },
         },
       });
+      expect(command.upstream?.params.runtime).toBeUndefined();
       expect(command.upstream?.params.meta).toEqual({
         requestId: 'r1',
         tenantId: grant.lease.tenant,

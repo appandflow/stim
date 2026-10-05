@@ -191,7 +191,11 @@ how a coding agent drives the app: { driver: "none", setting:
 "hosting.agentDriver" } until the hosting Mac's owner sets that setting there,
 or { driver: "agent-device", remoteConfig, command }. remoteConfig is a mode
 0600 file in the workspace directory that holds the credential; run the command
-it names and never print the file. stop deletes it.
+it names and never print the file. stop deletes it. Start with agent-device open
+<bundleId> --remote-config <path>, using macos.host.bundleId; the lease allows
+open, close, snapshot, wait, find, get, is, click, fill, press, type, focus,
+scroll, screenshot and batch on that app only. The agent-device on this Mac must
+know the macos-app lease backend.
 
 Agents that built, launched and drove test copies on another Mac with an SSH
 script such as mini-desktop.sh use these instead:

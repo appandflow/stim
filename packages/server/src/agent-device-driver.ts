@@ -62,7 +62,6 @@ const POLICY = {
       'open',
       'close',
       'snapshot',
-      'diff',
       'wait',
       'find',
       'get',
@@ -412,9 +411,9 @@ export class AgentDeviceDriver implements HostedAgentDriver {
       clientId: 'agent',
       deviceKey: `${app.bundleId}@${app.pid}`,
     };
+    await this.revoke(app.session);
     const id = randomBytes(16).toString('hex');
     await putLease(running.admin, id, scope);
-    await this.revoke(app.session);
     const renew = setInterval(() => {
       if (this.running !== running) return;
       putLease(running.admin, id, scope).catch((error: unknown) =>
@@ -528,16 +527,34 @@ function pinLease(body: Buffer, lease: Lease): Buffer | null {
   const { tenant, runId, clientId, deviceKey } = lease.scope;
   const owner = { runId, leaseId: lease.id, clientId, deviceKey, leaseProvider: 'proxy' };
   if (COMMAND_METHODS.has(rpc.method)) {
-    const meta = isJsonObject(rpc.params.meta) ? rpc.params.meta : {};
+    const { runtime: _runtime, meta, ...params } = rpc.params;
     rpc.params = {
-      ...rpc.params,
-      meta: { ...meta, ...owner, tenantId: tenant, leaseBackend: 'macos-app', sessionIsolation: 'tenant' },
+      ...params,
+      meta: {
+        ...pickClientMeta(meta),
+        ...owner,
+        tenantId: tenant,
+        leaseBackend: 'macos-app',
+        sessionIsolation: 'tenant',
+      },
     };
   } else if (LEASE_METHODS.has(rpc.method)) {
     const { tenant: _tenant, provider: _provider, ...params } = rpc.params;
     rpc.params = { ...params, ...owner, tenantId: tenant, backend: 'macos-app' };
   } else return null;
   return Buffer.from(JSON.stringify(rpc));
+}
+
+/**
+ * The request metadata a client may set: reporting preferences and the local paths its own artifacts land
+ * at. Host paths (`cwd`, `developerDir`), install sources, lock and lease options and runtime hints stay with
+ * the host.
+ */
+const CLIENT_META = ['requestId', 'debug', 'includeCost', 'responseLevel', 'sessionExplicit', 'clientArtifactPaths'];
+
+function pickClientMeta(meta: unknown): Record<string, unknown> {
+  if (!isJsonObject(meta)) return {};
+  return Object.fromEntries(CLIENT_META.filter((key) => meta[key] !== undefined).map((key) => [key, meta[key]]));
 }
 
 function readBody(request: IncomingMessage, limit: number): Promise<Buffer | null> {

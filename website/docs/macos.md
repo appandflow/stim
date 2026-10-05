@@ -203,7 +203,12 @@ confirm a live app) and does not contact the host. `agent` is
 owner turns on a driver with that setting. With `agent-device`, it names a
 `remoteConfig` file (mode 0600, in the workspace directory) and the `command` to
 run, such as `agent-device screenshot --remote-config <path>`. The credential stays
-in that file and never appears in command output.
+in that file and never appears in command output. Start with
+`agent-device open <host bundleId> --remote-config <path>`; the lease allows only
+commands that drive that one app (`snapshot`, `click`, `fill`, `type`, `press`,
+`scroll`, `screenshot` and similar), and the agent-device on the client needs the
+`macos-app` lease backend. On the hosting Mac, `stim-server service install --env
+STIM_AGENT_DEVICE_BIN=<path>` points stim-server at a specific agent-device.
 
 Copy this prompt:
 
