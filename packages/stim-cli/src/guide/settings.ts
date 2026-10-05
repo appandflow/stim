@@ -533,6 +533,11 @@ An in-progress approval inspection reports busy rather than replacing its
 pending token. This configures approval only; \`ios\` and \`android\` do
 not yet place sessions on these machines.
 
+On a hosting Mac, \`hosting.agentDriver\` names the tool it starts so a
+client's coding agent can drive the macOS apps it hosts, scoped to that
+client's own apps. The default, \`none\`, starts nothing. This version does
+not host macOS apps yet, so \`agent-device\` has no effect.
+
 BUILD MACHINES ARE MACHINE-LEVEL
 \`offload.machines\` lists the Macs on the tailnet that may build for this one,
 by MagicDNS name, each optionally with the port of its \`tailscale serve\`

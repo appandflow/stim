@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join, posix } from 'node:path';
 import { deviceHostArea } from './device-host.ts';
 import { isJsonObject } from './json-file.ts';
+import type { HostedAgentGrant } from './hosted-macos.ts';
 
 export interface HostedAppFile {
   path: string;
@@ -23,6 +24,7 @@ export interface HostedAppDelivery extends Omit<HostedAppOffer, 'manifest'> {
   state: 'receiving' | 'installing' | 'installed' | 'unknown';
   launched: true | 'unverified' | null;
   notice?: string;
+  agent?: HostedAgentGrant;
 }
 
 export interface HostedAppRecord extends HostedAppDelivery {

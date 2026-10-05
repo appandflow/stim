@@ -1,4 +1,5 @@
 import { isAbsolute } from 'node:path';
+import { HOSTED_AGENT_DRIVERS } from './hosted-macos.ts';
 
 export const ANDROID_COMPILER_CACHE_CHOICES = ['auto', 'ccache', 'cas', 'none'] as const;
 export const ANDROID_PCH_CHOICES = ['auto', 'on', 'off'] as const;
@@ -411,6 +412,14 @@ export const SETTINGS: readonly SettingDefinition[] = [
     scopes: MACHINE,
     description:
       'Tailscale names of the Macs that may host owned simulator sessions for this one, each optionally with :<port> of its tailscale serve route (default 7443); doctor --fix asks for separate device-host approval',
+  },
+  {
+    key: 'hosting.agentDriver',
+    type: { kind: 'choice', choices: HOSTED_AGENT_DRIVERS },
+    scopes: MACHINE,
+    default: 'none',
+    description:
+      "Tool this Mac starts so a client's coding agent can drive the macOS apps it hosts, scoped to that client's own apps; none starts nothing",
   },
   {
     key: 'offload.machines',

@@ -1323,6 +1323,27 @@ export function protocolJsonSchema(): JsonSchema {
           state: { enum: ['receiving', 'installing', 'installed', 'unknown'] },
           launched: { enum: [true, 'unverified', null] },
           notice: { type: 'string' },
+          agent: {
+            oneOf: [
+              {
+                type: 'object',
+                required: ['driver'],
+                additionalProperties: false,
+                properties: { driver: { const: 'none' } },
+              },
+              {
+                type: 'object',
+                required: ['driver', 'path', 'token', 'leaseId'],
+                additionalProperties: false,
+                properties: {
+                  driver: { const: 'agent-device' },
+                  path: { type: 'string', pattern: '^/device-host/agent/' },
+                  token: { type: 'string', minLength: 32 },
+                  leaseId: { type: 'string', minLength: 1 },
+                },
+              },
+            ],
+          },
         },
       },
       HostedAppOfferResult: {

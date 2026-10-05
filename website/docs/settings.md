@@ -296,6 +296,11 @@ Hosting approval is separate from `offload.machines` and grants no read,
 control or build access. This configures approval only; `stim ios` and
 `stim android` do not yet place sessions on these machines.
 
+On a hosting Mac, `hosting.agentDriver` names the tool it starts so a client's
+coding agent can drive the macOS apps it hosts, scoped to that client's own
+apps. The default, `none`, starts nothing. This version does not host macOS
+apps yet, so `agent-device` has no effect.
+
 Credentials stay private in `$STIM_HOME/device-host-machines.json`. Doctor
 reports approval under `deviceHosts` in JSON and never prints the token.
 Connections use the pinned node's own tailnet address and MagicDNS TLS name;
