@@ -1761,9 +1761,11 @@ setTimeout(() => console.log(fs.readFileSync(${JSON.stringify(grants)}, 'utf8'))
       name: 'Test Mac',
       version: '1.2.3',
       stim: '9.9.9',
+      stimBuild: expect.stringMatching(/^[0-9a-f]{16}$/),
       protocol: 1,
       stimHome: process.env.STIM_HOME,
       startup: { state: 'ready' },
+      busy: { builds: 0, hostedSessions: 0 },
       tailscale: { state: 'not-running', backendState: 'Stopped' },
       nativeViewerOpened: false,
     });

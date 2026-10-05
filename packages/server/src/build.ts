@@ -339,6 +339,10 @@ export class BuildHost {
     };
   }
 
+  running(): number {
+    return this.jobs.size;
+  }
+
   capacity(): BuildCapacity {
     const machine = machineCapacity();
     const running = this.jobs.size;

@@ -1,10 +1,18 @@
 #!/usr/bin/env node
-import { readFileSync } from 'node:fs';
+import { readFileSync, statSync } from 'node:fs';
 import { hostname } from 'node:os';
+import { resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { bundledStim, loginShellEnvironment } from '../src/environment.ts';
 import { readAudit } from '../src/actions.ts';
-import { installService, serviceStatus, statusLines, uninstallService } from '../src/service.ts';
+import {
+  installService,
+  rollbackService,
+  serviceStatus,
+  statusLines,
+  uninstallService,
+  updateService,
+} from '../src/service.ts';
 import {
   applyServeEnvironment,
   DEFAULT_LABEL,
@@ -12,6 +20,7 @@ import {
   ServiceError,
   validateLabel,
   validatePort,
+  validateRelease,
   validateServeEnvironment,
 } from '../src/service-plist.ts';
 import { PROTOCOL_VERSION } from '../src/protocol.ts';
@@ -47,6 +56,12 @@ const USAGE = `Usage:
                                     run stim-server as a macOS LaunchAgent that starts at login;
                                     --serve adds a tailnet-only \`tailscale serve\` route
   stim-server service status [--label <name>] [--json]
+  stim-server service update [--label <name>] --release <version>|--from <dir>
+                                    install that stim-server release from npm, or the .tgz
+                                    packages in <dir>, beside the current one, switch the
+                                    LaunchAgent to it, and switch back if it does not answer
+  stim-server service rollback [--label <name>]
+                                    switch the LaunchAgent back to the server it ran before
   stim-server service uninstall [--label <name>]
                                     remove the LaunchAgent (and the route install created)
   stim-server pair [--port <n>] [--control] [--json]
@@ -221,15 +236,27 @@ function scopeFlag(values: {
 async function runService(
   sub: string | undefined,
   extra: string | undefined,
-  values: { label?: string; serve?: boolean; json?: boolean; port?: string; env?: string[]; 'path-prepend'?: string[] },
+  values: {
+    label?: string;
+    serve?: boolean;
+    json?: boolean;
+    port?: string;
+    env?: string[];
+    'path-prepend'?: string[];
+    release?: string;
+    from?: string;
+  },
   env: string[],
   pathPrepend: string[],
 ): Promise<void> {
   const label = values.label ?? DEFAULT_LABEL;
   const labelProblem = validateLabel(label);
   if (labelProblem) fail(labelProblem);
-  if (extra !== undefined || (sub !== 'install' && sub !== 'status' && sub !== 'uninstall')) {
+  if (extra !== undefined || !['install', 'status', 'update', 'rollback', 'uninstall'].includes(sub ?? '')) {
     fail(`unknown command.\n${USAGE}`);
+  }
+  if (sub !== 'update' && (values.release !== undefined || values.from !== undefined)) {
+    fail(`--release and --from apply only to \`service update\`.\n${USAGE}`);
   }
   if (sub !== 'install' && (values.serve || values.port !== undefined || values.env || values['path-prepend'])) {
     fail(`--port, --serve, --env and --path-prepend apply only to \`service install\`.\n${USAGE}`);
@@ -251,6 +278,20 @@ async function runService(
     } else if (sub === 'status') {
       const status = await serviceStatus(label);
       console.log(values.json ? JSON.stringify(status) : statusLines(status, await hostPermissionPanes()).join('\n'));
+    } else if (sub === 'update') {
+      if ((values.release === undefined) === (values.from === undefined)) {
+        fail(`service update takes exactly one of --release <version> or --from <dir>.\n${USAGE}`);
+      }
+      const releaseProblem = values.release === undefined ? null : validateRelease(values.release);
+      if (releaseProblem) fail(releaseProblem);
+      const from = values.from === undefined ? null : resolve(values.from);
+      if (from !== null && !statSync(from, { throwIfNoEntry: false })?.isDirectory()) {
+        fail(`--from takes a directory of .tgz packages, got ${values.from}.`);
+      }
+      const source = from === null ? { release: values.release! } : { from };
+      for (const line of await updateService(label, source, (progress) => console.log(progress))) console.log(line);
+    } else if (sub === 'rollback') {
+      for (const line of await rollbackService(label, (progress) => console.log(progress))) console.log(line);
     } else {
       for (const line of await uninstallService(label)) console.log(line);
     }
@@ -274,6 +315,8 @@ async function main(): Promise<void> {
       serve: { type: 'boolean' },
       env: { type: 'string', multiple: true },
       'path-prepend': { type: 'string', multiple: true },
+      release: { type: 'string' },
+      from: { type: 'string' },
       help: { type: 'boolean', short: 'h' },
       version: { type: 'boolean', short: 'V' },
     },
@@ -295,6 +338,9 @@ async function main(): Promise<void> {
   }
   if ((values.label !== undefined || values.serve) && !service) {
     fail(`--label and --serve apply only to \`service\`.\n${USAGE}`);
+  }
+  if ((values.release !== undefined || values.from !== undefined) && !service) {
+    fail(`--release and --from apply only to \`service update\`.\n${USAGE}`);
   }
   if (command === undefined) return serve(port, extraEnv, pathPrepend);
   const grant = command === 'devices' && sub === 'grant';

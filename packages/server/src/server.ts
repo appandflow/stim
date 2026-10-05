@@ -12,6 +12,7 @@ import {
   readMacosRecord,
   parseNdjsonLine,
   RECORDING_PLATFORMS,
+  stimBuildDigest,
   type RecordingPlatform,
   type NdjsonRecord,
   type StatusPayload,
@@ -209,8 +210,12 @@ interface ServerHealth {
   name: string;
   version: string;
   stim: string;
+  /** The digest of the `stim` build this server runs, which offload compares between Macs. */
+  stimBuild: string | null;
   protocol: number;
   stimHome: string;
+  /** The work a restart would cut off: offloaded builds and hosted sessions running now. */
+  busy: { builds: number; hostedSessions: number };
   tailscale: { state: TailscaleState['state']; dnsName?: string | null; backendState?: string; reason?: string };
   route?: ServeRoute;
   nativeViewerOpened: boolean;
@@ -2104,6 +2109,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     name: options.name,
     version: options.serverVersion,
     stim: options.stimVersion,
+    stimBuild: stimBuildDigest(dirname(options.stimCli)),
     protocol: PROTOCOL_VERSION,
     stimHome: configDir(),
   } as const;
@@ -2117,6 +2123,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       ...health,
       startup,
       ...(options.host ? { host: await hostHealth() } : {}),
+      busy: { builds: builds.running(), hostedSessions: hostedDevices.active() },
       tailscale: healthTailscale(tailscale),
       route,
       nativeViewerOpened,

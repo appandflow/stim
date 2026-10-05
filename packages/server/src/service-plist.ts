@@ -1,4 +1,4 @@
-import { delimiter, isAbsolute } from 'node:path';
+import { delimiter, isAbsolute, join, relative } from 'node:path';
 import { isJsonObject } from '@stim-cli/core/state';
 import type { ServeRoute } from './tailscale.ts';
 
@@ -176,6 +176,9 @@ export interface InstalledService {
   /** Whether `install` wrote this plist. */
   managed: boolean;
   serve: ServeRecord | null;
+  /** The server script the job ran before `service update` or `service rollback` switched it. */
+  previousScript: string | null;
+  programArguments: string[];
 }
 
 function strings(value: unknown): string[] {
@@ -220,7 +223,18 @@ export function parseInstalledPlist(value: unknown): InstalledService | null {
       typeof servePort === 'number' && Number.isInteger(servePort)
         ? { port: servePort, created: meta.ServeCreated === true }
         : null,
+    previousScript: typeof meta.PreviousScript === 'string' ? meta.PreviousScript : null,
+    programArguments,
   };
+}
+
+/** The job's `ProgramArguments` with the server script, which follows the launcher, `run` and node, set to `script`. */
+export function argumentsWithScript(
+  service: Pick<InstalledService, 'host' | 'programArguments'>,
+  script: string,
+): string[] {
+  const index = service.host ? 3 : 1;
+  return service.programArguments.map((argument, at) => (at === index ? script : argument));
 }
 
 export interface LaunchdJob {
@@ -267,4 +281,61 @@ export function planServe(
     return { record: { port: route.port, created: previous?.port === route.port && previous.created }, create: false };
   }
   return { record: { port: route.port, created: true }, create: true };
+}
+
+const RELEASE_PATTERN = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
+
+export function validateRelease(value: string): string | null {
+  return RELEASE_PATTERN.test(value)
+    ? null
+    : `--release takes an exact stim-server version such as 1.15.0, not a range or tag; got "${value}".`;
+}
+
+/** A stim-server install: its package version and the digest of the `stim` build it runs. */
+export interface ServerBuild {
+  version: string;
+  stimBuild: string | null;
+}
+
+/**
+ * Whether a `/health` answer comes from a ready server running `expected`: the same version and, when both sides know
+ * it, the same Stim build digest. Two builds of one checkout share a version, so the digest tells them apart; a server
+ * older than the digest in `/health` is matched on its version alone.
+ */
+export function answersAs(
+  health: { version: string; stimBuild?: string | null; startup?: { state: string } } | null,
+  expected: ServerBuild,
+): boolean {
+  if (!health || health.version !== expected.version) return false;
+  if (health.startup && health.startup.state !== 'ready') return false;
+  return !health.stimBuild || !expected.stimBuild || health.stimBuild === expected.stimBuild;
+}
+
+const packageNames = (entries: unknown[]) =>
+  entries.map((entry) => (isJsonObject(entry) ? `${String(entry.name)}@${String(entry.version)}` : '?')).join(', ');
+
+/** Why `npm audit signatures --json` output does not vouch for every installed package, or null when it does. */
+export function signatureProblem(output: string): string | null {
+  let report: unknown;
+  try {
+    report = JSON.parse(output);
+  } catch {
+    return 'npm audit signatures did not print a JSON report';
+  }
+  if (!isJsonObject(report) || !Array.isArray(report.invalid) || !Array.isArray(report.missing)) {
+    return 'npm audit signatures did not print a JSON report';
+  }
+  if (report.invalid.length)
+    return `npm found invalid registry signatures or attestations: ${packageNames(report.invalid)}`;
+  if (report.missing.length) return `npm found packages without registry signatures: ${packageNames(report.missing)}`;
+  return null;
+}
+
+export function unusedInstalls(versions: string, entries: string[], keep: string[]): string[] {
+  return entries.filter((entry) =>
+    keep.every((script) => {
+      const inside = relative(join(versions, entry), script);
+      return inside.startsWith('..') || isAbsolute(inside);
+    }),
+  );
 }
