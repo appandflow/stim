@@ -14,6 +14,8 @@
 extern char **environ;
 
 #define PROMPT_WAIT_SECONDS 120
+#define PROMPT_POLL_MICROSECONDS 100000
+#define PROMPT_APPEAR_POLLS 100
 
 static pid_t child = 0;
 
@@ -86,14 +88,19 @@ static bool prompt_visible(void) {
   return found;
 }
 
+static bool wait_for_prompt_to_close(void) {
+  for (int i = 0; i < PROMPT_WAIT_SECONDS && prompt_visible(); i++) sleep(1);
+  return !prompt_visible();
+}
+
 static bool wait_for_prompt(void) {
   int i = 0;
-  while (i < 30 && !prompt_visible()) {
-    usleep(100000);
+  while (i < PROMPT_APPEAR_POLLS && !prompt_visible()) {
+    usleep(PROMPT_POLL_MICROSECONDS);
     i++;
   }
-  if (i == 30) return false;
-  for (i = 0; i < PROMPT_WAIT_SECONDS && prompt_visible(); i++) sleep(1);
+  if (i == PROMPT_APPEAR_POLLS) return false;
+  wait_for_prompt_to_close();
   return true;
 }
 
@@ -114,6 +121,10 @@ static int request_permissions(void) {
     wait_for_prompt();
   }
   if (control_allowed()) return 0;
+  if (!wait_for_prompt_to_close()) {
+    open_control_pane();
+    return 0;
+  }
   if (!AXIsProcessTrusted()) {
     const void *keys[] = {kAXTrustedCheckOptionPrompt};
     const void *values[] = {kCFBooleanTrue};

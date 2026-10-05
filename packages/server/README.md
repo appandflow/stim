@@ -687,11 +687,12 @@ keeps `~/Applications/Stim Host Dev.app`; its owner can delete it and its System
 Settings entries.
 
 After starting the service, install shows macOS's own permission requests on
-this Mac's screen, one at a time: Stim Host asks for Device Control and Data
-Access after you answer the Screen Recording request, waiting up to two minutes
-for each. If macOS shows no request for it, install opens that System Settings
-pane with Stim Host listed. You only approve; over SSH, use Screen Sharing to
-see that screen. If a request does not appear, turn Stim Host on in **System
+this Mac's screen, one at a time: Stim Host keeps running after install returns,
+asks for Device Control and Data Access once the Screen Recording request is
+answered (it waits up to two minutes for each), and opens that System Settings
+pane with Stim Host listed when macOS shows no request for it. You only
+approve; over SSH, use Screen Sharing to see that screen. If a request does not
+appear, turn Stim Host on in **System
 Settings > Privacy & Security > Screen & System Audio Recording** (**Screen
 Recording** on macOS 14) and **Device Control and Data Access** (**Accessibility**
 on macOS 26 and earlier). Stim never changes these settings itself. Servers
