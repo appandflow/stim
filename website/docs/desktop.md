@@ -162,6 +162,18 @@ Releasing Option, ending the gesture, changing orientation or releasing Control
 lifts both contacts. Option and the gesture's Shift modifier stay on the Mac.
 These gestures are not available for physical devices, remote previews or web pages.
 
+With **Control** on an owned local Android emulator, **Paste into device**
+copies Mac clipboard text and pastes it into the focused guest field.
+Owned local iOS simulators and Android emulators offer **Copy device clipboard**,
+which copies guest text back to this Mac, including empty text. iOS Paste remains
+unavailable while [#2331](https://github.com/appandflow/stim/issues/2331) tracks
+the simulator pasteboard provider's failed insertion.
+Unicode and line breaks are preserved. Transfers happen only when pressed; there
+is no automatic clipboard synchronization. An empty or non-text Mac clipboard
+leaves the guest unchanged. Disconnects and unavailable native clipboard APIs
+report a failure. Physical devices, remote sessions and replay do not offer
+clipboard actions.
+
 On the All devices and project wall, active workspaces without running or building
 devices use compact cards labelled **No running devices**, with Metro status,
 warnings and error links. CPU and RAM stay on the workspace page.

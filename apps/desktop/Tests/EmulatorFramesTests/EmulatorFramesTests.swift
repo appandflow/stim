@@ -80,6 +80,15 @@ import Testing
 }
 
 @Suite struct InputMessageTests {
+  @Test func exchangesUtf8ClipboardTextThroughTheEmulatorProtocol() {
+    let text = "\u{00E9}\n\u{65E5}"
+    let wire = Data([0x0a, 0x06, 0xc3, 0xa9, 0x0a, 0xe6, 0x97, 0xa5])
+    #expect(InputMessages.clipboard(text) == wire)
+    #expect(InputMessages.clipboardText(wire) == text)
+    #expect(InputMessages.clipboardText(Data()) == "")
+    #expect(InputMessages.clipboardText(Data([0x0a, 0x01, 0xff])) == nil)
+  }
+
   @Test func encodesAPressedMouseEventWithVarintCoordinates() {
     #expect(
       [UInt8](InputMessages.mouse(x: 378, y: 2208, pressed: true))

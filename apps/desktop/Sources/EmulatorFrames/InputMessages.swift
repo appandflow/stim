@@ -3,6 +3,21 @@ import Foundation
 // Field numbers and enum values follow MouseEvent, KeyboardEvent and
 // EmulatorStatus in the emulator's emulator_controller.proto (sdk/emulator/lib).
 enum InputMessages {
+  // ClipData.text is field 1, UTF-8, in emulator_controller.proto.
+  static func clipboard(_ text: String) -> Data {
+    var out = Data()
+    appendBytes(field: 1, Data(text.utf8), to: &out)
+    return out
+  }
+
+  static func clipboardText(_ bytes: Data) -> String? {
+    var reader = ProtoReader(bytes)
+    while let (field, value) = reader.next() {
+      if field == 1, case .bytes(let text) = value { return String(data: text, encoding: .utf8) }
+    }
+    return ""
+  }
+
   static let macKeyCodeType: UInt64 = 4
   static let keyup: UInt64 = 1
   static let keypress: UInt64 = 2
