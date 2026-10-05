@@ -152,7 +152,7 @@ export function collectOrphanedWorkspaces(
 export const REBUILD_COST: string =
   'The next build of an unchanged app installs from the shared build cache; after a native change the ' +
   'compilation cache speeds the rebuild, but on React Native 0.86 Swift does not use it (explicit modules ' +
-  'are off), so that build recompiles Swift.';
+  'are off), so that build recompiles Swift. The next stim macos in a cleared workspace is a full Swift build.';
 
 export const WORKSPACE_OUTPUT_DIRS: readonly string[] = [
   'derived-data',
