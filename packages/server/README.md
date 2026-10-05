@@ -1689,8 +1689,9 @@ sends reaches any other device.
   each from -1000 to 1000. When hello advertises `macos-window-select`,
   `input.window` takes `window`, an id from the `macos-windows` event, to pin the
   view and input to that window of the app: the helper verifies it is one of the
-  app's on-screen standard windows, makes it the app's main window, raises and
-  activates it, and capture stays on it while another window comes to the front.
+  app's on-screen standard windows, makes it the app's main window and raises it
+  among the app's windows without activating the app, and capture stays on it
+  while another window comes to the front.
   `window: null` follows the front window again. A pin also ends when its window
   closes or leaves the screen, or when the Control session that set it ends,
   including takeover, disconnect and the idle timeout. A window that is gone by
