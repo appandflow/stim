@@ -61,13 +61,8 @@ function bundleIdOf(app: string): string | null {
   }
 }
 
-/**
- * The signed Stim Host release `install` downloads, pinned by version and the SHA-256 of its zip, which the
- * host-release workflow prints. While it is null, `install` builds Stim Host Dev on the Mac instead.
- */
 const RELEASE: { version: string; sha256: string } | null = null;
 
-/** Developer ID Application certificates of App & Flow's team, the team that signs Stim Desktop. */
 const RELEASE_REQUIREMENT =
   'identifier "dev.stim.host" and anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6] exists and certificate leaf[field.1.2.840.113635.100.6.1.13] exists and certificate leaf[subject.OU] = "R7E8P23K3N"';
 

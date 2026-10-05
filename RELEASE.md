@@ -469,7 +469,14 @@ signature, and it only needs a new version when the launcher changes.
    `@stim-cli/server` release (or checkout build), `install` downloads that zip,
    checks the digest and the team's Developer ID signature, and installs
    `~/Applications/Stim Host.app` (`dev.stim.host`) instead of building
-   Stim Host Dev.
+   Stim Host Dev. In the same change, update the text that says a signed
+   release has not shipped yet: the Stim Host Dev paragraphs in
+   `packages/server/README.md` ("Run as a service"), `website/docs/macos.md`
+   and `stim guide macos` (`packages/stim-cli/src/guide/macos.ts`). A Mac that
+   had Stim Host Dev keeps that bundle in `~/Applications`; its owner can
+   delete it and its System Settings entries after the switch.
+3. Never replace a published zip: its pinned digest would stop matching. Fix a
+   bad release with a new version.
 
 `packages/server/host/release.sh <version>` builds the same zip locally, ad hoc
 signed unless `HOST_SIGNING_IDENTITY` is set.

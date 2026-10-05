@@ -311,7 +311,7 @@ describe('host app', () => {
       await expect(installHostApp(sources)).rejects.toThrow(/not a Stim Host Dev bundle/);
     }, 120_000);
 
-    it('installs a release only when its zip matches the pin and carries the Developer ID signature', async () => {
+    it('refuses a release zip that does not match the pin or lacks the Developer ID signature', async () => {
       const app = join(home, 'build', 'Stim Host.app');
       mkdirSync(join(app, 'Contents', 'MacOS'), { recursive: true });
       execFileSync('cp', ['/usr/bin/true', join(app, 'Contents', 'MacOS', 'stim-host')]);

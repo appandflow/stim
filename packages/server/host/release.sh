@@ -3,7 +3,7 @@ set -eu
 cd "$(dirname "$0")"
 
 version=${1:?usage: host/release.sh <version>}
-if ! printf '%s' "$version" | grep -Eqx '[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?'; then
+if ! printf '%s' "$version" | grep -Eqx '[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?' || [ "$(printf '%s' "$version" | wc -l)" -ne 0 ]; then
   echo "release.sh: $version is not a semver version such as 1.2.3 or 1.2.3-rc.1" >&2
   exit 1
 fi

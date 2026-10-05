@@ -118,6 +118,13 @@ jobs:
       - name: Build, sign and notarize
         run: packages/server/host/release.sh "$VERSION"
 
+      - name: Check the signature install requires
+        if: env.HOST_SIGNING_IDENTITY != ''
+        run: |
+          codesign --verify --strict --deep \
+            -R='identifier "dev.stim.host" and anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6] exists and certificate leaf[field.1.2.840.113635.100.6.1.13] exists and certificate leaf[subject.OU] = "R7E8P23K3N"' \
+            "packages/server/host/build/Stim Host.app"
+
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: stim-host-${{ env.VERSION }}
@@ -141,10 +148,12 @@ jobs:
         run: |
           out=packages/server/host/build/release
           if ! gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1; then
-            gh release create "$GITHUB_REF_NAME" --verify-tag --latest=false --title "Stim Host $VERSION" \
+            flags="--latest=false"
+            case "$VERSION" in *-*) flags="$flags --prerelease" ;; esac
+            gh release create "$GITHUB_REF_NAME" --verify-tag $flags --title "Stim Host $VERSION" \
               --notes "The signed launcher that \`stim-server service install\` installs on hosting Macs. \`SHA256SUMS\` lists the checksum that @stim-cli/server pins."
           fi
-          gh release upload "$GITHUB_REF_NAME" --clobber "$out/StimHost-$VERSION.zip" "$out/SHA256SUMS"
+          gh release upload "$GITHUB_REF_NAME" "$out/StimHost-$VERSION.zip" "$out/SHA256SUMS"
           cat "$out/SHA256SUMS"
 
       - name: Remove the signing keychain and API key
