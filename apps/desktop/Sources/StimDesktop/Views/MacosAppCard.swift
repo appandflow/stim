@@ -17,38 +17,47 @@ struct MacosAppCard: View {
 
   var body: some View {
     VStack(alignment: .leading, spacing: Space.md) {
-      HStack {
+      HStack(spacing: Space.sm) {
         Label(app.product, systemImage: "macwindow")
           .font(.stim(.headline))
         Spacer()
-        Button("Build and run") { actions.run("Build \(app.product)", StimCommand(runArguments, cwd: workspace)) }
-          .nativeControlStyle()
-          .disabled(app.build.state == "running" || actions.active(for: workspace) != nil)
-        if app.host != nil {
-          Button("Stop") { actions.run("Stop \(app.product)", StimCommand(["stop"], cwd: workspace)) }
-            .nativeControlStyle(.destructive)
-        } else if app.state == "running" || app.state == "orphaned" {
-          Button("Refresh preview") { previewRequest += 1 }
-            .nativeControlStyle()
-            .disabled(refreshing)
-          Button("Open app") { Task { await capture.openApp() } }
-            .nativeControlStyle()
-            .disabled(capture.image == nil || refreshing)
-          Button("Stop") { actions.run("Stop \(app.product)", StimCommand(["stop"], cwd: workspace)) }
-            .nativeControlStyle(.destructive)
+        if app.host == nil, app.state == "running" || app.state == "orphaned" {
+          IconButton(systemImage: "arrow.clockwise", help: "Refresh preview \u{2014} capture the app's window again") {
+            previewRequest += 1
+          }
+          .disabled(refreshing)
+          IconButton(
+            systemImage: "arrow.up.forward.app",
+            help: "Open app \u{2014} bring the captured window to the front for normal input"
+          ) { Task { await capture.openApp() } }
+          .disabled(capture.image == nil || refreshing)
         }
+        if app.host != nil || app.state == "running" || app.state == "orphaned" {
+          IconButton(systemImage: "stop.fill", tint: Palette.error, help: "Stop \u{2014} quit this workspace's app") {
+            actions.run("Stop \(app.product)", StimCommand(["stop"], cwd: workspace))
+          }
+        }
+        Button("Build and run", systemImage: "play.fill") {
+          actions.run("Build \(app.product)", StimCommand(runArguments, cwd: workspace))
+        }
+        .nativeControlStyle(.primary)
+        .disabled(app.build.state == "running" || actions.active(for: workspace) != nil)
       }
-      HStack {
+      HStack(spacing: Space.sm) {
         Text("Swift Package Debug \u{00B7} build \(app.build.state) \u{00B7} app \(app.state)")
           .font(.stim(.footnote)).foregroundStyle(Palette.secondary)
         Spacer()
-        if app.host == nil, capture.windows.count > 1 || capture.pinned != nil {
-          MacosWindowMenu(
-            windows: capture.windows.map { MacosWindows.Window(id: Int($0.id), title: $0.title) },
-            current: capture.current.map { Int($0.id) }, pinned: capture.pinned != nil, enabled: true
-          ) { id in Task { await capture.select(id.map(UInt32.init)) } }
+        if app.host == nil, permissionsMissing {
+          Button {
+            permissions.openSetup()
+          } label: {
+            Label("Allow viewer permissions", systemImage: "exclamationmark.triangle.fill")
+          }
+          .buttonStyle(.borderless)
+          .foregroundStyle(Palette.warning)
+          .font(.stim(.footnote))
+          .help("Viewing needs \(permissions.screenPermissionTitle); Open app also needs \(permissions.controlPermissionTitle).")
         }
-        if app.host == nil { Button("Permissions") { permissions.openSetup() }.nativeControlStyle() }
       }
       if let host = app.host {
         Label("on \(machineName(host.machine))", systemImage: "desktopcomputer")
@@ -62,6 +71,12 @@ struct MacosAppCard: View {
         if app.state == "running" || app.state == "unverified" { HostedMacosWindow(app: app, workspace: workspace) }
       } else if let error = capture.error {
         Text(error).foregroundStyle(Palette.secondary).textSelection(.enabled)
+      }
+      if app.host == nil, capture.image != nil, capture.windows.count > 1 || capture.pinned != nil {
+        MacosWindowMenu(
+          windows: capture.windows.map { MacosWindows.Window(id: Int($0.id), title: $0.title) },
+          current: capture.current.map { Int($0.id) }, pinned: capture.pinned != nil, enabled: true
+        ) { id in Task { await capture.select(id.map(UInt32.init)) } }
       }
       if app.host == nil, let image = capture.image {
         MacosWindowCanvas(image: image)
@@ -88,6 +103,11 @@ extension MacosAppCard {
   fileprivate var runArguments: [String] {
     guard let host = app.host else { return ["macos"] }
     return ["macos", "--host", host.machine]
+  }
+
+  fileprivate var permissionsMissing: Bool {
+    _ = permissions.revision
+    return !CGPreflightScreenCaptureAccess() || !AXIsProcessTrusted()
   }
 }
 
@@ -218,14 +238,23 @@ private struct MacosWindowMenu: View {
           isOn: Binding(get: { pinned && window.id == current }, set: { if $0 { select(window.id) } }))
       }
     } label: {
-      Label(pinned ? "Pinned window" : "Front window", systemImage: pinned ? "pin" : "macwindow.on.rectangle")
+      Label(
+        pinned ? "Pinned to \(currentTitle)" : "Following the front window, \(currentTitle)",
+        systemImage: pinned ? "pin.fill" : "macwindow.on.rectangle")
     }
+    .menuStyle(.borderlessButton)
+    .font(.stim(.caption))
+    .tint(Palette.secondary)
     .fixedSize()
     .disabled(!enabled)
     .help(
       enabled
         ? "Follow the app's front window, or pin the view to one window and bring it to the front."
         : "Take control to choose a window.")
+  }
+
+  private var currentTitle: String {
+    windows.first { $0.id == current }.map(title) ?? "no window"
   }
 
   private func title(_ window: MacosWindows.Window) -> String {

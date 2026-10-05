@@ -5,7 +5,7 @@ extension View {
     #if compiler(>=6.2)
       if #available(macOS 26, *) {
         if variant == .primary {
-          buttonStyle(.glassProminent).tint(Palette.brand).buttonBorderShape(.capsule).controlSize(.small)
+          buttonStyle(.glass).tint(Palette.brand).foregroundStyle(.white).buttonBorderShape(.capsule).controlSize(.small)
         } else {
           buttonStyle(.glass).tint(variant == .destructive ? Palette.error : Palette.accent)
             .buttonBorderShape(.capsule).controlSize(.small)
