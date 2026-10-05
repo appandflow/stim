@@ -42,8 +42,8 @@ jobs:
           build: 'false'
       - run: pnpm install --frozen-lockfile --filter stim-demo-server... --filter stim-monorepo
       - run: pnpm --filter @stim-cli/core run build
-      - run: pnpm run format:check
-      - run: pnpm run lint
+      - run: pnpm exec oxfmt --check apps/demo-server .github/workflows/demo-server.yml .github/workflows/demo-server-deploy.yml
+      - run: pnpm exec oxlint apps/demo-server
       - working-directory: apps/demo-server
         run: pnpm run typecheck
       - working-directory: apps/demo-server
