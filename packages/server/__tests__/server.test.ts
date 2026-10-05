@@ -290,6 +290,9 @@ async function start(
     pushEndpoint?: string;
     buildLimits?: ServerOptions['buildLimits'];
     hostedRelay?: ServerOptions['hostedRelay'];
+    startupProbeMs?: number;
+    startupRetryMs?: number;
+    settle?: boolean;
   } = {},
 ): Promise<number> {
   const stimCli = join(root, 'fake-stim.mjs');
@@ -337,7 +340,10 @@ async function start(
     pullRequests: async () => new Map(),
     buildLimits: overrides.buildLimits,
     hostedRelay: overrides.hostedRelay,
+    startupProbeMs: overrides.startupProbeMs,
+    startupRetryMs: overrides.startupRetryMs,
   });
+  if (overrides.settle !== false) await server!.ready;
   return server.addresses[0]!.port;
 }
 
@@ -482,38 +488,103 @@ describe('recorder startup', () => {
     },
   );
 
-  test('bounds a blocked directory read before spawning status followers', async () => {
-    const pidFile = join(root, 'probe.pid');
-    const preload = join(root, 'blocked-read.cjs');
-    writeFileSync(
-      preload,
-      `const fs = require('node:fs');
+  describe('while a Stim home directory read does not return', () => {
+    const blockRead = (name: string) => {
+      const preload = join(root, `${name}.cjs`);
+      const pidFile = join(root, `${name}.pid`);
+      const release = join(root, `${name}.release`);
+      writeFileSync(
+        preload,
+        `const fs = require('node:fs');
 const { syncBuiltinESMExports } = require('node:module');
 fs.readdirSync = () => {
+  if (fs.existsSync(process.env.PROBE_RELEASE_FILE)) return [];
   fs.writeFileSync(process.env.PROBE_PID_FILE, String(process.pid));
   process.on('SIGTERM', () => {});
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0);
 };
 syncBuiltinESMExports();
 `,
-    );
-    let responsive = false;
-    const timer = setTimeout(() => {
-      responsive = true;
-    }, 20);
-    try {
-      await expect(
-        start({ record: true, env: { NODE_OPTIONS: `--require ${JSON.stringify(preload)}`, PROBE_PID_FILE: pidFile } }),
-      ).rejects.toThrow('Reading recorder ownership directories did not finish within 10 s.');
-      expect(responsive).toBe(true);
-      expect(existsSync(calls)).toBe(false);
-      expect(existsSync(join(process.env.STIM_HOME!, 'server', 'recorder'))).toBe(false);
-      const pid = Number(readFileSync(pidFile, 'utf8'));
-      expect(() => process.kill(pid, 0)).toThrow('ESRCH');
-    } finally {
-      clearTimeout(timer);
-    }
-  }, 20_000);
+      );
+      return {
+        pidFile,
+        release,
+        env: {
+          NODE_OPTIONS: `--require ${JSON.stringify(preload)}`,
+          PROBE_PID_FILE: pidFile,
+          PROBE_RELEASE_FILE: release,
+        },
+      };
+    };
+
+    test('listens at once, reports degraded health, serves no clients and starts no recorder', async () => {
+      const blocked = blockRead('blocked-read');
+      const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const port = await start({
+        record: true,
+        settle: false,
+        startupProbeMs: 400,
+        startupRetryMs: 60_000,
+        env: blocked.env,
+      });
+      try {
+        const pending = await fetch(`http://127.0.0.1:${port}/health`);
+        expect(pending.status).toBe(503);
+        expect(await pending.json()).toMatchObject({ server: 'stim-server', startup: { state: 'pending' } });
+
+        const settled = await server!.ready;
+        expect(settled).toEqual({
+          state: 'degraded',
+          reason: expect.stringContaining('did not finish within 0.4 s'),
+        });
+        const degraded = await fetch(`http://127.0.0.1:${port}/health`);
+        expect(degraded.status).toBe(503);
+        expect(await degraded.json()).toMatchObject({ startup: settled });
+
+        await expect(
+          new Promise((resolve, reject) => {
+            const socket = new WebSocket(`ws://127.0.0.1:${port}`);
+            socket.once('unexpected-response', (_request, response) => resolve(response.statusCode));
+            socket.once('error', reject);
+          }),
+        ).resolves.toBe(503);
+
+        expect(existsSync(calls)).toBe(false);
+        expect(existsSync(join(process.env.STIM_HOME!, 'server'))).toBe(false);
+        expect(error).toHaveBeenCalledWith(expect.stringContaining('not serving clients'));
+        const pid = Number(readFileSync(blocked.pidFile, 'utf8'));
+        expect(() => process.kill(pid, 0)).toThrow('ESRCH');
+      } finally {
+        error.mockRestore();
+      }
+    });
+
+    test('becomes ready without a restart once the read returns', async () => {
+      const blocked = blockRead('recovering-read');
+      const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const port = await start({
+        record: true,
+        settle: false,
+        startupProbeMs: 400,
+        startupRetryMs: 50,
+        env: { FAKE_STIM_PAYLOADS: '[]', ...blocked.env },
+      });
+      try {
+        expect((await server!.ready).state).toBe('degraded');
+        writeFileSync(blocked.release, '');
+        await vi.waitFor(async () => {
+          const response = await fetch(`http://127.0.0.1:${port}/health`);
+          expect(response.status).toBe(200);
+          expect(await response.json()).toMatchObject({ startup: { state: 'ready' } });
+        });
+        expect(existsSync(join(process.env.STIM_HOME!, 'server'))).toBe(true);
+        const client = await connect(port);
+        expect(client.socket.readyState).toBe(WebSocket.OPEN);
+      } finally {
+        error.mockRestore();
+      }
+    }, 20_000);
+  });
 });
 
 describe.skipIf(!fakeTailscale)('Desktop route setup', () => {
@@ -1588,6 +1659,7 @@ setTimeout(() => console.log(fs.readFileSync(${JSON.stringify(grants)}, 'utf8'))
       stim: '9.9.9',
       protocol: 1,
       stimHome: process.env.STIM_HOME,
+      startup: { state: 'ready' },
       tailscale: { state: 'not-running', backendState: 'Stopped' },
       nativeViewerOpened: false,
     });

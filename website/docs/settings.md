@@ -465,11 +465,16 @@ command when a named machine does not answer.
 
 An installed LaunchAgent does not prove server readiness: check its health in
 `stim-server service status` and the reported log when readiness is unavailable.
-Before creating status followers or native helpers, the server bounds a
-read-only recording-directory check to 10 seconds, plus up to one second to
-stop the check. A stalled read fails startup without changing ownership claims
-or recordings. It does not restore an inaccessible volume or grant filesystem
-access; the underlying access problem still needs to be resolved.
+The server listens before it touches the Stim home. A read-only child process
+reads the Stim home, server and recording directories; until it returns,
+`/health` answers 503 with `startup.state` `pending`. A read that does not
+return within 10 seconds, plus up to one second to stop the child, leaves the
+server listening and `degraded`: `/health` and `stim-server service status` name
+the reason, and no status followers, watchers, native helpers or recorder start.
+The server reads again every 30 seconds and serves as soon as a read returns,
+without changing ownership claims or recordings. It does not restore an
+inaccessible volume or grant filesystem access; the underlying access problem
+still needs to be resolved.
 
 `gc.worktreeGraceMinutes` is how long `stim gc --delete` waits before it
 removes a merged or idle linked worktree, counted from the worktree's latest

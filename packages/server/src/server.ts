@@ -26,7 +26,8 @@ import { LatestFrames, FRAME_RETRY_MS } from './frame-delivery.ts';
 import { BuildHost, type BuildLimits, type BuildSession } from './build.ts';
 import { ControlHub, parseControlBegin, parseInput, SLOT_NAME, type Controller } from './control.ts';
 import { Recorder, type RecordLimits } from './recorder.ts';
-import { checkRecorderStartup } from './recorder-startup.ts';
+import { probeDirectories, STARTUP_PROBE_MS, STARTUP_RETRY_MS, type StartupState } from './startup.ts';
+import { exclusiveClaimDir, sharedClaimDir } from '@stim-cli/core/ownership-claim';
 import { Player, recordedSpans, recordingDir, segmentKeyframe, timelineMarkers } from './replay.ts';
 import { FeedPool, type JsonObject } from './feed.ts';
 import { buildFoldHelper, buildFrameHelper, type FrameHint } from './frame-helper.ts';
@@ -146,6 +147,12 @@ export interface ServerOptions {
   tailscaleMonitor?: TailscaleMonitor;
   /** How long to wait before listening again on a Tailscale address that failed; tests shorten it. */
   listenRetryMs?: number;
+  /**
+   * How long the startup read of the Stim home directories may take, and how long to wait before reading them
+   * again after it failed; tests shorten them.
+   */
+  startupProbeMs?: number;
+  startupRetryMs?: number;
   authTimeoutMs?: number;
   maxAuthFailures?: number;
   failureWindowMs?: number;
@@ -196,6 +203,7 @@ interface ControlLimits {
 
 interface ServerHealth {
   host?: HelloResult['host'];
+  startup: StartupState;
   server: 'stim-server';
   name: string;
   version: string;
@@ -226,6 +234,8 @@ function localHealthRequest(request: IncomingMessage): boolean {
 
 export interface RunningServer {
   addresses: { host: string; port: number }[];
+  /** Settles once the first read of the Stim home finished: `ready`, or `degraded` while a read does not return. */
+  ready: Promise<StartupState>;
   close: () => Promise<void>;
 }
 
@@ -449,7 +459,6 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     }
     return hostProbe;
   };
-  if (options.record !== false) await checkRecorderStartup(join(serverDir(), 'recorder'), options.env);
   const limiter = new FailureLimiter(options.maxAuthFailures ?? 5, options.failureWindowMs ?? 60_000);
   const authTimeoutMs = options.authTimeoutMs ?? 5000;
   const feeds = new FeedPool(options.stimCli, options.env);
@@ -479,18 +488,13 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     }
     return helperPath;
   };
-  if (options.frameHelper === undefined) buildHelper();
   let nativeViewerOpened = false;
   const helperEnv = options.host ? { ...options.env, STIM_CAPTURE_HOST: options.host.name } : options.env;
   const frames = new FramePool(helperEnv, frameLimits, frameHelper, new DeviceViewers());
-  const recorder =
-    options.record === false
-      ? null
-      : new Recorder({
-          frames,
-          subscribeStatus: (listener) => feeds.subscribe(STATUS_FEED, listener),
-          limits: options.recordLimits,
-        });
+  let recorder: Recorder | null = null;
+  let startup: StartupState = { state: 'pending' };
+  let startupProbe: ReturnType<typeof probeDirectories> | null = null;
+  let startupRetry: NodeJS.Timeout | null = null;
   let foldBuild: Promise<string> | null = null;
   const foldHelper = () => {
     if (options.foldHelper !== undefined) return Promise.resolve(options.foldHelper);
@@ -665,7 +669,6 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     limits: options.pushLimits,
   });
 
-  mkdirSync(serverDir(), { recursive: true, mode: 0o700 });
   const relays = new Map<WebSocket, HostedRelay>();
   let revocationCheck: NodeJS.Timeout | null = null;
   let checkedRegistry: string | null = null;
@@ -691,15 +694,29 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       }
     }
   };
-  const watcher: FSWatcher = watch(serverDir(), () => {
-    revocationCheck ??= setTimeout(() => {
-      revocationCheck = null;
-      checkRevocations();
-    }, 50);
-  });
-  // Node's macOS watcher can miss changes before it is ready: https://github.com/nodejs/node/issues/52601.
-  const revocationPoll = setInterval(checkRevocations, 1000);
-  revocationPoll.unref();
+  let watcher: FSWatcher | null = null;
+  let revocationPoll: NodeJS.Timeout | null = null;
+  const becomeReady = () => {
+    mkdirSync(serverDir(), { recursive: true, mode: 0o700 });
+    watcher = watch(serverDir(), () => {
+      revocationCheck ??= setTimeout(() => {
+        revocationCheck = null;
+        checkRevocations();
+      }, 50);
+    });
+    // Node's macOS watcher can miss changes before it is ready: https://github.com/nodejs/node/issues/52601.
+    revocationPoll = setInterval(checkRevocations, 1000);
+    revocationPoll.unref();
+    push.refresh();
+    if (options.frameHelper === undefined) buildHelper();
+    if (options.record !== false) {
+      recorder = new Recorder({
+        frames,
+        subscribeStatus: (listener) => feeds.subscribe(STATUS_FEED, listener),
+        limits: options.recordLimits,
+      });
+    }
+  };
 
   let settingUpRoute: Promise<ServeRoute> | null = null;
 
@@ -2035,6 +2052,10 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   }
 
   function upgrade(request: IncomingMessage, socket: Socket, head: Buffer): void {
+    if (startup.state !== 'ready') {
+      socket.end('HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\nContent-Length: 0\r\n\r\n');
+      return;
+    }
     const peer = peerAddress(request);
     if (limiter.blocked(peer ?? 'local')) {
       socket.end('HTTP/1.1 429 Too Many Requests\r\nConnection: close\r\nContent-Length: 0\r\n\r\n');
@@ -2068,31 +2089,42 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         : undefined;
     const body: ServerHealth = {
       ...health,
+      startup,
       ...(options.host ? { host: await hostHealth() } : {}),
       tailscale: healthTailscale(tailscale),
       route,
       nativeViewerOpened,
     };
-    response.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify(body));
+    response
+      .writeHead(startup.state === 'ready' ? 200 : 503, { 'content-type': 'application/json' })
+      .end(JSON.stringify(body));
   };
   const servers = new Map<string, { server: Server; sockets: Set<Socket> }>();
   const addresses: RunningServer['addresses'] = [];
-  push.refresh();
   const close = async () => {
     closing = true;
-    push.close();
-    watcher.close();
-    clearInterval(revocationPoll);
-    helperAbort.abort();
-    sampler.stop();
-    if (revocationCheck) clearTimeout(revocationCheck);
-    for (const client of wss.clients) client.terminate();
-    await control.close();
+    if (startupRetry) clearTimeout(startupRetry);
+    await startupProbe?.cancel();
     await builds.close();
-    await agentDrivers.close();
-    await hostedDevices.close();
-    recorder?.close();
-    await Promise.all([frames.close(), feeds.close(), ...[...running].map((cancel) => cancel()), cancelling.settled()]);
+    for (const client of wss.clients) client.terminate();
+    if (startup.state === 'ready') {
+      push.close();
+      watcher?.close();
+      if (revocationPoll) clearInterval(revocationPoll);
+      helperAbort.abort();
+      sampler.stop();
+      if (revocationCheck) clearTimeout(revocationCheck);
+      await control.close();
+      await agentDrivers.close();
+      await hostedDevices.close();
+      recorder?.close();
+      await Promise.all([
+        frames.close(),
+        feeds.close(),
+        ...[...running].map((cancel) => cancel()),
+        cancelling.settled(),
+      ]);
+    }
     wss.close();
     await Promise.all([...servers.values()].map(closeListener));
   };
@@ -2110,10 +2142,16 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         request.headers['sec-fetch-site'] === undefined
       ) {
         const peerHealth = { server: health.server, version: health.version, protocol: health.protocol };
-        response.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify(peerHealth));
+        response
+          .writeHead(startup.state === 'ready' ? 200 : 503, { 'content-type': 'application/json' })
+          .end(JSON.stringify(peerHealth));
         return;
       }
       const agent = /^\/device-host\/agent\/([a-f0-9-]{36})(?:[/?]|$)/.exec(request.url ?? '');
+      if (agent && startup.state !== 'ready') {
+        response.writeHead(503, { 'content-type': 'text/plain' }).end('stim-server is not ready.\n');
+        return;
+      }
       if (agent) {
         answerAgent(request, response, agent[1]!).catch(() => {
           if (response.headersSent) response.destroy();
@@ -2187,8 +2225,43 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   queueReconcile();
   await reconciling;
   const stopWatching = monitor?.onChange(queueReconcile);
+  let settle!: (state: StartupState) => void;
+  const ready = new Promise<StartupState>((resolve) => {
+    settle = resolve;
+  });
+  const checkHome = async (): Promise<void> => {
+    const directories = [configDir(), serverDir(), join(configDir(), 'workspaces')];
+    if (options.record !== false) {
+      const recorderRoot = join(serverDir(), 'recorder');
+      directories.push(exclusiveClaimDir(recorderRoot), sharedClaimDir(recorderRoot));
+    }
+    startupProbe = probeDirectories(directories, options.env, options.startupProbeMs ?? STARTUP_PROBE_MS, configDir());
+    let reason = await startupProbe.result;
+    startupProbe = null;
+    if (closing) return settle(startup);
+    if (reason === null) {
+      try {
+        becomeReady();
+      } catch (error) {
+        reason = (error as Error).message;
+      }
+    }
+    if (reason === null) {
+      if (startup.state === 'degraded') console.error('stim-server: the Stim home answers again; serving clients.');
+      startup = { state: 'ready' };
+      return settle(startup);
+    }
+    if (startup.state !== 'degraded' || startup.reason !== reason) {
+      console.error(`stim-server: listening, but not serving clients until the Stim home answers. ${reason}`);
+    }
+    startup = { state: 'degraded', reason };
+    settle(startup);
+    startupRetry = setTimeout(() => void checkHome(), options.startupRetryMs ?? STARTUP_RETRY_MS);
+  };
+  void checkHome();
   return {
     addresses,
+    ready,
     close: async () => {
       stopWatching?.();
       const closed = close();

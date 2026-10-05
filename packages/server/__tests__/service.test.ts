@@ -260,6 +260,26 @@ describe('service status permissions', () => {
     expect(line(lines, 'Accessibility:')).toContain('unknown');
   });
 
+  it('reports a server that listens but cannot read its Stim home as degraded, not ok', () => {
+    const health = {
+      startup: { state: 'ready' as const },
+      version: '1',
+      stim: '1',
+      stimHome: '/h',
+      tailscale: null,
+      route: null,
+    };
+    expect(line(statusLines({ ...status, health }, permissionPanes(27)), 'health:')).toMatch(/^ {2}health: ok,/);
+    const degraded = { ...health, startup: { state: 'degraded' as const, reason: 'A read did not finish.' } };
+    expect(line(statusLines({ ...status, health: degraded }, permissionPanes(27)), 'health:')).toMatch(
+      /^ {2}health: degraded.*A read did not finish\./,
+    );
+    const pending = { ...health, startup: { state: 'pending' as const } };
+    expect(line(statusLines({ ...status, health: pending }, permissionPanes(27)), 'health:')).toMatch(
+      /^ {2}health: starting/,
+    );
+  });
+
   it('points a node-first service at reinstalling', () => {
     expect(statusLines({ ...status, host: null }, permissionPanes(27)).join('\n')).toContain(
       '`stim-server service install` again',

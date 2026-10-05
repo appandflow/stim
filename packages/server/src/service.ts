@@ -17,6 +17,7 @@ import {
 } from './service-plist.ts';
 import { hostPermissionPanes, installHostApp, requestHostPermissions } from './stim-host.ts';
 import { findTailscale, serveCommand, serveRoute, tailscaleStatus } from './tailscale.ts';
+import type { StartupState } from './startup.ts';
 
 const LAUNCHCTL_TIMEOUT_MS = 15_000;
 const HEALTH_TIMEOUT_MS = 5_000;
@@ -121,6 +122,7 @@ async function unload(label: string): Promise<void> {
 }
 
 interface Health {
+  startup?: StartupState;
   host?: { name: string; screenRecording: boolean; accessibility: boolean } | null;
   version: string;
   stim: string;
@@ -143,7 +145,7 @@ async function waitForHealth(port: number): Promise<Health | null> {
   const deadline = Date.now() + HEALTH_WAIT_MS;
   for (;;) {
     const health = await fetchHealth(port);
-    if (health || Date.now() >= deadline) return health;
+    if ((health && health.startup?.state !== 'pending') || Date.now() >= deadline) return health;
     await sleep(500);
   }
 }
@@ -258,10 +260,15 @@ export async function installService(options: ServiceOptions): Promise<string[]>
 
   const notes = [`Installed ${options.label}: ${path}`, `Log: ${spec.logPath}`];
   const health = await waitForHealth(options.port);
+  const follow = `Run \`stim-server service status --label ${options.label}\` and check ${spec.logPath}.`;
   notes.push(
-    health
-      ? `stim-server ${health.version} answers on 127.0.0.1:${options.port}.`
-      : `LaunchAgent installed, but server readiness is unavailable on 127.0.0.1:${options.port}. Run \`stim-server service status --label ${options.label}\` and check ${spec.logPath}.`,
+    !health
+      ? `LaunchAgent installed, but server readiness is unavailable on 127.0.0.1:${options.port}. ${follow}`
+      : health.startup?.state === 'degraded'
+        ? `LaunchAgent installed and listening on 127.0.0.1:${options.port}, but not serving clients: ${health.startup.reason} ${follow}`
+        : health.startup?.state === 'pending'
+          ? `LaunchAgent installed and listening on 127.0.0.1:${options.port}, still reading its Stim home. ${follow}`
+          : `stim-server ${health.version} answers on 127.0.0.1:${options.port}.`,
   );
   try {
     await requestHostPermissions(host.app);
@@ -302,7 +309,14 @@ export interface ServiceStatus {
   runs: number | null;
   lastExitCode: string | null;
   port: number | null;
-  health: { version: string; stim: string; stimHome: string; tailscale: string | null; route: string | null } | null;
+  health: {
+    startup: StartupState;
+    version: string;
+    stim: string;
+    stimHome: string;
+    tailscale: string | null;
+    route: string | null;
+  } | null;
   serve: ServeRecord | null;
   logPath: string | null;
   host: { app: string; name: string; screenRecording: boolean | null; accessibility: boolean | null } | null;
@@ -357,6 +371,7 @@ export async function serviceStatus(label: string): Promise<ServiceStatus> {
     port: installed?.port ?? null,
     health: health
       ? {
+          startup: health.startup ?? { state: 'ready' },
           version: health.version,
           stim: health.stim,
           stimHome: health.stimHome,
@@ -406,10 +421,17 @@ export function statusLines(status: ServiceStatus, panes: { screen: string; cont
   if (status.runs !== null)
     lines.push(`  runs: ${status.runs}${status.lastExitCode ? `, last exit ${status.lastExitCode}` : ''}`);
   lines.push(`  port: ${status.port}`);
+  const detail = status.health
+    ? `stim-server ${status.health.version}, stim ${status.health.stim}, stim home ${status.health.stimHome}`
+    : null;
   lines.push(
-    status.health
-      ? `  health: ok, stim-server ${status.health.version}, stim ${status.health.stim}, stim home ${status.health.stimHome}`
-      : `  health: no answer on 127.0.0.1:${status.port}`,
+    !status.health
+      ? `  health: no answer on 127.0.0.1:${status.port}`
+      : status.health.startup.state === 'degraded'
+        ? `  health: degraded, listening but not serving clients: ${status.health.startup.reason} (${detail})`
+        : status.health.startup.state === 'pending'
+          ? `  health: starting, still reading the Stim home (${detail})`
+          : `  health: ok, ${detail}`,
   );
   if (status.health?.tailscale) lines.push(`  tailscale: ${status.health.tailscale}`);
   if (status.health?.route) lines.push(`  tailscale route: ${status.health.route}`);
