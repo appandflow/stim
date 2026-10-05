@@ -19,22 +19,18 @@
       try await check(screen: .simulator, scenario: .error, dark: false, width: 380)
     }
 
-    @MainActor func testBuildHistoryCollapsed() async throws {
-      try await checkBuild(expanded: false)
-    }
-
-    @MainActor func testBuildHistoryExpanded() async throws {
-      try await checkBuild(expanded: true)
+    @MainActor func testBuildHistoryRow() async throws {
+      try await checkBuild()
     }
 
     @MainActor private func checkBuild(
-      expanded: Bool, file: StaticString = #filePath, testName: String = #function, line: UInt = #line
+      file: StaticString = #filePath, testName: String = #function, line: UInt = #line
     ) async throws {
       let now = Date(timeIntervalSince1970: 946728000)
       let fixture = try PlaygroundFixtures.make(.longText, now: now)
       let entry = try XCTUnwrap(fixture.environment.builds?.builds(for: "ios").first)
       try await check(
-        content: BuildHistoryRow(entry: entry, workspace: PlaygroundFixtures.workspace, now: now, expanded: expanded)
+        content: BuildHistoryRow(entry: entry, now: now, open: {})
           .font(.stim(.callout))
           .padding(Space.lg)
           .background(RoundedRectangle(cornerRadius: Radius.control).fill(Palette.surface))

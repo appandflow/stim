@@ -2,13 +2,14 @@ import StimKit
 import StimStores
 import SwiftUI
 
-/// Each platform the workspace runs: the running build's phases, output and cache miss, or the last build and what
-/// `stim <platform> --plan` predicts for the next one, with Check and Run. Opening the section checks every platform
-/// it shows, unless a build is running.
+/// Each platform the workspace runs: the running build's phase and progress, or the last build and what
+/// `stim <platform> --plan` predicts for the next one, with Details, Check and Run. Opening the section checks every
+/// platform it shows, unless a build is running. Details opens the build sheet.
 struct BuildSection: View {
   var cli: Task<StimCLI, Never>
   var env: Workspace
   var openLogs: (LogQuery) -> Void
+  var openBuild: (BuildSheetSelection) -> Void
   @EnvironmentObject private var checks: BuildPlanChecks
   @EnvironmentObject private var actions: ActionCenter
 
@@ -70,12 +71,10 @@ struct BuildSection: View {
           .font(.stim(.callout, weight: .semibold))
           .lineLimit(1)
         Spacer()
-        if let query = buildLogs(platform, running: building) {
-          Button("Build logs") { openLogs(query) }
-            .buttonStyle(.stim())
-            .fixedSize()
-            .help("Open this build's full retained raw output")
-        }
+        Button("Details") { openBuild(BuildSheetSelection(workspace: env.path, platform: platform)) }
+          .buttonStyle(.stim())
+          .fixedSize()
+          .help("Open build details")
         if building == nil { runButton(platform) }
       }
       if let host = building?.remote(at: Date())?.host {
@@ -98,28 +97,24 @@ struct BuildSection: View {
           if running != nil {
             Text("Checked after the running build").foregroundStyle(Palette.tertiary)
           } else {
-            nextBuild(entry)
+            NextBuildView(entry: entry)
           }
         }
       }
       let history = env.builds?.builds(for: platform) ?? []
       if !history.isEmpty {
         Divider().overlay(Palette.border)
-        BuildHistoryList(entries: history, workspace: env.path)
+        BuildHistoryList(entries: history) { entry in
+          openBuild(
+            BuildSheetSelection(
+              workspace: env.path, platform: platform, run: "\(platform)|\(entry.slot)|\(entry.build.startedAt)"))
+        }
       }
     }
     .padding(Space.lg)
     .frame(maxWidth: .infinity, alignment: .leading)
     .background(
       RoundedRectangle(cornerRadius: Radius.control).fill(building == nil ? Palette.surface : Palette.primary.opacity(0.06)))
-  }
-
-  private func buildLogs(_ platform: String, running: Build?) -> LogQuery? {
-    if let running {
-      return .build(platform: platform, slot: running.slot, startedAt: running.startedAt)
-    }
-    guard let entry = env.builds?.builds(for: platform).first else { return nil }
-    return .build(platform: platform, slot: entry.slot, startedAt: entry.build.startedAt, finishedAt: entry.build.finishedAt)
   }
 
   @ViewBuilder private func checkButton(_ platform: String, entry: BuildPlanChecks.Entry?) -> some View {
@@ -167,60 +162,11 @@ struct BuildSection: View {
       if let diagnostics = last.diagnostics, !diagnostics.isEmpty {
         BuildDiagnosticsView(diagnostics: diagnostics, workspace: env.path)
       }
-      if let reason = last.missReason {
-        MissReasonButton(reason: reason, help: "Why this build missed the cache")
-      }
     } else {
       Text("No build recorded").foregroundStyle(Palette.tertiary)
     }
   }
 
-  @ViewBuilder
-  private func checkedAt(_ date: Date?) -> some View {
-    if let date {
-      TimelineView(.periodic(from: .now, by: 30)) { context in
-        Text("Checked \(Format.age(context.date.timeIntervalSince(date)))")
-          .font(.stim(.footnote)).foregroundStyle(Palette.tertiary)
-      }
-    }
-  }
-
-  @ViewBuilder
-  private func nextBuild(_ entry: BuildPlanChecks.Entry?) -> some View {
-    switch entry?.state {
-    case .checking:
-      HStack(spacing: Space.sm) {
-        ProgressView().controlSize(.mini)
-        Text("Checking next build\u{2026}").foregroundStyle(Palette.tertiary)
-      }
-    case .done(.plan(let plan)):
-      VStack(alignment: .leading, spacing: Space.xxs) {
-        Text(plan.nextBuild)
-          .font(.stim(.callout, weight: .semibold))
-          .fixedSize(horizontal: false, vertical: true)
-          .foregroundStyle(plan.refusal != nil || plan.cacheHit == .none ? Palette.warning : Palette.success)
-          .help(plan.detail ?? "")
-        checkedAt(entry?.checkedAt)
-        if let reason = plan.missReason {
-          MissReasonButton(reason: reason, help: "Why the next build would miss the cache")
-        }
-        if let refusal = plan.refusal {
-          Text([refusal.message, refusal.remedy].compactMap { $0 }.joined(separator: " "))
-            .foregroundStyle(Palette.secondary)
-            .textSelection(.enabled)
-        }
-      }
-    case .done(.refused(let refusal)):
-      Text("Cannot plan: \([refusal.message, refusal.remedy].compactMap { $0 }.joined(separator: " "))")
-        .foregroundStyle(Palette.warning)
-        .textSelection(.enabled)
-        .help(refusal.code)
-    case .failed(let message):
-      Text(message).foregroundStyle(Palette.error)
-    case nil:
-      Text("Not checked yet").foregroundStyle(Palette.tertiary)
-    }
-  }
 }
 
 /// The names the app shows for the workspaces at their paths.
@@ -243,8 +189,7 @@ extension EnvironmentValues {
   }
 }
 
-/// A running build: the phase and its counts, elapsed over the estimate, the phase bar and checklist, why the
-/// cache missed.
+/// A running build: the phase and its counts, elapsed over the estimate, the phase bar, why the cache missed.
 private struct RunningBuildDetail: View {
   var env: Workspace
   var build: Build
@@ -265,9 +210,6 @@ private struct RunningBuildDetail: View {
             .monospacedDigit()
         }
         PhaseBar(steps: barSteps(steps), key: build.key)
-        if namesPhases(steps) || build.cacheLookupOutcome != nil {
-          PhaseChecklist(steps: steps, build: build)
-        }
       }
       .accessibilityElement(children: .combine)
     }
@@ -281,7 +223,6 @@ private struct RunningBuildDetail: View {
     if let miss = build.missReason {
       Text(miss.summary).font(.stim(.footnote)).foregroundStyle(Palette.secondary)
         .fixedSize(horizontal: false, vertical: true)
-      MissReasonButton(reason: miss, help: "Why this build missed the cache")
       if let note = build.recheckNote {
         Text(note).font(.stim(.footnote)).foregroundStyle(Palette.tertiary)
       }
@@ -291,7 +232,7 @@ private struct RunningBuildDetail: View {
 
 private struct BuildHistoryList: View {
   var entries: [BuildHistoryEntry]
-  var workspace: String
+  var open: (BuildHistoryEntry) -> Void
   @State private var expanded = false
 
   var body: some View {
@@ -317,7 +258,7 @@ private struct BuildHistoryList: View {
       TimelineView(.periodic(from: .now, by: 30)) { context in
         VStack(alignment: .leading, spacing: Space.xxs) {
           ForEach(entries, id: \.self) { entry in
-            BuildHistoryRow(entry: entry, workspace: workspace, now: context.date)
+            BuildHistoryRow(entry: entry, now: context.date) { open(entry) }
           }
         }
         .padding(.top, Space.xs)
@@ -328,18 +269,8 @@ private struct BuildHistoryList: View {
 
 struct BuildHistoryRow: View {
   var entry: BuildHistoryEntry
-  var workspace: String
   var now: Date
-  @State private var expanded = false
-
-  #if DEBUG
-    init(entry: BuildHistoryEntry, workspace: String, now: Date, expanded: Bool = false) {
-      self.entry = entry
-      self.workspace = workspace
-      self.now = now
-      _expanded = State(initialValue: expanded)
-    }
-  #endif
+  var open: () -> Void
 
   private var color: Color {
     switch entry.result {
@@ -350,74 +281,51 @@ struct BuildHistoryRow: View {
   }
 
   var body: some View {
-    AnimatedDisclosure(isExpanded: expanded) {
-      Button {
-        expanded.toggle()
-      } label: {
-        VStack(alignment: .leading, spacing: 1) {
-          HStack(alignment: .firstTextBaseline, spacing: Space.sm) {
-            Circle().fill(color).frame(width: 6, height: 6)
-            Text(entry.outcome)
-              .foregroundStyle(entry.result == "succeeded" ? Palette.secondary : color)
-              .lineLimit(1)
-            Spacer(minLength: 4)
-            Text(entry.build.durationMs.map { Format.elapsed(ms: $0) } ?? "")
-              .foregroundStyle(Palette.tertiary)
-              .font(.stim(.footnote))
-              .monospacedDigit()
-              .fixedSize()
-            Image(systemName: "chevron.right").foregroundStyle(Palette.tertiary)
-              .rotationEffect(.degrees(expanded ? 90 : 0))
-          }
-          if entry.result == "failed", let code = entry.build.errorCode {
-            Text(code).font(.stim(.caption, mono: true)).foregroundStyle(Palette.error)
-              .padding(.leading, Space.lg)
-          }
-          if let endedAt = entry.build.endedAt {
-            Text(Format.age(now.timeIntervalSince(endedAt)))
-              .font(.stim(.caption)).foregroundStyle(Palette.tertiary).padding(.leading, Space.lg)
-          }
+    Button(action: open) {
+      VStack(alignment: .leading, spacing: 1) {
+        HStack(alignment: .firstTextBaseline, spacing: Space.sm) {
+          Circle().fill(color).frame(width: 6, height: 6)
+          Text(entry.outcome)
+            .foregroundStyle(entry.result == "succeeded" ? Palette.secondary : color)
+            .lineLimit(1)
+          Spacer(minLength: 4)
+          Text(entry.build.durationMs.map { Format.elapsed(ms: $0) } ?? "")
+            .foregroundStyle(Palette.tertiary)
+            .font(.stim(.footnote))
+            .monospacedDigit()
+            .fixedSize()
+          Image(systemName: "chevron.right").foregroundStyle(Palette.tertiary)
+        }
+        if entry.result == "failed", let code = entry.build.errorCode {
+          Text(code).font(.stim(.caption, mono: true)).foregroundStyle(Palette.error)
+            .padding(.leading, Space.lg)
+        }
+        if let endedAt = entry.build.endedAt {
+          Text(Format.age(now.timeIntervalSince(endedAt)))
+            .font(.stim(.caption)).foregroundStyle(Palette.tertiary).padding(.leading, Space.lg)
         }
       }
-      .buttonStyle(.hoverRow(outset: Space.xs))
-    } content: {
-      VStack(alignment: .leading, spacing: Space.sm) {
-        if let detail = entry.detail {
-          Text(detail).foregroundStyle(Palette.secondary).textSelection(.enabled)
-        }
-        let facts = [entry.configuration, entry.build.fingerprint.map { "fingerprint \($0.prefix(8))" }]
-          .compactMap { $0 }
-        if !facts.isEmpty {
-          Text(facts.joined(separator: " \u{00B7} ")).foregroundStyle(Palette.tertiary)
-        }
-        if let phases = entry.phaseLine {
-          Text(phases).foregroundStyle(Palette.tertiary)
-        }
-        OffloadFallbackLine(build: entry.build)
-        if let diagnostics = entry.build.diagnostics, !diagnostics.isEmpty {
-          BuildDiagnosticsView(diagnostics: diagnostics, workspace: workspace)
-        }
-        if let reason = entry.build.missReason {
-          MissReasonButton(reason: reason, help: "Why this build missed the cache")
-        }
-      }
-      .font(.stim(.footnote))
-      .fixedSize(horizontal: false, vertical: true)
-      .padding(.leading, Space.lg)
-      .padding(.vertical, Space.xs)
     }
+    .buttonStyle(.hoverRow(outset: Space.xs))
+    .help("Open build details")
   }
 }
 
 /// Why a run that considered offloading built here, in a few words; the tooltip holds the whole reason.
 struct OffloadFallbackLine: View {
   var build: LastBuild
+  var inlineReason = false
 
   var body: some View {
     if let line = build.fallbackLine {
-      Label(line.text, systemImage: "desktopcomputer")
-        .foregroundStyle(Palette.secondary)
-        .help(line.reason)
+      VStack(alignment: .leading, spacing: Space.xs) {
+        Label(line.text, systemImage: "desktopcomputer")
+          .foregroundStyle(Palette.secondary)
+          .help(line.reason)
+        if inlineReason {
+          Text(line.reason).foregroundStyle(Palette.secondary).textSelection(.enabled)
+        }
+      }
     }
   }
 }
@@ -425,11 +333,17 @@ struct OffloadFallbackLine: View {
 struct BuildDiagnosticsView: View {
   var diagnostics: [BuildDiagnostic]
   var workspace: String
-  @State private var expanded = false
+  @State private var expanded: Bool
+
+  init(diagnostics: [BuildDiagnostic], workspace: String, initiallyExpanded: Bool = false) {
+    self.diagnostics = diagnostics
+    self.workspace = workspace
+    _expanded = State(initialValue: initiallyExpanded)
+  }
 
   var body: some View {
     VStack(alignment: .leading, spacing: Space.xs) {
-      ForEach(Array((expanded ? diagnostics : [diagnostics[0]]).enumerated()), id: \.offset) { _, diagnostic in
+      ForEach(Array((expanded ? diagnostics : Array(diagnostics.prefix(1))).enumerated()), id: \.offset) { _, diagnostic in
         Text(diagnostic.text(workspace: workspace))
           .font(.stim(.caption, mono: true))
           .foregroundStyle(Palette.error)
@@ -448,9 +362,10 @@ struct BuildDiagnosticsView: View {
 }
 
 /// Jumps to the workspace whose build of the same app this run waits for.
-private struct WaitingOnButton: View {
+struct WaitingOnButton: View {
   var path: String
   var current: String
+  var beforeOpen: (() -> Void)? = nil
   @Environment(\.workspaceTitle) private var title
 
   var body: some View {
@@ -463,6 +378,7 @@ private struct WaitingOnButton: View {
 
   private var link: some View {
     Button {
+      beforeOpen?()
       OpenRequests.shared.workspacePath = path
     } label: {
       HStack(spacing: Space.xs) {
@@ -497,31 +413,9 @@ struct MissReasonButton: View {
     .accessibilityLabel("Cache miss details: \(reason.summary)")
     .help("\(help)\n\(reason.summary)")
     .popover(isPresented: $shown, arrowEdge: .bottom) {
-      VStack(alignment: .leading, spacing: Space.md) {
-        Text(reason.summary).font(.stim(.body, weight: .semibold)).textSelection(.enabled)
-        if let line = reason.baselineLine {
-          Text(line).foregroundStyle(Palette.secondary)
-        }
-        if !reason.changes.isEmpty {
-          VStack(alignment: .leading, spacing: Space.xxs) {
-            ForEach(reason.changes, id: \.self) { change in
-              HStack(alignment: .firstTextBaseline, spacing: Space.sm) {
-                Text(change.change == "added" ? "+" : change.change == "removed" ? "\u{2212}" : "~")
-                  .foregroundStyle(
-                    change.change == "added" ? Palette.success : change.change == "removed" ? Palette.error : Palette.warning)
-                Text(change.source).font(.stim(.caption, mono: true)).textSelection(.enabled)
-              }
-            }
-          }
-        }
-        if reason.changeCount > reason.changes.count {
-          let hidden = reason.changeCount - reason.changes.count
-          Text(hidden == 1 ? "1 more source changed." : "\(hidden) more sources changed.")
-            .foregroundStyle(Palette.tertiary)
-        }
-      }
-      .padding(Space.lg)
-      .frame(width: 380, alignment: .leading)
+      MissReasonView(reason: reason)
+        .padding(Space.lg)
+        .frame(width: 380, alignment: .leading)
     }
   }
 }
@@ -532,6 +426,95 @@ struct BuildOutcomeBadge: View {
   var body: some View {
     if let label = build.outcomeLabel {
       Pill(label, tone: build.outcome == "hit" ? .success : .warning, size: .small)
+    }
+  }
+}
+
+struct NextBuildView: View {
+  var entry: BuildPlanChecks.Entry?
+  var inlineDetails = false
+
+  @ViewBuilder
+  private func checkedAt(_ date: Date?) -> some View {
+    if let date {
+      TimelineView(.periodic(from: .now, by: 30)) { context in
+        Text("Checked \(Format.age(context.date.timeIntervalSince(date)))")
+          .font(.stim(.footnote)).foregroundStyle(Palette.tertiary)
+      }
+    }
+  }
+
+  @ViewBuilder
+  var body: some View {
+    switch entry?.state {
+    case .checking:
+      HStack(spacing: Space.sm) {
+        ProgressView().controlSize(.mini)
+        Text("Checking next build\u{2026}").foregroundStyle(Palette.tertiary)
+      }
+    case .done(.plan(let plan)):
+      VStack(alignment: .leading, spacing: Space.xxs) {
+        Text(plan.nextBuild)
+          .font(.stim(.callout, weight: .semibold))
+          .fixedSize(horizontal: false, vertical: true)
+          .foregroundStyle(plan.refusal != nil || plan.cacheHit == .none ? Palette.warning : Palette.success)
+          .help(plan.detail ?? "")
+        if inlineDetails, let detail = plan.detail {
+          Text(detail).foregroundStyle(Palette.secondary).textSelection(.enabled)
+        }
+        checkedAt(entry?.checkedAt)
+        if let reason = plan.missReason {
+          if inlineDetails {
+            MissReasonView(reason: reason)
+          } else {
+            MissReasonButton(reason: reason, help: "Why the next build would miss the cache")
+          }
+        }
+        if let refusal = plan.refusal {
+          Text([refusal.message, refusal.remedy].compactMap { $0 }.joined(separator: " "))
+            .foregroundStyle(Palette.secondary)
+            .textSelection(.enabled)
+        }
+      }
+    case .done(.refused(let refusal)):
+      Text("Cannot plan: \([refusal.message, refusal.remedy].compactMap { $0 }.joined(separator: " "))")
+        .foregroundStyle(Palette.warning)
+        .textSelection(.enabled)
+        .help(refusal.code)
+    case .failed(let message):
+      Text(message).foregroundStyle(Palette.error)
+    case nil:
+      Text("Not checked yet").foregroundStyle(Palette.tertiary)
+    }
+  }
+}
+
+struct MissReasonView: View {
+  var reason: BuildMissReason
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: Space.md) {
+      Text(reason.summary).font(.stim(.body, weight: .semibold)).textSelection(.enabled)
+      if let line = reason.baselineLine {
+        Text(line).foregroundStyle(Palette.secondary)
+      }
+      if !reason.changes.isEmpty {
+        VStack(alignment: .leading, spacing: Space.xxs) {
+          ForEach(reason.changes, id: \.self) { change in
+            HStack(alignment: .firstTextBaseline, spacing: Space.sm) {
+              Text(change.change == "added" ? "+" : change.change == "removed" ? "\u{2212}" : "~")
+                .foregroundStyle(
+                  change.change == "added" ? Palette.success : change.change == "removed" ? Palette.error : Palette.warning)
+              Text(change.source).font(.stim(.caption, mono: true)).textSelection(.enabled)
+            }
+          }
+        }
+      }
+      if reason.changeCount > reason.changes.count {
+        let hidden = reason.changeCount - reason.changes.count
+        Text(hidden == 1 ? "1 more source changed." : "\(hidden) more sources changed.")
+          .foregroundStyle(Palette.tertiary)
+      }
     }
   }
 }

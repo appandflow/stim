@@ -21,6 +21,7 @@
   enum PlaygroundScreen: String, CaseIterable, Identifiable {
     case notifications = "Notifications"
     case builds = "Builds"
+    case buildSheet = "Build sheet"
     case simulator = "Simulator controls"
     case settings = "Settings"
     case tokens = "Design tokens"
@@ -30,6 +31,7 @@
       switch self {
       case .notifications: return [.ready, .empty, .longText, .largeData]
       case .builds: return PlaygroundScenario.allCases
+      case .buildSheet: return [.ready, .loading, .error, .longText, .largeData]
       case .simulator: return [.ready, .loading, .empty, .error]
       case .settings: return [.ready, .loading, .empty, .error, .longText]
       case .tokens: return [.ready]
@@ -92,11 +94,18 @@
         InboxView(inbox: fixtures.inbox) { _ in action = "Selected notification logs (fixture only)." }
       case .builds:
         ScrollView {
-          BuildSection(cli: Task { StimCLI(environment: [:]) }, env: fixtures.environment) { _ in
-            action = "Selected build logs (fixture only)."
-          }
+          BuildSection(
+            cli: Task { StimCLI(environment: [:]) }, env: fixtures.environment,
+            openLogs: { _ in action = "Selected build logs (fixture only)." },
+            openBuild: { _ in action = "Selected build details (fixture only)." }
+          )
           .padding(Space.xl)
         }
+      case .buildSheet:
+        BuildSheet(
+          cli: Task { StimCLI(environment: ProcessInfo.processInfo.environment) }, env: fixtures.environment,
+          selection: BuildSheetSelection(workspace: fixtures.environment.path, platform: "ios"),
+          openLogs: { _ in action = "Selected build logs panel (fixture only)." })
       case .simulator:
         ScrollView {
           SimulatorOptionsView(fixture: PlaygroundSimulator(scenario: scenario))
