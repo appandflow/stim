@@ -9,7 +9,7 @@ test('notes hosted macOS apps only while no driver is configured', () => {
   expect(hostedAgentDriverFinding(undefined, 1)).toMatchObject({
     level: 'note',
     title: 'A hosted macOS app runs with no agent driver',
-    fix: 'stim settings set hosting.agentDriver agent-device',
+    fix: expect.stringContaining('hosting.agentDriver agent-device'),
   });
   expect(hostedAgentDriverFinding('none', 2)?.title).toBe('2 hosted macOS apps run with no agent driver');
   expect(hostedAgentDriverFinding('none', 0)).toBeNull();

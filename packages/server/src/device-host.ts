@@ -570,7 +570,7 @@ export class DeviceHost {
 
   private async install(record: HostedDeviceSession, owned: OwnedSession, attempt: string): Promise<void> {
     try {
-      if (record.platform === 'macos') await this.stopAgent(record.id);
+      if (record.platform === 'macos' && this.options.agents.access(record.id)) await this.stopAgent(record.id);
       await this.closeView(owned);
       if (owned.stopping || this.closed || !this.options.allowed(record.client)) return;
       releaseClaim(takeHostedInputClaim(owned.claim));

@@ -9,8 +9,8 @@ export function hostedAgentDriverFinding(driver: unknown, apps: number): Finding
     level: 'note',
     title: `${apps === 1 ? 'A hosted macOS app runs' : `${apps} hosted macOS apps run`} with no agent driver`,
     detail:
-      "The client's coding agent cannot drive these apps because `hosting.agentDriver` is none, so stim-server starts no driver.",
-    fix: 'stim settings set hosting.agentDriver agent-device',
+      "The client's coding agent cannot drive these apps because `hosting.agentDriver` is none, so stim-server starts no driver. agent-device starts only once it can lease a single macOS app.",
+    fix: 'stim settings set hosting.agentDriver agent-device, once agent-device can lease one macOS app',
   };
 }
 

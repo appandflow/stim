@@ -100,17 +100,20 @@ const NOAGENTS = "{appRunning:async()=>({grant:{driver:'none'}}),appStopped:asyn
 type AgentCall = ['running', HostedAgentApp, string] | ['stopped', string];
 let agentCalls: AgentCall[];
 let agentAccess: Map<string, AgentAccess>;
+let agentIssued: Map<string, AgentAccess>;
 const agents = {
   appRunning: (app: HostedAgentApp) => {
     const attempt = readHostedSessions().find((record) => record.id === app.session)!.appAttempt!;
     agentCalls.push(['running', app, readHostedAppMetadata(app.session, attempt).state]);
-    return Promise.resolve(agentAccess.get(app.session) ?? { grant: { driver: 'none' } as const });
+    const access = agentAccess.get(app.session) ?? { grant: { driver: 'none' } as const };
+    agentIssued.set(app.session, access);
+    return Promise.resolve(access);
   },
   appStopped: (session: string) => {
     agentCalls.push(['stopped', session]);
     return Promise.resolve();
   },
-  access: (session: string) => agentAccess.get(session),
+  access: (session: string) => agentIssued.get(session),
 };
 let home: string;
 let host: DeviceHost;
@@ -120,6 +123,7 @@ const request = { workspace: '/client/worktree', slot: 'default', platform: 'ios
 beforeEach(() => {
   agentCalls = [];
   agentAccess = new Map();
+  agentIssued = new Map();
   home = mkdtempSync(join(tmpdir(), 'stim-hosted-test-'));
   process.env.STIM_HOME = home;
   const worker = join(home, 'worker.mjs');
@@ -946,7 +950,6 @@ describe('hosted agent control', () => {
   test('starts macOS agent control for the installed process before the receipt reads installed and hands out its grant', async () => {
     const { id, params } = await installApp('macos', { grant });
     expect(agentCalls).toEqual([
-      ['stopped', id],
       [
         'running',
         {
