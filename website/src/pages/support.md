@@ -31,7 +31,7 @@ A new pairing can look at workspaces, devices and logs. To tap and type on a dev
 
 ## Notifications
 
-Notifications are off until you turn them on in the app and allow them in iOS Settings. Check the categories you want and the quiet hours. An event set to Silent goes to the notification list without a sound. Remote notifications also need the Mac to be awake, connected to the phone's pairing and able to reach Expo's push service.
+Notifications are off until you turn them on in the app and allow them in iOS Settings. Check the categories you want and the quiet hours. An event set to Silent goes to the notification list without a sound. Remote notifications also need the Mac to be awake, running Stim Desktop or stim-server, and able to reach Expo's push service.
 
 ## Disconnecting a phone
 
