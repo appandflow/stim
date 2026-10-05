@@ -46,6 +46,7 @@ let helloError: string | undefined;
 let helloCapabilities: string[];
 let heldMethods: Set<string>;
 let heldReplies: (() => void)[];
+let endControlOnBegin: boolean;
 
 beforeEach(async () => {
   root = realpathSync(mkdtempSync(join(tmpdir(), 'stim-hosted-relay-')));
@@ -88,6 +89,7 @@ beforeEach(async () => {
   helloCapabilities = ['device-host'];
   heldMethods = new Set();
   heldReplies = [];
+  endControlOnBegin = false;
   host = new WebSocketServer({ host: '127.0.0.1', port: 0 });
   await new Promise<void>((resolve, reject) => {
     host.once('listening', resolve);
@@ -146,7 +148,17 @@ beforeEach(async () => {
         if (params.session !== HOST_SESSION) return refuse('wrong hosted session');
         const control = controls.length ? `${CONTROL}-${controls.length + 1}` : CONTROL;
         controls.push(control);
-        return answer({ session: control, lease: null });
+        answer({ session: control, lease: null });
+        if (endControlOnBegin)
+          socket.send(
+            JSON.stringify({
+              event: 'control-ended',
+              session: control,
+              reason: 'taken-over',
+              message: 'Another client took control.',
+            }),
+          );
+        return;
       }
       if (method === 'device-host.frames.keyframe' || method === 'device-host.unsubscribe') {
         if (!subscriptions.includes(params.subscription!)) return refuse('wrong subscription');
@@ -271,6 +283,10 @@ async function client(control = true, controlLimits?: Parameters<typeof startSer
 }
 
 const target = () => ({ workspace, platform: 'macos' });
+const releases = () =>
+  requests
+    .filter((request) => request.method === 'device-host.unsubscribe' || request.method === 'device-host.control.end')
+    .map(({ method, params }) => [method, params]);
 
 it('routes hosted frames and video to the local subscription and forwards keyframes', async () => {
   const local = await client();
@@ -428,14 +444,10 @@ it('ends its host subscription and control session and closes the shared connect
   expect(host.clients.size).toBe(1);
   local.socket.close();
   await vi.waitFor(() => expect(host.clients.size).toBe(0));
-  expect(
-    requests.filter((request) => request.method !== 'hello').map(({ method, params }) => [method, params]),
-  ).toEqual(
-    expect.arrayContaining([
-      ['device-host.unsubscribe', { subscription: UPSTREAM }],
-      ['device-host.control.end', { session: CONTROL }],
-    ]),
-  );
+  expect(releases()).toEqual([
+    ['device-host.control.end', { session: CONTROL }],
+    ['device-host.unsubscribe', { subscription: UPSTREAM }],
+  ]);
 });
 
 it('relays a viewer and a control session over one host connection until the last one ends', async () => {
@@ -444,13 +456,8 @@ it('relays a viewer and a control session over one host connection until the las
   await local.next();
   const session = (await local.request('control.begin', target())).result.session!;
   expect(connections).toBe(1);
-  expect(requests.filter((request) => request.method === 'hello')).toHaveLength(1);
   expect(await local.request('unsubscribe', { subscription })).toMatchObject({ result: {} });
-  await vi.waitFor(() =>
-    expect(requests.find((request) => request.method === 'device-host.unsubscribe')?.params).toEqual({
-      subscription: UPSTREAM,
-    }),
-  );
+  await vi.waitFor(() => expect(releases()).toEqual([['device-host.unsubscribe', { subscription: UPSTREAM }]]));
   expect(host.clients.size).toBe(1);
   expect(await local.request('input.text', { session, text: 'still here' })).toMatchObject({ result: {} });
   expect(await local.request('control.end', { session })).toMatchObject({ result: {} });
@@ -463,20 +470,19 @@ it('shares one host connection between local clients and keeps one client stream
   await desktop.request('frames.subscribe', target());
   await desktop.next();
   await desktop.request('control.begin', target());
-  const phoneSubscription = (await phone.request('frames.subscribe', target())).result.subscription;
+  const phoneSubscription = (await phone.request('frames.subscribe', { ...target(), video: ['h264'] })).result
+    .subscription;
   expect(await phone.next()).toMatchObject({ event: 'frame', subscription: phoneSubscription });
+  const video = (await phone.next()) as Buffer;
+  expect(video.toString('ascii', 21, 21 + video[20]!)).toBe(phoneSubscription);
   expect(connections).toBe(1);
   const upstream = [...host.clients][0]!;
   desktop.socket.close();
   await vi.waitFor(() =>
-    expect(
-      requests.filter((request) => request.method !== 'hello').map(({ method, params }) => [method, params]),
-    ).toEqual(
-      expect.arrayContaining([
-        ['device-host.unsubscribe', { subscription: UPSTREAM }],
-        ['device-host.control.end', { session: CONTROL }],
-      ]),
-    ),
+    expect(releases()).toEqual([
+      ['device-host.control.end', { session: CONTROL }],
+      ['device-host.unsubscribe', { subscription: UPSTREAM }],
+    ]),
   );
   upstream.send(
     JSON.stringify({ event: 'frame-delayed', subscription: `${UPSTREAM}-2`, delayed: true, reason: 'still live' }),
@@ -522,8 +528,23 @@ it('fails every relayed subscription and control session once when the shared co
       expect.objectContaining({ event: 'control-ended', session, reason: 'failed' }),
     ]),
   );
-  await new Promise((resolve) => setTimeout(resolve, 50));
+  expect(await local.request('frames.keyframe', { subscription: first })).toMatchObject({
+    error: { code: 'unknown-subscription' },
+  });
   expect(local.inbox).toEqual([]);
+});
+
+it('forwards a control-ended that arrives right behind the control.begin reply', async () => {
+  endControlOnBegin = true;
+  const local = await client();
+  const begun = await local.request('control.begin', target());
+  expect(await local.next()).toEqual({
+    event: 'control-ended',
+    session: begun.result.session,
+    reason: 'taken-over',
+    message: 'Another client took control.',
+  });
+  await vi.waitFor(() => expect(host.clients.size).toBe(0));
 });
 
 it('returns a host refusal without leaking a token echoed by the host', async () => {

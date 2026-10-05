@@ -589,6 +589,8 @@ whichever local client opened them. Each request still checks the credential
 and the pinned node; a changed credential or endpoint opens a new connection.
 Ending a subscription or session sends `device-host.unsubscribe` or
 `device-host.control.end`, and the connection closes when the last one ends.
+The host's per-connection limits, such as its 32 subscriptions and input
+budgets, therefore apply to all of the client's relayed use of that host.
 Hosted frames and control reject `physical`, a non-default slot, and replay
 (`at`/`rate`).
 `control.begin` still needs the local `control` grant. Screen Recording for

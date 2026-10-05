@@ -38,7 +38,6 @@ function routeOf(message: Event): string | null {
   return null;
 }
 
-/** One connection to a host, shared by every relayed subscription and control session; events go to their route. */
 class Upstream {
   private readonly socket: WebSocket;
   private nextId = 1;
@@ -47,7 +46,7 @@ class Upstream {
   private held: { route: string; event: Event }[] = [];
   private holding: NodeJS.Immediate | null = null;
   private ended: Error | null = null;
-  users = 0;
+  private users = 0;
   onClose: (() => void) | null = null;
 
   private readonly token: string;
@@ -96,7 +95,7 @@ class Upstream {
     });
   }
 
-  /** An event can arrive in the same read as the reply that names its route; it waits one turn for that route. */
+  /** `ws` can emit an event from the same read as the reply that names its route; it waits one turn for that route. */
   private dispatch(route: string, event: Event): void {
     const found = this.routes.get(route);
     if (found) return found.event(event);
@@ -159,10 +158,7 @@ class Upstream {
     if (this.ended) return Promise.reject(this.ended);
     return new Promise((resolve, reject) => {
       const id = this.nextId++;
-      const timer = setTimeout(() => {
-        this.pending.delete(id);
-        reject(new Error(this.safe(`the host did not answer ${method} in time`)));
-      }, TIMEOUT_MS);
+      const timer = setTimeout(() => this.fail(`the host did not answer ${method} in time`), TIMEOUT_MS);
       this.pending.set(id, {
         resolve: (reply) => {
           clearTimeout(timer);
@@ -177,7 +173,6 @@ class Upstream {
     });
   }
 
-  /** Delivers a subscription's (`s:<id>`) or control session's (`c:<id>`) events until the returned function runs. */
   route(name: string, route: Route): () => void {
     if (this.ended) throw this.ended;
     this.routes.set(name, route);
@@ -186,6 +181,19 @@ class Upstream {
     for (const entry of held) route.event(entry.event);
     return () => {
       if (this.routes.get(name) === route) this.routes.delete(name);
+    };
+  }
+
+  lease(): Lease {
+    this.users++;
+    let released = false;
+    return {
+      connection: this,
+      release: () => {
+        if (released) return;
+        released = true;
+        if (--this.users === 0) this.close();
+      },
     };
   }
 
@@ -246,21 +254,14 @@ export class HostConnections {
         this.open.set(key, opened);
         entry = opened;
       }
-      const { connection } = entry;
-      connection.users++;
-      let released = false;
-      const release = () => {
-        if (released) return;
-        released = true;
-        if (--connection.users === 0) connection.close();
-      };
+      const lease = entry.connection.lease();
       try {
         await entry.ready;
       } catch (cause) {
-        release();
+        lease.release();
         throw cause;
       }
-      return { connection, release };
+      return lease;
     } catch (cause) {
       const reason = (cause as Error).message;
       throw new Error(token ? reason.replaceAll(token, '[redacted]') : reason, { cause });
@@ -324,7 +325,6 @@ export class HostedRelay {
     return lease;
   }
 
-  /** Sends `method` to the host and releases `lease` once the host answered or the connection ended. */
   private releaseAfter(lease: Lease, method: string, params: unknown): void {
     void lease.connection
       .request(method, params)
@@ -439,6 +439,7 @@ export class HostedRelay {
         },
         closed: (error) => failed(error.message),
       });
+      if (!this.frames.has(subscription)) unroute();
     } catch (cause) {
       const message = `${host.machine}: ${(cause as Error).message}`;
       if (local && this.frames.has(local)) {
@@ -495,7 +496,12 @@ export class HostedRelay {
       hostSession = reply.result.session;
       if (this.closed || !allowed()) throw new Error('local control access ended');
       const session = `h${this.nextControl++}`;
-      const unroute = connection.route(`c:${hostSession}`, {
+      const entry = { lease, hostSession, unroute: () => {}, startedAt: Date.now(), ...context };
+      this.controls.set(session, entry);
+      opened = session;
+      record({ ok: true });
+      this.send({ id, result: { ...reply.result, session } });
+      entry.unroute = connection.route(`c:${hostSession}`, {
         event: (event) => {
           if (this.controls.has(session) && !Buffer.isBuffer(event) && event.event === 'control-ended') {
             this.send({ ...event, session } as unknown as ServerMessage);
@@ -509,10 +515,7 @@ export class HostedRelay {
           this.endControl(session, 'failed', message, 'ended');
         },
       });
-      this.controls.set(session, { lease, hostSession, unroute, startedAt: Date.now(), ...context });
-      opened = session;
-      record({ ok: true });
-      this.send({ id, result: { ...reply.result, session } });
+      if (!this.controls.has(session)) entry.unroute();
     } catch (cause) {
       const message = `${host.machine}: ${(cause as Error).message}`;
       if (opened) {
@@ -543,10 +546,6 @@ export class HostedRelay {
     return true;
   }
 
-  /**
-   * `host` says how the host's session ends: it already `ended`, the relay must `end` it, or a forwarded
-   * `control.end` is in flight. The connection lease is released only after that.
-   */
   private endControl(
     session: string,
     reason: string | null,
