@@ -122,7 +122,7 @@ afterEach(() => {
   rmSync(root, { recursive: true, force: true });
 });
 
-describe('agent-device driver', () => {
+describe.skipIf(process.platform === 'win32')('agent-device driver', () => {
   test('ships disabled until agent-device can lease one macOS app', async () => {
     install(root);
     const driver = new AgentDeviceDriver({
