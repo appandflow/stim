@@ -119,9 +119,8 @@ describe('asking a build machine to update', () => {
     });
   });
 
-  it.skipIf(process.platform !== 'darwin')(
-    'uploads every packed package in order from a checkout',
-    async () => {
+  describe.skipIf(process.platform !== 'darwin')('from a checkout', () => {
+    it('uploads every packed package in order from a checkout', async () => {
       const machine = updates(SERVER);
       expect(await machine.start('mini')).toMatchObject({ result: { state: 'uploading' } });
       await vi.waitFor(
@@ -153,7 +152,6 @@ describe('asking a build machine to update', () => {
         }
         expect(offset).toBe(size);
       }
-    },
-    60_000,
-  );
+    }, 60_000);
+  });
 });
