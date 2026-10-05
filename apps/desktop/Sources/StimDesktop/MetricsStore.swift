@@ -27,6 +27,7 @@ struct UsageHistory {
 final class MetricsStore {
   private(set) var usage: [String: UsageHistory] = [:]
   private(set) var volumes: [DiskVolume] = []
+  private(set) var hasVolumes = false
   private(set) var memory: MachineMemory?
   /// Samples of the Mac's memory in use and of the CPU the status `machine` owners use, oldest first.
   private(set) var memoryUsed: [Double] = []
@@ -105,6 +106,7 @@ final class MetricsStore {
         }
         self.usage = next
         self.volumes = volumes
+        if self.hasVolumes != !volumes.isEmpty { self.hasVolumes = !volumes.isEmpty }
         self.memory = memory
         if let memory { self.memoryUsed = Array((self.memoryUsed + [Double(memory.usedBytes)]).suffix(UsageHistory.limit)) }
         self.owners.append(self.status.payload?.machine, at: Date())

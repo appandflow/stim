@@ -17,6 +17,7 @@ struct RootView: View {
   private let gc: GcReportStore
   private let buildMachines: BuildMachinesModel
   @ObservedObject private var actions: ActionCenter
+  @ObservedObject private var operations: OperationLog
   private let autopilot: AutopilotRunner
   private let onboarding: Onboarding
   private let storage: StorageStore
@@ -57,6 +58,7 @@ struct RootView: View {
     self.onboarding = onboarding
     self.store = store
     self.actions = actions
+    operations = actions.operations
     self.autopilot = autopilot
     self.gc = gc
     self.metrics = metrics
@@ -91,15 +93,20 @@ struct RootView: View {
         }
         .navigationSplitViewColumnWidth(min: 440, ideal: 900)
         .toolbar {
-          ToolbarItem(placement: .navigation) {
-            if columnVisibility == .detailOnly {
-              OperationsButton(log: actions.operations, actions: actions, store: store, arrowEdge: .bottom)
+          if columnVisibility == .detailOnly, !operations.runs.isEmpty {
+            ToolbarItem(placement: .navigation) {
+              OperationsButton(log: operations, actions: actions, store: store, arrowEdge: .bottom)
             }
           }
-          ToolbarItem(id: summaryItemID, placement: .navigation) {
-            MachineSummary(store: store, metrics: metrics, gc: gc, width: summaryWidth) { selection = .machine }
-              .frame(width: showsWorkspace && inspector == .overlay ? max(0, summaryWidth) : nil, alignment: .leading)
-              .clipped()
+          let summary = MachineSummary(store: store, metrics: metrics, gc: gc, width: summaryWidth) {
+            selection = .machine
+          }
+          if summary.hasContent {
+            ToolbarItem(id: summaryItemID, placement: .navigation) {
+              summary
+                .frame(width: showsWorkspace && inspector == .overlay ? max(0, summaryWidth) : nil, alignment: .leading)
+                .clipped()
+            }
           }
           if showsWorkspace {
             ToolbarItem(placement: .primaryAction) { Spacer() }
@@ -445,6 +452,12 @@ struct MachineSummary: View {
   @State private var showsCPU = false
   @State private var showsMemoryDetails = false
   @State private var showsDisk = false
+
+  /// macOS 26 draws a glass capsule around a toolbar item even when it draws nothing, so the item is declared only when `row` has content.
+  var hasContent: Bool {
+    store.error != nil || store.payload?.capacity != nil || metrics.hasVolumes
+      || (!store.watching && store.updatedAt != nil)
+  }
 
   var body: some View {
     ProposedWidth(width: max(0, width)) {
