@@ -451,7 +451,14 @@ describe('macOS artifact transfer', () => {
       if (typeof choice === 'string') throw new Error(choice);
       const outcome = await offloadBuild({
         choice,
-        request: { platform: 'macos', product: 'Sample', infoPlist: 'Info.plist', bundleId: 'dev.sample.stim.test' },
+        request: {
+          platform: 'macos',
+          product: 'Sample',
+          infoPlist: 'Info.plist',
+          bundleId: 'dev.sample.stim.test',
+          resources: { 'AppIcon.icns': 'Support/icon.icns' },
+          assetCatalog: 'Support/Assets.xcassets',
+        },
         stagingDir: join(repo, 'fetched'),
         onPhase: () => {},
         onEnter: () => {},
@@ -466,7 +473,13 @@ describe('macOS artifact transfer', () => {
         repo: choice.identity.repo,
         project: '',
         platform: 'macos',
-        macos: { product: 'Sample', infoPlist: 'Info.plist', bundleId: 'dev.sample.stim.test' },
+        macos: {
+          product: 'Sample',
+          infoPlist: 'Info.plist',
+          bundleId: 'dev.sample.stim.test',
+          resources: { 'AppIcon.icns': 'Support/icon.icns' },
+          assetCatalog: 'Support/Assets.xcassets',
+        },
         fingerprint: manifestDigest(files),
         stimBuild: 'b1',
       });

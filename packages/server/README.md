@@ -843,11 +843,16 @@ closes its connections and cancels its builds.
   checks every minute and on each change under its server directory. A daemon
   whose Gradle home is deleted stops itself within seconds, because Gradle
   expires a daemon whose registry file is gone.
-  A macOS request supplies `macos: { product, infoPlist, bundleId }`, omitting
-  runtime, configuration, scheme, packageName, isExpo, optimizations and android.
+  A macOS request supplies `macos: { product, infoPlist, bundleId }` and
+  optionally `resources` (up to 256 destination-to-source entries) and
+  `assetCatalog` (a string or null), omitting runtime, configuration, scheme, packageName, isExpo, optimizations and android.
   Product matches `^[A-Za-z0-9_.-]{1,100}$`; infoPlist is a valid relative build
   path within the project; bundleId matches `^[A-Za-z0-9][A-Za-z0-9.-]{0,199}$`.
-  Missing or malformed options get `bad-request`. Its fingerprint is sha256 of
+  Each `resources` destination must be a contained path under
+  `Contents/Resources` (no empty, `.` or `..` segments, no backslash, at most
+  1024 characters) and each source, like `assetCatalog`, a valid build path
+  relative to the repository root, not the project. Missing or malformed
+  options get `bad-request`. Its fingerprint is sha256 of
   every manifest entry sorted by path, encoded as `path NUL kind NUL sha256 LF`.
   The worker recomputes it before building and refuses a mismatch. It skips
   JavaScript installation, prebuild, pods and project fingerprinting. It runs
@@ -859,7 +864,10 @@ closes its connections and cancels its builds.
   process group so cancellation stops it. A failed Swift command reports
   `swift-failed` with the first error or last three output lines. The worker
   stages the executable, frameworks and resource bundles in
-  `out/<job>/<Product>.app`, stamps the requested bundle ID and signs ad hoc.
+  `out/<job>/<Product>.app`, copies each declared resource from its checkout
+  (refusing a source whose realpath leaves it), compiles `assetCatalog` with
+  `xcrun actool`, stamps the requested bundle ID and signs ad hoc. A bad
+  resource entry also reports `swift-failed`, before Swift runs.
   It returns that app as a tar archive, its manifest fingerprint, timings and
   `compilationCache: {}`. The client verifies the digest, identity, executable
   and signature before promotion and launches locally. Every offload failure

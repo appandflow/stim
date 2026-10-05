@@ -291,12 +291,23 @@ describe.skipIf(process.platform !== 'darwin')('stim macos --host (SwiftPM and c
     await host.close();
   });
 
-  test('places the bundle on the host, records the session, and stop ends it there', async () => {
+  test('delivers declared resources with the bundle, records the session, and stop ends it there', async () => {
     host.grant = GRANT;
     const args = ['-autopilot.enabled', 'true', ''];
+    writeFileSync(join(root, 'icon.icns'), 'icon bytes');
+    writeFileSync(join(root, 'font.woff2'), 'font bytes');
+    mkdirSync(join(root, 'branding'));
+    writeFileSync(join(root, 'branding', 'animation.json'), '{"frames":[]}');
     writeFileSync(
       join(root, '.stim.json'),
-      JSON.stringify({ macos: { product: 'Fixture', infoPlist: 'Info.plist', arguments: args } }),
+      JSON.stringify({
+        macos: {
+          product: 'Fixture',
+          infoPlist: 'Info.plist',
+          arguments: args,
+          resources: { 'AppIcon.icns': 'icon.icns', 'font.woff2': 'font.woff2', branding: 'branding' },
+        },
+      }),
     );
     const notes: string[] = [];
     const record = await runMacos(root, (line) => notes.push(line), 'mini');
@@ -313,6 +324,21 @@ describe.skipIf(process.platform !== 'darwin')('stim macos --host (SwiftPM and c
         expect.objectContaining({ path: 'Contents/Info.plist', kind: 'file' }),
         expect.objectContaining({ path: 'Contents/MacOS/Fixture', kind: 'exec', size: 70 * 1024 }),
         expect.objectContaining({ path: 'Contents/Frameworks/Fixture.framework/Fixture', kind: 'link' }),
+        expect.objectContaining({
+          path: 'Contents/Resources/AppIcon.icns',
+          kind: 'file',
+          sha256: sha256(Buffer.from('icon bytes')),
+        }),
+        expect.objectContaining({
+          path: 'Contents/Resources/font.woff2',
+          kind: 'file',
+          sha256: sha256(Buffer.from('font bytes')),
+        }),
+        expect.objectContaining({
+          path: 'Contents/Resources/branding/animation.json',
+          kind: 'file',
+          sha256: sha256(Buffer.from('{"frames":[]}')),
+        }),
       ]),
     );
     for (const file of manifest) expect(host.blobs.has(file.sha256)).toBe(true);

@@ -18,7 +18,25 @@ The plist must contain CFBundleIdentifier and CFBundleExecutable matching the
 product. Use a development plist without shared URL schemes or an update feed.
 Stim gives the copied bundle a workspace-specific identifier. SwiftPM resource
 bundles and frameworks in the reported build directory are copied into it;
-extra app assets and custom packaging scripts are not supported.
+macos.resources maps destinations under Contents/Resources to file or directory
+sources relative to the Swift Package directory, for example:
+
+  { "macos": { "resources": { "AppIcon.icns": "Support/AppIcon-Dev.icns" },
+               "assetCatalog": "Support/Assets.xcassets" } }
+
+macos.assetCatalog selects an optional .xcassets directory compiled by fixed
+xcrun actool arguments. Copies and the compiled Assets.car are added before
+ad hoc signing. If actool does not emit Assets.car, staging refuses; set
+LSMinimumSystemVersion in the plist when Xcode requires a deployment target.
+Destinations are non-empty relative paths without empty, . or
+.. segments, at most 1024 characters, and cannot overlap another resource,
+Assets.car when a catalog is set, or a SwiftPM resource bundle. At most 256
+resources are allowed. Sources must exist as regular files or directories;
+their realpaths must stay inside the git repository root, or the Swift Package
+directory when there is no git root, and a source directory cannot contain
+symbolic links. Sources can use ../ to reach other files
+inside that repository. Custom packaging scripts are not run and extra
+executables, including Stim Desktop's sim-fold helper, are not built.
 
   stim macos              # fixed SwiftPM Debug build, then launch
   stim macos --json       # one launch record; progress goes to stderr
@@ -48,10 +66,13 @@ matching Stim, CPU architecture, Xcode and macOS SDK, plus network access to
 fetch package dependencies the first time. It keeps SwiftPM dependencies in a
 per-client cache and incremental outputs per repository. It runs fixed swift
 build commands without JavaScript installs, prebuild or pods. It receives only
-the files git lists (tracked and untracked, not ignored).
+the files git lists (tracked and untracked, not ignored). Resource and catalog
+sources must be among those files. The client sends resolved sources relative
+to the repository root; the worker resolves them inside its checkout.
 
-The client validates the development plist before asking a machine. It verifies
-the returned archive's sha256, bundle identifier, executable and ad hoc signature
+The client validates the development plist and resource entries before asking a machine. It verifies
+the returned archive's sha256, bundle identifier, executable, declared resources
+and ad hoc signature
 before replacing the owned bundle, then launches locally as usual. Every offload
 failure falls back to the local build, including force. Failed staging preserves
 the previous bundle. No failed artifact is promoted or cached. The build record
@@ -202,6 +223,8 @@ stim-server service status shows the grants, and stim doctor here reports an
 approved host that lacks them. A server started by Stim Desktop uses Desktop's
 grants.
 
+Hosted delivery carries the staged bundle with declared resources and compiled assets.
+
 status --json reports macos.host { machine, session, appSlot, appAttempt,
 bundleId, agent }. For hosted placements only, status asks the host for the
 session state with about a 3 s timeout per connection and request and a 10 s
@@ -247,8 +270,9 @@ The agent-device rows work once the host's agent field names agent-device.
 
 DESKTOP DOGFOOD
 
-This repository's apps/desktop/.stim.json selects the full StimDesktop app and
-its development plist. It monitors the regular Stim home alongside the installed
+This repository's apps/desktop/.stim.json selects the full StimDesktop app,
+its development plist, asset catalog, fonts, branding and licences. Its sim-fold
+helper is not built. It monitors the regular Stim home alongside the installed
 app, with a workspace-specific bundle identifier and separate preferences.
 Its launch arguments disable automatic cleanup and notification alerts in this development copy.
 Use Window > SwiftUI Playground for in-memory production screen fixtures.

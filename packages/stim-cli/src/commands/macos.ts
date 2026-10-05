@@ -40,7 +40,9 @@ export async function runMacos(
   const settings = resolveSettings({ projectPath: root, gitCommonDir: gitCommonDir(root), repoRoot: repoRoot(root) });
   const [shape] = settingShapeErrors(settings);
   if (shape) throw new Error(`${shape} ${SETTING_SHAPE_REMEDY}`);
-  const macos = settings.macos as { product?: string; infoPlist?: string; arguments?: string[] } | undefined;
+  const macos = settings.macos as
+    | { product?: string; infoPlist?: string; arguments?: string[]; resources?: unknown; assetCatalog?: unknown }
+    | undefined;
   if (!macos?.product || !macos.infoPlist) {
     throw Object.assign(
       new Error('Set macos.product and macos.infoPlist explicitly in .stim.json. See stim guide macos.'),
@@ -81,7 +83,7 @@ export async function runMacos(
             build: { state: 'running', startedAt: new Date().toISOString() },
             ...(previous?.host ? { host: previous.host, hostLaunched: previous.hostLaunched ?? false } : {}),
           };
-          await buildBundle(root, macos.infoPlist!, record, host !== undefined, note);
+          await buildBundle(root, macos.infoPlist!, record, host !== undefined, note, macos);
           if (!host) return launchHere(root, record);
           const connection = await connectHost(host);
           const write = (patch: Partial<MacosAppRecord>) =>
@@ -129,13 +131,14 @@ async function buildBundle(
   record: MacosAppRecord,
   hosted: boolean,
   note: (line: string) => void,
+  extras: { resources?: unknown; assetCatalog?: unknown },
 ): Promise<void> {
   const started = Date.parse(record.build.startedAt);
   const scratch = join(macosDir(root), 'build');
   writeWorkspaceState(root, { macos: record });
   const writer = createNdjsonWriter(macosLogFile(root), { maxBytes: LOG_ROTATE_BYTES });
   try {
-    const base = validateInfoPlist(root, record.product, infoPlist);
+    const { bundleId: base } = validateInfoPlist(root, record.product, infoPlist);
     const bundleId = hosted ? base : `${base}.stim.${createHash('sha256').update(root).digest('hex').slice(0, 12)}`;
     const built = await buildMacosBundle({
       root,
@@ -147,6 +150,8 @@ async function buildBundle(
       writer,
       note,
       record: record.build,
+      resources: extras.resources,
+      assetCatalog: extras.assetCatalog,
     });
     record.bundleId = built.bundleId;
     record.bundle = realpathSync(record.bundle);

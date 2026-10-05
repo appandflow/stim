@@ -791,7 +791,13 @@ export interface BuildStartParams {
   isExpo?: boolean;
   optimizations?: Record<string, unknown> | null;
   android?: BuildAndroidOptions | null;
-  macos?: { product: string; infoPlist: string; bundleId: string } | null;
+  macos?: {
+    product: string;
+    infoPlist: string;
+    bundleId: string;
+    resources?: Record<string, string>;
+    assetCatalog?: string | null;
+  } | null;
   stimBuild: string;
 }
 

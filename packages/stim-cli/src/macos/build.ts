@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, renameSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, renameSync, rmSync } from 'node:fs';
 import { join, relative, resolve } from 'node:path';
 import { machineCapacity, type MacosBuild } from '@stim-cli/core/state';
 import { acquireBuildSlot, releaseBuildSlot } from '../engine/build-slots.ts';
@@ -20,7 +20,8 @@ import { macosToolchain } from '../offload/toolchain.ts';
 import { getConcurrencyLimits } from '../workspace/config.ts';
 import { logLines } from './run.ts';
 import { macosDir } from './state.ts';
-import { stageBundle, validateInfoPlist } from './stage.ts';
+import { repoRoot } from '../workspace/worktree.ts';
+import { resolveBundleExtras, stageBundle, validateInfoPlist } from './stage.ts';
 
 async function tool(
   root: string,
@@ -61,6 +62,8 @@ export async function buildMacosBundle({
   writer,
   note,
   record,
+  resources,
+  assetCatalog,
 }: {
   root: string;
   product: string;
@@ -71,8 +74,12 @@ export async function buildMacosBundle({
   writer: NdjsonWriter;
   note: (line: string) => void;
   record?: MacosBuild;
+  resources?: unknown;
+  assetCatalog?: unknown;
 }): Promise<{ bundleId: string; offloadedTo: string | null; offloadFallback: string | null }> {
   validateInfoPlist(root, product, infoPlist);
+  const repository = realpathSync(repoRoot(root) ?? root);
+  const extras = resolveBundleExtras(root, repository, resources, assetCatalog);
   const write = (msg: string) => {
     writer.write({ src: 'build', platform: 'macos', level: 'info', msg });
     note(msg);
@@ -119,7 +126,19 @@ export async function buildMacosBundle({
         write(`placement: ${choice.machine} (${placement.reason}${placementLoad(choice)})`);
         const outcome = await offloadBuild({
           choice,
-          request: { platform: 'macos', product, infoPlist: relative(root, resolve(root, infoPlist)), bundleId },
+          request: {
+            platform: 'macos',
+            product,
+            infoPlist: relative(root, resolve(root, infoPlist)),
+            bundleId,
+            resources: Object.fromEntries(
+              Object.entries(extras.resources).map(([destination, source]) => [
+                destination,
+                relative(repository, source),
+              ]),
+            ),
+            assetCatalog: extras.assetCatalog ? relative(repository, extras.assetCatalog) : null,
+          },
           stagingDir: join(staging, 'offload'),
           onPhase: (phase, line) => note(remotePhaseText(phase, line, choice!.machine)),
           onEnter: () => {},
@@ -139,6 +158,10 @@ export async function buildMacosBundle({
         );
         if (plist.CFBundleIdentifier !== bundleId || plist.CFBundleExecutable !== product || !existsSync(executable))
           throw new Error('The fetched macOS bundle does not match the requested identity and executable.');
+        for (const destination of [...Object.keys(extras.resources), ...(extras.assetCatalog ? ['Assets.car'] : [])]) {
+          if (!existsSync(join(outcome.artifactPath, 'Contents', 'Resources', destination)))
+            throw new Error(`The fetched macOS bundle lacks declared resource ${destination}.`);
+        }
         getExecutor().runFile('codesign', ['--verify', '--strict', outcome.artifactPath]);
         promote(outcome.artifactPath);
         if (record) record.offloadedTo = outcome.machine;
@@ -167,7 +190,7 @@ export async function buildMacosBundle({
         true,
       );
       const staged = join(staging, `${product}.app`);
-      stageBundle(root, product, infoPlist, bin, staged, bundleId);
+      stageBundle(root, product, infoPlist, bin, staged, bundleId, extras);
       promote(staged);
       return { bundleId, offloadedTo: null, offloadFallback };
     } finally {
