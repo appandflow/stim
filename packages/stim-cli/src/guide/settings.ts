@@ -563,10 +563,11 @@ machine's pairing state and, for an approved machine, asks it for one build
 offer and lists every reason it would not take this app's iOS build: no
 answer, another Stim build, CPU, Xcode, simulator SDK or CocoaPods, no
 Bundler for an app whose Gemfile.lock pins CocoaPods, no iPhone simulator on
-the runtime \`stim ios\` builds for here, low disk, or busy.
+the runtime \`stim ios\` builds for here, low disk, or busy. With Package.swift
+and no platform selection on a Mac, it also checks the macOS Xcode and SDK.
 
 \`offload.mode\` decides where an iOS simulator Debug build or an Android
-emulator debug build compiles:
+emulator debug build or a stim macos SwiftPM Debug build compiles:
 
   auto   (default) here while this Mac has capacity: a free
          \`concurrency.maxBuilds\` slot (always, with no build limit) and a
@@ -587,8 +588,11 @@ counts as saturated, both here and on a build machine.
 
 STIM_OFFLOAD_MODE overrides it for one command. Device, Release and
 \`--remote\` builds, Android builds with the Apple Clang CAS compiler cache,
-and runs with the build cache off, always build here.
-An offloaded build first runs prebuild (and \`pod install\` for iOS) here,
+and iOS/Android runs with the build cache off, always build here.
+macOS uses matching Xcode and macOS SDK, with a per-client SwiftPM dependency
+cache on the worker. It skips JavaScript dependencies, prebuild and pods; see
+stim guide macos. macOS artifacts are not cached.
+An offloaded iOS/Android build first runs prebuild (and \`pod install\` for iOS) here,
 then asks every paired machine what it can build. It takes one whose Stim
 build and CPU match this Mac exactly, with enough disk, that does not decline,
 preferring the one that already holds this repository, then the least loaded,

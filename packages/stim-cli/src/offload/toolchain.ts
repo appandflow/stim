@@ -33,6 +33,7 @@ export interface AndroidRequirements {
 
 /** A build machine's toolchain, the simulator runtimes it can build for, and its JDK and Android SDK packages. */
 export interface WorkerToolchain extends IosToolchain {
+  macosSdk: string | null;
   bundler: string | null;
   runtimes: string[];
   jdk: string | null;
@@ -47,7 +48,8 @@ export type BuildTarget =
       runtime: string | null;
       cocoapodsPinned: boolean;
     }
-  | { platform: 'android'; local: AndroidToolchain; requires: AndroidRequirements };
+  | { platform: 'android'; local: AndroidToolchain; requires: AndroidRequirements }
+  | { platform: 'macos'; local: MacosToolchain };
 
 const distDir = dirname(fileURLToPath(import.meta.url));
 
@@ -63,6 +65,23 @@ export function iosToolchain(): IosToolchain {
     xcode: xcode ? xcode.trim().replace(/\n/g, ' / ') : null,
     simulatorSdk: quiet('xcrun', ['--sdk', 'iphonesimulator', '--show-sdk-version'])?.trim() ?? null,
     cocoapods: quiet('pod', ['--version'])?.trim().split('\n').pop()?.trim() ?? null,
+  };
+}
+
+export interface MacosToolchain {
+  stimBuild: string | null;
+  arch: string;
+  xcode: string | null;
+  macosSdk: string | null;
+}
+
+export function macosToolchain(): MacosToolchain {
+  const xcode = quiet('xcodebuild', ['-version']);
+  return {
+    stimBuild: stimBuildDigest(distDir),
+    arch: process.arch,
+    xcode: xcode ? xcode.trim().replace(/\n/g, ' / ') : null,
+    macosSdk: quiet('xcrun', ['--sdk', 'macosx', '--show-sdk-version'])?.trim() ?? null,
   };
 }
 
@@ -153,6 +172,7 @@ export function workerToolchain(): WorkerToolchain {
   } catch {}
   return {
     ...iosToolchain(),
+    macosSdk: quiet('xcrun', ['--sdk', 'macosx', '--show-sdk-version'])?.trim() ?? null,
     bundler: quiet('bundle', ['--version'])?.trim() || null,
     runtimes: iphoneRuntimes(listed),
     jdk: localJdk(),
@@ -171,6 +191,7 @@ export interface OffloadProblem {
     | 'stim-build'
     | 'arch'
     | 'xcode'
+    | 'macos-sdk'
     | 'simulator-sdk'
     | 'cocoapods'
     | 'bundler'
@@ -219,6 +240,14 @@ export function toolchainMismatches(target: BuildTarget, worker: WorkerToolchain
   }
   if (worker.arch !== local.arch) out.push({ code: 'arch', reason: `CPU ${worker.arch} there, ${local.arch} here` });
   if (target.platform === 'android') return [...out, ...androidMismatches(target.local, target.requires, worker)];
+  if (target.platform === 'macos') {
+    const macos = target.local;
+    if (!macos.xcode || worker.xcode !== macos.xcode)
+      out.push({ code: 'xcode', reason: `Xcode ${worker.xcode} there, ${macos.xcode} here` });
+    if (!macos.macosSdk || worker.macosSdk !== macos.macosSdk)
+      out.push({ code: 'macos-sdk', reason: `macOS SDK ${worker.macosSdk} there, ${macos.macosSdk} here` });
+    return out;
+  }
   const ios = target.local;
   if (!ios.xcode || worker.xcode !== ios.xcode) {
     out.push({ code: 'xcode', reason: `Xcode ${worker.xcode} there, ${ios.xcode} here` });

@@ -29,10 +29,30 @@ extra app assets and custom packaging scripts are not supported.
 
 Each invocation stops its previous owned app, rebuilds and launches. SwiftPM
 keeps incremental outputs in the workspace's runtime directory under STIM_HOME.
-This prototype has no shared artifact cache, --plan, --slot, or reload command.
+macOS artifacts are not cached. This prototype has no --plan, --slot, or reload command.
 A failed build records its error and compiler output without launching an app.
 Runtime stdout and stderr become client records; build output becomes build
 records, all with platform "macos". Unexpected app exits are error records.
+
+BUILD OFFLOAD
+
+offload.mode places these SwiftPM Debug builds:
+auto builds here while this Mac has capacity, force uses an approved build
+machine when one accepts, and off always builds here. Configure offload.machines
+and approve build access as described in stim guide settings. The worker needs
+matching Stim, CPU architecture, Xcode and macOS SDK, plus network access to
+fetch package dependencies the first time. It keeps SwiftPM dependencies in a
+per-client cache and incremental outputs per repository. It runs fixed swift
+build commands without JavaScript installs, prebuild or pods. It receives only
+the files git lists (tracked and untracked, not ignored).
+
+The client validates the development plist before asking a machine. It verifies
+the returned archive's sha256, bundle identifier, executable and ad hoc signature
+before replacing the owned bundle, then launches locally as usual. Every offload
+failure falls back to the local build, including force. Failed staging preserves
+the previous bundle. No failed artifact is promoted or cached. The build record
+carries offloadedTo only for a remote build, and offloadFallback when an offload
+attempt falls back here. Placement and failure reasons are in build logs.
 
 OWNERSHIP AND LOCAL VIEWING
 

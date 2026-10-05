@@ -102,6 +102,7 @@ const PROBLEM_TITLES: Record<OffloadProblem['code'], string> = {
   'stim-build': 'runs another Stim build',
   arch: 'has another CPU architecture',
   xcode: 'has another Xcode',
+  'macos-sdk': 'has another macOS SDK',
   'simulator-sdk': 'has another simulator SDK',
   cocoapods: 'has another CocoaPods',
   bundler: 'has no Bundler',
@@ -127,6 +128,7 @@ function problemFix(code: OffloadProblem['code'], entry: string): string {
       return 'Use a build machine with the same CPU architecture as this Mac.';
     case 'xcode':
     case 'simulator-sdk':
+    case 'macos-sdk':
       return `Install and select the same Xcode on ${entry} and this Mac (\`xcode-select -p\` on each).`;
     case 'cocoapods':
       return `Install the same CocoaPods version on ${entry}, on the PATH its stim-server's login shell sets.`;

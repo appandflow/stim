@@ -689,6 +689,7 @@ export interface BuildToolchain {
   arch: string;
   xcode: string | null;
   simulatorSdk: string | null;
+  macosSdk: string | null;
   cocoapods: string | null;
   /** Simulator runtime identifiers that have an iPhone simulator to build for. */
   runtimes: string[];
@@ -757,20 +758,21 @@ export interface BuildAndroidOptions {
 
 /**
  * Builds the synced manifest of `repo`. The machine refuses unless its fingerprint equals `fingerprint`. iOS
- * needs `runtime`; Android needs `android`.
+ * needs `runtime`; Android needs `android`; macOS needs `macos` and uses the manifest digest as its fingerprint.
  */
 export interface BuildStartParams {
   repo: string;
   project: string;
-  platform: 'ios' | 'android';
-  configuration: string | null;
-  scheme: string | null;
-  runtime: string | null;
+  platform: 'ios' | 'android' | 'macos';
+  configuration?: string | null;
+  scheme?: string | null;
+  runtime?: string | null;
   fingerprint: string;
-  packageName: string | null;
-  isExpo: boolean;
-  optimizations: Record<string, unknown> | null;
+  packageName?: string | null;
+  isExpo?: boolean;
+  optimizations?: Record<string, unknown> | null;
   android?: BuildAndroidOptions | null;
+  macos?: { product: string; infoPlist: string; bundleId: string } | null;
   stimBuild: string;
 }
 
@@ -2355,24 +2357,22 @@ export function protocolJsonSchema(): JsonSchema {
           }),
           request('build.start', {
             type: 'object',
-            required: [
-              'repo',
-              'project',
-              'platform',
-              'configuration',
-              'scheme',
-              'runtime',
-              'fingerprint',
-              'packageName',
-              'isExpo',
-              'optimizations',
-              'stimBuild',
-            ],
+            required: ['repo', 'project', 'platform', 'fingerprint', 'stimBuild'],
             additionalProperties: false,
+            oneOf: [
+              {
+                properties: { platform: { const: 'macos' }, macos: { type: 'object' } },
+                required: ['macos'],
+              },
+              {
+                properties: { platform: { enum: ['ios', 'android'] } },
+                required: ['configuration', 'scheme', 'runtime', 'packageName', 'isExpo', 'optimizations'],
+              },
+            ],
             properties: {
               repo: buildRepo,
               project: { type: 'string', description: 'The app directory relative to the repository root.' },
-              platform: { enum: ['ios', 'android'] },
+              platform: { enum: ['ios', 'android', 'macos'] },
               configuration: { type: ['string', 'null'] },
               scheme: { type: ['string', 'null'] },
               runtime: { type: ['string', 'null'], minLength: 1 },
@@ -2390,6 +2390,16 @@ export function protocolJsonSchema(): JsonSchema {
                   gradleBuildCache: { type: 'boolean' },
                   pch: { enum: ['auto', 'on', 'off'] },
                   compilerCache: { enum: ['ccache', 'none'] },
+                },
+              },
+              macos: {
+                type: ['object', 'null'],
+                required: ['product', 'infoPlist', 'bundleId'],
+                additionalProperties: false,
+                properties: {
+                  product: { type: 'string', pattern: '^[A-Za-z0-9_.-]{1,100}$' },
+                  infoPlist: { type: 'string', minLength: 1 },
+                  bundleId: { type: 'string', pattern: '^[A-Za-z0-9][A-Za-z0-9.-]{0,199}$' },
                 },
               },
               stimBuild: { type: 'string', minLength: 1 },

@@ -14,6 +14,8 @@ export interface MacosBuild {
   finishedAt?: string;
   durationMs?: number;
   error?: string;
+  offloadedTo?: string;
+  offloadFallback?: string;
 }
 
 export interface MacosAppRecord {
@@ -85,6 +87,8 @@ export function parseMacosRecord(value: unknown): MacosAppRecord | null {
       ...(typeof b.finishedAt === 'string' ? { finishedAt: b.finishedAt } : {}),
       ...(typeof b.durationMs === 'number' ? { durationMs: b.durationMs } : {}),
       ...(typeof b.error === 'string' ? { error: b.error } : {}),
+      ...(typeof b.offloadedTo === 'string' ? { offloadedTo: b.offloadedTo } : {}),
+      ...(typeof b.offloadFallback === 'string' ? { offloadFallback: b.offloadFallback } : {}),
     },
     ...(processRecord(supervisor) ? { supervisor: processRecord(supervisor) } : {}),
     ...(processRecord(app) ? { app: processRecord(app) } : {}),

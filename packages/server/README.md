@@ -685,7 +685,7 @@ Approve the request on the build machine with
 ## Offloaded builds
 
 A client with `build` runs its iOS simulator builds and Android emulator
-debug builds here with these methods.
+debug builds and macOS SwiftPM Debug builds here with these methods.
 They need `build`, not `read`; a device without `build` gets `forbidden`.
 The server re-reads the build clients on every call, and revoking a client
 closes its connections and cancels its builds.
@@ -693,13 +693,15 @@ closes its connections and cancels its builds.
 - `build.offer` takes `repo` (the client's name for its repository: letters,
   digits, `.`, `_` and `-`, at most 80) and an optional `lockfile` sha256. It
   returns `toolchain` (`stimBuild`, a digest of the bundled Stim's built code;
-  `arch`; `xcode`; `simulatorSdk`; `cocoapods`; `runtimes`, the simulator
+  `arch`; `xcode`; `simulatorSdk`; `macosSdk` (from
+  `xcrun --sdk macosx --show-sdk-version`); `cocoapods`; `runtimes`, the simulator
   runtimes with an iPhone simulator to build for; `jdk`, the major version of
   the JDK in `JAVA_HOME` or the macOS default; and `androidSdk`, the `ndk`,
   `buildTools` and `platforms` directories of the SDK in `ANDROID_HOME` or
   `~/Library/Android/sdk`, null without one), `capacity` and `warm`
   (`checkout`, `dependencies` when the last install used that lockfile, and
-  `build` once a build ran there) for that repository. `capacity` holds
+  `build` once a build ran there, including a non-empty repository `macos/`
+  scratch directory) for that repository. `capacity` holds
   `running` and `max` offloaded builds, `diskFreeBytes` of the worker root's
   volume and `minDiskFreeBytes`, `cpus`, `loadPerCore` (the 5-minute load
   average per CPU), `builds` (this Mac's own Stim runs in prebuild, pods or
@@ -722,7 +724,7 @@ closes its connections and cancels its builds.
   do not match the digest close the connection with 4400. Blobs are kept per
   client and shared by all its repositories.
 - `build.start` takes `repo`, `project` (the app directory in the repository),
-  `platform` (`ios` or `android`), `configuration`, `scheme`, `runtime` (a
+  `platform` (`ios`, `android` or `macos`), `configuration`, `scheme`, `runtime` (a
   simulator runtime identifier, required for `ios`, null for `android`),
   `fingerprint`, `packageName`, `isExpo`, `optimizations`, `android` (for
   `android`: `variant`, `abi`, `gradleBuildCache`, `pch` and `compilerCache`,
@@ -753,6 +755,29 @@ closes its connections and cancels its builds.
   checks every minute and on each change under its server directory. A daemon
   whose Gradle home is deleted stops itself within seconds, because Gradle
   expires a daemon whose registry file is gone.
+  A macOS request supplies `macos: { product, infoPlist, bundleId }`, omitting
+  runtime, configuration, scheme, packageName, isExpo, optimizations and android.
+  Product matches `^[A-Za-z0-9_.-]{1,100}$`; infoPlist is a valid relative build
+  path within the project; bundleId matches `^[A-Za-z0-9][A-Za-z0-9.-]{0,199}$`.
+  Missing or malformed options get `bad-request`. Its fingerprint is sha256 of
+  every manifest entry sorted by path, encoded as `path NUL kind NUL sha256 LF`.
+  The worker recomputes it before building and refuses a mismatch. It skips
+  JavaScript installation, prebuild, pods and project fingerprinting. It runs
+  `swift build -c debug --product <product> --scratch-path <scratch> --cache-path <cache>`,
+  then `swift build -c debug --scratch-path <scratch> --cache-path <cache> --show-bin-path`,
+  without a jobs limit. Scratch is `repos/<repo>/macos/<project with / replaced by _>`,
+  or `root` for an empty project. The job JSON includes `swiftpmCache` alongside
+  `blobs`, pointing at the client's `cache/swiftpm`. Swift stays in the job's
+  process group so cancellation stops it. A failed Swift command reports
+  `swift-failed` with the first error or last three output lines. The worker
+  stages the executable, frameworks and resource bundles in
+  `out/<job>/<Product>.app`, stamps the requested bundle ID and signs ad hoc.
+  It returns that app as a tar archive, its manifest fingerprint, timings and
+  `compilationCache: {}`. The client verifies the digest, identity, executable
+  and signature before promotion and launches locally. Every offload failure
+  falls back locally; macOS artifacts are not cached. Matching Xcode and macOS
+  SDK are required, and the worker needs network access for the first SwiftPM
+  dependency fetch; the dependency cache is shared only within that client.
 - `build.progress` events `{ "event": "build.progress", "job", ... }` carry a
   `phase` and `msg`, a build-log `record`, and last the `outcome`: `ok`, and
   on success `artifact` (`name`, `size`, `sha256` of a tar of the `.app` or
@@ -782,7 +807,7 @@ closes its connections and cancels its builds.
 The worker root is `offload.workerRoot` in this Mac's Stim settings, or
 `$STIM_HOME/build-worker`. Each client gets `<root>/<device id>/`, with its
 blobs, caches (`CP_HOME_DIR`, `CP_CACHE_DIR`, the pnpm store and
-`GRADLE_USER_HOME`) and one area
+`GRADLE_USER_HOME` and SwiftPM) and one area
 per repository under `repos/<repo>/`: the checkout, its own Stim home with
 DerivedData, the compilation cache and ccache, and the output. A build never reads or
 writes this Mac's own Stim home. An ownership claim at

@@ -326,7 +326,8 @@ Stim connects to a named Mac only while it is still the pinned node, and never
 sends its token to another. Doctor reports each machine's pairing state.
 
 `offload.mode` decides where `stim ios` compiles a simulator Debug build and
-where `stim android` compiles an emulator debug build:
+where `stim android` compiles an emulator debug build, and where `stim macos`
+compiles a SwiftPM Debug build:
 
 - `auto` (default) builds here while this Mac has capacity: a free
   `concurrency.maxBuilds` slot (always, with no build limit) and a load per
@@ -345,9 +346,9 @@ declines offloaded builds.
 
 `STIM_OFFLOAD_MODE` overrides it for one command. Device, Release and
 `--remote` builds, Android builds with the Apple Clang CAS compiler cache, and
-runs with the build cache off, always build here.
+iOS/Android runs with the build cache off, always build here.
 
-An offloaded build runs prebuild (and `pod install` for iOS) here, then asks
+An offloaded iOS/Android build runs prebuild (and `pod install` for iOS) here, then asks
 every paired machine what it can build. Stim picks one whose Stim build and
 CPU architecture match this Mac exactly, with at least 10 GB free, that does
 not decline, preferring the one that already holds this repository, then the
@@ -360,6 +361,10 @@ in that order:
   project's `Gemfile.lock` pins CocoaPods: both Macs then run that version
   through Bundler, so the machine needs only Bundler on its stim-server `PATH`
   and installs the pinned gems itself on the first build.
+- For macOS, its Xcode and macOS SDK must match. The worker needs network
+  access to fetch SwiftPM dependencies the first time and keeps a dependency
+  cache per client. The returned app is verified and launched locally; macOS
+  artifacts are not cached. See [macOS development](./macos.md).
 - For Android, its JDK major version must match (the vendor may differ), and
   its Android SDK must hold the NDK, build-tools and compile platform that the
   project's React Native version names in `gradle/libs.versions.toml`. Gradle

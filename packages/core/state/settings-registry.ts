@@ -435,7 +435,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
     default: 'auto',
     env: 'STIM_OFFLOAD_MODE',
     description:
-      'Where iOS simulator and Android emulator debug builds run: auto builds here while this Mac has a free concurrency.maxBuilds slot and its load is under offload.maxLoadPerCore, and otherwise offloads to a less loaded machine in offload.machines; force offloads whenever a machine can take the build; off always builds here',
+      'Where iOS simulator Debug, Android emulator debug and macOS SwiftPM Debug builds run: auto builds here while this Mac has a free concurrency.maxBuilds slot and its load is under offload.maxLoadPerCore, and otherwise offloads to a less loaded machine in offload.machines; force offloads whenever a machine can take the build; off always builds here',
   },
   {
     key: 'offload.maxLoadPerCore',

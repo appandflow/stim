@@ -28,6 +28,7 @@ import { COMPILATION_CACHE_UNAVAILABLE } from '../engine/xcode.ts';
 import { getExecutor } from '../exec.ts';
 import { loadConfig } from '../workspace/config.ts';
 import { pairedMachines, pinnedEndpoint, type Endpoint } from './build-machines.ts';
+import { manifestDigest } from './manifest.ts';
 import { toolchainMismatches, type BuildTarget, type OffloadProblem, type WorkerToolchain } from './toolchain.ts';
 
 const CONNECT_TIMEOUT_MS = 10_000;
@@ -608,9 +609,10 @@ export type BuildRequest =
       isExpo: boolean;
       optimizations: unknown;
     }
-  | { platform: 'android'; isExpo: boolean; android: AndroidBuildOptions };
+  | { platform: 'android'; isExpo: boolean; android: AndroidBuildOptions }
+  | { platform: 'macos'; product: string; infoPlist: string; bundleId: string };
 
-const ARTIFACT_NAME = { ios: /^[^/]+\.app$/, android: /^[^/]+\.apk$/ } as const;
+const ARTIFACT_NAME = { ios: /^[^/]+\.app$/, android: /^[^/]+\.apk$/, macos: /^[^/]+\.app$/ } as const;
 
 /**
  * Reconnects to the machine that runs `job` and takes the job over with `build.attach`, retrying until
@@ -661,7 +663,9 @@ async function syncSource(
   connection: BuildConnection,
   identity: RepoIdentity,
   onEnter: (phase: string) => void,
-): Promise<{ files: number; uploaded: number; uploadedBytes: number; syncMs: number } | { failure: string }> {
+): Promise<
+  { files: number; uploaded: number; uploadedBytes: number; syncMs: number; digest: string } | { failure: string }
+> {
   onEnter('sync');
   const syncStarted = Date.now();
   const manifest = sourceManifest(identity.repoRoot);
@@ -696,7 +700,13 @@ async function syncSource(
     uploadedBytes += content.length;
     if (connection.failure) return { failure: `sync: ${connection.failure}` };
   }
-  return { files: manifest.length, uploaded: missing.length, uploadedBytes, syncMs: Date.now() - syncStarted };
+  return {
+    files: manifest.length,
+    uploaded: missing.length,
+    uploadedBytes,
+    syncMs: Date.now() - syncStarted,
+    digest: manifestDigest(manifest),
+  };
 }
 
 /**
@@ -714,15 +724,16 @@ export async function offloadBuild({
   note,
 }: {
   choice: OffloadChoice;
-  expectedFingerprint: string;
-  request: BuildRequest;
   stagingDir: string;
   onPhase: (phase: string, msg: string) => void;
   onEnter: (phase: string) => void;
   onRecord: (record: Record<string, unknown>) => void;
   /** One line about where the build goes, such as the next machine after a refusal. */
   note: (line: string) => void;
-}): Promise<OffloadOutcome> {
+} & (
+  | { request: Extract<BuildRequest, { platform: 'macos' }>; expectedFingerprint?: never }
+  | { request: Exclude<BuildRequest, { platform: 'macos' }>; expectedFingerprint: string }
+)): Promise<OffloadOutcome> {
   const { identity } = choice;
   const started = Date.now();
   const fail = (reason: string): OffloadOutcome => {
@@ -800,14 +811,21 @@ export async function offloadBuild({
         repo: identity.repo,
         project: identity.project,
         platform: request.platform,
-        configuration: request.platform === 'ios' ? request.configuration : null,
-        scheme: request.platform === 'ios' ? request.scheme : null,
-        runtime: request.platform === 'ios' ? request.runtime : null,
-        fingerprint: expectedFingerprint,
-        packageName: packageName(join(identity.repoRoot, identity.project)),
-        isExpo: request.isExpo,
-        optimizations: request.platform === 'ios' && isJsonObject(request.optimizations) ? request.optimizations : null,
-        ...(request.platform === 'android' ? { android: request.android } : {}),
+        fingerprint: request.platform === 'macos' ? synced.digest : expectedFingerprint,
+        ...(request.platform === 'macos'
+          ? {
+              macos: { product: request.product, infoPlist: request.infoPlist, bundleId: request.bundleId },
+            }
+          : {
+              configuration: request.platform === 'ios' ? request.configuration : null,
+              scheme: request.platform === 'ios' ? request.scheme : null,
+              runtime: request.platform === 'ios' ? request.runtime : null,
+              packageName: packageName(join(identity.repoRoot, identity.project)),
+              isExpo: request.isExpo,
+              optimizations:
+                request.platform === 'ios' && isJsonObject(request.optimizations) ? request.optimizations : null,
+              ...(request.platform === 'android' ? { android: request.android } : {}),
+            }),
         stimBuild: choice.target.local.stimBuild,
       });
       if ('result' in reply) {
@@ -833,7 +851,7 @@ export async function offloadBuild({
     const artifact = result.artifact as { name?: unknown; size?: unknown; sha256?: unknown };
     const name = typeof artifact?.name === 'string' ? artifact.name : '';
     if (!ARTIFACT_NAME[request.platform].test(name) || typeof artifact.sha256 !== 'string') {
-      return fail(`the machine reported no .${request.platform === 'ios' ? 'app' : 'apk'} artifact`);
+      return fail(`the machine reported no .${request.platform === 'android' ? 'apk' : 'app'} artifact`);
     }
 
     onEnter('fetch');
@@ -881,6 +899,15 @@ export async function offloadBuild({
     }
     if (request.platform === 'android' && !(lstatSync(artifactPath, { throwIfNoEntry: false })?.isFile() ?? false)) {
       return fail(`fetch: ${name} is not a file`);
+    }
+    if (request.platform === 'macos') {
+      for (const path of [
+        join(artifactPath, 'Contents', 'Info.plist'),
+        join(artifactPath, 'Contents', 'MacOS', request.product),
+      ]) {
+        if (!lstatSync(path, { throwIfNoEntry: false })?.isFile())
+          return fail(`fetch: ${name} has no regular ${relative(artifactPath, path)}`);
+      }
     }
     const fetchMs = Date.now() - fetchStarted;
     connection.close();
@@ -956,7 +983,7 @@ export function simulatorRuntime(udid: string): string | null {
 
 const DOCTOR_CONNECT_MS = 5000;
 const DOCTOR_OFFER_MS = 8000;
-const PLATFORM_LABEL = { ios: 'iOS', android: 'Android' } as const;
+const PLATFORM_LABEL = { ios: 'iOS', android: 'Android', macos: 'macOS' } as const;
 const SHARED_PROBLEMS: ReadonlySet<OffloadProblem['code']> = new Set(['stim-build', 'arch', 'disk', 'busy']);
 
 /**

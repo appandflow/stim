@@ -8,7 +8,7 @@ import StimTabs from '@site/src/components/StimTabs';
 The macOS prototype builds a Swift Package executable in Debug, launches an
 isolated development bundle and shows its owned window in Stim Desktop.
 It uses fixed SwiftPM commands. Xcode projects, custom packaging scripts,
-release distribution and shared artifact caching remain outside
+release distribution and artifact caching remain outside
 this slice. If Stim is not installed globally, replace `stim` with `npx stim`.
 
 Run from the directory containing `Package.swift`. Set an explicit executable
@@ -46,6 +46,25 @@ are client logs; unexpected exits are errors. `macos --json` prints one launch
 record on stdout, with progress on stderr. `status --json` reports
 `environments[].macos`, its build and process state. This command does not
 support `--plan`, `--slot` or `reload`.
+
+`offload.mode` also places these SwiftPM Debug builds: `auto` builds here while
+this Mac has capacity, `force` uses an approved build machine when one accepts,
+and `off` always builds here. Configure `offload.machines` and approve build
+access as described in [settings](./settings.md). The worker needs matching Stim,
+CPU architecture, Xcode and macOS SDK, and network access to fetch package
+dependencies the first time. It keeps SwiftPM dependencies per client and
+incremental outputs per repository; macOS artifacts are not cached. It runs no
+JavaScript install, prebuild or pod install for this job. It receives the files
+git lists (tracked and untracked, not ignored), so a build input that is
+gitignored is missing there.
+
+Stim validates the development plist before asking a machine and verifies the
+returned archive digest, bundle ID, executable and ad hoc signature before
+replacing the bundle. Every offload failure falls back locally, including in
+`force` mode; failed staging preserves the previous bundle. The app launches
+locally with the same supervisor and ownership checks. The build record carries
+`offloadedTo` for a remote build or `offloadFallback` for a fallback, and build
+logs show placement and its reason.
 
 Stim Desktop offers **Build and run**, **Refresh preview**, **Open app** and **Stop** on the
 workspace's app card. This prototype supports one visible main window, on the same
