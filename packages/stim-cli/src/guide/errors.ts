@@ -1368,9 +1368,9 @@ not on any remote"  (worktree remove)
   A line such as \`npm warn exec ... will be installed\` is normal when using
   the no-install form.
 
-"Unsupported engine" or a syntax error before Stim starts
-  Stim requires Node 22.12.0 or later.
-  Switch Node versions, then run the command again.
+"Unsupported engine" from npm, or a syntax error before Stim starts
+  Stim requires Node 22.12.0 or later. Stim itself refuses an older Node
+  with STIM_NODE_UNSUPPORTED; see that section.
 
 
 "Found no free Metro port between ..."
@@ -1453,6 +1453,30 @@ not on any remote"  (worktree remove)
   Expo build-cache provider would each use a different store. Set the named
   variable to an absolute path, or unset it to use the default. Metro and the
   cache provider, which cannot refuse, ignore a relative value with a warning.`,
+    },
+    STIM_NODE_UNSUPPORTED: {
+      summary: 'stim or stim-server started on a Node older than 22.12.0, often a project pin',
+      body: () => `STIM_NODE_UNSUPPORTED  ("Stim needs Node <floor> or later; this is Node <version> at <path>")
+  stim and stim-server refuse before loading anything else when the Node that
+  runs them is older than their engines floor. Both start through
+  \`#!/usr/bin/env node\`, so the working directory can choose that Node: asdf,
+  mise and Volta's node shim follow the project's .nvmrc, .node-version,
+  .tool-versions or package.json, and nvm and fnm do when a shell hook
+  switches versions on cd. A Stim installed with Volta keeps the Node it was
+  installed with. Run Stim with a supported Node for that one command:
+
+    ASDF_NODEJS_VERSION=<version> stim <command>
+    mise exec node@<version> -- stim <command>
+    volta run --node <version> stim <command>
+    fnm exec --using=<version> stim <command>
+    nvm exec --silent <version> stim <command>
+
+  <version> is 22.12.0 or later. asdf, mise, fnm and nvm keep global packages
+  per Node version, so when Stim was installed with npm under one of them, use
+  the version it was installed with; asdf names it when it prints "No version
+  is set for command stim" instead of running Stim. When that version is
+  older than 22.12.0, first install Stim with npm under a supported version.
+  The tools Stim starts inherit the override.`,
     },
   },
 };

@@ -193,10 +193,11 @@ tokens.
 ## Device-host approval
 
 Device hosting has a separate `device-host` capability. An approved client can
-reserve, boot, reconnect to and stop its own iOS simulator through the protocol.
-It can deliver, install and launch a compatible app bundle, stream the simulator
-and control it. The hosted app connects back to Metro on the client Mac.
-Automatic CLI placement, client view/control relays and Android hosting remain in [#2266](https://github.com/appandflow/stim/issues/2266).
+reserve, boot, reconnect to and stop its own iOS simulator or Android emulator
+through the protocol. It can deliver, install and launch a compatible iOS app
+bundle or Android APK, stream the iOS simulator and control it. The hosted iOS
+app connects back to Metro on the client Mac. Automatic CLI placement, client view/control relays and
+Android Metro and viewing remain in [#2266](https://github.com/appandflow/stim/issues/2266).
 
 The Stim client can name expected hosts with
 `stim settings set hosting.machines '["<mac>"]'` and request access with
@@ -216,7 +217,7 @@ separate limit. The same name validation and failed-attempt limit apply.
 On the hosting Mac, inspect `stim-server devices`, then approve the matching
 request with `stim-server devices grant <id> --device-host`, or use **Allow**
 in Stim Desktop. Approve only an expected request: it authorizes that Mac to
-reserve session-owned iOS simulators and run its native app code in them. **Deny**
+reserve session-owned simulators or emulators and run native app code. **Deny**
 or `stim-server devices revoke <id>` removes it; revocation also closes its
 open authenticated connections. The local-process trust boundary described in
 [Build access](#build-access) applies here too.
@@ -226,6 +227,36 @@ from phone pairings and build clients. A hosting token grants no `read`,
 `control` or `build` access, including access to unrelated workspaces. Existing
 read, control and build tokens cannot gain hosting through `devices grant`.
 Loopback requests and `pair --device-host` are refused.
+
+### Hosted availability offers
+
+Before reserving, an approved hosting client can send:
+
+```json
+{ "id": 1, "method": "device-host.offer", "params": { "platform": "ios", "runtime": "27.0" } }
+```
+
+Use `platform: "android"` with optional `systemImage` and `deviceProfile`, or
+`ios` with optional `deviceType` and `runtime`. Omit selectors for the same
+installed defaults used by reserve. The response includes `platform`, the
+selected SDK `choice` (runtime/model/image and host architecture), `resources`,
+`capacity` and a nullable `declined` reason. An unavailable SDK choice is `null`
+with a reason; unknown or elevated memory pressure declines. The query creates
+no session, simulator, AVD or ownership claim.
+
+`capacity.running` counts every reservation not confirmed stopped, including
+unresolved sessions. `max` is `concurrency.maxDevices`; zero means uncapped and
+`available` is then `null`. Android offers also decline when all supported
+console ports are already recorded as occupied. Resource values are advisory:
+`cpus`, five-minute `loadPerCore`, `memoryFreeBytes`, `memoryPressure` (nullable
+when unknown), and `workerDiskFreeBytes` (nullable when unreadable). Disk space
+is measured on the Stim home volume, which can differ from Android AVD storage.
+
+An offer is a snapshot, not a reservation or a boot guarantee. Capacity,
+memory, installed SDKs and local device producers can change before reserve;
+reserve still takes atomic admission and revalidates native preflight. A
+non-null choice with a non-null `declined` reason is currently unavailable.
+This protocol does not select a host for `stim ios` or `stim android`.
 
 ### Hosted iOS session protocol
 
@@ -278,6 +309,47 @@ transaction, so this is not a machine-wide hard capacity guarantee. Unknown
 inventory or elevated/unknown memory pressure refuses native creation. This
 protocol slice does not change `stim ios` placement.
 
+### Hosted Android session protocol
+
+The same reserve/attach/stop methods accept `platform: "android"` with optional
+`systemImage` (an installed `system-images;android-<api>;<tag>;<abi>` package)
+and `deviceProfile` (an installed avdmanager profile). iOS selectors refuse on
+Android requests. The image must match the host architecture. Omitted selectors
+use Stim's existing compatible installed-image and default-profile choice.
+The worker process needs an Android SDK and a JDK that `avdmanager` can use.
+
+```json
+{
+  "id": 1,
+  "method": "device-host.reserve",
+  "params": {
+    "workspace": "/client/worktree",
+    "slot": "default",
+    "platform": "android",
+    "attempt": "android-1",
+    "systemImage": "system-images;android-30;google_apis;arm64-v8a",
+    "deviceProfile": "pixel_6"
+  }
+}
+```
+
+A preparing Android result includes a server-selected `consolePort`. The journal
+reserves distinct ports among hosted sessions and excludes the ports in the
+host's local config. The worker refuses an observed occupied port before
+creation and before boot. Local producers do not participate in this reservation,
+so a racing local launch can still refuse a hosted boot; this is not a
+machine-wide hard port or device-capacity guarantee.
+
+A ready Android `device` has `avdName`, `serial`, `consolePort`, `systemImage`,
+`deviceProfile` and `architecture` (`arm64-v8a` or `x86_64`). The worker verifies
+its exact AVD name and running ABI before reporting ready. Creation remains
+inside the worker's claimed process group. The worker opens no emulator viewer.
+Stop and revocation use centralized teardown only for its private ledger's exact
+AVD. They shut down and retain its AVD data and record; unknown native outcomes
+retain the reservation and require explicit reconciliation. Android Metro
+and screen/input routing remain follow-ups in #2266. Android sessions
+refuse the iOS Metro, view and input routes.
+
 ### Hosted iOS app delivery
 
 App offers, chunks and launches require a ready session held by this server.
@@ -322,6 +394,27 @@ artifact retention and session reuse/retirement remain under
 [#2266](https://github.com/appandflow/stim/issues/2266) and
 [#2348](https://github.com/appandflow/stim/issues/2348).
 
+### Hosted Android app delivery
+
+Android sessions use the same app offer/chunk/launch/attach methods, with
+`bundleId` naming the expected Android package. Their manifest has exactly one
+`file` entry named `App.apk`, with the APK's byte size and SHA-256. Upload the
+manifest first, then the APK through the same resumable 32 KiB chunks.
+
+The worker verifies both digests, inspects the APK's package identity, minimum
+SDK and native library ABIs with installed Android build-tools, and rechecks the
+private ledger, exact running AVD and ABI before installation and launch. It
+resolves adb from that SDK even when the worker PATH does not include it. A
+signature or installation conflict refuses; hosting does not uninstall an
+existing app to resolve it.
+
+Release launch reports `true` only after observing a live package process.
+Development launch remains `unverified`; this driver launches the activity but
+does not wire an Android Metro bridge. Replaying an installed app attempt does
+not install or launch again. Owner loss, stop, revocation and uncertain outcomes
+retain the same reconciliation rules as iOS. Android viewing, Metro and client
+placement remain under [#2266](https://github.com/appandflow/stim/issues/2266).
+
 ### Private hosted Metro
 
 The client keeps its verified workspace Metro on loopback. It creates a
@@ -358,7 +451,7 @@ Bare React Native uses the worker `RCT_jsLocation`. Bridge readiness and
 manifest requests are not launch proof; development remains `unverified` until
 the workspace observes the app's own bundle delivery.
 This is a protocol API for approved clients; automatic CLI placement,
-client view/control relays and Android remain in [#2266](https://github.com/appandflow/stim/issues/2266).
+client view/control relays and Android Metro/viewing remain in [#2266](https://github.com/appandflow/stim/issues/2266).
 
 ### Hosted iOS view and input
 
@@ -1267,9 +1360,10 @@ sends reaches any other device.
   arrows or `a-z` and `0-9`, with unique optional `command/shift/option/control`
   modifiers. Hello advertises `macos-keyboard-extended` for the expanded keys;
   older servers accept only `a/c/v/x/z/s/f` plus navigation. Letter and digit
-  key events require the selected U.S. or ABC host input source because Apple
-  ANSI key codes identify physical U.S. positions; other layouts are refused
-  with a specific reason. `input.text` retains the printable ASCII contract,
+  key events require the owned app's selected U.S. or ABC input source because
+  Apple ANSI key codes identify physical U.S. positions. The helper focuses
+  the app and waits up to one second for activation before checking its layout;
+  unavailable activation and other layouts are refused with a specific reason. `input.text` retains the printable ASCII contract,
   and navigation keys do not depend on that host layout. Native windows
   reject simulator buttons, rotation and posture. The helper dynamically resolves
   private CoreGraphics `CGEventSetWindowLocation` to annotate PID-targeted pointer

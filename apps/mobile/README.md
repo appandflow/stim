@@ -381,8 +381,10 @@ receive it through a JavaScript update. A server advertising
 Older servers retain fixed shortcuts and navigation but reject other modified
 letters; the phone explains that requirement. Modified symbols and
 multi-character input are unsupported. Letter and digit shortcuts require the
-Mac's selected **U.S. or ABC** layout because native key codes represent physical
-U.S. positions; the helper refuses them on other layouts. Ordinary typing and
+owned app's selected **U.S. or ABC** layout because native key codes represent
+physical U.S. positions. The helper focuses the app and waits up to one second
+for activation before checking its layout; it refuses unavailable activation
+or other layouts. Ordinary typing and
 navigation remain available. [#2422](https://github.com/appandflow/stim/issues/2422) tracks logical mapping for
 other host layouts.
 

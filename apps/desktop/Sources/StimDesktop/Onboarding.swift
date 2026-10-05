@@ -21,15 +21,24 @@ final class Onboarding: ObservableObject {
     var serverPath: String?
     var viewerKeys: [String]
     var node: CLICompatibility
+    var nodePath: String?
     var brewPath: String?
     var skillPath: String?
     /// `HOME` in the login shell's environment, where the setup commands run and the skills CLI installs.
     var home: String
     var androidSDK: String?
     var javaHome: String?
+    /// The Node, older than Stim supports, that kept `stim` from reporting its version.
+    var nodeBlockingStim: NodeRuntime?
+    /// The same for `stim-server`.
+    var nodeBlockingServer: NodeRuntime?
+
+    var nodeBlocksStim: Bool
+    var nodeBlocksServer: Bool
   }
 
   enum PopupKind {
+    case node
     case stim
     case relaunch
     case server
@@ -98,19 +107,24 @@ final class Onboarding: ObservableObject {
     let offersViewer = !defaults.bool(forKey: AppPreferences.Key.viewerOfferDismissed)
     Task {
       let environment = await environment.value
-      let launched = await cli.value.executable
+      let launched = await cli.value
       let report = await Task.detached {
-        let stim = StimCLI(environment: environment, override: stimOverride)
+        let home = environment["HOME"].flatMap { $0.isEmpty ? nil : $0 } ?? NSHomeDirectory()
+        let packages = await PackageManagerLayout.probe(environment: environment, home: home)
+        let stim = await StimCLI.resolve(environment: environment, override: stimOverride) { packages }
         let compatibility = CLICompatibility.check(
           executable: stim.executable, versionOutput: await stim.versionOutput(), minimum: StimCLI.minimumVersion)
-        let server = serverOverride.map { StimServerCLI(environment: environment, override: $0) }
+        var server: StimServerCLI?
+        if let serverOverride {
+          server = await StimServerCLI.resolve(environment: environment, override: serverOverride) { packages }
+        }
         let viewerKeys =
           compatibility.isCompatible && offersViewer
           ? (try? await stim.settings(cwd: NSHomeDirectory())).map { DesktopViewerSettings.unset(in: $0.settings) } ?? []
           : []
-        let node = await SetupChecks.version(of: "node", environment: environment)
-        let packages = await PackageManagerLayout.probe(environment: environment)
-        let home = environment["HOME"].flatMap { $0.isEmpty ? nil : $0 } ?? NSHomeDirectory()
+        var node = stim.launcher?.runtime
+        if node == nil { node = await NodeRuntime.probe(environment: stim.environment, home: home) }
+        let nodePath = node?.path ?? SetupChecks.tool("node", environment: stim.environment)
         let skillPath = SetupChecks.installedSkill(home: home) {
           FileManager.default.fileExists(atPath: $0)
         }
@@ -123,22 +137,32 @@ final class Onboarding: ObservableObject {
         return Report(
           stim: compatibility,
           stimPath: stim.executable,
-          stimOwner: stim.executable.flatMap { packages.owner(ofExecutable: $0) },
+          stimOwner: (stim.launcher?.source ?? stim.executable).flatMap { packages.owner(ofExecutable: $0) },
           installers: packages.installed,
           defaultInstaller: packages.defaultInstaller(path: environment["PATH"] ?? ""),
-          needsRelaunch: compatibility.isCompatible && stim.executable != launched,
+          needsRelaunch: compatibility.isCompatible
+            && (stim.executable != launched.executable || stim.launcher?.source != launched.launcher?.source),
           server: serverCompatibility,
           serverPath: server?.executable,
           viewerKeys: viewerKeys,
           node: CLICompatibility.check(
-            executable: node.path, versionOutput: node.output, minimum: SetupChecks.nodeMinimum),
+            executable: nodePath, versionOutput: node?.version, minimum: SetupChecks.nodeMinimum),
+          nodePath: nodePath,
           brewPath: SetupChecks.tool("brew", environment: environment),
           skillPath: skillPath,
           home: home,
           androidSDK: MachineCheck.androidSDK(environment: environment, home: home) {
             FileManager.default.fileExists(atPath: $0)
           },
-          javaHome: environment["JAVA_HOME"].flatMap { $0.isEmpty ? nil : $0 })
+          javaHome: environment["JAVA_HOME"].flatMap { $0.isEmpty ? nil : $0 },
+          nodeBlockingStim: compatibility == .outdated(found: nil)
+            ? stim.launcher.flatMap(\.runtime).flatMap { $0.isSupported ? nil : $0 } : nil,
+          nodeBlockingServer: serverCompatibility == .outdated(found: nil)
+            ? server?.launcher.flatMap(\.runtime).flatMap { $0.isSupported ? nil : $0 } : nil,
+          nodeBlocksStim: compatibility == .outdated(found: nil) && stim.launcher != nil
+            && stim.launcher?.runtime?.isSupported != true,
+          nodeBlocksServer: serverCompatibility == .outdated(found: nil) && server?.launcher != nil
+            && server?.launcher?.runtime?.isSupported != true)
       }.value
       self.report = report
       setup.stim = report.stim

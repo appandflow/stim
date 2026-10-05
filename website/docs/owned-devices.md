@@ -576,6 +576,16 @@ first, or deny a request with `stim-server devices revoke <id>`.
 Hosting approval permits that client's native app code to run in its own
 hosted simulators. Approve only an expected client.
 
+Before reserving, an approved client can query the
+[hosted availability offer protocol](https://github.com/appandflow/stim/blob/main/packages/server/README.md#hosted-availability-offers)
+for an installed iOS or Android SDK choice, host architecture, current hosted
+reservation capacity, memory pressure, load and free disk on the Stim home
+volume. An unavailable or unknown choice carries a decline reason. This query
+creates no device or session. Offers are advisory snapshots; reserve still
+admits atomically and rechecks native conditions. Ordinary local device
+producers do not participate in hosted capacity, and Android AVD storage can
+be on a different volume. CLI host placement remains a follow-up in #2266.
+
 An approved client can reserve, boot, reconnect to and stop its own iOS simulator
 through the [hosted session protocol](https://github.com/appandflow/stim/blob/main/packages/server/README.md#hosted-ios-session-protocol).
 It can also transfer a digest-verified simulator `.app` bundle and install and
@@ -591,12 +601,30 @@ explicit stop and approval revocation touch only that session's owned simulator.
 Hosted reservations are atomic with each other; ordinary local device producers
 do not participate, so this is not a machine-wide hard capacity guarantee.
 
+The worker also accepts an Android reservation with optional installed
+`systemImage` and `deviceProfile` selectors. It gives that opaque session a
+unique owned AVD and a journal-reserved console port, verifies the exact running
+AVD and ABI, and reconnects to that same record. Explicit stop and revocation
+shut down only that ledger-owned AVD and retain its data. Ports are coordinated
+among hosted sessions; ordinary local producers can still race a reservation.
+Android Metro and screen/input routing remain follow-ups in #2266;
+Android sessions refuse the iOS Metro, view and input routes. The
+protocol details are in the
+[hosted Android session protocol](https://github.com/appandflow/stim/blob/main/packages/server/README.md#hosted-android-session-protocol).
+
+Android app delivery uses the same resumable transfer methods with a single
+`App.apk` file and the expected package identity. The worker checks byte digests,
+minimum SDK, native ABI and its exact ledger-owned running AVD before install
+and launch. An installed app attempt replays without launching twice. An install
+or signature conflict refuses without uninstalling an existing app. See the
+[Android app delivery protocol](https://github.com/appandflow/stim/blob/main/packages/server/README.md#hosted-android-app-delivery).
+
 Development launches remain `unverified` until a Metro bridge proves a bundle
 request. Release launches report success only after positive native process
 evidence; absent evidence remains `unverified`.
 
 The [private Metro protocol](https://github.com/appandflow/stim/blob/main/packages/server/README.md#private-hosted-metro)
-routes the hosted app through worker loopback to its client's verified Metro
+routes the hosted iOS app through worker loopback to its client's verified Metro
 over the tailnet. The client gateway accepts only the pinned worker and a
 session secret. Reconnect keeps the worker port while its session owner lives;
 stop and revocation close the streams. No public tunnel or Funnel is needed.
@@ -604,7 +632,7 @@ Expo development clients need the forwarded-origin manifest contract described
 in that protocol; older client/CLI versions are not covered by this slice.
 
 Client screen/control relays, automatic placement and
-Android hosting remain in [#2266](https://github.com/appandflow/stim/issues/2266).
+Android Metro and viewing remain in [#2266](https://github.com/appandflow/stim/issues/2266).
 This protocol slice does not change where `stim ios` or `stim android` runs.
 Hosting approval grants no access to unrelated
 workspaces, phone control or build offloading.

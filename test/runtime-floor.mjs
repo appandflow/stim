@@ -80,6 +80,13 @@ const version = execFileSync(process.execPath, ['packages/stim-cli/dist/cli.mjs'
 const cliPackage = JSON.parse(readFileSync(join(repositoryRoot, 'packages', 'stim-cli', 'package.json'), 'utf8'));
 assert.equal(version, cliPackage.version);
 
+const serverVersion = execFileSync(process.execPath, ['packages/server/dist/stim-server.mjs', '--version'], {
+  cwd: repositoryRoot,
+  encoding: 'utf8',
+}).trim();
+const serverPackage = JSON.parse(readFileSync(join(repositoryRoot, 'packages', 'server', 'package.json'), 'utf8'));
+assert.equal(serverVersion, serverPackage.version);
+
 execFileSync(process.execPath, ['packages/stim-cli/dist/cli.mjs', '--help'], {
   cwd: repositoryRoot,
   stdio: 'pipe',

@@ -81,7 +81,9 @@ time. Older servers retain fixed shortcuts and navigation but cannot receive
 other modified letters or digits. Multi-character modified input and symbols
 are not supported; ordinary typing keeps using input.text.
 
-Letter and digit shortcuts require the Mac's selected U.S. or ABC input source.
+Letter and digit shortcuts require the owned app's selected U.S. or ABC input source.
+The helper focuses that app and waits up to one second for activation before
+checking the layout; an app that does not activate refuses the shortcut.
 Apple's ANSI virtual key codes represent physical U.S. positions, not logical
 letters in other host layouts. The helper refuses those key events on other
 layouts with a specific reason; ordinary typing and navigation remain available.
