@@ -67,8 +67,8 @@ interface HostRelease {
 }
 
 const RELEASE: HostRelease | null = {
-  version: '0.1.0',
-  sha256: '1f6f8ad609881b5fbc0db8104892f403d4a0243afd65ce1853ac47262fb92652',
+  version: '0.1.1',
+  sha256: '4f895ea1604e658c1dd53be2c47e86f6fc81a428152ebd47691cc924766bf2e5',
 };
 
 const RELEASE_REQUIREMENT =
