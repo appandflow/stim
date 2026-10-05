@@ -222,7 +222,6 @@ private struct HostedMacosWindow: View {
     }
   }
 
-  /// Captures the window the app shows in front, moving to another one or a new size as the app changes.
   private func follow(_ app: MacosApp) async {
     guard self.app?.launchId == app.launchId, let pid = app.app?.pid else { return }
     let read = await Task.detached { Result { try OwnedAppWindowReader.selection(pid: pid) } }.value
@@ -277,7 +276,11 @@ private struct HostedMacosWindow: View {
       window = next
       current = selection.current
       error = nil
-    } catch { self.error = error.localizedDescription }
+    } catch {
+      if OwnedAppWindowReader.screen(pid: pid)?.contains(where: { $0.id == selection.current.id }) == true {
+        self.error = error.localizedDescription
+      }
+    }
   }
 
   func stop() async {
