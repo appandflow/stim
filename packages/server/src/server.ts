@@ -1150,14 +1150,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
           if (!ended) send(socket, { event: 'frame-delayed', subscription, delayed, ...(reason ? { reason } : {}) });
         },
         failed: end,
-        ...(wantsDuo
-          ? {
-              duo: (frame: Frame) => {
-                pending = frame;
-                if (!retry) flush();
-              },
-            }
-          : {}),
+        ...(wantsDuo ? { duo: (frame: Frame) => delivery.push(frame) } : {}),
         ...(wantsArtwork
           ? {
               artwork: (artwork: DeviceFrameArtwork | null) => {
