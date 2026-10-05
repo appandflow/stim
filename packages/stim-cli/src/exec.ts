@@ -36,7 +36,7 @@ function nameTimeout(error: unknown, command: string, timeoutMs: number | undefi
 }
 
 const defaultExecutor: Executor = {
-  run(cmd, { timeoutMs, killSignal, cwd } = {}) {
+  run(cmd, { timeoutMs, killSignal, cwd, env } = {}) {
     const opts: Parameters<typeof execSync>[1] = {
       encoding: 'utf-8',
       stdio: ['pipe', 'pipe', 'pipe'],
@@ -45,6 +45,7 @@ const defaultExecutor: Executor = {
     if (timeoutMs) opts.timeout = timeoutMs;
     if (killSignal) opts.killSignal = killSignal;
     if (cwd) opts.cwd = cwd;
+    if (env) opts.env = { ...process.env, ...env };
     try {
       return String(execSync(cmd, opts)).trim();
     } catch (error) {

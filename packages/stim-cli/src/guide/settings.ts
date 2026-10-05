@@ -549,15 +549,17 @@ Invalid hosting settings report an error and preserve every saved credential.
 replaced machine, run it, then re-add the name to request a new approval.
 A definite revoked or lapsed request can be requested again with --fix.
 An in-progress approval inspection reports busy rather than replacing its
-pending token. This configures approval only; \`ios\` and \`android\` do
-not yet place sessions on these machines.
+pending token. \`stim macos --host <machine>\` runs a macOS app on an
+approved machine (stim guide macos); \`ios\` and \`android\` do not yet
+place sessions on these machines.
 
 On a hosting Mac, \`hosting.agentDriver\` names the tool it starts so a
 client's coding agent can drive the macOS apps it hosts for that client.
 The default, \`none\`, starts nothing. \`agent-device\` starts its
 daemon only once agent-device can lease a single macOS app. Until then
 agent control reports \`none\` with a notice, and no client is handed the
-Mac's desktop.
+Mac's desktop. \`doctor\` on that Mac notes a hosted macOS app that runs while
+the setting is \`none\`.
 
 BUILD MACHINES ARE MACHINE-LEVEL
 \`offload.machines\` lists the Macs on the tailnet that may build for this one,

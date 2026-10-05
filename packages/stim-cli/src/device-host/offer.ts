@@ -5,6 +5,7 @@ import type { HostedDeviceOfferRequest, HostedNativeOffer } from '@stim-cli/core
 import { readHostMemoryPressure } from '../host-memory.ts';
 import { selectHostedIosDevice } from './worker.ts';
 import { selectHostedAndroidDevice } from './android.ts';
+import { selectHostedMacos } from './macos.ts';
 
 export function inspectHostedDevice(request: HostedDeviceOfferRequest): HostedNativeOffer {
   const cpus = availableParallelism();
@@ -23,9 +24,11 @@ export function inspectHostedDevice(request: HostedDeviceOfferRequest): HostedNa
   try {
     if (process.platform !== 'darwin') throw new Error('Hosted device sessions require a Mac.');
     if (resources.memoryPressure !== 'normal') throw new Error('Host memory pressure is unknown or elevated.');
-    return request.platform === 'ios'
-      ? { platform: 'ios', choice: selectHostedIosDevice(request), resources, declined: null }
-      : { platform: 'android', choice: selectHostedAndroidDevice(request), resources, declined: null };
+    return request.platform === 'macos'
+      ? { platform: 'macos', choice: selectHostedMacos(), resources, declined: null }
+      : request.platform === 'ios'
+        ? { platform: 'ios', choice: selectHostedIosDevice(request), resources, declined: null }
+        : { platform: 'android', choice: selectHostedAndroidDevice(request), resources, declined: null };
   } catch (error) {
     return { platform: request.platform, choice: null, resources, declined: (error as Error).message.slice(0, 4000) };
   }

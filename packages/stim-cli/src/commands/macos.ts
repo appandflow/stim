@@ -4,13 +4,14 @@ import { join, resolve } from 'node:path';
 import type { Command } from 'commander';
 import { LOG_ROTATE_BYTES } from '@stim-cli/core';
 import { readMacosRecord, type MacosAppRecord } from '@stim-cli/core/state';
+import { connectHost, placeHostedMacos } from '../device-host/hosted-macos.ts';
 import { withNativeBuildRun } from '../engine/native-run.ts';
 import { acquireBuildSlot, releaseBuildSlot } from '../engine/build-slots.ts';
 import { spawnDeclared } from '../engine/spawn-claims.ts';
 import { withWorkspaceProcessLock } from '../engine/workspace-process-lock.ts';
 import { getExecutor } from '../exec.ts';
 import { inspectProcessIdentity } from '../process-identity.ts';
-import { macosDir, macosLogFile, macosProcess } from '../macos/state.ts';
+import { macosDir, macosLogFile, macosProcess, requiredMacosRecord } from '../macos/state.ts';
 import { logLines } from '../macos/run.ts';
 import { stopMacosAppHeld } from '../macos/stop.ts';
 import { createNdjsonWriter, type NdjsonWriter } from '../ndjson.ts';
@@ -51,7 +52,14 @@ async function tool(
   return stdout.trim();
 }
 
-function stageBundle(root: string, product: string, infoPlist: string, bin: string, bundle: string): string {
+function stageBundle(
+  root: string,
+  product: string,
+  infoPlist: string,
+  bin: string,
+  bundle: string,
+  hosted: boolean,
+): string {
   const exec = getExecutor();
   const plist = JSON.parse(
     exec.runFile('plutil', ['-convert', 'json', '-o', '-', realpathSync(resolve(root, infoPlist))]),
@@ -62,7 +70,9 @@ function stageBundle(root: string, product: string, infoPlist: string, bin: stri
   if (plist.CFBundleURLTypes || plist.SUFeedURL) {
     throw new Error('Use a development Info.plist without shared URL schemes or an update feed.');
   }
-  const bundleId = `${plist.CFBundleIdentifier}.stim.${createHash('sha256').update(root).digest('hex').slice(0, 12)}`;
+  const bundleId = hosted
+    ? plist.CFBundleIdentifier
+    : `${plist.CFBundleIdentifier}.stim.${createHash('sha256').update(root).digest('hex').slice(0, 12)}`;
   rmSync(bundle, { recursive: true, force: true });
   const contents = join(bundle, 'Contents');
   mkdirSync(join(contents, 'MacOS'), { recursive: true });
@@ -88,7 +98,15 @@ function stageBundle(root: string, product: string, infoPlist: string, bin: stri
   return bundleId;
 }
 
-export async function runMacos(root: string, note: (line: string) => void = console.error): Promise<MacosAppRecord> {
+/**
+ * Builds the Debug app and launches it here, or with `host` on that approved hosting Mac. A named host never falls
+ * back to a local launch.
+ */
+export async function runMacos(
+  root: string,
+  note: (line: string) => void = console.error,
+  host?: string,
+): Promise<MacosAppRecord> {
   if (process.platform !== 'darwin') throw new Error('stim macos requires a Mac with Swift installed.');
   root = realpathSync(root);
   if (!existsSync(join(root, 'Package.swift')))
@@ -109,13 +127,18 @@ export async function runMacos(root: string, note: (line: string) => void = cons
         workspaceDir(root),
         'macos-launch',
         async () => {
-          await stopMacosAppHeld(root);
+          const previous = requiredMacosRecord(root);
+          if (previous?.host && previous.host.machine !== host) {
+            throw new Error(
+              `This workspace's macOS app runs on ${previous.host.machine}. Run stim stop first, then stim macos${host ? ` --host ${host}` : ''}.`,
+            );
+          }
+          if (host) (await connectHost(host)).connection.close();
+          if (host && macos.arguments?.length) note('macos.arguments are not passed to a hosted app.');
+          if (!previous?.host) await stopMacosAppHeld(root);
           upsertProject(root, {});
           recordWorkspaceUse(root);
-          const owner = macosProcess(process.pid);
-          const started = Date.now();
           const bundle = join(macosDir(root), `${macos.product}.app`);
-          const scratch = join(macosDir(root), 'build');
           const record: MacosAppRecord = {
             product: macos.product!,
             bundle,
@@ -123,99 +146,42 @@ export async function runMacos(root: string, note: (line: string) => void = cons
             executable: join(bundle, 'Contents', 'MacOS', macos.product!),
             launchId: randomUUID(),
             arguments: macos.arguments ?? [],
-            supervisor: owner,
-            build: { state: 'running', startedAt: new Date(started).toISOString() },
+            supervisor: macosProcess(process.pid),
+            build: { state: 'running', startedAt: new Date().toISOString() },
+            ...(previous?.host ? { host: previous.host, hostLaunched: previous.hostLaunched ?? false } : {}),
           };
-          writeWorkspaceState(root, { macos: record });
-          const writer = createNdjsonWriter(macosLogFile(root), { maxBytes: LOG_ROTATE_BYTES });
-          let slot: Awaited<ReturnType<typeof acquireBuildSlot>> | undefined;
+          await buildBundle(root, macos.infoPlist!, record, host !== undefined, note);
+          if (!host) return launchHere(root, record);
+          const connection = await connectHost(host);
+          const write = (patch: Partial<MacosAppRecord>) =>
+            writeWorkspaceState(root, { macos: { ...record, ...patch } });
+          let placement = record.host;
           try {
-            slot = await acquireBuildSlot({
-              max: getConcurrencyLimits().maxBuilds,
+            const run = await placeHostedMacos(connection, {
               root,
-              logFile: writer.file,
-              out: note,
-            });
-            const args = [
-              'build',
-              '-c',
-              'debug',
-              '--product',
-              record.product,
-              '--scratch-path',
-              scratch,
-              '--jobs',
-              '2',
-            ];
-            await tool(root, args, writer, note);
-            const bin = await tool(
-              root,
-              ['build', '-c', 'debug', '--scratch-path', scratch, '--show-bin-path'],
-              writer,
-              () => {},
-              true,
-            );
-            record.bundleId = stageBundle(root, record.product, macos.infoPlist!, bin, bundle);
-            record.bundle = realpathSync(bundle);
-            record.executable = realpathSync(join(record.bundle, 'Contents', 'MacOS', record.product));
-            record.build = {
-              ...record.build,
-              state: 'ok',
-              finishedAt: new Date().toISOString(),
-              durationMs: Date.now() - started,
-            };
-            writeWorkspaceState(root, { macos: record });
-          } catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
-            writer.write({ src: 'build', platform: 'macos', level: 'error', msg: message });
-            writeWorkspaceState(root, {
-              macos: {
-                ...record,
-                supervisor: undefined,
-                build: {
-                  ...record.build,
-                  state: 'failed',
-                  finishedAt: new Date().toISOString(),
-                  durationMs: Date.now() - started,
-                  error: message,
-                },
+              bundle: record.bundle,
+              bundleId: record.bundleId,
+              recorded: previous?.host,
+              reserved: (reserved) => {
+                placement = reserved;
+                write({ host: reserved, hostLaunched: false });
               },
+              note,
             });
+            const placed: MacosAppRecord = {
+              ...record,
+              supervisor: undefined,
+              host: run.placement,
+              hostLaunched: run.launched,
+            };
+            writeWorkspaceState(root, { macos: placed });
+            return placed;
+          } catch (error) {
+            write({ supervisor: undefined, ...(placement ? { host: placement, hostLaunched: false } : {}) });
             throw error;
           } finally {
-            releaseBuildSlot(slot);
-            writer.close();
+            connection.connection.close();
           }
-          const fd = openSync(join(workspaceLogsDir(root), 'macos-supervisor.log'), 'a');
-          let child;
-          try {
-            child = spawnDeclared(() =>
-              getExecutor().spawn(process.execPath, [spawnEntry('macos-run'), root, record.launchId], {
-                cwd: root,
-                detached: true,
-                stdio: ['ignore', fd, fd],
-                env: process.env,
-              }),
-            );
-            child.unref();
-          } finally {
-            closeSync(fd);
-          }
-          const deadline = Date.now() + 20_000;
-          while (Date.now() < deadline) {
-            const current = readMacosRecord(root);
-            if (
-              current?.launchId === record.launchId &&
-              current.app &&
-              current.supervisor &&
-              inspectProcessIdentity(current.app) === 'same' &&
-              inspectProcessIdentity(current.supervisor) === 'same'
-            )
-              return current;
-            if (child.exitCode !== null || child.signalCode !== null) break;
-            await new Promise((done) => setTimeout(done, 100));
-          }
-          throw new Error('The macOS app did not register. See macos-supervisor.log in the workspace logs.');
         },
         { external: true, declareSpawns: true, ownerPurpose: 'build and launch macOS app' },
       );
@@ -224,16 +190,121 @@ export async function runMacos(root: string, note: (line: string) => void = cons
   );
 }
 
+async function buildBundle(
+  root: string,
+  infoPlist: string,
+  record: MacosAppRecord,
+  hosted: boolean,
+  note: (line: string) => void,
+): Promise<void> {
+  const started = Date.parse(record.build.startedAt);
+  const scratch = join(macosDir(root), 'build');
+  writeWorkspaceState(root, { macos: record });
+  const writer = createNdjsonWriter(macosLogFile(root), { maxBytes: LOG_ROTATE_BYTES });
+  let slot: Awaited<ReturnType<typeof acquireBuildSlot>> | undefined;
+  try {
+    slot = await acquireBuildSlot({
+      max: getConcurrencyLimits().maxBuilds,
+      root,
+      logFile: writer.file,
+      out: note,
+    });
+    const args = ['build', '-c', 'debug', '--product', record.product, '--scratch-path', scratch, '--jobs', '2'];
+    await tool(root, args, writer, note);
+    const bin = await tool(
+      root,
+      ['build', '-c', 'debug', '--scratch-path', scratch, '--show-bin-path'],
+      writer,
+      () => {},
+      true,
+    );
+    record.bundleId = stageBundle(root, record.product, infoPlist, bin, record.bundle, hosted);
+    record.bundle = realpathSync(record.bundle);
+    record.executable = realpathSync(join(record.bundle, 'Contents', 'MacOS', record.product));
+    record.build = {
+      ...record.build,
+      state: 'ok',
+      finishedAt: new Date().toISOString(),
+      durationMs: Date.now() - started,
+    };
+    writeWorkspaceState(root, { macos: record });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    writer.write({ src: 'build', platform: 'macos', level: 'error', msg: message });
+    writeWorkspaceState(root, {
+      macos: {
+        ...record,
+        supervisor: undefined,
+        build: {
+          ...record.build,
+          state: 'failed',
+          finishedAt: new Date().toISOString(),
+          durationMs: Date.now() - started,
+          error: message,
+        },
+      },
+    });
+    throw error;
+  } finally {
+    releaseBuildSlot(slot);
+    writer.close();
+  }
+}
+
+async function launchHere(root: string, record: MacosAppRecord): Promise<MacosAppRecord> {
+  const fd = openSync(join(workspaceLogsDir(root), 'macos-supervisor.log'), 'a');
+  let child;
+  try {
+    child = spawnDeclared(() =>
+      getExecutor().spawn(process.execPath, [spawnEntry('macos-run'), root, record.launchId], {
+        cwd: root,
+        detached: true,
+        stdio: ['ignore', fd, fd],
+        env: process.env,
+      }),
+    );
+    child.unref();
+  } finally {
+    closeSync(fd);
+  }
+  const deadline = Date.now() + 20_000;
+  while (Date.now() < deadline) {
+    const current = readMacosRecord(root);
+    if (
+      current?.launchId === record.launchId &&
+      current.app &&
+      current.supervisor &&
+      inspectProcessIdentity(current.app) === 'same' &&
+      inspectProcessIdentity(current.supervisor) === 'same'
+    )
+      return current;
+    if (child.exitCode !== null || child.signalCode !== null) break;
+    await new Promise((done) => setTimeout(done, 100));
+  }
+  throw new Error('The macOS app did not register. See macos-supervisor.log in the workspace logs.');
+}
+
+function launchPayload(record: MacosAppRecord): Record<string, unknown> {
+  if (!record.host) return { platform: 'macos', ...record };
+  const { product, launchId, build, host } = record;
+  return { platform: 'macos', product, launchId, build, host };
+}
+
 export default function macosCommand(program: Command): void {
   program
     .command('macos')
     .description('Build and launch an owned Swift Package macOS Debug app.')
     .option('--json', 'print one launch payload; build output goes to stderr')
-    .action(async (options: { json?: boolean }) => {
+    .option('--host <machine>', 'run it on this approved hosting Mac from hosting.machines')
+    .action(async (options: { json?: boolean; host?: string }) => {
       const root = findProjectRoot(process.cwd());
       if (!root) throw new Error('Run stim macos from the Swift Package directory.');
-      const record = await runMacos(root);
-      if (options.json) console.log(JSON.stringify({ platform: 'macos', ...record }));
+      const record = await runMacos(root, console.error, options.host);
+      if (options.json) console.log(JSON.stringify(launchPayload(record)));
+      else if (record.host)
+        console.log(
+          `Started ${record.product} on ${record.host.machine} as ${record.host.bundleId}${record.hostLaunched === true ? '' : ' (launch not confirmed)'}.`,
+        );
       else console.log(`Started ${record.product} (pid ${record.app?.pid}).`);
     });
 }

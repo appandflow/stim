@@ -105,3 +105,47 @@ export function parseHostedAgentGrant(value: unknown): HostedAgentGrant | null {
     scope: value.scope,
   };
 }
+
+function parseHostedAgentAccess(value: unknown): HostedAgentAccess | null {
+  if (!isJsonObject(value)) return null;
+  if (value.driver === 'none')
+    return value.setting === 'hosting.agentDriver' && Object.keys(value).length === 2
+      ? { driver: 'none', setting: 'hosting.agentDriver' }
+      : null;
+  if (
+    value.driver !== 'agent-device' ||
+    typeof value.remoteConfig !== 'string' ||
+    !value.remoteConfig.startsWith('/') ||
+    typeof value.command !== 'string' ||
+    !value.command ||
+    Object.keys(value).length !== 3
+  )
+    return null;
+  return { driver: 'agent-device', remoteConfig: value.remoteConfig, command: value.command };
+}
+
+export function parseHostedMacosPlacement(value: unknown): HostedMacosPlacement | null {
+  if (
+    !isJsonObject(value) ||
+    typeof value.machine !== 'string' ||
+    !value.machine ||
+    typeof value.session !== 'string' ||
+    !/^[a-f0-9-]{36}$/.test(value.session) ||
+    !hostedMacosAppSlot(value.appSlot) ||
+    typeof value.appAttempt !== 'string' ||
+    !/^[a-zA-Z0-9_-]{1,128}$/.test(value.appAttempt) ||
+    typeof value.bundleId !== 'string' ||
+    !value.bundleId.endsWith(`.hosted${value.appSlot}`)
+  )
+    return null;
+  const agent = parseHostedAgentAccess(value.agent);
+  if (!agent) return null;
+  return {
+    machine: value.machine,
+    session: value.session,
+    appSlot: value.appSlot,
+    appAttempt: value.appAttempt,
+    bundleId: value.bundleId,
+    agent,
+  };
+}

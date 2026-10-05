@@ -22,6 +22,8 @@ import {
   isJsonObject,
   parseHostedPlatformDevice,
   hostedDeviceId,
+  hostedMacosBundleId,
+  HOSTED_MACOS_APP_SLOTS,
   loadConfig,
   parseHostedRequest,
   readHostedDevice,
@@ -31,7 +33,9 @@ import {
   hostedAppAttempt,
   parseHostedAppOffer,
   readHostedApp,
+  readHostedAppMetadata,
   type HostedAppDelivery,
+  type HostedAppLaunch,
   type HostedAppRecord,
   type HostedDeviceRequest,
   type HostedDeviceSession,
@@ -42,6 +46,7 @@ import { writeJson } from './registry.ts';
 import { takeHostedInputClaim } from './hosted-input.ts';
 import type { Methods, ProtocolError } from './protocol.ts';
 import { appDelivery, offerHostedApp, chunkHostedApp, changeHostedApp } from './hosted-app.ts';
+import type { HostedAgentHost } from './agent-driver.ts';
 
 export interface DeviceHostLimits {
   prepareMs: number;
@@ -73,6 +78,15 @@ interface OwnedSession {
   viewer?: { close: () => Promise<void> };
 }
 
+export interface DeviceHostOptions {
+  worker: string;
+  env: NodeJS.ProcessEnv;
+  allowed: (client: string) => boolean;
+  /** Issues and revokes the agent control that hosted macOS apps hand their client. */
+  agents: Pick<HostedAgentHost, 'appRunning' | 'appStopped' | 'access'>;
+  limits?: Partial<DeviceHostLimits>;
+}
+
 type Answer = { result: HostedDeviceSession } | { error: ProtocolError };
 type AppAnswer<T> = { result: T } | { error: ProtocolError };
 const refused = (code: ProtocolError['code'], message: string): { error: ProtocolError } => ({
@@ -87,19 +101,9 @@ export class DeviceHost {
   private closed = false;
   private readonly limits: DeviceHostLimits;
 
-  private readonly options: {
-    worker: string;
-    env: NodeJS.ProcessEnv;
-    allowed: (client: string) => boolean;
-    limits?: Partial<DeviceHostLimits>;
-  };
+  private readonly options: DeviceHostOptions;
 
-  constructor(options: {
-    worker: string;
-    env: NodeJS.ProcessEnv;
-    allowed: (client: string) => boolean;
-    limits?: Partial<DeviceHostLimits>;
-  }) {
+  constructor(options: DeviceHostOptions) {
     this.options = options;
     this.limits = { prepareMs: 5 * 60_000, offerMs: 30_000, stopMs: 90_000, killGraceMs: 5000, ...options.limits };
   }
@@ -188,9 +192,10 @@ export class DeviceHost {
         (native.resources.memoryPressure !== 'normal' ? 'Host memory pressure is unknown or elevated.' : null);
       if (max > 0 && running >= max)
         declined = 'All configured hosted device reservations are occupied, including unresolved sessions.';
-      if (request.platform === 'android') {
+      if (request.platform === 'android' || request.platform === 'macos') {
         try {
-          reserveAndroidPort(records);
+          if (request.platform === 'android') reserveAndroidPort(records);
+          else reserveMacosSlot(records);
         } catch (error) {
           declined = (error as Error).message;
         }
@@ -214,7 +219,7 @@ export class DeviceHost {
     if (!request)
       return refused(
         'bad-request',
-        'reserve needs an iOS or Android workspace, slot, attempt and valid optional selectors.',
+        'reserve needs an iOS, Android or macOS workspace, slot, attempt and valid optional selectors.',
       );
     let start: HostedDeviceSession | null = null;
     try {
@@ -245,6 +250,7 @@ export class DeviceHost {
           device: null,
           createdAt: new Date().toISOString(),
           ...(request.platform === 'android' ? { consolePort: reserveAndroidPort(records) } : {}),
+          ...(request.platform === 'macos' ? { appSlot: reserveMacosSlot(records) } : {}),
         };
         this.acquire(record);
         records.push(record);
@@ -456,6 +462,14 @@ export class DeviceHost {
       );
     try {
       const record = this.appSession(client, offer);
+      if (record.platform === 'macos') {
+        if (offer.mode === 'development' || offer.devClientScheme !== undefined)
+          throw new Error('Hosted macOS apps require release mode without a development client scheme.');
+        if (offer.bundleId.startsWith('com.apple.'))
+          throw new Error('Hosted macOS apps cannot use a com.apple. bundle identity.');
+        if (hostedMacosBundleId(offer.bundleId, record.appSlot!).length + '.plist'.length > 255)
+          throw new Error('The hosted macOS bundle identity exceeds 249 characters for its preferences plist.');
+      }
       if (record.state !== 'ready' || this.closed || !this.owned.has(record.id))
         throw new Error(
           'Only a ready session attached to this server accepts an app. Explicit stop must reconcile a lost owner.',
@@ -497,12 +511,17 @@ export class DeviceHost {
     }
   }
 
-  appAttach(client: string, params: unknown): AppAnswer<HostedAppDelivery> {
+  appAttach(client: string, params: unknown): AppAnswer<HostedAppLaunch> {
     if (!this.options.allowed(client)) return refused('forbidden', 'Current device-host approval is required.');
     try {
       const record = this.appSession(client, params);
-      const app = readHostedApp(record.id, (params as { attempt: string }).attempt);
-      const result = appDelivery(app);
+      const app = readHostedAppMetadata(record.id, (params as { attempt: string }).attempt);
+      const result: HostedAppLaunch = appDelivery(app);
+      if (record.platform === 'macos' && app.state === 'installed' && record.state === 'ready') {
+        const access = this.options.agents.access(record.id);
+        result.agent = access?.grant ?? { driver: 'none' };
+        if (access?.notice) result.notice = access.notice;
+      }
       if (app.state === 'installing' && this.owned.get(record.id)?.installing?.attempt !== app.attempt) {
         result.state = 'unknown';
         result.notice = 'The install owner is unavailable. Stop this hosted session before retrying.';
@@ -513,7 +532,7 @@ export class DeviceHost {
     }
   }
 
-  appLaunch(client: string, params: unknown): AppAnswer<HostedAppDelivery> {
+  appLaunch(client: string, params: unknown): AppAnswer<HostedAppLaunch> {
     if (!this.options.allowed(client)) return refused('forbidden', 'Current device-host approval is required.');
     try {
       const record = this.appSession(client, params);
@@ -522,13 +541,18 @@ export class DeviceHost {
           'Only a ready session attached to this server can install an app. Explicit stop must reconcile a lost owner.',
         );
       const owned = this.acquire(record);
-      const app = readHostedApp(record.id, (params as { attempt: string }).attempt);
+      const app = readHostedAppMetadata(record.id, (params as { attempt: string }).attempt);
       if (app.state !== 'receiving') return this.appAttach(client, params);
       if (owned.stopping || owned.installing)
         throw new Error('This hosted session already has a native operation in progress.');
       if (owned.metro && (!owned.metro.port || owned.metro.closing))
         throw new Error('This session Metro bridge is opening or closing.');
       if (offerHostedApp(app).missing.length) throw new Error('The app manifest still has missing content.');
+      if (
+        (record.platform === 'macos') !==
+        readHostedApp(record.id, app.attempt).files.some((file) => file.path === 'Contents/Info.plist')
+      )
+        throw new Error('The app manifest must include Contents/Info.plist only for macOS sessions.');
       const result = appDelivery(
         changeHostedApp(record.id, app.attempt, (current) => {
           current.state = 'installing';
@@ -546,6 +570,7 @@ export class DeviceHost {
 
   private async install(record: HostedDeviceSession, owned: OwnedSession, attempt: string): Promise<void> {
     try {
+      if (record.platform === 'macos' && this.options.agents.access(record.id)) await this.stopAgent(record.id);
       await this.closeView(owned);
       if (owned.stopping || this.closed || !this.options.allowed(record.client)) return;
       releaseClaim(takeHostedInputClaim(owned.claim));
@@ -564,6 +589,8 @@ export class DeviceHost {
         record.device !== null &&
         hostedDeviceId(parseHostedPlatformDevice(value.device, record.platform)!) === hostedDeviceId(record.device) &&
         (value.launched === true || value.launched === 'unverified');
+      if (installed && record.platform === 'macos' && Number.isSafeInteger(value.pid) && (value.pid as number) > 0)
+        await this.startAgent(record, attempt, value.pid as number);
       const app = changeHostedApp(record.id, attempt, (current) => {
         current.state = installed ? 'installed' : 'unknown';
         current.launched = installed ? (value as { launched: HostedAppDelivery['launched'] }).launched : null;
@@ -592,6 +619,25 @@ export class DeviceHost {
         process.stderr.write(`Hosted app ${record.id} remains unresolved: ${(journalError as Error).message}\n`);
       }
     }
+  }
+
+  private async startAgent(record: HostedDeviceSession, attempt: string, pid: number): Promise<void> {
+    try {
+      await this.options.agents.appRunning({
+        client: record.client,
+        session: record.id,
+        bundleId: hostedMacosBundleId(readHostedAppMetadata(record.id, attempt).bundleId, record.appSlot!),
+        pid,
+      });
+    } catch (error) {
+      process.stderr.write(`Hosted agent control did not start: ${(error as Error).message}\n`);
+    }
+  }
+
+  private stopAgent(session: string): Promise<void> {
+    return this.options.agents.appStopped(session).catch((error: unknown) => {
+      process.stderr.write(`Hosted agent control did not stop: ${(error as Error).message}\n`);
+    });
   }
 
   private async prepare(record: HostedDeviceSession): Promise<void> {
@@ -638,6 +684,7 @@ export class DeviceHost {
     if (record.state === 'stopped') return;
     const owned = this.acquire(record);
     if (owned.stopping) return;
+    void this.stopAgent(record.id);
     void this.closeMetro(owned).catch((error: unknown) => this.failed(record.id, error));
     void this.closeView(owned).catch((error: unknown) => this.failed(record.id, error));
     this.change(record.id, (current) => {
@@ -737,8 +784,9 @@ export class DeviceHost {
         }
       }
     } catch (error) {
-      for (const owned of this.owned.values()) {
+      for (const [id, owned] of this.owned) {
         owned.run?.cancel();
+        void this.stopAgent(id);
         void this.closeMetro(owned).catch((closeError: unknown) => {
           process.stderr.write(`Hosted Metro close failed: ${(closeError as Error).message}\n`);
         });
@@ -765,7 +813,10 @@ export class DeviceHost {
         }
       }
     } catch {
-      for (const owned of this.owned.values()) owned.run?.cancel();
+      for (const [id, owned] of this.owned) {
+        owned.run?.cancel();
+        void this.stopAgent(id);
+      }
     }
     await Promise.all([...this.owned.values()].map((owned) => owned.stopping ?? owned.run?.done));
     await Promise.all([...this.probes.keys()].map((probe) => probe.done));
@@ -790,6 +841,7 @@ export class DeviceHost {
         systemImage: record.systemImage,
         deviceProfile: record.deviceProfile,
         consolePort: record.consolePort,
+        appSlot: record.appSlot,
         session: record.id,
         attempt,
         metroPort: mode === 'install' ? owned.metro?.port : undefined,
@@ -955,7 +1007,19 @@ function reserveAndroidPort(records: HostedDeviceSession[]): number {
   throw new Error('All supported hosted Android console ports are reserved. Attach or stop an existing session.');
 }
 
+function reserveMacosSlot(records: HostedDeviceSession[]): number {
+  const slots = new Set(
+    records
+      .filter((record) => record.platform === 'macos' && record.state !== 'stopped')
+      .map((record) => record.appSlot),
+  );
+  for (let slot = 1; slot <= HOSTED_MACOS_APP_SLOTS; slot++) if (!slots.has(slot)) return slot;
+  throw new Error('All hosted macOS app slots are reserved. Attach or stop an existing session.');
+}
+
 function assertSessionDevice(record: HostedDeviceSession, device: NonNullable<HostedDeviceSession['device']>): void {
+  if (record.platform === 'macos' && (!('appSlot' in device) || device.appSlot !== record.appSlot))
+    throw new Error('The macOS worker app slot does not match its reserved session.');
   if (
     record.platform === 'android' &&
     (!('avdName' in device) ||

@@ -25,7 +25,9 @@ import {
 } from '@stim-cli/core/state';
 import { writeJson } from './registry.ts';
 
-export function appDelivery(record: HostedAppRecord): HostedAppDelivery {
+export function appDelivery(
+  record: Omit<HostedAppRecord, 'files'> & { files?: HostedAppRecord['files'] },
+): HostedAppDelivery {
   const { files: _files, manifest: _manifest, ...delivery } = record;
   return delivery;
 }

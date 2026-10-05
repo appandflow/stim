@@ -607,11 +607,12 @@ another Mac on your tailnet. The server command is
 `stim-server devices grant <id> --device-host`; inspect `stim-server devices`
 first, or deny a request with `stim-server devices revoke <id>`.
 Hosting approval permits that client's native app code to run in its own
-hosted simulators. Approve only an expected client.
+hosted simulators, emulators or macOS app sessions. Approve only an expected client.
 
 Before reserving, an approved client can query the
 [hosted availability offer protocol](https://github.com/appandflow/stim/blob/main/packages/server/README.md#hosted-availability-offers)
-for an installed iOS or Android SDK choice, host architecture, current hosted
+for an installed iOS or Android SDK choice or the macOS host version, host
+architecture, current hosted
 reservation capacity, memory pressure, load and free disk on the Stim home
 volume. An unavailable or unknown choice carries a decline reason. This query
 creates no device or session. Offers are advisory snapshots; reserve still
@@ -651,6 +652,20 @@ minimum SDK, native ABI and its exact ledger-owned running AVD before install
 and launch. An installed app attempt replays without launching twice. An install
 or signature conflict refuses without uninstalling an existing app. See the
 [Android app delivery protocol](https://github.com/appandflow/stim/blob/main/packages/server/README.md#hosted-android-app-delivery).
+
+The host also accepts `platform: "macos"` without selectors. It reserves one
+of 64 app slots and accepts a prebuilt release `.app` with a digest-verified
+`Contents/Info.plist` and executable under `Contents/MacOS/`. The worker checks
+bundle identity, architecture and minimum macOS version, refuses Apple bundle
+identities, URL registrations and update feeds, then stamps
+`<bundleId>.hosted<appSlot>` and ad hoc signs the app. The owned macOS supervisor
+runs it with a private home and temporary directory; this is not an OS sandbox.
+Stop and revocation stop only the recorded processes and remove the last hosted
+identity's preferences domain and plist, the private app home and delivered bytes,
+keeping logs and receipts. Unresolved sessions retain their app slots.
+Until a driver runs, the host reports `agent: { driver: 'none' }` for installed macOS apps, and `stim doctor` on the host names `hosting.agentDriver`.
+macOS hosting has no Metro, viewing, control or CLI placement in this slice.
+See the [macOS session protocol](https://github.com/appandflow/stim/blob/main/packages/server/README.md#hosted-macos-app-sessions).
 
 Development launches remain `unverified` until a Metro bridge proves a bundle
 request. Release launches report success only after positive native process
