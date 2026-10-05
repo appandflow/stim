@@ -152,19 +152,20 @@ instead.
 
 The copy keeps the plist's own CFBundleIdentifier. The host runs it as
 <id>.hosted<slot> from a fixed slot pool, so the bundle id stays the same
-across rebuilds; whether macOS keeps permission approvals for it also depends
-on how the host signs it. Viewing and
-controlling the hosted app needs Screen & System Audio Recording and Device
-Control and Data Access, granted once to the process that spawns stim-frames. For
-a stim-server run by stim-server service install, that is the node that
-stim-server service status reports, usually /opt/homebrew/bin/node. Add it in
-System Settings > Privacy & Security under both names; macOS 26 and earlier call
-the second one Accessibility. Running the
+across rebuilds; whether macOS keeps the permissions the hosted app asks for
+itself also depends on how the host signs it. Running the
 command again reuses the session and delivers a new copy. macos.arguments are
 not passed to a hosted app. A workspace has one macOS app: a local stim macos
 refuses while it runs on a host, and --host with a different machine refuses
 until stim stop. When the host cannot be reached or does not confirm the stop,
 the placement stays recorded; restore the connection and run stim stop again.
+
+Viewing and controlling the hosted app from a phone needs Screen & System Audio
+Recording and Device Control and Data Access (Accessibility on macOS 26 and
+earlier), granted once on the host to the process that spawns stim-frames, not to
+the hosted app. For a stim-server run by stim-server service install, that is the
+node that stim-server service status reports, usually /opt/homebrew/bin/node. Add
+it in System Settings > Privacy & Security in both panes.
 
 status --json reports macos.host { machine, session, appSlot, appAttempt,
 bundleId, agent }. state is running when the host reported a live app and

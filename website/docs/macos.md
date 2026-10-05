@@ -155,20 +155,21 @@ stim stop`}
 
 The copied bundle keeps its own `CFBundleIdentifier`. The host runs it as
 `<id>.hosted<slot>` from a fixed pool of slots, so its bundle ID stays the same
-across rebuilds. Whether macOS keeps its Screen & System Audio Recording and Device
-Control and Data Access approvals also depends on how the host signs it.
-
-To view or control the hosted app, grant both permissions once to the process that
-spawns `stim-frames`. For a stim-server run by `stim-server service install`, that is
-the `node` that `stim-server service status` reports, usually `/opt/homebrew/bin/node`.
-Add it under **System Settings → Privacy & Security → Screen & System Audio Recording**
-and **Device Control and Data Access** (**Accessibility** on macOS 26 and earlier).
+across rebuilds. Whether macOS keeps the permissions the hosted app asks for itself
+also depends on how the host signs it.
 Running the command again reuses the session and delivers a new copy.
 `macos.arguments` are not passed to a hosted app. While the app runs on a host, a
 local `stim macos` refuses, and so does `--host` with another machine, until
 `stim stop`. `stim stop` and `stim worktree remove` stop the session on the host and
 wait for it to confirm. When the host cannot be reached, the placement stays
 recorded so a later `stim stop` can finish.
+
+To view or control the hosted app from a phone, grant Screen & System Audio Recording
+and Device Control and Data Access (**Accessibility** on macOS 26 and earlier) once to
+the process that spawns `stim-frames` on the host, not to the hosted app. For a
+stim-server run by `stim-server service install`, that is the `node` that
+`stim-server service status` reports, usually `/opt/homebrew/bin/node`. Add it under
+**System Settings → Privacy & Security** in both panes.
 
 `macos --json` prints `{ platform, product, launchId, build, host }`, and
 `status --json` reports the same `host` under `environments[].macos`: the
