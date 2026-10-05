@@ -310,7 +310,7 @@ describe.skipIf(process.platform === 'win32')('agent-device driver', () => {
         SESSION,
         'POST',
         '/rpc?x=1',
-        '{"method":"agent_device.command","params":{}}',
+        '{"method":"agent_device.command","params":{"command":"snapshot"}}',
         {
           'x-agent-device-tenant': 'stim.other',
           authorization: 'Bearer client-grant-token',
@@ -384,6 +384,61 @@ describe.skipIf(process.platform === 'win32')('agent-device driver', () => {
         leaseBackend: 'macos-app',
         sessionIsolation: 'tenant',
       });
+      const selected = await rpc({
+        method: 'agent_device.command',
+        params: {
+          command: 'batch',
+          flags: {
+            udid: 'SIM-1',
+            serial: 'emulator-5554',
+            device: 'iPhone',
+            target: 'mobile',
+            iosSimulatorDeviceSet: '/tmp/set',
+            androidDeviceAllowlist: 'emulator-5554',
+            platform: 'ios',
+            surface: 'app',
+            batchSteps: [
+              {
+                command: 'open',
+                positionals: ['dev.example.app.hosted1'],
+                flags: { udid: 'SIM-2', platform: 'android' },
+                input: { serial: 's' },
+                runtime: { launchUrl: 'x://y' },
+              },
+              { command: 'snapshot' },
+            ],
+          },
+          input: { udid: 'SIM-3', text: 'hi' },
+        },
+      });
+      expect(selected.upstream?.params).toMatchObject({
+        flags: {
+          platform: 'macos',
+          surface: 'app',
+          batchSteps: [
+            { command: 'open', positionals: ['dev.example.app.hosted1'], flags: { platform: 'macos' }, input: {} },
+            { command: 'snapshot', flags: { platform: 'macos' } },
+          ],
+        },
+        input: { text: 'hi' },
+      });
+      expect(Object.keys((selected.upstream?.params.flags as object) ?? {}).sort()).toEqual([
+        'batchSteps',
+        'platform',
+        'surface',
+      ]);
+      const bareOpen = await rpc({ method: 'agent_device.command', params: { command: 'open' } });
+      expect(bareOpen.upstream?.params.flags).toEqual({ platform: 'macos' });
+      for (const command of ['session_list', 'lease_release', 'install', 'devices', 'diff', undefined])
+        expect((await rpc({ method: 'agent_device.command', params: { command } })).status).toBe(400);
+      expect(
+        (
+          await rpc({
+            method: 'agent_device.command',
+            params: { command: 'batch', flags: { batchSteps: [{ command: 'snapshot' }, { command: 'session_list' }] } },
+          })
+        ).status,
+      ).toBe(400);
       const heartbeat = await rpc({
         method: 'agent_device.lease.heartbeat',
         params: { tenant: 'stim.other', leaseId: 'f'.repeat(32), backend: 'ios-instance', provider: 'x' },

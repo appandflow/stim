@@ -149,6 +149,7 @@ interface Lease {
   id: string;
   scope: HostedAgentLease;
   renew: NodeJS.Timeout;
+  renewing: Promise<unknown>;
 }
 
 const FORWARDED = [
@@ -414,14 +415,19 @@ export class AgentDeviceDriver implements HostedAgentDriver {
     await this.revoke(app.session);
     const id = randomBytes(16).toString('hex');
     await putLease(running.admin, id, scope);
-    const renew = setInterval(() => {
-      if (this.running !== running) return;
-      putLease(running.admin, id, scope).catch((error: unknown) =>
-        process.stderr.write(`Hosted agent lease renewal failed: ${(error as Error).message}\n`),
-      );
-    }, this.options.leaseRenewMs);
-    renew.unref();
-    this.leases.set(app.session, { id, scope, renew });
+    const lease: Lease = {
+      id,
+      scope,
+      renewing: Promise.resolve(),
+      renew: setInterval(() => {
+        if (this.running !== running) return;
+        lease.renewing = putLease(running.admin, id, scope).catch((error: unknown) =>
+          process.stderr.write(`Hosted agent lease renewal failed: ${(error as Error).message}\n`),
+        );
+      }, this.options.leaseRenewMs),
+    };
+    lease.renew.unref();
+    this.leases.set(app.session, lease);
     return { driver: 'agent-device', path: agentRoute(app.session), token: newAgentToken(), scope: id, lease: scope };
   }
 
@@ -430,6 +436,7 @@ export class AgentDeviceDriver implements HostedAgentDriver {
     if (!lease) return;
     this.leases.delete(session);
     clearInterval(lease.renew);
+    await lease.renewing;
     if (this.running) await adminRequest(this.running.admin, 'DELETE', lease.id);
   }
 
@@ -527,9 +534,18 @@ function pinLease(body: Buffer, lease: Lease): Buffer | null {
   const { tenant, runId, clientId, deviceKey } = lease.scope;
   const owner = { runId, leaseId: lease.id, clientId, deviceKey, leaseProvider: 'proxy' };
   if (COMMAND_METHODS.has(rpc.method)) {
-    const { runtime: _runtime, meta, ...params } = rpc.params;
+    const { runtime: _runtime, meta, flags, input, ...params } = rpc.params;
+    if (!isAllowedCommand(params.command)) return null;
+    const steps = isJsonObject(flags) && Array.isArray(flags.batchSteps) ? flags.batchSteps : [];
+    if (steps.some((step) => !isJsonObject(step) || !isAllowedCommand(step.command))) return null;
     rpc.params = {
       ...params,
+      flags: {
+        ...withoutDeviceSelectors(flags),
+        platform: 'macos',
+        ...(steps.length ? { batchSteps: steps.map(pinStep) } : {}),
+      },
+      ...(isJsonObject(input) ? { input: withoutDeviceSelectors(input) } : {}),
       meta: {
         ...pickClientMeta(meta),
         ...owner,
@@ -543,6 +559,31 @@ function pinLease(body: Buffer, lease: Lease): Buffer | null {
     rpc.params = { ...params, ...owner, tenantId: tenant, backend: 'macos-app' };
   } else return null;
   return Buffer.from(JSON.stringify(rpc));
+}
+
+/**
+ * Flags that pick a device. The host forces `platform: macos` so a first `open` cannot resolve to a host
+ * simulator, emulator or phone; agent-device's `macos-app` admission enforces the same rule.
+ */
+const DEVICE_SELECTORS = ['device', 'udid', 'serial', 'target', 'iosSimulatorDeviceSet', 'androidDeviceAllowlist'];
+
+function withoutDeviceSelectors(fields: unknown): Record<string, unknown> {
+  if (!isJsonObject(fields)) return {};
+  return Object.fromEntries(Object.entries(fields).filter(([key]) => !DEVICE_SELECTORS.includes(key)));
+}
+
+function pinStep(step: unknown): unknown {
+  if (!isJsonObject(step)) return step;
+  const { runtime: _runtime, flags, input, ...rest } = step;
+  return {
+    ...rest,
+    flags: { ...withoutDeviceSelectors(flags), platform: 'macos' },
+    ...(isJsonObject(input) ? { input: withoutDeviceSelectors(input) } : {}),
+  };
+}
+
+function isAllowedCommand(command: unknown): boolean {
+  return typeof command === 'string' && POLICY.commands.allow.includes(command);
 }
 
 /**

@@ -308,7 +308,9 @@ daemon token, renews it while the app runs and releases it when the app stops
 or the grant is revoked. The grant carries the lease id and owner scope. The
 forward passes only `POST /rpc`, `GET /health` and `GET /artifacts/...`, and it
 rewrites every command and lease call to that session's lease, tenant and
-tenant session isolation, so a client cannot name another lease or session.
+tenant session isolation, so a client cannot name another lease or session. It
+refuses commands outside the daemon policy's list (also inside a `batch`),
+drops device selectors and runtime hints, and sets `platform` to `macos`.
 
 ### Hosted iOS session protocol
 
