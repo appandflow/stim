@@ -176,8 +176,8 @@ the placement stays recorded; restore the connection and run stim stop again.
 Viewing and controlling the hosted app from a phone needs Screen & System Audio
 Recording and Device Control and Data Access (Accessibility on macOS 26 and
 earlier), granted once on the host to the app that runs stim-server, not to the
-hosted app. stim-server service install runs the server under the Stim Host app
-(Stim Host Dev, built on that Mac, until a signed release ships) and shows
+hosted app. stim-server service install runs the server under the signed Stim
+Host app (dev.stim.host, installed in ~/Applications) and shows
 macOS's own requests on that Mac's screen; a person there approves them.
 stim-server service status shows the grants, and stim doctor here reports an
 approved host that lacks them. A server started by Stim Desktop uses Desktop's

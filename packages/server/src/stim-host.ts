@@ -61,7 +61,15 @@ function bundleIdOf(app: string): string | null {
   }
 }
 
-const RELEASE: { version: string; sha256: string } | null = null;
+interface HostRelease {
+  version: string;
+  sha256: string;
+}
+
+const RELEASE: HostRelease | null = {
+  version: '0.1.0',
+  sha256: '1f6f8ad609881b5fbc0db8104892f403d4a0243afd65ce1853ac47262fb92652',
+};
 
 const RELEASE_REQUIREMENT =
   'identifier "dev.stim.host" and anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6] exists and certificate leaf[field.1.2.840.113635.100.6.1.13] exists and certificate leaf[subject.OU] = "R7E8P23K3N"';
@@ -133,7 +141,7 @@ export async function unpackRelease(zip: Buffer, sha256: string, dir: string): P
   return app;
 }
 
-async function downloadRelease(release: { version: string; sha256: string }, dir: string): Promise<string> {
+async function downloadRelease(release: HostRelease, dir: string): Promise<string> {
   const url = `https://github.com/appandflow/stim/releases/download/host-v${release.version}/StimHost-${release.version}.zip`;
   let zip: Buffer;
   try {
@@ -149,12 +157,15 @@ async function downloadRelease(release: { version: string; sha256: string }, dir
 }
 
 /**
- * Installs the host app in `~/Applications`: the pinned signed release, or Stim Host Dev built from `sources` while
- * none is pinned. An installed bundle with the same bytes stays untouched, so the grants macOS keyed to its signature
+ * Installs the host app in `~/Applications`: the pinned signed `release`, or Stim Host Dev built from `sources` when
+ * `release` is null. An installed bundle with the same bytes stays untouched, so the grants macOS keyed to its signature
  * still match.
  */
-export async function installHostApp(sources: string = SOURCES): Promise<HostApp> {
-  const flavor = RELEASE ? FLAVORS.release : FLAVORS.dev;
+export async function installHostApp(
+  sources: string = SOURCES,
+  release: HostRelease | null = RELEASE,
+): Promise<HostApp> {
+  const flavor = release ? FLAVORS.release : FLAVORS.dev;
   const applications = join(homedir(), 'Applications');
   const app = join(applications, `${flavor.name}.app`);
   const executable = join(app, 'Contents', 'MacOS', 'stim-host');
@@ -172,9 +183,9 @@ export async function installHostApp(sources: string = SOURCES): Promise<HostApp
   let cleanup = true;
   try {
     let candidate = join(temporary, `${flavor.name}.app`);
-    if (RELEASE) candidate = await downloadRelease(RELEASE, temporary);
+    if (release) candidate = await downloadRelease(release, temporary);
     else await buildDev(candidate, sources);
-    const result = { app, executable, ...flavor, adHoc: !RELEASE };
+    const result = { app, executable, ...flavor, adHoc: !release };
     const binary = join(candidate, 'Contents', 'MacOS', 'stim-host');
     const info = join(candidate, 'Contents', 'Info.plist');
     const installedInfo = join(app, 'Contents', 'Info.plist');

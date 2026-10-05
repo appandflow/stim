@@ -189,10 +189,12 @@ Security** in both panes; Stim never changes these settings itself.
 reports an approved host that lacks them. A server started by Stim Desktop uses
 Desktop's grants.
 
-Until a signed Stim Host release ships, install builds **Stim Host Dev**
-(`dev.stim.host.dev`, in `~/Applications`) on the host with Xcode Command Line
-Tools and signs it ad hoc, so macOS keeps its approvals only while the launcher
-source and Xcode toolchain are unchanged.
+Install downloads the signed, notarized **Stim Host** release this version of
+Stim pins, checks its SHA-256 and App & Flow's Developer ID signature, and
+installs it as `~/Applications/Stim Host.app` (`dev.stim.host`), so macOS keeps
+its approvals across Stim and Node updates. A Mac that ran the earlier
+**Stim Host Dev** keeps that app in `~/Applications`; delete it and its System
+Settings entries when you no longer need them.
 
 `macos --json` prints `{ platform, product, launchId, build, host }`, and
 `status --json` reports the same `host` under `environments[].macos`: the
