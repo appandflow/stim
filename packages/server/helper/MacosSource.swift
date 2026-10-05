@@ -196,6 +196,15 @@ final class MacosSource: NSObject, Source, SCStreamDelegate, SCStreamOutput {
     event.postToPid(app.app.pid)
   }
 
+  // NSRunningApplication(processIdentifier:) returns nil for 1-2 ms at a time on macOS 27 while the process runs.
+  private static func runningApplication(_ pid: pid_t) -> NSRunningApplication? {
+    for attempt in 0..<4 {
+      if attempt > 0 { usleep(5_000) }
+      if let running = NSRunningApplication(processIdentifier: pid) { return running }
+    }
+    return nil
+  }
+
   private func refusal(_ message: String) -> NSError {
     NSError(domain: "StimFrames", code: 1, userInfo: [NSLocalizedDescriptionKey: message])
   }
@@ -304,7 +313,7 @@ final class MacosSource: NSObject, Source, SCStreamDelegate, SCStreamOutput {
     let (window, own) = try inputWindow()
     guard isActive(session) else { throw CancellationError() }
     let application = AXUIElementCreateApplication(app.app.pid)
-    guard let running = NSRunningApplication(processIdentifier: app.app.pid)
+    guard let running = Self.runningApplication(app.app.pid)
     else { throw refusal("The captured owned window could not be focused for Control.") }
     if !running.isActive || !isFocused(own, application: application) {
       let raise = AXUIElementPerformAction(own, kAXRaiseAction as CFString)
@@ -521,7 +530,7 @@ final class MacosSource: NSObject, Source, SCStreamDelegate, SCStreamOutput {
       proc_pidinfo(app.app.pid, PROC_PIDTBSDINFO, 0, &info, Int32(MemoryLayout<proc_bsdinfo>.size))
         == MemoryLayout<proc_bsdinfo>.size,
       info.pbi_start_tvsec * 1_000_000 + info.pbi_start_tvusec == app.app.startedAtMicros,
-      let running = NSRunningApplication(processIdentifier: app.app.pid),
+      let running = Self.runningApplication(app.app.pid),
       running.bundleIdentifier == app.bundleId,
       running.executableURL?.resolvingSymlinksInPath().path
         == URL(fileURLWithPath: app.executable).resolvingSymlinksInPath().path,
