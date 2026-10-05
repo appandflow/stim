@@ -86,19 +86,10 @@ test.skipIf(process.platform !== 'darwin')(
   'missing macOS settings are a bad argument with a named remedy',
   async () => {
     writeFileSync(join(root, 'Package.swift'), '// swift-tools-version:6.0\n');
-    const real = getExecutor();
-    setExecutor({
-      ...real,
-      runFileQuiet: (file, args, opts) => (file === 'git' ? null : real.runFileQuiet(file, args, opts)),
+    await expect(runMacos(root)).rejects.toMatchObject({
+      code: 'STIM_BAD_ARG',
+      message: expect.stringContaining('macos.product'),
     });
-    try {
-      await expect(runMacos(root)).rejects.toMatchObject({
-        code: 'STIM_BAD_ARG',
-        message: expect.stringContaining('macos.product'),
-      });
-    } finally {
-      resetExecutor();
-    }
   },
 );
 
