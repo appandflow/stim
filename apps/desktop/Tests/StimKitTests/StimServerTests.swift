@@ -26,6 +26,42 @@ import Testing
     #expect(running.isRunning && running.dnsName == "mac.tail1.ts.net")
   }
 
+  @Test func decodesReadyHealthWithStartupAndLegacyHealth() throws {
+    for startup in ["", #","startup":{"state":"ready"}"#] {
+      let data = Data(
+        #"{"server":"stim-server","name":"Mac","version":"1","stim":"1","protocol":1,"stimHome":"/Users/me/.stim","tailscale":{"state":"running"}\#(startup)}"#
+          .utf8)
+      let probe = try #require(StimServerCLI.decodeHealth(data, statusCode: 200))
+      guard case .ready(let health) = probe else {
+        Issue.record("Ready health must permit a server connection")
+        return
+      }
+      #expect(health.stimHome == "/Users/me/.stim" && health.tailscale.isRunning)
+    }
+  }
+
+  @Test func recognizesNotReadyHealthWithoutReadyOnlyFields() {
+    let pending = Data(#"{"server":"stim-server","startup":{"state":"pending"}}"#.utf8)
+    #expect(StimServerCLI.decodeHealth(pending, statusCode: 503) == .notReady(.pending))
+    let degraded = Data(
+      #"{"server":"stim-server","version":"1","startup":{"state":"degraded","reason":"Volume /Volumes/Work is stalled."}}"#
+        .utf8)
+    #expect(
+      StimServerCLI.decodeHealth(degraded, statusCode: 503)
+        == .notReady(.degraded("Volume /Volumes/Work is stalled.")))
+    let other = Data(#"{"server":"other","startup":{"state":"pending"}}"#.utf8)
+    #expect(StimServerCLI.decodeHealth(other, statusCode: 503) == nil)
+  }
+
+  @Test func treatsUnknownStartupStatesAsDegraded() {
+    let data = Data(#"{"server":"stim-server","startup":{"state":"recovering"}}"#.utf8)
+    for status in [200, 503] {
+      #expect(
+        StimServerCLI.decodeHealth(data, statusCode: status)
+          == .notReady(.degraded("Unknown server startup state: recovering.")))
+    }
+  }
+
   @Test func recognizesTheDefaultHomeThroughSymlinks() throws {
     let home = FileManager.default.temporaryDirectory.appendingPathComponent("home-\(UUID().uuidString)").path
     defer { try? FileManager.default.removeItem(atPath: home) }

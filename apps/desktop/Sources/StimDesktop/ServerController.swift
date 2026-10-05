@@ -8,13 +8,36 @@ final class ServerController: ObservableObject {
     case off
     case starting
     case running(ServerHealth, owned: Bool)
+    case notReady(ServerStartup, owned: Bool)
     case failed(String)
+
+    init(probe: ServerHealthProbe, owned: Bool, resolvedHome: String, port: Int) {
+      switch probe {
+      case .notReady(let startup): self = .notReady(startup, owned: owned)
+      case .ready(let health):
+        if !owned,
+          let failure = StimHome.adoptionFailure(serverHome: health.stimHome, resolved: resolvedHome, port: port)
+        {
+          self = .failed(failure)
+        } else {
+          self = .running(health, owned: owned)
+        }
+      }
+    }
   }
 
   static let shared = ServerController()
   static let startTimeout: TimeInterval = 15
 
-  @Published private(set) var state = State.off
+  @Published private(set) var state = State.off {
+    didSet {
+      if case .notReady = state {
+        devicesEpoch += 1
+        devices = []
+        devicesError = nil
+      }
+    }
+  }
   @Published private(set) var devices: [PairedDevice] = []
   @Published private(set) var devicesError: String?
   @Published private(set) var changeError: String?
@@ -37,7 +60,7 @@ final class ServerController: ObservableObject {
   private lazy var devicesPoller = ActivityPoller(
     active: Self.devicesInterval, inactive: Self.inactiveDevicesInterval, isActive: { NSApplication.shared.isActive },
     tick: { [weak self] in
-      guard let self, isRunning else { return }
+      guard let self, isResponding else { return }
       refresh()
     })
 
@@ -58,9 +81,18 @@ final class ServerController: ObservableObject {
     return false
   }
 
+  private var isResponding: Bool {
+    switch state {
+    case .running, .notReady: return true
+    case .off, .starting, .failed: return false
+    }
+  }
+
   var canRestart: Bool {
-    if case .running(_, owned: true) = state { return true }
-    return false
+    switch state {
+    case .running(_, owned: true), .notReady(_, owned: true): return true
+    default: return false
+    }
   }
 
   func configure(environment: Task<[String: String], Never>) {
@@ -90,7 +122,7 @@ final class ServerController: ObservableObject {
 
   func start() {
     switch state {
-    case .starting, .running: return
+    case .starting, .running, .notReady: return
     case .off, .failed: break
     }
     generation += 1
@@ -103,14 +135,10 @@ final class ServerController: ObservableObject {
         self.exiting = nil
       }
       guard current == generation else { return }
-      if let health = await StimServerCLI.health(port: port) {
+      if let probe = await StimServerCLI.health(port: port) {
         let resolved = StimHome.path(environment: await environment?.value ?? ProcessInfo.processInfo.environment)
         guard current == generation else { return }
-        if let failure = StimHome.adoptionFailure(serverHome: health.stimHome, resolved: resolved, port: port) {
-          state = .failed(failure)
-        } else {
-          state = .running(health, owned: false)
-        }
+        state = State(probe: probe, owned: false, resolvedHome: resolved, port: port)
         return
       }
       let cli = await cli()
@@ -133,8 +161,10 @@ final class ServerController: ObservableObject {
       while Date() < deadline {
         try? await Task.sleep(for: .milliseconds(250))
         guard current == generation, process != nil else { return }
-        if let health = await StimServerCLI.health(port: port) {
-          if current == generation { state = .running(health, owned: true) }
+        if let probe = await StimServerCLI.health(port: port) {
+          if current == generation {
+            state = State(probe: probe, owned: true, resolvedHome: StimHome.path(environment: cli.environment), port: port)
+          }
           return
         }
       }
@@ -158,7 +188,7 @@ final class ServerController: ObservableObject {
   }
 
   func setupConnection() {
-    guard !settingUpConnection else { return }
+    guard isRunning, !settingUpConnection else { return }
     settingUpConnection = true
     connectionError = nil
     Task {
@@ -180,7 +210,7 @@ final class ServerController: ObservableObject {
 
   func pairPhone(control: Bool) async throws -> PairingCode {
     let cli = await cli()
-    guard let before = await StimServerCLI.health(port: port) else {
+    guard isRunning, case .ready(let before) = await StimServerCLI.health(port: port) else {
       throw ServerError(code: "not-connected", message: "Could not verify the phone connection. Try again.")
     }
     if before.tailscale.isRunning && before.route?.state != "routed" {
@@ -190,7 +220,7 @@ final class ServerController: ObservableObject {
     }
     let code = try await cli.pair(port: port, control: control)
     if before.tailscale.isRunning || !code.isLocalOnly {
-      guard let after = await StimServerCLI.health(port: port), after.route?.state == "routed",
+      guard case .ready(let after) = await StimServerCLI.health(port: port), after.route?.state == "routed",
         let dnsName = after.tailscale.dnsName, code.qr.endpoint == after.route?.endpoint(dnsName: dnsName)
       else {
         throw ServerError(
@@ -201,17 +231,27 @@ final class ServerController: ObservableObject {
   }
 
   func refresh() {
-    if case .running(_, let owned) = state {
-      let current = generation
-      Task {
-        let health = await StimServerCLI.health(port: port)
-        let resolved = StimHome.path(environment: await environment?.value ?? ProcessInfo.processInfo.environment)
-        guard current == generation, isRunning else { return }
-        if let health, owned || StimHome.adopts(serverHome: health.stimHome, resolved: resolved) {
-          missedProbes = 0
-          state = .running(health, owned: owned)
-          if health.nativeViewerOpened == true { NativeViewerPermissions.shared.viewerOpened(serverOwned: owned) }
-        } else if !owned {
+    let owned: Bool
+    switch state {
+    case .running(_, let value), .notReady(_, let value): owned = value
+    case .off, .starting, .failed: return
+    }
+    let current = generation
+    Task {
+      let probe = await StimServerCLI.health(port: port)
+      let resolved = StimHome.path(environment: await environment?.value ?? ProcessInfo.processInfo.environment)
+      guard current == generation, isResponding else { return }
+      switch probe {
+      case .notReady(let startup):
+        missedProbes = 0
+        state = .notReady(startup, owned: owned)
+      case .ready(let health) where owned || StimHome.adopts(serverHome: health.stimHome, resolved: resolved):
+        missedProbes = 0
+        state = .running(health, owned: owned)
+        if health.nativeViewerOpened == true { NativeViewerPermissions.shared.viewerOpened(serverOwned: owned) }
+        reloadDevices()
+      default:
+        if !owned {
           missedProbes += 1
           guard missedProbes >= 2 else { return }
           missedProbes = 0
@@ -220,19 +260,19 @@ final class ServerController: ObservableObject {
         }
       }
     }
-    reloadDevices()
   }
 
   func reloadDevices() {
+    guard case .running(let health, _) = state else { return }
     let epoch = devicesEpoch
-    let health: ServerHealth? = if case .running(let health, _) = state { health } else { nil }
     Task {
       let cli = await cli()
+      guard epoch == devicesEpoch, isRunning else { return }
       let result = await Result.awaiting { try await cli.devices() }
-      guard epoch == devicesEpoch else { return }
+      guard epoch == devicesEpoch, isRunning else { return }
       switch result {
       case .success(let devices):
-        let own = health.flatMap { ServerSession.ownDeviceID(home: $0.stimHome) }
+        let own = ServerSession.ownDeviceID(home: health.stimHome)
         self.devices = devices.filter { $0.id != own }.map { device in
           guard let control = pendingGrants[device.id] else { return device }
           var device = device
@@ -248,7 +288,7 @@ final class ServerController: ObservableObject {
   }
 
   func grant(_ device: PairedDevice, control: Bool) {
-    guard pendingGrants[device.id] == nil else { return }
+    guard isRunning, pendingGrants[device.id] == nil else { return }
     pendingGrants[device.id] = control
     if let index = devices.firstIndex(where: { $0.id == device.id }) {
       devices[index].capabilities = Self.capabilities(control: control)
@@ -268,6 +308,7 @@ final class ServerController: ObservableObject {
   }
 
   func allowMachine(_ device: PairedDevice) {
+    guard isRunning else { return }
     Task {
       let cli = await cli()
       switch await Result.awaiting({
@@ -286,6 +327,7 @@ final class ServerController: ObservableObject {
   }
 
   func revoke(_ device: PairedDevice) {
+    guard isRunning else { return }
     Task {
       let cli = await cli()
       switch await Result.awaiting({ try await cli.revoke(device.id) }) {

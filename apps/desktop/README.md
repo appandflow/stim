@@ -874,6 +874,13 @@ there. This warning appears when Desktop uses the default home and
 has adopted a server started with another home. Those phones stop working once Stim Desktop
 serves `~/.stim` again.
 
+A server answering health with HTTP 503 appears as **Starting** or
+**Degraded** with its reason in Phones and the sidebar tooltip. Desktop keeps
+checking it without starting another server or terminating one it launched.
+The server retries reading its Stim home every 30 seconds. Until health is
+ready, Desktop does not adopt its home, connect a session, or offer pairing,
+device approvals or route setup. The usual home checks apply once it is ready.
+
 A read-only phone sees workspaces, devices and logs. With workspace diff support,
 it can also read changed and untracked text files in registered workspaces,
 including non-ignored `.env` files. A phone allowed to control
