@@ -63,7 +63,7 @@ test('journal rejects missing, foreign and mismatched macOS app slots', () => {
       { appSlot: 2 },
       { device: { ...record.device, appSlot: 4 } },
       { platform: 'ios', device: null, state: 'preparing' },
-      { platform: 'android', device: null, state: 'preparing', consolePort: 5554 },
+      { platform: 'android', appSlot: 3, device: null, state: 'preparing', consolePort: 5554 },
     ]) {
       write({ ...record, ...invalid });
       expect(() => readHostedSessions()).toThrow('Malformed hosted session record');

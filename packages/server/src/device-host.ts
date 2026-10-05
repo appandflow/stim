@@ -540,14 +540,16 @@ export class DeviceHost {
       const owned = this.acquire(record);
       const app = readHostedAppMetadata(record.id, (params as { attempt: string }).attempt);
       if (app.state !== 'receiving') return this.appAttach(client, params);
-      const files = readHostedApp(record.id, app.attempt).files;
-      if ((record.platform === 'macos') !== files.some((file) => file.path === 'Contents/Info.plist'))
-        throw new Error('The app manifest must include Contents/Info.plist only for macOS sessions.');
       if (owned.stopping || owned.installing)
         throw new Error('This hosted session already has a native operation in progress.');
       if (owned.metro && (!owned.metro.port || owned.metro.closing))
         throw new Error('This session Metro bridge is opening or closing.');
       if (offerHostedApp(app).missing.length) throw new Error('The app manifest still has missing content.');
+      if (
+        (record.platform === 'macos') !==
+        readHostedApp(record.id, app.attempt).files.some((file) => file.path === 'Contents/Info.plist')
+      )
+        throw new Error('The app manifest must include Contents/Info.plist only for macOS sessions.');
       const result = appDelivery(
         changeHostedApp(record.id, app.attempt, (current) => {
           current.state = 'installing';
