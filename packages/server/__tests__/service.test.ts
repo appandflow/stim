@@ -297,18 +297,18 @@ describe('host app', () => {
     it('keeps an identical bundle, removes abandoned builds and refuses a bundle it does not own', async () => {
       const sources = join(import.meta.dirname, '..', 'host');
       const applications = join(home, 'Applications');
-      const first = await installHostApp(sources);
+      const first = await installHostApp(sources, null);
       expect(first).toMatchObject({ bundleId: 'dev.stim.host.dev', replaced: true });
       execFileSync('codesign', ['--verify', '--strict', first.app]);
       const abandoned = join(applications, '.Stim Host Dev.app.999999.tmp-x');
       mkdirSync(abandoned);
-      expect((await installHostApp(sources)).replaced).toBe(false);
+      expect((await installHostApp(sources, null)).replaced).toBe(false);
       expect(readdirSync(applications)).toEqual(['Stim Host Dev.app']);
       writeFileSync(
         join(first.app, 'Contents', 'Info.plist'),
         '<plist><dict><key>CFBundleIdentifier</key><string>com.example.other</string></dict></plist>',
       );
-      await expect(installHostApp(sources)).rejects.toThrow(/not a Stim Host Dev bundle/);
+      await expect(installHostApp(sources, null)).rejects.toThrow(/not a Stim Host Dev bundle/);
     }, 120_000);
 
     it('refuses a release zip that does not match the pin or lacks the Developer ID signature', async () => {

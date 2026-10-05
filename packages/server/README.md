@@ -678,18 +678,17 @@ under `$STIM_HOME/server` or settings. `install` waits up to 15 seconds for
 as unavailable and points to `status` and its log. Installation success alone
 does not prove that the server is ready.
 
-When this package pins a Stim Host release, install downloads it from the
+Install downloads the Stim Host release this package pins from the
 `host-v<version>` GitHub release, checks the pinned SHA-256 and App & Flow's
 Developer ID signature, and installs **Stim Host** (`dev.stim.host`) at
-`~/Applications/Stim Host.app`; grants then survive Stim Host updates. Until one
-is pinned, install builds **Stim Host Dev** (`dev.stim.host.dev`) locally with
-Xcode Command Line Tools at `~/Applications/Stim Host Dev.app`, signed ad hoc,
-so macOS keeps its approvals only while the launcher source and Xcode toolchain
-are unchanged. Install keeps an identical bundle untouched either way.
+`~/Applications/Stim Host.app`; grants then survive Stim Host updates. Install
+keeps an identical bundle untouched. A Mac that ran the earlier **Stim Host Dev**
+keeps `~/Applications/Stim Host Dev.app`; its owner can delete it and its System
+Settings entries.
 
 After starting the service, install shows macOS's own permission requests on
 this Mac's screen. You only approve them; over SSH, use Screen Sharing to see
-that screen. If a request does not appear, turn Stim Host Dev on in **System
+that screen. If a request does not appear, turn Stim Host on in **System
 Settings > Privacy & Security > Screen & System Audio Recording** (**Screen
 Recording** on macOS 14) and **Device Control and Data Access** (**Accessibility**
 on macOS 26 and earlier). Stim never changes these settings itself. Servers

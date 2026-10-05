@@ -468,13 +468,13 @@ signature, and it only needs a new version when the launcher changes.
    version and the SHA-256 from the workflow's `SHA256SUMS`. From the next
    `@stim-cli/server` release (or checkout build), `install` downloads that zip,
    checks the digest and the team's Developer ID signature, and installs
-   `~/Applications/Stim Host.app` (`dev.stim.host`) instead of building
-   Stim Host Dev. In the same change, update the text that says a signed
-   release has not shipped yet: the Stim Host Dev paragraphs in
-   `packages/server/README.md` ("Run as a service"), `website/docs/macos.md`
-   and `stim guide macos` (`packages/stim-cli/src/guide/macos.ts`). A Mac that
-   had Stim Host Dev keeps that bundle in `~/Applications`; its owner can
-   delete it and its System Settings entries after the switch.
+   `~/Applications/Stim Host.app` (`dev.stim.host`). A Mac that had Stim Host
+   Dev keeps that bundle in `~/Applications`; its owner can delete it and its
+   System Settings entries after the switch. Update the paragraphs that
+   describe the installed app in `packages/server/README.md` ("Run as a
+   service"), `website/docs/macos.md` and `stim guide macos`
+   (`packages/stim-cli/src/guide/macos.ts`) when a release changes what
+   install does.
 3. Never replace a published zip: its pinned digest would stop matching. Fix a
    bad release with a new version.
 
