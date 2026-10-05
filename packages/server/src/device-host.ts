@@ -23,6 +23,7 @@ import {
   parseHostedPlatformDevice,
   hostedDeviceId,
   hostedMacosBundleId,
+  HOSTED_MACOS_APP_SLOTS,
   loadConfig,
   parseHostedRequest,
   readHostedDevice,
@@ -32,7 +33,9 @@ import {
   hostedAppAttempt,
   parseHostedAppOffer,
   readHostedApp,
+  readHostedAppMetadata,
   type HostedAppDelivery,
+  type HostedAppLaunch,
   type HostedAppRecord,
   type HostedDeviceRequest,
   type HostedDeviceSession,
@@ -451,15 +454,6 @@ export class DeviceHost {
 
   appOffer(client: string, params: unknown): AppAnswer<Methods['device-host.app.offer']['result']> {
     if (!this.options.allowed(client)) return refused('forbidden', 'Current device-host approval is required.');
-    if (isJsonObject(params) && params.devClientScheme !== undefined) {
-      try {
-        if (this.appSession(client, params).platform === 'macos')
-          return refused(
-            'action-failed',
-            'Hosted macOS apps require release mode without a development client scheme.',
-          );
-      } catch {}
-    }
     const offer = parseHostedAppOffer(params);
     if (!offer)
       return refused(
@@ -517,12 +511,13 @@ export class DeviceHost {
     }
   }
 
-  appAttach(client: string, params: unknown): AppAnswer<HostedAppDelivery> {
+  appAttach(client: string, params: unknown): AppAnswer<HostedAppLaunch> {
     if (!this.options.allowed(client)) return refused('forbidden', 'Current device-host approval is required.');
     try {
       const record = this.appSession(client, params);
-      const app = readHostedApp(record.id, (params as { attempt: string }).attempt);
-      const result = appDelivery(app);
+      const app = readHostedAppMetadata(record.id, (params as { attempt: string }).attempt);
+      const result: HostedAppLaunch = appDelivery(app);
+      if (record.platform === 'macos' && app.state === 'installed') result.agent = { driver: 'none' };
       if (app.state === 'installing' && this.owned.get(record.id)?.installing?.attempt !== app.attempt) {
         result.state = 'unknown';
         result.notice = 'The install owner is unavailable. Stop this hosted session before retrying.';
@@ -533,7 +528,7 @@ export class DeviceHost {
     }
   }
 
-  appLaunch(client: string, params: unknown): AppAnswer<HostedAppDelivery> {
+  appLaunch(client: string, params: unknown): AppAnswer<HostedAppLaunch> {
     if (!this.options.allowed(client)) return refused('forbidden', 'Current device-host approval is required.');
     try {
       const record = this.appSession(client, params);
@@ -542,7 +537,7 @@ export class DeviceHost {
           'Only a ready session attached to this server can install an app. Explicit stop must reconcile a lost owner.',
         );
       const owned = this.acquire(record);
-      const app = readHostedApp(record.id, (params as { attempt: string }).attempt);
+      const app = readHostedAppMetadata(record.id, (params as { attempt: string }).attempt);
       if (app.state !== 'receiving') return this.appAttach(client, params);
       if (owned.stopping || owned.installing)
         throw new Error('This hosted session already has a native operation in progress.');
@@ -982,7 +977,7 @@ function reserveMacosSlot(records: HostedDeviceSession[]): number {
       .filter((record) => record.platform === 'macos' && record.state !== 'stopped')
       .map((record) => record.appSlot),
   );
-  for (let slot = 1; slot <= 64; slot++) if (!slots.has(slot)) return slot;
+  for (let slot = 1; slot <= HOSTED_MACOS_APP_SLOTS; slot++) if (!slots.has(slot)) return slot;
   throw new Error('All hosted macOS app slots are reserved. Attach or stop an existing session.');
 }
 

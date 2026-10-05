@@ -451,10 +451,22 @@ its frameworks and bundle. That identity must fit within 255 characters. The
 existing macOS supervisor owns the app process, with `HOME`, `CFFIXED_USER_HOME`
 and `TMPDIR` pointing into the session's private app home. This is home and
 identity isolation, not an OS sandbox for the client's native code.
+The supervisor and app receive only the host's set `PATH`, `LANG`, `LC_ALL`,
+`LC_CTYPE`, `USER`, `LOGNAME`, `SHELL` and `TERM`, plus the worker `STIM_HOME`
+and isolated home and temporary paths.
 `launched: true` requires matching live app and supervisor process identities.
 Stop and revocation verify and stop those processes, then delete only the last
-recorded hosted bundle identity's preferences domain. macOS preferences use the
-real user's preferences service despite the isolated home.
+recorded hosted bundle identity's preferences domain and plist. A replacement
+app with a different identity removes the prior hosted identity's preferences
+after stopping its processes. macOS preferences use the real user's preferences
+service despite the isolated home. Stop removes the app home and delivered bytes
+from every app attempt, keeping logs and receipts so `app.attach` can still report
+the recorded state.
+
+Once a macOS app is `installed`, `device-host.app.launch` and
+`device-host.app.attach` return `agent: { driver: 'none' }` until a driver is
+configured. The field is built for the response and never stored in the receipt
+or journal; it is absent before installation and for iOS and Android sessions.
 
 macOS sessions refuse Metro, viewing and control. Client placement and streaming
 remain follow-ups in [#2403](https://github.com/appandflow/stim/issues/2403).

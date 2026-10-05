@@ -17,7 +17,7 @@ import { WebSocket, WebSocketServer } from 'ws';
 import { createMetroGateway } from '@stim-cli/core';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { deviceHostArea, deviceHostRoot, readHostedSessions } from '@stim-cli/core/state';
+import { deviceHostArea, deviceHostRoot, HOSTED_MACOS_APP_SLOTS, readHostedSessions } from '@stim-cli/core/state';
 import { processGroupAlive, readClaimSet, tryAcquireClaim, releaseClaim } from '@stim-cli/core/ownership-claim';
 import * as processIdentity from '@stim-cli/core/process-identity';
 import { DeviceHost } from '../src/device-host.ts';
@@ -818,12 +818,18 @@ test('refuses app mutations after the real session owner disappears until explic
 test.each(['ios', 'android', 'macos'])(
   'resumes %s app bytes and reconciles a lost install reply without another native launch',
   async (platform) => {
+    const validator = new Ajv2020({ strict: false, validateFormats: false });
+    validator.addSchema(protocolJsonSchema(), 'protocol');
+    const acceptsDelivery = validator.compile({ $ref: 'protocol#/$defs/HostedAppDelivery' });
     const first = reserve({ platform });
     await state(first.id, 'ready');
     const app = appOffer(first.id, 'app-first', platform);
     const { content, params, sha256 } = app;
     expect(host.appOffer('other', params)).toHaveProperty('error');
     expect(host.appOffer('client', params)).toHaveProperty('result.missing.0.offset', 0);
+    const receiving = host.appAttach('client', params);
+    expect(receiving).toHaveProperty('result.state', 'receiving');
+    expect(receiving).not.toHaveProperty('result.agent');
     expect(host.appLaunch('client', params)).toHaveProperty('error');
     expect(host.appOffer('client', { ...params, attempt: 'second-transfer' })).toHaveProperty('error');
     await uploadManifest(app);
@@ -845,11 +851,34 @@ test.each(['ios', 'android', 'macos'])(
     ).toHaveProperty('result.offset', content.length);
     expect(host.appOffer('client', params)).toHaveProperty('result.missing', []);
     expect(host.appOffer('client', { ...params, bundleId: 'different.app' })).toHaveProperty('error');
-    expect(host.appLaunch('client', params)).toHaveProperty('result.state', 'installing');
+    const installing = host.appLaunch('client', params);
+    expect(installing).toHaveProperty('result.state', 'installing');
+    expect(installing).not.toHaveProperty('result.agent');
+    expect(host.appAttach('client', params)).not.toHaveProperty('result.agent');
     await vi.waitFor(() => expect(host.appAttach('client', params)).toHaveProperty('result.state', 'installed'));
-    expect(host.appLaunch('client', params)).toHaveProperty('result.launched', true);
+    const installed = host.appAttach('client', params);
+    for (const answer of [installed, host.appLaunch('client', params)]) {
+      if ('error' in answer) throw new Error(answer.error.message);
+      expect(answer.result.launched).toBe(true);
+      expect(acceptsDelivery(answer.result)).toBe(true);
+      expect(answer.result.agent).toEqual(platform === 'macos' ? { driver: 'none' } : undefined);
+      expect('agent' in answer.result).toBe(platform === 'macos');
+    }
+    const receipt = join(deviceHostArea(first.id), 'apps', params.attempt, 'receipt.json');
+    expect(JSON.parse(readFileSync(receipt, 'utf8'))).not.toHaveProperty('agent');
     expect(readFileSync(join(deviceHostArea(first.id), 'home', 'installed'), 'utf8')).toBe('app-first\n');
     expect(host.attach('client', { session: first.id })).toHaveProperty('result.appAttempt', params.attempt);
+    if (platform === 'macos') {
+      host.stop('client', { session: first.id });
+      await state(first.id, 'stopped');
+      rmSync(join(deviceHostArea(first.id), 'apps', params.attempt, 'blobs'), { recursive: true });
+    }
+    expect(host.appAttach('client', params)).toEqual(installed);
+    const stored = JSON.parse(readFileSync(receipt, 'utf8'));
+    writeFileSync(receipt, JSON.stringify({ ...stored, state: 'unknown', launched: null }));
+    const unknown = host.appAttach('client', params);
+    expect(unknown).toHaveProperty('result.state', 'unknown');
+    expect(unknown).not.toHaveProperty('result.agent');
   },
 );
 
@@ -1152,16 +1181,16 @@ test('macOS reservations isolate concurrent clients, validate on the wire and re
 });
 
 test.each([
-  { mode: 'development' },
-  { mode: 'development', devClientScheme: 'fixture' },
-  { devClientScheme: 'fixture' },
-  { bundleId: 'com.apple.fixture' },
-  { bundleId: 'a'.repeat(255) },
-])('refuses macOS app offer %j before creating a receipt', async (invalid) => {
+  [{ mode: 'development' }, 'action-failed'],
+  [{ mode: 'development', devClientScheme: 'fixture' }, 'action-failed'],
+  [{ devClientScheme: 'fixture' }, 'bad-request'],
+  [{ bundleId: 'com.apple.fixture' }, 'action-failed'],
+  [{ bundleId: 'a'.repeat(255) }, 'action-failed'],
+])('refuses macOS app offer %j as %s before creating a receipt', async (invalid, code) => {
   const first = reserve({ platform: 'macos' });
   await state(first.id, 'ready');
   const app = appOffer(first.id, 'app-first', 'macos');
-  expect(host.appOffer('client', { ...app.params, ...invalid })).toHaveProperty('error.code', 'action-failed');
+  expect(host.appOffer('client', { ...app.params, ...invalid })).toHaveProperty('error.code', code);
   expect(existsSync(join(deviceHostArea(first.id), 'apps', 'app-first'))).toBe(false);
 });
 
@@ -1173,7 +1202,7 @@ test('macOS offer and reserve refuse all 64 unresolved app slots without mutatin
     allowed: () => true,
   });
   mkdirSync(deviceHostRoot(), { recursive: true });
-  const sessions = Array.from({ length: 64 }, (_, index) => ({
+  const sessions = Array.from({ length: HOSTED_MACOS_APP_SLOTS }, (_, index) => ({
     ...request,
     platform: 'macos',
     attempt: `occupied-${index}`,

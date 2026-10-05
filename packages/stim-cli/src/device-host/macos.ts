@@ -2,14 +2,17 @@ import { randomUUID } from 'node:crypto';
 import {
   closeSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   openSync,
   readFileSync,
   readdirSync,
   realpathSync,
   renameSync,
+  rmSync,
   writeFileSync,
 } from 'node:fs';
+import { homedir } from 'node:os';
 import { isAbsolute, join, relative } from 'node:path';
 import { withDirLock } from '@stim-cli/core';
 import {
@@ -53,6 +56,46 @@ function writeRecord(home: string, file: string, value: object): void {
   });
 }
 
+function preferenceIdentity(home: string, appSlot: number): string | null {
+  const file = join(home, 'hosted-macos-app.json');
+  if (!existsSync(file)) return null;
+  const stored: unknown = JSON.parse(readFileSync(file, 'utf8'));
+  if (
+    !isJsonObject(stored) ||
+    typeof stored.bundleId !== 'string' ||
+    !/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,254}$/.test(stored.bundleId) ||
+    stored.bundleId.startsWith('com.apple.') ||
+    !stored.bundleId.endsWith(`.hosted${appSlot}`)
+  )
+    throw new Error('The hosted macOS preference identity is malformed.');
+  return stored.bundleId;
+}
+
+function removePreferences(bundleId: string): void {
+  getExecutor().runFileQuiet('defaults', ['delete', bundleId], {
+    timeoutMs: 10000,
+    killSignal: 'SIGKILL',
+  });
+  rmSync(join(homedir(), 'Library', 'Preferences', `${bundleId}.plist`), { force: true });
+}
+
+function assertInside(root: string, path: string): void {
+  const diff = relative(root, realpathSync(path));
+  if (!diff || diff === '..' || diff.startsWith('../') || isAbsolute(diff))
+    throw new Error('Hosted macOS app data resolves outside its private area.');
+}
+
+function removeAppData(root: string, path: string): void {
+  try {
+    lstatSync(path);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
+    throw error;
+  }
+  assertInside(root, path);
+  rmSync(path, { recursive: true, force: true });
+}
+
 export async function runHostedMacosApp(
   mode: 'prepare' | 'stop' | 'install',
   request: { session: string; appSlot: number },
@@ -80,21 +123,20 @@ export async function runHostedMacosApp(
     const runRoot = join(realpathSync(home), 'macos-app');
     if (mode === 'stop') {
       if (requiredMacosRecord(runRoot)) await stopMacosAppHeld(runRoot);
-      const file = join(home, 'hosted-macos-app.json');
-      if (existsSync(file)) {
-        const stored: unknown = JSON.parse(readFileSync(file, 'utf8'));
-        if (
-          !isJsonObject(stored) ||
-          typeof stored.bundleId !== 'string' ||
-          !/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,254}$/.test(stored.bundleId) ||
-          stored.bundleId.startsWith('com.apple.') ||
-          !stored.bundleId.endsWith(`.hosted${device.appSlot}`)
-        )
-          throw new Error('The hosted macOS preference identity is malformed.');
-        getExecutor().runFileQuiet('defaults', ['delete', stored.bundleId], {
-          timeoutMs: 10000,
-          killSignal: 'SIGKILL',
-        });
+      const bundleId = preferenceIdentity(home, device.appSlot);
+      if (bundleId) removePreferences(bundleId);
+      const area = realpathSync(join(home, '..'));
+      assertInside(area, home);
+      removeAppData(realpathSync(home), join(home, 'app-home'));
+      const apps = join(home, '..', 'apps');
+      if (existsSync(apps)) {
+        assertInside(area, apps);
+        for (const attempt of readdirSync(apps)) {
+          const directory = join(apps, attempt);
+          assertInside(area, directory);
+          removeAppData(area, join(directory, 'App.app'));
+          removeAppData(area, join(directory, 'blobs'));
+        }
       }
       return { state: 'stopped', device };
     }
@@ -138,6 +180,8 @@ export async function runHostedMacosApp(
     }
     exec.runFile('codesign', ['--force', '--sign', '-', bundle], options);
     if (requiredMacosRecord(runRoot)) await stopMacosAppHeld(runRoot);
+    const previousId = preferenceIdentity(home, device.appSlot);
+    if (previousId && previousId !== bundleId) removePreferences(previousId);
     mkdirSync(runRoot, { recursive: true, mode: 0o700 });
     const canonicalRunRoot = realpathSync(runRoot);
     ensureWorkspaceStorage(canonicalRunRoot);
@@ -160,12 +204,16 @@ export async function runHostedMacosApp(
     const fd = openSync(join(home, 'macos-supervisor.log'), 'a', 0o600);
     let child;
     let spawnError: Error | undefined;
+    const env: NodeJS.ProcessEnv = {};
+    for (const key of ['PATH', 'LANG', 'LC_ALL', 'LC_CTYPE', 'USER', 'LOGNAME', 'SHELL', 'TERM'])
+      if (process.env[key] !== undefined) env[key] = process.env[key];
+    Object.assign(env, { STIM_HOME: home, HOME: isolated, CFFIXED_USER_HOME: isolated, TMPDIR: temporary });
     try {
       child = exec.spawn(process.execPath, [spawnEntry('macos-run'), canonicalRunRoot, launch.launchId], {
         detached: true,
         stdio: ['ignore', fd, fd],
         cwd: canonicalRunRoot,
-        env: { ...process.env, HOME: isolated, CFFIXED_USER_HOME: isolated, TMPDIR: temporary },
+        env,
       });
       child.once('error', (error) => {
         spawnError = error;

@@ -2,11 +2,21 @@ import type { ChildProcess } from 'node:child_process';
 import type { Executor } from '../exec.ts';
 import { createHash } from 'node:crypto';
 import { EventEmitter } from 'node:events';
-import { existsSync, mkdtempSync, mkdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdtempSync,
+  mkdirSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   assertHostedDeviceLedger,
+  HOSTED_MACOS_APP_SLOTS,
   deviceHostRoot,
   parseHostedMacosDevice,
   parseHostedOfferRequest,
@@ -16,6 +26,7 @@ import {
 } from '@stim-cli/core/state';
 import { runHostedMacosApp } from '../device-host/macos.ts';
 import { writeWorkspaceState } from '../workspace/workspace-state.ts';
+import { workspaceLogsDir } from '../workspace/paths.ts';
 
 const native = vi.hoisted(() => ({
   runFile: vi.fn<(file: string, args?: string[], options?: unknown) => string>(),
@@ -56,6 +67,8 @@ beforeEach(() => {
   home = join(root, 'home');
   area = join(root, 'apps', 'app');
   process.env.STIM_HOME = home;
+  vi.stubEnv('HOME', join(root, 'user-home'));
+  mkdirSync(join(process.env.HOME!, 'Library', 'Preferences'), { recursive: true });
   mkdirSync(home);
   mkdirSync(join(area, 'blobs'), { recursive: true });
   writeFileSync(join(home, 'hosted-device.json'), JSON.stringify(device));
@@ -90,6 +103,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   delete process.env.STIM_HOME;
+  vi.unstubAllEnvs();
   rmSync(root, { recursive: true, force: true });
 });
 
@@ -186,6 +200,20 @@ test('stamps and signs verified bytes, launches with an isolated home, and delet
     arguments: [],
     build: { state: 'ok' },
   });
+  const preferences = join(process.env.HOME!, 'Library', 'Preferences');
+  writeFileSync(join(preferences, `${bundleId}.hosted3.plist`), '{}');
+  writeFileSync(join(preferences, `${bundleId}.plist`), 'original preferences');
+  writeFileSync(join(preferences, `${bundleId}.hosted4.plist`), 'another slot');
+  symlinkSync(preferences, join(bundle, 'shared-preferences'));
+  const previous = join(root, 'apps', 'previous');
+  mkdirSync(join(previous, 'App.app'), { recursive: true });
+  mkdirSync(join(previous, 'blobs'));
+  writeFileSync(join(previous, 'receipt.json'), '{}');
+  writeFileSync(join(previous, 'manifest.json'), '[]');
+  const logs = workspaceLogsDir(realpathSync(join(home, 'macos-app')));
+  mkdirSync(logs, { recursive: true });
+  const log = join(logs, 'macos.ndjson');
+  writeFileSync(log, 'app output');
   expect(await runHostedMacosApp('stop', request)).toEqual({ state: 'stopped', device });
   expect(native.stop).toHaveBeenCalledExactlyOnceWith(realpathSync(join(home, 'macos-app')));
   expect(native.quiet).toHaveBeenCalledExactlyOnceWith(
@@ -193,6 +221,122 @@ test('stamps and signs verified bytes, launches with an isolated home, and delet
     ['delete', `${bundleId}.hosted3`],
     expect.anything(),
   );
+  expect(existsSync(join(preferences, `${bundleId}.hosted3.plist`))).toBe(false);
+  expect(readFileSync(join(preferences, `${bundleId}.plist`), 'utf8')).toBe('original preferences');
+  expect(readFileSync(join(preferences, `${bundleId}.hosted4.plist`), 'utf8')).toBe('another slot');
+  expect(existsSync(join(home, 'app-home'))).toBe(false);
+  for (const attempt of [area, previous]) {
+    expect(existsSync(join(attempt, 'App.app'))).toBe(false);
+    expect(existsSync(join(attempt, 'blobs'))).toBe(false);
+    expect(existsSync(join(attempt, 'receipt.json'))).toBe(true);
+  }
+  expect(existsSync(join(previous, 'manifest.json'))).toBe(true);
+  expect(existsSync(join(home, 'macos-supervisor.log'))).toBe(true);
+  expect(readFileSync(log, 'utf8')).toBe('app output');
+});
+
+test('replacing an app identity removes the stopped identity preferences before recording the new launch', async () => {
+  receipt();
+  await runHostedMacosApp('install', request, { attempt: 'app' });
+  const oldId = 'dev.stim.previous.hosted3';
+  const preferences = join(process.env.HOME!, 'Library', 'Preferences');
+  writeFileSync(join(preferences, `${bundleId}.hosted3.plist`), 'current preferences');
+  expect(await runHostedMacosApp('install', request, { attempt: 'app' })).toMatchObject({ state: 'installed' });
+  expect(native.quiet).not.toHaveBeenCalled();
+  expect(readFileSync(join(preferences, `${bundleId}.hosted3.plist`), 'utf8')).toBe('current preferences');
+  writeFileSync(join(home, 'hosted-macos-app.json'), JSON.stringify({ bundleId: oldId }));
+  writeFileSync(join(preferences, `${oldId}.plist`), '{}');
+  native.stop.mockClear();
+  native.quiet.mockImplementation(() => {
+    expect(native.stop).toHaveBeenCalled();
+    expect(JSON.parse(readFileSync(join(home, 'hosted-macos-app.json'), 'utf8'))).toEqual({ bundleId: oldId });
+    return '';
+  });
+  expect(await runHostedMacosApp('install', request, { attempt: 'app' })).toMatchObject({ state: 'installed' });
+  expect(native.quiet).toHaveBeenCalledExactlyOnceWith('defaults', ['delete', oldId], expect.anything());
+  expect(existsSync(join(preferences, `${oldId}.plist`))).toBe(false);
+  expect(readFileSync(join(preferences, `${bundleId}.hosted3.plist`), 'utf8')).toBe('current preferences');
+  expect(JSON.parse(readFileSync(join(home, 'hosted-macos-app.json'), 'utf8'))).toEqual({
+    bundleId: `${bundleId}.hosted3`,
+  });
+});
+
+test('launch passes only allowed environment variables and isolated paths to client code', async () => {
+  receipt();
+  vi.stubEnv('PATH', '/usr/bin');
+  vi.stubEnv('LANG', 'en_US.UTF-8');
+  vi.stubEnv('LC_ALL', 'en_US.UTF-8');
+  vi.stubEnv('LC_CTYPE', 'UTF-8');
+  vi.stubEnv('USER', 'fixture');
+  vi.stubEnv('LOGNAME', 'fixture');
+  vi.stubEnv('SHELL', '/bin/zsh');
+  vi.stubEnv('TERM', undefined);
+  vi.stubEnv('SERVER_TOKEN', 'secret');
+  vi.stubEnv('NODE_OPTIONS', '--inspect');
+  vi.stubEnv('STIM_SECRET', 'secret');
+  vi.stubEnv('CFFIXED_USER_HOME', '/host/home');
+  vi.stubEnv('TMPDIR', '/host/tmp');
+  expect(await runHostedMacosApp('install', request, { attempt: 'app' })).toMatchObject({ state: 'installed' });
+  expect(native.spawn.mock.calls[0]![2]!.env).toEqual({
+    PATH: '/usr/bin',
+    LANG: 'en_US.UTF-8',
+    LC_ALL: 'en_US.UTF-8',
+    LC_CTYPE: 'UTF-8',
+    USER: 'fixture',
+    LOGNAME: 'fixture',
+    SHELL: '/bin/zsh',
+    STIM_HOME: home,
+    HOME: join(home, 'app-home'),
+    CFFIXED_USER_HOME: join(home, 'app-home'),
+    TMPDIR: join(home, 'app-home', 'tmp'),
+  });
+});
+
+test.each(['app-home', 'attempt', 'bundle', 'blobs', 'apps'])(
+  'stop refuses %s links outside the private area without deleting their targets',
+  async (target) => {
+    const outside = mkdtempSync(join(tmpdir(), 'stim-hosted-outside-'));
+    try {
+      writeFileSync(join(outside, 'keep'), 'private bytes');
+      const path =
+        target === 'app-home'
+          ? join(home, 'app-home')
+          : target === 'attempt'
+            ? area
+            : target === 'apps'
+              ? join(root, 'apps')
+              : join(area, target === 'bundle' ? 'App.app' : 'blobs');
+      rmSync(path, { recursive: true, force: true });
+      symlinkSync(outside, path);
+      expect(await runHostedMacosApp('stop', request)).toMatchObject({
+        state: 'unknown',
+        notice: expect.stringContaining('outside'),
+      });
+      expect(readFileSync(join(outside, 'keep'), 'utf8')).toBe('private bytes');
+    } finally {
+      rmSync(outside, { recursive: true, force: true });
+    }
+  },
+);
+
+test('stop retains app data and preferences when process shutdown cannot be verified', async () => {
+  receipt();
+  await runHostedMacosApp('install', request, { attempt: 'app' });
+  native.stop.mockRejectedValue(new Error('Owner unresolved'));
+  expect(await runHostedMacosApp('stop', request)).toMatchObject({ state: 'unknown', notice: 'Owner unresolved' });
+  expect(native.quiet).not.toHaveBeenCalled();
+  expect(existsSync(join(home, 'app-home'))).toBe(true);
+  expect(existsSync(join(area, 'App.app'))).toBe(true);
+  expect(existsSync(join(area, 'blobs'))).toBe(true);
+});
+
+test('a preference plist removal failure leaves stop unresolved and app data intact', async () => {
+  receipt();
+  await runHostedMacosApp('install', request, { attempt: 'app' });
+  mkdirSync(join(process.env.HOME!, 'Library', 'Preferences', `${bundleId}.hosted3.plist`));
+  expect(await runHostedMacosApp('stop', request)).toMatchObject({ state: 'unknown' });
+  expect(existsSync(join(home, 'app-home'))).toBe(true);
+  expect(existsSync(join(area, 'App.app'))).toBe(true);
 });
 
 test('does not claim a launch when registration lacks a verified process', async () => {
@@ -238,7 +382,7 @@ test('macOS device parsing rejects foreign devices, invalid slots and selector r
     { avdName: 'foreign' },
     { extra: true },
     { appSlot: 0 },
-    { appSlot: 65 },
+    { appSlot: HOSTED_MACOS_APP_SLOTS + 1 },
     { appSlot: 1.5 },
     { macosVersion: '27.beta' },
   ]) {

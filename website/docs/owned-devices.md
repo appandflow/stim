@@ -630,7 +630,9 @@ identities, URL registrations and update feeds, then stamps
 `<bundleId>.hosted<appSlot>` and ad hoc signs the app. The owned macOS supervisor
 runs it with a private home and temporary directory; this is not an OS sandbox.
 Stop and revocation stop only the recorded processes and remove the last hosted
-identity's preferences domain. Unresolved sessions retain their app slots.
+identity's preferences domain and plist, the private app home and delivered bytes,
+keeping logs and receipts. Unresolved sessions retain their app slots.
+Until a driver is configured, the host reports `agent: { driver: 'none' }` for installed macOS apps.
 macOS hosting has no Metro, viewing, control or CLI placement in this slice.
 See the [macOS session protocol](https://github.com/appandflow/stim/blob/main/packages/server/README.md#hosted-macos-app-sessions).
 
