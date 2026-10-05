@@ -83,7 +83,8 @@ struct MacosAppCard: View {
     }
     NativeViewerPermissions.shared.viewerOpened()
     guard CGPreflightScreenCaptureAccess() else {
-      error = "Allow Screen Recording in Permissions to view this app. Status and logs remain available."
+      error =
+        "Allow \(NativeViewerPermissions.shared.screenPermissionTitle) in Permissions to view this app. Status and logs remain available."
       return
     }
     self.app = app

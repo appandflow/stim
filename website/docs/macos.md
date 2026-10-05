@@ -74,8 +74,9 @@ and executable. Open app rechecks the captured window and one standard app windo
 that owned app for normal native-window input. The captured view is read-only;
 background mouse/keyboard relay is not included.
 
-Capture requires existing Screen Recording permission; Open app also requires
-Accessibility permission. The first native viewer opening shows one Desktop setup screen for both permissions, with status, **Request permissions**, **Settings** and **Check again**. Approve the normal macOS requests; Stim never resets or automatically grants access. **Permissions** on the app card reopens setup. Builds never prompt. If unavailable, use the normal app window and workspace logs.
+Capture requires existing **Screen & System Audio Recording** permission (**Screen Recording** on macOS 14);
+Open app also requires **Device Control and Data Access** permission (**Accessibility** on macOS 26 and earlier).
+The first native viewer opening shows one Desktop setup screen for both permissions, named for your macOS version, with status, **Request permissions**, **Settings** and **Check again**. Approve the normal macOS requests; Stim never resets or automatically grants access. **Permissions** on the app card reopens setup. Builds never prompt. If unavailable, use the normal app window and workspace logs.
 Use Refresh preview after the app window opens or is resized to rebind capture. An
 unverifiable owner refuses cleanup rather than signalling another app. `stop`
 affects only this workspace's recorded app and supervisor.
@@ -92,9 +93,9 @@ Tap the app tile to view its one visible window. A server advertising
 read access. It verifies the recorded PID, process start time, executable and
 bundle before capture and on every frame. The view has no replay and never captures the desktop or another app.
 
-The capture host requires existing Screen Recording permission. When denied, the
-viewer names the existing host to allow in **System Settings → Privacy & Security →
-Screen & System Audio Recording**. Open **Permissions** in Stim Desktop on that Mac to request both grants, then reconnect the phone viewer. A phone-first native view asks the running Desktop host to show the same setup. A server started outside Desktop uses that launching host's permissions, so granting this copy of Stim may not apply to it. The phone and server never request or reset permissions.
+The capture host requires existing **Screen & System Audio Recording** permission
+(**Screen Recording** on macOS 14). When denied, the viewer names the existing host
+to allow in **System Settings → Privacy & Security → Screen & System Audio Recording**. Open **Permissions** in Stim Desktop on that Mac to request both grants, then reconnect the phone viewer. A phone-first native view asks the running Desktop host to show the same setup. A server started outside Desktop uses that launching host's permissions, so granting this copy of Stim may not apply to it. The phone and server never request or reset permissions.
 Status and logs remain available. Close and reopen the viewer after opening or
 resizing the app window.
 
@@ -125,7 +126,8 @@ process and the same single standard window; modal or disjoint windows, changed
 capture or resize refuse input. Contained nonmodal auxiliaries are allowed; only
 the focused captured main receives input. The server holds one exclusive session per app, ending
 on disconnect, revocation, takeover or five idle minutes, without a CLI device
-lock. Existing **Accessibility** permission is required. Stim never requests
+lock. Existing **Device Control and Data Access** permission (**Accessibility** on
+macOS 26 and earlier) is required. Stim never requests
 or resets permissions. An input refusal ends Control with its reason while
 viewing and logs remain usable; older servers stay view-only.
 
@@ -153,8 +155,14 @@ stim stop`}
 
 The copied bundle keeps its own `CFBundleIdentifier`. The host runs it as
 `<id>.hosted<slot>` from a fixed pool of slots, so its bundle ID stays the same
-across rebuilds. Whether macOS keeps Screen Recording and Accessibility approvals
-for it also depends on how the host signs it.
+across rebuilds. Whether macOS keeps its Screen & System Audio Recording and Device
+Control and Data Access approvals also depends on how the host signs it.
+
+To view or control the hosted app, grant both permissions once to the process that
+spawns `stim-frames`. For a stim-server run by `stim-server service install`, that is
+the `node` that `stim-server service status` reports, usually `/opt/homebrew/bin/node`.
+Add it under **System Settings → Privacy & Security → Screen & System Audio Recording**
+and **Device Control and Data Access** (**Accessibility** on macOS 26 and earlier).
 Running the command again reuses the session and delivers a new copy.
 `macos.arguments` are not passed to a hosted app. While the app runs on a host, a
 local `stim macos` refuses, and so does `--host` with another machine, until

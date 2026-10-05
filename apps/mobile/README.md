@@ -379,8 +379,8 @@ A running app's tile opens the same viewer with `platform: "macos"`, in the defa
 slot, when the server advertises `macos-window`. It has no replay. The server captures only
 one visible window of the app whose PID, process start time, executable and
 bundle match its owned launch record; other apps and the desktop are excluded.
-Existing Screen Recording permission is required for the capture host. A denial
-shows permission guidance while status and logs stay usable. On the host Mac, Stim Desktop opens one native viewer setup screen for Screen Recording and Accessibility (called Device Control and Data Access on macOS 27) on first use. Approve the normal macOS requests there, then reconnect the phone viewer. **Permissions** on the Desktop app card reopens setup. The phone and server do not request or reset OS grants. Close and reopen the viewer after opening or resizing the
+Existing Screen & System Audio Recording permission (Screen Recording on macOS 14) is required for the capture host. A denial
+shows permission guidance while status and logs stay usable. On the host Mac, Stim Desktop opens one native viewer setup screen for Screen & System Audio Recording and Device Control and Data Access (Accessibility on macOS 26 and earlier) on first use. Approve the normal macOS requests there, then reconnect the phone viewer. **Permissions** on the Desktop app card reopens setup. The phone and server do not request or reset OS grants. Close and reopen the viewer after opening or resizing the
 app window.
 
 With `macos-window-control` and a control pairing, **Control** enables mouse
@@ -411,7 +411,7 @@ input. Contained nonmodal auxiliary windows are allowed; input still goes only
 to the focused captured main window. Control
 uses one exclusive server session per app, with disconnect/revocation/takeover
 and five-minute idle expiry; it takes no CLI simulator lock. Existing
-Accessibility permission is required. Refusals end Control and show the reason
+Device Control and Data Access permission (Accessibility on macOS 26 and earlier) is required. Refusals end Control and show the reason
 while the live view remains available. Older servers keep the viewer read-only.
 
 Native Control uses dynamically resolved private CoreGraphics input SPI in the

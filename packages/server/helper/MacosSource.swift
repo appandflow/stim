@@ -22,6 +22,13 @@ final class MacosSource: NSObject, Source, SCStreamDelegate, SCStreamOutput {
     return unsafeBitCast(symbol, to: WindowLocationSetter.self)
   }()
 
+  private static let screenPermission =
+    ProcessInfo.processInfo.operatingSystemVersion.majorVersion >= 15
+    ? "Screen & System Audio Recording" : "Screen Recording"
+  private static let controlPermission =
+    ProcessInfo.processInfo.operatingSystemVersion.majorVersion >= 27
+    ? "Device Control and Data Access" : "Accessibility"
+
   private let app: OwnedApp
   private let pacer: Pacer
   private let video = videoEncoder()
@@ -48,7 +55,7 @@ final class MacosSource: NSObject, Source, SCStreamDelegate, SCStreamOutput {
     guard matches() else { fail("The owned macOS app process changed or exited.") }
     guard CGPreflightScreenCaptureAccess() else {
       fail(
-        "Screen Recording access is unavailable for stim-frames. Allow the existing capture host in System Settings > Privacy & Security > Screen & System Audio Recording, then reconnect. Open Permissions in Stim Desktop on this Mac to set up access, then reconnect. The server never requests or resets permissions; status and logs remain available."
+        "\(Self.screenPermission) access is unavailable for stim-frames. Allow the existing capture host in System Settings > Privacy & Security > \(Self.screenPermission), then reconnect. Open Permissions in Stim Desktop on this Mac to set up access, then reconnect. The server never requests or resets permissions; status and logs remain available."
       )
     }
     Task { [self] in
@@ -191,8 +198,7 @@ final class MacosSource: NSObject, Source, SCStreamDelegate, SCStreamOutput {
   private func inputWindow() throws -> ((windowID: CGWindowID, frame: CGRect), AXUIElement) {
     guard matches(), let captured = window else { throw refusal("The captured owned macOS app window is unavailable.") }
     guard AXIsProcessTrusted(), CGPreflightPostEventAccess() else {
-      let permission = ProcessInfo.processInfo.operatingSystemVersion.majorVersion >= 27
-        ? "Device Control and Data Access" : "Accessibility"
+      let permission = Self.controlPermission
       throw refusal(
         "Control needs \(permission) permission for the capture host. Open Permissions in Stim Desktop on this Mac, or allow the host in System Settings > Privacy & Security > \(permission), then reconnect. The server never requests or resets permissions; viewing and logs remain available."
       )
