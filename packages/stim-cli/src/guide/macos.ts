@@ -161,7 +161,8 @@ at most 32 arguments, 1024 characters each and 8192 characters total. Empty
 strings are allowed; NUL, CR and LF are refused. Values are stored in the host's
 app receipt and visible in process listings, so do not put secrets there. Older
 hosts ignore them and Stim warns to update stim-server on the host.
-status --json reports the host's applied arguments under macos.arguments.
+status --json reports the host's applied arguments under
+environments[].macos.arguments.
 A workspace has one macOS app: a local stim macos
 refuses while it runs on a host, and --host with a different machine refuses
 until stim stop. When the host cannot be reached or does not confirm the stop,

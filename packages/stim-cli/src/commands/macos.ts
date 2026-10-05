@@ -3,7 +3,7 @@ import { closeSync, existsSync, openSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Command } from 'commander';
 import { LOG_ROTATE_BYTES } from '@stim-cli/core';
-import { readMacosRecord, type MacosAppRecord } from '@stim-cli/core/state';
+import { readMacosRecord, validHostedAppArguments, type MacosAppRecord } from '@stim-cli/core/state';
 import { connectHost, placeHostedMacos } from '../device-host/hosted-macos.ts';
 import { withNativeBuildRun } from '../engine/native-run.ts';
 import { spawnDeclared } from '../engine/spawn-claims.ts';
@@ -58,6 +58,10 @@ export async function runMacos(
               `This workspace's macOS app runs on ${previous.host.machine}. Run stim stop first, then stim macos${host ? ` --host ${host}` : ''}.`,
             );
           }
+          if (host && !validHostedAppArguments(macos.arguments ?? []))
+            throw new Error(
+              'macos.arguments is too large for a hosted app: at most 32 arguments of 1024 characters (8192 in total), without NUL or line breaks.',
+            );
           if (host) (await connectHost(host)).connection.close();
           if (!previous?.host) await stopMacosAppHeld(root);
           upsertProject(root, {});

@@ -17,6 +17,7 @@ import {
   isJsonObject,
   parseHostedAgentGrant,
   parseHostedMacosDevice,
+  validHostedAppArguments,
   readDeviceHostMachines,
   type DeviceHostMachineCredential,
   type HostedAgentAccess,
@@ -331,7 +332,7 @@ export async function placeHostedMacos(
     await sleep(POLL_MS);
     delivery = await call(host, 'device-host.app.attach', ids);
   }
-  const appliedArguments = (delivery.arguments as string[] | undefined) ?? [];
+  const appliedArguments = validHostedAppArguments(delivery.arguments) ? delivery.arguments : [];
   if (JSON.stringify(appliedArguments) !== JSON.stringify(requestedArguments))
     note(`${host.machine} did not apply macos.arguments. Update stim-server on that host.`);
   if (typeof delivery.notice === 'string') note(delivery.notice);

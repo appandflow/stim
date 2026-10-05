@@ -261,6 +261,15 @@ describe.skipIf(process.platform !== 'darwin')('stim macos --host (SwiftPM and c
     expect(macosAppState(readMacosRecord(root))?.state).toBe('stopped');
   });
 
+  test('over-limit macos.arguments refuse before the host reserves a session', async () => {
+    writeFileSync(
+      join(root, '.stim.json'),
+      JSON.stringify({ macos: { product: 'Fixture', infoPlist: 'Info.plist', arguments: Array(33).fill('a') } }),
+    );
+    await expect(runMacos(root, () => {}, 'mini')).rejects.toThrow('macos.arguments is too large');
+    expect(host.methods).not.toContain('device-host.reserve');
+  });
+
   test.each([undefined, ['-notify.enabled', 'false']])(
     'records the applied arguments %j and warns when the host ignores or changes them',
     async (applied) => {
