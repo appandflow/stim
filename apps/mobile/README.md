@@ -1459,13 +1459,15 @@ one state in the run's annotations and summary:
 | not submitted for Beta App Review              | uploaded and processed, but the job did not add it for review |
 | awaiting Beta App Review or in Beta App Review | submitted; external testers cannot install it yet             |
 | available to external testers                  | approved and in the `External` group                          |
+| in export compliance review                    | Apple is reviewing the export compliance answers              |
 | rejected by Beta App Review                    | open the build in App Store Connect for Apple's reason        |
+| in an unexpected state                         | the message prints Apple's processing and external states     |
 
 A failure after the upload, such as missing test information or a rejected
 review submission, is a warning and does not fail the release: the build
 is in TestFlight and the update channel and runtime are unaffected. The run
 fails only when the build never reaches TestFlight. If the `testflight` job
-fails before the upload, the step uploads the same build with `eas submit`,
+exits with code 11 and the build is not in TestFlight, the step uploads the same build with `eas submit`,
 which reaches internal testers only and is reported as a warning. If that fails
 too, run `mode=build` again, which makes a new build.
 
