@@ -2134,7 +2134,7 @@ describe('action: the reserved port', { timeout: 30_000 }, () => {
       expect(result.exitCode).toBe(1);
       expect(JSON.parse(result.logs[0]!)).toMatchObject({
         code: 'STIM_BAD_ARG',
-        remedy: expect.stringContaining('stim stop'),
+        remedy: expect.stringContaining(status === 'live' ? 'stim stop' : 'tool that started it'),
       });
       expect(getProject(root)?.metroPort).toBe(port);
       expect(exec.calls.spawn).toEqual([]);
@@ -2171,6 +2171,22 @@ describe('action: the reserved port', { timeout: 30_000 }, () => {
 
     expect(getProject(root)?.metroPort).toBe(25062);
     expect(exec.calls.spawn[0]?.args[4]).toBe('25062');
+  });
+
+  test('--reset-cache with a pin held by a foreign listener refuses before stopping anything', async () => {
+    const port = 25063;
+    vi.spyOn(portProbes, 'isMetroRunning').mockResolvedValue(true);
+    vi.stubEnv('STIM_METRO_PORT', String(port));
+    const exec = metroExecutor({ listeners: { [port]: DEAD_LISTENER_PID }, cwd: '/somewhere/else' });
+    setExecutor(exec);
+
+    const result = await runAction({ json: true, resetCache: true });
+
+    expect(result.exitCode).toBe(1);
+    expect(JSON.parse(result.logs[0]!)).toMatchObject({ code: 'STIM_BAD_ARG' });
+    expect(result.errs.join('\n')).not.toContain('clearing');
+    expect(exec.calls.spawn).toEqual([]);
+    expect(getProject(root)?.metroPort).toBe(null);
   });
 
   test('a free first-use pin reserves and spawns on the pinned port', async () => {

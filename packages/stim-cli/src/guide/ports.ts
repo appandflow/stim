@@ -17,7 +17,7 @@ a letter and contain up to 64 letters, digits, underscores, or hyphens.
 metro is reserved; use stim start and stim stop for managed Metro, and
 metro.port or STIM_METRO_PORT to choose its number (guide settings).
 Changing the pin while this workspace's dev server runs refuses until
-stim stop; an unverified supervisor also blocks the change. A foreign holder
+stim stop; an unverified supervisor also blocks the change until you stop it with the tool that started it. A foreign holder
 of the pin is refused before anything starts; this project's own Metro on
 it is attached to. stim web follows these rules when its page uses Metro.
 ios and android with --no-metro-check use the pin, then the recorded port,

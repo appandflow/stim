@@ -107,8 +107,9 @@ IDEMPOTENT
   STIM_METRO_PORT never moves: \`start\` refuses with STIM_BAD_ARG and names
   the holder before anything starts or the pin is reserved. This project's
   own Metro already on the pin is attached to. Changing the pin while this
-  workspace's dev server runs or its supervisor cannot be verified refuses;
-  run stim stop before retrying, or unset or restore the pin. stim web follows
+  workspace's dev server runs refuses until stim stop; a supervisor that cannot
+  be verified also refuses, until you stop it with the tool that started it.
+  You can also unset or restore the pin. stim web follows
   the same rules when its page uses Metro.
   ios and android with --no-metro-check use the pin, then the recorded port,
   then 8081, without probing, reserving or writing the registry. An invalid

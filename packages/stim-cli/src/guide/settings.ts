@@ -274,8 +274,9 @@ ${ANDROID_AVD_CONFIG_HELP.map((line) => `                          ${line}`).joi
                         another workspace reserves it or another process
                         holds it. start, ios, android and web refuse a
                         changed pin while this workspace's dev server runs
-                        or its supervisor cannot be verified; run stim stop
-                        before retrying. A foreign holder is refused before
+                        (run stim stop before retrying) or its supervisor
+                        cannot be verified (stop it with the tool that
+                        started it). A foreign holder is refused before
                         anything starts; this project's Metro on the pin is
                         attached to. --no-metro-check uses the pin, then the
                         recorded port, then 8081, without probing or reserving;

@@ -505,6 +505,8 @@ export async function startDevServer(
       };
       if (resetCache) {
         await gateBudget();
+        const pinCheck = await resolveWorkspaceMetroPort(root, note, 'start');
+        if (typeof pinCheck !== 'number') return fail(pinCheck);
         try {
           await stopOwnedMetroForReset(root);
         } catch (error) {
@@ -1135,9 +1137,16 @@ export async function resolveWorkspaceMetroPort(
     });
     if (supervisor.status !== 'none' && supervisor.status !== 'stale') {
       if (pinned === null || recorded === pinned) return recorded;
+      if (supervisor.status === 'unverified') {
+        return {
+          code: 'STIM_BAD_ARG',
+          message: `Cannot move this workspace's Metro to metro.port ${pinned}: ${supervisor.reason}.`,
+          remedy: `Stop that supervisor with the tool that started it, then retry, or restore metro.port to ${recorded}. Stim leaves unverified processes alone.`,
+        };
+      }
       return {
         code: 'STIM_BAD_ARG',
-        message: `This workspace's dev server is running on port ${recorded} or cannot be verified, and metro.port pins it to ${pinned}.`,
+        message: `This workspace's dev server is running on port ${recorded}, and metro.port pins it to ${pinned}.`,
         remedy: 'Run `stim stop`, then retry, or unset or restore metro.port.',
       };
     }

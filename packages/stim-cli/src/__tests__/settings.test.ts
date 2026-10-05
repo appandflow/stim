@@ -114,6 +114,7 @@ test('metroPortSetting prefers STIM_METRO_PORT to the workspace layer and refuse
   setProjectSetting(tmpHome, 'metro.port', 25062);
   expect(metroPortSetting(tmpHome, {})).toEqual({ port: 25062, error: null });
   expect(metroPortSetting(tmpHome, { STIM_METRO_PORT: '25072' })).toEqual({ port: 25072, error: null });
+  expect(metroPortSetting(tmpHome, { STIM_METRO_PORT: '0x1F90' }).error).toMatch(/^Invalid STIM_METRO_PORT value/);
   expect(metroPortSetting(tmpHome, { STIM_METRO_PORT: '80' }).error).toMatch(/^Invalid STIM_METRO_PORT value "80"\./);
 });
 

@@ -10,6 +10,7 @@ import {
   acceptsShape,
   expectedShape,
   isLayeredSetting,
+  coerceSettingText,
   settingDefinition,
   settingValueError,
   REMOTE_DEVICE_BACKENDS,
@@ -689,7 +690,9 @@ export function metroPortSetting(
 ): { port: number | null; error: string | null } {
   const setting = settingDefinition('metro.port')!;
   const fromEnv = env.STIM_METRO_PORT?.trim();
-  const value = fromEnv ? Number(fromEnv) : settingValueAt(settingsForProject(projectPath), 'metro.port');
+  const value = fromEnv
+    ? coerceSettingText(setting, fromEnv)
+    : settingValueAt(settingsForProject(projectPath), 'metro.port');
   if (value === undefined) return { port: null, error: null };
   const problem = settingValueError(setting, value);
   if (problem === null) return { port: value as number, error: null };

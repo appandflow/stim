@@ -1064,7 +1064,7 @@ captured"  (in metro.ndjson, bare RN)
   refusal is on stderr. \`stop\` outside a project refuses rather than
   reporting that nothing was running.
   For a changed Metro pin, run stim stop before retrying, or unset or restore
-  the pin. A foreign holder is refused before anything starts; this project's
+  the pin; for an unverified supervisor, stop it with the tool that started it. A foreign holder is refused before anything starts; this project's
   own Metro on the pin is attached to. stim web follows the same rules when
   its page uses Metro. ios and android with --no-metro-check use the pin,
   then the recorded port, then 8081, without probing or reserving; an invalid

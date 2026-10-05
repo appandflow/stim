@@ -131,7 +131,8 @@ Explicit machine project/repository overrides keep their existing precedence.
 `metro.port` and `STIM_METRO_PORT` pin Metro for `stim start`, `stim ios`,
 `stim android` and pages using Metro in `stim web`. Changing the pin while
 this workspace's dev server runs is refused until `stim stop`; an unverified
-supervisor also blocks the change. You can also unset or restore the pin.
+supervisor also blocks the change until you stop it with the tool that started
+it. You can also unset or restore the pin.
 A foreign holder is refused before anything starts or the port is reserved.
 This project's own Metro already on the pin is attached to. With
 `--no-metro-check`, iOS and Android use the pin, then the recorded port, then
