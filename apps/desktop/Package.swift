@@ -1,6 +1,17 @@
 // swift-tools-version:6.0
 import PackageDescription
 
+#if compiler(>=6.4)
+  // SwiftPM 6.4 / Swift Build records the deployment target as the LC_BUILD_VERSION SDK;
+  // macOS 26 requires SDK 26 or newer for Liquid Glass.
+  let minimumMacOSVersion = "14.0"
+  let desktopLinkerSettings: [LinkerSetting] = [
+    .unsafeFlags(["-Xlinker", "-platform_version", "-Xlinker", "macos", "-Xlinker", minimumMacOSVersion, "-Xlinker", "27.0"])
+  ]
+#else
+  let desktopLinkerSettings: [LinkerSetting] = []
+#endif
+
 let package = Package(
   name: "StimDesktop",
   platforms: [.macOS(.v14)],
@@ -28,7 +39,8 @@ let package = Package(
         "StimKit", "StimStores", "SimulatorFrames", "EmulatorFrames", "WebFrames", .product(name: "Lottie", package: "lottie-spm"),
         .product(name: "Sparkle", package: "Sparkle"), .product(name: "Sentry", package: "sentry-cocoa"),
       ],
-      swiftSettings: [.swiftLanguageMode(.v5)]
+      swiftSettings: [.swiftLanguageMode(.v5)],
+      linkerSettings: desktopLinkerSettings
     ),
     .testTarget(
       name: "StimKitTests",
