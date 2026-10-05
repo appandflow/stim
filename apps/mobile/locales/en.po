@@ -2073,6 +2073,10 @@ msgstr "Live workspaces"
 msgid "Live, device stopped"
 msgstr "Live, device stopped"
 
+#: src/screens/logs.tsx
+msgid "Load older logs"
+msgstr "Load older logs"
+
 #: src/components/mac-chip.tsx
 #: src/components/mac-chip.tsx
 msgid "Loading"
