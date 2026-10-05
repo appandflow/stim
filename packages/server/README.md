@@ -193,10 +193,11 @@ tokens.
 ## Device-host approval
 
 Device hosting has a separate `device-host` capability. An approved client can
-reserve, boot, reconnect to and stop its own iOS simulator through the protocol.
-It can deliver, install and launch a compatible app bundle, stream the simulator
-and control it. The hosted app connects back to Metro on the client Mac.
-Automatic CLI placement, client view/control relays and Android hosting remain in [#2266](https://github.com/appandflow/stim/issues/2266).
+reserve, boot, reconnect to and stop its own iOS simulator or Android emulator
+through the protocol. It can deliver, install and launch a compatible iOS app
+bundle, stream the simulator and control it. The hosted iOS app connects back to
+Metro on the client Mac. Automatic CLI placement, client view/control relays and
+Android app delivery, Metro and viewing remain in [#2266](https://github.com/appandflow/stim/issues/2266).
 
 The Stim client can name expected hosts with
 `stim settings set hosting.machines '["<mac>"]'` and request access with
@@ -216,7 +217,7 @@ separate limit. The same name validation and failed-attempt limit apply.
 On the hosting Mac, inspect `stim-server devices`, then approve the matching
 request with `stim-server devices grant <id> --device-host`, or use **Allow**
 in Stim Desktop. Approve only an expected request: it authorizes that Mac to
-reserve session-owned iOS simulators and run its native app code in them. **Deny**
+reserve session-owned simulators or emulators and run native iOS app code. **Deny**
 or `stim-server devices revoke <id>` removes it; revocation also closes its
 open authenticated connections. The local-process trust boundary described in
 [Build access](#build-access) applies here too.
@@ -277,6 +278,47 @@ unresolved sessions. Ordinary local producers do not join that reservation
 transaction, so this is not a machine-wide hard capacity guarantee. Unknown
 inventory or elevated/unknown memory pressure refuses native creation. This
 protocol slice does not change `stim ios` placement.
+
+### Hosted Android session protocol
+
+The same reserve/attach/stop methods accept `platform: "android"` with optional
+`systemImage` (an installed `system-images;android-<api>;<tag>;<abi>` package)
+and `deviceProfile` (an installed avdmanager profile). iOS selectors refuse on
+Android requests. The image must match the host architecture. Omitted selectors
+use Stim's existing compatible installed-image and default-profile choice.
+The worker process needs an Android SDK and a JDK that `avdmanager` can use.
+
+```json
+{
+  "id": 1,
+  "method": "device-host.reserve",
+  "params": {
+    "workspace": "/client/worktree",
+    "slot": "default",
+    "platform": "android",
+    "attempt": "android-1",
+    "systemImage": "system-images;android-30;google_apis;arm64-v8a",
+    "deviceProfile": "pixel_6"
+  }
+}
+```
+
+A preparing Android result includes a server-selected `consolePort`. The journal
+reserves distinct ports among hosted sessions and excludes the ports in the
+host's local config. The worker refuses an observed occupied port before
+creation and before boot. Local producers do not participate in this reservation,
+so a racing local launch can still refuse a hosted boot; this is not a
+machine-wide hard port or device-capacity guarantee.
+
+A ready Android `device` has `avdName`, `serial`, `consolePort`, `systemImage`,
+`deviceProfile` and `architecture` (`arm64-v8a` or `x86_64`). The worker verifies
+its exact AVD name and running ABI before reporting ready. Creation remains
+inside the worker's claimed process group. The worker opens no emulator viewer.
+Stop and revocation use centralized teardown only for its private ledger's exact
+AVD. They shut down and retain its AVD data and record; unknown native outcomes
+retain the reservation and require explicit reconciliation. Android app delivery,
+Metro and screen/input routing remain follow-ups in #2266. Android sessions
+refuse the iOS app-delivery, Metro, view and input routes.
 
 ### Hosted iOS app delivery
 

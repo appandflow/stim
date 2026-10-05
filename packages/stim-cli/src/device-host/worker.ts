@@ -5,6 +5,7 @@ import {
   assertHostedDeviceLedger,
   readHostedDevice,
   type HostedDeviceSelectors,
+  type HostedDevice,
   type HostedIosChoice,
   type HostedIosDevice,
 } from '@stim-cli/core/state';
@@ -16,7 +17,7 @@ import { installHostedApp } from './app.ts';
 
 export type HostedWorkerResult = {
   state: 'ready' | 'stopped' | 'installed' | 'unknown';
-  device: HostedIosDevice | null;
+  device: HostedDevice | null;
   notice?: string;
   launched?: true | 'unverified';
 };

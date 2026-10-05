@@ -12,11 +12,12 @@ import { deviceHostArea, deviceHostRoot, readHostedSessions } from '@stim-cli/co
 import { processGroupAlive, readClaimSet, tryAcquireClaim, releaseClaim } from '@stim-cli/core/ownership-claim';
 import * as processIdentity from '@stim-cli/core/process-identity';
 import { DeviceHost } from '../src/device-host.ts';
+import { protocolJsonSchema, type ServerMessage } from '../src/protocol.ts';
+import { Ajv2020 } from 'ajv/dist/2020.js';
 import { HostedViews } from '../src/hosted-view.ts';
 import { ControlHub } from '../src/control.ts';
 import { FramePool } from '../src/frames.ts';
 import { FeedPool } from '../src/feed.ts';
-import type { ServerMessage } from '../src/protocol.ts';
 
 const WORKER = `
 import { spawn } from 'node:child_process';
@@ -26,7 +27,8 @@ const chunks = [];
 for await (const chunk of process.stdin) chunks.push(chunk);
 const input = JSON.parse(Buffer.concat(chunks));
 const home = process.env.STIM_HOME;
-const device = {udid:'12345678-1234-1234-1234-123456789abc',name:'stim-hosted',deviceTypeId:'iphone',runtimeId:'ios',deviceType:'iPhone',runtime:'27.1',architecture:'arm64'};
+const iosDevice = {udid:'12345678-1234-1234-1234-123456789abc',name:'stim-hosted',deviceTypeId:'iphone',runtimeId:'ios',deviceType:'iPhone',runtime:'27.1',architecture:'arm64'};
+const device = input.platform === 'android' ? {avdName:'stim-hosted-'+input.session,serial:'emulator-'+input.consolePort,consolePort:input.consolePort,systemImage:'system-images;android-30;google_apis;arm64-v8a',deviceProfile:'pixel_6',architecture:'arm64-v8a'} : iosDevice;
 const out = value => process.stdout.write(JSON.stringify(value));
 if(input.mode === 'prepare') {
   writeFileSync(join(home,'entered'),String(process.pid));
@@ -36,7 +38,7 @@ if(input.mode === 'prepare') {
   }
   else {
     writeFileSync(join(home,'hosted-device.json'),JSON.stringify(device));
-    writeFileSync(join(home,'created-devices.json'),JSON.stringify({version:1,ios:[device.udid],android:[],web:[]}));
+    writeFileSync(join(home,'created-devices.json'),JSON.stringify({version:1,ios:input.platform==='android'?[]:[device.udid],android:input.platform==='android'?[device.avdName]:[],web:[]}));
     if(input.deviceType === 'descendant') {
       spawn(process.execPath,['--input-type=module','-e',
         "import {writeFileSync} from 'node:fs'; process.on('SIGTERM',()=>{}); writeFileSync(process.env.STIM_HOME+'/descendant',String(process.pid)); setInterval(()=>{},1000);"
@@ -553,7 +555,10 @@ test('rejects malformed client identities and selectors before reserving a worke
     { workspace: '/client\nworktree' },
     { slot: '__proto__' },
     { slot: '../other' },
-    { platform: 'android' },
+    { platform: 'web' },
+    { platform: ['ios'] },
+    { platform: ['android'] },
+    { platform: 'android', deviceType: 'iPhone' },
     { attempt: '../other' },
     { deviceType: 42 },
     { runtime: '' },
@@ -852,3 +857,65 @@ test.each(['stop', 'revoke'])(
     expect(readClaimSet(join(deviceHostRoot(), `${first.id}.claims`)).live).toEqual([]);
   },
 );
+
+test('Android reservations keep distinct ports and platform slots, reconnect without recreation and refuse iOS app routes', async () => {
+  const validator = new Ajv2020({ strict: false, validateFormats: false });
+  validator.addSchema(protocolJsonSchema(), 'protocol');
+  const acceptsRequest = validator.compile({ $ref: 'protocol#/$defs/ClientRequest' });
+  const acceptsSession = validator.compile({ $ref: 'protocol#/$defs/HostedDeviceSession' });
+  const androidRequest = {
+    ...request,
+    platform: 'android',
+    attempt: 'android',
+    systemImage: 'system-images;android-30;google_apis;arm64-v8a',
+    deviceProfile: 'pixel_6',
+  };
+  expect(acceptsRequest({ id: 1, method: 'device-host.reserve', params: androidRequest })).toBe(true);
+  expect(acceptsRequest({ id: 1, method: 'device-host.reserve', params: { ...androidRequest, runtime: '27.0' } })).toBe(
+    false,
+  );
+  await host.close();
+  host = new DeviceHost({
+    worker: join(home, 'worker.mjs'),
+    env: { ...process.env, STIM_MAX_DEVICES: '3' },
+    allowed: (client) => allowed.has(client),
+  });
+  const ios = reserve();
+  const android = reserve(androidRequest);
+  const second = reserve({ platform: 'android', slot: 'second', attempt: 'android-second' });
+  expect(android.consolePort).toBe(5554);
+  expect(second.consolePort).toBe(5556);
+  expect(acceptsSession(ios)).toBe(true);
+  expect(acceptsSession(android)).toBe(true);
+  expect(acceptsSession(await state(ios.id, 'ready'))).toBe(true);
+  expect(acceptsSession(await state(android.id, 'ready'))).toBe(true);
+  await state(second.id, 'ready');
+  expect(host.attach('client', { session: android.id })).toHaveProperty(
+    'result.device.avdName',
+    `stim-hosted-${android.id}`,
+  );
+  expect(reserve(androidRequest).id).toBe(android.id);
+  expect(
+    host.appOffer('client', {
+      session: android.id,
+      attempt: 'app',
+      bundleId: 'dev.fixture',
+      mode: 'release',
+      manifest: { sha256: 'a'.repeat(64), size: 2 },
+    }),
+  ).toHaveProperty('error.message', 'Hosted app delivery currently supports iOS sessions only.');
+  const journal = readFileSync(join(deviceHostRoot(), 'sessions.json'), 'utf8');
+  expect(() => host.viewTarget('client', android.id)).toThrow(
+    'Hosted view and input currently support iOS sessions only.',
+  );
+  expect(
+    await host.metroOpen('client', { session: android.id, gatewayPort: 12345, secret: 'a'.repeat(64) }, '127.0.0.1'),
+  ).toHaveProperty('error.message', 'Hosted Metro currently supports iOS sessions only.');
+  expect(readFileSync(join(deviceHostRoot(), 'sessions.json'), 'utf8')).toBe(journal);
+  expect(host.stop('other', { session: android.id })).toHaveProperty('error.code', 'unknown-session');
+  host.stop('client', { session: android.id });
+  await state(android.id, 'stopped');
+  expect(readClaimSet(join(deviceHostRoot(), `${android.id}.claims`)).live).toEqual([]);
+  expect(host.attach('client', { session: ios.id })).toHaveProperty('result.state', 'ready');
+  expect(reserve({ platform: 'android', attempt: 'replacement' }).consolePort).toBe(5554);
+});
