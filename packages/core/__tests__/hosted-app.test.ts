@@ -2,7 +2,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { deviceHostRoot, readHostedSessions } from '../state/device-host.ts';
-import { parseHostedAppManifest } from '../state/hosted-app.ts';
+import { parseHostedAppManifest, parseHostedAppOffer } from '../state/hosted-app.ts';
 
 const file = (path: string, kind = 'file') => ({ path, kind, size: 1, sha256: 'a'.repeat(64) });
 
@@ -72,4 +72,34 @@ test('journal rejects missing, foreign and mismatched macOS app slots', () => {
     delete process.env.STIM_HOME;
     rmSync(home, { recursive: true, force: true });
   }
+});
+
+test('app offers preserve bounded plain arguments and omit an empty argument list', () => {
+  const offer = {
+    session: '12345678-1234-1234-1234-123456789abc',
+    attempt: 'app',
+    bundleId: 'dev.stim.fixture',
+    mode: 'release',
+    manifest: { sha256: 'a'.repeat(64), size: 1 },
+  };
+  const validArguments = ['-autopilot.enabled', 'true', '', 'ENV=value', '$(touch /tmp/unwanted)'];
+  expect(parseHostedAppOffer({ ...offer, arguments: validArguments })).toEqual({ ...offer, arguments: validArguments });
+  expect(parseHostedAppOffer({ ...offer, arguments: [] })).toEqual(offer);
+  expect(parseHostedAppOffer(offer)).toEqual(offer);
+  for (const args of [Array(32).fill(''), Array(8).fill('a'.repeat(1024))])
+    expect(parseHostedAppOffer({ ...offer, arguments: args })?.arguments).toEqual(args);
+  for (const args of [
+    'argument',
+    null,
+    {},
+    [1],
+    ['valid', false],
+    Array(33).fill(''),
+    ['a'.repeat(1025)],
+    [...Array(8).fill('a'.repeat(1024)), 'a'],
+    ['nul\0value'],
+    ['line\nvalue'],
+    ['line\rvalue'],
+  ])
+    expect(parseHostedAppOffer({ ...offer, arguments: args })).toBeNull();
 });

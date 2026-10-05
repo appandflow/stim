@@ -398,6 +398,15 @@ array of `{path, kind, size, sha256}` entries, where `kind` is `file`, `exec` or
 target; it must resolve inside the bundle. No entry may sit below a file or
 link. Duplicate paths, including Unicode/case aliases, are refused.
 
+macOS offers may also include an optional `arguments` string array: at most 32
+entries, 1024 characters per entry and 8192 characters total, with no NUL, CR or
+LF. Empty strings are allowed; an empty array is omitted. Other session platforms
+refuse non-empty arguments. The host passes them as plain executable arguments,
+without environment injection, stores them in the app receipt and echoes them in
+delivery replies. They are visible in process listings, so do not put secrets
+there. Older hosts ignore this field; Stim warns to update `stim-server` on the
+host when its delivery does not report the requested arguments.
+
 An offer returns `{delivery, missing}`. Upload each missing digest with
 `device-host.app.chunk` and `{session, attempt, sha256, offset, data}`; `data` is
 base64 for at most 32 KiB of raw bytes. The reply names the next byte `offset`.
@@ -405,7 +414,7 @@ Replay of the same bytes is safe after a lost reply. Re-offer to learn received
 offsets. Upload the manifest first, then re-offer for its missing file content.
 The manifest is limited to 8 MiB and 20,000 entries, with at most 1 GiB per file,
 1 KiB per link, and 4 GiB of declared bundle content. An app attempt cannot
-change its identity, mode or manifest. Complete a receiving attempt or stop the
+change its identity, mode, arguments or manifest. Complete a receiving attempt or stop the
 session before starting another transfer.
 
 After every digest is verified, call `device-host.app.launch` with

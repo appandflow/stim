@@ -161,8 +161,16 @@ The copied bundle keeps its own `CFBundleIdentifier`. The host runs it as
 across rebuilds. Whether macOS keeps Screen Recording and Accessibility approvals
 for it also depends on how the host signs it.
 Running the command again reuses the session and delivers a new copy.
-`macos.arguments` are not passed to a hosted app. While the app runs on a host, a
-local `stim macos` refuses, and so does `--host` with another machine, until
+`macos.arguments` are passed to the hosted launch as plain arguments, without
+environment injection: at most 32 arguments, 1024 characters each and 8192
+characters total. Empty strings are allowed; NUL, CR and LF are refused. Values
+are stored in the host's app receipt and visible in process listings, so do not
+put secrets there. Older hosts ignore them and Stim warns to update `stim-server`
+on the host. `status --json` reports the host's applied arguments under
+`environments[].macos.arguments`.
+
+While the app runs on a host, a local `stim macos` refuses, and so does `--host`
+with another machine, until
 `stim stop`. `stim stop` and `stim worktree remove` stop the session on the host and
 wait for it to confirm. When the host cannot be reached, the placement stays
 recorded so a later `stim stop` can finish.

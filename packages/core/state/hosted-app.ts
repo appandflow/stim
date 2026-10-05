@@ -16,6 +16,7 @@ export interface HostedAppOffer {
   bundleId: string;
   mode: 'development' | 'release';
   devClientScheme?: string;
+  arguments?: string[];
   manifest: { sha256: string; size: number };
 }
 
@@ -42,6 +43,16 @@ export function hostedAppArea(session: string, attempt: string, workerHome?: str
   return join(deviceHostArea(session), 'apps', attempt);
 }
 
+/** At most 32 plain arguments of 1024 characters (8192 in total), with no NUL, CR or LF. */
+export function validHostedAppArguments(value: unknown): value is string[] {
+  return (
+    Array.isArray(value) &&
+    value.length <= 32 &&
+    value.every((argument) => typeof argument === 'string' && argument.length <= 1024 && !/[\0\r\n]/.test(argument)) &&
+    value.reduce((total: number, argument: string) => total + argument.length, 0) <= 8192
+  );
+}
+
 export function parseHostedAppOffer(value: unknown): HostedAppOffer | null {
   if (
     !isJsonObject(value) ||
@@ -64,12 +75,14 @@ export function parseHostedAppOffer(value: unknown): HostedAppOffer | null {
     value.manifest.size > 8 * 1024 ** 2
   )
     return null;
+  if (value.arguments !== undefined && !validHostedAppArguments(value.arguments)) return null;
   return {
     session: value.session,
     attempt: value.attempt,
     bundleId: value.bundleId,
     mode: value.mode,
     ...(typeof value.devClientScheme === 'string' ? { devClientScheme: value.devClientScheme } : {}),
+    ...(Array.isArray(value.arguments) && value.arguments.length ? { arguments: value.arguments as string[] } : {}),
     manifest: { sha256: value.manifest.sha256, size: value.manifest.size },
   };
 }

@@ -1332,6 +1332,11 @@ export function protocolJsonSchema(): JsonSchema {
           bundleId: { type: 'string' },
           mode: { enum: ['development', 'release'] },
           devClientScheme: { type: 'string', pattern: '^[a-zA-Z][a-zA-Z0-9+.-]{0,127}$' },
+          arguments: {
+            type: 'array',
+            maxItems: 32,
+            items: { type: 'string', maxLength: 1024, pattern: '^[^\\u0000\\r\\n]*$' },
+          },
           state: { enum: ['receiving', 'installing', 'installed', 'unknown'] },
           launched: { enum: [true, 'unverified', null] },
           notice: { type: 'string' },
@@ -2090,6 +2095,11 @@ export function protocolJsonSchema(): JsonSchema {
                 bundleId: { type: 'string' },
                 mode: { enum: ['development', 'release'] },
                 devClientScheme: { type: 'string', pattern: '^[a-zA-Z][a-zA-Z0-9+.-]{0,127}$' },
+                arguments: {
+                  type: 'array',
+                  maxItems: 32,
+                  items: { type: 'string', maxLength: 1024, pattern: '^[^\\u0000\\r\\n]*$' },
+                },
                 manifest: {
                   type: 'object',
                   required: ['sha256', 'size'],

@@ -198,7 +198,7 @@ export async function runHostedMacosApp(
       bundle: root,
       bundleId,
       executable,
-      arguments: [],
+      arguments: record.arguments ?? [],
       launchId: randomUUID(),
       supervisor: macosProcess(process.pid),
       build: { state: 'ok', startedAt: new Date().toISOString() },

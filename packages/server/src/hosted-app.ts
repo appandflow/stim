@@ -60,6 +60,7 @@ export function offerHostedApp(offer: HostedAppOffer): {
     bundleId: offer.bundleId,
     mode: offer.mode,
     ...(offer.devClientScheme ? { devClientScheme: offer.devClientScheme } : {}),
+    ...(offer.arguments ? { arguments: offer.arguments } : {}),
     manifest: offer.manifest,
   };
   const area = hostedAppArea(offer.session, offer.attempt);
@@ -77,6 +78,7 @@ export function offerHostedApp(offer: HostedAppOffer): {
         bundleId: stored.bundleId,
         mode: stored.mode,
         ...(stored.devClientScheme ? { devClientScheme: stored.devClientScheme } : {}),
+        ...(stored.arguments ? { arguments: stored.arguments } : {}),
         manifest: stored.manifest,
       };
       if (JSON.stringify(previous) !== JSON.stringify(next))

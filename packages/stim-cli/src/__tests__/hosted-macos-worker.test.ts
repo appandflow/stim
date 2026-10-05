@@ -106,7 +106,7 @@ afterEach(() => {
   rmSync(root, { recursive: true, force: true });
 });
 
-function receipt() {
+function receipt(args?: string[]) {
   const files = [
     { path: 'Contents/Info.plist', kind: 'file', content: 'plist fixture' },
     { path: 'Contents/MacOS/Fixture', kind: 'exec', content: 'native binary' },
@@ -127,6 +127,7 @@ function receipt() {
       attempt: 'app',
       bundleId,
       mode: 'release',
+      ...(args ? { arguments: args } : {}),
       manifest: { sha256, size: manifest.length },
       state: 'installing',
       launched: null,
@@ -165,7 +166,8 @@ test.each([
 });
 
 test('stamps and signs verified bytes, launches with an isolated home, and deletes only its recorded preference domain after stop', async () => {
-  receipt();
+  const offeredArguments = ['-autopilot.enabled', 'true', '', 'ENV=value'];
+  receipt(offeredArguments);
   expect(await runHostedMacosApp('install', request, { attempt: 'app' })).toEqual({
     state: 'installed',
     device,
@@ -197,7 +199,7 @@ test('stamps and signs verified bytes, launches with an isolated home, and delet
   );
   expect(readMacosRecord(realpathSync(join(home, 'macos-app')))).toMatchObject({
     bundleId: `${bundleId}.hosted3`,
-    arguments: [],
+    arguments: offeredArguments,
     build: { state: 'ok' },
   });
   const preferences = join(process.env.HOME!, 'Library', 'Preferences');

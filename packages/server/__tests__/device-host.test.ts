@@ -896,7 +896,11 @@ test.each(['ios', 'android', 'macos'])(
     const first = reserve({ platform });
     await state(first.id, 'ready');
     const app = appOffer(first.id, 'app-first', platform);
-    const { content, params, sha256 } = app;
+    const { content, sha256 } = app;
+    const params = {
+      ...app.params,
+      ...(platform === 'macos' ? { arguments: ['-autopilot.enabled', 'true', ''] } : {}),
+    };
     expect(host.appOffer('other', params)).toHaveProperty('error');
     expect(host.appOffer('client', params)).toHaveProperty('result.missing.0.offset', 0);
     const receiving = host.appAttach('client', params);
@@ -923,6 +927,13 @@ test.each(['ios', 'android', 'macos'])(
     ).toHaveProperty('result.offset', content.length);
     expect(host.appOffer('client', params)).toHaveProperty('result.missing', []);
     expect(host.appOffer('client', { ...params, bundleId: 'different.app' })).toHaveProperty('error');
+    for (const args of platform === 'macos'
+      ? [undefined, ['-autopilot.enabled', 'false'], ['true', '-autopilot.enabled', '']]
+      : [])
+      expect(host.appOffer('client', { ...params, arguments: args })).toHaveProperty(
+        'error.message',
+        'This app attempt already describes different content.',
+      );
     const installing = host.appLaunch('client', params);
     expect(installing).toHaveProperty('result.state', 'installing');
     expect(installing).not.toHaveProperty('result.agent');
@@ -933,11 +944,14 @@ test.each(['ios', 'android', 'macos'])(
       if ('error' in answer) throw new Error(answer.error.message);
       expect(answer.result.launched).toBe(true);
       expect(acceptsDelivery(answer.result)).toBe(true);
+      expect(answer.result.arguments).toEqual(params.arguments);
       expect(answer.result.agent).toEqual(platform === 'macos' ? { driver: 'none' } : undefined);
       expect('agent' in answer.result).toBe(platform === 'macos');
     }
     const receipt = join(deviceHostArea(first.id), 'apps', params.attempt, 'receipt.json');
-    expect(JSON.parse(readFileSync(receipt, 'utf8'))).not.toHaveProperty('agent');
+    const received = JSON.parse(readFileSync(receipt, 'utf8'));
+    expect(received).not.toHaveProperty('agent');
+    expect(received.arguments).toEqual(params.arguments);
     expect(readFileSync(join(deviceHostArea(first.id), 'home', 'installed'), 'utf8')).toBe('app-first\n');
     expect(host.attach('client', { session: first.id })).toHaveProperty('result.appAttempt', params.attempt);
     if (platform === 'macos') {
@@ -1331,6 +1345,14 @@ test('macOS reservations isolate concurrent clients, validate on the wire and re
   validator.addSchema(protocolJsonSchema(), 'protocol');
   const acceptsRequest = validator.compile({ $ref: 'protocol#/$defs/ClientRequest' });
   const acceptsSession = validator.compile({ $ref: 'protocol#/$defs/HostedDeviceSession' });
+  const offer = appOffer('12345678-1234-1234-1234-123456789abc', 'app', 'macos').params;
+  expect(
+    acceptsRequest({ id: 1, method: 'device-host.app.offer', params: { ...offer, arguments: ['flag', ''] } }),
+  ).toBe(true);
+  for (const args of ['flag', [false], Array(33).fill(''), ['a'.repeat(1025)], ['line\nvalue'], ['nul\0value']])
+    expect(acceptsRequest({ id: 1, method: 'device-host.app.offer', params: { ...offer, arguments: args } })).toBe(
+      false,
+    );
   const params = { ...request, platform: 'macos' };
   for (const method of ['device-host.reserve', 'device-host.offer']) {
     const input = method === 'device-host.offer' ? { platform: 'macos' } : params;
@@ -1380,6 +1402,22 @@ test.each([
     code ?? 'receiving',
   );
   expect(existsSync(join(deviceHostArea(first.id), 'apps', 'app-first'))).toBe(code === null);
+});
+
+test.each(['ios', 'android'])('refuses app arguments in a %s session before creating a receipt', async (platform) => {
+  const first = reserve({ platform });
+  await state(first.id, 'ready');
+  const app = appOffer(first.id, 'app-first', platform);
+  expect(host.appOffer('client', { ...app.params, arguments: ['-autopilot.enabled'] })).toHaveProperty(
+    'error.message',
+    'App arguments are supported only for hosted macOS sessions.',
+  );
+  expect(existsSync(join(deviceHostArea(first.id), 'apps', 'app-first'))).toBe(false);
+  expect(host.appOffer('client', { ...app.params, arguments: [] })).toHaveProperty(
+    'result.delivery.state',
+    'receiving',
+  );
+  expect(host.appOffer('client', app.params)).toHaveProperty('result.delivery.state', 'receiving');
 });
 
 test.each([

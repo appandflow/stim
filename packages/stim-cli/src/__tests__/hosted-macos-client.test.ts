@@ -60,6 +60,7 @@ interface FakeHost {
   offers: Record<string, unknown>[];
   capabilities: string[];
   grant: unknown;
+  applyArguments: boolean;
   installed: { state: string; launched: true | 'unverified' | null; notice?: string };
   stopSession: () => void;
   close: () => Promise<void>;
@@ -79,6 +80,7 @@ async function fakeHost(): Promise<FakeHost> {
     offers: [],
     capabilities: ['device-host'],
     grant: { driver: 'none' },
+    applyArguments: true,
     installed: { state: 'installed', launched: true },
     stopSession: () => void (session = { ...session, state: 'stopped' }),
     close: () => new Promise((done) => server.close(() => done())),
@@ -116,6 +118,7 @@ async function fakeHost(): Promise<FakeHost> {
         attempt: params.attempt,
         bundleId: 'dev.fixture.app',
         mode: 'release',
+        ...(host.applyArguments && host.offers.at(-1)?.arguments ? { arguments: host.offers.at(-1)!.arguments } : {}),
       };
       if (method === 'device-host.app.offer') {
         host.offers.push(params);
@@ -206,10 +209,20 @@ afterEach(async () => {
 describe.skipIf(process.platform !== 'darwin')('stim macos --host (SwiftPM and codesign run only on macOS)', () => {
   test('places the bundle on the host, records the session, and stop ends it there', async () => {
     host.grant = GRANT;
-    const record = await runMacos(root, () => {}, 'mini');
+    const args = ['-autopilot.enabled', 'true', ''];
+    writeFileSync(
+      join(root, '.stim.json'),
+      JSON.stringify({ macos: { product: 'Fixture', infoPlist: 'Info.plist', arguments: args } }),
+    );
+    const notes: string[] = [];
+    const record = await runMacos(root, (line) => notes.push(line), 'mini');
     expect(host.methods.filter((method) => method === 'device-host.reserve')).toHaveLength(1);
     expect(host.offers[0]).toMatchObject({ bundleId: 'dev.fixture.app', mode: 'release' });
     expect(host.offers[0]).not.toHaveProperty('devClientScheme');
+    for (const offer of host.offers) expect(offer.arguments).toEqual(args);
+    expect(record.arguments).toEqual(args);
+    expect(readMacosRecord(root)?.arguments).toEqual(args);
+    expect(notes.some((line) => line.includes('did not apply macos.arguments'))).toBe(false);
     const manifest = JSON.parse(String(host.blobs.get((host.offers[0]!.manifest as { sha256: string }).sha256)));
     expect(manifest).toEqual(
       expect.arrayContaining([
@@ -248,6 +261,34 @@ describe.skipIf(process.platform !== 'darwin')('stim macos --host (SwiftPM and c
     expect(macosAppState(readMacosRecord(root))?.state).toBe('stopped');
   });
 
+  test('over-limit macos.arguments refuse before the host reserves a session', async () => {
+    writeFileSync(
+      join(root, '.stim.json'),
+      JSON.stringify({ macos: { product: 'Fixture', infoPlist: 'Info.plist', arguments: Array(33).fill('a') } }),
+    );
+    await expect(runMacos(root, () => {}, 'mini')).rejects.toThrow('macos.arguments is too large');
+    expect(host.methods).not.toContain('device-host.reserve');
+  });
+
+  test.each([undefined, ['-notify.enabled', 'false']])(
+    'records the applied arguments %j and warns when the host ignores or changes them',
+    async (applied) => {
+      host.applyArguments = false;
+      Object.assign(host.installed, applied ? { arguments: applied } : {});
+      const args = ['-notify.enabled', 'true'];
+      writeFileSync(
+        join(root, '.stim.json'),
+        JSON.stringify({ macos: { product: 'Fixture', infoPlist: 'Info.plist', arguments: args } }),
+      );
+      const notes: string[] = [];
+      const record = await runMacos(root, (line) => notes.push(line), 'mini');
+      for (const offer of host.offers) expect(offer.arguments).toEqual(args);
+      expect(record.arguments).toEqual(applied ?? []);
+      expect(readMacosRecord(root)?.arguments).toEqual(applied ?? []);
+      expect(notes).toContain('mini did not apply macos.arguments. Update stim-server on that host.');
+    },
+  );
+
   test('--json prints one payload with the placement and never a token', async () => {
     host.grant = GRANT;
     const lines: string[] = [];
@@ -265,6 +306,7 @@ describe.skipIf(process.platform !== 'darwin')('stim macos --host (SwiftPM and c
     expect(lines).toHaveLength(1);
     const payload = JSON.parse(lines[0]!);
     expect(Object.keys(payload).toSorted()).toEqual(['build', 'host', 'launchId', 'platform', 'product']);
+    for (const offer of host.offers) expect(offer).not.toHaveProperty('arguments');
     expect(payload.host).toMatchObject({ machine: 'mini', agent: { driver: 'agent-device' } });
     expect(lines[0]).not.toContain(TOKEN);
     expect(lines[0]).not.toContain(GRANT_TOKEN);
