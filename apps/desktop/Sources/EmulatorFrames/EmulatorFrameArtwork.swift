@@ -1,5 +1,8 @@
 import AppKit
-import StimKit
+
+#if canImport(StimKit)
+  import StimKit
+#endif
 
 struct EmulatorSkinLayout {
   var geometry: DeviceFrameGeometry

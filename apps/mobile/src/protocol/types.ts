@@ -555,6 +555,8 @@ export interface LogFilter {
 }
 
 export interface FrameTarget {
+  /** Requests installed ordinary-device artwork for this live subscription. */
+  deviceFrame?: boolean;
   workspace: string;
   platform: DevicePlatform;
   slot?: string;
@@ -913,6 +915,23 @@ export interface LogsEvent {
   records: LogRecord[];
 }
 
+/** Installed device artwork rasterized on the Mac; layers contain PNG bytes, never a local path. */
+export interface DeviceFrameArtwork {
+  width: number;
+  height: number;
+  aperture: { x: number; y: number; width: number; height: number };
+  cornerRadius: number;
+  quarterTurns: number;
+  background: string;
+  foreground: string;
+}
+
+export interface DeviceFrameEvent {
+  event: 'device-frame';
+  subscription: string;
+  artwork: DeviceFrameArtwork | null;
+}
+
 export interface FrameEvent {
   event: 'frame';
   subscription: string;
@@ -930,6 +949,8 @@ export interface FrameEvent {
    * outer display, and `unfolded` otherwise, including half open.
    */
   posture?: 'folded' | 'unfolded';
+  /** Clockwise artwork rotation captured with this frame. */
+  artworkTurns?: number;
 }
 
 /**
@@ -970,6 +991,7 @@ export type ServerEvent =
   | StatusEvent
   | LogsEvent
   | FrameEvent
+  | DeviceFrameEvent
   | FrameDelayedEvent
   | ReplayEndedEvent
   | ErrorEvent

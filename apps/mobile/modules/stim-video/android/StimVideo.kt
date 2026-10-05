@@ -15,8 +15,16 @@ class StimVideo : Module() {
       view.push(bytes, width, height)
     }
 
+    Function("pushWithOrientation") {
+      streamId: String, accessUnit: Uint8Array, width: Int, height: Int, generation: Int ->
+      val view = StimVideoRegistry.view(streamId) ?: return@Function
+      val bytes = ByteArray(accessUnit.byteLength)
+      accessUnit.read(bytes, 0, bytes.size)
+      view.push(bytes, width, height, generation)
+    }
+
     View(StimVideoView::class) {
-      Events("onKeyframeNeeded")
+      Events("onKeyframeNeeded", "onOrientationCleared")
 
       OnViewDestroys { view: StimVideoView -> view.destroy() }
 

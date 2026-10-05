@@ -1,6 +1,9 @@
 // Copyright (c) 2026 Siniulator contributors. Adapted under the MIT license in Support/Siniulator-LICENSE.txt.
 import AppKit
-import StimKit
+
+#if canImport(StimKit)
+  import StimKit
+#endif
 
 @MainActor
 enum SimulatorFrameArtwork {

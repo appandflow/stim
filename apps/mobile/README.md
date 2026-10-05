@@ -529,6 +529,18 @@ comes from the reserved regions. The hinge readings need the same iOS SDK
 support. Without both readings, the viewer keeps its default layout. Every
 control stays available in every posture.
 
+The **Device frame** button in the bottom toolbar shows installed iPhone or
+Android emulator housing around the live screen. Frames start off and do not
+require Control. The paired Mac supplies PNG layers from its installed DeviceKit
+or Android skin; artwork is not bundled in the app or repository. Touches stay
+inside the screen aperture, and taps on the bezel send no device input. Rotation
+metadata must match the current capture; otherwise the viewer shows the screen
+without its housing. Replay, physical phones, web pages, Duo and Android foldable
+or circular devices remain frameless. Missing artwork or an older server also
+keeps the frameless viewer.
+
+Framed H.264 needs a mobile build containing the native orientation-clear acknowledgement; older clients stay frameless. Rotation clears old screen pixels before matching housing is shown. JPEG and housing images reset their displayed content on orientation changes.
+
 With **Control** on, the server starts a control session (`control.begin`)
 and holds a `stim device lock` lease on the device, so agents see it as
 driven. Touches on the frame go to the device as a touch that follows your

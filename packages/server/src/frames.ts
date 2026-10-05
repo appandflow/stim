@@ -5,7 +5,7 @@ import { connect, type ClientHttp2Session } from 'node:http2';
 import { join } from 'node:path';
 import type { DeviceLeaseState, MacosAppState, StatusPayload } from '@stim-cli/core/state';
 import type { ClaimHandle } from '@stim-cli/core/ownership-claim';
-import type { DevicePosture, FrameTarget } from './protocol.ts';
+import type { DevicePosture, FrameTarget, DeviceFrameArtwork } from './protocol.ts';
 import { serverDir } from './registry.ts';
 import { DEFAULT_FRAME_HINT, HelperSource, RECORD_HINT, type FrameHint } from './frame-helper.ts';
 import { Pending, terminate } from './stim-command.ts';
@@ -21,7 +21,7 @@ import { connectOwnedPage, type OwnedPage } from './web-page.ts';
  */
 export type Device =
   | { platform: 'ios'; udid: string; foldable: boolean; physical?: true; name?: string }
-  | { platform: 'android'; serial: string; physical?: true }
+  | { platform: 'android'; serial: string; physical?: true; avdName?: string }
   | { platform: 'web'; endpoint: string; pid: number; targetId: string }
   | { platform: 'macos'; app: MacosAppState & { app: NonNullable<MacosAppState['app']> } };
 
@@ -33,6 +33,7 @@ export interface Frame {
   capturedAt: string;
   data: string;
   posture?: Posture;
+  artworkTurns?: number;
 }
 
 export interface DeviceInput {
@@ -44,6 +45,7 @@ export interface DeviceInput {
 
 export interface FrameListener {
   frame: (frame: Frame) => void;
+  artwork?: (artwork: DeviceFrameArtwork | null) => void;
   /**
    * With `video`, a device the helper streams sends H.264 access units here instead of JPEG frames; a device on
    * screenshots still sends `frame`.
@@ -192,11 +194,12 @@ export function ownedDevice(
   }
   const emulator = devices?.android;
   if (!emulator?.owned || emulator.physical) return `No emulator Stim owns runs ${where}.`;
+  const avdName = emulator.name && !/[/\\]/.test(emulator.name) ? { avdName: emulator.name } : {};
   if (emulator.state === 'unknown' && attached?.startsWith('android:')) {
-    return { platform: 'android', serial: attached.slice('android:'.length) };
+    return { platform: 'android', serial: attached.slice('android:'.length), ...avdName };
   }
   if (emulator.state !== 'detected' || !emulator.serial) return `The emulator for ${where} is not running.`;
-  return { platform: 'android', serial: emulator.serial };
+  return { platform: 'android', serial: emulator.serial, ...avdName };
 }
 
 function jpegSize(bytes: Buffer): { width: number; height: number } | null {
@@ -853,6 +856,7 @@ export class FramePool {
               },
             }
           : {}),
+        ...(listener.artwork ? { artwork: listener.artwork } : {}),
         delayed: listener.delayed,
         failed: (message) => {
           if (streamed || cancelled || helperOnly || this.claim) return listener.failed(message);

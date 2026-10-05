@@ -2,12 +2,14 @@ import { act, renderHook } from '@testing-library/react-native';
 
 import { useDeviceStream } from './device-stream';
 
+const mockPush = jest.fn();
 const mockAnswers: ((result: { subscription: string; video?: 'h264' }) => void)[] = [];
 const mockPackets: ((packet: {
   capturedAt: number;
   keyframe: boolean;
   width: number;
   height: number;
+  artworkTurns?: number;
   accessUnit: Uint8Array;
 }) => void)[] = [];
 const frame = (capturedAt: number, keyframe = false) => ({
@@ -41,12 +43,16 @@ const mockConnection = {
 };
 
 jest.mock('@/hooks/machines', () => ({ useMacConnection: () => ({ connection: mockConnection }) }));
-jest.mock('../../modules/stim-video/src', () => ({ pushAccessUnit: () => {} }));
+jest.mock('../../modules/stim-video/src', () => ({
+  pushAccessUnit: (...args: unknown[]) => mockPush(...args),
+  supportsFrameOrientation: true,
+}));
 
 const TARGET = { workspace: '/app', platform: 'ios' as const, slot: 'default' };
 const OPTIONS = { enabled: true, fps: 30, maxEdge: 720, video: ['h264' as const] };
 
 beforeEach(() => {
+  mockPush.mockClear();
   mockAnswers.length = 0;
   mockPackets.length = 0;
   mockRequests.length = 0;
@@ -128,4 +134,33 @@ test('moves the playhead of a playing replay without rendering the component tha
   } finally {
     jest.useRealTimers();
   }
+});
+
+test('keeps housing unavailable until native clearing, ignoring stale generations and preserving steady video renders', async () => {
+  const { result } = await renderHook(() => useDeviceStream(TARGET, { ...OPTIONS, deviceFrame: true }));
+  await act(async () => mockAnswers[0]!({ subscription: 's1', video: 'h264' }));
+  await act(async () => mockPackets[0]!({ ...frame(1000, true), artworkTurns: 0 }));
+  const first = mockPush.mock.calls.at(-1)![4] as number;
+  expect(result.current.video?.artworkTurns).toBeUndefined();
+  await act(async () => result.current.orientationCleared({ nativeEvent: { generation: first } }));
+  expect(result.current.video?.artworkTurns).toBe(0);
+  const before = result.current.video;
+  await act(async () => mockPackets[0]!({ ...frame(1100), artworkTurns: 0 }));
+  expect(result.current.video).toBe(before);
+  await act(async () => mockPackets[0]!({ ...frame(1200), artworkTurns: 2 }));
+  const second = mockPush.mock.calls.at(-1)![4] as number;
+  expect(second).not.toBe(first);
+  expect(result.current.video?.artworkTurns).toBeUndefined();
+  await act(async () => result.current.orientationCleared({ nativeEvent: { generation: first } }));
+  expect(result.current.video?.artworkTurns).toBeUndefined();
+  await act(async () => result.current.orientationCleared({ nativeEvent: { generation: second } }));
+  expect(result.current.video?.artworkTurns).toBe(2);
+  await act(async () => mockAnswers[0]!({ subscription: 's2', video: 'h264' }));
+  await act(async () => mockPackets[0]!({ ...frame(1300, true), artworkTurns: 2 }));
+  const resubscribed = mockPush.mock.calls.at(-1)![4] as number;
+  expect(resubscribed).not.toBe(second);
+  await act(async () => result.current.orientationCleared({ nativeEvent: { generation: second } }));
+  expect(result.current.video?.artworkTurns).toBeUndefined();
+  await act(async () => result.current.orientationCleared({ nativeEvent: { generation: resubscribed } }));
+  expect(result.current.video?.artworkTurns).toBe(2);
 });

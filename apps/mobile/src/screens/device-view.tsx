@@ -40,6 +40,7 @@ import { StatusBar } from 'expo-status-bar';
 
 import { Button } from '@/components/button';
 import { AgentFeed } from '@/components/agent-feed';
+import { DeviceFrame } from '@/components/device-frame';
 import { DeviceScreen } from '@/components/device-screen';
 import { Icon, type IconName } from '@/components/icon';
 import { ScrollView } from '@/components/lists';
@@ -60,6 +61,7 @@ import { useDeviceControl } from '@/hooks/device-control';
 import { useMacConnection, useWorkspace } from '@/hooks/machines';
 import { useSettings, type VideoQuality } from '@/hooks/settings';
 import { framePoint, keyboardDelta, orientationOf, otherDriver } from '@/lib/device-control';
+import { matchingDeviceFrame } from '@/lib/device-frame';
 import { foldOf } from '@/lib/fold';
 import { buildTimeline } from '@/lib/replay';
 import { LIVE_VIEW, replayView } from '@/lib/replay-view';
@@ -155,9 +157,22 @@ export function DeviceView({
   const replayStart = hasFootage ? view.startAt : null;
   const streams = running || replayStart !== null;
   const [scrubbing, setScrubbing] = useState(false);
+  const [showsFrame, setShowsFrame] = useState(false);
+  const frameSupported =
+    !physical &&
+    (platform === 'ios' || platform === 'android') &&
+    link.kind === 'open' &&
+    link.features?.includes('device-frames') === true;
   const streamOptions = useMemo(
-    () => ({ enabled: streams, fps: preset.fps, maxEdge, video: preset.video, startAt: replayStart }),
-    [streams, preset.fps, maxEdge, preset.video, replayStart],
+    () => ({
+      enabled: streams,
+      fps: preset.fps,
+      maxEdge,
+      video: preset.video,
+      startAt: replayStart,
+      deviceFrame: frameSupported,
+    }),
+    [streams, preset.fps, maxEdge, preset.video, replayStart, frameSupported],
   );
   const stream = useDeviceStream({ workspace, platform, slot, physical }, streamOptions);
   const canReplay = hasFootage && stream.replayable !== false;
@@ -172,6 +187,8 @@ export function DeviceView({
   });
   if (synced !== view) setView(synced);
   const source = stream.video ?? stream.frame;
+  const artwork = replaying ? null : matchingDeviceFrame(stream.artwork, source);
+  const activeArtwork = showsFrame ? artwork : null;
   const control = useDeviceControl(workspace, platform, slot, physical);
   const readOnly = !viewOnly && control.allowed === false;
   const [copied, setCopied] = useState(false);
@@ -205,7 +222,7 @@ export function DeviceView({
   const screenGesture = useExclusiveGestures(screenZoom.gesture, revealTap);
   const zoom = useDeviceZoom(
     zoomKey({ macId: mac?.id ?? '', workspace, platform, slot, physical }),
-    aspectOf(source),
+    activeArtwork ? activeArtwork.width / activeArtwork.height : aspectOf(source),
     platform === 'web' || platform === 'macos' ? 1.6 : platform === 'ios' ? 0.46 : 0.45,
     !controlling && !((landscape || book || table) && readOnly) && !screenZoom.zoomed && !scrubbing,
     root,
@@ -221,7 +238,7 @@ export function DeviceView({
     },
   );
   const snapshot = zoom.landed && source ? null : zoom.snapshot;
-  const screen = zoom.screenSize;
+  const touchSize = useRef<{ width: number; height: number } | null>(null);
   const keyboard = useRef<TextInputInstance>(null);
   const [typing, setTyping] = useState(false);
   const [scrolling, setScrolling] = useState(false);
@@ -285,7 +302,7 @@ export function DeviceView({
 
   const touches = useRef({ active: false, lastMove: 0, pending: null as { x: number; y: number } | null });
   const point = (x: number, y: number, clamp: boolean) =>
-    source && screen ? framePoint(x, y, screen, source, clamp) : null;
+    source && touchSize.current ? framePoint(x, y, touchSize.current, source, clamp) : null;
   const touchHandlers = {
     onStartShouldSetResponder: () => true,
     onMoveShouldSetResponder: () => true,
@@ -516,16 +533,27 @@ export function DeviceView({
         ))}
       </>
     ) : null;
-  const toolbars = buttons ? (
-    <ScrollView
-      horizontal
-      showsHorizontalScrollIndicator={false}
-      style={styles.toolScroll}
-      contentContainerStyle={styles.toolRow}
-    >
-      <View style={styles.toolbar}>{buttons}</View>
-    </ScrollView>
-  ) : null;
+  const toolbars =
+    buttons || artwork ? (
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        style={styles.toolScroll}
+        contentContainerStyle={styles.toolRow}
+      >
+        <View style={styles.toolbar}>
+          {artwork ? (
+            <ToolButton
+              icon="rectangle.portrait"
+              label={t`Device frame`}
+              selected={showsFrame}
+              onPress={() => setShowsFrame(!showsFrame)}
+            />
+          ) : null}
+          {buttons}
+        </View>
+      </ScrollView>
+    ) : null;
   const model = device?.page
     ? shortUrl(device.page.url)
     : (device?.model ?? (platform === 'ios' ? t`iOS Simulator` : platform === 'web' ? t`Web` : t`Android Emulator`));
@@ -643,28 +671,33 @@ export function DeviceView({
                 pointerEvents="box-none"
               >
                 <Animated.View style={[styles.flying, zoom.screenStyle, lift]}>
-                  <DeviceScreen
-                    stream={stream}
-                    label={model}
-                    style={StyleSheet.absoluteFill}
-                    requested={{ fps: preset.fps, maxEdge }}
-                  >
-                    {snapshot ? (
-                      <Image
-                        source={{ uri: `data:${snapshot.mime};base64,${snapshot.data}` }}
-                        style={StyleSheet.absoluteFill}
-                        contentFit="contain"
-                        transition={0}
-                      />
-                    ) : null}
-                    {source ? (
-                      <View
-                        style={[styles.overlay, controlling && styles.overlayActive]}
-                        pointerEvents={controlling ? 'auto' : 'none'}
-                        {...(controlling ? touchHandlers : {})}
-                      />
-                    ) : null}
-                  </DeviceScreen>
+                  <DeviceFrame artwork={snapshot ? null : activeArtwork}>
+                    <DeviceScreen
+                      stream={stream}
+                      label={model}
+                      style={StyleSheet.absoluteFill}
+                      requested={{ fps: preset.fps, maxEdge }}
+                    >
+                      {snapshot ? (
+                        <Image
+                          source={{ uri: `data:${snapshot.mime};base64,${snapshot.data}` }}
+                          style={StyleSheet.absoluteFill}
+                          contentFit="contain"
+                          transition={0}
+                        />
+                      ) : null}
+                      {source ? (
+                        <View
+                          onLayout={(event) => {
+                            touchSize.current = event.nativeEvent.layout;
+                          }}
+                          style={[styles.overlay, controlling && styles.overlayActive]}
+                          pointerEvents={controlling ? 'auto' : 'none'}
+                          {...(controlling ? touchHandlers : {})}
+                        />
+                      ) : null}
+                    </DeviceScreen>
+                  </DeviceFrame>
                 </Animated.View>
               </View>
             </GestureDetector>
