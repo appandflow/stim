@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, watch, type FSWatcher } from 'node:fs';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { isIP, type AddressInfo, type Socket } from 'node:net';
 import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { configDir } from '@stim-cli/core';
@@ -107,6 +108,7 @@ import {
 import { runStats } from './stats.ts';
 import { readWorkspaceDiff } from './workspace-diff.ts';
 import { ServerUpdates } from './server-update.ts';
+import { MachineUpdates } from './machine-update.ts';
 import { Pending, runStim, type CommandLimits } from './stim-command.ts';
 import { readHostPermissions } from './stim-host.ts';
 import {
@@ -670,6 +672,12 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   });
   const hostedViews = new HostedViews(hostedDevices, control, helperEnv, frameHelper);
   const ownStimBuild = stimBuildDigest(dirname(options.stimCli));
+  const machineUpdates = new MachineUpdates({
+    version: options.serverVersion,
+    serverDir: dirname(dirname(options.service?.script || fileURLToPath(import.meta.url))),
+    status: () => readRawTailscaleStatus(tailscaleNow().binary, options.env),
+    endpoint: options.hostedRelay?.endpoint,
+  });
   const updates = new ServerUpdates({
     label: options.service?.label ?? null,
     port: options.port,
@@ -1838,6 +1846,51 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       send(socket, 'error' in answer ? { id, error: answer.error } : { id, result: answer.result });
     }
 
+    function desktopMethod(
+      id: RequestId,
+      method: string,
+      params: unknown,
+      session: PairedDevice,
+    ): Promise<void> | null {
+      if (method !== 'route.setup' && method !== 'machines.update.start' && method !== 'machines.update.status')
+        return null;
+      if (!localControl || session.identity.kind !== 'local' || !session.capabilities.includes('control')) {
+        return Promise.resolve(
+          error(
+            id,
+            'forbidden',
+            method === 'route.setup'
+              ? 'Phone connection setup requires an authenticated local Desktop control connection.'
+              : 'Updating another Mac requires an authenticated local Desktop control connection.',
+          ),
+        );
+      }
+      return method === 'route.setup' ? setupRoute(id, params) : updateMachine(id, method, params);
+    }
+
+    async function setupRoute(id: RequestId, params: unknown): Promise<void> {
+      if (params !== undefined && (!isJsonObject(params) || Object.keys(params).length)) {
+        return error(id, 'bad-request', 'route.setup takes no parameters.');
+      }
+      const { binary, state } = tailscaleNow();
+      settingUpRoute ??= setupServeRoute(binary, options.env, addresses[0]!.port, state).finally(() => {
+        settingUpRoute = null;
+      });
+      try {
+        return send(socket, { id, result: await settingUpRoute });
+      } catch (cause) {
+        return error(id, 'action-failed', (cause as Error).message);
+      }
+    }
+
+    async function updateMachine(id: RequestId, method: string, params: unknown): Promise<void> {
+      const machine = isJsonObject(params) ? params.machine : undefined;
+      if (typeof machine !== 'string' || !machine) return error(id, 'bad-request', 'params.machine names the Mac.');
+      const answer =
+        method === 'machines.update.start' ? await machineUpdates.start(machine) : await machineUpdates.status(machine);
+      return send(socket, 'error' in answer ? { id, error: answer.error } : { id, result: answer.result });
+    }
+
     function machineMethod(
       id: RequestId,
       method: string,
@@ -2001,27 +2054,8 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       if (!device.capabilities.includes('read')) {
         return error(id, 'forbidden', `${message.method} needs read access, which this connection does not have.`);
       }
-      if (message.method === 'route.setup') {
-        if (!localControl || device.identity.kind !== 'local' || !device.capabilities.includes('control')) {
-          return error(
-            id,
-            'forbidden',
-            'Phone connection setup requires an authenticated local Desktop control connection.',
-          );
-        }
-        if (message.params !== undefined && (!isJsonObject(message.params) || Object.keys(message.params).length)) {
-          return error(id, 'bad-request', 'route.setup takes no parameters.');
-        }
-        const { binary, state } = tailscaleNow();
-        settingUpRoute ??= setupServeRoute(binary, options.env, addresses[0]!.port, state).finally(() => {
-          settingUpRoute = null;
-        });
-        try {
-          return send(socket, { id, result: await settingUpRoute });
-        } catch (cause) {
-          return error(id, 'action-failed', (cause as Error).message);
-        }
-      }
+      const desktop = desktopMethod(id, message.method, message.params, device);
+      if (desktop) return desktop;
       if (message.method === 'status.subscribe') return subscribeStatus(id);
       if (message.method === 'logs.subscribe') return subscribeLogs(id, message.params);
       if (message.method === 'logs.query') return queryLogs(id, message.params);

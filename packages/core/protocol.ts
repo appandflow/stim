@@ -132,6 +132,8 @@ export const METHODS = [
   'server.update.status',
   'server.update.start',
   'server.update.chunk',
+  'machines.update.start',
+  'machines.update.status',
 ] as const;
 
 /**
@@ -1153,7 +1155,19 @@ export interface ServerUpdateStatus {
   last: ServerUpdateOutcome | null;
 }
 
+/**
+ * Where an update this Mac asked `machine` for stands: the host's own `server.update.status`, or why it could not be
+ * read (`unreachable`, also while the host restarts), and how much of this Mac's build it has sent.
+ */
+export interface MachineUpdateStatus {
+  remote: ServerUpdateStatus | null;
+  unreachable: string | null;
+  upload: { sent: number; total: number; error: string | null } | null;
+}
+
 export interface Methods {
+  'machines.update.start': { params: { machine: string }; result: ServerUpdateProgress };
+  'machines.update.status': { params: { machine: string }; result: MachineUpdateStatus };
   'server.update.status': { params?: Record<string, never>; result: ServerUpdateStatus };
   'server.update.start': { params: ServerUpdateStartParams; result: ServerUpdateProgress };
   'server.update.chunk': {

@@ -779,6 +779,28 @@ describe.skipIf(!fakeTailscale)('Desktop route setup', () => {
     expect(fixture.commands()).toEqual([]);
   });
 
+  it('asks another Mac for an update only from the local Desktop control connection', async () => {
+    const fixture = await routeServer();
+    const { token } = await pair(fixture.port, '100.64.0.2', true);
+    const remote = await connect(fixture.port, '100.64.0.2');
+    await remote.request('hello', { protocol: 1, client: CLIENT, auth: { deviceToken: token } });
+    expect(await remote.request('machines.update.start', { machine: 'mini' })).toMatchObject({
+      error: { code: 'forbidden' },
+    });
+    const reader = await authed(fixture.port);
+    expect(await reader.request('machines.update.start', { machine: 'mini' })).toMatchObject({
+      error: { code: 'forbidden' },
+    });
+    const local = await authed(fixture.port, true);
+    expect(await local.request('machines.update.start', {})).toMatchObject({ error: { code: 'bad-request' } });
+    expect(await local.request('machines.update.start', { machine: 'mini' })).toMatchObject({
+      error: { code: 'action-failed', message: expect.stringContaining('has not approved this Mac') },
+    });
+    expect(await local.request('machines.update.status', { machine: 'mini' })).toMatchObject({
+      result: { remote: null, unreachable: expect.stringContaining('has not approved this Mac'), upload: null },
+    });
+  });
+
   it('refuses setup when Tailscale is unavailable and rejects target parameters', async () => {
     const port = await start();
     const client = await authed(port, true);

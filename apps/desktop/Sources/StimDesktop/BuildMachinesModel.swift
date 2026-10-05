@@ -21,6 +21,7 @@ final class BuildMachinesModel {
   private(set) var writeFailure: String?
   private(set) var runs = 0
   private(set) var stats = Fetched<MachineStats>()
+  private(set) var updates: [String: MachineUpdatePhase] = [:]
   private var checks: [String: Check] = [:]
 
   let settings: MachineSettingsStore
@@ -28,11 +29,102 @@ final class BuildMachinesModel {
   private let statsReader: StatsReader
   @ObservationIgnored private var latestRun: [String: Int] = [:]
   @ObservationIgnored private var latestStatsRun = 0
+  @ObservationIgnored private var autoUpdated: Set<String> = []
+  private let request: @MainActor (String, [String: JSONValue]) async throws -> JSONValue
+  private let pollInterval: Duration
+  private let unreachableLimit: Duration
 
-  init(cli: Task<StimCLI, Never>, settings: MachineSettingsStore, statsReader: StatsReader) {
+  init(
+    cli: Task<StimCLI, Never>, settings: MachineSettingsStore, statsReader: StatsReader,
+    pollInterval: Duration = .seconds(2), unreachableLimit: Duration = .seconds(300),
+    request: @escaping @MainActor (String, [String: JSONValue]) async throws -> JSONValue = BuildMachinesModel.localRequest
+  ) {
     self.cli = cli
     self.settings = settings
     self.statsReader = statsReader
+    self.pollInterval = pollInterval
+    self.unreachableLimit = unreachableLimit
+    self.request = request
+  }
+
+  static func localRequest(_ method: String, _ params: [String: JSONValue]) async throws -> JSONValue {
+    guard let client = ServerSession.shared.client, client.isOpen else {
+      throw ServerError(code: "not-connected", message: "The local Desktop connection is not ready. Try again.")
+    }
+    return try await client.request(method, params)
+  }
+
+  /// Asks `entry`'s stim-server, through the local one, to update to this Mac's build, and follows it until it ends.
+  func update(_ entry: String, checkout: String?) async {
+    guard updates[entry]?.isDone ?? true else { return }
+    updates[entry] = .sending(0)
+    let startedAt: String
+    do {
+      let result = try await request("machines.update.start", ["machine": .string(entry)])
+      guard case .object(let started) = result, let at = started["startedAt"]?.string else {
+        throw ServerError(code: "bad-reply", message: "stim-server did not say when the update started.")
+      }
+      startedAt = at
+    } catch {
+      updates[entry] = .failed(error.localizedDescription)
+      return
+    }
+    let deadline = ContinuousClock.now + .seconds(45 * 60)
+    var unreachableSince: ContinuousClock.Instant?
+    var idleSince: ContinuousClock.Instant?
+    while !Task.isCancelled {
+      try? await Task.sleep(for: pollInterval)
+      var phase: MachineUpdatePhase
+      var unreachable: String?
+      do {
+        let result = try await request("machines.update.status", ["machine": .string(entry)])
+        let status = try JSONDecoder().decode(MachineUpdateStatus.self, from: JSONEncoder().encode(result))
+        phase = MachineUpdatePhase.from(status, startedAt: startedAt)
+        unreachable = status.remote == nil ? status.unreachable : nil
+        if status.remote != nil, phase == .restarting {
+          let since = idleSince ?? ContinuousClock.now
+          idleSince = since
+          if ContinuousClock.now - since > .seconds(240) {
+            phase = .failed(
+              "\(entry) ended the update without recording an outcome. There, see ~/Library/Application Support/Stim/services/<label>/update.log."
+            )
+          }
+        } else {
+          idleSince = nil
+        }
+      } catch {
+        phase = .restarting
+        idleSince = nil
+        unreachable = error.localizedDescription
+      }
+      if let unreachable, !phase.isDone {
+        let since = unreachableSince ?? ContinuousClock.now
+        unreachableSince = since
+        if ContinuousClock.now - since > unreachableLimit {
+          phase = .failed("\(entry) stopped answering: \(unreachable)")
+        }
+      } else {
+        unreachableSince = nil
+      }
+      updates[entry] = phase
+      if phase.isDone { break }
+      if ContinuousClock.now > deadline {
+        updates[entry] = .failed(
+          "No outcome after 45 minutes. On \(entry), run stim-server service status to see what it runs.")
+        break
+      }
+    }
+    await refreshStatuses(checkout: checkout, ask: false)
+  }
+
+  private func updateAutomatically(_ statuses: [BuildMachineStatus], checkout: String?) {
+    guard UserDefaults.standard.bool(forKey: AppPreferences.Key.updatesBuildMachines) else { return }
+    for status in statuses where needsStimUpdate(status) {
+      let key = ([status.machine] + (status.reasons ?? [])).joined(separator: "\n")
+      guard !autoUpdated.contains(key), updates[status.machine]?.isDone ?? true else { continue }
+      autoUpdated.insert(key)
+      Task { await update(status.machine, checkout: checkout) }
+    }
   }
 
   var entries: [String]? {
@@ -96,7 +188,9 @@ final class BuildMachinesModel {
     let result = await Result.awaiting { try await cli.buildMachines(cwd: checkout, ask: ask) }
     guard run == latestRun[checkout], !Task.isCancelled else { return }
     switch result {
-    case .success(let reported?): checks[checkout] = Check(statuses: reported, problem: nil)
+    case .success(let reported?):
+      checks[checkout] = Check(statuses: reported, problem: nil)
+      updateAutomatically(reported, checkout: checkout)
     case .success(nil): checks[checkout] = Check(statuses: [], problem: .unsupported)
     case .failure(let error):
       checks[checkout] = Check(statuses: check(in: checkout)?.statuses ?? [], problem: .failed(error.localizedDescription))

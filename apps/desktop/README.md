@@ -943,6 +943,30 @@ run the same `--fix`. **Remove** takes a Mac out of the setting after a
 confirmation, unsetting it when the list is empty; removing a **Different Mac**
 also runs `--fix`, which forgets the old node so the Mac can be asked again.
 
+A build machine that runs another Stim build than this Mac (doctor's
+`stim-build` reason) offers **Install This Mac's Build**, here and on its
+**Machines** page. Desktop asks the local stim-server, over its local control connection,
+to update that machine with `machines.update.start`. The local server connects
+to the machine's pinned tailnet node with the credential `stim doctor --fix`
+stored. It asks for the same npm release when this Mac runs one, or, when it
+runs from a Stim checkout, sends the checkout's packed packages, which the
+machine takes only with `server.acceptClientBuilds`. Its stim-server then waits for
+its offloaded builds and hosted sessions, installs the update beside the current
+server, restarts, and switches back if the new one does not answer. The row
+follows `machines.update.status` every 2 seconds:
+
+- sending the build;
+- the machine's last update log line;
+- the restart;
+- the outcome, or the refusal (for example, the setting the machine needs).
+
+If the machine stops answering for 5 minutes, or answers for 4 minutes without an update running or an outcome, the update shows as failed with the reason.
+Then the row checks the machine again. **Install this Mac's build on build
+machines automatically** (off by default) does the same the next time Desktop
+checks a machine that reports another Stim build. It runs once per machine and
+reason each time Desktop launches. Either way, the machine gets this Mac's build,
+whether it is newer or older than the one it runs.
+
 On the Mac that builds, the app checks `stim-server devices --json` every 10
 seconds while a server runs. Each new build request adds "<Mac> wants to build
 on this Mac" to **Notifications** (category **A Mac asks to build here**,

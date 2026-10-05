@@ -96,6 +96,11 @@ performance traces. Every release is listed under
   in each popover opens the Machines page. CPU covers live workspace processes,
   while memory covers the whole Mac.
   **Link machine** opens the existing **Build Machines** settings flow.
+  A build machine on another Stim build offers **Install This Mac's Build**. It
+  installs this Mac's npm release there, or this checkout's own build when the
+  machine allows it with `server.acceptClientBuilds`. The update goes over the
+  tailnet, with no ssh, and the old server comes back if the new one does not
+  start. **Settings > Build Machines** can update them automatically.
   A removed selection returns to **This Mac**; remote selections have no local
   cleanup actions. Select checklist items to enable **Free space**;
   cleanup previews or confirms the selection before deleting anything.
