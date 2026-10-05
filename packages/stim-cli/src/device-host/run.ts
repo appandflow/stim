@@ -1,5 +1,7 @@
-import { hostedAppAttempt, isJsonObject } from '@stim-cli/core/state';
+import { hostedAppAttempt, isJsonObject, parseHostedOfferRequest } from '@stim-cli/core/state';
 import { runHostedDevice } from './worker.ts';
+import { runHostedAndroidDevice } from './android.ts';
+import { inspectHostedDevice } from './offer.ts';
 
 async function main(): Promise<void> {
   const chunks: Buffer[] = [];
@@ -10,11 +12,17 @@ async function main(): Promise<void> {
     chunks.push(chunk as Buffer);
   }
   const input: unknown = JSON.parse(Buffer.concat(chunks).toString('utf8'));
-  if (!isJsonObject(input) || !['prepare', 'stop', 'install'].includes(String(input.mode)))
+  if (!isJsonObject(input) || !['prepare', 'stop', 'install', 'offer'].includes(String(input.mode)))
     throw new Error('Invalid hosted worker request.');
+  if (input.mode === 'offer') {
+    const request = parseHostedOfferRequest(input);
+    if (!request) throw new Error('Invalid hosted offer selectors.');
+    process.stdout.write(`${JSON.stringify(inspectHostedDevice(request))}\n`);
+    return;
+  }
   if (process.platform !== 'darwin') {
     process.stdout.write(
-      `${JSON.stringify({ state: input.mode === 'prepare' ? 'stopped' : 'unknown', device: null, notice: 'Hosted iOS sessions require a Mac.' })}\n`,
+      `${JSON.stringify({ state: input.mode === 'prepare' ? 'stopped' : 'unknown', device: null, notice: 'Hosted device sessions require a Mac.' })}\n`,
     );
     return;
   }
@@ -31,20 +39,32 @@ async function main(): Promise<void> {
       input.metroPort > 65535)
   )
     throw new Error('Invalid hosted Metro port.');
-  const result = await runHostedDevice(
-    input.mode as 'prepare' | 'stop' | 'install',
-    {
-      ...(typeof input.deviceType === 'string' ? { deviceType: input.deviceType } : {}),
-      ...(typeof input.runtime === 'string' ? { runtime: input.runtime } : {}),
-    },
-    input.mode === 'install'
-      ? {
-          session: input.session as string,
-          attempt: input.attempt as string,
-          ...(typeof input.metroPort === 'number' ? { metroPort: input.metroPort } : {}),
-        }
-      : undefined,
-  );
+  const result =
+    input.platform === 'android'
+      ? await runHostedAndroidDevice(
+          input.mode as 'prepare' | 'stop' | 'install',
+          {
+            session: typeof input.session === 'string' ? input.session : '',
+            consolePort: input.consolePort,
+            ...(typeof input.systemImage === 'string' ? { systemImage: input.systemImage } : {}),
+            ...(typeof input.deviceProfile === 'string' ? { deviceProfile: input.deviceProfile } : {}),
+          },
+          input.mode === 'install' ? { attempt: input.attempt as string } : undefined,
+        )
+      : await runHostedDevice(
+          input.mode as 'prepare' | 'stop' | 'install',
+          {
+            ...(typeof input.deviceType === 'string' ? { deviceType: input.deviceType } : {}),
+            ...(typeof input.runtime === 'string' ? { runtime: input.runtime } : {}),
+          },
+          input.mode === 'install'
+            ? {
+                session: input.session as string,
+                attempt: input.attempt as string,
+                ...(typeof input.metroPort === 'number' ? { metroPort: input.metroPort } : {}),
+              }
+            : undefined,
+        );
   process.stdout.write(`${JSON.stringify(result)}\n`);
 }
 main().catch((error: unknown) => {

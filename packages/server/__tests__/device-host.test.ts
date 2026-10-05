@@ -1,5 +1,14 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync, renameSync, chmodSync } from 'node:fs';
-import { createHash } from 'node:crypto';
+import {
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+  existsSync,
+  renameSync,
+  mkdirSync,
+  chmodSync,
+} from 'node:fs';
+import { createHash, randomUUID } from 'node:crypto';
 import { execFile, spawn } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import { createServer } from 'node:http';
@@ -12,21 +21,36 @@ import { deviceHostArea, deviceHostRoot, readHostedSessions } from '@stim-cli/co
 import { processGroupAlive, readClaimSet, tryAcquireClaim, releaseClaim } from '@stim-cli/core/ownership-claim';
 import * as processIdentity from '@stim-cli/core/process-identity';
 import { DeviceHost } from '../src/device-host.ts';
+import { protocolJsonSchema, type ServerMessage } from '../src/protocol.ts';
+import { Ajv2020 } from 'ajv/dist/2020.js';
 import { HostedViews } from '../src/hosted-view.ts';
 import { ControlHub } from '../src/control.ts';
 import { FramePool } from '../src/frames.ts';
 import { FeedPool } from '../src/feed.ts';
-import type { ServerMessage } from '../src/protocol.ts';
 
 const WORKER = `
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { writeFileSync, readFileSync, appendFileSync } from 'node:fs';
 import { join } from 'node:path';
 const chunks = [];
 for await (const chunk of process.stdin) chunks.push(chunk);
 const input = JSON.parse(Buffer.concat(chunks));
+if(input.mode === 'offer') {
+  const request=input;
+  writeFileSync(join(process.env.STIM_HOME,'probe-entered'),String(process.pid));
+  if(request.deviceType === 'delayed') await new Promise(resolve=>setTimeout(resolve,150));
+  if(request.deviceType === 'sdk-hang') spawnSync(process.execPath,['--input-type=module','-e',
+    "import {writeFileSync} from 'node:fs'; process.on('SIGTERM',()=>{}); writeFileSync(process.env.STIM_HOME+'/probe-descendant',String(process.pid)); setInterval(()=>{},1000);"
+  ],{stdio:'ignore'});
+
+  const declined=request.deviceType==='unavailable'?'SDK unavailable':request.deviceType==='empty-reason'?'':null;
+  const choice=request.platform==='ios' ? {deviceTypeId:'iphone',runtimeId:'ios',deviceType:'iPhone',runtime:'27.1',architecture:'arm64',udid:'not-a-device'} : {systemImage:'system-images;android-30;google_apis;arm64-v8a',deviceProfile:'pixel_6',architecture:'arm64-v8a'};
+  process.stdout.write(JSON.stringify({platform:request.platform,choice:declined?null:choice,declined,resources:{cpus:4,loadPerCore:0.5,memoryFreeBytes:1000,memoryPressure:'normal',workerDiskFreeBytes:null}}));
+  process.exit(0);
+}
 const home = process.env.STIM_HOME;
-const device = {udid:'12345678-1234-1234-1234-123456789abc',name:'stim-hosted',deviceTypeId:'iphone',runtimeId:'ios',deviceType:'iPhone',runtime:'27.1',architecture:'arm64'};
+const iosDevice = {udid:'12345678-1234-1234-1234-123456789abc',name:'stim-hosted',deviceTypeId:'iphone',runtimeId:'ios',deviceType:'iPhone',runtime:'27.1',architecture:'arm64'};
+const device = input.platform === 'android' ? {avdName:'stim-hosted-'+input.session,serial:'emulator-'+input.consolePort,consolePort:input.consolePort,systemImage:'system-images;android-30;google_apis;arm64-v8a',deviceProfile:'pixel_6',architecture:'arm64-v8a'} : iosDevice;
 const out = value => process.stdout.write(JSON.stringify(value));
 if(input.mode === 'prepare') {
   writeFileSync(join(home,'entered'),String(process.pid));
@@ -36,7 +60,7 @@ if(input.mode === 'prepare') {
   }
   else {
     writeFileSync(join(home,'hosted-device.json'),JSON.stringify(device));
-    writeFileSync(join(home,'created-devices.json'),JSON.stringify({version:1,ios:[device.udid],android:[],web:[]}));
+    writeFileSync(join(home,'created-devices.json'),JSON.stringify({version:1,ios:input.platform==='android'?[]:[device.udid],android:input.platform==='android'?[device.avdName]:[],web:[]}));
     if(input.deviceType === 'descendant') {
       spawn(process.execPath,['--input-type=module','-e',
         "import {writeFileSync} from 'node:fs'; process.on('SIGTERM',()=>{}); writeFileSync(process.env.STIM_HOME+'/descendant',String(process.pid)); setInterval(()=>{},1000);"
@@ -49,6 +73,7 @@ if(input.mode === 'prepare') {
   }
 } else if(input.mode === 'install') {
   appendFileSync(join(home,'installed'),input.attempt+'\\n');
+  writeFileSync(join(home,'install-metro-port'),String(input.metroPort ?? ''));
   const stored=JSON.parse(readFileSync(join(home,'hosted-device.json'),'utf8'));
   const app=JSON.parse(readFileSync(join(home,'..','apps',input.attempt,'receipt.json'),'utf8'));
   if(input.deviceType === 'install-hang') { process.on('SIGTERM',()=>{}); setInterval(()=>{},1000); }
@@ -130,6 +155,18 @@ test('keeps HTTP and WebSocket Metro on the owned session port across reconnect 
     const echo = new Promise<string>((resolve) => client!.once('message', (message) => resolve(message.toString())));
     client.send(packet);
     expect(await echo).toBe(packet);
+    const app = appOffer(first.id);
+    host.appOffer('client', app.params);
+    await uploadManifest(app);
+    await host.appChunk('client', {
+      ...app.params,
+      sha256: app.sha256,
+      offset: 0,
+      data: app.content.toString('base64'),
+    });
+    expect(host.appLaunch('client', app.params)).toHaveProperty('result.state', 'installing');
+    await vi.waitFor(() => expect(host.appAttach('client', app.params)).toHaveProperty('result.state', 'installed'));
+    expect(readFileSync(join(deviceHostArea(first.id), 'home', 'install-metro-port'), 'utf8')).toBe(String(port));
     const closed = new Promise<void>((resolve) => client!.once('close', () => resolve()));
     allowed.delete('client');
     host.revoke();
@@ -553,7 +590,10 @@ test('rejects malformed client identities and selectors before reserving a worke
     { workspace: '/client\nworktree' },
     { slot: '__proto__' },
     { slot: '../other' },
-    { platform: 'android' },
+    { platform: 'web' },
+    { platform: ['ios'] },
+    { platform: ['android'] },
+    { platform: 'android', deviceType: 'iPhone' },
     { attempt: '../other' },
     { deviceType: 42 },
     { runtime: '' },
@@ -678,10 +718,12 @@ test('a lost journal directory cannot admit another device while a worker area r
   renameSync(backup, deviceHostRoot());
 });
 
-function appOffer(session: string, attempt = 'app-first') {
+function appOffer(session: string, attempt = 'app-first', platform = 'ios') {
   const content = Buffer.from('independent content for upload replay');
   const sha256 = createHash('sha256').update(content).digest('hex');
-  const files = [{ path: 'Info.plist', kind: 'file', size: content.length, sha256 }];
+  const files = [
+    { path: platform === 'android' ? 'App.apk' : 'Info.plist', kind: 'file', size: content.length, sha256 },
+  ];
   const manifest = Buffer.from(JSON.stringify(files));
   return {
     content,
@@ -767,40 +809,43 @@ test('refuses app mutations after the real session owner disappears until explic
   await state(retained.session, 'stopped');
 });
 
-test('resumes verified app bytes and reconciles a lost install reply without another native launch', async () => {
-  const first = reserve();
-  await state(first.id, 'ready');
-  const app = appOffer(first.id);
-  const { content, params, sha256 } = app;
-  expect(host.appOffer('other', params)).toHaveProperty('error');
-  expect(host.appOffer('client', params)).toHaveProperty('result.missing.0.offset', 0);
-  expect(host.appLaunch('client', params)).toHaveProperty('error');
-  expect(host.appOffer('client', { ...params, attempt: 'second-transfer' })).toHaveProperty('error');
-  await uploadManifest(app);
-  const firstChunk = {
-    session: first.id,
-    attempt: params.attempt,
-    sha256,
-    offset: 0,
-    data: content.subarray(0, 10).toString('base64'),
-  };
-  expect(await host.appChunk('client', firstChunk)).toHaveProperty('result.offset', 10);
-  expect(await host.appChunk('client', firstChunk)).toHaveProperty('result.offset', 10);
-  expect(await host.appChunk('client', { ...firstChunk, data: Buffer.alloc(10).toString('base64') })).toHaveProperty(
-    'error',
-  );
-  expect(host.appOffer('client', params)).toHaveProperty('result.missing.0.offset', 10);
-  expect(
-    await host.appChunk('client', { ...firstChunk, offset: 10, data: content.subarray(10).toString('base64') }),
-  ).toHaveProperty('result.offset', content.length);
-  expect(host.appOffer('client', params)).toHaveProperty('result.missing', []);
-  expect(host.appOffer('client', { ...params, bundleId: 'different.app' })).toHaveProperty('error');
-  expect(host.appLaunch('client', params)).toHaveProperty('result.state', 'installing');
-  await vi.waitFor(() => expect(host.appAttach('client', params)).toHaveProperty('result.state', 'installed'));
-  expect(host.appLaunch('client', params)).toHaveProperty('result.launched', true);
-  expect(readFileSync(join(deviceHostArea(first.id), 'home', 'installed'), 'utf8')).toBe('app-first\n');
-  expect(host.attach('client', { session: first.id })).toHaveProperty('result.appAttempt', params.attempt);
-});
+test.each(['ios', 'android'])(
+  'resumes %s app bytes and reconciles a lost install reply without another native launch',
+  async (platform) => {
+    const first = reserve({ platform });
+    await state(first.id, 'ready');
+    const app = appOffer(first.id, 'app-first', platform);
+    const { content, params, sha256 } = app;
+    expect(host.appOffer('other', params)).toHaveProperty('error');
+    expect(host.appOffer('client', params)).toHaveProperty('result.missing.0.offset', 0);
+    expect(host.appLaunch('client', params)).toHaveProperty('error');
+    expect(host.appOffer('client', { ...params, attempt: 'second-transfer' })).toHaveProperty('error');
+    await uploadManifest(app);
+    const firstChunk = {
+      session: first.id,
+      attempt: params.attempt,
+      sha256,
+      offset: 0,
+      data: content.subarray(0, 10).toString('base64'),
+    };
+    expect(await host.appChunk('client', firstChunk)).toHaveProperty('result.offset', 10);
+    expect(await host.appChunk('client', firstChunk)).toHaveProperty('result.offset', 10);
+    expect(await host.appChunk('client', { ...firstChunk, data: Buffer.alloc(10).toString('base64') })).toHaveProperty(
+      'error',
+    );
+    expect(host.appOffer('client', params)).toHaveProperty('result.missing.0.offset', 10);
+    expect(
+      await host.appChunk('client', { ...firstChunk, offset: 10, data: content.subarray(10).toString('base64') }),
+    ).toHaveProperty('result.offset', content.length);
+    expect(host.appOffer('client', params)).toHaveProperty('result.missing', []);
+    expect(host.appOffer('client', { ...params, bundleId: 'different.app' })).toHaveProperty('error');
+    expect(host.appLaunch('client', params)).toHaveProperty('result.state', 'installing');
+    await vi.waitFor(() => expect(host.appAttach('client', params)).toHaveProperty('result.state', 'installed'));
+    expect(host.appLaunch('client', params)).toHaveProperty('result.launched', true);
+    expect(readFileSync(join(deviceHostArea(first.id), 'home', 'installed'), 'utf8')).toBe('app-first\n');
+    expect(host.attach('client', { session: first.id })).toHaveProperty('result.appAttempt', params.attempt);
+  },
+);
 
 test('discards digest-mismatched app bytes and leaves native installation unstarted', async () => {
   const first = reserve();
@@ -850,5 +895,179 @@ test.each(['stop', 'revoke'])(
     allowed.add('client');
     expect(host.appAttach('client', params)).toHaveProperty('result.state', 'unknown');
     expect(readClaimSet(join(deviceHostRoot(), `${first.id}.claims`)).live).toEqual([]);
+  },
+);
+
+test('Android reservations keep distinct ports and platform slots and reconnect without recreation', async () => {
+  const validator = new Ajv2020({ strict: false, validateFormats: false });
+  validator.addSchema(protocolJsonSchema(), 'protocol');
+  const acceptsRequest = validator.compile({ $ref: 'protocol#/$defs/ClientRequest' });
+  const acceptsSession = validator.compile({ $ref: 'protocol#/$defs/HostedDeviceSession' });
+  const androidRequest = {
+    ...request,
+    platform: 'android',
+    attempt: 'android',
+    systemImage: 'system-images;android-30;google_apis;arm64-v8a',
+    deviceProfile: 'pixel_6',
+  };
+  expect(acceptsRequest({ id: 1, method: 'device-host.reserve', params: androidRequest })).toBe(true);
+  expect(acceptsRequest({ id: 1, method: 'device-host.reserve', params: { ...androidRequest, runtime: '27.0' } })).toBe(
+    false,
+  );
+  await host.close();
+  host = new DeviceHost({
+    worker: join(home, 'worker.mjs'),
+    env: { ...process.env, STIM_MAX_DEVICES: '3' },
+    allowed: (client) => allowed.has(client),
+  });
+  const ios = reserve();
+  const android = reserve(androidRequest);
+  const second = reserve({ platform: 'android', slot: 'second', attempt: 'android-second' });
+  expect(android.consolePort).toBe(5554);
+  expect(second.consolePort).toBe(5556);
+  expect(acceptsSession(ios)).toBe(true);
+  expect(acceptsSession(android)).toBe(true);
+  expect(acceptsSession(await state(ios.id, 'ready'))).toBe(true);
+  expect(acceptsSession(await state(android.id, 'ready'))).toBe(true);
+  await state(second.id, 'ready');
+  expect(host.attach('client', { session: android.id })).toHaveProperty(
+    'result.device.avdName',
+    `stim-hosted-${android.id}`,
+  );
+  expect(reserve(androidRequest).id).toBe(android.id);
+  const journal = readFileSync(join(deviceHostRoot(), 'sessions.json'), 'utf8');
+  expect(() => host.viewTarget('client', android.id)).toThrow(
+    'Hosted view and input currently support iOS sessions only.',
+  );
+  expect(
+    await host.metroOpen('client', { session: android.id, gatewayPort: 12345, secret: 'a'.repeat(64) }, '127.0.0.1'),
+  ).toHaveProperty('error.message', 'Hosted Metro currently supports iOS sessions only.');
+  expect(readFileSync(join(deviceHostRoot(), 'sessions.json'), 'utf8')).toBe(journal);
+  expect(host.stop('other', { session: android.id })).toHaveProperty('error.code', 'unknown-session');
+  host.stop('client', { session: android.id });
+  await state(android.id, 'stopped');
+  expect(readClaimSet(join(deviceHostRoot(), `${android.id}.claims`)).live).toEqual([]);
+  expect(host.attach('client', { session: ios.id })).toHaveProperty('result.state', 'ready');
+  expect(reserve({ platform: 'android', attempt: 'replacement' }).consolePort).toBe(5554);
+});
+
+test('offers schema-compatible SDK choices without creating a journal, claim, or worker area', async () => {
+  const validator = new Ajv2020({ strict: false, validateFormats: false });
+  validator.addSchema(protocolJsonSchema(), 'protocol');
+  const acceptsRequest = validator.compile({ $ref: 'protocol#/$defs/ClientRequest' });
+  const acceptsOffer = validator.compile({ $ref: 'protocol#/$defs/HostedDeviceOffer' });
+  for (const platform of ['ios', 'android']) {
+    const params = { platform };
+    expect(acceptsRequest({ id: 1, method: 'device-host.offer', params })).toBe(true);
+    const answer = await host.offer('client', params);
+    if ('error' in answer) throw new Error(answer.error.message);
+    expect(answer.result.capacity).toEqual({ running: 0, max: 1, available: 1 });
+    expect(answer.result.declined).toBeNull();
+    expect(acceptsOffer(answer.result)).toBe(true);
+    expect(answer.result.choice).not.toHaveProperty('udid');
+    expect(acceptsOffer({ ...answer.result, platform: platform === 'ios' ? 'android' : 'ios' })).toBe(false);
+  }
+  expect(await host.offer('client', { platform: 'ios', deviceType: 'empty-reason' })).toHaveProperty(
+    'error.code',
+    'action-failed',
+  );
+  expect(existsSync(deviceHostRoot())).toBe(false);
+  expect(existsSync(join(home, 'device-host'))).toBe(false);
+  const params = { platform: 'android', runtime: '27' };
+  expect(acceptsRequest({ id: 1, method: 'device-host.offer', params })).toBe(false);
+  rmSync(join(home, 'probe-entered'));
+  expect(await host.offer('client', params)).toHaveProperty('error.code', 'bad-request');
+  expect(await host.offer('foreign', { platform: 'ios' })).toHaveProperty('error.code', 'forbidden');
+  expect(existsSync(join(home, 'probe-entered'))).toBe(false);
+});
+
+test('offer capacity counts unresolved sessions and preserves SDK failures as declined choices', async () => {
+  const lost = reserve({ deviceType: 'lost' });
+  await state(lost.id, 'unknown');
+  const before = readFileSync(join(deviceHostRoot(), 'sessions.json'), 'utf8');
+  expect(await host.offer('client', { platform: 'android' })).toMatchObject({
+    result: { capacity: { running: 1, max: 1, available: 0 }, declined: expect.stringContaining('unresolved') },
+  });
+  expect(readFileSync(join(deviceHostRoot(), 'sessions.json'), 'utf8')).toBe(before);
+  host.stop('client', { session: lost.id });
+  await state(lost.id, 'stopped');
+  expect(await host.offer('client', { platform: 'ios', deviceType: 'unavailable' })).toMatchObject({
+    result: { choice: null, declined: 'SDK unavailable', capacity: { running: 0, available: 1 } },
+  });
+  const stopped = readFileSync(join(deviceHostRoot(), 'sessions.json'), 'utf8');
+  writeFileSync(join(deviceHostRoot(), 'sessions.json'), '{}');
+  rmSync(join(home, 'probe-entered'));
+  expect(await host.offer('client', { platform: 'ios' })).toHaveProperty('error.code', 'action-failed');
+  expect(existsSync(join(home, 'probe-entered'))).toBe(false);
+  writeFileSync(join(deviceHostRoot(), 'sessions.json'), stopped);
+});
+
+test.each(['revoke', 'close'])('does not publish an offer after %s during an actual pending query', async (action) => {
+  const pending = host.offer('client', { platform: 'ios', deviceType: 'delayed' });
+  await vi.waitFor(() => expect(existsSync(join(home, 'probe-entered'))).toBe(true));
+  if (action === 'revoke') {
+    allowed.delete('client');
+    host.revoke();
+  } else await host.close();
+  expect(await pending).toHaveProperty('error.code', 'forbidden');
+  expect(existsSync(deviceHostRoot())).toBe(false);
+});
+
+test('an uncapped offer still declines exhausted Android journal ports without changing the reservations', async () => {
+  await host.close();
+  host = new DeviceHost({
+    worker: join(home, 'worker.mjs'),
+    env: { ...process.env, STIM_MAX_DEVICES: '0' },
+    allowed: () => true,
+  });
+  mkdirSync(deviceHostRoot(), { recursive: true });
+  const sessions = Array.from({ length: 16 }, (_, index) => ({
+    ...request,
+    platform: 'android',
+    attempt: `occupied-${index}`,
+    id: randomUUID(),
+    client: 'other',
+    state: 'unknown',
+    device: null,
+    consolePort: 5554 + index * 2,
+    createdAt: new Date().toISOString(),
+  }));
+  const journal = JSON.stringify({ version: 1, sessions });
+  writeFileSync(join(deviceHostRoot(), 'sessions.json'), journal);
+  expect(await host.offer('client', { platform: 'android' })).toMatchObject({
+    result: { capacity: { running: 16, max: 0, available: null }, declined: expect.stringContaining('console ports') },
+  });
+  expect(readFileSync(join(deviceHostRoot(), 'sessions.json'), 'utf8')).toBe(journal);
+});
+
+test.each(['deadline', 'revoke', 'close'])(
+  'terminates synchronous SDK descendants when an offer ends by %s',
+  { skip: process.platform === 'win32' },
+  async (action) => {
+    await host.close();
+    host = new DeviceHost({
+      worker: join(home, 'worker.mjs'),
+      env: process.env,
+      allowed: (client) => allowed.has(client),
+      limits: { offerMs: action === 'deadline' ? 1000 : 5000, killGraceMs: 100 },
+    });
+    const pending = host.offer('client', { platform: 'ios', deviceType: 'sdk-hang' });
+    await vi.waitFor(() => expect(existsSync(join(home, 'probe-descendant'))).toBe(true));
+    const leader = Number(readFileSync(join(home, 'probe-entered'), 'utf8'));
+    const descendant = Number(readFileSync(join(home, 'probe-descendant'), 'utf8'));
+    try {
+      if (action === 'revoke') {
+        allowed.delete('client');
+        host.revoke();
+      }
+      if (action === 'close') await host.close();
+      expect(await pending).toHaveProperty('error.code', action === 'deadline' ? 'action-failed' : 'forbidden');
+      await host.close();
+      expect(processGroupAlive(leader)).toBe(false);
+      expect(() => process.kill(descendant, 0)).toThrow('ESRCH');
+      expect(existsSync(deviceHostRoot())).toBe(false);
+    } finally {
+      if (processGroupAlive(leader)) process.kill(-leader, 'SIGKILL');
+    }
   },
 );

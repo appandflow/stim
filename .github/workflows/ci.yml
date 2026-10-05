@@ -155,3 +155,11 @@ jobs:
 
       - name: Verify published runtime
         run: node test/runtime-floor.mjs
+
+      - name: Set up unsupported Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 18
+
+      - name: Verify the refusal below the runtime floor
+        run: node test/runtime-refusal.mjs

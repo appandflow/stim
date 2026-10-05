@@ -152,11 +152,31 @@ public struct StimServerCLI: Sendable {
   /// The override or the first `stim-server` on the environment's `PATH`.
   public let executable: String?
   public let environment: [String: String]
+  /// Runs `executable`'s script under the home directory's Node; nil runs `executable` through its own shebang.
+  public let launcher: NodeLauncher?
 
-  public init(environment: [String: String], override: String? = nil) {
+  public init(environment: [String: String], override: String? = nil, launcher: NodeLauncher? = nil) {
     var environment = environment
     self.executable = resolveExecutable("stim-server", override: override, environment: &environment)
     self.environment = environment
+    self.launcher = launcher
+  }
+
+  /// `init(environment:override:)` with a launcher, so a project's Node pin does not choose the Node it runs on.
+  /// `layout` names the package managers' global directories, which only a version-manager shim needs.
+  public static func resolve(
+    environment: [String: String], override: String? = nil,
+    layout: (() async -> PackageManagerLayout)? = nil
+  ) async -> StimServerCLI {
+    let cli = StimServerCLI(environment: environment, override: override)
+    let launcher = await NodeLauncher.resolve(
+      executable: cli.executable, name: "stim-server", environment: cli.environment, layout: layout)
+    return StimServerCLI(environment: environment, override: override, launcher: launcher)
+  }
+
+  private func command(_ arguments: [String]) throws -> (program: String, arguments: [String]) {
+    guard let executable else { throw Failure.notFound }
+    return try launcher?.command(arguments) ?? (executable, arguments)
   }
 
   public enum Failure: LocalizedError {
@@ -225,9 +245,9 @@ public struct StimServerCLI: Sendable {
     onLine: @escaping @Sendable (OutputLine) -> Void,
     onExit: @escaping @Sendable (Int32) -> Void
   ) throws -> Process {
-    guard let executable else { throw Failure.notFound }
+    let command = try command(["--port", String(port)])
     return try ProcessStream.start(
-      executable: executable, arguments: ["--port", String(port)], cwd: NSHomeDirectory(),
+      executable: command.program, arguments: command.arguments, cwd: NSHomeDirectory(),
       environment: environment, onLine: onLine, onExit: onExit)
   }
 
@@ -244,8 +264,8 @@ public struct StimServerCLI: Sendable {
   }
 
   private func run(_ args: [String]) async throws -> Data {
-    guard let executable else { throw Failure.notFound }
-    var request = ProcessRequest(executable, args, environment: environment)
+    let command = try command(args)
+    var request = ProcessRequest(command.program, command.arguments, environment: environment)
     request.captureStderr = true
     let result = try await request.run()
     guard result.status == 0 else {

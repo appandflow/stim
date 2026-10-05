@@ -93,7 +93,9 @@ accepts modified letters `a-z` and digits `0-9` one at a time. Older servers kee
 fixed shortcuts and navigation; the phone explains when a server update is
 needed. Modified multi-character input and symbols are unsupported.
 
-Letter and digit shortcuts require the **Mac's U.S. or ABC keyboard layout**.
+Letter and digit shortcuts require the **owned app's U.S. or ABC keyboard layout**.
+Stim focuses that app and waits up to one second for activation before checking
+the layout. If it does not activate, the shortcut is refused.
 Native virtual key codes identify physical U.S. positions; another host layout
 could turn a shortcut into a different command. The helper refuses letter and
 digit key events on other layouts; ordinary typing and navigation still work.

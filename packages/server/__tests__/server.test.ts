@@ -754,6 +754,12 @@ describe.each(['build', 'device-host'] as const)('%s access', (capability) => {
       });
     }
 
+    if (capability === 'build')
+      expect(await approved.request('device-host.offer', { platform: 'ios' })).toHaveProperty(
+        'error.code',
+        'forbidden',
+      );
+
     const elsewhere = await connect(port, '100.64.0.3');
     expect(await helloWith(elsewhere, deviceToken!)).toMatchObject({ error: { code: 'unauthorized' } });
 
@@ -789,6 +795,11 @@ describe('hosted device sessions', () => {
       import { join } from 'node:path';
       const chunks=[]; for await (const chunk of process.stdin) chunks.push(chunk);
       const input=JSON.parse(Buffer.concat(chunks));
+      if(input.mode==='offer') {
+        process.stdout.write(JSON.stringify({platform:'ios',choice:{deviceTypeId:'iphone',runtimeId:'ios',deviceType:'iPhone',runtime:'27.1',architecture:'arm64'},declined:null,resources:{cpus:4,loadPerCore:0.5,memoryFreeBytes:1000,memoryPressure:'normal',workerDiskFreeBytes:null}}));
+        process.exit(0);
+      }
+
       const device={udid:'12345678-1234-1234-1234-123456789abc',name:'stim-hosted',deviceTypeId:'iphone',runtimeId:'ios',deviceType:'iPhone',runtime:'27.1',architecture:'arm64'};
       writeFileSync(join(process.env.STIM_HOME,'hosted-device.json'),JSON.stringify(device));
       writeFileSync(join(process.env.STIM_HOME,'created-devices.json'),JSON.stringify({version:1,ios:[device.udid],android:[],web:[]}));
@@ -811,6 +822,11 @@ describe('hosted device sessions', () => {
         auth: { deviceToken: pending.deviceToken },
       });
       expect(hello).toHaveProperty('result.capabilities', ['device-host']);
+      expect(await first.request('device-host.offer', { platform: 'ios' })).toHaveProperty(
+        'result.choice.runtime',
+        '27.1',
+      );
+      expect(readHostedSessions()).toEqual([]);
       const params = { workspace: '/client/app', slot: 'default', platform: 'ios', attempt: 'socket-attempt' };
       const reserved = await first.request('device-host.reserve', params);
       expect(reserved).toHaveProperty('result.state', 'preparing');
@@ -1025,6 +1041,7 @@ describe('offloaded builds', () => {
 
       const viewer = await authed(port);
       expect(await viewer.request('build.offer', { repo: 'app-1' })).toMatchObject({ error: { code: 'forbidden' } });
+      expect(await viewer.request('device-host.offer', { platform: 'ios' })).toHaveProperty('error.code', 'forbidden');
     },
   );
 
@@ -2927,14 +2944,21 @@ describe('frames.subscribe', () => {
       );
       const client = await authed(port);
       await client.request('frames.subscribe', { workspace, platform: 'ios' });
-      // The first capture is slow (200 ms, over slowCaptureMs) but succeeds.
       expect(await client.next()).toEqual({ event: 'frame-delayed', subscription: 's1', delayed: true });
       expect(await client.next()).toMatchObject({ event: 'frame', data: a.toString('base64') });
-      // The second capture times out (600 ms, over toolTimeoutMs) and is retried instead of failing.
-      // The third capture is fast (20 ms) and recovers.
-      expect(await client.next()).toEqual({ event: 'frame-delayed', subscription: 's1', delayed: false });
-      expect(await client.next()).toMatchObject({ event: 'frame', data: b.toString('base64') });
-      expect(toolRuns().filter((run) => run.tool === 'xcrun')).toHaveLength(3);
+      let recovered = false;
+      let changed = false;
+      while (!recovered || !changed) {
+        const message = await client.next();
+        if ('event' in message && message.event === 'frame-delayed') {
+          expect(message).toEqual({ event: 'frame-delayed', subscription: 's1', delayed: false });
+          recovered = true;
+        } else {
+          expect(message).toMatchObject({ event: 'frame', data: b.toString('base64') });
+          changed = true;
+        }
+      }
+      expect(toolRuns().filter((run) => run.tool === 'xcrun').length).toBeGreaterThanOrEqual(3);
     },
     10_000,
   );

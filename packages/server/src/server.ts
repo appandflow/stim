@@ -1639,23 +1639,25 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         return input(id, inputMethod, raw, session);
       }
       const answer =
-        method === 'device-host.reserve'
-          ? hostedDevices.reserve(session.id, raw)
-          : method === 'device-host.attach'
-            ? hostedDevices.attach(session.id, raw)
-            : method === 'device-host.stop'
-              ? hostedDevices.stop(session.id, raw)
-              : method === 'device-host.app.offer'
-                ? hostedDevices.appOffer(session.id, raw)
-                : method === 'device-host.app.chunk'
-                  ? await hostedDevices.appChunk(session.id, raw)
-                  : method === 'device-host.app.launch'
-                    ? hostedDevices.appLaunch(session.id, raw)
-                    : method === 'device-host.app.attach'
-                      ? hostedDevices.appAttach(session.id, raw)
-                      : method === 'device-host.metro.open'
-                        ? await hostedDevices.metroOpen(session.id, raw, peer)
-                        : await hostedDevices.metroClose(session.id, raw);
+        method === 'device-host.offer'
+          ? await hostedDevices.offer(session.id, raw)
+          : method === 'device-host.reserve'
+            ? hostedDevices.reserve(session.id, raw)
+            : method === 'device-host.attach'
+              ? hostedDevices.attach(session.id, raw)
+              : method === 'device-host.stop'
+                ? hostedDevices.stop(session.id, raw)
+                : method === 'device-host.app.offer'
+                  ? hostedDevices.appOffer(session.id, raw)
+                  : method === 'device-host.app.chunk'
+                    ? await hostedDevices.appChunk(session.id, raw)
+                    : method === 'device-host.app.launch'
+                      ? hostedDevices.appLaunch(session.id, raw)
+                      : method === 'device-host.app.attach'
+                        ? hostedDevices.appAttach(session.id, raw)
+                        : method === 'device-host.metro.open'
+                          ? await hostedDevices.metroOpen(session.id, raw, peer)
+                          : await hostedDevices.metroClose(session.id, raw);
       return send(socket, 'error' in answer ? { id, error: answer.error } : { id, result: answer.result });
     }
 

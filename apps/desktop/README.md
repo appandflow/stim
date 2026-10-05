@@ -1036,6 +1036,31 @@ replaces its card. With the main window closed, the link reopens it.
   commands see the same `PATH` and variables such as `ANDROID_HOME` as a
   terminal. It adds `STIM_DESKTOP_APP`, set to the app's bundle path, which
   tells `stim` that Stim Desktop is installed without a Launch Services lookup.
+  It runs `stim` and `stim-server` as their JavaScript file under the Node that
+  `node` resolves to in the home folder, with the directory holding `stim`
+  first on the `PATH` so a Node installed beside it, as nvm does, wins. It does
+  not run them through the files' `#!/usr/bin/env node` line in the workspace. A version manager that follows
+  the working directory (asdf, mise, Volta) would otherwise run them on the
+  Node a project pins, which can be older than Stim supports. When `stim` on
+  the `PATH` is a shim in a version manager's `shims` folder (asdf, mise,
+  nodenv), the app runs the global install that npm, pnpm or bun reports from
+  the home folder; any other script, such as a wrapper, runs as it is. Each
+  command follows the executable's links again, so an update takes effect
+  without a restart. When the Node binary disappears, as after a Homebrew
+  upgrade, the next command finds the home folder's Node again first, waiting
+  at most 2 seconds for it. If the initial probe or redetection fails, the
+  managed launcher refuses the command rather than falling back to a project's
+  Node, and retries detection on later commands without requiring an app restart.
+  A recognized version-manager shim whose global CLI cannot be located also
+  refuses to run. Once Check Again resolves that install, it offers a restart
+  when the app's cached launcher still points to the unresolved shim. The server's
+  unresolved launcher is detected again on a later command after 60 seconds.
+  A Node older than 22.12.0 refuses every command
+  with its version and path; when that is why `stim` reports no version, a
+  popup asks for a newer default instead of a newer Stim. The app looks for
+  the Node again at most every 10 seconds, so the next command after a new
+  default runs without a restart. Without a launcher for `stim-server`, it
+  tries again at most once a minute.
 
 At launch the app runs `stim --version` and needs 1.11.0 or later. When
 `stim` is missing, too old, or reports no version, a banner explains Stim and
@@ -1083,8 +1108,8 @@ button, or **Continue** once the step is done, and never skips a step; Escape is
 Later**.
 
 1. **Welcome**.
-2. **Install the CLI**: `node --version` from the login shell must report
-   22.12.0 or later. Without it, the step offers `brew install node` when
+2. **Install the CLI**: `node` from the login shell, run in the home folder,
+   must report 22.12.0 or later; an older one is shown with its path. Without it, the step offers `brew install node` when
    `brew` is on the `PATH`, else a link to nodejs.org. Then it
    shows tabs for npm, pnpm and bun, only for the managers on the `PATH`
    (the default is pnpm or bun when its global bin directory is on the `PATH`,

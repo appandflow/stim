@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { isIP, type AddressInfo } from 'node:net';
 import { withDirLock, createMetroBridge, type MetroBridge } from '@stim-cli/core';
 import {
@@ -20,10 +20,14 @@ import {
   deviceHostRoot,
   getConcurrencyLimits,
   isJsonObject,
-  parseHostedDevice,
+  parseHostedPlatformDevice,
+  hostedDeviceId,
+  loadConfig,
   parseHostedRequest,
   readHostedDevice,
   readHostedSessions,
+  parseHostedOfferRequest,
+  parseHostedNativeOffer,
   hostedAppAttempt,
   parseHostedAppOffer,
   readHostedApp,
@@ -31,6 +35,8 @@ import {
   type HostedAppRecord,
   type HostedDeviceRequest,
   type HostedDeviceSession,
+  type HostedDeviceOffer,
+  type HostedIosDevice,
 } from '@stim-cli/core/state';
 import { writeJson } from './registry.ts';
 import { takeHostedInputClaim } from './hosted-input.ts';
@@ -39,6 +45,7 @@ import { appDelivery, offerHostedApp, chunkHostedApp, changeHostedApp } from './
 
 export interface DeviceHostLimits {
   prepareMs: number;
+  offerMs: number;
   stopMs: number;
   killGraceMs: number;
 }
@@ -76,6 +83,7 @@ const refused = (code: ProtocolError['code'], message: string): { error: Protoco
 export class DeviceHost {
   private readonly owned = new Map<string, OwnedSession>();
   private readonly revoked = new Set<string>();
+  private readonly probes = new Map<WorkerRun, string>();
   private closed = false;
   private readonly limits: DeviceHostLimits;
 
@@ -93,7 +101,7 @@ export class DeviceHost {
     limits?: Partial<DeviceHostLimits>;
   }) {
     this.options = options;
-    this.limits = { prepareMs: 5 * 60_000, stopMs: 90_000, killGraceMs: 5000, ...options.limits };
+    this.limits = { prepareMs: 5 * 60_000, offerMs: 30_000, stopMs: 90_000, killGraceMs: 5000, ...options.limits };
   }
 
   private transaction<T>(fn: (records: HostedDeviceSession[]) => T): T {
@@ -146,12 +154,68 @@ export class DeviceHost {
     return owned;
   }
 
+  async offer(client: string, params: unknown): Promise<AppAnswer<HostedDeviceOffer>> {
+    if (this.closed || !this.options.allowed(client))
+      return refused('forbidden', 'Current device-host approval is required.');
+    const request = parseHostedOfferRequest(params);
+    if (!request) return refused('bad-request', 'offer needs a platform and valid optional selectors.');
+    try {
+      readHostedSessions();
+      const probe = this.runWorker({
+        cwd: dirname(this.options.worker),
+        env: this.options.env,
+        input: { mode: 'offer', ...request },
+        timeoutMs: this.limits.offerMs,
+        maxOutputBytes: 32_768,
+      });
+      this.probes.set(probe, client);
+      let result: Awaited<WorkerRun['done']>;
+      try {
+        result = await probe.done;
+      } finally {
+        this.probes.delete(probe);
+      }
+      if (this.closed || !this.options.allowed(client))
+        return refused('forbidden', 'Current device-host approval is required.');
+      if (!result.settled || result.notice) throw new Error(result.notice ?? 'Hosted offer worker did not settle.');
+      const native = parseHostedNativeOffer(result.value);
+      if (!native || native.platform !== request.platform) throw new Error('Invalid native hosted offer.');
+      const records = readHostedSessions();
+      const running = records.filter((record) => record.state !== 'stopped').length;
+      const max = getConcurrencyLimits({ env: this.options.env }).maxDevices;
+      let declined =
+        native.declined ??
+        (native.resources.memoryPressure !== 'normal' ? 'Host memory pressure is unknown or elevated.' : null);
+      if (max > 0 && running >= max)
+        declined = 'All configured hosted device reservations are occupied, including unresolved sessions.';
+      if (request.platform === 'android') {
+        try {
+          reserveAndroidPort(records);
+        } catch (error) {
+          declined = (error as Error).message;
+        }
+      }
+      return {
+        result: {
+          ...native,
+          declined,
+          capacity: { running, max, available: max > 0 ? Math.max(0, max - running) : null },
+        },
+      };
+    } catch (error) {
+      return refused('action-failed', (error as Error).message);
+    }
+  }
+
   reserve(client: string, params: unknown): Answer {
     if (this.closed || !this.options.allowed(client))
       return refused('forbidden', 'Current device-host approval is required.');
     const request = parseHostedRequest(params);
     if (!request)
-      return refused('bad-request', 'reserve needs an iOS workspace, slot, attempt and valid optional selectors.');
+      return refused(
+        'bad-request',
+        'reserve needs an iOS or Android workspace, slot, attempt and valid optional selectors.',
+      );
     let start: HostedDeviceSession | null = null;
     try {
       const result = this.transaction((records) => {
@@ -164,6 +228,7 @@ export class DeviceHost {
           (record) =>
             record.client === client &&
             record.workspace === request.workspace &&
+            record.platform === request.platform &&
             record.slot === request.slot &&
             record.state !== 'stopped',
         );
@@ -179,6 +244,7 @@ export class DeviceHost {
           state: 'preparing',
           device: null,
           createdAt: new Date().toISOString(),
+          ...(request.platform === 'android' ? { consolePort: reserveAndroidPort(records) } : {}),
         };
         this.acquire(record);
         records.push(record);
@@ -257,6 +323,7 @@ export class DeviceHost {
       const record = readHostedSessions().find((each) => each.client === client && each.id === params.session);
       if (!record || record.state !== 'ready' || this.closed || !this.owned.has(record.id))
         throw new Error('Only a ready session attached to this owner can open Metro.');
+      if (record.platform !== 'ios') throw new Error('Hosted Metro currently supports iOS sessions only.');
       const owned = this.owned.get(record.id)!;
       if (owned.stopping) throw new Error('This hosted session is stopping.');
       if (owned.metro) {
@@ -332,7 +399,7 @@ export class DeviceHost {
     client: string,
     session: string,
   ): {
-    session: HostedDeviceSession;
+    session: HostedDeviceSession & { device: HostedIosDevice };
     home: string;
     claim: ClaimHandle;
   } {
@@ -343,12 +410,14 @@ export class DeviceHost {
       throw new Error(
         'Only a ready session attached to this server can be viewed. Explicit stop must reconcile a lost owner.',
       );
+    if (record.platform !== 'ios' || !('udid' in record.device))
+      throw new Error('Hosted view and input currently support iOS sessions only.');
     if (owned.stopping || owned.installing) throw new Error('This hosted session has a native operation in progress.');
     const home = join(deviceHostArea(record.id), 'home');
     assertHostedDeviceLedger(home, record.device.udid);
     if (readHostedDevice(home).udid !== record.device.udid)
       throw new Error('The device record no longer matches this session.');
-    return { session: { ...record }, home, claim: owned.claim };
+    return { session: { ...record, device: record.device }, home, claim: owned.claim };
   }
 
   bindView(client: string, session: string, close: () => Promise<void>): () => void {
@@ -491,7 +560,9 @@ export class DeviceHost {
         outcome.settled &&
         isJsonObject(value) &&
         value.state === 'installed' &&
-        parseHostedDevice(value.device)?.udid === record.device?.udid &&
+        parseHostedPlatformDevice(value.device, record.platform) !== null &&
+        record.device !== null &&
+        hostedDeviceId(parseHostedPlatformDevice(value.device, record.platform)!) === hostedDeviceId(record.device) &&
         (value.launched === true || value.launched === 'unverified');
       const app = changeHostedApp(record.id, attempt, (current) => {
         current.state = installed ? 'installed' : 'unknown';
@@ -534,11 +605,12 @@ export class DeviceHost {
     const outcome = await run.done;
     if (owned.stopping) return;
     const value = outcome.value;
-    const device = isJsonObject(value) ? parseHostedDevice(value.device) : null;
+    const device = isJsonObject(value) ? parseHostedPlatformDevice(value.device, record.platform) : null;
     if (outcome.settled && isJsonObject(value) && value.state === 'ready' && device) {
       const home = join(deviceHostArea(record.id), 'home');
-      assertHostedDeviceLedger(home, device.udid);
-      if (readHostedDevice(home).udid !== device.udid)
+      assertSessionDevice(record, device);
+      assertHostedDeviceLedger(home, hostedDeviceId(device), record.platform);
+      if (hostedDeviceId(readHostedDevice(home, record.platform)) !== hostedDeviceId(device))
         throw new Error('The worker result does not match its persisted device.');
     }
     this.change(record.id, (current) => {
@@ -607,8 +679,9 @@ export class DeviceHost {
         return;
       }
     }
-    const device = readHostedDevice(home);
-    if (record.device && record.device.udid !== device.udid)
+    const device = readHostedDevice(home, record.platform);
+    assertSessionDevice(record, device);
+    if (record.device && hostedDeviceId(record.device) !== hostedDeviceId(device))
       throw new Error('The device record no longer matches this session.');
     this.change(record.id, (current) => {
       current.device = device;
@@ -621,7 +694,8 @@ export class DeviceHost {
       outcome.settled &&
       isJsonObject(outcome.value) &&
       outcome.value.state === 'stopped' &&
-      parseHostedDevice(outcome.value.device)?.udid === device.udid;
+      parseHostedPlatformDevice(outcome.value.device, record.platform) !== null &&
+      hostedDeviceId(parseHostedPlatformDevice(outcome.value.device, record.platform)!) === hostedDeviceId(device);
     this.change(record.id, (current) => {
       current.state = stopped ? 'stopped' : 'unknown';
       if (stopped) delete current.notice;
@@ -651,6 +725,7 @@ export class DeviceHost {
   }
 
   revoke(): void {
+    for (const [probe, client] of this.probes) if (!this.options.allowed(client)) probe.cancel();
     try {
       for (const record of readHostedSessions()) {
         if (record.state === 'stopped' || this.options.allowed(record.client) || this.revoked.has(record.id)) continue;
@@ -677,6 +752,7 @@ export class DeviceHost {
 
   async close(): Promise<void> {
     this.closed = true;
+    for (const probe of this.probes.keys()) probe.cancel();
     await Promise.all([...this.owned.values()].map((owned) => this.closeMetro(owned)));
     await Promise.all([...this.owned.values()].map((owned) => this.closeView(owned)));
     try {
@@ -692,6 +768,7 @@ export class DeviceHost {
       for (const owned of this.owned.values()) owned.run?.cancel();
     }
     await Promise.all([...this.owned.values()].map((owned) => owned.stopping ?? owned.run?.done));
+    await Promise.all([...this.probes.keys()].map((probe) => probe.done));
   }
 
   private run(
@@ -702,17 +779,46 @@ export class DeviceHost {
   ): WorkerRun {
     const home = join(deviceHostArea(record.id), 'home');
     mkdirSync(home, { recursive: true, mode: 0o700 });
-    markClaimChildPending(owned.claim);
+    return this.runWorker({
+      cwd: home,
+      env: { ...this.options.env, STIM_HOME: home },
+      input: {
+        mode,
+        platform: record.platform,
+        deviceType: record.deviceType,
+        runtime: record.runtime,
+        systemImage: record.systemImage,
+        deviceProfile: record.deviceProfile,
+        consolePort: record.consolePort,
+        session: record.id,
+        attempt,
+        metroPort: mode === 'install' ? owned.metro?.port : undefined,
+      },
+      claim: owned.claim,
+      timeoutMs: mode === 'stop' ? this.limits.stopMs : this.limits.prepareMs,
+      maxOutputBytes: 16_384,
+    });
+  }
+
+  private runWorker(options: {
+    cwd: string;
+    env: NodeJS.ProcessEnv;
+    input: object;
+    claim?: ClaimHandle;
+    timeoutMs: number;
+    maxOutputBytes: number;
+  }): WorkerRun {
+    if (options.claim) markClaimChildPending(options.claim);
     let child: ChildProcess;
     try {
       child = spawn(process.execPath, [this.options.worker], {
-        cwd: home,
-        env: { ...this.options.env, STIM_HOME: home },
+        cwd: options.cwd,
+        env: options.env,
         detached: true,
         stdio: ['pipe', 'pipe', 'pipe'],
       });
     } catch (error) {
-      clearClaimChild(owned.claim);
+      if (options.claim) clearClaimChild(options.claim);
       throw error;
     }
     let identity: ProcessRecord | null = null;
@@ -738,7 +844,7 @@ export class DeviceHost {
       clearTimeout(finishTimer);
       clearTimeout(groupTimer);
       const settled = closed && (!child.pid || !processGroupAlive(child.pid));
-      if (settled) clearClaimChild(owned.claim);
+      if (settled && options.claim) clearClaimChild(options.claim);
       let value: unknown = null;
       try {
         value = JSON.parse(Buffer.concat(output).toString('utf8'));
@@ -779,9 +885,9 @@ export class DeviceHost {
         groupTimer = setTimeout(finishGroup, 25);
       }
     };
-    const timer = setTimeout(cancel, mode === 'stop' ? this.limits.stopMs : this.limits.prepareMs);
+    const timer = setTimeout(cancel, options.timeoutMs);
     child.stdout?.on('data', (chunk: Buffer) => {
-      if (outputBytes + chunk.length > 16384) {
+      if (outputBytes + chunk.length > options.maxOutputBytes) {
         notice = 'Hosted worker output exceeded its bound.';
         cancel();
       } else {
@@ -811,17 +917,8 @@ export class DeviceHost {
     } else {
       identity = { pid: child.pid, processToken: captured.token };
       try {
-        setClaimChild(owned.claim, identity);
-        child.stdin?.end(
-          JSON.stringify({
-            mode,
-            deviceType: record.deviceType,
-            runtime: record.runtime,
-            session: record.id,
-            attempt,
-            metroPort: mode === 'install' ? owned.metro?.port : undefined,
-          }),
-        );
+        if (options.claim) setClaimChild(options.claim, identity);
+        child.stdin?.end(JSON.stringify(options.input));
       } catch (error) {
         notice = (error as Error).message;
         cancel();
@@ -837,6 +934,34 @@ function sameRequest(a: HostedDeviceRequest, b: HostedDeviceRequest): boolean {
     a.slot === b.slot &&
     a.platform === b.platform &&
     a.deviceType === b.deviceType &&
-    a.runtime === b.runtime
+    a.runtime === b.runtime &&
+    a.systemImage === b.systemImage &&
+    a.deviceProfile === b.deviceProfile
   );
+}
+
+function reserveAndroidPort(records: HostedDeviceSession[]): number {
+  const ports = new Set(
+    records
+      .filter((record) => record.platform === 'android' && record.state !== 'stopped')
+      .map((record) => record.consolePort),
+  );
+  for (const project of Object.values(loadConfig()?.projects ?? {})) {
+    for (const platforms of [project.platforms, ...Object.values(project.deviceSlots ?? {})]) {
+      if (typeof platforms?.android?.consolePort === 'number') ports.add(platforms.android.consolePort);
+    }
+  }
+  for (let port = 5554; port <= 5584; port += 2) if (!ports.has(port)) return port;
+  throw new Error('All supported hosted Android console ports are reserved. Attach or stop an existing session.');
+}
+
+function assertSessionDevice(record: HostedDeviceSession, device: NonNullable<HostedDeviceSession['device']>): void {
+  if (
+    record.platform === 'android' &&
+    (!('avdName' in device) ||
+      device.consolePort !== record.consolePort ||
+      device.avdName !== `stim-hosted-${record.id}`)
+  ) {
+    throw new Error('The Android worker device does not match its reserved session and console port.');
+  }
 }

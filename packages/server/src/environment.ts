@@ -25,6 +25,7 @@ export function loginShellEnvironment(): Record<string, string> | null {
     spawnSync(process.env.SHELL || '/bin/zsh', ['-lic', 'command env -0 > "$1"', 'stim-server', file], {
       stdio: 'ignore',
       timeout: 15_000,
+      killSignal: 'SIGKILL',
     });
     const environment = parseEnvironment(readFileSync(file, 'utf8'));
     return Object.keys(environment).length ? environment : null;

@@ -130,7 +130,7 @@ final class MacosSource: NSObject, Source, SCStreamDelegate, SCStreamOutput {
         self.lastInput = Task {
           await previous?.value
           guard self.isActive(session) else { return }
-          do { try self.apply(action, session: session) } catch is CancellationError {
+          do { try await self.apply(action, session: session) } catch is CancellationError {
           } catch {
             if self.endControl(session) { Output.notice(["inputError": error.localizedDescription, "controlSession": session]) }
           }
@@ -257,21 +257,7 @@ final class MacosSource: NSObject, Source, SCStreamDelegate, SCStreamOutput {
     return (current, own)
   }
 
-  private func apply(_ command: Command, session: String) throws {
-    if case .key(let name, _) = command, name.count == 1 {
-      // Apple TextInputSources requires main-thread access; ANSI key codes identify physical U.S. positions.
-      let layout: String? = DispatchQueue.main.sync {
-        guard let source = TISCopyCurrentKeyboardInputSource()?.takeRetainedValue(),
-          let property = TISGetInputSourceProperty(source, kTISPropertyInputSourceID)
-        else { return nil }
-        return Unmanaged<AnyObject>.fromOpaque(property).takeUnretainedValue() as? String
-      }
-      guard layout == "com.apple.keylayout.US" || layout == "com.apple.keylayout.ABC" else {
-        throw refusal(
-          "Native letter and digit shortcuts require the Mac's U.S. or ABC keyboard layout. Select that input source and reconnect Control. Ordinary typing and navigation do not require it."
-        )
-      }
-    }
+  private func apply(_ command: Command, session: String) async throws {
     guard let setWindowLocation = Self.windowLocation else {
       throw refusal("Native window input is unavailable on this macOS version. Viewing and logs remain available.")
     }
@@ -386,6 +372,32 @@ final class MacosSource: NSObject, Source, SCStreamDelegate, SCStreamOutput {
         "command": .maskCommand, "shift": .maskShift, "option": .maskAlternate, "control": .maskControl,
       ]
       guard let code = codes[name], modifiers.allSatisfy({ flags[$0] != nil }) else { throw refusal("Unsupported native key.") }
+      if name.count == 1 {
+        // NSRunningApplication activation is asynchronous and may never complete; bound the shortcut wait.
+        let deadline = ContinuousClock.now.advanced(by: .seconds(1))
+        while !running.isActive {
+          guard isActive(session), matches() else { throw CancellationError() }
+          guard ContinuousClock.now < deadline else {
+            throw refusal("The captured owned app did not activate for keyboard shortcuts. Reconnect Control and try again.")
+          }
+          try await Task.sleep(for: .milliseconds(10))
+        }
+        // Apple TextInputSources requires main-thread access; ANSI key codes identify physical U.S. positions.
+        let layout: String? = try DispatchQueue.main.sync {
+          guard running.isActive, isActive(session), matches() else {
+            throw refusal("The captured owned app lost focus before reading its keyboard layout.")
+          }
+          guard let source = TISCopyCurrentKeyboardInputSource()?.takeRetainedValue(),
+            let property = TISGetInputSourceProperty(source, kTISPropertyInputSourceID)
+          else { return nil }
+          return Unmanaged<AnyObject>.fromOpaque(property).takeUnretainedValue() as? String
+        }
+        guard layout == "com.apple.keylayout.US" || layout == "com.apple.keylayout.ABC" else {
+          throw refusal(
+            "Native letter and digit shortcuts require the Mac's U.S. or ABC keyboard layout. Select that input source and reconnect Control. Ordinary typing and navigation do not require it."
+          )
+        }
+      }
       try key(code, modifiers.reduce(CGEventFlags()) { $0.union(flags[$1]!) }, nil)
     default: throw refusal("Unsupported native macOS input.")
     }

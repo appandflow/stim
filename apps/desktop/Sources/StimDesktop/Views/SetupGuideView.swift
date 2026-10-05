@@ -214,7 +214,9 @@ struct SetupGuideView: View {
         tone: .warning, icon: "exclamationmark.triangle.fill")
     case .outdated(let found)?:
       statusLine(
-        "Node.js \(found ?? "of an unknown version") is older than \(SetupChecks.nodeMinimum).", tone: .warning,
+        "Node.js \(found ?? "of an unknown version")"
+          + (onboarding.report?.nodePath.map { " at \($0)" } ?? "")
+          + " is older than \(SetupChecks.nodeMinimum).", tone: .warning,
         icon: "exclamationmark.triangle.fill")
     }
   }
@@ -235,6 +237,10 @@ struct SetupGuideView: View {
             restartBanner("The app picks its stim when it starts. The guide reopens here.", action: onboarding.restartForSetup)
           }
         }
+      case .outdated where report.nodeBlocksStim:
+        statusLine(
+          "\(abbreviatingHome(report.stimPath ?? "stim")) runs once Node.js is \(SetupChecks.nodeMinimum) or later.",
+          tone: .warning, icon: "exclamationmark.triangle.fill")
       case .outdated(let found):
         statusLine(
           "\(abbreviatingHome(report.stimPath ?? "stim")) reports \(found ?? "no version"); Stim Desktop needs \(StimCLI.minimumVersion) or later.",
