@@ -1292,6 +1292,91 @@
         "issues": []
       },
       {
+        "path": "/Users/dev/Developer/stim/.worktrees/a4-running/apps/desktop",
+        "live": true,
+        "phase": "live",
+        "phaseSince": null,
+        "memoryMb": 180,
+        "warnings": [],
+        "issues": [],
+        "worktree": {
+          "path": "/Users/dev/Developer/stim/.worktrees/a4-running",
+          "branch": "feat/1690-phone-android-video",
+          "repository": "/Users/dev/Developer/stim",
+          "git": {
+            "changed": 3,
+            "untracked": 0,
+            "upstream": "origin/feat/1690-phone-android-video",
+            "ahead": 2,
+            "behind": 0,
+            "mergedInto": null
+          },
+          "pullRequest": {
+            "number": 1695,
+            "url": "https://github.com/appandflow/stim/pull/1695",
+            "title": "feat(server): live video and control of a leased physical Android phone",
+            "state": "open",
+            "checks": {
+              "passing": 14,
+              "failing": 0,
+              "pending": 2
+            },
+            "reviewDecision": "review-required",
+            "checkedAt": "2026-09-25T04:21:09.012Z"
+          }
+        },
+        "logs": {
+          "dir": "/Users/dev/.stim/workspaces/desktop-a4-running/logs",
+          "errorsSinceMarker": 0
+        },
+        "macos": {
+          "launchId": "desktop-a4-running",
+          "arguments": [],
+          "product": "Stim",
+          "bundle": "/Users/dev/Developer/stim/.worktrees/a4-running/apps/desktop/.build/Stim.app",
+          "bundleId": "com.appandflow.stim.desktop",
+          "executable": "/Users/dev/Developer/stim/.worktrees/a4-running/apps/desktop/.build/Stim.app/Contents/MacOS/Stim",
+          "build": {
+            "state": "ok",
+            "startedAt": "2026-09-25T04:20:00.000Z",
+            "finishedAt": "2026-09-25T04:20:04.000Z",
+            "durationMs": 4000
+          },
+          "state": "running"
+        },
+        "disk": {
+          "worktreeBytes": 1900000000,
+          "nodeModulesBytes": 900000000,
+          "buildBytes": 50000000,
+          "measuredAt": "2026-09-25T04:20:09.012Z"
+        },
+        "agents": [
+          {
+            "tool": "claude-code",
+            "sessionId": "0dc300cd-42a3-4758-8d35-79edf2904001",
+            "cwd": "/Users/dev/Developer/stim/.worktrees/a4-running",
+            "title": "Show agent sessions in status",
+            "startedAt": "2026-09-25T03:10:00.000Z",
+            "lastActiveAt": "2026-09-25T04:20:00.000Z",
+            "pid": 20606,
+            "openUrl": "claude://code/continue?session=local_bb7da4e5-d1f7-4ba4-b2aa-8dd8021e39a7",
+            "webUrl": "https://claude.ai/code/session_016mNVcEGnttEVda1aDtiDUK"
+          }
+        ],
+        "endedAgents": [
+          {
+            "tool": "claude-code",
+            "sessionId": "7c1f2a9e-5b3d-4e8a-9f60-2d4c8b1e7a35",
+            "cwd": "/Users/dev/Developer/stim/.worktrees/a4-running",
+            "title": "Add ended agent sessions",
+            "startedAt": "2026-09-25T01:05:00.000Z",
+            "lastActiveAt": "2026-09-25T02:40:00.000Z",
+            "webUrl": "https://claude.ai/code/session_01Hq8ZbR3vKx2mYtN6pLwD4c",
+            "endedAt": "2026-09-25T02:41:10.000Z"
+          }
+        ]
+      },
+      {
         "path": "/Users/dev/Developer/stim/.worktrees/a4-running/apps/mobile",
         "live": true,
         "phase": "live",
@@ -3601,6 +3686,55 @@
         }
       },
       {
+        "path": "/Users/dev/Developer/stim/.worktrees/a4-multi-device/apps/desktop",
+        "live": true,
+        "phase": "live",
+        "phaseSince": null,
+        "memoryMb": 180,
+        "warnings": [],
+        "issues": [],
+        "worktree": {
+          "path": "/Users/dev/Developer/stim/.worktrees/a4-multi-device",
+          "branch": "feat/1686-web-agent-actions",
+          "repository": "/Users/dev/Developer/stim",
+          "git": {
+            "changed": 3,
+            "untracked": 0,
+            "upstream": "origin/feat/1686-web-agent-actions",
+            "ahead": 2,
+            "behind": 0,
+            "mergedInto": null
+          }
+        },
+        "logs": {
+          "dir": "/Users/dev/.stim/workspaces/desktop-a4-multi-device/logs",
+          "errorsSinceMarker": 0
+        },
+        "macos": {
+          "launchId": "desktop-a4-multi-device",
+          "arguments": [],
+          "product": "Stim",
+          "bundle": "/Users/dev/Developer/stim/.worktrees/a4-multi-device/apps/desktop/.build/Stim.app",
+          "bundleId": "com.appandflow.stim.desktop",
+          "executable": "/Users/dev/Developer/stim/.worktrees/a4-multi-device/apps/desktop/.build/Stim.app/Contents/MacOS/Stim",
+          "build": {
+            "state": "ok",
+            "startedAt": "2026-09-25T04:20:00.000Z",
+            "finishedAt": "2026-09-25T04:20:04.000Z",
+            "durationMs": 4000
+          },
+          "state": "running"
+        },
+        "disk": {
+          "worktreeBytes": 1900000000,
+          "nodeModulesBytes": 900000000,
+          "buildBytes": 50000000,
+          "measuredAt": "2026-09-25T04:20:09.012Z"
+        },
+        "agents": [],
+        "endedAgents": []
+      },
+      {
         "path": "/Users/dev/Developer/stim/.worktrees/a4-multi-device/apps/mobile",
         "macos": {
           "launchId": "6f1d2c7a-3b8e-4c55-9a0e-5d7b1c2e9f10",
@@ -4188,6 +4322,7 @@
     "environments[path*=a4-ready]: added by hand in the shape stim status --json reports for a worktree stim worktree warm prepared that never built or ran, with an open pull request whose checks all pass",
     "environments[path*=a4-running].agents and environments[path*=1123-mobile-app].agents: added by hand in the AgentSession shape; the capture predates the field. The a4-running session carries a webUrl as a Remote Control session does",
     "environments[path*=a4-offloading], [path*=a4-offloaded] and [path*=a4-offload-fallback]: added by hand from a4-building and a4-running in the shapes #1876 added (the pods build also carries outcomeKnown and missProvisional, as #2180 added): an iOS build offloaded to janics-mac-mini:7869 in its pods step (build.placement), a last build that machine compiled (offloadedTo), and a local build after the machine was busy (offloadFallback)",
-    "environments[path*=a4-running].endedAgents and environments[path*=a4-ready].endedAgents: added by hand in the EndedAgentSession shape; the capture predates the field. a4-running has a running and an ended session; a4-ready has only ended ones, a Claude Code session with a webUrl and a Codex thread without one"
+    "environments[path*=a4-running].endedAgents and environments[path*=a4-ready].endedAgents: added by hand in the EndedAgentSession shape; the capture predates the field. a4-running has a running and an ended session; a4-ready has only ended ones, a Claude Code session with a webUrl and a Codex thread without one",
+    "environments[path*=a4-running|a4-multi-device]/apps/desktop: added by hand with a running MacosAppState and the same worktree as apps/mobile, to exercise the unified worktree page"
   ]
 }

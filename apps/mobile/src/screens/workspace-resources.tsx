@@ -20,6 +20,7 @@ import {
   workspaceUsage,
   type DiskPart,
 } from '@/lib/workspace-view';
+import { worktreeApps, worktreeDisk, worktreeHistory, worktreePage, worktreeUsage } from '@/lib/worktree-page';
 import { devicesOf, orderDevices } from '@/lib/workspaces';
 import type { MachineUsage } from '@/protocol/types';
 
@@ -46,16 +47,27 @@ export function WorkspaceResources({ path }: { path: string }) {
       </SheetScreen>
     );
   }
-  const usage = workspaceUsage(env, status?.machine);
+  const apps = worktreeApps(path, status?.environments ?? []);
+  const multi = apps.length > 1;
+  const leadPath = worktreePage({ path, environments: apps, entries: [], now }).lead;
+  const lead = multi ? apps.find((app) => app.path === leadPath)! : env;
+  const usage = multi ? worktreeUsage(apps, status?.machine) : workspaceUsage(env, status?.machine);
   const devices = orderDevices(devicesOf(env));
-  const stage = workspaceStage(env, devices, now);
-  const rows = processRows(env, devices, status?.machine);
-  const series = workspaceSeries(history, path);
+  const stage = workspaceStage(lead, multi ? orderDevices(devicesOf(lead)) : devices, now);
+  const rows = multi
+    ? apps.flatMap((app) =>
+        processRows(app, orderDevices(devicesOf(app)), status?.machine).map((row) => ({
+          ...row,
+          key: `${app.path}\n${row.key}`,
+        })),
+      )
+    : processRows(env, devices, status?.machine);
+  const series = workspaceSeries(multi ? worktreeHistory(history, apps) : history, multi ? apps[0].path : path);
   const free = workspaceVolumeFree(machineUsage);
   const minutes = series?.minutes ?? 0;
   const peakCpu = series?.peakCpuPercent == null ? null : formatCpu(series.peakCpuPercent);
   const freeSpace = free === null ? '' : formatBytes(free);
-  const disk = diskParts(env);
+  const disk = diskParts(multi ? { ...env, disk: worktreeDisk(apps) } : env);
   return (
     <SheetScreen
       title={t`Status`}

@@ -119,8 +119,9 @@ performance traces. Every release is listed under
 - **Phones.** Pair the Stim phone app, and watch a leased phone from the
   desktop: Android can be controlled, an iPhone over USB is view only. Needs
   **Serve to phones**. The phone's workspace list groups app projects from one
-  linked Git checkout under one branch heading. Tap each app child for its own
-  devices, logs and commands. In the phone's **Work** sheet, **Changed** and
+  linked Git checkout under one branch heading. The heading and each app child
+  open one screen for the whole checkout, with every app's devices, builds,
+  logs and commands; a child scrolls to its app's devices. In the phone's **Work** sheet, **Changed** and
   **Untracked** open a file list; choosing a file shows staged/unstaged patches
   or new text. Diffs load only on demand, with virtualized lists, up to 200 files
   and a 256 KiB preview limit. Binary files and unsupported previews are labeled.

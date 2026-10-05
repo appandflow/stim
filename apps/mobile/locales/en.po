@@ -812,6 +812,10 @@ msgstr "Allow them in Settings to get notified when something needs attention."
 msgid "Also driven by {driver}"
 msgstr "Also driven by {driver}"
 
+#: src/hooks/workspace-actions.ts
+msgid "An action is already running."
+msgstr "An action is already running."
+
 #: src/lib/format.ts
 #: src/lib/format.ts
 msgid "an unknown tool"
@@ -944,6 +948,7 @@ msgstr "Budgets"
 #: src/lib/logs.ts
 #: src/lib/workspace-view.ts
 #: src/screens/build-details.tsx
+#: src/screens/build-details.tsx
 msgid "Build"
 msgstr "Build"
 
@@ -952,6 +957,10 @@ msgstr "Build"
 #: src/lib/workspace-view.ts
 msgid "Build failed"
 msgstr "Build failed"
+
+#: src/screens/build-details.tsx
+msgid "Build logs"
+msgstr "Build logs"
 
 #: src/screens/mac-status.tsx
 msgid "Build machines"
@@ -1133,6 +1142,8 @@ msgstr "Can control"
 
 #: src/hooks/app-update.ts
 #: src/screens/mac-list.tsx
+#: src/screens/workspace-detail.tsx
+#: src/screens/workspace-detail.tsx
 #: src/screens/workspace-detail.tsx
 #: src/screens/workspace-detail.tsx
 msgid "Cancel"
@@ -1498,6 +1509,7 @@ msgstr "Device view"
 #: src/lib/settings-options.ts
 #: src/screens/home.tsx
 #: src/screens/menu.tsx
+#: src/screens/workspace-detail.tsx
 #: src/screens/workspace-detail.tsx
 msgid "Devices"
 msgstr "Devices"
@@ -2007,6 +2019,7 @@ msgid "landscape"
 msgstr "landscape"
 
 #: src/screens/build-details.tsx
+#: src/screens/build-details.tsx
 msgid "Last build"
 msgstr "Last build"
 
@@ -2134,6 +2147,10 @@ msgstr "Logs"
 msgid "logs {logs}"
 msgstr "logs {logs}"
 
+#: src/screens/workspace-detail.tsx
+msgid "Logs for which app?"
+msgstr "Logs for which app?"
+
 #: src/lib/machine-report.ts
 msgid "Logs of {workspace}"
 msgstr "Logs of {workspace}"
@@ -2178,6 +2195,8 @@ msgid "macOS app"
 msgstr "macOS app"
 
 #: src/components/workspace-cards.tsx
+#: src/screens/workspace-detail.tsx
+#: src/screens/workspace-detail.tsx
 msgid "macOS build: {state}"
 msgstr "macOS build: {state}"
 
@@ -2269,6 +2288,10 @@ msgstr "Modifiers apply to one letter or digit at a time. Use the extra keys for
 #: src/screens/workspace-detail.tsx
 msgid "More"
 msgstr "More"
+
+#: src/screens/workspace-detail.tsx
+msgid "More..."
+msgstr "More..."
 
 #: src/screens/device-view.tsx
 msgid "Moving..."
@@ -2398,6 +2421,7 @@ msgstr "No Bundler"
 msgid "No checks"
 msgstr "No checks"
 
+#: src/screens/workspace-detail.tsx
 #: src/screens/workspace-detail.tsx
 msgid "No device in this workspace yet."
 msgstr "No device in this workspace yet."
@@ -2570,6 +2594,7 @@ msgid "Nothing in this workspace is using CPU or memory now."
 msgstr "Nothing in this workspace is using CPU or memory now."
 
 #: src/screens/workspace-detail.tsx
+#: src/screens/workspace-detail.tsx
 msgid "Nothing is running. Ask your agent to run the app."
 msgstr "Nothing is running. Ask your agent to run the app."
 
@@ -2666,6 +2691,7 @@ msgid "on {macName}"
 msgstr "on {macName}"
 
 #: src/screens/build-details.tsx
+#: src/screens/build-details.tsx
 msgid "on {remoteHost}"
 msgstr "on {remoteHost}"
 
@@ -2731,6 +2757,10 @@ msgstr "Opens {name}"
 #: src/components/workspace-cards.tsx
 msgid "Opens build logs"
 msgstr "Opens build logs"
+
+#: src/components/workspace-row.tsx
+msgid "Opens every app in this checkout"
+msgstr "Opens every app in this checkout"
 
 #: src/components/workspace-cards.tsx
 msgid "Opens the logs"
@@ -3016,6 +3046,7 @@ msgstr "Refuses to run"
 msgid "Reload"
 msgstr "Reload"
 
+#: src/screens/workspace-detail.tsx
 #: src/screens/workspace-detail.tsx
 msgid "Reload which app?"
 msgstr "Reload which app?"
@@ -3368,6 +3399,7 @@ msgid "Stale {idleDays}d"
 msgstr "Stale {idleDays}d"
 
 #: src/screens/build-details.tsx
+#: src/screens/build-details.tsx
 msgid "started {startedAge} ago"
 msgstr "started {startedAge} ago"
 
@@ -3494,6 +3526,10 @@ msgid "stim status reports no workspaces."
 msgstr "stim status reports no workspaces."
 
 #: src/screens/workspace-detail.tsx
+msgid "Stim stops every app in this worktree."
+msgstr "Stim stops every app in this worktree."
+
+#: src/screens/workspace-detail.tsx
 msgid "Stim stops Metro and shuts down this workspace's simulators and emulators."
 msgstr "Stim stops Metro and shuts down this workspace's simulators and emulators."
 
@@ -3514,6 +3550,19 @@ msgstr "Stop"
 #: src/screens/workspace-detail.tsx
 msgid "Stop {title}?"
 msgstr "Stop {title}?"
+
+#: src/screens/workspace-detail.tsx
+#: src/screens/workspace-detail.tsx
+msgid "Stop all"
+msgstr "Stop all"
+
+#: src/screens/workspace-detail.tsx
+msgid "Stop all apps?"
+msgstr "Stop all apps?"
+
+#: src/screens/workspace-detail.tsx
+msgid "Stop which app?"
+msgstr "Stop which app?"
 
 #: src/components/workspace-cards.tsx
 #: src/screens/logs.tsx

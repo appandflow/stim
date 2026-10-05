@@ -9,9 +9,9 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { Collapsible, DisclosureChevron } from '@/components/collapsible';
 import { Icon } from '@/components/icon';
-import { ListSection, SectionHeader } from '@/components/list';
+import { ListRow, ListSection, SectionHeader } from '@/components/list';
 import { PlatformGlyph } from '@/components/platform-glyph';
-import { SheetScreen } from '@/components/sheet-screen';
+import { SheetScreen, type SheetScreenProps } from '@/components/sheet-screen';
 import { Text } from '@/components/text';
 import { Touch } from '@/components/touch';
 import { withAlpha } from '@/design/color';
@@ -30,6 +30,7 @@ import {
   nextBuild,
   planDetail,
   buildTiming,
+  macosBuildLabel,
   recheckNote,
 } from '@/lib/format';
 import { relativeTo, tildeHome } from '@/lib/paths';
@@ -45,6 +46,7 @@ import {
   type PhaseStep,
   type RemoteBuild,
 } from '@/lib/workspace-view';
+import { buildEntries, worktreeApps, worktreePage } from '@/lib/worktree-page';
 import { workspaceTitleAt } from '@/lib/workspace-names';
 import { devicesOf, platformName, runningBuild } from '@/lib/workspaces';
 import type {
@@ -55,6 +57,7 @@ import type {
   BuildReport,
   LastBuild,
   Platform,
+  DevicePlatform,
 } from '@/protocol/types';
 
 const CHANGE_MARK: Record<BuildMissChange['change'], string> = { added: '+', removed: '\u2212', changed: '~' };
@@ -77,11 +80,118 @@ const SWITCH_INSET = 3;
 const PILL_SPRING: Transition = { type: 'spring', damping: 33, stiffness: 260, mass: 1 };
 const LABEL_FADE: Transition = { type: 'timing', duration: 180, easing: 'easeInOut' };
 
-/**
- * One workspace's builds, with a switch between iOS and Android: the running build's phases and output, the last
- * build, recent runs, and what the next would do.
- */
-export function BuildDetails({ path, platform: initial }: { path: string; platform: Platform }) {
+export function BuildDetails({ path, platform }: { path: string; platform: Platform | 'macos' }) {
+  const status = useStatus();
+  const apps = worktreeApps(path, status?.environments ?? []);
+  if (apps.length < 2) return <NativeBuildDetails path={path} platform={platform === 'android' ? 'android' : 'ios'} />;
+  return <WorktreeBuildDetails key={`${path}:${platform}`} path={path} platform={platform} />;
+}
+
+function WorktreeBuildDetails({ path, platform }: { path: string; platform: Platform | 'macos' }) {
+  const status = useStatus();
+  const { mac } = useMacConnection();
+  const router = useRouter();
+  const apps = worktreeApps(path, status?.environments ?? []);
+  const now = useNow(apps.some((app) => runningBuild(app) !== null) ? 1000 : 30_000);
+  const entries = buildEntries(apps, true);
+  const [selected, setSelected] = useState(`${path}\n${platform}`);
+  const active = entries.find((entry) => `${entry.path}\n${entry.platform}` === selected) ?? entries[0];
+  const subtitles = worktreePage({ path, environments: apps, entries, now }).subtitles;
+  const switcher = (
+    <PlatformSwitch
+      value={active ? `${active.path}\n${active.platform}` : selected}
+      onChange={setSelected}
+      building={null}
+      entries={entries.map((entry, i) => ({
+        key: `${entry.path}\n${entry.platform}`,
+        platform: entry.platform,
+        project: subtitles[i],
+        building:
+          entry.platform === 'macos'
+            ? entry.env.macos?.build.state === 'running'
+            : runningBuild(entry.env)?.platform === entry.platform,
+      }))}
+    />
+  );
+  const app = active?.env.macos;
+  const build = active ? runningBuild(active.env) : null;
+  const running = build?.platform === active?.platform ? build : null;
+  const target =
+    active && running
+      ? devicesOf(active.env).find((device) => device.platform === active.platform && device.slot === running.slot)
+      : null;
+  const remote = running ? remoteBuild(running, now) : null;
+  const remoteHost = remote?.host ?? '';
+  const startedAge = running ? formatDuration(Math.max(0, now - Date.parse(running.startedAt))) : '';
+  const state = app ? macosBuildLabel(app) : '';
+  return (
+    <SheetScreen
+      title={t`Build`}
+      subtitle={
+        running
+          ? [
+              target ? deviceTitle(target).name : null,
+              remote ? t`on ${remoteHost}` : null,
+              t`started ${startedAge} ago`,
+            ]
+              .filter(Boolean)
+              .join(' \u00B7 ')
+          : undefined
+      }
+    >
+      {switcher}
+      {active?.platform === 'macos' && app ? (
+        <>
+          <Section title={t`Last build`}>
+            <Text variant="body" weight="semibold">
+              {app.product}
+            </Text>
+            <Text tone={app.build.state === 'failed' ? 'error' : 'secondary'}>{state}</Text>
+            {app.build.durationMs === undefined ? null : <Note>{formatDuration(app.build.durationMs)}</Note>}
+            {app.build.error ? (
+              <Text tone="error" selectable>
+                {app.build.error}
+              </Text>
+            ) : null}
+          </Section>
+          <ListSection>
+            <ListRow
+              title={t`Build logs`}
+              accessory="chevron"
+              onPress={() =>
+                router.push({
+                  pathname: '/mac/[id]/logs',
+                  params: { id: mac?.id ?? '', path: active.path, source: 'build' },
+                })
+              }
+            />
+          </ListSection>
+        </>
+      ) : active && active.platform !== 'macos' ? (
+        <NativeBuildDetails
+          key={`${active.path}:${active.platform}`}
+          path={active.path}
+          platform={active.platform}
+          embedded
+        />
+      ) : null}
+    </SheetScreen>
+  );
+}
+
+function BuildContainer({ embedded, ...props }: SheetScreenProps & { embedded?: boolean }) {
+  return embedded ? <>{props.children}</> : <SheetScreen {...props} />;
+}
+
+function NativeBuildDetails({
+  path,
+  platform: initial,
+  embedded,
+}: {
+  path: string;
+  platform: Platform;
+  embedded?: boolean;
+}) {
   const { theme } = useUnistyles();
   const status = useStatus();
   const env = status?.environments.find((e) => e.path === path);
@@ -111,7 +221,8 @@ export function BuildDetails({ path, platform: initial }: { path: string; platfo
     planned && planned.expectedMs !== null && !planned.refusal ? clockDuration(planned.expectedMs) : null;
   const checkedAge = checkedAt === null ? '' : formatDuration(now - checkedAt);
   return (
-    <SheetScreen
+    <BuildContainer
+      embedded={embedded}
       title={t`Build`}
       subtitle={
         running
@@ -125,11 +236,13 @@ export function BuildDetails({ path, platform: initial }: { path: string; platfo
           : undefined
       }
     >
-      <PlatformSwitch
-        value={platform}
-        onChange={setPlatform}
-        building={building?.platform === 'ios' || building?.platform === 'android' ? building.platform : null}
-      />
+      {embedded ? null : (
+        <PlatformSwitch
+          value={platform}
+          onChange={(value) => setPlatform(value as Platform)}
+          building={building?.platform === 'ios' || building?.platform === 'android' ? building.platform : null}
+        />
+      )}
 
       {running ? <RunningBuild build={running} path={path} history={history} now={now} /> : null}
 
@@ -225,7 +338,7 @@ export function BuildDetails({ path, platform: initial }: { path: string; platfo
           </Text>
         ) : null}
       </Section>
-    </SheetScreen>
+    </BuildContainer>
   );
 }
 
@@ -233,15 +346,20 @@ function PlatformSwitch({
   value,
   onChange,
   building,
+  entries: suppliedEntries,
 }: {
-  value: Platform;
-  onChange: (platform: Platform) => void;
+  value: string;
+  onChange: (key: string) => void;
   building: Platform | null;
+  entries?: { key: string; platform: DevicePlatform; project: string | null; building: boolean }[];
 }) {
   const { theme } = useUnistyles();
   const reduceMotion = useReducedMotion();
   const [width, setWidth] = useState(0);
-  const segmentWidth = (width - 2 * SWITCH_INSET) / PLATFORMS.length;
+  const entries =
+    suppliedEntries ??
+    PLATFORMS.map((platform) => ({ key: platform, platform, project: null, building: building === platform }));
+  const segmentWidth = (width - 2 * SWITCH_INSET) / entries.length;
   return (
     <View
       style={styles.switch}
@@ -250,22 +368,22 @@ function PlatformSwitch({
     >
       {width > 0 ? (
         <EaseView
-          animate={{ translateX: PLATFORMS.indexOf(value) * segmentWidth }}
+          animate={{ translateX: entries.findIndex((entry) => entry.key === value) * segmentWidth }}
           transition={reduceMotion ? { type: 'none' } : PILL_SPRING}
           style={[styles.pill, { width: segmentWidth, backgroundColor: theme.colors.background }]}
         />
       ) : null}
-      {PLATFORMS.map((platform) => {
-        const selected = platform === value;
-        const label = platformName(platform);
+      {entries.map(({ key, platform, project, building: running }) => {
+        const selected = key === value;
+        const label = [platformName(platform), project].filter(Boolean).join(', ');
         return (
           <Touch
-            key={platform}
-            onPress={() => onChange(platform)}
+            key={key}
+            onPress={() => onChange(key)}
             accessibilityRole="tab"
             accessibilityState={{ selected }}
-            accessibilityLabel={building === platform ? t`${label}, building` : label}
-            style={styles.segment}
+            accessibilityLabel={running ? t`${label}, building` : label}
+            style={[styles.segment, entries.some((entry) => entry.project) && styles.segmentTall]}
           >
             {[false, true].map((layerSelected) => (
               <EaseView
@@ -282,10 +400,21 @@ function PlatformSwitch({
                   color={layerSelected ? theme.colors.text : theme.colors.secondary}
                   background={layerSelected ? theme.colors.background : theme.colors.raised}
                 />
-                <Text variant="footnote" weight="semibold" tone={layerSelected ? 'default' : 'secondary'}>
-                  {platformName(platform)}
-                </Text>
-                {building === platform ? <View style={styles.buildingDot} /> : null}
+                {project ? (
+                  <View style={styles.segmentProject}>
+                    <Text variant="footnote" weight="semibold" tone={layerSelected ? 'default' : 'secondary'}>
+                      {platformName(platform)}
+                    </Text>
+                    <Text testID="project-subtitle" variant="caption2" tone="secondary" numberOfLines={1}>
+                      {project}
+                    </Text>
+                  </View>
+                ) : (
+                  <Text variant="footnote" weight="semibold" tone={layerSelected ? 'default' : 'secondary'}>
+                    {platformName(platform)}
+                  </Text>
+                )}
+                {running ? <View style={styles.buildingDot} /> : null}
               </EaseView>
             ))}
           </Touch>
@@ -702,6 +831,8 @@ const styles = StyleSheet.create((theme) => ({
     borderCurve: 'continuous',
   },
   segment: { flex: 1, height: 32 },
+  segmentTall: { height: 50 },
+  segmentProject: { flexShrink: 1, alignItems: 'center' },
   segmentLabel: {
     flex: 1,
     flexDirection: 'row',
