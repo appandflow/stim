@@ -546,7 +546,7 @@ file starts at most 4 MiB before its end. A page holds at most 1 MiB; a file tha
 rotated since the cursor is read from the end of its previous generation. The
 session's own client only, for macOS sessions, and also after the session stopped,
 because stop keeps logs. Servers that predate it answer `forbidden` or
-`bad-request`.
+`unknown-method`.
 
 macOS sessions refuse Metro. Viewing and control are supported while the hosted
 app is running. CLI placement and client view/control relays remain follow-ups in [#2403](https://github.com/appandflow/stim/issues/2403).

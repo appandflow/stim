@@ -5,7 +5,6 @@ import { isJsonObject } from './json-file.ts';
 import { logFiles } from './logs-query.ts';
 import { parseNdjsonText, type NdjsonRecord } from './ndjson.ts';
 
-/** How far a client has read each NDJSON log file of a hosted session: the byte offset after its last complete line. */
 export type HostedLogsCursor = Record<string, number>;
 
 export interface HostedLogsPage {
@@ -32,7 +31,6 @@ export function parseHostedLogsCursor(value: unknown): HostedLogsCursor | null {
   return cursor;
 }
 
-/** The log directory of the macOS app a hosted session runs, under that session's isolated Stim home. */
 export function hostedMacosLogsDir(home: string): string | null {
   try {
     return join(home, 'workspaces', workspaceName(realpathSync(join(home, 'macos-app'))), 'logs');
@@ -52,10 +50,6 @@ function readSpan(path: string, from: number, to: number): Buffer {
   }
 }
 
-/**
- * The complete lines of `path` from `from`, at most `limit` bytes of them. `from` may fall inside a line when the
- * caller skipped the start of a large file; that partial line is dropped.
- */
 function readLines(
   path: string,
   from: number,

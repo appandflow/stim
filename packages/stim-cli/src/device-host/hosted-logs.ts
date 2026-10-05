@@ -28,7 +28,6 @@ function readCursor(root: string, session: string): HostedLogsCursor | undefined
 const sameCursor = (a: HostedLogsCursor | undefined, b: HostedLogsCursor | undefined): boolean =>
   JSON.stringify(Object.entries(a ?? {}).toSorted()) === JSON.stringify(Object.entries(b ?? {}).toSorted());
 
-/** Appends one page and its cursor unless another `stim logs` already advanced past `before`. */
 function commitPage(
   root: string,
   session: string,
@@ -36,6 +35,7 @@ function commitPage(
   records: Record<string, unknown>[],
   cursor: HostedLogsCursor,
 ): void {
+  if (!records.length && sameCursor(before, cursor)) return;
   const directory = macosDir(root);
   withDirLock(
     join(directory, 'host-logs.lock'),
@@ -65,10 +65,6 @@ function commitPage(
   );
 }
 
-/**
- * Copies the hosted app's captured logs that this workspace has not copied yet from the host into
- * `logs/macos-host.ndjson`, so `stim logs` and everything that reads the workspace logs treat them like local ones.
- */
 export async function pullHostedMacosLogs(
   root: string,
   placement: HostedMacosPlacement,
@@ -80,7 +76,10 @@ export async function pullHostedMacosLogs(
       session: placement.session,
       ...(before ? { cursor: before } : {}),
     });
-    if ('error' in reply) throw new Error(`${host.machine} refused device-host.logs.query: ${reply.error.message}`);
+    if ('error' in reply)
+      throw Object.assign(new Error(`${host.machine} refused device-host.logs.query: ${reply.error.message}`), {
+        code: reply.error.code,
+      });
     const result = reply.result;
     const cursor = isJsonObject(result) ? parseHostedLogsCursor(result.cursor) : null;
     if (

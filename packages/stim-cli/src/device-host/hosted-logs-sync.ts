@@ -14,7 +14,6 @@ function warning(machine: string, error: unknown): string {
   );
 }
 
-/** One `stim logs` pass: connects, copies, disconnects. A host that cannot answer costs a warning, not the command. */
 export async function syncHostedMacosLogs(root: string, placement: HostedMacosPlacement): Promise<boolean> {
   let host: HostConnection | undefined;
   try {
@@ -29,19 +28,20 @@ export async function syncHostedMacosLogs(root: string, placement: HostedMacosPl
   }
 }
 
-/**
- * Keeps copying for `stim logs --follow` over one connection, reconnecting after a failure and warning once per
- * outage, until the workspace no longer records a hosted app. Returns its stop function.
- */
 export function followHostedMacosLogs(
   root: string,
-  { failing = false, intervalMs = 500 }: { failing?: boolean; intervalMs?: number } = {},
+  {
+    failing = false,
+    intervalMs = 500,
+    retryMs = 5000,
+  }: { failing?: boolean; intervalMs?: number; retryMs?: number } = {},
 ): () => void {
   let host: HostConnection | undefined;
+  let retryAt = 0;
   let stopped = false;
   let running = false;
   const tick = async () => {
-    if (running || stopped) return;
+    if (running || stopped || Date.now() < retryAt) return;
     running = true;
     try {
       const placement = readMacosRecord(root)?.host;
@@ -58,6 +58,7 @@ export function followHostedMacosLogs(
       host = undefined;
       if (!failing) process.stderr.write(`${warning(readMacosRecord(root)?.host?.machine ?? 'the host', error)}\n`);
       failing = true;
+      retryAt = Date.now() + retryMs;
     } finally {
       running = false;
     }

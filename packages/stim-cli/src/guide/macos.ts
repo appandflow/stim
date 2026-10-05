@@ -174,7 +174,7 @@ workspace's logs/macos-host.ndjson and prints them with the local records.
 stim stop copies the last ones, including the exit record, before it forgets the
 placement, so the logs stay readable after stop. A host that cannot answer, because
 it is unreachable or runs a stim-server that predates this, costs one stderr
-warning; stdout still carries the records already copied, so logs --json stays
+warning (after up to 10 seconds of connecting); stdout still carries the records already copied, so logs --json stays
 valid NDJSON. The host's unified log is not collected: os.Logger output that is
 not written to stderr does not appear.
 

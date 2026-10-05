@@ -19,7 +19,7 @@ import { WebSocketServer } from 'ws';
 import { deviceHostMachinesFile, macosAppState, readMacosRecord, type MacosAppRecord } from '@stim-cli/core/state';
 import logsCommand from '../commands/logs.ts';
 import macosCommand, { runMacos } from '../commands/macos.ts';
-import { syncHostedMacosLogs } from '../device-host/hosted-logs-sync.ts';
+import { followHostedMacosLogs, syncHostedMacosLogs } from '../device-host/hosted-logs-sync.ts';
 import { agentRemoteConfig, probeHostedMacos, type HostedMacosProbe } from '../device-host/hosted-macos.ts';
 import { applyHostedMacosProbe, readHostedMacosStatus } from '../device-host/hosted-macos-status.ts';
 import { reclaimProject } from '../devices/reclaim.ts';
@@ -28,6 +28,7 @@ import { stopMacosApp } from '../macos/stop.ts';
 import { BuildConnection } from '../offload/client.ts';
 import { getConfigPath } from '../workspace/config.ts';
 import { workspaceInUse } from '../workspace/in-use.ts';
+import { workspaceLogsDir } from '../workspace/paths.ts';
 
 const tailnet = { port: 0, nodeId: 'nMini' };
 
@@ -727,6 +728,30 @@ describe.skipIf(process.platform !== 'darwin')('stim macos --host (SwiftPM and c
       expect(result.out).toEqual([]);
       expect(result.err).toContain('Could not read the app');
       expect(result.err).toContain('needs read access');
+    });
+
+    test('follow keeps copying, warns once per outage and recovers', async () => {
+      await runMacos(root, () => {}, 'mini');
+      host.logs.push(clientRecord(1));
+      const stderr = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+      const stop = followHostedMacosLogs(root, { intervalMs: 10, retryMs: 10 });
+      try {
+        const copied = () => {
+          const file = join(workspaceLogsDir(root), 'macos-host.ndjson');
+          return existsSync(file) ? readFileSync(file, 'utf8').split('\n').filter(Boolean).length : 0;
+        };
+        await vi.waitFor(() => expect(copied()).toBe(1));
+        host.logsRefused = true;
+        await vi.waitFor(() => expect(stderr).toHaveBeenCalledTimes(1));
+        await new Promise((done) => setTimeout(done, 100));
+        expect(stderr).toHaveBeenCalledTimes(1);
+        host.logsRefused = false;
+        host.logs.push(clientRecord(2));
+        await vi.waitFor(() => expect(copied()).toBe(2));
+      } finally {
+        stop();
+        stderr.mockRestore();
+      }
     });
 
     test('stop copies the last records before it forgets the placement', async () => {
