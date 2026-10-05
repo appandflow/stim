@@ -1343,12 +1343,15 @@ by its development launch arguments. **Window > SwiftUI Playground** opens the
 in-memory screen fixtures. Inspect compiler
 output with `stim logs --source build`, and use `stim stop` to stop only that
 workspace's recorded app. The normal Desktop viewer shows its app/build state,
-logs and one local owned main window using existing Screen & System Audio Recording permission (Screen Recording on macOS 14).
-Contained utility windows are supported; disjoint app windows refuse capture.
+logs and the local owned app's front window using existing Screen & System Audio Recording permission (Screen Recording on macOS 14).
+The preview follows the app's front standard window, with any attached sheet, as the
+app opens, switches, closes or resizes windows; without Device Control and Data Access
+permission it shows only an app whose one window contains the others. The selection
+is shared with stim-server's helper (`OwnedAppWindows` and `OwnedAppWindowReader` in StimKit).
 The viewer skips its own process to prevent recursive previews.
 **Open app** verifies and activates that owned app using existing Device Control and
 Data Access permission (Accessibility on macOS 26 and earlier) for normal native input;
-the captured view is read-only. Background input relay is not included. Use **Refresh preview** after the app window opens or is resized. No permission requests or custom packaging
+the captured view is read-only. Background input relay is not included. No permission requests or custom packaging
 script is part of the build flow.
 
 On the first native viewer opening, one **Native app viewer** setup screen explains

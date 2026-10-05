@@ -17,6 +17,7 @@ import {
   FRAME_EDGE,
   FRAME_FPS,
   type DeviceFrameArtwork,
+  type MacosWindow,
   type SimulatorCommand,
   type SimulatorOptions,
 } from './protocol.ts';
@@ -50,6 +51,27 @@ const VIDEO_MESSAGE = 3;
 const RECORD_MESSAGE = 4;
 const VIDEO_HEADER_BYTES = 14;
 const KEYFRAME_INTERVAL_MS = 250;
+
+function parseMacosWindow(value: unknown): MacosWindow | null {
+  if (!isJsonObject(value) || !isJsonObject(value.frame)) return null;
+  const { id, title } = value;
+  const { x, y, width, height } = value.frame;
+  if (
+    typeof id !== 'number' ||
+    !Number.isInteger(id) ||
+    id < 0 ||
+    typeof title !== 'string' ||
+    typeof x !== 'number' ||
+    typeof y !== 'number' ||
+    typeof width !== 'number' ||
+    typeof height !== 'number' ||
+    ![x, y, width, height].every(Number.isFinite) ||
+    width < 0 ||
+    height < 0
+  )
+    return null;
+  return { id, title, frame: { x, y, width, height } };
+}
 
 export function adbPath(env: NodeJS.ProcessEnv): string {
   for (const sdk of [env.ANDROID_HOME, env.ANDROID_SDK_ROOT, join(env.HOME ?? homedir(), 'Library/Android/sdk')]) {
@@ -225,6 +247,7 @@ export class HelperSource {
   private lastDuo: Frame | null = null;
   private duoAvailable = false;
   private artwork: DeviceFrameArtwork | null | undefined;
+  private windows: { current: MacosWindow | null; windows: MacosWindow[] } | undefined;
   private config = '';
   private stopped = false;
   private notice: string | null = null;
@@ -289,6 +312,7 @@ export class HelperSource {
     this.listeners.set(listener, hint);
     this.configure();
     if (this.artwork !== undefined) listener.artwork?.(this.artwork);
+    if (this.windows !== undefined) listener.windows?.(this.windows);
     if (listener.video) this.keyframe();
     else if (listener.duo && this.lastDuo && this.duoAvailable) listener.duo(this.lastDuo);
     else if (this.last && !listener.record) listener.frame(this.last);
@@ -503,6 +527,17 @@ export class HelperSource {
   private readNotice(text: string): void {
     try {
       const notice: unknown = JSON.parse(text);
+      if (isJsonObject(notice) && isJsonObject(notice.macosWindows)) {
+        const value = notice.macosWindows;
+        if (Array.isArray(value.windows)) {
+          const windows = value.windows.map(parseMacosWindow);
+          const current = value.current === null ? null : parseMacosWindow(value.current);
+          if ((value.current === null || current !== null) && windows.every((window) => window !== null)) {
+            this.windows = { current, windows };
+            for (const listener of this.listeners.keys()) listener.windows?.(this.windows);
+          }
+        }
+      }
       if (isJsonObject(notice) && typeof notice.duoAvailable === 'boolean') {
         this.duoAvailable = notice.duoAvailable;
         if (!this.duoAvailable) this.lastDuo = null;

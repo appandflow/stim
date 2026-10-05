@@ -288,6 +288,12 @@ it('routes hosted frames and video to the local subscription and forwards keyfra
   expect(packet.readUInt16BE(16)).toBe(800);
   expect(packet.readUInt16BE(18)).toBe(600);
   expect(packet.subarray(21 + packet[20]!)).toEqual(Buffer.from([0, 0, 1, 101, 99]));
+  const upstream = requests.find((request) => request.method === 'device-host.frames.subscribe')!.socket;
+  const window = { id: 7, title: 'Hosted app', frame: { x: -100, y: 0, width: 800, height: 600 } };
+  const windowsEvent = { event: 'macos-windows', current: window, windows: [window] };
+  upstream.send(JSON.stringify({ event: 'macos-windows', subscription: 'unrelated', current: null, windows: [] }));
+  upstream.send(JSON.stringify({ ...windowsEvent, subscription: UPSTREAM }));
+  expect(await local.next()).toEqual({ ...windowsEvent, subscription });
   expect(await local.request('frames.keyframe', { subscription })).toMatchObject({ result: {} });
   expect(requests.find((request) => request.method === 'device-host.frames.subscribe')?.params).toEqual({
     session: HOST_SESSION,

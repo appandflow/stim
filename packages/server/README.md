@@ -993,12 +993,24 @@ Events are `{ "event", "subscription", ... }`.
   housing in this path. Artwork notices stay within the helper's 16 MiB message
   limit; the combined PNG layers are limited to 10 MiB before base64 encoding.
 
-  With `macos`, it serves the one visible window of the workspace's verified
+  With `macos`, it serves the front standard window of the workspace's verified
   running native app, in the default slot, when hello advertises `macos-window`.
   The helper verifies the recorded PID, process start time, executable, bundle
   identifier and bundle path before starting and while capturing. ScreenCaptureKit
-  selects only that app's window; desktop capture and choosing between multiple
-  windows are unsupported. It requires existing Screen & System Audio Recording permission (Screen Recording on macOS 14) and
+  captures only that app's windows, never the desktop or another process. The
+  helper follows the app's main standard window (else its focused, else its
+  frontmost), with any attached sheet, by matching Accessibility windows to the
+  process's on-screen windows; it moves the stream when the app opens, switches,
+  closes or resizes windows. Without Device Control and Data Access permission it
+  serves only an app whose one window contains the others. A subscription fails
+  when the app has no open window at start; after the app closes its last window
+  the subscription gets `frame-delayed` until another opens. When hello
+  advertises `macos-windows`, the subscription also gets
+  `{ event: "macos-windows", subscription, current, windows }` after it starts and
+  whenever the windows change: `current` is the captured window or null, and
+  `windows` lists the app's on-screen standard windows front to back, each
+  `{ id, title, frame: { x, y, width, height } }` in points with a top-left global
+  origin. A hosted app's relay forwards the event with the local subscription. It requires existing Screen & System Audio Recording permission (Screen Recording on macOS 14) and
   never requests or resets grants. The local health payload sets `nativeViewerOpened` after a verified native view attaches, allowing the Desktop host to present its first-use Screen & System Audio Recording and Device Control and Data Access (Accessibility on macOS 26 and earlier) setup. Only explicit buttons in that host invoke normal OS requests. Capture refusal names setup and System Settings guidance; status and logs remain available. Native windows need the
   helper, have no screenshot fallback, recording or replay, and consume
   only the paired device's `read` capability.
@@ -1611,12 +1623,13 @@ sends reaches any other device.
   takeover, disconnect, revocation and five-minute idle rules; `lease` is null
   because CLI device locks do not cover macOS apps. Existing Device Control and
   Data Access permission (Accessibility on macOS 26 and earlier) is required, without permission requests or resets. Before each
-  action the helper verifies PID/start time/executable/bundle and the captured
-  window ID, size and matching sole standard Accessibility window. Modal dialogs or
-  disjoint windows, resizing and changed ownership refuse input. Contained
-  nonmodal auxiliaries are allowed. A sheet attached to the captured window takes focus
-  and pointer input; disjoint windows still refuse. A sheet larger than the captured
-  window is not supported. Events are
+  action the helper verifies PID/start time/executable/bundle and that the
+  captured window ID and size are still the app's front standard window. The app's
+  other windows are allowed. A modal dialog window and changed ownership refuse
+  input. Input that arrives while capture moves to another window is dropped with a
+  logged reason and Control continues. A sheet attached to the captured window
+  takes focus and pointer input. A sheet larger than the captured window is not
+  supported. Events are
   posted only to that PID; the desktop and other apps receive no input.
   `input.touch` maps normalized captured-window coordinates to mouse events.
   `input.scroll` takes normalized `x`, `y` and `deltaX`, `deltaY` in pixels,

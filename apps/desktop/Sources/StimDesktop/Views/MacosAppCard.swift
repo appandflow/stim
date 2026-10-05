@@ -187,17 +187,20 @@ private struct HostedMacosWindow: View {
 @MainActor private final class MacosWindowCapture: NSObject, ObservableObject, SCStreamDelegate, SCStreamOutput {
   @Published var image: CGImage?
   @Published var error: String?
+  @Published var windows: [OwnedAppWindows.Window] = []
+  @Published var current: OwnedAppWindows.Window?
   private var stream: SCStream?
   private var app: MacosApp?
   private var window: SCWindow?
+  private var follower: Task<Void, Never>?
   private let context = CIContext()
 
   func start(_ app: MacosApp) async {
     await stop()
     error = nil
     guard !Task.isCancelled else { return }
-    guard app.state == "running", matches(app) else { return }
-    guard app.app?.pid != getpid() else {
+    guard app.state == "running", matches(app), let pid = app.app?.pid else { return }
+    guard pid != getpid() else {
       error = "This is the viewer app. View its window from another Stim Desktop instance or your phone."
       return
     }
@@ -208,17 +211,47 @@ private struct HostedMacosWindow: View {
       return
     }
     self.app = app
+    await follow(app)
+    guard self.app?.launchId == app.launchId else { return }
+    follower = Task { [weak self] in
+      while !Task.isCancelled {
+        try? await Task.sleep(for: .milliseconds(500))
+        guard !Task.isCancelled, let self else { return }
+        await self.follow(app)
+      }
+    }
+  }
+
+  private func follow(_ app: MacosApp) async {
+    guard self.app?.launchId == app.launchId, let pid = app.app?.pid else { return }
+    let read = await Task.detached { Result { try OwnedAppWindowReader.selection(pid: pid) } }.value
+    guard self.app?.launchId == app.launchId, matches(app) else { return }
+    guard case .success(let found) = read else { return }
+    guard let selection = found else {
+      windows = []
+      current = nil
+      image = nil
+      error =
+        AXIsProcessTrusted()
+        ? "The app has no open window."
+        : "Without \(NativeViewerPermissions.shared.controlPermissionTitle), the preview needs one visible app window."
+      return
+    }
+    if windows != selection.windows { windows = selection.windows }
+    if stream != nil, let window, window.windowID == selection.current.id,
+      window.frame.size == selection.current.frame.size
+    {
+      if current != selection.current { current = selection.current }
+      return
+    }
     do {
       let content = try await SCShareableContent.excludingDesktopWindows(true, onScreenWindowsOnly: true)
-      guard !Task.isCancelled, self.app?.launchId == app.launchId, matches(app) else { return }
-      let windows = content.windows.filter { $0.owningApplication?.processID == app.app?.pid && $0.windowLayer == 0 }
-      let mainWindows = windows.filter { candidate in windows.allSatisfy { candidate.frame.contains($0.frame) } }
-      guard mainWindows.count == 1, let window = mainWindows.first else {
-        error = "This prototype needs one visible app window."
-        return
-      }
-      self.window = window
-      let filter = SCContentFilter(desktopIndependentWindow: window)
+      guard self.app?.launchId == app.launchId, matches(app),
+        let next = content.windows.first(where: {
+          $0.windowID == selection.current.id && $0.owningApplication?.processID == pid && $0.windowLayer == 0
+        })
+      else { return }
+      let filter = SCContentFilter(desktopIndependentWindow: next)
       let configuration = SCStreamConfiguration()
       configuration.width = Int((filter.contentRect.width * CGFloat(filter.pointPixelScale)).rounded(.up))
       configuration.height = Int((filter.contentRect.height * CGFloat(filter.pointPixelScale)).rounded(.up))
@@ -226,28 +259,53 @@ private struct HostedMacosWindow: View {
       configuration.minimumFrameInterval = CMTime(value: 1, timescale: 15)
       configuration.queueDepth = 3
       configuration.showsCursor = false
-      let stream = SCStream(filter: filter, configuration: configuration, delegate: self)
-      self.stream = stream
-      try stream.addStreamOutput(self, type: .screen, sampleHandlerQueue: .main)
-      try await stream.startCapture()
-    } catch { self.error = error.localizedDescription }
+      if let stream {
+        try await stream.updateContentFilter(filter)
+        try await stream.updateConfiguration(configuration)
+        guard self.app?.launchId == app.launchId, self.stream === stream else { return }
+      } else {
+        let stream = SCStream(filter: filter, configuration: configuration, delegate: self)
+        try stream.addStreamOutput(self, type: .screen, sampleHandlerQueue: .main)
+        try await stream.startCapture()
+        guard self.app?.launchId == app.launchId else {
+          try? await stream.stopCapture()
+          return
+        }
+        self.stream = stream
+      }
+      window = next
+      current = selection.current
+      error = nil
+    } catch {
+      if OwnedAppWindowReader.screen(pid: pid)?.contains(where: { $0.id == selection.current.id }) == true {
+        self.error = error.localizedDescription
+      }
+    }
   }
 
   func stop() async {
+    follower?.cancel()
+    follower = nil
     let old = stream
     stream = nil
     app = nil
     window = nil
     image = nil
+    windows = []
+    current = nil
     try? await old?.stopCapture()
   }
 
   nonisolated func stream(_ stream: SCStream, didStopWithError error: Error) {
     Task { @MainActor in
-      guard self.stream === stream else { return }
+      try? await Task.sleep(for: .milliseconds(500))
+      guard self.stream === stream, let pid = self.app?.app?.pid else { return }
       self.stream = nil
-      self.error = error.localizedDescription
       self.image = nil
+      if let id = self.window?.windowID, OwnedAppWindowReader.screen(pid: pid)?.contains(where: { $0.id == id }) == true {
+        self.follower?.cancel()
+        self.error = error.localizedDescription
+      }
     }
   }
 
@@ -291,52 +349,26 @@ private struct HostedMacosWindow: View {
   }
 
   func openApp() async {
-    guard let app, matches(app), let window, stream != nil else { return }
-    do {
-      let content = try await SCShareableContent.excludingDesktopWindows(true, onScreenWindowsOnly: true)
-      let windows = content.windows.filter { $0.owningApplication?.processID == app.app?.pid && $0.windowLayer == 0 }
-      guard self.app?.launchId == app.launchId, self.window?.windowID == window.windowID, stream != nil, matches(app),
-        windows.contains(where: { $0.windowID == window.windowID && $0.frame.size == window.frame.size }),
-        let process = app.app, let running = Self.runningApplication(process.pid)
-      else {
-        error = "Open app needs the same single owned window."
-        return
-      }
-      guard AXIsProcessTrusted() else {
-        error = "Allow \(NativeViewerPermissions.shared.controlPermissionTitle) in Permissions to open the captured app window."
-        return
-      }
-      let element = AXUIElementCreateApplication(process.pid)
-      var value: CFTypeRef?
-      guard AXUIElementCopyAttributeValue(element, kAXWindowsAttribute as CFString, &value) == .success,
-        let owned = value as? [AXUIElement]
-      else { return }
-      var mainWindows: [AXUIElement] = []
-      for own in owned {
-        var subrole: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(own, kAXSubroleAttribute as CFString, &subrole) == .success else { return }
-        if subrole as? String == kAXStandardWindowSubrole {
-          mainWindows.append(own)
-        } else if subrole as? String != kAXDialogSubrole {
-          error = "Open app needs one standard app window."
-          return
-        }
-      }
-      var title: CFTypeRef?
-      guard mainWindows.count == 1, let own = mainWindows.first,
-        AXUIElementCopyAttributeValue(own, kAXTitleAttribute as CFString, &title) == .success, title as? String == window.title,
-        matches(app)
-      else {
-        error = "Open app needs the captured standard window."
-        return
-      }
-      guard running.activate(options: [])
-      else {
-        error = "The owned app could not be activated."
-        return
-      }
-      error = nil
-    } catch { self.error = error.localizedDescription }
+    guard let app, matches(app), let window, stream != nil, let process = app.app,
+      let running = Self.runningApplication(process.pid)
+    else { return }
+    guard AXIsProcessTrusted() else {
+      error = "Allow \(NativeViewerPermissions.shared.controlPermissionTitle) in Permissions to open the captured app window."
+      return
+    }
+    let read = await Task.detached { try? OwnedAppWindowReader.selection(pid: process.pid) }.value
+    guard self.app?.launchId == app.launchId, self.window?.windowID == window.windowID, read?.current.id == window.windowID,
+      matches(app)
+    else {
+      error = "Open app needs the captured window in front."
+      return
+    }
+    guard running.activate(options: [])
+    else {
+      error = "The owned app could not be activated."
+      return
+    }
+    error = nil
   }
 }
 

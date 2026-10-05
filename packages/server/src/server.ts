@@ -66,6 +66,7 @@ import {
   REPLAY_RATES,
   type BuildPlanResult,
   type DeviceFrameArtwork,
+  type MacosWindow,
   type FramesSeekParams,
   type ErrorCode,
   type FrameTarget,
@@ -1173,6 +1174,13 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
           if (!ended) send(socket, { event: 'frame-delayed', subscription, delayed, ...(reason ? { reason } : {}) });
         },
         failed: end,
+        ...(frameTarget.platform === 'macos'
+          ? {
+              windows: ({ current, windows }: { current: MacosWindow | null; windows: MacosWindow[] }) => {
+                if (!ended) send(socket, { event: 'macos-windows', subscription, current, windows });
+              },
+            }
+          : {}),
         ...(wantsDuo ? { duo: (frame: Frame) => delivery.push(frame) } : {}),
         ...(wantsArtwork
           ? {
