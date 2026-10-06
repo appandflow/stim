@@ -121,8 +121,8 @@ To learn whether the next build is a cache hit and how long it should take,
 without building, run stim ios --plan (or stim android --plan); see stim guide
 lifecycle builds.
 
-Agents never set up build or hosting machines, set STIM_ACCESS_TICKET,
-run stim-server setup, or approve requests. Read stim guide settings for
+Agents never set STIM_ACCESS_TICKET, run stim-server setup, edit offload.*
+or hosting.* for the user, or approve requests. Read stim guide settings for
 Desktop access tickets and person-owned approval.
 Read stim guide settings to select a build machine. Keep a requested named
 placement when recovering STIM_OFFLOAD_REFUSED: report its reason and remedy.

@@ -14,7 +14,7 @@ import {
 } from '@stim-cli/core/state';
 import type { Finding } from '../diagnostics/doctor.ts';
 import { withDirLock } from '../dir-lock.ts';
-import { readAccessTicket } from '../offload/access-ticket.ts';
+import { readAccessTicket, readHostPermissions } from '../offload/access-ticket.ts';
 import {
   endpoint,
   findPeer,
@@ -295,7 +295,7 @@ export async function inspectDeviceHostMachines(
             credentials = credentials.map((each) => (each.machine === machine ? { ...each, state: 'approved' } : each));
             store(credentials);
           }
-          const host = reply.result.host;
+          const host = readHostPermissions(reply.result.host);
           if (host && (host.screenRecording === false || host.accessibility === false)) {
             const panes = [
               ...(host.screenRecording === false

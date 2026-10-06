@@ -797,9 +797,9 @@ test('access ticket guidance routes agents to settings and reserves setup for a 
   for (const topic of ['agent', 'settings']) {
     const body = renderTopic(topic);
     expect(body).toContain(env);
-    expect(body).toMatch(/Agents never set up/i);
+    expect(body).toMatch(/Agents never set/i);
     expect(body).toContain('stim-server setup');
-    expect(body).toMatch(/never approve|or approve/);
+    expect(body).toMatch(/never approve requests|or approve requests/);
   }
   expect(renderTopic('agent')).toContain('stim guide settings');
 });

@@ -94,7 +94,7 @@ describe('inspectBuildMachines', () => {
 
   it('never sends the token to a node other than the pinned one', async () => {
     await inspectBuildMachines({ fix: true }, fakeIo('nMini', [pending]).io, ['mini']);
-    vi.stubEnv('STIM_ACCESS_TICKET', 'new-ticket');
+    vi.stubEnv('STIM_ACCESS_TICKET', 'nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn');
     const { io, calls } = fakeIo('nImpostor', []);
     const { findings, machines } = await inspectBuildMachines({ fix: true }, io, ['mini']);
     expect(calls).toEqual([]);
@@ -197,7 +197,7 @@ describe('inspectBuildMachines', () => {
   });
 });
 
-test.each([undefined, '', '   ', '  desktop-access-ticket  '])(
+test.each([undefined, '', '   ', '  ddddddddddddddddddddddddddddddddddddddddddd  '])(
   'access requests carry only a non-empty trimmed ticket and persist only its hash: %j',
   async (value) => {
     vi.stubEnv('STIM_ACCESS_TICKET', value);
@@ -218,21 +218,61 @@ test.each([undefined, '', '   ', '  desktop-access-ticket  '])(
     const credential = readBuildMachines()[0]!;
     expect(credential.ticketHash).toBe(ticket ? createHash('sha256').update(ticket).digest('hex') : undefined);
     expect(Object.hasOwn(credential, 'ticketHash')).toBe(!!ticket);
-    expect(readFileSync(buildMachinesFile(), 'utf8')).not.toContain('desktop-access-ticket');
-    expect(JSON.stringify(result)).not.toContain('desktop-access-ticket');
+    expect(readFileSync(buildMachinesFile(), 'utf8')).not.toContain('ddddddddddddddddddddddddddddddddddddddddddd');
+    expect(JSON.stringify(result)).not.toContain('ddddddddddddddddddddddddddddddddddddddddddd');
   },
 );
 
 test.each([
-  ['missing hash', undefined, 'new-ticket', true, 'pending', false, true],
-  ['different hash', 'old-ticket', 'new-ticket', true, 'pending', false, true],
-  ['matching hash', 'same-ticket', '  same-ticket  ', true, 'pending', false, false],
-  ['no ticket', 'old-ticket', undefined, true, 'pending', false, false],
-  ['blank ticket', 'old-ticket', '   ', true, 'pending', false, false],
-  ['plain doctor', undefined, 'new-ticket', false, 'pending', false, false],
-  ['approved credential', 'old-ticket', 'new-ticket', true, 'approved', true, false],
-  ['approved credential with pending reply', undefined, 'new-ticket', true, 'approved', false, false],
-  ['approval since last request', undefined, 'new-ticket', true, 'pending', true, false],
+  ['missing hash', undefined, 'nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn', true, 'pending', false, true],
+  [
+    'different hash',
+    'ooooooooooooooooooooooooooooooooooooooooooo',
+    'nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn',
+    true,
+    'pending',
+    false,
+    true,
+  ],
+  [
+    'matching hash',
+    'sssssssssssssssssssssssssssssssssssssssssss',
+    '  sssssssssssssssssssssssssssssssssssssssssss  ',
+    true,
+    'pending',
+    false,
+    false,
+  ],
+  ['no ticket', 'ooooooooooooooooooooooooooooooooooooooooooo', undefined, true, 'pending', false, false],
+  ['blank ticket', 'ooooooooooooooooooooooooooooooooooooooooooo', '   ', true, 'pending', false, false],
+  ['plain doctor', undefined, 'nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn', false, 'pending', false, false],
+  [
+    'approved credential',
+    'ooooooooooooooooooooooooooooooooooooooooooo',
+    'nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn',
+    true,
+    'approved',
+    true,
+    false,
+  ],
+  [
+    'approved credential with pending reply',
+    undefined,
+    'nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn',
+    true,
+    'approved',
+    false,
+    false,
+  ],
+  [
+    'approval since last request',
+    undefined,
+    'nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn',
+    true,
+    'pending',
+    true,
+    false,
+  ],
 ] as const)(
   'ticket replacement respects approval and fix: %s',
   async (_name, storedTicket, currentTicket, fix, state, approved, retry) => {
@@ -255,8 +295,8 @@ test.each([
       ...(retry ? [{ auth: { request: 'build', deviceName: 'laptop', setupTicket: currentTicket } }] : []),
     ]);
     expect(result.machines[0]?.state).toBe(approved ? 'approved' : 'pending');
-    expect(readFileSync(buildMachinesFile(), 'utf8')).not.toContain('new-ticket');
-    expect(JSON.stringify(result)).not.toContain('new-ticket');
+    expect(readFileSync(buildMachinesFile(), 'utf8')).not.toContain('nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn');
+    expect(JSON.stringify(result)).not.toContain('nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn');
     expect(readBuildMachines()[0]?.deviceToken).toBe(retry ? 'replacement-token' : 'secret');
     expect(readBuildMachines()[0]?.ticketHash).toBe(
       retry ? createHash('sha256').update(currentTicket!).digest('hex') : saved.ticketHash,

@@ -12,7 +12,7 @@ import type { Finding } from '../diagnostics/doctor.ts';
 import type { OffloadProblem } from './toolchain.ts';
 import { withDirLock } from '../dir-lock.ts';
 import { getConfigDir, loadConfig } from '../workspace/config.ts';
-import { readAccessTicket } from './access-ticket.ts';
+import { readAccessTicket, readHostPermissions } from './access-ticket.ts';
 
 import { endpoint, findPeer, parseMachine, realIo, type TailnetPeer, type TailnetMachineIo } from './tailnet.ts';
 export { findPeer, parseMachine, pinnedEndpoint, type Endpoint, type HelloReply } from './tailnet.ts';
@@ -195,7 +195,11 @@ async function requestAccess(
     requestedAt: new Date().toISOString(),
     ...(ticket ? { ticketHash: ticket.ticketHash } : {}),
   };
-  updateCredentials((credentials) => [...credentials.filter((each) => each.machine !== entry), credential]);
+  updateCredentials((credentials) =>
+    credentials.some((each) => each.machine === entry && each.state === 'approved')
+      ? credentials
+      : [...credentials.filter((each) => each.machine !== entry), credential],
+  );
   return {
     report: {
       machine: entry,
@@ -261,7 +265,8 @@ async function inspectMachine(
   const paired = { ...known, deviceId: credential.deviceId, requestedAt: credential.requestedAt };
   const reply = await io.hello(endpoint(peer, parsed.port), { deviceToken: credential.deviceToken });
   if ('result' in reply && reply.result.capabilities.includes('build')) {
-    const host = reply.result.host ? { host: reply.result.host } : {};
+    const permissions = readHostPermissions(reply.result.host);
+    const host = permissions ? { host: permissions } : {};
     if (credential.state !== 'approved') {
       updateCredentials((credentials) =>
         credentials.map((each) => (each.machine === entry ? { ...each, state: 'approved' } : each)),
@@ -323,7 +328,7 @@ async function inspectMachine(
  * Doctor findings and a report for each `offload.machines` entry. The worker's node is pinned when access is
  * requested; a later connection goes only to the current MagicDNS name of that same node, checked before the token
  * is sent. With `fix`, requests access from a named machine this Mac holds no pairing for, requests again when the
- * pinned node forgot this Mac, and forgets pairings of machines no longer named. With `check`, each approved
+ * pinned node forgot this Mac or, with `STIM_ACCESS_TICKET` set, when a pending request carries another ticket, and forgets pairings of machines no longer named. With `check`, each approved
  * machine is asked for one build offer and reports every reason it would not take this project's build.
  */
 export async function inspectBuildMachines(

@@ -565,9 +565,9 @@ wants a pool says so with the variable.
 
 DESKTOP ACCESS TICKETS
 Stim Desktop's Add wizard sets STIM_ACCESS_TICKET for one \`doctor --fix\`
-run. Agents never set it, never run \`stim-server setup\`, and never approve
-requests. Agents never set up build or hosting machines; a person owns setup.
-Stim sends the trimmed, non-empty ticket only in build and device-host access
+run. Agents never set it, never run \`stim-server setup\`, never edit
+\`offload.*\` or \`hosting.*\` for the user, and never approve requests.
+Stim sends the ticket (43 base64url characters) only in build and device-host access
 requests and stores only its SHA-256 ticketHash. With --fix, a still-pending
 request is replaced when its ticketHash is missing or differs from the current
 ticket; matching hashes and approved credentials are preserved.
