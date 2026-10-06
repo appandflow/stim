@@ -632,6 +632,10 @@ so a Debug run on one is wired to a LAN origin instead of localhost.`,
   reach a booted state. \`stim doctor\` checks the toolchain; \`stim status\` says what
   Stim thinks it owns. Re-running the command creates a fresh owned device
   when the recorded one is gone.
+  With concurrency.maxDevices set, it also means Stim could not count the
+  booted devices before a boot: a simctl or adb listing failed or timed out,
+  usually under heavy load, or other runs held the device-admission lock for
+  5 minutes. Retry once the load falls.
   If Android creation says an AVD already exists on disk but is not listed,
   run \`npx stim gc\` to inspect orphaned owned AVDs, then \`npx stim gc --delete\`
   to reclaim those safe to delete before retrying. Keep anything GC cannot
@@ -738,12 +742,16 @@ so a Debug run on one is wired to a LAN origin instead of localhost.`,
       body: () => `STIM_AT_CAPACITY
   Only when concurrency.maxDevices is set (it is UNSET by default, so this never
   fires unless you opted in). Booting a NEW owned device would exceed the cap:
-  the machine already has that many Stim-owned devices booted. It is a refusal, not
-  a queue -- \`ios\`/\`android\` are interactive-shaped, so Stim does not make
-  you wait at a prompt. The remedy is fixed: stop an environment
-  (\`stim stop\`) to free a device, or raise concurrency.maxDevices. A
-  workspace whose OWN device is already booted is never refused -- re-running
-  \`ios\` on an environment you already have is idempotent. (The build cap
+  the machine already has that many Stim-owned devices booted or booting,
+  including ones other runs started a moment ago. It can come before Metro
+  starts or, when another run took the last place first, when the boot
+  starts. An iOS boot starts beside the build, so then the build has already
+  run and a rerun reuses it. It is a refusal, not a queue -- \`ios\`/\`android\`
+  are interactive-shaped, so Stim does not make you wait at a prompt. The
+  remedy is fixed: stop an environment (\`stim stop\`) to free a device, or
+  raise concurrency.maxDevices. A workspace whose OWN device is already booted
+  or booting is never refused -- re-running \`ios\` on an environment you
+  already have is idempotent. (The build cap
   behaves differently: a compile WAITS for a free slot rather than refusing.
   See \`guide lifecycle concurrency\`.)`,
     },

@@ -1,5 +1,12 @@
+import { join } from 'node:path';
 import { deviceSlotPlatforms, projectDeviceSlots } from '../devices/device-slots.ts';
-import { loadConfig, type Config, type ProjectRecord } from '../workspace/config.ts';
+import {
+  getConcurrencyLimits,
+  getConfigDir,
+  loadConfig,
+  type Config,
+  type ProjectRecord,
+} from '../workspace/config.ts';
 import {
   iosRuntimeMatches,
   listAllIosSims,
@@ -8,12 +15,16 @@ import {
   type IosRuntime,
 } from '../devices/ios.ts';
 import { listAdbDevices, type SystemImage } from '../devices/android.ts';
+import { formatElapsed, phaseLine } from '../command-output.ts';
+import { readClaimSet, releaseClaim, tryAcquireClaim, type ClaimHandle } from '../ownership-claim.ts';
+import { withWorkspaceProcessLock, workspaceProcessLockError } from './workspace-process-lock.ts';
 import type { SettingScope } from '@stim-cli/core/state';
 
 type SimRecord = ReturnType<typeof listAllIosSims>[number];
 type DeviceTypeInfo = ReturnType<typeof listIosDeviceTypes>[number];
 type AdbDevices = ReturnType<typeof listAdbDevices>;
-type EmulatorRecord = AdbDevices['emulators'][number];
+type EmulatorPort = { consolePort?: number | null };
+type Listing<T> = T | (() => T);
 
 interface CapacityRefusal {
   code: string;
@@ -21,14 +32,103 @@ interface CapacityRefusal {
   remedy: string;
 }
 
-export function liveOwnedDeviceCount({
+export interface BootingDevice {
+  platform: string;
+  key: string;
+}
+
+interface DeviceInventory {
+  sims: SimRecord[];
+  adb: AdbDevices;
+  config: Config | null;
+  booting: BootingDevice[];
+}
+
+export interface InventorySources {
+  sims?: Listing<SimRecord[]>;
+  adb?: Listing<AdbDevices>;
+  config?: Listing<Config | null>;
+  booting?: Listing<BootingDevice[]>;
+}
+
+const LIVE_SIM_STATES = new Set(['Booted', 'Booting']);
+const ADMISSION_LOCK = 'device-admission';
+const ADMISSION_LOCK_WAIT_MS = 5 * 60_000;
+const LOCK_QUIET_MS = 5000;
+const LOCK_PROGRESS_MS = 30_000;
+const LISTING_TIMEOUT_MS = 30_000;
+const NO_ADB: AdbDevices = { emulators: [], physical: [], unhealthy: [] };
+
+export class DeviceAdmissionRefusal extends Error {
+  readonly code: string;
+  readonly remedy: string;
+
+  constructor(refusal: CapacityRefusal) {
+    super(refusal.message);
+    this.code = refusal.code;
+    this.remedy = refusal.remedy;
+  }
+}
+
+class DeviceCountUnavailable extends Error {}
+
+function deviceKey(platform: string, key: string): string {
+  return `${platform}:${key}`;
+}
+
+function bootingDevicesRoot(): string {
+  return join(getConfigDir(), 'device-boots');
+}
+
+function liveEmulatorPorts(adb: AdbDevices): EmulatorPort[] {
+  return [...adb.emulators, ...adb.unhealthy.filter((entry) => entry.kind === 'emulator')];
+}
+
+function readBootingDevices(): BootingDevice[] {
+  const survey = readClaimSet(bootingDevicesRoot());
+  const booting: BootingDevice[] = [];
+  for (const holder of survey.live) {
+    const { platform, key } = holder.details;
+    if (typeof platform === 'string' && typeof key === 'string') booting.push({ platform, key });
+  }
+  return booting;
+}
+
+function listSimsForCount(): SimRecord[] {
+  return process.platform === 'darwin' ? listAllIosSims({ timeoutMs: LISTING_TIMEOUT_MS }) : [];
+}
+
+function listAdbForCount(): AdbDevices {
+  return listAdbDevices({ timeoutMs: LISTING_TIMEOUT_MS });
+}
+
+function toolAbsent(error: unknown): boolean {
+  const { code, status, stderr } = (error ?? {}) as { code?: unknown; status?: unknown; stderr?: unknown };
+  return (
+    code === 'ENOENT' ||
+    status === 127 ||
+    /unable to find utility|invalid active developer path|Xcode license/.test(String(stderr ?? ''))
+  );
+}
+
+function recordsOwnedEmulator(config: Config | null): boolean {
+  return Object.values(config?.projects || {}).some((project) =>
+    projectDeviceSlots(project).some(
+      ({ platforms }) => platforms.android?.owned && typeof platforms.android.consolePort === 'number',
+    ),
+  );
+}
+
+function liveOwnedDeviceKeys({
   sims = [],
   adbEmulators = [],
   config = null,
-}: { sims?: SimRecord[]; adbEmulators?: EmulatorRecord[]; config?: Config | null } = {}): number {
-  let count = 0;
+  booting = [],
+}: Partial<Omit<DeviceInventory, 'adb'>> & { adbEmulators?: EmulatorPort[] }): Set<string> {
+  const keys = new Set<string>();
   for (const sim of sims) {
-    if (sim?.state === 'Booted' && sim.name?.startsWith('stim-')) count++;
+    if (!sim?.name?.startsWith('stim-')) continue;
+    if (LIVE_SIM_STATES.has(sim.state)) keys.add(deviceKey('ios', sim.udid));
   }
   const livePorts = new Set(adbEmulators.map((e) => e.consolePort));
   for (const proj of Object.values(config?.projects || {})) {
@@ -40,11 +140,70 @@ export function liveOwnedDeviceCount({
         typeof android.consolePort === 'number' &&
         livePorts.has(android.consolePort)
       ) {
-        count++;
+        keys.add(deviceKey('android', android.avdName));
       }
     }
   }
-  return count;
+  for (const device of booting) keys.add(deviceKey(device.platform, device.key));
+  return keys;
+}
+
+function inventoryKeys(inventory: DeviceInventory): Set<string> {
+  return liveOwnedDeviceKeys({ ...inventory, adbEmulators: liveEmulatorPorts(inventory.adb) });
+}
+
+function atCapacityRefusal(count: number, max: number): CapacityRefusal {
+  return {
+    code: 'STIM_AT_CAPACITY',
+    message: `${count} Stim device(s) are already booted and concurrency.maxDevices is ${max}, so booting another would exceed the cap.`,
+    remedy: 'stop an environment (stim stop) or raise concurrency.maxDevices',
+  };
+}
+
+function uncountedRefusal(error: unknown): CapacityRefusal {
+  return {
+    code: 'STIM_NO_DEVICE',
+    message: `concurrency.maxDevices is set, and Stim could not count the booted devices: ${(error as Error)?.message || error}`,
+    remedy: `Listing devices times out when the machine is overloaded: retry once the load falls. Otherwise run \`stim doctor\` to check the simulator and adb toolchains, and check that ${join(getConfigDir(), 'config.json')} and ${bootingDevicesRoot()} are readable.`,
+  };
+}
+
+function listed<T>(source: Listing<T>, empty: T, absent: (error: unknown) => boolean = () => false): T {
+  try {
+    return (typeof source === 'function' ? (source as () => T)() : source) ?? empty;
+  } catch (error) {
+    if (absent(error)) return empty;
+    throw new DeviceCountUnavailable('', { cause: error });
+  }
+}
+
+function readInventory({
+  sims = listSimsForCount,
+  adb = listAdbForCount,
+  config = loadConfig,
+  booting = readBootingDevices,
+}: InventorySources): DeviceInventory | CapacityRefusal {
+  try {
+    const recorded = listed(config, null);
+    return {
+      booting: listed(booting, []),
+      sims: listed(sims, [], toolAbsent),
+      adb: recordsOwnedEmulator(recorded) ? listed(adb, NO_ADB, toolAbsent) : NO_ADB,
+      config: recorded,
+    };
+  } catch (error) {
+    if (error instanceof DeviceCountUnavailable) return uncountedRefusal(error.cause);
+    throw error;
+  }
+}
+
+/**
+ * Owned simulators that are booted or booting, owned emulators adb lists in any state, and devices another
+ * run is booting under `concurrency.maxDevices`, each counted once; when a listing fails, why the count is unknown.
+ */
+export function countLiveOwnedDevices(sources: InventorySources = {}): number | { unknown: string } {
+  const inventory = readInventory(sources);
+  return 'code' in inventory ? { unknown: inventory.message } : inventoryKeys(inventory).size;
 }
 
 function workspaceHasLiveDevice({
@@ -58,13 +217,13 @@ function workspaceHasLiveDevice({
   project: ProjectRecord | null;
   slot: string;
   sims: SimRecord[];
-  adbEmulators: EmulatorRecord[];
+  adbEmulators: EmulatorPort[];
 }> = {}) {
   if (!platform) return false;
   const record = deviceSlotPlatforms(project, slot)?.[platform];
   if (!record) return false;
   if (platform === 'ios') {
-    return sims.some((s) => s.udid === record.deviceUdid && s.state === 'Booted');
+    return sims.some((s) => s.udid === record.deviceUdid && LIVE_SIM_STATES.has(s.state));
   }
   return typeof record.consolePort === 'number' && adbEmulators.some((e) => e.consolePort === record.consolePort);
 }
@@ -77,6 +236,7 @@ export function deviceCapacityRefusal({
   sims = [],
   adb = null,
   config = null,
+  booting = [],
 }: Partial<{
   platform: string;
   project: ProjectRecord | null;
@@ -85,50 +245,121 @@ export function deviceCapacityRefusal({
   sims: SimRecord[];
   adb: AdbDevices | null;
   config: Config | null;
+  booting: BootingDevice[];
 }> = {}): CapacityRefusal | null {
   if (!max || max <= 0) return null;
-  const adbEmulators = adb?.emulators || [];
+  const adbEmulators = liveEmulatorPorts(adb ?? NO_ADB);
   if (workspaceHasLiveDevice({ platform, project, slot, sims, adbEmulators })) return null;
-  const count = liveOwnedDeviceCount({ sims, adbEmulators, config });
-  if (count < max) return null;
-  return {
-    code: 'STIM_AT_CAPACITY',
-    message: `${count} Stim device(s) are already booted and concurrency.maxDevices is ${max}, so booting another would exceed the cap.`,
-    remedy: 'stop an environment (stim stop) or raise concurrency.maxDevices',
-  };
+  const count = liveOwnedDeviceKeys({ sims, adbEmulators, config, booting }).size;
+  return count < max ? null : atCapacityRefusal(count, max);
 }
 
+/**
+ * The early `concurrency.maxDevices` check, before Metro starts or a device is created. It is advisory, so an
+ * unknown count passes: `withDeviceBootAdmission` makes the binding decision when the boot starts.
+ */
 export function checkDeviceCapacity({
   platform,
   project,
   slot = 'default',
   max,
-  sims = listAllIosSims,
-  adb = listAdbDevices,
-  config = loadConfig,
+  ...sources
 }: Partial<{
   platform: string;
   project: ProjectRecord | null;
   slot: string;
   max: number;
-  sims: SimRecord[] | (() => SimRecord[]);
-  adb: AdbDevices | (() => AdbDevices);
-  config: Config | null | (() => Config | null);
-}> = {}): CapacityRefusal | null {
+}> &
+  InventorySources = {}): CapacityRefusal | null {
   if (!max || max <= 0) return null;
-  let simList: SimRecord[] = [];
-  let adbRes: AdbDevices = { emulators: [], physical: [], unhealthy: [] };
+  const inventory = readInventory(sources);
+  if ('code' in inventory) return null;
+  return deviceCapacityRefusal({ platform, project, slot, max, ...inventory });
+}
+
+function admissionRefusal(device: BootingDevice, max: number, sources: InventorySources): CapacityRefusal | null {
+  const inventory = readInventory(sources);
+  if ('code' in inventory) return inventory;
+  const keys = inventoryKeys(inventory);
+  const own = deviceKey(device.platform, device.key);
+  if (device.platform === 'ios' && keys.has(own)) return null;
+  keys.delete(own);
+  return keys.size < max ? null : atCapacityRefusal(keys.size, max);
+}
+
+function takeBootMarker(device: BootingDevice): ClaimHandle {
+  const attempt = tryAcquireClaim({
+    root: bootingDevicesRoot(),
+    mode: 'shared',
+    label: 'device boot',
+    details: { platform: device.platform, key: device.key },
+  });
+  if (attempt.acquired) return attempt.acquired;
+  throw new DeviceAdmissionRefusal({
+    code: 'STIM_NO_DEVICE',
+    message: `Another process holds ${bootingDevicesRoot()} exclusively, so this boot cannot be counted toward concurrency.maxDevices.`,
+    remedy: 'Retry once that process finishes.',
+  });
+}
+
+async function admit(
+  device: BootingDevice,
+  max: number,
+  sources: InventorySources,
+  lockWaitMs: number,
+  out: (line: string) => void,
+): Promise<ClaimHandle> {
+  const started = Date.now();
+  let lastLine: number | null = null;
+  const onHeld = () => {
+    const elapsed = Date.now() - started;
+    if (elapsed < LOCK_QUIET_MS || (lastLine !== null && Date.now() - lastLine < LOCK_PROGRESS_MS)) return;
+    lastLine = Date.now();
+    out(phaseLine('device', `waiting for other runs to finish counting booted devices (${formatElapsed(elapsed)})`));
+  };
   try {
-    simList = typeof sims === 'function' ? sims() || [] : sims || [];
-  } catch {}
+    return await withWorkspaceProcessLock(
+      getConfigDir(),
+      ADMISSION_LOCK,
+      async () => {
+        const refusal = admissionRefusal(device, max, sources);
+        if (refusal) throw new DeviceAdmissionRefusal(refusal);
+        return takeBootMarker(device);
+      },
+      { external: true, waitMs: lockWaitMs, onHeld },
+    );
+  } catch (error) {
+    if (workspaceProcessLockError(error) !== 'timeout') throw error;
+    throw new DeviceAdmissionRefusal({
+      code: 'STIM_NO_DEVICE',
+      message: `Waited ${formatElapsed(lockWaitMs)} for other runs to finish counting booted devices for concurrency.maxDevices.`,
+      remedy: 'Listing devices is slow, which usually means the machine is overloaded. Retry once the load falls.',
+    });
+  }
+}
+
+/**
+ * Boots `device` only if one more owned device fits under `concurrency.maxDevices`. The count and the
+ * marker that makes this boot visible to other runs are taken under one lock in `$STIM_HOME`, so concurrent
+ * runs cannot all pass the cap; the marker is held until `boot` settles. Throws DeviceAdmissionRefusal.
+ */
+export async function withDeviceBootAdmission<T>(
+  device: BootingDevice,
+  boot: () => Promise<T>,
+  {
+    max = getConcurrencyLimits().maxDevices,
+    sources = {},
+    lockWaitMs = ADMISSION_LOCK_WAIT_MS,
+    out = () => {},
+  }: { max?: number; sources?: InventorySources; lockWaitMs?: number; out?: (line: string) => void } = {},
+): Promise<T> {
+  if (!max || max <= 0) return boot();
+  const marker = await admit(device, max, sources, lockWaitMs, out);
   try {
-    adbRes = typeof adb === 'function' ? adb() || adbRes : adb || adbRes;
-  } catch {}
-  let cfg: Config | null = null;
-  try {
-    cfg = typeof config === 'function' ? config() : (config ?? null);
-  } catch {}
-  return deviceCapacityRefusal({ platform, project, slot, max, sims: simList, adb: adbRes, config: cfg });
+    return await boot();
+  } finally {
+    releaseClaim(marker);
+  }
 }
 
 export function deviceTypeMismatch(

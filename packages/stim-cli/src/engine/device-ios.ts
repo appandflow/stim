@@ -28,7 +28,13 @@ import { iosSimSlimProfileSetting } from '../workspace/settings.ts';
 import { teardownParkedIosSim } from '../devices/teardown.ts';
 import { reconcileSimSlim } from './simslim.ts';
 import { withWorkspaceProcessLock } from './workspace-process-lock.ts';
-import { deviceTypeMismatch, runtimeMismatch } from './device-capacity.ts';
+import { claimFailure } from '../ownership-claim.ts';
+import {
+  DeviceAdmissionRefusal,
+  deviceTypeMismatch,
+  runtimeMismatch,
+  withDeviceBootAdmission,
+} from './device-capacity.ts';
 import type { BootResult, DeviceFlags, DeviceSettings, Notify, OwnedDeviceRecord } from './device.ts';
 
 type SimRecord = ReturnType<typeof listAllIosSims>[number];
@@ -45,10 +51,14 @@ function startIosBoot(
   out: Notify,
   simulatorApp?: IosSimulatorApp,
 ): IosBoot {
-  const done = (async () => {
-    await bootIosSim(udid, { label, out, simulatorApp });
-    await configure();
-  })();
+  const done = withDeviceBootAdmission(
+    { platform: 'ios', key: udid },
+    async () => {
+      await bootIosSim(udid, { label, out, simulatorApp });
+      await configure();
+    },
+    { out },
+  );
   // Node ends the process on an unhandled rejection, and `ensureBooted` -- the
   // real handler -- does not run when an earlier step of the run refuses first.
   done.catch(() => {});
@@ -449,7 +459,7 @@ export async function ensureIosBooted({
     try {
       await booting.done;
     } catch (e) {
-      return { failed: true, reason: `Could not boot simulator ${udid}: ${(e as Error)?.message || e}` };
+      return bootFailure(udid, e);
     }
     return ready();
   }
@@ -487,9 +497,13 @@ export async function ensureIosBooted({
   out(chalk.dim(phaseLine('device', `booting ${sim.name} (${udid})`)));
   const bootDeadline = Date.now() + timeoutMs;
   try {
-    await bootIosSim(udid, { timeoutMs, label: sim.name, out, simulatorApp });
+    await withDeviceBootAdmission(
+      { platform: 'ios', key: udid },
+      () => bootIosSim(udid, { timeoutMs, label: sim.name, out, simulatorApp }),
+      { out },
+    );
   } catch (e) {
-    return { failed: true, reason: `Could not boot simulator ${udid}: ${(e as Error)?.message || e}` };
+    return bootFailure(udid, e);
   }
 
   const deadline = Math.max(bootDeadline, Date.now() + 2 * pollMs);
@@ -505,6 +519,12 @@ export async function ensureIosBooted({
     failed: true,
     reason: `Simulator ${udid} did not reach the Booted state within ${Math.round(timeoutMs / 1000)}s.`,
   };
+}
+
+function bootFailure(udid: string, error: unknown): BootResult {
+  const refusal = error instanceof DeviceAdmissionRefusal ? error : claimFailure(error, 'stim ios');
+  if (refusal) return { failed: true, code: refusal.code, reason: refusal.message, remedy: refusal.remedy };
+  return { failed: true, reason: `Could not boot simulator ${udid}: ${(error as Error)?.message || error}` };
 }
 
 function sleep(ms: number) {
