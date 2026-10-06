@@ -15,12 +15,14 @@ import { StimVideoView, supportsFrameOrientation } from '../../modules/stim-vide
  */
 export function DeviceScreen({
   stream,
+  recorded = false,
   label,
   style,
   children,
   requested,
 }: {
   stream: DeviceStream;
+  recorded?: boolean;
   label: string;
   style?: ViewProps['style'];
   children?: ReactNode;
@@ -28,7 +30,7 @@ export function DeviceScreen({
   requested?: { fps: number; maxEdge: number };
 }) {
   const source = stream.video ?? stream.frame;
-  const screenLabel = t`Live screen of ${label}`;
+  const screenLabel = recorded ? t`Recorded screen of ${label}` : t`Live screen of ${label}`;
   return (
     <View style={[styles.screen, style]} accessibilityLabel={screenLabel}>
       <StimVideoView

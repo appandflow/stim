@@ -1,5 +1,6 @@
 import fixture from '../../mock-server/fixtures/status.json';
 
+import { needsAttention } from '@/lib/needs-attention';
 import { createMachineStore } from '@/lib/machine-store';
 import type { PairedMac } from '@/lib/macs';
 import { StatusCache, type KeyValueStore } from '@/lib/status-cache';
@@ -132,4 +133,34 @@ describe('createMachineStore', () => {
     });
     expect(machines.store.getState().worktrees.some((item) => item.macId === 'a')).toBe(false);
   });
+});
+
+it('keeps archive errors and ended agents outside live workspace counts and Needs attention', () => {
+  const machines = createMachineStore();
+  machines.setMacs([mac('a')], true);
+  const archived = clone().archived![0];
+  machines.receiveStatus('a', {
+    ...clone(),
+    environments: [],
+    unprovisionedWorktrees: [],
+    archived: [
+      {
+        ...archived,
+        builds: { ...archived.builds, lastErrorCount: 30, last: { ...archived.builds.last!, status: 'failed' } },
+      },
+    ],
+  });
+  const current = machines.store.getState();
+  expect(current.archives.map((item) => item.archive.id)).toEqual([archived.id]);
+  expect(current.workspaces).toEqual([]);
+  expect(current.worktrees).toEqual([]);
+  expect(
+    needsAttention({
+      environments: current.snapshots.a.status.environments,
+      volumes: null,
+      now: Date.now(),
+      stuckMinutes: 15,
+      easSessionMinutes: 30,
+    }),
+  ).toEqual([]);
 });

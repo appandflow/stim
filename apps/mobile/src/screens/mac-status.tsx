@@ -28,7 +28,7 @@ import { useMachineDetails } from '@/hooks/machine-details';
 import { useMacById, useMachineStatus, useMachineUsage } from '@/hooks/machines';
 import { useNow } from '@/hooks/use-now';
 import { useUsageHistory } from '@/hooks/usage-history';
-import { formatBytes, formatMemoryMb } from '@/intl/format';
+import { formatBytes, formatMemoryMb, formatSize } from '@/intl/format';
 import {
   buildPlacements,
   machineReadiness,
@@ -294,6 +294,23 @@ export function MacStatus({ id }: { id: string }) {
           renderRow={(row) => <SizedItemRow row={row} />}
           trailing={<SizeText size={sum(report.recordings)} />}
           empty={t`No device recordings are kept.`}
+        />
+      ) : null}
+
+      {report.archived ? (
+        <CollapsibleSection
+          id="machine.archived"
+          title={t`Archived workspaces`}
+          rows={report.archived.rows}
+          rowKey={(row) => row.id}
+          renderRow={(row) => <SizedItemRow row={row} />}
+          trailing={
+            <Text tone="secondary">
+              {plural(report.archived.count, { one: '# workspace', other: '# workspaces' })}
+              {' \u00B7 '}
+              {formatSize(report.archived.bytes)}
+            </Text>
+          }
         />
       ) : null}
 

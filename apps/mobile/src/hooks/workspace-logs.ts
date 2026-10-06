@@ -1,10 +1,16 @@
 import { useCallback, useMemo, useState } from 'react';
 
+import type { WorkspaceTarget } from '@/lib/archived';
 import { useLogs, type LogsChange } from '@/hooks/logs';
 import { agentActions, agentFeedFilter, appendRecords, type AgentAction } from '@/lib/logs';
 import type { LogFilter, LogRecord } from '@/protocol/types';
 
-export function useAgentActions(workspace: string, slot: string, deviceId: string | null, max: number): AgentAction[] {
+export function useAgentActions(
+  workspace: string | WorkspaceTarget,
+  slot: string,
+  deviceId: string | null,
+  max: number,
+): AgentAction[] {
   const [actions, setActions] = useState<AgentAction[]>([]);
   const filter = useMemo(() => (deviceId ? agentFeedFilter(workspace, slot) : null), [workspace, slot, deviceId]);
   const onChange = useCallback(
@@ -20,12 +26,20 @@ export function useAgentActions(workspace: string, slot: string, deviceId: strin
   return actions;
 }
 
-export function useBuildOutput(workspace: string, slot: string, since: string | null, max: number): LogRecord[] {
+export function useBuildOutput(
+  workspace: string | WorkspaceTarget,
+  slot: string,
+  since: string | null,
+  max: number,
+): LogRecord[] {
   const enabled = since !== null;
   const from = since === null ? NaN : Date.parse(since);
   const [records, setRecords] = useState<LogRecord[]>([]);
   const filter = useMemo<LogFilter | null>(
-    () => (enabled ? { workspace, sources: ['build'], slot, tail: max } : null),
+    () =>
+      enabled
+        ? { ...(typeof workspace === 'string' ? { workspace } : workspace), sources: ['build'], slot, tail: max }
+        : null,
     [workspace, slot, enabled, max],
   );
   const onChange = useCallback(

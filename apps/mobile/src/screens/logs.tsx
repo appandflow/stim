@@ -40,6 +40,7 @@ import {
   type LogFilterState,
   type Severity,
 } from '@/lib/logs';
+import { archivedView } from '@/lib/archived';
 import { hapticFeedback } from '@/lib/haptics';
 import { workspaceTitleAt } from '@/lib/workspace-names';
 import type { Theme } from '@/design/theme';
@@ -49,16 +50,20 @@ const LOG_WINDOW_STEP = 200;
 
 export function Logs({
   path,
+  archive,
   params,
 }: {
   path: string;
+  archive?: string;
   params: { errors?: string; source?: string; slot?: string; at?: string };
 }) {
   const { theme } = useUnistyles();
   const insets = useSafeAreaInsets();
   const { state, home, connection } = useMacConnection();
   const status = useStatus();
-  const env = status?.environments.find((e) => e.path === path);
+  const env = archive ? undefined : status?.environments.find((e) => e.path === path);
+  const target = useMemo(() => (archive ? { archive } : { workspace: path }), [archive, path]);
+  const archived = status?.archived?.find((a) => a.id === archive);
   const slots = useMemo(() => ['default', ...(env?.slots ?? []).map((s) => s.slot)], [env?.slots]);
   const [filter, setFilter] = useState<LogFilterState>(() => initialFilter(params));
   const [grepDraft, setGrepDraft] = useState('');
@@ -105,7 +110,7 @@ export function Logs({
     [opened],
   );
   const active = env && filter.slot !== null && !slots.includes(filter.slot) ? { ...filter, slot: null } : filter;
-  const listening = useLogs(logFilter(path, active, tail), onLogs);
+  const listening = useLogs(logFilter(target, active, tail), onLogs);
   useEffect(() => {
     if (!listening) setTail((current) => Math.max(current, retained.current));
   }, [listening]);
@@ -136,7 +141,7 @@ export function Logs({
         const started = generation.current;
         setFetched((map) => new Map(map).set(entry.key, []));
         connection
-          .request('logs.query', { workspace: path, sources: ['metro'], tail: MAX_RECORDS })
+          .request('logs.query', { ...target, sources: ['metro'], tail: MAX_RECORDS })
           .then(({ records: metro }) => {
             const context = expoContext(metro, entry.lead).map((r) => r.msg);
             if (context.length > 0 && generation.current === started)
@@ -150,7 +155,7 @@ export function Logs({
         return next;
       });
     },
-    [connection, hidesContext, fetched, path],
+    [connection, hidesContext, fetched, target],
   );
 
   const dragging = useRef(false);
@@ -164,7 +169,14 @@ export function Logs({
   return (
     <View style={styles.screen}>
       <Stack.Screen
-        options={{ headerTitle: () => <HeaderTitle title={t`Logs`} subtitle={workspaceTitleAt(path, status)} /> }}
+        options={{
+          headerTitle: () => (
+            <HeaderTitle
+              title={t`Logs`}
+              subtitle={archived ? archivedView(archived, Date.now()).title : workspaceTitleAt(path, status)}
+            />
+          ),
+        }}
       />
       <ConnectionBanner state={state} />
       <View style={styles.filters}>

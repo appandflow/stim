@@ -1,6 +1,8 @@
 import { useIsFocused } from 'expo-router';
 import { useEffect } from 'react';
 
+import { archiveError } from '@/lib/archived';
+
 import type { LogFilter, LogRecord } from '@/protocol/types';
 
 import { useAppForeground } from './app-foreground';
@@ -12,7 +14,8 @@ export type LogsChange =
   | { kind: 'error'; message: string };
 
 export function useLogs(filter: LogFilter | null, onChange: (change: LogsChange) => void): boolean {
-  const { connection } = useMacConnection();
+  const { connection, state } = useMacConnection();
+  const open = state.kind === 'open';
   const focused = useIsFocused();
   const foreground = useAppForeground();
   const active = focused && foreground;
@@ -21,6 +24,21 @@ export function useLogs(filter: LogFilter | null, onChange: (change: LogsChange)
     if (!connection || !key || !active) return;
     let stopped = false;
     onChange({ kind: 'reset' });
+    const params = JSON.parse(key) as LogFilter;
+    if (params.archive) {
+      if (!open) return;
+      connection.request('logs.query', params).then(
+        ({ records }) => {
+          if (!stopped) onChange({ kind: 'records', records });
+        },
+        (error: Error) => {
+          if (!stopped) onChange({ kind: 'error', message: archiveError(error, 'logs') });
+        },
+      );
+      return () => {
+        stopped = true;
+      };
+    }
     const unsubscribe = connection.subscribe(
       'logs.subscribe',
       JSON.parse(key) as LogFilter,
@@ -37,6 +55,6 @@ export function useLogs(filter: LogFilter | null, onChange: (change: LogsChange)
       stopped = true;
       unsubscribe();
     };
-  }, [connection, key, onChange, active]);
+  }, [connection, key, onChange, active, open]);
   return active;
 }

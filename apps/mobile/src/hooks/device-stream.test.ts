@@ -270,3 +270,27 @@ test('reports window selection mode and clears it when the subscription or targe
   await rerender({ workspace: '/other' });
   expect(result.current.windows).toBeNull();
 });
+
+test('opens archives only at recorded times and never sends a live request', async () => {
+  mockConnection.subscribe.mockClear();
+  const target = { archive: 'app--old', platform: 'ios' as const, slot: 'default' };
+  const { result, rerender } = await renderHook(
+    ({ startAt }: { startAt: number | null }) => useDeviceStream(target, { ...OPTIONS, startAt }),
+    { initialProps: { startAt: null } },
+  );
+  expect(mockConnection.subscribe).not.toHaveBeenCalled();
+  await rerender({ startAt: 1000 });
+  expect(mockConnection.subscribe.mock.calls[0][1]).toMatchObject({ archive: 'app--old', at: 1000, rate: 0 });
+  expect(mockConnection.subscribe.mock.calls[0][1]).not.toHaveProperty('workspace');
+  await act(async () => mockAnswers[0]!({ subscription: 's1', video: 'h264' }));
+  await act(async () => result.current.live());
+  expect(mockRequests).toEqual([]);
+  await act(async () =>
+    mockEvents[0]!({
+      event: 'error',
+      subscription: 's1',
+      error: { code: 'bad-request', message: 'workspace is required' },
+    }),
+  );
+  expect(result.current.error).toBe('Update stim-server to view archived replay');
+});

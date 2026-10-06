@@ -153,6 +153,12 @@ function RootLayoutContent() {
                       contentStyle: { backgroundColor: 'transparent' },
                     }}
                   />
+                  <Stack.Screen name="mac/[id]/archived" options={{ title: t`Archived workspace` }} />
+                  <Stack.Screen name="mac/[id]/archived-build" options={sheet([0.75, 1])} />
+                  <Stack.Screen
+                    name="mac/[id]/archived-replay"
+                    options={{ title: t`Archived replay`, ...opaqueHeader }}
+                  />
                   <Stack.Screen name="mac/[id]/build" options={sheet([0.75, 1])} />
                   <Stack.Screen name="mac/[id]/resources" options={sheet([0.75, 1])} />
                   <Stack.Screen name="mac/[id]/agent" options={sheet([0.75, 1])} />

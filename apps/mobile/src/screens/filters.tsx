@@ -12,7 +12,7 @@ import { Switch } from '@/components/switch';
 import { Text } from '@/components/text';
 import { Toggle } from '@/components/toggle';
 import { useHomeFilters } from '@/hooks/home-filters';
-import { useMacs, useWorkspaceItems, useWorktreeItems } from '@/hooks/machines';
+import { useArchiveItems, useMacs, useWorkspaceItems, useWorktreeItems } from '@/hooks/machines';
 import { hapticFeedback } from '@/lib/haptics';
 import { projectNames, type ActivityFilter } from '@/lib/home';
 
@@ -25,11 +25,16 @@ export function Filters() {
   const { filters, update, reset } = useHomeFilters();
   const workspaces = useWorkspaceItems();
   const worktrees = useWorktreeItems();
-  const projects = useMemo(() => projectNames([...workspaces, ...worktrees]), [workspaces, worktrees]);
+  const archives = useArchiveItems();
+  const projects = useMemo(
+    () => projectNames([...workspaces, ...worktrees, ...archives]),
+    [workspaces, worktrees, archives],
+  );
   const activity: { value: ActivityFilter; label: string }[] = [
     { value: 'live', label: t`Live` },
     { value: 'idle', label: t`Idle` },
     { value: 'all', label: t`All` },
+    { value: 'archived', label: t`Archived` },
   ];
   const selectedMacs = filters.macs.filter((id) => connections.some((c) => c.mac.id === id));
 

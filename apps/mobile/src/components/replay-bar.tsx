@@ -46,6 +46,7 @@ const NEWEST_FRAME = Number.MAX_SAFE_INTEGER;
  * lifts.
  */
 export function ReplayBar({
+  archived = false,
   timeline,
   markers,
   replay,
@@ -57,6 +58,7 @@ export function ReplayBar({
   onLive,
   onScrubbing,
 }: {
+  archived?: boolean;
   timeline: Timeline | null;
   markers: ReplayMarker[];
   replay: Replay | null;
@@ -113,7 +115,7 @@ export function ReplayBar({
   if (!timeline) {
     return (
       <View style={styles.root}>
-        <View style={styles.controls}>{livePill}</View>
+        <View style={styles.controls}>{archived ? null : livePill}</View>
       </View>
     );
   }
@@ -217,7 +219,7 @@ export function ReplayBar({
   return (
     <View style={styles.root}>
       <View style={styles.controls}>
-        {livePill}
+        {archived ? null : livePill}
         <Touch
           onPress={() => previousAction && step(previousAction)}
           disabled={!previousAction}

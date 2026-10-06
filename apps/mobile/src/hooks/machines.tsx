@@ -8,7 +8,7 @@ import { useShallow } from 'zustand/react/shallow';
 import type { AttentionMachine } from '@/lib/attention';
 import { usePolledRequest } from '@/hooks/polled-request';
 import { StimConnection } from '@/lib/connection';
-import type { HomeItem, HomeWorktree } from '@/lib/home';
+import type { HomeArchive, HomeItem, HomeWorktree } from '@/lib/home';
 import { createMachineStore, IDLE_LINK, type MachineLink, type MachinesState } from '@/lib/machine-store';
 import { listMacs, macToken, type PairedMac } from '@/lib/macs';
 import { StatusCache } from '@/lib/status-cache';
@@ -244,6 +244,10 @@ export function useMachinePresence(macId: string): MachinePresence {
 /** Every workspace of every machine, in home's order, from the pairings or, before they load, the cache. */
 export function useWorkspaceItems(): HomeItem[] {
   return useMachines((state) => state.workspaces);
+}
+
+export function useArchiveItems(): HomeArchive[] {
+  return useMachines((state) => state.archives);
 }
 
 export function useWorktreeItems(): HomeWorktree[] {

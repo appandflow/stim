@@ -11,6 +11,7 @@ import {
   mergeUsageSamples,
   minFreeDiskGb,
   usageCharts,
+  mergeArchives,
   mergeWorkspaces,
   mergeWorktrees,
   parseFilters,
@@ -521,4 +522,37 @@ test('renders unknown live and numeric history memory pressure without an alarm 
       (chart) => chart.kind === 'memory',
     )?.tone,
   ).toBe('normal');
+});
+
+it('round-trips Archived with the persisted machine and project filters', () => {
+  const selected = { ...DEFAULT_FILTERS, activity: 'archived' as const, macs: ['a'], projects: ['stim'] };
+  expect(parseFilters(JSON.stringify(selected))).toEqual(selected);
+  expect(filtersActive(selected, ['a'], ['stim'])).toBe(true);
+});
+
+it('keeps archives out of Live, Idle and All and their hidden-idle counts', () => {
+  const archives = mergeArchives([{ id: 'a', name: 'Mac', status: payload }]);
+  const live = mergeWorkspaces(macs);
+  const entries = [...live, ...mergeWorktrees(macs), ...archives];
+  for (const activity of ['live', 'idle', 'all'] as const) {
+    const filtered = filterWorkspaces(entries, { ...DEFAULT_FILTERS, activity }, ['a', 'b']);
+    expect(filtered.shown.some((entry) => 'archive' in entry)).toBe(false);
+    expect(filtered.hiddenByActivity).toBe(
+      filterWorkspaces(
+        entries.filter((entry) => !('archive' in entry)),
+        { ...DEFAULT_FILTERS, activity },
+        ['a', 'b'],
+      ).hiddenByActivity,
+    );
+  }
+  expect(filterWorkspaces(entries, { ...DEFAULT_FILTERS, activity: 'archived' }, ['a', 'b']).shown).toEqual(archives);
+  expect(
+    filterWorkspaces(entries, { ...DEFAULT_FILTERS, activity: 'archived', projects: ['tlon-apps'] }, [
+      'a',
+      'b',
+    ]).shown.map((entry) => entry.project),
+  ).toEqual(['tlon-apps']);
+  expect(mergeArchives([{ id: 'old', name: 'Old server', status: { ...status([]), archived: undefined } }])).toEqual(
+    [],
+  );
 });

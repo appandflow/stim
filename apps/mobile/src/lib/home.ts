@@ -1,5 +1,6 @@
 import { t } from '@lingui/core/macro';
 
+import type { ArchivedWorkspace } from '@/lib/archived';
 import type { Tone } from '@/design/tone';
 import { pathInCheckout, projectOf, repositoryRoots, workspaceTitle } from '@/lib/workspace-names';
 import { deviceKey, devicesOf, isShownLive, orderDevices, type DeviceRef } from '@/lib/workspaces';
@@ -57,11 +58,33 @@ export interface HomeWorktree {
   facts: WorktreeFacts;
 }
 
-export type HomeEntry = HomeItem | HomeWorktree;
+export interface HomeArchive {
+  key: string;
+  macId: string;
+  macName: string;
+  project: string;
+  title: string;
+  archive: ArchivedWorkspace;
+}
+
+export function mergeArchives(macs: MacSnapshot[]): HomeArchive[] {
+  return macs.flatMap((mac) =>
+    (mac.status?.archived ?? []).map((archive) => ({
+      key: `${mac.id}\narchive\n${archive.id}`,
+      macId: mac.id,
+      macName: mac.name,
+      project: archive.project,
+      title: archive.worktree.branch || archive.project,
+      archive,
+    })),
+  );
+}
+
+export type HomeEntry = HomeItem | HomeWorktree | HomeArchive;
 
 /** The home row an entry belongs to: apps of one linked checkout share a row, so they share a key. */
 export function workspaceKey(item: HomeEntry): string {
-  if ('facts' in item) return item.key;
+  if ('facts' in item || 'archive' in item) return item.key;
   const checkout = item.env.worktree?.path;
   return `${item.macId}\n${checkout ? `checkout\n${checkout}` : `app\n${item.env.path}`}`;
 }
@@ -99,7 +122,7 @@ export function mergeWorktrees(macs: MacSnapshot[]): HomeWorktree[] {
   );
 }
 
-export type ActivityFilter = 'live' | 'idle' | 'all';
+export type ActivityFilter = 'live' | 'idle' | 'all' | 'archived';
 
 export interface HomeFilters {
   /** Mac ids to show; empty shows every Mac. */
@@ -135,7 +158,8 @@ export function parseFilters(raw: string | null): HomeFilters {
   return {
     macs: strings(saved.macs),
     projects: strings(saved.projects),
-    activity: saved.activity === 'idle' || saved.activity === 'all' ? saved.activity : 'live',
+    activity:
+      saved.activity === 'idle' || saved.activity === 'all' || saved.activity === 'archived' ? saved.activity : 'live',
     errorsOnly: saved.errorsOnly === true,
     remoteOnly: saved.remoteOnly === true,
   };
@@ -169,9 +193,15 @@ export function filterWorkspaces<T extends HomeEntry>(
   const shown: T[] = [];
   const hidden = new Set<string>();
   for (const item of items) {
+    const archived = 'archive' in item;
+    if (archived !== (filters.activity === 'archived')) continue;
     if (macs.length && !macs.includes(item.macId)) continue;
     if (projects.length && !projects.includes(item.project)) continue;
-    if (filters.errorsOnly && (!('env' in item) || !hasErrors(item.env))) continue;
+    if (
+      filters.errorsOnly &&
+      !('archive' in item ? item.archive.builds.lastErrorCount > 0 : 'env' in item && hasErrors(item.env))
+    )
+      continue;
     if (filters.remoteOnly && (!('env' in item) || !hasRemote(item.env))) continue;
     const active = 'env' in item && isShownLive(item.env);
     if ((filters.activity === 'live' && !active) || (filters.activity === 'idle' && active)) {

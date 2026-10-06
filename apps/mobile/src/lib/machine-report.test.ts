@@ -345,3 +345,37 @@ describe('buildStats', () => {
     expect(buildStats(null)).toEqual([]);
   });
 });
+
+test('lists archived storage separately and never adds it to safe-to-free or caches', () => {
+  const plain = machineReport(status([]), null, NOW);
+  const report = machineReport(
+    status([], {
+      archivedUsage: { count: 2, bytes: 1440, byKind: { logs: 100, recordings: 1000, agentActions: 300, record: 40 } },
+    }),
+    null,
+    NOW,
+  );
+  expect(report.archived).toEqual({
+    count: 2,
+    bytes: 1440,
+    rows: [
+      { id: 'logs', title: 'Logs', detail: null, bytes: 100 },
+      { id: 'recordings', title: 'Recordings', detail: null, bytes: 1000 },
+      { id: 'agentActions', title: 'Agent actions', detail: null, bytes: 300 },
+      { id: 'record', title: 'Records', detail: null, bytes: 40 },
+    ],
+  });
+  expect(report.free).toEqual(plain.free);
+  expect(report.freeTotal).toEqual(plain.freeTotal);
+  expect(report.caches).toEqual(plain.caches);
+  expect(plain.archived).toBeNull();
+  expect(
+    machineReport(
+      status([], {
+        archivedUsage: { count: 0, bytes: 0, byKind: { logs: 0, recordings: 0, agentActions: 0, record: 0 } },
+      }),
+      null,
+      NOW,
+    ).archived,
+  ).toBeNull();
+});

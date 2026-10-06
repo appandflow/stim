@@ -4,7 +4,7 @@ import type { Tone } from '@/design/tone';
 import { formatDuration } from '@/intl/format';
 import { agentsSummary } from '@/lib/agents';
 import { ACTIVE_WINDOW_MS, activityLabel, spokenDuration } from '@/lib/format';
-import { workspaceKey, type HomeEntry, type HomeItem, type HomeWorktree } from '@/lib/home';
+import { workspaceKey, type HomeArchive, type HomeEntry, type HomeItem, type HomeWorktree } from '@/lib/home';
 import { STALE_MS } from '@/lib/needs-attention';
 import { buildLabel } from '@/lib/spoken-status';
 import { appPresence, currentPhaseLabel, gitChip } from '@/lib/workspace-view';
@@ -29,7 +29,7 @@ export interface HomeSection {
   project: string;
   live: number;
   idle: number;
-  data: (HomeWorkspace | HomeWorktree)[];
+  data: (HomeWorkspace | HomeWorktree | HomeArchive)[];
 }
 
 /**
@@ -37,12 +37,12 @@ export interface HomeSection {
  * ones, each by title and machine, so a row moves only when it turns live or idle.
  */
 export function homeSections(items: HomeEntry[]): HomeSection[] {
-  const checkouts = new Map<string, HomeWorkspace | HomeWorktree>();
+  const checkouts = new Map<string, HomeWorkspace | HomeWorktree | HomeArchive>();
   for (const item of [...items].sort(
     (a, b) =>
       a.project.localeCompare(b.project) || a.title.localeCompare(b.title) || a.macName.localeCompare(b.macName),
   )) {
-    if ('facts' in item) {
+    if ('facts' in item || 'archive' in item) {
       checkouts.set(item.key, item);
       continue;
     }
@@ -51,17 +51,30 @@ export function homeSections(items: HomeEntry[]): HomeSection[] {
     if ('apps' in workspace) workspace.apps.push(item);
     checkouts.set(key, workspace);
   }
-  const groups = new Map<string, { live: HomeWorkspace[]; idle: (HomeWorkspace | HomeWorktree)[] }>();
+  const groups = new Map<
+    string,
+    { live: HomeWorkspace[]; idle: (HomeWorkspace | HomeWorktree)[]; archived: HomeArchive[] }
+  >();
   for (const workspace of checkouts.values()) {
     if ('apps' in workspace) workspace.apps.sort((a, b) => a.env.path.localeCompare(b.env.path));
-    const project = 'facts' in workspace ? workspace.project : workspace.apps[0].project;
-    const group = groups.get(project) ?? { live: [], idle: [] };
+    const project = 'apps' in workspace ? workspace.apps[0].project : workspace.project;
+    const group = groups.get(project) ?? { live: [], idle: [], archived: [] };
     groups.set(project, group);
-    if ('apps' in workspace && workspace.apps.some((app) => isShownLive(app.env))) group.live.push(workspace);
+    if ('archive' in workspace) group.archived.push(workspace);
+    else if ('apps' in workspace && workspace.apps.some((app) => isShownLive(app.env))) group.live.push(workspace);
     else group.idle.push(workspace);
   }
   return [...groups]
-    .map(([project, { live, idle }]) => ({ project, live: live.length, idle: idle.length, data: [...live, ...idle] }))
+    .map(([project, { live, idle, archived }]) => ({
+      project,
+      live: live.length,
+      idle: idle.length,
+      data: [
+        ...live,
+        ...idle,
+        ...archived.sort((a, b) => Date.parse(b.archive.removedAt) - Date.parse(a.archive.removedAt)),
+      ],
+    }))
     .sort((a, b) => Number(b.live > 0) - Number(a.live > 0) || a.project.localeCompare(b.project));
 }
 
