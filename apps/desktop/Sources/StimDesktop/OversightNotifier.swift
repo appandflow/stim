@@ -124,7 +124,7 @@ final class OversightNotifier: ObservableObject {
         NotificationInbox.shared.markRead(entry)
         NoticeRouter.open(target)
       },
-      sticky: notification.category.needsAttention, key: notification.id)
+      sticky: notification.category.needsAttention, key: notification.id, workspacePath: target.path)
   }
 
   static func tone(_ category: OversightCategory) -> Tone {

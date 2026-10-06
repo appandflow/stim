@@ -12,6 +12,7 @@ struct Notice: Identifiable {
   var perform: @MainActor () -> Void
   var onDismiss: (@MainActor () -> Void)?
   var key: String?
+  var workspacePath: String?
 }
 
 @MainActor
@@ -59,6 +60,12 @@ final class NoticeCenter: ObservableObject {
 
   func remove(key: String) {
     for notice in notices where notice.key == key { remove(notice.id) }
+  }
+
+  func dismissCards(notIn payload: StatusPayload) {
+    for notice in notices {
+      if let path = notice.workspacePath, !payload.lists(workspace: path) { remove(notice.id) }
+    }
   }
 }
 

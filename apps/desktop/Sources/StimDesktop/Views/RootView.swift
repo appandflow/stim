@@ -154,6 +154,10 @@ struct RootView: View {
     }
     .onAppear {
       store.start()
+      if let payload = store.payload {
+        notices.dismissCards(notIn: payload)
+        toasts.dismissCards(notIn: payload)
+      }
       openRequests.openMainWindow = { [openWindow] in openWindow(id: "main") }
     }
     .onDisappear { notices.removeAll() }
@@ -165,6 +169,10 @@ struct RootView: View {
       Task { takeWorkspaceLink() }
     }
     .onReceive(store.$payload) { payload in
+      if let payload {
+        notices.dismissCards(notIn: payload)
+        toasts.dismissCards(notIn: payload)
+      }
       showDevice(openRequests.device, in: payload)
       showWorkspaceLink(in: payload)
       show(openRequests.target, in: payload)
@@ -301,7 +309,7 @@ struct RootView: View {
           perform: {
             selection = .environment(path)
             focusedDeviceID = deviceID
-          }, key: "device-launch:\(deviceID)"))
+          }, key: "device-launch:\(deviceID)", workspacePath: path))
     }
   }
 
@@ -362,7 +370,7 @@ struct RootView: View {
           selection = .environment(path)
           if let deviceID { focusedDeviceID = deviceID }
         },
-        sticky: true, key: "workspace-link:\(path)"))
+        sticky: true, key: "workspace-link:\(path)", workspacePath: path))
   }
 
   private func showWorkspaceNotFound(_ body: String, key: String? = nil) {
