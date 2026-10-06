@@ -12,7 +12,7 @@ export function applyHostedMacosProbe(record: MacosAppRecord, probe: HostedMacos
   if (probe.state === 'stopped') {
     return {
       record: { ...record, hostLaunched: false },
-      warning: `The macOS app on ${machine} is no longer running (the host reports session ${session} stopped or no longer holds it, for example after a stim-server restart there). Run stim macos --host ${machine} to launch it again, or stim stop to clear the placement.`,
+      warning: `The macOS app on ${machine} is no longer running (the host reports session ${session} stopped or no longer holds it, for example after a stim-server restart there). Run stim macos --remote ${machine} to launch it again, or stim stop to clear the placement.`,
     };
   }
   return {

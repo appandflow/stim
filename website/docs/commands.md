@@ -503,7 +503,7 @@ miss, which native change causes it.
 ## `macos`
 
 ```text
-stim macos [--build-machine <auto|local|name>] [--host <machine>] [--json]
+stim macos [--build-machine <auto|local|name>] [--remote <machine>] [--json]
 ```
 
 Builds the explicitly configured Swift Package executable in Debug and launches
@@ -517,9 +517,13 @@ the verified app for native input on the same Mac using existing permissions.
 [machine settings](./settings.md#machine-settings). A name refuses with
 `STIM_OFFLOAD_REFUSED` without fallback; `local` compiles here.
 
-`--host <machine>` runs the built app on an approved
-[`hosting.machines`](./settings.md#machine-settings) Mac over the tailnet; it never
-falls back to a local launch, and `stop` or `worktree remove` stop it there. See the
+`--remote <machine>` takes a hosting Mac name from
+[`hosting.machines`](./settings.md#machine-settings) and runs the built app on
+that approved Mac over the tailnet. It never falls back to a local launch, and
+`stop` or `worktree remove` stop it there. macOS refuses `eas` and `proxy` because
+it has neither backend, and refuses `auto` until automatic placement ships.
+These reserved names are case-insensitive and trimmed; they refuse with
+`STIM_BAD_ARG` before state access or a connection. See the
 [native macOS prototype](./macos.md) for metadata, arguments, hosting and current
 limitations.
 

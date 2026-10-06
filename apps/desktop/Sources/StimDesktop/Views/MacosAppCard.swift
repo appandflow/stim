@@ -106,7 +106,7 @@ struct MacosAppCard: View {
 extension MacosAppCard {
   fileprivate var runArguments: [String] {
     guard let host = app.host else { return ["macos"] }
-    return ["macos", "--host", host.machine]
+    return ["macos", "--remote", host.machine]
   }
 
   fileprivate var permissionsMissing: Bool {
@@ -115,7 +115,7 @@ extension MacosAppCard {
   }
 }
 
-/// The window of an app that `stim macos --host` runs on another Mac, through this Mac's stim-server, which relays
+/// The window of an app that `stim macos --remote` runs on another Mac, through this Mac's stim-server, which relays
 /// frames and input to the host. Control takes clicks and typed text.
 private struct HostedMacosWindow: View {
   var app: MacosApp

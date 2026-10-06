@@ -35,6 +35,7 @@ import { BuildConnection } from '../offload/client.ts';
 import { getConfigPath } from '../workspace/config.ts';
 import { workspaceInUse } from '../workspace/in-use.ts';
 import { workspaceLogsDir } from '../workspace/paths.ts';
+import * as settings from '../workspace/settings.ts';
 
 const tailnet = { port: 0, nodeId: 'nMini' };
 
@@ -264,6 +265,42 @@ afterEach(() => {
   delete process.env.STIM_HOME;
 });
 
+test('macos rejects reserved remote backends and the retired option before state access or a connection', async () => {
+  rmSync(process.env.STIM_HOME!, { recursive: true });
+  writeFileSync(join(root, 'package.json'), '{}');
+  rmSync(join(root, 'Package.swift'));
+  const resolve = vi.spyOn(settings, 'resolveSettings').mockImplementation(() => {
+    throw new Error('unexpected settings access');
+  });
+  const connect = vi.spyOn(BuildConnection, 'open').mockRejectedValue(new Error('unexpected hosting connection'));
+  const program = new Command().exitOverride().configureOutput({ writeErr: () => {} });
+  macosCommand(program);
+  const cwd = process.cwd();
+  process.chdir(root);
+  try {
+    for (const machine of ['eas', 'proxy', 'auto', ' EAS ', ' PrOxY ', ' AuTo ']) {
+      await expect(program.parseAsync(['node', 'stim', 'macos', '--remote', machine])).rejects.toMatchObject({
+        code: 'STIM_BAD_ARG',
+        message: expect.stringContaining(
+          machine.trim().toLowerCase() === 'auto' ? 'automatic placement' : 'no eas or proxy backend',
+        ),
+      });
+    }
+    await expect(program.parseAsync(['node', 'stim', 'macos', '--host', 'mini'])).rejects.toMatchObject({
+      code: 'commander.unknownOption',
+      message: "error: unknown option '--host'",
+    });
+    expect(resolve).not.toHaveBeenCalled();
+    expect(connect).not.toHaveBeenCalled();
+    expect(spawned).toEqual([]);
+    expect(existsSync(process.env.STIM_HOME!)).toBe(false);
+  } finally {
+    process.chdir(cwd);
+    resolve.mockRestore();
+    connect.mockRestore();
+  }
+});
+
 function statusRecord(): MacosAppRecord {
   return {
     launchId: 'launch',
@@ -320,7 +357,7 @@ test('local, absent, stopped and supervised records never ask a host for status'
   }
 });
 
-describe.skipIf(process.platform !== 'darwin')('stim macos --host (SwiftPM and codesign run only on macOS)', () => {
+describe.skipIf(process.platform !== 'darwin')('stim macos --remote (SwiftPM and codesign run only on macOS)', () => {
   beforeEach(async () => {
     host = await fakeHost();
   });
@@ -533,7 +570,7 @@ describe.skipIf(process.platform !== 'darwin')('stim macos --host (SwiftPM and c
     try {
       const program = new Command();
       macosCommand(program);
-      await program.parseAsync(['node', 'stim', 'macos', '--host', 'mini', '--json']);
+      await program.parseAsync(['node', 'stim', 'macos', '--remote', 'mini', '--json']);
     } finally {
       process.chdir(cwd);
       log.mockRestore();
@@ -571,7 +608,7 @@ describe.skipIf(process.platform !== 'darwin')('stim macos --host (SwiftPM and c
     const facts = await readHostedMacosStatus(saved, { ttlMs: 0 });
     expect(macosAppState(facts.record)).toMatchObject({ state: 'stopped', host: saved.host });
     expect(facts.warning).toContain(`session ${saved.host!.session} stopped`);
-    expect(facts.warning).toContain('Run stim macos --host mini');
+    expect(facts.warning).toContain('Run stim macos --remote mini');
     expect(facts.warning).toContain('stim stop to clear the placement');
     expect(readMacosRecord(root)).toEqual(saved);
   });
