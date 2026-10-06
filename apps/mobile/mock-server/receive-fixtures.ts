@@ -132,6 +132,7 @@ export function receiveStatus(captured: StatusPayload): StatusPayload {
           cacheLookupOutcome: 'miss',
           expectedMs: null,
           expectedPhaseMs: null,
+          completedPhaseMs: { prepare: 2000, 'cache-lookup': 800, prebuild: 5000, pods: 12_000 },
           basis: 0,
           plannedPhases: [{ phase: 'compile', expectedMs: 1000 }],
           missReason: miss,

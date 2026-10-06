@@ -825,7 +825,14 @@
           "outcome": "cold",
           "expectedMs": null,
           "expectedPhaseMs": null,
-          "basis": 0
+          "basis": 0,
+          "completedPhaseMs": {
+            "prepare": 2100,
+            "cache-lookup": 900,
+            "prebuild": 6400,
+            "pods": 14200
+          },
+          "cacheLookupOutcome": "miss"
         },
         "lastBuilds": {
           "android": {
@@ -1208,7 +1215,13 @@
           "outcome": "hit",
           "expectedMs": null,
           "expectedPhaseMs": null,
-          "basis": 0
+          "basis": 0,
+          "completedPhaseMs": {
+            "prepare": 1800,
+            "cache-lookup": 700,
+            "device": 3100
+          },
+          "cacheLookupOutcome": "hit"
         },
         "issues": [],
         "agents": [
@@ -1791,7 +1804,14 @@
               "from": "workspace"
             },
             "rekeyedBy": []
-          }
+          },
+          "completedPhaseMs": {
+            "prepare": 2100,
+            "cache-lookup": 900,
+            "prebuild": 6400,
+            "pods": 14200
+          },
+          "cacheLookupOutcome": "miss"
         },
         "lastBuilds": {
           "ios": {
@@ -2068,7 +2088,13 @@
             "phase": "pods",
             "startedAt": "2026-09-25T04:21:52.012Z",
             "phaseStartedAt": "2026-09-25T04:22:13.012Z"
-          }
+          },
+          "completedPhaseMs": {
+            "prepare": 2100,
+            "cache-lookup": 900,
+            "prebuild": 6400
+          },
+          "cacheLookupOutcome": "miss"
         },
         "lastBuilds": {
           "ios": {

@@ -356,7 +356,7 @@ function RowBuild({ env, build, now }: { env: EnvironmentState; build: BuildRepo
   const outcome = outcomeLabel(build);
   return (
     <View style={styles.build}>
-      <View style={styles.inline}>
+      <View style={styles.buildLine}>
         <Text variant="footnote" weight="semibold" tone="brand">
           {phase}
         </Text>
@@ -408,6 +408,7 @@ const styles = StyleSheet.create((theme) => ({
   pills: { flexDirection: 'row', flexWrap: 'wrap', gap: theme.space.sm },
   build: { gap: theme.space.sm, paddingVertical: theme.space.xxs },
   titleLineStacked: { flexDirection: 'column', alignItems: 'flex-start', gap: theme.space.xs },
+  buildLine: { flexDirection: 'row', alignItems: 'baseline', gap: theme.space.xs },
   inline: { flexDirection: 'row', alignItems: 'center', gap: theme.space.xs },
   line: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: theme.space.sm, rowGap: 2 },
   shrink: { flexShrink: 1 },
