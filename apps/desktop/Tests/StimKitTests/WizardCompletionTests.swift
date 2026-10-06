@@ -105,6 +105,14 @@ final class WizardCompletionTests: XCTestCase {
     XCTAssertTrue(OffloadResult.localPassed(Data("{\"launched\":\"bundling\"}".utf8), exit: 0))
   }
 
+  func testTimingsComeFromTheLastRealOffloadDoneRecord() throws {
+    let log = """
+      {"src":"build","level":"info","event":"offload_done","msg":"built on mini","timings":{"offerMs":889,"syncMs":126,"workerMs":793572,"fetchMs":7811,"totalMs":802413,"worker":{"syncMs":67,"buildMs":776856},"uploadedBytes":4721634},"ts":1,"slot":"default"}
+      {"src":"build","level":"info","event":"offload_done","msg":"built on mini","timings":{"offerMs":1,"syncMs":2,"workerMs":3,"fetchMs":4,"totalMs":10},"ts":2,"slot":"default"}
+      """
+    XCTAssertEqual(try BuildTimings.record(Data(log.utf8)).totalMs, 10)
+  }
+
   func testReducerNeedsRemoteProofTimingsAndLocalProofAndSkipStopsLateEvents() throws {
     let data = Data(
       "{\"event\":\"offload_done\",\"timings\":{\"offerMs\":1000,\"syncMs\":3000,\"workerMs\":161000,\"fetchMs\":4000,\"totalMs\":172000}}"

@@ -110,7 +110,7 @@ final class SampleBuildModel {
         let result = try OffloadResult.parse(output.stdout, machine: entry, exit: output.exit)
         test.apply(.offload(result))
         if result == .success {
-          let log = try await checked(["logs", "--json", "--source", "build", "--grep", "offload_done", "--tail", "1"])
+          let log = try await checked(["logs", "--json", "--source", "build", "--grep", "^built on ", "--tail", "5"])
           let timings = try BuildTimings.record(log.stdout)
           test.apply(.timings(timings))
           test.apply(.localStart)

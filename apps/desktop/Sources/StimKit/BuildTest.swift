@@ -38,9 +38,13 @@ public struct BuildTimings: Decodable, Equatable, Sendable {
       var event: String
       var timings: BuildTimings
     }
-    let record = try JSONDecoder().decode(Record.self, from: data)
-    guard record.event == "offload_done" else { throw CocoaError(.coderInvalidValue) }
-    return record.timings
+    let lines = String(decoding: data, as: UTF8.self).split(whereSeparator: \.isNewline)
+    for line in lines.reversed() {
+      if let record = try? JSONDecoder().decode(Record.self, from: Data(line.utf8)), record.event == "offload_done" {
+        return record.timings
+      }
+    }
+    throw CocoaError(.coderInvalidValue)
   }
 }
 
