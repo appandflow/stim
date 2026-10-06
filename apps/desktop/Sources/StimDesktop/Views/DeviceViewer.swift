@@ -16,6 +16,7 @@ struct DeviceViewer: View {
   var revealInLogs: (_ slot: String, _ at: Double?) -> Void
   var close: () -> Void
   @State private var takenOver = false
+  @State private var openedAt = Date()
   @State private var escapeMonitor: Any?
   @State private var window = WindowRef()
   @State private var scalingMode = DeviceScalingMode.fit
@@ -122,6 +123,9 @@ struct DeviceViewer: View {
         scalingMode: $scalingMode, scalingModes: scalingModes(device, replaying: replaying),
         close: close)
       Rectangle().fill(Palette.border).frame(height: 1)
+      if let run = actions.latest(for: env.path) {
+        ViewerRunNotice(run: run, openedAt: openedAt)
+      }
       HStack(spacing: 0) {
         VStack(spacing: 0) {
           canvas(device, replay: replay, replaying: replaying)

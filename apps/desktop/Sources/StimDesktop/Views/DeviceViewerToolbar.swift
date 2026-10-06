@@ -162,7 +162,7 @@ struct DeviceViewerToolbar: View {
     let busy = actions.active(for: env.path) != nil
     if device.appStopped, let run = runCommand(for: device, cwd: env.path) {
       Button("Run", systemImage: "play.fill") {
-        actions.run("Run on \(platformName(device.platform))", run)
+        actions.run("Run on \(platformName(device.platform))", steps: [run], present: false)
       }
       .nativeControlStyle(.primary)
       .fixedSize()
@@ -176,7 +176,7 @@ struct DeviceViewerToolbar: View {
       webControls(browser, busy: busy)
     } else if device.isRunning, !device.isPhysical {
       Button("Stop") {
-        actions.run("Stop \(device.slot)", stopCommand(for: device, cwd: env.path))
+        actions.run("Stop \(device.slot)", steps: [stopCommand(for: device, cwd: env.path)], present: false)
       }
       .nativeIconStyle(tint: Palette.error)
       .fixedSize()
@@ -219,7 +219,7 @@ struct DeviceViewerToolbar: View {
       .help("stim stop: ends the remote session with the rest of the workspace")
       .confirmationDialog("Stop this workspace?", isPresented: $confirmingStop, titleVisibility: .visible) {
         Button("Run stim stop", role: .destructive) {
-          actions.run("Stop \(env.names.title)", StimCommand(["stop"], cwd: env.path))
+          actions.run("Stop \(env.names.title)", steps: [StimCommand(["stop"], cwd: env.path)], present: false)
         }
       } message: {
         Text(
@@ -237,13 +237,13 @@ struct DeviceViewerToolbar: View {
     }
     if browser.running {
       Button("Reload", systemImage: "arrow.clockwise") {
-        actions.run("Reload web", StimCommand(["reload", "web"], cwd: env.path))
+        actions.run("Reload web", steps: [StimCommand(["reload", "web"], cwd: env.path)], present: false)
       }
       .labelStyle(.iconOnly)
       .nativeIconStyle()
       .disabled(busy)
       .help("stim reload web: reloads the page in Stim's Chrome")
-      Button("Close") { actions.run("Close web", stopCommand(for: device, cwd: env.path)) }
+      Button("Close") { actions.run("Close web", steps: [stopCommand(for: device, cwd: env.path)], present: false) }
         .nativeIconStyle(tint: Palette.error)
         .fixedSize()
         .disabled(busy)
