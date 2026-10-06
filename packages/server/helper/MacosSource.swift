@@ -1,5 +1,4 @@
 import AppKit
-import Carbon
 import CoreImage
 import Darwin
 import ScreenCaptureKit
@@ -33,6 +32,7 @@ final class MacosSource: NSObject, Source, SCStreamDelegate, SCStreamOutput {
   private let pacer: Pacer
   private let video = videoEncoder()
   private let jpegGate = JpegGate()
+  private let keyboardLayouts = KeyboardLayoutCache()
   private var window: SCWindow?
   private var reported: (selection: OwnedAppWindows.Selection?, pinned: Bool)?
   private var pinned: (window: UInt32, session: String)?
@@ -593,31 +593,37 @@ final class MacosSource: NSObject, Source, SCStreamDelegate, SCStreamOutput {
       let codes: [String: CGKeyCode] = [
         "escape": 53, "tab": 48, "return": 36, "backspace": 51,
         "left": 123, "right": 124, "down": 125, "up": 126,
-        "a": 0, "b": 11, "c": 8, "d": 2, "e": 14, "f": 3, "g": 5, "h": 4, "i": 34,
-        "j": 38, "k": 40, "l": 37, "m": 46, "n": 45, "o": 31, "p": 35, "q": 12,
-        "r": 15, "s": 1, "t": 17, "u": 32, "v": 9, "w": 13, "x": 7, "y": 16, "z": 6,
-        "0": 29, "1": 18, "2": 19, "3": 20, "4": 21, "5": 23, "6": 22, "7": 26, "8": 28, "9": 25,
       ]
       let flags: [String: CGEventFlags] = [
         "command": .maskCommand, "shift": .maskShift, "option": .maskAlternate, "control": .maskControl,
       ]
-      guard let code = codes[name], modifiers.allSatisfy({ flags[$0] != nil }) else { throw refusal("Unsupported native key.") }
+      guard modifiers.allSatisfy({ flags[$0] != nil }) else { throw refusal("Unsupported native key.") }
+      let code: CGKeyCode
       if name.count == 1 {
-        // Apple TextInputSources requires main-thread access; ANSI key codes identify physical U.S. positions.
-        let layout: String? = try DispatchQueue.main.sync {
+        guard let character = name.first, "abcdefghijklmnopqrstuvwxyz0123456789".contains(character) else {
+          throw refusal("Unsupported native key.")
+        }
+        let layout = try DispatchQueue.main.sync {
           guard isActive(session), matches() else {
             throw refusal("The Control session or owned app changed before reading its keyboard layout.")
           }
-          guard let source = TISCopyCurrentKeyboardInputSource()?.takeRetainedValue(),
-            let property = TISGetInputSourceProperty(source, kTISPropertyInputSourceID)
-          else { return nil }
-          return Unmanaged<AnyObject>.fromOpaque(property).takeUnretainedValue() as? String
+          return keyboardLayouts.current()
         }
-        guard layout == "com.apple.keylayout.US" || layout == "com.apple.keylayout.ABC" else {
+        guard let layout else {
           throw refusal(
-            "Native letter and digit shortcuts require the Mac's U.S. or ABC keyboard layout. Select that input source and reconnect Control. Ordinary typing and navigation do not require it."
+            "The Mac's keyboard layout could not be read, so native letter and digit shortcuts cannot be sent. Ordinary typing and navigation do not require it."
           )
         }
+        let command = modifiers.contains("command")
+        guard let resolved = layout.map.keyCode(for: character, command: command) else {
+          throw refusal(
+            "The Mac's current keyboard layout (\(layout.id)) has no key that types \"\(character)\"\(command ? " with Command" : ""), so the shortcut was not sent. Select an input source that has it and start Control again. Ordinary typing and navigation do not require it."
+          )
+        }
+        code = resolved
+      } else {
+        guard let navigation = codes[name] else { throw refusal("Unsupported native key.") }
+        code = navigation
       }
       try key(code, modifiers.reduce(CGEventFlags()) { $0.union(flags[$1]!) }, nil)
     default: throw refusal("Unsupported native macOS input.")

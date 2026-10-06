@@ -30,3 +30,4 @@ SimulatorFrames/SimulatorHingeAngle.swift
 StimKit/ProcessStream.swift
 StimKit/OwnedAppWindows.swift
 StimKit/OwnedAppWindowReader.swift
+StimKit/KeyboardLayoutMap.swift

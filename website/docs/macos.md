@@ -187,11 +187,15 @@ accepts modified letters `a-z` and digits `0-9` one at a time. Older servers kee
 fixed shortcuts and navigation; the phone explains when a server update is
 needed. Modified multi-character input and symbols are unsupported.
 
-Letter and digit shortcuts require the **Mac's selected U.S. or ABC keyboard layout**.
-Native virtual key codes identify physical U.S. positions; another host layout
-could turn a shortcut into a different command. The helper refuses letter and
-digit key events on other layouts; ordinary typing and navigation still work.
-[#2422](https://github.com/appandflow/stim/issues/2422) tracks logical shortcuts for other host layouts.
+Shortcuts for `a-z` and `0-9` use the key that types the character in the
+**Mac's current keyboard layout**, using the Command layer when Command is held.
+Russian and similar layouts, Dvorak, and Dvorak-QWERTY Command work this way.
+The Mac's selected input source is read on each key, so switching layouts takes
+effect on the next key. Letters and digits available only with Shift or Option,
+or through a dead key (for example digits on AZERTY), are refused with a reason
+naming the layout, and Control ends. Stim does not add modifiers to reach those
+characters. Ordinary typing and navigation do not depend on the layout. Symbols
+such as comma remain unsupported key names.
 
 Control posts input to the owned process without activating it or raising its
 window; only choosing a window to pin raises it among the app's windows. Only when the captured window is not the app's key window (or its
