@@ -127,7 +127,7 @@ struct AppPreferencesView: View {
 
       Section {
         if autopilot.log.isEmpty {
-          Text("No runs yet.").foregroundStyle(Palette.tertiary)
+          InlineEmpty("No runs yet.")
         } else {
           ForEach(autopilot.log.prefix(50)) { entry in AutopilotLogRow(entry: entry) }
         }

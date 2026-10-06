@@ -232,7 +232,7 @@ struct BuildSheet: View {
                     if run.running != nil {
                       ProgressView().controlSize(.mini)
                     } else {
-                      Circle().fill(run.result == "succeeded" ? Palette.success : Color(run.tone)).frame(width: 6, height: 6)
+                      StatusDot(color: run.result == "succeeded" ? Palette.success : Color(run.tone), size: 6)
                     }
                     Text(run.outcome).lineLimit(1)
                     Spacer(minLength: 0)

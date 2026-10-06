@@ -247,7 +247,7 @@ private struct AgentActionRow: View {
             .frame(maxWidth: .infinity, alignment: .leading)
           if recorded {
             Image(systemName: "play.circle")
-              .font(.system(size: 11))
+              .iconFont(IconSize.small)
               .foregroundStyle(current ? Palette.primary : Palette.tertiary)
               .accessibilityHidden(true)
           }

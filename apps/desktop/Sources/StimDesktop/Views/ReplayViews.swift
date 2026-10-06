@@ -190,7 +190,7 @@ struct ReplayBar: View {
             .help("recording.enabled is false for this workspace, so stim-server records none of its screens.")
         } else if controller.range?.recording == true {
           Pill(tone: .error, size: .small) {
-            Circle().fill(Palette.error).frame(width: 6, height: 6)
+            StatusDot(color: Palette.error, size: 6)
             Text("Recording")
           }
           .help("stim-server records this screen; the last 15 minutes can be replayed.")
@@ -219,7 +219,7 @@ struct ReplayBar: View {
       controller.live()
     } label: {
       HStack(spacing: Space.xs) {
-        Circle().fill(isLive && running ? Palette.error : Palette.tertiary).frame(width: 6, height: 6)
+        StatusDot(color: isLive && running ? Palette.error : Palette.tertiary, size: 6)
         Text("Live")
       }
     }

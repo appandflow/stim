@@ -133,6 +133,17 @@
               }.buttonStyle(.icon(active: true))
             }
           }
+          section("Icon sizes") {
+            FlowLayout(spacing: Space.lg, lineSpacing: Space.md) {
+              ForEach(Self.iconSizes, id: \.name) { name, size in
+                VStack(spacing: Space.xs) {
+                  Image(systemName: "gearshape").iconFont(size).frame(height: IconSize.large)
+                  Text(name).textStyle(.caption2)
+                  Text("\(size, specifier: "%g") pt").textStyle(.caption2, mono: true).foregroundStyle(Palette.secondary)
+                }
+              }
+            }
+          }
           section("Hover rows") {
             VStack(alignment: .leading, spacing: Space.xxs) {
               ForEach(["Hover row", "Selected row", "Disabled row"], id: \.self) { title in
@@ -188,6 +199,44 @@
               }
             }
           }
+          section("Cards") {
+            Card {
+              Text("Default card").padding(Space.lg)
+            }
+            Card(radius: Radius.control, fill: Palette.raised, border: Palette.separator) {
+              Text("Control radius, raised fill, separator border").padding(Space.lg)
+            }
+            ForEach([true, false], id: \.self) { clipsContent in
+              Card(radius: Radius.chip, border: nil, clipsContent: clipsContent) {
+                Text(clipsContent ? "Borderless, clipped content" : "Borderless, unclipped content")
+                  .padding(Space.lg)
+                  .frame(maxWidth: .infinity, alignment: .leading)
+                  .overlay(alignment: .trailing) {
+                    Circle().fill(Palette.accent).frame(width: 24, height: 24).offset(x: Space.md)
+                  }
+              }
+            }
+          }
+          section("Status dots") {
+            ForEach([CGFloat(6), CGFloat(7)], id: \.self) { size in
+              HStack(spacing: Space.md) {
+                Text("\(size, specifier: "%g") pt").textStyle(.caption2, mono: true)
+                StatusDot(color: Palette.success, size: size)
+                Text("Filled")
+                StatusDot(color: Palette.success, filled: false, size: size)
+                Text("Hollow")
+              }
+            }
+          }
+          section("Progress bars") {
+            Text("Determinate (50%)").textStyle(.caption)
+            StimProgressBar(value: 0.5)
+            Text("Indeterminate").textStyle(.caption)
+            StimProgressBar(value: nil)
+          }
+          section("Inline empty state") {
+            InlineEmpty("No items yet")
+          }
         }
         .textStyle(.body)
         .foregroundStyle(Palette.text)
@@ -205,5 +254,16 @@
     }
 
     private static let rows = ["iPhone 17 Pro", "Pixel 9"]
+    private static let iconSizes: [(name: String, size: CGFloat)] = [
+      ("micro", IconSize.micro),
+      ("indicator", IconSize.indicator),
+      ("compact", IconSize.compact),
+      ("small", IconSize.small),
+      ("control", IconSize.control),
+      ("regular", IconSize.regular),
+      ("row", IconSize.row),
+      ("medium", IconSize.medium),
+      ("large", IconSize.large),
+    ]
   }
 #endif

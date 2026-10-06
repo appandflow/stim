@@ -87,10 +87,10 @@ struct DeviceTile: View {
   private var canvas: some View {
     VStack(spacing: Space.lg) {
       if let workspace, showsStoppedBar, !replaying {
-        stoppedBar(runCommand(for: device, cwd: workspace))
-          .frame(maxWidth: 420)
-          .background(Palette.surface, in: RoundedRectangle(cornerRadius: Radius.card))
-          .overlay(RoundedRectangle(cornerRadius: Radius.card).strokeBorder(Palette.border))
+        Card(clipsContent: false) {
+          stoppedBar(runCommand(for: device, cwd: workspace))
+            .frame(maxWidth: 420)
+        }
       } else {
         Group {
           if replaying, let replay {
@@ -889,7 +889,7 @@ private struct DeviceControlButtonStyle: ButtonStyle {
 
   func makeBody(configuration: Configuration) -> some View {
     configuration.label
-      .font(.system(size: 16, weight: .regular))
+      .iconFont(IconSize.medium, weight: .regular)
       .foregroundStyle(Palette.text)
       .frame(width: 32, height: 32)
       .background(Palette.text.opacity(active ? Opacity.pressed : 0), in: Capsule())
@@ -1039,16 +1039,9 @@ private struct BuildCover: View {
           .font(.stim(.caption))
           .foregroundStyle(.white.opacity(0.6))
           .lineLimit(1)
-        Group {
-          if let fraction = progress.fraction {
-            ProgressView(value: fraction)
-          } else {
-            ProgressView().progressViewStyle(.linear)
-          }
-        }
-        .tint(Palette.accent)
-        .controlSize(.small)
-        .frame(maxWidth: 160)
+        StimProgressBar(value: progress.fraction)
+          .controlSize(.small)
+          .frame(maxWidth: 160)
         Text(Format.clock(ms: progress.elapsedMs) + estimate)
           .font(.stim(.caption))
           .monospacedDigit()
