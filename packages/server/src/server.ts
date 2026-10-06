@@ -8,6 +8,7 @@ import { WebSocketServer, type WebSocket } from 'ws';
 import { configDir } from '@stim-cli/core';
 import {
   archiveDir,
+  deviceHostArea,
   readArchive,
   queryJsonLogs,
   isJsonObject,
@@ -630,6 +631,15 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
             env: options.env,
             stateDir: join(serverDir(), 'agent-device'),
             claimRoot: join(serverDir(), 'agent-device.claims'),
+          })
+        : null,
+    resolveIos: (app, stopping) =>
+      stopping || loadConfig()?.hosting?.agentDriver === 'agent-device'
+        ? new AgentDeviceDriver({
+            env: options.env,
+            stateDir: join(deviceHostArea(app.session), 'agent-device'),
+            claimRoot: join(deviceHostArea(app.session), 'agent-device.claims'),
+            ios: { session: app.session, udid: app.udid },
           })
         : null,
     nodeOf: (client) => {
@@ -2408,33 +2418,39 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   const servers = new Map<string, { server: Server; sockets: Set<Socket> }>();
   const addresses: RunningServer['addresses'] = [];
   const close = async () => {
+    const failures: unknown[] = [];
+    const settle = async (work: Promise<unknown>) => {
+      try {
+        await work;
+      } catch (error) {
+        failures.push(error);
+      }
+    };
     closing = true;
     if (startupRetry) clearTimeout(startupRetry);
     startupProbe?.cancel();
     watcher?.close();
     if (revocationPoll) clearInterval(revocationPoll);
     if (revocationCheck) clearTimeout(revocationCheck);
-    await builds.close();
+    await settle(builds.close());
     for (const client of wss.clients) client.terminate();
     hostConnections.close();
     if (startup.state === 'ready') {
       push.close();
       helperAbort.abort();
       sampler.stop();
-      await control.close();
-      await agentDrivers.close();
-      await hostedDevices.close();
+      await settle(control.close());
+      await settle(agentDrivers.close());
+      await settle(hostedDevices.close());
       updates.close();
       recorder?.close();
-      await Promise.all([
-        frames.close(),
-        feeds.close(),
-        ...[...running].map((cancel) => cancel()),
-        cancelling.settled(),
-      ]);
+      await Promise.all(
+        [frames.close(), feeds.close(), ...[...running].map((cancel) => cancel()), cancelling.settled()].map(settle),
+      );
     }
     wss.close();
-    await Promise.all([...servers.values()].map(closeListener));
+    await Promise.all([...servers.values()].map((listener) => settle(closeListener(listener))));
+    if (failures.length) throw new AggregateError(failures, 'Server resources did not close cleanly.');
   };
   async function listenOn(host: string): Promise<void> {
     const server = createServer((request, response) => {
@@ -2488,7 +2504,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   try {
     for (const host of options.hosts) await listenOn(host);
   } catch (error) {
-    await close();
+    await close().catch(() => undefined);
     throw error;
   }
   const monitor = options.tailscaleMonitor;

@@ -592,13 +592,15 @@ Access (Accessibility on macOS 26 and earlier) for Stim Host, the app
 \`stim-server service install\` runs the server under.
 
 On a hosting Mac, \`hosting.agentDriver\` names the tool it starts so a
-client's coding agent can drive the macOS apps it hosts for that client.
-The default, \`none\`, starts nothing. \`agent-device\` starts its
-daemon only when that agent-device can lease a single macOS app (its
+client's coding agent can drive the macOS apps and iOS simulators it hosts for that client.
+The default, \`none\`, starts nothing. For macOS, \`agent-device\` starts its
+shared daemon only when that agent-device can lease a single app (its
 \`macos-app\` lease backend); otherwise agent control reports \`none\` with a
 notice, and no client is handed the Mac's desktop. STIM_AGENT_DEVICE_BIN in
 stim-server's environment names an agent-device binary to use instead of
-~/.local/bin/agent-device. \`doctor\` on that Mac notes a hosted macOS app that runs while
+~/.local/bin/agent-device. Hosted iOS uses one daemon per simulator, pinned by
+its UDID policy; both Macs need agent-device 0.21.20 or later. See guide lifecycle
+hosted-ios. \`doctor\` on that Mac notes an installed hosted app that runs while
 the setting is \`none\`.
 
 BUILD MACHINES ARE MACHINE-LEVEL

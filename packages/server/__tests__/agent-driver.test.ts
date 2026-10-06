@@ -51,7 +51,8 @@ class FakeDriver implements HostedAgentDriver {
         tenant: `stim.${app.session}`,
         runId: app.session,
         clientId: 'agent',
-        deviceKey: `${app.bundleId}@${app.pid}`,
+        deviceKey: app.udid ? `ios:mobile:${app.udid}` : `${app.bundleId}@${app.pid}`,
+        ...(app.udid ? { backend: 'ios-instance' as const } : {}),
       },
     });
   }
@@ -319,4 +320,122 @@ describe('hosted agent grants', () => {
     expect(agents.authorize(A, token, 'node-1')).toBe('forbidden');
     await agents.close();
   });
+});
+
+test('iOS sessions have separate daemon lifetimes, grants and restarts beside the shared macOS driver', async () => {
+  const macos = new FakeDriver();
+  const drivers = new Map<string, FakeDriver>();
+  const agents = new HostedAgentHost({
+    resolve: () => macos,
+    resolveIos: (target) => {
+      const driver = new FakeDriver();
+      drivers.set(target.session, driver);
+      return driver;
+    },
+    nodeOf: (client) => NODES[client] ?? null,
+    restartDelayMs: 0,
+  });
+  const ios = (session: string, client: string, udid: string): HostedAgentApp => ({
+    session,
+    client,
+    udid,
+    bundleId: 'dev.app',
+  });
+  const first = await agents.appRunning(ios(A, 'client-1', A));
+  const second = await agents.appRunning(ios(B, 'client-2', B));
+  const mac = await agents.appRunning(app('33333333-3333-4333-8333-333333333333', 5, 'client-1'));
+  try {
+    expect(drivers.get(A)).not.toBe(drivers.get(B));
+    expect(agents.authorize(A, tokenOf(first.grant), 'node-1')).toBe('ok');
+    expect(agents.authorize(A, tokenOf(second.grant), 'node-1')).toBe('forbidden');
+    expect(agents.authorize(A, tokenOf(first.grant), 'node-2')).toBe('forbidden');
+    drivers.get(A)!.crash();
+    await vi.waitFor(() => expect(drivers.get(A)!.starts).toBe(2));
+    await vi.waitFor(() => expect(tokenOf(agents.access(A)!.grant)).not.toBe(tokenOf(first.grant)));
+    expect(agents.access(B)).toEqual(second);
+    expect(macos.starts).toBe(1);
+    await agents.appStopped(A);
+    expect(drivers.get(A)!.running).toBe(false);
+    expect(drivers.get(B)!.running).toBe(true);
+    expect(agents.access(B)).toEqual(second);
+    expect(mac.grant.driver).toBe('agent-device');
+  } finally {
+    await agents.close();
+  }
+  expect(drivers.get(B)!.running).toBe(false);
+  expect(macos.running).toBe(false);
+});
+
+test('iOS none starts no daemon, and a failed daemon stop refuses replacement', async () => {
+  const driver = new FakeDriver();
+  let enabled = false;
+  const agents = new HostedAgentHost({
+    resolve: () => null,
+    resolveIos: () => (enabled ? driver : null),
+    nodeOf: () => 'node',
+  });
+  const target: HostedAgentApp = { session: A, client: 'client', udid: A, bundleId: 'dev.app' };
+  expect((await agents.appRunning(target)).grant.driver).toBe('none');
+  expect(driver.starts).toBe(0);
+  enabled = true;
+  expect((await agents.appRunning(target)).grant.driver).toBe('agent-device');
+  const stop = vi.spyOn(driver, 'stop').mockRejectedValue(new Error('daemon unresolved'));
+  await expect(agents.appStopped(A)).rejects.toThrow('daemon unresolved');
+  expect(agents.authorize(A, 'old', 'node')).toBe('unknown');
+  stop.mockRestore();
+  await agents.close();
+});
+
+test('close attempts every iOS daemon and macOS cleanup, retains failed children and retries their stop', async () => {
+  const macos = new FakeDriver();
+  const first = new FakeDriver();
+  const second = new FakeDriver();
+  const agents = new HostedAgentHost({
+    resolve: () => macos,
+    resolveIos: (target) => (target.session === A ? first : second),
+    nodeOf: () => 'node',
+  });
+  await agents.appRunning({ session: A, client: 'c', udid: A, bundleId: 'dev.app' });
+  await agents.appRunning({ session: B, client: 'c', udid: B, bundleId: 'dev.app' });
+  const mac = '33333333-3333-4333-8333-333333333333';
+  await agents.appRunning(app(mac, 10));
+  const stop = vi.spyOn(first, 'stop').mockRejectedValue(new Error('daemon unresolved'));
+  try {
+    await expect(agents.close()).rejects.toMatchObject({
+      errors: [expect.objectContaining({ errors: [expect.objectContaining({ message: 'daemon unresolved' })] })],
+    });
+    expect(stop).toHaveBeenCalledOnce();
+    expect(first.running).toBe(true);
+    expect(second.running).toBe(false);
+    expect(second.stops).toBe(1);
+    expect(macos.running).toBe(false);
+    expect(macos.revoked).toEqual([mac]);
+    expect(agents.access(B)).toBeUndefined();
+    expect(agents.access(mac)).toBeUndefined();
+  } finally {
+    stop.mockRestore();
+    await agents.close();
+  }
+  expect(first.running).toBe(false);
+  expect(agents.access(A)).toBeUndefined();
+  expect(second.stops).toBe(1);
+});
+
+test('retains a partially started iOS daemon until its shutdown is verified', async () => {
+  const driver = new FakeDriver();
+  const agents = new HostedAgentHost({ resolve: () => null, resolveIos: () => driver, nodeOf: () => 'node' });
+  vi.spyOn(driver, 'start').mockImplementation(() => {
+    driver.running = true;
+    return Promise.reject(new AgentDriverUnavailable('policy could not be verified'));
+  });
+  const stop = vi.spyOn(driver, 'stop').mockRejectedValue(new Error('daemon unresolved'));
+  await expect(agents.appRunning({ session: A, client: 'client', udid: A, bundleId: 'dev.app' })).rejects.toThrow(
+    'daemon unresolved',
+  );
+  await expect(agents.appStopped(A)).rejects.toThrow('daemon unresolved');
+  expect(driver.running).toBe(true);
+  expect(agents.authorize(A, 'old', 'node')).toBe('unknown');
+  stop.mockRestore();
+  await agents.close();
+  expect(driver.running).toBe(false);
 });

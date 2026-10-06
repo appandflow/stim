@@ -1,3 +1,8 @@
+import { rmSync } from 'node:fs';
+import { join } from 'node:path';
+import { workspaceDir } from '../workspace/paths.ts';
+import { agentAccess } from './hosted-agent.ts';
+import { closeAgentConnection } from './agent-connection.ts';
 import { randomUUID } from 'node:crypto';
 import type { BuildHandoff } from '../offload/client.ts';
 import { pullHostedIosLogs } from './hosted-logs.ts';
@@ -46,6 +51,9 @@ export interface HostedIosTarget {
   choice: HostedIosChoice;
   session: HostedSession | null;
 }
+
+export const iosAgentRemoteConfig = (root: string, slot: string): string =>
+  join(workspaceDir(root), 'hosted-ios', slot, 'agent-device-remote.json');
 
 export async function prepareHostedIos(
   machine: string,
@@ -232,6 +240,16 @@ export async function placeHostedIos(
       delivery = await call(host, 'device-host.app.attach', ids);
     }
     if (typeof delivery.notice === 'string') note(delivery.notice);
+    placement = {
+      ...placement,
+      agent: agentAccess(
+        iosAgentRemoteConfig(root, slot),
+        host.credential,
+        host.connection.supports('hosted-ios-agent') ? delivery.agent : undefined,
+        note,
+        'ios',
+      ),
+    };
     return { placement, launched: release && delivery.launched === true ? true : 'unverified' };
   } catch (error) {
     throw hostingRefusal(host.machine, error);
@@ -247,6 +265,7 @@ export async function stopHostedIos(root: string, slot?: string): Promise<void> 
       failures.push(unreadableHostedIos(name));
       continue;
     }
+    if (placement.agent.driver === 'agent-device') closeAgentConnection(placement.agent.remoteConfig);
     let host: HostConnection | undefined;
     try {
       host = await connectHost(placement.machine);
@@ -292,6 +311,7 @@ export async function stopHostedIos(root: string, slot?: string): Promise<void> 
     }
     try {
       await closeHostedMetro(root, placement.session);
+      rmSync(iosAgentRemoteConfig(root, name), { force: true });
       writeHostedIos(root, name, null);
     } catch (error) {
       failures.push(`${placement.machine}: ${(error as Error).message}. The placement is kept; rerun stim stop.`);

@@ -1,18 +1,15 @@
 import { randomUUID } from 'node:crypto';
-import { mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { rmSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   hostedMacosBundleId,
-  parseHostedAgentGrant,
   parseHostedMacosDevice,
   validHostedAppArguments,
-  type DeviceHostMachineCredential,
-  type HostedAgentAccess,
   type HostedMacosPlacement,
 } from '@stim-cli/core/state';
 import { macosDir } from '../macos/state.ts';
 import { type BuildHandoff } from '../offload/client.ts';
-import { parseMachine } from '../offload/tailnet.ts';
+import { agentAccess } from './hosted-agent.ts';
 import { phaseLine } from '../command-output.ts';
 import { closeAgentConnection } from './agent-connection.ts';
 import { pullHostedMacosLogs } from './hosted-logs.ts';
@@ -44,44 +41,6 @@ export {
 const HANDOFF_TIMEOUT_MS = 5 * 60_000;
 
 export const agentRemoteConfig = (root: string): string => join(macosDir(root), 'agent-device-remote.json');
-
-function agentAccess(
-  root: string,
-  credential: DeviceHostMachineCredential,
-  grant: unknown,
-  note: (line: string) => void,
-): HostedAgentAccess {
-  const parsed = grant === undefined ? null : parseHostedAgentGrant(grant);
-  if (grant !== undefined && !parsed) note(`${credential.machine} offered agent control this Stim does not support.`);
-  const file = agentRemoteConfig(root);
-  if (!parsed || parsed.driver === 'none') {
-    rmSync(file, { force: true });
-    return { driver: 'none', setting: 'hosting.agentDriver' };
-  }
-  const port = parseMachine(credential.machine)?.port ?? 443;
-  const config = {
-    daemonBaseUrl: `https://${credential.dnsName}${port === 443 ? '' : `:${port}`}${parsed.path}`,
-    daemonAuthToken: parsed.token,
-    tenant: parsed.lease.tenant,
-    sessionIsolation: 'tenant',
-    runId: parsed.lease.runId,
-    leaseId: parsed.scope,
-    leaseBackend: 'macos-app',
-    leaseProvider: 'proxy',
-    clientId: parsed.lease.clientId,
-    deviceKey: parsed.lease.deviceKey,
-    platform: 'macos',
-  };
-  mkdirSync(macosDir(root), { recursive: true });
-  const tmp = `${file}.${process.pid}.tmp`;
-  try {
-    writeFileSync(tmp, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
-    renameSync(tmp, file);
-  } finally {
-    rmSync(tmp, { force: true });
-  }
-  return { driver: 'agent-device', remoteConfig: file, command: `agent-device <command> --remote-config ${file}` };
-}
 
 export interface HostedMacosRun {
   placement: HostedMacosPlacement;
@@ -206,7 +165,7 @@ export async function placeHostedMacos(
     note(`${host.machine} did not apply macos.arguments. Update stim-server on that host.`);
   if (typeof delivery.notice === 'string') note(delivery.notice);
   return {
-    placement: { ...placement, agent: agentAccess(root, host.credential, delivery.agent, note) },
+    placement: { ...placement, agent: agentAccess(agentRemoteConfig(root), host.credential, delivery.agent, note) },
     launched: delivery.launched === true ? true : 'unverified',
     arguments: appliedArguments,
   };

@@ -1,11 +1,20 @@
 import { createServer } from 'node:net';
 import { createHash } from 'node:crypto';
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { BuildConnection } from '../offload/client.ts';
 import { deviceHostMachinesFile, queryLogs, type HostedIosPlacement } from '@stim-cli/core/state';
-import { prepareHostedIos, placeHostedIos, stopHostedIos } from '../device-host/hosted-ios.ts';
+import { iosAgentRemoteConfig, prepareHostedIos, placeHostedIos, stopHostedIos } from '../device-host/hosted-ios.ts';
 import { readHostedIos, writeHostedIos } from '../device-host/ios-state.ts';
 import { applyHostedIosProbe } from '../device-host/hosted-ios-status.ts';
 import { probeHostedSession } from '../device-host/hosted-client.ts';
@@ -24,6 +33,8 @@ import { connectIosTarget } from '../commands/ios/remote.ts';
 import { DEFAULT_DEPS } from '../commands/ios/dependencies.ts';
 import { workspaceInUse } from '../workspace/in-use.ts';
 import { runReload } from '../commands/reload.ts';
+import { getExecutor, setExecutor, resetExecutor } from '../exec.ts';
+import { agentRemoteConfig } from '../device-host/hosted-macos.ts';
 
 const loopbackAvailable = await new Promise<boolean>((resolve) => {
   const probe = createServer();
@@ -72,6 +83,8 @@ let pressure: string;
 let methods: { method: string; params: Record<string, unknown> }[];
 let blobs: Map<string, Buffer>;
 let manifest: { sha256: string; size: number };
+let hostFeatures: string[];
+let agentGrant: unknown;
 let features: boolean;
 let logRecords: Record<string, unknown>[];
 let retained: Map<string, Buffer> | null;
@@ -98,9 +111,11 @@ beforeEach(async () => {
   capacity = 1;
   pressure = 'normal';
   tailnet.changed = false;
+  hostFeatures = [];
+  agentGrant = undefined;
   const connection = Object.create(BuildConnection.prototype) as BuildConnection;
   connection.close = () => {};
-  connection.supports = () => features;
+  connection.supports = (feature) => (feature === 'hosted-ios-agent' ? hostFeatures.includes(feature) : features);
   connection.request = async (method, raw) => {
     const params = raw as Record<string, unknown> & {
       manifest: { sha256: string; size: number };
@@ -155,13 +170,14 @@ beforeEach(async () => {
       return reply({ offset: bytes.length });
     }
     if (method === 'device-host.app.launch' || method === 'device-host.app.attach')
-      return reply({ state: 'installed', launched: true });
+      return reply({ state: 'installed', launched: true, ...(agentGrant ? { agent: agentGrant } : {}) });
     throw new Error(`Unexpected fixture method ${method}`);
   };
   open = vi.spyOn(BuildConnection, 'open').mockResolvedValue(connection);
 });
 afterEach(async () => {
   open.mockRestore();
+  resetExecutor();
   delete process.env.STIM_HOME;
   rmSync(home, { recursive: true, force: true });
   rmSync(root, { recursive: true, force: true });
@@ -175,22 +191,22 @@ const placement = (): HostedIosPlacement => ({
   device,
   agent: { driver: 'none', setting: 'hosting.agentDriver' },
 });
-async function deliver(release = false) {
+async function deliver(release = false, slot = 'default') {
   const target = await prepareHostedIos(
     'mini',
     { deviceType: 'iPhone 17 Pro', runtime: 'iOS 27.0' },
-    readHostedIos(root).default,
+    readHostedIos(root)[slot],
   );
   try {
     return await placeHostedIos(target, {
       root,
-      slot: 'default',
+      slot,
       bundle: join(root, 'Fixture.app'),
       bundleId: 'dev.fixture',
       release,
       selectors: { deviceType: 'iPhone 17 Pro', runtime: 'iOS 27.0' },
       devClientScheme: 'exp+fixture',
-      reserved: (value) => writeHostedIos(root, 'default', value),
+      reserved: (value) => writeHostedIos(root, slot, value),
       note: () => {},
       metro: async () => ({ gatewayPort: 8111, secret: 'a'.repeat(64) }),
     });
@@ -644,6 +660,7 @@ test('delivery reconnects after the build instead of using the offer connection'
   const previous = target.host.connection;
   const connection = Object.create(BuildConnection.prototype) as BuildConnection;
   connection.close = () => {};
+  connection.supports = () => false;
   connection.request = previous.request.bind(previous);
   const stale = vi.spyOn(previous, 'request').mockRejectedValue(new Error('connection dropped during build'));
   open.mockResolvedValue(connection);
@@ -683,6 +700,120 @@ test('hosted stop failures cannot overwrite the local default-slot outcome', asy
   expect(result.outcomes.device.ios).toMatchObject({ status: 'shut-down', label: 'local simulator' });
   expect(result.outcomes.device['ios:host:default']).toMatchObject({ status: 'failed' });
   expect(result.outcomes.device['ios:host:tablet']).toMatchObject({ status: 'shut-down' });
+});
+
+test('iOS grants keep credentials in separate slot files and close only the selected connection', async () => {
+  hostFeatures = ['hosted-ios-agent'];
+  agentGrant = {
+    driver: 'agent-device',
+    path: `/device-host/agent/${sessionId}/`,
+    token: 's'.repeat(43),
+    scope: sessionId,
+    lease: {
+      tenant: `stim.${sessionId}`,
+      runId: sessionId,
+      clientId: 'agent',
+      backend: 'ios-instance',
+      deviceKey: `ios:mobile:${device.udid}`,
+    },
+  };
+  const first = await deliver(true);
+  const second = await deliver(true, 'tablet');
+  for (const [slot, run] of [
+    ['default', first],
+    ['tablet', second],
+  ] as const) {
+    const file = iosAgentRemoteConfig(root, slot);
+    expect(run.placement.agent.driver).toBe('agent-device');
+    expect(existsSync(file)).toBe(true);
+    writeHostedIos(root, slot, run.placement);
+    expect(statSync(file).mode & 0o777).toBe(0o600);
+    expect(JSON.parse(readFileSync(file, 'utf8'))).toEqual({
+      daemonBaseUrl: `https://mini.tail.ts.net:7443/device-host/agent/${sessionId}/`,
+      daemonAuthToken: 's'.repeat(43),
+      tenant: `stim.${sessionId}`,
+      sessionIsolation: 'tenant',
+      runId: sessionId,
+      clientId: 'agent',
+      leaseBackend: 'ios-instance',
+      leaseProvider: 'proxy',
+      deviceKey: `ios:mobile:${device.udid}`,
+      platform: 'ios',
+    });
+    expect(run.placement.agent).toEqual({
+      driver: 'agent-device',
+      remoteConfig: file,
+      command: `agent-device <command> --remote-config ${file}`,
+    });
+    expect(readFileSync(workspaceStateFile(root), 'utf8')).not.toContain('s'.repeat(43));
+    expect(JSON.stringify(applyHostedIosProbe(run.placement, { state: 'ready' }, slot))).not.toContain('s'.repeat(43));
+  }
+  expect(iosAgentRemoteConfig(root, 'default')).not.toBe(iosAgentRemoteConfig(root, 'tablet'));
+  expect(iosAgentRemoteConfig(root, 'default')).not.toBe(agentRemoteConfig(root));
+  const config = iosAgentRemoteConfig(root, 'tablet');
+  const calls: string[][] = [];
+  setExecutor({
+    ...getExecutor(),
+    findExecutable: () => '/fake/agent-device',
+    runFile: (_file, args = []) => {
+      calls.push(args);
+      return JSON.stringify({
+        success: true,
+        data: { connected: true, remoteConfig: config, session: 'agent-tablet' },
+      });
+    },
+  });
+  await stopHostedIos(root, 'tablet');
+  expect(calls).toEqual([
+    ['connection', 'status', '--json'],
+    ['close', '--remote-config', config, '--session', 'agent-tablet', '--json'],
+    ['disconnect', '--session', 'agent-tablet', '--json'],
+  ]);
+  expect(existsSync(config)).toBe(false);
+  expect(existsSync(iosAgentRemoteConfig(root, 'default'))).toBe(true);
+  expect(readHostedIos(root).default?.agent.driver).toBe('agent-device');
+});
+
+test('an unreachable stop retains the slot credential for retry', async () => {
+  const config = iosAgentRemoteConfig(root, 'default');
+  mkdirSync(join(config, '..'), { recursive: true });
+  writeFileSync(config, '{}', { mode: 0o600 });
+  writeHostedIos(root, 'default', {
+    ...placement(),
+    agent: {
+      driver: 'agent-device',
+      remoteConfig: config,
+      command: `agent-device <command> --remote-config ${config}`,
+    },
+  });
+  setExecutor({ ...getExecutor(), findExecutable: () => null });
+  errorMethod = 'device-host.stop';
+  errorCode = 'closed';
+  await expect(stopHostedIos(root)).rejects.toThrow('placement is kept');
+  expect(existsSync(config)).toBe(true);
+  expect(readHostedIos(root).default?.agent.driver).toBe('agent-device');
+});
+
+test('an older host grant is ignored and removes an obsolete config without failing placement', async () => {
+  const config = iosAgentRemoteConfig(root, 'default');
+  mkdirSync(join(config, '..'), { recursive: true });
+  writeFileSync(config, '{}');
+  agentGrant = {
+    driver: 'agent-device',
+    path: `/device-host/agent/${sessionId}/`,
+    token: 's'.repeat(43),
+    scope: sessionId,
+    lease: {
+      tenant: `stim.${sessionId}`,
+      runId: sessionId,
+      clientId: 'agent',
+      backend: 'ios-instance',
+      deviceKey: `ios:mobile:${device.udid}`,
+    },
+  };
+  const run = await deliver(true);
+  expect(run.placement.agent).toEqual({ driver: 'none', setting: 'hosting.agentDriver' });
+  expect(existsSync(config)).toBe(false);
 });
 
 test.each(['same-node', 'other-node', 'older-host', 'refused'])(

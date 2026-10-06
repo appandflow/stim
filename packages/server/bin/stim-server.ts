@@ -172,11 +172,25 @@ async function serve(port: number, extraEnv: string[], pathPrepend: string[]): P
   });
   const shutdown = () => {
     monitor.stop();
-    void server.close().then(() => process.exit(0));
+    void server
+      .close()
+      .catch((error: unknown) => {
+        reportShutdownFailure(error);
+        process.exitCode = 1;
+      })
+      .finally(() => process.exit());
   };
   process.on('SIGINT', shutdown);
   process.on('SIGTERM', shutdown);
   process.on('SIGHUP', shutdown);
+}
+
+function reportShutdownFailure(failure: unknown): void {
+  if (failure instanceof AggregateError) {
+    for (const kept of failure.errors) reportShutdownFailure(kept);
+  } else {
+    process.stderr.write(`stim-server: ${failure instanceof Error ? failure.message : String(failure)}\n`);
+  }
 }
 
 type Scope = 'read' | 'control' | 'build' | 'device-host';

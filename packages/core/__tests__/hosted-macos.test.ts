@@ -28,6 +28,13 @@ test('an agent grant is usable only for a known driver, one session route, and a
     lease: { tenant: 'stim.t', runId: 'run-1', clientId: 'agent', deviceKey: 'dev.example.app.hosted1@4242' },
   };
   expect(parseHostedAgentGrant(grant)).toEqual(grant);
+  const ios = {
+    ...grant,
+    lease: { ...grant.lease, backend: 'ios-instance', deviceKey: 'ios:mobile:12345678-1234-1234-1234-123456789abc' },
+  };
+  expect(parseHostedAgentGrant(ios)).toEqual(ios);
+  expect(parseHostedAgentGrant({ ...ios, lease: { ...ios.lease, backend: 'macos-app' } })).toBeNull();
+  expect(parseHostedAgentGrant({ ...ios, lease: { ...ios.lease, deviceKey: grant.lease.deviceKey } })).toBeNull();
   expect(parseHostedAgentGrant({ driver: 'none' })).toEqual({ driver: 'none' });
   for (const value of [
     { driver: 'none', token: grant.token },

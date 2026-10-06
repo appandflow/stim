@@ -828,6 +828,10 @@ test('hosted iOS safety routes and hosting refusal remedy render through the gui
   expect(hosted).toContain('stim stop; stim start');
   expect(hosted).toContain('workspace-state key to inspect');
   expect(hosted).toContain('outcomes.device["ios:host:<slot>"]');
+  expect(hosted).toContain('agent-device <command> --remote-config <file>');
+  expect(hosted).toContain('hosting.agentDriver');
+  expect(hosted).toContain('hosted-ios-agent');
+  expect(renderTopic('agent')).toContain('--remote-config');
 });
 
 test('Android machine placement refuses through the argument parser with its documented command error', () => {

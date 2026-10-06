@@ -20,21 +20,22 @@ export interface HostedMacosDevice extends HostedMacosChoice {
 }
 
 /**
- * The rest of an agent-device `macos-app` lease's owner scope, which a client names on every request:
- * `deviceKey` is `<bundleId>@<pid>` of the hosted app.
+ * The agent-device lease owner scope a client names on every request. `deviceKey` is `<bundleId>@<pid>`
+ * for a macOS app, or `ios:mobile:<udid>` with `backend: ios-instance` for a hosted simulator.
  */
 export interface HostedAgentLease {
   tenant: string;
   runId: string;
   clientId: string;
   deviceKey: string;
+  backend?: 'ios-instance';
 }
 
 /**
  * Agent control the host grants a client for one installed hosted app, sent only over that client's approved
  * device-host connection and never journaled. `none` means the host's `hosting.agentDriver` starts no driver.
  * `path` is the session's base route on the host, `scope` the driver's handle that limits it to this one app,
- * and `lease` the scope the driver's lease was allocated with.
+ * and `lease` the scope that pins the driver's lease allocation.
  */
 export type HostedAgentGrant =
   | { driver: 'none' }
@@ -106,10 +107,12 @@ const LEASE_DEVICE_KEY = /^[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)+@[1-9][0-9]{0,9}$/
 function parseHostedAgentLease(value: unknown): HostedAgentLease | null {
   if (
     !isJsonObject(value) ||
-    Object.keys(value).length !== 4 ||
+    Object.keys(value).length !== (value.backend === 'ios-instance' ? 5 : 4) ||
     ![value.tenant, value.runId, value.clientId].every((name) => typeof name === 'string' && LEASE_NAME.test(name)) ||
     typeof value.deviceKey !== 'string' ||
-    !LEASE_DEVICE_KEY.test(value.deviceKey)
+    !(value.backend === 'ios-instance'
+      ? /^ios:mobile:[a-fA-F0-9-]{36}$/.test(value.deviceKey)
+      : value.backend === undefined && LEASE_DEVICE_KEY.test(value.deviceKey))
   )
     return null;
   return value as unknown as HostedAgentLease;
@@ -141,7 +144,7 @@ export function parseHostedAgentGrant(value: unknown): HostedAgentGrant | null {
   };
 }
 
-function parseHostedAgentAccess(value: unknown): HostedAgentAccess | null {
+export function parseHostedAgentAccess(value: unknown): HostedAgentAccess | null {
   if (!isJsonObject(value)) return null;
   if (value.driver === 'none')
     return value.setting === 'hosting.agentDriver' && Object.keys(value).length === 2

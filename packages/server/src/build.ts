@@ -1,4 +1,4 @@
-import { execFile, spawn, type ChildProcess } from 'node:child_process';
+import { spawn, type ChildProcess } from 'node:child_process';
 import { createHash, randomBytes, randomUUID, type Hash } from 'node:crypto';
 import {
   appendFileSync,
@@ -39,6 +39,7 @@ import {
 import { validMacosResourceDestination } from '@stim-cli/core';
 import type { BuildStartParams } from '@stim-cli/core/protocol';
 import { readAvailableMemory } from './machine.ts';
+import { listProcesses } from './processes.ts';
 import {
   BUILD_REPO_PATTERN,
   type BuildAndroidOptions,
@@ -176,17 +177,6 @@ function workerGradleDaemons(ps: string, root: string): Array<{ pid: number; cli
   return daemons;
 }
 
-function listProcesses(): Promise<string> {
-  return new Promise((resolve) => {
-    execFile(
-      '/bin/ps',
-      ['-A', '-ww', '-o', 'pid=,command='],
-      { timeout: 10_000, maxBuffer: 64 * 1024 ** 2 },
-      (error, stdout) => resolve(error ? '' : stdout),
-    );
-  });
-}
-
 interface Job {
   id: string;
   client: string;
@@ -273,7 +263,7 @@ export class BuildHost {
     if (this.closed) return;
     const available = await readAvailableMemory();
     const low = available !== null && available < this.limits.minFreeMemoryBytes;
-    const daemons = workerGradleDaemons(await listProcesses(), this.root());
+    const daemons = workerGradleDaemons(await listProcesses().catch(() => ''), this.root());
     const busy = new Set([...this.jobs].map((job) => job.client));
     for (const daemon of daemons) {
       if (busy.has(daemon.client)) continue;

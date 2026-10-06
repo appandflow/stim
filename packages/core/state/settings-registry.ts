@@ -647,7 +647,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
     scopes: MACHINE,
     default: 'none',
     description:
-      "Tool this Mac starts so a client's coding agent can drive the macOS apps it hosts for that client; none starts nothing",
+      "Tool this Mac starts so a client's coding agent can drive the macOS apps and iOS simulators it hosts for that client; none starts nothing",
   },
   {
     key: 'server.acceptClientBuilds',

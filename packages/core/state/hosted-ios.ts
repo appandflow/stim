@@ -1,3 +1,4 @@
+import { parseHostedAgentAccess, type HostedAgentAccess } from './hosted-macos.ts';
 import { isJsonObject } from './json-file.ts';
 import { parseHostedDevice, type HostedIosDevice } from './device-host.ts';
 import { parseMachine } from './tailnet.ts';
@@ -10,7 +11,7 @@ export interface HostedIosPlacement {
   appAttempt: string;
   device: HostedIosDevice | null;
   selected: string;
-  agent: { driver: 'none'; setting: 'hosting.agentDriver' };
+  agent: HostedAgentAccess;
 }
 
 /** Public hosting facts; the host's UDID and private Metro gateway are excluded. */
@@ -37,7 +38,7 @@ export function parseHostedIosPlacement(value: unknown): HostedIosPlacement | nu
       typeof value.appAttempt === 'string' && /^[a-zA-Z0-9_-]{1,128}$/.test(value.appAttempt) ? value.appAttempt : '',
     selected: value.machine,
     device,
-    agent: { driver: 'none', setting: 'hosting.agentDriver' },
+    agent: parseHostedAgentAccess(value.agent) ?? { driver: 'none', setting: 'hosting.agentDriver' },
   };
 }
 
