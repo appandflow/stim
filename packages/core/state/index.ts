@@ -1,3 +1,5 @@
+export * from './agent-device-usage.ts';
+export * from './swiftpm-cache-usage.ts';
 export * from './build-capacity.ts';
 export * from './build-machines.ts';
 export * from './config.ts';

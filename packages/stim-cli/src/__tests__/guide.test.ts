@@ -837,3 +837,18 @@ test('archive cleanup guidance names each code-supported cache selector', () => 
     expect(section).toContain(selector.replace('example', '<id>'));
   }
 });
+
+test('facts keep the SwiftPM stats and gc keys and measurement cache filename discoverable', () => {
+  const stats = renderSection('facts', 'stats');
+  const gc = renderSection('facts', 'gc');
+  expect(stats).toContain('swiftpmCache:');
+  expect(stats).toContain('$STIM_HOME/swiftpm-cache-usage.json');
+  expect(gc).toContain('swiftpmCache');
+});
+
+test('agent-device cleanup guidance distinguishes shared state from workspace teardown', () => {
+  for (const body of [renderSection('cleanup', 'gc'), renderSection('facts', 'stats')]) {
+    expect(body).toContain('never trims or deletes the shared runner builds');
+    expect(body).toContain("workspace's own agent-device dir goes only with its workspace");
+  }
+});

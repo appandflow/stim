@@ -1,3 +1,5 @@
+import { readSwiftpmCacheUsage, type SwiftpmCacheUsage } from './swiftpm-cache-usage.ts';
+import { readAgentDeviceUsage, type AgentDeviceUsage } from './agent-device-usage.ts';
 import { existsSync, realpathSync } from 'node:fs';
 import { basename, dirname, join, relative, resolve } from 'node:path';
 import { readStateFile } from './json-file.ts';
@@ -416,6 +418,8 @@ export interface StatsReport {
   project: ({ key: string } & StatsReport['machine']) | null;
   machine: { ios: StatsBucket | null; android: StatsBucket | null };
   offload: OffloadSummary;
+  agentDevice: AgentDeviceUsage | null;
+  swiftpmCache: SwiftpmCacheUsage | null;
 }
 
 export function readStatsReport(key: string | null, now: number): { report: StatsReport; note: string | null } {
@@ -427,6 +431,8 @@ export function readStatsReport(key: string | null, now: number): { report: Stat
       project: key ? { key, ios: project?.ios ?? null, android: project?.android ?? null } : null,
       machine: { ios: record?.machine.ios ?? null, android: record?.machine.android ?? null },
       offload: offloadSummary(record, now),
+      agentDevice: readAgentDeviceUsage(),
+      swiftpmCache: readSwiftpmCacheUsage(),
     },
     note,
   };

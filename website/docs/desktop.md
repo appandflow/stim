@@ -91,6 +91,15 @@ performance traces. Every release is listed under
   all apps' iOS, Android and macOS entries, adding project names only for repeated
   platforms; checks, runs, history and logs use the selected app. The macOS panel
   shows the product, build state, duration, error and build logs.
+- **Other tools storage.** The Storage page reports agent-device runner builds,
+  sessions and logs under **Other tools**, with Reveal opening its state
+  directory. It also reports the user-level **SwiftPM cache**, shared by every
+  SwiftPM build on this machine, with Reveal opening its cache directory.
+  The `~/Library/Caches` row excludes SwiftPM bytes counted in that separate
+  row, as it excludes Stim caches, so **Other tools** counts them once.
+  Stim never offers a cleanup action for either report-only location.
+  Stim never trims or deletes the shared runner builds, sessions, logs and other state or the hosted driver dir; a workspace's own agent-device dir goes only with its workspace.
+  Stim never deletes the SwiftPM cache.
 - **Machines.** Select **This Mac** for local disk, memory and cleanup, or a
   configured build machine for its readiness, capacity and build history.
   Click the toolbar's CPU, memory or disk figure for details; **Open Machines**

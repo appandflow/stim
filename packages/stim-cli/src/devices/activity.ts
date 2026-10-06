@@ -84,6 +84,7 @@ export interface AgentDeviceRecord {
    */
   claimProtocol: boolean;
   createdAtMs: number | null;
+  xctestrunPath: string | null;
 }
 
 function field(entry: Record<string, unknown>, pidKey: string, startKey: string): PidStart | null {
@@ -127,12 +128,13 @@ export function parseAgentDeviceRecord(
     runner: entry && kind === 'runner-lease' ? field(entry, 'runnerPid', 'runnerStartTime') : null,
     claimProtocol: kind === 'runner-lease' && entry?.deviceClaimProtocol === 1,
     createdAtMs,
+    xctestrunPath: typeof entry?.xctestrunPath === 'string' ? entry.xctestrunPath : null,
   };
 }
 
 export type Liveness = 'live' | 'dead' | 'unknown';
 
-function processMatches(entry: PidStart, startOf: (pid: number) => ProcessStart): Liveness {
+export function processMatches(entry: PidStart, startOf: (pid: number) => ProcessStart): Liveness {
   const start = startOf(entry.pid);
   if (start.status === 'gone') return 'dead';
   if (start.status === 'unknown') return 'unknown';
@@ -258,7 +260,7 @@ export function tailLines(path: string): string[] | null {
   }
 }
 
-function envDir(name: string): string | null {
+export function envDir(name: string): string | null {
   const value = process.env[name]?.trim();
   return value ? resolve(value) : null;
 }

@@ -96,12 +96,12 @@ const statsHome = mkdtempSync(join(tmpdir(), 'stim-stats-runtime-'));
 try {
   writeFileSync(join(statsHome, 'stats.json'), JSON.stringify({ version: 1, machine: { ios: { runs: 3, hits: 2 } } }));
   const options = { cwd: statsHome, env: { ...process.env, STIM_HOME: statsHome }, encoding: 'utf8' };
-  const report = execFileSync(process.execPath, [join(repositoryRoot, 'packages/server/dist/stats-read.mjs')], options);
   const cli = execFileSync(
     process.execPath,
     [join(repositoryRoot, 'packages/stim-cli/dist/cli.mjs'), 'stats', '--json'],
     options,
   );
+  const report = execFileSync(process.execPath, [join(repositoryRoot, 'packages/server/dist/stats-read.mjs')], options);
   assert.deepEqual(JSON.parse(report), JSON.parse(cli));
   assert.equal(JSON.parse(report).machine.ios.runs, 3);
 } finally {

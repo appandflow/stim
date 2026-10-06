@@ -34,9 +34,14 @@ let tmpHome: string;
 beforeEach(() => {
   tmpHome = mkdtempSync(join(tmpdir(), 'stim-gc-memory-'));
   process.env.STIM_HOME = tmpHome;
+  vi.stubEnv('HOME', tmpHome);
+  vi.stubEnv('USERPROFILE', tmpHome);
+  vi.stubEnv('AGENT_DEVICE_STATE_DIR', '');
+  vi.stubEnv('AGENT_DEVICE_IOS_RUNNER_LEASE_DIR', '');
 });
 
 afterEach(() => {
+  vi.unstubAllEnvs();
   vi.restoreAllMocks();
   resetExecutor();
   delete process.env.STIM_HOME;

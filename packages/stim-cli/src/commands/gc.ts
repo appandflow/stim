@@ -1,4 +1,6 @@
 import { collectArchives, deleteArchives, archiveRefusal, archiveWorkPending } from './gc/archives.ts';
+import { getSwiftpmCacheUsage } from '../devices/swiftpm-cache-usage.ts';
+import { getAgentDeviceUsage } from '../devices/agent-device-usage.ts';
 import { existsSync } from 'fs';
 import { isAbsolute } from 'path';
 import chalk from 'chalk';
@@ -257,12 +259,18 @@ export async function collectGcReport(
       recordings: includesRecordings(scope) ? collectRecordings({ whole: all, olderThan, now }) : [],
       worktreeSweep: null,
       memory: memoryCacheKind(scope) ? await collectGcMemory(memoryScope(scope)!) : null,
+      agentDeviceUsage: null,
+      swiftpmCacheUsage: null,
       cacheScope: scope,
       olderThan,
       all,
     };
   }
 
+  phase('agent-device', 'measuring report-only state');
+  const agentDeviceUsage = await getAgentDeviceUsage();
+  phase('SwiftPM cache', 'measuring report-only state');
+  const swiftpmCacheUsage = await getSwiftpmCacheUsage();
   const mountedVolumes = listMountedVolumes();
   const cfg = loadConfig();
   let easSessionSweep = deps.precollectedEasSessionSweep;
@@ -450,6 +458,8 @@ export async function collectGcReport(
     recordings: collectRecordings({ whole: false, olderThan, now }, goneWorkspaceDirs),
     worktreeSweep: await collectWorktreeSweep({ idle: worktrees, olderThan, now }),
     memory: await collectGcMemory({ watchman: true, gradle: true }),
+    agentDeviceUsage,
+    swiftpmCacheUsage,
     cacheScope: null,
     olderThan,
     all,
