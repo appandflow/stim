@@ -96,15 +96,8 @@ struct BuildInlineProgress: View {
   }
 
   private func bar(_ progress: BuildProgress) -> some View {
-    Group {
-      if let fraction = progress.fraction {
-        ProgressView(value: fraction)
-      } else {
-        ProgressView().progressViewStyle(.linear)
-      }
-    }
-    .tint(Palette.primary)
-    .controlSize(.small)
+    StimProgressBar(value: progress.fraction, tint: Palette.primary)
+      .controlSize(.small)
   }
 }
 

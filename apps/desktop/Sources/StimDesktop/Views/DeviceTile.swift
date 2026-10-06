@@ -1039,16 +1039,9 @@ private struct BuildCover: View {
           .font(.stim(.caption))
           .foregroundStyle(.white.opacity(0.6))
           .lineLimit(1)
-        Group {
-          if let fraction = progress.fraction {
-            ProgressView(value: fraction)
-          } else {
-            ProgressView().progressViewStyle(.linear)
-          }
-        }
-        .tint(Palette.accent)
-        .controlSize(.small)
-        .frame(maxWidth: 160)
+        StimProgressBar(value: progress.fraction)
+          .controlSize(.small)
+          .frame(maxWidth: 160)
         Text(Format.clock(ms: progress.elapsedMs) + estimate)
           .font(.stim(.caption))
           .monospacedDigit()

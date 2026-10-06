@@ -299,11 +299,7 @@ struct BuildProgressBar: View {
             .fixedSize()
         }
         .font(.stim(.footnote))
-        if let fraction = progress.fraction {
-          ProgressView(value: fraction).tint(Palette.accent)
-        } else {
-          ProgressView().progressViewStyle(.linear).tint(Palette.accent)
-        }
+        StimProgressBar(value: progress.fraction)
         if let remaining = progress.remaining {
           Text(remaining).font(.stim(.caption2)).foregroundStyle(Palette.tertiary).lineLimit(1)
         }

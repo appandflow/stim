@@ -107,7 +107,7 @@ struct BuildCacheStatCard: View {
         Text(title).foregroundStyle(Palette.secondary)
         if let subtitle { Text(subtitle).font(.stim(.footnote)).foregroundStyle(Palette.tertiary) }
         Text("\(Int((platform.hitRate * 100).rounded()))%").font(.stim(.title))
-        ProgressView(value: platform.hitRate).tint(Palette.accent)
+        StimProgressBar(value: platform.hitRate)
         Text(countLabel(platform.hits, "hit")).foregroundStyle(Palette.secondary)
         Text(countLabel(platform.misses, "miss", plural: "misses")).foregroundStyle(Palette.secondary)
         if let cold = platform.lastColdBuildMs {
