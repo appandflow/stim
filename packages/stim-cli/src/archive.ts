@@ -85,12 +85,19 @@ function archiveSettings() {
 function enabled(root: string): boolean {
   const config = loadConfig();
   const project = config?.projects?.[root];
-  const checkout = existsSync(root) ? root : project?.worktreeMainRoot;
-  const common = checkout && existsSync(checkout) ? gitCommonDirOnDisk(checkout) : null;
+  const present = existsSync(root);
+  const common = present ? gitCommonDirOnDisk(root) : null;
+  if (
+    !present &&
+    Object.values(config?.repos ?? {}).some(
+      (repo) => (repo.settings as { archive?: { enabled?: unknown } })?.archive?.enabled === false,
+    )
+  )
+    return false;
   return archiveEnabled(process.env, [
     project?.settings,
     common ? config?.repos?.[common]?.settings : undefined,
-    existsSync(root) ? readCommittedSettings(root) : undefined,
+    present ? readCommittedSettings(root) : undefined,
     config,
   ]);
 }

@@ -84,7 +84,7 @@ export function deleteArchives(selection: ArchiveSelection | undefined): number 
     }
   }
   try {
-    const remaining = new Set(sweepArchiveStaging(true).map((entry) => entry.path));
+    const remaining = new Set(sweepArchiveStaging(true, 5000).map((entry) => entry.path));
     for (const entry of selection.staging) {
       if (!entry.kept && !remaining.has(entry.path))
         recordGcResult('archive', 'done', 'archive staging', { id: entry.path });

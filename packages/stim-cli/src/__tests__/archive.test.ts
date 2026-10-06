@@ -18,7 +18,7 @@ import { readArchives, archiveDir, linkReplacedArchives, type ArchivedWorkspace 
 import { archiveWorkspace, enforceArchiveRetention, sweepArchiveStaging } from '../archive.ts';
 import { reclaimProject } from '../devices/reclaim.ts';
 import { ensureWorkspaceStorage, workspaceDir } from '../workspace/paths.ts';
-import { saveConfig, upsertProject } from '../workspace/config.ts';
+import { loadConfig, saveConfig, upsertProject } from '../workspace/config.ts';
 import { resetExecutor, setExecutor } from '../exec.ts';
 import { goneClaimOwner, liveClaimOwner, plantClaim } from './_factories.ts';
 
@@ -162,6 +162,14 @@ test('disabled archive override preserves no history', async () => {
   await reclaimProject(root, { archive: { removedBy: 'gc' } });
   expect(readArchives()).toEqual([]);
   expect(existsSync(workspaceDir(root))).toBe(false);
+});
+
+test('a deleted root whose repo layer could disable archives fails closed', () => {
+  live();
+  saveConfig({ ...loadConfig(), repos: { '/elsewhere/.git': { settings: { archive: { enabled: false } } } } } as never);
+  rmSync(root, { recursive: true, force: true });
+  archiveWorkspace(root, 'gc');
+  expect(readArchives()).toEqual([]);
 });
 
 test('a mid-archive failure removes staging and does not block removal or print stdout', async () => {
