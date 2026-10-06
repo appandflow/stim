@@ -1549,11 +1549,30 @@ it.
 `store.config.js` is the App Store listing for [EAS Metadata](https://docs.expo.dev/eas/metadata/):
 name ("Stim Mobile"; the home-screen name stays "Stim"), subtitle, description,
 keywords, support, marketing and privacy URLs, copyright, categories (Developer
-Tools, Productivity), the age rating answers and the App Review notes.
+Tools, Productivity), the screenshots, the age rating answers and the App Review
+notes.
 `eas.json` points `submit.production.ios.metadataPath` at it. `apple.version`
 names the App Store version that `eas metadata:push` edits, or creates when it
 does not exist; set it to the version being released, which must equal `version`
 in `app.config.ts` for App Store Connect to accept the uploaded build.
+
+The screenshots are the framed light images in `store/screenshots/en-US/`, which
+sit outside `src/` and `assets/`, so the app bundle never contains them. They
+are listed per display type, in the order App Store Connect shows them:
+
+| Directory    | Display type            | Size      | Images |
+| ------------ | ----------------------- | --------- | ------ |
+| `iphone-6.9` | `APP_IPHONE_67`         | 1320x2868 | 6      |
+| `ipad-13`    | `APP_IPAD_PRO_3GEN_129` | 2064x2752 | 4      |
+
+App Store Connect files its 6.9-inch iPhone and 13-inch iPad images under those
+two display types. To change a screenshot, replace the PNG (RGB, no alpha) or
+edit the list in `store.config.js`, then push. `eas metadata:push` matches an
+image by file name and byte size, so a replacement needs a new file name unless
+its size differs. Within each listed display type it uploads new or changed
+images, deletes ones no longer listed and reorders the rest; dropping a display
+type from the config leaves its set in App Store Connect. `eas metadata:lint`
+does not check that the files exist.
 
 The App Review notes tell the reviewer to pair with the demo server at
 `wss://stim-demo.appandflow.workers.dev` (see `apps/demo-server`). The pairing
