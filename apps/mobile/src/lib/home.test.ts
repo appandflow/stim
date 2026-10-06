@@ -515,6 +515,31 @@ describe('filterWorkspaces', () => {
     ).toEqual(['ios', 'web']);
   });
 
+  it('matches a workspace whose only app runs on an EAS remote device of the selected platform', () => {
+    const remote = (platform: 'ios' | 'android' | null) =>
+      env(`/u/${platform}`, {
+        remoteDevices: [
+          {
+            platform,
+            backend: 'eas',
+            sessionId: 's',
+            state: 'claimed',
+            startedAt: '2026-10-01T00:00:00Z',
+            webPreviewUrl: null,
+          },
+        ],
+      });
+    const entries = mergeWorkspaces([
+      { id: 'a', name: 'Mac', status: status([remote('ios'), remote('android'), remote(null)]) },
+    ]);
+    const titles = (platforms: ('ios' | 'android')[]) =>
+      filterWorkspaces(entries, { ...DEFAULT_FILTERS, activity: 'all', platforms }, ['a']).shown.map(
+        (item) => item.title,
+      );
+    expect(titles(['ios'])).toEqual(['ios']);
+    expect(titles(['android'])).toEqual(['android']);
+  });
+
   it('keeps running local, offloaded and macOS builds, excluding stale builds, sessions and physical installs alone', () => {
     const build = payload.environments.find((e) => e.build)!.build!;
     const native = {
@@ -573,7 +598,7 @@ describe('filterWorkspaces', () => {
     expect(filtersActive(DEFAULT_FILTERS, [], [])).toBe(false);
     expect(filtersActive({ ...DEFAULT_FILTERS, platforms: ['web'] }, [], [])).toBe(true);
     expect(filtersActive({ ...DEFAULT_FILTERS, buildingOnly: true }, [], [])).toBe(true);
-    expect(filtersActive({ ...DEFAULT_FILTERS, sort: 'name' }, [], [])).toBe(true);
+    expect(filtersActive({ ...DEFAULT_FILTERS, sort: 'name' }, [], [])).toBe(false);
   });
 
   it('ignores a selected Mac that is no longer paired', () => {

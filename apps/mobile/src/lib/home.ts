@@ -193,8 +193,7 @@ export function filtersActive(filters: HomeFilters, macIds: string[], projects: 
     filters.errorsOnly ||
     filters.remoteOnly ||
     filters.platforms.length > 0 ||
-    filters.buildingOnly ||
-    filters.sort !== DEFAULT_FILTERS.sort
+    filters.buildingOnly
   );
 }
 
@@ -227,7 +226,11 @@ export function filterWorkspaces<T extends HomeEntry>(
     if (filters.remoteOnly && (!('env' in item) || !hasRemote(item.env))) continue;
     if (
       filters.platforms.length &&
-      (!('env' in item) || !devicesOf(item.env).some((device) => filters.platforms.includes(device.platform)))
+      (!('env' in item) ||
+        !(
+          devicesOf(item.env).some((device) => filters.platforms.includes(device.platform)) ||
+          item.env.remoteDevices?.some((device) => filters.platforms.some((platform) => platform === device.platform))
+        ))
     )
       continue;
     if (
