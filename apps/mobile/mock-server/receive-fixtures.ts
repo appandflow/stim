@@ -194,11 +194,54 @@ export function receiveStatus(captured: StatusPayload): StatusPayload {
       },
     ],
   };
+  payload.archived = [
+    {
+      version: 1,
+      id: 'app--archive',
+      projectRoot: '/app',
+      project: 'app',
+      workspace: 'feature',
+      worktree: {
+        repository: '/repo',
+        branch: 'feature',
+        head: null,
+        subject: null,
+        merged: true,
+        pullRequest: {
+          number: 42,
+          state: 'merged',
+          title: 'Feature',
+          url: 'https://github.com/appandflow/stim/pull/42',
+        },
+      },
+      removedAt: receivedAt,
+      removedBy: 'worktree-remove',
+      lastUsedAt: receivedAt,
+      builds: { count: 2, last, lastErrorCount: 1 },
+      agents: [{ tool: 'codex', sessionId: 'archived-agent', cwd: '/app', endedAt: receivedAt }],
+      bytes: { logs: 100, recordings: 200, agentActions: 30, record: 10, total: 340 },
+      expires: { logs: null, recordings: null, agentActions: null, record: null },
+      replacedBy: '/app',
+    },
+  ];
+  payload.archivedUsage = {
+    count: 1,
+    bytes: 340,
+    byKind: { logs: 100, recordings: 200, agentActions: 30, record: 10 },
+  };
   payload.unprovisionedWorktrees = [{ ...payload.environments[0]!.worktree!, path: '/unprovisioned' }];
   return payload;
 }
 
 export const statusEnumPaths: string[] = [
+  ...[
+    'removedBy',
+    'worktree.pullRequest.state',
+    'builds.last.platform',
+    'builds.last.status',
+    'builds.last.cacheHit',
+    'agents.0.tool',
+  ].map((path) => `archived.0.${path}`),
   'machine.memorySource',
   'machine.owners.0.kind',
   ...['pullRequest.state', 'pullRequest.reviewDecision', 'gitChip.ci', 'gitChip.parts.0.kind'].map(

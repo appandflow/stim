@@ -53,7 +53,8 @@ export function shareItems<T extends HomeEntry>(prev: T[], next: T[]): T[] {
     const old = byKey.get(item.key);
     return old &&
       (('env' in old && 'env' in item && old.env === item.env && old.inCheckout === item.inCheckout) ||
-        ('facts' in old && 'facts' in item && old.facts === item.facts)) &&
+        ('facts' in old && 'facts' in item && old.facts === item.facts) ||
+        ('archive' in old && 'archive' in item && old.archive === item.archive)) &&
       old.macName === item.macName &&
       old.project === item.project &&
       old.title === item.title

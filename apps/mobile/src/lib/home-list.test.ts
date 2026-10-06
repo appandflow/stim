@@ -1,3 +1,6 @@
+import captured from '../../mock-server/fixtures/status.json';
+import { mergeArchives } from '@/lib/home';
+import type { StatusPayload } from '@/protocol/types';
 import vectors from '../../../desktop/Tests/StimKitTests/Fixtures/workspace-row-vectors.json';
 
 import type { HomeItem, HomeWorktree } from '@/lib/home';
@@ -201,4 +204,15 @@ describe('rowLabel', () => {
       }),
     ).toBe('feat/y, Warming, Copying ignored files');
   });
+});
+
+it('groups archived rows by project without counting them as live or idle', () => {
+  const archives = mergeArchives([{ id: 'mac', name: 'Mac', status: captured.payload as StatusPayload }]);
+  const sections = homeSections(archives);
+  expect(sections.map((section) => [section.project, section.live, section.idle])).toEqual([
+    ['stim', 0, 0],
+    ['tlon-apps', 0, 0],
+  ]);
+  expect(sections[0].data.map((entry) => entry.title)).toEqual(['feat/archived-workspaces', 'feat/phone-list']);
+  expect(sections[0].data.every((entry) => 'archive' in entry)).toBe(true);
 });

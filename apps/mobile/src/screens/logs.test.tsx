@@ -7,12 +7,14 @@ import { AppState } from 'react-native';
 
 import '@/design/unistyles';
 
+import { RequestError } from '@/lib/connection';
 import type { LogEntry } from '@/lib/logs';
 import type { LogFilter, LogRecord, ServerEvent } from '@/protocol/types';
 
 import { Logs } from './logs';
 
 let mockFocused = true;
+let mockOpen = true;
 const mockSubscriptions: {
   filter: LogFilter;
   event: (event: ServerEvent) => void;
@@ -39,7 +41,11 @@ jest.mock('react-native', () => {
   return native;
 });
 jest.mock('@/hooks/machines', () => ({
-  useMacConnection: () => ({ connection: mockConnection, state: { kind: 'open' }, home: null }),
+  useMacConnection: () => ({
+    connection: mockConnection,
+    state: { kind: mockOpen ? 'open' : 'connecting' },
+    home: null,
+  }),
   useStatus: () => null,
 }));
 jest.mock('react-native-safe-area-context', () => ({
@@ -77,6 +83,7 @@ const push = async (records: LogRecord[]) =>
 
 beforeEach(() => {
   mockFocused = true;
+  mockOpen = true;
   mockEntries = [];
   mockSubscriptions.length = 0;
   jest.clearAllMocks();
@@ -160,8 +167,17 @@ test('does not subscribe when mounted in the background and starts on foreground
 });
 
 test('reconnect replaces the current display window and preserves distinct equal-time records', async () => {
-  await render(body());
+  const screen = await render(body());
   await push(Array.from({ length: 240 }, (_, i) => record(i)));
+  const subscription = latest();
+  mockOpen = false;
+  await screen.rerender(body());
+  expect(mockEntries).toHaveLength(240);
+  expect(subscription.stop).not.toHaveBeenCalled();
+  mockOpen = true;
+  await screen.rerender(body());
+  expect(mockSubscriptions).toHaveLength(1);
+  expect(subscription.stop).not.toHaveBeenCalled();
   await act(async () => latest().reset());
   expect(latest().filter.tail).toBe(240);
   const records = [record(1), { ...record(1), msg: 'another record at the same time' }];
@@ -215,4 +231,48 @@ test('keeps the newest 5,000 live records and removes older loading at the reque
   await push(Array.from({ length: 5_000 }, (_, i) => record(i + 100)));
   expect(mockEntries).toHaveLength(5_000);
   expect(screen.queryByLabelText('Load older logs')).toBeNull();
+});
+
+test('queries archived logs once without a reconnectable subscription and maps legacy refusals', async () => {
+  mockConnection.request.mockResolvedValue({ records: [record(1), record(2)] });
+  const screen = await render(
+    <I18nProvider i18n={i18n}>
+      <Logs path="/app" archive="app--old" params={{}} />
+    </I18nProvider>,
+  );
+  expect(mockConnection.subscribe).not.toHaveBeenCalled();
+  expect(mockConnection.request).toHaveBeenCalledWith('logs.query', { archive: 'app--old', tail: 200 });
+  expect(mockEntries.map((entry) => entry.lead.ts)).toEqual([1, 2]);
+  mockConnection.request.mockRejectedValue(new RequestError({ code: 'bad-request', message: 'workspace is required' }));
+  await fireEvent.press(screen.getByText('Errors'));
+  expect(screen.getByText('Update stim-server to view archived logs')).toBeTruthy();
+  expect(mockConnection.subscribe).not.toHaveBeenCalled();
+});
+
+test('waits for hello before querying an archive and drops an answer after its target changes', async () => {
+  mockOpen = false;
+  mockConnection.request.mockReset();
+  const body = (archive: string) => (
+    <I18nProvider i18n={i18n}>
+      <Logs path="/app" archive={archive} params={{}} />
+    </I18nProvider>
+  );
+  const screen = await render(body('old'));
+  expect(mockConnection.request).not.toHaveBeenCalled();
+  let first: (value: { records: LogRecord[] }) => void = () => {};
+  mockConnection.request
+    .mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          first = resolve;
+        }),
+    )
+    .mockResolvedValue({ records: [record(20)] });
+  mockOpen = true;
+  await screen.rerender(body('old'));
+  expect(mockConnection.request).toHaveBeenCalledWith('logs.query', { archive: 'old', tail: 200 });
+  await screen.rerender(body('new'));
+  await act(async () => first({ records: [record(10)] }));
+  expect(mockEntries.map((entry) => entry.lead.ts)).toEqual([20]);
+  expect(mockConnection.subscribe).not.toHaveBeenCalled();
 });

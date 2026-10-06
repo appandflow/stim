@@ -133,3 +133,24 @@ describe('createMachineStore', () => {
     expect(machines.store.getState().worktrees.some((item) => item.macId === 'a')).toBe(false);
   });
 });
+
+it('keeps archives outside live workspaces and worktrees', () => {
+  const machines = createMachineStore();
+  machines.setMacs([mac('a')], true);
+  const archived = clone().archived![0];
+  machines.receiveStatus('a', {
+    ...clone(),
+    environments: [],
+    unprovisionedWorktrees: [],
+    archived: [
+      {
+        ...archived,
+        builds: { ...archived.builds, lastErrorCount: 30, last: { ...archived.builds.last!, status: 'failed' } },
+      },
+    ],
+  });
+  const current = machines.store.getState();
+  expect(current.archives.map((item) => item.archive.id)).toEqual([archived.id]);
+  expect(current.workspaces).toEqual([]);
+  expect(current.worktrees).toEqual([]);
+});

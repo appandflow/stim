@@ -3755,7 +3755,10 @@
             "appSlot": 1,
             "appAttempt": "attempt-1",
             "bundleId": "dev.stim.notes.stim.a4md.hosted1",
-            "agent": { "driver": "none", "setting": "hosting.agentDriver" }
+            "agent": {
+              "driver": "none",
+              "setting": "hosting.agentDriver"
+            }
           },
           "hostLaunched": true,
           "state": "running"
@@ -4359,6 +4362,199 @@
           "processes": 3
         }
       ]
+    },
+    "archived": [
+      {
+        "version": 1,
+        "id": "stim--archive-1",
+        "projectRoot": "/Users/dev/Developer/stim/.worktrees/archived-workspaces",
+        "project": "stim",
+        "workspace": "archived-workspaces",
+        "worktree": {
+          "repository": "/Users/dev/Developer/stim",
+          "branch": "feat/archived-workspaces",
+          "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "subject": "Keep removed workspaces",
+          "merged": true,
+          "pullRequest": {
+            "number": 2600,
+            "title": "Keep removed workspaces",
+            "state": "merged",
+            "url": "https://github.com/appandflow/stim/pull/2600"
+          }
+        },
+        "removedAt": "2026-09-25T02:23:09.012Z",
+        "removedBy": "worktree-remove",
+        "lastUsedAt": "2026-09-25T02:23:09.012Z",
+        "builds": {
+          "count": 3,
+          "last": {
+            "platform": "ios",
+            "status": "ok",
+            "cacheHit": "local",
+            "cacheSkipped": false,
+            "durationMs": 42000,
+            "fingerprint": "mock-native",
+            "startedAt": "2026-09-25T02:23:09.012Z",
+            "finishedAt": "2026-09-25T02:23:09.012Z"
+          },
+          "lastErrorCount": 0
+        },
+        "agents": [
+          {
+            "tool": "codex",
+            "sessionId": "archive-agent-1",
+            "title": "Keep removed workspaces",
+            "cwd": "/Users/dev/Developer/stim/.worktrees/archived-workspaces",
+            "startedAt": "2026-09-25T02:23:09.012Z",
+            "endedAt": "2026-09-25T02:23:09.012Z"
+          }
+        ],
+        "bytes": {
+          "logs": 128000,
+          "recordings": 12000000,
+          "agentActions": 4000,
+          "record": 2048,
+          "total": 12134048
+        },
+        "expires": {
+          "logs": null,
+          "recordings": null,
+          "agentActions": null,
+          "record": null
+        }
+      },
+      {
+        "version": 1,
+        "id": "tlon-apps--archive-2",
+        "projectRoot": "/Users/dev/Developer/tlon-apps/.worktrees/login",
+        "project": "tlon-apps",
+        "workspace": "login",
+        "worktree": {
+          "repository": "/Users/dev/Developer/tlon-apps",
+          "branch": "fix/login",
+          "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "subject": "Fix login errors",
+          "merged": false,
+          "pullRequest": {
+            "number": 2601,
+            "title": "Fix login errors",
+            "state": "closed",
+            "url": "https://github.com/appandflow/stim/pull/2601"
+          }
+        },
+        "removedAt": "2026-09-24T14:23:09.012Z",
+        "removedBy": "gc",
+        "lastUsedAt": "2026-09-24T14:23:09.012Z",
+        "builds": {
+          "count": 4,
+          "last": {
+            "platform": "ios",
+            "status": "ok",
+            "cacheHit": "local",
+            "cacheSkipped": false,
+            "durationMs": 42000,
+            "fingerprint": "mock-native",
+            "startedAt": "2026-09-24T14:23:09.012Z",
+            "finishedAt": "2026-09-24T14:23:09.012Z"
+          },
+          "lastErrorCount": 0
+        },
+        "agents": [
+          {
+            "tool": "codex",
+            "sessionId": "archive-agent-2",
+            "title": "Fix login errors",
+            "cwd": "/Users/dev/Developer/tlon-apps/.worktrees/login",
+            "startedAt": "2026-09-24T14:23:09.012Z",
+            "endedAt": "2026-09-24T14:23:09.012Z"
+          }
+        ],
+        "bytes": {
+          "logs": 128000,
+          "recordings": 0,
+          "agentActions": 4000,
+          "record": 2048,
+          "total": 134048
+        },
+        "expires": {
+          "logs": null,
+          "recordings": null,
+          "agentActions": null,
+          "record": null
+        }
+      },
+      {
+        "version": 1,
+        "id": "stim--archive-3",
+        "projectRoot": "/Users/dev/Developer/stim",
+        "project": "stim",
+        "workspace": "phone-list",
+        "worktree": {
+          "repository": "/Users/dev/Developer/stim",
+          "branch": "feat/phone-list",
+          "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "subject": "Phone workspace list",
+          "merged": false,
+          "pullRequest": {
+            "number": 2602,
+            "title": "Phone workspace list",
+            "state": "open",
+            "url": "https://github.com/appandflow/stim/pull/2602"
+          }
+        },
+        "removedAt": "2026-09-24T02:23:09.012Z",
+        "removedBy": "maintenance",
+        "lastUsedAt": "2026-09-24T02:23:09.012Z",
+        "builds": {
+          "count": 5,
+          "last": {
+            "platform": "ios",
+            "status": "ok",
+            "cacheHit": "local",
+            "cacheSkipped": false,
+            "durationMs": 42000,
+            "fingerprint": "mock-native",
+            "startedAt": "2026-09-24T02:23:09.012Z",
+            "finishedAt": "2026-09-24T02:23:09.012Z"
+          },
+          "lastErrorCount": 0
+        },
+        "agents": [
+          {
+            "tool": "codex",
+            "sessionId": "archive-agent-3",
+            "title": "Phone workspace list",
+            "cwd": "/Users/dev/Developer/stim",
+            "startedAt": "2026-09-24T02:23:09.012Z",
+            "endedAt": "2026-09-24T02:23:09.012Z"
+          }
+        ],
+        "bytes": {
+          "logs": 128000,
+          "recordings": 0,
+          "agentActions": 4000,
+          "record": 2048,
+          "total": 134048
+        },
+        "expires": {
+          "logs": null,
+          "recordings": null,
+          "agentActions": null,
+          "record": null
+        },
+        "replacedBy": "/Users/dev/Developer/stim"
+      }
+    ],
+    "archivedUsage": {
+      "count": 3,
+      "bytes": 12402144,
+      "byKind": {
+        "logs": 384000,
+        "recordings": 12000000,
+        "agentActions": 12000,
+        "record": 6144
+      }
     }
   },
   "edits": [

@@ -23,8 +23,10 @@ import { useMenuDrawer } from '@/components/menu-drawer';
 import { WorkspaceGroupRow, WorktreeRow } from '@/components/workspace-row';
 import { useHomeFilters } from '@/hooks/home-filters';
 import { useInbox } from '@/hooks/inbox';
-import { useMacs, usePairedMacs, useWorkspaceItems, useWorktreeItems } from '@/hooks/machines';
+import { useArchiveItems, useMacs, usePairedMacs, useWorkspaceItems, useWorktreeItems } from '@/hooks/machines';
 import { useNow } from '@/hooks/use-now';
+import { archivedView } from '@/lib/archived';
+import { ListRow } from '@/components/list';
 import { AGENT_PROMPTS, pickPrompts } from '@/lib/agent-prompts';
 import {
   filtersActive,
@@ -33,6 +35,7 @@ import {
   projectNames,
   runningDevices,
   type DeviceTileItem,
+  type HomeArchive,
   type HomeItem,
 } from '@/lib/home';
 import { checkoutProjects, homeSections, type HomeSection } from '@/lib/home-list';
@@ -52,7 +55,8 @@ export function Home() {
   const macs = usePairedMacs();
   const items = useWorkspaceItems();
   const worktrees = useWorktreeItems();
-  const entries = useMemo(() => [...items, ...worktrees], [items, worktrees]);
+  const archives = useArchiveItems();
+  const entries = useMemo(() => [...items, ...worktrees, ...archives], [items, worktrees, archives]);
   const { filters, update, view } = useHomeFilters();
   const [visible, setVisible] = useState<Set<string>>(new Set());
   const [aspects, setAspects] = useState<ReadonlyMap<string, number>>(new Map());
@@ -255,7 +259,9 @@ export function Home() {
         ListHeaderComponent={listHeader}
         renderSectionHeader={({ section }) => <RepoHeader section={section} />}
         renderItem={({ item }) =>
-          'facts' in item ? (
+          'archive' in item ? (
+            <ArchiveRow item={item} now={now} showsMachine={showsMachine} />
+          ) : 'facts' in item ? (
             <WorktreeRow item={item} now={now} showsMachine={showsMachine} />
           ) : (
             <WorkspaceGroupRow
@@ -268,7 +274,18 @@ export function Home() {
           )
         }
         ListEmptyComponent={
-          <HomeEmpty view="workspaces" items={entries.length} noFilterSet={noFilterSet} focused={focused} />
+          filters.activity === 'archived' ? (
+            <Text tone="secondary" style={styles.emptyMessage}>
+              <Trans>No archived workspaces. Removed workspaces appear here when the server keeps an archive.</Trans>
+            </Text>
+          ) : (
+            <HomeEmpty
+              view="workspaces"
+              items={items.length + worktrees.length}
+              noFilterSet={noFilterSet}
+              focused={focused}
+            />
+          )
         }
         ListFooterComponent={
           filters.activity === 'live' && hiddenByActivity > 0 ? (
@@ -284,6 +301,21 @@ export function Home() {
         }
       />
     </SafeAreaView>
+  );
+}
+
+function ArchiveRow({ item, now, showsMachine }: { item: HomeArchive; now: number; showsMachine: boolean }) {
+  const router = useRouter();
+  const view = archivedView(item.archive, now);
+  return (
+    <ListRow
+      title={view.title}
+      subtitle={[view.pr, view.removed, view.size, showsMachine ? item.macName : null].filter(Boolean).join(' \u00B7 ')}
+      accessory="chevron"
+      onPress={() =>
+        router.push({ pathname: '/mac/[id]/archived', params: { id: item.macId, archive: item.archive.id } })
+      }
+    />
   );
 }
 

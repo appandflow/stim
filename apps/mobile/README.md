@@ -130,6 +130,15 @@ Duo fold detection requires a build made with the iOS 27.1 SDK and an iOS
   Tapping a machine opens that machine's status. Whichever of the three
   destinations is open is saved on the phone and is what home shows next
   launch.
+- **Archived workspaces**: choose **Archived** in Filters to see removed
+  workspaces, grouped by project, with their PR state, removal time and size.
+  Live, Idle and All show only current workspaces. An archive opens a read-only
+  page with its removal reason, replacement link when available, build count
+  and last build, saved logs, ended agent sessions and replay for each default
+  iOS, Android or Web slot that still has footage. Archives have no workspace
+  controls and never add to live counts or Needs attention. An older server
+  without archive status shows an empty list; one that refuses archive log or
+  replay requests shows an update hint.
 - **Filters**: the filter button filters the list by machine, by project, by live
   or idle, and to workspaces with errors or with remote sessions. The filters
   are saved on the phone; a dot on the button shows that some are on. Live only
@@ -149,6 +158,8 @@ Duo fold detection requires a build made with the iOS 27.1 SDK and an iOS
   merged, has an open pull request, or is stale), **Simulators and
   emulators** (every one on the Mac, Stim's and **Yours**), **Leased
   devices**, **Runtimes and system images**, **Recordings**, **Caches**,
+  **Archived workspaces** (count, total size and sizes of logs, recordings,
+  agent actions and records, shown separately from caches and Safe to free),
   **Native builds** (runs, cache hits and time saved per platform), budgets and
   **Needs attention**. Nothing on the page frees, deletes or stops anything;
   it says to manage those on the Mac. The disk sections other than Projects and
@@ -963,6 +974,13 @@ stim-server's segment format, with its agent-action markers in
   Seeking past the footage shows its last frame.
 - **The switch.** `recording.set` flips a flag that `replay.range`,
   `settings.get` and every status environment's `recording.enabled` follow.
+
+The mock status includes three archived workspaces: a merged PR with logs and
+an iOS recording, an archive without footage, and an archive replaced by a live
+workspace. Set `STIM_MOCK_LEGACY_ARCHIVES=1` when starting the mock to keep those
+rows visible while refusing archive requests with `bad-request`, so the update
+hints can be checked. Archived log subscriptions end with `logs-ended`; the
+phone uses one-shot queries instead.
 
 To try the home screen with two Macs, run two mock servers on different ports.
 `--workspaces <regex>` keeps only the app workspaces and source-only worktrees whose path matches, and

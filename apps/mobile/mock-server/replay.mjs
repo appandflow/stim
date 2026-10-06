@@ -143,3 +143,20 @@ export class VideoFeed {
     return shown;
   }
 }
+
+export function replayKeyframe(recording, at) {
+  const spans = replayRange(recording).spans;
+  const span = spans.find((span) => span.end >= at) ?? spans.at(-1);
+  const target = Math.max(0, at - span.start);
+  const keyframes = recording.units.filter((unit) => unit.flags & 1);
+  const unit = keyframes.findLast((unit) => unit.at <= target) ?? keyframes[0];
+  const next = keyframes.find((candidate) => candidate.at > unit.at);
+  return {
+    start: span.start + unit.at,
+    end: next ? span.start + next.at : span.end,
+    at: span.start + unit.at,
+    width: unit.width,
+    height: unit.height,
+    data: unit.data.toString('base64'),
+  };
+}
