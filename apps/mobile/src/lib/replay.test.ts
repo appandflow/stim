@@ -3,6 +3,7 @@ import fixture from '../../../desktop/Tests/StimKitTests/Fixtures/replay-timelin
 import {
   adjacentAction,
   buildTimeline,
+  clampReplayTime,
   LONG_GAP_MS,
   markerSeek,
   markerTitle,
@@ -37,6 +38,19 @@ describe('the replay timeline vectors Stim Desktop replays too', () => {
 });
 
 describe('the replay timeline', () => {
+  it.each([
+    [50, 100],
+    [150, 150],
+    [250, 300],
+    [450, 400],
+  ])('clamps a replay time of %s to recorded footage at %s', (at, expected) => {
+    const timeline = buildTimeline([
+      { start: 100, end: 200 },
+      { start: 300, end: 400 },
+    ])!;
+    expect(clampReplayTime(timeline, at)).toBe(expected);
+  });
+
   const spans = [
     { start: 0, end: 4 * MINUTE },
     { start: 2 * HOUR, end: 2 * HOUR + 6 * MINUTE },

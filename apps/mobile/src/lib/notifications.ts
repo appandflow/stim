@@ -234,17 +234,21 @@ export type NotificationRoute =
   | { pathname: '/mac/[id]'; params: { id: string } }
   | { pathname: '/mac/[id]/workspace'; params: { id: string; path: string } }
   | { pathname: '/mac/[id]/logs'; params: { id: string; path: string; errors: '1' } }
-  | { pathname: '/mac/[id]/device'; params: { id: string; path: string; platform: DevicePlatform; slot: string } }
+  | {
+      pathname: '/mac/[id]/device';
+      params: { id: string; path: string; platform: DevicePlatform; slot: string; at?: string };
+    }
   | { pathname: '/mac/[id]/build'; params: { id: string; path: string; platform: 'ios' | 'android' } }
   | { url: string };
 
 const GITHUB_PULL = /^https:\/\/github\.com\/[^/\s]+\/[^/\s]+\/pull\/\d+$/;
 
-/**
- * What a tapped notification opens: home; a paired machine's sheet, workspace, errors, device viewer or build
- * details; or a GitHub pull request in the browser. Anything else about a workspace opens the workspace.
- */
-export function notificationRoute(data: unknown, macIds: readonly string[]): NotificationRoute {
+// Expo Notifications reports notification.date in seconds on iOS and milliseconds on Android.
+export function notificationTimeMs(date: number): number {
+  return date < 1e11 ? date * 1000 : date;
+}
+
+export function notificationRoute(data: unknown, macIds: readonly string[], at?: number): NotificationRoute {
   const value = (data ?? {}) as Partial<NotificationData>;
   if (typeof value.ref !== 'string' || !macIds.includes(value.ref)) return { pathname: '/' };
   const id = value.ref;
@@ -258,7 +262,10 @@ export function notificationRoute(data: unknown, macIds: readonly string[]): Not
   if (value.target === 'url' && typeof value.url === 'string' && GITHUB_PULL.test(value.url)) return { url: value.url };
   if (value.target === 'device' && platform) {
     const slot = typeof value.slot === 'string' ? value.slot : 'default';
-    return { pathname: '/mac/[id]/device', params: { id, path, platform, slot } };
+    return {
+      pathname: '/mac/[id]/device',
+      params: { id, path, platform, slot, ...(at === undefined ? {} : { at: String(at) }) },
+    };
   }
   if (value.target === 'build' && (platform === 'ios' || platform === 'android')) {
     return { pathname: '/mac/[id]/build', params: { id, path, platform } };

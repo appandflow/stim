@@ -22,7 +22,7 @@ import { useMacConnection, useStatus } from '@/hooks/machines';
 import { useReplayRangeState } from '@/hooks/replay-range';
 import { useNow } from '@/hooks/use-now';
 import { archiveError, archivedView } from '@/lib/archived';
-import { buildTimeline } from '@/lib/replay';
+import { buildTimeline, clampReplayTime } from '@/lib/replay';
 import { buildLine } from '@/lib/workspace-view';
 import { platformName } from '@/lib/workspaces';
 import { aspectOf, fitRect, type Rect } from '@/lib/zoom';
@@ -155,7 +155,15 @@ export function ArchivedBuild({ archive: id }: { archive: string }) {
   );
 }
 
-export function ArchivedReplay({ archive, platform }: { archive: string; platform: DevicePlatform }) {
+export function ArchivedReplay({
+  archive,
+  platform,
+  openAt,
+}: {
+  archive: string;
+  platform: DevicePlatform;
+  openAt?: number;
+}) {
   const focused = useIsFocused();
   const foreground = useAppForeground();
   const range = useReplayRangeState({ archive, platform, slot: 'default' }, focused && foreground);
@@ -165,7 +173,7 @@ export function ArchivedReplay({ archive, platform }: { archive: string; platfor
       <Stack.Screen options={{ title }} />
       {range.error ? <Text tone="secondary">{archiveError(range.error, 'replay')}</Text> : null}
       {range.data?.spans.length ? (
-        <RecordedDevice archive={archive} platform={platform} range={range.data} />
+        <RecordedDevice archive={archive} platform={platform} range={range.data} openAt={openAt} />
       ) : !range.error ? (
         <Text tone="secondary">{range.data ? t`No recording available.` : t`Loading...`}</Text>
       ) : null}
@@ -177,20 +185,23 @@ function RecordedDevice({
   archive,
   platform,
   range,
+  openAt,
 }: {
   archive: string;
   platform: DevicePlatform;
   range: ReplayRange;
+  openAt?: number;
 }) {
   const focused = useIsFocused();
   const foreground = useAppForeground();
+  const timeline = buildTimeline(range.spans)!;
+  const [startAt] = useState(() => (openAt === undefined ? timeline.start : clampReplayTime(timeline, openAt)));
   const stream = useDeviceStream(
     { archive, platform, slot: 'default' },
-    { enabled: focused && foreground, fps: 5, maxEdge: 1280, video: VIDEO, startAt: range.spans[0].start },
+    { enabled: focused && foreground, fps: 5, maxEdge: 1280, video: VIDEO, startAt },
   );
   const [stage, setStage] = useState<Rect>([0, 0, 0, 0]);
   const [, , width, height] = fitRect(aspectOf(stream.video ?? stream.frame) ?? 0.5, stage);
-  const timeline = buildTimeline(range.spans);
   return (
     <View style={styles.recording}>
       <View
