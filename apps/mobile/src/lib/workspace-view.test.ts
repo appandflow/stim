@@ -406,6 +406,7 @@ describe('phaseSteps', () => {
       ['pods', 'done', 15_000],
       ['compile', 'current', 47_000],
     ]);
+    expect(barSteps(steps).map((step) => step.phase)).toEqual(['prepare', 'compile']);
   });
 
   it('folds the short prepare phases into one bar segment and launch into install', () => {
@@ -747,12 +748,7 @@ test.each([
   } else if (field === 'build.outcome') {
     expect(outcomeLabel(workspace.build!)).toBeNull();
   } else if (field === 'build.plannedPhases.0.phase') {
-    expect(barSteps(phaseSteps(workspace.build!, [], NOW)).map((step) => step.phase)).toEqual([
-      'prepare',
-      'prebuild',
-      'pods',
-      'compile',
-    ]);
+    expect(barSteps(phaseSteps(workspace.build!, [], NOW)).map((step) => step.phase)).toEqual(['compile']);
   } else if (field === 'lastBuilds.ios.status' || field === 'lastBuilds.ios.cacheHit') {
     expect(buildLine('ios', workspace.lastBuilds!.ios, undefined)).toMatchObject({
       main: 'Unknown',

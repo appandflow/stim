@@ -522,6 +522,7 @@ export interface PhaseStep {
   elapsedMs: number | null;
   expectedMs: number | null;
   fraction: number | null;
+  unplanned?: true;
 }
 
 export function cacheLookupLabel(build: BuildReport): 'hit' | 'miss' | null {
@@ -578,7 +579,15 @@ export function phaseSteps(build: BuildReport, history: readonly BuildHistoryEnt
     const i = PHASE_ORDER.indexOf(phase);
     const expectedMs =
       phase === build.phase ? (build.expectedPhaseMs ?? reference[phase] ?? null) : (reference[phase] ?? null);
-    if (i < currentIndex) return { phase, state: 'done', elapsedMs: completed[phase] ?? null, expectedMs, fraction: 1 };
+    if (i < currentIndex)
+      return {
+        phase,
+        state: 'done',
+        elapsedMs: completed[phase] ?? null,
+        expectedMs,
+        fraction: 1,
+        ...(reference[phase] === undefined ? { unplanned: true as const } : {}),
+      };
     if (i > currentIndex) return { phase, state: 'pending', elapsedMs: null, expectedMs, fraction: 0 };
     const { done, total } = compileDetail(build) ?? {};
     const counted = typeof done === 'number' && typeof total === 'number' && total > 0 ? done / total : null;
@@ -626,6 +635,7 @@ const BAR_GROUP: Record<BuildPhase, BuildPhase> = {
 export function barSteps(steps: PhaseStep[]): PhaseStep[] {
   const groups: PhaseStep[] = [];
   for (const step of steps) {
+    if (step.unplanned) continue;
     const phase = Object.hasOwn(BAR_GROUP, step.phase)
       ? BAR_GROUP[step.phase]
       : step.state === 'current'
