@@ -33,8 +33,9 @@ in the workspace directory:
   section (**Rebuild** when that platform's last build failed), run
   `stim ios` or `stim android` in the workspace with no other arguments, so the
   default slot and configuration. The
-  menus offer the platforms with a device or a last build, or both when
-  neither is recorded. Run is disabled while a build runs in the workspace.
+  menus offer the platforms `stim status` reports in `platforms`, plus any
+  with a device or a last build; an older `stim` that does not report them
+  offers the used ones, or iOS and Android when none is recorded. Run is disabled while a build runs in the workspace.
   **Reload app** runs `stim reload` and is disabled unless the dev server and a
   local device are running.
 - Workspace page: the "..." menu beside the stage line runs `stim stop`, and `stim worktree remove` after a

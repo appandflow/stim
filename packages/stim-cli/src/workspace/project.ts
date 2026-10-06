@@ -221,7 +221,8 @@ export function detectIsExpo(projectRoot: string): boolean {
 export function detectPlatforms(root: string, settings: SettingsObject): string[] {
   const platforms = new Set<string>();
   const product = settingValueAt(settings, 'macos.product');
-  if (existsSync(join(root, 'Package.swift')) && typeof product === 'string' && product) platforms.add('macos');
+  const infoPlist = settingValueAt(settings, 'macos.infoPlist');
+  if (existsSync(join(root, 'Package.swift')) && product && infoPlist) platforms.add('macos');
   const webUrl = webSettings(settings).url;
   if (webUrl !== null) platforms.add('web');
   const pkg = readPackageJson(root);
@@ -240,7 +241,7 @@ export function detectPlatforms(root: string, settings: SettingsObject): string[
       platforms.add('android');
       if ('react-native-web' in deps || isPackageResolvable(root, 'react-native-web')) platforms.add('web');
     }
-  } else if (declaresAppDependency(pkg) || 'react-native-web' in deps) {
+  } else if (declaresAppDependency(pkg)) {
     let ios: string[] = [];
     try {
       ios = readdirSync(join(root, 'ios'));
@@ -252,7 +253,6 @@ export function detectPlatforms(root: string, settings: SettingsObject): string[
       )
     )
       platforms.add('android');
-    if ('react-native-web' in deps || isPackageResolvable(root, 'react-native-web')) platforms.add('web');
   }
   return ['ios', 'android', 'macos', 'web'].filter((platform) => platforms.has(platform));
 }
@@ -264,10 +264,16 @@ function literalPlatforms(text: string): string[] | null {
         /\/\*[\s\S]*?\*\/|\/\/[^\n]*|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`|[A-Za-z_$][\w$]*|[^\s]/g,
       )
       ?.filter((token) => !token.startsWith('//') && !token.startsWith('/*')) ?? [];
-  const index = tokens.findIndex(
-    (token, i) =>
-      (token === 'platforms' || token === '"platforms"' || token === "'platforms'") && tokens[i + 1] === ':',
-  );
+  let open = 0;
+  const index = tokens.findIndex((token, i) => {
+    if (token === '[') open++;
+    else if (token === ']') open--;
+    return (
+      open === 0 &&
+      (token === 'platforms' || token === '"platforms"' || token === "'platforms'") &&
+      tokens[i + 1] === ':'
+    );
+  });
   if (index < 0 || tokens[index + 2] !== '[') return null;
   const platforms: string[] = [];
   let i = index + 3;

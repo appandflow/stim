@@ -83,6 +83,10 @@ import Testing
     #expect(menu.contains(.run(platform: "macos")))
     #expect(!menu.contains(.startDevServer))
     #expect(!menu.contains(.reload))
+    let withWeb = workspaceMenuItems(for: .workspace(metroRunning: false, platforms: ["macos", "web"], linkedWorktree: false))
+    #expect(withWeb.contains(.run(platform: "web")))
+    #expect(!withWeb.contains(.startDevServer))
+    #expect(!withWeb.contains(.reload))
   }
 
   @Test func reloadNeedsTheDevServerAndARunningLocalDevice() throws {

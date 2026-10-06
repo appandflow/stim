@@ -189,22 +189,22 @@ describe('detectPlatforms without running project code', () => {
     expect(detectPlatforms(root, {})).toEqual(['web']);
   });
 
-  test('bare apps support web via an explicit URL or declared react-native-web dependency', () => {
+  test('bare apps support web only through an explicit URL, since stim web refuses them without one', () => {
     app({ 'react-native': '0.81' });
     expect(detectPlatforms(root, { web: { url: 'http://localhost:5173' } })).toEqual(['web']);
     app({ 'react-native': '0.81', 'react-native-web': '0.21' });
-    expect(detectPlatforms(root, {})).toEqual(['web']);
+    file('node_modules/react-native-web/package.json', '{}');
+    expect(detectPlatforms(root, {})).toEqual([]);
   });
 
-  test('a Swift package needs macos.product but no package.json', () => {
-    expect(detectPlatforms(root, { macos: { product: 'Sample' } })).toEqual([]);
+  test('a Swift package needs macos.product and macos.infoPlist but no package.json', () => {
+    const macos = { product: 'Sample', infoPlist: 'Info.plist' };
+    expect(detectPlatforms(root, { macos })).toEqual([]);
     file('Package.swift');
     expect(detectPlatforms(root, {})).toEqual([]);
-    expect(detectPlatforms(root, { macos: { product: 'Sample' } })).toEqual(['macos']);
-    expect(detectPlatforms(root, { macos: { product: 'Sample' }, web: { url: 'http://localhost:5173' } })).toEqual([
-      'macos',
-      'web',
-    ]);
+    expect(detectPlatforms(root, { macos: { product: 'Sample' } })).toEqual([]);
+    expect(detectPlatforms(root, { macos })).toEqual(['macos']);
+    expect(detectPlatforms(root, { macos, web: { url: 'http://localhost:5173' } })).toEqual(['macos', 'web']);
   });
 
   test.each(['js', 'ts', 'cjs', 'mjs'])(
@@ -226,6 +226,11 @@ describe('detectPlatforms without running project code', () => {
       file(`app.config.${extension}`, "// platforms: ['web']\nexport default { slug: 'app' };");
       expect(detectPlatforms(root, {})).toEqual(['ios', 'android']);
       expo(['android']);
+      expect(detectPlatforms(root, {})).toEqual(['android']);
+      file(
+        `app.config.${extension}`,
+        "export default { plugins: [['some-plugin', { platforms: ['ios'] }]], slug: 'app' };",
+      );
       expect(detectPlatforms(root, {})).toEqual(['android']);
     },
   );

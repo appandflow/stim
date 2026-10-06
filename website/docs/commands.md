@@ -1074,9 +1074,9 @@ Expo uses an explicit `platforms` list from `app.json` or a literal array in
 `app.config.js/ts/cjs/mjs`; otherwise it defaults to iOS and Android, adding web
 when `react-native-web` is declared or resolves. Bare apps use `.xcodeproj` or
 `.xcworkspace` entries in `ios/` and Gradle project files in `android/`.
-Web support also comes from `react-native-web` or `web.url`; `web.url` always
-adds web even when Expo has an explicit platform list. macOS needs
-`Package.swift` and `macos.product`. Detection never runs project scripts or
+`web.url` adds web to any app, even when Expo has an explicit platform list; a
+bare app has no other route to web. macOS needs `Package.swift`,
+`macos.product` and `macos.infoPlist`. Detection never runs project scripts or
 executes app config code.
 
 In `--json`, an environment with a recorded run carries
