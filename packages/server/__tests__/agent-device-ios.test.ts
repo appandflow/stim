@@ -204,7 +204,7 @@ test('starts with exactly one simulator policy, requires its digest and allocate
   expect(policy.devices).toEqual({ allow: [{ udid: UDID }] });
   expect(policy.capabilities).toEqual({ deny: ['device-shutdown'] });
   expect(policy).not.toHaveProperty('leases');
-  expect(statSync(join(home, 'agent', 'policy.json')).mode & 0o777).toBe(0o600);
+  expect(statSync(join(home, 'agent', 'policy.json')).mode & 0o777).toBe(process.platform === 'win32' ? 0o666 : 0o600);
   expect(fixture.calls.map((call) => call.path)).toEqual(['/health']);
   await expect(driver.issue({ client: 'c', session: UDID, udid: UDID, bundleId: 'dev.app' })).rejects.toThrow(
     'another hosted simulator',
@@ -213,32 +213,40 @@ test('starts with exactly one simulator policy, requires its digest and allocate
   expect(readClaimSet(join(home, 'claims')).live).toHaveLength(0);
 });
 
-test('a fresh iOS driver refuses a kept live-child claim before stopping the daemon or runners', async () => {
-  const root = join(home, 'claims');
-  const child = keepAgentClaim(root);
-  const claim = readClaimSet(root).live[0]!;
-  try {
-    await expect(driver.stop()).rejects.toThrow(claim.path);
-    await expect(driver.stop()).rejects.toThrow(claimRemoveCommand(claim.path));
-    expect(readClaimSet(root).live[0]!.child).toEqual(child);
-    expect(fixture.events).toEqual([]);
-  } finally {
-    await killKeptChild(child);
-  }
-});
+test(
+  'a fresh iOS driver refuses a kept live-child claim before stopping the daemon or runners',
+  { skip: process.platform === 'win32' },
+  async () => {
+    const root = join(home, 'claims');
+    const child = keepAgentClaim(root);
+    const claim = readClaimSet(root).live[0]!;
+    try {
+      await expect(driver.stop()).rejects.toThrow(claim.path);
+      await expect(driver.stop()).rejects.toThrow(claimRemoveCommand(claim.path));
+      expect(readClaimSet(root).live[0]!.child).toEqual(child);
+      expect(fixture.events).toEqual([]);
+    } finally {
+      await killKeptChild(child);
+    }
+  },
+);
 
-test('a fresh iOS driver recovers a kept gone-child claim and sweeps runners before releasing it', async () => {
-  const root = join(home, 'claims');
-  const child = keepAgentClaim(root);
-  await killKeptChild(child);
-  expect(readClaimSet(root).dead).toHaveLength(1);
-  fixture.ps = [runner(888880)];
-  fixture.identities = { 888880: 'same' };
-  await driver.stop();
-  expect(fixture.events).toEqual(['ps', 'ps', 'signal:-888880:SIGTERM']);
-  expect(readClaimSet(root).live).toEqual([]);
-  expect(readClaimSet(root).dead).toEqual([]);
-});
+test(
+  'a fresh iOS driver recovers a kept gone-child claim and sweeps runners before releasing it',
+  { skip: process.platform === 'win32' },
+  async () => {
+    const root = join(home, 'claims');
+    const child = keepAgentClaim(root);
+    await killKeptChild(child);
+    expect(readClaimSet(root).dead).toHaveLength(1);
+    fixture.ps = [runner(888880)];
+    fixture.identities = { 888880: 'same' };
+    await driver.stop();
+    expect(fixture.events).toEqual(['ps', 'ps', 'signal:-888880:SIGTERM']);
+    expect(readClaimSet(root).live).toEqual([]);
+    expect(readClaimSet(root).dead).toEqual([]);
+  },
+);
 
 test.each(['policy', 'backend'] as const)('grants nothing when the daemon lacks the required %s', async (missing) => {
   fixture[missing] = false;

@@ -201,7 +201,7 @@ afterEach(async () => {
     }
   }
   delete process.env.STIM_HOME;
-  rmSync(home, { recursive: true, force: true });
+  rmSync(home, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
 });
 
 function reserve(extra = {}) {
@@ -2188,28 +2188,37 @@ test.each(['{broken', JSON.stringify({ until: 1, boundary: [], windowMs: 1099511
   },
 );
 
-test('rerun launch cancels and settles a follower before installation without refusing admission', async () => {
-  const session = reserve({ deviceType: 'logs-hang' });
-  await state(session.id, 'ready');
-  const app = appOffer(session.id);
-  host.appOffer('client', app.params);
-  await uploadManifest(app);
-  await host.appChunk('client', { ...app.params, sha256: app.sha256, offset: 0, data: app.content.toString('base64') });
-  host.appLaunch('client', app.params);
-  await vi.waitFor(() => expect(host.appAttach('client', app.params)).toHaveProperty('result.state', 'installed'));
-  const pending = host.logsQuery('client', { session: session.id });
-  const workerHome = join(deviceHostArea(session.id), 'home');
-  await vi.waitFor(() => expect(existsSync(join(workerHome, 'logs-entered'))).toBe(true));
-  const pid = Number(readFileSync(join(workerHome, 'logs-entered'), 'utf8'));
-  expect(host.viewTarget('client', session.id)).toHaveProperty('platform', 'ios');
-  const rerun = { ...app.params, attempt: 'rerun' };
-  expect(host.appOffer('client', rerun)).toHaveProperty('result.missing', []);
-  expect(host.appLaunch('client', rerun)).toHaveProperty('result.state', 'installing');
-  expect(await pending).toHaveProperty('error');
-  await vi.waitFor(() => expect(host.appAttach('client', rerun)).toHaveProperty('result.state', 'installed'));
-  expect(processGroupAlive(pid)).toBe(false);
-  expect(readFileSync(join(workerHome, 'installed'), 'utf8')).toContain('rerun');
-});
+test(
+  'rerun launch cancels and settles a follower before installation without refusing admission',
+  { skip: process.platform === 'win32' },
+  async () => {
+    const session = reserve({ deviceType: 'logs-hang' });
+    await state(session.id, 'ready');
+    const app = appOffer(session.id);
+    host.appOffer('client', app.params);
+    await uploadManifest(app);
+    await host.appChunk('client', {
+      ...app.params,
+      sha256: app.sha256,
+      offset: 0,
+      data: app.content.toString('base64'),
+    });
+    host.appLaunch('client', app.params);
+    await vi.waitFor(() => expect(host.appAttach('client', app.params)).toHaveProperty('result.state', 'installed'));
+    const pending = host.logsQuery('client', { session: session.id });
+    const workerHome = join(deviceHostArea(session.id), 'home');
+    await vi.waitFor(() => expect(existsSync(join(workerHome, 'logs-entered'))).toBe(true));
+    const pid = Number(readFileSync(join(workerHome, 'logs-entered'), 'utf8'));
+    expect(host.viewTarget('client', session.id)).toHaveProperty('platform', 'ios');
+    const rerun = { ...app.params, attempt: 'rerun' };
+    expect(host.appOffer('client', rerun)).toHaveProperty('result.missing', []);
+    expect(host.appLaunch('client', rerun)).toHaveProperty('result.state', 'installing');
+    expect(await pending).toHaveProperty('error');
+    await vi.waitFor(() => expect(host.appAttach('client', rerun)).toHaveProperty('result.state', 'installed'));
+    expect(processGroupAlive(pid)).toBe(false);
+    expect(readFileSync(join(workerHome, 'installed'), 'utf8')).toContain('rerun');
+  },
+);
 
 test.each(['stop', 'close', 'revoke'])(
   'the host collects a final native tail before %s teardown without a client drain',
@@ -2242,6 +2251,7 @@ test.each(['stop', 'close', 'revoke'])(
 
 test.each(['stop', 'close', 'revoke'])(
   'a bounded iOS log worker is cancelled and settled before %s deletes its device',
+  { skip: process.platform === 'win32' },
   async (ending) => {
     const session = reserve({ deviceType: 'logs-hang' });
     await state(session.id, 'ready');

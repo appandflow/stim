@@ -1,3 +1,4 @@
+import { isAbsolute } from 'node:path';
 import { isJsonObject } from './json-file.ts';
 import type { HostedAppDelivery } from './hosted-app.ts';
 
@@ -153,7 +154,7 @@ export function parseHostedAgentAccess(value: unknown): HostedAgentAccess | null
   if (
     value.driver !== 'agent-device' ||
     typeof value.remoteConfig !== 'string' ||
-    !value.remoteConfig.startsWith('/') ||
+    !isAbsolute(value.remoteConfig) ||
     typeof value.command !== 'string' ||
     !value.command ||
     Object.keys(value).length !== 3

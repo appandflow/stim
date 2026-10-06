@@ -18,6 +18,7 @@ import { createHash } from 'node:crypto';
 import { createServer as createNetServer } from 'node:net';
 import { homedir, tmpdir, totalmem } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { WebSocket, WebSocketServer } from 'ws';
 import {
   archiveDir,
@@ -2675,7 +2676,7 @@ describe('archived reads', () => {
     const client = await authed(await start());
     const queried: unknown[][] = [];
     for (const { filter, args } of cases) {
-      const expected = execFileSync(process.execPath, [cli.pathname, 'logs', '--json', '--tail=5000', ...args], {
+      const expected = execFileSync(process.execPath, [fileURLToPath(cli), 'logs', '--json', '--tail=5000', ...args], {
         cwd: workspace,
         env: { ...process.env, STIM_MAINTENANCE: 'off' },
         encoding: 'utf8',
