@@ -131,25 +131,56 @@ test('sixty steady-state collections keep a readable checkpoint and every collec
   );
   expect(collectHostedIosLogs(home, session, 'app', start, true)).toBe(false);
   expect(readLogsSince(hostedIosLogsDir(home), {}).records).toHaveLength(60);
+  expect(readHostedIosLogsCheckpoint(home)?.windowMs).toBeUndefined();
+  vi.setSystemTime(start + 8 * 60 * 60_000);
+  native.runFile.mockClear();
+  expect(collectHostedIosLogs(home, session, 'app', start)).toBe(false);
+  expect(native.runFile.mock.calls.filter(([file]) => file === 'xcrun')).toHaveLength(1);
+  expect(readHostedIosLogsCheckpoint(home)?.until).toBe(start + 8 * 60 * 60_000);
 });
 
-test('collection rebuilds a damaged checkpoint without losing saved records', () => {
-  vi.setSystemTime(start + 10_000);
-  native.runFile.mockImplementation((file) =>
-    file === '/usr/libexec/PlistBuddy' ? 'Fixture' : event(1000, 'saved failure'),
-  );
-  collectHostedIosLogs(home, session, 'app', start);
-  writeFileSync(join(hostedIosLogsDir(home), 'checkpoint.json'), '{broken');
-  native.runFile.mockImplementation((file) =>
-    file === '/usr/libexec/PlistBuddy' ? 'Fixture' : event(9000, 'new failure'),
-  );
-  expect(collectHostedIosLogs(home, session, 'app', start)).toBe(false);
-  expect(readHostedIosLogsCheckpoint(home)?.until).toBe(start + 10_000);
-  expect(readLogsSince(hostedIosLogsDir(home), {}).records.map((record) => record.msg)).toEqual([
-    'saved failure',
-    'new failure',
-  ]);
-});
+test.each(['{broken', null, JSON.stringify({ until: start, boundary: [], windowMs: 10995116277760000 })])(
+  'collection rebuilds checkpoint %s without repeating saved records',
+  (checkpoint) => {
+    const events = [
+      event(1100, 'older saved failure'),
+      event(8100, 'saved failure'),
+      event(8100, 'another saved failure'),
+    ];
+    let fail = false;
+    native.runFile.mockImplementation((file, args = []) => {
+      if (file === '/usr/libexec/PlistBuddy') return 'Fixture';
+      if (fail) throw new Error('query failed during rebuild');
+      const from = Date.parse(args[args.indexOf('--start') + 1]!);
+      const until = Date.parse(args[args.indexOf('--end') + 1]!);
+      return events
+        .filter((line) => {
+          const ts = Date.parse(JSON.parse(line).timestamp);
+          return ts >= from && ts <= until;
+        })
+        .join('\n');
+    });
+    vi.setSystemTime(start + 10_000);
+    collectHostedIosLogs(home, session, 'app', start);
+    const path = join(hostedIosLogsDir(home), 'checkpoint.json');
+    if (checkpoint === null) rmSync(path);
+    else writeFileSync(path, checkpoint);
+    fail = true;
+    expect(() => collectHostedIosLogs(home, session, 'app', start)).toThrow('query failed during rebuild');
+    expect(readHostedIosLogsCheckpoint(home)).toBeNull();
+    fail = false;
+    events.push(event(9000, 'new failure'));
+    expect(collectHostedIosLogs(home, session, 'app', start)).toBe(false);
+    expect(readHostedIosLogsCheckpoint(home)?.until).toBe(start + 10_000);
+    expect(collectHostedIosLogs(home, session, 'app', start)).toBe(false);
+    expect(readLogsSince(hostedIosLogsDir(home), {}).records.map((record) => record.msg)).toEqual([
+      'older saved failure',
+      'saved failure',
+      'another saved failure',
+      'new failure',
+    ]);
+  },
+);
 
 test('refuses a foreign device or unsafe executable before querying native logs', () => {
   writeFileSync(join(home, 'created-devices.json'), JSON.stringify({ version: 1, ios: [], android: [], web: [] }));

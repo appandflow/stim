@@ -688,7 +688,8 @@ export class DeviceHost {
           const delay = owned.logs && !owned.logs.pending ? Math.max(0, owned.logs.started + 3000 - Date.now()) : 0;
           if (!delay || owned.logs?.more) {
             if (delay) await new Promise((resolve) => setTimeout(resolve, delay));
-            if (!owned.stopping && !owned.installing) await this.collectLogs(record, owned);
+            if (this.owned.get(record.id) === owned && !owned.stopping && !owned.installing)
+              await this.collectLogs(record, owned);
           }
         }
       }

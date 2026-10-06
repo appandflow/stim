@@ -122,25 +122,44 @@ test('chunk refuses a symlinked partial without modifying its target', async () 
 });
 
 test('the first offer reuses uploaded verification, but same-size edits invalidate it', async () => {
-  const reads = vi.spyOn(fs, 'readSync');
+  const file = entry('Info.plist', 'verified bytes');
+  const blob = join(hostedAppBlobs(session), file.sha256);
+  let blobFd: number | undefined;
+  const open = fs.openSync;
+  const close = fs.closeSync;
+  const read = fs.readSync;
+  const opens = vi.spyOn(fs, 'openSync').mockImplementation((...args) => {
+    const fd = open(...args);
+    if (args[0] === blob) blobFd = fd;
+    return fd;
+  });
+  const closes = vi.spyOn(fs, 'closeSync').mockImplementation((fd) => {
+    if (fd === blobFd) blobFd = undefined;
+    return close(fd);
+  });
+  const blobReads = vi.fn<(...args: Parameters<typeof fs.readSync>) => void>();
+  const reads = vi.spyOn(fs, 'readSync').mockImplementation((...args: Parameters<typeof fs.readSync>) => {
+    if (args[0] === blobFd) blobReads(...args);
+    return read(...args);
+  });
   syncBuiltinESMExports();
   try {
-    const file = entry('Info.plist', 'verified bytes');
     const offer = await manifest('first', [file]);
     await chunkHostedApp(readHostedApp(session, 'first'), {
       sha256: file.sha256,
       offset: 0,
       data: Buffer.from('verified bytes').toString('base64'),
     });
-    expect(reads).toHaveBeenCalled();
-    reads.mockClear();
+    blobReads.mockClear();
     expect(offerHostedApp(offer).missing).toEqual([]);
-    expect(reads).not.toHaveBeenCalled();
-    writeFileSync(join(hostedAppBlobs(session), file.sha256), 'corrupt! bytes');
+    expect(blobReads).not.toHaveBeenCalled();
+    writeFileSync(blob, 'corrupt! bytes');
     expect(offerHostedApp(offer).missing).toEqual([{ sha256: file.sha256, size: file.size, offset: 0 }]);
-    expect(reads).toHaveBeenCalled();
+    expect(blobReads).toHaveBeenCalled();
   } finally {
     reads.mockRestore();
+    closes.mockRestore();
+    opens.mockRestore();
     syncBuiltinESMExports();
   }
 });

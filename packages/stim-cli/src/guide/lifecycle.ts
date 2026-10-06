@@ -333,10 +333,12 @@ queries. Concurrent followers share a collection, throttled per session, without
 blocking app delivery, viewing or control. Stop limits each log drain to 30 seconds with
 progress on stderr and a no-progress guard. The host collects a bounded final
 tail before deletion, including on revocation or server close; stop copies it
-back afterwards. If the final query drops a backlog interval, a device warning
-record names that interval. A damaged collection checkpoint is ignored and
+back afterwards. If the final collection drops a backlog interval and eventually
+succeeds, a device warning record names that interval. A damaged collection checkpoint is ignored and
 rebuilt; it never blocks reading collected records. The client waits up to
-180 seconds for stop, covering final collection and worker termination.
+180 seconds for stop. The final collection and worker termination paths fit within
+that wait; an in-flight handoff copy and closing Metro or view transports are
+outside those worker bounds.
 Collected records remain in the session home after deletion;
 app blobs and materialized bundles are removed. Native queries read persisted
 entries, overlap by five seconds and de-duplicate; info-level or later-persisted

@@ -1973,6 +1973,48 @@ test('a backlog query collects after its throttle timer fires before the wall-cl
   }
 });
 
+test('a throttled backlog query reads saved logs after stop without starting another worker', async () => {
+  const session = reserve({ deviceType: 'logs-backlog' });
+  await state(session.id, 'ready');
+  const app = appOffer(session.id);
+  host.appOffer('client', app.params);
+  await uploadManifest(app);
+  await host.appChunk('client', { ...app.params, sha256: app.sha256, offset: 0, data: app.content.toString('base64') });
+  host.appLaunch('client', app.params);
+  await vi.waitFor(() => expect(host.appAttach('client', app.params)).toHaveProperty('result.state', 'installed'));
+  const now = vi.spyOn(Date, 'now').mockReturnValue(Date.now());
+  const timer = globalThis.setTimeout;
+  let resume: (() => void) | undefined;
+  const waiting = vi.spyOn(globalThis, 'setTimeout').mockImplementation((callback, ms, ...args) => {
+    if (ms === 3000) {
+      resume = () => callback(...args);
+      return timer(() => {}, 0);
+    }
+    return timer(callback, ms, ...args);
+  });
+  let pending: ReturnType<DeviceHost['logsQuery']> | undefined;
+  try {
+    const first = await host.logsQuery('client', { session: session.id });
+    if ('error' in first) throw new Error(first.error.message);
+    expect(first.result.more).toBe(true);
+    pending = host.logsQuery('client', { session: session.id, cursor: first.result.cursor });
+    expect(resume).toBeDefined();
+    host.stop('client', { session: session.id });
+    await state(session.id, 'stopped');
+    const entered = join(deviceHostArea(session.id), 'home', 'logs-entered');
+    rmSync(entered);
+    resume!();
+    resume = undefined;
+    expect(await pending).toHaveProperty('result.records.0.msg', 'final native tail');
+    expect(existsSync(entered)).toBe(false);
+  } finally {
+    resume?.();
+    await pending;
+    waiting.mockRestore();
+    now.mockRestore();
+  }
+});
+
 test.each(['{broken', JSON.stringify({ until: 1, boundary: [], windowMs: 10995116277760000 })])(
   'a damaged checkpoint cannot refuse saved logs before or after stop (%s)',
   async (checkpoint) => {

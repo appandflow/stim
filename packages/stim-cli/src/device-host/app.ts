@@ -51,8 +51,8 @@ export function removeHostedAppData(home: string): void {
     assertInside(apps);
     for (const attempt of readdirSync(apps)) {
       const directory = join(apps, attempt);
-      assertInside(directory);
       if (!lstatSync(directory).isDirectory()) continue;
+      assertInside(directory);
       remove(join(directory, 'App.app'));
       remove(join(directory, 'App.apk'));
       remove(join(directory, 'App.apk.tmp'));

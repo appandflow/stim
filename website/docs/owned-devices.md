@@ -665,10 +665,12 @@ without blocking app delivery, viewing or control. Stop limits each log drain to
 30 seconds with progress on stderr and stops if neither cursor nor collection
 checkpoint advances. The host captures a bounded final tail before deletion,
 also on revocation or server close, and stop copies it back afterwards. If that
-query drops a backlog interval, a device warning record names the interval.
+collection drops a backlog interval and eventually succeeds, a device warning
+record names the interval.
 A damaged collection checkpoint is ignored and rebuilt; collected records remain
-readable. The client waits up to 180 seconds for stop, including final collection
-and worker termination. Collected
+readable. The client waits up to 180 seconds for stop. The final collection and
+worker termination paths fit within that wait; an in-flight handoff copy and
+closing Metro or view transports are outside those worker bounds. Collected
 records remain in the session home; app blobs and materialized bundles are removed.
 Native queries read persisted entries, overlap by five seconds and de-duplicate;
 info-level or later-persisted entries may be unavailable. JavaScript logs reach Metro.

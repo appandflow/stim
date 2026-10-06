@@ -9,6 +9,7 @@ import {
   readHostedAppMetadata,
   readHostedDevice,
   readHostedIosLogsCheckpoint,
+  readNdjsonGenerations,
   type NdjsonRecord,
 } from '@stim-cli/core/state';
 import { parseLogStreamLine } from '../collector/ios.ts';
@@ -34,8 +35,12 @@ export function collectHostedIosLogs(
   const directory = hostedIosLogsDir(home);
   const previous = readHostedIosLogsCheckpoint(home);
   const beginning = Math.floor(since / 1000) * 1000;
-  const checkpoint = previous?.until ?? beginning;
-  let from = Math.max(beginning, checkpoint - 5000);
+  let newest: number | undefined;
+  if (!previous)
+    for (const entry of readNdjsonGenerations(join(directory, 'device.ndjson')))
+      if (typeof entry.ts === 'number' && (newest === undefined || entry.ts > newest)) newest = entry.ts;
+  const checkpoint = previous?.until ?? Math.max(beginning, Math.floor((newest ?? beginning) / 1000) * 1000);
+  let from = Math.max(beginning, previous ? checkpoint - 5000 : checkpoint);
   const now = Math.floor(Date.now() / 1000) * 1000;
   if (now < checkpoint) return false;
   const backlogMs = Math.max(1000, now - checkpoint);
@@ -84,14 +89,16 @@ export function collectHostedIosLogs(
       if (final) from = Math.max(beginning, now - windowMs);
       else until = Math.min(now, checkpoint + windowMs);
       end = until === now ? until + 1000 : until;
-      mkdirSync(directory, { recursive: true, mode: 0o700 });
-      withDirLock(join(directory, 'query.lock'), () => {
-        const temporary = join(directory, 'checkpoint.json.tmp');
-        writeFileSync(temporary, JSON.stringify({ until: checkpoint, boundary: previous?.boundary ?? [], windowMs }), {
-          mode: 0o600,
+      if (previous) {
+        mkdirSync(directory, { recursive: true, mode: 0o700 });
+        withDirLock(join(directory, 'query.lock'), () => {
+          const temporary = join(directory, 'checkpoint.json.tmp');
+          writeFileSync(temporary, JSON.stringify({ until: checkpoint, boundary: previous.boundary, windowMs }), {
+            mode: 0o600,
+          });
+          renameSync(temporary, join(directory, 'checkpoint.json'));
         });
-        renameSync(temporary, join(directory, 'checkpoint.json'));
-      });
+      }
     }
   }
   const seen = new Map<string, number>();
@@ -114,6 +121,7 @@ export function collectHostedIosLogs(
       .update(JSON.stringify(Object.entries(entry).toSorted(([a], [b]) => a.localeCompare(b))))
       .digest('hex');
     if (parsed.ts >= until - 5000) boundary.push(digest);
+    if (newest !== undefined && parsed.ts <= newest) continue;
     const count = seen.get(digest) ?? 0;
     if (count) {
       seen.set(digest, count - 1);
@@ -133,7 +141,9 @@ export function collectHostedIosLogs(
     }
     const temporary = join(directory, 'checkpoint.json.tmp');
     try {
-      writeFileSync(temporary, JSON.stringify({ until, boundary, windowMs }), { mode: 0o600 });
+      writeFileSync(temporary, JSON.stringify({ until, boundary, ...(until < now ? { windowMs } : {}) }), {
+        mode: 0o600,
+      });
       renameSync(temporary, join(directory, 'checkpoint.json'));
     } finally {
       rmSync(temporary, { force: true });
