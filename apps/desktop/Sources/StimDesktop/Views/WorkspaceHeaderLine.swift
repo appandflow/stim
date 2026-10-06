@@ -174,23 +174,24 @@ struct GitChipButton: View {
     Button {
       shown = true
     } label: {
-      HStack(spacing: Space.xs + 1) {
-        if let pull = chip.pullRequest {
-          Text(pull.text).font(.stim(.caption, weight: .semibold)).foregroundStyle(Color(pull.tone))
-          if let checks = pull.checks { ChecksMark(checks: checks).font(.system(size: 9, weight: .bold)) }
-        } else {
-          Image(systemName: "arrow.triangle.branch").foregroundStyle(Palette.secondary)
+      Card(radius: Radius.control, border: nil, clipsContent: false) {
+        HStack(spacing: Space.xs + 1) {
+          if let pull = chip.pullRequest {
+            Text(pull.text).font(.stim(.caption, weight: .semibold)).foregroundStyle(Color(pull.tone))
+            if let checks = pull.checks { ChecksMark(checks: checks).font(.system(size: 9, weight: .bold)) }
+          } else {
+            Image(systemName: "arrow.triangle.branch").foregroundStyle(Palette.secondary)
+          }
+          ForEach(chip.parts, id: \.text) { part in
+            Text(part.text).foregroundStyle(Color(part.tone)).monospacedDigit()
+          }
+          Image(systemName: "chevron.down").font(.system(size: 8, weight: .semibold)).foregroundStyle(Palette.tertiary)
         }
-        ForEach(chip.parts, id: \.text) { part in
-          Text(part.text).foregroundStyle(Color(part.tone)).monospacedDigit()
-        }
-        Image(systemName: "chevron.down").font(.system(size: 8, weight: .semibold)).foregroundStyle(Palette.tertiary)
+        .font(.stim(.caption))
+        .lineLimit(1)
+        .padding(.horizontal, Space.md)
+        .padding(.vertical, 3)
       }
-      .font(.stim(.caption))
-      .lineLimit(1)
-      .padding(.horizontal, Space.md)
-      .padding(.vertical, 3)
-      .background(RoundedRectangle(cornerRadius: Radius.control).fill(Palette.surface))
     }
     .buttonStyle(.hoverRow(radius: Radius.control))
     .help("\(chip.label). Click for the branch and pull request.")

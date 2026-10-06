@@ -87,10 +87,10 @@ struct DeviceTile: View {
   private var canvas: some View {
     VStack(spacing: Space.lg) {
       if let workspace, showsStoppedBar, !replaying {
-        stoppedBar(runCommand(for: device, cwd: workspace))
-          .frame(maxWidth: 420)
-          .background(Palette.surface, in: RoundedRectangle(cornerRadius: Radius.card))
-          .overlay(RoundedRectangle(cornerRadius: Radius.card).strokeBorder(Palette.border))
+        Card(clipsContent: false) {
+          stoppedBar(runCommand(for: device, cwd: workspace))
+            .frame(maxWidth: 420)
+        }
       } else {
         Group {
           if replaying, let replay {

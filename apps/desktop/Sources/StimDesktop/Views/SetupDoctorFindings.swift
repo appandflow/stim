@@ -63,15 +63,15 @@ struct SetupDoctorFindings: View {
           icon: "exclamationmark.triangle.fill", color: Palette.warning)
       }
       if !report.findings.isEmpty {
-        VStack(spacing: 0) {
-          let ordered = report.costFindings + report.findings.filter { $0.level != "cost" }
-          ForEach(Array(ordered.enumerated()), id: \.offset) { index, finding in
-            if index > 0 { Rectangle().fill(Palette.border).frame(height: 1) }
-            row(finding)
+        Card(radius: Radius.control, clipsContent: false) {
+          VStack(spacing: 0) {
+            let ordered = report.costFindings + report.findings.filter { $0.level != "cost" }
+            ForEach(Array(ordered.enumerated()), id: \.offset) { index, finding in
+              if index > 0 { Rectangle().fill(Palette.border).frame(height: 1) }
+              row(finding)
+            }
           }
         }
-        .background(RoundedRectangle(cornerRadius: Radius.control).fill(Palette.surface))
-        .overlay(RoundedRectangle(cornerRadius: Radius.control).strokeBorder(Palette.border))
       }
     } else if let error = run.launchError {
       label(error, icon: "xmark.octagon.fill", color: Palette.error)
