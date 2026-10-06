@@ -46,6 +46,7 @@ struct PhoneSetupStep: View {
         Button("Pair a Phone\u{2026}") { pairing = true }
           .buttonStyle(.stim(.primary))
           .disabled(!canPair)
+          .help(canPair ? "" : "Needs Serve to phones on, Tailscale running and a route.")
       }
     }
     .task {

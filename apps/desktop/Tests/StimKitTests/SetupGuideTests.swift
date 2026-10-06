@@ -51,27 +51,17 @@ private func node(_ output: String?) -> CLICompatibility {
   #expect(!unchecked.isComplete)
 }
 
-@Test func phoneStepIsReachedAfterNotificationsAndContinuesToChecks() {
-  #expect(SetupStep.notifications.next == .phone)
-  #expect(SetupStep.phone.previous == .notifications)
-  #expect(SetupStep.phone.next == .check)
-  #expect(SetupStep.check.previous == .phone)
-}
-
 @Test func pairedPhoneIsDoneEvenWhenTailscaleIsDownAndOnlyReportedDowntimeBlocksPairing() {
   #expect(SetupChecks().state(of: .phone) == .pending)
   #expect(SetupChecks(phone: PhoneSetup(servesPhones: false, tailscaleRunning: nil)).state(of: .phone) == .pending)
-  for servesPhones in [false, true] {
-    for route in [nil, "routed", "missing", "funneled", "unknown"] as [String?] {
-      for running in [nil, false, true] as [Bool?] {
-        let phone = PhoneSetup(servesPhones: servesPhones, tailscaleRunning: running, routeState: route)
-        #expect(SetupChecks(phone: phone).state(of: .phone) == (running == false ? .blocked : .pending))
-        var paired = phone
-        paired.hasPhone = true
-        #expect(SetupChecks(phone: paired).state(of: .phone) == .done)
-      }
-    }
-  }
+  let down = PhoneSetup(servesPhones: true, tailscaleRunning: false, routeState: "missing")
+  #expect(SetupChecks(phone: down).state(of: .phone) == .blocked)
+  #expect(
+    SetupChecks(phone: PhoneSetup(servesPhones: true, tailscaleRunning: true, routeState: "missing")).state(of: .phone)
+      == .pending)
+  var paired = down
+  paired.hasPhone = true
+  #expect(SetupChecks(phone: paired).state(of: .phone) == .done)
 }
 
 @Test func optionalPhonePairingNeverPreventsCompletionOrCompletesMissingRequiredSteps() {

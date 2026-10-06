@@ -322,7 +322,7 @@ linked checkout.
 Unless you are already set up, the first launch opens a setup guide that
 installs the `stim` CLI with npm, pnpm or
 bun, whichever of them you use, and the agent skill, asks for notification
-permission and checks Xcode, the Android SDK and a project with `stim doctor`.
+permission, offers an optional step that turns on Serve to phones and pairs a phone, and checks Xcode, the Android SDK and a project with `stim doctor`.
 Each step shows the command it runs and runs
 it only when you press **Run**. The project check lists each `stim doctor`
 finding with its fix, and offers **Fix** for the findings `stim doctor --fix`
