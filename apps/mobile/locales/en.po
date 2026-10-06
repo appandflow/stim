@@ -325,10 +325,6 @@ msgstr "{machine} too old"
 msgid "{machine} toolchain differs"
 msgstr "{machine} toolchain differs"
 
-#: src/screens/menu.tsx
-msgid "{machineCount, plural, one {# machine, {statusText}} other {# machines, {statusText}}}"
-msgstr "{machineCount, plural, one {# machine, {statusText}} other {# machines, {statusText}}}"
-
 #: src/intl/format.ts
 msgid "{mb} MB"
 msgstr "{mb} MB"
@@ -632,6 +628,14 @@ msgstr "{todayCount} offloaded today"
 #: src/components/device-tile.tsx
 msgid "{tool}, {text}"
 msgstr "{tool}, {text}"
+
+#: src/lib/drawer-status.ts
+msgid "{total, plural, one {# Mac connected} other {# Macs connected}}"
+msgstr "{total, plural, one {# Mac connected} other {# Macs connected}}"
+
+#: src/lib/drawer-status.ts
+msgid "{total, plural, one {# Mac, {pending} connecting} other {# Macs, {pending} connecting}}"
+msgstr "{total, plural, one {# Mac, {pending} connecting} other {# Macs, {pending} connecting}}"
 
 #: src/screens/mac-status.tsx
 msgid "{totalCount} in all"
@@ -1104,6 +1108,7 @@ msgstr "Built on {name}"
 msgid "Built on a build machine"
 msgstr "Built on a build machine"
 
+#: src/lib/running-version.ts
 #: src/screens/about.tsx
 msgid "Built-in"
 msgstr "Built-in"
@@ -1286,6 +1291,10 @@ msgstr "Checked after the running build."
 #: src/screens/mac-status.tsx
 msgid "Checking build machines\\u2026"
 msgstr "Checking build machines\\u2026"
+
+#: src/screens/menu.tsx
+msgid "Checking for updates…"
+msgstr "Checking for updates…"
 
 #: src/screens/build-details.tsx
 msgid "Checking the next build…"
@@ -1634,6 +1643,10 @@ msgstr "Down"
 #: src/lib/workspace-view.ts
 msgid "Download"
 msgstr "Download"
+
+#: src/screens/menu.tsx
+msgid "Downloading update…"
+msgstr "Downloading update…"
 
 #: src/lib/format.ts
 msgid "Draft"
@@ -2574,6 +2587,10 @@ msgstr "No machine connected"
 msgid "No machine paired"
 msgstr "No machine paired"
 
+#: src/lib/drawer-status.ts
+msgid "No Macs paired"
+msgstr "No Macs paired"
+
 #: src/screens/filters.tsx
 msgid "No matching projects"
 msgstr "No matching projects"
@@ -3265,10 +3282,6 @@ msgstr "Rest of worktree"
 msgid "Restart"
 msgstr "Restart"
 
-#: src/screens/menu.tsx
-msgid "Restart to update"
-msgstr "Restart to update"
-
 #: src/hooks/app-update.ts
 msgid "Restart to update?"
 msgstr "Restart to update?"
@@ -3623,6 +3636,10 @@ msgstr "Stim · no workspace"
 msgid "Stim · parked"
 msgstr "Stim · parked"
 
+#: src/lib/running-version.ts
+msgid "Stim {appVersion}"
+msgstr "Stim {appVersion}"
+
 #: src/screens/about.tsx
 msgid "stim {stim} · server {server}"
 msgstr "stim {stim} · server {server}"
@@ -3630,14 +3647,6 @@ msgstr "stim {stim} · server {server}"
 #: src/screens/mac-status.tsx
 msgid "stim {stim} · server {version}"
 msgstr "stim {stim} · server {version}"
-
-#: src/screens/menu.tsx
-msgid "Stim {version}"
-msgstr "Stim {version}"
-
-#: src/screens/menu.tsx
-msgid "Stim {version} ({build})"
-msgstr "Stim {version} ({build})"
 
 #: src/screens/mac-status.tsx
 msgid "Stim acts only on devices this Stim home created. The others are listed so you can see their size; manage them in Xcode or Android Studio."
@@ -4050,6 +4059,18 @@ msgstr "Up to date"
 #: src/screens/about.tsx
 msgid "Update"
 msgstr "Update"
+
+#: src/lib/running-version.ts
+msgid "Update {id}"
+msgstr "Update {id}"
+
+#: src/lib/running-version.ts
+msgid "Update {id}, {date}"
+msgstr "Update {id}, {date}"
+
+#: src/screens/menu.tsx
+msgid "Update ready, tap to restart"
+msgstr "Update ready, tap to restart"
 
 #: src/components/viewer-keyboard.tsx
 msgid "Update Stim on the Mac to use modifiers with letters and digits. The extra keys and shortcuts still work."

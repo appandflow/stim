@@ -1,15 +1,20 @@
 import 'react-native-unistyles/mocks';
 
 import { fireEvent, render } from '@testing-library/react-native';
+import { i18n } from '@lingui/core';
+import { I18nProvider } from '@lingui/react';
 
 import '@/design/unistyles';
 
 import { hapticFeedback } from '@/lib/haptics';
+import { confirmRestartToUpdate } from '@/hooks/app-update';
+import type { updateStatus } from '@/lib/update-status';
 
 import { Menu } from './menu';
 
 let mockPathname = '/';
 let mockView = 'workspaces';
+let mockUpdateStatus: ReturnType<typeof updateStatus> = null;
 const mockPush = jest.fn();
 const mockReplace = jest.fn();
 const mockSetView = jest.fn();
@@ -23,7 +28,10 @@ jest.mock('@/hooks/home-filters', () => ({ useHomeFilters: () => ({ view: mockVi
 jest.mock('@/hooks/inbox', () => ({ useInbox: () => ({ supported: true, unread: 0 }) }));
 jest.mock('@/hooks/machines', () => ({ useMacs: () => ({ connections: [] }) }));
 jest.mock('@/hooks/recents', () => ({ useRecents: () => ({ recents: [] }) }));
-jest.mock('@/hooks/app-update', () => ({ useAppUpdate: () => ({ ready: false }) }));
+jest.mock('@/hooks/app-update', () => ({
+  useAppUpdate: () => ({ status: mockUpdateStatus }),
+  confirmRestartToUpdate: jest.fn(),
+}));
 jest.mock('@/screens/about', () => ({ About: () => null }));
 jest.mock('react-native-safe-area-context', () => ({
   useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
@@ -45,7 +53,36 @@ jest.mock('@/components/button', () => ({
 beforeEach(() => {
   mockPathname = '/';
   mockView = 'workspaces';
+  mockUpdateStatus = null;
   jest.clearAllMocks();
+});
+
+it('offers restart only for a ready update and keeps update progress non-interactive', async () => {
+  const menu = () => (
+    <I18nProvider i18n={i18n}>
+      <Menu onClose={jest.fn()} />
+    </I18nProvider>
+  );
+  const screen = await render(menu());
+  expect(screen.queryByText('Update ready, tap to restart')).toBeNull();
+  expect(screen.queryByText('Checking for updates\u2026')).toBeNull();
+  expect(screen.queryByText('Downloading update\u2026')).toBeNull();
+
+  mockUpdateStatus = 'ready';
+  await screen.rerender(menu());
+  await fireEvent.press(screen.getByRole('button', { name: 'Update ready, tap to restart' }));
+  expect(confirmRestartToUpdate).toHaveBeenCalledTimes(1);
+
+  for (const [status, text] of [
+    ['checking', 'Checking for updates\u2026'],
+    ['downloading', 'Downloading update\u2026'],
+  ] as const) {
+    mockUpdateStatus = status;
+    await screen.rerender(menu());
+    expect(screen.getByText(text)).toBeTruthy();
+    expect(screen.queryByRole('button', { name: text })).toBeNull();
+    expect(screen.queryByText('Update ready, tap to restart')).toBeNull();
+  }
 });
 
 it('opens Pair above the current content without closing its drawer', async () => {

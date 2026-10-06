@@ -1,6 +1,5 @@
-import { plural, t } from '@lingui/core/macro';
+import { t } from '@lingui/core/macro';
 import { Trans } from '@lingui/react/macro';
-import Constants from 'expo-constants';
 import { Image } from 'expo-image';
 import { usePathname, useRouter, type Href } from 'expo-router';
 import { useState } from 'react';
@@ -33,7 +32,7 @@ export function Menu({ onClose }: { onClose: () => void }) {
   const router = useRouter();
   const pathname = usePathname();
   const insets = useSafeAreaInsets();
-  const { connections } = useMacs();
+  const { connections, macs } = useMacs();
   const { view, setView } = useHomeFilters();
   const { recents } = useRecents();
   const update = useAppUpdate();
@@ -66,12 +65,9 @@ export function Menu({ onClose }: { onClose: () => void }) {
     missing: c.missing,
     diskTone: machineStats(c.usage).find((s) => s.kind === 'disk')?.tone ?? 'normal',
   }));
-  const version = Constants.expoConfig?.version ?? '';
-  const build = Constants.nativeBuildVersion;
-  const versionText = build ? t`Stim ${version} (${build})` : t`Stim ${version}`;
-  const status = drawerStatus(machines, versionText);
-  const statusText = status.text;
-  const machineCount = connections.length;
+  const status = drawerStatus(machines);
+  const statusText = macs === null ? '' : status.text;
+  const machineCount = machines.filter((m) => !m.missing).length;
   const statusTone = status.tone === 'critical' ? 'error' : status.tone === 'warn' ? 'warning' : 'secondary';
 
   return (
@@ -133,14 +129,6 @@ export function Menu({ onClose }: { onClose: () => void }) {
           />
         ) : null}
         <NavRow icon="plus" title={t`Pair a machine`} selected={false} onPress={() => router.push('/pair')} />
-        {update.ready ? (
-          <NavRow
-            icon="arrow.clockwise"
-            title={t`Restart to update`}
-            selected={false}
-            onPress={confirmRestartToUpdate}
-          />
-        ) : null}
         {recentRows.length > 0 ? (
           <>
             <Text
@@ -178,6 +166,18 @@ export function Menu({ onClose }: { onClose: () => void }) {
           </>
         ) : null}
       </ScrollView>
+      {update.status === 'ready' ? (
+        <Touch feedback="row" accessibilityRole="button" onPress={confirmRestartToUpdate} style={styles.updateReady}>
+          <Icon name="arrow.clockwise" size={15} color={theme.colors.primary} />
+          <Text variant="footnote" tone="brand" style={styles.grow}>
+            <Trans>Update ready, tap to restart</Trans>
+          </Text>
+        </Touch>
+      ) : update.status !== null ? (
+        <Text variant="footnote" tone="secondary" style={styles.updateText}>
+          {update.status === 'checking' ? t`Checking for updates\u2026` : t`Downloading update\u2026`}
+        </Text>
+      ) : null}
       <View style={styles.footer}>
         <Touch
           onPress={() =>
@@ -187,20 +187,22 @@ export function Menu({ onClose }: { onClose: () => void }) {
                 ? setAboutOpen(true)
                 : router.push('/about')
           }
-          accessibilityLabel={plural(machineCount, {
-            one: `# machine, ${statusText}`,
-            other: `# machines, ${statusText}`,
-          })}
+          accessibilityLabel={statusText}
           style={styles.footerLeft}
         >
           <View style={styles.badge}>
-            <Text variant="body" weight="semibold" style={styles.badgeText}>
-              {connections.length}
-            </Text>
+            <Icon name="laptopcomputer" size={18} color={theme.colors.text} />
+            {machineCount > 0 ? (
+              <View style={[styles.count, styles.badgeCount]}>
+                <Text variant="caption" weight="semibold" style={styles.countText}>
+                  {machineCount}
+                </Text>
+              </View>
+            ) : null}
           </View>
           <View style={styles.footerStatusRow}>
             <Text variant="footnote" tone={statusTone} numberOfLines={1} style={styles.grow}>
-              {status.text}
+              {statusText}
             </Text>
           </View>
         </Touch>
@@ -309,6 +311,18 @@ const styles = StyleSheet.create((theme) => ({
     borderCurve: 'continuous',
   },
   grow: { flex: 1, minWidth: 0 },
+  updateReady: {
+    minHeight: 44,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: theme.space.sm,
+    paddingLeft: theme.space.lg + theme.space.md + 36 + theme.space.lg,
+    paddingRight: theme.space.lg,
+  },
+  updateText: {
+    paddingLeft: theme.space.lg + theme.space.md + 36 + theme.space.lg,
+    paddingRight: theme.space.lg,
+  },
   footer: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -330,9 +344,9 @@ const styles = StyleSheet.create((theme) => ({
     borderRadius: theme.radius.round,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: theme.colors.text,
+    backgroundColor: theme.colors.raised,
   },
-  badgeText: { color: theme.colors.sidebar },
+  badgeCount: { position: 'absolute', top: -theme.space.xs, right: -theme.space.xs },
   footerStatusRow: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: theme.space.sm },
   scrim: { flex: 1, backgroundColor: theme.colors.scrim },
   sheet: {
