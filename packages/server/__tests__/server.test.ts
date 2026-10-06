@@ -1,4 +1,5 @@
 import {
+  cpSync,
   chmodSync,
   existsSync,
   mkdirSync,
@@ -19,6 +20,11 @@ import { homedir, tmpdir, totalmem } from 'node:os';
 import { join } from 'node:path';
 import { WebSocket, WebSocketServer } from 'ws';
 import {
+  archiveDir,
+  closedSegmentName,
+  recordingDeviceName,
+  type ArchivedWorkspace,
+  type StatusPayload,
   readStatsReport,
   readHostedSessions,
   deviceHostArea,
@@ -30,7 +36,6 @@ import {
 } from '@stim-cli/core/state';
 import { BuildHost } from '../src/build.ts';
 import { ownedDevice } from '../src/frames.ts';
-import type { StatusPayload } from '@stim-cli/core/state';
 import {
   protocolJsonSchema,
   type HelloResult,
@@ -2454,6 +2459,289 @@ describe('logs.query', () => {
     expect(stimCalls().filter((call) => call.args.startsWith('logs'))).toEqual([
       { args: 'logs --json --tail=5000', cwd: workspace },
     ]);
+  });
+});
+
+function archiveFixture(logged: unknown[] = []): { id: string; dir: string } {
+  const removedAt = '2026-10-01T12:00:00Z';
+  const id = `${workspaceName(workspace)}--${Date.parse(removedAt)}`;
+  const dir = archiveDir(id);
+  mkdirSync(join(dir, 'logs'), { recursive: true });
+  const archive: ArchivedWorkspace = {
+    id,
+    projectRoot: workspace,
+    project: 'app',
+    workspace: workspaceName(workspace),
+    worktree: { repository: null, branch: null, head: null, subject: null, merged: null, pullRequest: null },
+    removedAt,
+    removedBy: 'worktree-remove',
+    lastUsedAt: null,
+    builds: { count: 0, last: null, lastErrorCount: 0 },
+    agents: [],
+    bytes: { logs: 0, recordings: 0, agentActions: 0, record: 0, total: 0 },
+    expires: { logs: null, recordings: null, agentActions: null, record: null },
+    version: 1,
+  };
+  writeFileSync(join(dir, 'archive.json'), JSON.stringify(archive));
+  writeFileSync(join(dir, 'logs', 'client.ndjson'), logged.map((record) => JSON.stringify(record)).join('\n') + '\n');
+  return { id, dir };
+}
+
+function archivedFootage(dir: string, first: number, count: number): void {
+  const device = join(dir, 'recordings', recordingDeviceName('ios', 'default'));
+  mkdirSync(device, { recursive: true });
+  const units = Array.from({ length: count }, (_, i) => {
+    const header = Buffer.alloc(17);
+    header.writeUInt32BE(18, 0);
+    header.writeUInt8(i % 5 === 0 ? 1 : 0, 4);
+    header.writeDoubleBE(first + i * 100, 5);
+    header.writeUInt16BE(330, 13);
+    header.writeUInt16BE(720, 15);
+    return Buffer.concat([header, Buffer.from([0, 0, 0, 1, i])]);
+  });
+  writeFileSync(join(device, closedSegmentName(first, first + (count - 1) * 100)), Buffer.concat(units));
+}
+
+describe('archived reads', () => {
+  it('queries real archived logs with the same JSON filters and context as the CLI', async () => {
+    const { id, dir } = archiveFixture([
+      { ts: 2, src: 'client', level: 'error', msg: 'previous error' },
+      { ts: 5, src: 'build', level: 'info', marker: true, platform: 'ios', slot: 'tablet', msg: 'launched' },
+      { ts: 8, src: 'client', level: 'error', msg: 'current error' },
+      { ts: 9, src: 'device', level: 'fatal', event: 'native_crash', platform: 'ios', slot: 'tablet', msg: 'crash' },
+      { ts: 11, src: 'agent', level: 'info', platform: 'ios', slot: 'tablet', event: 'agent_action', msg: 'press' },
+    ]);
+    writeFileSync(
+      join(dir, 'logs', 'metro.ndjson.1'),
+      JSON.stringify({ ts: 1, src: 'metro', level: 'warn', msg: 'rotated' }) + '\n',
+    );
+    writeFileSync(
+      join(dir, 'logs', 'metro.ndjson'),
+      [
+        { ts: 6, src: 'metro', level: 'info', marker: true, msg: 'iOS Bundled' },
+        { ts: 7, src: 'metro', level: 'error', raw: true, event: 'metro_stderr', msg: 'Unable to resolve module' },
+        { ts: 10, src: 'metro', level: 'info', raw: true, event: 'metro_stderr', msg: 'Code: app.ts' },
+      ]
+        .map((record) => JSON.stringify(record))
+        .join('\n') + '\n',
+    );
+    writeFileSync(join(workspace, 'package.json'), JSON.stringify({ dependencies: { 'react-native': '*' } }));
+    const liveLogs = join(workspaceStateDir(workspace), 'logs');
+    cpSync(join(dir, 'logs'), liveLogs, { recursive: true });
+    const cli = new URL('../../stim-cli/dist/cli.mjs', import.meta.url);
+    const cases = [
+      { filter: {}, args: [] },
+      {
+        filter: { sources: ['metro'], level: 'warn', grep: 'rotated|resolve', tail: 2 },
+        args: ['--source=metro', '--level=warn', '--grep=rotated|resolve', '--tail=2'],
+      },
+      { filter: { errors: true, tail: 3 }, args: ['--errors', '--tail=3'] },
+      { filter: { slot: 'tablet', errors: true }, args: ['--slot=tablet', '--errors'] },
+      { filter: { sources: ['agent'], slot: 'tablet' }, args: ['--source=agent', '--slot=tablet'] },
+    ];
+    const client = await authed(await start());
+    const queried: unknown[][] = [];
+    for (const { filter, args } of cases) {
+      const expected = execFileSync(process.execPath, [cli.pathname, 'logs', '--json', '--tail=5000', ...args], {
+        cwd: workspace,
+        env: { ...process.env, STIM_MAINTENANCE: 'off' },
+        encoding: 'utf8',
+      })
+        .split('\n')
+        .filter(Boolean)
+        .map((line) => JSON.parse(line));
+      expect(await client.request('logs.query', { archive: id, ...filter })).toMatchObject({
+        result: { records: expected },
+      });
+      queried.push(expected);
+    }
+    expect(queried[2]).toContainEqual(expect.objectContaining({ context: ['Code: app.ts'] }));
+    expect(queried[3]).toContainEqual(expect.objectContaining({ context: ['Code: app.ts'] }));
+    rmSync(workspace, { recursive: true });
+    writeFileSync(join(process.env.STIM_HOME!, 'config.json'), JSON.stringify({ projects: {} }));
+    expect(await client.request('logs.query', { archive: id, sources: ['agent'] })).toMatchObject({
+      result: { records: [expect.objectContaining({ msg: 'press' })] },
+    });
+    expect(stimCalls()).toEqual([]);
+  });
+
+  it('batches archived records, ends once, and releases even empty subscriptions', async () => {
+    const logged = Array.from({ length: 501 }, (_, ts) => ({ ts, src: 'client', level: 'info', msg: `record ${ts}` }));
+    const { id, dir } = archiveFixture(logged);
+    rmSync(workspace, { recursive: true });
+    const client = await authed(await start());
+    expect(await client.request('logs.subscribe', { archive: id })).toMatchObject({ result: { subscription: 's1' } });
+    expect(await client.next()).toEqual({ event: 'logs', subscription: 's1', records: logged.slice(0, 500) });
+    expect(await client.next()).toEqual({ event: 'logs', subscription: 's1', records: logged.slice(500) });
+    expect(await client.next()).toEqual({ event: 'logs-ended', subscription: 's1' });
+    for (let i = 1; i < 33; i++) {
+      const subscription = `s${i + 1}`;
+      expect(await client.request('logs.subscribe', { archive: id, grep: 'absent' })).toMatchObject({
+        result: { subscription },
+      });
+      expect(await client.next()).toEqual({ event: 'logs-ended', subscription });
+    }
+    expect(await client.request('unsubscribe', { subscription: 's1' })).toMatchObject({
+      error: { code: 'unknown-subscription' },
+    });
+    expect(readdirSync(join(dir, 'logs'))).toEqual(['client.ndjson']);
+    expect(stimCalls()).toEqual([]);
+  });
+
+  it('reports overflow instead of successful completion', async () => {
+    const { id } = archiveFixture(
+      Array.from({ length: 3 }, (_, ts) => ({ ts, src: 'client', level: 'info', msg: 'record' })),
+    );
+    const client = await authed(await start({ logLimits: { maxPendingRecords: 2 } }));
+    await client.request('logs.subscribe', { archive: id });
+    expect(await client.next()).toMatchObject({ event: 'error', subscription: 's1', error: { code: 'slow-client' } });
+    expect(await client.request('unsubscribe', { subscription: 's1' })).toMatchObject({
+      error: { code: 'unknown-subscription' },
+    });
+  });
+
+  it('rejects ambiguous targets, traversal, unknown archives, symlinks and malformed records', async () => {
+    const { id, dir } = archiveFixture();
+    const link = `${id}-link`;
+    symlinkSync(dir, archiveDir(link), 'dir');
+    mkdirSync(archiveDir('broken'));
+    writeFileSync(join(archiveDir('broken'), 'archive.json'), '{}');
+    const client = await authed(await start());
+    for (const method of ['logs.query', 'logs.subscribe', 'replay.range', 'replay.keyframe', 'frames.subscribe']) {
+      const rest = { platform: 'ios', at: 1, video: ['h264'] };
+      for (const target of [
+        {},
+        { workspace, archive: id },
+        { archive: '../outside' },
+        { archive: 'a/b' },
+        { archive: 'a\\b' },
+        { archive: '..' },
+        { archive: '' },
+        { archive: 1 },
+        { archive: 'a\0b' },
+      ]) {
+        expect(await client.request(method, { ...rest, ...target })).toMatchObject({ error: { code: 'bad-request' } });
+      }
+      for (const archive of ['missing', link, 'broken']) {
+        expect(await client.request(method, { ...rest, archive })).toMatchObject({
+          error: { code: 'unknown-workspace', message: expect.stringContaining(archive) },
+        });
+      }
+    }
+    expect(stimCalls()).toEqual([]);
+  });
+
+  it('serves spans, markers and keyframes from archives without touching a replacement workspace', async () => {
+    const base = Date.now() - 60_000;
+    const { id, dir } = archiveFixture([
+      {
+        ts: base + 300,
+        startedAt: base + 200,
+        src: 'agent',
+        level: 'info',
+        event: 'agent_action',
+        platform: 'ios',
+        command: 'press',
+        msg: 'press @e3',
+      },
+      {
+        ts: base + 400,
+        src: 'agent',
+        level: 'info',
+        event: 'agent_action',
+        platform: 'android',
+        command: 'press',
+        msg: 'other',
+      },
+      { ts: base + 30_500, src: 'build', level: 'error', msg: 'Compile failed' },
+    ]);
+    archivedFootage(dir, base, 10);
+    archivedFootage(dir, base + 30_000, 10);
+    const client = await authed(await start());
+    expect(await client.request('replay.range', { archive: id, platform: 'ios' })).toMatchObject({
+      result: {
+        enabled: false,
+        recording: false,
+        spans: [
+          { start: base, end: base + 900 },
+          { start: base + 30_000, end: base + 30_900 },
+        ],
+        markers: [
+          { at: base + 200, kind: 'action', command: 'press', label: 'press @e3' },
+          { at: base + 30_500, kind: 'error', label: 'Compile failed' },
+        ],
+      },
+    });
+    rmSync(workspace, { recursive: true });
+    expect(await client.request('replay.keyframe', { archive: id, platform: 'ios', at: base + 850 })).toMatchObject({
+      result: {
+        start: base,
+        end: base + 900,
+        at: base,
+        width: 330,
+        height: 720,
+        data: Buffer.from([0, 0, 0, 1, 0]).toString('base64'),
+      },
+    });
+    expect(stimCalls()).toEqual([]);
+  });
+
+  it('replays and seeks archived frames locally and refuses live and physical subscriptions', async () => {
+    const base = Date.now() - 60_000;
+    const { id, dir } = archiveFixture();
+    archivedFootage(dir, base, 10);
+    rmSync(workspace, { recursive: true });
+    const client = await authed(await start());
+    const target = { archive: id, platform: 'ios', video: ['h264'] };
+    expect(await client.request('frames.subscribe', target)).toMatchObject({ error: { code: 'bad-request' } });
+    expect(await client.request('frames.subscribe', { ...target, at: base, physical: true })).toMatchObject({
+      error: { code: 'bad-request' },
+    });
+    expect(await client.request('frames.subscribe', { ...target, at: base + 230 })).toMatchObject({
+      result: { subscription: 's1', video: 'h264' },
+    });
+    const capturedAt = async () => {
+      const message = await client.next();
+      expect(message).toHaveProperty('binary');
+      return (message as unknown as { binary: Buffer }).binary.readDoubleBE(8);
+    };
+    expect(await capturedAt()).toBe(base);
+    expect(await capturedAt()).toBe(base + 100);
+    expect(await capturedAt()).toBe(base + 200);
+    expect(await client.request('frames.seek', { subscription: 's1', at: base + 730, rate: 0 })).toMatchObject({
+      result: { at: base + 700 },
+    });
+    expect(await capturedAt()).toBe(base + 500);
+    expect(await capturedAt()).toBe(base + 600);
+    expect(await capturedAt()).toBe(base + 700);
+    expect(await client.request('frames.live', { subscription: 's1' })).toMatchObject({
+      error: { code: 'frames-failed', message: expect.stringContaining(id) },
+    });
+    expect(await client.request('frames.seek', { subscription: 's1', at: base + 900, rate: 2 })).toMatchObject({
+      result: { at: base + 900 },
+    });
+    for (const offset of [500, 600, 700, 800, 900]) expect(await capturedAt()).toBe(base + offset);
+    expect(await client.next()).toEqual({ event: 'replay-ended', subscription: 's1', at: base + 900 });
+    expect(stimCalls()).toEqual([]);
+  });
+
+  it('returns empty ranges and no-recording for archives without closed footage', async () => {
+    const { id, dir } = archiveFixture();
+    const device = join(dir, 'recordings', recordingDeviceName('ios', 'default'));
+    mkdirSync(device, { recursive: true });
+    writeFileSync(join(device, '1000.part'), Buffer.alloc(17));
+    const client = await authed(await start());
+    expect(await client.request('replay.range', { archive: id, platform: 'ios' })).toMatchObject({
+      result: { enabled: false, recording: false, spans: [], markers: [] },
+    });
+    expect(await client.request('replay.keyframe', { archive: id, platform: 'ios', at: 1000 })).toMatchObject({
+      error: { code: 'no-recording' },
+    });
+    expect(
+      await client.request('frames.subscribe', { archive: id, platform: 'ios', video: ['h264'], at: 1000 }),
+    ).toMatchObject({ error: { code: 'no-recording' } });
+    expect(existsSync(join(device, '1000.part'))).toBe(true);
+    expect(stimCalls()).toEqual([]);
   });
 });
 

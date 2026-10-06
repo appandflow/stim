@@ -385,6 +385,8 @@ export const resultEnumCases: [Method, unknown, string, unknown][] = [
   ],
 ];
 
+export const archivedLogsEnded = { event: 'logs-ended', subscription: 's' } as const;
+
 export const eventEnumCases: [unknown, string][] = [
   ...['platform', 'posture', 'mime'].map((path): [unknown, string] => [
     {

@@ -8,6 +8,7 @@ import {
   recordMatches,
   markerWindow,
   queryLogs,
+  queryJsonLogs,
   readLogRecords,
   logFiles,
   fileSizes,
@@ -174,6 +175,35 @@ describe('logFiles', () => {
   test('a missing directory is not an error', () => {
     expect(logFiles(join(dir, 'nope'))).toEqual([]);
   });
+});
+
+test('JSON error queries attach retained Expo context after filtering and tail without changing the message', () => {
+  const error = {
+    ts: 3,
+    src: 'metro',
+    level: 'error',
+    raw: true,
+    event: 'metro_stderr',
+    msg: 'Unable to resolve module',
+  };
+  const context = { ts: 4, src: 'metro', level: 'info', raw: true, event: 'metro_stderr', msg: 'Code: app.ts' };
+  writeLog('metro.ndjson.1', [{ ts: 1, src: 'metro', level: 'error', msg: 'retired error' }]);
+  writeLog('metro.ndjson', [{ ts: 2, src: 'metro', level: 'info', marker: true, msg: 'iOS Bundled' }, error, context]);
+  writeLog('client.ndjson', [{ ts: 5, src: 'client', level: 'error', msg: 'other source' }]);
+  expect(queryJsonLogs({ dir, errorsOnly: true, sources: ['metro'], grep: 'resolve', tail: 1 })).toEqual([
+    { ...error, context: ['Code: app.ts'] },
+  ]);
+  expect(queryJsonLogs({ dir, sources: ['metro'], grep: 'resolve', tail: 1 })).toEqual([error]);
+  expect(queryJsonLogs({ dir, sources: ['metro'], tail: 1 })).toEqual([context]);
+});
+
+test('JSON tail queries put native crash records after other records captured at the same millisecond', () => {
+  const error = { ts: 5, src: 'device', level: 'fatal', event: 'native_crash', msg: 'native crash' };
+  const action = { ts: 5, src: 'agent', level: 'info', msg: 'action' };
+  writeLog('native-crash-ios-default.ndjson', [error]);
+  writeLog('z-agent.ndjson', [action]);
+  expect(queryJsonLogs({ dir })).toEqual([action, error]);
+  expect(queryJsonLogs({ dir, tail: 1 })).toEqual([error]);
 });
 
 describe('queryLogs', () => {

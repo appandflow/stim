@@ -359,6 +359,16 @@ sessions when present. Build outputs and open recording segments are deleted.
 An archive has no checkout, devices, ports, or processes. Recreating the path
 starts fresh; `status --json` links the earlier archive through `replacedBy`.
 
+Paired clients with `read` can use an archive's `archived[].id` as `archive`
+in `logs.query`, `logs.subscribe`, `replay.range`, `replay.keyframe`, and
+`frames.subscribe` with `at` and `video: ["h264"]`. Omit `workspace`: exactly
+one selector is required, and older servers refuse archive requests with
+`bad-request`. Archived logs use the same filters as live logs; subscriptions
+send retained records and then `logs-ended`. Replay uses closed segments and
+markers from archived logs, reports recording disabled, and supports seeking.
+Archives are served on the Mac that retains them, cannot be physical or go
+live, and do not need the original checkout or a replacement at its path.
+
 Archives are enabled by default. Set `archive.enabled` to `false` at machine,
 workspace, repo, or committed scope to disable them. With `STIM_HOME`, they
 are disabled unless `STIM_ARCHIVE_ENABLED` is explicitly set. Archives are
