@@ -1,7 +1,7 @@
 const demoEndpoint = 'wss://stim-demo.appandflow.workers.dev';
 
 const description = [
-  'Stim shows the development work running on your Mac. It is the phone companion for Stim, an open-source tool that gives each React Native or Expo workspace its own Metro port and its own simulator or emulator.',
+  'Stim Mobile shows the development work running on your Mac. It is the phone companion for Stim, an open-source tool that gives each React Native or Expo workspace its own Metro port and its own simulator or emulator.',
   '',
   'This app does not compile or run your projects. It needs a Mac running Stim Desktop or stim-server, paired with this phone. Without a paired Mac there is nothing to show.',
   '',
@@ -30,7 +30,7 @@ const description = [
 ].join('\n');
 
 const reviewNotes = [
-  'Stim is a monitor for React Native and Expo development work. It shows workspaces, builds, logs and simulator screens that run on a Mac. The phone app does not compile or run projects. It connects to Stim Desktop or stim-server on a Mac that the user owns, so it has no content until it is paired with one. The app has no accounts and no sign-in.',
+  'Stim Mobile (home-screen name: Stim) is a monitor for React Native and Expo development work. It shows workspaces, builds, logs and simulator screens that run on a Mac. The phone app does not compile or run projects. It connects to Stim Desktop or stim-server on a Mac that the user owns, so it has no content until it is paired with one. The app has no accounts and no sign-in.',
   '',
   'HOW TO REVIEW WITHOUT A MAC',
   'A demonstration server with sample data is running for review. Its address and token are in the "Demo access" lines at the end of these notes.',
@@ -62,10 +62,11 @@ module.exports = {
   configVersion: 0,
   apple: {
     copyright: '2026 App & Flow',
+    version: '1.0.0',
     categories: ['DEVELOPER_TOOLS', 'PRODUCTIVITY'],
     info: {
       'en-US': {
-        title: 'Stim',
+        title: 'Stim Mobile',
         subtitle: 'Watch React Native on a Mac',
         promoText:
           'Follow workspaces, builds, logs and simulators running on your Mac from your phone. Needs a Mac running Stim Desktop and Tailscale on both.',
