@@ -18,13 +18,13 @@ import Testing
   ]
 
   @Test func usShortcutsKeepTheirLetterAndDigitPositionsInBothLayers() {
-    let map = KeyboardLayoutMap { code, _ in us[code] }
+    let map = KeyboardLayoutMap { code, _, _ in us[code] }
     for (code, text) in us {
       for command in [false, true] {
-        #expect(map.keyCode(for: Character(text), command: command) == code)
+        #expect(map.keyCode(for: Character(text), command: command, control: false) == code)
       }
     }
-    #expect(map.keyCode(for: ",", command: true) == nil)
+    #expect(map.keyCode(for: ",", command: true, control: false) == nil)
   }
 
   @Test func azertyUsesMovedLettersAndRefusesShiftOnlyDigits() {
@@ -36,69 +36,121 @@ import Testing
     ] {
       azerty[code] = text
     }
-    let map = KeyboardLayoutMap { code, _ in azerty[code] }
+    let map = KeyboardLayoutMap { code, _, _ in azerty[code] }
     for command in [false, true] {
-      #expect(map.keyCode(for: "a", command: command) == 12)
-      #expect(map.keyCode(for: "q", command: command) == 0)
-      #expect(map.keyCode(for: "w", command: command) == 6)
-      #expect(map.keyCode(for: "z", command: command) == 13)
-      #expect(map.keyCode(for: "m", command: command) == 41)
+      #expect(map.keyCode(for: "a", command: command, control: false) == 12)
+      #expect(map.keyCode(for: "q", command: command, control: false) == 0)
+      #expect(map.keyCode(for: "w", command: command, control: false) == 6)
+      #expect(map.keyCode(for: "z", command: command, control: false) == 13)
+      #expect(map.keyCode(for: "m", command: command, control: false) == 41)
       for digit in "0123456789" {
-        #expect(map.keyCode(for: digit, command: command) == nil)
+        #expect(map.keyCode(for: digit, command: command, control: false) == nil)
       }
     }
   }
 
   @Test func plainDvorakCommandShortcutsUseDvorakPositions() {
-    let map = KeyboardLayoutMap { code, _ in dvorak[code] }
-    #expect(map.keyCode(for: "w", command: true) == 43)
-    #expect(map.keyCode(for: "w", command: false) == 43)
+    let map = KeyboardLayoutMap { code, _, _ in dvorak[code] }
+    #expect(map.keyCode(for: "w", command: true, control: false) == 43)
+    #expect(map.keyCode(for: "w", command: false, control: false) == 43)
   }
 
   @Test func dvorakQwertyCommandChoosesTheRequestedLayer() {
-    let map = KeyboardLayoutMap { code, command in (command ? us : dvorak)[code] }
-    #expect(map.keyCode(for: "w", command: true) == 13)
-    #expect(map.keyCode(for: "w", command: false) == 43)
+    let map = KeyboardLayoutMap { code, command, _ in (command ? us : dvorak)[code] }
+    #expect(map.keyCode(for: "w", command: true, control: false) == 13)
+    #expect(map.keyCode(for: "w", command: false, control: false) == 43)
   }
 
   @Test func russianUsesLatinCommandKeysWithoutFallingBackForUnmodifiedKeys() {
-    let map = KeyboardLayoutMap { code, command in
+    let map = KeyboardLayoutMap { code, command, _ in
       command ? us[code] : [UInt16(13): "\u{0446}", 0: "\u{0444}"][code]
     }
-    #expect(map.keyCode(for: "w", command: true) == 13)
-    #expect(map.keyCode(for: "w", command: false) == nil)
+    #expect(map.keyCode(for: "w", command: true, control: false) == 13)
+    #expect(map.keyCode(for: "w", command: false, control: false) == nil)
+  }
+
+  @Test func dvorakQwertyCommandRefusesControlCWhenNeitherPositionMatchesBothLayers() {
+    let map = KeyboardLayoutMap { code, command, control in
+      if control { return [UInt16(34): "\u{0009}", 8: "\u{0003}"][code] }
+      return (command ? us : dvorak)[code]
+    }
+    #expect(map.keyCode(for: "c", command: false, control: true) == nil)
+    #expect(map.keyCode(for: "c", command: true, control: true) == 8)
+  }
+
+  @Test func polishRefusesControlZWhenTheControlLayerTypesControlY() {
+    let map = KeyboardLayoutMap { code, _, control in
+      code == 16 ? (control ? "\u{0019}" : "z") : nil
+    }
+    for command in [false, true] {
+      #expect(map.keyCode(for: "z", command: command, control: true) == nil)
+    }
+  }
+
+  @Test func usControlCAcceptsTheMatchingControlCharacter() {
+    let map = KeyboardLayoutMap { code, _, control in
+      code == 8 ? (control ? "\u{0003}" : "c") : nil
+    }
+    for command in [false, true] {
+      #expect(map.keyCode(for: "c", command: command, control: true) == 8)
+    }
+  }
+
+  @Test func controlDigitsRequireTheDigitInTheControlLayer() {
+    let map = KeyboardLayoutMap { code, _, control in
+      if control { return [UInt16(18): "1", 19: "\u{0000}"][code] }
+      return [UInt16(18): "1", 19: "2"][code]
+    }
+    for command in [false, true] {
+      #expect(map.keyCode(for: "1", command: command, control: true) == 18)
+      #expect(map.keyCode(for: "2", command: command, control: true) == nil)
+    }
   }
 
   @Test func missingDeadKeyAndMultiCharacterOutputCannotBecomeShortcuts() {
-    let map = KeyboardLayoutMap { code, _ in
+    let map = KeyboardLayoutMap { code, _, _ in
       [UInt16(1): "ww", 2: "", 3: "a\u{0301}"][code]
     }
     for command in [false, true] {
-      #expect(map.keyCode(for: "a", command: command) == nil)
-      #expect(map.keyCode(for: "w", command: command) == nil)
+      for control in [false, true] {
+        #expect(map.keyCode(for: "a", command: command, control: control) == nil)
+        #expect(map.keyCode(for: "w", command: command, control: control) == nil)
+      }
+    }
+    for output in ["ww", "", "w\u{0301}"] {
+      let controlledMap = KeyboardLayoutMap { code, _, control in
+        code == 13 ? (control ? output : "w") : nil
+      }
+      for command in [false, true] {
+        #expect(controlledMap.keyCode(for: "w", command: command, control: true) == nil)
+      }
     }
   }
 
   @Test func keypadOutputCannotSupplyAMissingMainBlockDigit() {
-    let map = KeyboardLayoutMap { code, _ in code == 83 ? "1" : nil }
-    #expect(map.keyCode(for: "1", command: false) == nil)
-    #expect(map.keyCode(for: "1", command: true) == nil)
+    let map = KeyboardLayoutMap { code, _, _ in code == 83 ? "1" : nil }
+    #expect(map.keyCode(for: "1", command: false, control: false) == nil)
+    #expect(map.keyCode(for: "1", command: true, control: false) == nil)
   }
 
   @Test func duplicateCharactersUseTheLowestKeyCodeInEachLayer() {
-    let map = KeyboardLayoutMap { code, command in
-      (command ? [UInt16(13), 43] : [UInt16(6), 13]).contains(code) ? "w" : nil
+    let map = KeyboardLayoutMap { code, command, control in
+      if control && code == 6 { return "\u{0019}" }
+      return (command ? [UInt16(13), 43] : [UInt16(6), 13]).contains(code) ? "w" : nil
     }
-    #expect(map.keyCode(for: "w", command: false) == 6)
-    #expect(map.keyCode(for: "w", command: true) == 13)
+    #expect(map.keyCode(for: "w", command: false, control: false) == 6)
+    #expect(map.keyCode(for: "w", command: false, control: true) == 13)
+    for control in [false, true] {
+      #expect(map.keyCode(for: "w", command: true, control: control) == 13)
+    }
   }
 }
 
 private func installedLayoutData(_ id: String) -> CFData? {
   func read() -> CFData? {
     let filter = [kTISPropertyInputSourceID as String: id] as CFDictionary
-    let sources = TISCreateInputSourceList(filter, true).takeRetainedValue() as! [TISInputSource]
-    guard let source = sources.first,
+    guard let list = TISCreateInputSourceList(filter, true)?.takeRetainedValue() as? [TISInputSource],
+      let source = list.first,
       let property = TISGetInputSourceProperty(source, kTISPropertyUnicodeKeyLayoutData)
     else { return nil }
     return Unmanaged<CFData>.fromOpaque(property).takeUnretainedValue()
@@ -107,33 +159,51 @@ private func installedLayoutData(_ id: String) -> CFData? {
 }
 
 @Suite struct KeyboardLayoutMapInstalledTests {
+  @Test func unavailableLayoutReturnsNoData() {
+    #expect(installedLayoutData("com.stim.test.missing-keyboard-layout") == nil)
+  }
+
   @Test(.enabled(if: installedLayoutData("com.apple.keylayout.US") != nil))
   func usTranslatesWInBothLayers() throws {
     let map = KeyboardLayoutMap(layoutData: try #require(installedLayoutData("com.apple.keylayout.US")))
-    #expect(map.keyCode(for: "w", command: false) == 13)
-    #expect(map.keyCode(for: "w", command: true) == 13)
+    #expect(map.keyCode(for: "w", command: false, control: false) == 13)
+    #expect(map.keyCode(for: "w", command: true, control: false) == 13)
   }
 
   @Test(.enabled(if: installedLayoutData("com.apple.keylayout.ABC-AZERTY") != nil))
   func azertyTranslatesAAndRefusesDigitsInBothLayers() throws {
     let map = KeyboardLayoutMap(layoutData: try #require(installedLayoutData("com.apple.keylayout.ABC-AZERTY")))
     for command in [false, true] {
-      #expect(map.keyCode(for: "a", command: command) == 12)
-      #expect(map.keyCode(for: "1", command: command) == nil)
+      #expect(map.keyCode(for: "a", command: command, control: false) == 12)
+      #expect(map.keyCode(for: "1", command: command, control: false) == nil)
     }
   }
 
   @Test(.enabled(if: installedLayoutData("com.apple.keylayout.DVORAK-QWERTYCMD") != nil))
   func dvorakQwertyCommandTranslatesDifferentWPositions() throws {
     let map = KeyboardLayoutMap(layoutData: try #require(installedLayoutData("com.apple.keylayout.DVORAK-QWERTYCMD")))
-    #expect(map.keyCode(for: "w", command: false) == 43)
-    #expect(map.keyCode(for: "w", command: true) == 13)
+    #expect(map.keyCode(for: "w", command: false, control: false) == 43)
+    #expect(map.keyCode(for: "w", command: true, control: false) == 13)
+  }
+
+  @Test(.enabled(if: installedLayoutData("com.apple.keylayout.DVORAK-QWERTYCMD") != nil))
+  func dvorakQwertyCommandControlCDoesNotUseTheControlIPosition() throws {
+    let map = KeyboardLayoutMap(layoutData: try #require(installedLayoutData("com.apple.keylayout.DVORAK-QWERTYCMD")))
+    #expect(map.keyCode(for: "c", command: false, control: true) != 34)
+  }
+
+  @Test(.enabled(if: installedLayoutData("com.apple.keylayout.Polish") != nil))
+  func polishControlZDoesNotUseTheControlYPosition() throws {
+    let map = KeyboardLayoutMap(layoutData: try #require(installedLayoutData("com.apple.keylayout.Polish")))
+    for command in [false, true] {
+      #expect(map.keyCode(for: "z", command: command, control: true) != 16)
+    }
   }
 
   @Test(.enabled(if: installedLayoutData("com.apple.keylayout.Russian") != nil))
   func russianTranslatesLatinWOnlyWithCommand() throws {
     let map = KeyboardLayoutMap(layoutData: try #require(installedLayoutData("com.apple.keylayout.Russian")))
-    #expect(map.keyCode(for: "w", command: false) == nil)
-    #expect(map.keyCode(for: "w", command: true) == 13)
+    #expect(map.keyCode(for: "w", command: false, control: false) == nil)
+    #expect(map.keyCode(for: "w", command: true, control: false) == 13)
   }
 }

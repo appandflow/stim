@@ -615,9 +615,11 @@ final class MacosSource: NSObject, Source, SCStreamDelegate, SCStreamOutput {
           )
         }
         let command = modifiers.contains("command")
-        guard let resolved = layout.map.keyCode(for: character, command: command) else {
+        let control = modifiers.contains("control")
+        guard let resolved = layout.map.keyCode(for: character, command: command, control: control) else {
+          let layer = control ? (command ? " with Command and Control" : " with Control") : (command ? " with Command" : "")
           throw refusal(
-            "The Mac's current keyboard layout (\(layout.id)) has no key that types \"\(character)\"\(command ? " with Command" : ""), so the shortcut was not sent. Select an input source that has it and start Control again. Ordinary typing and navigation do not require it."
+            "The Mac's current keyboard layout (\(layout.id)) has no key that types \"\(character)\"\(layer), so the shortcut was not sent. Select an input source that has it and start Control again. Ordinary typing and navigation do not require it."
           )
         }
         code = resolved

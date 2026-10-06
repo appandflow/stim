@@ -189,8 +189,12 @@ needed. Modified multi-character input and symbols are unsupported.
 
 Shortcuts for `a-z` and `0-9` use the key that types the character in the
 **Mac's current keyboard layout**, using the Command layer when Command is held.
-Russian and similar layouts, Dvorak, and Dvorak-QWERTY Command work this way.
-The Mac's selected input source is read on each key, so switching layouts takes
+Dvorak and Dvorak-QWERTY Command are supported. On Russian and similar layouts
+(Cyrillic, Greek, Hebrew, Arabic), Latin-letter shortcuts work with Command;
+Control-only or Option-only letter shortcuts are refused. With Control, the
+layout's Control table must also yield the requested character or, for letters,
+its C0 control character; otherwise the shortcut is refused. The Mac's selected
+input source is read on each key, so switching layouts takes
 effect on the next key. Letters and digits available only with Shift or Option,
 or through a dead key (for example digits on AZERTY), are refused with a reason
 naming the layout, and Control ends. Stim does not add modifiers to reach those
