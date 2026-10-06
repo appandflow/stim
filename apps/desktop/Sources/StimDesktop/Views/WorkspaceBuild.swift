@@ -95,7 +95,7 @@ struct PhaseChecklist: View {
     let expected = step.expectedMs.map { "~\(Format.clock(ms: $0))" }
     switch step.state {
     case .done: return step.elapsedMs.map { Format.clock(ms: $0) } ?? expected ?? ""
-    case .pending: return expected ?? ""
+    case .pending: return step.elapsedMs.map { Format.clock(ms: $0) } ?? expected ?? ""
     case .current: return step.elapsedMs.map { Format.clock(ms: $0) } ?? ""
     }
   }

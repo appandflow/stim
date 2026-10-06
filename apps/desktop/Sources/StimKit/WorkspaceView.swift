@@ -479,10 +479,10 @@ extension Build {
       i, step in
       let expected = step == phase ? (expectedPhaseMs ?? reference[step]) : reference[step]
       if i < currentIndex {
-        return PhaseStep(phase: step, state: .done, elapsedMs: nil, expectedMs: expected, fraction: 1)
+        return PhaseStep(phase: step, state: .done, elapsedMs: completedPhaseMs?[step], expectedMs: expected, fraction: 1)
       }
       if i > currentIndex {
-        return PhaseStep(phase: step, state: .pending, elapsedMs: nil, expectedMs: expected, fraction: 0)
+        return PhaseStep(phase: step, state: .pending, elapsedMs: completedPhaseMs?[step], expectedMs: expected, fraction: 0)
       }
       let counted = compileDetail.flatMap { detail -> Double? in
         guard let done = detail.done, let total = detail.total, total > 0 else { return nil }
