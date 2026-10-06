@@ -2504,7 +2504,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   try {
     for (const host of options.hosts) await listenOn(host);
   } catch (error) {
-    await close();
+    await close().catch(() => undefined);
     throw error;
   }
   const monitor = options.tailscaleMonitor;

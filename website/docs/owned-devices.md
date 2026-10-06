@@ -726,15 +726,17 @@ Allowed commands are `devices`, `open`, `close`, `snapshot`, `diff`, `wait`, `fi
 `is`, `click`, `fill`, `press`, `type`, `focus`, `scroll`, `screenshot`,
 `longpress`, `swipe`, `back`, `home`, `orientation`, `appstate`, `alert` and `batch`.
 They inspect and interact with the simulator and its installed apps. `devices`
-lists only the session's simulator, filtered by the daemon policy. Client device
+lists only the session's simulator, filtered by the daemon policy. Its device
+claims are session-local and record `/` as the workspace. Client device
 selectors are stripped and requests are pinned to iOS and that UDID; an explicitly
 named foreign UDID is refused. Selecting another device, boot/shutdown/erase,
 installs, uninstall, uploads, `push`, `record`, `logs`, `network`, `perf`, `trace`,
 `clipboard` and `settings` are refused. Stim installs the app; agents cannot
-enumerate other host devices or write host files. Host paths and launch inputs (`--out`, baseline, launchConsole, cwd,
-developerDir, installSource and similar fields) are refused, including within
-batch steps. Runtime hints are dropped and only reporting/artifact metadata is
-forwarded. Screenshots accept agent-device's generated remote temp artifact,
+enumerate other host devices or write host files. Ambient client fields (`cwd`,
+`stateDir`, `config` and `remoteConfig`) are stripped, including within batch steps.
+Host paths and launch inputs (`--out`, baseline, launchConsole, developerDir,
+installSource and similar fields) are refused, including within batch steps.
+Runtime hints are dropped and only reporting/artifact metadata is forwarded. Screenshots accept agent-device's generated remote temp artifact,
 which the client downloads, rather than arbitrary host destinations.
 
 If the setting is `none`, the daemon cannot enforce the policy, or the host

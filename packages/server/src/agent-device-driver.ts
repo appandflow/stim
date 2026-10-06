@@ -282,7 +282,9 @@ export class AgentDeviceDriver implements HostedAgentDriver {
             AGENT_DEVICE_DAEMON_POLICY: policy,
             AGENT_DEVICE_MACOS_APP_BACKEND: 'native',
             AGENT_DEVICE_NO_UPDATE_NOTIFIER: '1',
+            ...(this.options.ios ? { AGENT_DEVICE_CLAIMS_DIR: join(this.options.stateDir, 'device-claims') } : {}),
           },
+          ...(this.options.ios ? { cwd: '/' } : {}),
           detached: true,
           stdio: ['ignore', 'pipe', 'pipe'],
         },
@@ -454,7 +456,7 @@ export class AgentDeviceDriver implements HostedAgentDriver {
         `The agent-device daemon identity is unresolved; its claim ${this.claim?.path} was kept. Once it is gone, clear it with: ${claimRemoveCommand(this.claim!.path)}`,
       );
     if (this.daemonRecord && !(await this.signalAndWait(this.daemonRecord, false)))
-      throw new Error('The agent-device daemon did not stop; its claim was kept.');
+      throw new Error(`The agent-device daemon did not stop; its claim ${this.claim?.path} was kept.`);
   }
 
   private async signalAndWait(record: ProcessRecord, group: boolean): Promise<boolean> {
@@ -480,7 +482,7 @@ export class AgentDeviceDriver implements HostedAgentDriver {
         const match = /^\s*(\d+)\s+(\d+)\s+(.*)$/.exec(line);
         if (
           !match ||
-          !/^(?:\S*\/)?xcodebuild\s/.test(match[3]!) ||
+          !/^(?:[^\n]*\/)?xcodebuild\s/.test(match[3]!) ||
           !/\stest-without-building(?:\s|$)/.test(match[3]!) ||
           !/\s-only-testing\s+AgentDeviceRunnerUITests\/RunnerTests\/testCommand(?:\s|$)/.test(match[3]!) ||
           !destination.test(match[3]!)
@@ -502,7 +504,7 @@ export class AgentDeviceDriver implements HostedAgentDriver {
     }
     if (failures.length)
       throw new Error(
-        `The agent-device iOS runners did not stop (${failures.join(', ')}); their daemon claim was kept.`,
+        `The agent-device iOS runners did not stop (${failures.join(', ')}); their daemon claim ${this.claim?.path} was kept.`,
       );
   }
 

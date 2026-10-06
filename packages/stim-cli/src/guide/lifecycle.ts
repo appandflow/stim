@@ -380,12 +380,15 @@ targeting its exact simulator UDID before deleting the simulator, even without c
 Allowed: devices, open, close, snapshot, diff, wait, find, get, is, click, fill,
 press, type, focus, scroll, screenshot, longpress, swipe, back, home, orientation,
 appstate, alert and batch. These inspect or interact with the simulator and
-installed apps. devices lists only the session's simulator, filtered by the daemon policy.
+installed apps. devices lists only the session's simulator, filtered by the
+daemon policy. Its device claims are session-local and record / as the workspace.
 Client device selectors are stripped and requests are pinned to iOS and that
 UDID; an explicitly named foreign UDID is refused. Selecting another device,
 boot/shutdown/erase, installs, uninstall, uploads, push, record, logs, network,
 perf, trace, clipboard and settings are refused. Stim installs; the agent cannot
-enumerate other host devices or write host files. Host paths and launch inputs (--out, baseline, launchConsole, cwd, developerDir,
+enumerate other host devices or write host files. Ambient client fields (cwd,
+stateDir, config and remoteConfig) are stripped, including inside batch steps.
+Host paths and launch inputs (--out, baseline, launchConsole, developerDir,
 installSource and similar fields) are refused, including inside batch steps.
 Only agent-device's generated screenshot temp artifact is accepted and returned
 to the client; arbitrary host screenshot destinations are refused. Runtime

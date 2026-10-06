@@ -1,6 +1,5 @@
 import { EventEmitter } from 'node:events';
-import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
-import { execFileSync } from 'node:child_process';
+import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -121,8 +120,6 @@ vi.mock('node:http', async (original) => ({
 
 const SESSION = '11111111-1111-4111-8111-111111111111';
 const UDID = '22222222-abcd-4222-8222-222222222222';
-const upstream =
-  '/private/tmp/claude-501/-Users-janicduplessis-Developer-stim/0dc300cd-42a3-4758-8d35-79edf2904001/scratchpad/ad-937471b/build-src';
 let home: string;
 let driver: AgentDeviceDriver;
 
@@ -215,55 +212,6 @@ test('starts with exactly one simulator policy, requires its digest and allocate
   expect(readClaimSet(join(home, 'claims')).live).toHaveLength(0);
 });
 
-// agent-device 0.21.20 ADR 0029: src/daemon-policy-file.ts and src/daemon/daemon-policy.ts.
-test.skipIf(!existsSync(join(upstream, 'src/daemon-policy-file.ts')))(
-  'the real upstream parser accepts the generated policy and inventory filtering exposes only its simulator',
-  async () => {
-    await start();
-    const result = JSON.parse(
-      execFileSync(
-        process.execPath,
-        [
-          '--experimental-strip-types',
-          '--input-type=module',
-          '-e',
-          `
-            import { readFileSync } from 'node:fs';
-            import { pathToFileURL } from 'node:url';
-            import assert from 'node:assert/strict';
-            const root = process.argv[1];
-            const { parseDaemonPolicy } = await import(pathToFileURL(root + '/src/daemon-policy-file.ts'));
-            const { assertDaemonPolicyAdmitsRequest, restrictDeviceInventoryToDaemonPolicy } =
-              await import(pathToFileURL(root + '/src/daemon/daemon-policy.ts'));
-            const raw = JSON.parse(readFileSync(process.argv[2], 'utf8'));
-            const policy = parseDaemonPolicy(raw, process.argv[2]);
-            assert.throws(() => parseDaemonPolicy({ ...raw, commands: { allow: ['rotate'] } }, 'invalid'));
-            assertDaemonPolicyAdmitsRequest(policy, { command: 'devices' });
-            const devices = [{ id: raw.devices.allow[0].udid }, { id: 'foreign-simulator' }];
-            const gateways = restrictDeviceInventoryToDaemonPolicy({
-              localOnly: { discover: async () => devices },
-              providerFirst: { discoverWithSource: async () => ({ devices, source: 'local' }) },
-            }, policy);
-            console.log(JSON.stringify({
-              digest: policy.digest,
-              local: await gateways.localOnly.discover(),
-              provider: await gateways.providerFirst.discover(),
-            }));
-          `,
-          upstream,
-          join(home, 'agent', 'policy.json'),
-        ],
-        { encoding: 'utf8', timeout: 10000 },
-      ),
-    );
-    expect(result).toEqual({
-      digest: JSON.parse(readFileSync(join(home, 'agent', 'daemon.json'), 'utf8')).policyDigest,
-      local: [{ id: UDID }],
-      provider: [{ id: UDID }],
-    });
-  },
-);
-
 test.each(['policy', 'backend'] as const)('grants nothing when the daemon lacks the required %s', async (missing) => {
   fixture[missing] = false;
   await expect(driver.start()).rejects.toThrow(/requires agent-device/);
@@ -284,24 +232,34 @@ function runner(pid: number, udid = UDID, group = pid): string {
   return `${pid} ${group} /Applications/Xcode.app/Contents/Developer/usr/bin/xcodebuild test-without-building -only-testing AgentDeviceRunnerUITests/RunnerTests/testCommand -xctestrun /host/AgentDeviceRunner.env.session-${udid}-owner-1.xctestrun -destination platform=iOS Simulator,id=${udid}`;
 }
 
-test('stops orphaned runners only for the exact session UDID, after the daemon clean path', async () => {
-  await start();
-  fixture.ps = [
-    [
-      runner(888880, UDID.toUpperCase()),
-      runner(888881, SESSION),
-      runner(888882, `${UDID}0`),
-      runner(888883).replace('-destination ', '--destination '),
-      runner(888884).replace('AgentDeviceRunnerUITests', 'OtherUITests'),
-      runner(888885, UDID, 900000),
-    ].join('\n'),
-  ];
-  fixture.identities = Object.fromEntries([888880, 888881, 888882, 888883, 888884, 888885].map((pid) => [pid, 'same']));
-  await driver.stop();
-  expect(fixture.events).toEqual(['daemon-stop', 'ps', 'ps', 'signal:-888880:SIGTERM', 'signal:888885:SIGTERM']);
-  expect(fixture.identities[888881]).toBe('same');
-  expect(readClaimSet(join(home, 'claims')).live).toHaveLength(0);
-});
+test.each(['Xcode.app', 'Xcode 27.app'])(
+  'stops only exact-UDID runners under %s, after the daemon clean path',
+  async (app) => {
+    await start();
+    fixture.ps = [
+      [
+        runner(888880, UDID.toUpperCase()),
+        runner(888881, SESSION),
+        runner(888882, `${UDID}0`),
+        runner(888883).replace('-destination ', '--destination '),
+        runner(888884).replace('AgentDeviceRunnerUITests', 'OtherUITests'),
+        runner(888885, UDID, 900000),
+        runner(888886, `0${UDID}`),
+        runner(888887).replace('/usr/bin/xcodebuild', '/usr/bin/not-xcodebuild'),
+        runner(888888).replace('/usr/bin/xcodebuild', '/usr/bin/echo xcodebuild'),
+      ]
+        .join('\n')
+        .replaceAll('Xcode.app', app),
+    ];
+    fixture.identities = Object.fromEntries(
+      [888880, 888881, 888882, 888883, 888884, 888885, 888886, 888887, 888888].map((pid) => [pid, 'same']),
+    );
+    await driver.stop();
+    expect(fixture.events).toEqual(['daemon-stop', 'ps', 'ps', 'signal:-888880:SIGTERM', 'signal:888885:SIGTERM']);
+    expect(fixture.identities[888881]).toBe('same');
+    expect(readClaimSet(join(home, 'claims')).live).toHaveLength(0);
+  },
+);
 
 test('escalates a surviving runner group to SIGKILL after waiting for SIGTERM', async () => {
   await start();
@@ -405,7 +363,7 @@ test.each([
       },
       meta: {
         requestId: 'b6dc81fbd6708d93',
-        cwd: '/private/tmp/.../2266-p1',
+        cwd: '/client/worktree',
         sessionExplicit: false,
         debug: false,
         lockPlatform: 'ios',
