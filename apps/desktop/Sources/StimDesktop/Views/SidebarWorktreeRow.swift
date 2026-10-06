@@ -27,17 +27,8 @@ struct SidebarWorktreeRow: View {
             if let session = summary.agents.first {
               SessionLine(session: session, others: summary.agents.count - 1)
             }
-            HStack(spacing: Space.sm) {
-              ForEach(summary.apps.indices, id: \.self) { index in
-                let app = summary.apps[index]
-                HStack(spacing: Space.xs) {
-                  StatusDot(color: Color(app.status.tone), filled: app.active)
-                  Text(app.label).foregroundStyle(Palette.secondary).lineLimit(1)
-                }
-              }
-              RowDetailLine(context: context(summary), git: summary.git)
-            }
-            .font(.stim(.caption))
+            AppBadges(apps: summary.apps)
+            RowDetailLine(context: context(summary), git: summary.git)
           }
         }
         .accessibilityElement(children: .ignore)
@@ -64,5 +55,27 @@ struct SidebarWorktreeRow: View {
     }
     if let subtitle = summary.subtitle { parts.append(Text(subtitle).foregroundStyle(Palette.tertiary)) }
     return RowDetailLine.joined(parts)
+  }
+}
+
+private struct AppBadges: View {
+  var apps: [WorktreeRowSummary.App]
+
+  var body: some View {
+    ViewThatFits(in: .horizontal) {
+      HStack(spacing: Space.md) { badges }.fixedSize()
+      VStack(alignment: .leading, spacing: Space.xs) { badges }
+    }
+    .font(.stim(.caption))
+  }
+
+  private var badges: some View {
+    ForEach(apps.indices, id: \.self) { index in
+      let app = apps[index]
+      HStack(spacing: Space.xs) {
+        StatusDot(color: Color(app.status.tone), filled: app.active)
+        Text(app.label).foregroundStyle(Palette.secondary).lineLimit(1).truncationMode(.tail)
+      }
+    }
   }
 }
