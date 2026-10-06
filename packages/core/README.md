@@ -34,6 +34,9 @@ path layout, the config and workspace state types and readers, the settings
 registry and its JSON Schema, the created-device and EAS session ledger readers,
 NDJSON log records and queries, and the status and settings payload types. The
 CLI owns every write to that state. The cache packages do not import it.
+Setup journals are an exception: stim-server writes and prunes
+`$STIM_HOME/server/setup/<sha256(ticket) hex>.json`; core owns their paths,
+strict parser and reader.
 
 `@stim-cli/core/oversight` holds the pure notification and needs-attention rules
 shared by stim-server and the phone. It imports no Node APIs; mobile consumers

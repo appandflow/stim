@@ -246,12 +246,14 @@ export interface DeviceAuth {
 export interface BuildRequestAuth {
   request: 'build';
   deviceName: string;
+  setupTicket?: string;
 }
 
 /** Requests explicit device hosting approval; grants no read, control or build access. */
 export interface DeviceHostRequestAuth {
   request: 'device-host';
   deviceName: string;
+  setupTicket?: string;
 }
 
 export interface HelloParams {
