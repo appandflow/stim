@@ -295,7 +295,10 @@ directories under its own state directory. Start with agent-device open
 <bundleId> --remote-config <path>, using macos.host.bundleId; the lease allows
 open, close, snapshot, wait, find, get, is, click, fill, press, type, focus,
 scroll, screenshot and batch on that app only. The agent-device on this Mac must
-know the macos-app lease backend.
+know the macos-app lease backend. A request outside that command list, or a
+method the relay does not forward, is refused with an agent-device UNAUTHORIZED
+error whose details.reason is STIM_AGENT_REQUEST_REFUSED and whose message names
+the refused command or method; do not retry it.
 
 Agents that built, launched and drove test copies on another Mac with an SSH
 script such as mini-desktop.sh use these instead:

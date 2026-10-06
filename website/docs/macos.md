@@ -326,6 +326,10 @@ commands that drive that one app (`snapshot`, `click`, `fill`, `type`, `press`,
 `scroll`, `screenshot` and similar), and the agent-device on the client needs the
 `macos-app` lease backend. On the hosting Mac, `stim-server service install --env
 STIM_AGENT_DEVICE_BIN=<path>` points stim-server at a specific agent-device.
+A request outside the allowed commands, or a method the relay does not forward,
+is refused with an agent-device `UNAUTHORIZED` error whose `details.reason` is
+`STIM_AGENT_REQUEST_REFUSED` and whose message names the refused command or
+method; do not retry it.
 
 Copy this prompt:
 
