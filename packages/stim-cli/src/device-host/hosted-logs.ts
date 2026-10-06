@@ -88,13 +88,26 @@ export async function pullHostedMacosLogs(
   host: HostConnection,
   target: LogTarget = MACOS,
   maxPages: number = MAX_PAGES,
+  final = false,
 ): Promise<void> {
-  for (let page = 0; page < maxPages; page++) {
+  const deadline = Date.now() + (final ? 30_000 : 120_000);
+  let checkpoint: number | undefined;
+  let progressAt = 0;
+  for (let page = 0; page < maxPages && Date.now() < deadline; page++) {
     const before = readCursor(root, placement.session, target);
-    const result = await call(host, 'device-host.logs.query', {
-      session: placement.session,
-      ...(before ? { cursor: before } : {}),
-    });
+    if (final && Date.now() >= progressAt) {
+      process.stderr.write(`Copying final native logs from ${host.machine} (page ${page + 1})\n`);
+      progressAt = Date.now() + 5000;
+    }
+    const result = await call(
+      host,
+      'device-host.logs.query',
+      {
+        session: placement.session,
+        ...(before ? { cursor: before } : {}),
+      },
+      Math.max(1, Math.min(20_000, deadline - Date.now())),
+    );
     const cursor = isJsonObject(result) ? parseHostedLogsCursor(result.cursor) : null;
     if (
       !isJsonObject(result) ||
@@ -105,10 +118,20 @@ export async function pullHostedMacosLogs(
     )
       throw new Error(`${host.machine} answered device-host.logs.query with an unexpected result.`);
     commitPage(root, placement.session, before, result.records, cursor, target);
-    if (!result.more || (target.platform === 'macos' && sameCursor(cursor, before))) return;
+    if (!result.more) return;
+    const nextCheckpoint = typeof result.checkpoint === 'number' ? result.checkpoint : undefined;
+    if (sameCursor(cursor, before) && nextCheckpoint === checkpoint) {
+      if (target.platform === 'macos' && !final) return;
+      throw new Error('Hosted native logs made no progress; keeping the logs already copied here.');
+    }
+    checkpoint = nextCheckpoint;
   }
   if (target.platform === 'ios')
-    throw new Error('Hosted native logs still have unread pages; run stim logs again before stopping.');
+    throw new Error(
+      final
+        ? 'Final native log copy reached its time or page bound; the host keeps collected logs after stop.'
+        : 'Hosted native logs still have unread pages; run stim logs again.',
+    );
 }
 
 export async function pullHostedIosLogs(
@@ -120,5 +143,5 @@ export async function pullHostedIosLogs(
 ): Promise<void> {
   if (!host.connection.supports('hosted-ios-data'))
     throw new Error(`${host.machine} needs a newer stim-server to collect hosted iOS native logs.`);
-  await pullHostedMacosLogs(root, placement, host, { platform: 'ios', slot }, final ? Infinity : MAX_PAGES);
+  await pullHostedMacosLogs(root, placement, host, { platform: 'ios', slot }, final ? 1024 : MAX_PAGES, final);
 }

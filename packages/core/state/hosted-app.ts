@@ -48,10 +48,14 @@ export function hostedAppBlobs(session: string, workerHome?: string): string {
   return join(workerHome ? join(workerHome, '..') : deviceHostArea(session), 'blobs');
 }
 
+const verifiedBlobs = new Map<string, string>();
+
 /** Checks regular blob bytes, including their size, before content-addressed reuse. */
 export function validHostedAppBlob(path: string, file: { size: number; sha256: string }): boolean {
   const stat = lstatSync(path, { throwIfNoEntry: false });
   if (!stat?.isFile() || stat.size !== file.size) return false;
+  const key = `${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeMs}:${stat.ctimeMs}:${file.sha256}`;
+  if (verifiedBlobs.get(path) === key) return true;
   const hash = createHash('sha256');
   const fd = openSync(path, 'r');
   try {
@@ -61,7 +65,12 @@ export function validHostedAppBlob(path: string, file: { size: number; sha256: s
   } finally {
     closeSync(fd);
   }
-  return hash.digest('hex') === file.sha256;
+  const valid = hash.digest('hex') === file.sha256;
+  if (valid) {
+    if (verifiedBlobs.size >= 20_001) verifiedBlobs.delete(verifiedBlobs.keys().next().value!);
+    verifiedBlobs.set(path, key);
+  } else verifiedBlobs.delete(path);
+  return valid;
 }
 
 /** At most 32 plain arguments of 1024 characters (8192 in total), with no NUL, CR or LF. */

@@ -99,11 +99,19 @@ export async function syncHostedLogs(root: string): Promise<boolean> {
 }
 
 export function followHostedLogs(root: string, failing: boolean): () => void {
-  const stops = [
-    ...(readMacosRecord(root)?.host ? [followHostedMacosLogs(root, { failing })] : []),
-    ...Object.keys(readHostedIos(root)).map((slot) => followHostedMacosLogs(root, { failing, slot })),
-  ];
+  const stops = new Map<string, () => void>();
+  const refresh = () => {
+    if (readMacosRecord(root)?.host && !stops.has('macos'))
+      stops.set('macos', followHostedMacosLogs(root, { failing }));
+    for (const slot of Object.keys(readHostedIos(root))) {
+      const key = `ios:${slot}`;
+      if (!stops.has(key)) stops.set(key, followHostedMacosLogs(root, { failing, slot }));
+    }
+  };
+  refresh();
+  const timer = setInterval(refresh, 500);
   return () => {
-    for (const stop of stops) stop();
+    clearInterval(timer);
+    for (const stop of stops.values()) stop();
   };
 }

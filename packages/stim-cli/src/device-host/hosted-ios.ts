@@ -194,10 +194,28 @@ export async function placeHostedIos(
             60_000,
           );
           if (taken.files) note(`${host.machine} took ${String(taken.files)} files from the build it ran`);
+          missing = (await call(host, 'device-host.app.offer', offer)).missing;
         } catch (error) {
           note(`${error instanceof Error ? error.message : String(error)}; uploading the app instead`);
+          const fallbackDeadline = Date.now() + 60_000;
+          for (;;) {
+            try {
+              missing = (
+                await call(
+                  host,
+                  'device-host.app.offer',
+                  offer,
+                  Math.max(1, Math.min(20_000, fallbackDeadline - Date.now())),
+                )
+              ).missing;
+              break;
+            } catch (offerError) {
+              if (!String(offerError).includes('native operation in progress') || Date.now() >= fallbackDeadline)
+                throw offerError;
+              await sleep(Math.min(POLL_MS, Math.max(0, fallbackDeadline - Date.now())));
+            }
+          }
         }
-        missing = (await call(host, 'device-host.app.offer', offer)).missing;
       }
     }
     await upload(host, ids, missing, content);
@@ -247,6 +265,13 @@ export async function stopHostedIos(root: string, slot?: string): Promise<void> 
         'ios',
       );
       if (stopped.state !== 'stopped') throw unknownSession(host, stopped);
+      try {
+        await pullHostedIosLogs(root, name, placement, host, true);
+      } catch (error) {
+        process.stderr.write(
+          `Could not copy the host's final native logs from ${placement.machine}: ${(error as Error).message}\n`,
+        );
+      }
     } catch (error) {
       const code = error instanceof Error && 'code' in error ? error.code : undefined;
       const hostCode = error instanceof Error && 'hostCode' in error ? error.hostCode : code;

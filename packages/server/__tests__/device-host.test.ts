@@ -32,6 +32,7 @@ import {
 } from '@stim-cli/core/state';
 import { processGroupAlive, readClaimSet, tryAcquireClaim, releaseClaim } from '@stim-cli/core/ownership-claim';
 import * as processIdentity from '@stim-cli/core/process-identity';
+import { takeHostedInputClaim } from '../src/hosted-input.ts';
 import { DeviceHost } from '../src/device-host.ts';
 import { AgentDriverUnavailable, HostedAgentHost, type AgentAccess, type HostedAgentApp } from '../src/agent-driver.ts';
 import { protocolJsonSchema, type ServerMessage } from '../src/protocol.ts';
@@ -90,8 +91,9 @@ if(input.mode === 'prepare') {
   writeFileSync(join(home,'logs-entered'),String(process.pid));
   if(input.deviceType === 'logs-hang') { process.on('SIGTERM',()=>{}); setInterval(()=>{},1000); }
   else {
+    if(input.deviceType === 'logs-delayed') await new Promise(resolve=>setTimeout(resolve,150));
     const logs=join(home,'ios-logs');mkdirSync(logs,{recursive:true});
-    appendFileSync(join(logs,'device.ndjson'),JSON.stringify({ts:1,src:'device',platform:'ios',level:'error',msg:'native failure'})+'\\n');
+    appendFileSync(join(logs,'device.ndjson'),JSON.stringify({ts:1,src:'device',platform:'ios',level:'error',msg:existsSync(join(logs,'device.ndjson'))?'final native tail':'native failure'})+'\\n');
     out({more:false});
   }
 } else if(input.mode === 'install') {
@@ -174,7 +176,7 @@ beforeEach(() => {
     env: { ...process.env, STIM_MAX_DEVICES: '1' },
     agents,
     allowed: (client) => allowed.has(client),
-    limits: { prepareMs: 5000, stopMs: 2000, killGraceMs: 100 },
+    limits: { prepareMs: 5000, stopMs: 2000, logsMs: 1000, killGraceMs: 100 },
   });
 });
 afterEach(async () => {
@@ -1098,7 +1100,7 @@ describe('hosted agent control', () => {
       env: { ...process.env, STIM_MAX_DEVICES: '1' },
       agents: real,
       allowed: (client) => allowed.has(client),
-      limits: { prepareMs: 5000, stopMs: 2000, killGraceMs: 100 },
+      limits: { prepareMs: 5000, stopMs: 2000, logsMs: 1000, killGraceMs: 100 },
     });
     const { params } = await installApp('macos');
     const attached = host.appAttach('client', params);
@@ -1889,8 +1891,19 @@ test('the congestion notice request names one subscription', () => {
     expect(accepts({ id: 1, method, params })).toBe(false);
 });
 
-test('iOS logs are isolated to their client, persist after stop and refuse a simultaneous native operation', async () => {
-  const session = reserve();
+test('iOS followers coalesce and throttle without blocking rerun offers, chunks, launch or view', async () => {
+  await host.close();
+  const bundle = join(home, 'Built.app');
+  mkdirSync(bundle);
+  host = new DeviceHost({
+    worker: join(home, 'worker.mjs'),
+    env: process.env,
+    agents,
+    allowed: (client) => allowed.has(client),
+    builtBundle: () => ({ bundle, release: () => {} }),
+    limits: { prepareMs: 5000, stopMs: 2000, logsMs: 1000, killGraceMs: 100 },
+  });
+  const session = reserve({ deviceType: 'logs-delayed' });
   await state(session.id, 'ready');
   const app = appOffer(session.id);
   expect(host.appOffer('client', app.params)).toHaveProperty('result');
@@ -1901,21 +1914,88 @@ test('iOS logs are isolated to their client, persist after stop and refuse a sim
   const query = { session: session.id };
   expect(await host.logsQuery('other', query)).toHaveProperty('error.code', 'unknown-session');
   const pending = host.logsQuery('client', query);
-  expect(host.appOffer('client', { ...app.params, attempt: 'new-app' })).toHaveProperty(
-    'error.message',
-    expect.stringContaining('native operation'),
-  );
+  const concurrent = host.logsQuery('client', query);
+  const target = host.viewTarget('client', session.id);
+  expect(target).toHaveProperty('platform', 'ios');
+  expect(releaseClaim(takeHostedInputClaim(target.claim))).toBe(true);
+  const rerun = { ...app.params, attempt: 'new-app' };
+  expect(host.appOffer('client', rerun)).toHaveProperty('result.missing', []);
+  expect(
+    await host.appChunk('client', { ...rerun, sha256: app.sha256, offset: 0, data: app.content.toString('base64') }),
+  ).toHaveProperty('result');
+  expect(
+    await host.appHandoff('client', { ...rerun, build: { handoff: 'a'.repeat(64), sha256: 'b'.repeat(64) } }),
+  ).toHaveProperty('result');
   const first = await pending;
   if ('error' in first) throw new Error(first.error.message);
   expect(first.result.records).toMatchObject([{ src: 'device', level: 'error', msg: 'native failure' }]);
-  host.stop('client', query);
-  await state(session.id, 'stopped');
+  expect(await concurrent).toEqual(first);
   expect(await host.logsQuery('client', { ...query, cursor: first.result.cursor })).toHaveProperty(
     'result.records',
     [],
   );
+  expect(host.appLaunch('client', rerun)).toHaveProperty('result.state', 'installing');
+  await vi.waitFor(() => expect(host.appAttach('client', rerun)).toHaveProperty('result.state', 'installed'));
+  host.stop('client', query);
+  await state(session.id, 'stopped');
+  expect(await host.logsQuery('client', { ...query, cursor: first.result.cursor })).toHaveProperty(
+    'result.records',
+    expect.arrayContaining([expect.objectContaining({ msg: 'final native tail' })]),
+  );
   expect(await host.logsQuery('client', query)).toHaveProperty('result.records.0.msg', 'native failure');
 });
+
+test('rerun launch cancels and settles a follower before installation without refusing admission', async () => {
+  const session = reserve({ deviceType: 'logs-hang' });
+  await state(session.id, 'ready');
+  const app = appOffer(session.id);
+  host.appOffer('client', app.params);
+  await uploadManifest(app);
+  await host.appChunk('client', { ...app.params, sha256: app.sha256, offset: 0, data: app.content.toString('base64') });
+  host.appLaunch('client', app.params);
+  await vi.waitFor(() => expect(host.appAttach('client', app.params)).toHaveProperty('result.state', 'installed'));
+  const pending = host.logsQuery('client', { session: session.id });
+  const workerHome = join(deviceHostArea(session.id), 'home');
+  await vi.waitFor(() => expect(existsSync(join(workerHome, 'logs-entered'))).toBe(true));
+  const pid = Number(readFileSync(join(workerHome, 'logs-entered'), 'utf8'));
+  expect(host.viewTarget('client', session.id)).toHaveProperty('platform', 'ios');
+  const rerun = { ...app.params, attempt: 'rerun' };
+  expect(host.appOffer('client', rerun)).toHaveProperty('result.missing', []);
+  expect(host.appLaunch('client', rerun)).toHaveProperty('result.state', 'installing');
+  expect(await pending).toHaveProperty('error');
+  await vi.waitFor(() => expect(host.appAttach('client', rerun)).toHaveProperty('result.state', 'installed'));
+  expect(processGroupAlive(pid)).toBe(false);
+  expect(readFileSync(join(workerHome, 'installed'), 'utf8')).toContain('rerun');
+});
+
+test.each(['stop', 'close', 'revoke'])(
+  'the host collects a final native tail before %s teardown without a client drain',
+  async (ending) => {
+    const session = reserve();
+    await state(session.id, 'ready');
+    const app = appOffer(session.id);
+    host.appOffer('client', app.params);
+    await uploadManifest(app);
+    await host.appChunk('client', {
+      ...app.params,
+      sha256: app.sha256,
+      offset: 0,
+      data: app.content.toString('base64'),
+    });
+    host.appLaunch('client', app.params);
+    await vi.waitFor(() => expect(host.appAttach('client', app.params)).toHaveProperty('result.state', 'installed'));
+    await host.logsQuery('client', { session: session.id });
+    if (ending === 'close') await host.close();
+    else if (ending === 'revoke') {
+      allowed.delete('client');
+      host.revoke();
+    } else host.stop('client', { session: session.id });
+    await state(session.id, 'stopped');
+    const workerHome = join(deviceHostArea(session.id), 'home');
+    expect(readFileSync(join(workerHome, 'ios-logs', 'device.ndjson'), 'utf8')).toContain('final native tail');
+    expect(existsSync(join(workerHome, 'stopped'))).toBe(true);
+  },
+);
 
 test.each(['stop', 'close', 'revoke'])(
   'a bounded iOS log worker is cancelled and settled before %s deletes its device',

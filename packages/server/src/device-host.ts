@@ -6,6 +6,7 @@ import { isIP, type AddressInfo } from 'node:net';
 import { withDirLock, createMetroBridge, type MetroBridge } from '@stim-cli/core';
 import {
   clearClaimChild,
+  ClaimRefusedError,
   markClaimChildPending,
   processGroupAlive,
   releaseClaim,
@@ -41,6 +42,7 @@ import {
   parseHostedLogsCursor,
   readHostedApp,
   readHostedAppMetadata,
+  readHostedIosLogsCheckpoint,
   readLogsSince,
   type HostedAppDelivery,
   type HostedAppLaunch,
@@ -62,6 +64,7 @@ export interface DeviceHostLimits {
   prepareMs: number;
   offerMs: number;
   stopMs: number;
+  logsMs: number;
   killGraceMs: number;
 }
 
@@ -74,9 +77,11 @@ interface OwnedSession {
   claim: ClaimHandle;
   run?: WorkerRun;
   data?: Promise<void>;
+  logs?: { started: number; more: boolean; run?: WorkerRun; pending?: Promise<void> };
   stopping?: Promise<void>;
   installing?: { attempt: string; done: Promise<void> };
   app?: HostedAppRecord;
+  installedAttempt?: string;
   metro?: {
     bridge: MetroBridge;
     ready: Promise<number>;
@@ -130,7 +135,14 @@ export class DeviceHost {
 
   constructor(options: DeviceHostOptions) {
     this.options = options;
-    this.limits = { prepareMs: 5 * 60_000, offerMs: 30_000, stopMs: 90_000, killGraceMs: 5000, ...options.limits };
+    this.limits = {
+      prepareMs: 5 * 60_000,
+      offerMs: 30_000,
+      stopMs: 90_000,
+      logsMs: 15_000,
+      killGraceMs: 5000,
+      ...options.limits,
+    };
   }
 
   private transaction<T>(fn: (records: HostedDeviceSession[]) => T): T {
@@ -174,6 +186,7 @@ export class DeviceHost {
       throw new Error(`Hosted session is held by another process: ${join(deviceHostRoot(), `${record.id}.claims`)}`);
     try {
       releaseClaim(takeHostedInputClaim(attempt.acquired));
+      releaseClaim(this.takeLogsClaim(attempt.acquired));
     } catch (error) {
       releaseClaim(attempt.acquired);
       throw error;
@@ -659,43 +672,94 @@ export class DeviceHost {
       if (record.platform !== 'macos' && record.platform !== 'ios')
         throw new Error('Hosted logs support iOS and macOS sessions only.');
       const home = join(deviceHostArea(record.id), 'home');
-      let more = false;
+      const dir = record.platform === 'ios' ? hostedIosLogsDir(home) : hostedMacosLogsDir(home);
+      const saved = dir ? readLogsSince(dir, cursor) : { records: [], cursor, more: false };
+      const owned = this.owned.get(record.id);
+      const attempt = owned?.installedAttempt ?? record.appAttempt;
       if (
         record.platform === 'ios' &&
         record.state === 'ready' &&
-        record.appAttempt &&
-        readHostedAppMetadata(record.id, record.appAttempt).state === 'installed'
+        attempt &&
+        readHostedAppMetadata(record.id, attempt).state === 'installed' &&
+        !saved.more
       ) {
-        if (!this.owned.has(record.id))
-          throw new Error('The hosted log owner is unavailable. Stop this session before retrying.');
-        const owned = this.acquire(record);
-        if (owned.stopping || owned.installing || owned.data)
-          throw new Error('This hosted session already has a native operation in progress.');
-        const claim = takeHostedInputClaim(owned.claim);
-        try {
-          const run = this.run(record, owned, 'logs', record.appAttempt, claim);
-          owned.run = run;
-          owned.data = run.done.then(() => undefined);
-          const outcome = await run.done;
-          if (
-            !outcome.settled ||
-            outcome.notice ||
-            !isJsonObject(outcome.value) ||
-            typeof outcome.value.more !== 'boolean'
-          )
-            throw new Error(outcome.notice ?? 'Hosted native log collection did not finish.');
-          more = outcome.value.more;
-        } finally {
-          delete owned.data;
-          releaseClaim(claim);
+        if (!owned) throw new Error('The hosted log owner is unavailable. Stop this session before retrying.');
+        if (!owned.stopping && !owned.installing) {
+          if (owned.logs?.more && !owned.logs.pending) {
+            const delay = Math.max(0, owned.logs.started + 3000 - Date.now());
+            if (delay) await new Promise((resolve) => setTimeout(resolve, delay));
+          }
+          if (!owned.stopping && !owned.installing) await this.collectLogs(record, owned);
         }
       }
-      const dir = record.platform === 'ios' ? hostedIosLogsDir(home) : hostedMacosLogsDir(home);
-      const page = dir ? readLogsSince(dir, cursor) : { records: [], cursor, more: false };
-      return { result: { ...page, more: page.more || more } };
+      const page = dir ? readLogsSince(dir, cursor) : saved;
+      return {
+        result: {
+          ...page,
+          more:
+            page.more || (record.state === 'ready' && !owned?.stopping && !owned?.installing && !!owned?.logs?.more),
+          ...(record.platform === 'ios' ? { checkpoint: readHostedIosLogsCheckpoint(home)?.until } : {}),
+        },
+      };
     } catch (error) {
       return refused('action-failed', (error as Error).message);
     }
+  }
+
+  private takeLogsClaim(session: ClaimHandle): ClaimHandle {
+    const root = `${session.root}.logs`;
+    const attempt = tryAcquireClaim({ root, mode: 'exclusive', label: 'hosted logs', details: session.details });
+    if (attempt.pending) releaseClaim(attempt.pending);
+    if (!attempt.acquired)
+      throw new ClaimRefusedError({
+        root,
+        claimPath: attempt.held?.path ?? root,
+        reason: 'a hosted log worker still holds it',
+        label: 'hosted logs',
+      });
+    return attempt.acquired;
+  }
+
+  private collectLogs(record: HostedDeviceSession, owned: OwnedSession, final = false): Promise<void> {
+    if (owned.logs?.pending) return owned.logs.pending;
+    if (!final && owned.logs && Date.now() - owned.logs.started < 3000) return Promise.resolve();
+    const attempt = owned.installedAttempt ?? record.appAttempt;
+    if (record.platform !== 'ios' || !attempt || readHostedAppMetadata(record.id, attempt).state !== 'installed')
+      return Promise.resolve();
+    const claim = this.takeLogsClaim(owned.claim);
+    const logs = (owned.logs = { started: Date.now(), more: false } as NonNullable<OwnedSession['logs']>);
+    try {
+      const run = (logs.run = this.run(record, owned, 'logs', attempt, claim, final));
+      logs.pending = run.done.then((outcome) => {
+        if (outcome.settled) {
+          releaseClaim(claim);
+          delete logs.pending;
+          delete logs.run;
+        }
+        if (
+          !outcome.settled ||
+          outcome.notice ||
+          !isJsonObject(outcome.value) ||
+          typeof outcome.value.more !== 'boolean'
+        )
+          throw new Error(outcome.notice ?? 'Hosted native log collection did not finish.');
+        logs.more = outcome.value.more;
+        return undefined;
+      });
+      return logs.pending;
+    } catch (error) {
+      releaseClaim(claim);
+      throw error;
+    }
+  }
+
+  private async settleLogs(owned: OwnedSession): Promise<void> {
+    const run = owned.logs?.run;
+    if (!run) return;
+    run.cancel();
+    await owned.logs?.pending?.catch(() => {});
+    if (!(await run.done).settled)
+      throw new Error('The log worker group is unresolved. Its claim and device were retained.');
   }
 
   appLaunch(client: string, params: unknown): AppAnswer<HostedAppLaunch> {
@@ -738,6 +802,7 @@ export class DeviceHost {
     try {
       if (record.platform === 'macos' && this.options.agents.access(record.id)) await this.stopAgent(record.id);
       await this.closeView(owned);
+      await this.settleLogs(owned);
       if (owned.stopping || this.closed || !this.options.allowed(record.client)) return;
       releaseClaim(takeHostedInputClaim(owned.claim));
       const run = this.run(record, owned, 'install', attempt);
@@ -755,6 +820,7 @@ export class DeviceHost {
         record.device !== null &&
         hostedDeviceId(parseHostedPlatformDevice(value.device, record.platform)!) === hostedDeviceId(record.device) &&
         (value.launched === true || value.launched === 'unverified');
+      if (installed) owned.installedAttempt = attempt;
       if (installed && record.platform === 'macos' && Number.isSafeInteger(value.pid) && (value.pid as number) > 0)
         await this.startAgent(record, attempt, value.pid as number);
       const app = changeHostedApp(record.id, attempt, (current) => {
@@ -869,6 +935,7 @@ export class DeviceHost {
     await this.closeMetro(owned);
     await this.closeView(owned);
     await owned.data;
+    await this.settleLogs(owned);
     releaseClaim(takeHostedInputClaim(owned.claim));
     if (owned.run) {
       owned.run.cancel();
@@ -900,6 +967,12 @@ export class DeviceHost {
     this.change(record.id, (current) => {
       current.device = device;
     });
+    try {
+      await this.collectLogs(record, owned, true);
+    } catch (error) {
+      process.stderr.write(`Could not collect final hosted native logs: ${(error as Error).message}\n`);
+    }
+    await this.settleLogs(owned);
     const run = this.run(record, owned, 'stop');
     owned.run = run;
     const outcome = await run.done;
@@ -953,6 +1026,7 @@ export class DeviceHost {
     } catch (error) {
       for (const [id, owned] of this.owned) {
         owned.run?.cancel();
+        owned.logs?.run?.cancel();
         void this.stopAgent(id);
         void this.closeMetro(owned).catch((closeError: unknown) => {
           process.stderr.write(`Hosted Metro close failed: ${(closeError as Error).message}\n`);
@@ -1043,6 +1117,7 @@ export class DeviceHost {
     } catch {
       for (const [id, owned] of this.owned) {
         owned.run?.cancel();
+        owned.logs?.run?.cancel();
         void this.stopAgent(id);
       }
     }
@@ -1057,6 +1132,7 @@ export class DeviceHost {
     mode: 'prepare' | 'stop' | 'install' | 'logs',
     attempt?: string,
     claim: ClaimHandle = owned.claim,
+    finalLogs = false,
   ): WorkerRun {
     const home = join(deviceHostArea(record.id), 'home');
     mkdirSync(home, { recursive: true, mode: 0o700 });
@@ -1074,11 +1150,12 @@ export class DeviceHost {
         appSlot: record.appSlot,
         session: record.id,
         since: mode === 'logs' ? Date.parse(record.createdAt) : undefined,
+        final: mode === 'logs' && finalLogs,
         attempt,
         metroPort: mode === 'install' ? owned.metro?.port : undefined,
       },
       claim,
-      timeoutMs: mode === 'stop' ? this.limits.stopMs : mode === 'logs' ? 15_000 : this.limits.prepareMs,
+      timeoutMs: mode === 'stop' ? this.limits.stopMs : mode === 'logs' ? this.limits.logsMs : this.limits.prepareMs,
       maxOutputBytes: 16_384,
     });
   }

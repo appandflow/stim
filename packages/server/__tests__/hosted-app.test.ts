@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { hostedAppBlobs, readHostedApp, type HostedAppFile, type HostedAppOffer } from '@stim-cli/core/state';
@@ -102,4 +102,33 @@ test('handoff fills only simulator bundle bytes matching the manifest, leaving e
   writeFileSync(join(bundle, 'Fixture'), 'worker binary');
   expect(await handOverHostedApp(readHostedApp(session, 'ios'), bundle)).toEqual({ files: 1, bytes: 5 });
   expect(offerHostedApp(offer).missing).toEqual([{ sha256: files[1]!.sha256, size: files[1]!.size, offset: 0 }]);
+});
+
+test('chunk refuses a symlinked partial without modifying its target', async () => {
+  const file = entry('Info.plist', 'verified bytes');
+  await manifest('first', [file]);
+  const target = join(home, 'outside');
+  writeFileSync(target, 'verified');
+  symlinkSync(target, join(hostedAppBlobs(session), `${file.sha256}.part`));
+  await expect(
+    chunkHostedApp(readHostedApp(session, 'first'), {
+      sha256: file.sha256,
+      offset: 8,
+      data: Buffer.from(' bytes').toString('base64'),
+    }),
+  ).rejects.toThrow('not a regular file');
+  expect(readFileSync(target, 'utf8')).toBe('verified');
+});
+
+test('cached blob verification invalidates when bytes are replaced at the same size', async () => {
+  const file = entry('Info.plist', 'verified bytes');
+  const offer = await manifest('first', [file]);
+  await chunkHostedApp(readHostedApp(session, 'first'), {
+    sha256: file.sha256,
+    offset: 0,
+    data: Buffer.from('verified bytes').toString('base64'),
+  });
+  expect(offerHostedApp(offer).missing).toEqual([]);
+  writeFileSync(join(hostedAppBlobs(session), file.sha256), 'corrupt! bytes');
+  expect(offerHostedApp(offer).missing).toEqual([{ sha256: file.sha256, size: file.size, offset: 0 }]);
 });

@@ -20,46 +20,79 @@ function logDate(ms: number): string {
 }
 
 /** Captures a bounded unified-log window only from this home's exact ledger-owned simulator. */
-export function collectHostedIosLogs(home: string, session: string, attempt: string, since: number): boolean {
+export function collectHostedIosLogs(
+  home: string,
+  session: string,
+  attempt: string,
+  since: number,
+  final = false,
+): boolean {
   const device = readHostedDevice(home);
   assertHostedDeviceLedger(home, device.udid);
   const record = readHostedAppMetadata(session, attempt, home);
   if (record.state !== 'installed') return false;
   const directory = hostedIosLogsDir(home);
   const previous = readHostedIosLogsCheckpoint(home);
-  const from = previous?.until ?? Math.floor(since / 1000) * 1000;
+  const beginning = Math.floor(since / 1000) * 1000;
+  const checkpoint = previous?.until ?? beginning;
+  let from = Math.max(beginning, checkpoint - 5000);
   const now = Math.floor(Date.now() / 1000) * 1000;
-  const until = Math.min(now, from + 60_000);
-  if (until < from) return false;
-  const end = until === now ? until + 1000 : until;
+  if (now < checkpoint) return false;
+  let windowMs = !final && previous?.windowMs ? previous.windowMs * 2 : Math.max(1000, now - checkpoint);
+  let until = Math.min(now, checkpoint + windowMs);
+  let end = until === now ? until + 1000 : until;
+  const deadline = Date.now() + 10_000;
   const exec = getExecutor();
   const executable = exec.runFile(
     '/usr/libexec/PlistBuddy',
     ['-c', 'Print :CFBundleExecutable', join(hostedAppArea(session, attempt, home), 'App.app', 'Info.plist')],
-    { timeoutMs: 10_000, killSignal: 'SIGKILL' },
+    { timeoutMs: 2000, killSignal: 'SIGKILL' },
   );
   if (!executable || /["\\/\0\r\n]/.test(executable))
     throw new Error('The app executable cannot form a log predicate.');
-  const output = exec.runFile(
-    'xcrun',
-    [
-      'simctl',
-      'spawn',
-      device.udid,
-      'log',
-      'show',
-      '--style',
-      'ndjson',
-      '--predicate',
-      `processImagePath ENDSWITH "/App.app/${executable}"`,
-      '--info',
-      '--start',
-      logDate(from),
-      '--end',
-      logDate(end),
-    ],
-    { timeoutMs: 10_000, killSignal: 'SIGKILL' },
-  );
+  let output: string;
+  for (;;) {
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) throw new Error('Hosted native log query exceeded its collection budget.');
+    try {
+      output = exec.runFile(
+        'xcrun',
+        [
+          'simctl',
+          'spawn',
+          device.udid,
+          'log',
+          'show',
+          '--style',
+          'ndjson',
+          '--predicate',
+          `processImagePath ENDSWITH "/App.app/${executable}"`,
+          '--info',
+          '--start',
+          logDate(from),
+          '--end',
+          logDate(end),
+        ],
+        { timeoutMs: Math.min(remaining, 4000), killSignal: 'SIGKILL' },
+      );
+      break;
+    } catch (error) {
+      const span = final ? until - from : until - checkpoint;
+      if (span <= 1000) throw error;
+      windowMs = Math.max(1000, Math.floor(span / 4 / 1000) * 1000);
+      if (final) from = Math.max(beginning, now - windowMs);
+      else until = Math.min(now, checkpoint + windowMs);
+      end = until === now ? until + 1000 : until;
+      mkdirSync(directory, { recursive: true, mode: 0o700 });
+      withDirLock(join(directory, 'query.lock'), () => {
+        const temporary = join(directory, 'checkpoint.json.tmp');
+        writeFileSync(temporary, JSON.stringify({ until: checkpoint, boundary: previous?.boundary ?? [], windowMs }), {
+          mode: 0o600,
+        });
+        renameSync(temporary, join(directory, 'checkpoint.json'));
+      });
+    }
+  }
   const seen = new Map<string, number>();
   for (const digest of previous?.boundary ?? []) seen.set(digest, (seen.get(digest) ?? 0) + 1);
   const boundary: string[] = [];
@@ -67,9 +100,12 @@ export function collectHostedIosLogs(home: string, session: string, attempt: str
   for (const line of output.split('\n')) {
     const parsed = parseLogStreamLine(line);
     if (!parsed || typeof parsed.ts !== 'number' || parsed.ts < from || parsed.ts > end) continue;
-    const digest = createHash('sha256').update(line.trim()).digest('hex');
-    if (parsed.ts >= until) boundary.push(digest);
-    const count = parsed.ts < from + 1000 ? (seen.get(digest) ?? 0) : 0;
+    const entry = JSON.parse(line) as Record<string, unknown>;
+    const digest = createHash('sha256')
+      .update(JSON.stringify(Object.entries(entry).toSorted(([a], [b]) => a.localeCompare(b))))
+      .digest('hex');
+    if (parsed.ts >= until - 5000) boundary.push(digest);
+    const count = seen.get(digest) ?? 0;
     if (count) {
       seen.set(digest, count - 1);
       continue;
@@ -88,7 +124,7 @@ export function collectHostedIosLogs(home: string, session: string, attempt: str
     }
     const temporary = join(directory, 'checkpoint.json.tmp');
     try {
-      writeFileSync(temporary, JSON.stringify({ until, boundary }), { mode: 0o600 });
+      writeFileSync(temporary, JSON.stringify({ until, boundary, windowMs }), { mode: 0o600 });
       renameSync(temporary, join(directory, 'checkpoint.json'));
     } finally {
       rmSync(temporary, { force: true });

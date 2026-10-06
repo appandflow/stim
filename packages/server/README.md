@@ -556,13 +556,25 @@ reports the app's pid, `DeviceHost` registers the running app with the agent
 driver before the receipt reads `installed`, and ends that registration when the
 session stops, is revoked or the server closes.
 
-`device-host.logs.query` with `{session, cursor?}` returns `{records, cursor, more}`:
+`device-host.logs.query` with `{session, cursor?}` returns `{records, cursor, more, checkpoint?}`:
 the NDJSON records the session's macOS app wrote to its captured log (stdout and
 stderr as `client` records, and its exit). iOS sessions capture app-filtered native
 logs as `device` records through bounded `simctl log show` worker queries, with
-a persisted time checkpoint in the isolated home. The worker holds the session's
-native-input child claim; install and stop wait for it, and close or revocation
-cancels it. The client pulls before sending stop. `cursor` maps each log file name to the
+a persisted time checkpoint in the isolated home. Windows adapt to the backlog,
+overlap by five seconds and de-duplicate event identities. `checkpoint` is the last
+completed iOS window in epoch milliseconds. `log show` reads persisted entries;
+info-level entries and persistence delayed beyond the overlap may be unavailable.
+The worker holds a separate child-aware log claim. Queries coalesce onto an
+in-flight collection or read captured files; collection starts at most once every
+three seconds per session. App offers, chunks, handoff, launch admission, view and
+control stay available. Installation and stop cancel and settle collection under
+bounded worker and termination deadlines before native work. Each native collection has a
+10-second step budget inside its 15-second worker deadline. The client drain has
+a 30-second bound, reports progress on stderr and stops on a stalled cursor and
+checkpoint. The host collects once more before deletion on stop, revocation or
+server close, preferring the recent tail if the remaining backlog will not fit.
+The client pulls that final collection after stop. Stop removes the session blob
+store and materialized apps, retaining receipts and collected logs. `cursor` maps each log file name to the
 byte offset after the last complete line read; pass the previous result's cursor to
 receive only newer records, and repeat while `more` is true. Without a cursor, each
 file starts at most 4 MiB before its end. A page holds at most 1 MiB; a file that

@@ -14,7 +14,7 @@ import { reconcileHostedMetro, watchHostedMetro } from '../supervisor/hosted-met
 import { getConfigPath, getProject, upsertProject } from '../workspace/config.ts';
 import { readWorkspaceState, writeWorkspaceState } from '../workspace/workspace-state.ts';
 import { pullHostedIosLogs } from '../device-host/hosted-logs.ts';
-import { followHostedMacosLogs, syncHostedLogs } from '../device-host/hosted-logs-sync.ts';
+import { followHostedMacosLogs, followHostedLogs, syncHostedLogs } from '../device-host/hosted-logs-sync.ts';
 import { workspaceLogsDir, workspaceStateFile } from '../workspace/paths.ts';
 import { launchSlotScope, siblingPlatformSlots } from '../engine/slot-launch.ts';
 import { workspaceIdleProbe } from '../supervisor/idle-stop.ts';
@@ -784,5 +784,113 @@ test('an older host gets no iOS log queries and follow warns once while retainin
   } finally {
     stop?.();
     stderr.mockRestore();
+  }
+});
+
+test('plain log pull commits 64 pages and reports a bound while final drain finishes the backlog', async () => {
+  logRecords = Array.from({ length: 130 }, (_, ts) => ({ ts, src: 'device', level: 'error', msg: `backlog ${ts}` }));
+  const target = await prepareHostedIos('mini', {}, placement());
+  await expect(pullHostedIosLogs(root, 'default', placement(), target.host)).rejects.toThrow('unread pages');
+  expect(methods.filter((entry) => entry.method === 'device-host.logs.query')).toHaveLength(64);
+  const progress = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+  try {
+    await pullHostedIosLogs(root, 'default', placement(), target.host, true);
+    expect(progress).toHaveBeenCalledWith(expect.stringContaining('Copying final native logs'));
+    expect(readFileSync(join(workspaceLogsDir(root), 'ios-host.ndjson'), 'utf8')).toContain('backlog 129');
+  } finally {
+    progress.mockRestore();
+  }
+});
+
+test.each([false, true])('an iOS page with no cursor or checkpoint progress cannot spin (final=%s)', async (final) => {
+  const target = await prepareHostedIos('mini', {}, placement());
+  const request = vi
+    .spyOn(target.host.connection, 'request')
+    .mockResolvedValue({ result: { records: [], cursor: {}, more: true, checkpoint: 1000 } });
+  const progress = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+  try {
+    await expect(pullHostedIosLogs(root, 'default', placement(), target.host, final)).rejects.toThrow('no progress');
+    expect(request).toHaveBeenCalledTimes(2);
+  } finally {
+    request.mockRestore();
+    progress.mockRestore();
+  }
+});
+
+test('final log drain has a time bound even while pages advance', async () => {
+  const target = await prepareHostedIos('mini', {}, placement());
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(0);
+  let queries = 0;
+  const request = vi.spyOn(target.host.connection, 'request').mockImplementation(async () => {
+    if (++queries > 4) throw new Error('The final drain did not stop at its deadline.');
+    vi.setSystemTime(Date.now() + 16_000);
+    return { result: { records: [], cursor: { 'device.ndjson': Date.now() }, more: true } };
+  });
+  const progress = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+  try {
+    await expect(pullHostedIosLogs(root, 'default', placement(), target.host, true)).rejects.toThrow(
+      'time or page bound',
+    );
+    expect(request).toHaveBeenCalledTimes(2);
+  } finally {
+    vi.useRealTimers();
+    request.mockRestore();
+    progress.mockRestore();
+  }
+});
+
+test('follow discovers an iOS slot placed after the follower starts', async () => {
+  const stop = followHostedLogs(root, false);
+  try {
+    writeHostedIos(root, 'tablet', placement());
+    logRecords = [{ ts: 1, src: 'device', level: 'error', msg: 'late slot failure' }];
+    await vi.waitFor(
+      () =>
+        expect(readFileSync(join(workspaceLogsDir(root), 'ios.tablet-host.ndjson'), 'utf8')).toContain(
+          'late slot failure',
+        ),
+      { timeout: 3000 },
+    );
+  } finally {
+    stop();
+  }
+});
+
+test('a timed-out handoff retries busy offers within the upload fallback', async () => {
+  const target = await prepareHostedIos('mini', {}, placement());
+  const original = target.host.connection.request.bind(target.host.connection);
+  let busy = 0;
+  const request = vi.spyOn(target.host.connection, 'request').mockImplementation(async (method, params, timeout) => {
+    if (method === 'device-host.app.handoff') {
+      busy = 2;
+      throw Object.assign(new Error('handoff timed out'), { code: 'timeout' });
+    }
+    if (method === 'device-host.app.offer' && busy-- > 0)
+      return {
+        error: { code: 'action-failed', message: 'This hosted session already has a native operation in progress.' },
+      };
+    return original(method, params, timeout);
+  });
+  const note = vi.fn<(line: string) => void>();
+  try {
+    await expect(
+      placeHostedIos(target, {
+        root,
+        slot: 'default',
+        bundle: join(root, 'Fixture.app'),
+        bundleId: 'dev.fixture',
+        release: true,
+        selectors: {},
+        reserved: (value) => writeHostedIos(root, 'default', value),
+        note,
+        metro: async () => ({ gatewayPort: 8111, secret: 'a'.repeat(64) }),
+        handoff: { nodeId: target.host.credential.nodeId, token: 'a'.repeat(64), sha256: 'b'.repeat(64) },
+      }),
+    ).resolves.toHaveProperty('launched', true);
+    expect(note).toHaveBeenCalledWith(expect.stringContaining('uploading the app instead'));
+    expect(methods.some((entry) => entry.method === 'device-host.app.chunk')).toBe(true);
+  } finally {
+    request.mockRestore();
   }
 });

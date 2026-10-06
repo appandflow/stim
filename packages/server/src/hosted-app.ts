@@ -164,7 +164,9 @@ export async function chunkHostedApp(record: HostedAppRecord, params: unknown): 
     rmSync(complete, { force: true });
     if (readHostedAppMetadata(record.session, record.attempt).state !== 'receiving')
       throw new Error('This app attempt is no longer receiving content.');
-    const current = existsSync(partial) ? statSync(partial).size : 0;
+    const stat = lstatSync(partial, { throwIfNoEntry: false });
+    if (stat && !stat.isFile()) throw new Error('The partial app blob is not a regular file.');
+    const current = stat?.size ?? 0;
     if (start !== current) {
       if (start + bytes.length > current) throw new Error(`Resume this file at byte ${current}.`);
       const previous = Buffer.alloc(bytes.length);

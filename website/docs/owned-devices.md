@@ -657,11 +657,17 @@ A host server restart stops its sessions.
 Reruns upload only missing manifest and file digests from a session-scoped store;
 the host verifies bytes before reuse. When an offloaded iOS simulator build ran
 on the hosting Mac's pinned node, the host takes files that match the client's
-manifest from that build. A refused handoff falls back to upload.
+manifest from that build. A refused or timed-out handoff falls back to upload, retrying a still-busy host for at most one minute.
 
 `stim logs` and `stim logs --errors` pull native device records through bounded
-host queries. Stop pulls again before deleting the simulator. Captured records
-remain in the session home after deletion; JavaScript logs already reach Metro.
+host queries. Concurrent followers share a collection, throttled per session,
+without blocking app delivery, viewing or control. Stop limits each log drain to
+30 seconds with progress on stderr and stops if neither cursor nor collection
+checkpoint advances. The host captures a bounded final tail before deletion,
+also on revocation or server close, and stop copies it back afterwards. Collected
+records remain in the session home; app blobs and materialized bundles are removed.
+Native queries read persisted entries, overlap by five seconds and de-duplicate;
+info-level or later-persisted entries may be unavailable. JavaScript logs reach Metro.
 An older host prints an update note, uses uploads and shows previously copied logs.
 Client viewing relays and agent leases are later work. The agent
 reports `driver: 'none'`. `devices.idleShutdownMinutes` does not stop hosted

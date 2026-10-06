@@ -56,6 +56,7 @@ async function main(): Promise<void> {
       input.session as string,
       input.attempt as string,
       input.since,
+      input.final === true,
     );
     process.stdout.write(`${JSON.stringify({ more })}\n`);
     return;

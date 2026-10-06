@@ -464,6 +464,11 @@ only on loopback. Gateway data stays in private workspace state; status and logs
 do not print it. `metro.tunnel` and `metro.publicUrl` are ignored. Non-Debug runs
 skip Metro. A recorded hosted session prevents idle stop; stop or a stopped host
 session closes its gateway. Native device records are pulled by `stim logs` and
-`stim logs --errors` from bounded host queries. Stop pulls before simulator deletion;
-copied records remain readable afterwards. An older host prints an update note
+`stim logs --errors` from adaptive, bounded host queries. Followers share a
+throttled collection without blocking app delivery, view or control. Stop limits each log drain
+to 30 seconds with progress on stderr and a no-progress guard. The host
+also collects a bounded final tail before deletion on stop, revocation or close;
+stop copies it back afterwards. Native windows overlap by five seconds and
+de-duplicate, but read persisted entries only, so info-level or entries persisted
+later than the overlap may be unavailable. Copied records remain readable afterwards. An older host prints an update note
 and shows logs already copied here. See [hosted iOS](./owned-devices.md#run-ios-on-another-mac).

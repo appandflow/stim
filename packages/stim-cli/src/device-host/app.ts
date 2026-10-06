@@ -4,6 +4,8 @@ import {
   copyFileSync,
   chmodSync,
   lstatSync,
+  existsSync,
+  readdirSync,
   mkdirSync,
   readFileSync,
   realpathSync,
@@ -31,6 +33,30 @@ function inside(root: string, path: string): boolean {
     !diff.startsWith(`..${process.platform === 'win32' ? '\\' : '/'}`) &&
     !isAbsolute(diff)
   );
+}
+
+export function removeHostedAppData(home: string): void {
+  const area = realpathSync(join(home, '..'));
+  const assertInside = (path: string) => {
+    if (!inside(area, realpathSync(path))) throw new Error('Hosted app data resolves outside its private area.');
+  };
+  const remove = (path: string) => {
+    if (!lstatSync(path, { throwIfNoEntry: false })) return;
+    assertInside(path);
+    rmSync(path, { recursive: true, force: true });
+  };
+  assertInside(home);
+  const apps = join(area, 'apps');
+  if (existsSync(apps)) {
+    assertInside(apps);
+    for (const attempt of readdirSync(apps)) {
+      const directory = join(apps, attempt);
+      assertInside(directory);
+      remove(join(directory, 'App.app'));
+      remove(join(directory, 'blobs'));
+    }
+  }
+  remove(join(area, 'blobs'));
 }
 
 async function digest(path: string): Promise<string> {

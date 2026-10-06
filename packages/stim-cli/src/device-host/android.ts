@@ -32,6 +32,7 @@ import { forgetCreatedDevice } from '../devices/created-devices.ts';
 import { teardownOwnedAvd } from '../devices/teardown.ts';
 import { ensureConfig, loadConfig, withConfigLock } from '../workspace/config.ts';
 import type { HostedWorkerResult } from './worker.ts';
+import { removeHostedAppData } from './app.ts';
 import { installHostedAndroidApp } from './android-app.ts';
 
 function portIsOccupied(port: number): boolean {
@@ -132,6 +133,7 @@ export async function runHostedAndroidDevice(
     if (getAvdNameForSerial(device.serial) === device.avdName)
       throw new Error('The hosted Android emulator is still running.');
     if (ledger === 'listed') forgetCreatedDevice('android', device.avdName);
+    removeHostedAppData(home);
     return { state: 'stopped', device };
   } catch (error) {
     return {

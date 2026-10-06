@@ -10,6 +10,8 @@ export type HostedLogsCursor = Record<string, number>;
 export interface HostedLogsPage {
   records: NdjsonRecord[];
   cursor: HostedLogsCursor;
+  /** Last completed iOS collection window, for detecting catch-up progress independently of file offsets. */
+  checkpoint?: number;
   /** True when the budget ended this page before the end of the logs; ask again with `cursor`. */
   more: boolean;
 }
@@ -41,19 +43,26 @@ export function hostedMacosLogsDir(home: string): string | null {
 
 export const hostedIosLogsDir = (home: string): string => join(home, 'ios-logs');
 
-/** The host worker's completed query window and event digests at its inclusive boundary. */
-export function readHostedIosLogsCheckpoint(home: string): { until: number; boundary: string[] } | null {
+/** The host worker's completed query window, adaptive span and event digests covering its overlapping boundary. */
+export function readHostedIosLogsCheckpoint(
+  home: string,
+): { until: number; boundary: string[]; windowMs?: number } | null {
   try {
     const value: unknown = JSON.parse(readFileSync(join(hostedIosLogsDir(home), 'checkpoint.json'), 'utf8'));
     if (
       !isJsonObject(value) ||
       !Number.isSafeInteger(value.until) ||
       (value.until as number) < 0 ||
+      (value.windowMs !== undefined && (!Number.isSafeInteger(value.windowMs) || (value.windowMs as number) < 1000)) ||
       !Array.isArray(value.boundary) ||
       !value.boundary.every((each) => typeof each === 'string' && /^[a-f0-9]{64}$/.test(each))
     )
       throw new Error('The hosted iOS log checkpoint is malformed.');
-    return { until: value.until as number, boundary: value.boundary as string[] };
+    return {
+      until: value.until as number,
+      boundary: value.boundary as string[],
+      ...(typeof value.windowMs === 'number' ? { windowMs: value.windowMs } : {}),
+    };
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
     throw error;
