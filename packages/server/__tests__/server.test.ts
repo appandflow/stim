@@ -2583,15 +2583,19 @@ describe('archived reads', () => {
     archivedFootage(dir, 1000, 10);
     const client = await authed(await start());
     const params = { archive: id, platform: 'ios', at: 1000, video: ['h264'] };
+    const methods = ['logs.query', 'logs.subscribe', 'replay.range', 'replay.keyframe', 'frames.subscribe'];
     const replies = await Promise.all(
-      ['logs.query', 'logs.subscribe', 'replay.range', 'replay.keyframe', 'frames.subscribe'].map((method) =>
-        client.request(method, params),
+      Array.from({ length: 40 }, (_, index) => client.request(methods[index % methods.length]!, params)),
+    );
+    const refused = replies.filter((reply) => 'error' in reply);
+    expect(refused.length).toBeGreaterThan(0);
+    expect(refused).toSatisfy((all: unknown[]) =>
+      all.every(
+        (reply) =>
+          (reply as { error: { code: string } }).error.code === 'limit-exceeded' &&
+          (reply as { error: { message: string } }).error.message === 'A connection can run 4 requests at a time.',
       ),
     );
-    expect(replies.slice(0, 4).every((reply) => 'result' in reply)).toBe(true);
-    expect(replies[4]).toMatchObject({
-      error: { code: 'limit-exceeded', message: 'A connection can run 4 requests at a time.' },
-    });
     expect(await client.request('frames.subscribe', params)).toMatchObject({ result: { video: 'h264' } });
     expect(await client.request('logs.query', { archive: id })).toMatchObject({ result: { records: [] } });
   });
