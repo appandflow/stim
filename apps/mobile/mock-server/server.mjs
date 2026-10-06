@@ -343,22 +343,18 @@ server.on('connection', (socket) => {
       return { result: { subscription } };
     },
     'frames.subscribe'(params) {
-<<<<<<< HEAD
       if (hostedTarget(params)?.state === 'stopped') return { error: ['frames-failed', 'The hosted session stopped.'] };
       if (
         hostedTarget(params) &&
         (params.physical || params.duoFrame || params.at !== undefined || params.rate !== undefined)
       )
         return { error: ['bad-request', 'Hosted iOS frames do not support physical targets, duoFrame or replay.'] };
-
-=======
       if (params.archive && params.at === undefined) return { error: ['bad-request', 'An archive requires at.'] };
       if (
         params.archive &&
         !fixtures.status.archived.find((archive) => archive.id === params.archive)?.bytes.recordings
       )
         return { error: ['no-recording', 'No archived recording remains.'] };
->>>>>>> fc3793609 (feat(mobile): show archived workspaces)
       if (params.platform === 'ios' && params.video?.includes('h264')) {
         const subscription = `s${nextSubscription++}`;
         const feed = new VideoFeed(recording, subscription, socket, send);
@@ -444,16 +440,11 @@ server.on('connection', (socket) => {
       };
     },
     'replay.range'(params) {
-<<<<<<< HEAD
       if (hostedTarget(params)) return { result: { enabled: false, recording: false, spans: [], markers: [] } };
-
-      if (params.platform !== 'ios' || !recordingEnabled) {
-=======
       const archived = params.archive
         ? fixtures.status.archived.find((archive) => archive.id === params.archive)
         : null;
       if (params.platform !== 'ios' || (params.archive ? !archived?.bytes.recordings : !recordingEnabled)) {
->>>>>>> fc3793609 (feat(mobile): show archived workspaces)
         return { result: { enabled: recordingEnabled, recording: false, spans: [], markers: [] } };
       }
       return { result: { ...replayRange(recording), recording: !params.archive } };
