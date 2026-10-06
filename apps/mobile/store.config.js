@@ -74,7 +74,7 @@ module.exports = {
     info: {
       'en-US': {
         title: 'Stim Mobile',
-        subtitle: 'Watch React Native on a Mac',
+        subtitle: 'See what your agents build',
         promoText:
           'Follow workspaces, builds, logs and simulators running on your Mac from your phone. Needs a Mac running Stim Desktop and Tailscale on both.',
         description,
@@ -85,10 +85,10 @@ module.exports = {
           'xcode',
           'gradle',
           'metro',
-          'build',
+          'react',
           'logs',
           'worktree',
-          'agent',
+          'native',
           'developer',
           'remote',
           'ios',
