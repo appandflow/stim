@@ -180,6 +180,15 @@ test('counts node mismatches as failures and blocks repeated identity attempts w
   expect(whois).toHaveBeenCalledTimes(1);
 });
 
+test('a transient whois failure does not lock out the bound node', async () => {
+  const base = await start();
+  writeSetupJournal(hash, journal());
+  vi.mocked(whois).mockResolvedValueOnce(null).mockResolvedValue(identity);
+  expect((await fetch(`${base}/setup/${hash}`, { headers })).status).toBe(404);
+  for (let i = 0; i < 40; i++) expect((await fetch(`${base}/setup/${hash}`, { headers })).status).toBe(200);
+  expect(whois).toHaveBeenCalledTimes(2);
+});
+
 test('returns unavailable before startup is ready without reading journals or resolving peers', async () => {
   let release!: (reason: null) => void;
   vi.mocked(probeDirectories).mockReturnValueOnce({
