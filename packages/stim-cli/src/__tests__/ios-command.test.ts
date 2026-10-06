@@ -6706,6 +6706,9 @@ describe('the simulator model and runtime flags', () => {
 });
 
 describe('run statistics', () => {
+  beforeEach(() => setExecutor(makeExecutor()));
+  afterEach(() => resetExecutor());
+
   function recorder(result: RecordStatsResult = { recorded: true, note: null }) {
     const runs: Array<{ run: StatsRun; now: number }> = [];
     const recordStats = (statsRun: StatsRun, now: number) => {
@@ -6731,6 +6734,7 @@ describe('run statistics', () => {
       waitedForBuild: false,
       durationMs: expect.any(Number),
       coldBuildMs: 161000,
+      placement: { decision: 'here', reason: 'no build machine is paired' },
       phases: expect.any(Object),
       deviceSetup: false,
     });
@@ -6762,12 +6766,23 @@ describe('run statistics', () => {
     expect(runs[0]?.run.placement).toEqual({ decision: 'here', reason: 'offload.mode is off' });
   });
 
-  test('a run with no paired build machine records no placement', async () => {
+  test('a compiling run without build machines records its local placement and slot wait', async () => {
     reserve();
     const { runs, recordStats } = recorder();
-    await run({}, { recordStats });
+    await run(
+      {},
+      {
+        recordStats,
+        getConcurrencyLimits: () => ({ maxBuilds: 1, maxDevices: 0 }),
+        acquireBuildSlot: async () => ({ acquired: true, unlimited: true, slotWaitMs: 5000 }),
+      },
+    );
 
-    expect(runs[0]?.run).not.toHaveProperty('placement');
+    expect(runs[0]?.run.placement).toEqual({
+      decision: 'here',
+      reason: 'no build machine is paired',
+      slotWaitMs: 5000,
+    });
   });
 
   test('a run that starts booting its device is recorded as a device setup', async () => {

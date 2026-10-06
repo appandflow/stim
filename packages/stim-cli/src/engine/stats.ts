@@ -37,6 +37,7 @@ interface RunPlacement {
   decision: BuildPlacement['decision'];
   reason: string;
   machine?: string;
+  slotWaitMs?: number;
   /** The offloaded build's total time; a build here takes the run's compile time instead. */
   buildMs?: number;
 }
@@ -155,6 +156,7 @@ function buildPlacement(run: StatsRun, before: StatsBucket | null, at: string): 
   const placement = run.placement!;
   const buildMs = wholeMs(placement.decision === 'offloaded' ? placement.buildMs : run.coldBuildMs);
   const localEstimateMs = wholeMs(before?.lastColdBuildMs);
+  const slotWaitMs = wholeMs(placement.slotWaitMs);
   return {
     at,
     project: run.projectKey,
@@ -163,6 +165,7 @@ function buildPlacement(run: StatsRun, before: StatsBucket | null, at: string): 
     reason: placement.reason,
     ...(placement.machine ? { machine: placement.machine } : {}),
     ...(buildMs > 0 ? { buildMs } : {}),
+    ...(slotWaitMs > 0 ? { slotWaitMs } : {}),
     ...(localEstimateMs > 0 ? { localEstimateMs } : {}),
     ...(run.failed ? { failed: true as const } : {}),
   };

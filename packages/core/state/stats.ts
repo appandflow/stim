@@ -52,6 +52,7 @@ export interface StatsPlacement {
   reason: string;
   machine?: string;
   buildMs?: number;
+  slotWaitMs?: number;
   /** The project's last cold build here before this run. */
   localEstimateMs?: number;
   failed?: true;
@@ -272,6 +273,7 @@ function normalizePlacement(value: unknown): StatsPlacement[] {
     return [];
   if (typeof reason !== 'string' || typeof project !== 'string') return [];
   const buildMs = wholeMs(value.buildMs);
+  const slotWaitMs = wholeMs(value.slotWaitMs);
   const localEstimateMs = wholeMs(value.localEstimateMs);
   return [
     {
@@ -282,6 +284,7 @@ function normalizePlacement(value: unknown): StatsPlacement[] {
       reason,
       ...(typeof machine === 'string' && machine !== '' ? { machine } : {}),
       ...(buildMs > 0 ? { buildMs } : {}),
+      ...(slotWaitMs > 0 ? { slotWaitMs } : {}),
       ...(localEstimateMs > 0 ? { localEstimateMs } : {}),
       ...(value.failed === true ? { failed: true as const } : {}),
     },

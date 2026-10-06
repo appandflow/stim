@@ -281,7 +281,8 @@ export async function acquireIosArtifact(
   let handoff: BuildHandoff | null = null;
   let offloadFallback: string | null = null;
   let fallbackMachine: string | null = null;
-  let hereReason: string | null = null;
+  let hereReason = 'no build machine is paired';
+  let slotWaitMs: number | undefined;
   let builtOn: string | undefined;
   const fallBack = (reason: string, line: string = reason) => {
     if (namedBuildMachine(buildMachine)) throw new OffloadRefusal(buildMachine, reason);
@@ -699,6 +700,7 @@ export async function acquireIosArtifact(
     if (!maxBuilds) return;
     try {
       buildSlot = await d.acquireBuildSlot({ max: maxBuilds, root, logFile, out: note });
+      slotWaitMs = buildSlot.slotWaitMs;
     } catch (e) {
       const refusal = claimFailure(e, 'stim ios');
       if (refusal) {
@@ -1015,11 +1017,12 @@ export async function acquireIosArtifact(
         if (offload) {
           stats.setPlacement({
             decision: 'fell-back',
+            slotWaitMs,
             reason: offloadFallback ?? 'offload failed',
             ...(fallbackMachine ? { machine: fallbackMachine } : {}),
           });
-        } else if (hereReason) {
-          stats.setPlacement({ decision: 'here', reason: hereReason });
+        } else {
+          stats.setPlacement({ decision: 'here', reason: hereReason, slotWaitMs });
         }
         builtOn = 'here';
         buildFailure = { ...buildFailure, builtOn };

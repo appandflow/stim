@@ -539,6 +539,7 @@ leased until <time>" for each one.`,
                   optional fields
   findings        the diagnostic findings; a lower resolved Stim is a
                   costs-time finding with a PATH or installation remedy
+                  offload-candidate is a note after 3+ successful local cold builds in 7 days average over 3 min, with no offload.machines and an online tailnet Mac; open Stim Desktop Settings > Build machines > Add
 
 ON FAILURE
   \`start\`, \`ios\`, \`android\` and \`web\` all print the error contract instead,
@@ -1721,9 +1722,9 @@ HOW A RUN IS COUNTED (\`stats\`)
   run's outcome.
 
 BUILD PLACEMENT (\`offload\`)
-  While at least one build machine is paired, every run that compiles
-  records where it built and why, in a placement: { at, project, platform,
-  decision, reason, machine?, buildMs?, localEstimateMs?, failed? }.
+  Every run that compiles records where it built and why, in a placement: { at, project, platform,
+  decision, reason, machine?, buildMs?, slotWaitMs?, localEstimateMs?, failed? }.
+  slotWaitMs is whole milliseconds waiting for a build slot, present only when positive.
   decision is "here", "offloaded", or "fell-back" (it tried a build machine
   and built here). reason is why: the run's \`placement:\` reason, such as
   "load 0.6/core, 1 of 3 build slots busy here" (auto keeps the build here

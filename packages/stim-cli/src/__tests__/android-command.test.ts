@@ -5927,6 +5927,18 @@ describe('the emulator system-image flag', () => {
 });
 
 describe('run statistics', () => {
+  beforeEach(() =>
+    setExecutor(
+      makeExecutor({
+        runFile: (file) => {
+          if (file === 'git') throw new Error('not a git checkout');
+          return '';
+        },
+      }),
+    ),
+  );
+  afterEach(() => resetExecutor());
+
   function recorder(result: RecordStatsResult = { recorded: true, note: null }) {
     const runs: Array<{ run: StatsRun; now: number }> = [];
     const recordStats = (statsRun: StatsRun, now: number) => {
@@ -5951,9 +5963,26 @@ describe('run statistics', () => {
       waitedForBuild: false,
       durationMs: expect.any(Number),
       coldBuildMs: 161000,
+      placement: { decision: 'here', reason: 'no build machine is paired' },
     });
     expect((runs[0]?.run.durationMs as number) > 0).toBe(true);
     expect(runs[0]?.now).toBe(clock);
+  });
+
+  test('a compiling run without build machines records its local placement and slot wait', async () => {
+    const { runs, recordStats } = recorder();
+    const result = await harness({
+      recordStats,
+      getLimits: () => ({ maxBuilds: 1, maxDevices: 0 }),
+      acquireSlot: async () => ({ acquired: true, unlimited: true, slotWaitMs: 5000 }),
+    }).run();
+
+    expect(result.ok).toBe(true);
+    expect(runs[0]?.run.placement).toEqual({
+      decision: 'here',
+      reason: 'no build machine is paired',
+      slotWaitMs: 5000,
+    });
   });
 
   function pairMini() {

@@ -223,7 +223,8 @@ export async function acquireAndroidArtifact(
 ): Promise<AndroidArtifactResult> {
   const { phase, out, estimates, stats, step, miss, hit: lateHit, place, waitingOn } = progress;
   let fallbackMachine: string | null = null;
-  let hereReason: string | null = null;
+  let hereReason = 'no build machine is paired';
+  let slotWaitMs: number | undefined;
   const buildMachine = record.buildMachine ?? 'auto';
   const fallBack = (reason: string, line: string = reason) => {
     if (namedBuildMachine(buildMachine)) throw new OffloadRefusal(buildMachine, reason);
@@ -583,6 +584,7 @@ export async function acquireAndroidArtifact(
     if (!maxBuilds) return true;
     try {
       buildSlot = await acquireSlot({ max: maxBuilds, root, logFile: buildLog, out });
+      slotWaitMs = buildSlot.slotWaitMs;
     } catch (err) {
       const refusal = claimFailure(err, 'stim android');
       if (refusal) {
@@ -841,11 +843,12 @@ export async function acquireAndroidArtifact(
           if (offload) {
             stats.setPlacement({
               decision: 'fell-back',
+              slotWaitMs,
               reason: record.offloadFallback ?? 'offload failed',
               ...(fallbackMachine ? { machine: fallbackMachine } : {}),
             });
-          } else if (hereReason) {
-            stats.setPlacement({ decision: 'here', reason: hereReason });
+          } else {
+            stats.setPlacement({ decision: 'here', reason: hereReason, slotWaitMs });
           }
           record.builtOn = 'here';
           phase('build', `compiling ${variant || 'debug'} with Gradle`);

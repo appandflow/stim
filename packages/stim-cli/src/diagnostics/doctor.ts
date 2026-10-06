@@ -3,7 +3,14 @@ import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync, rmSync 
 import { dirname, isAbsolute, join, relative, resolve } from 'path';
 import { plural, quotedPath } from '../command-output.ts';
 import { getExecutor } from '../exec.ts';
-import { readJsonObject } from '@stim-cli/core/state';
+import {
+  isJsonObject,
+  readJsonObject,
+  readStats,
+  type StatsPlacement,
+  type SettingsObject,
+} from '@stim-cli/core/state';
+import { realIo } from '../offload/tailnet.ts';
 import { makeTemporaryDirectory } from '../temporary.ts';
 import { checkStorageLayout } from './doctor-storage.ts';
 import { inspectIosDebugArchitectures } from './doctor-ios-architectures.ts';
@@ -49,7 +56,6 @@ import {
   settingShapeErrors,
   webSettings,
 } from '../workspace/settings.ts';
-import type { SettingsObject } from '@stim-cli/core/state';
 import { readInstalledEasCliVersion, type RemoteDeviceBackend } from '../engine/device-remote.ts';
 import { easCliSupport, easCliUpgradeRemedy, MIN_EAS_CLI_SIMULATOR_VERSION } from '../engine/eas-simulator.ts';
 import { MIN_EAS_CLI_BUILD_DOWNLOAD_VERSION } from '../engine/eas-build.ts';
@@ -76,6 +82,55 @@ export type DoctorPlatform = 'ios' | 'android';
 
 function finding(level: 'cost' | 'note', title: string, detail: string, fix: string | null): Finding {
   return { level, title, detail, fix };
+}
+
+export function checkOffloadCandidate(
+  placements: readonly StatsPlacement[],
+  machines: readonly string[],
+  peers: readonly unknown[],
+  now: number,
+): Finding | null {
+  if (machines.length || !peers.some((peer) => isJsonObject(peer) && peer.OS === 'macOS' && peer.Online === true))
+    return null;
+  const cold = placements.filter((placement) => {
+    const age = now - Date.parse(placement.at);
+    return (
+      placement.decision === 'here' &&
+      !placement.failed &&
+      (placement.buildMs ?? 0) > 0 &&
+      age >= 0 &&
+      age <= 7 * 24 * 60 * 60_000
+    );
+  });
+  if (cold.length < 3) return null;
+  const average = cold.reduce((total, placement) => total + placement.buildMs!, 0) / cold.length;
+  if (average <= 180_000) return null;
+  return {
+    code: 'offload-candidate',
+    ...finding(
+      'note',
+      'Builds could run on another Mac',
+      `Cold builds averaged ~${Math.round(average / 60_000)} min over ${cold.length} builds this week.`,
+      'In Stim Desktop, open Settings > Build machines > Add.',
+    ),
+  };
+}
+
+function readOffloadCandidate(tailnetStatus: () => unknown, now: number, host: NodeJS.Platform): Finding | null {
+  if (host !== 'darwin') return null;
+  try {
+    const entries = loadConfig()?.offload?.machines;
+    const machines = Array.isArray(entries)
+      ? entries.filter((entry): entry is string => typeof entry === 'string')
+      : [];
+    const placements = readStats().record?.placements ?? [];
+    if (machines.length || placements.length < 3) return null;
+    const status = tailnetStatus();
+    const peers = isJsonObject(status) && isJsonObject(status.Peer) ? Object.values(status.Peer) : [];
+    return checkOffloadCandidate(placements, machines, peers, now);
+  } catch {
+    return null;
+  }
 }
 
 function mainCheckoutProjectRoot(projectRoot: string): string {
@@ -842,6 +897,8 @@ export function runDoctor(
     memoryPressure = readHostMemoryPressure,
     lookupCcache = null,
     lookupChrome,
+    tailnetStatus = realIo.status,
+    now = Date.now,
     platform,
     host = process.platform,
   }: {
@@ -858,6 +915,8 @@ export function runDoctor(
     memoryPressure?: () => HostMemoryPressure | null;
     lookupCcache?: (() => boolean) | null;
     lookupChrome?: () => string | null;
+    tailnetStatus?: () => unknown;
+    now?: () => number;
     platform?: DoctorPlatform;
     host?: NodeJS.Platform;
   } = {},
@@ -1015,6 +1074,7 @@ export function runDoctor(
     easFinding,
     easBuildDownloadFinding,
     concurrencyFinding,
+    readOffloadCandidate(tailnetStatus, now(), host),
     memoryAdvice
       ? finding(
           'cost',
