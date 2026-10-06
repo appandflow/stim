@@ -1,6 +1,6 @@
 import { coerceSettingText, settingDefinition, settingValueError } from './settings-registry.ts';
 import { lstatSync, readdirSync, realpathSync } from 'node:fs';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { archiveRoot } from './paths.ts';
 import { isJsonObject, readJsonObject } from './json-file.ts';
 import type { EndedAgentSession, LastBuildReport } from './status.ts';
@@ -51,39 +51,42 @@ export function readArchives(): ArchivedWorkspace[] {
     return [];
   }
   return names
-    .filter((name) => !name.startsWith('.'))
     .flatMap((name) => {
-      try {
-        if (!lstatSync(join(archiveRoot(), name)).isDirectory()) return [];
-      } catch {
-        return [];
-      }
-      const record = readJsonObject(join(archiveRoot(), name, 'archive.json'));
-      if (
-        !record ||
-        record.id !== name ||
-        ['projectRoot', 'project', 'workspace', 'removedAt', 'removedBy'].some(
-          (key) => typeof record[key] !== 'string',
-        ) ||
-        !Number.isFinite(Date.parse(record.removedAt as string)) ||
-        !isJsonObject(record.bytes) ||
-        !isJsonObject(record.expires) ||
-        !isJsonObject(record.worktree) ||
-        !isJsonObject(record.builds) ||
-        !Array.isArray(record.agents) ||
-        typeof record.version !== 'number'
-      )
-        return [];
-      const bytes = record.bytes as Record<string, unknown>;
-      if (
-        ['logs', 'recordings', 'agentActions', 'record', 'total'].some(
-          (key) => typeof bytes[key] !== 'number' || !Number.isFinite(bytes[key]) || (bytes[key] as number) < 0,
-        )
-      )
-        return [];
-      return [record as unknown as ArchivedWorkspace];
+      const archive = readArchive(name);
+      return archive ? [archive] : [];
     })
     .toSorted((a, b) => Date.parse(b.removedAt) - Date.parse(a.removedAt) || b.id.localeCompare(a.id));
+}
+
+export function readArchive(id: string): ArchivedWorkspace | null {
+  if (!id || id.startsWith('.') || basename(id) !== id || id.includes('\0')) return null;
+  try {
+    if (!lstatSync(join(archiveRoot(), id)).isDirectory()) return null;
+  } catch {
+    return null;
+  }
+  const record = readJsonObject(join(archiveRoot(), id, 'archive.json'));
+  if (
+    !record ||
+    record.id !== id ||
+    ['projectRoot', 'project', 'workspace', 'removedAt', 'removedBy'].some((key) => typeof record[key] !== 'string') ||
+    !Number.isFinite(Date.parse(record.removedAt as string)) ||
+    !isJsonObject(record.bytes) ||
+    !isJsonObject(record.expires) ||
+    !isJsonObject(record.worktree) ||
+    !isJsonObject(record.builds) ||
+    !Array.isArray(record.agents) ||
+    typeof record.version !== 'number'
+  )
+    return null;
+  const bytes = record.bytes as Record<string, unknown>;
+  if (
+    ['logs', 'recordings', 'agentActions', 'record', 'total'].some(
+      (key) => typeof bytes[key] !== 'number' || !Number.isFinite(bytes[key]) || (bytes[key] as number) < 0,
+    )
+  )
+    return null;
+  return record as unknown as ArchivedWorkspace;
 }
 
 export function archivedUsage(archives: readonly ArchivedWorkspace[]): ArchivedUsage {

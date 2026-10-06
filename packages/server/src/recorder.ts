@@ -70,6 +70,7 @@ function recordBytes(unit: AccessUnit): Buffer {
 }
 
 interface Target extends FrameTarget {
+  workspace: string;
   slot: string;
   platform: RecordingPlatform;
 }

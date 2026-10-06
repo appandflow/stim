@@ -297,11 +297,12 @@ export const MAX_LOG_TAIL = 5000;
 
 /**
  * The Stim Desktop log viewer's filters, passed to `stim logs`. `workspace` is an environment `path` from a
- * status payload. Without `sources`, `errors` keeps the CLI's default error scope. `tail` defaults to
- * {@link MAX_LOG_TAIL}, which is also its maximum.
+ * status payload. Exactly one of `workspace` or `archive` (an `archived[].id`) is required. Without `sources`,
+ * `errors` keeps the CLI's default error scope. `tail` defaults to {@link MAX_LOG_TAIL}, which is also its maximum.
  */
 export interface LogFilter {
-  workspace: string;
+  workspace?: string;
+  archive?: string;
   sources?: LogSource[];
   level?: LogLevel;
   slot?: string;
@@ -354,13 +355,16 @@ export const FRAME_EDGE = { min: 240, default: 1280, max: 2048 } as const;
  * cable, and an Android phone over adb. `fps` caps how many frames a second this
  * subscription gets, and `maxEdge` asks for frames scaled to fit that many pixels; the server may send smaller
  * frames, and larger ones while another subscriber of the same device asks for more.
+ * Exactly one of `workspace` or `archive` (an `archived[].id`) is required. An archive needs `at`,
+ * cannot be physical, and cannot return to live.
  */
 export interface FrameTarget {
   /** Requests installed ordinary-device artwork for this live subscription. */
   deviceFrame?: boolean;
   /** Requests a composed Duo image carrying the pose used to map its input. */
   duoFrame?: boolean;
-  workspace: string;
+  workspace?: string;
+  archive?: string;
   platform: Platform;
   slot?: string;
   physical?: boolean;
@@ -417,9 +421,10 @@ export interface FramesLiveParams {
   subscription: string;
 }
 
-/** A device slot of a workspace, as `frames.subscribe` names it. */
+/** A device slot with exactly one of `workspace` or `archive` (an `archived[].id`), as `frames.subscribe` names it. */
 export interface ReplayTarget {
-  workspace: string;
+  workspace?: string;
+  archive?: string;
   platform: Platform;
   slot?: string;
 }
@@ -1312,12 +1317,18 @@ export interface StatusEvent {
 
 /**
  * Records for a `logs.subscribe` subscription: first the last `tail` matching records, then new ones as
- * they arrive.
+ * they arrive. An archive subscription sends its matching records, then `logs-ended`.
  */
 export interface LogsEvent {
   event: 'logs';
   subscription: string;
   records: LogRecord[];
+}
+
+/** All matching archived log records were sent; the subscription has been released. */
+export interface LogsEndedEvent {
+  event: 'logs-ended';
+  subscription: string;
 }
 
 /** A subscription ended because its source failed or the client fell behind; the client may resubscribe. */
@@ -1450,6 +1461,7 @@ export type ServerEvent =
   | NotificationEvent
   | StatusEvent
   | LogsEvent
+  | LogsEndedEvent
   | FrameEvent
   | DeviceFrameEvent
   | MacosWindowsEvent

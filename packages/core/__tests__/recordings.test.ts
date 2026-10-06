@@ -5,6 +5,7 @@ import {
   capDrops,
   footageDrops,
   listRecordedDevices,
+  listSegments,
   recordingEnabled,
   type RecordedDevice,
   type RecordedSegment,
@@ -46,6 +47,9 @@ test('lists each device slot, with the open segment ending at its last write', (
         { file: join(ios, '4000.part'), start: 4000, end: 9000, bytes: 2, open: true },
       ],
     },
+  ]);
+  expect(listSegments(ios, true)).toEqual([
+    { file: join(ios, '1000-4000.seg'), start: 1000, end: 4000, bytes: 3, open: false },
   ]);
 });
 

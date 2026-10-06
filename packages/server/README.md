@@ -1102,13 +1102,28 @@ Events are `{ "event", "subscription", ... }`.
   whose `since` is in `ownLeases` is a phone.
 - `logs.query` returns `{ "records" }`, and `logs.subscribe` sends `logs`
   events: first the last `tail` matching records, then new ones in batches.
-  Both take the Stim Desktop log viewer's filters: `workspace` (required),
-  `sources` (`metro`, `client`, `device`, `build`, `agent`), `slot`, `level` (the
+  Both take the Stim Desktop log viewer's filters: exactly one of `workspace`
+  (an environment path) or `archive` (an `archived[].id` from status),
+  `sources` (`metro`, `client`, `device`, `build`, `agent`, `maintenance`), `slot`, `level` (the
   minimum), `grep` (a regular expression), `errors`, and `tail` (1 to 5000,
   5000 by default). Without `sources`, `errors` keeps the CLI's default error
   scope. They run `stim logs --json` and `stim logs --json --follow` in the
   workspace. Subscribers with the same workspace and filters share one
-  `--follow` child, which stops with the last of them.
+  `--follow` child, which stops with the last of them. Archive requests read
+  retained logs and agent-device session actions locally through core, with the same JSON filters, ordering,
+  markers and error context. Archive reads are synchronous and queued per
+  connection, yielding to the event loop between requests. Pending archive
+  reads share the four-request limit with commands. Archived session actions
+  retain available platform and device attribution; device ids and Stim slot
+  assignments absent from retained files are unavailable after removal. They never follow files or use a hosted relay.
+  An archive subscription sends its records in the same batches and limits,
+  then `{ "event": "logs-ended", "subscription": "s3" }` and releases the
+  subscription, including when no records match. These reads need `read`.
+  `archive` requires an updated server: omit `workspace` so older servers
+  refuse with `bad-request` instead of reading a live replacement at that path.
+  Both or neither selector is `bad-request`; traversal ids are `bad-request`,
+  and unknown, invalid or symlinked archive directories are `unknown-workspace`
+  with a message naming the archive id.
 - `stats.get` returns the same payload as `stim stats --json`, using the shared
   core reader in a bounded, cancellable server child. The stats part of
   `machine.details` uses the same reader. `settings.get` runs
@@ -1303,7 +1318,7 @@ Events are `{ "event", "subscription", ... }`.
   `at` and `frames.seek` on it fail with `no-recording`, and it counts
   toward no idle check.
 
-- **Replay.** `replay.range` takes `workspace`, `platform` and `slot`
+- **Replay.** `replay.range` takes exactly one of `workspace` or `archive`, plus `platform` and `slot`
   (`default` when absent), like `frames.subscribe`, and returns what can be
   replayed of that device slot's [recording](#recording):
   - `enabled`: the workspace's `recording.enabled`, as the last status showed
@@ -1327,7 +1342,17 @@ Events are `{ "event", "subscription", ... }`.
   It needs only `read`. A device with no recording gets empty `spans` and
   `markers`, and runs no `stim` command.
 
-  `replay.keyframe` takes the same `workspace`, `platform` and `slot`, and
+  Archive replay reads only closed segments under the archive's recordings
+  directory. Its `enabled` and `recording` are false; spans and markers come
+  from those segments, archived logs and agent-device session actions. It never requires the former checkout
+  or reads a live replacement at that path, and never uses a hosted relay.
+  `frames.subscribe` with `archive` requires `at` and `video: ["h264"]`,
+  rejects physical targets, and supports `frames.seek` on that subscription.
+  `frames.live` refuses with `frames-failed`: an archive cannot go live.
+  Empty archives return empty ranges and `no-recording` for keyframes or frames.
+  These reads need the same `read` capability as workspace replay.
+
+  `replay.keyframe` takes the same `workspace` or `archive`, `platform` and `slot`, and
   `at` (epoch milliseconds), and returns one still frame for a scrubber
   preview without touching any subscription. The recording is stored in
   segments of about 5 seconds that each start at a keyframe; the server picks

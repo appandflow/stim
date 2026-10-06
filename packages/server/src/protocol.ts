@@ -541,10 +541,16 @@ export function protocolJsonSchema(): JsonSchema {
       },
       LogFilter: {
         type: 'object',
-        required: ['workspace'],
+        oneOf: [{ required: ['workspace'] }, { required: ['archive'] }],
         additionalProperties: false,
         properties: {
           workspace: { type: 'string', description: 'An environment path from a status payload.' },
+          archive: {
+            type: 'string',
+            minLength: 1,
+            pattern: '^(?!.*\\.\\.)[^/\\\\\\u0000]+$',
+            description: 'An archived[].id from a status payload; omit workspace.',
+          },
           sources: { type: 'array', minItems: 1, items: { enum: [...LOG_SOURCES] } },
           level: { enum: [...LOG_LEVELS] },
           slot: { type: 'string', pattern: '^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$' },
@@ -603,10 +609,20 @@ export function protocolJsonSchema(): JsonSchema {
       },
       FrameTarget: {
         type: 'object',
-        required: ['workspace', 'platform'],
+        required: ['platform'],
+        oneOf: [
+          { required: ['workspace'], not: { required: ['archive'] } },
+          { required: ['archive', 'at'], not: { required: ['workspace'] }, properties: { physical: { const: false } } },
+        ],
         additionalProperties: false,
         properties: {
           workspace: { type: 'string', description: 'An environment path from a status payload.' },
+          archive: {
+            type: 'string',
+            minLength: 1,
+            pattern: '^(?!.*\\.\\.)[^/\\\\\\u0000]+$',
+            description: 'An archived[].id from a status payload; omit workspace.',
+          },
           platform: { enum: [...PLATFORMS] },
           slot: { type: 'string', minLength: 1, default: 'default' },
           physical: { type: 'boolean', default: false },
@@ -1180,20 +1196,24 @@ export function protocolJsonSchema(): JsonSchema {
           }),
           request('replay.range', {
             type: 'object',
-            required: ['workspace', 'platform'],
+            required: ['platform'],
+            oneOf: [{ required: ['workspace'] }, { required: ['archive'] }],
             additionalProperties: false,
             properties: {
               workspace: { type: 'string' },
+              archive: { type: 'string', minLength: 1, pattern: '^(?!.*\\.\\.)[^/\\\\\\u0000]+$' },
               platform: { enum: [...RELOAD_PLATFORMS] },
               slot: { type: 'string', minLength: 1 },
             },
           }),
           request('replay.keyframe', {
             type: 'object',
-            required: ['workspace', 'platform', 'at'],
+            required: ['platform', 'at'],
+            oneOf: [{ required: ['workspace'] }, { required: ['archive'] }],
             additionalProperties: false,
             properties: {
               workspace: { type: 'string' },
+              archive: { type: 'string', minLength: 1, pattern: '^(?!.*\\.\\.)[^/\\\\\\u0000]+$' },
               platform: { enum: [...RELOAD_PLATFORMS] },
               slot: { type: 'string', minLength: 1 },
               at: { type: 'number', description: 'Epoch milliseconds on the Mac clock.' },
@@ -1682,6 +1702,15 @@ export function protocolJsonSchema(): JsonSchema {
               event: { const: 'logs' },
               subscription: { type: 'string' },
               records: { type: 'array', items: { $ref: '#/$defs/LogRecord' } },
+            },
+          },
+          {
+            type: 'object',
+            required: ['event', 'subscription'],
+            additionalProperties: false,
+            properties: {
+              event: { const: 'logs-ended' },
+              subscription: { type: 'string' },
             },
           },
           {

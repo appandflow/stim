@@ -59,13 +59,13 @@ function listDir(dir: string): string[] {
   }
 }
 
-/** The segments in one device directory, oldest first. Files that are not segments are left out. */
-export function listSegments(dir: string): RecordedSegment[] {
+/** The segments in one device directory, oldest first. Files that are not segments are left out; `closedOnly` excludes files still being written. */
+export function listSegments(dir: string, closedOnly = false): RecordedSegment[] {
   const segments: RecordedSegment[] = [];
   for (const name of listDir(dir)) {
     const closed = SEGMENT.exec(name);
     const part = closed ? null : PART.exec(name);
-    if (!closed && !part) continue;
+    if (!closed && (closedOnly || !part)) continue;
     let stat;
     try {
       stat = statSync(join(dir, name));
