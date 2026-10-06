@@ -25,6 +25,7 @@ import { useHomeFilters } from '@/hooks/home-filters';
 import { useInbox } from '@/hooks/inbox';
 import { useArchiveItems, useMacs, usePairedMacs, useWorkspaceItems, useWorktreeItems } from '@/hooks/machines';
 import { useNow } from '@/hooks/use-now';
+import { useWelcome } from '@/hooks/welcome';
 import { archivedView } from '@/lib/archived';
 import { ListRow } from '@/components/list';
 import { AGENT_PROMPTS, pickPrompts } from '@/lib/agent-prompts';
@@ -40,6 +41,7 @@ import {
 } from '@/lib/home';
 import { checkoutProjects, homeSections, type HomeSection } from '@/lib/home-list';
 import { MacList } from '@/screens/mac-list';
+import { Welcome } from '@/screens/welcome';
 
 const MENU_ICON = require('@/assets/icons/menu.png');
 const SLIDERS_ICON = require('@/assets/icons/sliders.png');
@@ -53,6 +55,7 @@ export function Home() {
   const menu = useMenuDrawer();
   const { unread } = useInbox();
   const macs = usePairedMacs();
+  const welcome = useWelcome(macs);
   const items = useWorkspaceItems();
   const worktrees = useWorktreeItems();
   const archives = useArchiveItems();
@@ -109,6 +112,7 @@ export function Home() {
     <>
       <Stack.Screen
         options={{
+          headerShown: true,
           headerTitle:
             view === 'workspaces' && menu.permanent
               ? ''
@@ -167,6 +171,8 @@ export function Home() {
       </Stack.Toolbar>
     </>
   );
+
+  if (welcome.show) return <Welcome dismiss={welcome.dismiss} />;
 
   if (macs?.length === 0) {
     return (
