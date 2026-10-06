@@ -23,7 +23,7 @@ import {
   connectIosTarget,
   hostedIosBuildTarget,
   hostedIosSelectors,
-  resolveIosRemote,
+  selectIosTarget,
 } from './ios/remote.ts';
 import { finishHostedIosRun } from './ios/hosted.ts';
 import type { CompilationCacheActivity, DevServerStart } from '../engine/build-facts.ts';
@@ -531,7 +531,7 @@ async function runIos(
   const isExpo = d.detectIsExpo(root);
   const schemeRefusal = explicitSchemeRefusal(root, buildScheme, isExpo, d);
   if (schemeRefusal) return fail(schemeRefusal);
-  const remoteSelection = resolveIosRemote({ opts, settings, physical, recorded: d.readHostedIos(root)[slot] });
+  const remoteSelection = selectIosTarget({ root, slot, opts, settings, physical, release, metroCheck, d });
   if ('failure' in remoteSelection) return fail(remoteSelection.failure);
   const { machine: hostedMachine, backend: remoteBackend } = remoteSelection;
   const viewer = resolveSimulatorAppFlag(opts.simulatorApp, physical, hostedMachine ?? remoteBackend);

@@ -31,6 +31,9 @@ HOSTED IOS METRO
   metro.tunnel and metro.publicUrl are ignored. Supervisor restart recreates
   the recorded gateway; stop or a stopped hosted session closes it. A recorded
   hosted session prevents Metro idle stop. Release runs skip the bridge.
+  Hosted Debug runs require the supervisor's private gateway support before
+  reservation. --no-metro-check refuses; restart a missing or older supervisor
+  with stim stop; stim start.
   Read guide lifecycle hosted-ios for placement and cleanup.
 
 TAILNET-ONLY METRO

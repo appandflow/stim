@@ -88,7 +88,8 @@ apply. The run then reports \`devServer: { started: true, reason }\` in its
 JSON, with reason "not running" or "stopped (idle)". When that start fails,
 the run refuses with the start's own code (STIM_METRO_TIMEOUT,
 STIM_SUPERVISOR_EXITED, ...) before any build work. Release builds and
-\`--no-metro-check\` neither check nor start the dev server. \`--remote\`
+\`--no-metro-check\` neither check nor start the dev server; hosted Debug iOS
+refuses --no-metro-check with STIM_BAD_ARG. \`--remote\`
 with eas or proxy starts it the way \`stim start --remote\` does. A named
 hosting Mac keeps Metro local through a private bridge; see hosted-ios. Step 2 remains useful to warm
 Metro while other work happens.
@@ -289,21 +290,31 @@ uploads the app on every run. Debug keeps Metro here; its supervisor owns a
 private gateway bound to this Mac's Tailscale address, pinned to the host peer
 and protected by a per-session secret. The host exposes only a loopback bridge.
 No start --remote is needed; metro.tunnel and metro.publicUrl are ignored.
+Debug requires a running supervisor with private gateway support before reserving
+a simulator. --no-metro-check refuses with STIM_BAD_ARG for hosted Debug runs.
+If its supervisor is missing or older, run stim stop; stim start, then retry.
 Non-Debug runs skip Metro. Launch is unverified until this workspace's Metro
 provides bundle evidence, or the host proves a live release process.
 
 A rerun on the same named Mac reattaches and delivers a new app attempt. A
 stopped or missing session is replaced; an unreachable or unknown owner refuses
-replacement. A different Mac or a local run refuses: run stim stop first.
+replacement. Switching between this Mac and a hosting Mac, or to a different
+hosting Mac, refuses for that slot: run stim stop first.
 Status adds ios.host { machine, session, selected, device: { name, runtime },
 agent } per slot; no host UDID or gateway secret enters local device state or
 status. Ready is normal; stopped has a rerun hint; unknown or unreachable is
 unverified. A host server restart stops its sessions.
 
 stop and worktree remove wait for the host to stop, delete exactly its owned
-simulator without parking, close the gateway and clear placement. Revoked or
+simulator without parking, close the gateway and clear placement. stop --json
+reports each hosted slot under outcomes.device["ios:host:<slot>"], retaining
+local device outcomes and successful siblings when another slot fails. Revoked or
 missing sessions clear placement too. An unreachable host retains placement
-and fails cleanup: rerun stim stop when it answers. devices.idleShutdownMinutes
+and fails cleanup: rerun stim stop when it answers. Missing or unapproved local
+credentials require stim doctor to restore access before retrying stop. An
+unreadable machine or session remains recorded; status warns and stop names the
+workspace-state key to inspect. Unknown selection or agent metadata is normalized
+without discarding the owner. devices.idleShutdownMinutes
 does not stop a hosted simulator in this phase; its recorded session keeps Metro
 from idle stopping. Native hosted iOS logs are not collected yet; JavaScript
 logs already arrive through Metro. Client viewing relays, app handoff, upload

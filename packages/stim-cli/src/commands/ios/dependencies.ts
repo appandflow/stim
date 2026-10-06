@@ -13,7 +13,7 @@ import { checkDeviceCapacity } from '../../engine/device-capacity.ts';
 import { budgetGate } from '../../budget.ts';
 import { clearIosAdoptionPending } from '../../engine/device-ios.ts';
 import { ensureBooted, ensureOwnedDevice } from '../../engine/device.ts';
-import { clearIosAppData, listIosRuntimes } from '../../devices/ios.ts';
+import { clearIosAppData, listIosRuntimes, listAllIosSims } from '../../devices/ios.ts';
 import {
   ensureRemoteBootOwned,
   ensureMetroReachable,
@@ -102,6 +102,7 @@ export interface IosDeps {
   budgetGate: typeof budgetGate;
   ensureOwnedDevice: typeof ensureOwnedDevice;
   listIosRuntimes: typeof listIosRuntimes;
+  listAllIosSims: typeof listAllIosSims;
   ensureBooted: typeof ensureBooted;
   resolveProjectMetro: typeof resolveProjectMetro;
   startDevServer: typeof startDevServer;
@@ -189,6 +190,7 @@ export const DEFAULT_DEPS: IosDeps = {
   budgetGate,
   ensureOwnedDevice,
   listIosRuntimes,
+  listAllIosSims,
   ensureBooted,
   resolveRemoteContext,
   remoteIosDeps,

@@ -36,8 +36,10 @@ Use stop --slot <name> for one slot, or plain stop for the whole workspace.
 
 HOSTED IOS
 
-For ios --remote <machine>, read guide lifecycle hosted-ios. It never falls
-back here; stop reconciles the recorded host before changing placement.
+For ios --remote <machine>, read guide lifecycle hosted-ios. Stop before switching
+between a local simulator and a hosting Mac. Hosted Debug requires the local
+Metro supervisor; restart a missing or older one with stim stop; stim start.
+It never falls back here; stop reconciles the recorded host before changing placement.
 Hosted iOS agent control is not available yet; do not use its UDID locally.
 
 NORMAL WORKFLOW

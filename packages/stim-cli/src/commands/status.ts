@@ -1,5 +1,4 @@
 import { readHostedIosStatus } from '../device-host/hosted-ios-status.ts';
-import { readHostedIos } from '../device-host/ios-state.ts';
 import { readHostedMacosStatus } from '../device-host/hosted-macos-status.ts';
 import { inspectProcessIdentity } from '../process-identity.ts';
 import { deviceSlotKey, projectDeviceSlots } from '../devices/device-slots.ts';
@@ -66,6 +65,10 @@ import { readIosDevices, type IosDeviceEntry } from '../engine/ios-device.ts';
 import { readEasSessionLedger } from '../engine/eas-session-ledger.ts';
 import { readMetroTunnel, readRemoteSession, readWorkspaceLaunches } from '../supervisor/state.ts';
 import {
+  hostedIosPlacements,
+  hostedIosRecords,
+  parseHostedIosPlacement,
+  unreadableHostedIos,
   macosAppState,
   readMacosRecord,
   readBuildDetail,
@@ -141,7 +144,7 @@ const WATCH_GIT_MAX_AGE_MS = 60_000;
 function iosStatusName(ios: NonNullable<EnvironmentState['ios']>): string {
   const host = ios.host;
   return host
-    ? `${host.device?.name ?? 'iOS simulator'} (${host.device ? `iOS ${host.device.runtime}` : 'runtime pending'}) on ${host.machine}`
+    ? `${host.device?.name ?? 'iOS simulator'} (${host.device ? `iOS ${host.device.runtime.replace(/^iOS /, '')}` : 'runtime pending'}) on ${host.machine}`
     : (ios.name ?? ios.udid);
 }
 
@@ -188,7 +191,7 @@ function readStatus(gitMaxAgeMs: number, simctlListing: string | null = null): P
 async function readStatusFacts(gitMaxAgeMs: number, simctlListing: string | null): Promise<StatusSnapshot> {
   const cfg = loadConfig();
   const projects = Object.entries(cfg?.projects || {});
-  const iosReads = projects.map(([path]) => readHostedIosStatus(readHostedIos(path)));
+  const iosReads = projects.map(([path]) => readHostedIosStatus(hostedIosPlacements(readWorkspaceState(path))));
   const macosReads = projects.map(([path]) => readHostedMacosStatus(readMacosRecord(path)));
   const cwdRoot = findServerWorkspace(process.cwd())?.root ?? null;
   const worktrees = linkedWorktrees([process.cwd(), ...projects.map(([path]) => path)]);
@@ -324,8 +327,18 @@ async function readStatusFacts(gitMaxAgeMs: number, simctlListing: string | null
     );
     const state = states[states.length - 1];
     if (state) {
+      for (const [slot, record] of Object.entries(hostedIosRecords(saved))) {
+        if (!parseHostedIosPlacement(record)) state.warnings.push(unreadableHostedIos(slot));
+      }
       for (const [slot, facts] of Object.entries(await iosReads[i]!)) {
-        if (slot === 'default') state.ios = facts.ios;
+        const local = slot === 'default' ? state.ios : state.slots?.find((entry) => entry.slot === slot)?.ios;
+        if (local?.udid) {
+          state.slots ??= [];
+          state.slots.push({ slot, ios: facts.ios, android: null });
+          state.warnings.push(
+            `Slot ${slot} records both a local and hosted iOS simulator (${iosStatusName(facts.ios)}); run stim stop to reconcile them.`,
+          );
+        } else if (slot === 'default') state.ios = facts.ios;
         else {
           state.slots ??= [];
           const savedSlot = state.slots.find((entry) => entry.slot === slot);

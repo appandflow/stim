@@ -348,7 +348,7 @@ export function reportIosResult({
     console.log(JSON.stringify({ ...facts, ...(links ? { links } : {}), ...(reclaimed.length ? { reclaimed } : {}) }));
   } else {
     const summary =
-      `${launchWarning ? 'WARNING' : 'OK'}: ${bundleId} on ${host ? `${device.deviceName} (${device.runtime}) on ${host.machine}` : deviceLabel(device, udid)}, ` +
+      `${launchWarning ? 'WARNING' : 'OK'}: ${bundleId} on ${host ? `${device.deviceName} (iOS ${device.runtime?.replace(/^iOS /, '')}) on ${host.machine}` : deviceLabel(device, udid)}, ` +
       (release ? `${configuration} (embedded JS, no Metro)` : `Metro port ${metroPort}`) +
       ` (${cacheDescription(cacheHit, providerName, offloadedTo)}, ${formatDuration(durationMs)})`;
     const outcome = launchWarning
@@ -372,7 +372,12 @@ export function reportIosResult({
     console.log(
       [
         outcome,
-        phaseLine('device', host ? `${deviceName} (${device.runtime}) on ${host.machine}` : `${deviceName} (${udid})`),
+        phaseLine(
+          'device',
+          host
+            ? `${deviceName} (iOS ${device.runtime?.replace(/^iOS /, '')}) on ${host.machine}`
+            : `${deviceName} (${udid})`,
+        ),
         phaseLine('app', bundleId),
         phaseLine('metro', metroResult),
         phaseLine('cache', cacheResult),

@@ -11,13 +11,16 @@ import { applyHostedIosProbe } from '../device-host/hosted-ios-status.ts';
 import { probeHostedSession } from '../device-host/hosted-client.ts';
 import { gatewayAddresses, clearHostedMetro } from '../device-host/metro-gateway.ts';
 import { reconcileHostedMetro, watchHostedMetro } from '../supervisor/hosted-metro.ts';
-import { getConfigPath, getProject } from '../workspace/config.ts';
+import { getConfigPath, getProject, upsertProject } from '../workspace/config.ts';
 import { readWorkspaceState, writeWorkspaceState } from '../workspace/workspace-state.ts';
 import { workspaceStateFile } from '../workspace/paths.ts';
 import { launchSlotScope, siblingPlatformSlots } from '../engine/slot-launch.ts';
 import { workspaceIdleProbe } from '../supervisor/idle-stop.ts';
 import { reclaimProject } from '../devices/reclaim.ts';
 import { runStop } from '../commands/stop.ts';
+import { connectIosTarget } from '../commands/ios/remote.ts';
+import { DEFAULT_DEPS } from '../commands/ios/dependencies.ts';
+import { workspaceInUse } from '../workspace/in-use.ts';
 import { runReload } from '../commands/reload.ts';
 
 const loopbackAvailable = await new Promise<boolean>((resolve) => {
@@ -39,7 +42,7 @@ const device = {
   udid: 'abcdef12-1234-1234-1234-123456789abc',
   name: 'iPhone 17 Pro',
   deviceType: 'iPhone 17 Pro',
-  runtime: 'iOS 27.0',
+  runtime: '27.0',
   deviceTypeId: 'iphone',
   runtimeId: 'ios27',
   architecture: 'x86_64' as const,
@@ -306,7 +309,7 @@ test.each(['ready', 'stopped', 'unknown', 'unreachable'] as const)(
     );
     expect(result.ios.state).toBe(state === 'ready' || state === 'stopped' ? state : 'unverified');
     expect(result.ios.udid).toBe('');
-    expect(result.ios.host?.device).toEqual({ name: 'iPhone 17 Pro', runtime: 'iOS 27.0' });
+    expect(result.ios.host?.device).toEqual({ name: 'iPhone 17 Pro', runtime: '27.0' });
     expect(JSON.stringify(result).includes(device.udid)).toBe(false);
     expect(result.warning?.includes('stim ios --remote mini --slot tablet') ?? false).toBe(state === 'stopped');
   },
@@ -361,6 +364,7 @@ test.skipIf(!loopbackAvailable)(
   'the supervisor binds and recreates a recorded gateway port, then closes it when requested',
   async () => {
     const request = { id: 'fixture', machine: 'mini', address: '127.0.0.1', peer: '127.0.0.1', secret: 'a'.repeat(64) };
+    writeHostedIos(root, 'default', placement());
     writeWorkspaceState(root, { supervisor: { processToken: 'first' }, hostedMetroRequests: { [sessionId]: request } });
     const awaitPort = async (token: string) => {
       await vi.waitFor(() =>
@@ -454,4 +458,180 @@ test('a hosting handshake refusal cannot expose the credential', async () => {
   expect(error).toBeInstanceOf(Error);
   expect((error as Error).message.includes(credential.deviceToken)).toBe(false);
   expect(methods).toEqual([]);
+});
+
+test.each(['missing', 'pending', 'unreadable', 'invalid-config', 'unlisted'])(
+  'command target reports coded %s hosting setup failure with recovery guidance',
+  async (reason) => {
+    if (reason === 'missing') rmSync(deviceHostMachinesFile());
+    if (reason === 'pending')
+      writeFileSync(
+        deviceHostMachinesFile(),
+        JSON.stringify({ version: 1, machines: [{ ...credential, state: 'pending' }] }),
+      );
+    if (reason === 'unreadable') writeFileSync(deviceHostMachinesFile(), '{');
+    if (reason === 'invalid-config') writeFileSync(getConfigPath(), JSON.stringify({ hosting: { machines: true } }));
+    const result = await connectIosTarget(
+      { machine: reason === 'unlisted' ? 'other' : 'mini', backend: null },
+      {},
+      DEFAULT_DEPS,
+    );
+    expect(result).toMatchObject({
+      failure: {
+        code: reason === 'unlisted' ? 'STIM_BAD_ARG' : 'STIM_HOSTING_REFUSED',
+        message: expect.stringContaining(reason === 'invalid-config' ? 'stim guide settings' : 'stim doctor'),
+      },
+    });
+    expect(result).toMatchObject({
+      failure: {
+        message: expect.stringContaining(
+          reason === 'pending'
+            ? 'stim-server devices grant client --device-host'
+            : reason === 'invalid-config'
+              ? 'hosting.machines'
+              : 'stim doctor',
+        ),
+      },
+    });
+    const expectedRemedy = expect.stringContaining(
+      reason === 'pending'
+        ? 'stim-server devices grant client --device-host'
+        : reason === 'invalid-config'
+          ? 'stim guide settings'
+          : 'stim doctor',
+    );
+    expect('failure' in result ? result.failure.remedy : null).toEqual(
+      reason === 'unlisted' ? undefined : expectedRemedy,
+    );
+    expect(open).not.toHaveBeenCalled();
+  },
+);
+
+test('stop reconciles newer metadata and isolates unreadable slots with exact state keys', async () => {
+  const sibling = {
+    ...placement(),
+    session: '34567890-1234-1234-1234-123456789abc',
+    selected: 'auto',
+    agent: { driver: 'agent-device' },
+    appAttempt: null,
+    device: null,
+  };
+  writeWorkspaceState(root, {
+    ios: { host: sibling },
+    deviceSlots: { tablet: { ios: { host: { machine: 'mini', session: '' } } } },
+  });
+  expect(workspaceInUse(root, { supervisor: false, managedLocks: false, nativeRun: false })).toEqual(
+    expect.arrayContaining([
+      expect.stringContaining('deviceSlots.tablet.ios.host.session'),
+      'its iOS simulator runs on mini',
+    ]),
+  );
+  const result = await runStop({ root, report: () => {} });
+  expect(result.ok).toBe(false);
+  expect(result.outcomes.device['ios:host:default']).toMatchObject({ status: 'shut-down' });
+  expect(result.outcomes.device['ios:host:tablet']).toMatchObject({
+    status: 'failed',
+    label: 'hosted iOS simulator for slot tablet',
+    reason: expect.stringContaining('deviceSlots.tablet.ios.host.machine'),
+  });
+  expect(result.summary).not.toContain('undefined');
+  expect(readWorkspaceState(root)?.ios).toEqual({});
+  expect(readWorkspaceState(root)?.deviceSlots).toMatchObject({ tablet: { ios: { host: { session: '' } } } });
+});
+
+test.each(['missing', 'unreachable'])('stop uses the %s remedy and reports sibling outcomes', async (reason) => {
+  writeHostedIos(root, 'default', placement());
+  writeHostedIos(root, 'tablet', { ...placement(), session: '34567890-1234-1234-1234-123456789abc' });
+  if (reason === 'missing') rmSync(deviceHostMachinesFile());
+  else {
+    errorMethod = 'device-host.stop';
+    errorCode = 'closed';
+    errorSession = sessionId;
+  }
+  const result = await runStop({ root, report: () => {} });
+  expect(result.outcomes.device['ios:host:default']).toMatchObject({
+    status: 'failed',
+    label: expect.stringContaining('mini'),
+    reason: expect.stringContaining(reason === 'missing' ? 'stim doctor' : 'when that machine answers'),
+  });
+  expect(result.outcomes.device['ios:host:tablet']?.status).toBe(reason === 'missing' ? 'failed' : 'shut-down');
+  expect(result.outcomes.device['ios:host:default']?.reason?.includes('when that machine answers')).toBe(
+    reason === 'unreachable',
+  );
+});
+
+test('replacing a recorded session removes its old gateway request atomically', () => {
+  writeHostedIos(root, 'default', placement());
+  writeWorkspaceState(root, {
+    hostedMetroRequests: {
+      [sessionId]: { id: 'old', machine: 'mini', address: '100.64.0.2', peer: '100.64.0.7', secret: 'a'.repeat(64) },
+    },
+  });
+  writeHostedIos(root, 'default', { ...placement(), session: '34567890-1234-1234-1234-123456789abc' });
+  expect(readWorkspaceState(root)?.hostedMetroRequests).toEqual({});
+});
+
+test.each([false, true])('missing or older Metro support refuses before reserving: older %s', async (older) => {
+  if (older) writeWorkspaceState(root, { supervisor: { pid: process.pid, processToken: 'old' } });
+  const target = await prepareHostedIos('mini', {});
+  await expect(
+    placeHostedIos(target, {
+      root,
+      slot: 'default',
+      bundle: join(root, 'Fixture.app'),
+      bundleId: 'dev.fixture',
+      release: false,
+      selectors: {},
+      reserved: (value) => writeHostedIos(root, 'default', value),
+      note: () => {},
+    }),
+  ).rejects.toMatchObject({ code: 'STIM_HOSTING_REFUSED', message: expect.stringContaining('stim stop; stim start') });
+  expect(methods.some((entry) => entry.method === 'device-host.reserve')).toBe(false);
+  expect(readHostedIos(root)).toEqual({});
+});
+
+test('delivery reconnects after the build instead of using the offer connection', async () => {
+  const target = await prepareHostedIos('mini', {});
+  const previous = target.host.connection;
+  const connection = Object.create(BuildConnection.prototype) as BuildConnection;
+  connection.close = () => {};
+  connection.request = previous.request.bind(previous);
+  const stale = vi.spyOn(previous, 'request').mockRejectedValue(new Error('connection dropped during build'));
+  open.mockResolvedValue(connection);
+  try {
+    await placeHostedIos(target, {
+      root,
+      slot: 'default',
+      bundle: join(root, 'Fixture.app'),
+      bundleId: 'dev.fixture',
+      release: true,
+      selectors: {},
+      reserved: (value) => writeHostedIos(root, 'default', value),
+      note: () => {},
+    });
+    expect(stale).not.toHaveBeenCalled();
+    expect(readHostedIos(root).default?.session).toBe(sessionId);
+  } finally {
+    stale.mockRestore();
+    target.host.connection.close();
+  }
+});
+
+test('hosted stop failures cannot overwrite the local default-slot outcome', async () => {
+  upsertProject(root, { platforms: { ios: { owned: true, deviceUdid: 'LOCAL' } } });
+  writeHostedIos(root, 'default', placement());
+  writeHostedIos(root, 'tablet', { ...placement(), session: '34567890-1234-1234-1234-123456789abc' });
+  errorMethod = 'device-host.stop';
+  errorCode = 'closed';
+  errorSession = sessionId;
+  const teardown = vi.fn<NonNullable<Parameters<typeof runStop>[0]['teardownIos']>>(() => ({
+    status: 'torn-down' as const,
+    label: 'local simulator',
+    id: 'LOCAL',
+    platform: 'ios' as const,
+  }));
+  const result = await runStop({ root, report: () => {}, teardownIos: teardown });
+  expect(result.outcomes.device.ios).toMatchObject({ status: 'shut-down', label: 'local simulator' });
+  expect(result.outcomes.device['ios:host:default']).toMatchObject({ status: 'failed' });
+  expect(result.outcomes.device['ios:host:tablet']).toMatchObject({ status: 'shut-down' });
 });

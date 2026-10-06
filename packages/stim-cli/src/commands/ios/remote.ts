@@ -1,3 +1,4 @@
+import { deviceSlotPlatforms } from '../../devices/device-slots.ts';
 import chalk from 'chalk';
 import { phaseLine } from '../../command-output.ts';
 import { isJsonObject, type HostedIosPlacement } from '@stim-cli/core/state';
@@ -55,6 +56,60 @@ export function resolveIosRemote({
   return { machine, backend: !physical && target?.kind === 'backend' ? target.backend : null, recorded };
 }
 
+export function selectIosTarget({
+  root,
+  slot,
+  opts,
+  settings,
+  physical,
+  release,
+  metroCheck,
+  d,
+}: {
+  root: string;
+  slot: string;
+  opts: IosCommandOptions;
+  settings: SettingsObject;
+  physical: boolean;
+  release: boolean;
+  metroCheck: boolean;
+  d: IosDeps;
+}): ReturnType<typeof resolveIosRemote> {
+  let recorded;
+  try {
+    recorded = d.readHostedIos(root)[slot];
+  } catch (error) {
+    return { failure: { code: 'STIM_HOSTING_REFUSED', message: (error as Error).message } };
+  }
+  const selection = resolveIosRemote({ opts, settings, physical, recorded });
+  if ('failure' in selection) return selection;
+  const localIos = selection.machine ? deviceSlotPlatforms(d.getProject(root), slot)?.ios : undefined;
+  if (selection.machine && localIos?.owned && localIos.deviceUdid) {
+    let localRunning = true;
+    try {
+      localRunning = d
+        .listAllIosSims({ timeoutMs: 5000 })
+        .some((sim) => sim.udid === localIos.deviceUdid && sim.state !== 'Shutdown');
+    } catch {}
+    if (localRunning)
+      return {
+        failure: {
+          code: 'STIM_BAD_ARG',
+          message: `This workspace's iOS simulator for slot ${slot} runs on this Mac; run stim stop first.`,
+        },
+      };
+  }
+  if (selection.machine && !release && !metroCheck)
+    return {
+      failure: {
+        code: 'STIM_BAD_ARG',
+        message: 'Hosted Debug runs require the local Metro supervisor; --no-metro-check cannot be used.',
+        remedy: 'Run stim stop; stim start, then retry without --no-metro-check.',
+      },
+    };
+  return selection;
+}
+
 export function hostedIosSelectors(
   deviceType: string | null,
   runtime: string | null,
@@ -71,8 +126,18 @@ export async function connectIosTarget(
   try {
     return { target: await d.prepareHostedIos(selection.machine, selectors, selection.recorded) };
   } catch (error) {
-    if (!(error instanceof Error) || !('code' in error) || typeof error.code !== 'string') throw error;
-    return { failure: { code: error.code, message: error.message } };
+    return {
+      failure: {
+        code:
+          error instanceof Error && 'code' in error && typeof error.code === 'string'
+            ? error.code
+            : 'STIM_HOSTING_REFUSED',
+        message: error instanceof Error ? error.message : String(error),
+        ...(error instanceof Error && 'remedy' in error && typeof error.remedy === 'string'
+          ? { remedy: error.remedy }
+          : {}),
+      },
+    };
   }
 }
 

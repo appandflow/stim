@@ -342,8 +342,13 @@ export function readHostedDevice(home: string, platform: HostedDevicePlatform = 
   return device;
 }
 
-/** Hosted sessions use isolated homes: only one exact device of their platform may appear in this ledger. */
-export function assertHostedDeviceLedger(home: string, id: string, platform: HostedDevicePlatform = 'ios'): void {
+/** Hosted sessions allow one exact device; deleted requires independently verified absence and an empty ledger. */
+export function assertHostedDeviceLedger(
+  home: string,
+  id: string,
+  platform: HostedDevicePlatform = 'ios',
+  deleted = false,
+): void {
   let value: unknown;
   try {
     value = JSON.parse(readFileSync(join(home, 'created-devices.json'), 'utf8'));
@@ -355,8 +360,8 @@ export function assertHostedDeviceLedger(home: string, id: string, platform: Hos
     !isJsonObject(value) ||
     value.version !== 1 ||
     !Array.isArray(value.ios) ||
-    value.ios.length !== (platform === 'ios' ? 1 : 0) ||
-    (platform === 'ios' && value.ios[0] !== id) ||
+    value.ios.length !== (platform === 'ios' && !deleted ? 1 : 0) ||
+    (platform === 'ios' && !deleted && value.ios[0] !== id) ||
     !Array.isArray(value.android) ||
     value.android.length !== (platform === 'android' ? 1 : 0) ||
     (platform === 'android' && value.android[0] !== id) ||

@@ -32,11 +32,23 @@ export function gatewayAddresses(
   return { address, peer: peer.address };
 }
 
+export function requireHostedMetro(root: string): void {
+  const supervisor = readWorkspaceState(root)?.supervisor;
+  if (supervisor?.hostedMetro === true && inspectProcessIdentity(supervisor) === 'same') return;
+  throw Object.assign(
+    new Error(
+      'Hosted Debug runs require a running Metro supervisor with private gateway support. Run stim stop; stim start, then retry.',
+    ),
+    { code: 'STIM_HOSTING_REFUSED', remedy: 'Run stim stop; stim start, then retry.' },
+  );
+}
+
 export async function requestHostedMetro(
   root: string,
   session: string,
   credential: DeviceHostMachineCredential,
 ): Promise<{ gatewayPort: number; secret: string }> {
+  requireHostedMetro(root);
   const addresses = gatewayAddresses(credential, realIo.status());
   const previous = hostedMetroRequests(readWorkspaceState(root))[session];
   const request: HostedMetroRequest =
@@ -58,7 +70,7 @@ export async function requestHostedMetro(
     await new Promise((done) => setTimeout(done, 100));
   }
   throw new Error(
-    `The Metro supervisor did not open a private gateway for ${credential.machine}. Run stim start, then retry.`,
+    `The Metro supervisor did not open a private gateway for ${credential.machine}. Run stim stop; stim start, then retry.`,
   );
 }
 

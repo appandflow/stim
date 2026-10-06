@@ -1,3 +1,5 @@
+import { writeHostedIos } from '../device-host/ios-state.ts';
+import * as hostedClient from '../device-host/hosted-client.ts';
 import { writeWorkspaceState } from '../workspace/workspace-state.ts';
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'fs';
 import { execFileSync } from 'child_process';
@@ -1103,5 +1105,77 @@ test.each([
     expect(report).toMatchObject({ buildMachine });
     expect(report.builtOn).toBe(builtOn);
     expect(report.errorCode).toBe(errorCode);
+  },
+);
+
+test.each([false, true])(
+  'an unreadable hosting slot warns without breaking other workspaces: JSON %s',
+  async (json) => {
+    const a = join(tmpHome, 'app-a');
+    const b = join(tmpHome, 'app-b');
+    for (const root of [a, b]) {
+      mkdirSync(root);
+      writeFileSync(join(root, 'package.json'), '{}');
+    }
+    saveConfig(
+      makeConfig({
+        projects: { [a]: { platforms: {} }, [b]: { platforms: { ios: { deviceUdid: 'UDID-ABC', owned: true } } } },
+      }),
+    );
+    writeWorkspaceState(a, { deviceSlots: { tablet: { ios: { host: { machine: 'mini', session: '' } } } } });
+    const output = json ? JSON.stringify(await runStatusJson()) : (await runStatus()).join('\n');
+    expect(output).toContain('deviceSlots.tablet.ios.host.session');
+    expect(output).toContain(json ? 'UDID-ABC' : 'stim-projA');
+  },
+);
+
+test.each(['default', 'tablet'])(
+  'status retains the local simulator alongside a hosted record in slot %s',
+  async (slot) => {
+    const root = join(tmpHome, 'app');
+    mkdirSync(root);
+    writeFileSync(join(root, 'package.json'), '{}');
+    const local = { owned: true, deviceUdid: 'UDID-ABC' };
+    saveConfig(
+      makeConfig({
+        projects: {
+          [root]:
+            slot === 'default'
+              ? { platforms: { ios: local } }
+              : { platforms: {}, deviceSlots: { tablet: { ios: local } } },
+        },
+      }),
+    );
+    vi.spyOn(hostedClient, 'probeHostedSession').mockResolvedValue({ state: 'ready' });
+    writeHostedIos(root, slot, {
+      machine: 'mini',
+      selected: 'mini',
+      session: '12345678-1234-1234-1234-123456789abc',
+      appAttempt: 'attempt',
+      device: {
+        udid: '23456789-1234-1234-1234-123456789abc',
+        name: 'iPhone 17 Pro',
+        deviceType: 'iPhone 17 Pro',
+        runtime: '27.0',
+        runtimeId: 'ios27',
+        deviceTypeId: 'iphone',
+        architecture: 'arm64',
+      },
+      agent: { driver: 'none', setting: 'hosting.agentDriver' },
+    });
+    const payload = await runStatusJson();
+    const environment = payload.environments[0];
+    const devices = [environment.ios, ...(environment.slots ?? []).map((entry: { ios: unknown }) => entry.ios)];
+    expect(devices).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ udid: 'UDID-ABC' }),
+        expect.objectContaining({ host: expect.objectContaining({ machine: 'mini' }) }),
+      ]),
+    );
+    const output = JSON.stringify(payload);
+    expect(output).toContain('UDID-ABC');
+    expect(output).toContain('mini');
+    expect(output).toContain('both a local and hosted');
+    expect((await runStatus()).join('\n')).toContain('iOS 27.0');
   },
 );

@@ -24,21 +24,15 @@ export function parseHostedIosPlacement(value: unknown): HostedIosPlacement | nu
     typeof value.machine !== 'string' ||
     !parseMachine(value.machine) ||
     typeof value.session !== 'string' ||
-    !/^[a-f0-9-]{36}$/.test(value.session) ||
-    typeof value.appAttempt !== 'string' ||
-    !/^[a-zA-Z0-9_-]{1,128}$/.test(value.appAttempt) ||
-    value.selected !== value.machine ||
-    !isJsonObject(value.agent) ||
-    value.agent.driver !== 'none' ||
-    value.agent.setting !== 'hosting.agentDriver'
+    !/^[a-f0-9-]{36}$/.test(value.session)
   )
     return null;
-  const device = value.device === null ? null : parseHostedDevice(value.device);
-  if (value.device !== null && !device) return null;
+  const device = parseHostedDevice(value.device);
   return {
     machine: value.machine,
     session: value.session,
-    appAttempt: value.appAttempt,
+    appAttempt:
+      typeof value.appAttempt === 'string' && /^[a-zA-Z0-9_-]{1,128}$/.test(value.appAttempt) ? value.appAttempt : '',
     selected: value.machine,
     device,
     agent: { driver: 'none', setting: 'hosting.agentDriver' },
@@ -55,8 +49,8 @@ export function hostedIosStatus(placement: HostedIosPlacement): HostedIosStatus 
   };
 }
 
-/** Reads all recorded placements, refusing an unreadable owner instead of losing it during cleanup. */
-export function hostedIosPlacements(state: WorkspaceState | null): Record<string, HostedIosPlacement> {
+/** Includes unreadable placements so callers retain every recorded hosting slot. */
+export function hostedIosRecords(state: WorkspaceState | null): Record<string, unknown> {
   const slots = isJsonObject(state?.deviceSlots) ? state.deviceSlots : {};
   const records: Record<string, unknown> = {
     default: state?.ios,
@@ -64,13 +58,23 @@ export function hostedIosPlacements(state: WorkspaceState | null): Record<string
       Object.entries(slots).map(([slot, value]) => [slot, isJsonObject(value) ? value.ios : undefined]),
     ),
   };
-  const found: Record<string, HostedIosPlacement> = {};
-  for (const [slot, record] of Object.entries(records)) {
-    if (!isJsonObject(record) || record.host === undefined) continue;
-    const placement = parseHostedIosPlacement(record.host);
-    if (!placement)
-      throw new Error(`The hosted iOS placement for slot ${slot} is unreadable. Run stim stop to reconcile it.`);
-    found[slot] = placement;
-  }
-  return found;
+  return Object.fromEntries(
+    Object.entries(records).flatMap(([slot, record]) =>
+      isJsonObject(record) && record.host !== undefined ? [[slot, record.host]] : [],
+    ),
+  );
+}
+
+export function unreadableHostedIos(slot: string): string {
+  const key = slot === 'default' ? 'ios.host' : `deviceSlots.${slot}.ios.host`;
+  return `The hosted iOS placement at workspace-state key ${key} is unreadable. Inspect ${key}.machine and ${key}.session before reconciling it.`;
+}
+
+export function hostedIosPlacements(state: WorkspaceState | null): Record<string, HostedIosPlacement> {
+  return Object.fromEntries(
+    Object.entries(hostedIosRecords(state)).flatMap(([slot, record]) => {
+      const placement = parseHostedIosPlacement(record);
+      return placement ? [[slot, placement]] : [];
+    }),
+  );
 }

@@ -623,18 +623,27 @@ unreachable, declined or uncertain placement and its reason.
 
 Metro stays on this Mac. Its supervisor runs a private tailnet gateway to the
 host's loopback bridge; no `stim start --remote` is needed. `metro.tunnel` and
-`metro.publicUrl` are ignored, and non-Debug runs skip Metro. Fast Refresh and
+`metro.publicUrl` are ignored, and non-Debug runs skip Metro. Hosted Debug runs
+require a running supervisor with private gateway support before reserving a
+simulator; `--no-metro-check` refuses with `STIM_BAD_ARG`. If Metro is missing or
+uses an older supervisor, run `stim stop; stim start`, then retry. Fast Refresh and
 `stim reload ios` use this workspace's Metro. `launched` stays `unverified`
 until bundle evidence, or positive native process evidence for a release run.
 
 Reruns reattach to the recorded session and upload a new app attempt. A stopped
 or missing session is replaced. An unreachable or unknown session refuses
-replacement. To change Macs or return here, run `stim stop` first.
+replacement. Switching between this Mac and a hosting Mac, or to a different
+hosting Mac, requires `stim stop` first for that slot.
 `status --json` adds `ios.host` with `machine`, `session`, `selected`, the device's
 `name` and `runtime`, and `agent`. The host UDID and private gateway never appear
 in local device fields. Stop and worktree removal wait for the host, delete only
-its owned simulator without parking, then clear placement. An unreachable host
-keeps the placement and fails cleanup; rerun `stim stop` when it answers.
+its owned simulator without parking, then clear placement. `stop --json` reports
+each hosted slot under `outcomes.device["ios:host:<slot>"]`, alongside local
+outcomes; one failure does not hide siblings that stopped. An unreachable host
+keeps the placement and fails cleanup; rerun `stim stop` when it answers. Missing
+or unapproved local credentials require `stim doctor` to restore access first.
+Unreadable machine or session state stays recorded: status warns, and stop names
+the workspace-state key to inspect.
 A host server restart stops its sessions.
 
 Native logs, client viewing relays, agent leases, app handoff and upload

@@ -41,9 +41,17 @@ export interface HostConnection {
 export const sleep = (ms: number): Promise<void> => new Promise((done) => setTimeout(done, ms));
 export const sha256 = (content: Buffer): string => createHash('sha256').update(content).digest('hex');
 
+function credentialRefusal(message: string, remedy = 'Run stim doctor.'): Error & { code: string; remedy: string } {
+  return Object.assign(new Error(message), { code: 'STIM_HOSTING_REFUSED', remedy });
+}
+
 function hostingCredential(machine: string): DeviceHostMachineCredential {
   const configured = configuredMachines();
-  if (configured === null) throw new Error('hosting.machines is invalid. Run stim guide settings and correct it.');
+  if (configured === null)
+    throw credentialRefusal(
+      'hosting.machines is invalid. Run stim guide settings and correct it.',
+      'Run stim guide settings and correct hosting.machines.',
+    );
   if (!configured.includes(machine)) {
     throw Object.assign(
       new Error(
@@ -56,14 +64,17 @@ function hostingCredential(machine: string): DeviceHostMachineCredential {
   try {
     credentials = readDeviceHostMachines();
   } catch {
-    throw new Error('The hosting credentials are unreadable. Run stim doctor.');
+    throw credentialRefusal('The hosting credentials are unreadable. Run stim doctor.');
   }
   const credential = credentials.find((each) => each.machine === machine);
-  if (!credential) throw new Error(`This Mac has not asked ${machine} for hosting access. Run stim doctor --fix.`);
-  if (credential.state !== 'approved') {
-    throw new Error(
-      `${machine} has not confirmed hosting access for this Mac. A person on ${machine} approves it with stim-server devices grant ${credential.deviceId} --device-host; then run stim doctor.`,
+  if (!credential)
+    throw credentialRefusal(
+      `This Mac has not asked ${machine} for hosting access. Run stim doctor --fix.`,
+      'Run stim doctor --fix.',
     );
+  if (credential.state !== 'approved') {
+    const remedy = `A person on ${machine} approves it with stim-server devices grant ${credential.deviceId} --device-host; then run stim doctor.`;
+    throw credentialRefusal(`${machine} has not confirmed hosting access for this Mac. ${remedy}`, remedy);
   }
   return credential;
 }
@@ -77,18 +88,14 @@ export async function connectHost(
   const credential = hostingCredential(machine);
   const target = pinnedEndpoint(credential);
   if (typeof target === 'string')
-    throw Object.assign(
-      new Error(`Stim does not connect to ${machine}: ${target}.`),
-      strict ? { code: 'STIM_HOSTING_REFUSED' } : {},
-    );
+    throw Object.assign(new Error(`Stim does not connect to ${machine}: ${target}.`), { code: 'STIM_HOSTING_REFUSED' });
   const opened = await BuildConnection.open(target, credential.deviceToken, timeoutMs, 'device-host').catch(
     (error: unknown) => {
-      if (!strict) throw error;
       throw Object.assign(
         new Error(`${machine} is unreachable. Check stim-server and its tailnet serve route on ${machine}.`, {
           cause: error,
         }),
-        { code: 'STIM_HOSTING_REFUSED' },
+        { code: strict ? 'STIM_HOSTING_REFUSED' : 'closed' },
       );
     },
   );
@@ -99,7 +106,7 @@ export async function connectHost(
           ? `${machine} refused this Mac: ${opened.failure.replaceAll(credential.deviceToken, '[redacted]')}. Run stim doctor.`
           : `${machine} is unreachable: ${opened.failure.replaceAll(credential.deviceToken, '[redacted]')}. Check stim-server and its tailnet serve route on ${machine}.`,
       ),
-      strict ? { code: 'STIM_HOSTING_REFUSED' } : opened.code ? { code: opened.code } : {},
+      { code: strict ? 'STIM_HOSTING_REFUSED' : opened.refused ? 'STIM_HOSTING_REFUSED' : (opened.code ?? 'closed') },
     );
   }
   return { machine, credential, connection: opened };

@@ -6,6 +6,9 @@ import {
   type HostedDeviceSelectors,
   type HostedIosChoice,
   type HostedIosPlacement,
+  hostedIosRecords,
+  parseHostedIosPlacement,
+  unreadableHostedIos,
 } from '@stim-cli/core/state';
 import {
   call,
@@ -25,12 +28,14 @@ import {
   type HostConnection,
   type HostedSession,
 } from './hosted-client.ts';
-import { requestHostedMetro, closeHostedMetro } from './metro-gateway.ts';
-import { readHostedIos, writeHostedIos } from './ios-state.ts';
+import { requestHostedMetro, closeHostedMetro, requireHostedMetro } from './metro-gateway.ts';
+import { writeHostedIos } from './ios-state.ts';
+import { readWorkspaceState } from '../workspace/workspace-state.ts';
 
 function hostingRefusal(machine: string, error: unknown): Error & { code: string } {
   return Object.assign(new Error(`${machine}: ${error instanceof Error ? error.message : String(error)}`), {
     code: 'STIM_HOSTING_REFUSED',
+    ...(error instanceof Error && 'remedy' in error ? { remedy: error.remedy } : {}),
   });
 }
 
@@ -45,8 +50,9 @@ export async function prepareHostedIos(
   selectors: HostedDeviceSelectors,
   recorded?: HostedIosPlacement,
 ): Promise<HostedIosTarget> {
-  const host = await connectHost(machine, undefined, true);
+  let host: HostConnection | undefined;
   try {
+    host = await connectHost(machine, undefined, true);
     if (recorded) {
       let session: HostedSession | null = null;
       try {
@@ -66,9 +72,7 @@ export async function prepareHostedIos(
         if (!device) throw new Error('The ready session has no simulator identity.');
         if (
           (selectors.deviceType && selectors.deviceType !== device.deviceType) ||
-          (selectors.runtime &&
-            selectors.runtime !== device.runtime &&
-            selectors.runtime !== device.runtime.replace(/^iOS /, ''))
+          (selectors.runtime && selectors.runtime.replace(/^iOS /, '') !== device.runtime.replace(/^iOS /, ''))
         )
           throw new Error(
             `This session uses ${device.deviceType} (${device.runtime}); run stim stop first to change it.`,
@@ -86,8 +90,10 @@ export async function prepareHostedIos(
       throw new Error('Host memory pressure is unknown or elevated.');
     return { host, choice, session: null };
   } catch (error) {
-    host.connection.close();
+    if (error instanceof Error && 'code' in error && error.code === 'STIM_BAD_ARG') throw error;
     throw hostingRefusal(machine, error);
+  } finally {
+    host?.connection.close();
   }
 }
 
@@ -117,10 +123,13 @@ export async function placeHostedIos(
     metro?: typeof requestHostedMetro;
   },
 ): Promise<{ placement: HostedIosPlacement; launched: true | 'unverified' }> {
-  const { host } = target;
+  let host = target.host;
   try {
+    if (!release && metro === requestHostedMetro) requireHostedMetro(root);
+    host = await connectHost(host.machine, undefined, true);
+    target.host = host;
     let session =
-      target.session ??
+      (target.session ? await attach(host, target.session.id, undefined, 'ios') : null) ??
       hostedSession(
         host,
         await call(host, 'device-host.reserve', {
@@ -190,8 +199,13 @@ export async function placeHostedIos(
 
 export async function stopHostedIos(root: string, slot?: string): Promise<void> {
   const failures: string[] = [];
-  for (const [name, placement] of Object.entries(readHostedIos(root))) {
+  for (const [name, record] of Object.entries(hostedIosRecords(readWorkspaceState(root)))) {
     if (slot !== undefined && name !== slot) continue;
+    const placement = parseHostedIosPlacement(record);
+    if (!placement) {
+      failures.push(unreadableHostedIos(name));
+      continue;
+    }
     let host: HostConnection | undefined;
     try {
       host = await connectHost(placement.machine);
@@ -207,8 +221,15 @@ export async function stopHostedIos(root: string, slot?: string): Promise<void> 
       if (
         !(error instanceof Error && 'code' in error && (error.code === 'unknown-session' || error.code === 'forbidden'))
       ) {
+        const code = error instanceof Error && 'code' in error ? error.code : undefined;
+        const remedy =
+          code === 'closed' || code === 'timeout'
+            ? 'rerun stim stop when that machine answers.'
+            : code === 'STIM_BAD_ARG' || code === 'STIM_HOSTING_REFUSED'
+              ? 'run stim doctor, restore hosting access, then rerun stim stop.'
+              : 'run stim stop to reconcile the session.';
         failures.push(
-          `Could not stop the iOS simulator on ${placement.machine}: ${error instanceof Error ? error.message : String(error)}. The placement is kept; rerun stim stop when that machine answers.`,
+          `Could not stop the iOS simulator on ${placement.machine}: ${error instanceof Error ? error.message : String(error)}. The placement is kept; ${remedy}`,
         );
         continue;
       }

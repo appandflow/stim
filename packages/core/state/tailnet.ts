@@ -14,10 +14,8 @@ export interface TailnetPeer {
 
 export function parseMachine(entry: string): { name: string; port: number } | null {
   if (!new RegExp(TAILNET_MACHINE_PATTERN).test(entry.trim())) return null;
-  const match = /^([A-Za-z0-9][A-Za-z0-9.-]*?)(?::(\d{1,5}))?$/.exec(entry.trim());
-  if (!match) return null;
-  const port = match[2] === undefined ? DEFAULT_SERVE_PORT : Number(match[2]);
-  return port >= 1 && port <= 65535 ? { name: match[1]!.toLowerCase(), port } : null;
+  const [name, port] = entry.trim().split(':');
+  return { name: name!.toLowerCase(), port: port === undefined ? DEFAULT_SERVE_PORT : Number(port) };
 }
 
 /**

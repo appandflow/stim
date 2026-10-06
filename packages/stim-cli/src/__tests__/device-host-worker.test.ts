@@ -1,7 +1,7 @@
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { recordCreatedDevice } from '../devices/created-devices.ts';
+import { forgetCreatedDevice, recordCreatedDevice } from '../devices/created-devices.ts';
 import { runHostedDevice } from '../device-host/worker.ts';
 
 const native = vi.hoisted(() => ({
@@ -43,6 +43,7 @@ beforeEach(() => {
   });
   native.teardown.mockImplementation((_target, options) => {
     deleted = options.del;
+    if (deleted) forgetCreatedDevice('ios', udid);
     return { status: 'torn-down' };
   });
 });
@@ -61,6 +62,7 @@ test('records exact ownership before boot, keeps the host viewer closed and dele
   expect(await runHostedDevice('prepare', {})).toMatchObject({ state: 'ready', device: { udid } });
   expect(await runHostedDevice('prepare', {})).toMatchObject({ state: 'unknown' });
   expect(native.create).toHaveBeenCalledTimes(1);
+  expect(await runHostedDevice('stop', {})).toMatchObject({ state: 'stopped', device: { udid } });
   expect(await runHostedDevice('stop', {})).toMatchObject({ state: 'stopped', device: { udid } });
   expect(native.teardown).toHaveBeenCalledExactlyOnceWith(udid, { del: true });
 });
@@ -106,4 +108,29 @@ test('never reports ready or stopped from command success without matching devic
     return { status: 'torn-down' };
   });
   expect(await runHostedDevice('stop', {})).toMatchObject({ state: 'unknown', device: { udid } });
+});
+
+test('an empty ledger cannot authorize stopping a simulator that still exists', async () => {
+  await runHostedDevice('prepare', {});
+  forgetCreatedDevice('ios', udid);
+  expect(await runHostedDevice('stop', {})).toMatchObject({
+    state: 'unknown',
+    notice: expect.stringContaining('ownership ledger'),
+  });
+  expect(native.teardown).not.toHaveBeenCalled();
+});
+
+test('a lost deletion verification can be reconciled on the next stop after the ledger is cleared', async () => {
+  await runHostedDevice('prepare', {});
+  native.inventory
+    .mockImplementationOnce(() => [{ udid, state: 'Booted' }])
+    .mockImplementationOnce(() => {
+      throw new Error('inventory unavailable after deletion');
+    });
+  expect(await runHostedDevice('stop', {})).toMatchObject({
+    state: 'unknown',
+    notice: 'inventory unavailable after deletion',
+  });
+  expect(await runHostedDevice('stop', {})).toMatchObject({ state: 'stopped', device: { udid } });
+  expect(native.teardown).toHaveBeenCalledTimes(1);
 });

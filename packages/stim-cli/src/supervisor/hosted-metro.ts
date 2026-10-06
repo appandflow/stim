@@ -1,9 +1,12 @@
+import { statSync } from 'node:fs';
+import { workspaceStateFile } from '../workspace/paths.ts';
 import { createMetroGateway, type MetroBridge } from '@stim-cli/core';
 import {
   HOSTED_METRO_GATEWAYS_KEY,
   hostedMetroRequests,
   hostedMetroGateways,
   hostedIosPlacements,
+  HOSTED_METRO_REQUESTS_KEY,
   type HostedMetroRequest,
   type HostedMetroGateway,
 } from '@stim-cli/core/state';
@@ -28,6 +31,23 @@ export function watchHostedMetro(root: string, metroPort: number, processToken: 
   let closed = false;
   let running: Promise<void> = Promise.resolve();
   let probingAt = 0;
+  let probing = false;
+  let stamp = '';
+  let cached: ReturnType<typeof readWorkspaceState> = null;
+  updateWorkspaceState(root, (state) =>
+    state.supervisor?.processToken === processToken
+      ? { ...state, supervisor: { ...state.supervisor, hostedMetro: true } }
+      : state,
+  );
+  const readState = () => {
+    const file = statSync(workspaceStateFile(root));
+    const next = `${file.ino}:${file.mtimeMs}:${file.ctimeMs}:${file.size}`;
+    if (next !== stamp) {
+      cached = readWorkspaceState(root);
+      stamp = next;
+    }
+    return cached;
+  };
   const publish = (session: string, gateway: HostedMetroGateway | null) =>
     updateWorkspaceState(root, (state) => {
       const gateways = { ...hostedMetroGateways(state) };
@@ -38,9 +58,25 @@ export function watchHostedMetro(root: string, metroPort: number, processToken: 
     });
   const reconcile = async () => {
     if (closed) return;
-    const state = readWorkspaceState(root);
+    const state = readState();
     if (state?.supervisor?.processToken !== processToken) return;
-    const requests = hostedMetroRequests(state);
+    const placements = Object.values(hostedIosPlacements(state));
+    const sessions = new Set(placements.map((placement) => placement.session));
+    const requests = Object.fromEntries(
+      Object.entries(hostedMetroRequests(state)).filter(([session]) => sessions.has(session)),
+    );
+    if (Object.keys(requests).length !== Object.keys(hostedMetroRequests(state)).length) {
+      updateWorkspaceState(root, (current) => {
+        if (current.supervisor?.processToken !== processToken) return current;
+        const recorded = new Set(Object.values(hostedIosPlacements(current)).map((placement) => placement.session));
+        return {
+          ...current,
+          [HOSTED_METRO_REQUESTS_KEY]: Object.fromEntries(
+            Object.entries(hostedMetroRequests(current)).filter(([session]) => recorded.has(session)),
+          ),
+        };
+      });
+    }
     const actions = reconcileHostedMetro(requests, active);
     for (const session of actions.close) {
       await bridges.get(session)?.close();
@@ -75,13 +111,19 @@ export function watchHostedMetro(root: string, metroPort: number, processToken: 
         });
       }
     }
-    if (Date.now() >= probingAt) {
+    if (!probing && Date.now() >= probingAt) {
       probingAt = Date.now() + 10_000;
-      await Promise.all(
-        Object.values(hostedIosPlacements(state)).map(async (placement) => {
-          if ((await probeHostedSession(placement)).state === 'stopped') clearHostedMetro(root, placement.session);
+      probing = true;
+      void Promise.all(
+        placements.map(async (placement) => {
+          if ((await probeHostedSession(placement)).state === 'stopped' && !closed)
+            clearHostedMetro(root, placement.session);
         }),
-      );
+      )
+        .catch(() => {})
+        .finally(() => {
+          probing = false;
+        });
     }
   };
   const tick = () => {

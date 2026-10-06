@@ -1,4 +1,10 @@
-import { hostedIosPlacements, macosAppState, readMacosRecord } from '@stim-cli/core/state';
+import {
+  hostedIosRecords,
+  parseHostedIosPlacement,
+  unreadableHostedIos,
+  macosAppState,
+  readMacosRecord,
+} from '@stim-cli/core/state';
 import { macosRuntimeClaim } from '../macos/state.ts';
 import { lstatSync, readdirSync, rmdirSync, rmSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
@@ -69,8 +75,9 @@ export function workspaceInUse(
     else if (claims.unresolved[0])
       reasons.push(`its native-run.lock cannot be resolved: ${claims.unresolved[0].reason}`);
   }
-  for (const placement of Object.values(hosted ? hostedIosPlacements(readWorkspaceState(root)) : {})) {
-    reasons.push(`its iOS simulator runs on ${placement.machine}`);
+  for (const [slot, record] of Object.entries(hosted ? hostedIosRecords(readWorkspaceState(root)) : {})) {
+    const placement = parseHostedIosPlacement(record);
+    reasons.push(placement ? `its iOS simulator runs on ${placement.machine}` : unreadableHostedIos(slot));
   }
   const self = canonicalPath(root);
   for (const [kind, entries] of [

@@ -4,6 +4,7 @@ import { withDirLock } from '@stim-cli/core';
 import {
   assertHostedDeviceLedger,
   readHostedDevice,
+  readCreatedDevices,
   type HostedDeviceSelectors,
   type HostedDevice,
   type HostedIosChoice,
@@ -75,8 +76,12 @@ export async function runHostedDevice(
       return { state: 'ready', device };
     }
     device = readHostedDevice(home);
-    assertHostedDeviceLedger(home, device.udid);
     const current = inventory().find((sim) => sim.udid === device!.udid);
+    if (mode === 'stop' && !current && readCreatedDevices().ios.size === 0) {
+      assertHostedDeviceLedger(home, device.udid, 'ios', true);
+      return { state: 'stopped', device };
+    }
+    assertHostedDeviceLedger(home, device.udid);
     if (mode === 'install') {
       if (!app || current?.state !== 'Booted')
         throw new Error('Hosted app installation requires its booted owned simulator.');

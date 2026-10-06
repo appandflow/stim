@@ -1,4 +1,10 @@
-import { hostedIosPlacements, hostedIosStatus, parseHostedIosPlacement } from '../state/hosted-ios.ts';
+import {
+  hostedIosPlacements,
+  hostedIosStatus,
+  parseHostedIosPlacement,
+  hostedIosRecords,
+  unreadableHostedIos,
+} from '../state/hosted-ios.ts';
 
 const placement = {
   machine: 'mini',
@@ -8,7 +14,7 @@ const placement = {
   device: {
     udid: 'abcdef12-1234-1234-1234-123456789abc',
     name: 'iPhone 17 Pro',
-    runtime: 'iOS 27.0',
+    runtime: '27.0',
     deviceType: 'iPhone 17 Pro',
     deviceTypeId: 'iphone',
     runtimeId: 'ios27',
@@ -23,14 +29,23 @@ test('a reservation without a device remains discoverable for stop, including a 
   expect(parseHostedIosPlacement(placement)).toEqual(placement);
 });
 
-test.each([
-  { device: { ...placement.device, architecture: 'x64' } },
-  { session: '' },
-  { selected: 'other' },
-  { agent: { driver: 'agent-device' } },
-])('invalid placement ownership refuses cleanup instead of being discarded: %j', (changed) => {
-  expect(parseHostedIosPlacement({ ...placement, ...changed })).toBeNull();
-  expect(() => hostedIosPlacements({ ios: { host: { ...placement, ...changed } } })).toThrow('unreadable');
+test.each([{ machine: '' }, { session: '' }])('unreadable ownership remains discoverable: %j', (changed) => {
+  const state = { ios: { host: { ...placement, ...changed } } };
+  expect(parseHostedIosPlacement(state.ios.host)).toBeNull();
+  expect(hostedIosPlacements(state)).toEqual({});
+  expect(hostedIosRecords(state)).toEqual({ default: state.ios.host });
+  expect(unreadableHostedIos('default')).toContain('ios.host.session');
+});
+
+test('newer selection, agent and app metadata cannot hide a readable owner from cleanup', () => {
+  const future = {
+    ...placement,
+    selected: { kind: 'auto' },
+    agent: { driver: 'agent-device' },
+    appAttempt: null,
+    device: { unknown: true },
+  };
+  expect(parseHostedIosPlacement(future)).toEqual({ ...placement, appAttempt: '', device: null });
 });
 
 test('public host facts exclude the host UDID and private transport fields', () => {
@@ -39,7 +54,7 @@ test('public host facts exclude the host UDID and private transport fields', () 
     machine: 'mini',
     session: placement.session,
     selected: 'mini',
-    device: { name: 'iPhone 17 Pro', runtime: 'iOS 27.0' },
+    device: { name: 'iPhone 17 Pro', runtime: '27.0' },
     agent: placement.agent,
   });
 });

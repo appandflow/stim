@@ -297,7 +297,8 @@ build can compile on a paired build machine instead: see `offload.mode` in
   and prints an EAS build command; cloud builds require authorization. Cannot
   be combined with `--scheme`, `--configuration`, or `--no-build-cache`.
 - `--no-metro-check` skips the Debug dev-server check and does not start the
-  dev server.
+  dev server. Hosted Debug iOS refuses this flag with `STIM_BAD_ARG`; it requires
+  the local supervisor's private gateway support.
 - `--no-build-cache` ignores cached artifacts and replaces the matching entry.
 - `--plan` predicts the next build instead of running it. See
   [Predict the next build](#predict-the-next-build).
@@ -418,8 +419,7 @@ on a paired build machine instead: see `offload.mode` in
 - `--no-wait` bypasses leasing, including another workspace's lease. Installing
   the same app terminates that workspace's running app. Only with `--device`;
   cannot be combined with `--wait`.
-- `--remote <machine>` runs on a named approved Mac in `hosting.machines`, with no local fallback.
-  `auto` refuses until automatic placement ships. See [hosted iOS](./owned-devices.md#run-ios-on-another-mac).
+- `--remote <machine>` refuses with `STIM_BAD_ARG`: Android on a paired Mac is not available yet. Use `eas` or `proxy`, or run Android locally.
 - `--remote proxy` uses a configured Agent Device daemon.
 - `--remote eas` uses an EAS remote emulator. It needs eas-cli 21.6.0 or later.
 - `--eas-profile <name>` selects a compatible [EAS development build](./eas-builds.md),

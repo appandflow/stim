@@ -70,7 +70,10 @@ export async function finishHostedIosRun({
     return fail({
       code: (error as Error & { code?: string }).code ?? 'STIM_HOSTING_REFUSED',
       message: (error as Error).message,
-      remedy: `The placement stays recorded. Retry stim ios --remote ${target.host.machine}, or run stim stop.`,
+      remedy:
+        error instanceof Error && 'remedy' in error && typeof error.remedy === 'string'
+          ? error.remedy
+          : `Retry stim ios --remote ${target.host.machine}, or run stim stop to reconcile any recorded placement.`,
     });
   }
   d.writeHostedIos(root, slot, run.placement);
