@@ -1,5 +1,5 @@
 import { writeWorkspaceState } from '../workspace/workspace-state.ts';
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'fs';
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'fs';
 import { execFileSync } from 'child_process';
 import { tmpdir } from 'os';
 import { join } from 'path';
@@ -14,7 +14,12 @@ import { captureProcessToken } from '../process-identity.ts';
 import { makeConfig } from './_factories.ts';
 import statusCommand, { readVolumes } from '../commands/status.ts';
 import type { NdjsonRecord } from '../ndjson.ts';
-import { ensureWorkspaceStorage, workspaceLogsDir, workspaceStateFile } from '../workspace/paths.ts';
+import {
+  ensureWorkspaceStorage,
+  workspaceLogsDir,
+  workspaceAgentDeviceDir,
+  workspaceStateFile,
+} from '../workspace/paths.ts';
 import { deviceLeasePath, deviceLocksDir } from '../engine/device-lease.ts';
 import { findProjectRoot } from '../workspace/project.ts';
 import { recordEasSessionClaim } from '../engine/eas-session-ledger.ts';
@@ -553,6 +558,8 @@ test('a workspace with no supervisor and no logs reports both as null', async ()
     const payload = await runStatusJson();
     expect(payload.environments[0].supervisor).toBe(null);
     expect(payload.environments[0].logs).toBe(null);
+    expect(payload.environments[0].agentDevice).toEqual({ stateDir: workspaceAgentDeviceDir(root) });
+    expect(existsSync(workspaceAgentDeviceDir(root))).toBe(false);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

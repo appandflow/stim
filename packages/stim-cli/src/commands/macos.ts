@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { closeSync, existsSync, openSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Command } from 'commander';
+import { phaseLine } from '../command-output.ts';
 import { LOG_ROTATE_BYTES } from '@stim-cli/core';
 import { readMacosRecord, validHostedAppArguments, type MacosAppRecord } from '@stim-cli/core/state';
 import { connectHost, placeHostedMacos } from '../device-host/hosted-macos.ts';
@@ -19,7 +20,7 @@ import { createNdjsonWriter } from '../ndjson.ts';
 import { resolveBuildPlacement, parseBuildMachineOption } from '../offload/selection.ts';
 import { spawnEntry } from '../spawn-entry.ts';
 import { upsertProject } from '../workspace/config.ts';
-import { ensureWorkspaceStorage, workspaceDir, workspaceLogsDir } from '../workspace/paths.ts';
+import { ensureWorkspaceStorage, workspaceDir, workspaceLogsDir, workspaceAgentDeviceDir } from '../workspace/paths.ts';
 import { findProjectRoot } from '../workspace/project.ts';
 import { resolveSettings, settingShapeErrors, SETTING_SHAPE_REMEDY } from '../workspace/settings.ts';
 import { recordWorkspaceUse, writeWorkspaceState } from '../workspace/workspace-state.ts';
@@ -245,10 +246,11 @@ async function launchHere(root: string, record: MacosAppRecord): Promise<MacosAp
   throw new Error('The macOS app did not register. See macos-supervisor.log in the workspace logs.');
 }
 
-function launchPayload(record: MacosAppRecord): Record<string, unknown> {
-  if (!record.host) return { platform: 'macos', ...record };
+function launchPayload(root: string, record: MacosAppRecord): Record<string, unknown> {
+  const agentDevice = { stateDir: workspaceAgentDeviceDir(root) };
+  if (!record.host) return { agentDevice, platform: 'macos', ...record };
   const { product, launchId, build, host } = record;
-  return { platform: 'macos', product, launchId, build, host };
+  return { agentDevice, platform: 'macos', product, launchId, build, host };
 }
 
 export default function macosCommand(program: Command): void {
@@ -270,11 +272,13 @@ export default function macosCommand(program: Command): void {
         if (typeof remedy === 'string') console.error(`remedy: ${remedy}`);
         throw error;
       });
-      if (options.json) console.log(JSON.stringify(launchPayload(record)));
+      if (options.json) console.log(JSON.stringify(launchPayload(root, record)));
       else if (record.host)
         console.log(
           `Started ${record.product} on ${record.host.machine} as ${record.host.bundleId}${record.hostLaunched === true ? '' : ' (launch not confirmed)'}.`,
         );
       else console.log(`Started ${record.product} (pid ${record.app?.pid}).`);
+      if (!options.json)
+        console.log(phaseLine('agent-device', `AGENT_DEVICE_STATE_DIR=${workspaceAgentDeviceDir(root)}`));
     });
 }

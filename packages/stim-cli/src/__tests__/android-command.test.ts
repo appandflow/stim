@@ -37,7 +37,7 @@ import {
 } from '../workspace/config.ts';
 import { buildMachinesFile, readLastBuilds } from '@stim-cli/core/state';
 import { parseNdjsonText } from '../ndjson.ts';
-import { emulatorLogFile, workspaceLogsDir, workspaceStateFile } from '../workspace/paths.ts';
+import { workspaceAgentDeviceDir, emulatorLogFile, workspaceLogsDir, workspaceStateFile } from '../workspace/paths.ts';
 import { readWorkspaceState, writeWorkspaceState } from '../workspace/workspace-state.ts';
 import {
   NO_DEVICE,
@@ -1543,6 +1543,7 @@ describe('a cache hit', () => {
       debugHttpHostNote: null,
       devClientUrl: null,
       logs: workspaceLogsDir(root),
+      agentDevice: { stateDir: workspaceAgentDeviceDir(root) },
       durationMs: 600,
     });
     assert(result.facts);
@@ -3317,7 +3318,7 @@ describe('the pure parts', () => {
   });
 
   test('androidFacts and lastBuildRecord fill every field of their contracts', () => {
-    expect(androidFacts({})).toEqual({
+    expect(androidFacts({ root })).toEqual({
       platform: 'android',
       buildMachine: 'auto',
       serial: null,
@@ -3341,6 +3342,7 @@ describe('the pure parts', () => {
       debugHttpHostNote: null,
       devClientUrl: null,
       logs: null,
+      agentDevice: { stateDir: workspaceAgentDeviceDir(root) },
       durationMs: null,
     });
     expect(androidFacts({ variant: 'productionDebug' }).variant).toBe('productionDebug');

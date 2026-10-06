@@ -149,7 +149,8 @@ Plain status prints "ios: Old iPhone (physical, iPhone 12 Pro) connected --
 leased until <time>" for each one.`,
   sections: {
     payloads: {
-      summary: 'every field of the start, ios, android, web and reload payloads, the error contract, the device rules',
+      summary:
+        'every field of the start, ios, android, macos, web and reload payloads, the error contract, the device rules',
       body: () => `  stim start --json
 
   port            the Metro port RESERVED for this workspace
@@ -157,12 +158,21 @@ leased until <time>" for each one.`,
                   already answering that Stim did not start
   mode            "bare-inproc" | "expo-child" | null (see \`guide metro\`)
   logsDir         where the NDJSON timeline is written
+  agentDevice     { stateDir }: absolute workspace agent-device state path;
+                  set AGENT_DEVICE_STATE_DIR to it (see guide logs)
   alreadyRunning  true when nothing needed starting
   links           { desktop }: a stim-desktop://workspace?path=<workspace>
                   link that shows this workspace in Stim Desktop. Absent when
                   no app on this Mac opens stim-desktop links. Plain output
                   prints it on stderr as "Open in Stim Desktop: <link>"; so
                   does worktree warm, which has no JSON payload
+
+  stim macos --json
+
+  platform        "macos"
+  product, launchId, build, host?  the launch record (see guide macos)
+  agentDevice     { stateDir }: absolute workspace agent-device state path
+                  for local or hosted launches with a local workspace
 
   stim ios --json
 
@@ -317,6 +327,7 @@ leased until <time>" for each one.`,
                   launch with no process id is "unverified", and
                   \`stim logs --errors\` has the device log that says why
   logs            { dir }
+  agentDevice     { stateDir }: absolute workspace agent-device state path
   durationMs      wall time for the whole run
 
   stim android --json
@@ -390,6 +401,7 @@ leased until <time>" for each one.`,
                   error, and this field is separate from cacheHit. On an
                   offloaded APK it is the build machine's ccache
   logs            the workspace log directory
+  agentDevice     { stateDir }: absolute workspace agent-device state path
   durationMs      wall time for the whole run
   reclaimed       present only when the run was over its disk or memory
                   budget and reclaimed first (\`start\`, \`ios\` and
@@ -858,6 +870,11 @@ RULES
                               directories that --delete removes whole (dead
                               projects and orphanedWorkspaces), and --cache
                               all does not
+    agentDevice             <AgentDeviceUsage|null>  report-only; workspace state
+                              goes only with its workspace;
+                              null with any --cache scope
+    swiftpmCache            <SwiftpmCacheUsage|null> report-only, never deleted;
+                              null with any --cache scope
     caches                  { name, dir, source, bytes, note, willEmpty,
                               emptySkipped, scopedEmpty }  alive, not
                               garbage; willEmpty marks the ones --delete
@@ -919,6 +936,11 @@ RULES
       summary:
         "the status payload's lifecycle phase and stage, issues and their codes, build and device activity fields: a running build, its estimate, each platform's last build, who drives each device, whether the app runs on it, and what uses CPU and memory now",
       body: () => `  stim status --json
+
+  logs        { dir, errorsSinceMarker }, or null without a log directory
+  agentDevice { stateDir }: absolute workspace agent-device state path on
+              every environment, shared by its slots. Reporting it creates
+              no directory; agent-device creates it when used.
 
   Each environment carries phase, where the workspace is in its lifecycle:
 
@@ -1588,7 +1610,9 @@ RULES
     "offload": { "today": { "here", "offloaded", "fellBack" },
                  "machines": { "<machine>": { "today": <day>,
                                               "total": <totals> } },
-                 "placements": [<placement>, ...] } }
+                 "placements": [<placement>, ...] },
+    "agentDevice": <AgentDeviceUsage|null>,
+    "swiftpmCache": <SwiftpmCacheUsage|null> }
 
   \`project\` is null outside a project; a platform with no run yet is null.
   A bucket carries runs, failed, hits, misses, coldRuns, coldRunMs, hitRuns,
@@ -1598,6 +1622,44 @@ RULES
   compiled one. An offloaded run is a miss but not a cold run, so the cold
   average, time saved and build estimates stay local. Milliseconds are
   integers.
+
+AGENT-DEVICE DISK USAGE
+  agentDevice: { version: 1, measuredAt, bytes, complete, stateDir,
+                 runnerBuilds, workspaces, hosted }
+  bytes sums known state, separate runner builds, workspace and hosted bytes;
+  complete is false when a measurement fails. Individual unknown byte fields
+  are null. Absent directories have zero bytes and present: false.
+  stateDir defaults to ~/.agent-device. AGENT_DEVICE_STATE_DIR overrides it
+  only when it does not overlap a workspace agent-device dir or the hosted dir.
+  stateDir: { dir, present, bytes, sessions: { dir, bytes, count },
+              logs: { dir, bytes }, other: { bytes, largest: [{ name, bytes }] } }
+  runnerBuilds: { dir, present, bytes, sharedBytes, platforms: [
+    { platform, dir, bytes, entries: [{ name, dir, bytes, lastUsedAt,
+      packageVersion, xcodeBuildVersion, inUse, inUseReason }] }] }
+  inUseReason is lease, lock, unreadable or null. Lease means a live owner or
+  runner matched by start time; lock means a live or unknown lock owner.
+  Unreadable lock owners and unreadable or unknown leases use unreadable.
+  Dead lock owners and leases do not mark entries in use.
+  workspaces: [{ dir, projectRoot, bytes }]; hosted: { dir, bytes, sessions } | null.
+  $STIM_HOME/agent-device-usage.json caches the measurement and resolved roots
+  for 10 minutes. stats and unscoped gc measure; no other command measures this
+  state. Server stats.get reads only the cached value.
+  Stim never trims or deletes the shared runner builds, sessions, logs and other
+  state or the hosted driver dir; a workspace's own agent-device dir goes only with its workspace.
+
+SWIFTPM CACHE DISK USAGE
+  swiftpmCache: { version: 1, measuredAt, dir, present, bytes, complete } | null.
+  The user-level cache is ~/Library/Caches/org.swift.swiftpm on macOS and
+  org.swift.swiftpm under XDG_CACHE_HOME (default ~/.cache) elsewhere.
+  It is shared by every SwiftPM build on the machine; Stim never deletes it.
+  bytes is null and complete is false if du fails; absent directories have
+  present: false, bytes: 0 and complete: true. Plain output omits absent caches.
+  $STIM_HOME/swiftpm-cache-usage.json caches the measurement for 10 minutes,
+  keyed on the resolved dir. stats and unscoped gc alone run du -sk with a
+  20-second timeout. Server stats.get reads only the cached value. status,
+  start, ios, android and the budget gate never measure it. gc reports it as
+  sections.swiftpmCache, never in caches or actionable; --delete and
+  --older-than leave it untouched, and any --cache scope reports null.
 
 HOW A RUN IS COUNTED (\`stats\`)
   Every \`ios\` or \`android\` invocation that got as far as computing a

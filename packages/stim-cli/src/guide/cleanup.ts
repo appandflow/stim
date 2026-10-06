@@ -47,6 +47,15 @@ with the holder and recovery guidance instead of waiting.
 
 CLEANUP AND DISK
 
+worktree remove stops the agent-device daemon when the workspace's
+agent-device/daemon.json exists, then removes its state directory with the
+workspace. If agent-device is missing or the stop fails, it keeps the directory
+and reports the retry command: agent-device daemon stop --state-dir <dir> --clean.
+A daemon.json whose process is gone is stale and does not block removal.
+gc --delete of a finished worktree does the same.
+stop closes owned-device sessions in that directory without deleting it.
+See stim guide logs for AGENT_DEVICE_STATE_DIR examples.
+
 WHAT RECLAIMS AN OWNED DEVICE
   stim worktree remove    parks eligible owned simulators and emulators
                             (\`guide lifecycle pool\`); deletes them when
@@ -119,7 +128,28 @@ to stats.json.corrupt-<unix ms> and starts a new one.`,
     gc: {
       summary:
         'what gc and worktree remove delete, keep and refuse: orphans, stale records, locks, leases, EAS sessions',
-      body: () => `LINKED WORKTREES
+      body: () => `AGENT-DEVICE (REPORT ONLY)
+Unscoped gc reports agent-device runner builds by platform and entry, last use,
+agent-device and Xcode versions, sessions, logs, other state, workspace state
+and hosted driver state. Stim never selects this state as a cache.
+Stim never trims or deletes the shared runner builds, sessions, logs and other
+state or the hosted driver dir; a workspace's own agent-device dir goes only with its workspace.
+A live owner or runner lease marks an entry in use. A lock marks it in use only
+when its owner is live or unknown. Unreadable lock owners and unreadable or unknown
+leases conservatively mark entries in use. Dead lock owners and leases do not.
+Use agent-device's own tooling or remove directories yourself to clear unused
+state. --cache scopes omit this report, including --cache all.
+
+SWIFTPM CACHE (REPORT ONLY)
+Unscoped gc also reports the user-level SwiftPM cache after agent-device:
+~/Library/Caches/org.swift.swiftpm on macOS, or org.swift.swiftpm under
+XDG_CACHE_HOME (default ~/.cache) elsewhere. It is shared by every SwiftPM
+build on this machine. Stim reports it and never deletes it. It is never in
+caches, never changes actionable, and --delete and --older-than never select
+it. Any --cache scope, including all, omits measurement and reports
+sections.swiftpmCache: null. Only stats and unscoped gc measure it.
+
+LINKED WORKTREES
   \`stim worktree remove\` works with any linked worktree, warmed or not.
   Git registration identifies the worktree; a Stim registry entry is not
   required. Before it reclaims anything, the command refuses a worktree git

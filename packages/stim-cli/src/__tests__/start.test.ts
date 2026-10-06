@@ -19,7 +19,12 @@ import {
   withManagedTunnelLock,
   type TunnelRecord,
 } from '../engine/tunnel.ts';
-import { supervisorLogFile, workspaceLogsDir, workspaceMetadataFile } from '../workspace/paths.ts';
+import {
+  workspaceAgentDeviceDir,
+  supervisorLogFile,
+  workspaceLogsDir,
+  workspaceMetadataFile,
+} from '../workspace/paths.ts';
 import { readWorkspaceState, writeWorkspaceState } from '../workspace/workspace-state.ts';
 import { readMetroTunnel } from '../supervisor/state.ts';
 import * as supervisorState from '../supervisor/state.ts';
@@ -453,6 +458,7 @@ describe('startFacts', () => {
   test('shapes the facts an agent reads', () => {
     expect(
       startFacts({
+        root,
         port: 8082,
         supervisor: { pid: 91, mode: 'expo-child' },
         logsDir: '/w/.stim/logs',
@@ -463,6 +469,7 @@ describe('startFacts', () => {
       supervisorPid: 91,
       mode: 'expo-child',
       logsDir: '/w/.stim/logs',
+      agentDevice: { stateDir: workspaceAgentDeviceDir(root) },
       alreadyRunning: false,
     });
   });
@@ -613,6 +620,7 @@ describe('action: already running', { timeout: 30_000 }, () => {
       supervisorPid: process.pid,
       mode: 'bare-inproc',
       logsDir: workspaceLogsDir(root),
+      agentDevice: { stateDir: workspaceAgentDeviceDir(root) },
       alreadyRunning: true,
     });
   });

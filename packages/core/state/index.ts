@@ -1,3 +1,5 @@
+export * from './agent-device-usage.ts';
+export * from './swiftpm-cache-usage.ts';
 export * from './build-capacity.ts';
 export * from './build-machines.ts';
 export * from './config.ts';
@@ -26,3 +28,4 @@ export * from './hosted-macos.ts';
 export * from './tailnet.ts';
 export * from './hosted-logs.ts';
 export * from './maintenance.ts';
+export * from './agent-device.ts';

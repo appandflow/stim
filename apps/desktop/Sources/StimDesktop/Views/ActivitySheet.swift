@@ -70,27 +70,28 @@ struct ActivitySheet: View {
 
   private var runningView: some View {
     TimelineView(.periodic(from: run.startedAt, by: 1)) { context in
-      VStack(alignment: .leading, spacing: Space.md) {
-        HStack(spacing: Space.md) {
-          ProgressView().controlSize(.small)
-          Text(currentStep)
-            .foregroundStyle(Palette.text)
-            .lineLimit(1)
-            .truncationMode(.middle)
-          Spacer()
-          Text(Format.elapsed(ms: context.date.timeIntervalSince(run.startedAt) * 1000))
-            .font(.stim(.caption, mono: true))
-            .foregroundStyle(Palette.tertiary)
+      Card(radius: Radius.chip, border: nil, clipsContent: false) {
+        VStack(alignment: .leading, spacing: Space.md) {
+          HStack(spacing: Space.md) {
+            ProgressView().controlSize(.small)
+            Text(currentStep)
+              .foregroundStyle(Palette.text)
+              .lineLimit(1)
+              .truncationMode(.middle)
+            Spacer()
+            Text(Format.elapsed(ms: context.date.timeIntervalSince(run.startedAt) * 1000))
+              .font(.stim(.caption, mono: true))
+              .foregroundStyle(Palette.tertiary)
+          }
+          if let waiting = ActivityProgress.waitingStep(steps) {
+            Label(abbreviatingHome(waiting.fact), systemImage: "hourglass")
+              .foregroundStyle(Palette.warning)
+              .lineLimit(2)
+          }
         }
-        if let waiting = ActivityProgress.waitingStep(steps) {
-          Label(abbreviatingHome(waiting.fact), systemImage: "hourglass")
-            .foregroundStyle(Palette.warning)
-            .lineLimit(2)
-        }
+        .padding(Space.lg)
+        .frame(maxWidth: .infinity, alignment: .leading)
       }
-      .padding(Space.lg)
-      .frame(maxWidth: .infinity, alignment: .leading)
-      .background(RoundedRectangle(cornerRadius: Radius.chip).fill(Palette.surface))
     }
   }
 
@@ -311,24 +312,24 @@ struct ActivitySheet: View {
 
   private var output: some View {
     ScrollViewReader { proxy in
-      ScrollView {
-        LazyVStack(alignment: .leading, spacing: 1) {
-          if run.output.droppedCount > 0 {
-            Text("\(run.output.droppedCount) earlier lines not shown").foregroundStyle(Palette.tertiary)
+      Card(radius: Radius.chip, clipsContent: false) {
+        ScrollView {
+          LazyVStack(alignment: .leading, spacing: 1) {
+            if run.output.droppedCount > 0 {
+              Text("\(run.output.droppedCount) earlier lines not shown").foregroundStyle(Palette.tertiary)
+            }
+            ForEach(Array(run.logLines.enumerated()), id: \.offset) { index, line in
+              Text(line.text.isEmpty ? " " : abbreviatingHome(line.text))
+                .foregroundStyle(line.channel == .stderr ? Palette.secondary : Palette.text)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .id(index)
+            }
           }
-          ForEach(Array(run.logLines.enumerated()), id: \.offset) { index, line in
-            Text(line.text.isEmpty ? " " : abbreviatingHome(line.text))
-              .foregroundStyle(line.channel == .stderr ? Palette.secondary : Palette.text)
-              .frame(maxWidth: .infinity, alignment: .leading)
-              .id(index)
-          }
+          .font(.stim(.caption, mono: true))
+          .textSelection(.enabled)
+          .padding(Space.md)
         }
-        .font(.stim(.caption, mono: true))
-        .textSelection(.enabled)
-        .padding(Space.md)
       }
-      .background(RoundedRectangle(cornerRadius: Radius.chip).fill(Palette.surface))
-      .overlay(RoundedRectangle(cornerRadius: Radius.chip).strokeBorder(Palette.border))
       .onAppear {
         if !run.logLines.isEmpty { proxy.scrollTo(run.logLines.count - 1, anchor: .bottom) }
       }

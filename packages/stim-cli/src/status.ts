@@ -23,6 +23,7 @@ import type {
   WorktreeFacts,
   WorktreeGit,
 } from '@stim-cli/core/state';
+import { workspaceAgentDeviceDir } from './workspace/paths.ts';
 import { ACTIVITY_RECENCY_BASES } from '@stim-cli/core/state';
 
 export type {
@@ -324,6 +325,7 @@ export function environmentState(
             healthy: Boolean(supervisor.healthy),
           }
         : null,
+    agentDevice: { stateDir: workspaceAgentDeviceDir(project.__path) },
     logs: logs ? { dir: logs.dir, errorsSinceMarker: logs.errorsSinceMarker ?? 0 } : null,
     worktree: enclosingWorktree(worktrees, project.__path),
     remoteDevices: remote ? [remote] : [],

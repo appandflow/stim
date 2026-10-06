@@ -98,7 +98,7 @@ struct Sidebar: View {
         SidebarLabel(title: "Machines", icon: "internaldrive", selected: selection == .machine)
         Spacer()
         if autopilot.pressure != nil {
-          Image(systemName: "exclamationmark.circle.fill").font(.system(size: 11)).foregroundStyle(Palette.warning)
+          Image(systemName: "exclamationmark.circle.fill").iconFont(IconSize.small).foregroundStyle(Palette.warning)
             .help("Free disk is under the Stim budget")
             .accessibilityLabel("Free disk is under the Stim budget")
         }
@@ -124,13 +124,13 @@ struct Sidebar: View {
   private func emptyText(_ options: SidebarOptions) -> some View {
     HStack(spacing: Space.xs) {
       if options.status != .all {
-        Text("No \(options.status.rawValue) workspaces \u{00B7}").foregroundStyle(Palette.tertiary)
+        InlineEmpty("No \(options.status.rawValue) workspaces \u{00B7}")
         Button("Show all") { prefs.status = .all }.buttonStyle(.hoverRow(outset: Space.xs)).foregroundStyle(Palette.primary)
       } else if options.differsFromDefaults(projects: store.projectList.map(\.project)) {
-        Text("Nothing matches \u{00B7}").foregroundStyle(Palette.tertiary)
+        InlineEmpty("Nothing matches \u{00B7}")
         Button("Reset") { prefs.reset() }.buttonStyle(.hoverRow(outset: Space.xs)).foregroundStyle(Palette.primary)
       } else {
-        Text("No workspaces").foregroundStyle(Palette.tertiary)
+        InlineEmpty("No workspaces")
       }
     }
     .font(.stim(.callout))
@@ -572,7 +572,7 @@ struct SidebarFooter: View {
 
   private func statusLabel(dot: Color, text: String) -> some View {
     HStack(spacing: Space.sm) {
-      Circle().fill(dot).frame(width: 6, height: 6)
+      StatusDot(color: dot, size: 6)
       Text(text).font(.stim(.footnote)).foregroundStyle(Palette.secondary).lineLimit(1)
     }
   }

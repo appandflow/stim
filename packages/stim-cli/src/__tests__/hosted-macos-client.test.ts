@@ -34,7 +34,7 @@ import { stopMacosApp } from '../macos/stop.ts';
 import { BuildConnection } from '../offload/client.ts';
 import { getConfigPath } from '../workspace/config.ts';
 import { workspaceInUse } from '../workspace/in-use.ts';
-import { workspaceLogsDir } from '../workspace/paths.ts';
+import { workspaceAgentDeviceDir, workspaceLogsDir } from '../workspace/paths.ts';
 import * as settings from '../workspace/settings.ts';
 
 const tailnet = { port: 0, nodeId: 'nMini' };
@@ -577,7 +577,15 @@ describe.skipIf(process.platform !== 'darwin')('stim macos --remote (SwiftPM and
     }
     expect(lines).toHaveLength(1);
     const payload = JSON.parse(lines[0]!);
-    expect(Object.keys(payload).toSorted()).toEqual(['build', 'host', 'launchId', 'platform', 'product']);
+    expect(payload.agentDevice).toEqual({ stateDir: workspaceAgentDeviceDir(root) });
+    expect(Object.keys(payload).toSorted()).toEqual([
+      'agentDevice',
+      'build',
+      'host',
+      'launchId',
+      'platform',
+      'product',
+    ]);
     for (const offer of host.offers) expect(offer).not.toHaveProperty('arguments');
     expect(payload.host).toMatchObject({ machine: 'mini', agent: { driver: 'agent-device' } });
     expect(lines[0]).not.toContain(TOKEN);

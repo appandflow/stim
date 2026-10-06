@@ -448,17 +448,48 @@ public struct StorageReport: Sendable {
       return (a.size.bytes ?? -1, b.title) > (b.size.bytes ?? -1, a.title)
     }
 
+    let swiftpmCache = gc?.sections.swiftpmCache.flatMap { usage -> (dir: String, bytes: Int64)? in
+      guard usage.present == true, let dir = usage.dir, let bytes = usage.bytes, bytes >= 0 else { return nil }
+      return (dir, bytes)
+    }
     var unmanaged: [StorageLocation] = []
     for location in paths.unmanaged {
       let inside = allCaches.filter { $0.dir.hasPrefix(location.path + "/") }
       let stimBytes = inside.compactMap(\.bytes).reduce(0, +)
+      let swiftpmInside = swiftpmCache.flatMap { $0.dir.hasPrefix(location.path + "/") ? $0.bytes : nil }
+      var exclusions: [String] = []
+      if !inside.isEmpty {
+        exclusions.append("\(inside.map { $0.title(among: allCaches) }.joined(separator: ", ")), counted under Stim")
+      }
+      if swiftpmInside != nil { exclusions.append("SwiftPM cache, counted separately") }
       let measured = disk.measure(location.path)
       unmanaged.append(
         StorageLocation(
           title: location.title, path: location.path,
-          size: measured.bytes.map { .size(max(0, $0 - stimBytes)) } ?? measured,
-          detail: inside.isEmpty
-            ? nil : "Excludes \(inside.map { $0.title(among: allCaches) }.joined(separator: ", ")), counted under Stim"))
+          size: measured.bytes.map { .size(max(0, $0 - stimBytes - (swiftpmInside ?? 0))) } ?? measured,
+          detail: exclusions.isEmpty ? nil : "Excludes \(exclusions.joined(separator: "; "))"))
+    }
+    if let usage = gc?.sections.agentDevice, let bytes = usage.bytes, bytes > 0,
+      let state = usage.stateDir, let dir = state.dir,
+      let runner = usage.runnerBuilds, let sessions = state.sessions, let logs = state.logs
+    {
+      let parts: [(String, Int64?)] = [
+        ("Runner builds", runner.bytes),
+        ("sessions", sessions.bytes),
+        ("logs", logs.bytes),
+      ]
+      unmanaged.append(
+        StorageLocation(
+          title: "agent-device", path: dir, size: .size(bytes),
+          detail: parts.map { name, bytes in
+            "\(name) \(bytes.map { Format.fileSize($0) } ?? "unknown")"
+          }.joined(separator: ", ")))
+    }
+    if let usage = swiftpmCache {
+      unmanaged.append(
+        StorageLocation(
+          title: "SwiftPM cache", path: usage.dir, size: .size(usage.bytes),
+          detail: "Shared by every SwiftPM build; Stim never deletes it"))
     }
     unmanaged.sort { ($0.size.bytes ?? -1) > ($1.size.bytes ?? -1) }
 

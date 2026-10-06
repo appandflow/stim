@@ -1,14 +1,14 @@
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { recordCreatedDevice } from '../devices/created-devices.ts';
+import { forgetCreatedDevice, recordCreatedDevice } from '../devices/created-devices.ts';
 import { runHostedDevice } from '../device-host/worker.ts';
 
 const native = vi.hoisted(() => ({
   inventory: vi.fn<() => { udid: string; state: string }[]>(),
   create: vi.fn<(...args: unknown[]) => { udid: string; name: string }>(),
   boot: vi.fn<(target: string, options: { openViewer: boolean }) => void | Promise<void>>(),
-  teardown: vi.fn<(target: string) => { status: string; reason?: string }>(),
+  teardown: vi.fn<(target: string, options: { del: boolean }) => { status: string; reason?: string }>(),
   pressure: vi.fn<() => string | null>(),
 }));
 vi.mock('../host-memory.ts', () => ({ readHostMemoryPressure: () => native.pressure() }));
@@ -23,14 +23,14 @@ vi.mock('../devices/teardown.ts', () => ({
 }));
 let home: string;
 const udid = '12345678-1234-1234-1234-123456789abc';
-let simulatorState: string;
+let simulatorState: string | null;
 
 beforeEach(() => {
   vi.resetAllMocks();
   home = mkdtempSync(join(tmpdir(), 'stim-host-worker-'));
   process.env.STIM_HOME = home;
   simulatorState = 'Shutdown';
-  native.inventory.mockImplementation(() => [{ udid, state: simulatorState }]);
+  native.inventory.mockImplementation(() => (simulatorState ? [{ udid, state: simulatorState }] : []));
   native.pressure.mockReturnValue('normal');
   native.create.mockImplementation(() => {
     recordCreatedDevice('ios', udid);
@@ -40,7 +40,8 @@ beforeEach(() => {
     simulatorState = 'Booted';
   });
   native.teardown.mockImplementation(() => {
-    simulatorState = 'Shutdown';
+    simulatorState = null;
+    forgetCreatedDevice('ios', udid);
     return { status: 'torn-down' };
   });
 });
@@ -49,7 +50,7 @@ afterEach(() => {
   rmSync(home, { recursive: true, force: true });
 });
 
-test('records exact ownership before boot, keeps the host viewer closed and verifies shutdown', async () => {
+test('records exact ownership before boot, keeps the host viewer closed and verifies retirement', async () => {
   native.boot.mockImplementation((target, options) => {
     expect(target).toBe(udid);
     expect(options).toEqual({ openViewer: false });
@@ -60,7 +61,7 @@ test('records exact ownership before boot, keeps the host viewer closed and veri
   expect(await runHostedDevice('prepare', {})).toMatchObject({ state: 'unknown' });
   expect(native.create).toHaveBeenCalledTimes(1);
   expect(await runHostedDevice('stop', {})).toMatchObject({ state: 'stopped', device: { udid } });
-  expect(native.teardown).toHaveBeenCalledExactlyOnceWith(udid);
+  expect(native.teardown).toHaveBeenCalledExactlyOnceWith(udid, { del: true });
 });
 
 test.each(['inventory', 'memory'])('refuses unknown or unsafe %s before creation', async (failure) => {
@@ -102,3 +103,42 @@ test('never reports ready or stopped from command success without matching devic
   native.teardown.mockReturnValue({ status: 'torn-down' });
   expect(await runHostedDevice('stop', {})).toMatchObject({ state: 'unknown', device: { udid } });
 });
+
+test('a deleted simulator with an empty ledger can complete stop after a lost reply', async () => {
+  await runHostedDevice('prepare', {});
+  await runHostedDevice('stop', {});
+  native.teardown.mockClear();
+  expect(await runHostedDevice('stop', {})).toMatchObject({ state: 'stopped', device: { udid } });
+  expect(native.teardown).not.toHaveBeenCalled();
+});
+
+test('an empty ledger cannot authorize deletion of a simulator still in inventory', async () => {
+  await runHostedDevice('prepare', {});
+  forgetCreatedDevice('ios', udid);
+  simulatorState = 'Shutdown';
+  expect(await runHostedDevice('stop', {})).toMatchObject({
+    state: 'unknown',
+    device: { udid },
+    notice: expect.stringContaining('without ledger ownership'),
+  });
+  expect(native.teardown).not.toHaveBeenCalled();
+});
+
+test('shutdown success cannot report stopped while the simulator still exists', async () => {
+  await runHostedDevice('prepare', {});
+  native.teardown.mockImplementation(() => {
+    simulatorState = 'Shutdown';
+    return { status: 'torn-down' };
+  });
+  expect(await runHostedDevice('stop', {})).toMatchObject({ state: 'unknown', device: { udid } });
+});
+
+test.each(['failed', 'skipped'])(
+  'a %s teardown cannot report retirement even if inventory is empty',
+  async (status) => {
+    await runHostedDevice('prepare', {});
+    simulatorState = null;
+    native.teardown.mockReturnValue({ status });
+    expect(await runHostedDevice('stop', {})).toMatchObject({ state: 'unknown', device: { udid } });
+  },
+);

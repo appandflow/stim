@@ -34,6 +34,12 @@ reach multiple devices. A launch counts a bundle delivery only when it can
 attribute it to its own device; read guide lifecycle options for the rule.
 Use stop --slot <name> for one slot, or plain stop for the whole workspace.
 
+When driving a device yourself with agent-device, set AGENT_DEVICE_STATE_DIR
+from agentDevice.stateDir in stim ios|android|macos --json or status --json.
+Its sessions and logs are then cleaned with the workspace. Do not set
+AGENT_DEVICE_IOS_RUNNER_DERIVED_PATH or AGENT_DEVICE_CLAIMS_DIR; the runner
+build cache and device claims stay shared. Read stim guide logs for examples.
+
 NORMAL WORKFLOW
 
 Create a linked worktree with Git and warm its ignored state. If a harness

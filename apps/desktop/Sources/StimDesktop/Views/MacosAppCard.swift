@@ -16,81 +16,84 @@ struct MacosAppCard: View {
   @State private var previewRequest = 0
 
   var body: some View {
-    VStack(alignment: .leading, spacing: Space.md) {
-      HStack(spacing: Space.sm) {
-        Label(app.product, systemImage: "macwindow")
-          .font(.stim(.headline))
-        Spacer()
-        if app.host == nil, app.state == "running" || app.state == "orphaned" {
-          IconButton(
-            systemImage: "arrow.up.forward.app", help: "Open app \u{2014} brings the app's window to the front on this Mac"
-          ) {
-            Task { await capture.openApp() }
+    Card(border: nil, clipsContent: false) {
+      VStack(alignment: .leading, spacing: Space.md) {
+        HStack(spacing: Space.sm) {
+          Label(app.product, systemImage: "macwindow")
+            .font(.stim(.headline))
+          Spacer()
+          if app.host == nil, app.state == "running" || app.state == "orphaned" {
+            IconButton(
+              systemImage: "arrow.up.forward.app", help: "Open app \u{2014} brings the app's window to the front on this Mac"
+            ) {
+              Task { await capture.openApp() }
+            }
+            .disabled(capture.image == nil || refreshing)
           }
-          .disabled(capture.image == nil || refreshing)
-        }
-        if app.host != nil || app.state == "running" || app.state == "orphaned" {
-          IconButton(systemImage: "stop.fill", tint: Palette.error, help: "Stop \u{2014} runs stim stop for this workspace's app")
-          {
-            actions.run("Stop \(app.product)", steps: [StimCommand(["stop"], cwd: workspace)], present: false)
+          if app.host != nil || app.state == "running" || app.state == "orphaned" {
+            IconButton(
+              systemImage: "stop.fill", tint: Palette.error, help: "Stop \u{2014} runs stim stop for this workspace's app"
+            ) {
+              actions.run("Stop \(app.product)", steps: [StimCommand(["stop"], cwd: workspace)], present: false)
+            }
+            .disabled(actions.active(for: workspace) != nil)
           }
-          .disabled(actions.active(for: workspace) != nil)
-        }
-        Button("Build and run", systemImage: "play.fill") {
-          actions.run("Build \(app.product)", steps: [StimCommand(runArguments, cwd: workspace)], present: false)
-        }
-        .nativeControlStyle(.primary)
-        .help(
-          app.host == nil
-            ? "Builds the Swift package and launches the app"
-            : "Builds the Swift package and launches the app on \(machineName(app.host?.machine ?? "the host"))"
-        )
-        .disabled(app.build.state == "running" || actions.active(for: workspace) != nil)
-      }
-      HStack(spacing: Space.sm) {
-        Text("Swift Package Debug \u{00B7} build \(app.build.state) \u{00B7} app \(app.state)")
-          .font(.stim(.footnote)).foregroundStyle(Palette.secondary)
-        Spacer()
-        if app.host == nil, permissionsMissing {
-          Button {
-            permissions.openSetup()
-          } label: {
-            Label("Allow viewer permissions", systemImage: "exclamationmark.triangle.fill")
+          Button("Build and run", systemImage: "play.fill") {
+            actions.run("Build \(app.product)", steps: [StimCommand(runArguments, cwd: workspace)], present: false)
           }
-          .buttonStyle(.borderless)
-          .foregroundStyle(Palette.warning)
-          .font(.stim(.footnote))
-          .help("Viewing needs \(permissions.screenPermissionTitle); Open app also needs \(permissions.controlPermissionTitle).")
+          .nativeControlStyle(.primary)
+          .help(
+            app.host == nil
+              ? "Builds the Swift package and launches the app"
+              : "Builds the Swift package and launches the app on \(machineName(app.host?.machine ?? "the host"))"
+          )
+          .disabled(app.build.state == "running" || actions.active(for: workspace) != nil)
+        }
+        HStack(spacing: Space.sm) {
+          Text("Swift Package Debug \u{00B7} build \(app.build.state) \u{00B7} app \(app.state)")
+            .font(.stim(.footnote)).foregroundStyle(Palette.secondary)
+          Spacer()
+          if app.host == nil, permissionsMissing {
+            Button {
+              permissions.openSetup()
+            } label: {
+              Label("Allow viewer permissions", systemImage: "exclamationmark.triangle.fill")
+            }
+            .buttonStyle(.borderless)
+            .foregroundStyle(Palette.warning)
+            .font(.stim(.footnote))
+            .help(
+              "Viewing needs \(permissions.screenPermissionTitle); Open app also needs \(permissions.controlPermissionTitle).")
+          }
+        }
+        if let host = app.host {
+          Label("on \(machineName(host.machine))", systemImage: "desktopcomputer")
+            .font(.stim(.footnote))
+            .foregroundStyle(Palette.secondary)
+            .lineLimit(1)
+            .help("\(host.machine) \u{00B7} \(host.bundleId)")
+        }
+        if let error = app.build.error { Text(error).foregroundStyle(Palette.error).textSelection(.enabled) }
+        if app.host != nil {
+          if app.state == "running" || app.state == "unverified" { HostedMacosWindow(app: app, workspace: workspace) }
+        } else if let error = capture.error {
+          Text(error).foregroundStyle(Palette.secondary).textSelection(.enabled)
+        }
+        if app.host == nil, capture.image != nil, capture.windows.count > 1 || capture.pinned != nil {
+          MacosWindowMenu(
+            windows: capture.windows.map { MacosWindows.Window(id: Int($0.id), title: $0.title) },
+            current: capture.current.map { Int($0.id) }, pinned: capture.pinned != nil, enabled: true
+          ) { id in Task { await capture.select(id.map(UInt32.init)) } }
+        }
+        if app.host == nil, let image = capture.image {
+          MacosWindowCanvas(image: image)
+            .aspectRatio(CGFloat(image.width) / CGFloat(image.height), contentMode: .fit)
+            .frame(maxWidth: .infinity)
+            .accessibilityLabel("\(app.product) owned window")
         }
       }
-      if let host = app.host {
-        Label("on \(machineName(host.machine))", systemImage: "desktopcomputer")
-          .font(.stim(.footnote))
-          .foregroundStyle(Palette.secondary)
-          .lineLimit(1)
-          .help("\(host.machine) \u{00B7} \(host.bundleId)")
-      }
-      if let error = app.build.error { Text(error).foregroundStyle(Palette.error).textSelection(.enabled) }
-      if app.host != nil {
-        if app.state == "running" || app.state == "unverified" { HostedMacosWindow(app: app, workspace: workspace) }
-      } else if let error = capture.error {
-        Text(error).foregroundStyle(Palette.secondary).textSelection(.enabled)
-      }
-      if app.host == nil, capture.image != nil, capture.windows.count > 1 || capture.pinned != nil {
-        MacosWindowMenu(
-          windows: capture.windows.map { MacosWindows.Window(id: Int($0.id), title: $0.title) },
-          current: capture.current.map { Int($0.id) }, pinned: capture.pinned != nil, enabled: true
-        ) { id in Task { await capture.select(id.map(UInt32.init)) } }
-      }
-      if app.host == nil, let image = capture.image {
-        MacosWindowCanvas(image: image)
-          .aspectRatio(CGFloat(image.width) / CGFloat(image.height), contentMode: .fit)
-          .frame(maxWidth: .infinity)
-          .accessibilityLabel("\(app.product) owned window")
-      }
+      .padding(Space.lg)
     }
-    .padding(Space.lg)
-    .background(RoundedRectangle(cornerRadius: Radius.card).fill(Palette.surface))
     .task(id: "\(app.launchId)|\(app.state)|\(previewRequest)") {
       refreshing = true
       await capture.start(app)

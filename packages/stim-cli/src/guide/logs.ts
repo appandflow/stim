@@ -2,6 +2,34 @@ export default {
   summary: 'Querying the merged NDJSON timeline, and what --errors means',
   body: () => `LOGS
 
+If Stim is not installed globally, replace stim with npx stim.
+
+AGENT-DEVICE WORKSPACE STATE
+
+When you drive a device yourself with agent-device, opt in to the workspace's
+state directory reported as agentDevice.stateDir in the stim ios, android and
+macos output and in status. Read it once from status, run from the app root:
+
+  STATE_DIR="$(stim status --json | jq -r '.environments[] | select(.path=="'"$(pwd -P)"'") | .agentDevice.stateDir')"
+
+Then prefix each agent-device command, so the choice survives shells that do
+not keep exports:
+
+  AGENT_DEVICE_STATE_DIR="$STATE_DIR" agent-device open <bundle id> --platform ios --session <name>
+  AGENT_DEVICE_STATE_DIR="$STATE_DIR" agent-device snapshot --session <name>
+
+The path is $STIM_HOME/workspaces/<name>/agent-device. agent-device creates it
+itself. Sessions (including events, runner logs and request text), logs,
+metro-sessions, allocations and daemon files move there. The apple-runner build
+cache and device claims stay shared; do not set
+AGENT_DEVICE_IOS_RUNNER_DERIVED_PATH or AGENT_DEVICE_CLAIMS_DIR.
+Each active workspace adds one agent-device daemon, which exits after five
+idle minutes with no open session. The variable is opt-in per command: forgetting it falls back to
+~/.agent-device.
+stim stop closes owned-device sessions there, stim logs --source agent reads
+them, and stim worktree remove stops the daemon and removes the directory.
+Hosted/stim-server sessions use their own state directory and need none of this.
+
   stim logs [filters]
 
 Reads every *.ndjson file in the global workspace logs directory, merges them into one timeline
@@ -337,7 +365,8 @@ WHAT WRITES WHAT
                        web.ndjson (\`guide web\`). For simulators and
                        emulators, no file: each query reads agent-device's
                        session records (~/.agent-device/sessions, or
-                       AGENT_DEVICE_STATE_DIR) for this workspace's owned
+                       AGENT_DEVICE_STATE_DIR, plus existing workspace
+                       agent-device directories) for this workspace's owned
                        simulators and emulators, read-only. An action is
                        info (msg is agent-device's summary, e.g. "Tapped
                        (201, 731)"; event agent_action with command, session,

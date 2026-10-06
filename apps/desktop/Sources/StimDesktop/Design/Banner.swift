@@ -18,13 +18,13 @@ struct Banner<Content: View, Trailing: View>: View {
 
   var body: some View {
     HStack(alignment: .top, spacing: Space.lg) {
-      Image(systemName: icon).font(.system(size: 18)).foregroundStyle(Color(tone)).frame(width: 22)
+      Image(systemName: icon).iconFont(IconSize.large).foregroundStyle(Color(tone)).frame(width: 22)
       VStack(alignment: .leading, spacing: Space.sm) { content }
         .frame(maxWidth: .infinity, alignment: .leading)
       trailing
       if let onDismiss {
         Button(action: onDismiss) {
-          Image(systemName: "xmark").font(.system(size: 10, weight: .semibold)).foregroundStyle(Palette.tertiary)
+          Image(systemName: "xmark").iconFont(IconSize.compact, weight: .semibold).foregroundStyle(Palette.tertiary)
         }
         .buttonStyle(.hoverRow(outset: Space.xs))
         .help("Dismiss")
