@@ -1190,7 +1190,11 @@ test.each(['default', 'tablet'].flatMap((slot) => ['Shutdown', 'Booted', 'unknow
         deviceTypeId: 'iphone',
         architecture: 'arm64',
       },
-      agent: { driver: 'none', setting: 'hosting.agentDriver' },
+      agent: {
+        driver: 'agent-device',
+        remoteConfig: '/tmp/hosted-ios.json',
+        command: 'agent-device <command> --remote-config /tmp/hosted-ios.json',
+      },
     });
     const payload = await runStatusJson();
     expect(isRpcEvent({ event: 'status', subscription: 'fixture', payload })).toBe(true);
@@ -1203,7 +1207,11 @@ test.each(['default', 'tablet'].flatMap((slot) => ['Shutdown', 'Booted', 'unknow
     expect(ios).toMatchObject({
       udid: state === 'Shutdown' ? '' : 'UDID-ABC',
       state: state === 'Shutdown' ? 'ready' : state,
-      host: { machine: 'mini', state: 'ready' },
+      host: {
+        machine: 'mini',
+        state: 'ready',
+        agent: { driver: 'agent-device', remoteConfig: '/tmp/hosted-ios.json' },
+      },
     });
     expect((environment.slots ?? []).filter((entry: { slot: string }) => entry.slot === slot)).toHaveLength(
       slot === 'default' ? 0 : 1,
@@ -1213,6 +1221,7 @@ test.each(['default', 'tablet'].flatMap((slot) => ['Shutdown', 'Booted', 'unknow
     );
     const plain = (await runStatus()).join('\n');
     expect(plain).toContain('iOS 27.0');
+    expect(plain).toContain('agent: agent-device <command> --remote-config /tmp/hosted-ios.json');
     expect(plain.includes(state === 'unknown' ? 'UDID-ABC' : 'stim-projA')).toBe(state !== 'Shutdown');
   },
 );

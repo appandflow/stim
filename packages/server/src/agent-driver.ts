@@ -2,13 +2,12 @@ import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { HostedAgentGrant } from '@stim-cli/core/state';
 
-/** One hosted macOS app a driver may be handed: a single client, session, hosted bundle id and process. */
-export interface HostedAgentApp {
+/** One installed hosted app and its process or owned simulator. */
+export type HostedAgentApp = {
   client: string;
   session: string;
   bundleId: string;
-  pid: number;
-}
+} & ({ pid: number; udid?: never } | { udid: string; pid?: never });
 
 /**
  * The host side of one driving tool. `HostedAgentHost` calls it; a driver never decides which client or
@@ -56,8 +55,10 @@ interface Entry {
 export interface HostedAgentHostOptions {
   /** The driver the host's `hosting.agentDriver` names right now, or null for none. Read when no driver runs. */
   resolve: () => HostedAgentDriver | null;
+  resolveIos?: (app: HostedAgentApp & { udid: string }) => HostedAgentDriver | null;
   /** The tailnet node a client's approved device-host credential is pinned to, or null once it is not approved. */
   nodeOf: (client: string) => string | null;
+  strictStop?: boolean;
   restartDelayMs?: number;
   maxRestarts?: number;
 }
@@ -67,7 +68,7 @@ const digest = (token: string): Buffer => createHash('sha256').update(token).dig
 const none = (notice?: string): AgentAccess => ({ grant: { driver: 'none' }, ...(notice ? { notice } : {}) });
 
 /**
- * Reference-counts a driver on live hosted macOS apps. It starts the driver with the first app that gets a
+ * Reference-counts a driver on live hosted macOS apps and owns a separate driver lifetime per iOS session. It starts the driver with the first app that gets a
  * grant and stops it after the last one, on revocation and on close. Grants live only here, in memory:
  * a driver restart drops the leases they name, so a restart issues new grants that the client reads
  * again through `app.attach`.
@@ -76,6 +77,7 @@ export class HostedAgentHost {
   private readonly options: HostedAgentHostOptions;
   private readonly entries = new Map<string, Entry>();
   private active: HostedAgentDriver | null = null;
+  private readonly ios = new Map<string, HostedAgentHost>();
   private chain: Promise<unknown> = Promise.resolve();
   private closed = false;
 
@@ -95,6 +97,8 @@ export class HostedAgentHost {
 
   /** What `app.launch` and `app.attach` hand a client for this session; undefined before the app runs. */
   access(session: string): AgentAccess | undefined {
+    const child = this.ios.get(session);
+    if (child) return child.access(session);
     const entry = this.entries.get(session);
     return entry ? { grant: entry.grant, ...(entry.notice ? { notice: entry.notice } : {}) } : undefined;
   }
@@ -102,12 +106,27 @@ export class HostedAgentHost {
   /** The session's app is installed and running. Issues its grant, starting the driver when it is the first. */
   appRunning(app: HostedAgentApp): Promise<AgentAccess> {
     return this.serialize(async () => {
+      if (app.udid !== undefined && this.options.resolveIos) {
+        if (this.closed) return none();
+        let child = this.ios.get(app.session);
+        if (!child) {
+          child = new HostedAgentHost({
+            ...this.options,
+            resolveIos: undefined,
+            strictStop: true,
+            resolve: () => this.options.resolveIos!(app),
+          });
+          this.ios.set(app.session, child);
+        }
+        return child.appRunning(app);
+      }
       const existing = this.entries.get(app.session);
       if (
         existing &&
         existing.grant.driver !== 'none' &&
         existing.app.pid === app.pid &&
-        existing.app.bundleId === app.bundleId
+        existing.app.bundleId === app.bundleId &&
+        existing.app.udid === app.udid
       )
         return this.access(app.session)!;
       if (existing) await this.drop(app.session, false);
@@ -118,6 +137,10 @@ export class HostedAgentHost {
         try {
           await driver.start();
         } catch (error) {
+          if (this.options.strictStop) {
+            this.active = driver;
+            await this.stopDriver();
+          }
           return this.remember(app, none(this.reason(error)));
         }
         this.active = driver;
@@ -151,7 +174,11 @@ export class HostedAgentHost {
 
   appStopped(session: string): Promise<void> {
     return this.serialize(async () => {
-      await this.drop(session);
+      const child = this.ios.get(session);
+      if (child) {
+        await child.close();
+        this.ios.delete(session);
+      } else await this.drop(session);
     });
   }
 
@@ -170,11 +197,13 @@ export class HostedAgentHost {
 
   private async stopDriver(): Promise<void> {
     const driver = this.active;
-    this.active = null;
+    if (!this.options.strictStop) this.active = null;
     if (!driver) return;
     try {
       await driver.stop();
+      if (this.options.strictStop) this.active = null;
     } catch (error) {
+      if (this.options.strictStop) throw error;
       process.stderr.write(`Hosted agent driver did not stop cleanly: ${(error as Error).message}\n`);
     }
   }
@@ -183,6 +212,9 @@ export class HostedAgentHost {
     return this.serialize(async () => {
       if (this.active !== driver || this.closed) return;
       const apps = this.live().map((entry) => entry.app);
+      if (this.options.strictStop)
+        for (const app of apps)
+          this.remember(app, none('Agent control is restarting. Reattach to obtain a new grant.'));
       const delay = this.options.restartDelayMs ?? 1000;
       const attempts = this.options.maxRestarts ?? 3;
       let started = false;
@@ -197,7 +229,7 @@ export class HostedAgentHost {
         }
       }
       if (!started) {
-        this.active = null;
+        if (!this.options.strictStop) this.active = null;
         for (const app of apps)
           this.remember(app, none('Agent control stopped: its daemon exited and could not be restarted.'));
         return;
@@ -215,6 +247,8 @@ export class HostedAgentHost {
   }
 
   authorize(session: string, token: string | null, node: string | null): 'ok' | 'unknown' | 'forbidden' {
+    const child = this.ios.get(session);
+    if (child) return child.authorize(session, token, node);
     const entry = this.entries.get(session);
     if (!entry || entry.grant.driver === 'none') return 'unknown';
     const expected = this.options.nodeOf(entry.app.client);
@@ -230,6 +264,8 @@ export class HostedAgentHost {
     request: IncomingMessage,
     response: ServerResponse,
   ): 'ok' | 'unknown' | 'forbidden' {
+    const child = this.ios.get(session);
+    if (child) return child.forward(session, token, node, request, response);
     const verdict = this.authorize(session, token, node);
     if (verdict === 'ok' && this.active) this.active.forward(session, request, response);
     else if (verdict === 'ok')
@@ -244,6 +280,8 @@ export class HostedAgentHost {
   close(): Promise<void> {
     this.closed = true;
     return this.serialize(async () => {
+      for (const child of this.ios.values()) await child.close();
+      this.ios.clear();
       const sessions = [...this.entries.keys()];
       for (const session of sessions) await this.drop(session);
       await this.stopDriver();

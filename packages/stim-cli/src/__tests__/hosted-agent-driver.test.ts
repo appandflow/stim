@@ -5,13 +5,13 @@ import { deviceHostRoot, hostedAppArea } from '@stim-cli/core/state';
 import { hostedAgentDriverFinding, inspectHostedAgentDriver } from '../device-host/agent-driver.ts';
 import { getConfigPath } from '../workspace/config.ts';
 
-test('notes hosted macOS apps only while no driver is configured', () => {
+test('notes hosted apps only while no driver is configured', () => {
   expect(hostedAgentDriverFinding(undefined, 1)).toMatchObject({
     level: 'note',
-    title: 'A hosted macOS app runs with no agent driver',
+    title: 'A hosted app runs with no agent driver',
     fix: expect.stringContaining('hosting.agentDriver agent-device'),
   });
-  expect(hostedAgentDriverFinding('none', 2)?.title).toBe('2 hosted macOS apps run with no agent driver');
+  expect(hostedAgentDriverFinding('none', 2)?.title).toBe('2 hosted apps run with no agent driver');
   expect(hostedAgentDriverFinding('none', 0)).toBeNull();
   expect(hostedAgentDriverFinding('agent-device', 3)).toBeNull();
 });
@@ -63,15 +63,33 @@ describe('reading the journal', () => {
     writeFileSync(join(deviceHostRoot(), 'sessions.json'), JSON.stringify({ version: 1, sessions }));
   };
 
-  test('counts only ready macOS sessions whose app is installed', () => {
+  test('counts only ready hosted sessions whose app is installed', () => {
     expect(inspectHostedAgentDriver()).toBeNull();
     journal(session(1), session(2), session(3, { state: 'stopping' }), session(4, { appAttempt: undefined }));
     receipt(1, 'installed');
     receipt(2, 'installing');
     receipt(3, 'installed');
-    expect(inspectHostedAgentDriver()?.title).toBe('A hosted macOS app runs with no agent driver');
+    expect(inspectHostedAgentDriver()?.title).toBe('A hosted app runs with no agent driver');
     receipt(2, 'installed');
-    expect(inspectHostedAgentDriver()?.title).toBe('2 hosted macOS apps run with no agent driver');
+    expect(inspectHostedAgentDriver()?.title).toBe('2 hosted apps run with no agent driver');
+    journal(
+      session(1),
+      session(2),
+      session(3, {
+        platform: 'ios',
+        appSlot: undefined,
+        device: {
+          udid: '12345678-1234-1234-1234-123456789abc',
+          name: 'iPhone',
+          deviceType: 'iPhone',
+          runtime: '27.0',
+          runtimeId: 'ios27',
+          deviceTypeId: 'iphone',
+          architecture: 'arm64',
+        },
+      }),
+    );
+    expect(inspectHostedAgentDriver()?.title).toBe('3 hosted apps run with no agent driver');
   });
 
   test('stays quiet when the setting names a driver or the journal is unreadable', () => {

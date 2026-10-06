@@ -58,3 +58,15 @@ test('public host facts exclude the host UDID and private transport fields', () 
     agent: placement.agent,
   });
 });
+
+test('agent access survives placement reads and status without a token or local device target', () => {
+  const agent = {
+    driver: 'agent-device',
+    remoteConfig: '/tmp/remote.json',
+    command: 'agent-device <command> --remote-config /tmp/remote.json',
+  };
+  const parsed = parseHostedIosPlacement({ ...placement, agent })!;
+  expect(parsed.agent).toEqual(agent);
+  expect(hostedIosStatus(parsed).agent).toEqual(agent);
+  expect(JSON.stringify(hostedIosStatus(parsed))).not.toContain(placement.device.udid);
+});

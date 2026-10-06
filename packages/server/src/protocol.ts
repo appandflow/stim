@@ -130,14 +130,24 @@ export function protocolJsonSchema(): JsonSchema {
                     type: 'object',
                     required: ['tenant', 'runId', 'clientId', 'deviceKey'],
                     additionalProperties: false,
+                    oneOf: [
+                      {
+                        required: ['backend'],
+                        properties: { deviceKey: { pattern: '^ios:mobile:[a-fA-F0-9-]{36}$' } },
+                      },
+                      {
+                        not: { required: ['backend'] },
+                        properties: {
+                          deviceKey: { pattern: '^[A-Za-z0-9_-]+(?:\\.[A-Za-z0-9_-]+)+@[1-9][0-9]{0,9}$' },
+                        },
+                      },
+                    ],
                     properties: {
                       tenant: { type: 'string', pattern: '^[A-Za-z0-9._-]{1,128}$' },
                       runId: { type: 'string', pattern: '^[A-Za-z0-9._-]{1,128}$' },
                       clientId: { type: 'string', pattern: '^[A-Za-z0-9._-]{1,128}$' },
-                      deviceKey: {
-                        type: 'string',
-                        pattern: '^[A-Za-z0-9_-]+(?:\\.[A-Za-z0-9_-]+)+@[1-9][0-9]{0,9}$',
-                      },
+                      backend: { const: 'ios-instance' },
+                      deviceKey: { type: 'string' },
                     },
                   },
                 },

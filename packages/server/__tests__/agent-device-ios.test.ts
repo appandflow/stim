@@ -1,0 +1,288 @@
+import { EventEmitter } from 'node:events';
+import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import type { IncomingMessage, ServerResponse } from 'node:http';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { PassThrough, Readable } from 'node:stream';
+import { createHash } from 'node:crypto';
+import { readClaimSet } from '@stim-cli/core/ownership-claim';
+import { parseHostedAgentGrant } from '@stim-cli/core/state';
+import { AgentDeviceDriver } from '../src/agent-device-driver.ts';
+
+const fixture = vi.hoisted(() => ({
+  policy: true,
+  backend: true,
+  proxyStopped: true,
+  calls: [] as { path: string; body: string; headers: Record<string, string> }[],
+}));
+
+vi.mock('@stim-cli/core/process-identity', async (original) => {
+  const actual = await original<typeof import('@stim-cli/core/process-identity')>();
+  return {
+    ...actual,
+    captureProcessIdentity: (pid: number) =>
+      [777777, 777778].includes(pid) ? { ok: true, token: 'fixture-process' } : actual.captureProcessIdentity(pid),
+    inspectProcessIdentity: (record: Parameters<typeof actual.inspectProcessIdentity>[0]) =>
+      record?.pid === 777778 && !fixture.proxyStopped
+        ? 'unknown'
+        : record && typeof record.pid === 'number' && [777777, 777778].includes(record.pid)
+          ? 'gone'
+          : actual.inspectProcessIdentity(record),
+    waitForProcessExit: () => Promise.resolve(fixture.proxyStopped),
+  };
+});
+
+vi.mock('node:child_process', async (original) => ({
+  ...(await original<typeof import('node:child_process')>()),
+  spawn: (_command: string, _args: string[], options: { env: NodeJS.ProcessEnv }) => {
+    const policy = JSON.parse(readFileSync(options.env.AGENT_DEVICE_DAEMON_POLICY!, 'utf8'));
+    const canonical = JSON.stringify({
+      devices: policy.devices.allow.map((device: { udid: string }) => device.udid),
+      commands: { mode: 'allow', names: policy.commands.allow.toSorted() },
+      capabilities: policy.capabilities.deny,
+    });
+    const file = options.env.AGENT_DEVICE_DAEMON_POLICY!.replace('policy.json', 'daemon.json');
+    writeFileSync(
+      file,
+      JSON.stringify({
+        pid: 777777,
+        httpPort: 4311,
+        token: 'daemon-private',
+        policyDigest: fixture.policy ? createHash('sha256').update(canonical).digest('hex') : 'different',
+      }),
+    );
+    const child = Object.assign(new EventEmitter(), {
+      pid: 777778,
+      stdout: new PassThrough(),
+      stderr: new PassThrough(),
+    });
+    queueMicrotask(() => child.stdout.write('Proxy listening at http://127.0.0.1:4310\n'));
+    return child;
+  },
+  execFile: (...args: unknown[]) => (args.at(-1) as () => void)(),
+}));
+
+vi.mock('node:http', async (original) => ({
+  ...(await original<typeof import('node:http')>()),
+  request: (
+    options: { path: string; headers: Record<string, string> },
+    answer: (response: IncomingMessage) => void,
+  ) => {
+    const request = Object.assign(new EventEmitter(), {
+      end: (body?: Buffer) => {
+        fixture.calls.push({ path: options.path, body: body?.toString() ?? '', headers: options.headers });
+        const data =
+          options.path === '/health'
+            ? { upstream: { leaseBackends: fixture.backend ? ['ios-instance'] : [] } }
+            : { forwarded: true };
+        queueMicrotask(() =>
+          answer(
+            Object.assign(Readable.from([JSON.stringify(data)]), { statusCode: 200, headers: {} }) as IncomingMessage,
+          ),
+        );
+      },
+      destroy: () => {},
+    });
+    return request;
+  },
+}));
+
+const SESSION = '11111111-1111-4111-8111-111111111111';
+const UDID = '22222222-2222-4222-8222-222222222222';
+let home: string;
+let driver: AgentDeviceDriver;
+
+beforeEach(() => {
+  home = mkdtempSync(join(tmpdir(), 'stim-ios-agent-'));
+  process.env.STIM_HOME = home;
+  const bin = join(home, 'agent-device.mjs');
+  writeFileSync(bin, '');
+  fixture.policy = true;
+  fixture.backend = true;
+  fixture.proxyStopped = true;
+  fixture.calls = [];
+  driver = new AgentDeviceDriver({
+    env: { STIM_AGENT_DEVICE_BIN: bin },
+    stateDir: join(home, 'agent'),
+    claimRoot: join(home, 'claims'),
+    ios: { session: SESSION, udid: UDID },
+  });
+});
+
+afterEach(async () => {
+  await driver.stop();
+  delete process.env.STIM_HOME;
+  rmSync(home, { recursive: true, force: true });
+});
+
+async function rpc(params: object, method = 'agent_device.command', path = '/rpc') {
+  const request = Object.assign(Readable.from([Buffer.from(JSON.stringify({ id: 4, method, params }))]), {
+    url: `/device-host/agent/${SESSION}${path}`,
+    method: 'POST',
+    headers: { authorization: 'Bearer client-private' },
+  });
+  const response = Object.assign(new PassThrough(), {
+    statusCode: 0,
+    writeHead(status: number) {
+      this.statusCode = status;
+      return this;
+    },
+  });
+  let text = '';
+  response.on('data', (chunk: Buffer) => {
+    text += chunk.toString();
+  });
+  const done = new Promise<void>((resolve) => response.once('finish', resolve));
+  driver.forward(SESSION, request as IncomingMessage, response as unknown as ServerResponse);
+  await done;
+  return { status: response.statusCode, text };
+}
+
+async function start() {
+  await driver.start();
+  return driver.issue({ client: 'c', session: SESSION, udid: UDID, bundleId: 'dev.app' });
+}
+
+test('starts with exactly one simulator policy, requires its digest and allocates no macOS admin lease', async () => {
+  const grant = await start();
+  expect(parseHostedAgentGrant(grant)).toEqual(grant);
+  expect(grant).toMatchObject({ lease: { deviceKey: `ios:mobile:${UDID}`, backend: 'ios-instance' } });
+  const policy = JSON.parse(readFileSync(join(home, 'agent', 'policy.json'), 'utf8'));
+  expect(policy.devices).toEqual({ allow: [{ udid: UDID }] });
+  expect(policy.capabilities).toEqual({ deny: ['device-shutdown'] });
+  expect(policy).not.toHaveProperty('leases');
+  expect(statSync(join(home, 'agent', 'policy.json')).mode & 0o777).toBe(0o600);
+  expect(fixture.calls.map((call) => call.path)).toEqual(['/health']);
+  await expect(driver.issue({ client: 'c', session: UDID, udid: UDID, bundleId: 'dev.app' })).rejects.toThrow(
+    'another hosted simulator',
+  );
+  await driver.stop();
+  expect(readClaimSet(join(home, 'claims')).live).toHaveLength(0);
+});
+
+test.each(['policy', 'backend'] as const)('grants nothing when the daemon lacks the required %s', async (missing) => {
+  fixture[missing] = false;
+  await expect(driver.start()).rejects.toThrow(/requires agent-device/);
+  expect(readClaimSet(join(home, 'claims')).live).toHaveLength(0);
+});
+
+test('keeps the daemon claim until both its proxy and daemon are proven stopped', async () => {
+  await start();
+  fixture.proxyStopped = false;
+  await expect(driver.stop()).rejects.toThrow('proxy is unresolved');
+  expect(readClaimSet(join(home, 'claims')).live).toHaveLength(1);
+  fixture.proxyStopped = true;
+  await driver.stop();
+  expect(readClaimSet(join(home, 'claims')).live).toHaveLength(0);
+});
+
+test('pins automatic iOS lease allocation and every batch step to the simulator and tenant', async () => {
+  await start();
+  const allocated = await rpc(
+    {
+      tenantId: 'foreign',
+      runId: 'other',
+      backend: 'macos-app',
+      deviceKey: 'other',
+      provider: 'limrun',
+      ttlMs: 300000,
+    },
+    'agent_device.lease.allocate',
+  );
+  expect(allocated.status).toBe(200);
+  expect(JSON.parse(fixture.calls.at(-1)!.body).params).toEqual({
+    tenantId: `stim.${SESSION}`,
+    runId: SESSION,
+    clientId: 'agent',
+    deviceKey: `ios:mobile:${UDID}`,
+    leaseProvider: 'proxy',
+    backend: 'ios-instance',
+    ttlMs: 300000,
+  });
+  await rpc({
+    command: 'batch',
+    runtime: { launchUrl: 'file:///etc' },
+    internal: { publicNetworkOnly: false },
+    meta: { requestId: 'r', cwd: '/host', tenantId: 'other', leaseId: 'client-lease' },
+    flags: {
+      platform: 'macos',
+      batchSteps: [
+        { command: 'open', positionals: ['dev.app'], runtime: { bundleUrl: '/host' } },
+        { command: 'click', positionals: ['e1'] },
+      ],
+    },
+  });
+  const forwarded = JSON.parse(fixture.calls.at(-1)!.body).params;
+  expect(forwarded.runtime).toBeUndefined();
+  expect(forwarded.internal).toBeUndefined();
+  expect(forwarded.meta).toEqual({
+    requestId: 'r',
+    leaseId: 'client-lease',
+    tenantId: `stim.${SESSION}`,
+    runId: SESSION,
+    clientId: 'agent',
+    deviceKey: `ios:mobile:${UDID}`,
+    leaseProvider: 'proxy',
+    leaseBackend: 'ios-instance',
+    sessionIsolation: 'tenant',
+  });
+  expect(forwarded.flags).toMatchObject({
+    platform: 'ios',
+    udid: UDID,
+    batchSteps: [{ flags: { platform: 'ios', udid: UDID } }, { flags: { platform: 'ios', udid: UDID } }],
+  });
+  expect(forwarded.flags.batchSteps[0]).not.toHaveProperty('runtime');
+  expect(fixture.calls.at(-1)!.headers).toMatchObject({ 'x-agent-device-tenant': `stim.${SESSION}` });
+  expect(fixture.calls.at(-1)!.headers.authorization).not.toContain('client-private');
+});
+
+test.each([
+  { command: 'devices' },
+  { command: 'install' },
+  { command: 'reinstall' },
+  { command: 'uninstall' },
+  { command: 'install-from-source' },
+  { command: 'push' },
+  { command: 'boot' },
+  { command: 'shutdown' },
+  { command: 'close', flags: { shutdown: true } },
+  { command: 'snapshot', flags: { udid: UDID } },
+  { command: 'snapshot', flags: { udid: SESSION } },
+  { command: 'snapshot', flags: { serial: 'foreign' } },
+  { command: 'screenshot', positionals: ['/host/file.png'] },
+  { command: 'open', positionals: ['https://host/'] },
+  { command: 'open', flags: { launchConsole: '/host/console' } },
+  { command: 'snapshot', input: { developerDir: '/host' } },
+  {
+    command: 'batch',
+    flags: {
+      batchSteps: [
+        { command: 'click' },
+        { command: 'batch', input: { batchSteps: [{ command: 'screenshot', flags: { out: '/host/file' } }] } },
+      ],
+    },
+  },
+])('refuses unsafe requests before any step reaches the daemon: %j', async (params) => {
+  await start();
+  fixture.calls = [];
+  expect((await rpc(params)).status).toBe(400);
+  expect(fixture.calls).toEqual([]);
+});
+
+test('allows screenshot artifacts but refuses uploads and stops forwarding after revoke', async () => {
+  await start();
+  expect(
+    (
+      await rpc({
+        command: 'screenshot',
+        flags: { out: '/tmp/agent-device-screenshot-123-ab12.png' },
+        positionals: ['/tmp/agent-device-screenshot-123-ab12.png'],
+      })
+    ).status,
+  ).toBe(200);
+  fixture.calls = [];
+  expect((await rpc({}, 'agent_device.command', '/upload')).status).toBe(404);
+  await driver.revoke(SESSION);
+  expect((await rpc({ command: 'snapshot' })).status).toBe(503);
+  expect(fixture.calls).toEqual([]);
+});

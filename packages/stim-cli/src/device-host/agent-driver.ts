@@ -7,17 +7,18 @@ export function hostedAgentDriverFinding(driver: unknown, apps: number): Finding
   return {
     code: 'hosted-agent-driver',
     level: 'note',
-    title: `${apps === 1 ? 'A hosted macOS app runs' : `${apps} hosted macOS apps run`} with no agent driver`,
+    title: `${apps === 1 ? 'A hosted app runs' : `${apps} hosted apps run`} with no agent driver`,
     detail:
-      "The client's coding agent cannot drive these apps because `hosting.agentDriver` is none, so stim-server starts no driver. agent-device starts only when its daemon offers the macos-app lease, which limits a client to one app.",
-    fix: 'stim settings set hosting.agentDriver agent-device, with an agent-device that offers the macos-app lease',
+      "The client's coding agent cannot drive these apps because `hosting.agentDriver` is none, so stim-server starts no driver. agent-device confines macOS control to one macos-app lease and iOS control to one simulator through its daemon policy.",
+    fix: 'stim settings set hosting.agentDriver agent-device, with agent-device 0.21.20 or later',
   };
 }
 
-function runningHostedMacosApps(): number {
+function runningHostedApps(): number {
   try {
     return readHostedSessions().filter((session) => {
-      if (session.platform !== 'macos' || session.state !== 'ready' || !session.appAttempt) return false;
+      if (!['macos', 'ios'].includes(session.platform) || session.state !== 'ready' || !session.appAttempt)
+        return false;
       try {
         return readHostedAppMetadata(session.id, session.appAttempt).state === 'installed';
       } catch {
@@ -29,8 +30,8 @@ function runningHostedMacosApps(): number {
   }
 }
 
-/** Notes installed hosted macOS apps on this Mac while `hosting.agentDriver` starts no driver. */
+/** Notes installed hosted macOS and iOS apps on this Mac while `hosting.agentDriver` starts no driver. */
 export function inspectHostedAgentDriver(): Finding | null {
   const hosting = loadConfig()?.hosting;
-  return hostedAgentDriverFinding(isJsonObject(hosting) ? hosting.agentDriver : undefined, runningHostedMacosApps());
+  return hostedAgentDriverFinding(isJsonObject(hosting) ? hosting.agentDriver : undefined, runningHostedApps());
 }

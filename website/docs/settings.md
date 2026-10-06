@@ -330,14 +330,12 @@ or forgets names removed from the setting. A concurrent approval inspection
 reports `busy` instead of rotating a pending token.
 
 On a hosting Mac, `hosting.agentDriver` names the tool it starts so a client's
-coding agent can drive the macOS apps it hosts for that client. The default,
-`none`, starts nothing. `agent-device` starts its daemon only when that
-agent-device can lease a single macOS app (its `macos-app` lease backend);
+coding agent can drive the macOS apps and iOS simulators it hosts for that client. The default,
+`none`, starts nothing. For macOS, `agent-device` starts its shared daemon only when it
+can lease a single app (its `macos-app` lease backend);
 otherwise agent control reports `none` with a notice, and no client is handed
 the Mac's desktop. `STIM_AGENT_DEVICE_BIN` in `stim-server`'s environment names
-an agent-device binary to use instead of `~/.local/bin/agent-device`.
-`stim doctor` on that Mac notes a hosted macOS app that runs while the setting
-is `none`.
+an agent-device binary to use instead of `~/.local/bin/agent-device`. Hosted iOS uses one daemon per session, pinned to its simulator UDID by the daemon policy. Both Macs need agent-device 0.21.20 or later. `doctor` counts installed hosted iOS and macOS apps with no driver. See [hosted iOS](./owned-devices.md#run-ios-on-another-mac).
 
 `offload.machines` lists the Macs on your tailnet that may build for this one,
 by MagicDNS name (`janics-mac-mini`), optionally with the port of their

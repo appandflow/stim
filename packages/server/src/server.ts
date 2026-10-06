@@ -8,6 +8,7 @@ import { WebSocketServer, type WebSocket } from 'ws';
 import { configDir } from '@stim-cli/core';
 import {
   archiveDir,
+  deviceHostArea,
   readArchive,
   queryJsonLogs,
   isJsonObject,
@@ -630,6 +631,15 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
             env: options.env,
             stateDir: join(serverDir(), 'agent-device'),
             claimRoot: join(serverDir(), 'agent-device.claims'),
+          })
+        : null,
+    resolveIos: (app) =>
+      loadConfig()?.hosting?.agentDriver === 'agent-device'
+        ? new AgentDeviceDriver({
+            env: options.env,
+            stateDir: join(deviceHostArea(app.session), 'agent-device'),
+            claimRoot: join(deviceHostArea(app.session), 'agent-device.claims'),
+            ios: { session: app.session, udid: app.udid },
           })
         : null,
     nodeOf: (client) => {

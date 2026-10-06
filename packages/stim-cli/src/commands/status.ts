@@ -182,6 +182,8 @@ function iosStatusLines(record: EnvironmentState['ios'], slotLabel: string): str
     out.push(
       `  ios${slotLabel}: ${chalk.cyan(iosStatusName(ios))} ${booted}${owned}${activitySuffix(ios.activity)}${appSuffix(ios.app)}${idleShutdownSuffix(ios.idleShutdown)}`,
     );
+    if (!ios.udid && ios.host?.agent.driver === 'agent-device')
+      out.push(chalk.dim(`    agent: ${ios.host.agent.command}`));
   }
   return out;
 }

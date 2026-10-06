@@ -40,7 +40,9 @@ For ios --remote <machine>, read guide lifecycle hosted-ios. Stop before switchi
 between a local simulator and a hosting Mac. Hosted Debug requires the local
 Metro supervisor; restart a missing or older one with stim stop; stim start.
 It never falls back here; stop reconciles the recorded host before changing placement.
-Hosted iOS agent control is not available yet; do not use its UDID locally.
+For hosted iOS, use agent-device <command> --remote-config <file> from ios.host.agent
+in stim status --json. Open the installed app first; never use the host UDID locally.
+See guide lifecycle hosted-ios for the agent policy and setup.
 
 When driving a device yourself with agent-device, set AGENT_DEVICE_STATE_DIR
 from agentDevice.stateDir in stim ios|android|macos --json or status --json.

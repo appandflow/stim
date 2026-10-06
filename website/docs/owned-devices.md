@@ -664,17 +664,65 @@ rotation and the postures reported by the host. Hosted viewing has no replay,
 Duo frame rendering or physical-device target. A stopped session shows a rerun
 command; an unavailable host reports the connection failure.
 
-Native logs, agent leases, app handoff and upload
-deduplication are later work. JavaScript logs already reach Metro. The agent
-reports `driver: 'none'`. `devices.idleShutdownMinutes` does not stop hosted
+Native logs, app handoff and upload deduplication are later work. JavaScript logs already reach Metro. `devices.idleShutdownMinutes` does not stop hosted
 simulators in this phase; their recorded sessions prevent Metro idle stop.
+
+For agent control, set `hosting.agentDriver` to `agent-device` on the hosting Mac.
+Both Macs need agent-device **0.21.20 or later**, with the daemon policy and remote-config contract.
+The host starts one loopback daemon per installed session, under an ownership claim
+whose child is that daemon. Its policy allows exactly the session's simulator UDID and
+refuses shutdown. Stop, close, revocation, reinstall and host restart stop the daemon
+and invalidate its grant. An unexpected exit restarts only that session; rerun
+`stim ios` to refresh the rotated grant.
+An unresolved proxy or daemon retains its claim and blocks reinstall and native
+teardown. Clear a named claim only after proving its owner and child are gone.
+
+`ios.host.agent` reports `driver`, `remoteConfig` and `command`. Plain status prints
+`agent: <command>`. Each slot has its own 0600 config under the workspace's Stim
+state directory; tokens never appear in placement or status. Use that file:
+
+```bash
+agent-device open <bundleId> --remote-config <file>
+agent-device snapshot --remote-config <file>
+agent-device click <ref> --remote-config <file>
+agent-device screenshot --remote-config <file>
+```
+
+The command shape is `agent-device <command> --remote-config <file>`. `open`
+automatically allocates an `ios-instance` lease through the `proxy` provider in
+this session's tenant. The config contains `daemonBaseUrl`, `daemonAuthToken`,
+`tenant`, `sessionIsolation`, `runId`, `clientId`, `deviceKey`, `leaseBackend`,
+`leaseProvider` and `platform`, with no preallocated `leaseId`. `close` releases
+the lease. `stim stop` closes the matching connection and removes that slot's
+config once the host confirms stop or revocation. An unreachable host keeps the
+config and placement for retry.
+
+Allowed commands are `open`, `close`, `snapshot`, `diff`, `wait`, `find`, `get`,
+`is`, `click`, `fill`, `press`, `type`, `focus`, `scroll`, `screenshot`,
+`longpress`, `swipe`, `back`, `home`, `rotate`, `appstate`, `alert` and `batch`.
+They inspect and interact with the simulator and its installed apps. `devices`,
+device selectors, boot/shutdown/erase, installs, uninstall, uploads, `push`,
+`record`, `logs`, `network`, `perf`, `trace`, `clipboard` and `settings` are
+refused. Stim installs the app; agents cannot enumerate the host or write its
+files. Host paths and launch inputs (`--out`, baseline, launchConsole, cwd,
+developerDir, installSource and similar fields) are refused, including within
+batch steps. Runtime hints are dropped and only reporting/artifact metadata is
+forwarded. Screenshots accept agent-device's generated remote temp artifact,
+which the client downloads, rather than arbitrary host destinations.
+
+If the setting is `none`, the daemon cannot enforce the policy, or the host
+lacks the `hosted-ios-agent` hello feature, agent access stays
+`{ driver: 'none', setting: 'hosting.agentDriver' }`. Update the host and check
+its agent-device installation and setting. This never grants another device.
 
 Copy this prompt into your coding agent:
 
 ```text
 Run this workspace's iOS app on janics-mac-mini with stim ios --remote janics-mac-mini.
 Use the host's offered simulator architecture, keep Metro here, report launch evidence
-and status, and run stim stop when finished. If the host refuses, report its reason.
+and status. Read ios.host.agent from stim status --json, open the app with
+agent-device open <bundleId> --remote-config <file>, then snapshot and click through
+that config. Run stim stop when finished. If the host refuses, report its reason.
 ```
 
 ## Paired Mac hosting approval

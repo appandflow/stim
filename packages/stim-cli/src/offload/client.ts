@@ -250,7 +250,10 @@ export class BuildConnection {
   private readonly keepalive: NodeJS.Timeout;
   private readonly socket: WebSocket;
 
-  private constructor(socket: WebSocket) {
+  readonly features: readonly string[];
+
+  private constructor(socket: WebSocket, features: readonly string[] = []) {
+    this.features = features;
     this.socket = socket;
     closeOnExit(socket);
     this.keepalive = setInterval(() => {
@@ -347,7 +350,13 @@ export class BuildConnection {
             'forbidden',
           );
         }
-        resolve(new BuildConnection(socket));
+        const features = isJsonObject(reply) && isJsonObject(reply.result) ? reply.result.features : null;
+        resolve(
+          new BuildConnection(
+            socket,
+            Array.isArray(features) ? features.filter((feature): feature is string => typeof feature === 'string') : [],
+          ),
+        );
       });
     });
   }
