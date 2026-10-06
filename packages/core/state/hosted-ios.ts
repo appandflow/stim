@@ -51,7 +51,7 @@ export function hostedIosStatus(placement: HostedIosPlacement): HostedIosStatus 
     session: placement.session,
     selected: placement.selected,
     agent: placement.agent,
-    device: placement.device ? { name: placement.device.name, runtime: placement.device.runtime } : null,
+    device: placement.device ? { name: placement.device.deviceType, runtime: placement.device.runtime } : null,
   };
 }
 

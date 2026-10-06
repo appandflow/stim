@@ -141,7 +141,7 @@ const WATCH_GIT_MAX_AGE_MS = 60_000;
 function iosStatusName(ios: NonNullable<EnvironmentState['ios']>): string {
   const host = ios.host;
   return host
-    ? `${host.device?.name ?? 'iOS simulator'} (${host.device?.runtime ?? 'runtime pending'}) on ${host.machine}`
+    ? `${host.device?.name ?? 'iOS simulator'} (${host.device ? `iOS ${host.device.runtime}` : 'runtime pending'}) on ${host.machine}`
     : (ios.name ?? ios.udid);
 }
 

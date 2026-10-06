@@ -50,7 +50,7 @@ export async function finishHostedIosRun({
   note: (line: string) => void;
   selectors: HostedDeviceSelectors;
 }): Promise<IosRunCompletion | null> {
-  const bundleId = artifact.bundleId;
+  const bundleId = artifact.bundleId ?? (d.readBundleId(artifact.path) || d.detectBundleId(root));
   if (!bundleId) return fail({ code: 'STIM_INSTALL_FAILED', message: 'The built app has no bundle identifier.' });
   const launchedAt = d.now();
   let run;
@@ -121,7 +121,7 @@ export async function finishHostedIosRun({
     metroCheck,
     metroPort,
     logsDir,
-    device: { deviceName: device.name, deviceType: device.deviceType, runtime: device.runtime },
+    device: { deviceName: device.deviceType, deviceType: device.deviceType, runtime: device.runtime },
     udid: '',
     host: hostedIosStatus(run.placement),
     appPath: artifact.path,
