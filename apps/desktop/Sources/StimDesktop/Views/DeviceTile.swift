@@ -889,7 +889,7 @@ private struct DeviceControlButtonStyle: ButtonStyle {
 
   func makeBody(configuration: Configuration) -> some View {
     configuration.label
-      .font(.system(size: 16, weight: .regular))
+      .iconFont(IconSize.medium, weight: .regular)
       .foregroundStyle(Palette.text)
       .frame(width: 32, height: 32)
       .background(Palette.text.opacity(active ? Opacity.pressed : 0), in: Capsule())

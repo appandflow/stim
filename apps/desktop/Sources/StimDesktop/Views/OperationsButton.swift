@@ -21,7 +21,7 @@ struct OperationsButton: View {
             ProgressView().controlSize(.mini).scaleEffect(0.8).frame(width: 14, height: 14)
             Text("\(running)").textStyle(.caption2, weight: .medium)
           } else {
-            Image(systemName: "clock.arrow.circlepath").font(.system(size: 12, weight: .medium))
+            Image(systemName: "clock.arrow.circlepath").iconFont(IconSize.control, weight: .medium)
           }
         }
         .padding(.horizontal, running > 0 ? Space.sm : 0)

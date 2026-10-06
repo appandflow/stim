@@ -47,7 +47,7 @@ struct ViewOptionsButton: View {
       isPresented.toggle()
     } label: {
       Image(systemName: "slider.horizontal.3")
-        .font(.system(size: 13, weight: .medium))
+        .iconFont(IconSize.regular, weight: .medium)
         .frame(width: 28, height: 24)
         .overlay(alignment: .topTrailing) {
           if differs {
@@ -282,13 +282,13 @@ private struct MenuRow: View {
         Text(value).foregroundStyle(Palette.secondary).lineLimit(1)
       case .check(let on):
         Image(systemName: "checkmark")
-          .font(.system(size: 11, weight: .semibold))
+          .iconFont(IconSize.small, weight: .semibold)
           .foregroundStyle(Palette.primary)
           .opacity(on ? 1 : 0)
       }
       if item.submenu != nil {
         Image(systemName: "chevron.right")
-          .font(.system(size: 10, weight: .semibold))
+          .iconFont(IconSize.compact, weight: .semibold)
           .foregroundStyle(Palette.tertiary)
       }
     }

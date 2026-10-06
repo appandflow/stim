@@ -63,7 +63,7 @@ struct PhaseChecklist: View {
       if !steps.contains(where: { $0.phase == "cache-lookup" }), let outcome = cacheOutcome {
         HStack(spacing: Space.sm) {
           Image(systemName: "checkmark.circle.fill").foregroundStyle(Palette.success)
-            .font(.system(size: 11))
+            .iconFont(IconSize.small)
           Text("Cache lookup").font(.stim(.footnote)).foregroundStyle(Palette.text)
           Pill(outcome == "hit" ? "Hit" : "Miss", tone: outcome == "hit" ? .success : .warning, size: .small)
         }
@@ -86,7 +86,7 @@ struct PhaseChecklist: View {
           Spacer(minLength: Space.sm)
           Text(timing(step)).font(.stim(.caption)).foregroundStyle(Palette.tertiary).monospacedDigit()
         }
-        .font(.system(size: 11))
+        .iconFont(IconSize.small)
       }
     }
   }

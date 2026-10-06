@@ -98,7 +98,7 @@ struct Sidebar: View {
         SidebarLabel(title: "Machines", icon: "internaldrive", selected: selection == .machine)
         Spacer()
         if autopilot.pressure != nil {
-          Image(systemName: "exclamationmark.circle.fill").font(.system(size: 11)).foregroundStyle(Palette.warning)
+          Image(systemName: "exclamationmark.circle.fill").iconFont(IconSize.small).foregroundStyle(Palette.warning)
             .help("Free disk is under the Stim budget")
             .accessibilityLabel("Free disk is under the Stim budget")
         }

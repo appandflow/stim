@@ -339,7 +339,7 @@ private struct DeviceRow: View {
 
   var body: some View {
     HStack(spacing: Space.lg) {
-      Image(systemName: "iphone").font(.system(size: 18)).foregroundStyle(Palette.accent)
+      Image(systemName: "iphone").iconFont(IconSize.large).foregroundStyle(Palette.accent)
       VStack(alignment: .leading, spacing: Space.xxs) {
         HStack(spacing: Space.sm) {
           Text(device.name).font(.stim(.body, weight: .semibold))
@@ -376,7 +376,7 @@ private struct BuildClientRow: View {
 
   var body: some View {
     HStack(spacing: Space.lg) {
-      Image(systemName: "desktopcomputer").font(.system(size: 18)).foregroundStyle(Palette.accent)
+      Image(systemName: "desktopcomputer").iconFont(IconSize.large).foregroundStyle(Palette.accent)
       VStack(alignment: .leading, spacing: Space.xxs) {
         HStack(spacing: Space.sm) {
           Text(verbatim: device.name).font(.stim(.body, weight: .semibold)).lineLimit(1)

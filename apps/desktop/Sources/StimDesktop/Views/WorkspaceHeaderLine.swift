@@ -178,14 +178,14 @@ struct GitChipButton: View {
         HStack(spacing: Space.xs + 1) {
           if let pull = chip.pullRequest {
             Text(pull.text).font(.stim(.caption, weight: .semibold)).foregroundStyle(Color(pull.tone))
-            if let checks = pull.checks { ChecksMark(checks: checks).font(.system(size: 9, weight: .bold)) }
+            if let checks = pull.checks { ChecksMark(checks: checks).iconFont(IconSize.indicator, weight: .bold) }
           } else {
             Image(systemName: "arrow.triangle.branch").foregroundStyle(Palette.secondary)
           }
           ForEach(chip.parts, id: \.text) { part in
             Text(part.text).foregroundStyle(Color(part.tone)).monospacedDigit()
           }
-          Image(systemName: "chevron.down").font(.system(size: 8, weight: .semibold)).foregroundStyle(Palette.tertiary)
+          Image(systemName: "chevron.down").iconFont(IconSize.micro, weight: .semibold).foregroundStyle(Palette.tertiary)
         }
         .font(.stim(.caption))
         .lineLimit(1)
@@ -252,7 +252,7 @@ struct GitPopover: View {
         Text(pull.title).fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
         if let checks = GitChip.checks(pull.checks) {
           HStack(spacing: Space.sm) {
-            ChecksMark(checks: checks).font(.system(size: 10, weight: .bold))
+            ChecksMark(checks: checks).iconFont(IconSize.compact, weight: .bold)
             Text("Checks: \(GitChip.checksSummary(pull.checks) ?? "none")").foregroundStyle(Palette.secondary)
           }
         }
@@ -288,7 +288,7 @@ struct UsageFigures: View {
 
   private func figure(_ icon: String, _ value: String, help: String, minor: Bool = false) -> some View {
     HStack(spacing: Space.xs + 1) {
-      Image(systemName: icon).font(.system(size: 10)).foregroundStyle(Palette.secondary).frame(width: 14)
+      Image(systemName: icon).iconFont(IconSize.compact).foregroundStyle(Palette.secondary).frame(width: 14)
       Text(value)
         .font(.stim(.footnote))
         .foregroundStyle(minor ? Palette.secondary : Palette.text)
@@ -335,7 +335,7 @@ struct PlatformGlyph: View {
           .offset(y: -1)
       } else if platform == "macos" || platform == "web" {
         Image(systemName: platform == "macos" ? "laptopcomputer" : "globe")
-          .font(.system(size: size, weight: .medium)).foregroundStyle(color)
+          .iconFont(size, weight: .medium).foregroundStyle(color)
       } else {
         AndroidHead().fill(color, style: FillStyle(eoFill: true)).frame(width: size * 1.1, height: size * 0.93)
       }

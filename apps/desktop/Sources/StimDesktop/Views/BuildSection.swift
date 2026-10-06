@@ -257,7 +257,7 @@ private struct BuildHistoryList: View {
       } label: {
         HStack(spacing: Space.sm) {
           Image(systemName: "chevron.right")
-            .font(.system(size: 11, weight: .semibold))
+            .iconFont(IconSize.small, weight: .semibold)
             .foregroundStyle(Palette.tertiary)
             .rotationEffect(.degrees(expanded ? 90 : 0))
             .frame(width: 12)

@@ -136,7 +136,7 @@ private struct NoticeCard: View {
     Button {
       center.step(offset)
     } label: {
-      Image(systemName: symbol).font(.system(size: 10, weight: .semibold)).foregroundStyle(Palette.tertiary)
+      Image(systemName: symbol).iconFont(IconSize.compact, weight: .semibold).foregroundStyle(Palette.tertiary)
     }
     .buttonStyle(.hoverRow(outset: Space.xs))
     .help(label)
