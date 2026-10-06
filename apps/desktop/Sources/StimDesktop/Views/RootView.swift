@@ -154,10 +154,6 @@ struct RootView: View {
     }
     .onAppear {
       store.start()
-      if let payload = store.payload {
-        notices.dismissCards(notIn: payload)
-        toasts.dismissCards(notIn: payload)
-      }
       openRequests.openMainWindow = { [openWindow] in openWindow(id: "main") }
     }
     .onDisappear { notices.removeAll() }
