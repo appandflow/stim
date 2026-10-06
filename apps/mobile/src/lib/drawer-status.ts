@@ -1,4 +1,4 @@
-import { t } from '@lingui/core/macro';
+import { plural, t } from '@lingui/core/macro';
 
 import type { ConnectionState } from '@/lib/connection';
 import type { UsageTone } from '@/lib/home';
@@ -31,11 +31,12 @@ const unreachableText = (machine: DrawerMachine): string => {
 /**
  * The drawer footer's one status line. Highest priority first: a paired machine that's disconnected or
  * reconnecting, a machine critically low on disk, a machine getting
- * low on disk, or else `normalText` (the app's version).
+ * low on disk, or else the paired machines' connection summary. Missing machines are ignored.
  */
-export function drawerStatus(machines: DrawerMachine[], normalText: string): DrawerStatus {
+export function drawerStatus(machines: DrawerMachine[]): DrawerStatus {
+  machines = machines.filter((m) => !m.missing);
   const unreachable = machines.find(
-    (m) => !m.missing && (m.state.kind === 'waiting' || m.state.kind === 'refused' || m.state.kind === 'closed'),
+    (m) => m.state.kind === 'waiting' || m.state.kind === 'refused' || m.state.kind === 'closed',
   );
   if (unreachable) return { text: unreachableText(unreachable), tone: 'warn', macId: null };
 
@@ -45,5 +46,13 @@ export function drawerStatus(machines: DrawerMachine[], normalText: string): Dra
   const warn = machines.find((m) => m.diskTone === 'warn');
   if (warn) return { text: lowDisk(warn.name), tone: 'warn', macId: warn.id };
 
-  return { text: normalText, tone: 'normal', macId: null };
+  const total = machines.length;
+  const offline = machines.filter((m) => m.state.kind !== 'open').length;
+  const text =
+    total === 0
+      ? t`No Macs paired`
+      : offline > 0
+        ? plural(total, { one: `# Mac, ${offline} offline`, other: `# Macs, ${offline} offline` })
+        : plural(total, { one: '# Mac connected', other: '# Macs connected' });
+  return { text, tone: 'normal', macId: null };
 }

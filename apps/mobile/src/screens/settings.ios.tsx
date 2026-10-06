@@ -30,6 +30,7 @@ import type { OversightCategory } from '@stim-cli/core/oversight';
 import { useRecordingSetting } from '@/hooks/recording-setting';
 import { useSettings } from '@/hooks/settings';
 import { pairingScope, type StimConnection } from '@/lib/connection';
+import { getRunningVersion } from '@/lib/running-version';
 import {
   appearanceOptions,
   homeViewOptions,
@@ -57,6 +58,7 @@ export function Settings() {
   const notifications = useNotificationPrefs();
   const rowModifiers = [listRowBackground(colors.raised)];
   const anyReadOnly = connections.some(({ state }) => pairingScope(state) === 'read');
+  const running = getRunningVersion();
 
   return (
     <Host style={{ flex: 1 }}>
@@ -146,7 +148,7 @@ export function Settings() {
               ))}
           </Section>
         ) : null}
-        <Section title={t`More`}>
+        <Section title={t`More`} footer={<Text>{`${running.version}\n${running.update}`}</Text>}>
           <LinkRow
             colors={colors}
             title={t`About Stim`}

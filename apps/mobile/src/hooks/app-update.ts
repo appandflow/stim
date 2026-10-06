@@ -4,16 +4,14 @@ import { Alert, AppState } from 'react-native';
 import * as Updates from 'expo-updates';
 
 import { updateCheckDue } from '@/lib/update-check';
+import { updateStatus } from '@/lib/update-status';
 
 export interface AppUpdateState {
-  /** Whether a downloaded update is waiting for a restart to apply. */
-  ready: boolean;
+  status: ReturnType<typeof updateStatus>;
 }
 
-/** Whether an EAS Update has downloaded and is waiting for a restart. */
 export function useAppUpdate(): AppUpdateState {
-  const { isUpdatePending } = Updates.useUpdates();
-  return { ready: isUpdatePending };
+  return { status: updateStatus(Updates.useUpdates()) };
 }
 
 /** Asks before restarting into the downloaded update, and reports a restart that fails. */
@@ -34,30 +32,30 @@ export function confirmRestartToUpdate(): void {
   ]);
 }
 
-async function downloadAvailableUpdate(): Promise<void> {
+let lastCheckedAt: number | null = null;
+let running = false;
+
+export async function checkForUpdateIfDue(): Promise<void> {
+  const now = Date.now();
+  if (!Updates.isEnabled || running || !updateCheckDue(lastCheckedAt, now)) return;
+  lastCheckedAt = now;
+  running = true;
   try {
     const result = await Updates.checkForUpdateAsync();
     if (result.isAvailable) await Updates.fetchUpdateAsync();
-  } catch {}
+  } catch {
+  } finally {
+    running = false;
+  }
 }
 
-/**
- * Downloads a published EAS Update in the background whenever the app returns to the foreground. expo-updates
- * checks on launch itself, so this covers a resumed process, which never launches again.
- */
 export function useForegroundUpdateCheck(): void {
   useEffect(() => {
     if (!Updates.isEnabled) return;
-    let lastCheckedAt: number | null = Date.now();
-    let running = false;
+    // expo-updates checks on launch, so foreground and drawer checks wait for the next interval.
+    lastCheckedAt = Date.now();
     const subscription = AppState.addEventListener('change', (state) => {
-      const now = Date.now();
-      if (state !== 'active' || running || !updateCheckDue(lastCheckedAt, now)) return;
-      lastCheckedAt = now;
-      running = true;
-      void downloadAvailableUpdate().then(() => {
-        running = false;
-      });
+      if (state === 'active') void checkForUpdateIfDue();
     });
     return () => subscription.remove();
   }, []);

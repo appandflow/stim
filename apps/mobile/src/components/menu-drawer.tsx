@@ -14,6 +14,7 @@ import { ReservedRegionsProvider, useReservedRegions } from 'react-native-reserv
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import { useLargeText } from '@/hooks/large-text';
+import { checkForUpdateIfDue } from '@/hooks/app-update';
 import { hapticFeedback } from '@/lib/haptics';
 import { sidebarOf } from '@/lib/sidebar';
 import { Menu } from '@/screens/menu';
@@ -56,6 +57,10 @@ function DrawerContent({ children, layout }: { children: ReactNode; layout: { wi
     backgroundColor: theme.colors.sidebar,
     transition: permanent && !reducedMotion ? `width ${PANE_TRANSITION}` : 'none',
   };
+
+  useEffect(() => {
+    if (open && !permanent) void checkForUpdateIfDue();
+  }, [open, permanent]);
 
   useEffect(() => {
     if (permanent || !open || !focused) return;
