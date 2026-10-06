@@ -8,13 +8,14 @@ import SwiftUI
 struct StatusDot: View {
   var color: Color
   var filled = true
+  var size: CGFloat = 7
   var label: String?
 
   var body: some View {
     let dot = Circle()
       .fill(filled ? color : .clear)
       .overlay(Circle().strokeBorder(filled ? .clear : color, lineWidth: 1))
-      .frame(width: 7, height: 7)
+      .frame(width: size, height: size)
     if let label {
       dot.accessibilityElement().accessibilityLabel(label)
     } else {

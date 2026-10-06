@@ -572,7 +572,7 @@ struct SidebarFooter: View {
 
   private func statusLabel(dot: Color, text: String) -> some View {
     HStack(spacing: Space.sm) {
-      Circle().fill(dot).frame(width: 6, height: 6)
+      StatusDot(color: dot, size: 6)
       Text(text).font(.stim(.footnote)).foregroundStyle(Palette.secondary).lineLimit(1)
     }
   }

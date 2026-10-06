@@ -299,7 +299,7 @@ struct BuildHistoryRow: View {
     Button(action: open) {
       VStack(alignment: .leading, spacing: 1) {
         HStack(alignment: .firstTextBaseline, spacing: Space.sm) {
-          Circle().fill(color).frame(width: 6, height: 6)
+          StatusDot(color: color, size: 6)
           Text(entry.outcome)
             .foregroundStyle(entry.result == "succeeded" ? Palette.secondary : color)
             .lineLimit(1)

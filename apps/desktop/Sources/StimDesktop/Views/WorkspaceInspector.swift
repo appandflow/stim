@@ -237,7 +237,7 @@ private struct DiskCard: View {
         VStack(spacing: Space.xs) {
           ForEach(breakdown.parts) { part in
             HStack(spacing: Space.sm) {
-              Circle().fill(color(part)).frame(width: 7, height: 7)
+              StatusDot(color: color(part))
               Text(breakdown.label(of: part))
               Spacer(minLength: Space.sm)
               Text(Format.fileSize(Int64(part.bytes))).monospacedDigit().foregroundStyle(Palette.secondary)

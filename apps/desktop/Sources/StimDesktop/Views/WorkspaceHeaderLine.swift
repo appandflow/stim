@@ -155,7 +155,7 @@ struct ChecksMark: View {
     switch checks {
     case .passing: Image(systemName: "checkmark").foregroundStyle(Palette.success)
     case .failing: Image(systemName: "xmark").foregroundStyle(Palette.error)
-    case .pending: Circle().fill(Palette.warning).frame(width: 6, height: 6)
+    case .pending: StatusDot(color: Palette.warning, size: 6)
     }
   }
 }
