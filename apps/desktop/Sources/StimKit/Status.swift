@@ -45,6 +45,7 @@ public struct UnprovisionedWorktree: Decodable, Hashable, Sendable {
 
 public struct Workspace: Decodable, Identifiable, Hashable, Sendable {
   public var path: String
+  public var platforms: [String]?
   public var live: Bool
   /// `warming`, `ready`, `live` or `idle`; absent from a `stim` that does not report lifecycle phases.
   public var phase: String?
@@ -89,7 +90,7 @@ public struct Workspace: Decodable, Identifiable, Hashable, Sendable {
   public var project: Project?
 
   enum CodingKeys: String, CodingKey {
-    case path, live, phase, phaseSince, warmStep, memoryMb, memorySource, warnings, issues, ios, android, web, metro
+    case path, platforms, live, phase, phaseSince, warmStep, memoryMb, memorySource, warnings, issues, ios, android, web, metro
     case macos, supervisor, logs, slots, remoteDevices, physicalDevices, build
     case lastBuilds, builds, worktree, recording
     case agents, endedAgents, disk

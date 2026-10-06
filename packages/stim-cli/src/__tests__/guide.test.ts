@@ -663,6 +663,10 @@ test('the facts topic documents every workspace phase', () => {
   for (const phase of WORKSPACE_PHASES) expect(body).toMatch(new RegExp(`^ +(phase +)?"${phase}" `, 'm'));
 });
 
+test('the facts topic documents the detected platforms field', () => {
+  expect(renderSection('facts', 'status')).toMatch(/^ +platforms /m);
+});
+
 test('the facts topic documents every workspace stage kind', () => {
   const body = renderSection('facts', 'status');
   assert(body);

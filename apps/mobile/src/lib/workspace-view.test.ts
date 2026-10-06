@@ -46,6 +46,7 @@ import {
   workspaceSeries,
   workspaceStage,
   workspaceUsage,
+  supportedPlatforms,
 } from '@/lib/workspace-view';
 import type {
   BuildHistoryEntry,
@@ -810,3 +811,17 @@ test.each(['future-kind', '__proto__', 'constructor'])(
     ]);
   },
 );
+
+it('offers detected and used platforms, ignores unknown platforms and preserves older CLI fallbacks', () => {
+  const env = { path: '/w', live: false, warnings: [], memoryMb: 0 };
+  expect(supportedPlatforms(env)).toEqual(['ios', 'android']);
+  const android = { ...env, android: { name: 'pixel', owned: true, physical: false, state: 'not-detected' } };
+  expect(supportedPlatforms(android)).toEqual(['android']);
+  expect(supportedPlatforms({ ...android, platforms: ['web', 'ios', 'future-platform'] })).toEqual([
+    'ios',
+    'android',
+    'web',
+  ]);
+  expect(supportedPlatforms({ ...env, platforms: ['future-platform'] })).toEqual([]);
+  expect(supportedPlatforms({ ...env, platforms: [] })).toEqual([]);
+});

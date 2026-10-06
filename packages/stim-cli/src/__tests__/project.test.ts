@@ -6,6 +6,7 @@ import {
   declaresAppDependency,
   findProjectRoot,
   detectIsExpo,
+  detectPlatforms,
   resolveRegisteredProject,
   projectShortcut,
   ownedDeviceLabel,
@@ -143,6 +144,98 @@ test('detectIsExpo trusts the ios script: expo run:ios wins', async () => {
   } finally {
     rmSync(tmp, { recursive: true, force: true });
   }
+});
+
+describe('detectPlatforms without running project code', () => {
+  let root: string;
+  const file = (name: string, contents = '') => {
+    mkdirSync(join(root, name, '..'), { recursive: true });
+    writeFileSync(join(root, name), contents);
+  };
+  const app = (dependencies: Record<string, string>) => file('package.json', JSON.stringify({ dependencies }));
+  const expo = (platforms?: string[]) => {
+    app({ expo: '54' });
+    file('app.json', JSON.stringify({ expo: { slug: 'app', ...(platforms ? { platforms } : {}) } }));
+  };
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), 'stim-platforms-'));
+  });
+  afterEach(() => {
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  test('fresh bare native projects and Android-only Kotlin projects', () => {
+    app({ 'react-native': '0.81' });
+    file('ios/App.xcodeproj/project.pbxproj');
+    file('android/build.gradle');
+    expect(detectPlatforms(root, {})).toEqual(['ios', 'android']);
+    rmSync(join(root, 'ios'), { recursive: true });
+    rmSync(join(root, 'android/build.gradle'));
+    file('android/settings.gradle.kts');
+    expect(detectPlatforms(root, {})).toEqual(['android']);
+    file('ios/App.xcworkspace/contents.xcworkspacedata');
+    expect(detectPlatforms(root, {})).toEqual(['ios', 'android']);
+  });
+
+  test('Expo defaults work before prebuild and explicit platforms constrain native and web support', () => {
+    expo();
+    expect(detectPlatforms(root, {})).toEqual(['ios', 'android']);
+    file('node_modules/react-native-web/package.json', '{}');
+    expect(detectPlatforms(root, {})).toEqual(['ios', 'android', 'web']);
+    expo(['ios']);
+    expect(detectPlatforms(root, {})).toEqual(['ios']);
+    expect(detectPlatforms(root, { web: { url: 'http://localhost:5173' } })).toEqual(['ios', 'web']);
+    file('app.json', JSON.stringify({ slug: 'app', platforms: ['web'] }));
+    expect(detectPlatforms(root, {})).toEqual(['web']);
+  });
+
+  test('bare apps support web via an explicit URL or declared react-native-web dependency', () => {
+    app({ 'react-native': '0.81' });
+    expect(detectPlatforms(root, { web: { url: 'http://localhost:5173' } })).toEqual(['web']);
+    app({ 'react-native': '0.81', 'react-native-web': '0.21' });
+    expect(detectPlatforms(root, {})).toEqual(['web']);
+  });
+
+  test('a Swift package needs macos.product but no package.json', () => {
+    expect(detectPlatforms(root, { macos: { product: 'Sample' } })).toEqual([]);
+    file('Package.swift');
+    expect(detectPlatforms(root, {})).toEqual([]);
+    expect(detectPlatforms(root, { macos: { product: 'Sample' } })).toEqual(['macos']);
+    expect(detectPlatforms(root, { macos: { product: 'Sample' }, web: { url: 'http://localhost:5173' } })).toEqual([
+      'macos',
+      'web',
+    ]);
+  });
+
+  test.each(['js', 'ts', 'cjs', 'mjs'])(
+    'dynamic app.config.%s reads only literal arrays and never executes',
+    (extension) => {
+      expo();
+      file(
+        `app.config.${extension}`,
+        "throw new Error('must not execute'); export default { platforms: ['web', 'ios'] };",
+      );
+      expect(detectPlatforms(root, {})).toEqual(['ios', 'web']);
+      file(
+        `app.config.${extension}`,
+        "throw new Error('must not execute'); export default { platforms: choosePlatforms() };",
+      );
+      expect(detectPlatforms(root, {})).toEqual(['ios', 'android']);
+      file(`app.config.${extension}`, "export default { platforms: ['ios', ...otherPlatforms] };");
+      expect(detectPlatforms(root, {})).toEqual(['ios', 'android']);
+      file(`app.config.${extension}`, "// platforms: ['web']\nexport default { slug: 'app' };");
+      expect(detectPlatforms(root, {})).toEqual(['ios', 'android']);
+      expo(['android']);
+      expect(detectPlatforms(root, {})).toEqual(['android']);
+    },
+  );
+
+  test('a non-app workspace has no platforms even when native-looking files exist', () => {
+    app({ typescript: '5' });
+    file('ios/App.xcodeproj/project.pbxproj');
+    file('android/build.gradle');
+    expect(detectPlatforms(root, {})).toEqual([]);
+  });
 });
 
 test('detectBundleId reads ios.bundleIdentifier from app.json', () => {

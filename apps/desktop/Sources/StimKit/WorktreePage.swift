@@ -105,8 +105,10 @@ public struct WorktreePage: Hashable, Sendable {
 
   public func appLabels(entries: [Entry]) -> [String] {
     let labels = apps.map { app in
-      Self.platforms.filter { platform in entries.contains { $0.path == app.path && $0.platform == platform } }
-        .map(platformName).joined(separator: " \u{00B7} ")
+      Self.platforms.filter { platform in
+        app.supportedPlatforms.contains(platform) || entries.contains { $0.path == app.path && $0.platform == platform }
+      }
+      .map(platformName).joined(separator: " \u{00B7} ")
     }
     return apps.indices.map { i in
       if labels[i].isEmpty { return Self.project(apps[i]) }
@@ -120,12 +122,7 @@ public struct WorktreePage: Hashable, Sendable {
 
   public var buildEntries: [Entry] {
     let entries = apps.flatMap { app in
-      var platforms = app.runPlatforms.filter { $0 != "macos" && $0 != "web" }
-      if let build = app.build, build.isRunning, !platforms.contains(build.platform), build.platform != "macos",
-        build.platform != "web"
-      {
-        platforms.append(build.platform)
-      }
+      let platforms = app.supportedPlatforms.filter { $0 == "ios" || $0 == "android" }
       return (app.macos == nil ? [] : [Entry(path: app.path, platform: "macos")])
         + platforms.map { Entry(path: app.path, platform: $0) }
     }

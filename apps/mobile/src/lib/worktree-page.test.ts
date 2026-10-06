@@ -1,17 +1,28 @@
 import fixture from '../../../desktop/Tests/StimKitTests/Fixtures/worktree-page-vectors.json';
 
-import { worktreePage, worktreeDisk, worktreeUsage, worktreeDevices, worktreeSessions } from '@/lib/worktree-page';
-import type { EnvironmentState, DevicePlatform, MachineUsageState } from '@/protocol/types';
+import {
+  buildEntries,
+  worktreePage,
+  worktreeApps,
+  worktreeDisk,
+  worktreeUsage,
+  worktreeDevices,
+  worktreeSessions,
+} from '@/lib/worktree-page';
+import type { EnvironmentState, MachineUsageState } from '@/protocol/types';
 
 it.each(fixture.cases)('$name', ({ input, expected }) => {
-  expect(
-    worktreePage({
-      ...input,
-      now: Date.parse(input.now),
-      environments: input.environments as unknown as EnvironmentState[],
-      entries: input.entries as { path: string; platform: DevicePlatform }[],
-    }),
-  ).toEqual(expected);
+  const environments = input.environments.map((app) => ({ memoryMb: 0, ...app })) as unknown as EnvironmentState[];
+  const apps = worktreeApps(input.path, environments);
+  const entries = buildEntries(apps);
+  const { buildEntries: expectedEntries, ...expectedPage } = expected;
+  expect(entries.map(({ path, platform }) => ({ path, platform }))).toEqual(expectedEntries);
+  expect(worktreePage({ path: input.path, environments, entries, now: Date.parse(input.now) })).toEqual(expectedPage);
+});
+
+it('keeps native build detail tabs available independently of detected support', () => {
+  const app: EnvironmentState = { path: '/w', live: false, warnings: [], memoryMb: 0, platforms: ['web'] };
+  expect(buildEntries([app], true).map(({ platform }) => platform)).toEqual(['ios', 'android']);
 });
 
 it('counts shared disk once and sums independently measured app resources', () => {

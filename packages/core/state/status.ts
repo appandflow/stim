@@ -573,6 +573,8 @@ export interface AndroidDeviceState {
 export interface EnvironmentState {
   slots?: { slot: string; ios: SimulatorState | null | undefined; android: AndroidDeviceState | null | undefined }[];
   path: string;
+  /** Statically detected app platforms; always set by status, empty when none are detected. */
+  platforms?: string[];
   live: boolean;
   phase?: WorkspacePhase;
   /** When the warm started (`warming`) or finished (`ready`); null for `live` and `idle`. */

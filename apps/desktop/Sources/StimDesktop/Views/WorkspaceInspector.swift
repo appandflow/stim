@@ -18,8 +18,10 @@ struct Inspector: View {
   var body: some View {
     ScrollView {
       VStack(alignment: .leading, spacing: Space.xxxl) {
-        BuildSection(cli: cli, env: env, openLogs: openLogs, openBuild: openBuild)
-          .id(env.path)
+        if env.runPlatforms.contains(where: { $0 == "ios" || $0 == "android" }) || env.macos != nil {
+          BuildSection(cli: cli, env: env, openLogs: openLogs, openBuild: openBuild)
+            .id(env.path)
+        }
 
         ResourcesSection(env: env, machine: machine, history: history, sampled: usage)
 
@@ -324,11 +326,13 @@ struct WorktreeInspector: View {
     let labeledApps = Array(zip(page.apps, page.appLabels))
     ScrollView {
       VStack(alignment: .leading, spacing: Space.xxxl) {
-        VStack(alignment: .leading, spacing: Space.md) {
-          SectionLabel(title: "Build")
-          ForEach(page.buildEntries) { entry in
-            if let app = page.apps.first(where: { $0.path == entry.path }) {
-              buildEntry(entry, app: app)
+        if !page.buildEntries.isEmpty {
+          VStack(alignment: .leading, spacing: Space.md) {
+            SectionLabel(title: "Build")
+            ForEach(page.buildEntries) { entry in
+              if let app = page.apps.first(where: { $0.path == entry.path }) {
+                buildEntry(entry, app: app)
+              }
             }
           }
         }

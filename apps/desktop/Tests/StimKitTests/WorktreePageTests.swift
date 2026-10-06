@@ -8,7 +8,6 @@ struct WorktreePageTests {
       var now: String
       var path: String
       var environments: [Workspace]
-      var entries: [WorktreePage.Entry]
     }
     struct Expected: Decodable {
       var apps: [String]
@@ -16,6 +15,7 @@ struct WorktreePageTests {
       var lead: String
       var subtitles: [String?]
       var appLabels: [String]
+      var buildEntries: [WorktreePage.Entry]
     }
     struct Case: Decodable {
       var name: String
@@ -44,8 +44,10 @@ struct WorktreePageTests {
     #expect(groups.flatMap { $0.apps.map(\.path) }.sorted() == c.input.environments.map(\.path).sorted())
     #expect(page.projects == c.expected.projects)
     #expect(page.lead(now: now).path == c.expected.lead)
-    #expect(page.subtitles(entries: c.input.entries) == c.expected.subtitles)
-    #expect(page.appLabels(entries: c.input.entries) == c.expected.appLabels)
+    let entries = page.buildEntries
+    #expect(page.buildEntries == c.expected.buildEntries)
+    #expect(page.subtitles(entries: entries) == c.expected.subtitles)
+    #expect(page.appLabels(entries: entries + page.canvasEntries) == c.expected.appLabels)
   }
 
   @Test func rowPathMapsAnyAppOfAMultiAppWorktreeToItsFirstApp() throws {
@@ -60,7 +62,7 @@ struct WorktreePageTests {
     let c = Self.vectors.cases[0]
     let page = try #require(WorktreePage(path: c.input.path, environments: c.input.environments))
     #expect(!page.isUnified)
-    for entries in [c.input.entries, page.buildEntries, page.canvasEntries] {
+    for entries in [page.buildEntries, page.canvasEntries] {
       #expect(page.subtitles(entries: entries).allSatisfy { $0 == nil })
     }
   }

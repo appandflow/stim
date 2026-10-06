@@ -53,7 +53,7 @@ import Testing
     try JSONDecoder().decode(Workspace.self, from: Data(#"{"path":"/w","live":true,"warnings":[]\#(fields)}"#.utf8))
   }
 
-  @Test func runOffersThePlatformsTheWorkspaceUsesOrBoth() throws {
+  @Test func runOffersDetectedPlatformsAndRecordedUseWithOlderCLIFallback() throws {
     #expect(try workspace("").runPlatforms == ["ios", "android"])
     let android = try workspace(#","android":{"name":"stim-w","owned":true,"physical":false,"state":"not-detected"}"#)
     #expect(android.runPlatforms == ["android"])
@@ -61,6 +61,17 @@ import Testing
       #","lastBuilds":{"ios":{"platform":"ios","status":"failed","cacheHit":false,"cacheSkipped":false,"durationMs":1,"fingerprint":null,"startedAt":"2026-09-26T00:00:00Z","finishedAt":null}}"#
     )
     #expect(built.runPlatforms == ["ios"])
+    var detected = android
+    detected.platforms = ["ios", "future-platform"]
+    #expect(detected.supportedPlatforms == ["ios", "android"])
+    #expect(detected.runPlatforms == ["ios", "android"])
+    detected.platforms = []
+    #expect(detected.supportedPlatforms == ["android"])
+    let empty = try workspace(#","platforms":[]"#)
+    #expect(empty.supportedPlatforms.isEmpty)
+    let web = try workspace(
+      #","web":{"running":true,"url":"http://localhost:5173/","headless":true,"viewport":"desktop","profile":"/p"}"#)
+    #expect(web.runPlatforms == ["web"])
   }
 
   @Test func aSwiftPackageAppDoesNotOfferMetroOrPhoneCommands() throws {
