@@ -573,7 +573,7 @@ function PhaseList({
           ) : null}
           <View style={styles.grow} />
           <Text variant="footnote" tone={step.state === 'pending' ? 'tertiary' : 'secondary'} style={styles.tabular}>
-            {step.state === 'pending'
+            {step.state === 'pending' && step.elapsedMs === null
               ? step.expectedMs === null
                 ? ''
                 : `~${clockDuration(step.expectedMs)}`

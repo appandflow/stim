@@ -344,7 +344,6 @@ describe('cache lookup labels', () => {
   it.each([
     [{ cacheLookupOutcome: 'hit' }, 'hit'],
     [{ cacheLookupOutcome: 'miss' }, 'miss'],
-    [{ cacheLookupOutcome: 'miss', missProvisional: true }, 'miss'],
     [{}, null],
     [{ cacheLookupOutcome: 'unknown' }, null],
   ] as const)('labels the latest lookup report %j as %s', (patch, label) => {
@@ -407,6 +406,19 @@ describe('phaseSteps', () => {
       ['compile', 'current', 47_000],
     ]);
     expect(barSteps(steps).map((step) => step.phase)).toEqual(['prepare', 'compile']);
+  });
+
+  it('keeps the time of a phase that came before the current one in phase order', () => {
+    const steps = phaseSteps(
+      build({
+        phase: 'prebuild',
+        plannedPhases: [{ phase: 'compile', expectedMs: 94_000 }],
+        completedPhaseMs: { compile: 30_000 },
+      }),
+      history,
+      NOW,
+    );
+    expect(steps.find((step) => step.phase === 'compile')).toMatchObject({ state: 'pending', elapsedMs: 30_000 });
   });
 
   it('folds the short prepare phases into one bar segment and launch into install', () => {

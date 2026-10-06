@@ -588,7 +588,8 @@ export function phaseSteps(build: BuildReport, history: readonly BuildHistoryEnt
         fraction: 1,
         ...(reference[phase] === undefined ? { unplanned: true as const } : {}),
       };
-    if (i > currentIndex) return { phase, state: 'pending', elapsedMs: null, expectedMs, fraction: 0 };
+    if (i > currentIndex)
+      return { phase, state: 'pending', elapsedMs: completed[phase] ?? null, expectedMs, fraction: 0 };
     const { done, total } = compileDetail(build) ?? {};
     const counted = typeof done === 'number' && typeof total === 'number' && total > 0 ? done / total : null;
     const timed = expectedMs && inPhase !== null ? inPhase / expectedMs : null;
