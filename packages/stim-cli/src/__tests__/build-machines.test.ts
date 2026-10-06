@@ -173,6 +173,25 @@ describe('inspectBuildMachines', () => {
     });
   });
 
+  it('stores the new request when --fix asks again after an approved machine revoked this Mac', async () => {
+    await inspectBuildMachines({ fix: true }, fakeIo('nMini', [pending]).io, ['mini']);
+    const approved: HelloReply = { result: { capabilities: ['build'], device: { id: 'ab12', name: 'laptop' } } };
+    await inspectBuildMachines({ fix: false }, fakeIo('nMini', [approved]).io, ['mini']);
+    const renewed: HelloReply = {
+      result: {
+        ...(pending as { result: object }).result,
+        device: { id: 'cd34', name: 'laptop' },
+        deviceToken: 'fresh',
+      },
+    } as HelloReply;
+    const { io } = fakeIo('nMini', [{ error: { code: 'unauthorized', message: 'Unknown device.' } }, renewed]);
+    const { machines } = await inspectBuildMachines({ fix: true }, io, ['mini']);
+    expect(machines).toEqual([expect.objectContaining({ state: 'pending', deviceId: 'cd34' })]);
+    expect(readBuildMachines()).toEqual([
+      expect.objectContaining({ deviceId: 'cd34', deviceToken: 'fresh', state: 'pending' }),
+    ]);
+  });
+
   it('reports a revoked machine and one never asked without asking either', async () => {
     await inspectBuildMachines({ fix: true }, fakeIo('nMini', [pending]).io, ['mini']);
     const { io, calls } = fakeIo('nMini', [{ error: { code: 'unauthorized', message: 'Unknown device.' } }]);

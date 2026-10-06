@@ -195,11 +195,7 @@ async function requestAccess(
     requestedAt: new Date().toISOString(),
     ...(ticket ? { ticketHash: ticket.ticketHash } : {}),
   };
-  updateCredentials((credentials) =>
-    credentials.some((each) => each.machine === entry && each.state === 'approved')
-      ? credentials
-      : [...credentials.filter((each) => each.machine !== entry), credential],
-  );
+  updateCredentials((credentials) => [...credentials.filter((each) => each.machine !== entry), credential]);
   return {
     report: {
       machine: entry,
