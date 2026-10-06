@@ -12,12 +12,23 @@ public enum DeviceRef: Hashable, Identifiable, Sendable {
 
   public var id: String {
     switch self {
-    case .ios(let slot, let d): return d.udid.isEmpty ? "ios:host:\(slot)" : "ios:\(d.udid)"
+    case .ios(let slot, let d):
+      return d.host.map { "ios:\(slot):hosted:\($0.session)" } ?? (d.udid.isEmpty ? "ios:host:\(slot)" : "ios:\(d.udid)")
     case .android(let slot, let d) where d.physical: return "android:\(slot):physical:\(d.serial ?? d.name)"
     case .android(let slot, let d): return "android:\(slot):\(d.name)"
     case .remote(let d): return "remote:\(d.sessionId)"
     case .web(let d): return "web:\(d.profile)"
     }
+  }
+
+  public var hostedIos: HostedIos? {
+    if case .ios(_, let d) = self { return d.host }
+    return nil
+  }
+
+  public var localSimulatorUDID: String? {
+    guard case .ios(_, let d) = self, d.host == nil, !d.physical, !d.udid.isEmpty else { return nil }
+    return d.udid
   }
 
   public var slot: String {
@@ -96,7 +107,7 @@ public enum DeviceRef: Hashable, Identifiable, Sendable {
   /// DevTools target.
   public var activityKey: String? {
     switch self {
-    case .ios(_, let d): return d.udid
+    case .ios(_, let d): return d.host == nil && !d.udid.isEmpty ? d.udid : nil
     case .android(_, let d): return d.serial
     case .web(let d): return d.targetId
     case .remote: return nil
@@ -107,7 +118,7 @@ public enum DeviceRef: Hashable, Identifiable, Sendable {
   /// A recorded remote session counts as running: `stim status` does not ask the backend.
   public var isRunning: Bool {
     switch self {
-    case .ios(_, let d): return d.physical ? d.state == "connected" : d.state == "Booted"
+    case .ios(_, let d): return d.host != nil ? d.state == "ready" : d.physical ? d.state == "connected" : d.state == "Booted"
     case .android(_, let d): return d.state == "detected" || (d.physical && d.state == "connected")
     case .remote: return true
     case .web(let d): return d.running
@@ -121,6 +132,7 @@ public enum DeviceRef: Hashable, Identifiable, Sendable {
   public var model: String {
     switch self {
     case .ios(_, let d):
+      if let device = d.host?.device { return "\(device.name) \(device.runtime)" }
       return d.owned ? (DeviceRef.parenthesizedModel(in: d.name) ?? d.name) : d.name
     case .android(_, let d):
       return d.name
@@ -225,6 +237,7 @@ public enum DeviceRef: Hashable, Identifiable, Sendable {
   /// Only splits off a trailing numeric runtime from a name Stim itself formatted as `<model> <runtime>` inside
   /// parens -- an unowned simulator can be legitimately named e.g. "iPhone 16", which is not `<model> <runtime>`.
   private var iosModel: (name: String, runtime: String?) {
+    if let device = hostedIos?.device { return (device.name, device.runtime.replacingOccurrences(of: "iOS ", with: "")) }
     guard case .ios(_, let d) = self, d.owned, let parsed = DeviceRef.parenthesizedModel(in: d.name) else {
       return (model, nil)
     }

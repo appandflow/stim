@@ -5,6 +5,7 @@ import {
   statusEnumPaths,
   resultEnumCases,
   eventEnumCases,
+  archivedLogsEnded,
 } from '../../mock-server/receive-fixtures';
 import type { StatusPayload, Methods } from '@/protocol/types';
 import { pair, pairingScope, StimConnection, type ConnectionState } from '@/lib/connection';
@@ -454,6 +455,23 @@ test.each(resultEnumCases)(
     connection.close();
   },
 );
+
+test('delivers archived log completion to its subscriber without reconnecting', async () => {
+  const { connection, sockets, timers } = setup();
+  const seen: ServerEvent[] = [];
+  connection.subscribe('logs.subscribe', { archive: 'app--123' }, (event) => seen.push(event));
+  connection.start();
+  sockets[0]!.onopen?.();
+  sockets[0]!.reply('hello', hello);
+  await flush();
+  sockets[0]!.reply('logs.subscribe', { subscription: archivedLogsEnded.subscription });
+  await flush();
+  sockets[0]!.emit(archivedLogsEnded);
+  expect(seen).toEqual([archivedLogsEnded]);
+  expect(sockets[0]!.closed).toBe(false);
+  expect(timers).toEqual([]);
+  connection.close();
+});
 
 test.each(eventEnumCases)('keeps the socket open for future event values at %s', async (fixture, path) => {
   const { connection, sockets, timers } = setup();

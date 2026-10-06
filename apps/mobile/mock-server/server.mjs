@@ -250,6 +250,13 @@ server.on('connection', (socket) => {
   const send = (message) => socket.readyState === socket.OPEN && socket.send(JSON.stringify(message));
   const fail = (id, code, message) => send({ id, error: { code, message } });
   const feeds = new Map();
+  const controls = new Set();
+  const hostedTarget = (params) => {
+    const env = fixtures.status.environments.find((candidate) => candidate.path === params.workspace);
+    const ios =
+      params.slot && params.slot !== 'default' ? env?.slots?.find((slot) => slot.slot === params.slot)?.ios : env?.ios;
+    return params.platform === 'ios' && ios?.host ? ios : null;
+  };
   const stop = (subscription) => {
     clearInterval(timers.get(subscription));
     timers.delete(subscription);
@@ -316,6 +323,13 @@ server.on('connection', (socket) => {
       return { result: { subscription } };
     },
     'frames.subscribe'(params) {
+      if (hostedTarget(params)?.state === 'stopped') return { error: ['frames-failed', 'The hosted session stopped.'] };
+      if (
+        hostedTarget(params) &&
+        (params.physical || params.duoFrame || params.at !== undefined || params.rate !== undefined)
+      )
+        return { error: ['bad-request', 'Hosted iOS frames do not support physical targets, duoFrame or replay.'] };
+
       if (params.platform === 'ios' && params.video?.includes('h264')) {
         const subscription = `s${nextSubscription++}`;
         const feed = new VideoFeed(recording, subscription, socket, send);
@@ -337,6 +351,19 @@ server.on('connection', (socket) => {
         }),
       );
       return { result: { subscription } };
+    },
+    'control.begin'(params) {
+      if (values.read) return { error: ['forbidden', 'The mock pairing is read only.'] };
+      if (!hostedTarget(params) || params.physical)
+        return { error: ['bad-request', 'Mock control needs a hosted iOS target.'] };
+      if (hostedTarget(params).state === 'stopped') return { error: ['action-failed', 'The hosted session stopped.'] };
+      const session = `c${nextSubscription++}`;
+      controls.add(session);
+      return { result: { session, platform: 'ios', lease: null, postures: [] } };
+    },
+    'control.end'(params) {
+      controls.delete(params.session);
+      return { result: {} };
     },
     'workspace.files'(params) {
       const files =
@@ -387,6 +414,8 @@ server.on('connection', (socket) => {
       };
     },
     'replay.range'(params) {
+      if (hostedTarget(params)) return { result: { enabled: false, recording: false, spans: [], markers: [] } };
+
       if (params.platform !== 'ios' || !recordingEnabled) {
         return { result: { enabled: recordingEnabled, recording: false, spans: [], markers: [] } };
       }
@@ -465,6 +494,10 @@ server.on('connection', (socket) => {
     },
   };
 
+  for (const method of ['input.touch', 'input.text', 'input.button', 'input.rotate'])
+    handlers[method] = (params) =>
+      controls.has(params.session) ? { result: {} } : { error: ['unknown-session', 'No mock control session.'] };
+
   socket.on('message', (data) => {
     let message;
     try {
@@ -505,7 +538,7 @@ function hello(deviceToken, deviceName) {
     protocol: 1,
     server: { name: values.name, version: '0.0.0-mock', stim: fixtures.stimVersion, home: fixtures.home },
     capabilities: values.read ? ['read'] : ['read', 'control'],
-    features: ['physical-ios', 'physical-android', 'notifications', 'workspace-diff'],
+    features: ['ios-hosted', 'physical-ios', 'physical-android', 'notifications', 'workspace-diff'],
     actions: values.read ? [] : ACTIONS,
     device: { id: hash(deviceToken).slice(0, 8), name: deviceName },
   };

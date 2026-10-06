@@ -207,7 +207,7 @@ Device hosting has a separate `device-host` capability. An approved client can
 reserve, boot, reconnect to and stop its own iOS simulator or Android emulator
 through the protocol. It can deliver, install and launch a compatible iOS app
 bundle, Android APK or prebuilt macOS app, stream the iOS simulator or macOS app and control it. The hosted iOS
-app connects back to Metro on the client Mac. Automatic CLI placement, client view/control relays and
+app connects back to Metro on the client Mac. Automatic CLI placement and
 Android Metro and viewing remain in [#2266](https://github.com/appandflow/stim/issues/2266).
 
 The Stim client can name expected hosts with
@@ -585,7 +585,7 @@ without it, they show an update note and copied logs. Servers that predate macOS
 `unknown-method`.
 
 macOS sessions refuse Metro. Viewing and control are supported while the hosted
-app is running. CLI placement and client view/control relays remain follow-ups in [#2403](https://github.com/appandflow/stim/issues/2403).
+app is running. Automatic CLI placement remains a follow-up in [#2403](https://github.com/appandflow/stim/issues/2403).
 
 ### Private hosted Metro
 
@@ -623,15 +623,21 @@ Bare React Native uses the worker `RCT_jsLocation`. Bridge readiness and
 manifest requests are not launch proof; development remains `unverified` until
 the workspace observes the app's own bundle delivery.
 This is a protocol API for approved clients; automatic iOS CLI placement,
-client iOS view/control relays and Android Metro/viewing remain in [#2266](https://github.com/appandflow/stim/issues/2266).
+Android Metro/viewing remains in [#2266](https://github.com/appandflow/stim/issues/2266).
 
-### Hosted macOS relay
+### Hosted viewer relay
 
-The client's stim-server relays a hosted workspace's macOS view and input to
+The client's stim-server relays a hosted workspace's iOS simulator or macOS view and input to
 its host using the client's approved device-host credential over the pinned
 tailnet connection. Stim Desktop and phones keep talking only to their own
-server. The `macos-hosted` feature advertises this relay. All of the client's
-relayed subscriptions and control sessions for one host share one connection,
+server. The `macos-hosted` and `ios-hosted` features advertise these relays.
+iOS resolves `ios.host` by the requested slot; macOS retains its default slot.
+The local platform and slot replace the host's private target fields in events
+and iOS control audit records. H.264 packets retain their flags and payload and
+carry the local subscription ID, which identifies the platform and slot.
+The relay forwards iOS device artwork and orientation metadata. Hosted targets
+refuse replay (`at`/`rate`), `duoFrame` and `physical` with `bad-request`.
+All of the client's relayed subscriptions and control sessions for one host share one connection,
 whichever local client opened them. Each request still checks the credential
 and the pinned node; a changed credential or endpoint opens a new connection.
 Ending a subscription or session sends `device-host.unsubscribe` or
@@ -643,9 +649,8 @@ its packets until the next keyframe and, when the host advertises the
 `hosted-congestion` feature, sends `device-host.frames.congested` at most every
 250 ms, so the host lowers that app's bitrate as it does for a local subscriber
 whose socket backs up.
-Hosted frames and control reject `physical`, a non-default slot, and replay
-(`at`/`rate`).
-`control.begin` still needs the local `control` grant. Screen Recording for
+Hosted macOS frames and control require the default slot; hosted iOS supports named slots.
+`control.begin` still needs the local `control` grant. For macOS apps, Screen Recording for
 viewing and Accessibility for control are granted on the host, not the client.
 
 ### Hosted iOS and macOS view and input
@@ -1117,13 +1122,28 @@ Events are `{ "event", "subscription", ... }`.
   whose `since` is in `ownLeases` is a phone.
 - `logs.query` returns `{ "records" }`, and `logs.subscribe` sends `logs`
   events: first the last `tail` matching records, then new ones in batches.
-  Both take the Stim Desktop log viewer's filters: `workspace` (required),
-  `sources` (`metro`, `client`, `device`, `build`, `agent`), `slot`, `level` (the
+  Both take the Stim Desktop log viewer's filters: exactly one of `workspace`
+  (an environment path) or `archive` (an `archived[].id` from status),
+  `sources` (`metro`, `client`, `device`, `build`, `agent`, `maintenance`), `slot`, `level` (the
   minimum), `grep` (a regular expression), `errors`, and `tail` (1 to 5000,
   5000 by default). Without `sources`, `errors` keeps the CLI's default error
   scope. They run `stim logs --json` and `stim logs --json --follow` in the
   workspace. Subscribers with the same workspace and filters share one
-  `--follow` child, which stops with the last of them.
+  `--follow` child, which stops with the last of them. Archive requests read
+  retained logs and agent-device session actions locally through core, with the same JSON filters, ordering,
+  markers and error context. Archive reads are synchronous and queued per
+  connection, yielding to the event loop between requests. Pending archive
+  reads share the four-request limit with commands. Archived session actions
+  retain available platform and device attribution; device ids and Stim slot
+  assignments absent from retained files are unavailable after removal. They never follow files or use a hosted relay.
+  An archive subscription sends its records in the same batches and limits,
+  then `{ "event": "logs-ended", "subscription": "s3" }` and releases the
+  subscription, including when no records match. These reads need `read`.
+  `archive` requires an updated server: omit `workspace` so older servers
+  refuse with `bad-request` instead of reading a live replacement at that path.
+  Both or neither selector is `bad-request`; traversal ids are `bad-request`,
+  and unknown, invalid or symlinked archive directories are `unknown-workspace`
+  with a message naming the archive id.
 - `stats.get` returns the same payload as `stim stats --json`, using the shared
   core reader in a bounded, cancellable server child. The stats part of
   `machine.details` uses the same reader. `settings.get` runs
@@ -1318,7 +1338,7 @@ Events are `{ "event", "subscription", ... }`.
   `at` and `frames.seek` on it fail with `no-recording`, and it counts
   toward no idle check.
 
-- **Replay.** `replay.range` takes `workspace`, `platform` and `slot`
+- **Replay.** `replay.range` takes exactly one of `workspace` or `archive`, plus `platform` and `slot`
   (`default` when absent), like `frames.subscribe`, and returns what can be
   replayed of that device slot's [recording](#recording):
   - `enabled`: the workspace's `recording.enabled`, as the last status showed
@@ -1342,7 +1362,17 @@ Events are `{ "event", "subscription", ... }`.
   It needs only `read`. A device with no recording gets empty `spans` and
   `markers`, and runs no `stim` command.
 
-  `replay.keyframe` takes the same `workspace`, `platform` and `slot`, and
+  Archive replay reads only closed segments under the archive's recordings
+  directory. Its `enabled` and `recording` are false; spans and markers come
+  from those segments, archived logs and agent-device session actions. It never requires the former checkout
+  or reads a live replacement at that path, and never uses a hosted relay.
+  `frames.subscribe` with `archive` requires `at` and `video: ["h264"]`,
+  rejects physical targets, and supports `frames.seek` on that subscription.
+  `frames.live` refuses with `frames-failed`: an archive cannot go live.
+  Empty archives return empty ranges and `no-recording` for keyframes or frames.
+  These reads need the same `read` capability as workspace replay.
+
+  `replay.keyframe` takes the same `workspace` or `archive`, `platform` and `slot`, and
   `at` (epoch milliseconds), and returns one still frame for a scrubber
   preview without touching any subscription. The recording is stored in
   segments of about 5 seconds that each start at a keyframe; the server picks

@@ -63,8 +63,8 @@ public func workspaceRoots(_ env: Workspace, in processes: [ProcessEntry]) -> Se
   if let metro = env.metro, metro.running, let pid = metro.pid { roots.insert(pid) }
   for device in env.devices {
     switch device {
-    case .ios(_, let sim):
-      let marker = "/DEVICES/\(sim.udid.uppercased())/"
+    case .ios where device.localSimulatorUDID != nil:
+      let marker = "/DEVICES/\(device.localSimulatorUDID!.uppercased())/"
       for p in processes where p.args.hasPrefix("launchd_sim ") && p.args.uppercased().contains(marker) {
         roots.insert(p.pid)
       }
@@ -73,7 +73,7 @@ public func workspaceRoots(_ env: Workspace, in processes: [ProcessEntry]) -> Se
       for p in processes where isEmulator(p.args, avd: avd.name, port: port) {
         roots.insert(p.pid)
       }
-    case .android, .remote, .web:
+    case .ios, .android, .remote, .web:
       break
     }
   }

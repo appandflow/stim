@@ -1,12 +1,6 @@
 import type { ConnectionOptions } from 'node:tls';
 import { WebSocket, type ClientOptions } from 'ws';
-import {
-  isJsonObject,
-  pinnedEndpoint,
-  readDeviceHostMachines,
-  type Endpoint,
-  type HostedMacosPlacement,
-} from '@stim-cli/core/state';
+import { isJsonObject, pinnedEndpoint, readDeviceHostMachines, type Endpoint } from '@stim-cli/core/state';
 import type { AuditRecord } from './actions.ts';
 import type { SessionTarget } from './control.ts';
 import { LatestFrames, FRAME_RETRY_MS } from './frame-delivery.ts';
@@ -16,6 +10,8 @@ import { DEFAULT_VIDEO_LIMITS, rewriteVideoSubscription, videoSubscription, Vide
 const TIMEOUT_MS = 10_000;
 const KEYFRAME_RETRY_MS = 1000;
 const CONGESTION_NOTICE_MS = 250;
+type Placement = { machine: string; session: string };
+type RelayTarget = { platform: 'ios' | 'macos'; slot: string };
 type Reply = { result: unknown } | { error: ProtocolError };
 type Event = Record<string, unknown> | Buffer;
 
@@ -242,7 +238,7 @@ export class HostConnections {
   }
 
   /** Checks the credential and pinned node on every call, then joins or opens the connection to that endpoint. */
-  async acquire(host: HostedMacosPlacement): Promise<Lease> {
+  async acquire(host: Placement): Promise<Lease> {
     let token = '';
     try {
       const credential = readDeviceHostMachines().find((entry) => entry.machine === host.machine);
@@ -296,6 +292,8 @@ export class HostedRelay {
       startedAt: number;
       workspace: string;
       device: { id: string; name: string };
+      target: RelayTarget;
+      postures: SessionTarget['postures'];
     }
   >();
   private nextControl = 1;
@@ -324,7 +322,7 @@ export class HostedRelay {
     this.audit = audit;
   }
 
-  private async connect(host: HostedMacosPlacement): Promise<Lease> {
+  private async connect(host: Placement): Promise<Lease> {
     if (this.closed) throw new Error('the local connection closed');
     const lease = await this.hosts.acquire(host);
     if (this.closed) {
@@ -343,11 +341,14 @@ export class HostedRelay {
 
   async subscribe(
     id: RequestId,
-    host: HostedMacosPlacement,
+    host: Placement,
     params: Record<string, unknown>,
     register: (id: string, stop: () => void) => void,
   ): Promise<void> {
     let lease: Lease | undefined;
+    const platform = params.platform === 'ios' ? 'ios' : 'macos';
+    const slot = typeof params.slot === 'string' ? params.slot : 'default';
+    const eventTarget: Partial<RelayTarget> = platform === 'ios' ? { platform, slot } : {};
     let upstream: string | undefined;
     let local: string | null = null;
     try {
@@ -358,6 +359,7 @@ export class HostedRelay {
         fps: params.fps,
         maxEdge: params.maxEdge,
         video: params.video,
+        ...(platform === 'ios' && params.deviceFrame !== undefined ? { deviceFrame: params.deviceFrame } : {}),
       });
       if ('error' in reply) throw new Error(reply.error.message);
       if (!isJsonObject(reply.result) || typeof reply.result.subscription !== 'string')
@@ -411,8 +413,8 @@ export class HostedRelay {
         this.send({
           event: 'error',
           subscription,
-          platform: 'macos',
-          slot: 'default',
+          platform,
+          slot,
           error: { code: 'frames-failed', message: `${host.machine}: ${message}` },
         } as ServerMessage);
         end(true);
@@ -439,12 +441,18 @@ export class HostedRelay {
             const keyframe = (packet[1]! & VIDEO_KEYFRAME) !== 0;
             if (gate.admit({ keyframe }, this.buffered()) === 'send') return this.send(packet);
             if (!keyframeRetry) requestKeyframe();
-          } else if (['frame', 'frame-delayed', 'macos-windows', 'error'].includes(String(event.event))) {
+          } else if (
+            ['frame', 'frame-delayed', 'device-frame', 'macos-windows', 'error'].includes(String(event.event))
+          ) {
             if (event.event === 'error')
               return failed(isJsonObject(event.error) ? String(event.error.message) : 'host frames failed');
             if (event.event === 'macos-windows')
               return this.send({ ...event, subscription, pinned: event.pinned === true } as unknown as ServerMessage);
-            const forwarded = { ...event, subscription, platform: 'macos', slot: 'default' };
+            if (event.event === 'device-frame') {
+              if (platform === 'ios') this.send({ ...event, subscription, platform, slot } as unknown as ServerMessage);
+              return;
+            }
+            const forwarded = { ...event, subscription, platform, slot };
             if (event.event === 'frame') {
               if (typeof event.data !== 'string') return failed('the host sent an invalid JPEG frame');
               delivery.push({ ...forwarded, data: event.data });
@@ -457,7 +465,7 @@ export class HostedRelay {
     } catch (cause) {
       const message = `${host.machine}: ${(cause as Error).message}`;
       if (local && this.frames.has(local)) {
-        this.send({ event: 'error', subscription: local, error: { code: 'frames-failed', message } });
+        this.send({ event: 'error', subscription: local, ...eventTarget, error: { code: 'frames-failed', message } });
         this.frames.get(local)!.stop();
         return;
       }
@@ -465,7 +473,7 @@ export class HostedRelay {
       else lease?.release();
       if (local) {
         this.dropSubscription(local);
-        this.send({ event: 'error', subscription: local, error: { code: 'frames-failed', message } });
+        this.send({ event: 'error', subscription: local, ...eventTarget, error: { code: 'frames-failed', message } });
       } else this.send({ id, error: { code: 'frames-failed', message } });
     }
   }
@@ -480,19 +488,24 @@ export class HostedRelay {
 
   async begin(
     id: RequestId,
-    host: HostedMacosPlacement,
+    host: Placement,
     takeOver: boolean,
     allowed: () => boolean,
-    context: { workspace: string; device: { id: string; name: string } },
+    context: { workspace: string; device: { id: string; name: string }; platform?: 'ios' | 'macos'; slot?: string },
   ): Promise<void> {
     let lease: Lease | undefined;
+    const target: RelayTarget = { platform: context.platform ?? 'macos', slot: context.slot ?? 'default' };
+    const eventTarget = target.platform === 'ios' ? target : {};
+    const { workspace, device } = context;
     let hostSession: string | undefined;
     let opened: string | undefined;
     const record = (outcome: { ok: boolean; error?: ProtocolError }) =>
       this.audit({
         at: new Date().toISOString(),
-        ...context,
-        platform: 'macos',
+        workspace,
+        device,
+        platform: target.platform,
+        ...(target.platform === 'ios' ? { slot: target.slot } : {}),
         action: takeOver ? 'control.take-over' : 'control.begin',
         ...outcome,
       });
@@ -510,7 +523,17 @@ export class HostedRelay {
       hostSession = reply.result.session;
       if (this.closed || !allowed()) throw new Error('local control access ended');
       const session = `h${this.nextControl++}`;
-      const entry = { lease, hostSession, unroute: () => {}, startedAt: Date.now(), ...context };
+      const postures = Array.isArray(reply.result.postures) ? (reply.result.postures as SessionTarget['postures']) : [];
+      const entry = {
+        lease,
+        hostSession,
+        unroute: () => {},
+        startedAt: Date.now(),
+        workspace,
+        device,
+        target,
+        postures,
+      };
       this.controls.set(session, entry);
       opened = session;
       record({ ok: true });
@@ -518,14 +541,14 @@ export class HostedRelay {
       entry.unroute = connection.route(`c:${hostSession}`, {
         event: (event) => {
           if (this.controls.has(session) && !Buffer.isBuffer(event) && event.event === 'control-ended') {
-            this.send({ ...event, session } as unknown as ServerMessage);
+            this.send({ ...event, session, ...eventTarget } as unknown as ServerMessage);
             this.endControl(session, String(event.reason), String(event.message), 'ended');
           }
         },
         closed: (error) => {
           if (!this.controls.has(session)) return;
           const message = `${host.machine}: ${error.message}`;
-          this.send({ event: 'control-ended', session, reason: 'failed', message });
+          this.send({ event: 'control-ended', session, ...eventTarget, reason: 'failed', message });
           this.endControl(session, 'failed', message, 'ended');
         },
       });
@@ -533,7 +556,7 @@ export class HostedRelay {
     } catch (cause) {
       const message = `${host.machine}: ${(cause as Error).message}`;
       if (opened) {
-        this.send({ event: 'control-ended', session: opened, reason: 'failed', message });
+        this.send({ event: 'control-ended', session: opened, ...eventTarget, reason: 'failed', message });
         return this.endControl(opened, 'failed', message, 'end');
       }
       if (lease && hostSession) this.releaseAfter(lease, 'device-host.control.end', { session: hostSession });
@@ -545,7 +568,11 @@ export class HostedRelay {
   }
 
   targetOf(session: string): SessionTarget | null {
-    return this.controls.has(session) ? { platform: 'macos', postures: [] } : null;
+    const entry = this.controls.get(session);
+    if (!entry) return null;
+    return entry.target.platform === 'ios'
+      ? { ...entry.target, postures: entry.postures }
+      : { platform: 'macos', postures: [] };
   }
 
   control(id: RequestId, method: string, params: unknown): boolean {
@@ -574,7 +601,8 @@ export class HostedRelay {
       at: new Date().toISOString(),
       device: entry.device,
       workspace: entry.workspace,
-      platform: 'macos',
+      platform: entry.target.platform,
+      ...(entry.target.platform === 'ios' ? { slot: entry.target.slot } : {}),
       action: 'control.end',
       ok: true,
       durationMs: Date.now() - entry.startedAt,
@@ -594,9 +622,10 @@ export class HostedRelay {
   }
 
   endControls(): void {
-    for (const session of this.controls.keys()) {
+    for (const [session, entry] of this.controls) {
+      const eventTarget = entry.target.platform === 'ios' ? entry.target : {};
       const message = 'Local control access ended.';
-      this.send({ event: 'control-ended', session, reason: 'forbidden', message });
+      this.send({ event: 'control-ended', session, ...eventTarget, reason: 'forbidden', message });
       this.endControl(session, 'forbidden', message, 'end');
     }
   }

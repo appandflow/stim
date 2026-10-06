@@ -131,6 +131,13 @@ average). Events: `status` (a full payload, as `status --watch` prints it),
 `logs`, `frame`, `error`. A client that reconnects resubscribes; the server
 keeps no per-client history.
 
+Archived history reads select `archive` (a status `archived[].id`) instead of
+`workspace`. Exactly one selector is required, so older servers refuse with
+`bad-request`. `logs.subscribe` ends retained history with `logs-ended` and
+releases its subscription. Replay range, keyframe and frames at a recorded time
+also accept `archive`; archived frames can seek but cannot go live or be
+physical. Archives are read locally on the retaining Mac, with `read` capability.
+
 Log sources are the CLI's: `metro`, `client`, `device`, `build`, and `agent`,
 the agent-device actions `stim logs --source agent` reads for the workspace's
 owned devices. An app that shows what an agent does on a device subscribes

@@ -145,12 +145,16 @@ export function DeviceView({
       )
     : undefined;
   const { mac, state: link, connection } = useMacConnection();
-  const running = Boolean(device?.running && streamsFrames(device, link.kind === 'open' ? link.features : null));
+  const running = Boolean(
+    device &&
+    (device.running || (device.host && device.state !== 'stopped')) &&
+    streamsFrames(device, link.kind === 'open' ? link.features : null),
+  );
   const viewOnly =
     (physical && platform === 'ios') ||
     (platform === 'macos' && (link.kind !== 'open' || !link.features.includes('macos-window-control')));
   const slotRange = useReplayRange({ workspace, platform, slot });
-  const range = physical ? null : slotRange;
+  const range = physical || device?.host ? null : slotRange;
   const replayOff = !physical && env?.recording?.enabled === false;
   const timeline = useMemo(() => (range && !replayOff ? buildTimeline(range.spans) : null), [range, replayOff]);
   const hasFootage = timeline !== null && preset.video.length > 0;
@@ -165,6 +169,7 @@ export function DeviceView({
     link.kind === 'open' &&
     link.features?.includes('device-frames') === true;
   const duoSupported =
+    !device?.host &&
     !physical &&
     platform === 'ios' &&
     /\bDuo\b/.test(device?.model ?? '') &&

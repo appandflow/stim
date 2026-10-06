@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { open } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
+  archiveDir,
   listSegments,
   recordingDeviceName,
   workspaceRecordingsDir,
@@ -18,8 +19,16 @@ const MAX_ACTION_MARKERS = 400;
 const MAX_ERROR_MARKERS = 100;
 const MARKER_LABEL_CHARS = 120;
 
-export function recordingDir(workspace: string, platform: RecordingPlatform, slot: string): string {
-  return join(workspaceRecordingsDir(workspace), recordingDeviceName(platform, slot));
+export function recordingDir(
+  workspace: string | undefined,
+  platform: RecordingPlatform,
+  slot: string,
+  archive?: string,
+): string {
+  return join(
+    archive ? join(archiveDir(archive), 'recordings') : workspaceRecordingsDir(workspace!),
+    recordingDeviceName(platform, slot),
+  );
 }
 
 /** The access units of one segment file, in order; a record cut short at the end of a file being written is left out. */
@@ -61,8 +70,9 @@ function readUnitsFrom(bytes: Buffer): AccessUnit[] {
 export async function segmentKeyframe(
   dir: string,
   at: number,
+  closedOnly = false,
 ): Promise<{ segment: RecordedSegment; unit: AccessUnit } | null> {
-  const segments = listSegments(dir);
+  const segments = listSegments(dir, closedOnly);
   const segment = segments.find((candidate) => candidate.end >= at) ?? segments.at(-1);
   if (!segment) return null;
   let file;
@@ -170,16 +180,18 @@ export class Player {
   private readonly dir: string;
   private readonly output: PlayerOutput;
   private readonly congestedBytes: number;
+  private readonly closedOnly: boolean;
   private timer: NodeJS.Timeout | null = null;
   private generation = 0;
   private position = 0;
   private rate = 0;
   stopped = false;
 
-  constructor(dir: string, output: PlayerOutput, congestedBytes: number) {
+  constructor(dir: string, output: PlayerOutput, congestedBytes: number, closedOnly = false) {
     this.dir = dir;
     this.output = output;
     this.congestedBytes = congestedBytes;
+    this.closedOnly = closedOnly;
   }
 
   /** Returns the capture time of the frame shown, the newest one past the end, or null when nothing was recorded. */
@@ -187,7 +199,7 @@ export class Player {
     this.cancel();
     const generation = ++this.generation;
     this.rate = rate;
-    const segments = listSegments(this.dir);
+    const segments = listSegments(this.dir, this.closedOnly);
     if (!segments.length) return null;
     const found = segments.findIndex((segment) => segment.end >= at);
     const index = found === -1 ? segments.length - 1 : found;
@@ -245,7 +257,7 @@ export class Player {
     let list = units;
     let at = next;
     while (at >= list.length) {
-      const fresh = listSegments(this.dir);
+      const fresh = listSegments(this.dir, this.closedOnly);
       const current = fresh.findIndex((segment) => segment.start === segments[segmentIndex]?.start);
       const reread = current === -1 ? [] : readUnits(fresh[current]!.file);
       if (reread.length > list.length) {

@@ -8,6 +8,7 @@ import WebKit
 
 struct DeviceTile: View {
   var device: DeviceRef
+  var hostedPreview: PhysicalScreen? = nil
   var screenHeight: CGFloat
   var interactive = false
   var workspace: String?
@@ -201,7 +202,8 @@ struct DeviceTile: View {
   /// Whether the viewer offers hardware controls below the device's screen.
   static func hasButtons(_ device: DeviceRef) -> Bool {
     switch device {
-    case .ios, .android: return device.isRunning && !device.isPhysical
+    case .ios: return device.isRunning && device.localSimulatorUDID != nil
+    case .android: return device.isRunning && !device.isPhysical
     case .web, .remote: return false
     }
   }
@@ -285,6 +287,10 @@ struct DeviceTile: View {
           Pill(tone: .warning) { Text("billable") }
             .help("This remote session is billed while it runs.")
         }
+      }
+      if let host = device.hostedIos {
+        Label("on \(machineName(host.machine))", systemImage: "desktopcomputer")
+          .font(.stim(.caption)).foregroundStyle(Palette.tertiary)
       }
       if let project { Text(project).font(.stim(.footnote)).foregroundStyle(Palette.secondary) }
       FlowLayout(spacing: Space.sm) {
@@ -386,7 +392,7 @@ struct DeviceTile: View {
         }
         .disabled(clipboardRequest != nil)
       }
-      if device.formFactor == .dual, screenIDs.count > 1, case .ios(_, let sim) = device {
+      if device.formFactor == .dual, screenIDs.count > 1, case .ios(_, let sim) = device, device.localSimulatorUDID != nil {
         if hingeAvailable {
           controlGroup {
             ForEach(DuoPosture.allCases, id: \.self) { postureButton($0, udid: sim.udid) }
@@ -464,7 +470,7 @@ struct DeviceTile: View {
 
   var showsStoppedBar: Bool {
     if case .remote = device { return false }
-    if isPhysical, workspace != nil { return false }
+    if isPhysical || device.hostedIos != nil, workspace != nil { return false }
     return !device.isRunning && build == nil && !["Booting", "unknown"].contains(device.state)
   }
 
@@ -620,29 +626,31 @@ struct DeviceTile: View {
 
   private var dualSimulatorUDID: String? {
     guard viewer, !replaying, device.isRunning, !device.isPhysical, device.formFactor == .dual,
-      screenIDs.count > 1, case .ios(_, let sim) = device
+      screenIDs.count > 1, device.localSimulatorUDID != nil
     else { return nil }
-    return sim.udid
+    return device.localSimulatorUDID
   }
 
   private var clipboardTarget: String? {
     guard viewer, interactive, !replaying, device.isRunning else { return nil }
     switch device {
-    case .ios(_, let sim) where sim.owned && !sim.physical: return sim.udid
+    case .ios(_, let sim) where sim.owned: return device.localSimulatorUDID
     case .android(_, let avd) where avd.owned && !avd.physical: return avd.serial
     default: return nil
     }
   }
 
   private var simulatorOptionsUDID: String? {
-    guard viewer, interactive, !replaying, device.isRunning, case .ios(_, let sim) = device, !sim.physical else { return nil }
-    return sim.udid
+    guard viewer, interactive, !replaying, device.isRunning, case .ios = device, device.localSimulatorUDID != nil else {
+      return nil
+    }
+    return device.localSimulatorUDID
   }
 
   private var currentHingeAngle: Double {
     if let observedHingeAngle { return observedHingeAngle }
-    guard case .ios(_, let sim) = device else { return 180 }
-    return SimulatorPosture.estimatedAngle(udid: sim.udid, folded: posture.map { $0 == "Folded" })
+    guard let udid = device.localSimulatorUDID else { return 180 }
+    return SimulatorPosture.estimatedAngle(udid: udid, folded: posture.map { $0 == "Folded" })
   }
 
   private var duoPosture: DuoPosture? {
@@ -794,7 +802,24 @@ struct DeviceTile: View {
 
   @ViewBuilder private var screen: some View {
     switch device {
-    case .ios(_, let sim) where device.isRunning && !sim.physical:
+    case .ios where device.hostedIos != nil:
+      if let hostedPreview {
+        switch hostedPreview {
+        case .message(let text, let remedy): PhysicalMessage(text: text, remedy: remedy)
+        case .stream: placeholder("Connecting to the hosted simulator")
+        }
+      } else if let workspace {
+        PhysicalDeviceScreen(
+          device: device, workspace: workspace, interactive: interactive,
+          onPixelSizeChange: { pixelSizes[1] = $0 }, onControlLost: onControlLost
+        )
+        .id(device.id)
+        .frame(width: screenWidth(1))
+        .padding(screenPadding)
+      } else {
+        placeholder("A workspace is required to view this hosted simulator.")
+      }
+    case .ios(_, let sim) where device.isRunning && device.localSimulatorUDID != nil:
       HStack(alignment: .bottom, spacing: displayedScreenIDs.count > 1 ? screenPadding : 0) {
         ForEach(screenIDs, id: \.self) { screenID in
           SimulatorDisplayView(
@@ -901,7 +926,8 @@ private struct DeviceControlButtonStyle: ButtonStyle {
 extension DeviceRef {
   var isInteractive: Bool {
     switch self {
-    case .ios(_, let sim): return isRunning && !sim.physical
+    case .ios(_, let sim):
+      return !sim.physical && (hostedIos != nil ? state != "stopped" : isRunning && localSimulatorUDID != nil)
     case .android(_, let avd): return isRunning && (avd.owned || avd.physical) && avd.serial != nil
     case .web(let browser): return browser.running && browser.cdpEndpoint != nil && browser.targetId != nil
     case .remote: return false

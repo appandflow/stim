@@ -22,6 +22,7 @@ export function isActive(env: EnvironmentState): boolean {
     env.macos?.build.state === 'running' ||
     env.macos?.state === 'running' ||
     env.macos?.state === 'orphaned' ||
+    devicesOf(env).some((device) => device.host && device.running) ||
     (env.remoteDevices?.length ?? 0) > 0 ||
     (env.physicalDevices?.length ?? 0) > 0
   );
@@ -59,7 +60,7 @@ export interface DeviceRef {
   diskBytes?: number | null;
   /** When the workspace's lease on a physical device ends. */
   leaseExpiresAt?: string;
-  /** The Mac a hosted macOS app runs on, without the entry's port. */
+  /** The Mac a hosted device or app runs on, without the entry's port. */
   host?: string;
 }
 
@@ -67,7 +68,7 @@ export function deviceKey(device: Pick<DeviceRef, 'platform' | 'slot' | 'physica
   return `${device.platform}\n${device.slot}${device.physical ? '\nphysical' : ''}`;
 }
 
-type ServedDevice = Pick<DeviceRef, 'platform' | 'owned' | 'physical' | 'running' | 'state'>;
+type ServedDevice = Pick<DeviceRef, 'platform' | 'owned' | 'physical' | 'running' | 'state' | 'host'>;
 
 /**
  * Whether stim-server serves the device's screen: an owned one, or a connected physical device whose platform the
@@ -76,6 +77,8 @@ type ServedDevice = Pick<DeviceRef, 'platform' | 'owned' | 'physical' | 'running
  * connected, when nothing streams and the tile waits for it like any other.
  */
 export function streamsFrames(device: ServedDevice, features: readonly string[] | null): boolean {
+  if (device.host && device.platform === 'ios')
+    return device.state !== 'stopped' && (features === null || features.includes('ios-hosted'));
   if (device.platform === 'macos') return device.running && (features === null || features.includes('macos-window'));
   if (!device.physical) return device.owned;
   return device.running && (features === null || features.includes(`physical-${device.platform}`));
@@ -83,6 +86,8 @@ export function streamsFrames(device: ServedDevice, features: readonly string[] 
 
 /** Why a device {@link streamsFrames} does not serve shows no screen. */
 export function unservedReason(device: ServedDevice): string {
+  if (device.host && device.platform === 'ios')
+    return device.state === 'stopped' ? t`Not running` : t`Update stim-server on the Mac to see this device's screen.`;
   if (device.platform === 'macos') return t`Update stim-server on the Mac to view this app window.`;
   if (!device.physical) return t`Frames are only served for devices Stim owns.`;
   if (!device.running) return device.state;
@@ -94,11 +99,12 @@ function iosDevice(slot: string, sim: SimState): DeviceRef {
   return {
     platform: 'ios',
     slot,
-    id: sim.udid,
+    id: sim.host ? null : sim.udid,
     name: sim.name ?? sim.udid,
-    model,
+    model: sim.host?.device ? `${sim.host.device.name} ${sim.host.device.runtime.replace(/^iOS /, '')}` : model,
+    host: sim.host ? machineName(sim.host.machine) : undefined,
     state: sim.state,
-    running: sim.state === 'Booted',
+    running: sim.host ? sim.state === 'ready' : sim.state === 'Booted',
     owned: sim.owned,
     physical: false,
     activity: sim.activity,
@@ -211,7 +217,7 @@ export function livePlatforms(env: EnvironmentState): DevicePlatform[] {
   return [
     ...new Set(
       devicesOf(env)
-        .filter((d) => d.running && d.owned && !d.physical)
+        .filter((d) => d.running && (d.owned || d.host) && !d.physical)
         .map((d) => d.platform),
     ),
   ];

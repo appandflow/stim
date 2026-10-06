@@ -227,6 +227,14 @@ export function readLogRecords(dir: string, include: (name: string) => boolean =
   return sortByTs(all);
 }
 
+export const NATIVE_CRASH_LOG_PREFIX = 'native-crash-';
+
+/** Reads the CLI timeline with retained native crash records after other records at the same timestamp. */
+export function readLogTimeline(dir: string, records?: NdjsonRecord[]): NdjsonRecord[] {
+  const timeline = records ?? readLogRecords(dir, (name) => !name.startsWith(NATIVE_CRASH_LOG_PREFIX));
+  return sortByTs([...timeline, ...readLogRecords(dir, (name) => name.startsWith(NATIVE_CRASH_LOG_PREFIX))]);
+}
+
 function isExpoErrorContext(record: NdjsonRecord, event: unknown): boolean {
   if (record.src !== 'metro' || record.raw !== true || record.event !== event || typeof record.msg !== 'string') {
     return false;
@@ -482,6 +490,13 @@ export function queryLogs({
   return errorContext
     ? includeBareErrorContext(all, attachExpoErrorContext(all, matched), launchTs, criteria.sinceTs)
     : matched;
+}
+
+/** Queries the JSON timeline, including Expo context fields on errors as `stim logs --json` does. */
+export function queryJsonLogs(options: Parameters<typeof queryLogs>[0] = {}): NdjsonRecord[] {
+  const records = options.records ?? readLogTimeline(options.dir as string);
+  const matched = queryLogs({ ...options, records, errorContext: false });
+  return options.errorsOnly ? attachExpoErrorContext(records, matched, 'field') : matched;
 }
 
 export function tailRead(prev: TailState | null | undefined, size: number): { start: number; prev: TailState } {

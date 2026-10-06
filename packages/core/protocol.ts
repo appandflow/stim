@@ -33,6 +33,7 @@ export type Capability = (typeof CAPABILITIES)[number];
  * the slot's Stim-owned device instead. `notifications` is `notifications.list` and the `notification` event.
  * `macos-hosted` relays `frames.subscribe` and control for a workspace whose macOS app
  * `stim macos --remote` placed on another Mac.
+ * `ios-hosted` relays iOS simulator frames and control by workspace slot through the client's server.
  * `macos-windows` is the `macos-windows` event on a macOS `frames.subscribe`, naming the window capture follows
  * and the app's other windows.
  * `hosted-congestion` is `device-host.frames.congested`, which lowers the bitrate of a hosted video subscription
@@ -53,6 +54,7 @@ export const FEATURES = [
   'macos-keyboard-extended',
   'device-frames',
   'macos-hosted',
+  'ios-hosted',
   'duo-frames',
   'workspace-diff',
   'hosted-congestion',
@@ -297,11 +299,12 @@ export const MAX_LOG_TAIL = 5000;
 
 /**
  * The Stim Desktop log viewer's filters, passed to `stim logs`. `workspace` is an environment `path` from a
- * status payload. Without `sources`, `errors` keeps the CLI's default error scope. `tail` defaults to
- * {@link MAX_LOG_TAIL}, which is also its maximum.
+ * status payload. Exactly one of `workspace` or `archive` (an `archived[].id`) is required. Without `sources`,
+ * `errors` keeps the CLI's default error scope. `tail` defaults to {@link MAX_LOG_TAIL}, which is also its maximum.
  */
 export interface LogFilter {
-  workspace: string;
+  workspace?: string;
+  archive?: string;
   sources?: LogSource[];
   level?: LogLevel;
   slot?: string;
@@ -354,13 +357,16 @@ export const FRAME_EDGE = { min: 240, default: 1280, max: 2048 } as const;
  * cable, and an Android phone over adb. `fps` caps how many frames a second this
  * subscription gets, and `maxEdge` asks for frames scaled to fit that many pixels; the server may send smaller
  * frames, and larger ones while another subscriber of the same device asks for more.
+ * Exactly one of `workspace` or `archive` (an `archived[].id`) is required. An archive needs `at`,
+ * cannot be physical, and cannot return to live.
  */
 export interface FrameTarget {
   /** Requests installed ordinary-device artwork for this live subscription. */
   deviceFrame?: boolean;
   /** Requests a composed Duo image carrying the pose used to map its input. */
   duoFrame?: boolean;
-  workspace: string;
+  workspace?: string;
+  archive?: string;
   platform: Platform;
   slot?: string;
   physical?: boolean;
@@ -417,9 +423,10 @@ export interface FramesLiveParams {
   subscription: string;
 }
 
-/** A device slot of a workspace, as `frames.subscribe` names it. */
+/** A device slot with exactly one of `workspace` or `archive` (an `archived[].id`), as `frames.subscribe` names it. */
 export interface ReplayTarget {
-  workspace: string;
+  workspace?: string;
+  archive?: string;
   platform: Platform;
   slot?: string;
 }
@@ -1312,7 +1319,7 @@ export interface StatusEvent {
 
 /**
  * Records for a `logs.subscribe` subscription: first the last `tail` matching records, then new ones as
- * they arrive.
+ * they arrive. An archive subscription sends its matching records, then `logs-ended`.
  */
 export interface LogsEvent {
   event: 'logs';
@@ -1320,8 +1327,16 @@ export interface LogsEvent {
   records: LogRecord[];
 }
 
+/** All matching archived log records were sent; the subscription has been released. */
+export interface LogsEndedEvent {
+  event: 'logs-ended';
+  subscription: string;
+}
+
 /** A subscription ended because its source failed or the client fell behind; the client may resubscribe. */
 export interface ErrorEvent {
+  platform?: Platform;
+  slot?: string;
   event: 'error';
   subscription: string;
   error: ProtocolError;
@@ -1340,6 +1355,8 @@ export interface DeviceFrameArtwork {
 }
 
 export interface DeviceFrameEvent {
+  platform?: Platform;
+  slot?: string;
   event: 'device-frame';
   subscription: string;
   artwork: DeviceFrameArtwork | null;
@@ -1398,6 +1415,8 @@ export interface FrameEvent {
  * frames stopped when the server knows, such as a locked iPhone or one another app captures.
  */
 export interface FrameDelayedEvent {
+  platform?: Platform;
+  slot?: string;
   event: 'frame-delayed';
   subscription: string;
   delayed: boolean;
@@ -1411,6 +1430,8 @@ export const CONTROL_END_REASONS = ['idle', 'taken-over', 'device-gone', 'forbid
  * stopped or changed owner, the device lost `control`, or input could not reach the device.
  */
 export interface ControlEndedEvent {
+  platform?: ControlPlatform;
+  slot?: string;
   event: 'control-ended';
   session: string;
   reason: (typeof CONTROL_END_REASONS)[number];
@@ -1442,6 +1463,7 @@ export type ServerEvent =
   | NotificationEvent
   | StatusEvent
   | LogsEvent
+  | LogsEndedEvent
   | FrameEvent
   | DeviceFrameEvent
   | MacosWindowsEvent

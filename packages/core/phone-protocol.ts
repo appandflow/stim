@@ -333,6 +333,7 @@ export type PhoneStatusEvent = Omit<Wire.StatusEvent, 'payload' | 'usage'> & {
   payload: PhoneStatusPayload;
   usage?: PhoneStatusUsage;
 };
+export type PhoneLogsEndedEvent = Wire.LogsEndedEvent;
 export type PhoneLogsEvent = Omit<Wire.LogsEvent, 'records'> & { records: PhoneLogRecord[] };
 export type PhoneDeviceFrameArtwork = Wire.DeviceFrameArtwork;
 export type PhoneDeviceFrameEvent = Wire.DeviceFrameEvent;
@@ -528,6 +529,7 @@ export type {
   PhoneProtocolError as ProtocolError,
   PhoneStatusEvent as StatusEvent,
   PhoneLogsEvent as LogsEvent,
+  PhoneLogsEndedEvent as LogsEndedEvent,
   PhoneDeviceFrameArtwork as DeviceFrameArtwork,
   PhoneDeviceFrameEvent as DeviceFrameEvent,
   PhoneMacosWindowsEvent as MacosWindowsEvent,

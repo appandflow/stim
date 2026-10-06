@@ -69,6 +69,28 @@
     }
   }
 
+  struct HostedIosGallery: View {
+    var scenario: PlaygroundScenario
+
+    var body: some View {
+      let state = scenario == .empty ? "stopped" : scenario == .error ? "unverified" : "ready"
+      let json = """
+        {"name":"iPhone 17 Pro","udid":"","owned":false,"state":"\(state)",
+         "host":{"machine":"janics-mac-mini:7443","session":"hosted-ios-gallery",
+                 "device":{"name":"iPhone 17 Pro","runtime":"iOS 27.0"}}}
+        """
+      if let ios = try? JSONDecoder().decode(IosDevice.self, from: Data(json.utf8)) {
+        let device = DeviceRef.ios(slot: "tablet", ios)
+        let link: ServerLink = scenario == .error ? .unavailable("janics-mac-mini is unavailable.") : .connecting
+        DeviceTile(
+          device: device, hostedPreview: PhysicalScreen(device: device, link: link, now: Date()),
+          screenHeight: 360, workspace: "/fixture/hosted-ios"
+        )
+        .padding(Space.xl)
+      }
+    }
+  }
+
   /// Dynamic `NSColor`s resolve against the hosting view's `NSAppearance`, which SwiftUI's `colorScheme`
   /// environment does not set, so each column is hosted in its own `NSHostingView`.
   private struct AppearanceHost<Content: View>: NSViewRepresentable {

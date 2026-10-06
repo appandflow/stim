@@ -139,6 +139,13 @@ to stats.json.corrupt-<unix ms> and starts a new one.`,
   Build outputs and open recording segments are deleted with the workspace.
   Archives have no checkout, devices, ports or running processes. A recreated
   path starts fresh; status links its earlier archives with replacedBy.
+  Paired clients with read can select archived[].id with archive instead of
+  workspace for server log queries and replay. Archived log subscriptions send
+  retained records, then logs-ended. Archived frame subscriptions need at and
+  cannot be physical or go live. Replay ranges report recording disabled.
+  Reads stay on this Mac.
+  An updated server is required; older servers refuse with bad-request when
+  workspace is omitted. There is no CLI archive log flag.
   archive.enabled defaults true and accepts every settings layer. STIM_HOME
   disables archives unless STIM_ARCHIVE_ENABLED is set. Empty stubs and orphaned
   workspace directories are not archived. A failure prints one stderr line

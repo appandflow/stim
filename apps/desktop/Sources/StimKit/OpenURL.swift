@@ -56,7 +56,7 @@ extension StatusPayload {
     for env in environments {
       for device in env.devices {
         switch (request, device) {
-        case (.simulator(let udid), .ios(_, let ios)) where ios.udid == udid:
+        case (.simulator(let udid), .ios(_, let ios)) where !udid.isEmpty && ios.host == nil && ios.udid == udid:
           return (env, device)
         case (.emulator(let serial), .android(_, let android)) where android.serial == serial:
           return (env, device)

@@ -45,7 +45,9 @@ export function DeviceTile({
   const workspace = env.path;
   const [screenWidth, setScreenWidth] = useState(0);
   const now = useNow(30_000);
-  const streams = device.running && streamsFrames(device, link.kind === 'open' ? link.features : null);
+  const streams =
+    (device.running || Boolean(device.host && device.state !== 'stopped')) &&
+    streamsFrames(device, link.kind === 'open' ? link.features : null);
   const { frame, error, delayed, delayedReason } = useFrame(workspace, device.platform, device.slot, streams, {
     physical: device.physical,
   });
@@ -101,7 +103,7 @@ export function DeviceTile({
       {usage ? <UsageStats usage={usage} /> : null}
     </View>
   );
-  if (!device.running) {
+  if (!device.running && !(device.host && streams)) {
     return (
       <Card>
         {header}

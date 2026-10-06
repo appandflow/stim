@@ -1,10 +1,21 @@
-import { compileGrep, isJsonObject } from '@stim-cli/core/state';
+import { join } from 'node:path';
+import {
+  compileGrep,
+  createAgentActionReader,
+  isJsonObject,
+  queryJsonLogs,
+  readLogTimeline,
+  sortByTs,
+  type NdjsonRecord,
+} from '@stim-cli/core/state';
 import { SLOT_NAME } from './control.ts';
 import type { JsonObject } from './feed.ts';
 import { LOG_LEVELS, LOG_SOURCES, MAX_LOG_TAIL, type LogFilter, type LogLevel, type LogSource } from './protocol.ts';
 
 export function parseLogFilter(params: unknown): { filter: LogFilter } | { error: string } {
-  if (!isJsonObject(params) || typeof params.workspace !== 'string') return { error: 'params.workspace is required.' };
+  if (!isJsonObject(params)) return { error: 'params must be an object.' };
+  const error = readTargetError(params);
+  if (error) return { error };
   const { sources, level, slot, grep, errors, tail } = params;
   if (
     sources !== undefined &&
@@ -29,7 +40,7 @@ export function parseLogFilter(params: unknown): { filter: LogFilter } | { error
   }
   return {
     filter: {
-      workspace: params.workspace,
+      ...(typeof params.archive === 'string' ? { archive: params.archive } : { workspace: params.workspace as string }),
       ...(sources ? { sources: sources as LogSource[] } : {}),
       ...(level && level !== 'debug' ? { level: level as LogLevel } : {}),
       ...(slot ? { slot } : {}),
@@ -38,6 +49,37 @@ export function parseLogFilter(params: unknown): { filter: LogFilter } | { error
       tail: (tail as number | undefined) ?? MAX_LOG_TAIL,
     },
   };
+}
+
+export function readTargetError(params: JsonObject): string | null {
+  if ((params.workspace === undefined) === (params.archive === undefined)) {
+    return 'Exactly one of params.workspace or params.archive is required.';
+  }
+  if (params.archive !== undefined) {
+    return typeof params.archive === 'string' && params.archive.length > 0 && !/[\\/\0]|\.\./.test(params.archive)
+      ? null
+      : "params.archive must be an archive id without path separators, NUL or '..'.";
+  }
+  return typeof params.workspace === 'string' ? null : 'params.workspace is required.';
+}
+
+export function archivedTimeline(dir: string): NdjsonRecord[] {
+  return sortByTs([
+    ...readLogTimeline(join(dir, 'logs')),
+    ...createAgentActionReader({ sessionsDirs: [join(dir, 'agent-device', 'sessions')] })(),
+  ]);
+}
+
+export function archivedLogs(dir: string, filter: LogFilter): JsonObject[] {
+  return queryJsonLogs({
+    records: archivedTimeline(dir),
+    sources: filter.sources,
+    minLevel: filter.level,
+    slot: filter.slot,
+    grep: filter.grep,
+    errorsOnly: filter.errors,
+    tail: filter.tail,
+  });
 }
 
 export function logArgs(filter: LogFilter, follow: boolean): string[] {
@@ -54,6 +96,7 @@ export interface LogSink {
   send: (records: JsonObject[]) => void;
   bufferedBytes: () => number;
   overflow: () => void;
+  ended?: () => void;
 }
 
 export interface LogLimits {
@@ -68,6 +111,7 @@ export class LogBatcher {
   private pending: JsonObject[] = [];
   private timer: NodeJS.Timeout | null = null;
   private stopped = false;
+  private finishing = false;
 
   private readonly sink: LogSink;
   private readonly limits: LogLimits;
@@ -88,6 +132,12 @@ export class LogBatcher {
     this.timer ??= setTimeout(() => this.flush(false), BATCH_MS);
   }
 
+  finish(): void {
+    if (this.stopped) return;
+    this.finishing = true;
+    this.flush(false);
+  }
+
   flush(force: boolean): void {
     if (this.timer) clearTimeout(this.timer);
     this.timer = null;
@@ -96,6 +146,10 @@ export class LogBatcher {
       this.sink.send(this.pending.splice(0, MAX_BATCH));
     }
     if (this.pending.length && !this.stopped) this.timer = setTimeout(() => this.flush(false), BATCH_MS);
+    else if (this.finishing && !this.stopped) {
+      this.stop();
+      this.sink.ended?.();
+    }
   }
 
   stop(): void {

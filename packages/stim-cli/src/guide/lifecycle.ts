@@ -339,7 +339,18 @@ entries, overlap by five seconds and de-duplicate; info-level or later-persisted
 entries may be unavailable. JavaScript logs arrive through Metro.
 The host advertises hosted-ios-data for iOS handoff and native logs. An older
 host gets an update note, uses uploads and shows logs already copied here.
-Client viewing relays and agent control are later work.`,
+Agent control is later work.
+
+Stim Desktop and the phone app view and control the simulator through this
+Mac's stim-server relay, with an "on <machine>" label. Turn on Serve to phones
+in Desktop; pair the phone with this Mac, not the hosting Mac. frames.subscribe
+and control.begin address workspace, platform ios and slot, including named
+slots. The relay shares one authenticated host connection with hosted macOS
+viewers. Stopped sessions show a rerun remedy; unavailable hosts report why
+frames cannot arrive. Replay, duoFrame and physical targets are refused for
+hosted subscriptions. Desktop hides local Simulator.app, rotation, hardware
+buttons and simulator options; touch and text use the relay. The phone can also
+send the host's supported button, rotation and posture inputs.`,
     },
     eas: {
       summary: 'download a matching EAS development build; explicit profile, costs, cache and miss remedies',

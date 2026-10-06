@@ -122,6 +122,7 @@ type InputMethod =
  * physical device, which turns only in hand.
  */
 export interface SessionTarget {
+  slot?: string;
   platform: ControlPlatform;
   postures: readonly DevicePosture[];
   simulator?: SimulatorOptions;
