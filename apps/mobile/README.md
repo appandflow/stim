@@ -1566,13 +1566,13 @@ are listed per display type, in the order App Store Connect shows them:
 | `ipad-13`    | `APP_IPAD_PRO_3GEN_129` | 2064x2752 | 4      |
 
 App Store Connect files its 6.9-inch iPhone and 13-inch iPad images under those
-two display types. To change a screenshot, replace the PNG (RGB, no alpha, same
-size) and keep the file name, or edit the list in `store.config.js`, then push.
-`eas metadata:push` matches an image by file name and size: it uploads new or
-changed ones, deletes ones no longer listed and reorders the rest. Renaming a
-file uploads it again. `eas metadata:lint` does not check that the files exist.
-Screenshots need eas-cli 24.10 or later; an older one ignores them, so run
-`npx eas-cli@latest metadata:push` if `npx eas-cli` resolves to a cached release.
+two display types. To change a screenshot, replace the PNG (RGB, no alpha) or
+edit the list in `store.config.js`, then push. `eas metadata:push` matches an
+image by file name and byte size, so a replacement needs a new file name unless
+its size differs. Within each listed display type it uploads new or changed
+images, deletes ones no longer listed and reorders the rest; dropping a display
+type from the config leaves its set in App Store Connect. `eas metadata:lint`
+does not check that the files exist.
 
 The App Review notes tell the reviewer to pair with the demo server at
 `wss://stim-demo.appandflow.workers.dev` (see `apps/demo-server`). The pairing
