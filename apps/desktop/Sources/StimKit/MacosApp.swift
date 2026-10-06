@@ -10,7 +10,7 @@ public struct MacosApp: Decodable, Hashable, Sendable {
   public var state: String
   public var app: Process?
   public var build: Build
-  /// Set when `stim macos --host` runs the app on another Mac; it then has no local process.
+  /// Set when `stim macos --remote` runs the app on another Mac; it then has no local process.
   public var host: Host?
 
   public struct Host: Decodable, Hashable, Sendable {

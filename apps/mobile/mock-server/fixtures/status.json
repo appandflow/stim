@@ -4362,7 +4362,7 @@
     }
   },
   "edits": [
-    "environments[path*=a4-multi-device].macos: added by hand in the MacosAppState shape stim status --json reports for `stim macos --host janics-mac-mini`, with a hosted placement and a running app; the capture predates hosted macOS apps",
+    "environments[path*=a4-multi-device].macos: added by hand in the MacosAppState shape stim status --json reports for `stim macos --remote janics-mac-mini`, with a hosted placement and a running app; the capture predates hosted macOS apps",
     "environments[path*=1123-mobile-app].remoteDevices: added by hand in the RemoteDeviceState shape; the capture machine had no EAS session",
     "environments[path*=chat-perf-demo].android: added by hand, so one workspace runs both platforms and reload needs a platform",
     "environments[path*=react-native-reserved-regions].lastBuilds and environments[path*=wide-insets].lastBuilds: added by hand in the LastBuild shape; the capture predates the field; the reserved-regions Android missReason follows the shape of a real miss recorded by stim ios after adding expo-clipboard",

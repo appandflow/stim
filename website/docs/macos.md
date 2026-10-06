@@ -74,7 +74,7 @@ incremental outputs. It does not start Metro. Local `stim macos` starts the app 
 the background without activating it or changing focus: it sets
 `STIM_BACKGROUND_LAUNCH=1` in the app's environment, which Stim Desktop honors.
 An app that activates itself at launch still takes focus. Hosted launches
-(`macos --host`) do not set it. A failed build keeps the compiler
+(`macos --remote`) do not set it. A failed build keeps the compiler
 output in workspace logs and does not launch an app. Runtime stdout and stderr
 are client logs, and Stim runs the app with `NSUnbufferedIO=YES` so Swift `print`
 output arrives per line instead of when the app exits; unexpected exits are errors. `macos --json` prints one launch
@@ -230,13 +230,18 @@ available.
 
 ## Run it on another Mac
 
-`stim macos --host <machine>` builds the Debug app on this Mac and runs it on
+`stim macos --remote <machine>` builds the Debug app on this Mac and runs it on
 another Mac over your tailnet, without SSH. List that Mac in
 [`hosting.machines`](./settings.md#machine-settings) and run `stim doctor --fix`;
 a person on that Mac approves the request with
 `stim-server devices grant <id> --device-host`, then run `stim doctor` once more.
 Stim connects only to the Mac's pinned tailnet node. If the host refuses or is
 unreachable, the command fails; it never launches the app locally instead.
+
+The `--remote` value is a hosting Mac name from `hosting.machines`. macOS
+refuses `eas` and `proxy` because it has neither backend. It also refuses `auto`
+until automatic placement ships. These reserved names are case-insensitive and
+trimmed; they refuse with `STIM_BAD_ARG` before state access or a connection.
 
 The host records the hosted app's stdout, stderr and exit like a local run.
 `stim logs`, including `--errors`, `--json` and `--follow`, asks the host over the
@@ -254,8 +259,8 @@ stim-server, which relays to the host. The phone sends clicks, scrolls,
 text and keys; Stim Desktop's Control sends clicks, drags and typed text.
 
 <StimTabs
-code={`stim macos --host janics-mac-mini
-stim macos --host janics-mac-mini --json
+code={`stim macos --remote janics-mac-mini
+stim macos --remote janics-mac-mini --json
 stim status --json
 stim stop`}
 />
@@ -280,7 +285,7 @@ put secrets there. Older hosts ignore them and Stim warns to update `stim-server
 on the host. `status --json` reports the host's applied arguments under
 `environments[].macos.arguments`.
 
-While the app runs on a host, a local `stim macos` refuses, and so does `--host`
+While the app runs on a host, a local `stim macos` refuses, and so does `--remote`
 with another machine, until
 `stim stop`. `stim stop` and `stim worktree remove` stop the session on the host and
 wait for it to confirm. When the host cannot be reached, the placement stays
@@ -314,7 +319,7 @@ asks the host for the session state only for hosted placements, with about a
 3 s timeout per connection and request and a 10 s cache. It reports `stopped`
 when the host says the session stopped, for example after a stim-server restart
 there, and `unverified` when the host is unreachable or cannot confirm. The
-`host` field stays recorded for cleanup. Run `stim macos --host <machine>` to
+`host` field stays recorded for cleanup. Run `stim macos --remote <machine>` to
 launch a stopped app again, or `stim stop` to clear or reconcile the placement.
 `agent` is
 `{ "driver": "none", "setting": "hosting.agentDriver" }` until the hosting Mac's
@@ -341,7 +346,7 @@ method; do not retry it.
 
 Copy this prompt:
 
-> Run my Swift Package app on janics-mac-mini with `stim macos --host`. Confirm
+> Run my Swift Package app on janics-mac-mini with `stim macos --remote`. Confirm
 > `stim status --json` reports the hosted session, then stop it with `stim stop`.
 > Do not use SSH or change settings on the other Mac.
 

@@ -57,7 +57,7 @@ public enum PhysicalScreen: Equatable, Sendable {
     }
   }
 
-  /// A macOS app that `stim macos --host` runs on another Mac, which this Mac's stim-server relays.
+  /// A macOS app that `stim macos --remote` runs on another Mac, which this Mac's stim-server relays.
   public init(hostedMacosOn link: ServerLink) {
     switch link {
     case .off:

@@ -1038,6 +1038,7 @@ captured"  (in metro.ndjson, bare RN)
   -- \`guide settings\` names the type each key takes), an invalid
   Metro tunnel setting, \`stim macos\` with macos.product or macos.infoPlist
   unset (set both explicitly in .stim.json; see \`stim guide macos\`),
+  \`stim macos --remote eas|proxy|auto\` (name a hosting Mac instead),
   an invalid android.dataPartitionSizeGb value, an unsafe
   android.avdConfig key or fragment, a malformed ios.signingIdentity,
   ios.signingIdentitySha1 or ios.lanHost value, a metro.port or

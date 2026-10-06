@@ -1,5 +1,5 @@
 export default {
-  summary: 'Swift Package macOS Debug apps: owned bundle, logs, local window viewing, and --host on another Mac',
+  summary: 'Swift Package macOS Debug apps: owned bundle, logs, local window viewing, and --remote on another Mac',
   body: () => `MACOS: SWIFT PACKAGE DEVELOPMENT PROTOTYPE
 
 If Stim is not installed globally, replace stim with npx stim.
@@ -50,7 +50,7 @@ keeps incremental outputs in the workspace's runtime directory under STIM_HOME.
 Local stim macos starts the app in the background without activating it or
 changing focus: it sets STIM_BACKGROUND_LAUNCH=1 in the app's environment, which
 Stim Desktop honors. An app that activates itself at launch still takes focus.
-Hosted launches (macos --host) do not set it.
+Hosted launches (macos --remote) do not set it.
 macOS artifacts are not cached. This prototype has no --plan, --slot, or reload command.
 A failed build records its error and compiler output without launching an app.
 Runtime stdout and stderr become client records; build output becomes build
@@ -215,13 +215,18 @@ used.
 
 ON ANOTHER MAC
 
-stim macos --host <machine> builds the Debug app on this Mac and runs it on an
+stim macos --remote <machine> builds the Debug app on this Mac and runs it on an
 approved hosting Mac over the tailnet, without SSH. The machine must be listed
 in hosting.machines and approved: stim doctor --fix asks it, a person on that
 Mac runs stim-server devices grant <id> --device-host, and stim doctor then
 records the approval. Stim connects only to the machine's pinned tailnet node.
 A refusal or an unreachable host fails the command; it never launches here
 instead.
+
+The --remote value is a hosting Mac name from hosting.machines. macOS refuses
+eas and proxy because it has neither backend. It also refuses auto until
+automatic placement ships. These reserved names are case-insensitive and
+trimmed; they refuse with STIM_BAD_ARG before state access or a connection.
 
 Logs: the host records the hosted app's stdout, stderr and exit like a local run.
 stim logs, including --errors, --json and --follow, asks the host over the same
@@ -238,11 +243,11 @@ Phones and Stim Desktop view and control the hosted app through this Mac's
 stim-server, which relays to the host. The phone sends clicks, scrolls,
 text and keys; Stim Desktop's Control sends clicks, drags and typed text.
 
-  stim macos --host mini          # build here, deliver, launch on mini
-  stim macos --host mini --json   # { platform, product, launchId, build, host }
-  stim status --json              # environments[].macos.state and macos.host
-  stim stop                       # stop the session on mini and confirm it
-  stim worktree remove <path>     # also stops it
+  stim macos --remote mini          # build here, deliver, launch on mini
+  stim macos --remote mini --json   # { platform, product, launchId, build, host }
+  stim status --json                # environments[].macos.state and macos.host
+  stim stop                         # stop the session on mini and confirm it
+  stim worktree remove <path>       # also stops it
 
 The copy keeps the plist's own CFBundleIdentifier. The host runs it as
 <id>.hosted<slot> from a fixed slot pool, so the bundle id stays the same
@@ -257,7 +262,7 @@ hosts ignore them and Stim warns to update stim-server on the host.
 status --json reports the host's applied arguments under
 environments[].macos.arguments.
 A workspace has one macOS app: a local stim macos
-refuses while it runs on a host, and --host with a different machine refuses
+refuses while it runs on a host, and --remote with a different machine refuses
 until stim stop. When the host cannot be reached or does not confirm the stop,
 the placement stays recorded; restore the connection and run stim stop again.
 
@@ -283,7 +288,7 @@ bundleId, agent }. For hosted placements only, status asks the host for the
 session state with about a 3 s timeout per connection and request and a 10 s
 cache. It reports stopped when the host says the session stopped, for example
 after a stim-server restart there, and unverified when the host is unreachable
-or cannot confirm. Run stim macos --host <machine> to launch a stopped app
+or cannot confirm. Run stim macos --remote <machine> to launch a stopped app
 again, or stim stop to clear or reconcile the placement. The host field stays
 in status --json for cleanup.
 While a placement is recorded, gc treats the workspace as in use. agent says
@@ -311,7 +316,7 @@ Agents that built, launched and drove test copies on another Mac with an SSH
 script such as mini-desktop.sh use these instead:
 
   script command             stim
-  build                      stim macos --host <mac>
+  build                      stim macos --remote <mac>
   launch                     the same command; the host launches it under the
                              session's own home
   shot <out.png>             agent-device screenshot --remote-config <path>

@@ -933,8 +933,9 @@ one Mac that built here. The `a4-offloading`, `a4-offloaded` and
 `a4-offload-fallback` workspaces show an iOS build running on
 `janics-mac-mini`, a last build that machine compiled, and a local build after
 it was busy.
-The `a4-multi-device` workspace also carries a macOS app that `stim macos --host
-janics-mac-mini` placed on another Mac, added by hand in the `macos.host` shape.
+The `a4-multi-device` workspace also carries a macOS app that
+`stim macos --remote janics-mac-mini` placed on another Mac, added by hand in the
+`macos.host` shape.
 
 Device tokens the mock server issues survive its restarts in a file in the
 system temporary directory. The mock server grants every phone control and

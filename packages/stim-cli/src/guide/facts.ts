@@ -1340,7 +1340,7 @@ RULES
                           finishedAt?, durationMs?, error?,
                           buildMachine?, builtOn?, errorCode?, offloadedTo?, offloadFallback? }
     host?               { machine, session, appSlot, appAttempt, bundleId,
-                          agent } when stim macos --host placed the app on
+                          agent } when stim macos --remote placed the app on
                           another Mac; it then has no local app or supervisor
     hostLaunched?       true when that host reported a live app, false when
                           stopped, "unverified" when it could not confirm one
