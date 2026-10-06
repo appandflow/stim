@@ -113,7 +113,7 @@ private struct NoticeCard: View {
   var body: some View {
     Banner(tone: notice.tone, icon: notice.icon, style: .floating, onDismiss: { center.dismiss(notice.id) }) {
       if center.notices.count > 1 { stepper }
-      Text(notice.title).font(.stim(.headline)).fixedSize(horizontal: false, vertical: true)
+      Text(notice.title).font(.stim(.headline)).lineLimit(2)
       if let detail = notice.detail {
         Text(detail).foregroundStyle(Palette.secondary).lineLimit(1).truncationMode(.middle)
       }

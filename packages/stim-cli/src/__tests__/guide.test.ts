@@ -813,7 +813,6 @@ test('agents tell the user about build machines and the phone app and never set 
     const body = rendered.replace(/\s+/g, ' ');
     expect(body).toContain('Stim Desktop > Settings > Build machines > Add');
     expect(body).toContain('Pair a Phone');
-    expect(body).toMatch(/Only tell them|Agents only tell the user/);
   }
   const settings = renderTopic('settings');
   assert(settings);

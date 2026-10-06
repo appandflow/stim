@@ -22,7 +22,7 @@ final class DiscoveryCoordinator: ObservableObject {
   private var placements: [BuildPlacements.Placement]?
   private var previous: StatusPayload?
   private var macs: [TailnetMac] = []
-  private var pending: [DiscoveryType: DiscoveryPrompt] = [:]
+  private var pending: [DiscoveryType: (prompt: DiscoveryPrompt, rememberedAt: Date)] = [:]
   private var polling = false
   private var delivering = false
 
@@ -84,7 +84,7 @@ final class DiscoveryCoordinator: ObservableObject {
         let duration = last.durationMs, last.status == "ok" || last.status == "failed",
         let phones = ServerController.shared.pairedPhoneCount
       {
-        remember(Discovery.away(pairedPhones: phones, durationMs: duration, idleSeconds: idleSeconds(), ended: true))
+        remember(Discovery.away(pairedPhones: phones, durationMs: duration, idleSeconds: idleSeconds()))
       }
     }
     if finished {
@@ -117,7 +117,7 @@ final class DiscoveryCoordinator: ObservableObject {
   }
 
   private func remember(_ prompt: DiscoveryPrompt?) {
-    if let prompt { pending[prompt.type] = prompt }
+    if let prompt { pending[prompt.type] = (prompt, Date()) }
   }
 
   private func allowed(now: Date) -> Bool {
@@ -129,7 +129,8 @@ final class DiscoveryCoordinator: ObservableObject {
 
   private func evaluate() {
     let now = Date()
-    var candidates = Array(pending.values).filter { prompt in
+    pending = pending.filter { Discovery.fresh($0.key, rememberedAt: $0.value.rememberedAt, now: now) }
+    var candidates = pending.values.map(\.prompt).filter { prompt in
       if prompt.type == .newMac, case .addMachine(let mac?, _) = prompt.action {
         return macs.contains(where: { $0.id == mac.id }) && machines.settings.error == nil
           && machines.entries.map { entries in !entries.contains { OffloadMachines.names($0, mac) } } == true
@@ -152,22 +153,25 @@ final class DiscoveryCoordinator: ObservableObject {
       candidates.append(prompt)
     }
     guard !delivering, allowed(now: now),
-      let prompt = Discovery.select(candidates, states: persistence.states, now: now)
+      let prompt = Discovery.select(candidates, states: persistence.states, now: now, bannersAvailable: MainWindow.isOpen)
     else { return }
     if prompt.surface == .banner {
+      let previous = persistence.state(prompt.type)
       NoticeCenter.shared.show(
         Self.notice(
           prompt, perform: Self.open,
           snooze: { [persistence] in
-            persistence.set(Discovery.snooze(now: Date()), for: prompt.type)
+            persistence.set(Discovery.dismissed(previous: previous, now: Date()), for: prompt.type)
           }, never: { [persistence] in persistence.set(.never, for: prompt.type) }))
       persistence.shown(prompt, now: now)
     } else {
+      guard let event = pending[prompt.type] else { return }
       delivering = true
       Task {
         let posted = await Notifier.postDiscovery(prompt) { [self] in
           allowed(now: Date()) && Discovery.eligible(persistence.state(prompt.type), now: Date())
-            && ServerController.shared.pairedPhoneCount == 0
+            && ServerController.shared.pairedPhoneCount == 0 && idleSeconds() > 300
+            && Discovery.fresh(prompt.type, rememberedAt: event.rememberedAt, now: Date())
         }
         if posted { persistence.shown(prompt, now: Date()) }
         delivering = false

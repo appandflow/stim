@@ -116,12 +116,11 @@ struct DiscoveryTests {
         == "Device limit reached. Run simulators on another Mac?")
   }
 
-  @Test func awayRequiresAnEndedLongRunAnIdleUserAndNoPairedPhone() {
-    #expect(Discovery.away(pairedPhones: 0, durationMs: 600_000, idleSeconds: 301, ended: true) == nil)
-    #expect(Discovery.away(pairedPhones: 0, durationMs: 600_001, idleSeconds: 300, ended: true) == nil)
-    #expect(Discovery.away(pairedPhones: 1, durationMs: 600_001, idleSeconds: 301, ended: true) == nil)
-    #expect(Discovery.away(pairedPhones: 0, durationMs: 600_001, idleSeconds: 301, ended: false) == nil)
-    let prompt = Discovery.away(pairedPhones: 0, durationMs: 600_001, idleSeconds: 301, ended: true)
+  @Test func awayRequiresALongRunAnIdleUserAndNoPairedPhone() {
+    #expect(Discovery.away(pairedPhones: 0, durationMs: 600_000, idleSeconds: 301) == nil)
+    #expect(Discovery.away(pairedPhones: 0, durationMs: 600_001, idleSeconds: 300) == nil)
+    #expect(Discovery.away(pairedPhones: 1, durationMs: 600_001, idleSeconds: 301) == nil)
+    let prompt = Discovery.away(pairedPhones: 0, durationMs: 600_001, idleSeconds: 301)
     #expect(prompt?.surface == .notification)
     #expect(prompt?.action == .pairPhone)
   }
@@ -135,10 +134,37 @@ struct DiscoveryTests {
   }
 
   @Test func notNowAllowsShowingAgainExactlyAfterSevenDays() {
-    let snoozed = DiscoveryState.parse(Discovery.snooze(now: now).encoded)
+    let snoozed = Discovery.dismissed(previous: nil, now: now)
+    #expect(snoozed == .snoozed(until: now.addingTimeInterval(Discovery.week)))
     #expect(!Discovery.eligible(snoozed, now: now.addingTimeInterval(7 * 86400 - 1)))
     #expect(Discovery.eligible(snoozed, now: now.addingTimeInterval(7 * 86400)))
     #expect(Discovery.eligible(snoozed, now: now.addingTimeInterval(8 * 86400)))
+  }
+
+  @Test func dismissingTheOneReshowConsumesTheSuggestion() {
+    let snoozed = Discovery.dismissed(previous: nil, now: now)
+    let later = now.addingTimeInterval(Discovery.week)
+    #expect(Discovery.eligible(snoozed, now: later))
+    let dismissed = Discovery.dismissed(previous: snoozed, now: later)
+    #expect(dismissed == .shown)
+    #expect(!Discovery.eligible(dismissed, now: later))
+    #expect(!Discovery.eligible(dismissed, now: .distantFuture))
+  }
+
+  @Test func eventPromptsExpireAfterTenMinutesOrSixHours() {
+    for (type, lifetime) in [(DiscoveryType.away, 10 * 60), (.capHit, 6 * 60 * 60)] {
+      #expect(Discovery.fresh(type, rememberedAt: now, now: now.addingTimeInterval(Double(lifetime))))
+      #expect(!Discovery.fresh(type, rememberedAt: now, now: now.addingTimeInterval(Double(lifetime + 1))))
+    }
+    #expect(Discovery.fresh(.newMac, rememberedAt: now, now: now.addingTimeInterval(Discovery.week)))
+  }
+
+  @Test func closedWindowLeavesBannersEligibleAndDoesNotBlockNotifications() throws {
+    let banner = try #require(cold(Array(repeating: placement(), count: 3)))
+    let notification = try #require(Discovery.away(pairedPhones: 0, durationMs: 600_001, idleSeconds: 301))
+    #expect(Discovery.select([banner], states: [:], now: now, bannersAvailable: false) == nil)
+    #expect(Discovery.select([banner, notification], states: [:], now: now, bannersAvailable: false) == notification)
+    #expect(Discovery.select([banner], states: [:], now: now, bannersAvailable: true) == banner)
   }
 
   @Test func shownPermanentDismissalAndMalformedValuesNeverNag() {
@@ -180,7 +206,7 @@ struct DiscoveryTests {
 
   @Test func selectionUsesTableOrderAndLeavesTheOtherCandidateEligible() throws {
     let early = try #require(cold(Array(repeating: placement(), count: 3)))
-    let late = try #require(Discovery.away(pairedPhones: 0, durationMs: 600_001, idleSeconds: 301, ended: true))
+    let late = try #require(Discovery.away(pairedPhones: 0, durationMs: 600_001, idleSeconds: 301))
     #expect(Discovery.select([late, early], states: [:], now: now)?.type == .slowCold)
     #expect(Discovery.select([late, early], states: [.slowCold: .shown], now: now)?.type == .away)
   }

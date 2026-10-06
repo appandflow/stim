@@ -91,6 +91,7 @@ struct BuildMachinesView: View {
       guard let request else { return }
       Task { @MainActor in
         OpenRequests.shared.addMachine = nil
+        guard adding == nil else { return }
         let wizard = model.addMachine(checkout: checkout)
         wizard.preselect(machineID: request.machineID, hostedSimulators: request.hostedSimulators)
         adding = wizard

@@ -28,7 +28,7 @@
           plan: PressurePlan.make(freeBytes: 0, minimumFreeGb: 20, hardFloorGb: 5, report: nil),
           cacheBytes: 48 * 1_073_741_824, mac: mac)!
       case .capHit: return Discovery.capHit(lines: ["STIM_AT_CAPACITY"], exitStatus: 1, mac: mac)!
-      case .away: return Discovery.away(pairedPhones: 0, durationMs: 700_000, idleSeconds: 400, ended: true)!
+      case .away: return Discovery.away(pairedPhones: 0, durationMs: 700_000, idleSeconds: 400)!
       }
     }
   }

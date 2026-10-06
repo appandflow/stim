@@ -52,7 +52,11 @@ final class ServerController: ObservableObject {
 
   @Published private(set) var state = State.off {
     didSet {
-      if case .running = state {} else { hasDeviceList = false }
+      if case .running = state {
+        if case .running = oldValue {} else { reloadDevices() }
+      } else {
+        hasDeviceList = false
+      }
     }
   }
   @Published private(set) var devices: [PairedDevice] = []

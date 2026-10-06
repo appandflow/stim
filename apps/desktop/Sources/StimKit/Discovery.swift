@@ -65,6 +65,19 @@ public enum Discovery {
 
   public static func snooze(now: Date) -> DiscoveryState { .snoozed(until: now.addingTimeInterval(week)) }
 
+  public static func dismissed(previous: DiscoveryState?, now: Date) -> DiscoveryState {
+    if case .snoozed = previous { return .shown }
+    return snooze(now: now)
+  }
+
+  public static func fresh(_ type: DiscoveryType, rememberedAt: Date, now: Date) -> Bool {
+    switch type {
+    case .away: return now.timeIntervalSince(rememberedAt) <= 10 * 60
+    case .capHit: return now.timeIntervalSince(rememberedAt) <= 6 * 60 * 60
+    default: return true
+    }
+  }
+
   public static func gate(
     workspaces: [Workspace], setupCompleted: Bool, launches: Int, lastShown: Date?, now: Date, calendar: Calendar
   ) -> Bool {
@@ -73,10 +86,10 @@ public enum Discovery {
   }
 
   public static func select(
-    _ prompts: [DiscoveryPrompt], states: [DiscoveryType: DiscoveryState], now: Date
+    _ prompts: [DiscoveryPrompt], states: [DiscoveryType: DiscoveryState], now: Date, bannersAvailable: Bool = true
   ) -> DiscoveryPrompt? {
     for type in DiscoveryType.allCases where eligible(states[type], now: now) {
-      if let prompt = prompts.first(where: { $0.type == type }) { return prompt }
+      if let prompt = prompts.first(where: { $0.type == type && (bannersAvailable || $0.surface != .banner) }) { return prompt }
     }
     return nil
   }
@@ -134,8 +147,8 @@ public enum Discovery {
       mac: mac, hostedSimulators: true)
   }
 
-  public static func away(pairedPhones: Int, durationMs: Double, idleSeconds: TimeInterval, ended: Bool) -> DiscoveryPrompt? {
-    guard pairedPhones == 0, durationMs > 600_000, idleSeconds > 300, ended else { return nil }
+  public static func away(pairedPhones: Int, durationMs: Double, idleSeconds: TimeInterval) -> DiscoveryPrompt? {
+    guard pairedPhones == 0, durationMs > 600_000, idleSeconds > 300 else { return nil }
     return DiscoveryPrompt(
       type: .away, title: "Your build finished while you were away", detail: "Get these on your phone?",
       actionTitle: "Pair a Phone", action: .pairPhone, surface: .notification)
