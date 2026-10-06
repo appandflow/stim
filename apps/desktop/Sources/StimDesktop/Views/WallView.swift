@@ -33,57 +33,52 @@ struct WallView: View {
           }
           ForEach(live) { env in
             let devices = env.devices.filter { $0.isRunning || env.runningBuild(for: $0) != nil }
-            VStack(alignment: .leading, spacing: Space.lg) {
-              WorkspaceHeader(
-                env: env, project: store.project(of: env), usage: metrics.usage[env.path], compact: devices.isEmpty,
-                openLogs: { openLogs(env.path) }
-              )
-              .onTapGesture { selection = .environment(env.path) }
-              .focusable()
-              .onKeyPress(keys: [.return, .space]) { _ in
-                selection = .environment(env.path)
-                return .handled
-              }
-              .accessibilityElement(children: .contain)
-              .accessibilityLabel(env.names.title)
-              .accessibilityAddTraits(.isButton)
-              .accessibilityAction { selection = .environment(env.path) }
-              if let macos = env.macos {
-                MacosAppCard(app: macos, workspace: env.path)
-              }
-              if devices.isEmpty && env.macos == nil {
-                Label("No running devices", systemImage: "iphone.gen3")
-                  .font(.stim(.callout))
-                  .foregroundStyle(Palette.secondary)
-                  .labelStyle(.titleAndIcon)
-              } else if !devices.isEmpty {
-                ScrollView(.horizontal, showsIndicators: false) {
-                  LazyHStack(alignment: .top, spacing: Space.xl) {
-                    ForEach(devices) { device in
-                      Button {
-                        selection = .environment(env.path)
-                      } label: {
-                        DeviceTile(
-                          device: device, screenHeight: tileSize.screenHeight, workspace: env.path,
-                          build: env.runningBuild(for: device), pausesWhenOffscreen: true)
+            Card(
+              fill: devices.isEmpty ? Palette.surface : .clear,
+              border: devices.isEmpty ? Palette.border : nil, clipsContent: false
+            ) {
+              VStack(alignment: .leading, spacing: Space.lg) {
+                WorkspaceHeader(
+                  env: env, project: store.project(of: env), usage: metrics.usage[env.path], compact: devices.isEmpty,
+                  openLogs: { openLogs(env.path) }
+                )
+                .onTapGesture { selection = .environment(env.path) }
+                .focusable()
+                .onKeyPress(keys: [.return, .space]) { _ in
+                  selection = .environment(env.path)
+                  return .handled
+                }
+                .accessibilityElement(children: .contain)
+                .accessibilityLabel(env.names.title)
+                .accessibilityAddTraits(.isButton)
+                .accessibilityAction { selection = .environment(env.path) }
+                if let macos = env.macos {
+                  MacosAppCard(app: macos, workspace: env.path)
+                }
+                if devices.isEmpty && env.macos == nil {
+                  Label("No running devices", systemImage: "iphone.gen3")
+                    .font(.stim(.callout))
+                    .foregroundStyle(Palette.secondary)
+                    .labelStyle(.titleAndIcon)
+                } else if !devices.isEmpty {
+                  ScrollView(.horizontal, showsIndicators: false) {
+                    LazyHStack(alignment: .top, spacing: Space.xl) {
+                      ForEach(devices) { device in
+                        Button {
+                          selection = .environment(env.path)
+                        } label: {
+                          DeviceTile(
+                            device: device, screenHeight: tileSize.screenHeight, workspace: env.path,
+                            build: env.runningBuild(for: device), pausesWhenOffscreen: true)
+                        }
+                        .buttonStyle(.plain)
                       }
-                      .buttonStyle(.plain)
                     }
                   }
                 }
               }
-            }
-            .padding(devices.isEmpty ? Space.xl : 0)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background {
-              if devices.isEmpty {
-                RoundedRectangle(cornerRadius: Radius.card).fill(Palette.surface)
-              }
-            }
-            .overlay {
-              if devices.isEmpty {
-                RoundedRectangle(cornerRadius: Radius.card).strokeBorder(Palette.border)
-              }
+              .padding(devices.isEmpty ? Space.xl : 0)
+              .frame(maxWidth: .infinity, alignment: .leading)
             }
           }
         }

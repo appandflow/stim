@@ -1,7 +1,7 @@
 import { writeHostedIos } from '../device-host/ios-state.ts';
 import * as hostedClient from '../device-host/hosted-client.ts';
 import { writeWorkspaceState } from '../workspace/workspace-state.ts';
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'fs';
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'fs';
 import { execFileSync } from 'child_process';
 import { tmpdir } from 'os';
 import { join } from 'path';
@@ -16,7 +16,12 @@ import { captureProcessToken } from '../process-identity.ts';
 import { makeConfig } from './_factories.ts';
 import statusCommand, { readVolumes } from '../commands/status.ts';
 import type { NdjsonRecord } from '../ndjson.ts';
-import { ensureWorkspaceStorage, workspaceLogsDir, workspaceStateFile } from '../workspace/paths.ts';
+import {
+  ensureWorkspaceStorage,
+  workspaceLogsDir,
+  workspaceAgentDeviceDir,
+  workspaceStateFile,
+} from '../workspace/paths.ts';
 import { deviceLeasePath, deviceLocksDir } from '../engine/device-lease.ts';
 import { findProjectRoot } from '../workspace/project.ts';
 import { recordEasSessionClaim } from '../engine/eas-session-ledger.ts';
@@ -555,6 +560,8 @@ test('a workspace with no supervisor and no logs reports both as null', async ()
     const payload = await runStatusJson();
     expect(payload.environments[0].supervisor).toBe(null);
     expect(payload.environments[0].logs).toBe(null);
+    expect(payload.environments[0].agentDevice).toEqual({ stateDir: workspaceAgentDeviceDir(root) });
+    expect(existsSync(workspaceAgentDeviceDir(root))).toBe(false);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -655,10 +662,21 @@ test('a label-only worktree root is flagged labelOnly in --json and relabelled i
   assert(rootEntry);
   assert(appEntry);
   expect(rootEntry.labelOnly).toBe(true);
+  expect(rootEntry.platforms).toEqual([]);
+  expect(appEntry.platforms).toEqual([]);
   expect('labelOnly' in appEntry).toBe(false);
 
   const logs = await runStatus();
   expect(logs.some((l) => /worktree root \(holds the label/.test(l))).toBeTruthy();
+});
+
+test('status reports detected platforms before a run, including resolved project settings', async () => {
+  const root = process.cwd();
+  writeFileSync(join(root, 'package.json'), JSON.stringify({ dependencies: { expo: '54' } }));
+  writeFileSync(join(root, 'app.json'), JSON.stringify({ expo: { platforms: ['ios'] } }));
+  writeFileSync(join(root, '.stim.json'), JSON.stringify({ web: { url: 'http://localhost:5173' } }));
+  saveConfig(makeConfig({ version: 2, projects: { [root]: { label: 'fresh', platforms: {} } } }));
+  expect((await runStatusJson()).environments[0].platforms).toEqual(['ios', 'web']);
 });
 
 test('a running build reports what its build tool is doing only while it compiles', async () => {
@@ -1179,3 +1197,25 @@ test.each(['default', 'tablet'])(
     expect((await runStatus()).join('\n')).toContain('iOS 27.0');
   },
 );
+
+test('status emits one archive payload and links earlier runs to a live environment', async () => {
+  const { archiveWorkspace } = await import('../archive.ts');
+  const root = '/proj/archive-test';
+  process.env.STIM_ARCHIVE_ENABLED = 'true';
+  try {
+    saveConfig(makeConfig({ projects: { [root]: {} } }));
+    ensureWorkspaceStorage(root);
+    writeFileSync(workspaceStateFile(root), '{}');
+    archiveWorkspace(root, 'worktree-remove');
+    const payload = await runStatusJson();
+    expect(payload.archived).toHaveLength(1);
+    expect(payload.archived[0]).toMatchObject({ projectRoot: root, replacedBy: root, removedBy: 'worktree-remove' });
+    expect(payload.archivedUsage.count).toBe(1);
+    expect(payload.archivedUsage.bytes).toBeGreaterThan(0);
+    expect((await runStatus()).filter((line) => line.startsWith('Archived:'))).toEqual([
+      expect.stringContaining('Archived: 1 workspace, '),
+    ]);
+  } finally {
+    delete process.env.STIM_ARCHIVE_ENABLED;
+  }
+});

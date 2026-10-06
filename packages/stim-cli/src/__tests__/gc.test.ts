@@ -1032,7 +1032,7 @@ let originalHomeRoots: Record<string, string | undefined>;
 let originalTmpRoots: Record<string, string | undefined>;
 let originalAvdRoots: Record<string, string | undefined>;
 
-const HOME_ENV_KEYS = process.platform === 'win32' ? ['HOME', 'USERPROFILE'] : ['HOME'];
+const HOME_ENV_KEYS = ['HOME', 'USERPROFILE'];
 const TMP_ENV_KEYS = process.platform === 'win32' ? ['TMPDIR', 'TEMP', 'TMP'] : ['TMPDIR'];
 
 function currentConfig() {
@@ -1220,6 +1220,8 @@ function claimEasSessions(
 beforeEach(() => {
   tmpHome = mkdtempSync(join(tmpdir(), 'stim-test-'));
   process.env.STIM_HOME = tmpHome;
+  vi.stubEnv('AGENT_DEVICE_STATE_DIR', '');
+  vi.stubEnv('AGENT_DEVICE_IOS_RUNNER_LEASE_DIR', '');
   for (const udid of [
     'A1F3-0000',
     'DEFAULT',
@@ -1297,6 +1299,7 @@ beforeEach(() => {
   fakeHome = mkdtempSync(join(tmpdir(), 'stim-fakehome-'));
   originalHomeRoots = Object.fromEntries(HOME_ENV_KEYS.map((key) => [key, process.env[key]]));
   for (const key of HOME_ENV_KEYS) process.env[key] = fakeHome;
+  vi.stubEnv('XDG_CACHE_HOME', join(fakeHome, '.cache'));
   originalAvdRoots = Object.fromEntries(
     ['ANDROID_AVD_HOME', 'ANDROID_SDK_HOME', 'ANDROID_USER_HOME', 'ANDROID_EMULATOR_HOME'].map((key) => [
       key,
@@ -1313,6 +1316,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.unstubAllEnvs();
   vi.restoreAllMocks();
   for (const [key, value] of Object.entries(originalAvdRoots)) {
     if (value === undefined) delete process.env[key];
@@ -3633,6 +3637,8 @@ describe('gc --json', () => {
       'recordings',
       'workspaceBuildOutputs',
       'caches',
+      'agentDevice',
+      'swiftpmCache',
       'memory',
       'watchmanRoots',
       'memoryNotices',
@@ -4132,4 +4138,99 @@ test('gc reports and reclaims named ports only for confirmed missing workspaces'
   expect(getProject(missing)).toBeNull();
   expect(getProject(unmounted)?.ports).toEqual({ web: 8901 });
   expect(inspected).toEqual(['-iTCP:8900', '-iTCP:8900']);
+});
+
+test('unscoped gc JSON reports agent-device separately without adding actionable cleanup', async () => {
+  installExecutor();
+  const dir = join(fakeHome, '.agent-device');
+  mkdirSync(dir);
+  writeFileSync(join(dir, 'keep'), 'agent-device-owned');
+  const { stdout, stderr } = await captureJson(() => cli(['--json']));
+  expect(stdout).toHaveLength(1);
+  const report = JSON.parse(stdout[0]!);
+  expect(report.sections.agentDevice).toMatchObject({
+    version: 1,
+    stateDir: { dir: realpathSync.native(dir), present: true },
+  });
+  expect(report.sections.caches.some((entry: { dir: string }) => entry.dir === dir)).toBe(false);
+  expect(stderr).toContain('agent-device');
+  expect(report.actionable).toBe(false);
+  expect(formatGcReport({ agentDeviceUsage: report.sections.agentDevice }).join('\n')).toContain(
+    "a workspace's own agent-device dir goes only with its workspace",
+  );
+  expect(readFileSync(join(dir, 'keep'), 'utf8')).toBe('agent-device-owned');
+});
+
+test.each([
+  ['--cache', 'all', '--delete'],
+  ['--older-than', '30', '--delete'],
+])('gc %j leaves agent-device and SwiftPM bytes intact', async (...args: string[]) => {
+  installExecutor();
+  const project = realpathSync.native(fakeHome);
+  writeFileSync(join(project, 'package.json'), '{}');
+  upsertProject(project, { platforms: {} });
+  ensureWorkspaceStorage(project);
+  const dirs = [
+    swiftpmDir(),
+    join(fakeHome, '.agent-device'),
+    join(tmpHome, 'server', 'agent-device'),
+    join(workspaceDir(project), 'agent-device'),
+  ];
+  for (const dir of dirs) {
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'keep'), Buffer.from([0, 1, 255]));
+  }
+  const { stdout } = await captureJson(() => cli([...args, '--json']));
+  expect(stdout).toHaveLength(1);
+  const report = JSON.parse(stdout[0]!);
+  expect(report.sections.swiftpmCache === null).toBe(args.includes('--cache'));
+  expect(report.sections.caches.some((entry: { dir: string }) => dirs.includes(entry.dir))).toBe(false);
+  for (const dir of dirs) expect(readFileSync(join(dir, 'keep'))).toEqual(Buffer.from([0, 1, 255]));
+});
+
+test('cache-scoped collection omits agent-device and SwiftPM measurement', async () => {
+  installExecutor();
+  mkdirSync(join(fakeHome, '.agent-device'));
+  mkdirSync(swiftpmDir(), { recursive: true });
+  const du = vi.fn<() => Promise<string>>();
+  setExecutor({ ...getExecutor(), runFileAsync: du });
+  const report = await collectGcReport({ cache: 'no-matching-cache' });
+  expect(report.agentDeviceUsage).toBe(null);
+  expect(report.swiftpmCacheUsage).toBe(null);
+  expect(du).not.toHaveBeenCalled();
+  const cacheDir = join(tmpHome, 'unrelated-cache');
+  mkdirSync(cacheDir);
+  register({ dir: cacheDir, name: 'test-only-cache' });
+  const { stdout } = await captureJson(() => cli(['--cache', 'test-only-cache', '--json']));
+  expect(JSON.parse(stdout[0]!).sections.agentDevice).toBe(null);
+  expect(JSON.parse(stdout[0]!).sections.swiftpmCache).toBe(null);
+  expect(du).not.toHaveBeenCalled();
+});
+
+function swiftpmDir(): string {
+  return process.platform === 'darwin'
+    ? join(fakeHome, 'Library', 'Caches', 'org.swift.swiftpm')
+    : join(fakeHome, '.cache', 'org.swift.swiftpm');
+}
+
+test('unscoped gc reports SwiftPM after agent-device without making it actionable or a cache', async () => {
+  installExecutor();
+  const dir = swiftpmDir();
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, 'keep'), 'shared');
+  mkdirSync(join(fakeHome, '.agent-device'));
+  const { stdout, stderr } = await captureJson(() => cli(['--json']));
+  expect(stdout).toHaveLength(1);
+  const report = JSON.parse(stdout[0]!);
+  expect(report.sections.swiftpmCache).toMatchObject({ version: 1, dir: realpathSync.native(dir), present: true });
+  expect(report.sections.caches.some((entry: { dir: string }) => entry.dir === dir)).toBe(false);
+  expect(report.actionable).toBe(false);
+  expect(stderr.indexOf('SwiftPM cache')).toBeGreaterThan(stderr.indexOf('agent-device'));
+  const text = formatGcReport({
+    agentDeviceUsage: report.sections.agentDevice,
+    swiftpmCacheUsage: report.sections.swiftpmCache,
+  }).join('\n');
+  expect(text.indexOf('SwiftPM cache (')).toBeGreaterThan(text.indexOf('agent-device ('));
+  expect(text).toContain('shared by every SwiftPM build on this machine');
+  expect(readFileSync(join(dir, 'keep'), 'utf8')).toBe('shared');
 });

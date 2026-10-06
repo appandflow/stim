@@ -1,3 +1,7 @@
+import { archiveLines, type ArchiveSelection } from './archives.ts';
+import type { AgentDeviceUsage, SwiftpmCacheUsage } from '@stim-cli/core/state';
+import { swiftpmCacheLines } from '../../devices/swiftpm-cache-usage-output.ts';
+import { agentDeviceLines } from '../../devices/agent-device-usage-output.ts';
 import { formatLongDuration, shortUdid } from '../../command-output.ts';
 import { claimRemoveCommand } from '../../ownership-claim.ts';
 import { formatBytes } from '../../fs-util.ts';
@@ -38,6 +42,7 @@ import { recordingLines, type RecordingKeptCode, type WorkspaceRecordings } from
 import { memoryCacheKind, memoryLines, type MemoryProcess, type MemoryReport, type WatchmanRoot } from './memory.ts';
 
 export interface GcReport {
+  archives?: ArchiveSelection;
   skipped: GcSkip[];
   deadProjects: string[];
   orphanedPorts?: { project: string; label: string; port: number }[];
@@ -57,6 +62,8 @@ export interface GcReport {
   idleDevices: IdleDevice[];
   deviceSweepNotices: string[];
   easSessionSweep: EasSessionSweep;
+  agentDeviceUsage?: AgentDeviceUsage | null;
+  swiftpmCacheUsage?: SwiftpmCacheUsage | null;
   caches: GcCache[];
   workspaceOutputs: WorkspaceOutputsReport | null;
   workspaceLogs: WorkspaceLogs[];
@@ -147,6 +154,7 @@ function scopeLine(cacheScope: string): string {
 
 export function formatGcReport(
   {
+    archives,
     skipped = [],
     deadProjects = [],
     orphanedPorts,
@@ -166,6 +174,8 @@ export function formatGcReport(
     idleDevices = [],
     deviceSweepNotices = [],
     easSessionSweep = { projectScope: null, orphaned: [], notices: [], deletionSafe: true },
+    agentDeviceUsage = null,
+    swiftpmCacheUsage,
     caches = [],
     workspaceOutputs = null,
     workspaceLogs = [],
@@ -177,7 +187,7 @@ export function formatGcReport(
   }: Partial<GcReport>,
   { now = Date.now() }: { now?: number } = {},
 ): string[] {
-  const lines: string[] = [];
+  const lines: string[] = archiveLines(archives);
   const staleLocks = buildLocks?.stale ?? [];
   const liveLocks = buildLocks?.live ?? [];
   const staleSlots = buildSlots?.stale ?? [];
@@ -339,6 +349,8 @@ export function formatGcReport(
   lines.push(...workspaceLogLines(workspaceLogs));
   lines.push(...recordingLines(recordings));
   lines.push(...cacheLines(caches, workspaceOutputs));
+  lines.push(...agentDeviceLines(agentDeviceUsage, true, now));
+  lines.push(...swiftpmCacheLines(swiftpmCacheUsage, now));
   lines.push(...memoryLines(memory, memoryCacheKind(cacheScope), now));
 
   return lines;
@@ -510,8 +522,10 @@ function jsonPullRequest(lookup: PullRequestLookup | null): GcJsonSections['link
   return pr ? { number: pr.number, state: pr.state, url: pr.url, containsHead: pr.containsHead } : null;
 }
 
-/** The `gc --json` sections, in text report order. Each section is an array of entries. */
+/** The `gc --json` sections, in text report order. Sections contain entries or a report-only usage payload. */
 export interface GcJsonSections {
+  archived?: ArchiveSelection['records'];
+  archiveStaging?: ArchiveSelection['staging'];
   deadProjects: { path: string }[];
   invalidProjects: { path: string }[];
   orphanedPorts: { project: string; label: string; port: number }[];
@@ -601,6 +615,8 @@ export interface GcJsonSections {
     reason: WorkspaceKeptCode | null;
     detail: string | null;
   }[];
+  agentDevice: AgentDeviceUsage | null;
+  swiftpmCache: SwiftpmCacheUsage | null;
   caches: {
     name: string;
     dir: string;
@@ -617,6 +633,7 @@ export interface GcJsonSections {
 }
 
 export function gcReportSections({
+  archives,
   skipped = [],
   deadProjects = [],
   orphanedPorts = [],
@@ -640,10 +657,13 @@ export function gcReportSections({
   workspaceOutputs = null,
   workspaceLogs = [],
   recordings = [],
+  agentDeviceUsage = null,
+  swiftpmCacheUsage = null,
   caches = [],
   memory = null,
 }: Partial<GcReport>): GcJsonSections {
   return {
+    ...(archives ? { archived: archives.records, archiveStaging: archives.staging } : {}),
     deadProjects: deadProjects.map((path) => ({ path })),
     invalidProjects: invalidProjects.map((path) => ({ path })),
     orphanedPorts: orphanedPorts.map(({ project, label, port }) => ({ project, label, port })),
@@ -791,6 +811,8 @@ export function gcReportSections({
       emptySkipped: c.emptySkipped ?? null,
       scopedEmpty: c.scopedEmpty ?? null,
     })),
+    agentDevice: agentDeviceUsage,
+    swiftpmCache: swiftpmCacheUsage,
     memory: memory?.processes ?? [],
     watchmanRoots: memory?.watchmanRoots ?? [],
     memoryNotices: (memory?.notices ?? []).map((message) => ({ message })),

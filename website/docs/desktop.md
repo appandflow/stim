@@ -91,6 +91,15 @@ performance traces. Every release is listed under
   all apps' iOS, Android and macOS entries, adding project names only for repeated
   platforms; checks, runs, history and logs use the selected app. The macOS panel
   shows the product, build state, duration, error and build logs.
+- **Other tools storage.** The Storage page reports agent-device runner builds,
+  sessions and logs under **Other tools**, with Reveal opening its state
+  directory. It also reports the user-level **SwiftPM cache**, shared by every
+  SwiftPM build on this machine, with Reveal opening its cache directory.
+  The `~/Library/Caches` row excludes SwiftPM bytes counted in that separate
+  row, as it excludes Stim caches, so **Other tools** counts them once.
+  Stim never offers a cleanup action for either report-only location.
+  Stim never trims or deletes the shared runner builds, sessions, logs and other state or the hosted driver dir; a workspace's own agent-device dir goes only with its workspace.
+  Stim never deletes the SwiftPM cache.
 - **Machines.** Select **This Mac** for local disk, memory and cleanup, or a
   configured build machine for its readiness, capacity and build history.
   Click the toolbar's CPU, memory or disk figure for details; **Open Machines**
@@ -259,7 +268,10 @@ warnings and error links. CPU and RAM stay on the workspace page.
 Run, Reload app, Start dev server and Stop from the workspace or sidebar menus keep
 you on the workspace page, as do Stop or Shut down in the now band and Build and run and Stop
 on a macOS app card. Open **Last output** or **Operations** for command details,
-including failed runs. Click the **Recent builds** label or chevron to expand
+including failed runs. The device viewer's Run, Stop (including a remote session's), Reload web and Close web
+also run without opening a sheet. Progress and failures appear on a line under
+the viewer toolbar; **Show output** opens the failed run's output, and **Dismiss**
+hides that failure. Click the **Recent builds** label or chevron to expand
 the build history. Each row shows outcome, duration and age; click a row to
 open that run in the build details sheet. Disclosure content and chevrons animate
 unless Reduce Motion is enabled.

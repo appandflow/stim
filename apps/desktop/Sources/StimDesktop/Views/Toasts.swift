@@ -21,6 +21,7 @@ struct Toast: Identifiable {
   var sticky = false
   /// Showing a toast replaces any shown one with the same key.
   var key: String?
+  var workspacePath: String?
 }
 
 @MainActor
@@ -98,6 +99,12 @@ final class ToastCenter: ObservableObject {
 
   func dismiss(key: String) {
     for toast in toasts where toast.key == key { dismiss(toast.id) }
+  }
+
+  func dismissCards(notIn payload: StatusPayload) {
+    for toast in toasts {
+      if let path = toast.workspacePath, !payload.lists(workspace: path) { dismiss(toast.id) }
+    }
   }
 
   func hold(_ id: Toast.ID, _ hold: Hold, _ on: Bool) {

@@ -31,7 +31,9 @@ struct ListSection<Data: RandomAccessCollection, ID: Hashable, Header: View, Row
         }
       case .separated:
         ForEach(data, id: id) { element in
-          row(element).background(RoundedRectangle(cornerRadius: Radius.control).fill(Palette.surface))
+          Card(radius: Radius.control, border: nil, clipsContent: false) {
+            row(element)
+          }
         }
       }
     }
@@ -84,12 +86,24 @@ struct SectionLabel: View {
 }
 
 struct Card<Content: View>: View {
+  var radius: CGFloat = Radius.card
+  var fill: Color = Palette.surface
+  var border: Color? = Palette.border
+  var clipsContent = true
   @ViewBuilder var content: Content
 
   var body: some View {
-    content
-      .background(RoundedRectangle(cornerRadius: Radius.card).fill(Palette.surface))
-      .clipShape(RoundedRectangle(cornerRadius: Radius.card))
-      .overlay(RoundedRectangle(cornerRadius: Radius.card).strokeBorder(Palette.border))
+    let shape = RoundedRectangle(cornerRadius: radius)
+    let surface = content.background(shape.fill(fill))
+    Group {
+      if clipsContent {
+        surface.clipShape(shape)
+      } else {
+        surface
+      }
+    }
+    .overlay {
+      if let border { shape.strokeBorder(border) }
+    }
   }
 }

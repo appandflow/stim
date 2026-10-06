@@ -21,14 +21,13 @@ struct BuildSection: View {
 
   private var platforms: [String] {
     if let onlyPlatform { return onlyPlatform == "macos" ? [] : [onlyPlatform] }
-    guard let running, !env.runPlatforms.contains(running.platform) else { return env.runPlatforms.filter { $0 != "macos" } }
-    return env.runPlatforms.filter { $0 != "macos" } + [running.platform]
+    return env.runPlatforms.filter { $0 == "ios" || $0 == "android" }
   }
 
   private var cancellationPlatforms: [String] { onlyPlatform == nil ? ["ios", "android"] : platforms }
 
   private var trigger: [String] {
-    [running == nil ? "idle" : "building"] + platforms.map(buildKey)
+    [running == nil ? "idle" : "building"] + platforms.map { $0 + "|" + buildKey($0) }
   }
 
   var body: some View {
@@ -76,58 +75,61 @@ struct BuildSection: View {
   private func card(_ platform: String) -> some View {
     let entry = checks.entry(workspace: env.path, platform: platform)
     let building = running.flatMap { $0.platform == platform ? $0 : nil }
-    return VStack(alignment: .leading, spacing: Space.lg) {
-      HStack(spacing: Space.sm) {
-        PlatformGlyph(platform: platform, size: 12, color: building == nil ? Palette.text : Palette.primary)
-        Text(building == nil ? platformName(platform) : "Building \(platformName(platform))")
-          .font(.stim(.callout, weight: .semibold))
-          .lineLimit(1)
-        Spacer()
-        Button("Details") { openBuild(BuildSheetSelection(workspace: env.path, platform: platform)) }
-          .buttonStyle(.stim())
-          .fixedSize()
-          .help("Open build details")
-        if building == nil { runButton(platform) }
-      }
-      if let projectSubtitle { Text(projectSubtitle).font(.stim(.footnote)).foregroundStyle(Palette.secondary) }
-      if let host = building?.remote(at: Date())?.host {
-        Label("on \(host)", systemImage: "desktopcomputer").foregroundStyle(Palette.secondary).lineLimit(1)
-      }
-      if let building {
-        RunningBuildDetail(env: env, build: building)
-      } else {
-        VStack(alignment: .leading, spacing: Space.sm) {
-          Text("Last build").font(.stim(.footnote, weight: .semibold)).foregroundStyle(Palette.secondary)
-          lastBuild(platform)
+    return Card(
+      radius: Radius.control, fill: building == nil ? Palette.surface : Palette.primary.opacity(0.06),
+      border: nil, clipsContent: false
+    ) {
+      VStack(alignment: .leading, spacing: Space.lg) {
+        HStack(spacing: Space.sm) {
+          PlatformGlyph(platform: platform, size: 12, color: building == nil ? Palette.text : Palette.primary)
+          Text(building == nil ? platformName(platform) : "Building \(platformName(platform))")
+            .font(.stim(.callout, weight: .semibold))
+            .lineLimit(1)
+          Spacer()
+          Button("Details") { openBuild(BuildSheetSelection(workspace: env.path, platform: platform)) }
+            .buttonStyle(.stim())
+            .fixedSize()
+            .help("Open build details")
+          if building == nil { runButton(platform) }
         }
-        Divider().overlay(Palette.border)
-        VStack(alignment: .leading, spacing: Space.sm) {
-          HStack {
-            Text("Next build").font(.stim(.footnote, weight: .semibold)).foregroundStyle(Palette.secondary)
-            Spacer(minLength: Space.sm)
-            checkButton(platform, entry: entry)
+        if let projectSubtitle { Text(projectSubtitle).font(.stim(.footnote)).foregroundStyle(Palette.secondary) }
+        if let host = building?.remote(at: Date())?.host {
+          Label("on \(host)", systemImage: "desktopcomputer").foregroundStyle(Palette.secondary).lineLimit(1)
+        }
+        if let building {
+          RunningBuildDetail(env: env, build: building)
+        } else {
+          VStack(alignment: .leading, spacing: Space.sm) {
+            Text("Last build").font(.stim(.footnote, weight: .semibold)).foregroundStyle(Palette.secondary)
+            lastBuild(platform)
           }
-          if running != nil {
-            Text("Checked after the running build").foregroundStyle(Palette.tertiary)
-          } else {
-            NextBuildView(entry: entry)
+          Divider().overlay(Palette.border)
+          VStack(alignment: .leading, spacing: Space.sm) {
+            HStack {
+              Text("Next build").font(.stim(.footnote, weight: .semibold)).foregroundStyle(Palette.secondary)
+              Spacer(minLength: Space.sm)
+              checkButton(platform, entry: entry)
+            }
+            if running != nil {
+              Text("Checked after the running build").foregroundStyle(Palette.tertiary)
+            } else {
+              NextBuildView(entry: entry)
+            }
+          }
+        }
+        let history = env.builds?.builds(for: platform) ?? []
+        if !history.isEmpty {
+          Divider().overlay(Palette.border)
+          BuildHistoryList(entries: history) { entry in
+            openBuild(
+              BuildSheetSelection(
+                workspace: env.path, platform: platform, run: "\(platform)|\(entry.slot)|\(entry.build.startedAt)"))
           }
         }
       }
-      let history = env.builds?.builds(for: platform) ?? []
-      if !history.isEmpty {
-        Divider().overlay(Palette.border)
-        BuildHistoryList(entries: history) { entry in
-          openBuild(
-            BuildSheetSelection(
-              workspace: env.path, platform: platform, run: "\(platform)|\(entry.slot)|\(entry.build.startedAt)"))
-        }
-      }
+      .padding(Space.lg)
+      .frame(maxWidth: .infinity, alignment: .leading)
     }
-    .padding(Space.lg)
-    .frame(maxWidth: .infinity, alignment: .leading)
-    .background(
-      RoundedRectangle(cornerRadius: Radius.control).fill(building == nil ? Palette.surface : Palette.primary.opacity(0.06)))
   }
 
   @ViewBuilder private func checkButton(_ platform: String, entry: BuildPlanChecks.Entry?) -> some View {
@@ -176,7 +178,7 @@ struct BuildSection: View {
         BuildDiagnosticsView(diagnostics: diagnostics, workspace: env.path)
       }
     } else {
-      Text("No build recorded").foregroundStyle(Palette.tertiary)
+      InlineEmpty("No build recorded")
     }
   }
 
@@ -255,7 +257,7 @@ private struct BuildHistoryList: View {
       } label: {
         HStack(spacing: Space.sm) {
           Image(systemName: "chevron.right")
-            .font(.system(size: 11, weight: .semibold))
+            .iconFont(IconSize.small, weight: .semibold)
             .foregroundStyle(Palette.tertiary)
             .rotationEffect(.degrees(expanded ? 90 : 0))
             .frame(width: 12)
@@ -297,7 +299,7 @@ struct BuildHistoryRow: View {
     Button(action: open) {
       VStack(alignment: .leading, spacing: 1) {
         HStack(alignment: .firstTextBaseline, spacing: Space.sm) {
-          Circle().fill(color).frame(width: 6, height: 6)
+          StatusDot(color: color, size: 6)
           Text(entry.outcome)
             .foregroundStyle(entry.result == "succeeded" ? Palette.secondary : color)
             .lineLimit(1)

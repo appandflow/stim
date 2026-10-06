@@ -64,6 +64,7 @@ export interface IosFacts {
   launched: LaunchStatus;
   metroPort?: number | null;
   logs: LogsInfo;
+  agentDevice?: { stateDir: string };
   durationMs?: number;
   webPreviewUrl?: string | null;
   lease?: RunLeaseFacts | null;
@@ -100,6 +101,7 @@ export interface AndroidFacts {
   debugHttpHostNote: string | null;
   devClientUrl: string | null;
   logs: string | null;
+  agentDevice?: { stateDir: string };
   durationMs: number | null;
   lease?: RunLeaseFacts | null;
   devServer?: DevServerStart;

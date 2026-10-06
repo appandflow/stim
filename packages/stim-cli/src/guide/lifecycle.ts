@@ -509,6 +509,7 @@ result as proof instead of requiring an unrelated screenshot.`,
   The labels are a closed set, and nothing else is ever printed in that
   column:
 
+    agent-device
     branch      budget      build       cache       caches      carry
     checkout    daemons     deps        device
     devices     error       failed      findings    fingerprint gems

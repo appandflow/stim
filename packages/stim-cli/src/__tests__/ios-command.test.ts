@@ -31,7 +31,7 @@ import type { HostedIosPlacement } from '@stim-cli/core/state';
 import { buildMachinesFile, deviceHostMachinesFile, readLastBuilds } from '@stim-cli/core/state';
 import { parseNdjsonText } from '../ndjson.ts';
 import { IOS_DEV_MENU_OFF_DEFAULTS_PLIST } from '../engine/app-install.ts';
-import { workspaceDir, workspaceLogsDir, workspaceStateFile } from '../workspace/paths.ts';
+import { workspaceAgentDeviceDir, workspaceDir, workspaceLogsDir, workspaceStateFile } from '../workspace/paths.ts';
 import type { WorkspaceState } from '../workspace/workspace-state.ts';
 import { readWorkspaceState, writeWorkspaceState } from '../workspace/workspace-state.ts';
 import {
@@ -3091,6 +3091,7 @@ describe('iosFacts', () => {
   test('is the shape an agent parses', () => {
     expect(
       iosFacts({
+        root,
         udid: UDID,
         deviceName: 'stim-x',
         fingerprint: 'abc',
@@ -3122,6 +3123,7 @@ describe('iosFacts', () => {
       launched: true,
       metroPort: 8082,
       logs: { dir: '/w/.stim/logs' },
+      agentDevice: { stateDir: workspaceAgentDeviceDir(root) },
       durationMs: 1234,
     });
   });

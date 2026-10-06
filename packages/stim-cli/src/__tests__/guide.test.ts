@@ -1,3 +1,4 @@
+import { includesArchives } from '../commands/gc/caches.ts';
 import { registerIos } from '../commands/ios.ts';
 import { registerAndroid } from '../commands/android.ts';
 import { Command } from 'commander';
@@ -663,6 +664,10 @@ test('the facts topic documents every workspace phase', () => {
   for (const phase of WORKSPACE_PHASES) expect(body).toMatch(new RegExp(`^ +(phase +)?"${phase}" `, 'm'));
 });
 
+test('the facts topic documents the detected platforms field', () => {
+  expect(renderSection('facts', 'status')).toMatch(/^ +platforms /m);
+});
+
 test('the facts topic documents every workspace stage kind', () => {
   const body = renderSection('facts', 'status');
   assert(body);
@@ -835,4 +840,42 @@ test('Android machine placement refuses through the argument parser with its doc
   const android = commands.split('## `android`')[1]!.split('\n## ')[0]!;
   expect(android.match(/`--remote <machine>`[^\n]+/g)).toEqual([expect.stringContaining('`STIM_BAD_ARG`')]);
   expect(renderSection('lifecycle', 'hosted-ios')).toContain('Android on a paired Mac');
+});
+
+test('the guide names the workspace agent-device state contract without setting a runner-cache override', () => {
+  const agent = renderTopic('agent');
+  assert(agent);
+  expect(agent).toContain('AGENT_DEVICE_STATE_DIR');
+  expect(agent).toContain('agentDevice.stateDir');
+  expect(agent).not.toMatch(/(?:export\s+)?AGENT_DEVICE_IOS_RUNNER_DERIVED_PATH\s*=/);
+  const facts = renderSection('facts', 'payloads');
+  assert(facts);
+  expect(facts).toContain('agentDevice');
+  expect(facts).toContain('stateDir');
+  const status = renderSection('facts', 'status');
+  assert(status);
+  expect(status).toContain('agentDevice');
+});
+
+test('archive cleanup guidance names each code-supported cache selector', () => {
+  const section = renderSection('cleanup', 'archive');
+  for (const selector of ['archived', 'archived:example', 'archived-logs', 'archived-recordings', 'archived-agent']) {
+    expect(includesArchives(selector)).toBe(true);
+    expect(section).toContain(selector.replace('example', '<id>'));
+  }
+});
+
+test('facts keep the SwiftPM stats and gc keys and measurement cache filename discoverable', () => {
+  const stats = renderSection('facts', 'stats');
+  const gc = renderSection('facts', 'gc');
+  expect(stats).toContain('swiftpmCache:');
+  expect(stats).toContain('$STIM_HOME/swiftpm-cache-usage.json');
+  expect(gc).toContain('swiftpmCache');
+});
+
+test('agent-device cleanup guidance distinguishes shared state from workspace teardown', () => {
+  for (const body of [renderSection('cleanup', 'gc'), renderSection('facts', 'stats')]) {
+    expect(body).toContain('never trims or deletes the shared runner builds');
+    expect(body).toContain("workspace's own agent-device dir goes only with its workspace");
+  }
 });

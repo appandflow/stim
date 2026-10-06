@@ -33,8 +33,9 @@ in the workspace directory:
   section (**Rebuild** when that platform's last build failed), run
   `stim ios` or `stim android` in the workspace with no other arguments, so the
   default slot and configuration. The
-  menus offer the platforms with a device or a last build, or both when
-  neither is recorded. Run is disabled while a build runs in the workspace.
+  menus offer the platforms `stim status` reports in `platforms`, plus any
+  with a device or a last build; an older `stim` that does not report them
+  offers the used ones, or iOS and Android when none is recorded. Run is disabled while a build runs in the workspace.
   **Reload app** runs `stim reload` and is disabled unless the dev server and a
   local device are running.
 - Workspace page: the "..." menu beside the stage line runs `stim stop`, and `stim worktree remove` after a
@@ -302,6 +303,9 @@ Run, Reload app, Start dev server and Stop from a workspace or its sidebar menu,
 Stop (or Shut down) in the now band, and Build and run and Stop on a macOS app card run without
 opening an activity sheet. Follow progress on the workspace page and open **Last output**
 or **Operations** to inspect the command; pending and failed runs remain there.
+The device viewer's Run, Stop (including a remote session's), Reload web and Close web also run without opening
+a sheet. Progress and failures appear on a line under the viewer toolbar; **Show output**
+opens the failed run's output, and **Dismiss** hides that failure.
 Other actions open an activity sheet. While the command runs, the sheet shows a
 spinner and its latest progress line; only the CLI's progress labels (`stim
 guide lifecycle progress`) count as progress. When it finishes, the sheet
@@ -1365,7 +1369,7 @@ To check a bundle, point the DSN at a local listener, such as `http://<key>@127.
 - `Sources/EmulatorFrames`: live emulator frames through the emulator's localhost gRPC `streamScreenshot` call, found through its discovery file, and input through the same endpoint. An emulator without a hardware keyboard (`hw.keyboard=no`) drops key events, so Desktop types on it with `adb shell input`. Emulators Stim booted before it passed `-grpc` show no frames until their next boot.
 - `Sources/WebFrames`: the Stim-owned Chrome page from `stim web`, over the Chrome DevTools Protocol on the loopback `cdpEndpoint` `stim status` reports. It connects only when `SystemInfo.getProcessInfo` names the Chrome pid status reports, attaches to the page's `targetId`, streams it with `Page.startScreencast` and sends `Input.dispatch*` events. Public protocol only; no WebKit view, which would render a different engine than the one agents test.
 - stim-server's `stim-frames` helper compiles the shared files listed in `packages/server/helper/desktop-sources.txt`, together with its own `main.swift`. This includes the SceneKit Duo model used for composed mobile frames. Desktop CI compiles it; keep SwiftUI and StimKit dependencies behind module availability checks. Desktop and the helper both send simulator keys through `SimulatorHID.hardwareKey`, and page input through `WebPage`.
-- `Sources/StimDesktop`: the SwiftUI app. `Design/` holds the generated tokens, the theme layer over them (`.textStyle(_:)`, `Font.stim(_:)` and the dynamic colors), and the component kit that mirrors the phone's: `.buttonStyle(.stim(_:_:))`, `IconButton`, `Pill`, `Banner` and `ListSection`/`ListRow`. A debug build has **Window > SwiftUI Playground** for production screen fixtures and design tokens.
+- `Sources/StimDesktop`: the SwiftUI app. `Design/` holds the generated tokens, the theme layer over them (`.textStyle(_:)`, `Font.stim(_:)` and the dynamic colors), and the component kit that mirrors the phone's: `.buttonStyle(.stim(_:_:))`, `IconButton`, `Pill`, `Banner`, `ListSection`/`ListRow`, `Card`, `HoverRowStyle`, `StatusDot`, `StimProgressBar`, `InlineEmpty` and the `IconSize` scale. A debug build has **Window > SwiftUI Playground** for production screen fixtures and design tokens.
 
 ### Native visual fixture pilot
 

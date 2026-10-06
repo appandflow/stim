@@ -124,7 +124,7 @@ struct WorkspaceDiffView: View {
         Spacer()
       } else if let files {
         if files.files.isEmpty {
-          Text("No \(group == "changed" ? "changed" : "new") files").foregroundStyle(Palette.secondary)
+          InlineEmpty("No \(group == "changed" ? "changed" : "new") files")
           Spacer()
         } else {
           List(files.files, selection: $selected) { file in
@@ -171,7 +171,7 @@ struct WorkspaceDiffView: View {
                 .textSelection(.enabled).fixedSize(horizontal: true, vertical: false).padding(.horizontal, Space.lg)
             }
           }
-          if patch.patches.isEmpty { Text("No diff available").foregroundStyle(Palette.secondary).padding(Space.lg) }
+          if patch.patches.isEmpty { InlineEmpty("No diff available").padding(Space.lg) }
         }
       }
     } else if selected != nil {

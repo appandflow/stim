@@ -693,10 +693,12 @@ The worker checks the expected bundle identity, simulator platform, executable
 architecture and minimum OS. Bundle links must stay inside the app. Uploads
 resume at recorded byte offsets; replaying a completed app attempt returns its
 result without launching twice. Stop and revocation cancel installation before
-deleting that exact owned iOS simulator without parking.
+deleting that exact owned simulator.
 Replaying an attempt resolves the same session after a lost reply. Unknown
-creation or shutdown outcomes retain the reservation until exact reconciliation;
-explicit stop and approval revocation touch only that session's owned simulator.
+creation or deletion outcomes retain the reservation until exact reconciliation;
+explicit stop and approval revocation delete only that session's exact
+ledger-owned simulator. At start, stim-server retires leftover stopped iOS and
+Android devices while retaining session homes and records.
 Hosted reservations are atomic with each other; ordinary local device producers
 do not participate, so this is not a machine-wide hard capacity guarantee.
 
@@ -704,7 +706,7 @@ The worker also accepts an Android reservation with optional installed
 `systemImage` and `deviceProfile` selectors. It gives that opaque session a
 unique owned AVD and a journal-reserved console port, verifies the exact running
 AVD and ABI, and reconnects to that same record. Explicit stop and revocation
-shut down only that ledger-owned AVD and retain its data. Ports are coordinated
+delete only that exact ledger-owned AVD and retain its session home and record. Ports are coordinated
 among hosted sessions; ordinary local producers can still race a reservation.
 Android Metro and screen/input routing remain follow-ups in #2266;
 Android sessions refuse the iOS Metro, view and input routes. The

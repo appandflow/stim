@@ -310,6 +310,26 @@ describe('stim status --watch --json', () => {
     proc.send({ path: process.env.STIM_HOME, name: 'config.json' });
     await new Promise((resolve) => setTimeout(resolve, 1500));
     expect(lines).toHaveLength(2);
+
+    const { archiveWorkspace } = await import('../archive.ts');
+    const app = join(root, 'app');
+    const dir = ensureWorkspaceStorage(app);
+    writeFileSync(join(dir, 'state.json'), '{}');
+    process.env.STIM_ARCHIVE_ENABLED = 'true';
+    try {
+      archiveWorkspace(app, 'worktree-remove');
+    } finally {
+      delete process.env.STIM_ARCHIVE_ENABLED;
+    }
+    proc.send({ path: process.env.STIM_HOME, name: 'archive' });
+    await until(() => lines.length === 3);
+    const archive = JSON.parse(lines[2]!).archived[0];
+    expect(archive.projectRoot).toBe(app);
+    expect(archive.replacedBy).toBe(app);
+    expect(JSON.parse(lines[2]!).archivedUsage.count).toBe(1);
+    proc.send({ path: join(process.env.STIM_HOME!, 'archive'), name: archive.id });
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    expect(lines).toHaveLength(3);
   }, 30_000);
 
   test.each([
@@ -462,4 +482,12 @@ describe('stim status --watch --json', () => {
     },
     30_000,
   );
+});
+
+test('archive publication refreshes status while staging and lock changes do not', () => {
+  expect(statusChange('home', 'archive')).toBe('full');
+  expect(statusChange('archive', 'project--1')).toBe('full');
+  expect(statusChange('archive', null)).toBe('full');
+  for (const name of ['.incoming-abc', '.incoming-abc.claims', '.removing-project--1', '.lock', '.lock.claims'])
+    expect(statusChange('archive', name)).toBeNull();
 });

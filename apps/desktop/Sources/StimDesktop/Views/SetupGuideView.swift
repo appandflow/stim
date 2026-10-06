@@ -82,12 +82,9 @@ struct SetupGuideView: View {
           }
           .padding(.horizontal, Space.md)
           .frame(height: 30)
-          .background(
-            RoundedRectangle(cornerRadius: Radius.control).fill(item == step ? Palette.selection : .clear)
-          )
           .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.hoverRow(radius: Radius.control, selected: item == step))
         .accessibilityLabel([item.title, stateDescription(item)].filter { !$0.isEmpty }.joined(separator: ", "))
         .accessibilityAddTraits(item == step ? .isSelected : [])
       }
@@ -417,7 +414,7 @@ struct SetupGuideView: View {
               Text(item.title)
             }
           }
-          .buttonStyle(.plain)
+          .buttonStyle(.hoverRow(outset: Space.xs))
           .accessibilityLabel([item.title, stateDescription(item)].filter { !$0.isEmpty }.joined(separator: ", "))
         }
       }
@@ -515,33 +512,33 @@ private struct CommandBlock: View {
 
   var body: some View {
     VStack(alignment: .leading, spacing: Space.sm) {
-      HStack(spacing: Space.md) {
-        Text(text)
-          .font(.stim(.callout, mono: true))
-          .textSelection(.enabled)
-          .frame(maxWidth: .infinity, alignment: .leading)
-        Button {
-          NSPasteboard.general.clearContents()
-          NSPasteboard.general.setString(text, forType: .string)
-          copied = true
-        } label: {
-          Image(systemName: copied ? "checkmark" : "doc.on.doc")
+      Card(radius: Radius.control, clipsContent: false) {
+        HStack(spacing: Space.md) {
+          Text(text)
+            .font(.stim(.callout, mono: true))
+            .textSelection(.enabled)
+            .frame(maxWidth: .infinity, alignment: .leading)
+          Button {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(text, forType: .string)
+            copied = true
+          } label: {
+            Image(systemName: copied ? "checkmark" : "doc.on.doc")
+          }
+          .buttonStyle(.stim(.plain))
+          .help("Copy the command")
+          .accessibilityLabel(copied ? "Copied" : "Copy \(text)")
+          .task(id: copied) {
+            guard copied else { return }
+            try? await Task.sleep(for: .seconds(2))
+            copied = false
+          }
+          runButton
         }
-        .buttonStyle(.stim(.plain))
-        .help("Copy the command")
-        .accessibilityLabel(copied ? "Copied" : "Copy \(text)")
-        .task(id: copied) {
-          guard copied else { return }
-          try? await Task.sleep(for: .seconds(2))
-          copied = false
-        }
-        runButton
+        .padding(.leading, Space.lg)
+        .padding(.trailing, Space.sm)
+        .padding(.vertical, Space.sm)
       }
-      .padding(.leading, Space.lg)
-      .padding(.trailing, Space.sm)
-      .padding(.vertical, Space.sm)
-      .background(RoundedRectangle(cornerRadius: Radius.control).fill(Palette.surface))
-      .overlay(RoundedRectangle(cornerRadius: Radius.control).strokeBorder(Palette.border))
       let line = [caption, showsDirectory ? "Runs in \(abbreviatingHome(command.cwd))." : nil].compactMap { $0 }
       if !line.isEmpty {
         Text(line.joined(separator: " ")).font(.stim(.footnote)).foregroundStyle(Palette.tertiary)

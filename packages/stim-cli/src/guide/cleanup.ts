@@ -11,7 +11,21 @@ wipe state to upgrade: it records ownership needed for safe teardown. Use the
 same slot-aware CLI for all commands while named assignments exist; older
 versions cannot reliably manage their assignments.
 
+ARCHIVE
+
+Linked-worktree removal and gc dead-project pruning keep history under
+$STIM_HOME/archive by default. See stim guide cleanup archive.
+
 CLEANUP AND DISK
+
+worktree remove stops the agent-device daemon when the workspace's
+agent-device/daemon.json exists, then removes its state directory with the
+workspace. If agent-device is missing or the stop fails, it keeps the directory
+and reports the retry command: agent-device daemon stop --state-dir <dir> --clean.
+A daemon.json whose process is gone is stale and does not block removal.
+gc --delete of a finished worktree does the same.
+stop closes owned-device sessions in that directory without deleting it.
+See stim guide logs for AGENT_DEVICE_STATE_DIR examples.
 
 WHAT RECLAIMS AN OWNED DEVICE
   stim worktree remove    parks eligible owned simulators and emulators
@@ -82,10 +96,71 @@ written by a newer Stim -- costs one dim line on stderr and is otherwise left
 alone; only the next \`ios\` or \`android\` run moves an unparseable one aside
 to stats.json.corrupt-<unix ms> and starts a new one.`,
   sections: {
+    archive: {
+      summary: 'retained workspace history and explicit archive cleanup',
+      body: () => `ARCHIVE
+  Linked-worktree removal and gc pruning a registered root that is gone keep
+  state, ended agents, the error index, logs, closed recording segments and
+  workspace-local agent-device sessions under $STIM_HOME/archive.
+  Build outputs and open recording segments are deleted with the workspace.
+  Archives have no checkout, devices, ports or running processes. A recreated
+  path starts fresh; status links its earlier archives with replacedBy.
+  archive.enabled defaults true and accepts every settings layer. STIM_HOME
+  disables archives unless STIM_ARCHIVE_ENABLED is set. Empty stubs and orphaned
+  workspace directories are not archived. A failure prints one stderr line
+  beginning "could not archive:" and removal continues with empty stdout.
+
+  Retention runs on every worktree removal, archived or not, once an archive
+  exists. It deletes records past their age or count limit first, then expires
+  recordings, agent actions and logs by age from removedAt; trims per-workspace
+  logs (oldest rotated generations, then build logs, then oldest other files);
+  and removes the largest kind of the oldest archive while over total caps.
+  Archives with expired artifacts keep their record until the record limit. recording.enabled false at machine scope deletes archived
+  recordings on the next retention pass. Sizes are binary GB/MB; 0 keeps none.
+  See stim guide settings for the nine archive.* keys and overrides.
+
+  stim gc --cache archived                     list ids, kinds, bytes and expiry
+  stim gc --delete --cache archived             delete every archive
+  stim gc --delete --cache archived --older-than 14
+                                                only removed at least 14 days ago
+  stim gc --delete --cache archived:<id>         delete one; ignores --older-than
+  stim gc --delete --cache archived-logs        delete logs, keep records
+  stim gc --delete --cache archived-recordings  delete recordings, keep records
+  stim gc --delete --cache archived-agent       delete agent actions, keep records
+  Per-kind selectors also accept --older-than, measured from removedAt.
+  Normal gc, --cache all, --worktrees and unscoped --older-than exclude archives.
+  Archive scopes report abandoned staging directories and delete only those
+  with no live or unresolved claim. An unresolved claim names its removal command.
+
+  Directories are 0700 and files 0600. No redaction is applied; logs and agent
+  actions can contain secrets. Use archive.enabled false for a sensitive repo.
+  Archived logs and replay are not exposed through CLI or app readers yet.`,
+    },
     gc: {
       summary:
         'what gc and worktree remove delete, keep and refuse: orphans, stale records, locks, leases, EAS sessions',
-      body: () => `LINKED WORKTREES
+      body: () => `AGENT-DEVICE (REPORT ONLY)
+Unscoped gc reports agent-device runner builds by platform and entry, last use,
+agent-device and Xcode versions, sessions, logs, other state, workspace state
+and hosted driver state. Stim never selects this state as a cache.
+Stim never trims or deletes the shared runner builds, sessions, logs and other
+state or the hosted driver dir; a workspace's own agent-device dir goes only with its workspace.
+A live owner or runner lease marks an entry in use. A lock marks it in use only
+when its owner is live or unknown. Unreadable lock owners and unreadable or unknown
+leases conservatively mark entries in use. Dead lock owners and leases do not.
+Use agent-device's own tooling or remove directories yourself to clear unused
+state. --cache scopes omit this report, including --cache all.
+
+SWIFTPM CACHE (REPORT ONLY)
+Unscoped gc also reports the user-level SwiftPM cache after agent-device:
+~/Library/Caches/org.swift.swiftpm on macOS, or org.swift.swiftpm under
+XDG_CACHE_HOME (default ~/.cache) elsewhere. It is shared by every SwiftPM
+build on this machine. Stim reports it and never deletes it. It is never in
+caches, never changes actionable, and --delete and --older-than never select
+it. Any --cache scope, including all, omits measurement and reports
+sections.swiftpmCache: null. Only stats and unscoped gc measure it.
+
+LINKED WORKTREES
   \`stim worktree remove\` works with any linked worktree, warmed or not.
   Git registration identifies the worktree; a Stim registry entry is not
   required. Before it reclaims anything, the command refuses a worktree git

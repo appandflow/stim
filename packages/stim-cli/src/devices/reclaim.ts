@@ -1,4 +1,5 @@
 import { stopHostedIos } from '../device-host/hosted-ios.ts';
+import { archiveWorkspace } from '../archive.ts';
 import { clearNamedPorts } from '../named-ports.ts';
 import { projectDeviceSlots } from './device-slots.ts';
 import { type ProjectRecord, clearDevice, getProject, removeProject } from '../workspace/config.ts';
@@ -31,7 +32,10 @@ import { endRecordedSession } from '../engine/device-remote.ts';
 import { releaseWorkspaceLeases, type ReleasedLease } from '../engine/device-lease.ts';
 import { resolveEasCliBin } from '../engine/remote-cache.ts';
 import { stopTunnel, type StopTunnelResult } from '../engine/tunnel.ts';
-import { workspaceDir } from '../workspace/paths.ts';
+import { getExecutor } from '../exec.ts';
+import { agentDeviceDaemon } from './activity.ts';
+import { phaseLine } from '../command-output.ts';
+import { workspaceAgentDeviceDir, workspaceDir } from '../workspace/paths.ts';
 import { resolveSupervisorTarget } from '../supervisor/ownership.ts';
 import { emptyWorkspaceDir, withIdleWorkspace } from '../workspace/in-use.ts';
 import {
@@ -332,6 +336,7 @@ export interface ReclaimResult {
 }
 
 type ReclaimOptions = {
+  archive?: { removedBy: 'worktree-remove' | 'gc' | 'maintenance' };
   deleteOwnedDevices?: boolean;
   parkOwnedDevices?: boolean;
   preserveProjectRecord?: boolean;
@@ -379,6 +384,7 @@ async function reclaimIdleProject(
   path: string,
   workspaceExisted: boolean,
   {
+    archive,
     deleteOwnedDevices = false,
     parkOwnedDevices = false,
     preserveProjectRecord = false,
@@ -547,6 +553,24 @@ async function reclaimIdleProject(
     const dir = workspaceDir(path);
     if (existsSync(dir)) {
       try {
+        const stateDir = workspaceAgentDeviceDir(path);
+        if (!['none', 'dead'].includes(agentDeviceDaemon(stateDir))) {
+          const exec = getExecutor();
+          try {
+            if (!exec.findExecutable('agent-device')) throw new Error('agent-device is not on PATH');
+            exec.runFile('agent-device', ['daemon', 'stop', '--state-dir', stateDir, '--clean'], {
+              timeoutMs: 20_000,
+              killSignal: 'SIGKILL',
+              env: { AGENT_DEVICE_NO_UPDATE_NOTIFIER: '1' },
+            });
+          } catch (error) {
+            process.stderr.write(
+              `${phaseLine('agent-device', `daemon could not be stopped: ${(error as Error).message}; run agent-device daemon stop --state-dir "${stateDir}" --clean`)}\n`,
+            );
+            throw error;
+          }
+        }
+        if (archive) archiveWorkspace(path, archive.removedBy, initialState);
         emptyWorkspaceDir(dir);
         if (workspaceExisted) removedWorkspaceDirs.push(dir);
       } catch {

@@ -71,9 +71,14 @@ beforeEach(() => {
   home = mkdtempSync(join(tmpdir(), 'stim-claim-publication-'));
   root = join(home, 'build.lock');
   process.env.STIM_HOME = home;
+  vi.stubEnv('HOME', home);
+  vi.stubEnv('USERPROFILE', home);
+  vi.stubEnv('AGENT_DEVICE_STATE_DIR', '');
+  vi.stubEnv('AGENT_DEVICE_IOS_RUNNER_LEASE_DIR', '');
 });
 
 afterEach(() => {
+  vi.unstubAllEnvs();
   faults.readOnly = '';
   faults.beforeRename = null;
   faults.denied.clear();

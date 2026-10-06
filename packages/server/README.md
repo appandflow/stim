@@ -347,14 +347,15 @@ After a lost reply or connection, replay the same reserve request or attach to
 its attempt. That resolves the same session; a changed request with that attempt
 is refused. Another attempt cannot replace an occupied workspace/slot. The
 client never supplies a worker filesystem path or another client's session.
-`device-host.stop` with `{"session":"<id>"}` shuts down only its recorded,
+`device-host.stop` with `{"session":"<id>"}` deletes only its recorded,
 ledger-owned simulator. Poll attach for completion. A new attempt may reserve
-after the previous one is confirmed stopped. Stopped device records remain for
-ownership and reconciliation; stop does not delete the simulator.
+after the previous one is confirmed stopped. Stopped session homes and device records remain for reconciliation. At start,
+stim-server retires leftover stopped iOS and Android devices through their exact
+private ledger ownership.
 
 The worker persists the journal under `$STIM_HOME/server/device-host-sessions/`
 and chooses an isolated worker home under `$STIM_HOME/device-host/sessions/`.
-An uncertain create, child exit, journal or shutdown outcome retains the slot
+An uncertain create, child exit, journal or deletion outcome retains the slot
 as `unknown`. Explicit stop can reconcile a complete record after a server
 restart; a live or unverifiable owner is refused. Missing ownership records
 need operator investigation, never a replacement inferred from a simulator name.
@@ -403,8 +404,9 @@ A ready Android `device` has `avdName`, `serial`, `consolePort`, `systemImage`,
 its exact AVD name and running ABI before reporting ready. Creation remains
 inside the worker's claimed process group. The worker opens no emulator viewer.
 Stop and revocation use centralized teardown only for its private ledger's exact
-AVD. They shut down and retain its AVD data and record; unknown native outcomes
-retain the reservation and require explicit reconciliation. Android Metro
+AVD. They delete that AVD and retain the session home and record. At start,
+stim-server retires leftover stopped sessions; unknown native outcomes retain
+the reservation and require explicit reconciliation. Android Metro
 and screen/input routing remain follow-ups in #2266. Android sessions
 refuse the iOS Metro, view and input routes.
 
@@ -589,7 +591,7 @@ the bridge available for the same session while its server owner lives. Call
 `device-host.metro.close` to replace a gateway, then reopen on the same port;
 an occupied port refuses rather than sending the app to another listener.
 Closing a bridge interrupts its active streams. Stop, revocation and server
-shutdown close its sockets before device shutdown. After a server owner
+shutdown close its sockets before device retirement. After a server owner
 disappears, the retained session requires explicit stop, as app delivery does.
 
 Expo dev-launcher and CLI versions that send and honor the `Forwarded` header

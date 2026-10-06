@@ -1,5 +1,5 @@
 import { workspaceAgentSessions } from '@/lib/agents';
-import { metroHealth, usedPlatforms, workspaceStage, workspaceUsage, type Usage } from '@/lib/workspace-view';
+import { metroHealth, supportedPlatforms, workspaceStage, workspaceUsage, type Usage } from '@/lib/workspace-view';
 import { devicesOf, orderDevices, platformName, type DeviceRef } from '@/lib/workspaces';
 import type {
   AgentSession,
@@ -61,7 +61,11 @@ export function worktreePage({
     null,
   );
   const labels = apps.map((env) =>
-    PLATFORMS.filter((platform) => entries.some((entry) => entry.path === env.path && entry.platform === platform))
+    PLATFORMS.filter(
+      (platform) =>
+        supportedPlatforms(env).includes(platform) ||
+        entries.some((entry) => entry.path === env.path && entry.platform === platform),
+    )
       .map(platformName)
       .join(' \u00B7 '),
   );
@@ -87,12 +91,16 @@ export function worktreePage({
 export function buildEntries(apps: EnvironmentState[], tabs = false) {
   return apps
     .flatMap((env) => {
-      const used = usedPlatforms(env);
-      const platforms: (Platform | 'macos')[] = env.macos
-        ? ['macos']
-        : tabs || !used.length
-          ? ['ios', 'android']
-          : used;
+      const native = supportedPlatforms(env).filter(
+        (platform): platform is Platform => platform === 'ios' || platform === 'android',
+      );
+      const platforms: (Platform | 'macos')[] =
+        tabs && env.macos
+          ? ['macos']
+          : [
+              ...(tabs ? ['ios' as const, 'android' as const] : native),
+              ...(!tabs && env.macos ? ['macos' as const] : []),
+            ];
       return platforms.map((platform) => ({ path: env.path, platform, env }));
     })
     .sort((a, b) => PLATFORMS.indexOf(a.platform) - PLATFORMS.indexOf(b.platform));

@@ -33,7 +33,10 @@ import * as slots from '../engine/build-slots.ts';
 import * as spawns from '../engine/spawn-claims.ts';
 import { markClaimChildPending, releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
 import { macosRuntimeClaim, requiredMacosRecord } from '../macos/state.ts';
-import { runMacos } from '../commands/macos.ts';
+import macosCommand, { runMacos } from '../commands/macos.ts';
+import { Command } from 'commander';
+import * as nativeRun from '../engine/native-run.ts';
+import { workspaceAgentDeviceDir } from '../workspace/paths.ts';
 import { runStop } from '../commands/stop.ts';
 import { stopMacosApp } from '../macos/stop.ts';
 import { captureProcessToken, inspectProcessIdentity, waitForProcessExit } from '../process-identity.ts';
@@ -698,3 +701,56 @@ describe('macOS resource staging', () => {
     expect(() => resolveBundleExtras(root, root, {}, source)).toThrow(/macos.assetCatalog.*stim guide macos/);
   });
 });
+
+test.skipIf(process.platform !== 'darwin')(
+  'macos launch output reports workspace agent-device state for local and hosted apps',
+  async () => {
+    writeFileSync(join(root, 'Package.swift'), '// swift-tools-version:6.0\n');
+    writeFileSync(join(root, '.stim.json'), JSON.stringify({ macos: { product: 'Sample', infoPlist: 'Info.plist' } }));
+    setExecutor({ runFileQuiet: () => null });
+    const launch = vi.spyOn(nativeRun, 'withNativeBuildRun');
+    const cwd = vi.spyOn(process, 'cwd').mockReturnValue(root);
+    const stdout = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      for (const hosted of [false, true]) {
+        const app = record(
+          hosted
+            ? {
+                host: {
+                  machine: 'mini',
+                  session: '12345678-1234-1234-1234-123456789abc',
+                  appSlot: 3,
+                  appAttempt: 'attempt',
+                  bundleId: 'dev.sample.hosted3',
+                  agent: { driver: 'none', setting: 'hosting.agentDriver' },
+                },
+              }
+            : {},
+        );
+        launch.mockResolvedValue(app);
+        stdout.mockClear();
+        const program = new Command();
+        macosCommand(program);
+        await program.parseAsync(['node', 'stim', 'macos', '--json', ...(hosted ? ['--remote', 'mini'] : [])]);
+        expect(stdout).toHaveBeenCalledOnce();
+        const payload = JSON.parse(stdout.mock.calls[0]![0]);
+        expect(payload.agentDevice).toEqual({ stateDir: workspaceAgentDeviceDir(root) });
+        expect(payload.platform).toBe('macos');
+        expect(payload.host).toEqual(app.host);
+        expect(payload.product).toBe('Sample');
+        expect(existsSync(workspaceAgentDeviceDir(root))).toBe(false);
+        stdout.mockClear();
+        const plain = new Command();
+        macosCommand(plain);
+        await plain.parseAsync(['node', 'stim', 'macos']);
+        expect(stdout).toHaveBeenCalledWith(
+          expect.stringContaining(`AGENT_DEVICE_STATE_DIR=${workspaceAgentDeviceDir(root)}`),
+        );
+      }
+    } finally {
+      launch.mockRestore();
+      cwd.mockRestore();
+      stdout.mockRestore();
+    }
+  },
+);

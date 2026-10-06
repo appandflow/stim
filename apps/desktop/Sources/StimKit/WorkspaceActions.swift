@@ -40,7 +40,7 @@ public func workspaceMenuItems(for kind: ActionRowKind) -> [WorkspaceMenuItem?] 
       .openInEditor, .openInTerminal, .revealInFinder, .copyPath, .lastOutput,
       nil,
     ] + platforms.map { .run(platform: $0) }
-      + (platforms == ["macos"]
+      + (platforms.contains("macos") && !platforms.contains { $0 == "ios" || $0 == "android" }
         ? [.stopDevServer, .showLogs]
         : [
           .reload, metroRunning ? .stopDevServer : .startDevServer, .showLogs,
@@ -65,16 +65,25 @@ public func worktreeRemovalAllowed(git: WorktreeGit?) -> Bool {
 }
 
 extension Workspace {
-  /// The platforms with a device or a last build.
+  /// The platforms with a device, a last build, macOS state or a running build.
   public var usedPlatforms: [String] {
-    return (macos == nil ? [] : ["macos"])
-      + ["ios", "android"].filter { platform in
-        devices.contains { $0.platform == platform } || lastBuilds?.build(for: platform) != nil
-      }
+    ["ios", "android", "macos", "web"].filter { platform in
+      devices.contains { $0.platform == platform }
+        || (["ios", "android"].contains(platform) && lastBuilds?.build(for: platform) != nil)
+        || (platform == "macos" && macos != nil) || (build?.isRunning == true && build?.platform == platform)
+    }
   }
 
-  /// The platforms Run offers: `usedPlatforms`, or both when neither is recorded.
-  public var runPlatforms: [String] { usedPlatforms.isEmpty ? ["ios", "android"] : usedPlatforms }
+  /// The platforms `stim status` reports for the app plus `usedPlatforms`; without the report (an older `stim`),
+  /// the used ones, or iOS and Android when nothing is used.
+  public var supportedPlatforms: [String] {
+    let used = usedPlatforms
+    let detected = platforms ?? (used.isEmpty ? ["ios", "android"] : [])
+    return ["ios", "android", "macos", "web"].filter { detected.contains($0) || used.contains($0) }
+  }
+
+  /// The platforms Run offers.
+  public var runPlatforms: [String] { supportedPlatforms }
 
   /// Whether `stim reload` can reach an app: the dev server runs and a local simulator or emulator is up with the
   /// app not known to be stopped. The web page reloads from its own tile, since a bare `stim reload` refuses when

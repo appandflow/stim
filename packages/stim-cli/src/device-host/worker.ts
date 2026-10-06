@@ -4,7 +4,6 @@ import { withDirLock } from '@stim-cli/core';
 import {
   assertHostedDeviceLedger,
   readHostedDevice,
-  readCreatedDevices,
   type HostedDeviceSelectors,
   type HostedDevice,
   type HostedIosChoice,
@@ -13,6 +12,7 @@ import {
 import { getExecutor } from '../exec.ts';
 import { readHostMemoryPressure } from '../host-memory.ts';
 import { bootIosSim, createOwnedIosSim, listAllIosSims, resolveIosCreation } from '../devices/ios.ts';
+import { forgetCreatedDevice } from '../devices/created-devices.ts';
 import { teardownOwnedIosSim } from '../devices/teardown.ts';
 import { installHostedApp } from './app.ts';
 
@@ -76,23 +76,27 @@ export async function runHostedDevice(
       return { state: 'ready', device };
     }
     device = readHostedDevice(home);
+    const ledger = assertHostedDeviceLedger(home, device.udid, 'ios', { allowEmpty: mode === 'stop' });
     const current = inventory().find((sim) => sim.udid === device!.udid);
-    if (mode === 'stop' && !current && readCreatedDevices().ios.size === 0) {
-      assertHostedDeviceLedger(home, device.udid, 'ios', true);
-      return { state: 'stopped', device };
-    }
-    assertHostedDeviceLedger(home, device.udid);
     if (mode === 'install') {
       if (!app || current?.state !== 'Booted')
         throw new Error('Hosted app installation requires its booted owned simulator.');
       const launched = await installHostedApp(home, app.session, app.attempt, device, app.metroPort);
       return { state: 'installed', device, launched };
     }
+    if (ledger === 'empty') {
+      if (current) throw new Error('The hosted simulator remains without ledger ownership; it was kept.');
+      return { state: 'stopped', device };
+    }
     const outcome = teardownOwnedIosSim(device.udid, { del: true });
     if (outcome.status !== 'torn-down' && outcome.status !== 'missing')
       throw new Error(outcome.reason ?? 'Hosted simulator teardown was not established.');
     const after = inventory().find((sim) => sim.udid === device!.udid);
-    if (after) throw new Error('Hosted simulator deletion could not be verified.');
+    if (after)
+      throw new Error(
+        `Hosted simulator ${device.udid} is still listed (${after.state}); deletion could not be verified. If its runtime is unavailable, delete it with xcrun simctl delete and stop the session again.`,
+      );
+    forgetCreatedDevice('ios', device.udid);
     return { state: 'stopped', device };
   } catch (error) {
     return {

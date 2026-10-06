@@ -56,7 +56,7 @@ export const PATH_SETTINGS: readonly string[] = Object.freeze(
   LAYERED_SETTINGS.filter((setting) => setting.type.kind === 'path').map((setting) => setting.key),
 );
 
-function settingValueAt(settings: unknown, path: string): unknown {
+export function settingValueAt(settings: unknown, path: string): unknown {
   let node: unknown = settings;
   for (const segment of path.split('.')) {
     if (!isPlainObject(node)) return undefined;

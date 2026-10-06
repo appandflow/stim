@@ -18,10 +18,18 @@
               "since": "2026-10-05T11:00:00.000Z",
               "platform": null,
               "closedApps": []
-            }
+            },
+            "platforms": ["ios", "android"]
           }
-        ],
-        "entries": [
+        ]
+      },
+      "expected": {
+        "apps": ["/w/one/apps/mobile"],
+        "projects": ["apps/mobile"],
+        "lead": "/w/one/apps/mobile",
+        "subtitles": [null, null],
+        "appLabels": ["iOS \u00b7 Android"],
+        "buildEntries": [
           {
             "path": "/w/one/apps/mobile",
             "platform": "ios"
@@ -31,13 +39,6 @@
             "platform": "android"
           }
         ]
-      },
-      "expected": {
-        "apps": ["/w/one/apps/mobile"],
-        "projects": ["apps/mobile"],
-        "lead": "/w/one/apps/mobile",
-        "subtitles": [null, null],
-        "appLabels": ["iOS \u00b7 Android"]
       }
     },
     {
@@ -63,7 +64,8 @@
                   "slot": "default"
                 }
               ]
-            }
+            },
+            "platforms": ["ios", "android", "web"]
           },
           {
             "path": "/w/other/apps/mobile",
@@ -77,7 +79,8 @@
               "since": "2026-10-05T11:00:00.000Z",
               "platform": "ios",
               "closedApps": []
-            }
+            },
+            "platforms": []
           },
           {
             "path": "/w/wt/apps/desktop",
@@ -91,10 +94,30 @@
               "since": "2026-10-05T11:00:00.000Z",
               "platform": "macos",
               "closedApps": []
+            },
+            "platforms": ["macos"],
+            "macos": {
+              "launchId": "one",
+              "product": "Sample",
+              "bundle": "/w/Sample.app",
+              "bundleId": "dev.sample",
+              "executable": "/w/Sample.app/Contents/MacOS/Sample",
+              "state": "stopped",
+              "build": {
+                "state": "ok",
+                "startedAt": "2026-10-04T00:00:00Z"
+              }
             }
           }
-        ],
-        "entries": [
+        ]
+      },
+      "expected": {
+        "apps": ["/w/wt/apps/desktop", "/w/wt/apps/mobile"],
+        "projects": ["apps/desktop", "apps/mobile"],
+        "lead": "/w/wt/apps/mobile",
+        "subtitles": [null, null, null],
+        "appLabels": ["macOS", "iOS \u00b7 Android \u00b7 Web"],
+        "buildEntries": [
           {
             "path": "/w/wt/apps/mobile",
             "platform": "ios"
@@ -106,19 +129,8 @@
           {
             "path": "/w/wt/apps/desktop",
             "platform": "macos"
-          },
-          {
-            "path": "/w/wt/apps/mobile",
-            "platform": "web"
           }
         ]
-      },
-      "expected": {
-        "apps": ["/w/wt/apps/desktop", "/w/wt/apps/mobile"],
-        "projects": ["apps/desktop", "apps/mobile"],
-        "lead": "/w/wt/apps/mobile",
-        "subtitles": [null, null, null, null],
-        "appLabels": ["macOS", "iOS \u00b7 Android \u00b7 Web"]
       }
     },
     {
@@ -139,7 +151,8 @@
               "since": "2026-10-05T11:00:00.000Z",
               "platform": null,
               "closedApps": []
-            }
+            },
+            "platforms": ["ios"]
           },
           {
             "path": "/w/wt/apps/a",
@@ -153,10 +166,18 @@
               "since": "2026-10-05T11:00:00.000Z",
               "platform": null,
               "closedApps": []
-            }
+            },
+            "platforms": ["ios", "android"]
           }
-        ],
-        "entries": [
+        ]
+      },
+      "expected": {
+        "apps": ["/w/wt/apps/a", "/w/wt/apps/b"],
+        "projects": ["apps/a", "apps/b"],
+        "lead": "/w/wt/apps/a",
+        "subtitles": ["apps/a", "apps/b", null],
+        "appLabels": ["iOS \u00b7 Android", "iOS"],
+        "buildEntries": [
           {
             "path": "/w/wt/apps/a",
             "platform": "ios"
@@ -170,13 +191,6 @@
             "platform": "android"
           }
         ]
-      },
-      "expected": {
-        "apps": ["/w/wt/apps/a", "/w/wt/apps/b"],
-        "projects": ["apps/a", "apps/b"],
-        "lead": "/w/wt/apps/a",
-        "subtitles": ["apps/a", "apps/b", null],
-        "appLabels": ["iOS \u00b7 Android", "iOS"]
       }
     },
     {
@@ -197,7 +211,8 @@
               "since": "2026-10-05T11:00:00.000Z",
               "platform": null,
               "closedApps": []
-            }
+            },
+            "platforms": ["ios"]
           },
           {
             "path": "/w/wt/apps/b",
@@ -211,10 +226,18 @@
               "since": "2026-10-05T11:00:00.000Z",
               "platform": null,
               "closedApps": []
-            }
+            },
+            "platforms": ["ios"]
           }
-        ],
-        "entries": [
+        ]
+      },
+      "expected": {
+        "apps": ["/w/wt/apps/a", "/w/wt/apps/b"],
+        "projects": ["apps/a", "apps/b"],
+        "lead": "/w/wt/apps/a",
+        "subtitles": ["apps/a", "apps/b"],
+        "appLabels": ["iOS \u00b7 apps/a", "iOS \u00b7 apps/b"],
+        "buildEntries": [
           {
             "path": "/w/wt/apps/a",
             "platform": "ios"
@@ -224,13 +247,6 @@
             "platform": "ios"
           }
         ]
-      },
-      "expected": {
-        "apps": ["/w/wt/apps/a", "/w/wt/apps/b"],
-        "projects": ["apps/a", "apps/b"],
-        "lead": "/w/wt/apps/a",
-        "subtitles": ["apps/a", "apps/b"],
-        "appLabels": ["iOS \u00b7 apps/a", "iOS \u00b7 apps/b"]
       }
     },
     {
@@ -251,7 +267,8 @@
               "since": "2026-10-05T11:00:00.000Z",
               "platform": null,
               "closedApps": []
-            }
+            },
+            "platforms": []
           },
           {
             "path": "/w/wt/apps/b",
@@ -265,13 +282,8 @@
               "since": "2026-10-05T11:00:00.000Z",
               "platform": null,
               "closedApps": []
-            }
-          }
-        ],
-        "entries": [
-          {
-            "path": "/w/wt/apps/b",
-            "platform": "android"
+            },
+            "platforms": ["android"]
           }
         ]
       },
@@ -280,7 +292,13 @@
         "projects": ["apps/a", "apps/b"],
         "lead": "/w/wt/apps/a",
         "subtitles": [null],
-        "appLabels": ["apps/a", "Android"]
+        "appLabels": ["apps/a", "Android"],
+        "buildEntries": [
+          {
+            "path": "/w/wt/apps/b",
+            "platform": "android"
+          }
+        ]
       }
     },
     {
@@ -298,7 +316,8 @@
               "since": "2026-10-05T11:00:00.000Z",
               "platform": null,
               "closedApps": []
-            }
+            },
+            "platforms": ["ios"]
           },
           {
             "path": "/repo/apps/web",
@@ -309,13 +328,8 @@
               "since": "2026-10-05T11:00:00.000Z",
               "platform": null,
               "closedApps": []
-            }
-          }
-        ],
-        "entries": [
-          {
-            "path": "/repo/apps/mobile",
-            "platform": "ios"
+            },
+            "platforms": []
           }
         ]
       },
@@ -324,7 +338,13 @@
         "projects": ["mobile"],
         "lead": "/repo/apps/mobile",
         "subtitles": [null],
-        "appLabels": ["iOS"]
+        "appLabels": ["iOS"],
+        "buildEntries": [
+          {
+            "path": "/repo/apps/mobile",
+            "platform": "ios"
+          }
+        ]
       }
     },
     {
@@ -345,7 +365,8 @@
               "since": "2026-10-05T11:00:00.000Z",
               "platform": null,
               "closedApps": []
-            }
+            },
+            "platforms": ["android"]
           },
           {
             "path": "/w/root",
@@ -359,7 +380,8 @@
               "since": "2026-10-05T11:00:00.000Z",
               "platform": "android",
               "closedApps": []
-            }
+            },
+            "platforms": ["android"]
           },
           {
             "path": "/w/root/.worktrees/feat",
@@ -373,10 +395,18 @@
               "since": "2026-10-05T11:00:00.000Z",
               "platform": "ios",
               "closedApps": []
-            }
+            },
+            "platforms": []
           }
-        ],
-        "entries": [
+        ]
+      },
+      "expected": {
+        "apps": ["/w/root", "/w/root/packages/app"],
+        "projects": ["root", "packages/app"],
+        "lead": "/w/root",
+        "subtitles": ["root", "packages/app"],
+        "appLabels": ["Android \u00b7 root", "Android \u00b7 packages/app"],
+        "buildEntries": [
           {
             "path": "/w/root",
             "platform": "android"
@@ -386,13 +416,6 @@
             "platform": "android"
           }
         ]
-      },
-      "expected": {
-        "apps": ["/w/root", "/w/root/packages/app"],
-        "projects": ["root", "packages/app"],
-        "lead": "/w/root",
-        "subtitles": ["root", "packages/app"],
-        "appLabels": ["Android \u00b7 root", "Android \u00b7 packages/app"]
       }
     },
     {
@@ -413,7 +436,8 @@
               "since": "2026-10-05T11:00:00.000Z",
               "platform": "ios",
               "closedApps": []
-            }
+            },
+            "platforms": []
           },
           {
             "path": "/w/wt/apps/a",
@@ -427,7 +451,8 @@
               "since": "2026-10-05T11:00:00.000Z",
               "platform": null,
               "closedApps": []
-            }
+            },
+            "platforms": []
           },
           {
             "path": "/w/wt/apps/b",
@@ -445,17 +470,338 @@
             "logs": {
               "dir": "/l",
               "errorsSinceMarker": 2
-            }
+            },
+            "platforms": []
           }
-        ],
-        "entries": []
+        ]
       },
       "expected": {
         "apps": ["/w/wt/apps/a", "/w/wt/apps/b", "/w/wt/apps/c"],
         "projects": ["apps/a", "apps/b", "apps/c"],
         "lead": "/w/wt/apps/b",
         "subtitles": [],
-        "appLabels": ["apps/a", "apps/b", "apps/c"]
+        "appLabels": ["apps/a", "apps/b", "apps/c"],
+        "buildEntries": []
+      }
+    },
+    {
+      "name": "a fresh native app has both build predictions before it runs",
+      "input": {
+        "now": "2026-10-05T12:00:00.000Z",
+        "path": "/w/app",
+        "environments": [
+          {
+            "path": "/w/app",
+            "live": false,
+            "warnings": [],
+            "platforms": ["ios", "android"]
+          }
+        ]
+      },
+      "expected": {
+        "apps": ["/w/app"],
+        "projects": ["app"],
+        "lead": "/w/app",
+        "subtitles": [null, null],
+        "appLabels": ["iOS \u00b7 Android"],
+        "buildEntries": [
+          {
+            "path": "/w/app",
+            "platform": "ios"
+          },
+          {
+            "path": "/w/app",
+            "platform": "android"
+          }
+        ]
+      }
+    },
+    {
+      "name": "a fresh web-only app has a Web label and no native build rows",
+      "input": {
+        "now": "2026-10-05T12:00:00.000Z",
+        "path": "/w/app",
+        "environments": [
+          {
+            "path": "/w/app",
+            "live": false,
+            "warnings": [],
+            "platforms": ["web"]
+          }
+        ]
+      },
+      "expected": {
+        "apps": ["/w/app"],
+        "projects": ["app"],
+        "lead": "/w/app",
+        "subtitles": [],
+        "appLabels": ["Web"],
+        "buildEntries": []
+      }
+    },
+    {
+      "name": "a fresh Expo web app keeps native predictions and a Web label",
+      "input": {
+        "now": "2026-10-05T12:00:00.000Z",
+        "path": "/w/app",
+        "environments": [
+          {
+            "path": "/w/app",
+            "live": false,
+            "warnings": [],
+            "platforms": ["ios", "android", "web"]
+          }
+        ]
+      },
+      "expected": {
+        "apps": ["/w/app"],
+        "projects": ["app"],
+        "lead": "/w/app",
+        "subtitles": [null, null],
+        "appLabels": ["iOS \u00b7 Android \u00b7 Web"],
+        "buildEntries": [
+          {
+            "path": "/w/app",
+            "platform": "ios"
+          },
+          {
+            "path": "/w/app",
+            "platform": "android"
+          }
+        ]
+      }
+    },
+    {
+      "name": "a recorded macOS app has its macOS build row",
+      "input": {
+        "now": "2026-10-05T12:00:00.000Z",
+        "path": "/w/app",
+        "environments": [
+          {
+            "path": "/w/app",
+            "live": false,
+            "warnings": [],
+            "platforms": ["macos"],
+            "macos": {
+              "launchId": "one",
+              "product": "Sample",
+              "bundle": "/w/Sample.app",
+              "bundleId": "dev.sample",
+              "executable": "/w/Sample.app/Contents/MacOS/Sample",
+              "state": "stopped",
+              "build": {
+                "state": "ok",
+                "startedAt": "2026-10-04T00:00:00Z"
+              }
+            }
+          }
+        ]
+      },
+      "expected": {
+        "apps": ["/w/app"],
+        "projects": ["app"],
+        "lead": "/w/app",
+        "subtitles": [null],
+        "appLabels": ["macOS"],
+        "buildEntries": [
+          {
+            "path": "/w/app",
+            "platform": "macos"
+          }
+        ]
+      }
+    },
+    {
+      "name": "an older CLI with only Android use shows only Android",
+      "input": {
+        "now": "2026-10-05T12:00:00.000Z",
+        "path": "/w/app",
+        "environments": [
+          {
+            "path": "/w/app",
+            "live": false,
+            "warnings": [],
+            "android": {
+              "name": "pixel",
+              "owned": true,
+              "physical": false,
+              "state": "not-detected"
+            }
+          }
+        ]
+      },
+      "expected": {
+        "apps": ["/w/app"],
+        "projects": ["app"],
+        "lead": "/w/app",
+        "subtitles": [null],
+        "appLabels": ["Android"],
+        "buildEntries": [
+          {
+            "path": "/w/app",
+            "platform": "android"
+          }
+        ]
+      }
+    },
+    {
+      "name": "an older CLI with no recorded use keeps native predictions",
+      "input": {
+        "now": "2026-10-05T12:00:00.000Z",
+        "path": "/w/app",
+        "environments": [
+          {
+            "path": "/w/app",
+            "live": false,
+            "warnings": []
+          }
+        ]
+      },
+      "expected": {
+        "apps": ["/w/app"],
+        "projects": ["app"],
+        "lead": "/w/app",
+        "subtitles": [null, null],
+        "appLabels": ["iOS \u00b7 Android"],
+        "buildEntries": [
+          {
+            "path": "/w/app",
+            "platform": "ios"
+          },
+          {
+            "path": "/w/app",
+            "platform": "android"
+          }
+        ]
+      }
+    },
+    {
+      "name": "a detected macOS package without recorded state has a label only",
+      "input": {
+        "now": "2026-10-05T12:00:00.000Z",
+        "path": "/w/app",
+        "environments": [
+          {
+            "path": "/w/app",
+            "live": false,
+            "warnings": [],
+            "platforms": ["macos"]
+          }
+        ]
+      },
+      "expected": {
+        "apps": ["/w/app"],
+        "projects": ["app"],
+        "lead": "/w/app",
+        "subtitles": [],
+        "appLabels": ["macOS"],
+        "buildEntries": []
+      }
+    },
+    {
+      "name": "detected support keeps a native platform that actually ran",
+      "input": {
+        "now": "2026-10-05T12:00:00.000Z",
+        "path": "/w/app",
+        "environments": [
+          {
+            "path": "/w/app",
+            "live": false,
+            "warnings": [],
+            "platforms": ["web"],
+            "android": {
+              "name": "pixel",
+              "owned": true,
+              "physical": false,
+              "state": "not-detected"
+            }
+          }
+        ]
+      },
+      "expected": {
+        "apps": ["/w/app"],
+        "projects": ["app"],
+        "lead": "/w/app",
+        "subtitles": [null],
+        "appLabels": ["Android \u00b7 Web"],
+        "buildEntries": [
+          {
+            "path": "/w/app",
+            "platform": "android"
+          }
+        ]
+      }
+    },
+    {
+      "name": "an older CLI with a web device does not invent native builds",
+      "input": {
+        "now": "2026-10-05T12:00:00.000Z",
+        "path": "/w/app",
+        "environments": [
+          {
+            "path": "/w/app",
+            "live": false,
+            "warnings": [],
+            "web": {
+              "browser": "chrome",
+              "version": null,
+              "running": true,
+              "pid": 1,
+              "supervisorPid": 2,
+              "url": "http://localhost:5173/",
+              "headless": true,
+              "viewport": "desktop",
+              "profile": "/p",
+              "cdpEndpoint": "http://127.0.0.1:8900",
+              "targetId": "T"
+            }
+          }
+        ]
+      },
+      "expected": {
+        "apps": ["/w/app"],
+        "projects": ["app"],
+        "lead": "/w/app",
+        "subtitles": [],
+        "appLabels": ["Web"],
+        "buildEntries": []
+      }
+    },
+    {
+      "name": "a running native build stays visible when detection misses it",
+      "input": {
+        "now": "2026-10-05T12:00:00.000Z",
+        "path": "/w/app",
+        "environments": [
+          {
+            "path": "/w/app",
+            "platforms": ["web"],
+            "live": false,
+            "warnings": [],
+            "build": {
+              "platform": "ios",
+              "slot": "default",
+              "state": "running",
+              "phase": "compile",
+              "startedAt": "2026-10-05T11:00:00.000Z",
+              "phaseStartedAt": "2026-10-05T11:00:00.000Z",
+              "basis": 0
+            }
+          }
+        ]
+      },
+      "expected": {
+        "apps": ["/w/app"],
+        "projects": ["app"],
+        "lead": "/w/app",
+        "subtitles": [null],
+        "appLabels": ["iOS \u00b7 Web"],
+        "buildEntries": [
+          {
+            "path": "/w/app",
+            "platform": "ios"
+          }
+        ]
       }
     }
   ]

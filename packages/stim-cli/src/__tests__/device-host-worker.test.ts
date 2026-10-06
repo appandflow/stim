@@ -23,16 +23,14 @@ vi.mock('../devices/teardown.ts', () => ({
 }));
 let home: string;
 const udid = '12345678-1234-1234-1234-123456789abc';
-let simulatorState: string;
-let deleted: boolean;
+let simulatorState: string | null;
 
 beforeEach(() => {
   vi.resetAllMocks();
   home = mkdtempSync(join(tmpdir(), 'stim-host-worker-'));
   process.env.STIM_HOME = home;
   simulatorState = 'Shutdown';
-  deleted = false;
-  native.inventory.mockImplementation(() => (deleted ? [] : [{ udid, state: simulatorState }]));
+  native.inventory.mockImplementation(() => (simulatorState ? [{ udid, state: simulatorState }] : []));
   native.pressure.mockReturnValue('normal');
   native.create.mockImplementation(() => {
     recordCreatedDevice('ios', udid);
@@ -41,9 +39,9 @@ beforeEach(() => {
   native.boot.mockImplementation(() => {
     simulatorState = 'Booted';
   });
-  native.teardown.mockImplementation((_target, options) => {
-    deleted = options.del;
-    if (deleted) forgetCreatedDevice('ios', udid);
+  native.teardown.mockImplementation(() => {
+    simulatorState = null;
+    forgetCreatedDevice('ios', udid);
     return { status: 'torn-down' };
   });
 });
@@ -52,7 +50,7 @@ afterEach(() => {
   rmSync(home, { recursive: true, force: true });
 });
 
-test('records exact ownership before boot, keeps the host viewer closed and deletes instead of parking at stop', async () => {
+test('records exact ownership before boot, keeps the host viewer closed and verifies retirement', async () => {
   native.boot.mockImplementation((target, options) => {
     expect(target).toBe(udid);
     expect(options).toEqual({ openViewer: false });
@@ -62,7 +60,6 @@ test('records exact ownership before boot, keeps the host viewer closed and dele
   expect(await runHostedDevice('prepare', {})).toMatchObject({ state: 'ready', device: { udid } });
   expect(await runHostedDevice('prepare', {})).toMatchObject({ state: 'unknown' });
   expect(native.create).toHaveBeenCalledTimes(1);
-  expect(await runHostedDevice('stop', {})).toMatchObject({ state: 'stopped', device: { udid } });
   expect(await runHostedDevice('stop', {})).toMatchObject({ state: 'stopped', device: { udid } });
   expect(native.teardown).toHaveBeenCalledExactlyOnceWith(udid, { del: true });
 });
@@ -103,6 +100,32 @@ test('never reports ready or stopped from command success without matching devic
   native.boot.mockResolvedValue(undefined);
   expect(await runHostedDevice('prepare', {})).toMatchObject({ state: 'unknown', device: { udid } });
   simulatorState = 'Booted';
+  native.teardown.mockReturnValue({ status: 'torn-down' });
+  expect(await runHostedDevice('stop', {})).toMatchObject({ state: 'unknown', device: { udid } });
+});
+
+test('a deleted simulator with an empty ledger can complete stop after a lost reply', async () => {
+  await runHostedDevice('prepare', {});
+  await runHostedDevice('stop', {});
+  native.teardown.mockClear();
+  expect(await runHostedDevice('stop', {})).toMatchObject({ state: 'stopped', device: { udid } });
+  expect(native.teardown).not.toHaveBeenCalled();
+});
+
+test('an empty ledger cannot authorize deletion of a simulator still in inventory', async () => {
+  await runHostedDevice('prepare', {});
+  forgetCreatedDevice('ios', udid);
+  simulatorState = 'Shutdown';
+  expect(await runHostedDevice('stop', {})).toMatchObject({
+    state: 'unknown',
+    device: { udid },
+    notice: expect.stringContaining('without ledger ownership'),
+  });
+  expect(native.teardown).not.toHaveBeenCalled();
+});
+
+test('shutdown success cannot report stopped while the simulator still exists', async () => {
+  await runHostedDevice('prepare', {});
   native.teardown.mockImplementation(() => {
     simulatorState = 'Shutdown';
     return { status: 'torn-down' };
@@ -110,27 +133,12 @@ test('never reports ready or stopped from command success without matching devic
   expect(await runHostedDevice('stop', {})).toMatchObject({ state: 'unknown', device: { udid } });
 });
 
-test('an empty ledger cannot authorize stopping a simulator that still exists', async () => {
-  await runHostedDevice('prepare', {});
-  forgetCreatedDevice('ios', udid);
-  expect(await runHostedDevice('stop', {})).toMatchObject({
-    state: 'unknown',
-    notice: expect.stringContaining('ownership ledger'),
-  });
-  expect(native.teardown).not.toHaveBeenCalled();
-});
-
-test('a lost deletion verification can be reconciled on the next stop after the ledger is cleared', async () => {
-  await runHostedDevice('prepare', {});
-  native.inventory
-    .mockImplementationOnce(() => [{ udid, state: 'Booted' }])
-    .mockImplementationOnce(() => {
-      throw new Error('inventory unavailable after deletion');
-    });
-  expect(await runHostedDevice('stop', {})).toMatchObject({
-    state: 'unknown',
-    notice: 'inventory unavailable after deletion',
-  });
-  expect(await runHostedDevice('stop', {})).toMatchObject({ state: 'stopped', device: { udid } });
-  expect(native.teardown).toHaveBeenCalledTimes(1);
-});
+test.each(['failed', 'skipped'])(
+  'a %s teardown cannot report retirement even if inventory is empty',
+  async (status) => {
+    await runHostedDevice('prepare', {});
+    simulatorState = null;
+    native.teardown.mockReturnValue({ status });
+    expect(await runHostedDevice('stop', {})).toMatchObject({ state: 'unknown', device: { udid } });
+  },
+);

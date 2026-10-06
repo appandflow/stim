@@ -1,4 +1,5 @@
 import type { HostedIosStatus } from './hosted-ios.ts';
+import type { ArchivedWorkspace, ArchivedUsage } from './archive.ts';
 import type { MacosAppState } from './macos.ts';
 import type { TunnelMode, WebViewport } from './settings-registry.ts';
 import type { DeviceIdleShutdownRecord, IdleStopRecord, MetroLastStop } from './workspace-state.ts';
@@ -575,6 +576,8 @@ export interface AndroidDeviceState {
 export interface EnvironmentState {
   slots?: { slot: string; ios: SimulatorState | null | undefined; android: AndroidDeviceState | null | undefined }[];
   path: string;
+  /** Statically detected app platforms; always set by status, empty when none are detected. */
+  platforms?: string[];
   live: boolean;
   phase?: WorkspacePhase;
   /** When the warm started (`warming`) or finished (`ready`); null for `live` and `idle`. */
@@ -613,6 +616,7 @@ export interface EnvironmentState {
   macos?: MacosAppState | null;
   supervisor?: { pid: number | null; mode: string | null; startedAt: string | null; healthy: boolean } | null;
   logs?: { dir: string; errorsSinceMarker: number } | null;
+  agentDevice?: { stateDir: string };
   worktree?: WorktreeFacts | null;
   remoteDevices?: RemoteDeviceState[];
   /** The physical devices this workspace leases, in every slot; absent when it leases none. */
@@ -707,6 +711,8 @@ export interface MachineUsageState {
 
 /** The payload `stim status --json` prints, and `status --watch --json` prints on each change. */
 export interface StatusPayload {
+  archived?: ArchivedWorkspace[];
+  archivedUsage?: ArchivedUsage;
   environments: (EnvironmentState & { labelOnly?: true })[];
   capacity: StatusCapacity;
   deviceLeases: DeviceLeaseState[];

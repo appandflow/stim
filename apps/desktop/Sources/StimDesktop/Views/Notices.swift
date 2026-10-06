@@ -12,6 +12,7 @@ struct Notice: Identifiable {
   var perform: @MainActor () -> Void
   var onDismiss: (@MainActor () -> Void)?
   var key: String?
+  var workspacePath: String?
 }
 
 @MainActor
@@ -60,6 +61,12 @@ final class NoticeCenter: ObservableObject {
   func remove(key: String) {
     for notice in notices where notice.key == key { remove(notice.id) }
   }
+
+  func dismissCards(notIn payload: StatusPayload) {
+    for notice in notices {
+      if let path = notice.workspacePath, !payload.lists(workspace: path) { remove(notice.id) }
+    }
+  }
 }
 
 struct NoticeStack: View {
@@ -71,14 +78,14 @@ struct NoticeStack: View {
       if let notice = center.current {
         let behind = min(center.notices.count - 1, 2)
         ForEach(Array((0..<behind).reversed()), id: \.self) { depth in
-          RoundedRectangle(cornerRadius: Radius.card)
-            .fill(Palette.raised)
-            .overlay(RoundedRectangle(cornerRadius: Radius.card).strokeBorder(Palette.separator))
-            .shadow(color: .black.opacity(0.12), radius: 4, y: 1)
-            .padding(.horizontal, CGFloat(depth + 1) * Space.md)
-            .frame(height: 40)
-            .offset(y: CGFloat(depth + 1) * Space.md)
-            .accessibilityHidden(true)
+          Card(fill: Palette.raised, border: Palette.separator, clipsContent: false) {
+            Color.clear
+          }
+          .shadow(color: .black.opacity(0.12), radius: 4, y: 1)
+          .padding(.horizontal, CGFloat(depth + 1) * Space.md)
+          .frame(height: 40)
+          .offset(y: CGFloat(depth + 1) * Space.md)
+          .accessibilityHidden(true)
         }
         NoticeCard(notice: notice, center: center)
           .id(notice.id)
@@ -129,7 +136,7 @@ private struct NoticeCard: View {
     Button {
       center.step(offset)
     } label: {
-      Image(systemName: symbol).font(.system(size: 10, weight: .semibold)).foregroundStyle(Palette.tertiary)
+      Image(systemName: symbol).iconFont(IconSize.compact, weight: .semibold).foregroundStyle(Palette.tertiary)
     }
     .buttonStyle(.hoverRow(outset: Space.xs))
     .help(label)

@@ -42,7 +42,7 @@ export interface SettingDefinition {
   env?: string;
   sensitive?: boolean;
   committedAt?: 'repository';
-  scopedHomeValue?: number;
+  scopedHomeValue?: number | boolean;
   desktopDefault?: string;
 }
 
@@ -325,6 +325,79 @@ export const SETTINGS: readonly SettingDefinition[] = [
     default: true,
     env: 'STIM_RECORDING',
     description: 'Let stim-server record device screens for replay; false stops it and deletes the recordings',
+  },
+  {
+    key: 'archive.enabled',
+    type: BOOLEAN,
+    scopes: EVERY,
+    default: true,
+    env: 'STIM_ARCHIVE_ENABLED',
+    scopedHomeValue: false,
+    description: 'Keep workspace history on removal; false under STIM_HOME unless explicitly enabled',
+  },
+  {
+    key: 'archive.maxAgeDays',
+    type: CAPACITY,
+    scopes: MACHINE,
+    default: 30,
+    env: 'STIM_ARCHIVE_MAX_AGE_DAYS',
+    description: 'Days to keep archived workspace records; 0 keeps nothing',
+  },
+  {
+    key: 'archive.maxCount',
+    type: CAPACITY,
+    scopes: MACHINE,
+    default: 200,
+    env: 'STIM_ARCHIVE_MAX_COUNT',
+    description: 'Archived workspace count; oldest records go first, 0 keeps nothing',
+  },
+  {
+    key: 'archive.maxTotalGb',
+    type: GIGABYTES,
+    scopes: MACHINE,
+    default: 5,
+    env: 'STIM_ARCHIVE_MAX_TOTAL_GB',
+    description: 'Total archived bytes in binary GB; 0 keeps no artifacts',
+  },
+  {
+    key: 'archive.logs.maxAgeDays',
+    type: CAPACITY,
+    scopes: MACHINE,
+    default: 14,
+    env: 'STIM_ARCHIVE_LOGS_MAX_AGE_DAYS',
+    description: 'Days to keep archived logs; 0 keeps none',
+  },
+  {
+    key: 'archive.logs.maxMbPerWorkspace',
+    type: GIGABYTES,
+    scopes: MACHINE,
+    default: 100,
+    env: 'STIM_ARCHIVE_LOGS_MAX_MB_PER_WORKSPACE',
+    description: 'Archived logs per workspace in binary MB; 0 keeps none',
+  },
+  {
+    key: 'archive.recordings.maxAgeDays',
+    type: CAPACITY,
+    scopes: MACHINE,
+    default: 3,
+    env: 'STIM_ARCHIVE_RECORDINGS_MAX_AGE_DAYS',
+    description: 'Days to keep archived recordings; 0 keeps none',
+  },
+  {
+    key: 'archive.recordings.maxTotalGb',
+    type: GIGABYTES,
+    scopes: MACHINE,
+    default: 2,
+    env: 'STIM_ARCHIVE_RECORDINGS_MAX_TOTAL_GB',
+    description: 'Archived recordings in binary GB; 0 keeps none',
+  },
+  {
+    key: 'archive.agentActions.maxAgeDays',
+    type: CAPACITY,
+    scopes: MACHINE,
+    default: 7,
+    env: 'STIM_ARCHIVE_AGENT_ACTIONS_MAX_AGE_DAYS',
+    description: 'Days to keep archived agent-device sessions; 0 keeps none',
   },
   {
     key: 'worktree.exclude',

@@ -161,7 +161,7 @@ private struct InboxRow: View {
       Circle().fill(entry.read ? Color.clear : Palette.primary).frame(width: 8, height: 8)
         .accessibilityHidden(true)
       Image(systemName: entry.category.symbol)
-        .font(.system(size: 15, weight: .semibold))
+        .iconFont(IconSize.row, weight: .semibold)
         .foregroundStyle(Color(OversightNotifier.tone(entry.category)))
         .frame(width: 20)
         .help(entry.category.label)

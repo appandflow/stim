@@ -18,8 +18,10 @@ struct Inspector: View {
   var body: some View {
     ScrollView {
       VStack(alignment: .leading, spacing: Space.xxxl) {
-        BuildSection(cli: cli, env: env, openLogs: openLogs, openBuild: openBuild)
-          .id(env.path)
+        if env.runPlatforms.contains(where: { $0 == "ios" || $0 == "android" }) || env.macos != nil {
+          BuildSection(cli: cli, env: env, openLogs: openLogs, openBuild: openBuild)
+            .id(env.path)
+        }
 
         ResourcesSection(env: env, machine: machine, history: history, sampled: usage)
 
@@ -100,23 +102,24 @@ struct BuildCacheStatCard: View {
   var subtitle: String? = nil
 
   var body: some View {
-    VStack(alignment: .leading, spacing: Space.sm) {
-      Text(title).foregroundStyle(Palette.secondary)
-      if let subtitle { Text(subtitle).font(.stim(.footnote)).foregroundStyle(Palette.tertiary) }
-      Text("\(Int((platform.hitRate * 100).rounded()))%").font(.stim(.title))
-      ProgressView(value: platform.hitRate).tint(Palette.accent)
-      Text(countLabel(platform.hits, "hit")).foregroundStyle(Palette.secondary)
-      Text(countLabel(platform.misses, "miss", plural: "misses")).foregroundStyle(Palette.secondary)
-      if let cold = platform.lastColdBuildMs {
-        Text("Last cold \(Format.elapsed(ms: cold))").foregroundStyle(Palette.secondary)
+    Card(radius: Radius.control, border: nil, clipsContent: false) {
+      VStack(alignment: .leading, spacing: Space.sm) {
+        Text(title).foregroundStyle(Palette.secondary)
+        if let subtitle { Text(subtitle).font(.stim(.footnote)).foregroundStyle(Palette.tertiary) }
+        Text("\(Int((platform.hitRate * 100).rounded()))%").font(.stim(.title))
+        StimProgressBar(value: platform.hitRate)
+        Text(countLabel(platform.hits, "hit")).foregroundStyle(Palette.secondary)
+        Text(countLabel(platform.misses, "miss", plural: "misses")).foregroundStyle(Palette.secondary)
+        if let cold = platform.lastColdBuildMs {
+          Text("Last cold \(Format.elapsed(ms: cold))").foregroundStyle(Palette.secondary)
+        }
+        if let saved = platform.timeSavedMs, saved >= 1000 {
+          Text("Saved \(Format.elapsed(ms: saved))").foregroundStyle(Palette.primary)
+        }
       }
-      if let saved = platform.timeSavedMs, saved >= 1000 {
-        Text("Saved \(Format.elapsed(ms: saved))").foregroundStyle(Palette.primary)
-      }
+      .padding(Space.lg)
+      .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
-    .padding(Space.lg)
-    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-    .background(RoundedRectangle(cornerRadius: Radius.control).fill(Palette.surface))
   }
 }
 
@@ -191,14 +194,15 @@ struct ResourcesSection: View {
   private func chart(_ icon: String, _ title: String, _ value: String, values: [Double], minimumPeak: Double)
     -> some View
   {
-    VStack(alignment: .leading, spacing: Space.xs) {
-      Label(title, systemImage: icon).foregroundStyle(Palette.secondary)
-      Text(value).font(.stim(.headline)).monospacedDigit()
-      Sparkline(values: values, minimumPeak: minimumPeak).frame(height: 24)
+    Card(radius: Radius.control, border: nil, clipsContent: false) {
+      VStack(alignment: .leading, spacing: Space.xs) {
+        Label(title, systemImage: icon).foregroundStyle(Palette.secondary)
+        Text(value).font(.stim(.headline)).monospacedDigit()
+        Sparkline(values: values, minimumPeak: minimumPeak).frame(height: 24)
+      }
+      .padding(Space.md)
+      .frame(maxWidth: .infinity, alignment: .leading)
     }
-    .padding(Space.md)
-    .frame(maxWidth: .infinity, alignment: .leading)
-    .background(RoundedRectangle(cornerRadius: Radius.control).fill(Palette.surface))
   }
 }
 
@@ -214,37 +218,38 @@ private struct DiskCard: View {
   }
 
   var body: some View {
-    VStack(alignment: .leading, spacing: Space.sm) {
-      Label("Disk", systemImage: "internaldrive").foregroundStyle(Palette.secondary)
-      Text(Format.fileSize(Int64(breakdown.total))).font(.stim(.headline)).monospacedDigit()
-      GeometryReader { geo in
-        HStack(spacing: 1) {
+    Card(radius: Radius.control, border: nil, clipsContent: false) {
+      VStack(alignment: .leading, spacing: Space.sm) {
+        Label("Disk", systemImage: "internaldrive").foregroundStyle(Palette.secondary)
+        Text(Format.fileSize(Int64(breakdown.total))).font(.stim(.headline)).monospacedDigit()
+        GeometryReader { geo in
+          HStack(spacing: 1) {
+            ForEach(breakdown.parts) { part in
+              Rectangle().fill(color(part))
+                .frame(width: max(2, geo.size.width * CGFloat(part.bytes / max(breakdown.total, 1))))
+            }
+          }
+          .frame(width: geo.size.width, alignment: .leading)
+          .clipShape(RoundedRectangle(cornerRadius: Radius.small))
+        }
+        .frame(height: 6)
+        .accessibilityHidden(true)
+        VStack(spacing: Space.xs) {
           ForEach(breakdown.parts) { part in
-            Rectangle().fill(color(part))
-              .frame(width: max(2, geo.size.width * CGFloat(part.bytes / max(breakdown.total, 1))))
+            HStack(spacing: Space.sm) {
+              StatusDot(color: color(part))
+              Text(breakdown.label(of: part))
+              Spacer(minLength: Space.sm)
+              Text(Format.fileSize(Int64(part.bytes))).monospacedDigit().foregroundStyle(Palette.secondary)
+            }
+            .accessibilityElement(children: .combine)
           }
         }
-        .frame(width: geo.size.width, alignment: .leading)
-        .clipShape(RoundedRectangle(cornerRadius: Radius.small))
+        .font(.stim(.footnote))
       }
-      .frame(height: 6)
-      .accessibilityHidden(true)
-      VStack(spacing: Space.xs) {
-        ForEach(breakdown.parts) { part in
-          HStack(spacing: Space.sm) {
-            Circle().fill(color(part)).frame(width: 7, height: 7)
-            Text(breakdown.label(of: part))
-            Spacer(minLength: Space.sm)
-            Text(Format.fileSize(Int64(part.bytes))).monospacedDigit().foregroundStyle(Palette.secondary)
-          }
-          .accessibilityElement(children: .combine)
-        }
-      }
-      .font(.stim(.footnote))
+      .padding(Space.md)
+      .frame(maxWidth: .infinity, alignment: .leading)
     }
-    .padding(Space.md)
-    .frame(maxWidth: .infinity, alignment: .leading)
-    .background(RoundedRectangle(cornerRadius: Radius.control).fill(Palette.surface))
     .help("The worktree folder, with node_modules counted on its own, plus Stim's build folder for this workspace")
   }
 }
@@ -285,7 +290,7 @@ struct MetroLogsSection: View {
         }
         .help(env.supervisor.map { "\($0.mode ?? "supervisor") \u{00B7} \(health.rawValue)" } ?? "Metro \(health.rawValue)")
       } else {
-        Text("No dev server").foregroundStyle(Palette.tertiary)
+        InlineEmpty("No dev server")
       }
       TimelineView(.periodic(from: .now, by: 15)) { context in
         if let bundle = env.bundleLine(now: context.date, reportsBundles: reportsBundles) {
@@ -324,11 +329,13 @@ struct WorktreeInspector: View {
     let labeledApps = Array(zip(page.apps, page.appLabels))
     ScrollView {
       VStack(alignment: .leading, spacing: Space.xxxl) {
-        VStack(alignment: .leading, spacing: Space.md) {
-          SectionLabel(title: "Build")
-          ForEach(page.buildEntries) { entry in
-            if let app = page.apps.first(where: { $0.path == entry.path }) {
-              buildEntry(entry, app: app)
+        if !page.buildEntries.isEmpty {
+          VStack(alignment: .leading, spacing: Space.md) {
+            SectionLabel(title: "Build")
+            ForEach(page.buildEntries) { entry in
+              if let app = page.apps.first(where: { $0.path == entry.path }) {
+                buildEntry(entry, app: app)
+              }
             }
           }
         }
@@ -337,7 +344,7 @@ struct WorktreeInspector: View {
           SectionLabel(title: "Metro")
           let metros = labeledApps.filter { $0.0.metro != nil }
           if metros.isEmpty {
-            Text("No dev server").foregroundStyle(Palette.tertiary)
+            InlineEmpty("No dev server")
           } else {
             ForEach(metros, id: \.0.path) { app, label in
               MetroLogsSection(
@@ -403,8 +410,9 @@ struct WorktreeInspector: View {
       cli: cli, env: app, openLogs: { openLogs(app, $0) }, openBuild: openBuild, onlyPlatform: entry.platform,
       projectSubtitle: page.subtitle(for: entry, among: page.buildEntries))
     if entry.platform == "macos" {
-      section.padding(Space.lg).frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: Radius.control).fill(Palette.surface))
+      Card(radius: Radius.control, border: nil, clipsContent: false) {
+        section.padding(Space.lg).frame(maxWidth: .infinity, alignment: .leading)
+      }
     } else {
       section
     }

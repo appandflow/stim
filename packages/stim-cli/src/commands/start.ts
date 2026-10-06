@@ -14,7 +14,12 @@ import { resolveSupervisorTarget, type SupervisorStateRecord } from '../supervis
 import type { MetroResolution } from '../metro.ts';
 import { IDLE_STOP_KEY, queryLogs } from '@stim-cli/core/state';
 import { levelRank } from '../ndjson.ts';
-import { ensureWorkspaceStorage, supervisorLogFile, workspaceLogsDir } from '../workspace/paths.ts';
+import {
+  ensureWorkspaceStorage,
+  supervisorLogFile,
+  workspaceLogsDir,
+  workspaceAgentDeviceDir,
+} from '../workspace/paths.ts';
 import { reserveMetroPort } from '../ports.ts';
 import { appProjectProblem, detectIsExpo, findProjectRoot, NO_PROJECT_REFUSAL } from '../workspace/project.ts';
 import { detectAppIds } from '../workspace/app-id.ts';
@@ -150,6 +155,7 @@ export function liveSupervisor({
 }
 
 export function startFacts({
+  root,
   port,
   supervisor,
   logsDir,
@@ -158,6 +164,7 @@ export function startFacts({
   port: number;
   supervisor?: Pick<LiveSupervisor, 'pid' | 'mode'> | null;
   logsDir: string;
+  root?: string;
   alreadyRunning?: unknown;
 }): StartFacts {
   return {
@@ -165,6 +172,7 @@ export function startFacts({
     supervisorPid: supervisor?.pid ?? null,
     mode: supervisor?.mode ?? null,
     logsDir,
+    ...(root ? { agentDevice: { stateDir: workspaceAgentDeviceDir(root) } } : {}),
     alreadyRunning: Boolean(alreadyRunning),
   };
 }
@@ -949,7 +957,7 @@ export async function startDevServer(
         }
         if (managedTunnelExited()) return failExitedManagedTunnel();
         clearWorkspaceStateKeys(root, [IDLE_STOP_KEY]);
-        return startFacts({ port, supervisor, logsDir, alreadyRunning: true });
+        return startFacts({ root, port, supervisor, logsDir, alreadyRunning: true });
       }
 
       if (!spawnedChild && supervisor) {
@@ -999,7 +1007,7 @@ export async function startDevServer(
           (tunnel ? null : supervisor);
         requireExpoTunnel();
         if (managedTunnelExited()) return failExitedManagedTunnel();
-        return startFacts({ port, supervisor, logsDir, alreadyRunning: true });
+        return startFacts({ root, port, supervisor, logsDir, alreadyRunning: true });
       }
 
       if (managedTunnelExited()) return failExitedManagedTunnel();
@@ -1065,7 +1073,7 @@ export async function startDevServer(
         mode: null,
         startedAt: null,
       };
-      return startFacts({ port, supervisor, logsDir, alreadyRunning: false });
+      return startFacts({ root, port, supervisor, logsDir, alreadyRunning: false });
     };
 
     const startLocked = async () => {
@@ -1291,5 +1299,7 @@ function report({
     ),
   );
   out(chalk.dim(phaseLine('logs', facts.logsDir)));
+  if (facts.agentDevice)
+    out(chalk.dim(phaseLine('agent-device', `AGENT_DEVICE_STATE_DIR=${facts.agentDevice.stateDir}`)));
   if (links) console.error(chalk.dim(workspaceLinkLine(links)));
 }

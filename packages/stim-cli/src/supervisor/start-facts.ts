@@ -3,6 +3,7 @@ export interface StartFacts {
   supervisorPid: number | null;
   mode: string | null;
   logsDir: string;
+  agentDevice?: { stateDir: string };
   alreadyRunning: boolean;
 }
 

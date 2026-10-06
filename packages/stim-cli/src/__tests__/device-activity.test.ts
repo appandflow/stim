@@ -15,7 +15,7 @@ import {
 } from '../devices/activity.ts';
 import { hostDriverTool } from '../devices/automation-tools.ts';
 import { resetExecutor, setExecutor } from '../exec.ts';
-import { workspaceLogsDir } from '../workspace/paths.ts';
+import { workspaceAgentDeviceDir, workspaceLogsDir } from '../workspace/paths.ts';
 
 const UDID = '7466D06C-1AE4-4EDB-8A93-6B8A43A7A47A';
 const OWNER_START = 'Thu Sep 24 21:59:30 2026';
@@ -191,6 +191,30 @@ describe('createActivityReader', () => {
         'agent-action': new Date(actedAt).toISOString(),
         'device-log': new Date(NOW - 3_600_000).toISOString(),
       },
+    });
+  });
+
+  test.each(['ios', 'android'] as const)('a shared %s claim finds actions only in workspace state', (platform) => {
+    const id = platform === 'ios' ? UDID : 'emulator-5554';
+    const claims = join(home, '.agent-device', 'device-claims');
+    mkdirSync(claims, { recursive: true });
+    writeFileSync(
+      join(claims, 'claim.json'),
+      JSON.stringify({
+        session: 'workspace-task',
+        device: { id },
+        ownerPid: 100,
+        ownerStartTime: OWNER_START,
+      }),
+    );
+    const events = join(workspaceAgentDeviceDir(workspace), 'sessions', 'workspace-task', 'events.ndjson');
+    mkdirSync(join(events, '..'), { recursive: true });
+    writeFileSync(events, '{}\n');
+    const actedAt = NOW - 120_000;
+    utimesSync(events, actedAt / 1000, actedAt / 1000);
+    expect(read({ 100: OWNER_START }, { ...target, platform, id })).toMatchObject({
+      state: 'driven',
+      recent: { 'agent-action': new Date(actedAt).toISOString() },
     });
   });
 

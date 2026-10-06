@@ -1,4 +1,5 @@
 import chalk from 'chalk';
+import { workspaceAgentDeviceDir } from '../../workspace/paths.ts';
 import {
   cacheLevel,
   UPLOAD_TIMEOUT_MS,
@@ -80,6 +81,7 @@ export function lastBuildRecord({
 }
 
 export function iosFacts({
+  root,
   slot,
   udid,
   deviceName,
@@ -112,6 +114,7 @@ export function iosFacts({
   builtOn?: string;
   offloadedTo?: string | null;
   offloadFallback?: string | null;
+  root?: string;
   slot?: string;
   udid: string;
   deviceName?: string | null;
@@ -161,6 +164,7 @@ export function iosFacts({
     launched: launched === LAUNCH_UNVERIFIED || launched === LAUNCH_BUNDLING ? launched : Boolean(launched),
     metroPort,
     logs: { dir: logsDir },
+    ...(root ? { agentDevice: { stateDir: workspaceAgentDeviceDir(root) } } : {}),
     durationMs,
     ...(webPreviewUrl ? { webPreviewUrl } : {}),
     ...(lease === undefined ? {} : { lease }),
@@ -315,6 +319,7 @@ export function reportIosResult({
   closeWriter();
 
   const facts = iosFacts({
+    root,
     slot,
     udid,
     deviceName: device?.deviceName ?? null,
@@ -385,6 +390,7 @@ export function reportIosResult({
           ? [phaseLine('compilation cache', compilationCacheActivityLine(compilationCache))]
           : []),
         phaseLine('logs', logsDir),
+        phaseLine('agent-device', `AGENT_DEVICE_STATE_DIR=${workspaceAgentDeviceDir(root)}`),
       ].join('\n'),
     );
     if (facts.webPreviewUrl) console.error(chalk.dim(`Watch this device: ${facts.webPreviewUrl}`));

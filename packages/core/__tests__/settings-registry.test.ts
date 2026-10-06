@@ -58,3 +58,41 @@ test('ios.remote validates a host name before settings set writes it', () => {
   for (const value of ['', 'bad name', 'mini:0', 'mini:65536'])
     expect(settingValueError(setting, value)).not.toBeNull();
 });
+
+test.each([
+  ['archive.enabled', true, 'STIM_ARCHIVE_ENABLED', false],
+  ['archive.maxAgeDays', 30, 'STIM_ARCHIVE_MAX_AGE_DAYS', undefined],
+  ['archive.maxCount', 200, 'STIM_ARCHIVE_MAX_COUNT', undefined],
+  ['archive.maxTotalGb', 5, 'STIM_ARCHIVE_MAX_TOTAL_GB', undefined],
+  ['archive.logs.maxAgeDays', 14, 'STIM_ARCHIVE_LOGS_MAX_AGE_DAYS', undefined],
+  ['archive.logs.maxMbPerWorkspace', 100, 'STIM_ARCHIVE_LOGS_MAX_MB_PER_WORKSPACE', undefined],
+  ['archive.recordings.maxAgeDays', 3, 'STIM_ARCHIVE_RECORDINGS_MAX_AGE_DAYS', undefined],
+  ['archive.recordings.maxTotalGb', 2, 'STIM_ARCHIVE_RECORDINGS_MAX_TOTAL_GB', undefined],
+  ['archive.agentActions.maxAgeDays', 7, 'STIM_ARCHIVE_AGENT_ACTIONS_MAX_AGE_DAYS', undefined],
+])('%s rejects wrong types and accepts disabling retention', (key, value, env, scoped) => {
+  const setting = SETTINGS.find((entry) => entry.key === key)!;
+  expect(setting).toMatchObject({ default: value, env });
+  expect(setting.scopedHomeValue).toBe(scoped);
+  expect(setting.scopes).toEqual(
+    key === 'archive.enabled' ? ['machine', 'workspace', 'repo', 'committed'] : ['machine'],
+  );
+  expect(settingValueError(setting, value)).toBeNull();
+  expect(settingValueError(setting, key === 'archive.enabled' ? false : 0)).toBeNull();
+  expect(settingValueError(setting, key === 'archive.enabled' ? 1 : -1)).not.toBeNull();
+  expect(settingValueError(setting, String(value))).not.toBeNull();
+});
+
+test.each([
+  'archive.maxAgeDays',
+  'archive.maxCount',
+  'archive.logs.maxAgeDays',
+  'archive.recordings.maxAgeDays',
+  'archive.agentActions.maxAgeDays',
+])('%s rejects fractional ages or counts', (key) => {
+  expect(
+    settingValueError(
+      SETTINGS.find((entry) => entry.key === key)!,
+      1.5,
+    ),
+  ).not.toBeNull();
+});

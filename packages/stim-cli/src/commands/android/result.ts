@@ -1,4 +1,5 @@
 import chalk from 'chalk';
+import { workspaceAgentDeviceDir } from '../../workspace/paths.ts';
 import type { AndroidFacts, CcacheActivity, DevServerStart, WaitedForBuild } from '../../engine/build-facts.ts';
 import { LAUNCH_BUNDLING, LAUNCH_UNVERIFIED } from '../../engine/launch-verify.ts';
 import {
@@ -19,6 +20,7 @@ import { buildDiagnostics, type BuildMissReason } from '@stim-cli/core/state';
 import { recordFinishedBuild } from '../../engine/build-progress.ts';
 
 export function androidFacts({
+  root,
   slot,
   serial,
   avdName = null,
@@ -53,6 +55,7 @@ export function androidFacts({
   builtOn?: string;
   offloadedTo?: string | null;
   offloadFallback?: string | null;
+  root?: string;
   slot?: string;
   serial?: string | null;
   avdName?: string | null;
@@ -107,6 +110,7 @@ export function androidFacts({
     debugHttpHostNote: debugHttpHostNote ?? null,
     devClientUrl: devClientUrl ?? null,
     logs: logs ?? null,
+    ...(root ? { agentDevice: { stateDir: workspaceAgentDeviceDir(root) } } : {}),
     durationMs: typeof durationMs === 'number' && Number.isFinite(durationMs) ? durationMs : null,
     ...(lease === undefined ? {} : { lease }),
     ...(devServer ? { devServer } : {}),
@@ -206,6 +210,7 @@ export async function finishAndroidUpload(
 }
 
 export interface ReportAndroidResultArgs {
+  root: string;
   slot?: string;
   lease?: { kind: string; expiresAt: string } | null;
   json: boolean;
@@ -237,6 +242,7 @@ export interface ReportAndroidResultArgs {
 }
 
 export function reportAndroidResult({
+  root,
   slot,
   json,
   useBuildCache,
@@ -269,6 +275,7 @@ export function reportAndroidResult({
   const offloadedTo = record.offloadedTo ?? null;
   recordRun({ failed: false, cacheHit: cacheLevel(record.cacheHit), waited: waitedForBuild, durationMs, offloadedTo });
   const facts = androidFacts({
+    root,
     slot,
     serial,
     avdName: record.avdName,
@@ -335,6 +342,7 @@ export function reportAndroidResult({
         phaseLine('cache', cacheResult),
         ...(ccache.status === 'not-run' ? [phaseLine('compilation cache', ccacheActivityLine(ccache))] : []),
         phaseLine('logs', logsDir || 'unavailable (remote device)'),
+        phaseLine('agent-device', `AGENT_DEVICE_STATE_DIR=${workspaceAgentDeviceDir(root)}`),
       ].join('\n'),
     );
     if (links) console.error(chalk.dim(workspaceLinkLine(links)));

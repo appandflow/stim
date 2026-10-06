@@ -544,7 +544,7 @@ import Testing
     #expect(web.activity?.driver?.tool == "playwright")
     #expect(stopCommand(for: web, cwd: "/w") == StimCommand(["stop", "--slot", "web"], cwd: "/w"))
     #expect(runCommand(for: web, cwd: "/w") == StimCommand(["web"], cwd: "/w"))
-    #expect(env.usedPlatforms == ["ios"])
+    #expect(env.usedPlatforms == ["ios", "web"])
     #expect(platformName("web") == "Web")
   }
 

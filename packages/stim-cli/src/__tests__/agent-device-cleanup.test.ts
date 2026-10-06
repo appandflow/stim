@@ -1,3 +1,7 @@
+import { mkdtempSync, mkdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { workspaceAgentDeviceDir } from '../workspace/paths.ts';
 import {
   closeOwnedDeviceSessions,
   isOwnDeviceSession,
@@ -199,4 +203,58 @@ test('stops invoking agent-device once the per-device budget is exhausted', () =
   closeOwnedDeviceSessions({ platform: 'ios', id: 'U1' }, () => true);
   expect(calls).toHaveLength(3);
   expect(stderr).toHaveBeenCalledWith(expect.stringContaining('agent-device cleanup timed out'));
+});
+
+test('closes claimed workspace sessions with --state-dir even when the default inventory fails', () => {
+  const home = realpathSync(mkdtempSync(join(tmpdir(), 'stim-agent-cleanup-')));
+  vi.stubEnv('STIM_HOME', join(home, 'stim'));
+  vi.stubEnv('AGENT_DEVICE_CLAIMS_DIR', join(home, 'claims'));
+  const workspace = join(home, 'app');
+  mkdirSync(workspace);
+  const stateDir = workspaceAgentDeviceDir(workspace);
+  mkdirSync(stateDir, { recursive: true });
+  writeFileSync(join(stateDir, 'daemon.json'), '{}');
+  mkdirSync(join(home, 'claims'));
+  writeFileSync(
+    join(home, 'claims', 'claim.json'),
+    JSON.stringify({
+      session: ios.name,
+      workspace,
+      device: { id: 'U1' },
+    }),
+  );
+  const calls: string[][] = [];
+  setExecutor({
+    findExecutable: () => '/bin/agent-device',
+    runFile: (_file, args) => {
+      calls.push(args);
+      if (!args.includes('--state-dir')) throw new Error('default daemon unavailable');
+      return args[0] === 'session' ? payload([ios, { ...ios, name: 'unclaimed' }]) : '{"success":true}';
+    },
+  });
+  try {
+    closeOwnedDeviceSessions({ platform: 'ios', id: 'U1' }, () => true, workspace);
+    expect(calls.filter((args) => args[0] === 'close')).toEqual([
+      [
+        'close',
+        '--session',
+        ios.name,
+        '--session-lock',
+        'reject',
+        '--platform',
+        'ios',
+        '--udid',
+        'U1',
+        '--state-dir',
+        stateDir,
+        '--json',
+        '--daemon-transport',
+        'socket',
+      ],
+    ]);
+    expect(calls.filter((args) => args[0] === 'session' && args.includes(stateDir))).toHaveLength(2);
+  } finally {
+    vi.unstubAllEnvs();
+    rmSync(home, { recursive: true, force: true });
+  }
 });

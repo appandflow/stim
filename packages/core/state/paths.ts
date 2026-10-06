@@ -14,6 +14,10 @@ export function workspaceMetadataFile(projectRoot: string): string {
   return join(workspaceDir(projectRoot), 'workspace.json');
 }
 
+export function workspaceAgentDeviceDir(projectRoot: string): string {
+  return join(workspaceDir(projectRoot), 'agent-device');
+}
+
 export function workspaceLogsDir(projectRoot: string): string {
   return join(workspaceDir(projectRoot), 'logs');
 }
@@ -150,4 +154,16 @@ export function deviceViewersDir(): string {
 
 export function statsFile(): string {
   return join(configDir(), 'stats.json');
+}
+
+export function archiveRoot(): string {
+  return join(configDir(), 'archive');
+}
+
+export function archiveDir(id: string): string {
+  return join(archiveRoot(), id);
+}
+
+export function archiveLock(): string {
+  return join(archiveRoot(), '.lock');
 }

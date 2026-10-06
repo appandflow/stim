@@ -33,7 +33,7 @@ struct MenuPill<Value: Hashable>: View {
     } label: {
       Pill(tone: tone, outlined: !isActive) {
         Text(options.first { $0.value == selection.wrappedValue }?.title ?? "")
-        Image(systemName: "chevron.down").font(.system(size: 8, weight: .semibold))
+        Image(systemName: "chevron.down").iconFont(IconSize.micro, weight: .semibold)
       }
     }
     .menuStyle(.button)
