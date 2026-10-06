@@ -183,6 +183,12 @@ private let booted = #"{"name":"stim-w (iPhone 18 27.0)","udid":"SIM-1","owned":
     #expect(steps[4].expectedMs == 8000)
   }
 
+  @Test func showsTheTimeEachCompletedPhaseTookWhenTheCLISendsIt() throws {
+    let steps = try build(#","completedPhaseMs":{"prepare":1800,"pods":15000}"#).phaseSteps(history: history, now: now)
+    #expect(steps.map(\.elapsedMs) == [1800, nil, 15_000, 47_000, nil])
+    #expect(try build().phaseSteps(history: history, now: now).map(\.elapsedMs) == [nil, nil, nil, 47_000, nil])
+  }
+
   @Test func movesTheCompilePhaseByTheBuildToolCountsOnlyWhenTheyAreAheadOfTheTimeEstimate() throws {
     let detail = #","detail":{"step":"compile","unit":"targets","done":45,"total":180}"#
     let counted = try build(detail)

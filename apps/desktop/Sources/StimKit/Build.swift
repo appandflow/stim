@@ -15,6 +15,8 @@ public struct Build: Decodable, Hashable, Sendable {
   public var cacheLookupOutcome: String?
   public var expectedMs: Double?
   public var expectedPhaseMs: Double?
+  /// Milliseconds spent in each phase the run already left; nil before one completes or from an older stim.
+  public var completedPhaseMs: [String: Double]?
   public var basis: Int
   /// The phases runs like this one go through, in order, with each one's median, from the runs behind `expectedMs`;
   /// nil without such runs or from an older stim.
