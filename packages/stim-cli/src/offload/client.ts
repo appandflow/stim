@@ -249,9 +249,11 @@ export class BuildConnection {
   private ended = false;
   private readonly keepalive: NodeJS.Timeout;
   private readonly socket: WebSocket;
+  private readonly features: readonly string[];
 
-  private constructor(socket: WebSocket) {
+  private constructor(socket: WebSocket, features: readonly string[]) {
     this.socket = socket;
+    this.features = features;
     closeOnExit(socket);
     this.keepalive = setInterval(() => {
       if (this.watched && Date.now() - this.heard > SILENT_MS) return void socket.terminate();
@@ -347,9 +349,19 @@ export class BuildConnection {
             'forbidden',
           );
         }
-        resolve(new BuildConnection(socket));
+        const features = isJsonObject(reply) && isJsonObject(reply.result) ? reply.result.features : null;
+        resolve(
+          new BuildConnection(
+            socket,
+            Array.isArray(features) ? features.filter((each): each is string => typeof each === 'string') : [],
+          ),
+        );
       });
     });
+  }
+
+  supports(feature: string): boolean {
+    return this.features.includes(feature);
   }
 
   request(method: string, params: unknown, timeoutMs: number = REQUEST_TIMEOUT_MS): Promise<Reply> {

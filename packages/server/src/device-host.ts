@@ -36,6 +36,7 @@ import {
   parseHostedNativeOffer,
   hostedAppAttempt,
   hostedMacosLogsDir,
+  hostedIosLogsDir,
   parseHostedAppOffer,
   parseHostedLogsCursor,
   readHostedApp,
@@ -72,6 +73,7 @@ interface WorkerRun {
 interface OwnedSession {
   claim: ClaimHandle;
   run?: WorkerRun;
+  data?: Promise<void>;
   stopping?: Promise<void>;
   installing?: { attempt: string; done: Promise<void> };
   app?: HostedAppRecord;
@@ -93,7 +95,7 @@ export interface DeviceHostOptions {
   allowed: (client: string) => boolean;
   /** Issues and revokes the agent control that hosted macOS apps hand their client. */
   agents: Pick<HostedAgentHost, 'appRunning' | 'appStopped' | 'access'>;
-  /** Takes the macOS bundle a build on this Mac retained under `handoff`, when `client` may have it, or says why not. */
+  /** Takes the simulator or macOS bundle a build on this Mac retained under `handoff`, when `client` may have it, or says why not. */
   builtBundle?: (client: string, handoff: string, sha256: string) => { bundle: string; release: () => void } | string;
   limits?: Partial<DeviceHostLimits>;
 }
@@ -436,7 +438,8 @@ export class DeviceHost {
       );
     if (record.platform !== 'ios' && record.platform !== 'macos')
       throw new Error('Hosted view and input support iOS and macOS sessions only.');
-    if (owned.stopping || owned.installing) throw new Error('This hosted session has a native operation in progress.');
+    if (owned.stopping || owned.data || owned.installing)
+      throw new Error('This hosted session has a native operation in progress.');
     const home = join(deviceHostArea(record.id), 'home');
     if (record.platform === 'macos') {
       if (!('appSlot' in record.device) || record.device.appSlot !== record.appSlot)
@@ -547,7 +550,7 @@ export class DeviceHost {
           'Only a ready session attached to this server accepts an app. Explicit stop must reconcile a lost owner.',
         );
       const owned = this.acquire(record);
-      if (owned.stopping || (owned.installing && owned.installing.attempt !== offer.attempt))
+      if (owned.stopping || owned.data || (owned.installing && owned.installing.attempt !== offer.attempt))
         throw new Error('This hosted session already has a native operation in progress.');
       if (
         record.appAttempt &&
@@ -591,13 +594,14 @@ export class DeviceHost {
     try {
       const record = this.appSession(client, params);
       const attempt = (params as { attempt: string }).attempt;
-      if (record.platform !== 'macos') throw new Error('Only hosted macOS sessions take a build from this Mac.');
+      if (record.platform !== 'macos' && record.platform !== 'ios')
+        throw new Error('Only hosted iOS and macOS sessions take a build from this Mac.');
       if (record.state !== 'ready' || this.closed || !this.owned.has(record.id) || record.appAttempt !== attempt)
         throw new Error(
           'Only the current app attempt of a ready session attached to this server receives an app. Explicit stop must reconcile a lost owner.',
         );
       const owned = this.acquire(record);
-      if (owned.stopping || owned.installing)
+      if (owned.stopping || owned.data || owned.installing)
         throw new Error('This hosted session already has a native operation in progress.');
       const app = readHostedApp(record.id, attempt);
       if (app.state !== 'receiving' || !app.files.length)
@@ -605,9 +609,15 @@ export class DeviceHost {
       const taken =
         this.options.builtBundle?.(client, build.handoff, build.sha256) ?? 'This server hands over no builds.';
       if (typeof taken === 'string') throw new Error(taken);
+      const transfer = handOverHostedApp(app, taken.bundle);
+      owned.data = transfer.then(
+        () => undefined,
+        () => undefined,
+      );
       try {
-        return { result: await handOverHostedApp(app, taken.bundle) };
+        return { result: await transfer };
       } finally {
+        delete owned.data;
         taken.release();
       }
     } catch (error) {
@@ -636,8 +646,8 @@ export class DeviceHost {
     }
   }
 
-  /** The hosted macOS app's captured logs, also after its session stopped; the isolated home keeps them. */
-  logsQuery(client: string, params: unknown): AppAnswer<Methods['device-host.logs.query']['result']> {
+  /** Captured app logs remain readable from the isolated home after the session stops. */
+  async logsQuery(client: string, params: unknown): Promise<AppAnswer<Methods['device-host.logs.query']['result']>> {
     if (this.closed || !this.options.allowed(client))
       return refused('forbidden', 'Current device-host approval is required.');
     const cursor = isJsonObject(params) && params.cursor !== undefined ? parseHostedLogsCursor(params.cursor) : {};
@@ -646,9 +656,43 @@ export class DeviceHost {
     try {
       const record = readHostedSessions().find((each) => each.client === client && each.id === params.session);
       if (!record) return refused('unknown-session', 'This client has no such hosted session.');
-      if (record.platform !== 'macos') throw new Error('Hosted logs support macOS sessions only.');
-      const dir = hostedMacosLogsDir(join(deviceHostArea(record.id), 'home'));
-      return { result: dir ? readLogsSince(dir, cursor) : { records: [], cursor, more: false } };
+      if (record.platform !== 'macos' && record.platform !== 'ios')
+        throw new Error('Hosted logs support iOS and macOS sessions only.');
+      const home = join(deviceHostArea(record.id), 'home');
+      let more = false;
+      if (
+        record.platform === 'ios' &&
+        record.state === 'ready' &&
+        record.appAttempt &&
+        readHostedAppMetadata(record.id, record.appAttempt).state === 'installed'
+      ) {
+        if (!this.owned.has(record.id))
+          throw new Error('The hosted log owner is unavailable. Stop this session before retrying.');
+        const owned = this.acquire(record);
+        if (owned.stopping || owned.installing || owned.data)
+          throw new Error('This hosted session already has a native operation in progress.');
+        const claim = takeHostedInputClaim(owned.claim);
+        try {
+          const run = this.run(record, owned, 'logs', record.appAttempt, claim);
+          owned.run = run;
+          owned.data = run.done.then(() => undefined);
+          const outcome = await run.done;
+          if (
+            !outcome.settled ||
+            outcome.notice ||
+            !isJsonObject(outcome.value) ||
+            typeof outcome.value.more !== 'boolean'
+          )
+            throw new Error(outcome.notice ?? 'Hosted native log collection did not finish.');
+          more = outcome.value.more;
+        } finally {
+          delete owned.data;
+          releaseClaim(claim);
+        }
+      }
+      const dir = record.platform === 'ios' ? hostedIosLogsDir(home) : hostedMacosLogsDir(home);
+      const page = dir ? readLogsSince(dir, cursor) : { records: [], cursor, more: false };
+      return { result: { ...page, more: page.more || more } };
     } catch (error) {
       return refused('action-failed', (error as Error).message);
     }
@@ -665,7 +709,7 @@ export class DeviceHost {
       const owned = this.acquire(record);
       const app = readHostedAppMetadata(record.id, (params as { attempt: string }).attempt);
       if (app.state !== 'receiving') return this.appAttach(client, params);
-      if (owned.stopping || owned.installing)
+      if (owned.stopping || owned.data || owned.installing)
         throw new Error('This hosted session already has a native operation in progress.');
       if (owned.metro && (!owned.metro.port || owned.metro.closing))
         throw new Error('This session Metro bridge is opening or closing.');
@@ -824,6 +868,7 @@ export class DeviceHost {
     owned.run?.cancel();
     await this.closeMetro(owned);
     await this.closeView(owned);
+    await owned.data;
     releaseClaim(takeHostedInputClaim(owned.claim));
     if (owned.run) {
       owned.run.cancel();
@@ -1009,8 +1054,9 @@ export class DeviceHost {
   private run(
     record: HostedDeviceSession,
     owned: OwnedSession,
-    mode: 'prepare' | 'stop' | 'install',
+    mode: 'prepare' | 'stop' | 'install' | 'logs',
     attempt?: string,
+    claim: ClaimHandle = owned.claim,
   ): WorkerRun {
     const home = join(deviceHostArea(record.id), 'home');
     mkdirSync(home, { recursive: true, mode: 0o700 });
@@ -1027,11 +1073,12 @@ export class DeviceHost {
         consolePort: record.consolePort,
         appSlot: record.appSlot,
         session: record.id,
+        since: mode === 'logs' ? Date.parse(record.createdAt) : undefined,
         attempt,
         metroPort: mode === 'install' ? owned.metro?.port : undefined,
       },
-      claim: owned.claim,
-      timeoutMs: mode === 'stop' ? this.limits.stopMs : this.limits.prepareMs,
+      claim,
+      timeoutMs: mode === 'stop' ? this.limits.stopMs : mode === 'logs' ? 15_000 : this.limits.prepareMs,
       maxOutputBytes: 16_384,
     });
   }

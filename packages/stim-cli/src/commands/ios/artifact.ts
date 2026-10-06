@@ -51,6 +51,7 @@ import {
   remotePhaseText,
   simulatorRuntime,
   type OffloadChoice,
+  type BuildHandoff,
 } from '../../offload/client.ts';
 import type { pairedMachines } from '../../offload/build-machines.ts';
 import { bundlerPin } from '../../engine/bundler.ts';
@@ -153,6 +154,7 @@ type IosArtifactDeps = Pick<
 
 /** The caller owns this installable app's temporary copies until release(). */
 export interface PreparedIosArtifact {
+  handoff?: BuildHandoff | null;
   path: string;
   bundleId: string | null;
   cache: {
@@ -276,6 +278,7 @@ export async function acquireIosArtifact(
   let bundleId: string | null = null;
   let cacheHit: CacheHitLevel = false;
   let offloadedTo: string | null = null;
+  let handoff: BuildHandoff | null = null;
   let offloadFallback: string | null = null;
   let fallbackMachine: string | null = null;
   let hereReason: string | null = null;
@@ -842,6 +845,7 @@ export async function acquireIosArtifact(
     appPath = prepared;
     builtOn = outcome.machine;
     offloadedTo = outcome.machine;
+    handoff = outcome.handoff ?? null;
     stats.setPlacement({
       decision: 'offloaded',
       machine: outcome.machine,
@@ -1108,6 +1112,7 @@ export async function acquireIosArtifact(
       await buildArtifact();
     }
     const artifact: PreparedIosArtifact = {
+      handoff,
       path: appPath!,
       bundleId,
       cache: {

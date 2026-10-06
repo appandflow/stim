@@ -1,4 +1,3 @@
-import { readHostedIos } from '../device-host/ios-state.ts';
 import { parseDeviceSlotOption } from '../devices/device-slots.ts';
 import chalk from 'chalk';
 import type { ChalkInstance } from 'chalk';
@@ -22,14 +21,13 @@ import {
   parseSince,
   queryLogs,
   readLogRecords,
-  readMacosRecord,
   recordMatches,
   sortByTs,
 } from '@stim-cli/core/state';
 import { createAgentActionReader, workspaceAgentTargets } from '../devices/agent-actions.ts';
 import { errorDiagnostics } from '../diagnostics/error-diagnostics.ts';
 import { launchErrorPreview } from '../diagnostics/launch-error-preview.ts';
-import { followHostedMacosLogs, syncHostedMacosLogs } from '../device-host/hosted-logs-sync.ts';
+import { followHostedLogs, syncHostedLogs } from '../device-host/hosted-logs-sync.ts';
 import { readWorkspaceState } from '../workspace/workspace-state.ts';
 import { captureWorkspaceCrashes } from '../diagnostics/native-crash.ts';
 
@@ -236,12 +234,7 @@ export default function logsCommand(program: Command): void {
 
       requireLogsWorkspace(root, dir);
 
-      if (Object.keys(readHostedIos(root)).length)
-        console.error(
-          'Native logs of a hosted iOS device are not collected yet; JavaScript logs arrive through Metro.',
-        );
-      const hosted = readMacosRecord(root)?.host;
-      const hostedReachable = hosted ? await syncHostedMacosLogs(root, hosted) : true;
+      const hostedReachable = await syncHostedLogs(root);
 
       const query = {
         slot: opts.slot,
@@ -340,7 +333,7 @@ export default function logsCommand(program: Command): void {
             for (const record of readAgent()) if (recordMatches(record, criteria)) emit(record);
           }, 500)
         : null;
-      const stopHosted = hosted ? followHostedMacosLogs(root, { failing: !hostedReachable }) : null;
+      const stopHosted = followHostedLogs(root, !hostedReachable);
       const finish = () => {
         stop();
         stopHosted?.();

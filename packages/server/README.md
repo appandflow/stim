@@ -442,9 +442,11 @@ offsets. Upload the manifest first, then re-offer for its missing file content.
 The manifest is limited to 8 MiB and 20,000 entries, with at most 1 GiB per file,
 1 KiB per link, and 4 GiB of declared bundle content. An app attempt cannot
 change its identity, mode, arguments or manifest. Complete a receiving attempt or stop the
-session before starting another transfer.
+session before starting another transfer. Manifest, file and partial blobs are shared
+by attempts of one session in its content-addressed store; offers recheck complete
+blob digests and request only missing bytes.
 
-A macOS session can take its content from a build this Mac ran instead: after
+An iOS simulator or macOS session can take its content from a build this Mac ran instead: after
 the manifest arrives, send `device-host.app.handoff` with
 `{session, attempt, build: {handoff, sha256}}`, where `handoff` is the token
 and `sha256` the archive digest from that job's `build.artifact` answer. The
@@ -454,7 +456,8 @@ tailnet node. It copies only regular files, and links where the manifest
 declares links, whose directory resolves inside the staged bundle and whose
 bytes match their manifest digest; it answers `{files, bytes}` for what it
 took. The token is spent once the handoff starts. Re-offer and upload whatever
-is still missing; an older server answers `unknown-method`.
+is still missing; an older server answers `unknown-method`. For iOS, check the
+`hosted-ios-data` hello feature before requesting handoff; without it, upload.
 
 After every digest is verified, call `device-host.app.launch` with
 `{session, attempt}`. Poll `device-host.app.attach` for `installed` or `unknown`.
@@ -555,13 +558,18 @@ session stops, is revoked or the server closes.
 
 `device-host.logs.query` with `{session, cursor?}` returns `{records, cursor, more}`:
 the NDJSON records the session's macOS app wrote to its captured log (stdout and
-stderr as `client` records, and its exit). `cursor` maps each log file name to the
+stderr as `client` records, and its exit). iOS sessions capture app-filtered native
+logs as `device` records through bounded `simctl log show` worker queries, with
+a persisted time checkpoint in the isolated home. The worker holds the session's
+native-input child claim; install and stop wait for it, and close or revocation
+cancels it. The client pulls before sending stop. `cursor` maps each log file name to the
 byte offset after the last complete line read; pass the previous result's cursor to
 receive only newer records, and repeat while `more` is true. Without a cursor, each
 file starts at most 4 MiB before its end. A page holds at most 1 MiB; a file that
 rotated since the cursor is read from the end of its previous generation. The
-session's own client only, for macOS sessions, and also after the session stopped,
-because stop keeps logs. Servers that predate it answer `forbidden` or
+session's own client only, for iOS and macOS sessions, and also after the session stopped,
+because stop keeps captured logs. iOS clients check hello feature `hosted-ios-data`;
+without it, they show an update note and copied logs. Servers that predate macOS queries answer `forbidden` or
 `unknown-method`.
 
 macOS sessions refuse Metro. Viewing and control are supported while the hosted
@@ -1018,11 +1026,11 @@ closes its connections and cancels its builds.
   another client, gets `bad-request`.
 - `build.artifact` takes the `job` of a successful build and sends the archive
   as binary frames, each 32 bytes of its sha256 and then the next bytes, then
-  answers `{ "name", "size", "sha256" }`, and deletes it here. For a macOS
+  answers `{ "name", "size", "sha256" }`, and deletes it here. For an iOS simulator or macOS
   job the answer also carries `handoff`, a single-use token, and the staged
   `.app` stays for 10 minutes so a hosted session on this Mac can take it with
   `device-host.app.handoff`. A client keeps at most one such bundle; its next
-  fetched macOS build or a revoked approval deletes it. An archive nobody fetched is deleted when its job
+  fetched iOS or macOS build or a revoked approval deletes it. An archive nobody fetched is deleted when its job
   is cancelled; one left by a server that crashed stays under
   `repos/<repo>/out/` until you delete it.
 

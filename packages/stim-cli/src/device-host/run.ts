@@ -1,4 +1,5 @@
 import { hostedAppAttempt, hostedMacosAppSlot, isJsonObject, parseHostedOfferRequest } from '@stim-cli/core/state';
+import { collectHostedIosLogs } from './ios-logs.ts';
 import { runHostedDevice } from './worker.ts';
 import { runHostedAndroidDevice } from './android.ts';
 import { runHostedMacosApp } from './macos.ts';
@@ -13,7 +14,7 @@ async function main(): Promise<void> {
     chunks.push(chunk as Buffer);
   }
   const input: unknown = JSON.parse(Buffer.concat(chunks).toString('utf8'));
-  if (!isJsonObject(input) || !['prepare', 'stop', 'install', 'offer'].includes(String(input.mode)))
+  if (!isJsonObject(input) || !['prepare', 'stop', 'install', 'offer', 'logs'].includes(String(input.mode)))
     throw new Error('Invalid hosted worker request.');
   if (input.mode === 'offer') {
     const request = parseHostedOfferRequest(input);
@@ -28,7 +29,7 @@ async function main(): Promise<void> {
     return;
   }
   if (
-    input.mode === 'install' &&
+    (input.mode === 'install' || input.mode === 'logs') &&
     (typeof input.session !== 'string' || !/^[a-f0-9-]{36}$/.test(input.session) || !hostedAppAttempt(input.attempt))
   )
     throw new Error('Invalid hosted app request.');
@@ -42,6 +43,23 @@ async function main(): Promise<void> {
     throw new Error('Invalid hosted Metro port.');
   if (input.platform === 'macos' && !hostedMacosAppSlot(input.appSlot))
     throw new Error('Invalid hosted macOS app slot.');
+  if (input.mode === 'logs') {
+    if (
+      input.platform !== 'ios' ||
+      !process.env.STIM_HOME ||
+      typeof input.since !== 'number' ||
+      !Number.isFinite(input.since)
+    )
+      throw new Error('Invalid hosted iOS log request.');
+    const more = collectHostedIosLogs(
+      process.env.STIM_HOME,
+      input.session as string,
+      input.attempt as string,
+      input.since,
+    );
+    process.stdout.write(`${JSON.stringify({ more })}\n`);
+    return;
+  }
   const result =
     input.platform === 'macos'
       ? await runHostedMacosApp(

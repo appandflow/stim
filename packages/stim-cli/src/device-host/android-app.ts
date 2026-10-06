@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import {
   assertHostedDeviceLedger,
   hostedAppArea,
+  hostedAppBlobs,
   readHostedApp,
   readHostedDevice,
   type HostedAndroidDevice,
@@ -32,10 +33,10 @@ export async function installHostedAndroidApp(
   const entry = record.files[0];
   if (record.files.length !== 1 || !entry || entry.path !== 'App.apk' || entry.kind !== 'file')
     throw new Error('Hosted Android delivery requires a single file entry named App.apk.');
-  const manifest = join(area, 'blobs', record.manifest.sha256);
+  const manifest = join(hostedAppBlobs(session, home), record.manifest.sha256);
   if (lstatSync(manifest).size !== record.manifest.size || (await digest(manifest)) !== record.manifest.sha256)
     throw new Error('The hosted APK manifest differs from its digest.');
-  const blob = join(area, 'blobs', entry.sha256);
+  const blob = join(hostedAppBlobs(session, home), entry.sha256);
   const stat = lstatSync(blob);
   if (!stat.isFile() || stat.size !== entry.size || (await digest(blob)) !== entry.sha256)
     throw new Error('APK content is incomplete or differs from its digest.');

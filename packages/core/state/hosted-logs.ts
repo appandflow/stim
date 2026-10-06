@@ -1,4 +1,4 @@
-import { closeSync, openSync, readSync, realpathSync, statSync } from 'node:fs';
+import { closeSync, openSync, readFileSync, readSync, realpathSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { workspaceName } from '../index.ts';
 import { isJsonObject } from './json-file.ts';
@@ -36,6 +36,27 @@ export function hostedMacosLogsDir(home: string): string | null {
     return join(home, 'workspaces', workspaceName(realpathSync(join(home, 'macos-app'))), 'logs');
   } catch {
     return null;
+  }
+}
+
+export const hostedIosLogsDir = (home: string): string => join(home, 'ios-logs');
+
+/** The host worker's completed query window and event digests at its inclusive boundary. */
+export function readHostedIosLogsCheckpoint(home: string): { until: number; boundary: string[] } | null {
+  try {
+    const value: unknown = JSON.parse(readFileSync(join(hostedIosLogsDir(home), 'checkpoint.json'), 'utf8'));
+    if (
+      !isJsonObject(value) ||
+      !Number.isSafeInteger(value.until) ||
+      (value.until as number) < 0 ||
+      !Array.isArray(value.boundary) ||
+      !value.boundary.every((each) => typeof each === 'string' && /^[a-f0-9]{64}$/.test(each))
+    )
+      throw new Error('The hosted iOS log checkpoint is malformed.');
+    return { until: value.until as number, boundary: value.boundary as string[] };
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    throw error;
   }
 }
 

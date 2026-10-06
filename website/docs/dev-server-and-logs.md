@@ -463,4 +463,7 @@ pins the hosting peer and requires a per-session secret. The host's bridge liste
 only on loopback. Gateway data stays in private workspace state; status and logs
 do not print it. `metro.tunnel` and `metro.publicUrl` are ignored. Non-Debug runs
 skip Metro. A recorded hosted session prevents idle stop; stop or a stopped host
-session closes its gateway. See [hosted iOS](./owned-devices.md#run-ios-on-another-mac).
+session closes its gateway. Native device records are pulled by `stim logs` and
+`stim logs --errors` from bounded host queries. Stop pulls before simulator deletion;
+copied records remain readable afterwards. An older host prints an update note
+and shows logs already copied here. See [hosted iOS](./owned-devices.md#run-ios-on-another-mac).

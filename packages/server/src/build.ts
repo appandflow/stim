@@ -616,12 +616,16 @@ export class BuildHost {
   }
 
   /**
-   * Deletes a fetched job's output. A macOS job keeps its staged bundle for `handoffMs` under a new single-use token,
+   * Deletes a fetched job's output. An iOS or macOS job keeps its staged bundle for `handoffMs` under a new single-use token,
    * which this returns, in place of any bundle its client still had retained.
    */
   retain(job: Job, artifact: BuildArtifactResult): string | null {
     const dir = dirname(job.archive);
-    if (this.closed || job.platform !== 'macos' || basename(artifact.name) !== artifact.name) {
+    if (
+      this.closed ||
+      (job.platform !== 'macos' && job.platform !== 'ios') ||
+      basename(artifact.name) !== artifact.name
+    ) {
       rmSync(dir, { recursive: true, force: true });
       return null;
     }

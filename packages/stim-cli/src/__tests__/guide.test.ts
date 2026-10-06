@@ -1,3 +1,4 @@
+import { FEATURES } from '@stim-cli/core/protocol';
 import { includesArchives } from '../commands/gc/caches.ts';
 import { registerIos } from '../commands/ios.ts';
 import { registerAndroid } from '../commands/android.ts';
@@ -878,4 +879,11 @@ test('agent-device cleanup guidance distinguishes shared state from workspace te
     expect(body).toContain('never trims or deletes the shared runner builds');
     expect(body).toContain("workspace's own agent-device dir goes only with its workspace");
   }
+});
+
+test('hosted iOS data paths name their feature flag in the guides', () => {
+  const feature = FEATURES.find((entry) => entry === 'hosted-ios-data');
+  assert(feature);
+  for (const body of [renderSection('lifecycle', 'hosted-ios'), renderSection('errors', 'STIM_HOSTING_REFUSED')])
+    expect(body).toContain(feature);
 });

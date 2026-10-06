@@ -1,4 +1,6 @@
 import { randomUUID } from 'node:crypto';
+import type { BuildHandoff } from '../offload/client.ts';
+import { pullHostedIosLogs } from './hosted-logs.ts';
 import {
   parseHostedChoice,
   parseHostedDevice,
@@ -103,6 +105,7 @@ export async function placeHostedIos(
     root,
     slot,
     bundle,
+    handoff,
     bundleId,
     selectors,
     release,
@@ -114,6 +117,7 @@ export async function placeHostedIos(
     root: string;
     slot: string;
     bundle: string;
+    handoff?: BuildHandoff | null;
     bundleId: string;
     selectors: HostedDeviceSelectors;
     release: boolean;
@@ -177,7 +181,26 @@ export async function placeHostedIos(
     };
     note(`Delivering ${files.length} files to ${host.machine} (${device.runtime}, ${device.architecture})`);
     await upload(host, ids, (await call(host, 'device-host.app.offer', offer)).missing, content);
-    await upload(host, ids, (await call(host, 'device-host.app.offer', offer)).missing, content);
+    let missing = (await call(host, 'device-host.app.offer', offer)).missing;
+    if (handoff && handoff.nodeId === host.credential.nodeId && Array.isArray(missing) && missing.length) {
+      if (!host.connection.supports('hosted-ios-data')) {
+        note(`${host.machine} needs a newer stim-server for iOS build handoff; uploading the app instead`);
+      } else {
+        try {
+          const taken = await call(
+            host,
+            'device-host.app.handoff',
+            { ...ids, build: { handoff: handoff.token, sha256: handoff.sha256 } },
+            60_000,
+          );
+          if (taken.files) note(`${host.machine} took ${String(taken.files)} files from the build it ran`);
+        } catch (error) {
+          note(`${error instanceof Error ? error.message : String(error)}; uploading the app instead`);
+        }
+        missing = (await call(host, 'device-host.app.offer', offer)).missing;
+      }
+    }
+    await upload(host, ids, missing, content);
     note(`Launching on ${host.machine}`);
     let delivery = await call(host, 'device-host.app.launch', ids);
     const deadline = Date.now() + INSTALL_TIMEOUT_MS;
@@ -209,6 +232,13 @@ export async function stopHostedIos(root: string, slot?: string): Promise<void> 
     let host: HostConnection | undefined;
     try {
       host = await connectHost(placement.machine);
+      try {
+        await pullHostedIosLogs(root, name, placement, host, true);
+      } catch (error) {
+        process.stderr.write(
+          `Could not copy final native logs from ${placement.machine}: ${(error as Error).message}\n`,
+        );
+      }
       const stopped = await settle(
         host,
         hostedSession(host, await call(host, 'device-host.stop', { session: placement.session }), 'ios'),

@@ -86,6 +86,14 @@ if(input.mode === 'prepare') {
     else if(input.deviceType === 'lost') { process.exitCode=1; }
     else out({state:'ready',device});
   }
+} else if(input.mode === 'logs') {
+  writeFileSync(join(home,'logs-entered'),String(process.pid));
+  if(input.deviceType === 'logs-hang') { process.on('SIGTERM',()=>{}); setInterval(()=>{},1000); }
+  else {
+    const logs=join(home,'ios-logs');mkdirSync(logs,{recursive:true});
+    appendFileSync(join(logs,'device.ndjson'),JSON.stringify({ts:1,src:'device',platform:'ios',level:'error',msg:'native failure'})+'\\n');
+    out({more:false});
+  }
 } else if(input.mode === 'install') {
   appendFileSync(join(home,'installed'),input.attempt+'\\n');
   writeFileSync(join(home,'install-metro-port'),String(input.metroPort ?? ''));
@@ -979,7 +987,7 @@ test.each(['ios', 'android', 'macos'])(
     if (platform === 'macos') {
       host.stop('client', { session: first.id });
       await state(first.id, 'stopped');
-      rmSync(join(deviceHostArea(first.id), 'apps', params.attempt, 'blobs'), { recursive: true });
+      rmSync(join(deviceHostArea(first.id), 'blobs'), { recursive: true });
     }
     const attached = host.appAttach('client', params);
     expect(attached).toHaveProperty('result.state', 'installed');
@@ -1492,37 +1500,37 @@ test.skipIf(process.platform === 'win32')(
       'logs',
     );
     const query = (params: object, client = 'client') => host.logsQuery(client, { session: macos.id, ...params });
-    expect(query({})).toEqual({ result: { records: [], cursor: {}, more: false } });
+    expect(await query({})).toEqual({ result: { records: [], cursor: {}, more: false } });
     mkdirSync(logs, { recursive: true });
     const line = (n: number) =>
       `${JSON.stringify({ ts: n, src: 'client', platform: 'macos', level: 'info', msg: `line ${n}` })}\n`;
     writeFileSync(join(logs, 'macos.ndjson'), line(1) + line(2) + '{"ts":3,"msg":"half');
-    const first = query({});
+    const first = await query({});
     if ('error' in first) throw new Error(first.error.message);
     expect(first.result.records.map((record) => record.msg)).toEqual(['line 1', 'line 2']);
     expect(first.result.more).toBe(false);
     appendFileSync(join(logs, 'macos.ndjson'), ` written"}\n${line(4)}`);
-    const second = query({ cursor: first.result.cursor });
+    const second = await query({ cursor: first.result.cursor });
     if ('error' in second) throw new Error(second.error.message);
     expect(second.result.records.map((record) => record.msg)).toEqual(['half written', 'line 4']);
     renameSync(join(logs, 'macos.ndjson'), join(logs, 'macos.ndjson.1'));
     appendFileSync(join(logs, 'macos.ndjson.1'), line(5));
     writeFileSync(join(logs, 'macos.ndjson'), line(6));
-    const third = query({ cursor: second.result.cursor });
+    const third = await query({ cursor: second.result.cursor });
     if ('error' in third) throw new Error(third.error.message);
     expect(third.result.records.map((record) => record.msg)).toEqual(['line 5', 'line 6']);
-    expect(query({}, 'other')).toHaveProperty('error.code', 'unknown-session');
-    expect(query({ cursor: { '../escape.ndjson': 0 } })).toHaveProperty('error.code', 'bad-request');
-    expect(query({ cursor: { 'macos.ndjson': -1 } })).toHaveProperty('error.code', 'bad-request');
+    expect(await query({}, 'other')).toHaveProperty('error.code', 'unknown-session');
+    expect(await query({ cursor: { '../escape.ndjson': 0 } })).toHaveProperty('error.code', 'bad-request');
+    expect(await query({ cursor: { 'macos.ndjson': -1 } })).toHaveProperty('error.code', 'bad-request');
     expect(acceptsRequest({ id: 1, method: 'device-host.logs.query', params: { session: macos.id } })).toBe(true);
     expect(
       acceptsRequest({ id: 1, method: 'device-host.logs.query', params: { session: macos.id, cursor: { a: 1.5 } } }),
     ).toBe(false);
     host.stop('client', { session: macos.id });
     await state(macos.id, 'stopped');
-    expect(query({})).toHaveProperty('result.records.length', 1);
+    expect(await query({})).toHaveProperty('result.records.length', 1);
     allowed.delete('client');
-    expect(query({})).toHaveProperty('error.code', 'forbidden');
+    expect(await query({})).toHaveProperty('error.code', 'forbidden');
     allowed.add('client');
     await host.close();
   },
@@ -1879,6 +1887,91 @@ test('the congestion notice request names one subscription', () => {
   expect(accepts({ id: 1, method, params: { subscription: 's1' } })).toBe(true);
   for (const params of [{}, { subscription: 1 }, { subscription: 's1', bitrate: 1 }])
     expect(accepts({ id: 1, method, params })).toBe(false);
+});
+
+test('iOS logs are isolated to their client, persist after stop and refuse a simultaneous native operation', async () => {
+  const session = reserve();
+  await state(session.id, 'ready');
+  const app = appOffer(session.id);
+  expect(host.appOffer('client', app.params)).toHaveProperty('result');
+  await uploadManifest(app);
+  await host.appChunk('client', { ...app.params, sha256: app.sha256, offset: 0, data: app.content.toString('base64') });
+  expect(host.appLaunch('client', app.params)).toHaveProperty('result.state', 'installing');
+  await vi.waitFor(() => expect(host.appAttach('client', app.params)).toHaveProperty('result.state', 'installed'));
+  const query = { session: session.id };
+  expect(await host.logsQuery('other', query)).toHaveProperty('error.code', 'unknown-session');
+  const pending = host.logsQuery('client', query);
+  expect(host.appOffer('client', { ...app.params, attempt: 'new-app' })).toHaveProperty(
+    'error.message',
+    expect.stringContaining('native operation'),
+  );
+  const first = await pending;
+  if ('error' in first) throw new Error(first.error.message);
+  expect(first.result.records).toMatchObject([{ src: 'device', level: 'error', msg: 'native failure' }]);
+  host.stop('client', query);
+  await state(session.id, 'stopped');
+  expect(await host.logsQuery('client', { ...query, cursor: first.result.cursor })).toHaveProperty(
+    'result.records',
+    [],
+  );
+  expect(await host.logsQuery('client', query)).toHaveProperty('result.records.0.msg', 'native failure');
+});
+
+test.each(['stop', 'close', 'revoke'])(
+  'a bounded iOS log worker is cancelled and settled before %s deletes its device',
+  async (ending) => {
+    const session = reserve({ deviceType: 'logs-hang' });
+    await state(session.id, 'ready');
+    const app = appOffer(session.id);
+    host.appOffer('client', app.params);
+    await uploadManifest(app);
+    await host.appChunk('client', {
+      ...app.params,
+      sha256: app.sha256,
+      offset: 0,
+      data: app.content.toString('base64'),
+    });
+    host.appLaunch('client', app.params);
+    await vi.waitFor(() => expect(host.appAttach('client', app.params)).toHaveProperty('result.state', 'installed'));
+    const pending = host.logsQuery('client', { session: session.id });
+    const workerHome = join(deviceHostArea(session.id), 'home');
+    await vi.waitFor(() => expect(existsSync(join(workerHome, 'logs-entered'))).toBe(true));
+    const pid = Number(readFileSync(join(workerHome, 'logs-entered'), 'utf8'));
+    if (ending === 'close') await host.close();
+    else if (ending === 'revoke') {
+      allowed.delete('client');
+      host.revoke();
+    } else host.stop('client', { session: session.id });
+    expect(await pending).toHaveProperty('error');
+    await state(session.id, 'stopped');
+    expect(processGroupAlive(pid)).toBe(false);
+    expect(existsSync(join(workerHome, 'stopped'))).toBe(true);
+  },
+);
+
+test('an iOS session takes verified files from a retained build instead of requiring an upload', async () => {
+  await host.close();
+  const bundle = join(home, 'Built.app');
+  mkdirSync(bundle);
+  const release = vi.fn<() => void>();
+  host = new DeviceHost({
+    worker: join(home, 'worker.mjs'),
+    env: process.env,
+    agents: noAgents,
+    allowed: (client) => allowed.has(client),
+    builtBundle: () => ({ bundle, release }),
+  });
+  const session = reserve();
+  await state(session.id, 'ready');
+  const app = appOffer(session.id);
+  writeFileSync(join(bundle, 'Info.plist'), app.content);
+  host.appOffer('client', app.params);
+  await uploadManifest(app);
+  expect(
+    await host.appHandoff('client', { ...app.params, build: { handoff: 'a'.repeat(64), sha256: 'b'.repeat(64) } }),
+  ).toHaveProperty('result', { files: 1, bytes: app.content.length });
+  expect(release).toHaveBeenCalledOnce();
+  expect(host.appOffer('client', app.params)).toHaveProperty('result.missing', []);
 });
 
 function expectRetired(id: string): void {

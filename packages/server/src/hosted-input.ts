@@ -8,7 +8,7 @@ export function takeHostedInputClaim(session: ClaimHandle): ClaimHandle {
     throw new ClaimRefusedError({
       root,
       claimPath: attempt.held?.path ?? root,
-      reason: 'a native input process still holds it',
+      reason: 'a native input or log process still holds it',
       label: 'hosted input',
     });
   return attempt.acquired;

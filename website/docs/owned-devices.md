@@ -654,8 +654,16 @@ access clears its placement during stop or worktree removal; other refusals
 retain it.
 A host server restart stops its sessions.
 
-Native logs, client viewing relays, agent leases, app handoff and upload
-deduplication are later work. JavaScript logs already reach Metro. The agent
+Reruns upload only missing manifest and file digests from a session-scoped store;
+the host verifies bytes before reuse. When an offloaded iOS simulator build ran
+on the hosting Mac's pinned node, the host takes files that match the client's
+manifest from that build. A refused handoff falls back to upload.
+
+`stim logs` and `stim logs --errors` pull native device records through bounded
+host queries. Stop pulls again before deleting the simulator. Captured records
+remain in the session home after deletion; JavaScript logs already reach Metro.
+An older host prints an update note, uses uploads and shows previously copied logs.
+Client viewing relays and agent leases are later work. The agent
 reports `driver: 'none'`. `devices.idleShutdownMinutes` does not stop hosted
 simulators in this phase; their recorded sessions prevent Metro idle stop.
 

@@ -4,7 +4,7 @@ import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, w
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { BuildConnection } from '../offload/client.ts';
-import { deviceHostMachinesFile, type HostedIosPlacement } from '@stim-cli/core/state';
+import { deviceHostMachinesFile, queryLogs, type HostedIosPlacement } from '@stim-cli/core/state';
 import { prepareHostedIos, placeHostedIos, stopHostedIos } from '../device-host/hosted-ios.ts';
 import { readHostedIos, writeHostedIos } from '../device-host/ios-state.ts';
 import { applyHostedIosProbe } from '../device-host/hosted-ios-status.ts';
@@ -13,7 +13,9 @@ import { gatewayAddresses, clearHostedMetro } from '../device-host/metro-gateway
 import { reconcileHostedMetro, watchHostedMetro } from '../supervisor/hosted-metro.ts';
 import { getConfigPath, getProject, upsertProject } from '../workspace/config.ts';
 import { readWorkspaceState, writeWorkspaceState } from '../workspace/workspace-state.ts';
-import { workspaceStateFile } from '../workspace/paths.ts';
+import { pullHostedIosLogs } from '../device-host/hosted-logs.ts';
+import { followHostedMacosLogs, syncHostedLogs } from '../device-host/hosted-logs-sync.ts';
+import { workspaceLogsDir, workspaceStateFile } from '../workspace/paths.ts';
 import { launchSlotScope, siblingPlatformSlots } from '../engine/slot-launch.ts';
 import { workspaceIdleProbe } from '../supervisor/idle-stop.ts';
 import { reclaimProject } from '../devices/reclaim.ts';
@@ -70,6 +72,9 @@ let pressure: string;
 let methods: { method: string; params: Record<string, unknown> }[];
 let blobs: Map<string, Buffer>;
 let manifest: { sha256: string; size: number };
+let features: boolean;
+let logRecords: Record<string, unknown>[];
+let retained: Map<string, Buffer> | null;
 
 beforeEach(async () => {
   home = mkdtempSync(join(tmpdir(), 'stim-ios-host-'));
@@ -81,6 +86,9 @@ beforeEach(async () => {
   writeFileSync(deviceHostMachinesFile(), JSON.stringify({ version: 1, machines: [credential] }));
   methods = [];
   blobs = new Map();
+  features = true;
+  logRecords = [];
+  retained = null;
   sessionState = 'ready';
   errorMethod = '';
   errorCode = 'forbidden';
@@ -92,6 +100,7 @@ beforeEach(async () => {
   tailnet.changed = false;
   const connection = Object.create(BuildConnection.prototype) as BuildConnection;
   connection.close = () => {};
+  connection.supports = () => features;
   connection.request = async (method, raw) => {
     const params = raw as Record<string, unknown> & {
       manifest: { sha256: string; size: number };
@@ -113,6 +122,19 @@ beforeEach(async () => {
       });
     if (method === 'device-host.reserve' || method === 'device-host.attach')
       return reply({ id: sessionId, platform: 'ios', state: sessionState, device });
+    if (method === 'device-host.logs.query') {
+      const cursor = params.cursor as Record<string, number> | undefined;
+      const offset = cursor?.['device.ndjson'] ?? 0;
+      return reply({
+        records: logRecords.slice(offset, offset + 2),
+        cursor: { 'device.ndjson': Math.min(logRecords.length, offset + 2) },
+        more: offset + 2 < logRecords.length,
+      });
+    }
+    if (method === 'device-host.app.handoff') {
+      for (const [digest, bytes] of retained ?? []) blobs.set(digest, bytes);
+      return reply({ files: retained?.size ?? 0 });
+    }
     if (method === 'device-host.stop') {
       sessionState = 'stopped';
       return reply({ id: sessionId, platform: 'ios', state: 'stopped', device });
@@ -661,4 +683,106 @@ test('hosted stop failures cannot overwrite the local default-slot outcome', asy
   expect(result.outcomes.device.ios).toMatchObject({ status: 'shut-down', label: 'local simulator' });
   expect(result.outcomes.device['ios:host:default']).toMatchObject({ status: 'failed' });
   expect(result.outcomes.device['ios:host:tablet']).toMatchObject({ status: 'shut-down' });
+});
+
+test.each(['same-node', 'other-node', 'older-host', 'refused'])(
+  'iOS handoff %s retains upload fallback and only sends missing content',
+  async (scenario) => {
+    await deliver();
+    retained = new Map(blobs);
+    retained.delete(manifest.sha256);
+    blobs.clear();
+    methods = [];
+    features = scenario !== 'older-host';
+    if (scenario === 'refused') {
+      errorMethod = 'device-host.app.handoff';
+      errorCode = 'action-failed';
+    }
+    const target = await prepareHostedIos('mini', {}, readHostedIos(root).default);
+    const note = vi.fn<(line: string) => void>();
+    await placeHostedIos(target, {
+      root,
+      slot: 'default',
+      bundle: join(root, 'Fixture.app'),
+      bundleId: 'dev.fixture',
+      release: true,
+      selectors: {},
+      handoff: {
+        nodeId: scenario === 'other-node' ? 'other' : credential.nodeId,
+        token: 'a'.repeat(64),
+        sha256: 'b'.repeat(64),
+      },
+      note,
+      reserved: (value) => writeHostedIos(root, 'default', value),
+    });
+    expect(methods.some((entry) => entry.method === 'device-host.app.handoff')).toBe(
+      ['same-node', 'refused'].includes(scenario),
+    );
+    const chunks = methods.filter((entry) => entry.method === 'device-host.app.chunk');
+    expect(chunks.filter((entry) => retained!.has(entry.params.sha256 as string))).toHaveLength(
+      scenario === 'same-node' ? 0 : retained.size,
+    );
+    expect(note.mock.calls.some(([line]) => line.includes('uploading the app instead'))).toBe(
+      ['older-host', 'refused'].includes(scenario),
+    );
+  },
+);
+
+test('hosted iOS native errors are paged into the workspace once per slot and pulled before stop', async () => {
+  writeHostedIos(root, 'tablet', placement());
+  logRecords = [1, 2, 3].map((ts) => ({ ts, src: 'device', level: ts === 3 ? 'error' : 'info', msg: `native ${ts}` }));
+  const target = await prepareHostedIos('mini', {}, placement());
+  await Promise.all([
+    pullHostedIosLogs(root, 'tablet', placement(), target.host),
+    pullHostedIosLogs(root, 'tablet', placement(), target.host),
+  ]);
+  const stored = readFileSync(join(workspaceLogsDir(root), 'ios.tablet-host.ndjson'), 'utf8')
+    .trim()
+    .split('\n')
+    .map((line) => JSON.parse(line));
+  expect(stored.map((record) => record.msg)).toEqual(['native 1', 'native 2', 'native 3']);
+  expect(
+    stored.every((record) => record.src === 'device' && record.platform === 'ios' && record.slot === 'tablet'),
+  ).toBe(true);
+  expect(queryLogs({ dir: workspaceLogsDir(root), errorsOnly: true }).map((record) => record.msg)).toEqual([
+    'native 3',
+  ]);
+  logRecords.push(
+    ...Array.from({ length: 130 }, (_, index) => ({
+      ts: index + 4,
+      src: 'device',
+      level: 'error',
+      msg: `final error ${index + 1}`,
+    })),
+  );
+  methods = [];
+  await stopHostedIos(root, 'tablet');
+  expect(methods.map((entry) => entry.method).indexOf('device-host.logs.query')).toBeLessThan(
+    methods.map((entry) => entry.method).indexOf('device-host.stop'),
+  );
+  const finalLogs = readFileSync(join(workspaceLogsDir(root), 'ios.tablet-host.ndjson'), 'utf8');
+  expect(finalLogs).toContain('final error 130');
+  expect(finalLogs.trim().split('\n')).toHaveLength(133);
+  expect(readHostedIos(root)).toEqual({});
+});
+
+test('an older host gets no iOS log queries and follow warns once while retaining copied logs', async () => {
+  features = false;
+  writeHostedIos(root, 'default', placement());
+  writeHostedIos(root, 'tablet', placement());
+  const stderr = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+  let stop: (() => void) | undefined;
+  try {
+    expect(await syncHostedLogs(root)).toBe(false);
+    stop = followHostedMacosLogs(root, { slot: 'default', failing: true, intervalMs: 10, retryMs: 10 });
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    expect(stderr).toHaveBeenCalledTimes(1);
+    expect(String(stderr.mock.calls[0]![0])).toContain('newer stim-server');
+    expect(methods.some((entry) => entry.method === 'device-host.logs.query')).toBe(false);
+    await stopHostedIos(root);
+    expect(methods.some((entry) => entry.method === 'device-host.stop')).toBe(true);
+  } finally {
+    stop?.();
+    stderr.mockRestore();
+  }
 });

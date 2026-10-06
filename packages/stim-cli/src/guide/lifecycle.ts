@@ -322,9 +322,17 @@ Reload returns a JSON error with that remedy when no other app can reload;
 logs remain readable. Unknown selection or agent metadata is normalized
 without discarding the owner. devices.idleShutdownMinutes
 does not stop a hosted simulator in this phase; its recorded session keeps Metro
-from idle stopping. Native hosted iOS logs are not collected yet; JavaScript
-logs already arrive through Metro. Client viewing relays, app handoff, upload
-deduplication and agent control are later work.`,
+from idle stopping. Reruns upload only missing manifest and file digests from a
+session-scoped store; the host verifies bytes before reuse. When the iOS build
+ran on the hosting Mac's pinned node, it takes matching files from that build.
+A refused handoff falls back to upload.
+
+stim logs and stim logs --errors pull native device records from bounded host
+queries. Stop pulls once more before deleting the simulator. Captured records
+remain in the session home after deletion; JavaScript logs arrive through Metro.
+The host advertises hosted-ios-data for iOS handoff and native logs. An older
+host gets an update note, uses uploads and shows logs already copied here.
+Client viewing relays and agent control are later work.`,
     },
     eas: {
       summary: 'download a matching EAS development build; explicit profile, costs, cache and miss remedies',
