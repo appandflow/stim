@@ -12,12 +12,13 @@ import {
   minFreeDiskGb,
   usageCharts,
   mergeWorkspaces,
+  mergeWorktrees,
   parseFilters,
   projectNames,
   runningDevices,
   type DeviceTileItem,
 } from '@/lib/home';
-import type { EnvironmentState, MachineUsage, StatusPayload, UsageSample } from '@/protocol/types';
+import type { EnvironmentState, MachineUsage, StatusPayload, UsageSample, WorktreeFacts } from '@/protocol/types';
 
 const payload = fixture.payload as StatusPayload;
 const env = (path: string, extra: Partial<EnvironmentState> = {}): EnvironmentState => ({
@@ -27,38 +28,48 @@ const env = (path: string, extra: Partial<EnvironmentState> = {}): EnvironmentSt
   warnings: [],
   ...extra,
 });
-const status = (environments: EnvironmentState[]): StatusPayload => ({ ...payload, environments });
+const status = (environments: EnvironmentState[], unprovisionedWorktrees?: WorktreeFacts[]): StatusPayload => ({
+  ...payload,
+  environments,
+  unprovisionedWorktrees,
+});
 
 const macs = [
   {
     id: 'a',
     name: 'MacBook Pro',
-    status: status([
-      env('/u/app/.worktrees/idle-one'),
-      env('/u/app/.worktrees/live-one', { live: true, logs: { dir: '/l', errorsSinceMarker: 2 } }),
-    ]),
+    status: status(
+      [
+        env('/u/app/.worktrees/idle-one'),
+        env('/u/app/.worktrees/live-one', { live: true, logs: { dir: '/l', errorsSinceMarker: 2 } }),
+      ],
+      [{ path: '/u/app/.worktrees/source', branch: 'source-only' }],
+    ),
   },
   {
     id: 'b',
     name: 'Mac mini',
-    status: status([
-      env('/u/app/.worktrees/building', {
-        build: { ...payload.environments.find((e) => e.build)!.build!, state: 'running' },
-      }),
-      env('/u/other', {
-        live: true,
-        remoteDevices: [
-          {
-            platform: 'ios',
-            backend: 'eas',
-            sessionId: 's',
-            state: 'claimed',
-            startedAt: null,
-            webPreviewUrl: null,
-          },
-        ],
-      }),
-    ]),
+    status: status(
+      [
+        env('/u/app/.worktrees/building', {
+          build: { ...payload.environments.find((e) => e.build)!.build!, state: 'running' },
+        }),
+        env('/u/other', {
+          live: true,
+          remoteDevices: [
+            {
+              platform: 'ios',
+              backend: 'eas',
+              sessionId: 's',
+              state: 'claimed',
+              startedAt: null,
+              webPreviewUrl: null,
+            },
+          ],
+        }),
+      ],
+      [{ path: '/u/review/.worktrees/source' }],
+    ),
   },
   { id: 'c', name: 'Offline Mac', status: null },
 ];
@@ -73,7 +84,44 @@ describe('mergeWorkspaces', () => {
       ['other', 'Mac mini', 'other'],
     ]);
     expect(projectNames(items)).toEqual(['app', 'other']);
+    const worktrees = mergeWorktrees(macs);
+    expect(worktrees.map((i) => [i.title, i.macName, i.project])).toEqual([
+      ['source-only', 'MacBook Pro', 'app'],
+      ['source', 'Mac mini', 'review'],
+    ]);
+    expect(projectNames([...items, ...worktrees])).toEqual(['app', 'other', 'review']);
+    const older = status([]);
+    delete older.unprovisionedWorktrees;
+    expect(mergeWorktrees([{ id: 'old', name: 'Old Mac', status: older }])).toEqual([]);
   });
+});
+
+it('avoids duplicate source rows and registered checkouts without hiding a same-path worktree on another machine', () => {
+  const facts = { path: '/repo/.worktrees/source', branch: 'feat/source' };
+  const snapshot = status(
+    [
+      env('/repo/.worktrees/exact'),
+      env('/repo/.worktrees/nested/apps/mobile'),
+      env('/elsewhere/app', { worktree: { path: '/repo/.worktrees/linked' } }),
+      env('/repo/.worktrees/source-other'),
+    ],
+    [
+      { path: '/repo/.worktrees/exact' },
+      { path: '/repo/.worktrees/nested' },
+      { path: '/repo/.worktrees/linked' },
+      facts,
+      facts,
+    ],
+  );
+  expect(
+    mergeWorktrees([
+      { id: 'a', name: 'MacBook', status: snapshot },
+      { id: 'b', name: 'Mac mini', status: status([], [facts]) },
+    ]).map((item) => [item.macId, item.facts.path]),
+  ).toEqual([
+    ['b', facts.path],
+    ['a', facts.path],
+  ]);
 });
 
 describe('warming and ready workspaces', () => {
@@ -106,22 +154,40 @@ describe('warming and ready workspaces', () => {
 });
 
 describe('filterWorkspaces', () => {
-  const items = mergeWorkspaces(macs);
+  const items = [...mergeWorkspaces(macs), ...mergeWorktrees(macs)];
   const ids = ['a', 'b', 'c'];
   const titles = (f: Partial<typeof DEFAULT_FILTERS>, known = ids) =>
     filterWorkspaces(items, { ...DEFAULT_FILTERS, ...f }, known).shown.map((i) => i.title);
 
-  it('hides idle workspaces by default and counts them', () => {
-    expect(filterWorkspaces(items, DEFAULT_FILTERS, ids)).toMatchObject({ hiddenByActivity: 1 });
+  it('hides idle apps and source-only worktrees under Live and reveals them under Idle and All', () => {
+    expect(filterWorkspaces(items, DEFAULT_FILTERS, ids)).toMatchObject({ hiddenByActivity: 3 });
     expect(titles({})).toEqual(['building', 'live-one', 'other']);
-    expect(titles({ activity: 'idle' })).toEqual(['idle-one']);
+    expect(titles({ activity: 'idle' })).toEqual(['idle-one', 'source-only', 'source']);
+    expect(titles({ activity: 'all' })).toEqual(['building', 'idle-one', 'live-one', 'other', 'source-only', 'source']);
+  });
+
+  it('counts the apps of one checkout as one hidden workspace', () => {
+    const worktree = { path: '/u/app/.worktrees/multi', branch: 'multi' };
+    const multi = [
+      {
+        id: 'a',
+        name: 'MacBook Pro',
+        status: status([
+          env('/u/app/.worktrees/multi/apps/mobile', { worktree }),
+          env('/u/app/.worktrees/multi/apps/desktop', { worktree }),
+        ]),
+      },
+    ];
+    expect(filterWorkspaces(mergeWorkspaces(multi), DEFAULT_FILTERS, ['a']).hiddenByActivity).toBe(1);
   });
 
   it('filters by Mac, project, errors and remote sessions', () => {
-    expect(titles({ activity: 'all', macs: ['a'] })).toEqual(['idle-one', 'live-one']);
+    expect(titles({ activity: 'all', macs: ['a'] })).toEqual(['idle-one', 'live-one', 'source-only']);
     expect(titles({ activity: 'all', projects: ['other'] })).toEqual(['other']);
-    expect(titles({ errorsOnly: true })).toEqual(['live-one']);
-    expect(titles({ remoteOnly: true })).toEqual(['other']);
+    expect(titles({ activity: 'all', projects: ['review'] })).toEqual(['source']);
+    expect(filterWorkspaces(items, { ...DEFAULT_FILTERS, macs: ['b'] }, ids).hiddenByActivity).toBe(1);
+    expect(titles({ activity: 'all', errorsOnly: true })).toEqual(['live-one']);
+    expect(titles({ activity: 'all', remoteOnly: true })).toEqual(['other']);
   });
 
   it('ignores a selected Mac that is no longer paired', () => {

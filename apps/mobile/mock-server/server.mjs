@@ -92,6 +92,7 @@ const status = () => {
   return {
     ...payload,
     environments,
+    unprovisionedWorktrees: payload.unprovisionedWorktrees?.filter((facts) => only.test(facts.path)),
     capacity: {
       ...payload.capacity,
       liveCount: live.length,

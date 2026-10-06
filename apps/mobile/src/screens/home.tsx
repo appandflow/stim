@@ -20,10 +20,10 @@ import { StimJar } from '@/components/stim-jar';
 import { Text } from '@/components/text';
 import { Touch } from '@/components/touch';
 import { useMenuDrawer } from '@/components/menu-drawer';
-import { WorkspaceGroupRow } from '@/components/workspace-row';
+import { WorkspaceGroupRow, WorktreeRow } from '@/components/workspace-row';
 import { useHomeFilters } from '@/hooks/home-filters';
 import { useInbox } from '@/hooks/inbox';
-import { useMacs, usePairedMacs, useWorkspaceItems } from '@/hooks/machines';
+import { useMacs, usePairedMacs, useWorkspaceItems, useWorktreeItems } from '@/hooks/machines';
 import { useNow } from '@/hooks/use-now';
 import { AGENT_PROMPTS, pickPrompts } from '@/lib/agent-prompts';
 import {
@@ -51,6 +51,8 @@ export function Home() {
   const { unread } = useInbox();
   const macs = usePairedMacs();
   const items = useWorkspaceItems();
+  const worktrees = useWorktreeItems();
+  const entries = useMemo(() => [...items, ...worktrees], [items, worktrees]);
   const { filters, update, view } = useHomeFilters();
   const [visible, setVisible] = useState<Set<string>>(new Set());
   const [aspects, setAspects] = useState<ReadonlyMap<string, number>>(new Map());
@@ -67,17 +69,23 @@ export function Home() {
   );
 
   const macIds = useMemo(
-    () => (macs ? macs.map((mac) => mac.id) : [...new Set(items.map((item) => item.macId))]),
-    [macs, items],
+    () => (macs ? macs.map((mac) => mac.id) : [...new Set(entries.map((item) => item.macId))]),
+    [macs, entries],
   );
-  const { shown, hiddenByActivity } = useMemo(() => filterWorkspaces(items, filters, macIds), [items, filters, macIds]);
+  const { shown, hiddenByActivity } = useMemo(
+    () => filterWorkspaces(entries, filters, macIds),
+    [entries, filters, macIds],
+  );
   const sections = useMemo(() => homeSections(shown), [shown]);
   const folders = useMemo(() => checkoutProjects(items), [items]);
   const showsMachine = (macs?.length ?? 0) > 1;
   const now = useNow(30_000);
   const tiles = useMemo(() => runningDevices(items, filters, macIds), [items, filters, macIds]);
   const rows = useMemo(() => gridRows(tiles, aspects), [tiles, aspects]);
-  const noFilterSet = useMemo(() => !filtersActive(filters, macIds, projectNames(items)), [filters, macIds, items]);
+  const noFilterSet = useMemo(
+    () => !filtersActive(filters, macIds, projectNames(view === 'devices' ? items : entries)),
+    [filters, macIds, items, entries, view],
+  );
 
   const openWorkspace = useCallback(
     (item: HomeItem, errors: boolean, checkout = false) =>
@@ -147,7 +155,7 @@ export function Home() {
             accessibilityLabel={t`Filter`}
             onPress={() => router.push('/filters')}
           >
-            {filtersActive(filters, macIds, projectNames(items)) ? (
+            {filtersActive(filters, macIds, projectNames(view === 'devices' ? items : entries)) ? (
               <Stack.Toolbar.Badge style={{ backgroundColor: theme.colors.primary }} />
             ) : null}
           </Stack.Toolbar.Button>
@@ -246,23 +254,27 @@ export function Home() {
         stickySectionHeadersEnabled={false}
         ListHeaderComponent={listHeader}
         renderSectionHeader={({ section }) => <RepoHeader section={section} />}
-        renderItem={({ item }) => (
-          <WorkspaceGroupRow
-            workspace={item}
-            now={now}
-            folder={folders.has(item.apps[0].project)}
-            showsMachine={showsMachine}
-            onOpen={openWorkspace}
-          />
-        )}
+        renderItem={({ item }) =>
+          'facts' in item ? (
+            <WorktreeRow item={item} now={now} showsMachine={showsMachine} />
+          ) : (
+            <WorkspaceGroupRow
+              workspace={item}
+              now={now}
+              folder={folders.has(item.apps[0].project)}
+              showsMachine={showsMachine}
+              onOpen={openWorkspace}
+            />
+          )
+        }
         ListEmptyComponent={
-          <HomeEmpty view="workspaces" items={items.length} noFilterSet={noFilterSet} focused={focused} />
+          <HomeEmpty view="workspaces" items={entries.length} noFilterSet={noFilterSet} focused={focused} />
         }
         ListFooterComponent={
           filters.activity === 'live' && hiddenByActivity > 0 ? (
             <Touch feedback="row" onPress={() => update({ activity: 'all' })} style={styles.footer}>
               <Text tone="secondary">
-                {plural(hiddenByActivity, { one: '# idle app hidden.', other: '# idle apps hidden.' })}{' '}
+                {plural(hiddenByActivity, { one: '# idle workspace hidden.', other: '# idle workspaces hidden.' })}{' '}
                 <Text tone="brand">
                   <Trans>Show all</Trans>
                 </Text>

@@ -3,7 +3,7 @@ import { t } from '@lingui/core/macro';
 import type { Tone } from '@/design/tone';
 import { pathInCheckout, projectOf, repositoryRoots, workspaceTitle } from '@/lib/workspace-names';
 import { deviceKey, devicesOf, isShownLive, orderDevices, type DeviceRef } from '@/lib/workspaces';
-import type { EnvironmentState, MachineUsage, StatusPayload, UsageSample } from '@/protocol/types';
+import type { EnvironmentState, MachineUsage, StatusPayload, UsageSample, WorktreeFacts } from '@/protocol/types';
 
 export interface MacSnapshot {
   id: string;
@@ -39,6 +39,57 @@ export function mergeWorkspaces(macs: MacSnapshot[]): HomeItem[] {
         title: workspaceTitle(env, roots),
         inCheckout: pathInCheckout(env, roots),
         env,
+      });
+    }
+  }
+  return items.sort(
+    (a, b) =>
+      a.project.localeCompare(b.project) || a.title.localeCompare(b.title) || a.macName.localeCompare(b.macName),
+  );
+}
+
+export interface HomeWorktree {
+  key: string;
+  macId: string;
+  macName: string;
+  project: string;
+  title: string;
+  facts: WorktreeFacts;
+}
+
+export type HomeEntry = HomeItem | HomeWorktree;
+
+/** The home row an entry belongs to: apps of one linked checkout share a row, so they share a key. */
+export function workspaceKey(item: HomeEntry): string {
+  if ('facts' in item) return item.key;
+  const checkout = item.env.worktree?.path;
+  return `${item.macId}\n${checkout ? `checkout\n${checkout}` : `app\n${item.env.path}`}`;
+}
+
+export function mergeWorktrees(macs: MacSnapshot[]): HomeWorktree[] {
+  const items: HomeWorktree[] = [];
+  for (const mac of macs) {
+    if (!mac.status) continue;
+    const roots = repositoryRoots(mac.status);
+    const seen = new Set<string>();
+    for (const facts of mac.status.unprovisionedWorktrees ?? []) {
+      if (seen.has(facts.path)) continue;
+      seen.add(facts.path);
+      if (
+        mac.status.environments.some(
+          (env) =>
+            env.worktree?.path === facts.path || env.path === facts.path || env.path.startsWith(`${facts.path}/`),
+        )
+      )
+        continue;
+      const worktree = { path: facts.path, worktree: facts };
+      items.push({
+        key: `${mac.id}\nworktree\n${facts.path}`,
+        macId: mac.id,
+        macName: mac.name,
+        project: projectOf(worktree, roots).name,
+        title: workspaceTitle(worktree, roots),
+        facts,
       });
     }
   }
@@ -108,28 +159,28 @@ const hasRemote = (env: EnvironmentState) => (env.remoteDevices?.length ?? 0) > 
  * The items the filters keep, and how many more the activity filter alone hides. A selected machine that is no
  * longer paired, or a selected project no machine lists any more, is ignored, so it cannot hide everything.
  */
-export function filterWorkspaces(
-  items: HomeItem[],
+export function filterWorkspaces<T extends HomeEntry>(
+  items: T[],
   filters: HomeFilters,
   macIds: string[],
-): { shown: HomeItem[]; hiddenByActivity: number } {
+): { shown: T[]; hiddenByActivity: number } {
   const macs = filters.macs.filter((id) => macIds.includes(id));
   const projects = filters.projects.filter((name) => items.some((item) => item.project === name));
-  const shown: HomeItem[] = [];
-  let hiddenByActivity = 0;
+  const shown: T[] = [];
+  const hidden = new Set<string>();
   for (const item of items) {
     if (macs.length && !macs.includes(item.macId)) continue;
     if (projects.length && !projects.includes(item.project)) continue;
-    if (filters.errorsOnly && !hasErrors(item.env)) continue;
-    if (filters.remoteOnly && !hasRemote(item.env)) continue;
-    const active = isShownLive(item.env);
+    if (filters.errorsOnly && (!('env' in item) || !hasErrors(item.env))) continue;
+    if (filters.remoteOnly && (!('env' in item) || !hasRemote(item.env))) continue;
+    const active = 'env' in item && isShownLive(item.env);
     if ((filters.activity === 'live' && !active) || (filters.activity === 'idle' && active)) {
-      hiddenByActivity += 1;
+      hidden.add(workspaceKey(item));
       continue;
     }
     shown.push(item);
   }
-  return { shown, hiddenByActivity };
+  return { shown, hiddenByActivity: hidden.size };
 }
 
 export interface DeviceTileItem {
@@ -180,7 +231,7 @@ export function runningDevices(items: HomeItem[], filters: HomeFilters, macIds: 
   );
 }
 
-export function projectNames(items: HomeItem[]): string[] {
+export function projectNames(items: HomeEntry[]): string[] {
   return [...new Set(items.map((item) => item.project))].sort((a, b) => a.localeCompare(b));
 }
 

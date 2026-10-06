@@ -43,10 +43,16 @@ Duo fold detection requires a build made with the iOS 27.1 SDK and an iOS
   status. The checkout heading opens the unified workspace page at the first app;
   child rows open the same page scrolled to that app's first device. Children stay visible without
   an extra expansion step; filters still apply per app. Repo live/idle counts count
-  the shown workspaces, while the hidden-idle footer counts apps. Different Macs
+  the shown workspaces, while the hidden-idle footer counts apps and source-only worktrees. Different Macs
   and checkouts stay separate even when they share a branch name. Primary checkouts
   and older servers without an explicit checkout identity retain separate app rows;
   [#2418](https://github.com/appandflow/stim/issues/2418) tracks that payload addition.
+  Source-only worktrees share their repo's section and count as idle. **Idle**, **All**
+  and **Show all** reveal them; the default **Live** filter hides them. Their rows
+  show the branch or folder, **Not warmed**, git facts and the machine when more
+  than one is paired. They have no app activity or controls and do not open a
+  workspace page. Machine and project filters apply; errors and remote-session
+  filters exclude them. Older servers that omit them keep the registered-app list.
   Each single-app row is titled by its worktree's branch, or the
   worktree's folder when it has no branch, or the project for a main checkout,
   truncated in the middle when long. At the trailing edge, a word says what the
@@ -948,7 +954,7 @@ stim-server's segment format, with its agent-action markers in
   `settings.get` and every status environment's `recording.enabled` follow.
 
 To try the home screen with two Macs, run two mock servers on different ports.
-`--workspaces <regex>` keeps only the workspaces whose path matches, and
+`--workspaces <regex>` keeps only the app workspaces and source-only worktrees whose path matches, and
 `--free-gb <n>` sets the free disk `machine.get` reports:
 
 ```bash

@@ -14,15 +14,19 @@ import { AgentIcon } from './agent-icon';
 import { PlatformGlyph } from './platform-glyph';
 import { MacStatus } from '@/screens/mac-status';
 
-import type { HomeItem } from '@/lib/home';
+import type { HomeItem, HomeWorktree } from '@/lib/home';
 import { homeSections } from '@/lib/home-list';
 
-import { WorkspaceGroupRow } from './workspace-row';
+import { WorkspaceGroupRow, WorktreeRow } from './workspace-row';
 
+let mockPresence = { online: true, cached: false, lastSeenAt: null as number | null };
 let mockStatus = receiveStatus(fixture.payload as StatusPayload);
+afterEach(() => {
+  mockPresence = { online: true, cached: false, lastSeenAt: null };
+});
 jest.mock('expo-router', () => ({ useIsFocused: () => false, useRouter: () => ({ push: jest.fn() }) }));
 jest.mock('@/hooks/machines', () => ({
-  useMachinePresence: () => ({ online: true, cached: false }),
+  useMachinePresence: () => mockPresence,
   useMachineStatus: () => mockStatus,
   useMachineUsage: () => null,
   useMacById: () => ({ mac: { name: 'Mac', endpoint: 'ws://mac' }, state: { kind: 'disconnected' } }),
@@ -87,6 +91,7 @@ it('shows the branch and git state once while each app opens its original route 
   const mobile = app('apps/mobile', false);
   const desktop = app('apps/desktop', true);
   const workspace = homeSections([mobile, desktop])[0].data[0];
+  if (!('apps' in workspace)) throw new Error('Expected the registered checkout');
   const open = jest.fn();
   const screen = await render(
     <WorkspaceGroupRow workspace={workspace} now={Date.now()} folder showsMachine onOpen={open} />,
@@ -103,6 +108,52 @@ it('shows the branch and git state once while each app opens its original route 
   expect(open).toHaveBeenLastCalledWith(desktop, false);
   await fireEvent.press(screen.getByText('2 errors'));
   expect(open).toHaveBeenLastCalledWith(desktop, true);
+});
+
+it('announces source-only git work without workspace controls and shows last seen when its machine is offline', async () => {
+  const item: HomeWorktree = {
+    key: 'mac\nsource',
+    macId: 'mac',
+    macName: 'MacBook',
+    project: 'stim',
+    title: 'feat/source',
+    facts: {
+      path: '/source',
+      branch: 'feat/source',
+      git: { changed: 3, untracked: 2, upstream: 'origin/main', ahead: 2, behind: 1, mergedInto: null },
+      pullRequest: {
+        number: 2440,
+        url: 'https://github.com/appandflow/stim/pull/2440',
+        title: 'Source work',
+        state: 'open',
+        checks: null,
+        reviewDecision: null,
+        checkedAt: '2026-10-05T12:00:00Z',
+      },
+    },
+  };
+  const now = Date.parse('2026-10-05T12:00:00Z');
+  const screen = await render(<WorktreeRow item={item} now={now} showsMachine />);
+  const row = screen.getByLabelText(
+    'feat/source, Not warmed, Pull request 2440, open, 5 uncommitted changes, 2 commits not pushed to origin/main, 1 commit behind origin/main, MacBook',
+  );
+  expect(row.props.accessibilityHint).toBeUndefined();
+  expect(row.props.accessibilityActions).toBeUndefined();
+  expect(row.props.onPress).toBeUndefined();
+  expect(screen.queryByRole('button')).toBeNull();
+  expect(screen.getByText('Not warmed')).toBeTruthy();
+  expect(screen.getByText('PR #2440')).toBeTruthy();
+  expect(screen.getByText('\u21912 \u21931')).toBeTruthy();
+  expect(screen.getByText('5 changed')).toBeTruthy();
+  mockPresence = { online: true, cached: true, lastSeenAt: now - 180_000 };
+  await screen.rerender(<WorktreeRow item={item} now={now} showsMachine={false} />);
+  expect(screen.getByText('Last seen 3m ago')).toBeTruthy();
+  expect(screen.queryByText('MacBook')).toBeNull();
+  expect(
+    screen.getByLabelText(
+      'feat/source, Not warmed, Last seen 3 minutes ago, Pull request 2440, open, 5 uncommitted changes, 2 commits not pushed to origin/main, 1 commit behind origin/main',
+    ),
+  ).toBeTruthy();
 });
 
 test.each(['platform', 'backend', 'state'])(

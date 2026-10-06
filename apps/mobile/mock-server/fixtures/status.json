@@ -4084,7 +4084,39 @@
       },
       {
         "path": "/Users/dev/Developer/stim/.claude/worktrees/issue-1097",
-        "branch": "@janic/issue-1097-warm-stale-node-modules"
+        "branch": "@janic/issue-1097-warm-stale-node-modules",
+        "repository": "/Users/dev/Developer/stim",
+        "git": {
+          "changed": 0,
+          "untracked": 0,
+          "upstream": "origin/@janic/issue-1097-warm-stale-node-modules",
+          "ahead": 2,
+          "behind": 1,
+          "mergedInto": null
+        },
+        "pullRequest": {
+          "number": 1097,
+          "url": "https://github.com/appandflow/stim/pull/1097",
+          "title": "Fix stale worktree dependencies during warm",
+          "state": "open",
+          "checks": {
+            "passing": 14,
+            "failing": 0,
+            "pending": 0
+          },
+          "reviewDecision": "review-required",
+          "checkedAt": "2026-09-25T04:23:09.012Z"
+        },
+        "gitChip": {
+          "parts": [
+            {
+              "kind": "arrows",
+              "ahead": 2,
+              "behind": 1
+            }
+          ],
+          "ci": "passing"
+        }
       },
       {
         "path": "/Users/dev/Developer/stim/.claude/worktrees/issue-1112",
@@ -4099,7 +4131,28 @@
       },
       {
         "path": "/Users/dev/Developer/stim/.claude/worktrees/profile-decode",
-        "branch": "fix/profile-decode-keychain"
+        "branch": "fix/profile-decode-keychain",
+        "repository": "/Users/dev/Developer/stim",
+        "git": {
+          "changed": 3,
+          "untracked": 2,
+          "upstream": null,
+          "ahead": null,
+          "behind": null,
+          "mergedInto": null
+        },
+        "gitChip": {
+          "parts": [
+            {
+              "kind": "changed",
+              "count": 5
+            },
+            {
+              "kind": "no-upstream"
+            }
+          ],
+          "ci": null
+        }
       },
       {
         "path": "/Users/dev/Developer/stim/.claude/worktrees/wt-1087",
@@ -4323,6 +4376,8 @@
     "environments[path*=a4-running].agents and environments[path*=1123-mobile-app].agents: added by hand in the AgentSession shape; the capture predates the field. The a4-running session carries a webUrl as a Remote Control session does",
     "environments[path*=a4-offloading], [path*=a4-offloaded] and [path*=a4-offload-fallback]: added by hand from a4-building and a4-running in the shapes #1876 added (the pods build also carries outcomeKnown and missProvisional, as #2180 added): an iOS build offloaded to janics-mac-mini:7869 in its pods step (build.placement), a last build that machine compiled (offloadedTo), and a local build after the machine was busy (offloadFallback)",
     "environments[path*=a4-running].endedAgents and environments[path*=a4-ready].endedAgents: added by hand in the EndedAgentSession shape; the capture predates the field. a4-running has a running and an ended session; a4-ready has only ended ones, a Claude Code session with a webUrl and a Codex thread without one",
-    "environments[path*=a4-running|a4-multi-device]/apps/desktop: added by hand with a running MacosAppState and the same worktree as apps/mobile, to exercise the unified worktree page"
+    "environments[path*=a4-running|a4-multi-device]/apps/desktop: added by hand with a running MacosAppState and the same worktree as apps/mobile, to exercise the unified worktree page",
+    "unprovisionedWorktrees[path*=issue-1097].repository, git, pullRequest and gitChip: added by hand in the WorktreeFacts shape with an open pull request, passing checks and commits ahead and behind",
+    "unprovisionedWorktrees[path*=profile-decode].repository, git and gitChip: added by hand in the WorktreeFacts shape with three changed files, two untracked files and no upstream"
   ]
 }

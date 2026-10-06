@@ -16,11 +16,19 @@ import { useMachinePresence } from '@/hooks/machines';
 import { useNow } from '@/hooks/use-now';
 import { workspaceAgentSessions } from '@/lib/agents';
 import { buildKey, buildTiming, outcomeLabel } from '@/lib/format';
-import type { HomeItem } from '@/lib/home';
-import { rowDevices, rowLabel, rowProblems, rowStatus, warmStepText, type HomeWorkspace } from '@/lib/home-list';
+import type { HomeItem, HomeWorktree } from '@/lib/home';
+import {
+  offlineRowStatus,
+  rowDevices,
+  rowLabel,
+  rowProblems,
+  rowStatus,
+  warmStepText,
+  type HomeWorkspace,
+} from '@/lib/home-list';
 import { barSteps, currentPhaseLabel, gitChip, phaseSteps } from '@/lib/workspace-view';
 import { isSettingUp, isShownLive, runningBuild } from '@/lib/workspaces';
-import type { BuildReport, EnvironmentState } from '@/protocol/types';
+import type { BuildReport, EnvironmentState, WorktreeFacts } from '@/protocol/types';
 
 const SEPARATOR = '\u00B7';
 
@@ -58,7 +66,7 @@ export const WorkspaceGroupRow = memo(function WorkspaceGroupRow({
             {first.macName}
           </Text>
         ) : null}
-        <GitLine item={first} folder={false} />
+        <GitLine facts={first.env.worktree} />
       </Touch>
       <View style={styles.apps}>
         {workspace.apps.map((item) => (
@@ -207,18 +215,81 @@ const WorkspaceRow = memo(function WorkspaceRow({
           </Text>
         ) : null}
         {context.length ? <Line parts={context} /> : null}
-        {!app ? <GitLine item={item} folder={folder} /> : null}
+        {!app ? <GitLine facts={item.env.worktree} folder={folder ? item.inCheckout : null} /> : null}
       </View>
     </Touch>
   );
 });
 
-function GitLine({ item, folder }: { item: HomeItem; folder: boolean }) {
+export const WorktreeRow = memo(function WorktreeRow({
+  item,
+  now,
+  showsMachine,
+}: {
+  item: HomeWorktree;
+  now: number;
+  showsMachine: boolean;
+}) {
+  const { theme } = useUnistyles();
   const large = useLargeText();
   const lines = large ? 3 : 1;
-  const git = gitChip(item.env.worktree);
+  const { online, cached, lastSeenAt } = useMachinePresence(item.macId);
+  const offline = !online || cached;
+  const status = offlineRowStatus(now, offline ? { lastSeenAt } : null);
+  const notWarmed = t`Not warmed`;
+  return (
+    <View
+      accessible
+      accessibilityLabel={[
+        item.title,
+        notWarmed,
+        status?.label,
+        gitChip(item.facts)?.label,
+        showsMachine ? item.macName : null,
+      ]
+        .filter(Boolean)
+        .join(', ')}
+      style={[styles.row, offline && styles.dimmed]}
+    >
+      <View style={styles.lead}>
+        <View style={[styles.dot, { borderColor: theme.colors.tertiary, backgroundColor: 'transparent' }]} />
+      </View>
+      <View style={styles.body}>
+        <View style={[styles.titleLine, large && styles.titleLineStacked]}>
+          <Text
+            variant="headline"
+            weight="medium"
+            tone="secondary"
+            numberOfLines={lines}
+            ellipsizeMode={lines > 1 ? 'tail' : 'middle'}
+            style={styles.title}
+          >
+            {item.title}
+          </Text>
+          <Text variant="callout" weight="medium" tone="tertiary" numberOfLines={1}>
+            {status?.text ?? notWarmed}
+          </Text>
+        </View>
+        {showsMachine ? (
+          <View style={styles.inline}>
+            <Icon name="laptopcomputer" size={13} color={offline ? theme.colors.tertiary : theme.colors.success} />
+            <Text variant="footnote" tone="secondary" numberOfLines={lines}>
+              {item.macName}
+            </Text>
+          </View>
+        ) : null}
+        <GitLine facts={item.facts} />
+      </View>
+    </View>
+  );
+});
+
+function GitLine({ facts, folder }: { facts: WorktreeFacts | null | undefined; folder?: string | null }) {
+  const large = useLargeText();
+  const lines = large ? 3 : 1;
+  const git = gitChip(facts);
   const gitParts: ReactNode[] = [];
-  if (folder && item.inCheckout) {
+  if (folder) {
     gitParts.push(
       <Text
         key="folder"
@@ -228,7 +299,7 @@ function GitLine({ item, folder }: { item: HomeItem; folder: boolean }) {
         ellipsizeMode={lines > 1 ? 'tail' : 'middle'}
         style={styles.shrink}
       >
-        {item.inCheckout}
+        {folder}
       </Text>,
     );
   }
