@@ -1,6 +1,5 @@
-import { closeSync, mkdirSync, openSync } from 'node:fs';
+import { closeSync, openSync } from 'node:fs';
 import {
-  maintenanceDir,
   maintenanceChildLogFile,
   maintenanceRunClaims,
   readMaintenanceState,
@@ -12,6 +11,7 @@ import { windowsLauncherArgs } from '../detached-entry.ts';
 import { spawnEntry } from '../spawn-entry.ts';
 import { resolveMaintenanceSettings } from './settings.ts';
 import { due } from './due.ts';
+import { capChildLog, stampAttempt } from './attempt.ts';
 
 export function triggerMaintenance(
   trigger: string,
@@ -37,7 +37,9 @@ export function triggerMaintenance(
       return;
     const claims = readClaimSet(maintenanceRunClaims());
     if (claims.live.length || claims.unresolved.length) return;
-    mkdirSync(maintenanceDir(), { recursive: true });
+    const now = Date.now();
+    stampAttempt(now);
+    capChildLog();
     const logFile = maintenanceChildLogFile();
     const fd = openSync(logFile, 'a');
     try {

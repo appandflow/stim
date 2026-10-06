@@ -1,4 +1,4 @@
-import { appendFileSync, mkdirSync, renameSync, statSync, truncateSync, unlinkSync, writeFileSync } from 'node:fs';
+import { appendFileSync, mkdirSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { basename, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { withDirLock } from '@stim-cli/core';
@@ -7,8 +7,6 @@ import {
   maintenanceDir,
   maintenanceRunClaims,
   maintenanceStateFile,
-  maintenanceAttemptFile,
-  readMaintenanceAttempt,
   readMaintenanceState,
   type MaintenanceState,
   type MaintenanceRecord,
@@ -19,6 +17,7 @@ import { formatBytes } from '../fs-util.ts';
 import { resolveBudget } from '../budget.ts';
 import { resolveMaintenanceSettings } from './settings.ts';
 import { due } from './due.ts';
+import { capChildLog } from './attempt.ts';
 import { measurePressure, measureSizes, sizeScanDeferred } from './measure.ts';
 import { plannedMaintenance } from './preview.ts';
 import { maintenanceLogger } from './log.ts';
@@ -40,25 +39,14 @@ function writeState(state: MaintenanceState): void {
 }
 
 const actionKey = (action: MaintenanceState['plan'][number]) => JSON.stringify([action.kind, action.target]);
+const stableText = (text: string) => text.replace(/\d+(?:\.\d+)?/g, '#');
 const sameSet = (before: Set<string>, after: Set<string>) =>
   before.size === after.size && [...before].every((key) => after.has(key));
 
 export async function runMaintenance(trigger: string): Promise<void> {
   const startedAt = Date.now();
-  const attemptedAt = readMaintenanceAttempt();
   let claim: ClaimHandle | undefined;
   try {
-    mkdirSync(maintenanceDir(), { recursive: true });
-    const file = maintenanceAttemptFile();
-    const tmp = `${file}.${process.pid}.tmp`;
-    writeFileSync(tmp, `${JSON.stringify({ attemptedAt: startedAt })}\n`);
-    try {
-      renameSync(tmp, file);
-    } finally {
-      try {
-        unlinkSync(tmp);
-      } catch {}
-    }
     const attempt = tryAcquireClaim({
       root: maintenanceRunClaims(),
       mode: 'exclusive',
@@ -85,7 +73,7 @@ export async function runMaintenance(trigger: string): Promise<void> {
       recent: [],
       plan: [],
     };
-    const checks = due(state, settings, startedAt, attemptedAt);
+    const checks = due(state, settings, startedAt);
     if (checks.length === 0) return;
     logger = maintenanceLogger(settings, `p-${claim.claimId}`, trigger);
     const record = (
@@ -193,7 +181,7 @@ export async function runMaintenance(trigger: string): Promise<void> {
       !state.lastPass ||
       !sameSet(previousActions, nextActions) ||
       !sameSet(previousSkips, nextSkips) ||
-      !sameSet(new Set(state.lastPass.blocked), new Set(blocked));
+      !sameSet(new Set(state.lastPass.blocked.map(stableText)), new Set(blocked.map(stableText)));
     for (const action of result.actions) {
       if (previousActions.has(actionKey(action))) continue;
       previousActions.add(actionKey(action));
@@ -250,9 +238,7 @@ function crashLine(error: unknown): void {
   try {
     mkdirSync(maintenanceDir(), { recursive: true });
     const file = maintenanceChildLogFile();
-    try {
-      if (statSync(file).size > 64 * 1024) truncateSync(file);
-    } catch {}
+    capChildLog();
     appendFileSync(file, `${String(error).replaceAll('\n', ' ')}\n`);
   } catch {}
 }

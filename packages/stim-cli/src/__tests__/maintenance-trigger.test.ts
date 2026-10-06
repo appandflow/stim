@@ -6,6 +6,7 @@ import {
   maintenanceStateFile,
   maintenanceChildLogFile,
   maintenanceRunClaims,
+  readMaintenanceAttempt,
 } from '@stim-cli/core/state';
 import { triggerMaintenance } from '../maintenance/trigger.ts';
 import { setExecutor, resetExecutor, type Executor } from '../exec.ts';
@@ -95,6 +96,21 @@ test('fresh stamps suppress spawning, while a due check starts one detached chil
   expect(readFileSync(maintenanceChildLogFile(), 'utf8')).toBe('detached child\n');
   expect(out).not.toHaveBeenCalled();
   expect(err).not.toHaveBeenCalled();
+});
+
+test('the trigger stamps the attempt before spawning, so a child that dies at once is not respawned by the next command', () => {
+  triggerMaintenance('status', { argv: ['status'], platform: 'linux' });
+  expect(spawned).toHaveBeenCalledTimes(1);
+  expect(readMaintenanceAttempt()).toBeLessThanOrEqual(Date.now());
+  triggerMaintenance('status', { argv: ['status'], platform: 'linux' });
+  expect(spawned).toHaveBeenCalledTimes(1);
+});
+
+test('child.log is cut back before a new child appends to it', () => {
+  mkdirSync(maintenanceDir());
+  writeFileSync(maintenanceChildLogFile(), 'x'.repeat(70 * 1024));
+  triggerMaintenance('status', { argv: ['status'], platform: 'linux' });
+  expect(readFileSync(maintenanceChildLogFile(), 'utf8')).toBe('detached child\n');
 });
 
 test('Windows maintenance uses the handle-free launcher and asks the entry to relaunch into child.log', () => {

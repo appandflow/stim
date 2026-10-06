@@ -87,6 +87,12 @@ test('a deferred size scan is not retried by every command while the host stays 
   expect(due(state, settings, 3_600_000 + 300_000)).toEqual(['pressure', 'size']);
 });
 
+test('a stamp from a clock that was ahead does not suppress checks until the clock catches up', () => {
+  const future = 10 * 3_600_000;
+  const state = { ...emptyState(), lastAt: { pressure: future, size: future }, deferredAt: { size: future } };
+  expect(due(state, settings, 3_600_000, future)).toEqual(['pressure', 'size']);
+});
+
 test('maintenance settings reject acting mode and invalid ranges before they can trigger work', () => {
   for (const [key, bad, good] of [
     ['maintenance.mode', 'on', 'report'],

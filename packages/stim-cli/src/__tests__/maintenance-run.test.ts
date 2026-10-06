@@ -9,7 +9,7 @@ import {
   maintenanceNdjsonFile,
   maintenanceRunClaims,
   readMaintenanceState,
-  readMaintenanceAttempt,
+  maintenanceAttemptFile,
   workspaceLogsDir,
   sharedCompilationCache,
 } from '@stim-cli/core/state';
@@ -18,7 +18,6 @@ import { resolveMaintenanceSettings } from '../maintenance/settings.ts';
 import * as measurements from '../maintenance/measure.ts';
 import * as budget from '../budget.ts';
 import * as preview from '../maintenance/preview.ts';
-import * as log from '../maintenance/log.ts';
 import * as buildLocks from '../engine/build-lock.ts';
 import { maintenanceStatus } from '../maintenance/status.ts';
 import { releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
@@ -132,7 +131,6 @@ test('an unresolved claim produces only one child crash-log line', async () => {
   const err = vi.spyOn(console, 'error').mockImplementation(() => {});
   writeFileSync(maintenanceChildLogFile(), 'x'.repeat(65 * 1024));
   await runMaintenance('status');
-  expect(readMaintenanceAttempt()).toEqual(expect.any(Number));
   expect(maintenanceStatus().claim).toMatchObject({
     unresolved: expect.stringContaining('bad.claim'),
     removeCommand: expect.stringContaining('bad.claim'),
@@ -164,6 +162,7 @@ test('status and gc JSON remain a single payload while their preAction hook star
     maintenance: { mode: 'report', running: null },
   });
   out.mockClear();
+  rmSync(maintenanceAttemptFile());
   triggerMaintenance('gc', { argv: ['gc', '--json'] });
   await runGc({ json: true, cache: 'recordings' });
   expect(out).toHaveBeenCalledTimes(1);
@@ -210,6 +209,29 @@ test('GC maintenance preview uses cached sizes and never calls du for a size sca
   expect(result.actions).toContainEqual(expect.objectContaining({ kind: 'would-trim-cache', bytes: 4 * 1024 ** 3 }));
   expect(measurements.measureSizes).not.toHaveBeenCalled();
   expect(resolveMaintenanceSettings()?.mode).toBe('report');
+});
+
+test('a blocked reason that differs only in its free-disk figure is not a new pass record', async () => {
+  let now = Date.now();
+  vi.spyOn(Date, 'now').mockImplementation(() => now);
+  const planned = vi.spyOn(preview, 'plannedMaintenance').mockResolvedValue({
+    actions: [],
+    skips: [],
+    blocked: ['free disk 46.3G on / under the 1000.0G floor; no reclaimable disk targets'],
+  });
+  await runMaintenance('status');
+  now += 60_000;
+  planned.mockResolvedValue({
+    actions: [],
+    skips: [],
+    blocked: ['free disk 45.7G on / under the 1000.0G floor; no reclaimable disk targets'],
+  });
+  await runMaintenance('status');
+  const records = readFileSync(maintenanceNdjsonFile(), 'utf8')
+    .trim()
+    .split('\n')
+    .map((line) => JSON.parse(line));
+  expect(records.filter((record) => record.event === 'maintenance_pass')).toHaveLength(1);
 });
 
 test.each([
@@ -264,24 +286,20 @@ test.each([
   });
 });
 
-test('failure before the first check stamp backs off child spawns for one minute', async () => {
+test('a child that fails before writing anything is not respawned for one minute', () => {
   let now = Date.now();
   vi.spyOn(Date, 'now').mockImplementation(() => now);
-  vi.spyOn(log, 'maintenanceLogger').mockImplementation(() => {
-    throw new Error('log lock blocked');
-  });
-  await runMaintenance('status');
-  expect(readMaintenanceState()).toBeNull();
-  expect(readMaintenanceAttempt()).toBe(now);
   const spawn = vi.fn<Executor['spawn']>(() => makeChildProcess());
   setExecutor({ spawn });
   triggerMaintenance('status', { argv: ['status'] });
+  expect(spawn).toHaveBeenCalledTimes(1);
+  expect(readMaintenanceState()).toBeNull();
   now += 59_999;
   triggerMaintenance('status', { argv: ['status'] });
-  expect(spawn).not.toHaveBeenCalled();
+  expect(spawn).toHaveBeenCalledTimes(1);
   now++;
   triggerMaintenance('status', { argv: ['status'] });
-  expect(spawn).toHaveBeenCalledTimes(1);
+  expect(spawn).toHaveBeenCalledTimes(2);
 });
 
 test('cached Swift CAS observations refresh build protection before each plan', async () => {
