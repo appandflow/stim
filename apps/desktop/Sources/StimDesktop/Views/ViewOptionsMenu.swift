@@ -245,9 +245,9 @@ private struct MenuRows<Submenu: View>: View {
         Button {
           activate(item)
         } label: {
-          MenuRow(item: item, highlighted: highlighted == item.id || pinned == item.id)
+          MenuRow(item: item)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.hoverRow(selected: highlighted == item.id || pinned == item.id))
         .onHover { inside in
           if inside { highlighted = item.id } else if highlighted == item.id { highlighted = nil }
         }
@@ -270,7 +270,6 @@ private struct MenuRows<Submenu: View>: View {
 
 private struct MenuRow: View {
   var item: MenuItem
-  var highlighted: Bool
 
   var body: some View {
     HStack(spacing: Space.md) {
@@ -296,7 +295,6 @@ private struct MenuRow: View {
     .font(.stim(.body))
     .padding(.horizontal, Space.md)
     .frame(height: 28)
-    .background(RoundedRectangle(cornerRadius: Radius.chip).fill(highlighted ? Palette.selection : Color.clear))
     .contentShape(Rectangle())
   }
 }

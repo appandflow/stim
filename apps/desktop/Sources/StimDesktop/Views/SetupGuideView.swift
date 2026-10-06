@@ -82,12 +82,9 @@ struct SetupGuideView: View {
           }
           .padding(.horizontal, Space.md)
           .frame(height: 30)
-          .background(
-            RoundedRectangle(cornerRadius: Radius.control).fill(item == step ? Palette.selection : .clear)
-          )
           .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.hoverRow(radius: Radius.control, selected: item == step))
         .accessibilityLabel([item.title, stateDescription(item)].filter { !$0.isEmpty }.joined(separator: ", "))
         .accessibilityAddTraits(item == step ? .isSelected : [])
       }
@@ -417,7 +414,7 @@ struct SetupGuideView: View {
               Text(item.title)
             }
           }
-          .buttonStyle(.plain)
+          .buttonStyle(.hoverRow(outset: Space.xs))
           .accessibilityLabel([item.title, stateDescription(item)].filter { !$0.isEmpty }.joined(separator: ", "))
         }
       }
