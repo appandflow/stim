@@ -10,7 +10,7 @@ import {
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
-import { spawn } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { createServer, request as httpRequest } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -31,6 +31,7 @@ const stateDir = args[args.indexOf('--state-dir') + 1];
 if (args[0] === 'proxy' && process.env.FAKE_PROXY === 'daemon-only') {
   const daemon = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { detached: true, stdio: 'ignore' });
   daemon.unref();
+  appendFileSync(process.env.FAKE_PIDS, daemon.pid + '\\n');
   writeFileSync(join(stateDir, 'daemon.json'), JSON.stringify({ pid: daemon.pid }));
   setInterval(() => {}, 1000);
 } else if (args[0] === 'proxy' && process.env.FAKE_PROXY === 'silent') {
@@ -39,6 +40,7 @@ if (args[0] === 'proxy' && process.env.FAKE_PROXY === 'daemon-only') {
   const code = (process.env.FAKE_DAEMON === 'stubborn' ? "process.on('SIGTERM', () => {});" : '') + 'setInterval(() => {}, 1000)';
   const daemon = spawn(process.execPath, ['-e', code], { detached: true, stdio: 'ignore' });
   daemon.unref();
+  appendFileSync(process.env.FAKE_PIDS, daemon.pid + '\\n');
   writeFileSync(join(stateDir, 'proxy-env.json'), JSON.stringify({
     policy: readFileSync(process.env.AGENT_DEVICE_DAEMON_POLICY, 'utf8'),
     backend: process.env.AGENT_DEVICE_MACOS_APP_BACKEND,
@@ -100,7 +102,7 @@ function driverIn(
   env: Record<string, string> = {},
 ) {
   return new AgentDeviceDriver({
-    env: { HOME: home, PATH: '/usr/bin:/bin', ...env },
+    env: { HOME: home, PATH: '/usr/bin:/bin', FAKE_PIDS: join(home, 'daemon-pids.log'), ...env },
     stateDir: join(home, 'state'),
     claimRoot: join(home, 'agent-device.claims'),
     watchMs: 50,
@@ -149,8 +151,30 @@ beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), 'stim-agent-device-'));
 });
 
-afterEach(() => {
+function isFixtureDaemon(pid: number): boolean {
+  try {
+    return execFileSync('ps', ['-o', 'command=', '-p', String(pid)], { encoding: 'utf8' }).includes('setInterval');
+  } catch (error) {
+    if ((error as { status?: number }).status === 1) return false;
+    throw error;
+  }
+}
+
+afterEach(async () => {
+  const log = join(root, 'daemon-pids.log');
+  const recorded = existsSync(log) ? readFileSync(log, 'utf8').split('\n').filter(Boolean).map(Number) : [];
+  let survivors = recorded.filter(isFixtureDaemon);
+  for (let waited = 0; survivors.length > 0 && waited < 1000; waited += 50) {
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    survivors = survivors.filter(isFixtureDaemon);
+  }
+  for (const pid of survivors) {
+    try {
+      process.kill(-pid, 'SIGKILL');
+    } catch {}
+  }
   rmSync(root, { recursive: true, force: true });
+  if (survivors.length > 0) throw new Error(`fake agent-device daemons outlived their test: ${survivors.join(', ')}`);
 });
 
 describe.skipIf(process.platform === 'win32')('agent-device driver', () => {
