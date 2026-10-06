@@ -1,3 +1,4 @@
+import type { HostedIosStatus } from './hosted-ios.ts';
 import type { MacosAppState } from './macos.ts';
 import type { TunnelMode, WebViewport } from './settings-registry.ts';
 import type { DeviceIdleShutdownRecord, IdleStopRecord, MetroLastStop } from './workspace-state.ts';
@@ -541,6 +542,7 @@ export interface MetroBundleState {
 }
 
 export interface SimulatorState {
+  host?: HostedIosStatus;
   name: string | null;
   udid: string;
   owned: boolean;

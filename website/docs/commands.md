@@ -234,7 +234,7 @@ same way when it is not running, so running `start` first is optional.
 
 ```text
 stim ios [--slot <name>] [--scheme <name>] [--configuration <name>] [--device-type <name>] [--runtime <version>]
-         [--simulator-app <xcode|siniulator|stim-desktop>] [--device [udid]] [--wait <seconds> | --no-wait] [--remote <proxy|eas>]
+         [--simulator-app <xcode|siniulator|stim-desktop>] [--device [udid]] [--wait <seconds> | --no-wait] [--remote <eas|proxy|auto|machine>]
          [--eas-profile <name>] [--no-metro-check] [--no-build-cache] [--plan] [--json]
 ```
 
@@ -267,14 +267,14 @@ build can compile on a paired build machine instead: see `offload.mode` in
   installed version, `stim ios` refuses instead of booting it: remove the
   simulator with `stim worktree remove` or `stim gc --delete`, or pass
   `--slot <name>` to create one beside it.
-- On a remote run (`--remote` or the `ios.remote` setting), `--runtime` refuses
+- On an eas/proxy run (`--remote` or `ios.remote`), `--runtime` refuses
   with `STIM_BAD_ARG` because the remote backend chooses the iOS version, and so
   does `--device-type` on the proxy backend. `--remote eas` honors
   `--device-type` by starting the EAS Simulator session with
   `eas simulator:start --device <name>`, which needs eas-cli 22.2.0 or later.
   A recorded EAS session still running another model refuses with
   `STIM_REMOTE_DEVICE_MISMATCH`; run `stim stop`, then rerun. The
-  `ios.deviceType` and `ios.runtime` settings are ignored on a remote run.
+  `ios.deviceType` and `ios.runtime` settings are ignored on an eas/proxy run. A named hosting Mac uses both selectors.
 - `--simulator-app <xcode|siniulator|stim-desktop>` overrides the machine `iosSimulatorApp`
   preference for this run. It also opens an already running owned simulator in
   that app without rebooting it. The preference is not saved. Local simulators
@@ -288,6 +288,8 @@ build can compile on a paired build machine instead: see `offload.mode` in
 - `--no-wait` bypasses leasing, including when another workspace holds the
   device. Installing the same app terminates that workspace's running app.
   Only with `--device`; cannot be combined with `--wait`.
+- `--remote <machine>` runs on a named approved Mac in `hosting.machines`, with no local fallback.
+  `auto` refuses until automatic placement ships. See [hosted iOS](./owned-devices.md#run-ios-on-another-mac).
 - `--remote proxy` uses a configured Agent Device daemon.
 - `--remote eas` uses an EAS remote simulator. It needs eas-cli 21.6.0 or later.
 - `--eas-profile <name>` selects a compatible [EAS development build](./eas-builds.md),
@@ -304,7 +306,7 @@ build can compile on a paired build machine instead: see `offload.mode` in
   worker name, absent when no build ran, including cache hits).
 
 A Debug run starts the workspace's dev server as `stim start` would when it is
-not running, including after an idle stop. With `--remote`, it starts it as
+not running, including after an idle stop. With eas/proxy `--remote`, it starts it as
 `stim start --remote` would. The JSON result then carries
 `devServer: { "started": true, "reason": "not running" | "stopped (idle)" }`.
 The run refuses only when that start fails, with the start's error code.
@@ -416,6 +418,8 @@ on a paired build machine instead: see `offload.mode` in
 - `--no-wait` bypasses leasing, including another workspace's lease. Installing
   the same app terminates that workspace's running app. Only with `--device`;
   cannot be combined with `--wait`.
+- `--remote <machine>` runs on a named approved Mac in `hosting.machines`, with no local fallback.
+  `auto` refuses until automatic placement ships. See [hosted iOS](./owned-devices.md#run-ios-on-another-mac).
 - `--remote proxy` uses a configured Agent Device daemon.
 - `--remote eas` uses an EAS remote emulator. It needs eas-cli 21.6.0 or later.
 - `--eas-profile <name>` selects a compatible [EAS development build](./eas-builds.md),

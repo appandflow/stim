@@ -31,3 +31,11 @@ test('the published schema covers every setting once, at the scope files it may 
     ),
   );
 });
+
+test('iOS hosting targets accept tailnet names and ports without widening Android remote values', () => {
+  const validate = new Ajv({ strict: false }).compile(settingsJsonSchema());
+  for (const remote of ['eas', 'proxy', 'auto', 'mini', 'mini.tail.ts.net:7443'])
+    expect(validate({ ios: { remote } })).toBe(true);
+  for (const remote of ['bad name', 'mini:0', 'mini:65536', true]) expect(validate({ ios: { remote } })).toBe(false);
+  for (const remote of ['auto', 'mini']) expect(validate({ android: { remote } })).toBe(false);
+});

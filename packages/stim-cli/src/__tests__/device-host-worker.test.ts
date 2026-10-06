@@ -8,7 +8,7 @@ const native = vi.hoisted(() => ({
   inventory: vi.fn<() => { udid: string; state: string }[]>(),
   create: vi.fn<(...args: unknown[]) => { udid: string; name: string }>(),
   boot: vi.fn<(target: string, options: { openViewer: boolean }) => void | Promise<void>>(),
-  teardown: vi.fn<(target: string) => { status: string; reason?: string }>(),
+  teardown: vi.fn<(target: string, options: { del: boolean }) => { status: string; reason?: string }>(),
   pressure: vi.fn<() => string | null>(),
 }));
 vi.mock('../host-memory.ts', () => ({ readHostMemoryPressure: () => native.pressure() }));
@@ -24,13 +24,15 @@ vi.mock('../devices/teardown.ts', () => ({
 let home: string;
 const udid = '12345678-1234-1234-1234-123456789abc';
 let simulatorState: string;
+let deleted: boolean;
 
 beforeEach(() => {
   vi.resetAllMocks();
   home = mkdtempSync(join(tmpdir(), 'stim-host-worker-'));
   process.env.STIM_HOME = home;
   simulatorState = 'Shutdown';
-  native.inventory.mockImplementation(() => [{ udid, state: simulatorState }]);
+  deleted = false;
+  native.inventory.mockImplementation(() => (deleted ? [] : [{ udid, state: simulatorState }]));
   native.pressure.mockReturnValue('normal');
   native.create.mockImplementation(() => {
     recordCreatedDevice('ios', udid);
@@ -39,8 +41,8 @@ beforeEach(() => {
   native.boot.mockImplementation(() => {
     simulatorState = 'Booted';
   });
-  native.teardown.mockImplementation(() => {
-    simulatorState = 'Shutdown';
+  native.teardown.mockImplementation((_target, options) => {
+    deleted = options.del;
     return { status: 'torn-down' };
   });
 });
@@ -49,7 +51,7 @@ afterEach(() => {
   rmSync(home, { recursive: true, force: true });
 });
 
-test('records exact ownership before boot, keeps the host viewer closed and verifies shutdown', async () => {
+test('records exact ownership before boot, keeps the host viewer closed and deletes instead of parking at stop', async () => {
   native.boot.mockImplementation((target, options) => {
     expect(target).toBe(udid);
     expect(options).toEqual({ openViewer: false });
@@ -60,7 +62,7 @@ test('records exact ownership before boot, keeps the host viewer closed and veri
   expect(await runHostedDevice('prepare', {})).toMatchObject({ state: 'unknown' });
   expect(native.create).toHaveBeenCalledTimes(1);
   expect(await runHostedDevice('stop', {})).toMatchObject({ state: 'stopped', device: { udid } });
-  expect(native.teardown).toHaveBeenCalledExactlyOnceWith(udid);
+  expect(native.teardown).toHaveBeenCalledExactlyOnceWith(udid, { del: true });
 });
 
 test.each(['inventory', 'memory'])('refuses unknown or unsafe %s before creation', async (failure) => {
@@ -99,6 +101,9 @@ test('never reports ready or stopped from command success without matching devic
   native.boot.mockResolvedValue(undefined);
   expect(await runHostedDevice('prepare', {})).toMatchObject({ state: 'unknown', device: { udid } });
   simulatorState = 'Booted';
-  native.teardown.mockReturnValue({ status: 'torn-down' });
+  native.teardown.mockImplementation(() => {
+    simulatorState = 'Shutdown';
+    return { status: 'torn-down' };
+  });
   expect(await runHostedDevice('stop', {})).toMatchObject({ state: 'unknown', device: { udid } });
 });

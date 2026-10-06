@@ -8,6 +8,20 @@ const errors: GuideTopic = {
 Every refusal listed here carries a stable CODE, whichever command prints it.
 Branch on the code, never on the message.`,
   sections: {
+    STIM_HOSTING_REFUSED: {
+      summary: 'a named hosting Mac refused or could not confirm its iOS session; no local fallback',
+      body: () => `STIM_HOSTING_REFUSED
+  The message names the hosting Mac and its reason: unreachable or changed
+  tailnet node, no installed simulator choice, no capacity, elevated or unknown
+  memory pressure, or an unresolved reservation or delivery. Stim boots nothing
+  locally and never tries another Mac. Check stim-server and Tailscale there,
+  then run stim doctor. Correct --device-type / --runtime when the offer names
+  an unavailable choice. A session that exists stays recorded even if delivery
+  fails: retry stim ios --remote <machine>, or run stim stop to reconcile it.
+  An unreachable stop keeps the placement; rerun stim stop when the host answers.
+  A name outside hosting.machines is STIM_BAD_ARG. Missing or pending hosting
+  approval keeps the doctor --fix and stim-server devices grant remedies.`,
+    },
     STIM_EAS_BUILD_MISSING: {
       summary: 'no completed EAS development build matches; build only with session authorization',
       separator: '--- EAS BUILD CODES (`ios --eas-profile` / `android --eas-profile`) ---',
@@ -1047,7 +1061,7 @@ captured"  (in metro.ndjson, bare RN)
   cannot be verified,
   \`--device\` with an empty
   serial or UDID, \`--device\` together with \`--remote\`, \`ios --runtime\`
-  on a remote run (\`--remote\` or ios.remote; the remote backend picks the
+  on an eas/proxy run (\`--remote\` or ios.remote; that backend picks the
   iOS version), \`ios --device-type\` on the proxy backend or with an
   eas-cli older than 22.2.0 on the eas backend, \`android --system-image\` or
   \`--device-profile\` on a remote run (\`--remote\` or android.remote), a

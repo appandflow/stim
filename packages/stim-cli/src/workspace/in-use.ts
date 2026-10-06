@@ -1,4 +1,4 @@
-import { macosAppState, readMacosRecord } from '@stim-cli/core/state';
+import { hostedIosPlacements, macosAppState, readMacosRecord } from '@stim-cli/core/state';
 import { macosRuntimeClaim } from '../macos/state.ts';
 import { lstatSync, readdirSync, rmdirSync, rmSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
@@ -24,11 +24,17 @@ const NATIVE_RUN_HELD = 'a stim ios, android or stop run holds its native-run.lo
 interface InUseChecks {
   supervisor?: boolean;
   managedLocks?: boolean;
+  hosted?: boolean;
 }
 
 export function workspaceInUse(
   root: string,
-  { supervisor = true, managedLocks = true, nativeRun = true }: InUseChecks & { nativeRun?: boolean } = {},
+  {
+    supervisor = true,
+    managedLocks = true,
+    hosted = true,
+    nativeRun = true,
+  }: InUseChecks & { nativeRun?: boolean } = {},
 ): string[] {
   const reasons: string[] = [];
   if (supervisor) {
@@ -62,6 +68,9 @@ export function workspaceInUse(
     if (claims.live.length) reasons.push(NATIVE_RUN_HELD);
     else if (claims.unresolved[0])
       reasons.push(`its native-run.lock cannot be resolved: ${claims.unresolved[0].reason}`);
+  }
+  for (const placement of Object.values(hosted ? hostedIosPlacements(readWorkspaceState(root)) : {})) {
+    reasons.push(`its iOS simulator runs on ${placement.machine}`);
   }
   const self = canonicalPath(root);
   for (const [kind, entries] of [

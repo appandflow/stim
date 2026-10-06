@@ -89,7 +89,8 @@ JSON, with reason "not running" or "stopped (idle)". When that start fails,
 the run refuses with the start's own code (STIM_METRO_TIMEOUT,
 STIM_SUPERVISOR_EXITED, ...) before any build work. Release builds and
 \`--no-metro-check\` neither check nor start the dev server. \`--remote\`
-starts it the way \`stim start --remote\` does. Step 2 remains useful to warm
+with eas or proxy starts it the way \`stim start --remote\` does. A named
+hosting Mac keeps Metro local through a private bridge; see hosted-ios. Step 2 remains useful to warm
 Metro while other work happens.
 
 Repeat step 3 whenever a NATIVE input changes. A JS-only edit needs nothing --
@@ -253,6 +254,61 @@ WAITING FOR A CHANGE
   still running, which it notices at the next change.
   Without --json it reprints the human view on change.`,
   sections: {
+    'hosted-ios': {
+      summary: 'iOS on a named approved Mac: strict placement, private Metro, status and stop',
+      body: () => `IOS ON A HOSTING MAC
+
+If Stim is not installed globally, replace stim with npx stim.
+
+  stim settings set hosting.machines '["janics-mac-mini"]'
+  stim doctor --fix
+  # A person there approves: stim-server devices grant <id> --device-host
+  stim doctor
+  stim ios --remote janics-mac-mini --device-type "iPhone 17 Pro" --runtime "iOS 27.0"
+  stim status --json
+  stim reload ios
+  stim stop
+
+The same setup serves macos --remote. Approval is separate from build, read
+and phone control. Set ios.remote to the machine name for a workspace default;
+no flag or setting runs here. eas and proxy keep their remote backend meanings.
+auto is accepted but refuses with STIM_BAD_ARG until automatic placement ships.
+Android on a paired Mac and hosted iOS agent leases are not available yet.
+The iOS agent reports { driver: 'none', setting: 'hosting.agentDriver' }.
+
+A named Mac is strict: STIM_HOSTING_REFUSED names its reason; nothing boots
+here or elsewhere. --device cannot use a hosting Mac, and --simulator-app
+refuses. The host boots headless and ignores this Mac's iosSimulatorApp setting.
+--slot, --device-type and --runtime select the hosted simulator; --scheme,
+--configuration and --eas-profile select the app as usual. The build targets
+the offered simulator architecture, not this Mac's. --build-machine remains
+independent and selects a compatible build worker for a Debug cache miss.
+
+Stim builds or fetches before reserving, records the session immediately, then
+uploads the app on every run. Debug keeps Metro here; its supervisor owns a
+private gateway bound to this Mac's Tailscale address, pinned to the host peer
+and protected by a per-session secret. The host exposes only a loopback bridge.
+No start --remote is needed; metro.tunnel and metro.publicUrl are ignored.
+Non-Debug runs skip Metro. Launch is unverified until this workspace's Metro
+provides bundle evidence, or the host proves a live release process.
+
+A rerun on the same named Mac reattaches and delivers a new app attempt. A
+stopped or missing session is replaced; an unreachable or unknown owner refuses
+replacement. A different Mac or a local run refuses: run stim stop first.
+Status adds ios.host { machine, session, selected, device: { name, runtime },
+agent } per slot; no host UDID or gateway secret enters local device state or
+status. Ready is normal; stopped has a rerun hint; unknown or unreachable is
+unverified. A host server restart stops its sessions.
+
+stop and worktree remove wait for the host to stop, delete exactly its owned
+simulator without parking, close the gateway and clear placement. Revoked or
+missing sessions clear placement too. An unreachable host retains placement
+and fails cleanup: rerun stim stop when it answers. devices.idleShutdownMinutes
+does not stop a hosted simulator in this phase; its recorded session keeps Metro
+from idle stopping. Native hosted iOS logs are not collected yet; JavaScript
+logs already arrive through Metro. Client viewing relays, app handoff, upload
+deduplication and agent control are later work.`,
+    },
     eas: {
       summary: 'download a matching EAS development build; explicit profile, costs, cache and miss remedies',
       body: () => `EAS DEVELOPMENT BUILDS
@@ -1330,7 +1386,7 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
         'every flag per command, Android variants and flavors, the per-run simulator model, runtime and system image',
       body: () => `THE OPTION SURFACE, IN FULL
   start           --json --wait <seconds> --remote --reset-cache
-  ios             --build-machine <auto|local|name> --slot <name> --json --plan --no-metro-check --no-build-cache --scheme <name> --configuration <name> --device-type <name> --runtime <version> --simulator-app <xcode|siniulator|stim-desktop> --device [udid] --wait <seconds> --no-wait --remote <proxy|eas>
+  ios             --build-machine <auto|local|name> --slot <name> --json --plan --no-metro-check --no-build-cache --scheme <name> --configuration <name> --device-type <name> --runtime <version> --simulator-app <xcode|siniulator|stim-desktop> --device [udid] --wait <seconds> --no-wait --remote <eas|proxy|auto|machine>
   android         --build-machine <auto|local|name> --slot <name> --json --plan --no-metro-check --no-build-cache --variant <name> --system-image <id> --device-profile <id> --device [serial] --wait <seconds> --no-wait --remote <proxy|eas>
   reload          [ios|android] --json
   device          lock <ios|android> [id] --slot <name> --for <duration> --wait <seconds> --json;
@@ -1365,7 +1421,7 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
   and prints what it waits for. \`stop --slot\` interrupts a build only for
   its own slot or when it stops the workspace's only device (see STOP DURING
   A BUILD).
-  Named slots support local devices; remote sessions use the default slot.
+  Named slots support local devices and hosted iOS simulators; eas/proxy sessions use the default slot.
   Names use 1-64 letters, digits, underscores or hyphens, starting with a letter
   or digit. Reserved object-property names and web are refused.
 
@@ -1571,7 +1627,7 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
   \`--device-type "iPhone 8" --runtime 26.5\` that each half would pass alone.
   \`--runtime\` takes a version (\`26.5\`) or a runtime's full name
   (\`iOS 26.5\`), exactly; no prefix or suffix matches. On a remote run
-  (\`--remote\` or the ios.remote setting) \`--runtime\` refuses with
+  (eas/proxy via \`--remote\` or ios.remote) \`--runtime\` refuses with
   STIM_BAD_ARG, because the remote backend picks the iOS version. So does
   \`--device-type\` on the proxy backend. The eas backend honors
   \`--device-type\`: Stim passes it to \`eas simulator:start --device\`,
@@ -1580,7 +1636,9 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
   recorded EAS session still running another model refuses with
   STIM_REMOTE_DEVICE_MISMATCH instead of being reused; one that already
   ended is replaced on the requested model. The ios.deviceType and
-  ios.runtime settings do not refuse on a remote run; it ignores them.
+  ios.runtime settings do not refuse on an eas/proxy run; it ignores them.
+  A named hosting Mac uses both selectors and its installed choices instead;
+  an unavailable choice is STIM_HOSTING_REFUSED. See hosted-ios.
   \`android --system-image\` and \`--device-profile\` refuse with
   STIM_BAD_ARG on every remote run (\`--remote\` or the android.remote
   setting), and a remote run ignores android.systemImage and

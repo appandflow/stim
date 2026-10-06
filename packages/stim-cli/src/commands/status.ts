@@ -1,3 +1,5 @@
+import { readHostedIosStatus } from '../device-host/hosted-ios-status.ts';
+import { readHostedIos } from '../device-host/ios-state.ts';
 import { readHostedMacosStatus } from '../device-host/hosted-macos-status.ts';
 import { inspectProcessIdentity } from '../process-identity.ts';
 import { deviceSlotKey, projectDeviceSlots } from '../devices/device-slots.ts';
@@ -136,6 +138,13 @@ interface StatusOptions {
 
 const WATCH_GIT_MAX_AGE_MS = 60_000;
 
+function iosStatusName(ios: NonNullable<EnvironmentState['ios']>): string {
+  const host = ios.host;
+  return host
+    ? `${host.device?.name ?? 'iOS simulator'} (${host.device?.runtime ?? 'runtime pending'}) on ${host.machine}`
+    : (ios.name ?? ios.udid);
+}
+
 function formatGb(mb: number): string {
   return `${(mb / 1024).toFixed(1)} GB`;
 }
@@ -179,6 +188,7 @@ function readStatus(gitMaxAgeMs: number, simctlListing: string | null = null): P
 async function readStatusFacts(gitMaxAgeMs: number, simctlListing: string | null): Promise<StatusSnapshot> {
   const cfg = loadConfig();
   const projects = Object.entries(cfg?.projects || {});
+  const iosReads = projects.map(([path]) => readHostedIosStatus(readHostedIos(path)));
   const macosReads = projects.map(([path]) => readHostedMacosStatus(readMacosRecord(path)));
   const cwdRoot = findServerWorkspace(process.cwd())?.root ?? null;
   const worktrees = linkedWorktrees([process.cwd(), ...projects.map(([path]) => path)]);
@@ -314,6 +324,17 @@ async function readStatusFacts(gitMaxAgeMs: number, simctlListing: string | null
     );
     const state = states[states.length - 1];
     if (state) {
+      for (const [slot, facts] of Object.entries(await iosReads[i]!)) {
+        if (slot === 'default') state.ios = facts.ios;
+        else {
+          state.slots ??= [];
+          const savedSlot = state.slots.find((entry) => entry.slot === slot);
+          if (savedSlot) savedSlot.ios = facts.ios;
+          else state.slots.push({ slot, ios: facts.ios, android: null });
+        }
+        if (facts.warning) state.warnings.push(facts.warning);
+        state.live ||= facts.ios.state === 'ready';
+      }
       const tunnel = readMetroTunnel(path);
       if (state.metro && tunnel?.kind === 'managed' && tunnel.port === state.metro.port && pidExists(tunnel.pid)) {
         state.metro.tunnel = { provider: tunnel.provider, url: tunnel.url };
@@ -583,7 +604,7 @@ function renderStatus(
           deviceState.ios.state === 'Booted' ? chalk.green('booted') : chalk.dim(deviceState.ios.state.toLowerCase());
         const owned = deviceState.ios.owned ? chalk.dim(' (owned)') : '';
         out.push(
-          `  ios${slotLabel}: ${chalk.cyan(deviceState.ios.name ?? deviceState.ios.udid)} ${booted}${owned}${activitySuffix(deviceState.ios.activity)}${appSuffix(deviceState.ios.app)}${idleShutdownSuffix(deviceState.ios.idleShutdown)}`,
+          `  ios${slotLabel}: ${chalk.cyan(iosStatusName(deviceState.ios))} ${booted}${owned}${activitySuffix(deviceState.ios.activity)}${appSuffix(deviceState.ios.app)}${idleShutdownSuffix(deviceState.ios.idleShutdown)}`,
         );
       }
       if (deviceState.android) {

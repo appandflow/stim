@@ -13,12 +13,22 @@ import {
 import { type Command, InvalidArgumentError } from 'commander';
 import chalk from 'chalk';
 import { formatDuration, phaseLine, SLOW_STEP_MS, stepClock, stepTimer } from '../command-output.ts';
-import { waitFlagConflict, leaseExpiryText, parseDeviceWait, type RunLease } from '../engine/device-lease-run.ts';
-import type { RemoteDeviceBackend } from '../engine/device-remote.ts';
+import { waitFlagConflict, leaseExpiryText, type RunLease } from '../engine/device-lease-run.ts';
+import { parseMachine } from '@stim-cli/core/state';
+import {
+  connectIosBackend,
+  iosPlacementBudget,
+  hostedIosMetroNote,
+  iosMetroSettings,
+  connectIosTarget,
+  hostedIosBuildTarget,
+  hostedIosSelectors,
+  resolveIosRemote,
+} from './ios/remote.ts';
+import { finishHostedIosRun } from './ios/hosted.ts';
 import type { CompilationCacheActivity, DevServerStart } from '../engine/build-facts.ts';
 import { exitAfterFlush } from '../engine/remote-cache.ts';
 import {
-  REMOTE_DEVICE_BACKENDS,
   cacheProviderSettingError,
   iosLanHostSetting,
   iosLanHostSettingError,
@@ -28,7 +38,6 @@ import {
   iosSigningIdentitySha1SettingError,
   metroWarmupUrlSetting,
   publicUrlSetting,
-  remoteIosSetting,
   SETTING_SHAPE_REMEDY,
   metroPortSetting,
   settingShapeErrors,
@@ -67,12 +76,12 @@ import {
   resolveDeviceType,
   resolveRuntime,
   resolveSimulatorAppFlag,
+  resolveIosWait,
   deviceModelRefusal,
   isReleaseConfiguration,
   ownedSimFailure,
   simulatorBuildArch,
 } from './ios/support.ts';
-import type { SimulatorArch } from '../engine/agent-device.ts';
 import { lastBuildRecord, writeLastBuild } from './ios/result.ts';
 import { finishIosRun, type IosRunCompletion } from './ios/launch.ts';
 import { planIos } from './ios/next-build.ts';
@@ -174,11 +183,11 @@ export function registerIos(program: Command, deps: Partial<IosDeps> = {}): void
         "workspace's Metro over the LAN. Stim never creates, boots, or deletes a physical device.",
     )
     .option(
-      '--remote <backend>',
-      'Install and launch on a remote device with proxy or EAS. Builds are local unless --eas-profile selects an existing EAS build.',
+      '--remote <target>',
+      'Run on eas, proxy, or an approved Mac in hosting.machines; named Macs never fall back locally. auto is not available yet.',
       (value) => {
-        if ((REMOTE_DEVICE_BACKENDS as readonly string[]).includes(value)) return value as RemoteDeviceBackend;
-        throw new InvalidArgumentError(`expected one of: ${REMOTE_DEVICE_BACKENDS.join(', ')}`);
+        if (parseMachine(value)) return value.trim();
+        throw new InvalidArgumentError('expected eas, proxy, auto, or a hosting Mac name');
       },
     )
     .option(
@@ -515,37 +524,17 @@ async function runIos(
     });
   }
 
-  const noWait = opts.wait === false;
-  const waitFlagged = opts.wait !== undefined;
-  if (opts.waitConflict) {
-    return fail({
-      code: 'STIM_BAD_ARG',
-      message: '--wait and --no-wait ask for opposite things.',
-      remedy: 'Pass `--wait <seconds>` to wait for the lease, or `--no-wait` to install without one.',
-    });
-  }
-  if (waitFlagged && !physical) {
-    return fail({
-      code: 'STIM_BAD_ARG',
-      message: '--wait and --no-wait only apply to a `--device` run.',
-      remedy: 'This workspace owns its simulator, so nothing contends for it. Drop the flag, or pass `--device`.',
-    });
-  }
-  const waitParsed = parseDeviceWait(noWait ? undefined : opts.wait);
-  if ('error' in waitParsed) {
-    return fail({
-      code: 'STIM_BAD_ARG',
-      message: waitParsed.error,
-      remedy: 'Pass a whole number of seconds, e.g. --wait 90. `--wait 0` refuses a leased device at once.',
-    });
-  }
-  const waitSeconds = waitParsed.seconds;
+  const wait = resolveIosWait(opts, physical);
+  if ('failure' in wait) return fail(wait.failure);
+  const { waitSeconds, noWait } = wait;
 
   const isExpo = d.detectIsExpo(root);
   const schemeRefusal = explicitSchemeRefusal(root, buildScheme, isExpo, d);
   if (schemeRefusal) return fail(schemeRefusal);
-  const remoteBackend = physical ? null : (opts.remote ?? remoteIosSetting(settings));
-  const viewer = resolveSimulatorAppFlag(opts.simulatorApp, physical, remoteBackend);
+  const remoteSelection = resolveIosRemote({ opts, settings, physical, recorded: d.readHostedIos(root)[slot] });
+  if ('failure' in remoteSelection) return fail(remoteSelection.failure);
+  const { machine: hostedMachine, backend: remoteBackend } = remoteSelection;
+  const viewer = resolveSimulatorAppFlag(opts.simulatorApp, physical, hostedMachine ?? remoteBackend);
   if ('refusal' in viewer) return fail(viewer.refusal);
   const { simulatorApp } = viewer;
   const settingsLayersForOrigin = d.settingsLayers(settingsContext);
@@ -559,433 +548,461 @@ async function runIos(
     runtimeOrigin: d.settingOriginScope(settingsLayersForOrigin, 'ios.runtime'),
     physical,
     remoteBackend,
+    hosted: Boolean(hostedMachine),
     listRuntimes: d.listIosRuntimes,
   });
   if (modelRefusal) return fail(modelRefusal);
-  const budget = await d.budgetGate({ root, note });
-  reclaimed = budget.reclaimed;
-  if (budget.refusal) return fail(budget.refusal);
-  let remoteDevice: ReturnType<typeof d.remoteIosDeps> | null = null;
-  let remoteArch: SimulatorArch | null = null;
-  if (remoteBackend) {
-    const resolved = await d.resolveRemoteContext({
-      root,
-      backend: remoteBackend,
-      easBin: d.resolveEasCliBin(root)?.file ?? null,
-      deviceType: opts.deviceType?.trim() || null,
-    });
-    if ('failed' in resolved) {
-      return fail({ code: resolved.code ?? REMOTE_SESSION_ERROR, message: resolved.failed, remedy: resolved.remedy });
-    }
-    remoteDevice = d.remoteIosDeps(resolved.ctx);
-    remoteArch = await d.readRemoteSimulatorArch(resolved.ctx.existingDaemon);
-    d = {
-      ...d,
-      checkDeviceCapacity: remoteDevice.checkDeviceCapacity,
-      ensureOwnedDevice: remoteDevice.ensureOwnedDevice,
-      ensureBooted: remoteDevice.ensureBooted,
-      installIosApp: remoteDevice.installIosApp,
-      launchIosApp: remoteDevice.launchIosApp,
-    };
-  }
-
-  const easBuild = await d.resolveEasDevelopmentBuild({
-    root,
-    platform: PLATFORM,
-    profile: opts.easProfile,
-    note,
-    isExpo,
-    physical,
-    selectors: [opts.scheme, opts.configuration],
-    buildCache: opts.buildCache,
-  });
-  if (isEasBuildFailure(easBuild)) return fail(easBuild);
-  const registerProject = () => d.upsertProject(root, { bundleId: d.detectBundleId(root) ?? undefined, isExpo });
-  if (remoteBackend !== 'eas') registerProject();
-  const proj = d.getProject(root);
-
-  const limits = d.getConcurrencyLimits();
-
-  let physicalDevice: { udid: string; name: string } | null = null;
-  let wireless = false;
-  if (physical && typeof deviceFlag !== 'string') {
-    const pooled = await d.selectFromPool({
-      root,
-      platform: PLATFORM,
-      idLabel: 'udid',
-      list: () =>
-        iosPoolCandidates(d.listIosDevices()).map((entry) => ({
-          id: entry.udid,
-          name: entry.name,
-          fallback: isWirelessIosDevice(entry),
-        })),
-      noCandidates: () => {
-        const resolved = iosPoolNoCandidatesRefusal(d.listIosDevices());
-        return { message: resolved.error as string, remedy: resolved.remedy as string };
-      },
-      waitSeconds,
-      noWait,
-      now: d.now,
-      warn: (line: string) => note(chalk.yellow(phaseLine('lease', line))),
-    });
-    if (pooled.status === 'refused') {
-      return fail({
-        code: pooled.refusal.code,
-        message: pooled.refusal.message,
-        remedy: pooled.refusal.remedy,
-        ...(pooled.refusal.lease === null ? {} : { lease: pooled.refusal.lease }),
-      });
-    }
-    physicalDevice = { udid: pooled.candidate.id, name: pooled.candidate.name ?? pooled.candidate.id };
-    wireless = pooled.candidate.fallback === true;
-  } else if (physical) {
-    const resolved = resolveIosPhysicalDevice(typeof deviceFlag === 'string' ? deviceFlag : null, d.listIosDevices());
-    if (!resolved.udid) {
-      return fail({ code: 'STIM_NO_DEVICE', message: resolved.error!, remedy: resolved.remedy! });
-    }
-    physicalDevice = { udid: resolved.udid, name: resolved.name ?? resolved.udid };
-    wireless = resolved.wireless === true;
-  }
-  if (!physical) {
-    const capacity = d.checkDeviceCapacity({
-      platform: PLATFORM,
-      project: proj,
-      max: limits.maxDevices,
-    });
-    if (capacity) return fail(capacity);
-  }
-
-  let metroPort = proj?.metroPort ?? null;
-  let lanAddress: string | null = null;
-  let lanOriginUrl: string | null = null;
-  let devServer: DevServerStart | null = null;
-  if (!(await resolveMetroPort())) return null;
-
-  let device: Awaited<ReturnType<typeof ensureOwnedDevice>>;
-  if (physicalDevice) {
-    device = { deviceUdid: physicalDevice.udid, deviceName: physicalDevice.name, owned: false } as Awaited<
-      ReturnType<typeof ensureOwnedDevice>
-    >;
-  } else {
-    const prepare = stepClock(d.now);
-    try {
-      device = await d.ensureOwnedDevice({
-        platform: PLATFORM,
-        project: proj,
-        projectPath: root,
-        settingsRoot: root,
-        settings,
-        flags: { deviceType, runtime, runtimeFlag: resolveRuntime(opts.runtime, null), simulatorApp },
-        note,
-        out: note,
-      });
-    } catch (e) {
-      return fail(ownedSimFailure(e));
-    }
-    progress.deviceSetup(didSetUpDevice(device, Boolean(remoteDevice)));
-    const prepareMs = prepare();
-    if (device.created || prepareMs >= SLOW_STEP_MS) {
-      phase(
-        'device',
-        `${deviceLabel(device, device.deviceUdid)} ${device.created ? 'created' : 'prepared'} (${formatDuration(prepareMs)})`,
-      );
-    }
-  }
-
-  let bootDuration = '';
-  let bootPromise!: Promise<{ ok?: boolean; reason?: string; udid?: string } | null | undefined>;
-  let udid = '';
-  async function resolveMetroPort(): Promise<boolean> {
-    if (release) {
-      metroPort = null;
-      phase('metro', `skipped (${configuration}: the JS bundle is embedded, no dev server is used)`);
-    } else if (metroCheck) {
-      const gate = await ensureDevServer({
-        root,
-        port: metroPort,
-        settings,
-        remote: Boolean(remoteDevice),
-        note,
-        resolve: d.resolveProjectMetro,
-        start: d.startDevServer,
-        readState: d.readWorkspaceState,
-      });
-      reclaimed = [...reclaimed, ...gate.reclaimed];
-      if (!gate.ok) {
-        fail({ code: gate.code, message: gate.message, remedy: gate.remedy, lines: gate.lines });
-        return false;
-      }
-      metroPort = gate.port;
-      devServer = gate.devServer;
-    } else {
-      const pin = metroPortSetting(root);
-      if (pin.error) {
-        fail({ code: 'STIM_BAD_ARG', message: pin.error, remedy: SETTING_SHAPE_REMEDY });
-        return false;
-      }
-      if (pin.port === null && !metroPort)
-        note(chalk.yellow(`No Metro port is reserved for this workspace; wiring the app to ${DEFAULT_METRO_PORT}.`));
-      metroPort = pin.port ?? metroPort ?? DEFAULT_METRO_PORT;
-    }
-    if (physical && metroPort !== null && !(await resolveLanOrigin())) return false;
-    if (remoteDevice && metroPort !== null) {
-      const reachable = await d.ensureMetroReachable({
-        ctx: remoteDevice.ctx,
-        metroPort,
-        isExpo,
-        tunnelMode: tunnelModeSetting(settings) ?? undefined,
-        publicUrl: publicUrlSetting(settings),
-        available: d.detectProviders(binOnPath, tunnelModeSetting(settings) ?? 'auto'),
-      });
-      if ('failed' in reachable) {
-        fail({
-          code: reachable.code ?? REMOTE_SESSION_ERROR,
-          message: reachable.failed,
-          remedy: reachable.remedy,
-        });
-        return false;
-      }
-    }
-    if (!release && metroCheck && optimizations.metroWarmup)
-      void d.warmMetro({
-        port: metroPort as number,
-        platform: 'ios',
-        isExpo,
-        appId: proj?.bundleId,
-        bundleUrl: metroWarmupUrlSetting(settings, 'ios'),
-      });
-    return true;
-  }
-
-  async function resolveLanOrigin(): Promise<boolean> {
-    const port = metroPort as number;
-    const pinned = iosLanHostSetting(settings);
-    const candidates = d.hostLanCandidates();
-    const chosen = chooseLanAddress({ pinned, candidates });
-    if (!chosen) {
-      fail({
-        code: 'STIM_NO_LAN_ADDRESS',
-        message:
-          'A Debug run on a phone needs an address the phone can reach, and this Mac has no non-internal IPv4 interface.',
-        remedy:
-          'The phone reaches Metro over the network you share, because USB carries no reverse forward. ' +
-          'Join a Wi-Fi or Ethernet network, or connect this Mac by cable, then run the command again.',
-      });
-      return false;
-    }
-    lanAddress = chosen.address;
-    lanOriginUrl = lanOriginUrlFor(chosen.address, port);
-    const source = chosen.pinned
-      ? 'ios.lanHost'
-      : `${chosen.interfaceName ?? 'interface'}${chosen.candidates > 1 ? ` of ${chosen.candidates} candidates` : ''}`;
-    phase('lan', `${lanOriginUrl} (${source})`);
-    if (publicUrlSetting(settings) || tunnelModeSetting(settings)) {
-      note(
-        chalk.dim(
-          phaseLine(
-            'lan',
-            'metro.publicUrl and metro.tunnel are ignored on --device: neither channel to a phone carries a URL, ' +
-              'only a host and a port. They still apply to --remote.',
-          ),
-        ),
-      );
-    }
-    if (!metroCheck) return true;
-    const reachable = await d.ensureLanReachable({
-      origin: lanOriginUrl,
-      metroPort: port,
-      root,
-      isExpo,
-      logsDir,
-    });
-    if ('failed' in reachable) {
-      fail({ code: 'STIM_LAN_METRO_UNREACHABLE', message: reachable.failed, remedy: reachable.remedy });
-      return false;
-    }
-    phase('lan', `gated: ${lanOriginUrl} answered as this workspace's Metro`);
-    return true;
-  }
-
-  let artifact: PreparedIosArtifact | null = null;
+  const selectors = hostedIosSelectors(deviceType, runtime);
+  const connected = await connectIosTarget(remoteSelection, selectors, d);
+  if ('failure' in connected) return fail(connected.failure);
+  const hostedTarget = connected.target;
   try {
-    const boot = (): Promise<IosBootLike> =>
-      physicalDevice
-        ? Promise.resolve({ ok: true, udid: physicalDevice.udid })
-        : Promise.resolve(d.ensureBooted({ platform: PLATFORM, device, simulatorApp, out: note })).catch((e) => ({
-            ok: false,
-            reason: String((e as Error)?.message || e),
-          }));
-    const startBoot = (): Promise<string> => {
-      const bootTimer = stepTimer(d.now);
-      bootPromise = (
-        remoteDevice?.ctx.backend === 'eas'
-          ? d.ensureRemoteBootOwned({
-              root,
-              platform: PLATFORM,
-              sessionName: ownedSessionName(remoteDevice.ctx.label),
-              startedAt: new Date(d.now()).toISOString(),
-              deviceType: remoteDevice.ctx.deviceType ?? null,
-              boot,
-              createdSessionId: remoteDevice.createdSessionId,
-              abandonCreatedSession: remoteDevice.abandonCreatedSession,
-              webPreviewUrl: remoteDevice.webPreviewUrl,
-              writeState: d.writeWorkspaceState,
-              register: registerProject,
-              notice: (line: string) => note(chalk.dim(phaseLine('lock', line))),
-            })
-          : boot()
-      ).then((result) => {
-        bootDuration = bootTimer();
-        return result;
-      });
-      return bootPromise.then((result) => result?.udid ?? '');
-    };
-    // A remote device boots after the build: agent-device's daemon exits five
-    // minutes after its last request while no session is open, and nothing
-    // restarts it on an EAS host (https://github.com/appandflow/stim/issues/1212).
-    const localBoot = remoteDevice ? null : startBoot();
-    udid = (device.deviceUdid as string | undefined) ?? (await localBoot) ?? '';
-    const acquiredArtifact = unlessCancelled(
-      await acquireIosArtifact(
-        {
-          root,
-          logFile,
-          udid,
-          configuration,
-          buildScheme,
-          buildProfile,
-          buildMachine,
-          isExpo,
-          remoteDestination: Boolean(remoteDevice),
-          simulatorArch: simulatorBuildArch({ physical, remoteArch, hostArch: d.hostSimulatorArch(), configuration }),
-          device: physical
-            ? {
-                lanAddress,
-                metroPort,
-                signingName: iosSigningIdentitySetting(settings),
-                signingSha1: iosSigningIdentitySha1Setting(settings),
-              }
-            : null,
-          optimizations: optimizations.ios,
-          cache: {
-            policy: cachePolicy,
-            providerConfig: cacheProviderConfig,
-            disabledByFlag: opts.buildCache === false,
-          },
-          easBuild,
-          easProfile: opts.easProfile,
-          maxBuilds: limits.maxBuilds,
-          progress: {
-            phase,
-            note,
-            logWriter,
-            estimates,
-            stats,
-            step: progress.step,
-            miss: progress.miss,
-            hit: progress.hit,
-            place: progress.place,
-            waitingOn: progress.waitingOn,
-          },
-        },
-        d,
-      ),
-    );
-    if (!acquiredArtifact.ok) {
-      compilationCache = acquiredArtifact.compilationCache;
-      return fail(acquiredArtifact.failure);
-    }
-    artifact = acquiredArtifact.artifact;
-    compilationCache = artifact.cache.compilation;
-    if (!localBoot) {
-      progress.step('device');
-      udid = await startBoot();
-    }
+    const budget = await iosPlacementBudget(d, root, note, Boolean(hostedTarget));
+    reclaimed = budget.reclaimed;
+    if (budget.refusal) return fail(budget.refusal);
+    const backendConnection = await connectIosBackend(root, remoteBackend, opts.deviceType, d);
+    if ('failure' in backendConnection) return fail(backendConnection.failure);
+    const remoteDevice = backendConnection.remote;
+    const remoteArch = hostedTarget ? hostedTarget.choice.architecture : backendConnection.arch;
+    if (remoteDevice)
+      d = {
+        ...d,
+        checkDeviceCapacity: remoteDevice.checkDeviceCapacity,
+        ensureOwnedDevice: remoteDevice.ensureOwnedDevice,
+        ensureBooted: remoteDevice.ensureBooted,
+        installIosApp: remoteDevice.installIosApp,
+        launchIosApp: remoteDevice.launchIosApp,
+      };
 
-    if (physicalDevice) {
-      progress.step('device');
-      const acquired = await d.acquireRunLease({
+    const easBuild = await d.resolveEasDevelopmentBuild({
+      root,
+      platform: PLATFORM,
+      profile: opts.easProfile,
+      note,
+      isExpo,
+      physical,
+      selectors: [opts.scheme, opts.configuration],
+      buildCache: opts.buildCache,
+    });
+    if (isEasBuildFailure(easBuild)) return fail(easBuild);
+    const registerProject = () => d.upsertProject(root, { bundleId: d.detectBundleId(root) ?? undefined, isExpo });
+    if (remoteBackend !== 'eas') registerProject();
+    const proj = d.getProject(root);
+
+    const limits = d.getConcurrencyLimits();
+
+    let physicalDevice: { udid: string; name: string } | null = null;
+    let wireless = false;
+    if (physical && typeof deviceFlag !== 'string') {
+      const pooled = await d.selectFromPool({
         root,
         platform: PLATFORM,
-        id: physicalDevice.udid,
-        deviceName: physicalDevice.name,
         idLabel: 'udid',
+        list: () =>
+          iosPoolCandidates(d.listIosDevices()).map((entry) => ({
+            id: entry.udid,
+            name: entry.name,
+            fallback: isWirelessIosDevice(entry),
+          })),
+        noCandidates: () => {
+          const resolved = iosPoolNoCandidatesRefusal(d.listIosDevices());
+          return { message: resolved.error as string, remedy: resolved.remedy as string };
+        },
         waitSeconds,
         noWait,
-        installBoundMs: iosDeviceBounds(wireless).installMs,
-        appId: artifact.bundleId ?? proj?.bundleId ?? null,
-        holderAppId: (holder: string) => d.getProject(holder)?.bundleId ?? null,
         now: d.now,
         warn: (line: string) => note(chalk.yellow(phaseLine('lease', line))),
       });
-      if (acquired.status === 'refused') {
+      if (pooled.status === 'refused') {
         return fail({
-          code: acquired.refusal.code,
-          message: acquired.refusal.message,
-          remedy: acquired.refusal.remedy,
-          lease: acquired.refusal.lease,
+          code: pooled.refusal.code,
+          message: pooled.refusal.message,
+          remedy: pooled.refusal.remedy,
+          ...(pooled.refusal.lease === null ? {} : { lease: pooled.refusal.lease }),
         });
       }
-      leaseHandle = d.runLease({
-        root,
+      physicalDevice = { udid: pooled.candidate.id, name: pooled.candidate.name ?? pooled.candidate.id };
+      wireless = pooled.candidate.fallback === true;
+    } else if (physical) {
+      const resolved = resolveIosPhysicalDevice(typeof deviceFlag === 'string' ? deviceFlag : null, d.listIosDevices());
+      if (!resolved.udid) {
+        return fail({ code: 'STIM_NO_DEVICE', message: resolved.error!, remedy: resolved.remedy! });
+      }
+      physicalDevice = { udid: resolved.udid, name: resolved.name ?? resolved.udid };
+      wireless = resolved.wireless === true;
+    }
+    if (!physical && !hostedTarget) {
+      const capacity = d.checkDeviceCapacity({
         platform: PLATFORM,
-        kind: acquired.status === 'leased' ? acquired.kind : null,
-        expiresAt: acquired.status === 'leased' ? acquired.expiresAt : null,
+        project: proj,
+        max: limits.maxDevices,
       });
-      if (acquired.status === 'leased') {
-        stopLeaseSignals = d.releaseLeaseOnSignal(releaseLease);
+      if (capacity) return fail(capacity);
+    }
+
+    let metroPort = proj?.metroPort ?? null;
+    let lanAddress: string | null = null;
+    let lanOriginUrl: string | null = null;
+    let devServer: DevServerStart | null = null;
+    if (!(await resolveMetroPort())) return null;
+
+    let device: Awaited<ReturnType<typeof ensureOwnedDevice>>;
+    if (physicalDevice) {
+      device = { deviceUdid: physicalDevice.udid, deviceName: physicalDevice.name, owned: false } as Awaited<
+        ReturnType<typeof ensureOwnedDevice>
+      >;
+    } else if (hostedTarget) {
+      device = { owned: false, deviceName: hostedTarget.choice.deviceType, runtime: hostedTarget.choice.runtime };
+    } else {
+      const prepare = stepClock(d.now);
+      try {
+        device = await d.ensureOwnedDevice({
+          platform: PLATFORM,
+          project: proj,
+          projectPath: root,
+          settingsRoot: root,
+          settings,
+          flags: { deviceType, runtime, runtimeFlag: resolveRuntime(opts.runtime, null), simulatorApp },
+          note,
+          out: note,
+        });
+      } catch (e) {
+        return fail(ownedSimFailure(e));
+      }
+      progress.deviceSetup(didSetUpDevice(device, Boolean(remoteDevice)));
+      const prepareMs = prepare();
+      if (device.created || prepareMs >= SLOW_STEP_MS) {
         phase(
-          'lease',
-          `${acquired.kind} lease on ${physicalDevice.udid} until ${leaseExpiryText(acquired.expiresAt, d.now())}`,
+          'device',
+          `${deviceLabel(device, device.deviceUdid)} ${device.created ? 'created' : 'prepared'} (${formatDuration(prepareMs)})`,
         );
       }
     }
 
-    try {
-      return await finishIosRun({
-        slot,
-        d,
-        root,
-        json,
-        release,
-        configuration,
-        buildScheme,
-        isExpo,
-        metroCheck,
-        metroPort,
-        logsDir,
-        logFile,
-        device,
-        udid,
-        physical,
-        wireless,
-        lanAddress,
-        lanOriginUrl,
-        remoteDevice,
-        bootPromise,
-        bootDuration: () => bootDuration,
-        artifact,
-        fail,
-        phase,
-        note,
-        logWriter,
-        elapsed,
-        startedAt,
-        closeWriter: () => writer?.close?.(),
-        lease: leaseHandle,
-        releaseLease,
-        recordRun,
-        reclaimed,
-        devServer,
-        enterPhase: progress.step,
-      });
-    } finally {
-      releaseLease();
+    let bootDuration = '';
+    let bootPromise!: Promise<{ ok?: boolean; reason?: string; udid?: string } | null | undefined>;
+    let udid = '';
+    async function resolveMetroPort(): Promise<boolean> {
+      if (release) {
+        metroPort = null;
+        phase('metro', `skipped (${configuration}: the JS bundle is embedded, no dev server is used)`);
+      } else if (metroCheck) {
+        const gate = await ensureDevServer({
+          root,
+          port: metroPort,
+          settings: iosMetroSettings(settings, Boolean(hostedTarget)),
+          remote: Boolean(remoteDevice),
+          note,
+          resolve: d.resolveProjectMetro,
+          start: d.startDevServer,
+          readState: d.readWorkspaceState,
+        });
+        reclaimed = [...reclaimed, ...gate.reclaimed];
+        if (!gate.ok) {
+          fail({ code: gate.code, message: gate.message, remedy: gate.remedy, lines: gate.lines });
+          return false;
+        }
+        metroPort = gate.port;
+        devServer = gate.devServer;
+      } else {
+        const pin = metroPortSetting(root);
+        if (pin.error) {
+          fail({ code: 'STIM_BAD_ARG', message: pin.error, remedy: SETTING_SHAPE_REMEDY });
+          return false;
+        }
+        if (pin.port === null && !metroPort)
+          note(chalk.yellow(`No Metro port is reserved for this workspace; wiring the app to ${DEFAULT_METRO_PORT}.`));
+        metroPort = pin.port ?? metroPort ?? DEFAULT_METRO_PORT;
+      }
+      hostedIosMetroNote(Boolean(hostedTarget), settings, note);
+      if (physical && metroPort !== null && !(await resolveLanOrigin())) return false;
+      if (remoteDevice && metroPort !== null) {
+        const reachable = await d.ensureMetroReachable({
+          ctx: remoteDevice.ctx,
+          metroPort,
+          isExpo,
+          tunnelMode: tunnelModeSetting(settings) ?? undefined,
+          publicUrl: publicUrlSetting(settings),
+          available: d.detectProviders(binOnPath, tunnelModeSetting(settings) ?? 'auto'),
+        });
+        if ('failed' in reachable) {
+          fail({
+            code: reachable.code ?? REMOTE_SESSION_ERROR,
+            message: reachable.failed,
+            remedy: reachable.remedy,
+          });
+          return false;
+        }
+      }
+      if (!release && metroCheck && optimizations.metroWarmup)
+        void d.warmMetro({
+          port: metroPort as number,
+          platform: 'ios',
+          isExpo,
+          appId: proj?.bundleId,
+          bundleUrl: metroWarmupUrlSetting(settings, 'ios'),
+        });
+      return true;
     }
-  } catch (error) {
-    recordRun({ failed: true, durationMs: elapsed() });
-    throw error;
+
+    async function resolveLanOrigin(): Promise<boolean> {
+      const port = metroPort as number;
+      const pinned = iosLanHostSetting(settings);
+      const candidates = d.hostLanCandidates();
+      const chosen = chooseLanAddress({ pinned, candidates });
+      if (!chosen) {
+        fail({
+          code: 'STIM_NO_LAN_ADDRESS',
+          message:
+            'A Debug run on a phone needs an address the phone can reach, and this Mac has no non-internal IPv4 interface.',
+          remedy:
+            'The phone reaches Metro over the network you share, because USB carries no reverse forward. ' +
+            'Join a Wi-Fi or Ethernet network, or connect this Mac by cable, then run the command again.',
+        });
+        return false;
+      }
+      lanAddress = chosen.address;
+      lanOriginUrl = lanOriginUrlFor(chosen.address, port);
+      const source = chosen.pinned
+        ? 'ios.lanHost'
+        : `${chosen.interfaceName ?? 'interface'}${chosen.candidates > 1 ? ` of ${chosen.candidates} candidates` : ''}`;
+      phase('lan', `${lanOriginUrl} (${source})`);
+      if (publicUrlSetting(settings) || tunnelModeSetting(settings)) {
+        note(
+          chalk.dim(
+            phaseLine(
+              'lan',
+              'metro.publicUrl and metro.tunnel are ignored on --device: neither channel to a phone carries a URL, ' +
+                'only a host and a port. They still apply to --remote.',
+            ),
+          ),
+        );
+      }
+      if (!metroCheck) return true;
+      const reachable = await d.ensureLanReachable({
+        origin: lanOriginUrl,
+        metroPort: port,
+        root,
+        isExpo,
+        logsDir,
+      });
+      if ('failed' in reachable) {
+        fail({ code: 'STIM_LAN_METRO_UNREACHABLE', message: reachable.failed, remedy: reachable.remedy });
+        return false;
+      }
+      phase('lan', `gated: ${lanOriginUrl} answered as this workspace's Metro`);
+      return true;
+    }
+
+    let artifact: PreparedIosArtifact | null = null;
+    try {
+      const boot = (): Promise<IosBootLike> =>
+        physicalDevice
+          ? Promise.resolve({ ok: true, udid: physicalDevice.udid })
+          : Promise.resolve(d.ensureBooted({ platform: PLATFORM, device, simulatorApp, out: note })).catch((e) => ({
+              ok: false,
+              reason: String((e as Error)?.message || e),
+            }));
+      const startBoot = (): Promise<string> => {
+        const bootTimer = stepTimer(d.now);
+        bootPromise = (
+          remoteDevice?.ctx.backend === 'eas'
+            ? d.ensureRemoteBootOwned({
+                root,
+                platform: PLATFORM,
+                sessionName: ownedSessionName(remoteDevice.ctx.label),
+                startedAt: new Date(d.now()).toISOString(),
+                deviceType: remoteDevice.ctx.deviceType ?? null,
+                boot,
+                createdSessionId: remoteDevice.createdSessionId,
+                abandonCreatedSession: remoteDevice.abandonCreatedSession,
+                webPreviewUrl: remoteDevice.webPreviewUrl,
+                writeState: d.writeWorkspaceState,
+                register: registerProject,
+                notice: (line: string) => note(chalk.dim(phaseLine('lock', line))),
+              })
+            : boot()
+        ).then((result) => {
+          bootDuration = bootTimer();
+          return result;
+        });
+        return bootPromise.then((result) => result?.udid ?? '');
+      };
+      // A remote device boots after the build: agent-device's daemon exits five
+      // minutes after its last request while no session is open, and nothing
+      // restarts it on an EAS host (https://github.com/appandflow/stim/issues/1212).
+      const localBoot = remoteDevice || hostedTarget ? null : startBoot();
+      udid = (device.deviceUdid as string | undefined) ?? (await localBoot) ?? '';
+      const acquiredArtifact = unlessCancelled(
+        await acquireIosArtifact(
+          {
+            root,
+            logFile,
+            udid,
+            configuration,
+            buildScheme,
+            buildProfile,
+            buildMachine,
+            isExpo,
+            remoteDestination: Boolean(remoteDevice || hostedTarget),
+            ...hostedIosBuildTarget(hostedTarget),
+            simulatorArch: simulatorBuildArch({ physical, remoteArch, hostArch: d.hostSimulatorArch(), configuration }),
+            device: physical
+              ? {
+                  lanAddress,
+                  metroPort,
+                  signingName: iosSigningIdentitySetting(settings),
+                  signingSha1: iosSigningIdentitySha1Setting(settings),
+                }
+              : null,
+            optimizations: optimizations.ios,
+            cache: {
+              policy: cachePolicy,
+              providerConfig: cacheProviderConfig,
+              disabledByFlag: opts.buildCache === false,
+            },
+            easBuild,
+            easProfile: opts.easProfile,
+            maxBuilds: limits.maxBuilds,
+            progress: {
+              phase,
+              note,
+              logWriter,
+              estimates,
+              stats,
+              step: progress.step,
+              miss: progress.miss,
+              hit: progress.hit,
+              place: progress.place,
+              waitingOn: progress.waitingOn,
+            },
+          },
+          d,
+        ),
+      );
+      if (!acquiredArtifact.ok) {
+        compilationCache = acquiredArtifact.compilationCache;
+        return fail(acquiredArtifact.failure);
+      }
+      artifact = acquiredArtifact.artifact;
+      compilationCache = artifact.cache.compilation;
+      if (hostedTarget)
+        return await finishHostedIosRun({
+          target: hostedTarget,
+          root,
+          slot,
+          d,
+          artifact,
+          configuration,
+          buildScheme,
+          release,
+          isExpo,
+          metroCheck,
+          metroPort,
+          logsDir,
+          json,
+          elapsed,
+          startedAt,
+          closeWriter: () => writer?.close(),
+          recordRun,
+          reclaimed,
+          devServer,
+          fail,
+          note,
+          selectors,
+        });
+      if (!localBoot) {
+        progress.step('device');
+        udid = await startBoot();
+      }
+
+      if (physicalDevice) {
+        progress.step('device');
+        const acquired = await d.acquireRunLease({
+          root,
+          platform: PLATFORM,
+          id: physicalDevice.udid,
+          deviceName: physicalDevice.name,
+          idLabel: 'udid',
+          waitSeconds,
+          noWait,
+          installBoundMs: iosDeviceBounds(wireless).installMs,
+          appId: artifact.bundleId ?? proj?.bundleId ?? null,
+          holderAppId: (holder: string) => d.getProject(holder)?.bundleId ?? null,
+          now: d.now,
+          warn: (line: string) => note(chalk.yellow(phaseLine('lease', line))),
+        });
+        if (acquired.status === 'refused') {
+          return fail({
+            code: acquired.refusal.code,
+            message: acquired.refusal.message,
+            remedy: acquired.refusal.remedy,
+            lease: acquired.refusal.lease,
+          });
+        }
+        leaseHandle = d.runLease({
+          root,
+          platform: PLATFORM,
+          kind: acquired.status === 'leased' ? acquired.kind : null,
+          expiresAt: acquired.status === 'leased' ? acquired.expiresAt : null,
+        });
+        if (acquired.status === 'leased') {
+          stopLeaseSignals = d.releaseLeaseOnSignal(releaseLease);
+          phase(
+            'lease',
+            `${acquired.kind} lease on ${physicalDevice.udid} until ${leaseExpiryText(acquired.expiresAt, d.now())}`,
+          );
+        }
+      }
+
+      try {
+        return await finishIosRun({
+          slot,
+          d,
+          root,
+          json,
+          release,
+          configuration,
+          buildScheme,
+          isExpo,
+          metroCheck,
+          metroPort,
+          logsDir,
+          logFile,
+          device,
+          udid,
+          physical,
+          wireless,
+          lanAddress,
+          lanOriginUrl,
+          remoteDevice,
+          bootPromise,
+          bootDuration: () => bootDuration,
+          artifact,
+          fail,
+          phase,
+          note,
+          logWriter,
+          elapsed,
+          startedAt,
+          closeWriter: () => writer?.close?.(),
+          lease: leaseHandle,
+          releaseLease,
+          recordRun,
+          reclaimed,
+          devServer,
+          enterPhase: progress.step,
+        });
+      } finally {
+        releaseLease();
+      }
+    } catch (error) {
+      recordRun({ failed: true, durationMs: elapsed() });
+      throw error;
+    } finally {
+      artifact?.release();
+    }
   } finally {
-    artifact?.release();
+    hostedTarget?.host.connection.close();
   }
 }

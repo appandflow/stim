@@ -99,9 +99,10 @@ KEYS STIM READS
                         embedded JS, no Metro, cache keyed -release-sim, and
                         a JS-bundle swap on cache hits. The \`--configuration\`
                         flag overrides this per invocation. Unset means Debug.
-  ios.remote            "proxy" or "eas" to use that remote backend, the same
-                        as passing \`--remote proxy\` or \`--remote eas\`. The
-                        build still runs here; only the device is elsewhere.
+  ios.remote            "proxy", "eas", or a named approved Mac from
+                        hosting.machines, with the same meaning as --remote.
+                        "auto" is accepted but refuses until automatic placement
+                        ships. Unset runs here. See lifecycle hosted-ios.
   ios.simslimProfile    a SimSlim JSON profile under the app directory,
                         at most 64 KiB. Install the
                         external tool once with
@@ -382,7 +383,7 @@ ${ANDROID_AVD_CONFIG_HELP.map((line) => `                          ${line}`).joi
                         them from the environment or the machine layers.
 
 Each setting takes its documented type: string, array of strings, number,
-boolean, or object. ios.remote, android.remote, metro.tunnel, web.viewport,
+boolean, or object. android.remote, metro.tunnel, web.viewport,
 optimizations.android.compilerCache and optimizations.android.pch take only
 their listed choices. A value of the wrong
 type or outside those choices is refused by name on every command that resolves
@@ -646,14 +647,16 @@ the ones it offloaded.
 counts as saturated, both here and on a build machine.
 
 STIM_OFFLOAD_MODE overrides it for one command. Device, Release and
-\`--remote\` builds, Android builds with the Apple Clang CAS compiler cache,
-and iOS/Android runs with the build cache off, always build here.
+\`--remote eas|proxy\` builds, Android builds with the Apple Clang CAS compiler cache,
+and iOS/Android runs with the build cache off, always build here. Hosted iOS
+Debug builds can use a separate --build-machine, targeting the hosting Mac's
+architecture and runtime.
 macOS uses matching Xcode and macOS SDK, with a per-client SwiftPM dependency
 cache on the worker. It skips JavaScript dependencies, prebuild and pods; see
 stim guide macos. macOS artifacts are not cached.
 An offloaded iOS/Android build first runs prebuild (and \`pod install\` for iOS) here,
 then asks every paired machine what it can build. It takes one whose Stim
-build and CPU match this Mac exactly, with enough disk, that does not decline,
+build matches this Mac and CPU matches the target simulator, with enough disk, that does not decline,
 preferring the one that already holds this repository, then the least loaded,
 and moves to the next one in that order when a machine that offered fails the
 sync or refuses to start the build.

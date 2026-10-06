@@ -78,6 +78,7 @@ export async function planIos(
   } as const;
   const isExpo = d.detectIsExpo(root);
   const settingsLayersForOrigin = d.settingsLayers(settingsContext);
+  const iosRemote = remoteIosSetting(settings);
   const modelRefusal = deviceModelRefusal({
     slot,
     deviceTypeFlag: opts.deviceType,
@@ -87,7 +88,8 @@ export async function planIos(
     deviceTypeOrigin: d.settingOriginScope(settingsLayersForOrigin, 'ios.deviceType'),
     runtimeOrigin: d.settingOriginScope(settingsLayersForOrigin, 'ios.runtime'),
     physical: false,
-    remoteBackend: remoteIosSetting(settings),
+    remoteBackend: iosRemote?.kind === 'backend' ? iosRemote.backend : null,
+    hosted: iosRemote?.kind === 'machine',
     listRuntimes: d.listIosRuntimes,
   });
   if (modelRefusal) return refuse(modelRefusal);
@@ -121,7 +123,7 @@ export async function planIos(
   if (remoteBackend) {
     return refuse({
       code: 'STIM_BAD_ARG',
-      message: `ios.remote routes this workspace's runs to a ${remoteBackend} device, whose architecture --plan cannot read without a session.`,
+      message: `ios.remote routes this workspace's runs to a ${remoteBackend.kind === 'backend' ? remoteBackend.backend : remoteBackend.machine} device, whose architecture --plan cannot read without a session.`,
       remedy: 'Run `stim ios` to build for the remote device, or unset ios.remote to plan the owned simulator.',
     });
   }

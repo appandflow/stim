@@ -1,3 +1,5 @@
+import { prepareHostedIos, placeHostedIos } from '../../device-host/hosted-ios.ts';
+import { readHostedIos, writeHostedIos } from '../../device-host/ios-state.ts';
 import { loadCacheProvider } from '@stim-cli/cache';
 import { resolveEasDevelopmentBuild } from '../../engine/eas-build.ts';
 import { fingerprintProject, resolveBuild, storeBuild, untrackedNativeFiles } from '../../cache/build-cache.ts';
@@ -70,6 +72,10 @@ import { devClientScheme, devClientTakesDevMenuParams } from '../dev-client.ts';
 import { stopPreviousCollector, replaceCollector } from './collector.ts';
 
 export interface IosDeps {
+  prepareHostedIos: typeof prepareHostedIos;
+  placeHostedIos: typeof placeHostedIos;
+  readHostedIos: typeof readHostedIos;
+  writeHostedIos: typeof writeHostedIos;
   resolveEasDevelopmentBuild: typeof resolveEasDevelopmentBuild;
   resolveRemoteContext: typeof resolveRemoteContext;
   ensureMetroReachable: typeof ensureMetroReachable;
@@ -161,6 +167,10 @@ export interface IosDeps {
 }
 
 export const DEFAULT_DEPS: IosDeps = {
+  prepareHostedIos,
+  placeHostedIos,
+  readHostedIos,
+  writeHostedIos,
   resolveEasDevelopmentBuild,
   findProjectRoot,
   resolveSettings,

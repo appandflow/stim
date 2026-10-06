@@ -1,5 +1,4 @@
 import type { BuildMissReason } from '@stim-cli/core/state';
-import type { RemoteDeviceBackend } from '../../engine/device-remote.ts';
 import type { LaunchErrorRecord } from '../../command-output.ts';
 import type { LeaseFacts } from '../../engine/device-lease-run.ts';
 
@@ -68,7 +67,7 @@ export interface IosCommandOptions {
   runtime?: string;
   simulatorApp?: string;
   device?: string | boolean;
-  remote?: RemoteDeviceBackend;
+  remote?: string;
   wait?: string | boolean;
   waitConflict?: boolean;
   plan?: boolean;

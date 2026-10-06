@@ -1,3 +1,5 @@
+import { stopHostedIos } from '../device-host/hosted-ios.ts';
+import { readHostedIos } from '../device-host/ios-state.ts';
 import { stopMacosApp } from '../macos/stop.ts';
 import { withWorkspaceProcessLock } from '../engine/workspace-process-lock.ts';
 import {
@@ -303,6 +305,7 @@ export async function runStop(options: StopArgs & { slot?: string }): ReturnType
     clearRegistration: async () => true,
     teardownBrowser: null,
     stopMacos: false,
+    hostedSlot: slot,
     releaseLeases: (projectRoot) => releaseWorkspaceLeases(projectRoot, { slot }),
   });
   result.outcomes.port = {
@@ -336,6 +339,32 @@ async function stopBrowserOnly({
   if (!outcomes.device.web) return { ok: true, outcomes, summary: `Stopped: no owned Chrome was running (${root})` };
   const ok = outcomes.device.web.status === 'shut-down';
   return { ok, outcomes, summary: summarize(root, outcomes, ok) };
+}
+
+async function stopWorkspaceHostedIos(
+  root: string,
+  slot: string | undefined,
+  report: (line: string) => void,
+  failed: () => void,
+): Promise<{ devices: Record<string, DeviceOutcomeEntry>; failed: boolean }> {
+  const devices: Record<string, DeviceOutcomeEntry> = {};
+  try {
+    const placements = Object.entries(readHostedIos(root)).filter(([name]) => slot === undefined || name === slot);
+    await stopHostedIos(root, slot);
+    for (const [name, placement] of placements) {
+      devices[name === 'default' ? 'ios' : `ios:${name}`] = {
+        status: 'shut-down',
+        label: `${placement.device?.name ?? 'iOS simulator'} on ${placement.machine}`,
+      };
+      report(chalk.dim(phaseLine('device', `stopped hosted iOS simulator on ${placement.machine}`)));
+    }
+    return { devices, failed: false };
+  } catch (error) {
+    const reason = (error as Error).message;
+    report(chalk.red(phaseLine('device', reason)));
+    failed();
+    return { devices: { ios: { status: 'failed', reason } }, failed: true };
+  }
 }
 
 async function stopWorkspaceMacos(
@@ -373,6 +402,7 @@ async function stopWorkspace({
   teardownAvd = teardownOwnedAvd,
   teardownBrowser = (projectRoot: string) => teardownOwnedBrowser(projectRoot),
   stopMacos,
+  hostedSlot,
   remoteDevice = undefined,
   teardownRemoteSession = defaultTeardownRemoteSession,
   metroTunnel = undefined,
@@ -400,6 +430,7 @@ async function stopWorkspace({
   teardownIos?: (udid: string, opts: { del?: boolean; label?: string; workspace?: string }) => TeardownResult;
   teardownAvd?: (avdName: string, opts: { del?: boolean; workspace?: string }) => TeardownResult;
   stopMacos?: boolean;
+  hostedSlot?: string;
   teardownBrowser?: ((root: string) => Promise<TeardownResult>) | null;
   remoteDevice?: RemoteDeviceRecord | null;
   metroTunnel?: ReturnType<typeof readMetroTunnel> | undefined;
@@ -561,6 +592,10 @@ async function stopWorkspace({
     stopMacos,
   );
 
+  const hosted = await stopWorkspaceHostedIos(root, hostedSlot, report, () => {
+    ok = false;
+  });
+  Object.assign(outcomes.device, hosted.devices);
   const remote = remoteDevice === undefined ? readRemoteSession(root) : remoteDevice;
   const sessionId = typeof remote?.sessionId === 'string' ? remote.sessionId : null;
   if (sessionId) {
@@ -1026,6 +1061,7 @@ function recordedDeviceSlots(root: string): string[] {
     const parsed = parseDeviceSlotKey(key);
     if (parsed) slots.add(parsed.slot);
   }
+  for (const slot of Object.keys(readHostedIos(root))) slots.add(slot);
   return [...slots].toSorted();
 }
 
@@ -1033,6 +1069,7 @@ function workspaceDeviceSlots(root: string): string[] {
   const slots = projectDeviceSlots(getProject(root))
     .filter(({ platforms }) => Object.values(platforms).some(Boolean))
     .map(({ slot }) => slot);
+  for (const slot of Object.keys(readHostedIos(root))) if (!slots.includes(slot)) slots.push(slot);
   if (typeof readRemoteSession(root)?.sessionId === 'string' && !slots.includes('default')) slots.push('default');
   return slots;
 }

@@ -809,3 +809,10 @@ test.each([registerIos, registerAndroid, macosCommand])(
     expect(renderSection('lifecycle', 'options')).toContain('--build-machine');
   },
 );
+
+test('hosted iOS safety routes and hosting refusal remedy render through the guides', () => {
+  expect(sectionNames('lifecycle')).toContain('hosted-ios');
+  expect(renderTopic('agent')).toContain('guide lifecycle hosted-ios');
+  expect(renderSection('errors', 'STIM_HOSTING_REFUSED')).toContain('stim stop');
+  expect(renderSection('lifecycle', 'hosted-ios')).toContain('STIM_HOSTING_REFUSED');
+});

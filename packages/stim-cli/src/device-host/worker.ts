@@ -83,12 +83,11 @@ export async function runHostedDevice(
       const launched = await installHostedApp(home, app.session, app.attempt, device, app.metroPort);
       return { state: 'installed', device, launched };
     }
-    if (!current) return { state: 'stopped', device };
-    const outcome = teardownOwnedIosSim(device.udid);
+    const outcome = teardownOwnedIosSim(device.udid, { del: true });
     if (outcome.status !== 'torn-down' && outcome.status !== 'missing')
       throw new Error(outcome.reason ?? 'Hosted simulator teardown was not established.');
     const after = inventory().find((sim) => sim.udid === device!.udid);
-    if (after && after.state !== 'Shutdown') throw new Error('Hosted simulator shutdown could not be verified.');
+    if (after) throw new Error('Hosted simulator deletion could not be verified.');
     return { state: 'stopped', device };
   } catch (error) {
     return {

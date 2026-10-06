@@ -478,7 +478,8 @@ export async function startDevServer(
         remedy: 'Set metro.tunnel to "ngrok" and metro.ngrokUrl to an HTTPS URL, or remove metro.ngrokUrl.',
       });
     }
-    const remote = remoteFlag || remoteIosSetting(settings) !== null || remoteAndroidSetting(settings) !== null;
+    const remote =
+      remoteFlag || remoteIosSetting(settings)?.kind === 'backend' || remoteAndroidSetting(settings) !== null;
     const tunnelMode = tunnelModeSetting(settings) ?? 'auto';
     const publicUrl = publicUrlSetting(settings);
     const tunnel = wantsExpoOwnTunnel({

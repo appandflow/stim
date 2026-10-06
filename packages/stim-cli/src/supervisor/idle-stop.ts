@@ -1,3 +1,4 @@
+import { hostedIosPlacements } from '@stim-cli/core/state';
 import { readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { createActivityReader, type ActivityTarget } from '../devices/activity.ts';
@@ -90,6 +91,8 @@ export function workspaceIdleProbe(
     },
     blocker() {
       if (workspaceBuildInProgress(root)) return 'a build is in progress';
+      const hosted = Object.values(hostedIosPlacements(readWorkspaceState(root)))[0];
+      if (hosted) return `its iOS simulator runs on ${hosted.machine}`;
       const lease = heldDeviceLease(root, Date.now());
       if (lease) return lease;
       const readActivity = createActivityReader();

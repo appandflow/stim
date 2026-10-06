@@ -84,6 +84,7 @@ interface IosArtifactRequest {
   logFile: string;
   udid: string;
   remoteDestination: boolean;
+  hostedDestination?: { runtime: string; architecture: SimulatorArch };
   simulatorArch: SimulatorArch | null;
   device: {
     lanAddress: string | null;
@@ -195,6 +196,7 @@ export async function acquireIosArtifact(
     logFile,
     udid,
     remoteDestination,
+    hostedDestination,
     simulatorArch,
     device,
     configuration,
@@ -717,10 +719,11 @@ export async function acquireIosArtifact(
   function placeBuild(): Candidate | null {
     const { mode, machines } = buildPlacementCandidates(buildMachine);
     if (machines.length === 0 && !namedBuildMachine(buildMachine) && buildMachine !== 'local') return null;
-    const runtime = physical || remoteDestination || release ? null : simulatorRuntime(udid);
+    const runtime =
+      physical || release ? null : (hostedDestination?.runtime ?? (remoteDestination ? null : simulatorRuntime(udid)));
     const unsupported = physical
       ? 'device builds build here'
-      : remoteDestination
+      : remoteDestination && !hostedDestination
         ? '--remote builds build here'
         : release
           ? `${configuration} builds build here`
@@ -745,7 +748,10 @@ export async function acquireIosArtifact(
       projectRoot: root,
       target: {
         platform: 'ios',
-        local: iosToolchain(),
+        local: {
+          ...iosToolchain(),
+          ...(hostedDestination ? { arch: hostedDestination.architecture === 'x86_64' ? 'x64' : 'arm64' } : {}),
+        },
         runtime: candidate.runtime,
         cocoapodsPinned: bundlerPin(root) !== null,
       },

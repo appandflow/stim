@@ -1,3 +1,4 @@
+import { watchHostedMetro } from './hosted-metro.ts';
 import { existsSync, realpathSync, statSync } from 'node:fs';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -235,6 +236,7 @@ export async function runSupervisor({
   let stopping = false;
   let stopWatchingIdle: (() => void) | null = null;
   let stopWatchingDevices: (() => void) | null = null;
+  let closeHostedMetro: (() => Promise<void>) | null = null;
   const stopCause = (trigger: SupervisorExitTrigger): DevServerStopRecord => {
     const request = readDevServerStopRequest(readWorkspaceState(root));
     return devServerStopRecord(
@@ -277,6 +279,7 @@ export async function runSupervisor({
     stopping = true;
     stopWatchingIdle?.();
     stopWatchingDevices?.();
+    await closeHostedMetro?.();
     await watchRoots.beforeClose();
     try {
       await server.close();
@@ -377,6 +380,7 @@ export async function runSupervisor({
     msg: `${mode} dev server listening on port ${port}`,
   });
 
+  closeHostedMetro = watchHostedMetro(root, port, processToken);
   const deviceIdleMs = deviceIdleMinutes * 60_000;
   const workspaceProbe = workspaceIdleProbe(root);
   const shutDownIdleDevices = (idleMs: number) =>

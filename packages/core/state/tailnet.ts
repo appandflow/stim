@@ -2,6 +2,9 @@ import { isJsonObject } from './json-file.ts';
 
 const DEFAULT_SERVE_PORT = 7443;
 
+export const TAILNET_MACHINE_PATTERN: string =
+  '^[A-Za-z0-9][A-Za-z0-9.-]*(?::(?!0+$)(?:[0-5]?[0-9]{1,4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5]))?$';
+
 export interface TailnetPeer {
   nodeId: string;
   dnsName: string;
@@ -10,6 +13,7 @@ export interface TailnetPeer {
 }
 
 export function parseMachine(entry: string): { name: string; port: number } | null {
+  if (!new RegExp(TAILNET_MACHINE_PATTERN).test(entry.trim())) return null;
   const match = /^([A-Za-z0-9][A-Za-z0-9.-]*?)(?::(\d{1,5}))?$/.exec(entry.trim());
   if (!match) return null;
   const port = match[2] === undefined ? DEFAULT_SERVE_PORT : Number(match[2]);

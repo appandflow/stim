@@ -4,6 +4,9 @@ export default {
 
 If Stim is not installed globally, replace stim with npx stim.
 
+ios --remote <machine> shares hosting.machines and its separate device-host
+approval. Read guide lifecycle hosted-ios for simulator placement and Metro.
+
 Run from the directory containing Package.swift. This prototype builds one
 explicit executable product in Debug, creates an isolated development app,
 and launches it. It does not use package scripts, Metro, simulators, Xcode

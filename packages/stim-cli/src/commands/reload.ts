@@ -1,3 +1,5 @@
+import { readHostedIos } from '../device-host/ios-state.ts';
+import { probeHostedSession } from '../device-host/hosted-client.ts';
 import { nativeRunCommand } from '../engine/slot-launch.ts';
 import { deviceSlotPlatforms, parseDeviceSlotKey } from '../devices/device-slots.ts';
 import chalk from 'chalk';
@@ -45,6 +47,7 @@ interface LiveTarget {
   platform: WorkspaceLaunchPlatform;
   record: WorkspaceLaunchRecord;
   deviceName: string;
+  hosted?: boolean;
 }
 
 interface TargetFailure {
@@ -294,10 +297,38 @@ export async function runReload({
           ),
         };
   }
+  const hosted = readHostedIos(root);
+  const hostedProbes = Object.fromEntries(
+    await Promise.all(
+      Object.entries(hosted).map(async ([slot, placement]) => [slot, await probeHostedSession(placement)]),
+    ),
+  );
   const launches = d.readLaunches(root);
   const inspected = Object.entries(launches).flatMap(([key, record]) => {
     const parsed = parseDeviceSlotKey(key);
     if (!parsed || (platform && parsed.platform !== platform)) return [];
+    const placement = parsed.platform === 'ios' ? hosted[parsed.slot] : undefined;
+    if (placement && record.deviceId === placement.session) {
+      const probe = hostedProbes[parsed.slot]!;
+      return [
+        probe.state === 'ready'
+          ? {
+              platform: 'ios' as const,
+              slot: parsed.slot,
+              record,
+              hosted: true,
+              deviceName: `${placement.device?.name ?? 'iOS simulator'} on ${placement.machine}`,
+            }
+          : {
+              platform: 'ios' as const,
+              error: failure(
+                'STIM_RELOAD_PROBE_FAILED',
+                `The iOS session on ${placement.machine} is ${probe.state}.`,
+                `Run stim ios --remote ${placement.machine} or stim stop to reconcile it.`,
+              ),
+            },
+      ];
+    }
     return [
       inspectTarget(
         parsed.platform,
@@ -390,7 +421,7 @@ export async function runReload({
       ),
     };
   }
-  const stopped = processFailure(target.platform, target.record, d, target.slot);
+  const stopped = target.hosted ? null : processFailure(target.platform, target.record, d, target.slot);
   if (stopped) return { ok: false, error: stopped };
 
   const reverseRestored: string[] = [];
@@ -424,8 +455,17 @@ export async function runReload({
   }
   const reloaded = await d.reloadMetro(port, request);
   if (!reloaded.ok) {
-    const stoppedAfterMetro = processFailure(target.platform, target.record, d, target.slot);
+    const stoppedAfterMetro = target.hosted ? null : processFailure(target.platform, target.record, d, target.slot);
     if (stoppedAfterMetro) return { ok: false, error: stoppedAfterMetro };
+    if (target.hosted)
+      return {
+        ok: false,
+        error: failure(
+          'STIM_RELOAD_FAILED',
+          reloaded.reason,
+          `Metro could not confirm a peer for the hosted iOS app. Check the app on its hosting Mac and run stim reload ios again.`,
+        ),
+      };
     const snapshot = `agent-device snapshot -i --platform ${target.platform} --${target.platform === 'ios' ? 'udid' : 'serial'} ${target.record.deviceId}`;
     const relaunch = `agent-device open ${target.record.appId} --platform ${target.platform} --${target.platform === 'ios' ? 'udid' : 'serial'} ${target.record.deviceId} --metro-port ${port} --relaunch`;
     const firstBundle =

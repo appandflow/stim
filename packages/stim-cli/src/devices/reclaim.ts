@@ -1,3 +1,4 @@
+import { stopHostedIos } from '../device-host/hosted-ios.ts';
 import { clearNamedPorts } from '../named-ports.ts';
 import { projectDeviceSlots } from './device-slots.ts';
 import { type ProjectRecord, clearDevice, getProject, removeProject } from '../workspace/config.ts';
@@ -347,6 +348,7 @@ export async function reclaimProject(path: string, options: ReclaimOptions = {})
   const existed = existsSync(dir);
   const run = await withIdleWorkspace(path, () => reclaimIdleProject(path, existed, options), {
     purpose: 'workspace removal',
+    hosted: false,
     supervisor: false,
     managedLocks: false,
   });
@@ -496,6 +498,13 @@ async function reclaimIdleProject(
         };
   skippedDevices.push(...skippedCollectors);
   failedDevices.push(...failedCollectors);
+  try {
+    await stopHostedIos(path);
+  } catch (error) {
+    const failed: SkippedDevice = { platform: 'ios', name: 'hosted iOS simulator', reason: (error as Error).message };
+    failedDevices.push(failed);
+    skippedDevices.push(failed);
+  }
 
   const remote = reclaimRemoteSession(path, { stopSession });
   if (remote.failed) {

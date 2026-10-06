@@ -1,3 +1,4 @@
+import { parseMachine } from '@stim-cli/core/state';
 import { isEasBuildFailure, resolveEasDevelopmentBuild } from '../engine/eas-build.ts';
 import { configuredAndroidEmulatorApp } from '../devices/android-emulator-viewer.ts';
 import { deviceSlotFileKey, parseDeviceSlotOption, validateDeviceSlot } from '../devices/device-slots.ts';
@@ -234,7 +235,14 @@ export function registerAndroid(program: Command): void {
       'Install and launch on a remote device with proxy or EAS. Builds are local unless --eas-profile selects an existing EAS build.',
       (value) => {
         if ((REMOTE_DEVICE_BACKENDS as readonly string[]).includes(value)) return value as RemoteDeviceBackend;
-        throw new InvalidArgumentError(`expected one of: ${REMOTE_DEVICE_BACKENDS.join(', ')}`);
+        if (!parseMachine(value))
+          throw new InvalidArgumentError(`expected one of: ${REMOTE_DEVICE_BACKENDS.join(', ')}`);
+        throw Object.assign(
+          new InvalidArgumentError(
+            'Android on a paired Mac is not available yet. Use eas or proxy, or run Android locally.',
+          ),
+          { code: 'STIM_BAD_ARG' },
+        );
       },
     )
     .option(

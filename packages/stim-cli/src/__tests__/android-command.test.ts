@@ -157,7 +157,8 @@ describe('--remote', () => {
     expect(parseRemoteOption(['--remote', 'proxy'])).toBe('proxy');
     expect(parseRemoteOption(['--remote', 'eas'])).toBe('eas');
     expect(() => parseRemoteOption(['--remote'])).toThrow(/argument missing/i);
-    expect(() => parseRemoteOption(['--remote', 'cloud'])).toThrow(/proxy.*eas/i);
+    expect(() => parseRemoteOption(['--remote', 'mini'])).toThrow(/Android on a paired Mac is not available yet/);
+    expect(() => parseRemoteOption(['--remote', 'bad name'])).toThrow(/proxy.*eas/i);
   });
 });
 
