@@ -1547,12 +1547,12 @@ it.
 ### App Store listing
 
 `store.config.js` is the App Store listing for [EAS Metadata](https://docs.expo.dev/eas/metadata/):
-name, subtitle, description, keywords, support, marketing and privacy URLs,
-copyright, categories (Developer Tools, Productivity), the age rating answers
-and the App Review notes. `eas.json` points `submit.production.ios.metadataPath`
-at it. It carries no version, so `eas metadata:push` edits the version in App
-Store Connect that the uploaded build created. Upload a build first
-(see [Each release](#each-release)); a new app has no version to edit before that.
+name ("Stim Mobile"; the home-screen name stays "Stim"), subtitle, description,
+keywords, support, marketing and privacy URLs, copyright, categories (Developer
+Tools, Productivity), the age rating answers and the App Review notes.
+`eas.json` points `submit.production.ios.metadataPath` at it. `apple.version`
+names the App Store version that `eas metadata:push` edits, or creates when it
+does not exist; set it to the version being released.
 
 The App Review notes tell the reviewer to pair with the demo server at
 `wss://stim-demo.appandflow.workers.dev` (see `apps/demo-server`). The pairing
