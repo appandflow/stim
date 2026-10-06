@@ -24,6 +24,9 @@ test('restores Archived at launch and saves later activity selections', async ()
     projects: ['stim'],
     errorsOnly: false,
     remoteOnly: false,
+    platforms: [],
+    buildingOnly: false,
+    sort: 'recent',
   });
   await act(async () => result.current.update({ activity: 'all' }));
   const saved = jest.mocked(SecureStore.setItemAsync).mock.calls.at(-1)!;
@@ -34,6 +37,9 @@ test('restores Archived at launch and saves later activity selections', async ()
     projects: ['stim'],
     errorsOnly: false,
     remoteOnly: false,
+    platforms: [],
+    buildingOnly: false,
+    sort: 'recent',
   });
   await act(async () => result.current.update({ activity: 'archived' }));
   expect(JSON.parse(jest.mocked(SecureStore.setItemAsync).mock.calls.at(-1)![1]).activity).toBe('archived');

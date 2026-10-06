@@ -16,9 +16,21 @@ import { Touch } from '@/components/touch';
 import { useHomeFilters } from '@/hooks/home-filters';
 import { useArchiveItems, useMacs, useWorkspaceItems, useWorktreeItems } from '@/hooks/machines';
 import { hapticFeedback } from '@/lib/haptics';
-import { keepProjectOrder, projectNames, projectsByActivity, visibleProjects, type ActivityFilter } from '@/lib/home';
+import {
+  keepProjectOrder,
+  projectNames,
+  projectsByActivity,
+  visibleProjects,
+  type ActivityFilter,
+  type HomeFilters,
+} from '@/lib/home';
 
-const toggled = (list: string[], value: string) =>
+import { platformName } from '@/lib/workspaces';
+import type { DevicePlatform } from '@/protocol/types';
+
+const PLATFORMS: DevicePlatform[] = ['ios', 'android', 'web', 'macos'];
+
+const toggled = <T extends string>(list: T[], value: T) =>
   list.includes(value) ? list.filter((v) => v !== value) : [...list, value];
 
 export function Filters() {
@@ -62,6 +74,10 @@ export function Filters() {
     { value: 'all', label: t`All` },
     { value: 'archived', label: t`Archived` },
   ];
+  const sorts: { value: HomeFilters['sort']; label: string }[] = [
+    { value: 'recent', label: t`Last used` },
+    { value: 'name', label: t`Name` },
+  ];
   const selectedMacs = filters.macs.filter((id) => connections.some((c) => c.mac.id === id));
   const options: {
     key: string;
@@ -83,6 +99,13 @@ export function Filters() {
       value: filters.remoteOnly,
       onChange: (remoteOnly) => update({ remoteOnly }),
     },
+    {
+      key: 'building',
+      label: t`Building now`,
+      detail: t`Local or offloaded builds`,
+      value: filters.buildingOnly,
+      onChange: (buildingOnly) => update({ buildingOnly }),
+    },
   ];
 
   return (
@@ -96,6 +119,40 @@ export function Filters() {
             onPress={() => {
               if (filters.activity !== value) hapticFeedback('selection');
               update({ activity: value });
+            }}
+          />
+        ))}
+      </Group>
+      <Group title={t`Platform`}>
+        <Toggle
+          label={t`All`}
+          on={filters.platforms.length === 0}
+          onPress={() => {
+            if (filters.platforms.length > 0) hapticFeedback('selection');
+            update({ platforms: [] });
+          }}
+        />
+        {PLATFORMS.map((platform) => (
+          <Toggle
+            key={platform}
+            label={platformName(platform)}
+            on={filters.platforms.includes(platform)}
+            onPress={() => {
+              hapticFeedback('selection');
+              update({ platforms: toggled(filters.platforms, platform) });
+            }}
+          />
+        ))}
+      </Group>
+      <Group title={t`Sort`}>
+        {sorts.map(({ value, label }) => (
+          <Toggle
+            key={value}
+            label={label}
+            on={filters.sort === value}
+            onPress={() => {
+              if (filters.sort !== value) hapticFeedback('selection');
+              update({ sort: value });
             }}
           />
         ))}

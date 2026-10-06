@@ -804,6 +804,7 @@ msgstr "Alerts"
 #: src/screens/filters.tsx
 #: src/screens/filters.tsx
 #: src/screens/filters.tsx
+#: src/screens/filters.tsx
 #: src/screens/logs.tsx
 msgid "All"
 msgstr "All"
@@ -1065,6 +1066,10 @@ msgstr "Building {platform}"
 #: src/lib/spoken-status.ts
 msgid "Building {platform}, slot {slot}"
 msgstr "Building {platform}, slot {slot}"
+
+#: src/screens/filters.tsx
+msgid "Building now"
+msgstr "Building now"
 
 #: src/screens/mac-status.tsx
 msgid "Builds for other Macs"
@@ -2101,6 +2106,10 @@ msgstr "Last seen {seen} ago"
 msgid "Last seen {spoken} ago"
 msgstr "Last seen {spoken} ago"
 
+#: src/screens/filters.tsx
+msgid "Last used"
+msgstr "Last used"
+
 #: src/components/device-tile.tsx
 msgid "Latest frame of {deviceName}"
 msgstr "Latest frame of {deviceName}"
@@ -2197,6 +2206,10 @@ msgstr "Loading changes..."
 #: src/screens/archived-workspace.tsx
 msgid "Loading..."
 msgstr "Loading..."
+
+#: src/screens/filters.tsx
+msgid "Local or offloaded builds"
+msgstr "Local or offloaded builds"
 
 #: src/screens/device-view.tsx
 msgid "Lock"
@@ -2373,6 +2386,10 @@ msgstr "Moving..."
 #: src/lib/settings-options.ts
 msgid "Muted"
 msgstr "Muted"
+
+#: src/screens/filters.tsx
+msgid "Name"
+msgstr "Name"
 
 #: src/screens/pair.tsx
 msgid "Name this machine"
@@ -2965,6 +2982,10 @@ msgstr "Physical"
 msgid "Physical device"
 msgstr "Physical device"
 
+#: src/screens/filters.tsx
+msgid "Platform"
+msgstr "Platform"
+
 #: src/components/replay-bar.tsx
 msgid "Play"
 msgstr "Play"
@@ -3533,6 +3554,10 @@ msgstr "Someone takes over your device"
 #: src/app/_layout.tsx
 msgid "Something went wrong"
 msgstr "Something went wrong"
+
+#: src/screens/filters.tsx
+msgid "Sort"
+msgstr "Sort"
 
 #: src/screens/workspace-diff.tsx
 #: src/screens/workspace-diff.tsx

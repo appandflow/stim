@@ -49,30 +49,100 @@ const build = (extra: Partial<BuildReport> = {}): BuildReport =>
   }) as BuildReport;
 
 describe('homeSections', () => {
-  it('counts source-only rows as idle and puts live repos and rows before idle apps and worktrees', () => {
-    const sections = homeSections([
-      item('alpha', 'a-idle', env('/alpha/1')),
-      item('beta', 'b-idle', env('/beta/1')),
-      {
-        key: 'source',
-        macId: 'mac',
-        macName: 'Mac mini',
-        project: 'beta',
-        title: 'b-first-source',
-        facts: { path: '/beta/source' },
-      } satisfies HomeWorktree,
-      {
-        key: 'only-source',
-        macId: 'mac',
-        macName: 'Mac mini',
-        project: 'delta',
-        title: 'd-source',
-        facts: { path: '/delta/source' },
-      } satisfies HomeWorktree,
-      item('beta', 'b-live', env('/beta/2', { live: true })),
-      item('beta', 'b-warming', env('/beta/3', { phase: 'warming' })),
-      item('gamma', 'g-live', env('/gamma/1', { live: true })),
+  const rows = [
+    item('z-live', 'z-old', env('/z/old', { live: true, phaseSince: ago(5 * MIN) })),
+    item('z-live', 'a-live', env('/z/a', { live: true, phaseSince: ago(10 * MIN) })),
+    item('z-live', 'linked', env('/z/linked/a', { worktree: { path: '/z/linked' }, phaseSince: ago(20 * MIN) })),
+    item('z-live', 'linked', env('/z/linked/b', { worktree: { path: '/z/linked' }, phaseSince: ago(2 * MIN) })),
+    item('z-live', 'z-idle', env('/z/idle', { phaseSince: ago(3 * MIN) })),
+    item('z-live', 'a-null', env('/z/null')),
+    { ...item('z-live', 'a-null', env('/other/null')), macName: 'Another Mac' },
+    {
+      key: 'source',
+      macId: 'mac',
+      macName: 'Mac mini',
+      project: 'z-live',
+      title: 'b-source',
+      facts: { path: '/source' },
+    } satisfies HomeWorktree,
+    item('a-live', 'live', env('/a/live', { live: true, phaseSince: ago(4 * MIN) })),
+    item('a-idle', 'idle', env('/a/idle', { phaseSince: ago(6 * MIN) })),
+    item('z-idle', 'idle', env('/zi/idle', { phaseSince: ago(MIN) })),
+    item('b-tie', 'idle', env('/b/idle', { phaseSince: ago(MIN) })),
+    item('a-none', 'idle', env('/none')),
+  ];
+
+  it('sorts recent repos and live/idle rows by newest activity, using all checkout apps and putting missing activity last', () => {
+    const sections = homeSections(rows, 'recent');
+    expect(sections.map((section) => section.project)).toEqual([
+      'z-live',
+      'a-live',
+      'b-tie',
+      'z-idle',
+      'a-idle',
+      'a-none',
     ]);
+    expect(sections[0].data.map((row) => row.title)).toEqual([
+      'z-old',
+      'a-live',
+      'linked',
+      'z-idle',
+      'a-null',
+      'a-null',
+      'b-source',
+    ]);
+    expect(sections[0].data[4]).toMatchObject({ apps: [{ macName: 'Another Mac' }] });
+  });
+
+  it('keeps name sorting independent of activity, with live repos and rows first and title/machine ties unchanged', () => {
+    const sections = homeSections(rows, 'name');
+    expect(sections.map((section) => section.project)).toEqual([
+      'a-live',
+      'z-live',
+      'a-idle',
+      'a-none',
+      'b-tie',
+      'z-idle',
+    ]);
+    expect(sections[1].data.map((row) => row.title)).toEqual([
+      'a-live',
+      'z-old',
+      'a-null',
+      'a-null',
+      'b-source',
+      'linked',
+      'z-idle',
+    ]);
+    expect(sections[1].data[2]).toMatchObject({ apps: [{ macName: 'Another Mac' }] });
+  });
+
+  it('counts source-only rows as idle and puts live repos and rows before idle apps and worktrees', () => {
+    const sections = homeSections(
+      [
+        item('alpha', 'a-idle', env('/alpha/1')),
+        item('beta', 'b-idle', env('/beta/1')),
+        {
+          key: 'source',
+          macId: 'mac',
+          macName: 'Mac mini',
+          project: 'beta',
+          title: 'b-first-source',
+          facts: { path: '/beta/source' },
+        } satisfies HomeWorktree,
+        {
+          key: 'only-source',
+          macId: 'mac',
+          macName: 'Mac mini',
+          project: 'delta',
+          title: 'd-source',
+          facts: { path: '/delta/source' },
+        } satisfies HomeWorktree,
+        item('beta', 'b-live', env('/beta/2', { live: true })),
+        item('beta', 'b-warming', env('/beta/3', { phase: 'warming' })),
+        item('gamma', 'g-live', env('/gamma/1', { live: true })),
+      ],
+      'name',
+    );
     expect(sections.map((s) => [s.project, s.live, s.idle, s.data.map((i) => i.title)])).toEqual([
       ['beta', 2, 2, ['b-live', 'b-warming', 'b-first-source', 'b-idle']],
       ['gamma', 1, 0, ['g-live']],
@@ -206,13 +276,16 @@ describe('rowLabel', () => {
   });
 });
 
-it('groups archived rows by project without counting them as live or idle', () => {
-  const archives = mergeArchives([{ id: 'mac', name: 'Mac', status: captured.payload as StatusPayload }]);
-  const sections = homeSections(archives);
-  expect(sections.map((section) => [section.project, section.live, section.idle])).toEqual([
-    ['stim', 0, 0],
-    ['tlon-apps', 0, 0],
-  ]);
-  expect(sections[0].data.map((entry) => entry.title)).toEqual(['feat/archived-workspaces', 'feat/phone-list']);
-  expect(sections[0].data.every((entry) => 'archive' in entry)).toBe(true);
-});
+it.each(['recent', 'name'] as const)(
+  'groups archived rows by project in removal order without counting them as live or idle (%s)',
+  (sort) => {
+    const archives = mergeArchives([{ id: 'mac', name: 'Mac', status: captured.payload as StatusPayload }]);
+    const sections = homeSections(archives, sort);
+    expect(sections.map((section) => [section.project, section.live, section.idle])).toEqual([
+      ['stim', 0, 0],
+      ['tlon-apps', 0, 0],
+    ]);
+    expect(sections[0].data.map((entry) => entry.title)).toEqual(['feat/archived-workspaces', 'feat/phone-list']);
+    expect(sections[0].data.every((entry) => 'archive' in entry)).toBe(true);
+  },
+);
