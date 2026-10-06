@@ -31,10 +31,19 @@ import {
   readHostedDeviceLedger,
   type HostedDeviceSession,
 } from '@stim-cli/core/state';
-import { processGroupAlive, readClaimSet, tryAcquireClaim, releaseClaim } from '@stim-cli/core/ownership-claim';
+import {
+  claimRemoveCommand,
+  processGroupAlive,
+  readClaimSet,
+  tryAcquireClaim,
+  releaseClaim,
+} from '@stim-cli/core/ownership-claim';
 import * as processIdentity from '@stim-cli/core/process-identity';
 import { takeHostedInputClaim } from '../src/hosted-input.ts';
 import { DeviceHost } from '../src/device-host.ts';
+import { AgentDeviceDriver } from '../src/agent-device-driver.ts';
+import * as processes from '../src/processes.ts';
+import { keepAgentClaim } from './fixtures/kept-agent-claim.ts';
 import { AgentDriverUnavailable, HostedAgentHost, type AgentAccess, type HostedAgentApp } from '../src/agent-driver.ts';
 import { protocolJsonSchema, type ServerMessage } from '../src/protocol.ts';
 import { Ajv2020 } from 'ajv/dist/2020.js';
@@ -152,7 +161,7 @@ const agents = {
     agentIssued.set(app.session, access);
     return Promise.resolve(access);
   },
-  appStopped: (session: string) => {
+  appStopped: (session: string, _udid?: string) => {
     agentCalls.push(['stopped', session]);
     return Promise.resolve();
   },
@@ -1099,6 +1108,70 @@ describe('hosted agent control', () => {
     await state(id, 'stopped');
     expect(agentCalls).toContainEqual(['stopped', id]);
   });
+
+  test.each(['live', 'gone'])(
+    'reconciles a kept %s-child iOS agent claim with no in-memory driver before native stop',
+    async (status) => {
+      const first = reserve();
+      await state(first.id, 'ready');
+      const root = join(deviceHostArea(first.id), 'agent-device.claims');
+      const child = keepAgentClaim(root);
+      const claim = readClaimSet(root).live[0]!;
+      const fresh = new HostedAgentHost({
+        resolve: () => null,
+        resolveIos: (app) =>
+          new AgentDeviceDriver({
+            env: {},
+            stateDir: join(deviceHostArea(app.session), 'agent-device'),
+            claimRoot: join(deviceHostArea(app.session), 'agent-device.claims'),
+            ios: app,
+          }),
+        nodeOf: () => 'node',
+      });
+      const sweep = vi.spyOn(processes, 'listProcesses').mockImplementation(async () => {
+        expect(existsSync(join(deviceHostArea(first.id), 'home', 'stopped'))).toBe(false);
+        return '';
+      });
+      const stop = vi
+        .spyOn(agents, 'appStopped')
+        .mockImplementation((session, udid) => fresh.appStopped(session, udid));
+      try {
+        if (status === 'gone') {
+          process.kill(child.pid as number, 'SIGKILL');
+          await processIdentity.waitForProcessExit(child, 2000);
+        }
+        host.stop('client', { session: first.id });
+        const stopped = await state(first.id, status === 'live' ? 'unknown' : 'stopped');
+        const keptClaim = expect.stringContaining(claim.path);
+        const remedy = expect.stringContaining(claimRemoveCommand(claim.path));
+        expect(stopped.notice).toEqual(status === 'live' ? keptClaim : undefined);
+        expect(stopped.notice).toEqual(status === 'live' ? remedy : undefined);
+        expect(existsSync(join(deviceHostArea(first.id), 'home', 'stopped'))).toBe(status === 'gone');
+        expect(readHostedDeviceLedger(join(deviceHostArea(first.id), 'home'))!.ios).toHaveLength(
+          status === 'live' ? 1 : 0,
+        );
+        expect(readClaimSet(root).live.map((holder) => holder.child)).toEqual(status === 'live' ? [child] : []);
+        expect(sweep).toHaveBeenCalledTimes(status === 'live' ? 0 : 1);
+        if (status === 'live') {
+          process.kill(child.pid as number, 'SIGKILL');
+          await processIdentity.waitForProcessExit(child, 2000);
+          host.stop('client', { session: first.id });
+        }
+        await state(first.id, 'stopped');
+        expect(sweep).toHaveBeenCalledOnce();
+        expect(readHostedDeviceLedger(join(deviceHostArea(first.id), 'home'))!.ios).toEqual([]);
+        expect(readClaimSet(root).live).toEqual([]);
+      } finally {
+        if (processIdentity.inspectProcessIdentity(child) === 'same') {
+          process.kill(child.pid as number, 'SIGKILL');
+          await processIdentity.waitForProcessExit(child, 2000);
+        }
+        await fresh.close();
+        stop.mockRestore();
+        sweep.mockRestore();
+      }
+    },
+  );
 
   test.each(['stop', 'reinstall'])('retains the iOS device when the agent cannot stop before %s', async (action) => {
     const { id } = await installApp('ios');

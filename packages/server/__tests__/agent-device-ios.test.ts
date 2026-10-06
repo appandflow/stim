@@ -5,7 +5,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PassThrough, Readable } from 'node:stream';
 import { createHash } from 'node:crypto';
-import { readClaimSet } from '@stim-cli/core/ownership-claim';
+import { claimRemoveCommand, readClaimSet } from '@stim-cli/core/ownership-claim';
+import { keepAgentClaim } from './fixtures/kept-agent-claim.ts';
 import { parseHostedAgentGrant } from '@stim-cli/core/state';
 import type { ProcessIdentityStatus } from '@stim-cli/core/process-identity';
 import { AgentDeviceDriver } from '../src/agent-device-driver.ts';
@@ -210,6 +211,41 @@ test('starts with exactly one simulator policy, requires its digest and allocate
   );
   await driver.stop();
   expect(readClaimSet(join(home, 'claims')).live).toHaveLength(0);
+});
+
+test('a fresh iOS driver refuses a kept live-child claim before stopping the daemon or runners', async () => {
+  const root = join(home, 'claims');
+  const child = keepAgentClaim(root);
+  const claim = readClaimSet(root).live[0]!;
+  try {
+    await expect(driver.stop()).rejects.toThrow(claim.path);
+    await expect(driver.stop()).rejects.toThrow(claimRemoveCommand(claim.path));
+    expect(readClaimSet(root).live[0]!.child).toEqual(child);
+    expect(fixture.events).toEqual([]);
+  } finally {
+    process.kill(child.pid as number, 'SIGKILL');
+    const actual = await vi.importActual<typeof import('@stim-cli/core/process-identity')>(
+      '@stim-cli/core/process-identity',
+    );
+    expect(await actual.waitForProcessExit(child, 2000)).toBe(true);
+  }
+});
+
+test('a fresh iOS driver recovers a kept gone-child claim and sweeps runners before releasing it', async () => {
+  const root = join(home, 'claims');
+  const child = keepAgentClaim(root);
+  process.kill(child.pid as number, 'SIGKILL');
+  const actual = await vi.importActual<typeof import('@stim-cli/core/process-identity')>(
+    '@stim-cli/core/process-identity',
+  );
+  expect(await actual.waitForProcessExit(child, 2000)).toBe(true);
+  expect(readClaimSet(root).dead).toHaveLength(1);
+  fixture.ps = [runner(888880)];
+  fixture.identities = { 888880: 'same' };
+  await driver.stop();
+  expect(fixture.events).toEqual(['ps', 'ps', 'signal:-888880:SIGTERM']);
+  expect(readClaimSet(root).live).toEqual([]);
+  expect(readClaimSet(root).dead).toEqual([]);
 });
 
 test.each(['policy', 'backend'] as const)('grants nothing when the daemon lacks the required %s', async (missing) => {

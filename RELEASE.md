@@ -161,7 +161,8 @@ preparation, `git status --short` may show only the draft
    preflight; do not combine the two lanes informally.
 
    The native compatibility stage requires the tools and connected iPhone listed
-   in [docs/testing.md](./docs/testing.md). Record unavailable prerequisites
+   in [docs/testing.md](./docs/testing.md), including `STIM_AGENT_DEVICE_SOURCE` for
+   the agent-device source checkout. Record unavailable prerequisites
    explicitly; a unit-only pass does not satisfy that stage.
 
    ```bash

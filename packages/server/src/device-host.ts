@@ -805,7 +805,11 @@ export class DeviceHost {
   private async install(record: HostedDeviceSession, owned: OwnedSession, attempt: string): Promise<void> {
     try {
       if (record.platform === 'ios' || this.options.agents.access(record.id))
-        await this.stopAgent(record.id, record.platform === 'ios');
+        await this.stopAgent(
+          record.id,
+          record.platform === 'ios',
+          record.platform === 'ios' ? (record.device as HostedIosDevice | null)?.udid : undefined,
+        );
       await this.closeView(owned);
       await this.settleLogs(owned);
       if (owned.stopping || this.closed || !this.options.allowed(record.client)) return;
@@ -882,8 +886,8 @@ export class DeviceHost {
     }
   }
 
-  private stopAgent(session: string, strict = false): Promise<void> {
-    return this.options.agents.appStopped(session).catch((error: unknown) => {
+  private stopAgent(session: string, strict = false, udid?: string): Promise<void> {
+    return this.options.agents.appStopped(session, udid).catch((error: unknown) => {
       if (strict) throw error;
       process.stderr.write(`Hosted agent control did not stop: ${(error as Error).message}\n`);
     });
@@ -933,7 +937,11 @@ export class DeviceHost {
     if (record.state === 'stopped') return;
     const owned = this.acquire(record);
     if (owned.stopping) return;
-    const agentStop = this.stopAgent(record.id, record.platform === 'ios');
+    const agentStop = this.stopAgent(
+      record.id,
+      record.platform === 'ios',
+      record.platform === 'ios' ? (record.device as HostedIosDevice | null)?.udid : undefined,
+    );
     void this.closeMetro(owned).catch((error: unknown) => this.failed(record.id, error));
     void this.closeView(owned).catch((error: unknown) => this.failed(record.id, error));
     this.change(record.id, (current) => {

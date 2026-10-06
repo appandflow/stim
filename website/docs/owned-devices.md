@@ -727,7 +727,8 @@ Allowed commands are `devices`, `open`, `close`, `snapshot`, `diff`, `wait`, `fi
 `longpress`, `swipe`, `back`, `home`, `orientation`, `appstate`, `alert` and `batch`.
 They inspect and interact with the simulator and its installed apps. `devices`
 lists only the session's simulator, filtered by the daemon policy. Its device
-claims are session-local and record `/` as the workspace. Client device
+claims are session-local and record `/` as the workspace; a host-side agent-device
+using the same simulator is not visible to the hosted daemon. Client device
 selectors are stripped and requests are pinned to iOS and that UDID; an explicitly
 named foreign UDID is refused. Selecting another device, boot/shutdown/erase,
 installs, uninstall, uploads, `push`, `record`, `logs`, `network`, `perf`, `trace`,

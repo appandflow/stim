@@ -408,6 +408,30 @@ export class AgentDeviceDriver implements HostedAgentDriver {
     const running = this.running;
     this.running = null;
     if (running) clearInterval(running.watch);
+    if (!this.claim && this.options.ios) {
+      let attempt;
+      try {
+        attempt = tryAcquireClaim({
+          root: this.options.claimRoot,
+          mode: 'exclusive',
+          label: 'agent-device daemon',
+        });
+      } catch (error) {
+        throw new Error(
+          `The agent-device daemon claim ${this.options.claimRoot} is unresolved: ${(error as Error).message}. Once it is gone, clear it with: ${claimRemoveCommand(this.options.claimRoot)}`,
+          { cause: error },
+        );
+      }
+      if (attempt.pending) releaseClaim(attempt.pending);
+      if (!attempt.acquired) {
+        const path = attempt.held?.path ?? attempt.waitingFor?.[0]?.path ?? this.options.claimRoot;
+        throw new Error(
+          `The agent-device daemon is unresolved; its claim ${path} was kept. Once it is gone, clear it with: ${claimRemoveCommand(path)}`,
+        );
+      }
+      this.claim = attempt.acquired;
+      this.daemonRecord = attempt.reaped.find((holder) => holder.child)?.child ?? null;
+    }
     if (running || this.claim) await this.teardown(running?.proxy, running ?? undefined);
     for (const session of sessions) this.removeSessionDirectories(session);
   }
@@ -440,17 +464,19 @@ export class AgentDeviceDriver implements HostedAgentDriver {
   }
 
   private async stopDaemon(): Promise<void> {
-    try {
-      const invocation = resolveAgentDevice(this.options.env);
-      await new Promise<void>((resolve) => {
-        execFile(
-          invocation.command,
-          [...invocation.args, 'daemon', 'stop', '--state-dir', this.options.stateDir],
-          { env: { ...this.options.env, AGENT_DEVICE_NO_UPDATE_NOTIFIER: '1' }, timeout: this.options.stopTimeoutMs },
-          () => resolve(),
-        );
-      });
-    } catch {}
+    if (!this.options.ios || this.iosProxy) {
+      try {
+        const invocation = resolveAgentDevice(this.options.env);
+        await new Promise<void>((resolve) => {
+          execFile(
+            invocation.command,
+            [...invocation.args, 'daemon', 'stop', '--state-dir', this.options.stateDir],
+            { env: { ...this.options.env, AGENT_DEVICE_NO_UPDATE_NOTIFIER: '1' }, timeout: this.options.stopTimeoutMs },
+            () => resolve(),
+          );
+        });
+      } catch {}
+    }
     if (this.iosProxy?.child.pid !== undefined && !this.daemonRecord)
       throw new Error(
         `The agent-device daemon identity is unresolved; its claim ${this.claim?.path} was kept. Once it is gone, clear it with: ${claimRemoveCommand(this.claim!.path)}`,

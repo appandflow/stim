@@ -633,8 +633,8 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
             claimRoot: join(serverDir(), 'agent-device.claims'),
           })
         : null,
-    resolveIos: (app) =>
-      loadConfig()?.hosting?.agentDriver === 'agent-device'
+    resolveIos: (app, stopping) =>
+      stopping || loadConfig()?.hosting?.agentDriver === 'agent-device'
         ? new AgentDeviceDriver({
             env: options.env,
             stateDir: join(deviceHostArea(app.session), 'agent-device'),

@@ -55,7 +55,7 @@ interface Entry {
 export interface HostedAgentHostOptions {
   /** The driver the host's `hosting.agentDriver` names right now, or null for none. Read when no driver runs. */
   resolve: () => HostedAgentDriver | null;
-  resolveIos?: (app: HostedAgentApp & { udid: string }) => HostedAgentDriver | null;
+  resolveIos?: (app: { session: string; udid: string }, stopping?: boolean) => HostedAgentDriver | null;
   /** The tailnet node a client's approved device-host credential is pinned to, or null once it is not approved. */
   nodeOf: (client: string) => string | null;
   strictStop?: boolean;
@@ -172,9 +172,17 @@ export class HostedAgentHost {
     return 'Agent control failed to start on the hosting Mac. Check its stim-server log.';
   }
 
-  appStopped(session: string): Promise<void> {
+  appStopped(session: string, udid?: string): Promise<void> {
     return this.serialize(async () => {
-      const child = this.ios.get(session);
+      let child = this.ios.get(session);
+      if (!child && udid && this.options.resolveIos) {
+        const driver = this.options.resolveIos({ session, udid }, true);
+        if (driver) {
+          child = new HostedAgentHost({ ...this.options, resolveIos: undefined, strictStop: true });
+          child.active = driver;
+          this.ios.set(session, child);
+        }
+      }
       if (child) {
         await child.close();
         this.ios.delete(session);
