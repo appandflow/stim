@@ -1,0 +1,102 @@
+[
+  {
+    "path": "/Users/dev/Developer/hosted-ios",
+    "live": true,
+    "memoryMb": 0,
+    "warnings": [],
+    "ios": {
+      "udid": "",
+      "owned": false,
+      "state": "ready",
+      "name": "stim-hosted (iPhone Duo 27.0)",
+      "host": {
+        "machine": "janics-mac-mini:7443",
+        "session": "12345678-1234-1234-1234-123456789abc",
+        "selected": "janics-mac-mini:7443",
+        "device": {
+          "name": "iPhone Duo",
+          "runtime": "iOS 27.0"
+        },
+        "agent": {
+          "driver": "none",
+          "setting": "hosting.agentDriver"
+        }
+      }
+    },
+    "slots": [
+      {
+        "slot": "tablet",
+        "ios": {
+          "udid": "",
+          "owned": false,
+          "state": "ready",
+          "name": "stim-hosted (iPad Pro 27.0)",
+          "host": {
+            "machine": "janics-mac-mini:7443",
+            "session": "12345678-1234-1234-1234-123456789abd",
+            "selected": "janics-mac-mini:7443",
+            "device": {
+              "name": "iPad Pro",
+              "runtime": "iOS 27.0"
+            },
+            "agent": {
+              "driver": "none",
+              "setting": "hosting.agentDriver"
+            }
+          }
+        },
+        "android": null
+      }
+    ]
+  },
+  {
+    "path": "/Users/dev/Developer/hosted-ios-stopped",
+    "live": false,
+    "memoryMb": 0,
+    "warnings": [],
+    "ios": {
+      "udid": "",
+      "owned": false,
+      "state": "stopped",
+      "name": "stim-hosted (iPhone Duo 27.0)",
+      "host": {
+        "machine": "janics-mac-mini:7443",
+        "session": "12345678-1234-1234-1234-123456789abc",
+        "selected": "janics-mac-mini:7443",
+        "device": {
+          "name": "iPhone Duo",
+          "runtime": "iOS 27.0"
+        },
+        "agent": {
+          "driver": "none",
+          "setting": "hosting.agentDriver"
+        }
+      }
+    }
+  },
+  {
+    "path": "/Users/dev/Developer/hosted-ios-unavailable",
+    "live": true,
+    "memoryMb": 0,
+    "warnings": ["janics-mac-mini is unavailable."],
+    "ios": {
+      "udid": "",
+      "owned": false,
+      "state": "unverified",
+      "name": "stim-hosted (iPhone Duo 27.0)",
+      "host": {
+        "machine": "janics-mac-mini:7443",
+        "session": "12345678-1234-1234-1234-123456789abc",
+        "selected": "janics-mac-mini:7443",
+        "device": {
+          "name": "iPhone Duo",
+          "runtime": "iOS 27.0"
+        },
+        "agent": {
+          "driver": "none",
+          "setting": "hosting.agentDriver"
+        }
+      }
+    }
+  }
+]

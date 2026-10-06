@@ -11,7 +11,7 @@ public enum ServerLink: Equatable, Sendable {
   case unavailable(String)
 }
 
-/// What a leased physical device's tile shows: its screen through stim-server, or why it cannot.
+/// What a physical or hosted device's tile shows: its screen through stim-server, or why it cannot.
 public enum PhysicalScreen: Equatable, Sendable {
   /// `control` is nil when Take over is offered, else why the screen is view only.
   case stream(control: String?)
@@ -19,6 +19,27 @@ public enum PhysicalScreen: Equatable, Sendable {
 
   /// `now` decides an expired lease before `stim status` drops the device.
   public init(device: DeviceRef, link: ServerLink, now: Date) {
+    if let host = device.hostedIos {
+      let slot = device.slot == DeviceRef.defaultSlot ? "" : " --slot \(device.slot)"
+      if device.state == "stopped" {
+        self = .message(
+          "The iOS session on \(machineName(host.machine)) stopped.", remedy: "stim ios --remote \(host.machine)\(slot)")
+        return
+      }
+      switch link {
+      case .off: self = .message("Turn on Serve to phones on the Phones page to see this simulator's screen.")
+      case .connecting: self = .message("Connecting to stim-server")
+      case .unavailable(let reason): self = .message(reason)
+      case .open(let features, let capabilities):
+        guard features?.contains("ios-hosted") == true else {
+          self = .message(
+            "Update stim-server to see this simulator's screen.", remedy: "npm install --global @stim-cli/server@latest")
+          return
+        }
+        self = .stream(control: capabilities.contains("control") ? nil : "Stim Desktop's stim-server pairing is read only.")
+      }
+      return
+    }
     let command = device.platform == "ios" ? "stim ios --device" : "stim android --device"
     if let expires = device.leaseExpiresAt, expires <= now {
       self = .message("The workspace's lease on this device ended.", remedy: command)

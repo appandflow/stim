@@ -4,6 +4,7 @@ const fixture = (name) => new URL(`./fixtures/${name}`, import.meta.url);
 
 export function loadFixtures() {
   const status = JSON.parse(readFileSync(fixture('status.json'), 'utf8'));
+  status.payload.environments.push(...JSON.parse(readFileSync(fixture('hosted-ios.json'), 'utf8')));
   const logs = readFileSync(fixture('logs.ndjson'), 'utf8')
     .split('\n')
     .filter(Boolean)

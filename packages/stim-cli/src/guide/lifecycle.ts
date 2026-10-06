@@ -323,8 +323,19 @@ logs remain readable. Unknown selection or agent metadata is normalized
 without discarding the owner. devices.idleShutdownMinutes
 does not stop a hosted simulator in this phase; its recorded session keeps Metro
 from idle stopping. Native hosted iOS logs are not collected yet; JavaScript
-logs already arrive through Metro. Client viewing relays, app handoff, upload
-deduplication and agent control are later work.`,
+logs already arrive through Metro. App handoff, upload deduplication and agent
+control are later work.
+
+Stim Desktop and the phone app view and control the simulator through this
+Mac's stim-server relay, with an "on <machine>" label. Turn on Serve to phones
+in Desktop; pair the phone with this Mac, not the hosting Mac. frames.subscribe
+and control.begin address workspace, platform ios and slot, including named
+slots. The relay shares one authenticated host connection with hosted macOS
+viewers. Stopped sessions show a rerun remedy; unavailable hosts report why
+frames cannot arrive. Replay, duoFrame and physical targets are refused for
+hosted subscriptions. Desktop hides local Simulator.app, rotation, hardware
+buttons and simulator options; touch and text use the relay. The phone can also
+send the host's supported button, rotation and posture inputs.`,
     },
     eas: {
       summary: 'download a matching EAS development build; explicit profile, costs, cache and miss remedies',

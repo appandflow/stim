@@ -17,6 +17,8 @@ let mockArtwork = false;
 let mockControlling = true;
 let mockAllowed = true;
 let mockPhysical = false;
+let mockHosted = false;
+const mockStream = jest.fn();
 let mockFeatures = ['frames'];
 const mockSelectWindow = jest.fn();
 const mockWindow = { id: 12, title: 'App', frame: { x: 0, y: 0, width: 800, height: 600 } };
@@ -62,7 +64,15 @@ jest.mock('@/hooks/machines', () => ({
     title: 'Duo fixture',
     env: {
       path: '/fixture',
-      ios: { udid: 'fixture', owned: true, state: 'Booted', name: 'stim-fixture (iPhone Duo 27.1)' },
+      ios: {
+        udid: mockHosted ? '' : 'fixture',
+        owned: !mockHosted,
+        state: mockHosted ? 'ready' : 'Booted',
+        name: 'stim-fixture (iPhone Duo 27.1)',
+        ...(mockHosted
+          ? { host: { machine: 'mini', session: 'host-session', device: { name: 'iPhone Duo', runtime: 'iOS 27.1' } } }
+          : {}),
+      },
       activity: { ios: mockDriver },
       deviceLeases: mockPhysical ? [] : undefined,
     },
@@ -91,23 +101,26 @@ jest.mock('@/hooks/device-control', () => ({
 }));
 jest.mock('@/hooks/device-stream', () => ({
   useReplayAt: () => null,
-  useDeviceStream: () => ({
-    windows: mockWindows,
-    frame: { width: 400, height: 800, ...(mockArtwork ? { artworkTurns: 0 } : { posture: 'folded' }) },
-    replay: null,
-    video: null,
-    artwork: mockArtwork
-      ? {
-          width: 500,
-          height: 1000,
-          aperture: { x: 50, y: 100, width: 400, height: 800 },
-          quarterTurns: 0,
-          cornerRadius: 20,
-          background: 'png',
-          foreground: 'png',
-        }
-      : null,
-  }),
+  useDeviceStream: (...args: unknown[]) => {
+    mockStream(...args);
+    return {
+      windows: mockWindows,
+      frame: { width: 400, height: 800, ...(mockArtwork ? { artworkTurns: 0 } : { posture: 'folded' }) },
+      replay: null,
+      video: null,
+      artwork: mockArtwork
+        ? {
+            width: 500,
+            height: 1000,
+            aperture: { x: 50, y: 100, width: 400, height: 800 },
+            quarterTurns: 0,
+            cornerRadius: 20,
+            background: 'png',
+            foreground: 'png',
+          }
+        : null,
+    };
+  },
 }));
 jest.mock('@/hooks/replay-range', () => ({ useReplayRange: () => null }));
 jest.mock('@/hooks/auto-hide', () => ({ useAutoHide: () => ({ shown: true, hide: jest.fn() }) }));
@@ -188,6 +201,8 @@ beforeEach(() => {
   mockControlling = true;
   mockAllowed = true;
   mockPhysical = false;
+  mockHosted = false;
+  mockStream.mockClear();
   mockArtwork = false;
   mockFeatures = ['frames', 'device-frames'];
   mockWindows = null;
@@ -394,3 +409,22 @@ it.each([
     expect(screen.queryByLabelText('Window') !== null).toBe(visible);
   },
 );
+
+it('shows a hosted iOS machine label and subscribes through the paired Mac without requesting duo frames', async () => {
+  mockHosted = true;
+  mockFeatures = ['ios-hosted', 'device-frames', 'duo-frames'];
+  const screen = await render(
+    <I18nProvider i18n={i18n}>
+      <DeviceView workspace="/fixture" platform="ios" slot="default" />
+    </I18nProvider>,
+  );
+  expect(screen.getAllByText('on mini').length).toBeGreaterThan(0);
+  expect(mockStream.mock.calls.at(-1)?.[0]).toEqual({
+    workspace: '/fixture',
+    platform: 'ios',
+    slot: 'default',
+    physical: false,
+  });
+  expect(mockStream.mock.calls.at(-1)?.[1]).toMatchObject({ enabled: true, startAt: null, duoFrame: false });
+  await screen.unmount();
+});

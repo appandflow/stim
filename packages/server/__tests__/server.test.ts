@@ -843,6 +843,7 @@ describe('pairing', () => {
           'macos-keyboard-extended',
           'device-frames',
           'macos-hosted',
+          'ios-hosted',
           'duo-frames',
           'workspace-diff',
           'hosted-congestion',

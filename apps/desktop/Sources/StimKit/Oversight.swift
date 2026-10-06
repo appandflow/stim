@@ -38,6 +38,7 @@ public struct OversightDevice: Decodable, Sendable {
   public var name: String?
   public var state: String?
   public var physical: Bool?
+  public var host: HostedIos?
   public var activity: OversightActivity?
 }
 
@@ -417,7 +418,8 @@ public enum Oversight {
       if let ios {
         out.append(
           SlotDevice(
-            platform: "ios", slot: slot, model: Format.simulatorModel(ios.name), running: ios.state == "Booted",
+            platform: "ios", slot: slot, model: Format.simulatorModel(ios.name),
+            running: ios.host != nil ? ios.state == "ready" : ios.state == "Booted",
             activity: ios.activity))
       }
       if let android {

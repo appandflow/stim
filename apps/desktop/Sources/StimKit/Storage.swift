@@ -387,8 +387,8 @@ public struct StorageReport: Sendable {
       } else {
         for device in env.devices {
           switch device {
-          case .ios(_, let sim) where sim.owned:
-            sizes.append(disk.measure(paths.simulator(sim.udid.uppercased()), in: paths.simulatorDevices))
+          case .ios(_, let sim) where sim.owned && device.localSimulatorUDID != nil:
+            sizes.append(disk.measure(paths.simulator(device.localSimulatorUDID!.uppercased()), in: paths.simulatorDevices))
           case .android(_, let avd) where avd.owned && !avd.physical:
             sizes.append(disk.measure(paths.avd(avd.name), in: paths.avds))
           default:

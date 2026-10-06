@@ -66,11 +66,12 @@ public func shellQuote(_ s: String) -> String {
 /// workspace's Chrome. Nil for a physical device or one Stim does not own, which that command does not target.
 public func runCommand(for device: DeviceRef, cwd: String) -> StimCommand? {
   switch device {
-  case .ios(_, let sim) where sim.owned: break
+  case .ios(_, let sim) where sim.owned || sim.host != nil: break
   case .android(_, let avd) where avd.owned && !avd.physical: break
   case .web(let browser): return webCommand(browser, cwd: cwd)
   default: return nil
   }
   let slot = device.slot == DeviceRef.defaultSlot ? [] : ["--slot", device.slot]
-  return StimCommand([device.platform] + slot, cwd: cwd)
+  let remote = device.hostedIos.map { ["--remote", $0.machine] } ?? []
+  return StimCommand([device.platform] + slot + remote, cwd: cwd)
 }

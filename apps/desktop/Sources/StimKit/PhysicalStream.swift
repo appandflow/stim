@@ -1,8 +1,8 @@
 import Combine
 import Foundation
 
-/// The live screen of a workspace's leased physical device through stim-server, and for an Android phone the control
-/// session that drives it, following the phone's `useDeviceStream` and `useDeviceControl` with `physical: true`.
+/// A workspace's physical device or hosted simulator/app screen and control session through its local stim-server.
+/// Physical devices use `physical: true`; hosted targets are resolved by workspace, platform and slot.
 @MainActor public final class PhysicalStream: ObservableObject {
   public enum Control: Equatable, Sendable {
     /// `ended` says why the server or the connection ended the last session.
@@ -15,7 +15,7 @@ import Foundation
   static let fps = 30.0
 
   public let target: ReplayTarget
-  /// False for a hosted macOS app, which stim-server relays rather than reading a leased device.
+  /// False for a hosted simulator or macOS app, which stim-server relays rather than reading a leased device.
   public let physical: Bool
   /// Why no frames arrive: a refused or failed subscription, or the server's `frame-delayed` reason.
   @Published public private(set) var problem: String?
@@ -113,7 +113,7 @@ import Foundation
   }
 
   /// Starts driving the device, taking it over from an agent that drives it. The server refuses a workspace that
-  /// no longer holds the device's lease.
+  /// no longer owns the target session or holds the physical device's lease.
   public func begin() {
     guard let server else { return }
     switch control {

@@ -2577,6 +2577,11 @@ msgstr "Not on the tailnet"
 msgid "Not paired"
 msgstr "Not paired"
 
+#: src/lib/device-tile.ts
+#: src/lib/workspaces.ts
+msgid "Not running"
+msgstr "Not running"
+
 #: src/components/device-tile.tsx
 msgid "Not running · {deviceState}"
 msgstr "Not running · {deviceState}"
@@ -3800,6 +3805,7 @@ msgstr "unknown"
 #: src/lib/build-machines.ts
 #: src/lib/device-tile.ts
 #: src/lib/device-tile.ts
+#: src/lib/device-tile.ts
 #: src/lib/format.ts
 #: src/lib/format.ts
 #: src/lib/format.ts
@@ -3885,6 +3891,7 @@ msgstr "Update Stim on the Mac to view workspace diffs."
 msgid "Update stim-server on the Mac to see caches, runtimes and what Stim can free."
 msgstr "Update stim-server on the Mac to see caches, runtimes and what Stim can free."
 
+#: src/lib/workspaces.ts
 #: src/lib/workspaces.ts
 msgid "Update stim-server on the Mac to see this device's screen."
 msgstr "Update stim-server on the Mac to see this device's screen."

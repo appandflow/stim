@@ -243,7 +243,8 @@ valid NDJSON. The host's unified log is not collected: os.Logger output that is
 not written to stderr does not appear.
 
 Phones and Stim Desktop view and control the hosted app through this Mac's
-stim-server, which relays to the host. The phone sends clicks, scrolls,
+stim-server, which relays to the host. Hosted iOS simulator tiles use the same
+relay and show on <machine>; see guide lifecycle hosted-ios. The phone sends clicks, scrolls,
 text and keys; Stim Desktop's Control sends clicks, drags and typed text.
 
   stim macos --remote mini          # build here, deliver, launch on mini

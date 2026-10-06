@@ -654,7 +654,17 @@ access clears its placement during stop or worktree removal; other refusals
 retain it.
 A host server restart stops its sessions.
 
-Native logs, client viewing relays, agent leases, app handoff and upload
+Stim Desktop and the phone app show the simulator with an **on &lt;machine&gt;**
+label. Turn on **Serve to phones** in Desktop and pair the phone with the client
+Mac. Both view and control it through that Mac's local stim-server relay;
+neither connects directly to the hosting Mac. Named slots work independently.
+Touch and text work in Desktop. Local Simulator.app, rotation, hardware buttons
+and simulator options are hidden there. The phone also sends supported buttons,
+rotation and the postures reported by the host. Hosted viewing has no replay,
+Duo frame rendering or physical-device target. A stopped session shows a rerun
+command; an unavailable host reports the connection failure.
+
+Native logs, agent leases, app handoff and upload
 deduplication are later work. JavaScript logs already reach Metro. The agent
 reports `driver: 'none'`. `devices.idleShutdownMinutes` does not stop hosted
 simulators in this phase; their recorded sessions prevent Metro idle stop.
@@ -755,8 +765,7 @@ stop and revocation close the streams. No public tunnel or Funnel is needed.
 Expo development clients need the forwarded-origin manifest contract described
 in that protocol; older client/CLI versions are not covered by this slice.
 
-Client screen/control relays, automatic placement and
-Android Metro and viewing remain in [#2266](https://github.com/appandflow/stim/issues/2266).
+Automatic placement and Android Metro and viewing remain in [#2266](https://github.com/appandflow/stim/issues/2266).
 This protocol slice does not change where `stim ios` or `stim android` runs.
 Hosting approval grants no access to unrelated
 workspaces, phone control or build offloading.
@@ -774,5 +783,4 @@ native session; subscribe and begin control again. Installation, stop and
 revocation close capture and input before native work. An uncertain journal
 retains native ownership while ending known capture. Surviving or unresolved
 posture input blocks native replacement and teardown after a server crash.
-Client viewer relays and
-automatic CLI placement remain under #2266.
+Automatic CLI placement remains under #2266.

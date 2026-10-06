@@ -22,6 +22,10 @@ struct DeviceViewerToolbar: View {
     HStack(spacing: Space.md) {
       identity
         .layoutPriority(1)
+      if let host = device.hostedIos {
+        Label("on \(machineName(host.machine))", systemImage: "desktopcomputer")
+          .font(.stim(.caption)).foregroundStyle(Palette.tertiary)
+      }
       ViewThatFits(in: .horizontal) {
         status(usage: true)
         status(usage: false)
@@ -189,7 +193,8 @@ struct DeviceViewerToolbar: View {
 
   @ViewBuilder private var takeOverButton: some View {
     if device.isInteractive,
-      !device.isPhysical || takenOver || PhysicalScreen(device: device, link: server.link, now: Date()).canControl
+      (!device.isPhysical && device.hostedIos == nil) || takenOver
+        || PhysicalScreen(device: device, link: server.link, now: Date()).canControl
     {
       if takenOver {
         Button("Release control", systemImage: "hand.raised.fill") { takenOver = false }

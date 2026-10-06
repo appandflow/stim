@@ -4,8 +4,8 @@ import EmulatorFrames
 import StimKit
 import SwiftUI
 
-/// A leased physical device's screen through Stim Desktop's stim-server connection. While `interactive`, an Android
-/// phone takes clicks, trackpad scrolls and keys, and shows its Home, Back, Apps and Lock buttons.
+/// A physical device or hosted iOS screen through Stim Desktop's local stim-server connection. Hosted iOS and
+/// physical Android targets take clicks, trackpad scrolls and keys; physical iOS stays view only.
 struct PhysicalDeviceScreen: View {
   var device: DeviceRef
   var workspace: String
@@ -27,7 +27,7 @@ struct PhysicalDeviceScreen: View {
     self.onControlLost = onControlLost
     _stream = StateObject(
       wrappedValue: PhysicalStream(
-        target: ReplayTarget(workspace: workspace, platform: device.platform, slot: device.slot)))
+        target: ReplayTarget(workspace: workspace, platform: device.platform, slot: device.slot), physical: device.isPhysical))
   }
 
   var body: some View {
@@ -37,7 +37,11 @@ struct PhysicalDeviceScreen: View {
         .onChange(of: screen, initial: true) { _, screen in follow(screen) }
     }
     .onChange(of: interactive, initial: true) { _, interactive in
-      if interactive { stream.begin() } else { stream.end() }
+      if interactive, PhysicalScreen(device: device, link: session.link, now: Date()).canControl {
+        stream.begin()
+      } else {
+        stream.end()
+      }
     }
     .onChange(of: stream.control) { _, control in
       switch control {
@@ -107,7 +111,7 @@ struct PhysicalDeviceScreen: View {
   private func follow(_ screen: PhysicalScreen) {
     if case .stream = screen, session.isOpen {
       stream.connect(session.client)
-      if interactive { stream.begin() }
+      if interactive, screen.canControl { stream.begin() } else { stream.end() }
     } else {
       stream.stop()
     }
@@ -265,8 +269,6 @@ final class PhysicalDisplayView: NSView {
     touch("up", point(event, clamped: true) ?? last)
   }
 
-  // A trackpad scroll becomes a one-finger drag that follows the gesture's phases. Momentum events are dropped
-  // because Android flings on its own after the finger lifts.
   override func scrollWheel(with event: NSEvent) {
     guard interactive, event.hasPreciseScrollingDeltas, event.momentumPhase.isEmpty else {
       return super.scrollWheel(with: event)

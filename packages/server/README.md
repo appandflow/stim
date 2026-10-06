@@ -207,7 +207,7 @@ Device hosting has a separate `device-host` capability. An approved client can
 reserve, boot, reconnect to and stop its own iOS simulator or Android emulator
 through the protocol. It can deliver, install and launch a compatible iOS app
 bundle, Android APK or prebuilt macOS app, stream the iOS simulator or macOS app and control it. The hosted iOS
-app connects back to Metro on the client Mac. Automatic CLI placement, client view/control relays and
+app connects back to Metro on the client Mac. Automatic CLI placement and
 Android Metro and viewing remain in [#2266](https://github.com/appandflow/stim/issues/2266).
 
 The Stim client can name expected hosts with
@@ -565,7 +565,7 @@ because stop keeps logs. Servers that predate it answer `forbidden` or
 `unknown-method`.
 
 macOS sessions refuse Metro. Viewing and control are supported while the hosted
-app is running. CLI placement and client view/control relays remain follow-ups in [#2403](https://github.com/appandflow/stim/issues/2403).
+app is running. Automatic CLI placement remains a follow-up in [#2403](https://github.com/appandflow/stim/issues/2403).
 
 ### Private hosted Metro
 
@@ -603,15 +603,21 @@ Bare React Native uses the worker `RCT_jsLocation`. Bridge readiness and
 manifest requests are not launch proof; development remains `unverified` until
 the workspace observes the app's own bundle delivery.
 This is a protocol API for approved clients; automatic iOS CLI placement,
-client iOS view/control relays and Android Metro/viewing remain in [#2266](https://github.com/appandflow/stim/issues/2266).
+Android Metro/viewing remains in [#2266](https://github.com/appandflow/stim/issues/2266).
 
-### Hosted macOS relay
+### Hosted viewer relay
 
-The client's stim-server relays a hosted workspace's macOS view and input to
+The client's stim-server relays a hosted workspace's iOS simulator or macOS view and input to
 its host using the client's approved device-host credential over the pinned
 tailnet connection. Stim Desktop and phones keep talking only to their own
-server. The `macos-hosted` feature advertises this relay. All of the client's
-relayed subscriptions and control sessions for one host share one connection,
+server. The `macos-hosted` and `ios-hosted` features advertise these relays.
+iOS resolves `ios.host` by the requested slot; macOS retains its default slot.
+The local platform and slot replace the host's private target fields in events
+and iOS control audit records. H.264 packets retain their flags and payload and
+carry the local subscription ID, which identifies the platform and slot.
+The relay forwards iOS device artwork and orientation metadata. Hosted targets
+refuse replay (`at`/`rate`), `duoFrame` and `physical` with `bad-request`.
+All of the client's relayed subscriptions and control sessions for one host share one connection,
 whichever local client opened them. Each request still checks the credential
 and the pinned node; a changed credential or endpoint opens a new connection.
 Ending a subscription or session sends `device-host.unsubscribe` or
@@ -623,9 +629,8 @@ its packets until the next keyframe and, when the host advertises the
 `hosted-congestion` feature, sends `device-host.frames.congested` at most every
 250 ms, so the host lowers that app's bitrate as it does for a local subscriber
 whose socket backs up.
-Hosted frames and control reject `physical`, a non-default slot, and replay
-(`at`/`rate`).
-`control.begin` still needs the local `control` grant. Screen Recording for
+Hosted macOS frames and control require the default slot; hosted iOS supports named slots.
+`control.begin` still needs the local `control` grant. For macOS apps, Screen Recording for
 viewing and Accessibility for control are granted on the host, not the client.
 
 ### Hosted iOS and macOS view and input

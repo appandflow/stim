@@ -33,6 +33,7 @@ export type Capability = (typeof CAPABILITIES)[number];
  * the slot's Stim-owned device instead. `notifications` is `notifications.list` and the `notification` event.
  * `macos-hosted` relays `frames.subscribe` and control for a workspace whose macOS app
  * `stim macos --remote` placed on another Mac.
+ * `ios-hosted` relays iOS simulator frames and control by workspace slot through the client's server.
  * `macos-windows` is the `macos-windows` event on a macOS `frames.subscribe`, naming the window capture follows
  * and the app's other windows.
  * `hosted-congestion` is `device-host.frames.congested`, which lowers the bitrate of a hosted video subscription
@@ -52,6 +53,7 @@ export const FEATURES = [
   'macos-keyboard-extended',
   'device-frames',
   'macos-hosted',
+  'ios-hosted',
   'duo-frames',
   'workspace-diff',
   'hosted-congestion',
@@ -1331,6 +1333,8 @@ export interface LogsEndedEvent {
 
 /** A subscription ended because its source failed or the client fell behind; the client may resubscribe. */
 export interface ErrorEvent {
+  platform?: Platform;
+  slot?: string;
   event: 'error';
   subscription: string;
   error: ProtocolError;
@@ -1349,6 +1353,8 @@ export interface DeviceFrameArtwork {
 }
 
 export interface DeviceFrameEvent {
+  platform?: Platform;
+  slot?: string;
   event: 'device-frame';
   subscription: string;
   artwork: DeviceFrameArtwork | null;
@@ -1407,6 +1413,8 @@ export interface FrameEvent {
  * frames stopped when the server knows, such as a locked iPhone or one another app captures.
  */
 export interface FrameDelayedEvent {
+  platform?: Platform;
+  slot?: string;
   event: 'frame-delayed';
   subscription: string;
   delayed: boolean;
@@ -1420,6 +1428,8 @@ export const CONTROL_END_REASONS = ['idle', 'taken-over', 'device-gone', 'forbid
  * stopped or changed owner, the device lost `control`, or input could not reach the device.
  */
 export interface ControlEndedEvent {
+  platform?: ControlPlatform;
+  slot?: string;
   event: 'control-ended';
   session: string;
   reason: (typeof CONTROL_END_REASONS)[number];

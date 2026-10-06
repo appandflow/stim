@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import type { AddressInfo } from 'node:net';
@@ -48,6 +48,8 @@ let helloFeatures: string[];
 let heldMethods: Set<string>;
 let heldReplies: (() => void)[];
 let endControlOnBegin: boolean;
+let stopped: boolean;
+let postures: string[];
 
 beforeEach(async () => {
   root = realpathSync(mkdtempSync(join(tmpdir(), 'stim-hosted-relay-')));
@@ -92,6 +94,8 @@ beforeEach(async () => {
   heldMethods = new Set();
   heldReplies = [];
   endControlOnBegin = false;
+  stopped = false;
+  postures = [];
   host = new WebSocketServer({ host: '127.0.0.1', port: 0 });
   await new Promise<void>((resolve, reject) => {
     host.once('listening', resolve);
@@ -117,6 +121,8 @@ beforeEach(async () => {
         if (helloError) return refuse(helloError);
         return answer({ capabilities: helloCapabilities, features: helloFeatures });
       }
+      if (stopped && (method === 'device-host.frames.subscribe' || method === 'device-host.control.begin'))
+        return refuse('The hosted session stopped.');
       if (method === 'device-host.frames.subscribe') {
         if (params.session !== HOST_SESSION) return refuse('wrong hosted session');
         const upstream = subscriptions.length ? `${UPSTREAM}-${subscriptions.length + 1}` : UPSTREAM;
@@ -150,7 +156,7 @@ beforeEach(async () => {
         if (params.session !== HOST_SESSION) return refuse('wrong hosted session');
         const control = controls.length ? `${CONTROL}-${controls.length + 1}` : CONTROL;
         controls.push(control);
-        answer({ session: control, lease: null });
+        answer({ session: control, lease: null, ...(postures.length ? { postures } : {}) });
         if (endControlOnBegin)
           socket.send(
             JSON.stringify({
@@ -821,4 +827,154 @@ it('tells a host with hosted-congestion about local congestion at most every 250
 
 it('sends no congestion notices to a host without hosted-congestion', async () => {
   expect(await congestionNotices([])).toEqual({ whileBehind: [], afterDrain: 0 });
+});
+
+function placeIos(slot: string) {
+  const placement = {
+    machine: 'mini',
+    session: HOST_SESSION,
+    appAttempt: 'ios-attempt',
+    selected: 'mini',
+    device: null,
+    agent: { driver: 'none', setting: 'hosting.agentDriver' },
+  };
+  const ios = { host: placement };
+  writeFileSync(
+    workspaceStateFile(workspace),
+    JSON.stringify({
+      ...JSON.parse(readFileSync(workspaceStateFile(workspace), 'utf8')),
+      ...(slot === 'default' ? { ios } : { deviceSlots: { [slot]: { ios } } }),
+    }),
+  );
+  return { workspace, platform: 'ios', slot };
+}
+
+it.each(['default', 'tablet'])(
+  'relays hosted iOS frames and control for slot %s without a local UDID',
+  async (slot) => {
+    const ios = placeIos(slot);
+    postures = ['folded', 'unfolded'];
+    const local = await client();
+    const reply = await local.request('frames.subscribe', { ...ios, deviceFrame: true, video: ['h264'] });
+    expect(await local.next()).toMatchObject({
+      event: 'frame',
+      subscription: reply.result.subscription,
+      platform: 'ios',
+      slot,
+    });
+    const packet = (await local.next()) as Buffer;
+    expect(packet.toString('ascii', 21, 21 + packet[20]!)).toBe(reply.result.subscription);
+    expect(await local.request('frames.keyframe', { subscription: reply.result.subscription })).toMatchObject({
+      result: {},
+    });
+    expect(requests.find((r) => r.method === 'device-host.frames.subscribe')?.params).toEqual({
+      session: HOST_SESSION,
+      deviceFrame: true,
+      video: ['h264'],
+    });
+    const session = (await local.request('control.begin', ios)).result.session!;
+    for (const [method, params] of [
+      ['input.touch', { phase: 'down', x: 0.2, y: 0.7 }],
+      ['input.button', { button: 'home' }],
+      ['input.rotate', { direction: 'right' }],
+      ['input.posture', { posture: 'folded' }],
+    ] as const) {
+      expect(await local.request(method, { session, ...params })).toMatchObject({ result: {} });
+      expect(requests.at(-1)).toMatchObject({
+        method: `device-host.${method}`,
+        params: { session: CONTROL, ...params },
+      });
+    }
+    expect(await local.request('input.window', { session, window: 1 })).toMatchObject({
+      error: { code: 'bad-request' },
+    });
+    const upstream = requests.find((r) => r.method === 'device-host.frames.subscribe')!.socket;
+    upstream.send(JSON.stringify({ event: 'frame-delayed', subscription: UPSTREAM, delayed: true, reason: 'waiting' }));
+    expect(await local.next()).toMatchObject({ event: 'frame-delayed', platform: 'ios', slot });
+    upstream.send(JSON.stringify({ event: 'device-frame', subscription: UPSTREAM, artwork: null }));
+    expect(await local.next()).toEqual({
+      event: 'device-frame',
+      subscription: reply.result.subscription,
+      platform: 'ios',
+      slot,
+      artwork: null,
+    });
+    upstream.send(
+      JSON.stringify({ event: 'control-ended', session: CONTROL, reason: 'device-gone', message: 'stopped' }),
+    );
+    expect(await local.next()).toMatchObject({ event: 'control-ended', session, platform: 'ios', slot });
+    expect(readAudit().filter((r) => r.workspace === workspace)).toEqual([
+      expect.objectContaining({ platform: 'ios', slot, action: 'control.begin', ok: true }),
+      expect.objectContaining({ platform: 'ios', slot, action: 'control.end', ok: true }),
+    ]);
+    upstream.send(
+      JSON.stringify({ event: 'error', subscription: UPSTREAM, error: { code: 'frames-failed', message: 'stopped' } }),
+    );
+    expect(await local.next()).toMatchObject({ event: 'error', platform: 'ios', slot });
+  },
+);
+
+it('refuses hosted iOS replay and duo frames before opening a host connection', async () => {
+  const ios = placeIos('tablet');
+  const local = await client();
+  for (const options of [{ at: 123 }, { rate: 1 }, { duoFrame: true }])
+    expect(await local.request('frames.subscribe', { ...ios, ...options })).toMatchObject({
+      error: { code: 'bad-request' },
+    });
+  expect(connections).toBe(0);
+});
+
+it('routes a physical iPhone on a slot with a hosted placement to the local path, and ignores prototype slot names', async () => {
+  const ios = placeIos('tablet');
+  const local = await client();
+  expect(await local.request('control.begin', { ...ios, physical: true })).toHaveProperty('error.code');
+  expect(await local.request('frames.subscribe', { ...ios, physical: true })).not.toHaveProperty(
+    'error.message',
+    expect.stringContaining('Hosted iOS'),
+  );
+  expect(await local.request('frames.subscribe', { ...ios, slot: 'constructor' })).not.toHaveProperty(
+    'error.code',
+    'frames-failed',
+  );
+  expect(connections).toBe(0);
+});
+
+it('reports a stopped hosted iOS placement instead of opening a local simulator', async () => {
+  const ios = placeIos('tablet');
+  stopped = true;
+  const local = await client();
+  expect(await local.request('frames.subscribe', ios)).toMatchObject({
+    error: { code: 'frames-failed', message: 'mini: The hosted session stopped.' },
+  });
+  expect(await local.request('control.begin', ios)).toMatchObject({
+    error: { code: 'forbidden', message: 'The hosted session stopped.' },
+  });
+});
+
+it('shares a host connection across macOS and a named iOS slot without confusing their events', async () => {
+  const ios = placeIos('tablet');
+  const local = await client();
+  const macos = await local.request('frames.subscribe', target());
+  expect(await local.next()).toMatchObject({
+    subscription: macos.result.subscription,
+    platform: 'macos',
+    slot: 'default',
+  });
+  const phone = await local.request('frames.subscribe', ios);
+  expect(await local.next()).toMatchObject({
+    subscription: phone.result.subscription,
+    platform: 'ios',
+    slot: 'tablet',
+  });
+  expect(connections).toBe(1);
+  expect(await local.request('unsubscribe', { subscription: macos.result.subscription })).toMatchObject({ result: {} });
+  const upstream = requests.find((r) => r.method === 'device-host.frames.subscribe')!.socket;
+  upstream.send(JSON.stringify({ event: 'frame-delayed', subscription: `${UPSTREAM}-2`, delayed: true }));
+  expect(await local.next()).toMatchObject({
+    subscription: phone.result.subscription,
+    platform: 'ios',
+    slot: 'tablet',
+  });
+  expect(await local.request('unsubscribe', { subscription: phone.result.subscription })).toMatchObject({ result: {} });
+  await vi.waitFor(() => expect(host.clients.size).toBe(0));
 });
