@@ -255,8 +255,12 @@ import Testing
     await settle()
     try #require(server.take("replay.range")).reply.resume(
       throwing: ServerError(code: "limit-exceeded", message: "A connection can run 4 requests at a time."))
-    try await Task.sleep(for: .milliseconds(300))
-    let retry = try #require(server.take("replay.range"))
+    var pending = server.take("replay.range")
+    for _ in 0..<100 where pending == nil {
+      try await Task.sleep(for: .milliseconds(50))
+      pending = server.take("replay.range")
+    }
+    let retry = try #require(pending)
     #expect(controller.error == nil)
     retry.reply.resume(
       returning: .object(["enabled": .bool(true), "recording": .bool(false), "spans": .array([]), "markers": .array([])]))
