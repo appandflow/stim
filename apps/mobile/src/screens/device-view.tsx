@@ -52,16 +52,17 @@ import { LANDED_SCREEN_RADIUS, useDeviceZoom, zoomKey } from '@/hooks/device-zoo
 import { useScreenZoom } from '@/hooks/screen-zoom';
 import { grantCommand, readOnlyReason, allowControlSteps } from '@/components/read-only';
 import { useDeviceControl } from '@/hooks/device-control';
-import { useMacConnection, useWorkspace } from '@/hooks/machines';
+import { useHasStatus, useMachinePresence, useMachineStatus, useMacConnection, useWorkspace } from '@/hooks/machines';
 import { useSettings, type VideoQuality } from '@/hooks/settings';
 import { framePoint, orientationOf, otherDriver } from '@/lib/device-control';
 import { matchingDeviceFrame } from '@/lib/device-frame';
+import { deviceUnavailable } from '@/lib/device-unavailable';
 import { foldOf } from '@/lib/fold';
-import { buildTimeline } from '@/lib/replay';
+import { buildTimeline, clampReplayTime } from '@/lib/replay';
 import { LIVE_VIEW, replayView } from '@/lib/replay-view';
 import { aspectOf, liftAbove } from '@/lib/zoom';
 import { workspaceTitleAt } from '@/lib/workspace-names';
-import { devicesOf, shortUrl, streamsFrames, unservedReason } from '@/lib/workspaces';
+import { devicesOf, shortUrl, streamsFrames } from '@/lib/workspaces';
 import type {
   DevicePlatform,
   DevicePosture,
@@ -113,11 +114,13 @@ export function DeviceView({
   platform,
   slot,
   physical = false,
+  openAt,
 }: {
   workspace: string;
   platform: DevicePlatform;
   slot: string;
   physical?: boolean;
+  openAt?: number;
 }) {
   const router = useRouter();
   const { theme } = useUnistyles();
@@ -138,6 +141,10 @@ export function DeviceView({
   const maxEdge = preset.maxEdge ?? windowMaxEdge;
   const { id: macId } = useLocalSearchParams<{ id?: string }>();
   const item = useWorkspace(macId ?? '', workspace);
+  const loaded = useHasStatus(macId ?? '');
+  const cached = useMachinePresence(macId ?? '').cached;
+  const hasStatus = loaded && !cached;
+  const status = useMachineStatus(macId);
   const env = item?.env;
   const device = env
     ? devicesOf(env).find(
@@ -187,14 +194,23 @@ export function DeviceView({
   const stream = useDeviceStream({ workspace, platform, slot, physical }, streamOptions);
   const canReplay = hasFootage && stream.replayable !== false;
   const replaying = stream.replay !== null;
+  const [opened, setOpened] = useState(false);
   const resumeAt = useReplayAt(view.replayedLive && !running ? stream.playhead : null);
-  const synced = replayView(view, {
+  let synced = replayView(view, {
     type: 'sync',
     replaying,
     running,
     at: resumeAt,
     timelineStart: timeline?.start ?? null,
   });
+  if (!opened && hasStatus) {
+    if (running || replaying || view.startAt !== null) {
+      setOpened(true);
+    } else if (hasFootage && timeline && openAt !== undefined) {
+      setOpened(true);
+      synced = replayView(synced, { type: 'seek', at: clampReplayTime(timeline, openAt), running, hasFootage });
+    }
+  }
   if (synced !== view) setView(synced);
   const control = useDeviceControl(workspace, platform, slot, physical);
   const [heldFrame, setHeldFrame] = useState<FrameEvent | null>(null);
@@ -374,11 +390,13 @@ export function DeviceView({
 
   const takeOver = () => control.begin(true);
   const seek = (at: number, rate: ReplayRate) => {
+    setOpened(true);
     if (controlling) control.end();
     setView((current) => replayView(current, { type: 'seek', at, running, hasFootage }));
     stream.seek(at, rate);
   };
   const goLive = () => {
+    setOpened(true);
     if (view.startAt !== null) return setView((current) => replayView(current, { type: 'live' }));
     stream.live();
   };
@@ -683,7 +701,15 @@ export function DeviceView({
                     >
                       {streams ? null : (
                         <Text style={styles.placeholder}>
-                          {device?.running ? unservedReason(device) : (device?.state ?? t`This device is not running.`)}
+                          {deviceUnavailable({
+                            hasStatus,
+                            workspaceListed: item !== undefined,
+                            hasArchive: status?.archived?.some((archive) => archive.projectRoot === workspace) ?? false,
+                            recordingDisabled: replayOff,
+                            hasFootage,
+                            range,
+                            device,
+                          })}
                           {canReplay ? ` ${scrubHint}` : ''}
                         </Text>
                       )}
@@ -851,7 +877,7 @@ export function DeviceView({
                   setBarSides(([left]) => [left, width]);
                 }}
               >
-                {!viewOnly && control.allowed !== null ? (
+                {!viewOnly && control.allowed !== null && (running || replaying) ? (
                   <ControlButton on={controlling} disabled={readOnly || replaying} onPress={toggle} />
                 ) : null}
               </View>

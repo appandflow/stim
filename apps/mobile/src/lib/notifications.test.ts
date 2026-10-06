@@ -7,6 +7,7 @@ import {
   DEFAULT_PREFS,
   localNotifications,
   notificationRoute,
+  notificationTimeMs,
   parsePrefs,
   type LocalNotification,
   type NotificationPrefs,
@@ -366,6 +367,30 @@ describe('parsePrefs', () => {
 });
 
 describe('notificationRoute', () => {
+  it.each([1_791_288_000, 1_791_288_000_000])('opens device replay at the delivery time from %s', (delivered) => {
+    expect(
+      notificationRoute(
+        { ref: 'a', target: 'device', path: '/w', platform: 'ios' },
+        ['a'],
+        notificationTimeMs(delivered),
+      ),
+    ).toEqual({
+      pathname: '/mac/[id]/device',
+      params: { id: 'a', path: '/w', platform: 'ios', slot: 'default', at: '1791288000000' },
+    });
+  });
+  it.each([
+    ['machine', { pathname: '/mac/[id]', params: { id: 'a' } }],
+    ['workspace', { pathname: '/mac/[id]/workspace', params: { id: 'a', path: '/w' } }],
+    ['logs', { pathname: '/mac/[id]/logs', params: { id: 'a', path: '/w', errors: '1' } }],
+    ['build', { pathname: '/mac/[id]/build', params: { id: 'a', path: '/w', platform: 'ios' } }],
+    ['url', { url: 'https://github.com/appandflow/stim/pull/2625' }],
+    ['home', { pathname: '/mac/[id]/workspace', params: { id: 'a', path: '/w' } }],
+  ])('does not add replay time to %s', (target, expected) => {
+    const data = { ref: 'a', target, path: '/w', platform: 'ios', url: 'https://github.com/appandflow/stim/pull/2625' };
+    expect(notificationRoute(data, ['a'], 1_791_288_000_000)).toEqual(expected);
+  });
+
   it('opens the screen a notification names on a paired machine, and home otherwise', () => {
     const macs = ['a'];
     expect(notificationRoute({ ref: 'a', target: 'machine' }, macs)).toEqual({

@@ -118,7 +118,33 @@ const notificationSamples = (() => {
   const login = '/Users/dev/Developer/tlon-apps/.worktrees/web-login';
   const hinges = '/Users/dev/Developer/react-native-hinges/example';
   const pr = 'https://github.com/appandflow/react-native-hinges/pull/42';
+  const stopped = fixtures.status.environments.find((env) => env.path.includes('a4-stopped')).path;
+  const archive = fixtures.status.archived[0];
   return [
+    {
+      ago: 0.5,
+      id: `started:${stopped}`,
+      category: 'started',
+      title: 'a4-stopped',
+      body: 'Agent drove this device before it stopped',
+      target: { kind: 'device', path: stopped, platform: 'ios', slot: 'default' },
+    },
+    {
+      ago: 1,
+      id: `started:${hinges}:no-recording`,
+      category: 'started',
+      title: 'example',
+      body: 'Agent drove this device without a recording',
+      target: { kind: 'device', path: hinges, platform: 'ios', slot: 'default' },
+    },
+    {
+      ago: 120.5,
+      id: `started:${archive.projectRoot}`,
+      category: 'started',
+      title: archive.workspace,
+      body: 'Agent drove this device before the workspace was removed',
+      target: { kind: 'device', path: archive.projectRoot, platform: 'ios', slot: 'default' },
+    },
     {
       ago: 2,
       id: `stuck:${login}`,
@@ -444,10 +470,17 @@ server.on('connection', (socket) => {
       const archived = params.archive
         ? fixtures.status.archived.find((archive) => archive.id === params.archive)
         : null;
-      if (params.platform !== 'ios' || (params.archive ? !archived?.bytes.recordings : !recordingEnabled)) {
+      if (
+        params.platform !== 'ios' ||
+        (params.archive
+          ? !archived?.bytes.recordings
+          : !recordingEnabled || params.workspace === '/Users/dev/Developer/react-native-hinges/example')
+      ) {
         return { result: { enabled: recordingEnabled, recording: false, spans: [], markers: [] } };
       }
-      return { result: { ...replayRange(recording), recording: !params.archive } };
+      const running =
+        fixtures.status.environments.find((env) => env.path === params.workspace)?.ios?.state === 'Booted';
+      return { result: { ...replayRange(recording), recording: !params.archive && running } };
     },
     'replay.keyframe'(params) {
       const archived = params.archive

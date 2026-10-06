@@ -18,6 +18,7 @@ let mockControlling = true;
 let mockAllowed = true;
 let mockPhysical = false;
 let mockHosted = false;
+let mockStopped = false;
 const mockStream = jest.fn();
 let mockFeatures = ['frames'];
 const mockSelectWindow = jest.fn();
@@ -60,6 +61,9 @@ jest.mock('react-native-safe-area-context', () => ({
 }));
 jest.mock('@/hooks/settings', () => ({ useSettings: () => ({ videoQuality: 'auto' }) }));
 jest.mock('@/hooks/machines', () => ({
+  useHasStatus: () => true,
+  useMachinePresence: () => ({ online: true, cached: false, lastSeenAt: null }),
+  useMachineStatus: () => null,
   useWorkspace: () => ({
     title: 'Duo fixture',
     env: {
@@ -67,7 +71,7 @@ jest.mock('@/hooks/machines', () => ({
       ios: {
         udid: mockHosted ? '' : 'fixture',
         owned: !mockHosted,
-        state: mockHosted ? 'ready' : 'Booted',
+        state: mockStopped ? 'Shutdown' : mockHosted ? 'ready' : 'Booted',
         name: 'stim-fixture (iPhone Duo 27.1)',
         ...(mockHosted
           ? { host: { machine: 'mini', session: 'host-session', device: { name: 'iPhone Duo', runtime: 'iOS 27.1' } } }
@@ -202,6 +206,7 @@ beforeEach(() => {
   mockAllowed = true;
   mockPhysical = false;
   mockHosted = false;
+  mockStopped = false;
   mockStream.mockClear();
   mockArtwork = false;
   mockFeatures = ['frames', 'device-frames'];
@@ -265,7 +270,7 @@ it('dispatches secondary device actions from More and keeps them disabled on a r
   expect(mockButton).not.toHaveBeenCalled();
 });
 
-it('takes over directly from the conflict banner without a second confirmation', async () => {
+it('takes over directly from the conflict banner and hides Control once the device stops', async () => {
   mockControlling = false;
   const alert = jest.spyOn(Alert, 'alert');
   const screen = await render(
@@ -277,6 +282,14 @@ it('takes over directly from the conflict banner without a second confirmation',
   expect(mockBegin).toHaveBeenCalledWith(true);
   expect(alert).not.toHaveBeenCalled();
   alert.mockRestore();
+  expect(screen.getByLabelText('Control')).toBeTruthy();
+  mockStopped = true;
+  await screen.rerender(
+    <I18nProvider i18n={i18n}>
+      <DeviceView workspace="/fixture" platform="ios" slot="default" />
+    </I18nProvider>,
+  );
+  expect(screen.queryByLabelText('Control')).toBeNull();
 });
 
 it('keeps physical iPhones view-only without rotation buttons', async () => {

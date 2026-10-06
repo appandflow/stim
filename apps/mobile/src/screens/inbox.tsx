@@ -73,7 +73,7 @@ export function Inbox() {
 
   const open = (item: InboxItem) => {
     inbox.markRead(item);
-    const route = notificationRoute(itemData(item), macIds);
+    const route = notificationRoute(itemData(item), macIds, Date.parse(item.at));
     if ('url' in route) void Linking.openURL(route.url);
     else if (route.pathname === '/') router.replace('/');
     else router.push(route);
