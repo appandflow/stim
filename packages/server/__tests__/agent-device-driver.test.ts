@@ -556,13 +556,25 @@ describe.skipIf(process.platform === 'win32')('agent-device driver', () => {
           rule: 'method',
           details: { method: 'agent_device.lease.allocate' },
         },
+        {
+          body: { id: 4, method: 'agent_device.command', params: { command: 'batch', flags: { batchSteps: [null] } } },
+          id: 4,
+          rule: 'command',
+          details: {},
+        },
+        {
+          body: { id: 5, method: 'x'.repeat(200), params: {} },
+          id: 5,
+          rule: 'method',
+          details: { method: 'x'.repeat(64) },
+        },
         { body: 'not json', id: null, rule: 'request', details: {} },
         { body: { id: 'malformed', method: 'agent_device.command' }, id: 'malformed', rule: 'request', details: {} },
         {
           body: { id: true, method: 'agent_device.lease.allocate', params: {} },
           id: null,
           rule: 'method',
-          details: {},
+          details: { method: 'agent_device.lease.allocate' },
         },
         { body: 'x'.repeat(1024 * 1024 + 1), id: null, rule: 'request', details: {} },
       ]) {

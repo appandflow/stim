@@ -82,6 +82,7 @@ const POLICY = {
 /** agent-device caps a lease's inactivity window at ten minutes; the host renews well inside it. */
 const LEASE_TTL_MS = 600_000;
 const MAX_RPC_BYTES = 1024 * 1024;
+const MAX_ECHO = 64;
 const COMMAND_METHODS = new Set(['agent_device.command', 'agent-device.command']);
 const LEASE_METHODS = new Set([
   'agent_device.lease.heartbeat',
@@ -593,12 +594,15 @@ function pinLease(body: Buffer | null, lease: Lease): Buffer | Refusal {
   const owner = { runId, leaseId: lease.id, clientId, deviceKey, leaseProvider: 'proxy' };
   if (COMMAND_METHODS.has(rpc.method)) {
     const { runtime: _runtime, meta, flags, input, ...params } = rpc.params;
-    const refuseCommand = (command: unknown) => ({
-      id,
-      rule: 'command' as const,
-      message: `Refused command${typeof command === 'string' ? ` "${command}"` : ''}. Allowed commands: ${POLICY.commands.allow.join(', ')}.`,
-      details: typeof command === 'string' ? { command } : {},
-    });
+    const refuseCommand = (value: unknown) => {
+      const command = typeof value === 'string' ? value.slice(0, MAX_ECHO) : undefined;
+      return {
+        id,
+        rule: 'command' as const,
+        message: `Refused command${command === undefined ? '' : ` "${command}"`}. Allowed commands: ${POLICY.commands.allow.join(', ')}.`,
+        details: command === undefined ? {} : { command },
+      };
+    };
     if (!isAllowedCommand(params.command)) return refuseCommand(params.command);
     const steps = isJsonObject(flags) && Array.isArray(flags.batchSteps) ? flags.batchSteps : [];
     for (const step of steps)
@@ -623,7 +627,10 @@ function pinLease(body: Buffer | null, lease: Lease): Buffer | Refusal {
   } else if (LEASE_METHODS.has(rpc.method)) {
     const { tenant: _tenant, provider: _provider, ...params } = rpc.params;
     rpc.params = { ...params, ...owner, tenantId: tenant, backend: 'macos-app' };
-  } else return { id, rule: 'method', message: `Refused method "${rpc.method}".`, details: { method: rpc.method } };
+  } else {
+    const method = rpc.method.slice(0, MAX_ECHO);
+    return { id, rule: 'method', message: `Refused method "${method}".`, details: { method } };
+  }
   return Buffer.from(JSON.stringify(rpc));
 }
 
