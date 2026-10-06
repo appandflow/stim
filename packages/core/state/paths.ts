@@ -14,6 +14,10 @@ export function workspaceMetadataFile(projectRoot: string): string {
   return join(workspaceDir(projectRoot), 'workspace.json');
 }
 
+export function workspaceAgentDeviceDir(projectRoot: string): string {
+  return join(workspaceDir(projectRoot), 'agent-device');
+}
+
 export function workspaceLogsDir(projectRoot: string): string {
   return join(workspaceDir(projectRoot), 'logs');
 }

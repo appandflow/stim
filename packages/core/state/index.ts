@@ -25,3 +25,4 @@ export * from './macos.ts';
 export * from './hosted-macos.ts';
 export * from './tailnet.ts';
 export * from './hosted-logs.ts';
+export * from './agent-device.ts';

@@ -1,6 +1,7 @@
-import { appendFileSync, cpSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, cpSync, mkdirSync, renameSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { workspaceAgentDeviceDir } from '../workspace/paths.ts';
 import type { ProjectRecord } from '@stim-cli/core/state';
 import type { ProcessStart } from '../process-identity.ts';
 import { createAgentActionReader, workspaceAgentTargets, type AgentTarget } from '../devices/agent-actions.ts';
@@ -22,6 +23,7 @@ beforeEach(() => {
   for (const name of ['AGENT_DEVICE_STATE_DIR', 'AGENT_DEVICE_CLAIMS_DIR', 'AGENT_DEVICE_IOS_RUNNER_LEASE_DIR'])
     vi.stubEnv(name, '');
   home = mkdtempSync(join(tmpdir(), 'stim-agent-actions-'));
+  vi.stubEnv('STIM_HOME', join(home, 'stim'));
   root = join(home, '.agent-device');
   cpSync(FIXTURE, root, { recursive: true });
 });
@@ -164,5 +166,39 @@ test('targets are the workspace-owned simulators and emulators of every slot', (
   ).toEqual([
     { platform: 'ios', id: FIRST_SIM, slot: 'default' },
     { platform: 'android', id: 'emulator-5560', slot: 'default', name: 'stim-app' },
+  ]);
+});
+
+test('workspace-only sessions are read through iOS runner logs and shared Android claims', () => {
+  const stateDir = workspaceAgentDeviceDir('/projects/app');
+  mkdirSync(stateDir, { recursive: true });
+  renameSync(join(root, 'sessions'), join(stateDir, 'sessions'));
+  const reader = createAgentActionReader({
+    targets: [
+      { platform: 'ios', id: FIRST_SIM, slot: 'default' },
+      { platform: 'android', id: 'emulator-5560', slot: 'default', name: 'stim-app' },
+    ],
+    home,
+    startOf: live,
+  });
+  const records = reader();
+  expect(records.filter((record) => record.platform === 'ios').map((record) => record.msg)).toEqual([
+    'Opened com.appandflow.stim',
+    'Ran snapshot',
+    'Tapped @e7',
+    'Closed default',
+  ]);
+  expect(records.filter((record) => record.platform === 'android').map((record) => record.msg)).toEqual([
+    'Failed open: DEVICE_NOT_FOUND',
+    'Opened io.tlon.groups',
+    'Tapped (541, 2265)',
+  ]);
+  expect(reader()).toEqual([]);
+  cpSync(join(stateDir, 'sessions', IOS_SESSION.split('/')[1]!), join(root, IOS_SESSION), { recursive: true });
+  expect(reader().map((record) => record.msg)).toEqual([
+    'Opened com.appandflow.stim',
+    'Ran snapshot',
+    'Tapped @e7',
+    'Closed default',
   ]);
 });

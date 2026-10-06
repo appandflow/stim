@@ -17,6 +17,16 @@ Run `stim <command> --help` for parser help. Run `stim guide` for the full
 reference that ships with the installed version. Every refusal code has an
 entry in the [troubleshooting reference](./troubleshooting.md).
 
+`start --json`, `ios --json`, `android --json` and `macos --json` report
+`agentDevice: { stateDir }`, an absolute path under
+`$STIM_HOME/workspaces/<name>/agent-device/`. Each `status --json` environment
+reports the same field, shared by its slots, without creating the directory.
+Set `AGENT_DEVICE_STATE_DIR` to it when driving a device yourself; see
+[agent-device actions](./dev-server-and-logs.md#agent-device-actions).
+The existing log fields stay the same: `start` has `logsDir`, `ios` has
+`logs: { dir }`, `android` has `logs`, and each status environment has
+`logs: { dir, errorsSinceMarker }` or `null`.
+
 ## Normal workflow
 
 <StimTabs

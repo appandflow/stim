@@ -243,6 +243,12 @@ roots it watches, do not count as work; removal deletes them.
 Git-created branches stay. An existing Stim ownership record permits deleting
 a branch only when it has no unique commits.
 
+Removal also stops the agent-device daemon in the workspace's
+`agentDevice.stateDir` and removes its sessions and logs. If agent-device is
+missing or the stop fails, Stim keeps the workspace directory and prints the
+`agent-device daemon stop --state-dir <dir>` command to retry.
+See [agent-device workspace state](./dev-server-and-logs.md#agent-device-actions).
+
 On the source checkout, `worktree remove` only reclaims the Stim environment.
 It does not remove that checkout.
 

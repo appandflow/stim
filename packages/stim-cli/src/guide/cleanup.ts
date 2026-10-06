@@ -13,6 +13,13 @@ versions cannot reliably manage their assignments.
 
 CLEANUP AND DISK
 
+worktree remove stops the agent-device daemon when the workspace's
+agent-device/daemon.json exists, then removes its state directory with the
+workspace. If agent-device is missing or the stop fails, it keeps the directory
+and reports the retry command: agent-device daemon stop --state-dir <dir>.
+stop closes owned-device sessions in that directory without deleting it.
+See stim guide logs for AGENT_DEVICE_STATE_DIR examples.
+
 WHAT RECLAIMS AN OWNED DEVICE
   stim worktree remove    parks eligible owned simulators and emulators
                             (\`guide lifecycle pool\`); deletes them when

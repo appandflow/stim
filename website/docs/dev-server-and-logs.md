@@ -351,13 +351,43 @@ When an agent drives an owned simulator or emulator with agent-device, `stim log
 with their coordinates, typing (agent-device redacts the text), app opens, and
 screenshots. A failed
 agent-device command is an `error` record. Stim reads agent-device's own session
-records under `~/.agent-device` (or `AGENT_DEVICE_STATE_DIR`) and never writes
-there. An iOS session is matched to a simulator through its runner log, including
+records under `~/.agent-device` (or `AGENT_DEVICE_STATE_DIR`) plus existing
+workspace agent-device directories, and never writes there. An iOS session is matched to a simulator through its runner log, including
 a session that moved between simulators. An Android session is matched only
 while agent-device holds its claim on the emulator, so its actions drop out of
 later queries once agent-device releases the claim. Records from a newer
 agent-device format that Stim does not recognize are replaced by one `warn`
 record saying the session's actions are not shown.
+
+For agent-device you run yourself, use the `agentDevice.stateDir` reported by
+`ios`, `android`, `macos`, or each `status --json` environment. Read it once
+from `status`, run from the app root, and prefix each agent-device command:
+
+```sh
+STATE_DIR="$(stim status --json | jq -r '.environments[] | select(.path=="'"$PWD"'") | .agentDevice.stateDir')"
+AGENT_DEVICE_STATE_DIR="$STATE_DIR" agent-device open <bundle id> --platform ios --session <name>
+AGENT_DEVICE_STATE_DIR="$STATE_DIR" agent-device snapshot --session <name>
+```
+
+Sessions, logs, metro-sessions, allocations and daemon files live under
+`$STIM_HOME/workspaces/<name>/agent-device/`. The Apple runner build cache and
+device claims stay shared: leave `AGENT_DEVICE_IOS_RUNNER_DERIVED_PATH` and
+`AGENT_DEVICE_CLAIMS_DIR` unset. Each active workspace adds one daemon, which
+exits after five idle minutes. This is opt-in per command; forgetting the
+variable uses `~/.agent-device`.
+`stim stop` closes owned-device sessions there; `stim worktree remove` stops its
+daemon and removes the directory. Hosted/stim-server sessions already use their
+own state directory and need no export.
+
+:::tip[Ask your agent]
+
+```text
+Read stim guide logs, set AGENT_DEVICE_STATE_DIR from this workspace's
+agentDevice.stateDir, then use agent-device to inspect the app. Keep the runner
+build cache and device claims shared, and check stim logs --source agent.
+```
+
+:::
 
 `stim stop` ends the supervisor and log collectors. It also frees the reserved
 port and shuts down the owned local device.

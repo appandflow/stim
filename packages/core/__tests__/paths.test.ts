@@ -19,6 +19,7 @@ import {
   workspaceDerivedData,
   workspaceGradleBuild,
   workspaceLogsDir,
+  workspaceAgentDeviceDir,
   workspaceStateFile,
 } from '../state/paths.ts';
 
@@ -41,6 +42,7 @@ describe('workspace paths', () => {
     expect(workspaceName(root)).toBe(`my-app--${workspaceId(root)}`);
     expect(workspaceDir(root)).toBe(dir);
     expect(workspaceLogsDir(root)).toBe(join(dir, 'logs'));
+    expect(workspaceAgentDeviceDir(root)).toBe(join(dir, 'agent-device'));
     expect(workspaceDerivedData(root)).toBe(join(dir, 'derived-data'));
     expect(workspaceGradleBuild(root)).toBe(join(dir, 'gradle-build'));
     expect(supervisorPidFile(root)).toBe(join(dir, 'supervisor.pid'));
@@ -52,6 +54,7 @@ describe('workspace paths', () => {
     const root = join(tmpdir(), 'stim-nonexistent-xyz');
     workspaceDir(root);
     workspaceLogsDir(root);
+    workspaceAgentDeviceDir(root);
     workspaceDerivedData(root);
     workspaceGradleBuild(root);
     supervisorPidFile(root);

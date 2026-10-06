@@ -1,9 +1,10 @@
 import { closeSync, fstatSync, openSync, readdirSync, readFileSync, readSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { join } from 'node:path';
 import type { NdjsonRecord, ProjectRecord } from '@stim-cli/core/state';
 import { inspectProcessStart, type ProcessStart } from '../process-identity.ts';
 import { projectDeviceSlots } from './device-slots.ts';
+import { agentDeviceStateDirs } from '@stim-cli/core/state';
 import { agentDeviceLiveness, readAgentDeviceRecords } from './activity.ts';
 
 export interface AgentTarget {
@@ -188,11 +189,6 @@ export function workspaceAgentTargets(project: ProjectRecord | null | undefined)
   return targets;
 }
 
-function envDir(name: string): string | null {
-  const value = process.env[name]?.trim();
-  return value ? resolve(value) : null;
-}
-
 function readCompleteLines(path: string, start: number): { text: string; next: number; size: number } | null {
   let fd: number | undefined;
   try {
@@ -231,7 +227,7 @@ export interface AgentActionReaderOptions {
 /**
  * Returns a reader of agent-device actions on the given devices. Each call returns the records written
  * since the previous call; the first call returns the retained history newer than `sinceTs`. It only reads
- * agent-device's state directory, and any file it cannot read or recognize yields no records.
+ * agent-device's current and workspace state directories, and any file it cannot read or recognize yields no records.
  */
 export function createAgentActionReader({
   targets,
@@ -240,18 +236,19 @@ export function createAgentActionReader({
   now = Date.now,
   startOf = inspectProcessStart,
 }: AgentActionReaderOptions): () => NdjsonRecord[] {
-  const sessionsDir = join(envDir('AGENT_DEVICE_STATE_DIR') ?? join(home, '.agent-device'), 'sessions');
   const cursors = new Map<string, SessionCursor>();
   const byId = new Map(targets.map((target) => [target.id, target]));
 
   return () => {
     if (!targets.length) return [];
-    let names: string[];
-    try {
-      names = readdirSync(sessionsDir);
-    } catch {
-      return [];
-    }
+    const sessionDirs = agentDeviceStateDirs(home).flatMap((root) => {
+      const sessionsDir = join(root, 'sessions');
+      try {
+        return readdirSync(sessionsDir).map((name) => ({ name, dir: join(sessionsDir, name) }));
+      } catch {
+        return [];
+      }
+    });
     let claimed: Map<string, string> | undefined;
     const claimedDevice = (session: string) =>
       (claimed ??= new Map(
@@ -266,11 +263,10 @@ export function createAgentActionReader({
       )).get(session) ?? null;
 
     const out: NdjsonRecord[] = [];
-    for (const name of names) {
-      const dir = join(sessionsDir, name);
+    for (const { name, dir } of sessionDirs) {
       const eventsPath = join(dir, 'events.ndjson');
       const lines: string[] = [];
-      let cursor = cursors.get(name);
+      let cursor = cursors.get(dir);
       if (!cursor) {
         try {
           if (statSync(eventsPath).mtimeMs < sinceTs) continue;
@@ -278,7 +274,7 @@ export function createAgentActionReader({
           continue;
         }
         cursor = { offset: 0, closes: [], runner: null, session: null, unknownReported: false, started: new Map() };
-        cursors.set(name, cursor);
+        cursors.set(dir, cursor);
         try {
           lines.push(...readFileSync(`${eventsPath}.1`, 'utf8').split('\n'));
         } catch {}

@@ -149,7 +149,8 @@ Plain status prints "ios: Old iPhone (physical, iPhone 12 Pro) connected --
 leased until <time>" for each one.`,
   sections: {
     payloads: {
-      summary: 'every field of the start, ios, android, web and reload payloads, the error contract, the device rules',
+      summary:
+        'every field of the start, ios, android, macos, web and reload payloads, the error contract, the device rules',
       body: () => `  stim start --json
 
   port            the Metro port RESERVED for this workspace
@@ -157,12 +158,21 @@ leased until <time>" for each one.`,
                   already answering that Stim did not start
   mode            "bare-inproc" | "expo-child" | null (see \`guide metro\`)
   logsDir         where the NDJSON timeline is written
+  agentDevice     { stateDir }: absolute workspace agent-device state path;
+                  set AGENT_DEVICE_STATE_DIR to it (see guide logs)
   alreadyRunning  true when nothing needed starting
   links           { desktop }: a stim-desktop://workspace?path=<workspace>
                   link that shows this workspace in Stim Desktop. Absent when
                   no app on this Mac opens stim-desktop links. Plain output
                   prints it on stderr as "Open in Stim Desktop: <link>"; so
                   does worktree warm, which has no JSON payload
+
+  stim macos --json
+
+  platform        "macos"
+  product, launchId, build, host?  the launch record (see guide macos)
+  agentDevice     { stateDir }: absolute workspace agent-device state path
+                  for local or hosted launches with a local workspace
 
   stim ios --json
 
@@ -317,6 +327,7 @@ leased until <time>" for each one.`,
                   launch with no process id is "unverified", and
                   \`stim logs --errors\` has the device log that says why
   logs            { dir }
+  agentDevice     { stateDir }: absolute workspace agent-device state path
   durationMs      wall time for the whole run
 
   stim android --json
@@ -390,6 +401,7 @@ leased until <time>" for each one.`,
                   error, and this field is separate from cacheHit. On an
                   offloaded APK it is the build machine's ccache
   logs            the workspace log directory
+  agentDevice     { stateDir }: absolute workspace agent-device state path
   durationMs      wall time for the whole run
   reclaimed       present only when the run was over its disk or memory
                   budget and reclaimed first (\`start\`, \`ios\` and
@@ -915,6 +927,11 @@ RULES
       summary:
         "the status payload's lifecycle phase and stage, issues and their codes, build and device activity fields: a running build, its estimate, each platform's last build, who drives each device, whether the app runs on it, and what uses CPU and memory now",
       body: () => `  stim status --json
+
+  logs        { dir, errorsSinceMarker }, or null without a log directory
+  agentDevice { stateDir }: absolute workspace agent-device state path on
+              every environment, shared by its slots. Reporting it creates
+              no directory; agent-device creates it when used.
 
   Each environment carries phase, where the workspace is in its lifecycle:
 

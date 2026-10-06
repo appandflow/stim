@@ -8,6 +8,7 @@ import { leaseIsExpired, listLeaseFiles, type LeaseFileEntry } from '../engine/d
 import { workspaceLogsDir } from '../workspace/paths.ts';
 import { readWorkspaceState } from '../workspace/workspace-state.ts';
 import {
+  agentDeviceStateDirs,
   readViewedDevices,
   type ActivityDriver,
   type ActivityRecencyBasis,
@@ -262,12 +263,14 @@ function agentDeviceDirs(home: string): { kind: AgentDeviceRecord['kind']; dir: 
  * session's directory after the session with every character outside `[a-zA-Z0-9._-]` replaced by `_`.
  */
 function agentSessionActedAt(home: string, session: string): number | null {
-  const root = envDir('AGENT_DEVICE_STATE_DIR') ?? join(home, '.agent-device');
-  try {
-    return statSync(join(root, 'sessions', session.replaceAll(/[^a-zA-Z0-9._-]/g, '_'), 'events.ndjson')).mtimeMs;
-  } catch {
-    return null;
+  let latest: number | null = null;
+  for (const root of agentDeviceStateDirs(home)) {
+    try {
+      const at = statSync(join(root, 'sessions', session.replaceAll(/[^a-zA-Z0-9._-]/g, '_'), 'events.ndjson')).mtimeMs;
+      latest = latest === null ? at : Math.max(latest, at);
+    } catch {}
   }
+  return latest;
 }
 
 export function readAgentDeviceRecords(home: string): AgentDeviceRecord[] {

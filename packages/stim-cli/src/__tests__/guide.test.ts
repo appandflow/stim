@@ -813,3 +813,18 @@ test.each([registerIos, registerAndroid, macosCommand])(
     expect(renderSection('lifecycle', 'options')).toContain('--build-machine');
   },
 );
+
+test('the guide names the workspace agent-device state contract without setting a runner-cache override', () => {
+  const agent = renderTopic('agent');
+  assert(agent);
+  expect(agent).toContain('AGENT_DEVICE_STATE_DIR');
+  expect(agent).toContain('agentDevice.stateDir');
+  expect(agent).not.toMatch(/(?:export\s+)?AGENT_DEVICE_IOS_RUNNER_DERIVED_PATH\s*=/);
+  const facts = renderSection('facts', 'payloads');
+  assert(facts);
+  expect(facts).toContain('agentDevice');
+  expect(facts).toContain('stateDir');
+  const status = renderSection('facts', 'status');
+  assert(status);
+  expect(status).toContain('agentDevice');
+});

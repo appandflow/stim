@@ -613,6 +613,7 @@ export interface EnvironmentState {
   macos?: MacosAppState | null;
   supervisor?: { pid: number | null; mode: string | null; startedAt: string | null; healthy: boolean } | null;
   logs?: { dir: string; errorsSinceMarker: number } | null;
+  agentDevice?: { stateDir: string };
   worktree?: WorktreeFacts | null;
   remoteDevices?: RemoteDeviceState[];
   /** The physical devices this workspace leases, in every slot; absent when it leases none. */
