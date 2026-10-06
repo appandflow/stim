@@ -1139,6 +1139,7 @@ describe('hosted agent control', () => {
         if (status === 'gone') {
           process.kill(child.pid as number, 'SIGKILL');
           await processIdentity.waitForProcessExit(child, 2000);
+          await vi.waitFor(() => expect(processGroupAlive(child.pid as number)).toBe(false), { timeout: 10_000 });
         }
         host.stop('client', { session: first.id });
         const stopped = await state(first.id, status === 'live' ? 'unknown' : 'stopped', 20_000);
@@ -1155,6 +1156,7 @@ describe('hosted agent control', () => {
         if (status === 'live') {
           process.kill(child.pid as number, 'SIGKILL');
           await processIdentity.waitForProcessExit(child, 2000);
+          await vi.waitFor(() => expect(processGroupAlive(child.pid as number)).toBe(false), { timeout: 10_000 });
           host.stop('client', { session: first.id });
         }
         await state(first.id, 'stopped', 20_000);
@@ -1165,6 +1167,7 @@ describe('hosted agent control', () => {
         if (processIdentity.inspectProcessIdentity(child) === 'same') {
           process.kill(child.pid as number, 'SIGKILL');
           await processIdentity.waitForProcessExit(child, 2000);
+          await vi.waitFor(() => expect(processGroupAlive(child.pid as number)).toBe(false), { timeout: 10_000 });
         }
         await fresh.close();
         stop.mockRestore();
