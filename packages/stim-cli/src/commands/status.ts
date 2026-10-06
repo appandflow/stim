@@ -151,9 +151,37 @@ const WATCH_GIT_MAX_AGE_MS = 60_000;
 
 function iosStatusName(ios: NonNullable<EnvironmentState['ios']>): string {
   const host = ios.host;
-  return host
+  return host && !ios.udid
     ? `${host.device?.name ?? 'iOS simulator'} (${host.device ? `iOS ${host.device.runtime.replace(/^iOS /, '')}` : 'runtime pending'}) on ${host.machine}`
     : (ios.name ?? ios.udid);
+}
+
+function iosStatusLines(record: EnvironmentState['ios'], slotLabel: string): string[] {
+  const out: string[] = [];
+  const host = record?.udid ? record.host : undefined;
+  const iosDevices: EnvironmentState['ios'][] = [
+    record,
+    ...(host
+      ? [
+          {
+            host,
+            name: host.device?.name ?? null,
+            udid: '',
+            owned: false,
+            state: host.state ?? 'unverified',
+          },
+        ]
+      : []),
+  ];
+  for (const ios of iosDevices) {
+    if (!ios) continue;
+    const booted = ios.state === 'Booted' ? chalk.green('booted') : chalk.dim(ios.state.toLowerCase());
+    const owned = ios.owned ? chalk.dim(' (owned)') : '';
+    out.push(
+      `  ios${slotLabel}: ${chalk.cyan(iosStatusName(ios))} ${booted}${owned}${activitySuffix(ios.activity)}${appSuffix(ios.app)}${idleShutdownSuffix(ios.idleShutdown)}`,
+    );
+  }
+  return out;
 }
 
 function formatGb(mb: number): string {
@@ -350,18 +378,18 @@ async function readStatusFacts(
       }
       for (const [slot, facts] of Object.entries(await iosReads[i]!)) {
         const local = slot === 'default' ? state.ios : state.slots?.find((entry) => entry.slot === slot)?.ios;
-        if (local?.udid) {
-          state.slots ??= [];
-          state.slots.push({ slot, ios: facts.ios, android: null });
+        const conflict = local?.udid && (local.state === 'Booted' || local.state === 'unknown');
+        const ios = conflict ? { ...local, host: facts.ios.host } : facts.ios;
+        if (conflict)
           state.warnings.push(
             `Slot ${slot} records both a local and hosted iOS simulator (${iosStatusName(facts.ios)}); run stim stop to reconcile them.`,
           );
-        } else if (slot === 'default') state.ios = facts.ios;
+        if (slot === 'default') state.ios = ios;
         else {
           state.slots ??= [];
           const savedSlot = state.slots.find((entry) => entry.slot === slot);
-          if (savedSlot) savedSlot.ios = facts.ios;
-          else state.slots.push({ slot, ios: facts.ios, android: null });
+          if (savedSlot) savedSlot.ios = ios;
+          else state.slots.push({ slot, ios, android: null });
         }
         if (facts.warning) state.warnings.push(facts.warning);
         state.live ||= facts.ios.state === 'ready';
@@ -651,14 +679,7 @@ function renderStatus(
     }
     for (const deviceState of [{ slot: 'default', ios: state.ios, android: state.android }, ...(state.slots ?? [])]) {
       const slotLabel = deviceState.slot === 'default' ? '' : ` [${deviceState.slot}]`;
-      if (deviceState.ios) {
-        const booted =
-          deviceState.ios.state === 'Booted' ? chalk.green('booted') : chalk.dim(deviceState.ios.state.toLowerCase());
-        const owned = deviceState.ios.owned ? chalk.dim(' (owned)') : '';
-        out.push(
-          `  ios${slotLabel}: ${chalk.cyan(iosStatusName(deviceState.ios))} ${booted}${owned}${activitySuffix(deviceState.ios.activity)}${appSuffix(deviceState.ios.app)}${idleShutdownSuffix(deviceState.ios.idleShutdown)}`,
-        );
-      }
+      out.push(...iosStatusLines(deviceState.ios, slotLabel));
       if (deviceState.android) {
         const kind = deviceState.android.physical ? chalk.dim('(physical)') : chalk.dim('(emulator)');
         const observed = deviceState.android.state

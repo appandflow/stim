@@ -274,7 +274,8 @@ The same setup serves macos --remote. Approval is separate from build, read
 and phone control. Set ios.remote to the machine name for a workspace default;
 no flag or setting runs here. eas and proxy keep their remote backend meanings.
 auto is accepted but refuses with STIM_BAD_ARG until automatic placement ships.
-Android on a paired Mac and hosted iOS agent leases are not available yet.
+Android --remote <machine> refuses with STIM_BAD_ARG: Android on a paired Mac
+is not available yet. Hosted iOS agent leases are not available yet.
 The iOS agent reports { driver: 'none', setting: 'hosting.agentDriver' }.
 
 A named Mac is strict: STIM_HOSTING_REFUSED names its reason; nothing boots
@@ -301,7 +302,9 @@ stopped or missing session is replaced; an unreachable or unknown owner refuses
 replacement. Switching between this Mac and a hosting Mac, or to a different
 hosting Mac, refuses for that slot: run stim stop first.
 Status adds ios.host { machine, session, selected, device: { name, runtime },
-agent } per slot; no host UDID or gateway secret enters local device state or
+agent, state } per slot. A shutdown local simulator is replaced in status; a
+booted or unknown local simulator stays visible alongside ios.host with a warning.
+The default slot appears only in ios, never in slots[]. No host UDID or gateway secret enters local device state or
 status. Ready is normal; stopped has a rerun hint; unknown or unreachable is
 unverified. A host server restart stops its sessions.
 
@@ -313,7 +316,10 @@ missing sessions clear placement too. An unreachable host retains placement
 and fails cleanup: rerun stim stop when it answers. Missing or unapproved local
 credentials require stim doctor to restore access before retrying stop. An
 unreadable machine or session remains recorded; status warns and stop names the
-workspace-state key to inspect. Unknown selection or agent metadata is normalized
+workspace-state key to inspect. Only that slot's ios run refuses; restore its
+recorded machine and session from the host, then run stim stop for that slot.
+Reload returns a JSON error with that remedy when no other app can reload;
+logs remain readable. Unknown selection or agent metadata is normalized
 without discarding the owner. devices.idleShutdownMinutes
 does not stop a hosted simulator in this phase; its recorded session keeps Metro
 from idle stopping. Native hosted iOS logs are not collected yet; JavaScript

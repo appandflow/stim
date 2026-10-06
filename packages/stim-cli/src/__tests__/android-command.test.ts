@@ -153,6 +153,14 @@ function parseRemoteOption(args: string[]): unknown {
 }
 
 describe('--remote', () => {
+  test('a machine placement prints STIM_BAD_ARG in the parser refusal', async () => {
+    const errors: string[] = [];
+    const program = new Command().exitOverride().configureOutput({ writeErr: (line) => errors.push(line) });
+    registerAndroid(program);
+    await expect(program.parseAsync(['node', 'stim', 'android', '--remote', 'mini'])).rejects.toThrow(/STIM_BAD_ARG/);
+    expect(errors.join('')).toContain('STIM_BAD_ARG');
+  });
+
   test('the CLI parser accepts only an explicit proxy or eas backend', () => {
     expect(parseRemoteOption(['--remote', 'proxy'])).toBe('proxy');
     expect(parseRemoteOption(['--remote', 'eas'])).toBe('eas');

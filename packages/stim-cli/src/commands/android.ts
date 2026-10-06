@@ -238,7 +238,7 @@ export function registerAndroid(program: Command): void {
         if (!parseMachine(value))
           throw new InvalidArgumentError(`expected one of: ${REMOTE_DEVICE_BACKENDS.join(', ')}`);
         throw new InvalidArgumentError(
-          'Android on a paired Mac is not available yet. Use eas or proxy, or run Android locally.',
+          'STIM_BAD_ARG: Android on a paired Mac is not available yet. Use eas or proxy, or run Android locally.',
         );
       },
     )

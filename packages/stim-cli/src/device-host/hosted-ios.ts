@@ -75,7 +75,7 @@ export async function prepareHostedIos(
           (selectors.runtime && selectors.runtime.replace(/^iOS /, '') !== device.runtime.replace(/^iOS /, ''))
         )
           throw new Error(
-            `This session uses ${device.deviceType} (${device.runtime}); run stim stop first to change it.`,
+            `This session uses ${device.deviceType} (iOS ${device.runtime.replace(/^iOS /, '')}); run stim stop first to change it.`,
           );
         return { host, choice: device, session };
       }
@@ -218,10 +218,13 @@ export async function stopHostedIos(root: string, slot?: string): Promise<void> 
       );
       if (stopped.state !== 'stopped') throw unknownSession(host, stopped);
     } catch (error) {
-      if (
-        !(error instanceof Error && 'code' in error && (error.code === 'unknown-session' || error.code === 'forbidden'))
-      ) {
-        const code = error instanceof Error && 'code' in error ? error.code : undefined;
+      const code =
+        error instanceof Error && 'hostCode' in error && typeof error.hostCode === 'string'
+          ? error.hostCode
+          : error instanceof Error && 'code' in error
+            ? error.code
+            : undefined;
+      if (code !== 'unknown-session' && code !== 'forbidden') {
         const remedy =
           code === 'closed' || code === 'timeout'
             ? 'rerun stim stop when that machine answers.'

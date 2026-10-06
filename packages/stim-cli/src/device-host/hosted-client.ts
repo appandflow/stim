@@ -103,10 +103,13 @@ export async function connectHost(
     throw Object.assign(
       new Error(
         opened.refused
-          ? `${machine} refused this Mac: ${opened.failure.replaceAll(credential.deviceToken, '[redacted]')}. Run stim doctor.`
+          ? `${machine} refused this Mac: ${opened.failure.replaceAll(credential.deviceToken, '[redacted]').replace(/\.+$/, '')}. Run stim doctor.`
           : `${machine} is unreachable: ${opened.failure.replaceAll(credential.deviceToken, '[redacted]')}. Check stim-server and its tailnet serve route on ${machine}.`,
       ),
-      { code: strict ? 'STIM_HOSTING_REFUSED' : opened.refused ? 'STIM_HOSTING_REFUSED' : (opened.code ?? 'closed') },
+      {
+        code: strict ? 'STIM_HOSTING_REFUSED' : opened.refused ? 'STIM_HOSTING_REFUSED' : (opened.code ?? 'closed'),
+        hostCode: opened.code,
+      },
     );
   }
   return { machine, credential, connection: opened };

@@ -635,7 +635,10 @@ or missing session is replaced. An unreachable or unknown session refuses
 replacement. Switching between this Mac and a hosting Mac, or to a different
 hosting Mac, requires `stim stop` first for that slot.
 `status --json` adds `ios.host` with `machine`, `session`, `selected`, the device's
-`name` and `runtime`, and `agent`. The host UDID and private gateway never appear
+`name` and `runtime`, `agent`, and the probed `state`. A shutdown local simulator
+is replaced in status without a warning. A booted or unknown local simulator
+stays visible alongside `ios.host` with a warning; plain status shows both. The
+default slot appears only in `ios`, never in `slots[]`. The host UDID and private gateway never appear
 in local device fields. Stop and worktree removal wait for the host, delete only
 its owned simulator without parking, then clear placement. `stop --json` reports
 each hosted slot under `outcomes.device["ios:host:<slot>"]`, alongside local
@@ -643,7 +646,12 @@ outcomes; one failure does not hide siblings that stopped. An unreachable host
 keeps the placement and fails cleanup; rerun `stim stop` when it answers. Missing
 or unapproved local credentials require `stim doctor` to restore access first.
 Unreadable machine or session state stays recorded: status warns, and stop names
-the workspace-state key to inspect.
+the workspace-state key to inspect. Only that slot's iOS run refuses; restore
+its recorded machine and session from the host, then run `stim stop` for that
+slot. Reload reports the failure and remedy in JSON when no other app can
+reload, and logs remain readable. A hello refusal after this Mac loses hosting
+access clears its placement during stop or worktree removal; other refusals
+retain it.
 A host server restart stops its sessions.
 
 Native logs, client viewing relays, agent leases, app handoff and upload

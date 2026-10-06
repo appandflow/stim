@@ -77,9 +77,17 @@ export function selectIosTarget({
 }): ReturnType<typeof resolveIosRemote> {
   let recorded;
   try {
-    recorded = d.readHostedIos(root)[slot];
+    recorded = d.readHostedIos(root, slot)[slot];
   } catch (error) {
-    return { failure: { code: 'STIM_HOSTING_REFUSED', message: (error as Error).message } };
+    return {
+      failure: {
+        code: 'STIM_HOSTING_REFUSED',
+        message: (error as Error).message,
+        ...(error instanceof Error && 'remedy' in error && typeof error.remedy === 'string'
+          ? { remedy: error.remedy }
+          : {}),
+      },
+    };
   }
   const selection = resolveIosRemote({ opts, settings, physical, recorded });
   if ('failure' in selection) return selection;

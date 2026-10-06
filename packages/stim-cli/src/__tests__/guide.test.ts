@@ -833,7 +833,7 @@ test('Android machine placement refuses through the argument parser with its doc
   expect(() => program.commands[0]!.parseOptions(['--remote', 'mini'])).toThrow(
     expect.objectContaining({
       code: 'commander.invalidArgument',
-      message: expect.stringContaining('not available yet'),
+      message: expect.stringContaining('STIM_BAD_ARG'),
     }),
   );
   const commands = readFileSync(new URL('../../../../website/docs/commands.md', import.meta.url), 'utf8');

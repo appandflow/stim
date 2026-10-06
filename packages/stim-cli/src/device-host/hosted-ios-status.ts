@@ -7,13 +7,17 @@ export function applyHostedIosProbe(
   slot = 'default',
 ): { ios: SimulatorState; warning?: string } {
   const rerun = `stim ios --remote ${placement.machine}${slot === 'default' ? '' : ` --slot ${slot}`}`;
+  const state = probe.state === 'ready' ? 'ready' : probe.state === 'stopped' ? 'stopped' : 'unverified';
   return {
     ios: {
-      host: hostedIosStatus(placement),
+      host: {
+        ...hostedIosStatus(placement),
+        state,
+      },
       name: placement.device?.name ?? null,
       udid: '',
       owned: false,
-      state: probe.state === 'ready' ? 'ready' : probe.state === 'stopped' ? 'stopped' : 'unverified',
+      state,
     },
     ...(probe.state === 'ready'
       ? {}

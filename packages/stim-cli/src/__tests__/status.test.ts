@@ -1,3 +1,4 @@
+import { isRpcEvent } from '@stim-cli/core/receive-protocol';
 import { writeHostedIos } from '../device-host/ios-state.ts';
 import * as hostedClient from '../device-host/hosted-client.ts';
 import { writeWorkspaceState } from '../workspace/workspace-state.ts';
@@ -1147,9 +1148,19 @@ test.each([false, true])(
   },
 );
 
-test.each(['default', 'tablet'])(
-  'status retains the local simulator alongside a hosted record in slot %s',
-  async (slot) => {
+test.each(['default', 'tablet'].flatMap((slot) => ['Shutdown', 'Booted', 'unknown'].map((state) => ({ slot, state }))))(
+  'status reconciles a $state local simulator with a hosted record in slot $slot',
+  async ({ slot, state }) => {
+    const executor = getExecutor();
+    setExecutor({
+      ...executor,
+      async runFileAsync(file, args = [], opts) {
+        const output = await executor.runFileAsync(file, args, opts);
+        if (!args.join(' ').includes('simctl list devices --json')) return output;
+        if (state === 'unknown') throw new Error('fixture unreadable simulator inventory');
+        return output.replaceAll('Shutdown', state);
+      },
+    });
     const root = join(tmpHome, 'app');
     mkdirSync(root);
     writeFileSync(join(root, 'package.json'), '{}');
@@ -1182,19 +1193,27 @@ test.each(['default', 'tablet'])(
       agent: { driver: 'none', setting: 'hosting.agentDriver' },
     });
     const payload = await runStatusJson();
+    expect(isRpcEvent({ event: 'status', subscription: 'fixture', payload })).toBe(true);
     const environment = payload.environments[0];
-    const devices = [environment.ios, ...(environment.slots ?? []).map((entry: { ios: unknown }) => entry.ios)];
-    expect(devices).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ udid: 'UDID-ABC' }),
-        expect.objectContaining({ host: expect.objectContaining({ machine: 'mini' }) }),
-      ]),
+    expect(environment.slots ?? []).not.toEqual(expect.arrayContaining([expect.objectContaining({ slot: 'default' })]));
+    const ios =
+      slot === 'default'
+        ? environment.ios
+        : environment.slots.find((entry: { slot: string }) => entry.slot === slot).ios;
+    expect(ios).toMatchObject({
+      udid: state === 'Shutdown' ? '' : 'UDID-ABC',
+      state: state === 'Shutdown' ? 'ready' : state,
+      host: { machine: 'mini', state: 'ready' },
+    });
+    expect((environment.slots ?? []).filter((entry: { slot: string }) => entry.slot === slot)).toHaveLength(
+      slot === 'default' ? 0 : 1,
     );
-    const output = JSON.stringify(payload);
-    expect(output).toContain('UDID-ABC');
-    expect(output).toContain('mini');
-    expect(output).toContain('both a local and hosted');
-    expect((await runStatus()).join('\n')).toContain('iOS 27.0');
+    expect(environment.warnings.some((warning: string) => warning.includes('both a local and hosted'))).toBe(
+      state !== 'Shutdown',
+    );
+    const plain = (await runStatus()).join('\n');
+    expect(plain).toContain('iOS 27.0');
+    expect(plain.includes(state === 'unknown' ? 'UDID-ABC' : 'stim-projA')).toBe(state !== 'Shutdown');
   },
 );
 

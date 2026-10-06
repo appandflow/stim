@@ -250,6 +250,16 @@ describe('logs command', () => {
     expect(out[1]).toMatch(/ warn  client deprecated$/);
   });
 
+  test.each([false, true])('logs remain readable with an unreadable hosted slot in JSON mode %s', async (json) => {
+    writeWorkspaceState(project, { deviceSlots: { tablet: { ios: { host: { machine: 'mini', session: '' } } } } });
+    const record = { ts: 1, src: 'metro', level: 'info', msg: 'bundling' };
+    writeLog('metro.ndjson', [record]);
+    await run({ json });
+    expect(exitCode).toBe(null);
+    expect(out).toHaveLength(1);
+    expect(out[0]).toContain('bundling');
+  });
+
   test('--json emits the raw records, one valid NDJSON object per line', async () => {
     const record = { ts: 1, src: 'metro', level: 'error', msg: 'boom', event: 'bundling_error' };
     writeLog('metro.ndjson', [record]);

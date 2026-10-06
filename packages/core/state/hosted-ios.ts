@@ -16,6 +16,8 @@ export interface HostedIosPlacement {
 /** Public hosting facts; the host's UDID and private Metro gateway are excluded. */
 export type HostedIosStatus = Pick<HostedIosPlacement, 'machine' | 'session' | 'selected' | 'agent'> & {
   device: { name: string; runtime: string } | null;
+  /** The latest session probe in status, independent of a conflicting local simulator's state. */
+  state?: string;
 };
 
 export function parseHostedIosPlacement(value: unknown): HostedIosPlacement | null {

@@ -10,13 +10,18 @@ import {
 } from '@stim-cli/core/state';
 import { readWorkspaceState, updateWorkspaceState } from '../workspace/workspace-state.ts';
 
-export function readHostedIos(root: string): Record<string, HostedIosPlacement> {
+export function readHostedIos(root: string, slot?: string): Record<string, HostedIosPlacement> {
   const state = readWorkspaceState(root);
-  for (const [slot, record] of Object.entries(hostedIosRecords(state))) {
-    if (!parseHostedIosPlacement(record))
-      throw Object.assign(new Error(unreadableHostedIos(slot)), { code: 'STIM_HOSTING_REFUSED' });
+  if (slot !== undefined) {
+    const record = hostedIosRecords(state)[slot];
+    if (record !== undefined && !parseHostedIosPlacement(record))
+      throw Object.assign(new Error(unreadableHostedIos(slot)), {
+        code: 'STIM_HOSTING_REFUSED',
+        remedy: `Restore that slot's recorded machine and session from the host, then run stim stop${slot === 'default' ? '' : ` --slot ${slot}`} to reconcile it.`,
+      });
   }
-  return hostedIosPlacements(state);
+  const placements = hostedIosPlacements(state);
+  return slot === undefined ? placements : placements[slot] ? { [slot]: placements[slot] } : {};
 }
 
 export function writeHostedIos(root: string, slot: string, host: HostedIosPlacement | null): void {

@@ -1,3 +1,4 @@
+import { hostedIosRecords } from '@stim-cli/core/state';
 import { readHostedIos } from '../device-host/ios-state.ts';
 import { probeHostedSession } from '../device-host/hosted-client.ts';
 import { nativeRunCommand } from '../engine/slot-launch.ts';
@@ -12,7 +13,7 @@ import { resolveProjectMetro, type MetroResolution } from '../metro.ts';
 import { findCommandWorkspace } from '../workspace/project.ts';
 import { liveWebRecord, sendToOwnedPage } from '../web/page.ts';
 import { cdpEndpoint, readWebRecord, webFacts, type WebRecord } from '../web/state.ts';
-import { recordWorkspaceUse } from '../workspace/workspace-state.ts';
+import { readWorkspaceState, recordWorkspaceUse } from '../workspace/workspace-state.ts';
 import { resolveOwnedAvdSerial, type ResolvedAvdSerial } from '../devices/android.ts';
 import { resolveOwnedIosSim, type ResolvedIosSim } from '../devices/ios.ts';
 import {
@@ -297,7 +298,25 @@ export async function runReload({
           ),
         };
   }
-  const hosted = readHostedIos(root);
+  const hosted = platform === 'android' ? {} : readHostedIos(root);
+  const hostedFailures: Record<string, TargetFailure> = {};
+  if (platform !== 'android') {
+    for (const slot of Object.keys(hostedIosRecords(readWorkspaceState(root)))) {
+      if (hosted[slot]) continue;
+      try {
+        readHostedIos(root, slot);
+      } catch (error) {
+        hostedFailures[slot] = {
+          platform: 'ios',
+          error: failure(
+            'STIM_HOSTING_REFUSED',
+            describe(error),
+            error instanceof Error && 'remedy' in error && typeof error.remedy === 'string' ? error.remedy : null,
+          ),
+        };
+      }
+    }
+  }
   const hostedProbes = Object.fromEntries(
     await Promise.all(
       Object.entries(hosted).map(async ([slot, placement]) => [slot, await probeHostedSession(placement)]),
@@ -307,6 +326,7 @@ export async function runReload({
   const inspected = Object.entries(launches).flatMap(([key, record]) => {
     const parsed = parseDeviceSlotKey(key);
     if (!parsed || (platform && parsed.platform !== platform)) return [];
+    if (parsed.platform === 'ios' && hostedFailures[parsed.slot]) return [];
     const placement = parsed.platform === 'ios' ? hosted[parsed.slot] : undefined;
     if (placement && record.deviceId === placement.session) {
       const probe = hostedProbes[parsed.slot]!;
@@ -339,6 +359,7 @@ export async function runReload({
       ),
     ];
   });
+  inspected.push(...Object.values(hostedFailures));
   const live = inspected.filter((target): target is LiveTarget => !isTargetFailure(target));
 
   const livePlatforms = new Set<ReloadPlatform>(live.map((target) => target.platform));

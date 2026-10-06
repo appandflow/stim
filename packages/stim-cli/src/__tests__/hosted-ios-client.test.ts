@@ -432,6 +432,24 @@ test.each([false, true])('workspace removal preserves an unreachable hosting own
   expect(Object.keys(readHostedIos(root)).length).toBe(unreachable ? 1 : 0);
 });
 
+test.each(['forbidden', 'capacity'])('stop handles a hello refusal with host code %s', async (code) => {
+  writeHostedIos(root, 'default', placement());
+  open.mockResolvedValue({ refused: true, code, failure: 'This Mac is refused.' });
+  const result = await runStop({ root, report: () => {} });
+  expect(result.ok).toBe(code === 'forbidden');
+  expect(readHostedIos(root)).toEqual(code === 'forbidden' ? {} : { default: placement() });
+  expect(methods).toEqual([]);
+});
+
+test('worktree removal clears placement when hosting was revoked at hello', async () => {
+  writeHostedIos(root, 'default', placement());
+  open.mockResolvedValue({ refused: true, code: 'forbidden', failure: 'This Mac is refused.' });
+  const result = await reclaimProject(root);
+  expect(result.keptEntry).toBe(false);
+  expect(result.failedDevices).toEqual([]);
+  expect(readHostedIos(root)).toEqual({});
+});
+
 test('the stop command reports a hosted stop without sending the host UDID to local teardown', async () => {
   writeHostedIos(root, 'default', placement());
   const local = vi.fn<() => never>(() => {
@@ -453,10 +471,12 @@ test('hosted sibling slots share Metro evidence even without local collectors or
 });
 
 test('a hosting handshake refusal cannot expose the credential', async () => {
-  open.mockResolvedValue({ refused: true, failure: `invalid ${credential.deviceToken}` });
+  open.mockResolvedValue({ refused: true, code: 'forbidden', failure: `invalid ${credential.deviceToken}.` });
   const error = await prepareHostedIos('mini', {}).catch((refusal: Error) => refusal);
   expect(error).toBeInstanceOf(Error);
   expect((error as Error).message.includes(credential.deviceToken)).toBe(false);
+  expect((error as Error).message).toContain('[redacted]. Run stim doctor.');
+  expect((error as Error & { code: string }).code).toBe('STIM_HOSTING_REFUSED');
   expect(methods).toEqual([]);
 });
 

@@ -1,4 +1,5 @@
 import * as offloadClient from '../offload/client.ts';
+import * as tailnet from '../offload/tailnet.ts';
 import { requestNativeRunCancel } from '../engine/native-run.ts';
 import { SETTING_SHAPE_REMEDY } from '../workspace/settings.ts';
 import assert from 'node:assert';
@@ -7513,6 +7514,63 @@ describe('iOS placement on a hosting Mac', () => {
     },
   );
 
+  test.each(['27.0', 'iOS 27.0'])(
+    'a hosted runtime mismatch labels the recorded runtime %s as iOS',
+    async (runtime) => {
+      writeConfigSetting({ scope: 'machine' }, 'hosting.machines', ['mini']);
+      writeFileSync(
+        deviceHostMachinesFile(),
+        JSON.stringify({
+          version: 1,
+          machines: [
+            {
+              machine: 'mini',
+              nodeId: 'nMini',
+              dnsName: 'mini.tail.ts.net',
+              deviceId: 'client',
+              deviceToken: 'fixture-token',
+              state: 'approved',
+              requestedAt: '2026-10-05T12:00:00Z',
+            },
+          ],
+        }),
+      );
+      writeHostedIos(root, 'default', { ...placement, device: { ...hostedDevice, runtime } });
+      const endpoint = vi.spyOn(tailnet, 'pinnedEndpoint').mockReturnValue({
+        url: 'ws://127.0.0.1:1',
+        host: 'mini',
+        servername: 'mini',
+      });
+      const connection = Object.create(offloadClient.BuildConnection.prototype) as offloadClient.BuildConnection;
+      connection.close = () => {};
+      connection.request = async () => ({
+        result: {
+          id: placement.session,
+          platform: 'ios',
+          state: 'ready',
+          device: { ...hostedDevice, runtime },
+        },
+      });
+      const open = vi.spyOn(offloadClient.BuildConnection, 'open').mockResolvedValue(connection);
+      try {
+        const { logs, exitCode, calls } = await run(
+          { remote: 'mini', runtime: '26.5', json: true },
+          { prepareHostedIos },
+        );
+        expect(exitCode).toBe(1);
+        expect(logs).toHaveLength(1);
+        expect(parseFirst(logs)).toMatchObject({
+          code: 'STIM_HOSTING_REFUSED',
+          message: expect.stringContaining('iPhone 17 Pro (iOS 27.0); run stim stop first'),
+        });
+        expect(calls.order).not.toContain('buildIos');
+      } finally {
+        open.mockRestore();
+        endpoint.mockRestore();
+      }
+    },
+  );
+
   test('a shut-down local simulator permits hosted placement after stop', async () => {
     upsertProject(root, { platforms: { ios: { owned: true, deviceUdid: 'LOCAL' } } });
     const connect = vi.fn<NonNullable<IosDeps['prepareHostedIos']>>(async () => {
@@ -7524,6 +7582,29 @@ describe('iOS placement on a hosting Mac', () => {
     );
     expect(connect).toHaveBeenCalled();
     expect(parseFirst(logs).code).toBe('STIM_HOSTING_REFUSED');
+  });
+
+  test('an unreadable sibling hosting slot does not block a local default-slot run', async () => {
+    reserve();
+    writeWorkspaceState(root, { deviceSlots: { tablet: { ios: { host: { machine: 'mini', session: '' } } } } });
+    const { logs, exitCode, calls } = await run({ json: true });
+    expect(exitCode).toBe(null);
+    expect(logs).toHaveLength(1);
+    expect(parseFirst(logs)).toMatchObject({ launched: true });
+    expect(calls.order).toContain('buildIos');
+  });
+
+  test('an unreadable hosting record refuses only its own slot with a recovery remedy', async () => {
+    writeWorkspaceState(root, { deviceSlots: { tablet: { ios: { host: { machine: 'mini', session: '' } } } } });
+    const { logs, exitCode, calls } = await run({ slot: 'tablet', json: true });
+    expect(exitCode).toBe(1);
+    expect(logs).toHaveLength(1);
+    expect(parseFirst(logs)).toMatchObject({
+      code: 'STIM_HOSTING_REFUSED',
+      message: expect.stringContaining('deviceSlots.tablet.ios.host.session'),
+      remedy: expect.stringContaining('stim stop --slot tablet'),
+    });
+    expect(calls.order).not.toContain('buildIos');
   });
 
   test('--no-metro-check refuses hosted Debug before connecting', async () => {
