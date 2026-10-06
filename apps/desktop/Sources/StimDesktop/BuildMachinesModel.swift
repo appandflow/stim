@@ -127,12 +127,33 @@ final class BuildMachinesModel {
     }
   }
 
+  private(set) var sampleExists = FileManager.default.fileExists(atPath: WizardSample.desktop.folder.path)
+
+  func deleteSample() async {
+    let sample = SampleBuildModel(cli: cli)
+    let location = sample.dependencies.sample
+    guard location.permitsRemoval(location.folder) else {
+      writeFailure = "Refused to remove a path outside the sample folder."
+      return
+    }
+    do {
+      let output = try await sample.dependencies.run(StimCommand(["stop"], cwd: location.folder.path), { _ in })
+      guard output.exit == 0 else { throw StimCLI.Failure.exited(output.exit, stderr: output.stderr) }
+      guard location.permitsRemoval(location.folder) else { throw CocoaError(.fileWriteNoPermission) }
+      try FileManager.default.removeItem(at: location.folder)
+      sampleExists = false
+      writeFailure = nil
+    } catch { writeFailure = error.localizedDescription }
+  }
+
   var entries: [String]? {
     settings.payload.map { $0.entry("offload.machines")?.value.strings ?? [] }
   }
 
   func addMachine(checkout: String?) -> AddMachineModel {
-    AddMachineModel(cli: cli, settings: settings, checkout: checkout)
+    let model = AddMachineModel(cli: cli, settings: settings, checkout: checkout)
+    model.machines = self
+    return model
   }
 
   var isBusy: Bool { working != nil || runs > 0 }
@@ -146,6 +167,7 @@ final class BuildMachinesModel {
   }
 
   func refresh(checkout: String?) async {
+    sampleExists = FileManager.default.fileExists(atPath: WizardSample.desktop.folder.path)
     await settings.refresh()
     async let placements: Void = (entries ?? []).isEmpty ? () : refreshPlacements()
     await refreshStatuses(checkout: checkout, ask: false)
@@ -161,6 +183,7 @@ final class BuildMachinesModel {
   }
 
   func load(checkout: String?) async {
+    sampleExists = FileManager.default.fileExists(atPath: WizardSample.desktop.folder.path)
     let cli = await cli.value
     probing = true
     let environment = cli.environment

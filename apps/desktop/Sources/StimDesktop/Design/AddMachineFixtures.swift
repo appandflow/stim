@@ -8,9 +8,21 @@
     case chooseBoth, chooseBuilds, chooseHosted, alreadyApproved
     case command, expired, starting, awaitingApproval, awaitingPermission, approved
     case noAnswer, stepFailed, serverTooOld, requestLapsed, grantedOther, funneled, permissionSkipped, noWorkspace
+    case toolsOK, toolsFixes, toolsBusy, toolsAndroid
+    case testPreparingSample, sampleFailed, offloading, offloaded, localBuilding, testPassed, testFailed, testSkipped
+    case summaryAuto, summaryNever, summaryUndo
     var id: Self { self }
 
     @MainActor func make() -> AddMachineModel {
+      let later: [Self] = [
+        .toolsOK, .toolsFixes, .toolsBusy, .toolsAndroid, .testPreparingSample, .sampleFailed, .offloading, .offloaded,
+        .localBuilding, .testPassed, .testFailed, .testSkipped, .summaryAuto, .summaryNever, .summaryUndo,
+      ]
+      if later.contains(self) {
+        let model = Self.approved.make()
+        model.configureLaterFixture(self)
+        return model
+      }
       let now = Date(timeIntervalSince1970: 1_791_284_400)
       let issued = self == .expired ? now.addingTimeInterval(-1801) : self == .noAnswer ? now.addingTimeInterval(-181) : now
       let ticket = SetupTicket.generate(now: issued, randomBytes: { bytes in bytes = Array(0..<32) })
@@ -98,7 +110,11 @@
         dependencies: .init(
           status: { status }, health: { _, _ in nil }, journal: { _, _, _ in .notFound },
           doctor: { _, _, _ in throw FixtureError.unavailable }, readSettings: { payload }, writeSetting: { _, _ in },
-          version: { "1.16.0" }, now: { now }, ticket: { _ in ticket }), wizard: wizard)
+          version: { "1.16.0" }, now: { now }, ticket: { _ in ticket }), wizard: wizard,
+        sample: SampleBuildModel(
+          dependencies: .init(
+            sample: WizardSample(applicationSupport: URL(fileURLWithPath: NSHomeDirectory() + "/Library/Application Support")),
+            run: { _, _ in throw FixtureError.unavailable })))
       let health = try! JSONDecoder().decode(
         Tailnet.Health.self, from: Data("{\"server\":\"stim-server\",\"version\":\"1.16.0\",\"protocol\":1}".utf8))
       model.configureFixture(

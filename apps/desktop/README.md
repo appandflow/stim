@@ -962,16 +962,41 @@ shows an assumed endpoint when the route is missing or unknown.
 
 ## Build machines
 
-**Add...** in **Settings > Build Machines** opens the first three steps of the
-setup wizard: pick a Mac on the tailnet, choose Builds and/or Hosted simulators,
-and mirror setup live. Run the generated command in Terminal while signed in
-at the build Mac; running it and answering each y/N request there approves
-access. Permission prompts appear on that Mac's screen. Stim needs a listed
-workspace to send requests. Cancel removes entries added by the wizard,
-restores `offload.mode` only if the wizard changed it, and runs doctor to forget
-the pairing; it shows revoke commands to run on the build Mac. Tools and the
-test build arrive in the next release. Done leaves `offload.mode` at `off` when
-the wizard set it, so no build runs on the new machine before a test passes.
+**Add...** in **Settings > Build Machines** opens the six-step setup wizard:
+pick a Mac on the tailnet, choose Builds and/or Hosted simulators, mirror setup
+live, compare tools, test a sample build, and choose when to offload. Run the
+generated command in Terminal while signed in at the build Mac; answering each
+y/N request there approves access. Permission prompts appear on that Mac's screen.
+There is no SSH option. Tool fixes come from setup or doctor. Shell commands have
+Copy buttons; prose fixes appear as text. Desktop never runs these fixes.
+**Install This Mac's Build** updates a mismatched Stim build through the existing
+machine update action. Tools are checked on entry, with **Check again**, and at
+most every 30 seconds while step 4 is open. Any missing or mismatched
+row for the chosen capabilities (Xcode, runtime, CocoaPods / Bundler, Stim build,
+CPU, checkout, disk, access) blocks Next.
+**Check Android** adds an informational Android tool comparison that never blocks Next.
+
+From step 2, Desktop prepares a pinned Expo blank SDK 58 app in
+`~/Library/Application Support/Stim Desktop/Onboarding/sample-sdk58/`, outside
+user projects and Stim's state directory. It also uses this checkout for setup
+requests when no workspace is listed. The test requires a build on the selected
+Mac and a verified launch, then forces a local build to prove the fallback path.
+Both runs bypass the build cache. Live output shows both runs; phase timings
+describe the offloaded run, and the local run shows its total time. The optional
+hosted-simulator check is not part of this wizard. Desktop
+stops the sample workspace when the test ends or the sheet closes; its folder
+stays for **Run again**. **Delete sample app** in Build Machines stops it and
+removes only that folder after confirmation.
+
+Cancel removes entries added by the wizard, restores `offload.mode` only if the
+wizard changed it, and runs doctor to forget the pairing. It shows revoke
+commands to run on the build Mac. Done keeps the entries and writes the selected
+Auto / Always / Never mode only when it differs. If the wizard turned offloading
+off, Auto is the default after both builds pass; skipping or failing keeps Never
+selected unless you choose otherwise. Existing machine settings keep their
+current effective mode. The summary lists approvals, settings and undo commands.
+Uninstalling the server service is optional; Stim Host permissions stay in System
+Settings until you remove them.
 
 Another Mac on the tailnet can build for this one once a person on it approves
 this Mac (see [Build access](../../packages/server/README.md#build-access)).

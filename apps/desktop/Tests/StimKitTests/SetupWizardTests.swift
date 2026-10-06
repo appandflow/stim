@@ -139,7 +139,6 @@ final class SetupWizardTests: XCTestCase {
     _ = wizard.apply(.doctorReported(build: status(.approved, id: "b"), host: status(.approved, id: "h")), now: now)
     XCTAssertEqual(wizard.phase, .approved)
     XCTAssertNil(wizard.failure(now: now))
-    XCTAssertEqual(wizard.apply(.done, now: now), [])
   }
 
   func testAlreadyApprovedCapabilityCanBeOmittedFromSetupWithoutLosingVerifiedApproval() {

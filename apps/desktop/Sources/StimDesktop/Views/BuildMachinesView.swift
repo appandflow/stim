@@ -10,6 +10,7 @@ struct BuildMachinesView: View {
   @ObservedObject var store: StatusStore
   var workspace: String?
 
+  @State private var confirmsDeleteSample = false
   @State private var removing: String?
   @State private var adding: AddMachineModel?
   @AppStorage(AppPreferences.Key.updatesBuildMachines) private var updatesAutomatically = false
@@ -65,6 +66,11 @@ struct BuildMachinesView: View {
           .frame(maxWidth: .infinity, alignment: .leading)
       }
 
+      if model.sampleExists {
+        Section {
+          Button("Delete sample app", role: .destructive) { confirmsDeleteSample = true }
+        }
+      }
       Section {
         discovered
       } header: {
@@ -106,6 +112,11 @@ struct BuildMachinesView: View {
     .onQuitRequested {
       adding?.stop()
       adding = nil
+    }
+    .confirmationDialog("Delete the wizard's sample app?", isPresented: $confirmsDeleteSample) {
+      Button("Delete sample app", role: .destructive) { Task { await model.deleteSample() } }
+    } message: {
+      Text("Stops the sample workspace and removes only Stim Desktop's SDK 58 sample folder. The next wizard creates it again.")
     }
     .confirmationDialog(
       "Stop building on \(removing ?? "")?", isPresented: .init(get: { removing != nil }, set: { if !$0 { removing = nil } }),
