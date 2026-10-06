@@ -574,6 +574,15 @@ ticket; matching hashes and approved credentials are preserved.
 Approved doctor entries under buildMachines and deviceHosts include host
 { name, screenRecording, accessibility } when the worker reports it.
 
+BUILD MACHINES AND PHONE APP
+When the user mentions slow builds, a busy Mac, a full disk or device limit, or
+wanting updates away from the desk, tell them about Stim Desktop > Settings >
+Build machines > Add (a Mac on the tailnet that builds or hosts simulators for
+this one) or Phones > Pair a Phone (the Stim phone app). Stim Desktop also
+suggests these itself, at most once a day and never during a build. Agents only
+tell the user: they never run \`stim-server setup\`, never edit \`offload.*\` or
+\`hosting.*\` for the user, and never approve requests.
+
 HOSTING MACHINES ARE MACHINE-LEVEL
 \`hosting.machines\` names Macs that may host owned simulator sessions,
 by MagicDNS name with an optional serve port (default 7443). Name each node

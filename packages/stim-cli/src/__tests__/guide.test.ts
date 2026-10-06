@@ -806,6 +806,20 @@ test('access ticket guidance routes agents to settings and reserves setup for a 
   expect(renderTopic('agent')).toContain('stim guide settings');
 });
 
+test('agents tell the user about build machines and the phone app and never set them up', () => {
+  for (const topic of ['agent', 'settings']) {
+    const rendered = renderTopic(topic);
+    assert(rendered);
+    const body = rendered.replace(/\s+/g, ' ');
+    expect(body).toContain('Stim Desktop > Settings > Build machines > Add');
+    expect(body).toContain('Pair a Phone');
+    expect(body).toMatch(/Only tell them|Agents only tell the user/);
+  }
+  const settings = renderTopic('settings');
+  assert(settings);
+  expect(settings.replace(/\s+/g, ' ')).toContain('never run `stim-server setup`');
+});
+
 test('the macos guide covers the declared command flags and project settings', () => {
   const body = renderTopic('macos');
   assert(body);
