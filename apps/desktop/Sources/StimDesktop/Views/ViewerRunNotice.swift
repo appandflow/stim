@@ -8,7 +8,7 @@ struct ViewerRunNotice: View {
   @EnvironmentObject private var actions: ActionCenter
 
   var body: some View {
-    if run.isRunning || (run.needsAttention && run.startedAt > openedAt && dismissedRunID != run.id) {
+    if run.isRunning || (run.needsAttention && (run.finishedAt.map { $0 > openedAt } ?? false) && dismissedRunID != run.id) {
       HStack(spacing: Space.md) {
         HStack(spacing: Space.md) {
           if run.isRunning {
@@ -32,10 +32,13 @@ struct ViewerRunNotice: View {
           Button("Show output") { actions.presented = run }
             .nativeIconStyle(tint: Palette.primary)
             .fixedSize()
-          Button("Dismiss", systemImage: "xmark") { dismissedRunID = run.id }
-            .labelStyle(.iconOnly)
-            .nativeIconStyle()
-            .accessibilityLabel("Dismiss failure")
+          Button("Dismiss", systemImage: "xmark") {
+            dismissedRunID = run.id
+            actions.operations.markSeen(run)
+          }
+          .labelStyle(.iconOnly)
+          .nativeIconStyle()
+          .accessibilityLabel("Dismiss failure")
         }
       }
       .font(.stim(.footnote))
@@ -43,6 +46,7 @@ struct ViewerRunNotice: View {
       .padding(.horizontal, Space.xl)
       .frame(height: 28)
       .background(Palette.surface)
+      .overlay(alignment: .bottom) { Rectangle().fill(Palette.border).frame(height: 1) }
       .accessibilityElement(children: .contain)
     }
   }
