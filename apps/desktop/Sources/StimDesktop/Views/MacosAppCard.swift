@@ -36,7 +36,7 @@ struct MacosAppCard: View {
           }
         }
         Button("Build and run", systemImage: "play.fill") {
-          actions.run("Build \(app.product)", StimCommand(runArguments, cwd: workspace))
+          actions.run("Build \(app.product)", steps: [StimCommand(runArguments, cwd: workspace)], present: false)
         }
         .nativeControlStyle(.primary)
         .help(
