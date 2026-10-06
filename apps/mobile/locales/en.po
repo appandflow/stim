@@ -325,10 +325,6 @@ msgstr "{machine} too old"
 msgid "{machine} toolchain differs"
 msgstr "{machine} toolchain differs"
 
-#: src/screens/menu.tsx
-msgid "{machineCount, plural, one {# machine, {statusText}} other {# machines, {statusText}}}"
-msgstr "{machineCount, plural, one {# machine, {statusText}} other {# machines, {statusText}}}"
-
 #: src/intl/format.ts
 msgid "{mb} MB"
 msgstr "{mb} MB"
@@ -638,8 +634,8 @@ msgid "{total, plural, one {# Mac connected} other {# Macs connected}}"
 msgstr "{total, plural, one {# Mac connected} other {# Macs connected}}"
 
 #: src/lib/drawer-status.ts
-msgid "{total, plural, one {# Mac, {offline} offline} other {# Macs, {offline} offline}}"
-msgstr "{total, plural, one {# Mac, {offline} offline} other {# Macs, {offline} offline}}"
+msgid "{total, plural, one {# Mac, {pending} connecting} other {# Macs, {pending} connecting}}"
+msgstr "{total, plural, one {# Mac, {pending} connecting} other {# Macs, {pending} connecting}}"
 
 #: src/screens/mac-status.tsx
 msgid "{totalCount} in all"

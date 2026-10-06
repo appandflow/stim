@@ -1,4 +1,4 @@
-import { plural, t } from '@lingui/core/macro';
+import { t } from '@lingui/core/macro';
 import { Trans } from '@lingui/react/macro';
 import { Image } from 'expo-image';
 import { usePathname, useRouter, type Href } from 'expo-router';
@@ -32,7 +32,7 @@ export function Menu({ onClose }: { onClose: () => void }) {
   const router = useRouter();
   const pathname = usePathname();
   const insets = useSafeAreaInsets();
-  const { connections } = useMacs();
+  const { connections, macs } = useMacs();
   const { view, setView } = useHomeFilters();
   const { recents } = useRecents();
   const update = useAppUpdate();
@@ -66,7 +66,7 @@ export function Menu({ onClose }: { onClose: () => void }) {
     diskTone: machineStats(c.usage).find((s) => s.kind === 'disk')?.tone ?? 'normal',
   }));
   const status = drawerStatus(machines);
-  const statusText = status.text;
+  const statusText = macs === null ? '' : status.text;
   const machineCount = machines.filter((m) => !m.missing).length;
   const statusTone = status.tone === 'critical' ? 'error' : status.tone === 'warn' ? 'warning' : 'secondary';
 
@@ -187,10 +187,7 @@ export function Menu({ onClose }: { onClose: () => void }) {
                 ? setAboutOpen(true)
                 : router.push('/about')
           }
-          accessibilityLabel={plural(machineCount, {
-            one: `# machine, ${statusText}`,
-            other: `# machines, ${statusText}`,
-          })}
+          accessibilityLabel={statusText}
           style={styles.footerLeft}
         >
           <View style={styles.badge}>
@@ -205,7 +202,7 @@ export function Menu({ onClose }: { onClose: () => void }) {
           </View>
           <View style={styles.footerStatusRow}>
             <Text variant="footnote" tone={statusTone} numberOfLines={1} style={styles.grow}>
-              {status.text}
+              {statusText}
             </Text>
           </View>
         </Touch>

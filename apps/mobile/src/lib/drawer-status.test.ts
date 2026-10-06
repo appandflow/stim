@@ -35,9 +35,9 @@ describe('drawerStatus', () => {
   });
 
   it.each([
-    [[machine({ state: { kind: 'connecting' } })], '1 Mac, 1 offline'],
-    [[machine(), machine({ id: 'b', state: { kind: 'connecting' } })], '2 Macs, 1 offline'],
-  ])('counts non-open Macs as offline', (machines, text) => {
+    [[machine({ state: { kind: 'connecting' } })], '1 Mac, 1 connecting'],
+    [[machine(), machine({ id: 'b', state: { kind: 'connecting' } })], '2 Macs, 1 connecting'],
+  ])('counts a connecting Mac separately', (machines, text) => {
     expect(drawerStatus(machines)).toEqual({ text, tone: 'normal', macId: null });
   });
 

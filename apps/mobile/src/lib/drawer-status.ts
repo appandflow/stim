@@ -47,12 +47,12 @@ export function drawerStatus(machines: DrawerMachine[]): DrawerStatus {
   if (warn) return { text: lowDisk(warn.name), tone: 'warn', macId: warn.id };
 
   const total = machines.length;
-  const offline = machines.filter((m) => m.state.kind !== 'open').length;
+  const pending = machines.filter((m) => m.state.kind !== 'open').length;
   const text =
     total === 0
       ? t`No Macs paired`
-      : offline > 0
-        ? plural(total, { one: `# Mac, ${offline} offline`, other: `# Macs, ${offline} offline` })
+      : pending > 0
+        ? plural(total, { one: `# Mac, ${pending} connecting`, other: `# Macs, ${pending} connecting` })
         : plural(total, { one: '# Mac connected', other: '# Macs connected' });
   return { text, tone: 'normal', macId: null };
 }

@@ -4,7 +4,7 @@ const app = {
   version: '1.0.0',
   build: '22',
   updateId: '1a2b3c4d-5678-1234-1234-123456789abc',
-  createdAt: new Date('2026-10-05T12:00:00Z'),
+  createdAt: new Date(2026, 9, 5, 12),
   isEmbeddedLaunch: false,
 };
 
