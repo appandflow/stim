@@ -162,7 +162,11 @@ describe('startTunnel: the happy path', () => {
       const child = makeChildProcess();
       const spawn = vi.fn<NonNullable<Parameters<typeof startTunnel>[0]['spawnFn']>>(() => child);
       const probe = vi.fn<(url: string, signal: AbortSignal) => Promise<boolean>>(async () => false);
-      setExecutor({ findExecutable: (bin: string) => (bin === binary ? resolvedBinary : null), spawn });
+      setExecutor({
+        findExecutable: (bin: string) => (bin === binary ? resolvedBinary : null),
+        spawn,
+        runFileQuiet: () => '',
+      });
       try {
         const promise = startVerified({
           provider: 'tailscale',

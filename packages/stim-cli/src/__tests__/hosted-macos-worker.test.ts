@@ -66,6 +66,7 @@ beforeEach(() => {
   area = join(root, 'apps', 'app');
   process.env.STIM_HOME = home;
   vi.stubEnv('HOME', join(root, 'user-home'));
+  vi.stubEnv('USERPROFILE', join(root, 'user-home'));
   mkdirSync(join(process.env.HOME!, 'Library', 'Preferences'), { recursive: true });
   mkdirSync(home);
   mkdirSync(join(area, 'blobs'), { recursive: true });
@@ -186,7 +187,7 @@ test('stamps and signs verified bytes, launches with an isolated home, and delet
   ]);
   expect(native.spawn).toHaveBeenCalledWith(
     process.execPath,
-    [expect.stringMatching(/macos[/-]run\.(ts|mjs)$/), realpathSync(join(home, 'macos-app')), expect.any(String)],
+    [expect.stringMatching(/macos[/\\-]run\.(ts|mjs)$/), realpathSync(join(home, 'macos-app')), expect.any(String)],
     expect.objectContaining({
       detached: true,
       env: expect.objectContaining({

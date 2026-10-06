@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -169,7 +169,7 @@ let repo: string;
 const machines: FakeMachine[] = [];
 
 beforeEach(() => {
-  repo = mkdtempSync(join(tmpdir(), 'stim-offload-'));
+  repo = realpathSync.native(mkdtempSync(join(tmpdir(), 'stim-offload-')));
   execFileSync('git', ['init', '-q', repo]);
   writeFileSync(join(repo, 'package.json'), '{}');
 });
