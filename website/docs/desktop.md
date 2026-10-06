@@ -12,9 +12,10 @@ agents driving them. It runs `stim` for you, so it needs the CLI from
 
 ![The workspace page in Stim Desktop: two iPhone simulators side by side with the build stage, git branch and pull request above them](/img/desktop/workspace.webp)
 
-Apps in one linked worktree share a detail page; the sidebar keeps a row per
-app and scrolls to its device or macOS preview. The canvas combines all devices,
-with one stage and git chip. Build cards keep platform titles, adding project
+Apps in one linked worktree share a detail page and one sidebar row, with platform
+badges for each app. Selecting the row opens the page; a link or action for one app
+scrolls to that app. The row's context menu has per-app submenus, **Stop all** and
+**Remove worktree**. The canvas combines all devices, with one stage and git chip. Build cards keep platform titles, adding project
 subtitles only for repeated platforms. The inspector aggregates resources,
 labels each Metro and deduplicates agents. The logs drawer follows app selection
 and has an **App** picker. The actions menu keeps each app's commands plus
@@ -143,8 +144,8 @@ performance traces. Every release is listed under
   Log followers pause while their route is covered or the phone app is in the
   background and refresh the retained window when visible again. This reduces
   initial phone transfer; the server still reads its captured log timeline.
-  Desktop's sidebar retains its app rows. On wide iPad and Duo windows, the app keeps its navigation
-  beside the main screen; details use the full window. A book fold aligns the panes with the display
+  Desktop's sidebar shows one row per multi-app worktree, with platform badges for each app.
+  On wide iPad and Duo windows, the app keeps its navigation beside the main screen; details use the full window. A book fold aligns the panes with the display
   division; a narrow cover screen uses the menu drawer. Duo fold detection
   needs an app built with the iOS 27.1 SDK and an iOS 27.1 runtime.
   On supported phones, light haptics mark menu opening, section and custom-filter

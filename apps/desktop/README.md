@@ -100,11 +100,12 @@ spells it out.
 
 ## Workspace page
 
-Apps in the same linked worktree share one detail page. The sidebar keeps one
-row per app; selecting an app scrolls its first device or macOS preview into
-view. A device deep link scrolls to that
-device. Single-app worktrees keep the same layout. The shared canvas puts
-macOS previews above one ordered grid of all apps' devices. Build cards keep
+Apps in the same linked worktree share one detail page and one sidebar row, with
+platform badges for each app. Selecting the row opens the page; a link or action
+for one app scrolls to its first device or macOS preview. A device deep link
+scrolls to that device. The row's context menu has per-app submenus, **Stop all**
+and **Remove worktree**. Single-app worktrees keep the same layout. The shared
+canvas puts macOS previews above one ordered grid of all apps' devices. Build cards keep
 platform titles, with a small project subtitle only when multiple apps share
 that platform. The header uses the most urgent app's stage and shows git and
 pull request state once. Its menu keeps each app's actions in a submenu and
@@ -115,7 +116,7 @@ sample, lists every app's processes, and counts the worktree folder once plus
 each app's build output. Metro lines show their app labels, ports and log
 shortcuts; agent sessions appear once per tool and session id. Build plans,
 history, cache stats and warnings stay tied to their apps. The logs drawer adds an **App** picker;
-app-specific log shortcuts select that app, and selecting another sidebar app
+app-specific log shortcuts select that app, and selecting another sidebar row
 follows its logs. Changing the log app clears slot and build-run filters. The
 toolbar toggle selects the only app with errors when there is one; otherwise
 it keeps the current log selection.

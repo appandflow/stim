@@ -89,6 +89,80 @@ import Testing
         == "w, Building iOS, Compiling, 97 of 214 targets, 2 errors, iOS, driven by agent-device for 5 minutes")
   }
 
+  @Test func summarizesEveryAppWhileUsingTheUrgentAppsStatusAndDeduplicatingSharedFacts() throws {
+    let worktree =
+      #"{"path":"/w","branch":"topic","git":{"changed":0,"untracked":0,"upstream":"origin/topic","ahead":0,"behind":0},"pullRequest":{"number":7,"url":"https://example.test/7","title":"Topic","state":"open","checks":{"passing":0,"failing":1,"pending":0}}}"#
+    let agent = #"{"tool":"codex","sessionId":"shared","cwd":"/w","title":"Fix","startedAt":"2026-09-30T10:00:00.000Z"}"#
+    var envs = try JSONDecoder().decode(
+      [Workspace].self,
+      from: Data(
+        #"""
+        [
+          {"path":"/w/b","live":true,"warnings":[],"worktree":\#(worktree),"ios":\#(Self.driven),
+            "build":{"platform":"ios","slot":"default","state":"running","phase":"compile","startedAt":"2026-09-30T11:59:00.000Z","phaseStartedAt":"2026-09-30T11:59:00.000Z","outcome":"cold","basis":0},
+            "logs":{"dir":"/b","errorsSinceMarker":2},"agents":[\#(agent)],
+            "endedAgents":[{"tool":"claude-code","sessionId":"other","cwd":"/w","startedAt":"2026-09-30T11:00:00.000Z"}],
+            "remoteDevices":[{"platform":"ios","backend":"eas","sessionId":"B","state":"running"},
+              {"platform":"ios","backend":"eas","sessionId":"C","state":"running"}]},
+          {"path":"/w/a","live":true,"warnings":[],"worktree":\#(worktree),"ios":\#(Self.driven),
+            "logs":{"dir":"/a","errorsSinceMarker":2},"agents":[\#(agent)],
+            "remoteDevices":[{"platform":"ios","backend":"eas","sessionId":"A","state":"running"}]}
+        ]
+        """#.utf8))
+    let page = try #require(WorktreePage(path: "/w/b", environments: envs))
+    let summary = page.rowSummary(now: Self.now, subtitle: "Repo", showsGit: true)
+    #expect(summary.title == "topic")
+    #expect(summary.status.kind == .driven)
+    #expect(summary.status.tone == .brand)
+    #expect(summary.active)
+    #expect(summary.apps.map(\.label) == ["iOS \u{00B7} a", "iOS \u{00B7} b"])
+    #expect(summary.apps.map(\.status.kind) == [.driven, .building])
+    #expect(summary.apps.map(\.active) == [true, true])
+    #expect(summary.drivers == "agent-device")
+    #expect(summary.remote == 3)
+    #expect(summary.problems == ["4 errors", "CI failing"])
+    #expect(summary.agents.map(\.id) == ["codex:shared", "claude-code:other"])
+    let spoken =
+      "topic, Driven by an agent for 5 minutes, iOS \u{00B7} a: Driven by an agent for 5 minutes, iOS \u{00B7} b: Building iOS, Codex \u{00B7} Fix +1, 4 errors, CI failing, driven by agent-device, 3 EAS sessions"
+    #expect(summary.label == spoken + ", Pull request 7, open, checks failing, Repo")
+    #expect(page.rowSummary(now: Self.now, subtitle: nil, showsGit: false).label == spoken)
+
+    envs[1].logs = nil
+    let building = try #require(WorktreePage(path: "/w/a", environments: envs))
+    #expect(building.id == page.id)
+    #expect(building.rowSummary(now: Self.now, subtitle: nil, showsGit: false).status.kind == .building)
+    for index in envs.indices {
+      envs[index].live = false
+      envs[index].build = nil
+      envs[index].remoteDevices = nil
+      envs[index].logs = nil
+    }
+    let idle = try #require(WorktreePage(path: "/w/a", environments: envs)).rowSummary(
+      now: Self.now, subtitle: nil, showsGit: false)
+    #expect(!idle.active)
+    #expect(idle.apps.map(\.active) == [false, false])
+    #expect(idle.status.kind == .idle)
+    #expect(idle.status.tone == .tertiary)
+  }
+
+  @Test func headlinesALiveAppEvenWhenAStoppedAppRanksFirstByItsFailedBuild() throws {
+    let envs = try JSONDecoder().decode(
+      [Workspace].self,
+      from: Data(
+        #"""
+        [
+          {"path":"/w/a","live":false,"warnings":[],"worktree":{"path":"/w"},
+            "lastBuilds":{"ios":{"platform":"ios","status":"failed","cacheHit":false,"cacheSkipped":false,"durationMs":1,"fingerprint":null,"startedAt":"2026-09-01T00:00:00Z","finishedAt":null}}},
+          {"path":"/w/b","live":true,"warnings":[],"worktree":{"path":"/w"},"logs":{"dir":"/b","errorsSinceMarker":3}}
+        ]
+        """#.utf8))
+    let page = try #require(WorktreePage(path: "/w/a", environments: envs))
+    #expect(page.lead(now: Self.now).path == "/w/a")
+    let summary = page.rowSummary(now: Self.now, subtitle: nil, showsGit: false)
+    #expect(summary.status.kind == .running)
+    #expect(summary.problems == ["3 errors"])
+  }
+
   @Test func speaksADrivenWorkspaceOnceThroughItsDevices() throws {
     let env = try Self.workspace(
       #""ios":\#(Self.driven),"slots":[{"slot":"ipad","ios":{"name":"stim-w (iPad 27.0)","udid":"SIM-2","owned":true,"state":"Booted"}}]"#

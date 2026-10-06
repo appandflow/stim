@@ -2,7 +2,7 @@ import Foundation
 
 /// The unified worktree page rule, mirrored by `apps/mobile/src/lib/worktree-page.ts`;
 /// both replay `Tests/StimKitTests/Fixtures/worktree-page-vectors.json`.
-public struct WorktreePage: Sendable {
+public struct WorktreePage: Hashable, Sendable {
   public struct Entry: Decodable, Hashable, Identifiable, Sendable {
     public var path: String
     public var platform: String
@@ -28,12 +28,37 @@ public struct WorktreePage: Sendable {
   public var actionKey: String { "worktree:\(identity)" }
 
   public init?(path: String, environments: [Workspace]) {
-    guard let selected = environments.first(where: { $0.path == path }) else { return nil }
-    if let root = selected.worktree?.path, !root.isEmpty {
-      apps = environments.filter { $0.path == path || $0.worktree?.path == root }.sorted { $0.path < $1.path }
-    } else {
-      apps = [selected]
+    guard let page = Self.groups(environments: environments).first(where: { $0.apps.contains { $0.path == path } }) else {
+      return nil
     }
+    self = page
+  }
+
+  private init(apps: [Workspace]) {
+    self.apps = apps
+  }
+
+  public static func groups(environments: [Workspace]) -> [WorktreePage] {
+    var groups: [[Workspace]] = []
+    var roots: [String: Int] = [:]
+    for app in environments {
+      if let root = app.worktree?.path, !root.isEmpty {
+        if let index = roots[root] {
+          groups[index].append(app)
+        } else {
+          roots[root] = groups.count
+          groups.append([app])
+        }
+      } else {
+        groups.append([app])
+      }
+    }
+    return groups.map { WorktreePage(apps: $0.sorted { $0.path < $1.path }) }
+  }
+
+  /// The path a sidebar row of a multi-app worktree is tagged with, for a selection on any of its apps.
+  public static func rowPath(containing path: String, in pages: [WorktreePage]) -> String? {
+    pages.first { $0.isUnified && $0.apps.contains { $0.path == path } }?.id
   }
 
   public var projects: [String] { apps.map(Self.project) }
@@ -45,8 +70,9 @@ public struct WorktreePage: Sendable {
     return (app.path as NSString).lastPathComponent
   }
 
-  public func lead(now: Date) -> Workspace {
-    apps.enumerated().min {
+  public func lead(now: Date, among candidates: [Workspace]? = nil) -> Workspace {
+    let candidates = candidates ?? apps
+    return candidates.enumerated().min {
       let a = Self.urgency($0.element.stage(now: now))
       let b = Self.urgency($1.element.stage(now: now))
       return a == b ? $0.offset < $1.offset : a < b

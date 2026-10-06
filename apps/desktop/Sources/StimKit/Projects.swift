@@ -80,15 +80,15 @@ public func currentBranch(at path: String) -> String? {
   return branch.isEmpty ? nil : branch
 }
 
-/// A project in the sidebar and how many of its workspaces are live. `total`
-/// counts its workspaces and its worktrees with no environment.
+/// A project in the sidebar and how many of its worktrees are live. `total`
+/// counts each worktree once, including ones with no environment.
 public struct ProjectSummary: Hashable, Sendable {
   public var project: Project
   public var live: Int
   public var total: Int
-  /// Workspaces `stim worktree warm` is preparing or has just prepared.
+  /// Worktrees with an app `stim worktree warm` is preparing or has just prepared.
   public var settingUp = 0
-  /// Workspaces the Live filter shows: live, building, held by an EAS session or a leased phone, or setting up.
+  /// Worktrees the Live filter shows: an app is live, building, held by an EAS session or a leased phone, or setting up.
   public var active = 0
 
   public var hasActive: Bool { active > 0 }
@@ -103,10 +103,16 @@ public func projectSummaries(
   func add(_ path: String, live: Bool, settingUp: Bool = false, active: Bool = false) {
     let key = project(path)
     summaries[key, default: ProjectSummary(project: key, live: 0, total: 0)].total += 1
-    if live { summaries[key]?.live += 1 } else if settingUp { summaries[key]?.settingUp += 1 }
+    if live { summaries[key]?.live += 1 }
+    if settingUp { summaries[key]?.settingUp += 1 }
     if active { summaries[key]?.active += 1 }
   }
-  for env in environments { add(env.path, live: env.live, settingUp: env.isSettingUp, active: env.isActive) }
+  for page in WorktreePage.groups(environments: environments) {
+    add(
+      page.id, live: page.apps.contains(where: \.live),
+      settingUp: page.apps.contains { $0.isSettingUp && (page.isUnified || !$0.live) },
+      active: page.apps.contains(where: \.isActive))
+  }
   for worktree in unprovisioned { add(worktree.path, live: false) }
   return summaries.values.sorted {
     ($0.hasActive ? 0 : 1, $0.project.name.lowercased()) < ($1.hasActive ? 0 : 1, $1.project.name.lowercased())
