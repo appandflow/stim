@@ -223,6 +223,10 @@ msgid "{hidden, plural, one {# more source changed.} other {# more sources chang
 msgstr "{hidden, plural, one {# more source changed.} other {# more sources changed.}}"
 
 #: src/screens/filters.tsx
+msgid "{hidden, plural, one {Show # more project} other {Show # more projects}}"
+msgstr "{hidden, plural, one {Show # more project} other {Show # more projects}}"
+
+#: src/screens/filters.tsx
 msgid "{hidden} more"
 msgstr "{hidden} more"
 
@@ -3413,10 +3417,6 @@ msgstr "Shift"
 #: src/screens/filters.tsx
 msgid "Show"
 msgstr "Show"
-
-#: src/screens/filters.tsx
-msgid "Show {hidden} more projects"
-msgstr "Show {hidden} more projects"
 
 #: src/screens/home.tsx
 msgid "Show all"

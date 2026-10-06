@@ -313,13 +313,11 @@ export function visibleProjects({
   limit?: number;
 }): { projects: string[]; showToggle: boolean } {
   const search = query.trim().toLowerCase();
-  return {
-    projects: sorted.filter(
-      (project, index) =>
-        selected.includes(project) || (search ? project.toLowerCase().includes(search) : expanded || index < limit),
-    ),
-    showToggle: sorted.length > limit && !search,
-  };
+  const projects = sorted.filter(
+    (project, index) =>
+      selected.includes(project) || (search ? project.toLowerCase().includes(search) : expanded || index < limit),
+  );
+  return { projects, showToggle: sorted.length > limit && !search && (expanded || projects.length < sorted.length) };
 }
 
 const LOW_DISK_BYTES = 20e9;

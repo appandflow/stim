@@ -363,6 +363,14 @@ describe('visibleProjects', () => {
     expect(visibleProjects({ ...options, query: ' \t ' }).showToggle).toBe(true);
     expect(visibleProjects({ ...options, query: 'Alpha' }).showToggle).toBe(false);
   });
+
+  it('offers no collapsed toggle when selections already show every project, but keeps Show less when expanded', () => {
+    const seven = ['A', 'B', 'C', 'D', 'E', 'F', 'G'];
+    const all = { ...options, sorted: seven, selected: ['G'] };
+    expect(visibleProjects(all).projects).toEqual(['A', 'B', 'C', 'D', 'E', 'F', 'G']);
+    expect(visibleProjects(all).showToggle).toBe(false);
+    expect(visibleProjects({ ...all, expanded: true }).showToggle).toBe(true);
+  });
 });
 
 it('avoids duplicate source rows and registered checkouts without hiding a same-path worktree on another machine', () => {

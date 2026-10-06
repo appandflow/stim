@@ -1,5 +1,5 @@
 import { Host } from '@expo/ui';
-import { t } from '@lingui/core/macro';
+import { plural, t } from '@lingui/core/macro';
 import { Trans } from '@lingui/react/macro';
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { TextInput, View, type TextInputInstance } from 'react-native';
@@ -245,7 +245,11 @@ function ProjectExpansionChip({
   return (
     <Touch
       accessibilityRole="button"
-      accessibilityLabel={expanded ? t`Show fewer projects` : t`Show ${hidden} more projects`}
+      accessibilityLabel={
+        expanded
+          ? t`Show fewer projects`
+          : plural(hidden, { one: 'Show # more project', other: 'Show # more projects' })
+      }
       onPress={onPress}
       hitSlop={{ top: 8, bottom: 8, left: 2, right: 2 }}
       style={styles.projectExpansionChip}
