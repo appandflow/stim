@@ -523,7 +523,7 @@ signature. `--from` installs the `.tgz` packages in the directory. Either way
 the new server is installed beside the running one and must start before the
 switch. The update waits up to 30 minutes for offloaded builds and hosted
 sessions to finish, restarts the job, and switches back to the previous server
-when the new one does not answer within 90 seconds. It never changes pairings,
+when the new job exits or does not answer within 90 seconds. It never changes pairings,
 approvals, Stim Host, the pinned `--env` and `--path-prepend` values or the
 serve route.
 
@@ -537,7 +537,9 @@ is false by default:
 stim settings set server.acceptClientBuilds true   # on the build machine
 ```
 
-An installed LaunchAgent does not prove server readiness: check its health in
+Replacing a service waits up to 45 seconds for the old server to release its
+port. Install fails if the new job exits during startup and restores any previous
+LaunchAgent. A running LaunchAgent does not prove server readiness: check its health in
 `stim-server service status` and the reported log when readiness is unavailable.
 The server listens before it touches the Stim home. A read-only child process
 reads the Stim home, server and recording directories; until it returns,

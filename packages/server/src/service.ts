@@ -13,6 +13,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { createRequire } from 'node:module';
+import { createServer } from 'node:net';
 import { homedir } from 'node:os';
 import { basename, delimiter, dirname, join } from 'node:path';
 import { clearFreeClaimSet, releaseClaim, tryAcquireClaim } from '@stim-cli/core/ownership-claim';
@@ -132,17 +133,40 @@ function alive(pid: number): boolean {
   }
 }
 
-/** Boots the job out and waits until launchd forgets it and its process has exited, so the port is free. */
-async function unload(label: string): Promise<void> {
+async function portFree(port: number): Promise<boolean> {
+  return new Promise((resolve, reject) => {
+    const server = createServer();
+    server.once('error', (error: NodeJS.ErrnoException) => {
+      if (error.code === 'EADDRINUSE') resolve(false);
+      else reject(error);
+    });
+    server.listen(port, '127.0.0.1', () => server.close(() => resolve(true)));
+  });
+}
+
+async function unload(label: string, port: number | null): Promise<void> {
   const job = await loaded(label);
-  if (!job) return;
-  const stopped = await run('launchctl', ['bootout', `${domain()}/${label}`]);
+  const stopped = job ? await run('launchctl', ['bootout', `${domain()}/${label}`]) : null;
   const deadline = Date.now() + UNLOAD_WAIT_MS;
   while (Date.now() < deadline) {
-    if (!(await loaded(label)) && (job.pid === null || !alive(job.pid))) return;
+    if (!(await loaded(label)) && (job?.pid == null || !alive(job.pid)) && (port === null || (await portFree(port))))
+      return;
     await sleep(250);
   }
-  throw new ServiceError(`${label} did not stop within ${UNLOAD_WAIT_MS / 1000} s. ${stopped.stderr.trim()}`.trim());
+  const listener = port === null ? null : await run('lsof', ['-nP', `-iTCP:${port}`, '-sTCP:LISTEN', '-t']);
+  const pid = listener?.ok ? listener.stdout.trim() : '';
+  throw new ServiceError(
+    `${label} did not stop${port === null ? '' : ` and release port ${port}${pid ? ` (listening pid ${pid})` : ''}`} within ${UNLOAD_WAIT_MS / 1000} s. ${stopped?.stderr.trim() ?? ''}`.trim(),
+  );
+}
+
+async function requireRunning(label: string): Promise<void> {
+  const job = await loaded(label);
+  if (!job?.pid) {
+    throw new ServiceError(
+      `${label} is not running${job?.lastExitCode ? ` (last exit code ${job.lastExitCode})` : ''}. Check ${logPath(label)}.`,
+    );
+  }
 }
 
 interface Health {
@@ -167,10 +191,11 @@ async function fetchHealth(port: number): Promise<Health | null> {
   }
 }
 
-async function waitForHealth(port: number): Promise<Health | null> {
+async function waitForHealth(port: number, label: string): Promise<Health | null> {
   const deadline = Date.now() + HEALTH_WAIT_MS;
   for (;;) {
     const health = await fetchHealth(port);
+    await requireRunning(label);
     if ((health && health.startup?.state !== 'pending') || Date.now() >= deadline) return health;
     await sleep(500);
   }
@@ -255,8 +280,12 @@ async function installJob(options: ServiceOptions): Promise<string[]> {
 
   const wasLoaded = (await loaded(options.label)) !== null;
   let routeCreated = false;
+  let bootstrapped = false;
+  let unloaded = false;
+  let health: Health | null;
   try {
-    await unload(options.label);
+    await unload(options.label, previous?.port ?? null);
+    unloaded = true;
     if (await fetchHealth(options.port)) {
       throw new ServiceError(
         `port ${options.port} already answers as a stim-server that is not ${options.label} (Stim Desktop runs one on 7787). Pass --port to use another.`,
@@ -272,14 +301,15 @@ async function installJob(options: ServiceOptions): Promise<string[]> {
     renameSync(partial, path);
     const started = await run('launchctl', ['bootstrap', domain(), path]);
     if (!started.ok) throw new ServiceError(`launchctl bootstrap failed: ${started.stderr.trim()}`);
+    bootstrapped = true;
+    health = await waitForHealth(options.port, options.label);
   } catch (error) {
+    if (oldPlist === null) rmSync(path, { force: true });
+    else writeFileSync(path, oldPlist, { mode: 0o644 });
     if (routeCreated && serve) await run(tailscale, ['serve', `--https=${serve.port}`, 'off']);
-    if (oldPlist === null) {
-      rmSync(path, { force: true });
-      throw error;
-    }
-    writeFileSync(path, oldPlist, { mode: 0o644 });
-    const restored = wasLoaded ? await run('launchctl', ['bootstrap', domain(), path]) : null;
+    if (bootstrapped) await unload(options.label, options.port);
+    if (oldPlist === null) throw error;
+    const restored = wasLoaded && unloaded ? await run('launchctl', ['bootstrap', domain(), path]) : null;
     if (restored && !restored.ok && !(await loaded(options.label))) {
       throw new ServiceError(
         `${(error as Error).message} The previous service could not be restarted either (${restored.stderr.trim()}); run install again.`,
@@ -289,7 +319,6 @@ async function installJob(options: ServiceOptions): Promise<string[]> {
   }
 
   const notes = [`Installed ${options.label}: ${path}`, `Log: ${spec.logPath}`];
-  const health = await waitForHealth(options.port);
   const follow = `Run \`stim-server service status --label ${options.label}\` and check ${spec.logPath}.`;
   notes.push(
     !health
@@ -548,7 +577,7 @@ async function uninstallJob(label: string): Promise<string[]> {
     notes.push(`Kept the tailscale serve route on https port ${installed.serve.port}; install did not create it.`);
   }
   if (installed.host) notes.push(`Kept ${dirname(dirname(dirname(installed.host)))}; other service labels may use it.`);
-  await unload(label);
+  await unload(label, installed.port);
   if (routeOff && tailscale) {
     const removed = await run(tailscale, ['serve', `--https=${routeOff}`, 'off']);
     notes.push(
@@ -794,20 +823,24 @@ async function waitForIdle(port: number, log: (line: string) => void): Promise<v
   }
 }
 
-async function waitForBuild(port: number, expected: ServerBuild): Promise<boolean> {
+async function waitForBuild(label: string, port: number, expected: ServerBuild): Promise<boolean> {
   const deadline = Date.now() + UPDATE_HEALTH_WAIT_MS;
   while (Date.now() < deadline) {
-    if (answersAs(await fetchHealth(port), expected)) {
+    const health = await fetchHealth(port);
+    await requireRunning(label);
+    if (answersAs(health, expected)) {
       await sleep(UPDATE_SETTLE_MS);
-      if (answersAs(await fetchHealth(port), expected)) return true;
+      const settled = await fetchHealth(port);
+      await requireRunning(label);
+      if (answersAs(settled, expected)) return true;
     }
     await sleep(1000);
   }
   return false;
 }
 
-async function restart(label: string, path: string): Promise<Run> {
-  await unload(label);
+async function restart(label: string, path: string, port: number): Promise<Run> {
+  await unload(label, port);
   return run('launchctl', ['bootstrap', domain(), path]);
 }
 
@@ -851,8 +884,8 @@ async function switchTo(
     let why: string;
     try {
       renameSync(staged, path);
-      const started = await restart(installed.label, path);
-      if (started.ok && (await waitForBuild(installed.port, expected))) return;
+      const started = await restart(installed.label, path, installed.port);
+      if (started.ok && (await waitForBuild(installed.label, installed.port, expected))) return;
       why = started.ok
         ? `did not answer on 127.0.0.1:${installed.port} within ${UPDATE_HEALTH_WAIT_MS / 1000} s`
         : `did not start (launchctl bootstrap: ${started.stderr.trim()})`;
@@ -863,18 +896,20 @@ async function switchTo(
     writeFileSync(path, before, { mode: 0o644 });
     let unloaded = true;
     try {
-      await unload(installed.label);
+      await unload(installed.label, installed.port);
     } catch {
       unloaded = false;
     }
     let loadedAgain = false;
-    for (const deadline = Date.now() + UNLOAD_WAIT_MS; !loadedAgain && Date.now() < deadline;) {
-      loadedAgain =
-        (await run('launchctl', ['bootstrap', domain(), path])).ok ||
-        (unloaded && (await loaded(installed.label).catch(() => null)) !== null);
-      if (!loadedAgain) await sleep(1000);
+    if (unloaded) {
+      for (const deadline = Date.now() + UNLOAD_WAIT_MS; !loadedAgain && Date.now() < deadline;) {
+        loadedAgain =
+          (await run('launchctl', ['bootstrap', domain(), path])).ok ||
+          (await loaded(installed.label).catch(() => null)) !== null;
+        if (!loadedAgain) await sleep(1000);
+      }
     }
-    const back = loadedAgain ? await waitForHealth(installed.port) : null;
+    const back = loadedAgain ? await waitForHealth(installed.port, installed.label).catch(() => null) : null;
     const previous = serverBuild(installed.script) ?? { version: back?.version ?? '', stimBuild: null };
     const answered = answersAs(back, previous);
     const answer = back
