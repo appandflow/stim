@@ -165,7 +165,7 @@ struct ReplayBar: View {
     let timeline = replayOff || controller.replayable == false ? nil : controller.timeline
     VStack(alignment: .leading, spacing: Space.sm) {
       HStack(spacing: Space.md) {
-        liveButton
+        if controller.target.archive == nil { liveButton }
         if let timeline {
           stepButton(timeline, forward: false)
           playButton(timeline)
@@ -238,7 +238,7 @@ struct ReplayBar: View {
     let from = ReplayTimeline.stepFrom(
       replay?.at ?? timeline.end, stepped: replay == nil ? nil : controller.stepped, playing: playing)
     let target = ReplayTimeline.adjacentAction(controller.range?.markers ?? [], from: from, forward: forward)
-    let goesLive = forward && target == nil && running
+    let goesLive = forward && target == nil && controller.target.archive == nil && running
     return Button {
       if let target {
         seek(timeline.seekTime(for: target), rate: playing ? controller.speed : 0, action: target.at)

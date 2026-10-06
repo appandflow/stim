@@ -63,18 +63,29 @@ public struct HelloResult: Decodable, Equatable, Sendable {
 
 /// A device slot of a workspace, as `replay.range` and `frames.subscribe` name it.
 public struct ReplayTarget: Hashable, Sendable {
-  public var workspace: String
+  public private(set) var workspace: String?
+  public private(set) var archive: String?
   public var platform: String
   public var slot: String
 
   public init(workspace: String, platform: String, slot: String) {
     self.workspace = workspace
+    self.archive = nil
     self.platform = platform
     self.slot = slot
   }
 
-  var params: [String: JSONValue] {
-    ["workspace": .string(workspace), "platform": .string(platform), "slot": .string(slot)]
+  public init(archive: String, platform: String, slot: String = "default") {
+    self.workspace = nil
+    self.archive = archive
+    self.platform = platform
+    self.slot = slot
+  }
+
+  public var params: [String: JSONValue] {
+    var params: [String: JSONValue] = ["platform": .string(platform), "slot": .string(slot)]
+    if let archive { params["archive"] = .string(archive) } else if let workspace { params["workspace"] = .string(workspace) }
+    return params
   }
 }
 
@@ -221,5 +232,27 @@ public struct ControlEnded: Equatable, Sendable {
     self.session = session
     self.reason = reason
     self.message = message
+  }
+}
+
+public struct ArchivedLogsRequest: Sendable {
+  public var archive: String
+  public var query: LogQuery
+
+  public init(archive: String, query: LogQuery) {
+    self.archive = archive
+    self.query = query
+  }
+
+  public var params: [String: JSONValue] {
+    var params: [String: JSONValue] = ["archive": .string(archive), "tail": .number(Double(query.tail))]
+    if query.sources.count < LogSource.allCases.count {
+      params["sources"] = .array(LogSource.allCases.filter(query.sources.contains).map { .string($0.rawValue) })
+    }
+    if let slot = query.slot { params["slot"] = .string(slot) }
+    if query.minimumLevel != .debug { params["level"] = .string(query.minimumLevel.rawValue) }
+    if !query.search.isEmpty { params["grep"] = .string(query.search) }
+    if query.errorsOnly { params["errors"] = .bool(true) }
+    return params
   }
 }

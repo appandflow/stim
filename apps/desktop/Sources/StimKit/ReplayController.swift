@@ -123,6 +123,7 @@ import Foundation
 
   /// Returns to the live screen.
   public func live() {
+    guard target.archive == nil else { return }
     closeSubscription()
     replay = nil
     error = nil
@@ -138,13 +139,22 @@ import Foundation
         polls.shown = sequence
         rangeReceivedAt = clock()
         range = try JSONDecoder().decode(ReplayRange.self, from: JSONEncoder().encode(result))
+        if target.archive != nil { error = nil }
       } catch let failure as ServerError where failure.code == "unknown-method" {
         if server === self.server {
           pollsSupported = false
           cancelPoll?()
           cancelPoll = nil
         }
-      } catch {}
+      } catch {
+        guard server === self.server, self.target.archive != nil else { return }
+        self.error = archivedReadError(error, content: "replay")
+        if let failure = error as? ServerError, failure.code == "bad-request" {
+          pollsSupported = false
+          cancelPoll?()
+          cancelPoll = nil
+        }
+      }
     }
     cancelPoll = schedule(Self.pollInterval) { [weak self, weak server] in
       guard let self, let server, server === self.server, self.pollsSupported else { return }
@@ -197,7 +207,7 @@ import Foundation
           if failure?.code == "bad-request" { self.replayable = false }
           self.closeSubscription()
           self.replay = nil
-          self.error = failure?.message
+          self.error = failure.map { self.target.archive == nil ? $0.message : archivedReadError($0, content: "replay") }
         case "error":
           self.subscriptionID = nil
           self.error = event.error?.message

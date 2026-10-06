@@ -6,10 +6,12 @@ public struct StatusPayload: Decodable, Sendable {
   public var capacity: Capacity?
   public var unprovisionedWorktrees: [UnprovisionedWorktree]?
   public var machine: MachineUsage?
+  public var archived: [ArchivedWorkspace]?
+  public var archivedUsage: ArchivedUsage?
   /// The same payload as the oversight rules read it; nil when it does not decode as one.
   public var oversight: OversightStatus?
 
-  enum CodingKeys: String, CodingKey { case environments, capacity, unprovisionedWorktrees, machine }
+  enum CodingKeys: String, CodingKey { case environments, capacity, unprovisionedWorktrees, machine, archived, archivedUsage }
 
   public init(from decoder: Decoder) throws {
     let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -17,6 +19,8 @@ public struct StatusPayload: Decodable, Sendable {
     capacity = try c.decodeIfPresent(Capacity.self, forKey: .capacity)
     unprovisionedWorktrees = try c.decodeIfPresent([UnprovisionedWorktree].self, forKey: .unprovisionedWorktrees)
     machine = try c.decodeIfPresent(MachineUsage.self, forKey: .machine)
+    archived = try c.decodeIfPresent([ArchivedWorkspace].self, forKey: .archived)
+    archivedUsage = try c.decodeIfPresent(ArchivedUsage.self, forKey: .archivedUsage)
     oversight = try? OversightStatus(from: decoder)
   }
 }

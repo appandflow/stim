@@ -68,6 +68,7 @@ struct MachineView: View {
           ThisMacPlacements(model: buildMachines)
           MachineHeading(icon: "internaldrive", title: "Disk on this Mac", subtitle: nil) { EmptyView() }
           headline(report)
+          if let usage = status.payload?.archivedUsage { ArchivedStorageSection(usage: usage) }
           safeToFree(report)
           projects(report)
           devices(report)

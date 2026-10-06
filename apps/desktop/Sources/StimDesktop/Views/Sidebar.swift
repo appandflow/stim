@@ -32,8 +32,12 @@ struct Sidebar: View {
                   selection: rowSelection.wrappedValue, openLogs: openLogs)
               }
             } label: {
-              ProjectRow(store: store, summary: tree.summary, selected: selection == .project(tree.summary.project))
-                .sidebarTag(.project(tree.summary.project), selection: selection)
+              if options.status == .archived {
+                Label(store.title(of: tree.summary.project), systemImage: "archivebox")
+              } else {
+                ProjectRow(store: store, summary: tree.summary, selected: selection == .project(tree.summary.project))
+                  .sidebarTag(.project(tree.summary.project), selection: selection)
+              }
             }
           }
           if trees.isEmpty { emptyText(options) }
@@ -113,7 +117,9 @@ struct Sidebar: View {
       StimWordmark()
       Spacer()
       ViewOptionsButton(
-        projects: store.projectList.map(\.project).sorted { $0.name.lowercased() < $1.name.lowercased() },
+        projects: Array(Set(store.projectList.map(\.project) + (store.payload?.archived ?? []).map(\.sidebarProject))).sorted {
+          $0.name.lowercased() < $1.name.lowercased()
+        },
         title: store.title(of:))
     }
     .padding(.horizontal, Space.xl)
@@ -140,7 +146,7 @@ struct Sidebar: View {
     let root = summary.project.root
     let choices = (try? JSONDecoder().decode([String: Bool].self, from: expandedProjects)) ?? [:]
     return Binding(
-      get: { choices[root] ?? summary.hasActive },
+      get: { choices[root] ?? (prefs.status == .archived || summary.hasActive) },
       set: { expanded in
         var updated = choices
         updated[root] = expanded
@@ -239,6 +245,11 @@ struct EntryRow: View {
 
   var body: some View {
     switch entry {
+    case .archived(let archive):
+      TimelineView(.everyMinute) { context in
+        ArchivedRow(archive: archive, now: context.date)
+      }
+      .sidebarTag(.archived(archive.id), selection: selection)
     case .workspace(let env):
       WorkspaceRow(
         env: env, place: place(env.names), showsGit: showsGit, selection: selection, openLogs: openLogs)

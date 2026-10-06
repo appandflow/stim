@@ -138,6 +138,12 @@ public typealias ServerScheduler = @MainActor (TimeInterval, @escaping @MainActo
     state = .idle
   }
 
+  public func archivedLogs(_ request: ArchivedLogsRequest) async throws -> [LogRecord] {
+    struct Result: Decodable { var records: [LogRecord] }
+    let result = try await self.request("logs.query", request.params)
+    return try JSONDecoder().decode(Result.self, from: JSONEncoder().encode(result)).records
+  }
+
   /// Cancellation ends only this local await and ignores a late reply, keeping shared subscriptions connected.
   /// The protocol has no request cancellation: sent work continues until completion or its server limit
   /// (60 seconds for stats), and can occupy a request slot until then.
