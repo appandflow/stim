@@ -21,12 +21,13 @@ process.stdout.write(JSON.stringify(record));
 }
 
 export async function killKeptChild(child: ProcessRecord, timeoutMs = 10_000): Promise<void> {
+  const pid = child.pid as number;
   try {
-    process.kill(child.pid, 'SIGKILL');
+    process.kill(pid, 'SIGKILL');
   } catch {}
   const deadline = Date.now() + timeoutMs;
-  while (processGroupAlive(child.pid)) {
-    if (Date.now() > deadline) throw new Error(`process group ${child.pid} was not reaped in ${timeoutMs} ms`);
+  while (processGroupAlive(pid)) {
+    if (Date.now() > deadline) throw new Error(`process group ${pid} was not reaped in ${timeoutMs} ms`);
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
 }
