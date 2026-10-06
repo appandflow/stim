@@ -3,7 +3,7 @@ import { t } from '@lingui/core/macro';
 import { RequestError } from '@/lib/connection';
 import { pullRequestStateName } from '@/lib/format';
 import { formatSize, formatDuration } from '@/intl/format';
-import type { StatusPayload } from '@/protocol/types';
+import type { DevicePlatform, StatusPayload } from '@/protocol/types';
 
 export type ArchivedWorkspace = NonNullable<StatusPayload['archived']>[number];
 export type WorkspaceTarget = { workspace: string; archive?: never } | { archive: string; workspace?: never };
@@ -41,4 +41,54 @@ export function archiveError(error: Error, kind: 'logs' | 'replay'): string {
       : t`Update stim-server to view archived replay`;
   }
   return error.message;
+}
+
+export function archivedDeviceRoute({
+  macId,
+  path,
+  platform,
+  slot,
+  physical = false,
+  at,
+  hasStatus,
+  workspaceListed,
+  archives,
+}: {
+  macId: string;
+  path: string;
+  platform: DevicePlatform;
+  slot: string;
+  physical?: boolean;
+  at?: string;
+  hasStatus: boolean;
+  workspaceListed: boolean;
+  archives: readonly ArchivedWorkspace[];
+}):
+  | { pathname: '/mac/[id]/archived'; params: { id: string; archive: string } }
+  | {
+      pathname: '/mac/[id]/archived-replay';
+      params: { id: string; archive: string; platform: 'ios' | 'android' | 'web'; at?: string };
+    }
+  | null {
+  if (!hasStatus || workspaceListed) return null;
+  const archive = archives
+    .filter((entry) => entry.projectRoot === path)
+    .reduce<ArchivedWorkspace | null>(
+      (newest, entry) => (!newest || Date.parse(entry.removedAt) > Date.parse(newest.removedAt) ? entry : newest),
+      null,
+    );
+  if (!archive) return null;
+  const params = { id: macId, archive: archive.id };
+  if (
+    archive.bytes.recordings > 0 &&
+    slot === 'default' &&
+    !physical &&
+    (platform === 'ios' || platform === 'android' || platform === 'web')
+  ) {
+    return {
+      pathname: '/mac/[id]/archived-replay',
+      params: { ...params, platform, ...(at === undefined ? {} : { at }) },
+    };
+  }
+  return { pathname: '/mac/[id]/archived', params };
 }

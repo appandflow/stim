@@ -17,6 +17,7 @@ import {
   localNotifications,
   notifiedCategories,
   notificationRoute,
+  notificationTimeMs,
   parsePrefs,
   type NotificationPrefs,
   type NotifyState,
@@ -342,6 +343,7 @@ function NotificationTaps() {
     const route = notificationRoute(
       data,
       macs.map((mac) => mac.id),
+      notificationTimeMs(response.notification.date),
     );
     if (typeof data.ref === 'string') markNotificationRead(data.ref, data);
     if ('url' in route) void Linking.openURL(route.url);

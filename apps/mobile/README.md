@@ -1001,9 +1001,14 @@ status event carries a usage history drawn around those owners, and
 with the status. Android and Web devices show `frame-android.jpg` and
 `frame-web.jpg`.
 
-The mock server answers `notifications.list` with nine entries of every
+The mock server answers `notifications.list` with twelve entries covering every
 category, two of them held back (`suppressed`), and sends a new `notification`
-event every 2 minutes to each connection that listed.
+event every 2 minutes to each connection that listed. Device samples include
+**a4-stopped** with recorded iOS footage, **example** from react-native-hinges
+with no recording, and **archived-workspaces**, whose iOS footage is served
+through the archive target. Tapping the stopped or archived recording opens it
+at the notification time, clamped to available footage. A running device stays
+live; a stopped device without footage explains why replay is unavailable.
 
 `--overlay <file>` changes the status while the server runs, to try
 notifications. The server rereads the JSON file for each status push (every 5
