@@ -1,5 +1,6 @@
 import { mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { hostname } from 'node:os';
+import type { HelloResult } from '@stim-cli/core/protocol';
 import {
   buildMachinesFile,
   buildMachinesLock,
@@ -11,6 +12,7 @@ import type { Finding } from '../diagnostics/doctor.ts';
 import type { OffloadProblem } from './toolchain.ts';
 import { withDirLock } from '../dir-lock.ts';
 import { getConfigDir, loadConfig } from '../workspace/config.ts';
+import { readAccessTicket, readHostPermissions } from './access-ticket.ts';
 
 import { endpoint, findPeer, parseMachine, realIo, type TailnetPeer, type TailnetMachineIo } from './tailnet.ts';
 export { findPeer, parseMachine, pinnedEndpoint, type Endpoint, type HelloReply } from './tailnet.ts';
@@ -68,6 +70,7 @@ interface BuildMachineReport {
   dnsName?: string;
   deviceId?: string;
   requestedAt?: string;
+  host?: NonNullable<HelloResult['host']>;
   /** For an approved machine: whether it would take this project's build now, and every reason it would not. */
   offloadable?: boolean;
   reasons?: string[];
@@ -169,7 +172,12 @@ async function requestAccess(
   deviceName: string,
   io: BuildMachineIo,
 ): Promise<Inspected> {
-  const reply = await io.hello(endpoint(peer, port), { request: 'build', deviceName });
+  const ticket = readAccessTicket();
+  const reply = await io.hello(endpoint(peer, port), {
+    request: 'build',
+    deviceName,
+    ...(ticket ? { setupTicket: ticket.ticket } : {}),
+  });
   if (!('result' in reply) || !reply.result.approval || !reply.result.deviceToken) {
     const reason = 'failed' in reply ? reply.failed : 'error' in reply ? reply.error.message : 'it granted no request';
     return {
@@ -185,6 +193,7 @@ async function requestAccess(
     deviceToken: reply.result.deviceToken,
     state: 'pending',
     requestedAt: new Date().toISOString(),
+    ...(ticket ? { ticketHash: ticket.ticketHash } : {}),
   };
   updateCredentials((credentials) => [...credentials.filter((each) => each.machine !== entry), credential]);
   return {
@@ -252,17 +261,20 @@ async function inspectMachine(
   const paired = { ...known, deviceId: credential.deviceId, requestedAt: credential.requestedAt };
   const reply = await io.hello(endpoint(peer, parsed.port), { deviceToken: credential.deviceToken });
   if ('result' in reply && reply.result.capabilities.includes('build')) {
+    const permissions = readHostPermissions(reply.result.host);
+    const host = permissions ? { host: permissions } : {};
     if (credential.state !== 'approved') {
       updateCredentials((credentials) =>
         credentials.map((each) => (each.machine === entry ? { ...each, state: 'approved' } : each)),
       );
     }
-    if (!check) return { report: { ...paired, state: 'approved' }, finding: null };
+    if (!check) return { report: { ...paired, state: 'approved', ...host }, finding: null };
     const { capacity, problems } = await check({ ...credential, state: 'approved' });
     return {
       report: {
         ...paired,
         state: 'approved',
+        ...host,
         offloadable: problems.length === 0,
         reasons: problems.map((problem) => problem.reason),
         problems,
@@ -273,6 +285,10 @@ async function inspectMachine(
     };
   }
   if ('error' in reply && reply.error.code === 'approval-pending') {
+    const ticket = fix && credential.state !== 'approved' ? readAccessTicket() : undefined;
+    if (ticket && credential.ticketHash !== ticket.ticketHash) {
+      return requestAccess(entry, peer, parsed.port, deviceName, io);
+    }
     return {
       report: { ...paired, state: 'pending' },
       finding: note(
@@ -308,7 +324,7 @@ async function inspectMachine(
  * Doctor findings and a report for each `offload.machines` entry. The worker's node is pinned when access is
  * requested; a later connection goes only to the current MagicDNS name of that same node, checked before the token
  * is sent. With `fix`, requests access from a named machine this Mac holds no pairing for, requests again when the
- * pinned node forgot this Mac, and forgets pairings of machines no longer named. With `check`, each approved
+ * pinned node forgot this Mac or, with `STIM_ACCESS_TICKET` set, when a pending request carries another ticket, and forgets pairings of machines no longer named. With `check`, each approved
  * machine is asked for one build offer and reports every reason it would not take this project's build.
  */
 export async function inspectBuildMachines(

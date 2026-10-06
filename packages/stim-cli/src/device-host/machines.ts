@@ -1,5 +1,6 @@
 import { mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { hostname } from 'node:os';
+import type { HelloResult } from '@stim-cli/core/protocol';
 import { releaseClaim, tryAcquireClaim } from '@stim-cli/core/ownership-claim';
 import {
   deviceHostMachinesClaims,
@@ -13,6 +14,7 @@ import {
 } from '@stim-cli/core/state';
 import type { Finding } from '../diagnostics/doctor.ts';
 import { withDirLock } from '../dir-lock.ts';
+import { readAccessTicket, readHostPermissions } from '../offload/access-ticket.ts';
 import {
   endpoint,
   findPeer,
@@ -40,6 +42,7 @@ interface MachineReport {
   dnsName?: string;
   deviceId?: string;
   requestedAt?: string;
+  host?: NonNullable<HelloResult['host']>;
 }
 
 interface Inspection {
@@ -86,7 +89,12 @@ async function request(
   deviceName: string,
   io: TailnetMachineIo,
 ): Promise<{ report: MachineReport; finding: Finding; credential?: DeviceHostMachineCredential }> {
-  const reply = await io.hello(endpoint(peer, port), { request: 'device-host', deviceName });
+  const ticket = readAccessTicket();
+  const reply = await io.hello(endpoint(peer, port), {
+    request: 'device-host',
+    deviceName,
+    ...(ticket ? { setupTicket: ticket.ticket } : {}),
+  });
   if (
     !('result' in reply) ||
     reply.result?.approval?.state !== 'pending' ||
@@ -110,6 +118,7 @@ async function request(
     deviceToken: reply.result.deviceToken,
     state: 'pending',
     requestedAt: new Date().toISOString(),
+    ...(ticket ? { ticketHash: ticket.ticketHash } : {}),
   };
   return {
     report: {
@@ -286,7 +295,7 @@ export async function inspectDeviceHostMachines(
             credentials = credentials.map((each) => (each.machine === machine ? { ...each, state: 'approved' } : each));
             store(credentials);
           }
-          const host = reply.result.host;
+          const host = readHostPermissions(reply.result.host);
           if (host && (host.screenRecording === false || host.accessibility === false)) {
             const panes = [
               ...(host.screenRecording === false
@@ -308,10 +317,14 @@ export async function inspectDeviceHostMachines(
               ),
             );
           }
-          inspected.machines.push({ ...known, state: 'approved' });
+          inspected.machines.push({ ...known, state: 'approved', ...(host ? { host } : {}) });
           continue;
         }
-        if ('error' in reply && reply.error?.code === 'approval-pending') {
+        const pending = 'error' in reply && reply.error?.code === 'approval-pending';
+        const revoked = 'error' in reply && reply.error?.code === 'unauthorized';
+        const ticket = fix && pending && credential.state !== 'approved' ? readAccessTicket() : undefined;
+        ask = fix && (revoked || (!!ticket && credential.ticketHash !== ticket.ticketHash));
+        if (pending && !ask) {
           inspected.machines.push({ ...known, state: 'pending' });
           inspected.findings.push(
             note(
@@ -322,8 +335,6 @@ export async function inspectDeviceHostMachines(
           );
           continue;
         }
-        const revoked = 'error' in reply && reply.error?.code === 'unauthorized';
-        ask = revoked && fix;
         if (!ask) {
           inspected.machines.push({ ...known, state: revoked ? 'revoked' : 'unreachable' });
           inspected.findings.push(

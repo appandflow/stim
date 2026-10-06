@@ -138,6 +138,10 @@ under `buildMachines` with its `state`: `approved`, `pending`, `not-asked`,
 `revoked`, `node-changed`, `not-on-tailnet`, `tailscale-off`, `unreachable` or
 `invalid`.
 
+Approved entries in `buildMachines` and `deviceHosts` also include
+`host: { name, screenRecording, accessibility }` when the worker reports its
+Stim Host permissions; otherwise `host` is omitted.
+
 Doctor also asks each approved machine for one build offer, the same offer
 `stim ios` and `stim android` ask for, and reports every reason that machine
 would not take this app's builds now, each as a finding with a fix: it does

@@ -13,6 +13,7 @@ export interface BuildMachineCredential {
   deviceToken: string;
   state: 'pending' | 'approved';
   requestedAt: string;
+  ticketHash?: string;
 }
 
 function parseCredential(value: unknown): BuildMachineCredential | null {
@@ -29,6 +30,7 @@ function parseCredential(value: unknown): BuildMachineCredential | null {
     deviceToken: deviceToken as string,
     state,
     requestedAt: requestedAt as string,
+    ...(typeof value.ticketHash === 'string' ? { ticketHash: value.ticketHash } : {}),
   };
 }
 

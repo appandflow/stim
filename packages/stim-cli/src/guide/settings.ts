@@ -563,6 +563,17 @@ test suites and the end-to-end harness use one -- and a scoped config must not
 leave simulators on the machine it cannot account for. A redirected home that
 wants a pool says so with the variable.
 
+DESKTOP ACCESS TICKETS
+Stim Desktop's Add wizard sets STIM_ACCESS_TICKET for one \`doctor --fix\`
+run. Agents never set it, never run \`stim-server setup\`, never edit
+\`offload.*\` or \`hosting.*\` for the user, and never approve requests.
+Stim sends the ticket (43 base64url characters) only in build and device-host access
+requests and stores only its SHA-256 ticketHash. With --fix, a still-pending
+request is replaced when its ticketHash is missing or differs from the current
+ticket; matching hashes and approved credentials are preserved.
+Approved doctor entries under buildMachines and deviceHosts include host
+{ name, screenRecording, accessibility } when the worker reports it.
+
 HOSTING MACHINES ARE MACHINE-LEVEL
 \`hosting.machines\` names Macs that may host owned simulator sessions,
 by MagicDNS name with an optional serve port (default 7443). Name each node

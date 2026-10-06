@@ -1,7 +1,8 @@
-import { mkdtempSync, rmSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { readBuildMachines } from '@stim-cli/core/state';
+import { buildMachinesFile, readBuildMachines } from '@stim-cli/core/state';
 import {
   findPeer,
   inspectBuildMachines,
@@ -14,11 +15,12 @@ let home: string;
 
 beforeEach(() => {
   home = mkdtempSync(join(tmpdir(), 'stim-build-machines-'));
-  process.env.STIM_HOME = home;
+  vi.stubEnv('STIM_HOME', home);
+  vi.stubEnv('STIM_ACCESS_TICKET', undefined);
 });
 
 afterEach(() => {
-  delete process.env.STIM_HOME;
+  vi.unstubAllEnvs();
   rmSync(home, { recursive: true, force: true });
 });
 
@@ -92,6 +94,7 @@ describe('inspectBuildMachines', () => {
 
   it('never sends the token to a node other than the pinned one', async () => {
     await inspectBuildMachines({ fix: true }, fakeIo('nMini', [pending]).io, ['mini']);
+    vi.stubEnv('STIM_ACCESS_TICKET', 'nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn');
     const { io, calls } = fakeIo('nImpostor', []);
     const { findings, machines } = await inspectBuildMachines({ fix: true }, io, ['mini']);
     expect(calls).toEqual([]);
@@ -118,7 +121,8 @@ describe('inspectBuildMachines', () => {
 
   it('reports every reason an approved machine would not take the build, with a remedy for each', async () => {
     await inspectBuildMachines({ fix: true }, fakeIo('nMini', [pending]).io, ['mini']);
-    const approved: HelloReply = { result: { capabilities: ['build'], device: { id: 'ab12', name: 'laptop' } } };
+    const host = { name: 'Stim Host', screenRecording: true, accessibility: false };
+    const approved: HelloReply = { result: { capabilities: ['build'], device: { id: 'ab12', name: 'laptop' }, host } };
     const asked: string[] = [];
     const { findings, machines } = await inspectBuildMachines(
       {
@@ -141,6 +145,7 @@ describe('inspectBuildMachines', () => {
     expect(machines).toEqual([
       expect.objectContaining({
         state: 'approved',
+        host,
         offloadable: false,
         reasons: ['Stim build 6bbe there, e774 here', 'busy (load at or above 2/core; load 8.2/core, 2 builds)'],
         problems: [
@@ -164,8 +169,27 @@ describe('inspectBuildMachines', () => {
     );
     expect(ready).toEqual({
       findings: [],
-      machines: [expect.objectContaining({ state: 'approved', offloadable: true, reasons: [] })],
+      machines: [expect.objectContaining({ state: 'approved', offloadable: true, reasons: [], host })],
     });
+  });
+
+  it('stores the new request when --fix asks again after an approved machine revoked this Mac', async () => {
+    await inspectBuildMachines({ fix: true }, fakeIo('nMini', [pending]).io, ['mini']);
+    const approved: HelloReply = { result: { capabilities: ['build'], device: { id: 'ab12', name: 'laptop' } } };
+    await inspectBuildMachines({ fix: false }, fakeIo('nMini', [approved]).io, ['mini']);
+    const renewed: HelloReply = {
+      result: {
+        ...(pending as { result: object }).result,
+        device: { id: 'cd34', name: 'laptop' },
+        deviceToken: 'fresh',
+      },
+    } as HelloReply;
+    const { io } = fakeIo('nMini', [{ error: { code: 'unauthorized', message: 'Unknown device.' } }, renewed]);
+    const { machines } = await inspectBuildMachines({ fix: true }, io, ['mini']);
+    expect(machines).toEqual([expect.objectContaining({ state: 'pending', deviceId: 'cd34' })]);
+    expect(readBuildMachines()).toEqual([
+      expect.objectContaining({ deviceId: 'cd34', deviceToken: 'fresh', state: 'pending' }),
+    ]);
   });
 
   it('reports a revoked machine and one never asked without asking either', async () => {
@@ -191,3 +215,138 @@ describe('inspectBuildMachines', () => {
     expect(readBuildMachines()).toEqual([]);
   });
 });
+
+test.each([undefined, '', '   ', '  ddddddddddddddddddddddddddddddddddddddddddd  '])(
+  'access requests carry only a non-empty trimmed ticket and persist only its hash: %j',
+  async (value) => {
+    vi.stubEnv('STIM_ACCESS_TICKET', value);
+    const replies: HelloReply[] = [pending];
+    const { io, calls } = fakeIo('nMini', replies);
+    const result = await inspectBuildMachines({ fix: true }, io, ['mini']);
+    const ticket = value?.trim();
+    expect(calls).toEqual([
+      expect.objectContaining({
+        auth: {
+          request: 'build',
+          deviceName: 'laptop',
+          ...(ticket ? { setupTicket: ticket } : {}),
+        },
+      }),
+    ]);
+    expect(Object.hasOwn(calls[0]!.auth, 'setupTicket')).toBe(!!ticket);
+    const credential = readBuildMachines()[0]!;
+    expect(credential.ticketHash).toBe(ticket ? createHash('sha256').update(ticket).digest('hex') : undefined);
+    expect(Object.hasOwn(credential, 'ticketHash')).toBe(!!ticket);
+    expect(readFileSync(buildMachinesFile(), 'utf8')).not.toContain('ddddddddddddddddddddddddddddddddddddddddddd');
+    expect(JSON.stringify(result)).not.toContain('ddddddddddddddddddddddddddddddddddddddddddd');
+  },
+);
+
+test.each([
+  ['missing hash', undefined, 'nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn', true, 'pending', false, true],
+  [
+    'different hash',
+    'ooooooooooooooooooooooooooooooooooooooooooo',
+    'nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn',
+    true,
+    'pending',
+    false,
+    true,
+  ],
+  [
+    'matching hash',
+    'sssssssssssssssssssssssssssssssssssssssssss',
+    '  sssssssssssssssssssssssssssssssssssssssssss  ',
+    true,
+    'pending',
+    false,
+    false,
+  ],
+  ['no ticket', 'ooooooooooooooooooooooooooooooooooooooooooo', undefined, true, 'pending', false, false],
+  ['blank ticket', 'ooooooooooooooooooooooooooooooooooooooooooo', '   ', true, 'pending', false, false],
+  ['plain doctor', undefined, 'nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn', false, 'pending', false, false],
+  [
+    'approved credential',
+    'ooooooooooooooooooooooooooooooooooooooooooo',
+    'nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn',
+    true,
+    'approved',
+    true,
+    false,
+  ],
+  [
+    'approved credential with pending reply',
+    undefined,
+    'nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn',
+    true,
+    'approved',
+    false,
+    false,
+  ],
+  [
+    'approval since last request',
+    undefined,
+    'nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn',
+    true,
+    'pending',
+    true,
+    false,
+  ],
+] as const)(
+  'ticket replacement respects approval and fix: %s',
+  async (_name, storedTicket, currentTicket, fix, state, approved, retry) => {
+    vi.stubEnv('STIM_ACCESS_TICKET', storedTicket);
+    const replies: HelloReply[] = [pending];
+    await inspectBuildMachines({ fix: true }, fakeIo('nMini', replies).io, ['mini']);
+    const saved = readBuildMachines()[0]!;
+    writeFileSync(buildMachinesFile(), JSON.stringify({ version: 1, machines: [{ ...saved, state }] }));
+    vi.stubEnv('STIM_ACCESS_TICKET', currentTicket);
+    replies.push(
+      approved
+        ? { result: { capabilities: ['build'], device: { id: 'ab12', name: 'laptop' } } }
+        : { error: { code: 'approval-pending', message: 'wait' } },
+      { result: { ...pending.result, deviceToken: 'replacement-token' } },
+    );
+    const { io, calls } = fakeIo('nMini', replies);
+    const result = await inspectBuildMachines({ fix }, io, ['mini']);
+    expect(calls).toMatchObject([
+      { auth: { deviceToken: 'secret' } },
+      ...(retry ? [{ auth: { request: 'build', deviceName: 'laptop', setupTicket: currentTicket } }] : []),
+    ]);
+    expect(result.machines[0]?.state).toBe(approved ? 'approved' : 'pending');
+    expect(readFileSync(buildMachinesFile(), 'utf8')).not.toContain('nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn');
+    expect(JSON.stringify(result)).not.toContain('nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn');
+    expect(readBuildMachines()[0]?.deviceToken).toBe(retry ? 'replacement-token' : 'secret');
+    expect(readBuildMachines()[0]?.ticketHash).toBe(
+      retry ? createHash('sha256').update(currentTicket!).digest('hex') : saved.ticketHash,
+    );
+  },
+);
+
+test('credential parsing drops a mistyped optional ticket hash without losing the node pin', async () => {
+  const replies: HelloReply[] = [pending];
+  await inspectBuildMachines({ fix: true }, fakeIo('nMini', replies).io, ['mini']);
+  const saved = readBuildMachines()[0]!;
+  writeFileSync(buildMachinesFile(), JSON.stringify({ version: 1, machines: [{ ...saved, ticketHash: 42 }] }));
+  expect(readBuildMachines()).toEqual([saved]);
+});
+
+test.each([undefined, null, { name: 'Stim Host', screenRecording: false, accessibility: true }])(
+  'approved doctor machine entries expose host permissions only when reported: %j',
+  async (host) => {
+    const replies: HelloReply[] = [pending];
+    await inspectBuildMachines({ fix: true }, fakeIo('nMini', replies).io, ['mini']);
+    replies.push({
+      result: {
+        capabilities: ['build'],
+        device: { id: 'ab12', name: 'laptop' },
+        ...(host !== undefined ? { host } : {}),
+      },
+    });
+    const result = await inspectBuildMachines({ fix: false }, fakeIo('nMini', replies).io, ['mini']);
+    const [entry] = JSON.parse(JSON.stringify(result.machines));
+    expect(entry.state).toBe('approved');
+    expect(entry.host).toEqual(host ?? undefined);
+    expect(Object.hasOwn(entry, 'host')).toBe(!!host);
+  },
+);
