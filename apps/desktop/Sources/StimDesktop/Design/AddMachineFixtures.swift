@@ -113,7 +113,7 @@
           version: { "1.16.0" }, now: { now }, ticket: { _ in ticket }), wizard: wizard,
         sample: SampleBuildModel(
           dependencies: .init(
-            sample: WizardSample(applicationSupport: URL(fileURLWithPath: "/Users/janic/Library/Application Support")),
+            sample: WizardSample(applicationSupport: URL(fileURLWithPath: NSHomeDirectory() + "/Library/Application Support")),
             run: { _, _ in throw FixtureError.unavailable })))
       let health = try! JSONDecoder().decode(
         Tailnet.Health.self, from: Data("{\"server\":\"stim-server\",\"version\":\"1.16.0\",\"protocol\":1}".utf8))

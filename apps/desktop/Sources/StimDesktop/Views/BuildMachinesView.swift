@@ -116,7 +116,7 @@ struct BuildMachinesView: View {
     .confirmationDialog("Delete the wizard's sample app?", isPresented: $confirmsDeleteSample) {
       Button("Delete sample app", role: .destructive) { Task { await model.deleteSample() } }
     } message: {
-      Text("Stops the sample workspace and removes only Stim Desktop's SDK 57 sample folder. The next wizard creates it again.")
+      Text("Stops the sample workspace and removes only Stim Desktop's SDK 58 sample folder. The next wizard creates it again.")
     }
     .confirmationDialog(
       "Stop building on \(removing ?? "")?", isPresented: .init(get: { removing != nil }, set: { if !$0 { removing = nil } }),

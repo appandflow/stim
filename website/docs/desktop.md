@@ -380,7 +380,7 @@ is no SSH option.
 
 Tool fixes can be copied to run there. **Install This Mac's Build** handles a
 Stim build mismatch, and **Check Android** adds Java and Android SDK checks.
-Desktop prepares a pinned Expo blank SDK 57 sample in its own Application
+Desktop prepares a pinned Expo blank SDK 58 sample in its own Application
 Support folder from step 2. It uses that checkout for setup requests if you have
 no listed workspace. The test verifies an offloaded build and launch, then
 forces a local build without the build cache to prove this Mac can still build.

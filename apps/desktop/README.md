@@ -971,8 +971,8 @@ There is no SSH option. Tool fixes have Copy buttons; Desktop never runs them.
 **Install This Mac's Build** updates a mismatched Stim build through the existing
 machine update action. **Check Android** adds the Android tool comparison.
 
-From step 2, Desktop prepares a pinned Expo blank SDK 57 app in
-`~/Library/Application Support/Stim Desktop/Onboarding/sample-sdk57/`, outside
+From step 2, Desktop prepares a pinned Expo blank SDK 58 app in
+`~/Library/Application Support/Stim Desktop/Onboarding/sample-sdk58/`, outside
 user projects and Stim's state directory. It also uses this checkout for setup
 requests when no workspace is listed. The test requires a build on the selected
 Mac and a verified launch, then forces a local build without the build cache to

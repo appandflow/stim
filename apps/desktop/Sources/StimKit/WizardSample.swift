@@ -2,7 +2,7 @@ import Foundation
 
 public struct WizardSample: Sendable {
   public let onboarding: URL
-  public var folder: URL { onboarding.appendingPathComponent("sample-sdk57", isDirectory: true) }
+  public var folder: URL { onboarding.appendingPathComponent("sample-sdk58", isDirectory: true) }
   public var marker: URL { folder.appendingPathComponent(".stim-sample-ready") }
   public init(applicationSupport: URL) {
     onboarding = applicationSupport.appendingPathComponent("Stim Desktop/Onboarding", isDirectory: true)
@@ -14,13 +14,13 @@ public struct WizardSample: Sendable {
     let root = onboarding.standardizedFileURL.resolvingSymlinksInPath()
     let target = candidate.standardizedFileURL.resolvingSymlinksInPath()
     return candidate.standardizedFileURL == folder.standardizedFileURL && target.deletingLastPathComponent() == root
-      && target.lastPathComponent == "sample-sdk57"
+      && target.lastPathComponent == "sample-sdk58"
   }
   public var prepareCommands: [StimCommand] {
     [
       StimCommand(
         [
-          "--yes", "create-expo-app@5.0.0", "sample", "--template", "expo-template-blank@57.0.29", "--no-install",
+          "--yes", "create-expo-app@5.0.0", "sample", "--template", "expo-template-blank@58.0.15", "--no-install",
           "--no-agents-md", "--yes",
         ], cwd: onboarding.path, program: "npx")
     ]

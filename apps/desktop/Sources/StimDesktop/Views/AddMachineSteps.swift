@@ -45,7 +45,7 @@ struct AddMachineSteps: View {
   @ViewBuilder private var test: some View {
     VStack(alignment: .leading, spacing: Space.lg) {
       Text("Test build").font(.stim(.title))
-      Text("Expo blank (SDK 57), in Stim Desktop's own folder.").foregroundStyle(Palette.secondary)
+      Text("Expo blank (SDK 58), in Stim Desktop's own folder.").foregroundStyle(Palette.secondary)
       if let sample = model.sample {
         Text(abbreviatingHome(sample.folder)).font(.stim(.caption, mono: true)).textSelection(.enabled)
         testStatus(sample.test.state)

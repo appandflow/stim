@@ -170,7 +170,7 @@ final class WizardCompletionTests: XCTestCase {
     let commands = sample.prepareCommands
     XCTAssertEqual(commands.first?.program, "npx")
     XCTAssertTrue(commands.first!.arguments.contains("create-expo-app@5.0.0"))
-    XCTAssertTrue(commands.first!.arguments.contains("expo-template-blank@57.0.29"))
+    XCTAssertTrue(commands.first!.arguments.contains("expo-template-blank@58.0.15"))
     XCTAssertEqual(commands.first?.cwd, sample.onboarding.path)
     XCTAssertTrue(commands.dropFirst().allSatisfy { $0.cwd == sample.folder.path })
     XCTAssertEqual(commands.last?.arguments.suffix(3), ["commit", "-m", "sample"])
