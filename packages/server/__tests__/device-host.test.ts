@@ -667,7 +667,6 @@ test('reserves once across reconnect and attempt replay, isolates clients, and s
   expect(host.stop('client', { session: first.id })).toHaveProperty('result.state', 'stopping');
   await state(first.id, 'stopped');
   expect(existsSync(join(deviceHostArea(first.id), 'home', 'stopped'))).toBe(true);
-  expectRetired(first.id);
   expect(reserve().state).toBe('stopped');
   expect(readClaimSet(join(deviceHostRoot(), `${first.id}.claims`)).live).toEqual([]);
   expect(reserve({ attempt: 'new' }).id).not.toBe(first.id);
@@ -768,7 +767,6 @@ test('revocation stops a live owned device and rejects subsequent client methods
   allowed.delete('client');
   host.revoke();
   await state(first.id, 'stopped');
-  expectRetired(first.id);
   expect(host.attach('client', { session: first.id })).toHaveProperty('error.code', 'forbidden');
   expect(host.reserve('client', request)).toHaveProperty('error.code', 'forbidden');
 });
@@ -781,7 +779,6 @@ test('a failed native preflight releases capacity but lost results and uncertain
   expect(host.reserve('other', request)).toHaveProperty('error.code', 'device-busy');
   host.stop('client', { session: lost.id });
   await state(lost.id, 'stopped');
-  expectRetired(lost.id);
   const uncertain = reserve({ attempt: 'uncertain', deviceType: 'uncertain-stop' });
   await state(uncertain.id, 'ready');
   host.stop('client', { session: uncertain.id });
@@ -1952,14 +1949,6 @@ function seedHosted(
     );
   return record;
 }
-
-test('server close retires the owned device before confirming its session stopped', async () => {
-  const first = reserve();
-  await state(first.id, 'ready');
-  await host.close();
-  expect(readHostedSessions().find((record) => record.id === first.id)?.state).toBe('stopped');
-  expectRetired(first.id);
-});
 
 test.each(['ios', 'android'] as const)(
   'reconciliation retires a stopped %s device in its private home without approval or journal changes',

@@ -983,7 +983,6 @@ export class DeviceHost {
 
   async close(): Promise<void> {
     this.closed = true;
-    await this.reconciling?.catch(() => {});
     for (const probe of this.probes.keys()) probe.cancel();
     await Promise.all([...this.owned.values()].map((owned) => this.closeMetro(owned)));
     await Promise.all([...this.owned.values()].map((owned) => this.closeView(owned)));
@@ -1004,6 +1003,7 @@ export class DeviceHost {
     }
     await Promise.all([...this.owned.values()].map((owned) => owned.stopping ?? owned.run?.done));
     await Promise.all([...this.probes.keys()].map((probe) => probe.done));
+    await this.reconciling?.catch(() => {});
   }
 
   private run(

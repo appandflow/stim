@@ -92,7 +92,10 @@ export async function runHostedDevice(
     if (outcome.status !== 'torn-down' && outcome.status !== 'missing')
       throw new Error(outcome.reason ?? 'Hosted simulator teardown was not established.');
     const after = inventory().find((sim) => sim.udid === device!.udid);
-    if (after) throw new Error('Hosted simulator deletion could not be verified.');
+    if (after)
+      throw new Error(
+        `Hosted simulator ${device.udid} is still listed (${after.state}); deletion could not be verified. If its runtime is unavailable, delete it with xcrun simctl delete and stop the session again.`,
+      );
     forgetCreatedDevice('ios', device.udid);
     return { state: 'stopped', device };
   } catch (error) {

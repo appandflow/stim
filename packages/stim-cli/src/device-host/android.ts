@@ -13,6 +13,8 @@ import { getExecutor } from '../exec.ts';
 import { readHostMemoryPressure } from '../host-memory.ts';
 import {
   androidDeviceAbi,
+  avdPathExists,
+  avdStorageRoots,
   bootAndroidEmulator,
   createOwnedAvd,
   DEFAULT_AVD_DEVICE_PROFILE,
@@ -119,8 +121,14 @@ export async function runHostedAndroidDevice(
       if (outcome.status !== 'torn-down' && outcome.status !== 'missing')
         throw new Error(outcome.reason ?? 'Hosted Android deletion was not established.');
     }
-    if (listAvds({ timeoutMs: 5000 }).includes(device.avdName))
-      throw new Error('The hosted AVD still exists; deletion could not be verified.');
+    const name = device.avdName;
+    if (
+      listAvds({ timeoutMs: 5000 }).includes(name) ||
+      avdStorageRoots().some(
+        (root) => avdPathExists(join(root, `${name}.ini`)) || avdPathExists(join(root, `${name}.avd`)),
+      )
+    )
+      throw new Error('The hosted AVD or its data still exists; deletion could not be verified.');
     if (getAvdNameForSerial(device.serial) === device.avdName)
       throw new Error('The hosted Android emulator is still running.');
     if (ledger === 'listed') forgetCreatedDevice('android', device.avdName);

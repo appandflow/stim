@@ -611,9 +611,6 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       });
     },
   });
-  void hostedDevices.reconcileStopped().catch((error: unknown) => {
-    process.stderr.write(`Hosted device retirement failed: ${(error as Error).message}\n`);
-  });
   const agentNodes = new Map<string, { node: string; until: number }>();
   const agentLimiter = new FailureLimiter(30, options.failureWindowMs ?? 60_000);
   async function answerAgent(request: IncomingMessage, response: ServerResponse, session: string): Promise<void> {
@@ -761,6 +758,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   };
   let watcher: FSWatcher | null = null;
   let revocationPoll: NodeJS.Timeout | null = null;
+  let retireOnce: Promise<void> | undefined;
   const becomeReady = () => {
     mkdirSync(serverDir(), { recursive: true, mode: 0o700 });
     watcher ??= watch(serverDir(), () => {
@@ -772,6 +770,9 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     // Node's macOS watcher can miss changes before it is ready: https://github.com/nodejs/node/issues/52601.
     revocationPoll ??= setInterval(checkRevocations, 1000).unref();
     push.refresh();
+    retireOnce ??= hostedDevices.reconcileStopped().catch((error: unknown) => {
+      process.stderr.write(`Hosted device retirement failed: ${(error as Error).message}\n`);
+    });
     if (options.frameHelper === undefined && !helperPath && !helperBuilding) buildHelper();
     if (options.record !== false) {
       recorder ??= new Recorder({
@@ -2274,7 +2275,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         ...[...running].map((cancel) => cancel()),
         cancelling.settled(),
       ]);
-    }
+    } else await hostedDevices.close();
     wss.close();
     await Promise.all([...servers.values()].map(closeListener));
   };

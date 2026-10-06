@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { forgetCreatedDevice, recordCreatedDevice } from '../devices/created-devices.ts';
@@ -33,6 +33,8 @@ vi.mock('../devices/android.ts', () => ({
   waitForBoot: () => Promise.resolve({ ok: true }),
   getAvdNameForSerial: () => native.name(),
   androidDeviceAbi: () => native.abi(),
+  avdStorageRoots: () => [home],
+  avdPathExists: (path: string) => existsSync(path),
 }));
 vi.mock('../devices/teardown.ts', () => ({
   teardownOwnedAvd: (...args: Parameters<typeof native.teardown>) => native.teardown(...args),
@@ -194,4 +196,14 @@ test.each(['AVD', 'emulator'])('teardown success cannot report stopped while the
     return { status: 'torn-down' };
   });
   expect(await runHostedAndroidDevice('stop', request)).toMatchObject({ state: 'unknown', device: { avdName: avd } });
+});
+
+test('an empty ledger refuses to report stopped while the AVD data remains on disk', async () => {
+  await runHostedAndroidDevice('prepare', request);
+  forgetCreatedDevice('android', avd);
+  native.avds.mockReturnValue([]);
+  native.name.mockReturnValue(null);
+  mkdirSync(join(home, `${avd}.avd`));
+  expect(await runHostedAndroidDevice('stop', request)).toMatchObject({ state: 'unknown' });
+  expect(native.teardown).not.toHaveBeenCalled();
 });
