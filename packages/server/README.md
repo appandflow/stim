@@ -1796,9 +1796,20 @@ sends reaches any other device.
   `input.key` accepts Escape, Tab, Return, Backspace,
   arrows or `a-z` and `0-9`, with unique optional `command/shift/option/control`
   modifiers. Hello advertises `macos-keyboard-extended` for the expanded keys;
-  older servers accept only `a/c/v/x/z/s/f` plus navigation. Letter and digit
-  key events require the Mac's selected U.S. or ABC input source because
-  Apple ANSI key codes identify physical U.S. positions; other layouts are refused with a specific reason.
+  older servers accept only `a/c/v/x/z/s/f` plus navigation. Shortcuts for `a-z` and `0-9`
+  use the key that types the character in the Mac's current keyboard layout,
+  using the Command layer when Command is held. Dvorak and Dvorak-QWERTY Command
+  are supported. On Russian and similar layouts (Cyrillic, Greek, Hebrew, Arabic),
+  Latin-letter shortcuts work with Command; Control-only or Option-only letter
+  shortcuts are refused. With Control, the layout's Control table must also yield
+  the requested character or, for letters, its C0 control character; otherwise
+  the shortcut is refused. The Mac's selected input source is read on each key,
+  so switching layouts takes effect on the next key.
+  Letters and digits available only with Shift or Option, or through a dead key
+  (for example digits on AZERTY), are refused with a reason naming the layout,
+  and Control ends. Stim posts the requested modifiers unchanged; it does not
+  add modifiers to reach those characters. Ordinary typing and navigation do
+  not depend on the layout. Symbols such as comma remain unsupported key names.
   The helper posts input to the owned process without activating it or raising its window,
   except that `input.window` raises the window it pins among the app's windows.
   Only when the captured window is not the app's key window does it activate the app (waiting up to one

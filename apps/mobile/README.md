@@ -431,12 +431,20 @@ receive it through a JavaScript update. A server advertising
 `macos-keyboard-extended` supports modified `a-z` and `0-9` one key at a time.
 Older servers retain fixed shortcuts and navigation but reject other modified
 letters; the phone explains that requirement. Modified symbols and
-multi-character input are unsupported. Letter and digit shortcuts require the
-Mac's selected **U.S. or ABC** layout because native key codes represent
-physical U.S. positions; other layouts are refused. Control does not bring the
-app to the front. Ordinary typing and
-navigation remain available. [#2422](https://github.com/appandflow/stim/issues/2422) tracks logical mapping for
-other host layouts.
+multi-character input are unsupported. Shortcuts for `a-z` and `0-9` use the
+key that types the character in the **Mac's current keyboard layout**, using the
+Command layer when Command is held. Dvorak and Dvorak-QWERTY Command are
+supported. On Russian and similar layouts (Cyrillic, Greek, Hebrew, Arabic),
+Latin-letter shortcuts work with Command; Control-only or Option-only letter
+shortcuts are refused. With Control, the layout's Control table must also yield
+the requested character or, for letters, its C0 control character; otherwise
+the shortcut is refused. The Mac's selected input source is read on each key,
+so switching layouts takes effect on the next key. Letters and digits
+available only with Shift or Option, or through a dead key (for example digits
+on AZERTY), are refused with a reason naming the layout, and Control ends. Stim
+does not add modifiers to reach those characters. Ordinary typing and navigation
+do not depend on the layout. Symbols such as comma remain unsupported key names.
+Control does not bring the app to the front.
 
 With `macos-window-select`, Control adds a **Window** toolbar menu when the app has
 more than one window: **Follow front window**, or a window by title, which pins the
