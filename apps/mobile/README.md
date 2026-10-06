@@ -1544,6 +1544,50 @@ App Store Connect (`asc_build_id`) and needs an App Store Connect connection
 under the Expo project's settings, **Connections**; the workflow does not use
 it.
 
+### App Store listing
+
+`store.config.js` is the App Store listing for [EAS Metadata](https://docs.expo.dev/eas/metadata/):
+name, subtitle, description, keywords, support, marketing and privacy URLs,
+copyright, categories (Developer Tools, Productivity), the age rating answers
+and the App Review notes. `eas.json` points `submit.production.ios.metadataPath`
+at it. It carries no version, so `eas metadata:push` edits the version in App
+Store Connect that the uploaded build created. Upload a build first
+(see [Each release](#each-release)); a new app has no version to edit before that.
+
+The App Review notes tell the reviewer to pair with the demo server at
+`wss://stim-demo.appandflow.workers.dev` (see `apps/demo-server`). The pairing
+token and the review contact are secrets and personal data, so the file reads
+them from the environment and never stores them:
+
+| Variable                 | Used for                                                     |
+| ------------------------ | ------------------------------------------------------------ |
+| `STIM_REVIEW_DEMO_TOKEN` | the demo server's `DEMO_TOKEN`, appended to the review notes |
+| `STIM_REVIEW_FIRST_NAME` | App Review contact first name                                |
+| `STIM_REVIEW_LAST_NAME`  | App Review contact last name                                 |
+| `STIM_REVIEW_EMAIL`      | App Review contact email                                     |
+| `STIM_REVIEW_PHONE`      | App Review contact phone, with the country code              |
+
+A variable that is not set is left out. Without the four contact variables,
+`eas metadata:lint` and `eas metadata:push` refuse the config, which needs a
+review contact. Without `STIM_REVIEW_DEMO_TOKEN` the notes have no token, and a
+push replaces the notes already in App Store Connect, so set it every time.
+
+Push from `apps/mobile`, signed in with `eas login`. EAS signs in to App Store
+Connect with an API key (`EXPO_ASC_API_KEY_PATH`, `EXPO_ASC_KEY_ID`,
+`EXPO_ASC_ISSUER_ID`) or asks for an Apple ID:
+
+```bash
+cd apps/mobile
+STIM_REVIEW_DEMO_TOKEN="<DEMO_TOKEN>" \
+  STIM_REVIEW_FIRST_NAME="<first name>" STIM_REVIEW_LAST_NAME="<last name>" \
+  STIM_REVIEW_EMAIL="<email>" STIM_REVIEW_PHONE="<+country number>" \
+  npx eas-cli metadata:push
+```
+
+Run the same command with `metadata:lint` to validate the file without signing
+in to Apple. The push sends the listing to App Store Connect; it does not
+submit the version for App Review.
+
 ### Roll back a bad update
 
 An update reaches every installed build on its runtime the next time the app
