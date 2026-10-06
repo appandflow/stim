@@ -357,6 +357,8 @@ check. The server checks pairings on changes and once a second. If QR pairing
 fails, the phone keeps the error visible until **Retry** or manual entry is
 chosen.
 
+See [Phone app](./phone-app.md) for installation, pairing, notifications and access.
+
 The phone validates server replies and live events before displaying them.
 Malformed known data triggers a reconnect with a connection error; message
 contents are not logged. Older compatible payloads and extra fields remain
@@ -394,6 +396,8 @@ test keeps Never selected unless you choose otherwise. Existing machine settings
 keep their effective mode. Cancel removes only settings the wizard added and
 shows revoke commands for the build Mac. The summary explains how to undo setup;
 Stim Host permissions remain in System Settings until you remove them.
+
+See [Remote machines](./remote-machines.md) for requirements, CLI setup, permissions and troubleshooting.
 
 ## SwiftUI playground for contributors
 
