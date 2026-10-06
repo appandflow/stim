@@ -12,6 +12,7 @@ import {
 import { getExecutor } from '../exec.ts';
 import { readHostMemoryPressure } from '../host-memory.ts';
 import { bootIosSim, createOwnedIosSim, listAllIosSims, resolveIosCreation } from '../devices/ios.ts';
+import { forgetCreatedDevice } from '../devices/created-devices.ts';
 import { teardownOwnedIosSim } from '../devices/teardown.ts';
 import { installHostedApp } from './app.ts';
 
@@ -75,7 +76,7 @@ export async function runHostedDevice(
       return { state: 'ready', device };
     }
     device = readHostedDevice(home);
-    assertHostedDeviceLedger(home, device.udid);
+    const ledger = assertHostedDeviceLedger(home, device.udid, 'ios', { allowEmpty: mode === 'stop' });
     const current = inventory().find((sim) => sim.udid === device!.udid);
     if (mode === 'install') {
       if (!app || current?.state !== 'Booted')
@@ -83,12 +84,19 @@ export async function runHostedDevice(
       const launched = await installHostedApp(home, app.session, app.attempt, device, app.metroPort);
       return { state: 'installed', device, launched };
     }
-    if (!current) return { state: 'stopped', device };
-    const outcome = teardownOwnedIosSim(device.udid);
+    if (ledger === 'empty') {
+      if (current) throw new Error('The hosted simulator remains without ledger ownership; it was kept.');
+      return { state: 'stopped', device };
+    }
+    const outcome = teardownOwnedIosSim(device.udid, { del: true });
     if (outcome.status !== 'torn-down' && outcome.status !== 'missing')
       throw new Error(outcome.reason ?? 'Hosted simulator teardown was not established.');
     const after = inventory().find((sim) => sim.udid === device!.udid);
-    if (after && after.state !== 'Shutdown') throw new Error('Hosted simulator shutdown could not be verified.');
+    if (after)
+      throw new Error(
+        `Hosted simulator ${device.udid} is still listed (${after.state}); deletion could not be verified. If its runtime is unavailable, delete it with xcrun simctl delete and stop the session again.`,
+      );
+    forgetCreatedDevice('ios', device.udid);
     return { state: 'stopped', device };
   } catch (error) {
     return {

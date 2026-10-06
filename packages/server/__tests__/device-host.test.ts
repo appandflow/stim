@@ -28,6 +28,7 @@ import {
   readHostedAppMetadata,
   readHostedSessions,
   readHostedMacosApp,
+  type HostedDeviceSession,
 } from '@stim-cli/core/state';
 import { processGroupAlive, readClaimSet, tryAcquireClaim, releaseClaim } from '@stim-cli/core/ownership-claim';
 import * as processIdentity from '@stim-cli/core/process-identity';
@@ -42,7 +43,7 @@ import { FeedPool } from '../src/feed.ts';
 
 const WORKER = `
 import { spawn, spawnSync } from 'node:child_process';
-import { writeFileSync, readFileSync, appendFileSync, mkdirSync, realpathSync } from 'node:fs';
+import { writeFileSync, readFileSync, appendFileSync, mkdirSync, realpathSync, existsSync } from 'node:fs';
 import { workspaceName } from ${JSON.stringify(pathToFileURL(join(import.meta.dirname, '../../core/index.ts')).href)};
 import { captureProcessToken, processStartMicros } from ${JSON.stringify(pathToFileURL(join(import.meta.dirname, '../../core/process-identity.ts')).href)};
 import { join } from 'node:path';
@@ -116,7 +117,10 @@ if(input.mode === 'prepare') {
 } else {
   writeFileSync(join(home,'stopped'),String(process.pid));
   const stored=JSON.parse(readFileSync(join(home,'hosted-device.json'),'utf8'));
-  out({state:input.deviceType === 'uncertain-stop'?'unknown':'stopped',device:stored});
+  if(input.deviceType === 'delayed-stop') while(!existsSync(join(home,'release-stop'))) await new Promise(resolve=>setTimeout(resolve,20));
+  if(input.deviceType === 'fail-stop') throw new Error('retirement failed');
+  if(input.platform !== 'macos' && input.deviceType !== 'uncertain-stop' && input.deviceType !== 'wrong-stop') writeFileSync(join(home,'created-devices.json'),JSON.stringify({version:1,ios:[],android:[],web:[]}));
+  out({state:input.deviceType === 'uncertain-stop'?'unknown':'stopped',device:input.deviceType === 'wrong-stop'?{...stored,udid:'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'}:stored});
 }
 `;
 const noAgents = {
@@ -1875,4 +1879,179 @@ test('the congestion notice request names one subscription', () => {
   expect(accepts({ id: 1, method, params: { subscription: 's1' } })).toBe(true);
   for (const params of [{}, { subscription: 1 }, { subscription: 's1', bitrate: 1 }])
     expect(accepts({ id: 1, method, params })).toBe(false);
+});
+
+function expectRetired(id: string): void {
+  expect(JSON.parse(readFileSync(join(deviceHostArea(id), 'home', 'created-devices.json'), 'utf8'))).toEqual({
+    version: 1,
+    ios: [],
+    android: [],
+    web: [],
+  });
+}
+
+function seedHosted(
+  extra: Partial<HostedDeviceSession> = {},
+  ledger: 'listed' | 'empty' | 'missing' = 'listed',
+): HostedDeviceSession {
+  const records = readHostedSessions();
+  const id = randomUUID();
+  const platform = extra.platform ?? 'ios';
+  const device =
+    platform === 'android'
+      ? {
+          avdName: `stim-hosted-${id}`,
+          serial: 'emulator-5554',
+          consolePort: 5554,
+          systemImage: 'system-images;android-30;google_apis;arm64-v8a',
+          deviceProfile: 'pixel_6',
+          architecture: 'arm64-v8a' as const,
+        }
+      : platform === 'macos'
+        ? { appSlot: 1, architecture: 'arm64' as const, macosVersion: '27.0' }
+        : {
+            udid: '12345678-1234-1234-1234-123456789abc',
+            name: 'stim-hosted',
+            deviceTypeId: 'iphone',
+            runtimeId: 'ios',
+            deviceType: 'iPhone',
+            runtime: '27.1',
+            architecture: 'arm64' as const,
+          };
+  const record: HostedDeviceSession = {
+    ...request,
+    platform,
+    id,
+    client: 'client',
+    state: 'stopped',
+    device,
+    createdAt: new Date().toISOString(),
+    ...(platform === 'android' ? { consolePort: 5554 } : platform === 'macos' ? { appSlot: 1 } : {}),
+    ...extra,
+  };
+  mkdirSync(deviceHostRoot(), { recursive: true });
+  writeFileSync(
+    join(deviceHostRoot(), 'sessions.json'),
+    JSON.stringify({ version: 1, sessions: [...records, record] }),
+  );
+  const area = join(deviceHostArea(id), 'home');
+  mkdirSync(area, { recursive: true });
+  writeFileSync(join(area, 'hosted-device.json'), JSON.stringify(device));
+  if (ledger !== 'missing')
+    writeFileSync(
+      join(area, 'created-devices.json'),
+      JSON.stringify({
+        version: 1,
+        ios: ledger === 'listed' && 'udid' in device ? [device.udid] : [],
+        android: ledger === 'listed' && 'avdName' in device ? [device.avdName] : [],
+        web: [],
+      }),
+    );
+  return record;
+}
+
+test.each(['ios', 'android'] as const)(
+  'reconciliation retires a stopped %s device in its private home without approval or journal changes',
+  async (platform) => {
+    const record = seedHosted({ platform });
+    const journal = readFileSync(join(deviceHostRoot(), 'sessions.json'), 'utf8');
+    allowed.clear();
+    await host.reconcileStopped();
+    expectRetired(record.id);
+    expect(existsSync(join(deviceHostArea(record.id), 'home', 'stopped'))).toBe(true);
+    expect(readFileSync(join(deviceHostRoot(), 'sessions.json'), 'utf8')).toBe(journal);
+    expect(readClaimSet(join(deviceHostRoot(), `${record.id}.claims`)).live).toEqual([]);
+  },
+);
+
+test('reconciliation never spawns workers for empty, missing, macOS or non-stopped sessions', async () => {
+  const records = [
+    seedHosted({}, 'empty'),
+    seedHosted({}, 'missing'),
+    seedHosted({ platform: 'macos' }),
+    ...(['unknown', 'ready', 'preparing', 'stopping'] as const).map((phase) => seedHosted({ state: phase })),
+  ];
+  const journal = readFileSync(join(deviceHostRoot(), 'sessions.json'), 'utf8');
+  await host.reconcileStopped();
+  for (const record of records) expect(existsSync(join(deviceHostArea(record.id), 'home', 'stopped'))).toBe(false);
+  expect(readFileSync(join(deviceHostRoot(), 'sessions.json'), 'utf8')).toBe(journal);
+});
+
+test('a stopped session claimed by another process is skipped while later sessions retire', async () => {
+  const held = seedHosted();
+  const next = seedHosted();
+  const ready = join(home, 'claim-ready');
+  const script = join(home, 'claim-owner.mts');
+  writeFileSync(
+    script,
+    `import {writeFileSync} from 'node:fs';
+import {tryAcquireClaim} from ${JSON.stringify(new URL('../../core/ownership-claim.ts', import.meta.url).href)};
+const claim=tryAcquireClaim({root:${JSON.stringify(join(deviceHostRoot(), `${held.id}.claims`))},mode:'exclusive'});
+if(!claim.acquired)throw new Error('No fixture claim');
+writeFileSync(${JSON.stringify(ready)},'ready');setInterval(()=>{},1000);`,
+  );
+  const child = spawn(process.execPath, [script], { env: process.env, stdio: ['ignore', 'ignore', 'pipe'] });
+  let errors = '';
+  child.stderr.on('data', (chunk: Buffer) => (errors += chunk.toString()));
+  const exited = new Promise<void>((resolve) => child.once('close', () => resolve()));
+  try {
+    await vi.waitFor(() => {
+      if (child.exitCode !== null) throw new Error(errors || 'Claim owner exited');
+      expect(existsSync(ready)).toBe(true);
+    });
+    await expect(host.reconcileStopped()).resolves.toBeUndefined();
+    expect(existsSync(join(deviceHostArea(held.id), 'home', 'stopped'))).toBe(false);
+    expect(JSON.parse(readFileSync(join(deviceHostArea(held.id), 'home', 'created-devices.json'), 'utf8')).ios).toEqual(
+      [(held.device as { udid: string }).udid],
+    );
+    expectRetired(next.id);
+  } finally {
+    child.kill('SIGKILL');
+    await exited;
+  }
+});
+
+test.each(['fail-stop', 'uncertain-stop', 'wrong-stop'])(
+  'a %s retirement keeps its stopped journal and does not abort later sessions',
+  async (deviceType) => {
+    const failed = seedHosted({ deviceType });
+    const next = seedHosted();
+    const journal = readFileSync(join(deviceHostRoot(), 'sessions.json'), 'utf8');
+    const stderr = vi.spyOn(process.stderr, 'write').mockReturnValue(true);
+    try {
+      await host.reconcileStopped();
+      expect(stderr).toHaveBeenCalledTimes(1);
+      expect(stderr.mock.calls[0]![0]).toContain(failed.id);
+      expect(readHostedSessions().find((record) => record.id === failed.id)?.state).toBe('stopped');
+      expect(
+        JSON.parse(readFileSync(join(deviceHostArea(failed.id), 'home', 'created-devices.json'), 'utf8')).ios,
+      ).toHaveLength(1);
+      expectRetired(next.id);
+      expect(readFileSync(join(deviceHostRoot(), 'sessions.json'), 'utf8')).toBe(journal);
+    } finally {
+      stderr.mockRestore();
+    }
+  },
+);
+
+test('close waits for an in-flight retirement and prevents further reconciliation workers', async () => {
+  const record = seedHosted({ deviceType: 'delayed-stop' });
+  const next = seedHosted();
+  const area = join(deviceHostArea(record.id), 'home');
+  const reconciliation = host.reconcileStopped();
+  expect(host.reconcileStopped()).toBe(reconciliation);
+  await vi.waitFor(() => expect(existsSync(join(area, 'stopped'))).toBe(true));
+  let closed = false;
+  const closing = host.close().then(() => (closed = true));
+  try {
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(closed).toBe(false);
+    expect(readClaimSet(join(deviceHostRoot(), `${record.id}.claims`)).live).toHaveLength(1);
+  } finally {
+    writeFileSync(join(area, 'release-stop'), 'release');
+    await closing;
+  }
+  expectRetired(record.id);
+  await host.reconcileStopped();
+  expect(existsSync(join(deviceHostArea(next.id), 'home', 'stopped'))).toBe(false);
 });

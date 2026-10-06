@@ -27,6 +27,7 @@ import {
   loadConfig,
   parseHostedRequest,
   readHostedDevice,
+  readHostedDeviceLedger,
   readHostedMacosApp,
   macosAppState,
   readJsonObject,
@@ -119,6 +120,7 @@ export class DeviceHost {
   private readonly revoked = new Set<string>();
   private readonly probes = new Map<WorkerRun, string>();
   private closed = false;
+  private reconciling?: Promise<void>;
   private draining: string | null = null;
   private readonly limits: DeviceHostLimits;
 
@@ -926,6 +928,59 @@ export class DeviceHost {
     this.draining = reason;
   }
 
+  reconcileStopped(): Promise<void> {
+    if (this.closed) return Promise.resolve();
+    return (this.reconciling ??= this.retireStopped().finally(() => {
+      this.reconciling = undefined;
+    }));
+  }
+
+  private async retireStopped(): Promise<void> {
+    for (const record of readHostedSessions()) {
+      if (this.closed) break;
+      if (record.state !== 'stopped' || record.platform === 'macos' || this.owned.has(record.id)) continue;
+      let owned: OwnedSession | undefined;
+      let settled = true;
+      try {
+        const home = join(deviceHostArea(record.id), 'home');
+        const ledger = readHostedDeviceLedger(home);
+        if (!ledger || (!ledger.ios.length && !ledger.android.length && !ledger.web.length)) continue;
+        try {
+          owned = this.acquire(record);
+        } catch {
+          continue;
+        }
+        const device = readHostedDevice(home, record.platform);
+        assertSessionDevice(record, device);
+        if (record.device && hostedDeviceId(record.device) !== hostedDeviceId(device))
+          throw new Error('The device record no longer matches this session.');
+        const run = this.run(record, owned, 'stop');
+        owned.run = run;
+        const outcome = await run.done;
+        settled = outcome.settled;
+        const result = isJsonObject(outcome.value) ? outcome.value : null;
+        const stopped = result && parseHostedPlatformDevice(result.device, record.platform);
+        if (
+          outcome.notice ||
+          !outcome.settled ||
+          result?.state !== 'stopped' ||
+          !stopped ||
+          hostedDeviceId(stopped) !== hostedDeviceId(device)
+        )
+          throw new Error(
+            outcome.notice ??
+              (typeof result?.notice === 'string' ? result.notice : 'Hosted device retirement could not be verified.'),
+          );
+      } catch (error) {
+        process.stderr.write(
+          `Hosted session ${record.id} retirement failed: ${(error as Error).message.replace(/[\r\n]+/g, ' ')}\n`,
+        );
+      } finally {
+        if (owned && settled) this.release(record.id, owned);
+      }
+    }
+  }
+
   async close(): Promise<void> {
     this.closed = true;
     for (const probe of this.probes.keys()) probe.cancel();
@@ -948,6 +1003,7 @@ export class DeviceHost {
     }
     await Promise.all([...this.owned.values()].map((owned) => owned.stopping ?? owned.run?.done));
     await Promise.all([...this.probes.keys()].map((probe) => probe.done));
+    await this.reconciling?.catch(() => {});
   }
 
   private run(

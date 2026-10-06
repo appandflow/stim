@@ -342,26 +342,48 @@ export function readHostedDevice(home: string, platform: HostedDevicePlatform = 
   return device;
 }
 
-/** Hosted sessions use isolated homes: only one exact device of their platform may appear in this ledger. */
-export function assertHostedDeviceLedger(home: string, id: string, platform: HostedDevicePlatform = 'ios'): void {
+export function readHostedDeviceLedger(
+  home: string,
+  options: { required?: boolean } = {},
+): { ios: string[]; android: string[]; web: string[] } | null {
   let value: unknown;
   try {
     value = JSON.parse(readFileSync(join(home, 'created-devices.json'), 'utf8'));
   } catch (error) {
-    if (platform === 'macos' && (error as NodeJS.ErrnoException).code === 'ENOENT') return;
+    if (!options.required && (error as NodeJS.ErrnoException).code === 'ENOENT') return null;
     throw error;
   }
   if (
     !isJsonObject(value) ||
     value.version !== 1 ||
-    !Array.isArray(value.ios) ||
+    !['ios', 'android', 'web'].every(
+      (key) => Array.isArray(value[key]) && value[key].every((id: unknown) => typeof id === 'string'),
+    )
+  )
+    throw new Error('The hosted device ownership ledger is malformed.');
+  return value as { ios: string[]; android: string[]; web: string[] };
+}
+
+/** Hosted sessions use isolated homes: only one exact device of their platform may appear in this ledger. */
+export function assertHostedDeviceLedger(
+  home: string,
+  id: string,
+  platform: HostedDevicePlatform = 'ios',
+  options: { allowEmpty?: boolean } = {},
+): 'listed' | 'empty' {
+  const value = readHostedDeviceLedger(home, { required: platform !== 'macos' });
+  if (!value && platform === 'macos') return 'empty';
+  if (value && !value.ios.length && !value.android.length && !value.web.length) {
+    if (platform === 'macos' || options.allowEmpty) return 'empty';
+  }
+  if (
+    !value ||
     value.ios.length !== (platform === 'ios' ? 1 : 0) ||
     (platform === 'ios' && value.ios[0] !== id) ||
-    !Array.isArray(value.android) ||
     value.android.length !== (platform === 'android' ? 1 : 0) ||
     (platform === 'android' && value.android[0] !== id) ||
-    !Array.isArray(value.web) ||
     value.web.length !== 0
   )
     throw new Error('The hosted device ownership ledger is missing, malformed or names another device.');
+  return 'listed';
 }
