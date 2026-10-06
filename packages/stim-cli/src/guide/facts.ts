@@ -767,6 +767,10 @@ RULES
                     timing out or an AVD or system image folder Stim
                     cannot read. A macOS privacy denial (EPERM) names the
                     Privacy & Security setting to grant
+  maintenance     within sections: { mode, pressure, actions, blocked,
+                  skips, note }, the next report-only maintenance plan
+                  from live pressure and cached sizes. note says when no
+                  pass has run yet. No du runs for this preview.
   sections        one array per report section, in the text order. Every key
                   is present, empty when there is nothing to report:
     deadProjects            { path }
@@ -1475,6 +1479,15 @@ RULES
   capacity.committedMb sums memoryMb. The memory budget plans before a boot
   and always uses the estimate. What is using CPU and memory now is the
   top-level machine section:
+
+  maintenance { mode, lastChecks: { pressure, size }, pressure, sizes,
+                lastPass, running, recent, plan }
+    Report-only observations; every plan action's kind starts with would-.
+    lastChecks are epoch milliseconds or null. running comes only from a
+    live maintenance/run.claims owner, never from a check stamp.
+    lastPass carries startedAt, durationMs, trigger, mode, freedBytes (0),
+    actions, stopped (0), blocked. recent holds the last 20 action, failure
+    and blocked NDJSON records from maintenance/maintenance.ndjson.
 
   machine   null, or { memorySource, owners: [{ kind, name, workspace,
             slot?, id, owned, cpuPercent, residentMb, memoryMb,

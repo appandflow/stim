@@ -1,3 +1,4 @@
+import type { MaintenancePreview } from '../../maintenance/preview.ts';
 import { formatLongDuration, shortUdid } from '../../command-output.ts';
 import { claimRemoveCommand } from '../../ownership-claim.ts';
 import { formatBytes } from '../../fs-util.ts';
@@ -38,6 +39,7 @@ import { recordingLines, type RecordingKeptCode, type WorkspaceRecordings } from
 import { memoryCacheKind, memoryLines, type MemoryProcess, type MemoryReport, type WatchmanRoot } from './memory.ts';
 
 export interface GcReport {
+  maintenance?: MaintenancePreview;
   skipped: GcSkip[];
   deadProjects: string[];
   orphanedPorts?: { project: string; label: string; port: number }[];
@@ -145,8 +147,23 @@ function scopeLine(cacheScope: string): string {
     : `Cache scope: "${cacheScope}". Devices, project entries and locks were not inspected.`;
 }
 
+function maintenanceReportLines(maintenance: MaintenancePreview | undefined): string[] {
+  const lines: string[] = [];
+  if (maintenance) {
+    lines.push(`Automatic maintenance (${maintenance.mode === 'report' ? 'report only' : 'off'}):`);
+    if (maintenance.note) lines.push(`  ${maintenance.note}`);
+    for (const action of maintenance.actions)
+      lines.push(`  ${action.kind}: ${action.target} (${formatBytes(action.bytes)}): ${action.reason}`);
+    for (const skip of maintenance.skips) lines.push(`  kept ${skip.target}: ${skip.reason}`);
+    for (const reason of maintenance.blocked) lines.push(`  blocked: ${reason}`);
+    if (!maintenance.actions.length && !maintenance.blocked.length) lines.push('  no actions planned');
+  }
+  return lines;
+}
+
 export function formatGcReport(
   {
+    maintenance,
     skipped = [],
     deadProjects = [],
     orphanedPorts,
@@ -178,6 +195,7 @@ export function formatGcReport(
   { now = Date.now() }: { now?: number } = {},
 ): string[] {
   const lines: string[] = [];
+  lines.push(...maintenanceReportLines(maintenance));
   const staleLocks = buildLocks?.stale ?? [];
   const liveLocks = buildLocks?.live ?? [];
   const staleSlots = buildSlots?.stale ?? [];
@@ -512,6 +530,7 @@ function jsonPullRequest(lookup: PullRequestLookup | null): GcJsonSections['link
 
 /** The `gc --json` sections, in text report order. Each section is an array of entries. */
 export interface GcJsonSections {
+  maintenance?: MaintenancePreview;
   deadProjects: { path: string }[];
   invalidProjects: { path: string }[];
   orphanedPorts: { project: string; label: string; port: number }[];
@@ -617,6 +636,7 @@ export interface GcJsonSections {
 }
 
 export function gcReportSections({
+  maintenance,
   skipped = [],
   deadProjects = [],
   orphanedPorts = [],
@@ -644,6 +664,7 @@ export function gcReportSections({
   memory = null,
 }: Partial<GcReport>): GcJsonSections {
   return {
+    ...(maintenance ? { maintenance } : {}),
     deadProjects: deadProjects.map((path) => ({ path })),
     invalidProjects: invalidProjects.map((path) => ({ path })),
     orphanedPorts: orphanedPorts.map(({ project, label, port }) => ({ project, label, port })),

@@ -2813,7 +2813,9 @@ test('gc --json lists every device with its owner and every runtime and system i
       ['system-images;android-36;google_apis;arm64-v8a', 2],
     ]);
     expect(inventory.notices).toEqual([]);
-    expect(execCalls.filter((c) => !c.includes(' list '))).toEqual([]);
+    expect(
+      execCalls.filter((c) => !c.includes(' list ') && c !== '/usr/sbin/sysctl -n kern.memorystatus_vm_pressure_level'),
+    ).toEqual([]);
   } finally {
     rmSync(otherHome, { recursive: true, force: true });
     for (const [key, value] of Object.entries(savedSdk)) {
@@ -3605,6 +3607,7 @@ describe('gc --json', () => {
       { path: lock, platform: 'android', key: 'def-debug-sim', pid: 999999, projectRoot: '/w/dead' },
     ]);
     expect(Object.keys(payload.sections)).toEqual([
+      'maintenance',
       'deadProjects',
       'invalidProjects',
       'orphanedPorts',

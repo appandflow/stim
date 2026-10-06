@@ -11,6 +11,32 @@ wipe state to upgrade: it records ownership needed for safe teardown. Use the
 same slot-aware CLI for all commands while named assignments exist; older
 versions cannot reliably manage their assignments.
 
+MAINTENANCE
+
+Automatic maintenance is report-only in this release: it measures, plans and
+logs, and never stops or deletes resources. The default mode is report; it is
+off in CI and scoped STIM_HOME homes unless STIM_MAINTENANCE is explicit.
+Commands trigger a detached pass when disk and memory checks (every minute)
+or directory sizes (hourly) are due. guide, settings and help do not trigger
+it. status --watch also triggers checks. Size checks defer under high load.
+Measured directories are workspace build outputs and Stim's shared native,
+Metro, ccache, Swift compilation and registered caches. Pressure checks read
+free disk on the Stim home, projects and worker root volumes, plus host memory.
+Memory pressure is recorded only; memory stops are deferred to a later phase.
+
+  stim status                     last checks, plan and running pass
+  stim status --json              maintenance observations and recent records
+  stim logs --source maintenance  this workspace's maintenance records
+  stim gc                         live pressure and cached-size preview
+  stim settings set maintenance.mode off
+
+The machine log is $STIM_HOME/maintenance/maintenance.ndjson, rotated at
+maintenance.logMaxMb with the old generation retained for
+maintenance.logRetentionDays. Child crashes use maintenance/child.log.
+maintenance.logChecks enables debug observations; default false.
+The run claim serializes passes with gc --delete; gc refuses a held claim
+with the holder and recovery guidance instead of waiting.
+
 CLEANUP AND DISK
 
 WHAT RECLAIMS AN OWNED DEVICE

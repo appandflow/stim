@@ -15,6 +15,16 @@ test('accepts captured older status while checking Android runtime fields', () =
   const { payload } = JSON.parse(
     readFileSync(new URL('../../../apps/mobile/mock-server/fixtures/status.json', import.meta.url), 'utf8'),
   );
+  payload.maintenance = {
+    mode: 'report',
+    lastChecks: { pressure: 1, size: null },
+    pressure: null,
+    sizes: [],
+    lastPass: null,
+    running: null,
+    recent: [],
+    plan: [],
+  };
   expect(isRpcEvent({ event: 'status', subscription: 's', payload })).toBe(true);
   const environment = payload.environments.find((entry: { android?: unknown }) => entry.android);
   for (const state of ['detected', 'not-detected', 'missing', 'unknown']) {
@@ -44,7 +54,9 @@ test('accepts the original hello and unknown compatible fields but refuses malfo
 test('validates nested log records and their stack while allowing structured metadata', () => {
   const record = {
     ts: 1,
-    src: 'metro',
+    src: 'maintenance',
+    event: 'maintenance_failure',
+    mode: 'report',
     level: 'error',
     msg: 'Error',
     stack: [{ file: 'app.ts', line: 1 }],

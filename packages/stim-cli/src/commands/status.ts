@@ -1,3 +1,5 @@
+import { maintenanceStatus, maintenanceLine } from '../maintenance/status.ts';
+import { triggerMaintenance } from '../maintenance/trigger.ts';
 import { readHostedMacosStatus } from '../device-host/hosted-macos-status.ts';
 import { inspectProcessIdentity } from '../process-identity.ts';
 import { deviceSlotKey, projectDeviceSlots } from '../devices/device-slots.ts';
@@ -507,6 +509,7 @@ function renderStatus(
     return { error, line: poolLine({ platform, parked: readParked(platform).length, max }) };
   });
 
+  const maintenance = maintenanceStatus();
   if (json) {
     out.push(
       JSON.stringify({
@@ -518,10 +521,14 @@ function renderStatus(
         unprovisionedWorktrees: orphanWorktrees.map(withGitChip),
         simctlAvailable: simsAvailable,
         machine,
+        maintenance,
       } satisfies StatusPayload),
     );
     return out;
   }
+
+  const autoLine = maintenanceLine(maintenance);
+  if (autoLine) out.push(chalk.dim(autoLine));
 
   if (projects.length === 0 && orphanWorktrees.length === 0) {
     out.push(chalk.dim('No projects registered.'));
@@ -691,6 +698,7 @@ async function watchStatus(json: boolean): Promise<void> {
     debounceMs: WATCH_DEBOUNCE_MS,
     lightIntervalMs: WATCH_LIGHT_INTERVAL_MS,
     run: async (kind) => {
+      triggerMaintenance('status-watch');
       let text: string;
       try {
         if (kind === 'light' && snapshot) await refreshLightFacts(snapshot, json);

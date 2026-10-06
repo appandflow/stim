@@ -1,3 +1,4 @@
+import type { MaintenanceStatus } from './maintenance.ts';
 import type { MacosAppState } from './macos.ts';
 import type { TunnelMode, WebViewport } from './settings-registry.ts';
 import type { DeviceIdleShutdownRecord, IdleStopRecord, MetroLastStop } from './workspace-state.ts';
@@ -707,6 +708,7 @@ export interface MachineUsageState {
 
 /** The payload `stim status --json` prints, and `status --watch --json` prints on each change. */
 export interface StatusPayload {
+  maintenance?: MaintenanceStatus;
   environments: (EnvironmentState & { labelOnly?: true })[];
   capacity: StatusCapacity;
   deviceLeases: DeviceLeaseState[];

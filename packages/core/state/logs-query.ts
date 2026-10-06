@@ -118,14 +118,18 @@ export function recordMatches(record: NdjsonRecord | null | undefined, criteria:
     sources &&
     sources.length > 0 &&
     !sources.includes(record.src as string) &&
-    !(criteria.includeAppDeviceErrors && isAppDeviceRecord(record))
+    !(
+      criteria.includeAppDeviceErrors &&
+      (isAppDeviceRecord(record) || (record.src === 'maintenance' && record.event === 'maintenance_failure'))
+    )
   )
     return false;
   if (minLevel && levelRank(record.level) < levelRank(minLevel)) return false;
 
   if (errorsOnly) {
+    if (record.src === 'maintenance' && record.event !== 'maintenance_failure') return false;
     if (record.level !== 'error' && record.level !== 'fatal') return false;
-    if (typeof markerTs === 'number') {
+    if (typeof markerTs === 'number' && record.src !== 'maintenance') {
       const ts = tsOf(record);
       if (ts === null || ts <= markerTs) return false;
     }
@@ -449,6 +453,7 @@ export function queryLogs({
   );
   const slotPlatforms = slot === undefined ? [] : [...launches.keys()].filter((platform) => platform !== null);
   const windowStart = (record: NdjsonRecord): number | undefined => {
+    if (record.src === 'maintenance') return undefined;
     if (pageLoadTs !== null && isWebPageRecord(record)) return pageLoadTs - 1;
     if (record.src !== 'metro' && record.src !== 'client') return slotMarkers.get(record.slot ?? 'default');
     const platform = nativePlatform(record);

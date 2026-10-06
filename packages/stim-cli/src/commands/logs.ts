@@ -176,21 +176,21 @@ export default function logsCommand(program: Command): void {
   program
     .command('logs')
     .description(
-      "Query this workspace's merged NDJSON log timeline (bundler, client, device, build, agent actions). Prints and exits; an existing timeline with nothing matching is a successful, empty result. Use --follow to stream.",
+      "Query this workspace's merged NDJSON log timeline (bundler, client, device, build, agent actions, maintenance). Prints and exits; an existing timeline with nothing matching is a successful, empty result. Use --follow to stream.",
     )
     .option(
       '--slot <name>',
       "Only this device slot's records, plus the shared Metro and app client records once it has launched",
       parseDeviceSlotOption,
     )
-    .option('--source <s...>', 'Only these sources: metro, client, device, build, agent, or all')
+    .option('--source <s...>', 'Only these sources: metro, client, device, build, agent, maintenance, or all')
     .option('--level <l>', `Minimum level: ${LEVELS.join(', ')}`)
     .option('--since <d>', 'Only records newer than this, e.g. 30s, 5m, 2h')
     .option('--grep <re>', 'Only records whose message matches this regular expression')
     .option('--tail <n>', 'Only the last n matching records')
     .option(
       '--errors',
-      'Errors and fatals since the last marker, from metro, client and build, plus confirmed native app-crash reports and stim web browser errors. Add --source device or --source all for general device errors.',
+      'Errors and fatals since the last marker, from metro, client and build, plus maintenance failures, confirmed native app-crash reports and stim web browser errors. Add --source device or --source all for general device errors.',
     )
     .option('--follow', 'Keep streaming new records until interrupted')
     .option('--json', 'Emit the raw records, one per line (valid NDJSON; zero matches is zero bytes, exit 0)')

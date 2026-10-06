@@ -1,5 +1,5 @@
 import { ANDROID_AVD_CONFIG_HELP } from '../workspace/settings.ts';
-import { SETTINGS_SCHEMA_URL } from '@stim-cli/core/state';
+import { SETTINGS, SETTINGS_SCHEMA_URL } from '@stim-cli/core/state';
 
 export default {
   summary: 'Settings Stim reads, and where they can live',
@@ -437,6 +437,20 @@ overrides the file:
 0 turns a check off. With STIM_HOME set and no environment variable, the
 budget is off. A value of the wrong shape refuses start, ios and android with
 STIM_BAD_ARG. See \`guide lifecycle budget\` for what each limit reclaims.
+
+AUTOMATIC MAINTENANCE IS MACHINE-LEVEL
+Report-only in this release: it measures and plans, and deletes or stops nothing.
+STIM_HOME and CI make the mode off unless STIM_MAINTENANCE is set.
+See \`guide cleanup\` for checks, plans and log paths.
+
+${SETTINGS.filter((setting) => setting.key.startsWith('maintenance.') || /^caches\..*MaxGb$/.test(setting.key))
+  .map(
+    (
+      setting,
+    ) => `  ${setting.key}  ${setting.env}  ${setting.default === undefined ? 'unset' : `default ${setting.default}`}
+    ${setting.description}`,
+  )
+  .join('\n')}
 
 THE IOS SIMULATOR APP IS MACHINE-LEVEL
 Top-level \`iosSimulatorApp\` in ~/.stim/config.json selects the macOS app that

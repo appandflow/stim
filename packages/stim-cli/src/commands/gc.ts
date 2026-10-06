@@ -1,3 +1,5 @@
+import { maintenanceRunClaims } from '@stim-cli/core/state';
+import { previewMaintenance } from '../maintenance/preview.ts';
 import { existsSync } from 'fs';
 import { isAbsolute } from 'path';
 import chalk from 'chalk';
@@ -8,7 +10,13 @@ import { directorySize, isOnMountedVolume, listMountedVolumes, volumeRootFor } f
 import { listBuildLocks } from '../engine/build-lock.ts';
 import { listBuildSlots } from '../engine/build-slots.ts';
 import { removeExpiredLease } from '../engine/device-lease.ts';
-import { clearFreeClaimSet } from '../ownership-claim.ts';
+import {
+  ClaimRefusedError,
+  claimFailure,
+  tryAcquireClaim,
+  releaseClaim,
+  clearFreeClaimSet,
+} from '../ownership-claim.ts';
 import { detectIsExpo, findProjectRoot } from '../workspace/project.ts';
 import { describeDereferenced, reclaimProject } from '../devices/reclaim.ts';
 import { listAllIosSims, type IosSimRecord } from '../devices/ios.ts';
@@ -455,18 +463,53 @@ export async function collectGcReport(
 
 export async function runGc(opts: RunGcOptions = {}, deps: GcDependencies = {}): Promise<void> {
   if (!opts.json) {
-    await sweep(opts, deps);
+    await maintenanceGuardedSweep(opts, deps);
     return;
   }
   const log = console.log;
   console.log = console.error;
   let payload: GcPayload;
   try {
-    payload = await sweep(opts, deps);
+    payload = await maintenanceGuardedSweep(opts, deps);
   } finally {
     console.log = log;
   }
   console.log(JSON.stringify(payload));
+}
+
+async function maintenanceGuardedSweep(opts: RunGcOptions, deps: GcDependencies): Promise<GcPayload> {
+  if (!opts.delete) return sweep(opts, deps);
+  let claim;
+  try {
+    const root = maintenanceRunClaims();
+    const attempt = tryAcquireClaim({
+      root,
+      mode: 'exclusive',
+      label: 'maintenance',
+      details: { trigger: 'gc --delete' },
+    });
+    if (attempt.pending) releaseClaim(attempt.pending);
+    claim = attempt.acquired;
+    if (!claim) {
+      const holder = attempt.held ?? attempt.waitingFor?.[0];
+      throw new ClaimRefusedError({
+        root,
+        claimPath: holder?.path ?? root,
+        label: 'maintenance',
+        reason: `held by pid ${holder?.owner.pid ?? '?'} since ${holder?.startedAt ?? '?'} (${String(holder?.details.trigger ?? 'maintenance')})`,
+      });
+    }
+    return await sweep(opts, deps);
+  } catch (error) {
+    const failure = claimFailure(error, 'stim gc --delete');
+    if (!failure) throw error;
+    console.error(`${failure.code}: ${failure.message}`);
+    console.error(failure.remedy);
+    process.exitCode = 1;
+    return failure;
+  } finally {
+    if (claim) releaseClaim(claim);
+  }
 }
 
 async function sweep(opts: RunGcOptions, deps: GcDependencies): Promise<GcPayload> {
@@ -671,6 +714,7 @@ async function runGcCore(opts: RunGcOptions, deps: GcDependencies): Promise<GcPa
     };
   }
 
+  if (!opts.delete) report.maintenance = await previewMaintenance();
   const all = report.all;
 
   for (const line of formatGcReport(report)) console.log(line);

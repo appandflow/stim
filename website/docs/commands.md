@@ -621,7 +621,7 @@ device and inspect `stim logs --errors` before claiming recovery.
 ## `logs`
 
 ```text
-stim logs [--slot <name>] [--source <metro|client|device|build|agent|all...>]
+stim logs [--slot <name>] [--source <metro|client|device|build|agent|maintenance|all...>]
           [--level <debug|info|warn|error|fatal>] [--since <duration>]
           [--grep <expression>] [--tail <count>] [--errors]
           [--follow] [--json]
@@ -643,6 +643,8 @@ result.
   `--slot <ios-slot>` still shows it. General device logs require
   an explicit `--source device` or `--source all`.
 - `--source device` includes operating-system device logs.
+- `--source maintenance` shows report-only maintenance actions and failures
+  for this workspace. `--errors` includes only maintenance failures from it.
 - `--source agent` shows what agent-device did on this workspace's owned
   simulators and emulators: taps, typing, app opens, screenshots, and failed
   commands. A plain `logs` includes it; `--errors` includes it only when

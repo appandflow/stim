@@ -86,7 +86,7 @@ export function createRefreshScheduler({
   };
 }
 
-type WatchedDir = 'home' | 'workspaces' | 'workspace' | 'logs' | 'leases' | 'eas';
+type WatchedDir = 'home' | 'workspaces' | 'workspace' | 'logs' | 'leases' | 'eas' | 'maintenance';
 
 /**
  * Which refresh a change to `name` in a watched `$STIM_HOME` directory needs: `light` for a log append or a running
@@ -99,10 +99,17 @@ export function statusChange(dir: WatchedDir, name: string | null): RefreshKind 
   if (name === null) return 'full';
   switch (dir) {
     case 'home':
-      return name.startsWith('config.json') || name === 'workspaces' || name === 'device-locks' ? 'full' : null;
+      return name.startsWith('config.json') ||
+        name === 'workspaces' ||
+        name === 'device-locks' ||
+        name === 'maintenance'
+        ? 'full'
+        : null;
     case 'workspace':
       if (name.startsWith('build-detail.json')) return 'light';
       return name.startsWith('state.json') || name.startsWith('ended-agents.json') || name === 'logs' ? 'full' : null;
+    case 'maintenance':
+      return name.startsWith('state.json') || name === 'run.claims' ? 'full' : null;
     case 'eas':
       return name.startsWith('sessions.json') ? 'full' : null;
     default:
@@ -156,6 +163,7 @@ export function watchStatusSources({
     const dirs = new Map<string, WatchedDir>([
       [home, 'home'],
       [join(home, 'workspaces'), 'workspaces'],
+      [join(home, 'maintenance'), 'maintenance'],
       [join(home, 'device-locks'), 'leases'],
       [easMachineStateRoot(), 'eas'],
     ]);
