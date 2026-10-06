@@ -46,6 +46,11 @@ public func launchResponse(page: LaunchPage, mainWindowOpen: Bool, workspacePath
 }
 
 extension StatusPayload {
+  public func lists(workspace path: String) -> Bool {
+    environments.contains { $0.path == path || $0.worktree?.path == path }
+      || unprovisionedWorktrees?.contains { $0.path == path } == true
+  }
+
   /// The workspace that records the requested device, in its default devices or a slot.
   public func owner(of request: DeviceOpenRequest) -> (workspace: Workspace, device: DeviceRef)? {
     for env in environments {
