@@ -1,3 +1,4 @@
+import { archiveWorkspace } from '../archive.ts';
 import { clearNamedPorts } from '../named-ports.ts';
 import { projectDeviceSlots } from './device-slots.ts';
 import { type ProjectRecord, clearDevice, getProject, removeProject } from '../workspace/config.ts';
@@ -334,6 +335,7 @@ export interface ReclaimResult {
 }
 
 type ReclaimOptions = {
+  archive?: { removedBy: 'worktree-remove' | 'gc' | 'maintenance' };
   deleteOwnedDevices?: boolean;
   parkOwnedDevices?: boolean;
   preserveProjectRecord?: boolean;
@@ -380,6 +382,7 @@ async function reclaimIdleProject(
   path: string,
   workspaceExisted: boolean,
   {
+    archive,
     deleteOwnedDevices = false,
     parkOwnedDevices = false,
     preserveProjectRecord = false,
@@ -558,6 +561,7 @@ async function reclaimIdleProject(
             throw error;
           }
         }
+        if (archive) archiveWorkspace(path, archive.removedBy, initialState);
         emptyWorkspaceDir(dir);
         if (workspaceExisted) removedWorkspaceDirs.push(dir);
       } catch {

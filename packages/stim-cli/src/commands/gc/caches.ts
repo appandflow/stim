@@ -41,6 +41,16 @@ const WORKSPACE_OUTPUTS = 'workspaces';
 const RECORDINGS = 'recordings';
 const PARKED_DEVICES = 'parked';
 
+export function includesArchives(name: string | null | undefined): boolean {
+  const wanted = name?.trim().toLowerCase();
+  return Boolean(
+    wanted &&
+    (wanted === 'archived' ||
+      wanted.startsWith('archived:') ||
+      ['archived-logs', 'archived-recordings', 'archived-agent'].includes(wanted)),
+  );
+}
+
 export function includesParkedDevices(name: string | null | undefined): boolean {
   return name?.trim().toLowerCase() === PARKED_DEVICES;
 }
@@ -61,14 +71,22 @@ export function includesWorkspaceOutputs(name: string | null | undefined): boole
 
 /** Whether a --cache name selects something besides shared caches: recordings, parked devices or a memory kind. */
 export function selectsBeyondCaches(name: string | null | undefined): boolean {
-  return includesRecordings(name) || includesParkedDevices(name) || memoryCacheKind(name) !== null;
+  return (
+    includesArchives(name) || includesRecordings(name) || includesParkedDevices(name) || memoryCacheKind(name) !== null
+  );
 }
 
 export function selectCaches(caches: CacheDescriptor[], name: string | null | undefined): CacheDescriptor[] {
   if (!name) return caches;
   const wanted = name.trim().toLowerCase();
   if (wanted === EVERY_CACHE) return caches;
-  if (wanted === WORKSPACE_OUTPUTS || wanted === RECORDINGS || wanted === PARKED_DEVICES || memoryCacheKind(wanted)) {
+  if (
+    includesArchives(wanted) ||
+    wanted === WORKSPACE_OUTPUTS ||
+    wanted === RECORDINGS ||
+    wanted === PARKED_DEVICES ||
+    memoryCacheKind(wanted)
+  ) {
     return [];
   }
   return caches.filter((c) => c.name.toLowerCase().includes(wanted) || c.dir.toLowerCase().includes(wanted));

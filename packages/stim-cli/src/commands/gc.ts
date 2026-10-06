@@ -1,3 +1,4 @@
+import { collectArchives, deleteArchives, archiveRefusal, archiveWorkPending } from './gc/archives.ts';
 import { getSwiftpmCacheUsage } from '../devices/swiftpm-cache-usage.ts';
 import { getAgentDeviceUsage } from '../devices/agent-device-usage.ts';
 import { existsSync } from 'fs';
@@ -24,6 +25,7 @@ import { recordGcResult, takeGcResults, type GcResult } from './gc/results.ts';
 import { phase } from './gc/progress.ts';
 import {
   emptyCaches,
+  includesArchives,
   includesParkedDevices,
   includesRecordings,
   includesWorkspaceOutputs,
@@ -226,6 +228,7 @@ export async function collectGcReport(
 
   if (scope) {
     return {
+      archives: includesArchives(scope) ? collectArchives(scope, olderThan, now) : undefined,
       skipped: [],
       deadProjects: [],
       invalidProjects: [],
@@ -584,7 +587,10 @@ async function pruneDeadProjects(deadProjects: string[]): Promise<number> {
       recordGcResult('project', 'kept', path, { detail: 'its absence can no longer be confirmed' });
       continue;
     }
-    const result = await reclaimProject(path, { stopRequester: { by: 'stim gc --delete' } }).catch((error: unknown) => {
+    const result = await reclaimProject(path, {
+      archive: { removedBy: 'gc' },
+      stopRequester: { by: 'stim gc --delete' },
+    }).catch((error: unknown) => {
       deleteFailures++;
       console.log(chalk.red(`Could not prune ${path}; its registry entry was kept: ${(error as Error).message}`));
       recordGcResult('project', 'failed', path, { detail: `its registry entry was kept: ${(error as Error).message}` });
@@ -681,6 +687,8 @@ async function runGcCore(opts: RunGcOptions, deps: GcDependencies): Promise<GcPa
     };
   }
 
+  const refusal = archiveRefusal(report.archives);
+  if (refusal !== null) return refusal;
   const all = report.all;
 
   for (const line of formatGcReport(report)) console.log(line);
@@ -697,26 +705,28 @@ async function runGcCore(opts: RunGcOptions, deps: GcDependencies): Promise<GcPa
     easSessionSweep,
     caches,
   } = report;
-  const actionable =
+  const actionable = archiveWorkPending(
+    report.archives,
     deadProjects.length + invalidProjects.length > 0 ||
-    report.orphanedWorkspaces.length > 0 ||
-    Boolean(report.workspaceOutputs?.workspaces.some((entry) => entry.willClear)) ||
-    report.workspaceLogs.some((entry) => entry.willTrim) ||
-    report.recordings.some((entry) => entry.willDelete && !entry.withWorkspace) ||
-    Boolean(report.worktreeSweep?.worktrees.some((entry) => !entry.skipped)) ||
-    report.parkedSims.length > 0 ||
-    report.parkedAvds.length > 0 ||
-    orphanedDevices.length > 0 ||
-    staleDevices.length > 0 ||
-    staleDeviceRecords.length > 0 ||
-    report.staleLedgerEntries.length > 0 ||
-    report.staleStatusCaches.length > 0 ||
-    buildLocks.stale.length > 0 ||
-    buildSlots.stale.length > 0 ||
-    deviceLeases.expired.length > 0 ||
-    easSessionSweep.orphaned.length > 0 ||
-    ((olderThan !== null || all) && caches.length > 0) ||
-    memoryWorkPending(cache, report.memory);
+      report.orphanedWorkspaces.length > 0 ||
+      Boolean(report.workspaceOutputs?.workspaces.some((entry) => entry.willClear)) ||
+      report.workspaceLogs.some((entry) => entry.willTrim) ||
+      report.recordings.some((entry) => entry.willDelete && !entry.withWorkspace) ||
+      Boolean(report.worktreeSweep?.worktrees.some((entry) => !entry.skipped)) ||
+      report.parkedSims.length > 0 ||
+      report.parkedAvds.length > 0 ||
+      orphanedDevices.length > 0 ||
+      staleDevices.length > 0 ||
+      staleDeviceRecords.length > 0 ||
+      report.staleLedgerEntries.length > 0 ||
+      report.staleStatusCaches.length > 0 ||
+      buildLocks.stale.length > 0 ||
+      buildSlots.stale.length > 0 ||
+      deviceLeases.expired.length > 0 ||
+      easSessionSweep.orphaned.length > 0 ||
+      ((olderThan !== null || all) && caches.length > 0) ||
+      memoryWorkPending(cache, report.memory),
+  );
   const idle = opts.idle ?? null;
   const idleFailures =
     idle === null
@@ -749,6 +759,7 @@ async function runGcCore(opts: RunGcOptions, deps: GcDependencies): Promise<GcPa
   }
 
   let deleteFailures = idleFailures;
+  deleteFailures += deleteArchives(report.archives);
   deleteFailures += report.workspaceOutputs
     ? (await clearWorkspaceOutputs(report.workspaceOutputs, { olderThan })).failures
     : 0;
@@ -888,7 +899,7 @@ export default function gcCommand(program: Command): void {
     )
     .option(
       '--cache <name>',
-      'act on the shared caches whose name or directory contains <name>, every cache, the workspace build outputs and the device recordings with --cache all, only the workspace build outputs with --cache workspaces, only the device recordings with --cache recordings, only the parked simulators and emulators with --cache parked, the watchman daemon and its stale roots with --cache watchman, or the Gradle and Kotlin compile daemons with --cache gradle-daemons; all, workspaces, recordings, parked, watchman and gradle-daemons are reserved names that never select a single cache, and --cache all never includes watchman or gradle-daemons. With --delete they are emptied whole (a parked device is erased and stays parked, watchman loses its stale roots and shuts down only when no client uses it, and only daemons proven idle stop), which is the only way to clear an index-backed cache; add --older-than <days> to trim them by age instead. Only those caches are reported; other devices and project entries are not inspected. Caches outside the config dir are refused while STIM_HOME is set.',
+      'act on the shared caches whose name or directory contains <name>, every cache, the workspace build outputs and the device recordings with --cache all, only the workspace build outputs with --cache workspaces, only the device recordings with --cache recordings, only the parked simulators and emulators with --cache parked, the watchman daemon and its stale roots with --cache watchman, or the Gradle and Kotlin compile daemons with --cache gradle-daemons; archived, archived:<id>, archived-logs, archived-recordings and archived-agent select archived history explicitly; --cache all excludes archives. all, workspaces, recordings, parked, archived, archived:<id>, archived-logs, archived-recordings, archived-agent, watchman and gradle-daemons are reserved names that never select a single cache, and --cache all never includes watchman or gradle-daemons. With --delete they are emptied whole (a parked device is erased and stays parked, watchman loses its stale roots and shuts down only when no client uses it, and only daemons proven idle stop), which is the only way to clear an index-backed cache; add --older-than <days> to trim them by age instead. Archive ids ignore --older-than; archived and per-kind archive selectors filter by removal age. Only those caches are reported; other devices and project entries are not inspected. Caches outside the config dir are refused while STIM_HOME is set.',
       (v: string) => {
         if (!v.trim()) throw new InvalidArgumentError('must name a cache, e.g. --cache "compilation cache"');
         return v;

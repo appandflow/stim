@@ -1,5 +1,5 @@
 import { ANDROID_AVD_CONFIG_HELP } from '../workspace/settings.ts';
-import { SETTINGS_SCHEMA_URL } from '@stim-cli/core/state';
+import { SETTINGS, SETTINGS_SCHEMA_URL } from '@stim-cli/core/state';
 
 export default {
   summary: 'Settings Stim reads, and where they can live',
@@ -47,7 +47,7 @@ Resolution order, first match wins:
   4. machine         ~/.stim/config.json, top-level optimizations,
                      ios.deviceType, ios.runtime, android.systemImage,
                      android.deviceProfile and devices.idleShutdownMinutes
-                     only
+                     and archive.enabled
   5. Stim default
 An environment override, where a setting has one, wins over every layer.
 
@@ -72,6 +72,17 @@ An app's .stim.json can contain:
     },
     "android": { "variant": "productionDebug" }
   }
+
+ARCHIVE SETTINGS
+${SETTINGS.filter((setting) => setting.key.startsWith('archive.'))
+  .map(
+    (setting) =>
+      `  ${setting.key}: ${setting.description}; default ${setting.default}; layers ${setting.scopes.join(', ')}; ${setting.env}`,
+  )
+  .join('\n')}
+Sizes use binary GB/MB. Archive ages and caps accept 0 to keep none.
+STIM_HOME makes archive.enabled false unless STIM_ARCHIVE_ENABLED is set.
+See stim guide cleanup archive for retention and explicit deletion.
 
 KEYS STIM READS
   ios.deviceType        e.g. "iPhone 17 Pro" -- the simulator model this

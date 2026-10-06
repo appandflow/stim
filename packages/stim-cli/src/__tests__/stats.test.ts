@@ -662,7 +662,14 @@ describe('stim stats', async () => {
     const { out: lines, err } = await inDir(root, () => runStats());
 
     expect(err).toEqual([]);
-    expect(lines).toEqual([`project ${root}`, '  no runs recorded', 'machine', '  no runs recorded']);
+    expect(lines).toEqual([
+      `project ${root}`,
+      '  no runs recorded',
+      'machine',
+      '  no runs recorded',
+      'archive',
+      '  archived workspaces: 0, 0K',
+    ]);
     expect(existsSync(statsFile())).toBe(false);
   });
 
@@ -703,7 +710,14 @@ describe('stim stats', async () => {
 
     expect(newer.err).toHaveLength(1);
     expect(newer.err[0]).toMatch(/are version 2, which this Stim does not understand/);
-    expect(newer.out).toEqual([`project ${root}`, '  no runs recorded', 'machine', '  no runs recorded']);
+    expect(newer.out).toEqual([
+      `project ${root}`,
+      '  no runs recorded',
+      'machine',
+      '  no runs recorded',
+      'archive',
+      '  archived workspaces: 0, 0K',
+    ]);
 
     writeFileSync(statsFile(), '{ this is not json');
     const corrupt = await inDir(root, () => runStats(['--json']));
@@ -841,6 +855,22 @@ test('CLI and the server read child agree for a real monorepo worktree and its s
     } finally {
       await child.cancel();
     }
+  }
+});
+
+test('stats prints the archive usage section', async () => {
+  const { archiveWorkspace } = await import('../archive.ts');
+  const { ensureWorkspaceStorage } = await import('../workspace/paths.ts');
+  process.env.STIM_ARCHIVE_ENABLED = 'true';
+  try {
+    const dir = ensureWorkspaceStorage(root);
+    writeFileSync(join(dir, 'state.json'), '{}');
+    archiveWorkspace(root, 'gc');
+    expect((await inDir(root, () => runStats())).out).toEqual(
+      expect.arrayContaining(['archive', expect.stringMatching(/^  archived workspaces: 1, /)]),
+    );
+  } finally {
+    delete process.env.STIM_ARCHIVE_ENABLED;
   }
 });
 
