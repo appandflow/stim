@@ -221,10 +221,7 @@ final class AddMachineModelTests: XCTestCase {
           WizardCommandOutput(exit: 0, stdout: Data(), stderr: "")
         }, exists: { $0 == location.marker }))
     sample.prepare()
-    for _ in 0..<1000 {
-      if sample.sampleReady { break }
-      await Task.yield()
-    }
+    await waitUntil { sample.sampleReady }
     let model = harness.make(workspace: false, sample: sample)
     await model.start()
     defer { model.stop() }
@@ -306,15 +303,9 @@ final class AddMachineModelTests: XCTestCase {
       harness.grantReady = true
       await model.checkAgain()
       await model.openTools()
-      for _ in 0..<1000 {
-        if sample.sampleReady { break }
-        await Task.yield()
-      }
+      await waitUntil { sample.sampleReady }
       model.openTest()
-      for _ in 0..<1000 {
-        if !sample.running { break }
-        await Task.yield()
-      }
+      await waitUntil { sample.test.passed && !sample.running }
       XCTAssertTrue(sample.test.passed)
       XCTAssertEqual(model.page, .test)
       XCTAssertEqual(harness.mode, "off")
@@ -408,4 +399,11 @@ final class AddMachineModelTests: XCTestCase {
     XCTAssertEqual(harness.toolCalls, ["ios", "ios", "ios"])
   }
 
+}
+
+@MainActor func waitUntil(_ condition: @MainActor () -> Bool) async {
+  for _ in 0..<2000 {
+    if condition() { return }
+    try? await Task.sleep(for: .milliseconds(10))
+  }
 }

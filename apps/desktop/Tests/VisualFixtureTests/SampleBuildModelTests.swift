@@ -69,9 +69,10 @@ final class SampleBuildModelTests: XCTestCase {
     }
   }
   @MainActor private func settle(_ model: SampleBuildModel) async {
-    for _ in 0..<1000 {
+    await Task.yield()
+    for _ in 0..<2000 {
       if !model.preparing && !model.running { return }
-      await Task.yield()
+      try? await Task.sleep(for: .milliseconds(10))
     }
     XCTFail("Model did not settle")
   }
