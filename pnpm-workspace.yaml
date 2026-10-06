@@ -49,6 +49,9 @@ overrides:
 # The expo-image patch loads require()d images from React Native's asset catalog
 # (RCTUseAssetCatalog, apps/mobile); drop it once expo/expo#50723 ships. It only
 # takes effect because apps/mobile builds expo-image from source on iOS.
+# react-native-unistyles 3.5.0 passes ImageProps::tintColor to a SharedColor overload;
+# React Native 0.88 declares it std::optional<SharedColor>, so the iOS build fails in
+# ShadowTreeDiagnostics.cpp. Drop the patch once a release compiles against 0.88.
 patchedDependencies:
   expo-image@58.0.6: patches/expo-image@58.0.6.patch
   react-native-mmkv@4.3.2: patches/react-native-mmkv@4.3.2.patch
@@ -58,3 +61,4 @@ patchedDependencies:
   # Expo #50052 adds versionless Android publications; later autolinkers also require
   # a macro package absent from this SDK core. Backport the resolver until the SDK updates.
   expo-modules-autolinking@58.0.4: patches/expo-modules-autolinking@58.0.4.patch
+  react-native-unistyles@3.5.0: patches/react-native-unistyles@3.5.0.patch
