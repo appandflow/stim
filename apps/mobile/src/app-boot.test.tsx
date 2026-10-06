@@ -81,6 +81,7 @@ jest.mock('react-native-mmkv', () => ({
     const store = mockStore(id);
     return {
       getString: (key: string) => store.get(key),
+      getBoolean: (key: string) => (store.has(key) ? store.get(key) === 'true' : undefined),
       set: (key: string, value: unknown) => void store.set(key, String(value)),
       remove: (key: string) => store.delete(key),
       getAllKeys: () => [...store.keys()],

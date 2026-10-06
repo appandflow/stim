@@ -995,6 +995,10 @@ msgstr "billable"
 msgid "Binary file: preview unavailable."
 msgstr "Binary file: preview unavailable."
 
+#: src/screens/welcome.tsx
+msgid "Both signed in to the same tailnet"
+msgstr "Both signed in to the same tailnet"
+
 #: src/lib/workspace-view.ts
 msgid "Branch"
 msgstr "Branch"
@@ -1881,6 +1885,10 @@ msgstr "From {provider}. {runs}"
 msgid "From Pair a phone in Stim Desktop"
 msgstr "From Pair a phone in Stim Desktop"
 
+#: src/screens/welcome.tsx
+msgid "Get Tailscale"
+msgstr "Get Tailscale"
+
 #: src/screens/workspace-work.tsx
 msgid "Git"
 msgstr "Git"
@@ -2691,6 +2699,7 @@ msgid "Not measured"
 msgstr "Not measured"
 
 #: src/hooks/notifications.tsx
+#: src/screens/welcome.tsx
 msgid "Not now"
 msgstr "Not now"
 
@@ -2958,6 +2967,10 @@ msgstr "Pair a machine"
 #: src/components/mac-chip.tsx
 msgid "Pair again"
 msgstr "Pair again"
+
+#: src/screens/welcome.tsx
+msgid "Pair with your Mac"
+msgstr "Pair with your Mac"
 
 #: src/screens/pair.tsx
 msgid "Paired"
@@ -3613,6 +3626,7 @@ msgstr "Status"
 #: src/screens/home.tsx
 #: src/screens/mac-status.tsx
 #: src/screens/menu.tsx
+#: src/screens/welcome.tsx
 msgid "Stim"
 msgstr "Stim"
 
@@ -3663,6 +3677,10 @@ msgstr "Stim build differs"
 #: src/lib/machine-report.ts
 msgid "Stim caches and outputs"
 msgstr "Stim caches and outputs"
+
+#: src/screens/welcome.tsx
+msgid "Stim Desktop on your Mac, with Serve to phones on"
+msgstr "Stim Desktop on your Mac, with Serve to phones on"
 
 #: src/screens/pair.tsx
 msgid "Stim Desktop shows the code under Pair a phone. The phone connects through Tailscale, so it works on any network where both devices are signed in to the same tailnet."
@@ -3719,6 +3737,10 @@ msgstr "Stim workspace directory"
 #: src/screens/mac-status.tsx
 msgid "Stim-owned devices that stim status has measured. The Mac lists every simulator and emulator once stim-server serves machine details."
 msgstr "Stim-owned devices that stim status has measured. The Mac lists every simulator and emulator once stim-server serves machine details."
+
+#: src/screens/welcome.tsx
+msgid "stim.appandflow.com/desktop"
+msgstr "stim.appandflow.com/desktop"
 
 #: src/screens/workspace-detail.tsx
 #: src/screens/workspace-detail.tsx
@@ -3792,6 +3814,10 @@ msgstr "Tab"
 #: src/lib/build-machines.ts
 msgid "Tailscale is off"
 msgstr "Tailscale is off"
+
+#: src/screens/welcome.tsx
+msgid "Tailscale on this phone"
+msgstr "Tailscale on this phone"
 
 #: src/screens/device-view.tsx
 msgid "Take over"
@@ -4197,6 +4223,10 @@ msgstr "Warning"
 msgid "Warnings"
 msgstr "Warnings"
 
+#: src/screens/welcome.tsx
+msgid "Watch your agents' apps from your phone"
+msgstr "Watch your agents' apps from your phone"
+
 #: src/lib/logs.ts
 #: src/lib/workspace-view.ts
 #: src/lib/workspaces.ts
@@ -4287,6 +4317,10 @@ msgstr "Xcode differs"
 #: src/lib/inbox.ts
 msgid "Yesterday"
 msgstr "Yesterday"
+
+#: src/screens/welcome.tsx
+msgid "You need"
+msgstr "You need"
 
 #: src/lib/machine-report.ts
 msgid "Yours"
