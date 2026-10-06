@@ -58,6 +58,10 @@ xcrun actool Support/Assets.xcassets --compile "$app/Contents/Resources" --platf
 cp "$website/src/css/fonts/InterVariable.woff2" "$website/src/css/fonts/JetBrainsMono-Regular.woff2" \
   "$website/src/css/fonts/Inter-LICENSE.txt" "$website/src/css/fonts/JetBrainsMono-OFL.txt" \
   "$website/static/img/branding/stim-jar-dark.json" "$website/static/img/branding/stim-jar-light.json" \
+  "$website/static/img/branding/device-boot-ios-dark.json" "$website/static/img/branding/device-boot-ios-light.json" \
+  "$website/static/img/branding/device-boot-android-dark.json" "$website/static/img/branding/device-boot-android-light.json" \
+  "$website/static/img/branding/device-boot-web-dark.json" "$website/static/img/branding/device-boot-web-light.json" \
+  "$website/static/img/branding/device-boot-macos-dark.json" "$website/static/img/branding/device-boot-macos-light.json" \
   "$website/static/img/branding/wordmark.svg" "$website/static/img/branding/agent-claude.svg" \
   "$website/static/img/branding/agent-codex.svg" "$website/static/img/branding/agent-cursor.svg" \
   "$app/Contents/Resources/"

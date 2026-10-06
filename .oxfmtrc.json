@@ -7,7 +7,7 @@
     "**/node_modules/**",
     "website/build/**",
     "website/.docusaurus/**",
-    "website/static/img/branding/stim-jar-*.json",
+    "website/static/img/branding/*.json",
     ".claude/**",
     "apps/mobile/**",
     "apps/desktop/Support/Assets.xcassets/**",

@@ -869,7 +869,7 @@ struct DeviceTile: View {
           }
         }
       } else {
-        placeholder(device.state)
+        placeholder(device.state, loading: device.state == "Booting")
       }
     case .web(let browser) where browser.running:
       if let endpoint = browser.cdpEndpoint.flatMap(URL.init(string:)), let pid = browser.pid, let target = browser.targetId {
@@ -898,13 +898,13 @@ struct DeviceTile: View {
         .frame(width: screenWidth(1))
         .padding(screenPadding)
       } else {
-        placeholder(device.state)
+        placeholder(device.state, loading: device.state == "Booting")
       }
     }
   }
 
-  private func placeholder(_ text: String) -> some View {
-    ScreenMessage(text: text)
+  private func placeholder(_ text: String, loading: Bool = false) -> some View {
+    ScreenMessage(text: text, loading: loading, platform: device.platform)
   }
 }
 
@@ -1011,7 +1011,7 @@ private struct EmulatorScreen: View {
     )
     .overlay {
       switch status {
-      case .connecting: ScreenMessage(text: "Connecting to the emulator")
+      case .connecting: ScreenMessage(text: "Connecting to the emulator", loading: true, platform: "android")
       case .noEndpoint: ScreenMessage(text: "This emulator has no gRPC endpoint. Frames appear after Stim next boots it.")
       case .streaming: EmptyView()
       }
@@ -1035,7 +1035,7 @@ private struct WebScreen: View {
     )
     .overlay {
       switch status {
-      case .connecting: ScreenMessage(text: "Connecting to Chrome")
+      case .connecting: ScreenMessage(text: "Connecting to Chrome", loading: true, platform: "web")
       case .refused(let reason): ScreenMessage(text: reason)
       case .streaming: EmptyView()
       }
@@ -1085,14 +1085,28 @@ private struct BuildCover: View {
 
 private struct ScreenMessage: View {
   var text: String
+  var loading = false
+  var platform = ""
 
   var body: some View {
-    Text(text)
-      .font(.stim(.callout))
-      .foregroundStyle(Palette.tertiary)
-      .multilineTextAlignment(.center)
-      .padding()
-      .frame(maxWidth: .infinity, maxHeight: .infinity)
+    ViewThatFits(in: .vertical) {
+      if loading { content(showsMotion: true) }
+      content(showsMotion: false)
+    }
+    .padding()
+    .frame(maxWidth: .infinity, maxHeight: .infinity)
+  }
+
+  private func content(showsMotion: Bool) -> some View {
+    VStack(spacing: Space.sm) {
+      if showsMotion {
+        BrandMotion(name: .deviceWait(platform: platform), height: 120, forcedColorScheme: .dark)
+      }
+      Text(text)
+        .font(.stim(.callout))
+        .foregroundStyle(Palette.tertiary)
+        .multilineTextAlignment(.center)
+    }
   }
 }
 

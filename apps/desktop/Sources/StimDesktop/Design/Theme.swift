@@ -140,6 +140,10 @@ enum BrandAssets {
     url(scheme == .dark ? "stim-jar-dark.json" : "stim-jar-light.json", websitePath: "static/img/branding")
   }
 
+  static func motion(_ name: BrandMotionName, _ scheme: ColorScheme) -> URL? {
+    url("\(name.rawValue)-\(scheme == .dark ? "dark" : "light").json", websitePath: "static/img/branding")
+  }
+
   /// The wordmark's path art as a template image, so callers tint it with `Palette.primary`.
   static let wordmark: NSImage? = {
     let art = image("wordmark.svg")
