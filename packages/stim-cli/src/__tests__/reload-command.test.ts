@@ -5,7 +5,7 @@ import { Command } from 'commander';
 import type { ProjectRecord } from '../workspace/config.ts';
 import { registerReload, runReload, type ReloadDeps } from '../commands/reload.ts';
 import type { WorkspaceLaunchRecord } from '../supervisor/state.ts';
-import { readWorkspaceState } from '../workspace/workspace-state.ts';
+import { readWorkspaceState, writeWorkspaceState } from '../workspace/workspace-state.ts';
 
 const iosLaunch: WorkspaceLaunchRecord = {
   appId: 'com.example.ios',
@@ -621,6 +621,47 @@ test('reload turns owned-device inspection failures into actionable errors', asy
     ok: false,
     error: { code: 'STIM_RELOAD_PROBE_FAILED', remedy: expect.any(String) },
   });
+});
+
+test.each(['default', 'tablet'].flatMap((slot) => [false, true].map((launched) => ({ slot, launched }))))(
+  'reload --json reports an unreadable iOS placement in slot $slot with launch $launched',
+  async ({ slot, launched }) => {
+    writeWorkspaceState(
+      '/project',
+      slot === 'default'
+        ? { ios: { host: { machine: 'mini', session: '' } } }
+        : { deviceSlots: { tablet: { ios: { host: { machine: 'mini', session: '' } } } } },
+    );
+    const program = new Command();
+    registerReload(
+      program,
+      reloadDeps({ readLaunches: () => (launched ? { [slot === 'default' ? 'ios' : 'ios:tablet']: iosLaunch } : {}) }),
+    );
+    const lines: string[] = [];
+    const originalLog = console.log;
+    console.log = (line) => lines.push(String(line));
+    try {
+      await program.parseAsync(['node', 'stim', 'reload', 'ios', '--json']);
+    } finally {
+      console.log = originalLog;
+    }
+    expect(process.exitCode).toBe(1);
+    expect(lines).toHaveLength(1);
+    expect(JSON.parse(lines[0]!)).toMatchObject({
+      code: 'STIM_HOSTING_REFUSED',
+      message: expect.stringContaining(slot === 'default' ? 'ios.host.session' : 'deviceSlots.tablet.ios.host.session'),
+      remedy: expect.stringContaining('stim stop'),
+    });
+  },
+);
+
+test('reload ignores an unreadable sibling iOS placement when reloading a live default app', async () => {
+  writeWorkspaceState('/project', { deviceSlots: { tablet: { ios: { host: { machine: 'mini', session: '' } } } } });
+  const result = await runReload({
+    root: '/project',
+    deps: reloadDeps({ readLaunches: () => ({ ios: iosLaunch, 'ios:tablet': iosLaunch }) }),
+  });
+  expect(result).toMatchObject({ ok: true, facts: { platform: 'ios', deviceId: 'U1' } });
 });
 
 test('reload --json prints exactly one parseable facts line', async () => {

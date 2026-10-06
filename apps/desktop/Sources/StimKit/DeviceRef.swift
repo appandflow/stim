@@ -12,7 +12,7 @@ public enum DeviceRef: Hashable, Identifiable, Sendable {
 
   public var id: String {
     switch self {
-    case .ios(_, let d): return "ios:\(d.udid)"
+    case .ios(let slot, let d): return d.udid.isEmpty ? "ios:host:\(slot)" : "ios:\(d.udid)"
     case .android(let slot, let d) where d.physical: return "android:\(slot):physical:\(d.serial ?? d.name)"
     case .android(let slot, let d): return "android:\(slot):\(d.name)"
     case .remote(let d): return "remote:\(d.sessionId)"

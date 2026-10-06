@@ -1,3 +1,4 @@
+import { readHostedIosStatus } from '../device-host/hosted-ios-status.ts';
 import { maintenanceStatus, maintenanceLines } from '../maintenance/status.ts';
 import { triggerMaintenance } from '../maintenance/trigger.ts';
 import { machineNumber } from '../budget.ts';
@@ -68,6 +69,10 @@ import { readIosDevices, type IosDeviceEntry } from '../engine/ios-device.ts';
 import { readEasSessionLedger } from '../engine/eas-session-ledger.ts';
 import { readMetroTunnel, readRemoteSession, readWorkspaceLaunches } from '../supervisor/state.ts';
 import {
+  hostedIosPlacements,
+  hostedIosRecords,
+  parseHostedIosPlacement,
+  unreadableHostedIos,
   macosAppState,
   readMacosRecord,
   readBuildDetail,
@@ -146,6 +151,41 @@ interface StatusOptions {
 
 const WATCH_GIT_MAX_AGE_MS = 60_000;
 
+function iosStatusName(ios: NonNullable<EnvironmentState['ios']>): string {
+  const host = ios.host;
+  return host && !ios.udid
+    ? `${host.device?.name ?? 'iOS simulator'} (${host.device ? `iOS ${host.device.runtime.replace(/^iOS /, '')}` : 'runtime pending'}) on ${host.machine}`
+    : (ios.name ?? ios.udid);
+}
+
+function iosStatusLines(record: EnvironmentState['ios'], slotLabel: string): string[] {
+  const out: string[] = [];
+  const host = record?.udid ? record.host : undefined;
+  const iosDevices: EnvironmentState['ios'][] = [
+    record,
+    ...(host
+      ? [
+          {
+            host,
+            name: host.device?.name ?? null,
+            udid: '',
+            owned: false,
+            state: host.state ?? 'unverified',
+          },
+        ]
+      : []),
+  ];
+  for (const ios of iosDevices) {
+    if (!ios) continue;
+    const booted = ios.state === 'Booted' ? chalk.green('booted') : chalk.dim(ios.state.toLowerCase());
+    const owned = ios.owned ? chalk.dim(' (owned)') : '';
+    out.push(
+      `  ios${slotLabel}: ${chalk.cyan(iosStatusName(ios))} ${booted}${owned}${activitySuffix(ios.activity)}${appSuffix(ios.app)}${idleShutdownSuffix(ios.idleShutdown)}`,
+    );
+  }
+  return out;
+}
+
 function formatGb(mb: number): string {
   return `${(mb / 1024).toFixed(1)} GB`;
 }
@@ -199,6 +239,7 @@ async function readStatusFacts(
 ): Promise<StatusSnapshot> {
   const cfg = loadConfig();
   const projects = Object.entries(cfg?.projects || {});
+  const iosReads = projects.map(([path]) => readHostedIosStatus(hostedIosPlacements(readWorkspaceState(path))));
   const macosReads = projects.map(([path]) => readHostedMacosStatus(readMacosRecord(path)));
   const cwdRoot = findServerWorkspace(process.cwd())?.root ?? null;
   const worktrees = linkedWorktrees([process.cwd(), ...projects.map(([path]) => path)]);
@@ -334,6 +375,27 @@ async function readStatusFacts(
     );
     const state = states[states.length - 1];
     if (state) {
+      for (const [slot, record] of Object.entries(hostedIosRecords(saved))) {
+        if (!parseHostedIosPlacement(record)) state.warnings.push(unreadableHostedIos(slot));
+      }
+      for (const [slot, facts] of Object.entries(await iosReads[i]!)) {
+        const local = slot === 'default' ? state.ios : state.slots?.find((entry) => entry.slot === slot)?.ios;
+        const conflict = local?.udid && (local.state === 'Booted' || local.state === 'unknown');
+        const ios = conflict ? { ...local, host: facts.ios.host } : facts.ios;
+        if (conflict)
+          state.warnings.push(
+            `Slot ${slot} records both a local and hosted iOS simulator (${iosStatusName(facts.ios)}); run stim stop to reconcile them.`,
+          );
+        if (slot === 'default') state.ios = ios;
+        else {
+          state.slots ??= [];
+          const savedSlot = state.slots.find((entry) => entry.slot === slot);
+          if (savedSlot) savedSlot.ios = ios;
+          else state.slots.push({ slot, ios, android: null });
+        }
+        if (facts.warning) state.warnings.push(facts.warning);
+        state.live ||= facts.ios.state === 'ready';
+      }
       const tunnel = readMetroTunnel(path);
       if (state.metro && tunnel?.kind === 'managed' && tunnel.port === state.metro.port && pidExists(tunnel.pid)) {
         state.metro.tunnel = { provider: tunnel.provider, url: tunnel.url };
@@ -622,14 +684,7 @@ function renderStatus(
     }
     for (const deviceState of [{ slot: 'default', ios: state.ios, android: state.android }, ...(state.slots ?? [])]) {
       const slotLabel = deviceState.slot === 'default' ? '' : ` [${deviceState.slot}]`;
-      if (deviceState.ios) {
-        const booted =
-          deviceState.ios.state === 'Booted' ? chalk.green('booted') : chalk.dim(deviceState.ios.state.toLowerCase());
-        const owned = deviceState.ios.owned ? chalk.dim(' (owned)') : '';
-        out.push(
-          `  ios${slotLabel}: ${chalk.cyan(deviceState.ios.name ?? deviceState.ios.udid)} ${booted}${owned}${activitySuffix(deviceState.ios.activity)}${appSuffix(deviceState.ios.app)}${idleShutdownSuffix(deviceState.ios.idleShutdown)}`,
-        );
-      }
+      out.push(...iosStatusLines(deviceState.ios, slotLabel));
       if (deviceState.android) {
         const kind = deviceState.android.physical ? chalk.dim('(physical)') : chalk.dim('(emulator)');
         const observed = deviceState.android.state

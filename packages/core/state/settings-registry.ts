@@ -1,4 +1,5 @@
 import { isAbsolute } from 'node:path';
+import { TAILNET_MACHINE_PATTERN } from './tailnet.ts';
 import { HOSTED_AGENT_DRIVERS } from './hosted-macos.ts';
 
 export const ANDROID_COMPILER_CACHE_CHOICES = ['auto', 'ccache', 'cas', 'none'] as const;
@@ -145,7 +146,17 @@ export const SETTINGS: readonly SettingDefinition[] = [
     default: 'Debug',
     description: 'Xcode configuration to build, such as Debug or Release',
   },
-  { key: 'ios.remote', type: REMOTE, scopes: PROJECT, description: 'Default remote backend for iOS' },
+  {
+    key: 'ios.remote',
+    type: {
+      kind: 'string',
+      pattern: TAILNET_MACHINE_PATTERN,
+      patternHelp: 'eas, proxy, auto, or a tailnet machine name',
+    },
+    scopes: PROJECT,
+    description:
+      'Default iOS remote target: eas, proxy, or an approved Mac in hosting.machines; auto is not available yet',
+  },
   {
     key: 'ios.simslimProfile',
     type: RELATIVE_PATH,
@@ -657,8 +668,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
     key: 'offload.machine',
     type: {
       kind: 'string',
-      pattern:
-        '^[A-Za-z0-9][A-Za-z0-9.-]*(?::(?!0+$)(?:[0-5]?[0-9]{1,4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5]))?$',
+      pattern: TAILNET_MACHINE_PATTERN,
       patternHelp: 'auto, local, or a tailnet machine name',
     },
     scopes: MACHINE,

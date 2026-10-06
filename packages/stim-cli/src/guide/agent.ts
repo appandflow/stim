@@ -34,6 +34,14 @@ reach multiple devices. A launch counts a bundle delivery only when it can
 attribute it to its own device; read guide lifecycle options for the rule.
 Use stop --slot <name> for one slot, or plain stop for the whole workspace.
 
+HOSTED IOS
+
+For ios --remote <machine>, read guide lifecycle hosted-ios. Stop before switching
+between a local simulator and a hosting Mac. Hosted Debug requires the local
+Metro supervisor; restart a missing or older one with stim stop; stim start.
+It never falls back here; stop reconciles the recorded host before changing placement.
+Hosted iOS agent control is not available yet; do not use its UDID locally.
+
 When driving a device yourself with agent-device, set AGENT_DEVICE_STATE_DIR
 from agentDevice.stateDir in stim ios|android|macos --json or status --json.
 Its sessions and logs are then cleaned with the workspace. Do not set

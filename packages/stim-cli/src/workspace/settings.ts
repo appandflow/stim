@@ -77,7 +77,7 @@ export function settingShapeErrors(settings: unknown): string[] {
     const value = settingValueAt(settings, setting.key);
     if (value === undefined) continue;
     const expected =
-      setting.type.kind === 'number' && !BOUNDS_CHECKED_WHEN_USED.has(setting.key)
+      setting.key === 'ios.remote' || (setting.type.kind === 'number' && !BOUNDS_CHECKED_WHEN_USED.has(setting.key))
         ? settingValueError(setting, value)
         : acceptsShape(setting, value)
           ? null
@@ -631,8 +631,19 @@ export function cacheProviderSettingError(settings: SettingsObject): string | nu
   return null;
 }
 
-export function remoteIosSetting(settings: SettingsObject): RemoteDeviceBackend | null {
-  return remoteSetting(settings, 'ios');
+export type IosRemoteTarget = { kind: 'backend'; backend: RemoteDeviceBackend } | { kind: 'machine'; machine: string };
+
+export function parseIosRemote(remote: string): IosRemoteTarget {
+  const selected = remote.trim();
+  const reserved = selected.toLowerCase();
+  return (REMOTE_DEVICE_BACKENDS as readonly string[]).includes(reserved)
+    ? { kind: 'backend', backend: reserved as RemoteDeviceBackend }
+    : { kind: 'machine', machine: reserved === 'auto' ? 'auto' : selected };
+}
+
+export function remoteIosSetting(settings: SettingsObject): IosRemoteTarget | null {
+  const ios = settings.ios;
+  return isPlainObject(ios) && typeof ios.remote === 'string' ? parseIosRemote(ios.remote) : null;
 }
 
 export function remoteAndroidSetting(settings: SettingsObject): RemoteDeviceBackend | null {

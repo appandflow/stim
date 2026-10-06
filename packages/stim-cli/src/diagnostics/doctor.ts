@@ -813,6 +813,19 @@ function checkXcodeEnvLineEndings(
   );
 }
 
+function configuredRemoteBackends(
+  projectSettings: Parameters<typeof remoteIosSetting>[0],
+  platform: string | undefined,
+): RemoteDeviceBackend[] {
+  const iosTarget = remoteIosSetting(projectSettings);
+  return [
+    ...new Set([
+      ...(platform !== 'android' ? [iosTarget?.kind === 'backend' ? iosTarget.backend : null] : []),
+      ...(platform !== 'ios' ? [remoteAndroidSetting(projectSettings)] : []),
+    ]),
+  ].filter((backend): backend is RemoteDeviceBackend => backend !== null);
+}
+
 export function runDoctor(
   projectRoot: string,
   {
@@ -949,12 +962,7 @@ export function runDoctor(
           profileError: simslimProfileError,
           onPath: simslimProfile ? (lookupSimSlim ? lookupSimSlim() : simslimIsOnPath()) : false,
         });
-  const remoteBackends = [
-    ...new Set([
-      ...(platform !== 'android' ? [remoteIosSetting(projectSettings)] : []),
-      ...(platform !== 'ios' ? [remoteAndroidSetting(projectSettings)] : []),
-    ]),
-  ].filter((backend): backend is RemoteDeviceBackend => backend !== null);
+  const remoteBackends = configuredRemoteBackends(projectSettings, platform);
   const daemonInEnv = Boolean(
     remoteEnv.AGENT_DEVICE_DAEMON_BASE_URL?.trim() && remoteEnv.AGENT_DEVICE_DAEMON_AUTH_TOKEN?.trim(),
   );

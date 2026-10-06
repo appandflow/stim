@@ -1,4 +1,5 @@
 import * as offloadClient from '../offload/client.ts';
+import * as tailnet from '../offload/tailnet.ts';
 import { requestNativeRunCancel } from '../engine/native-run.ts';
 import { SETTING_SHAPE_REMEDY } from '../workspace/settings.ts';
 import assert from 'node:assert';
@@ -25,7 +26,10 @@ import { join } from 'node:path';
 import { Command } from 'commander';
 import { collectorProcessTitle } from '../collector/ownership.ts';
 import { getProject, upsertProject, writeConfigSetting } from '../workspace/config.ts';
-import { buildMachinesFile, readLastBuilds } from '@stim-cli/core/state';
+import { prepareHostedIos } from '../device-host/hosted-ios.ts';
+import { writeHostedIos } from '../device-host/ios-state.ts';
+import type { HostedIosPlacement } from '@stim-cli/core/state';
+import { buildMachinesFile, deviceHostMachinesFile, readLastBuilds } from '@stim-cli/core/state';
 import { parseNdjsonText } from '../ndjson.ts';
 import { IOS_DEV_MENU_OFF_DEFAULTS_PLIST } from '../engine/app-install.ts';
 import { workspaceAgentDeviceDir, workspaceDir, workspaceLogsDir, workspaceStateFile } from '../workspace/paths.ts';
@@ -3359,7 +3363,9 @@ describe('--remote', () => {
     expect(parseRemoteOption(['--remote', 'proxy'])).toBe('proxy');
     expect(parseRemoteOption(['--remote', 'eas'])).toBe('eas');
     expect(() => parseRemoteOption(['--remote'])).toThrow(/argument missing/i);
-    expect(() => parseRemoteOption(['--remote', 'cloud'])).toThrow(/proxy.*eas/i);
+    expect(parseRemoteOption(['--remote', 'mini'])).toBe('mini');
+    expect(parseRemoteOption(['--remote', 'auto'])).toBe('auto');
+    expect(() => parseRemoteOption(['--remote', 'bad name'])).toThrow(/hosting Mac name/i);
   });
 
   function remoteStub(createdSessionId: string | null = 'drs_42') {
@@ -3752,7 +3758,7 @@ describe('--remote', () => {
     const { exitCode, stderr } = await run(
       {},
       {
-        resolveSettings: () => ({ ios: { remote: 'yes' } }),
+        resolveSettings: () => ({ ios: { remote: 'bad name' } }),
         resolveRemoteContext: () => {
           asked = true;
           return { failed: 'x', remedy: '' };
@@ -7449,6 +7455,345 @@ describe('--plan', () => {
     const { logs, exitCode } = await run({ plan: true, json: true, deviceType: 'iPhone 1' });
     expect(exitCode).toBe(1);
     expect(parseFirst(logs).code).toBe('STIM_BAD_ARG');
+  });
+});
+
+describe('iOS placement on a hosting Mac', () => {
+  const hostedDevice = {
+    udid: '12345678-1234-1234-1234-123456789abc',
+    name: 'iPhone 17 Pro',
+    runtime: '27.0',
+    deviceType: 'iPhone 17 Pro',
+    deviceTypeId: 'iphone',
+    runtimeId: 'ios27',
+    architecture: 'x86_64' as const,
+  };
+  const placement: HostedIosPlacement = {
+    machine: 'mini',
+    selected: 'mini',
+    session: '23456789-1234-1234-1234-123456789abc',
+    appAttempt: 'attempt',
+    device: hostedDevice,
+    agent: { driver: 'none', setting: 'hosting.agentDriver' },
+  };
+
+  test.each([false, true])('missing hosting approval is a coded command refusal in JSON mode %s', async (json) => {
+    writeConfigSetting({ scope: 'machine' }, 'hosting.machines', ['mini']);
+    writeFileSync(deviceHostMachinesFile(), JSON.stringify({ version: 1, machines: [] }));
+    const result = await run({ remote: 'mini', json }, { prepareHostedIos });
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain('STIM_HOSTING_REFUSED');
+    expect(result.stderr).toContain('stim doctor --fix');
+    expect(result.logs).toHaveLength(json ? 1 : 0);
+    const expected = expect.objectContaining({ code: 'STIM_HOSTING_REFUSED', remedy: 'Run stim doctor --fix.' });
+    expect(result.logs.map((line) => JSON.parse(line))).toEqual(json ? [expected] : []);
+    expect(result.calls.order).not.toContain('buildIos');
+  });
+
+  test.each(['default', 'tablet'])(
+    'a running local simulator in slot %s refuses hosting before connecting',
+    async (slot) => {
+      upsertProject(
+        root,
+        slot === 'default'
+          ? { platforms: { ios: { owned: true, deviceUdid: 'LOCAL' } } }
+          : { deviceSlots: { tablet: { ios: { owned: true, deviceUdid: 'LOCAL' } } } },
+      );
+      const connect = vi.fn<() => never>();
+      const { logs, exitCode } = await run(
+        { remote: 'mini', slot, json: true },
+        { prepareHostedIos: connect, listAllIosSims: () => [{ udid: 'LOCAL', state: 'Booted', name: 'stim-local' }] },
+      );
+      expect(exitCode).toBe(1);
+      expect(logs).toHaveLength(1);
+      expect(parseFirst(logs)).toMatchObject({
+        code: 'STIM_BAD_ARG',
+        message: `This workspace's iOS simulator for slot ${slot} runs on this Mac; run stim stop first.`,
+      });
+      expect(connect).not.toHaveBeenCalled();
+    },
+  );
+
+  test.each(['27.0', 'iOS 27.0'])(
+    'a hosted runtime mismatch labels the recorded runtime %s as iOS',
+    async (runtime) => {
+      writeConfigSetting({ scope: 'machine' }, 'hosting.machines', ['mini']);
+      writeFileSync(
+        deviceHostMachinesFile(),
+        JSON.stringify({
+          version: 1,
+          machines: [
+            {
+              machine: 'mini',
+              nodeId: 'nMini',
+              dnsName: 'mini.tail.ts.net',
+              deviceId: 'client',
+              deviceToken: 'fixture-token',
+              state: 'approved',
+              requestedAt: '2026-10-05T12:00:00Z',
+            },
+          ],
+        }),
+      );
+      writeHostedIos(root, 'default', { ...placement, device: { ...hostedDevice, runtime } });
+      const endpoint = vi.spyOn(tailnet, 'pinnedEndpoint').mockReturnValue({
+        url: 'ws://127.0.0.1:1',
+        host: 'mini',
+        servername: 'mini',
+      });
+      const connection = Object.create(offloadClient.BuildConnection.prototype) as offloadClient.BuildConnection;
+      connection.close = () => {};
+      connection.request = async () => ({
+        result: {
+          id: placement.session,
+          platform: 'ios',
+          state: 'ready',
+          device: { ...hostedDevice, runtime },
+        },
+      });
+      const open = vi.spyOn(offloadClient.BuildConnection, 'open').mockResolvedValue(connection);
+      try {
+        const { logs, exitCode, calls } = await run(
+          { remote: 'mini', runtime: '26.5', json: true },
+          { prepareHostedIos },
+        );
+        expect(exitCode).toBe(1);
+        expect(logs).toHaveLength(1);
+        expect(parseFirst(logs)).toMatchObject({
+          code: 'STIM_HOSTING_REFUSED',
+          message: expect.stringContaining('iPhone 17 Pro (iOS 27.0); run stim stop first'),
+        });
+        expect(calls.order).not.toContain('buildIos');
+      } finally {
+        open.mockRestore();
+        endpoint.mockRestore();
+      }
+    },
+  );
+
+  test('a shut-down local simulator permits hosted placement after stop', async () => {
+    upsertProject(root, { platforms: { ios: { owned: true, deviceUdid: 'LOCAL' } } });
+    const connect = vi.fn<NonNullable<IosDeps['prepareHostedIos']>>(async () => {
+      throw Object.assign(new Error('fixture host offer declined'), { code: 'STIM_HOSTING_REFUSED' });
+    });
+    const { logs } = await run(
+      { remote: 'mini', json: true },
+      { prepareHostedIos: connect, listAllIosSims: () => [{ udid: 'LOCAL', state: 'Shutdown', name: 'stim-local' }] },
+    );
+    expect(connect).toHaveBeenCalled();
+    expect(parseFirst(logs).code).toBe('STIM_HOSTING_REFUSED');
+  });
+
+  test('an unreadable sibling hosting slot does not block a local default-slot run', async () => {
+    reserve();
+    writeWorkspaceState(root, { deviceSlots: { tablet: { ios: { host: { machine: 'mini', session: '' } } } } });
+    const { logs, exitCode, calls } = await run({ json: true });
+    expect(exitCode).toBe(null);
+    expect(logs).toHaveLength(1);
+    expect(parseFirst(logs)).toMatchObject({ launched: true });
+    expect(calls.order).toContain('buildIos');
+  });
+
+  test('an unreadable hosting record refuses only its own slot with a recovery remedy', async () => {
+    writeWorkspaceState(root, { deviceSlots: { tablet: { ios: { host: { machine: 'mini', session: '' } } } } });
+    const { logs, exitCode, calls } = await run({ slot: 'tablet', json: true });
+    expect(exitCode).toBe(1);
+    expect(logs).toHaveLength(1);
+    expect(parseFirst(logs)).toMatchObject({
+      code: 'STIM_HOSTING_REFUSED',
+      message: expect.stringContaining('deviceSlots.tablet.ios.host.session'),
+      remedy: expect.stringContaining('stim stop --slot tablet'),
+    });
+    expect(calls.order).not.toContain('buildIos');
+  });
+
+  test('--no-metro-check refuses hosted Debug before connecting', async () => {
+    const connect = vi.fn<() => never>();
+    const { logs } = await run({ remote: 'mini', metroCheck: false, json: true }, { prepareHostedIos: connect });
+    expect(parseFirst(logs)).toMatchObject({
+      code: 'STIM_BAD_ARG',
+      message: expect.stringContaining('--no-metro-check'),
+    });
+    expect(connect).not.toHaveBeenCalled();
+  });
+
+  test.each([{ remote: 'auto' }, { device: true, remote: 'mini' }, { remote: 'mini', simulatorApp: 'xcode' }])(
+    'refuses unsupported target flags before host access or local creation: %j',
+    async (opts) => {
+      const connect = vi.fn<() => never>(() => {
+        throw new Error('unexpected connection');
+      });
+      const { logs, calls, exitCode } = await run({ ...opts, json: true }, { prepareHostedIos: connect });
+      expect(exitCode).toBe(1);
+      expect(parseFirst(logs).code).toBe('STIM_BAD_ARG');
+      expect(connect).not.toHaveBeenCalled();
+      expect(calls.order).not.toContain('ensureOwnedDevice');
+    },
+  );
+
+  test.each([undefined, 'other', 'proxy'])('a recorded host refuses switching to %s until stop', async (remote) => {
+    writeHostedIos(root, 'default', placement);
+    const { logs, calls } = await run({ remote, json: true });
+    expect(parseFirst(logs)).toMatchObject({
+      code: 'STIM_BAD_ARG',
+      message: expect.stringContaining('runs on mini; run stim stop first'),
+    });
+    expect(calls.order).not.toContain('ensureOwnedDevice');
+    expect(calls.order).not.toContain('buildIos');
+  });
+
+  test.each(['Debug', 'Release'])(
+    'builds %s for the offered architecture before reservation and never touches a local device',
+    async (configuration) => {
+      reserve();
+      const order: string[] = [];
+      const close = vi.fn<() => void>();
+      const prepare: LooseDeps['prepareHostedIos'] = async () => {
+        order.push('offer');
+        return { host: { machine: 'mini', connection: { close } }, choice: hostedDevice, session: null };
+      };
+      const { logs, calls, exitCode } = await run(
+        { remote: 'mini', configuration, deviceType: 'iPhone 17 Pro', runtime: 'iOS 27.0', json: true },
+        {
+          prepareHostedIos: prepare,
+          checkDeviceCapacity: () => {
+            throw new Error('local quota applied to hosted device');
+          },
+          budgetGate: () => {
+            throw new Error('local device budget applied to hosted device');
+          },
+          hostSimulatorArch: () => 'arm64',
+          buildIos: async (args) => {
+            order.push('build');
+            expect(args.destination).toBe('generic/platform=iOS Simulator');
+            expect(args.arch).toBe('x86_64');
+            return makeIosBuildSuccess({ appPath: join(root, 'Fixture.app'), bundleId: 'com.example.app' });
+          },
+          placeHostedIos: async (_target, args) => {
+            order.push('reserve');
+            expect(args.selectors).toEqual({ deviceType: 'iPhone 17 Pro', runtime: 'iOS 27.0' });
+            args.reserved(placement);
+            return { placement, launched: args.release ? true : 'unverified' };
+          },
+        },
+      );
+      expect(exitCode).toBe(null);
+      expect(order).toEqual(['offer', 'build', 'reserve']);
+      const facts = parseFirst(logs);
+      expect(logs).toHaveLength(1);
+      expect(facts.udid).toBe('');
+      expect(facts.host).toMatchObject({
+        machine: 'mini',
+        device: { name: 'iPhone 17 Pro', runtime: '27.0' },
+        agent: { driver: 'none' },
+      });
+      expect(facts.cacheKey).toContain('x86-64');
+      expect(JSON.stringify(facts).includes(hostedDevice.udid)).toBe(false);
+      for (const native of ['ensureOwnedDevice', 'ensureBooted', 'installIosApp', 'launchIosApp', 'replaceCollector'])
+        expect(calls.order).not.toContain(native);
+      expect(getProject(root)?.platforms?.ios).toBeUndefined();
+      expect(close).toHaveBeenCalledOnce();
+    },
+  );
+
+  test('a missing watcher preserves the restart remedy without claiming a simulator was reserved', async () => {
+    reserve();
+    const { logs } = await run(
+      { remote: 'mini', json: true },
+      {
+        prepareHostedIos: async () => ({
+          host: { machine: 'mini', connection: { close() {} } },
+          choice: hostedDevice,
+          session: null,
+        }),
+        placeHostedIos: async () => {
+          throw Object.assign(new Error('missing private gateway support'), {
+            code: 'STIM_HOSTING_REFUSED',
+            remedy: 'Run stim stop; stim start, then retry.',
+          });
+        },
+      },
+    );
+    expect(parseFirst(logs)).toMatchObject({
+      code: 'STIM_HOSTING_REFUSED',
+      remedy: 'Run stim stop; stim start, then retry.',
+    });
+    expect(readWorkspaceState(root)?.ios).toBeUndefined();
+  });
+
+  test('hosted plain output labels a bare runtime as iOS version', async () => {
+    reserve();
+    const { logs, stderr } = await run(
+      { remote: 'mini', configuration: 'Release' },
+      {
+        prepareHostedIos: async () => ({
+          host: { machine: 'mini', connection: { close() {} } },
+          choice: hostedDevice,
+          session: null,
+        }),
+        placeHostedIos: async (_target, args) => {
+          args.reserved(placement);
+          return { placement, launched: true };
+        },
+      },
+    );
+    expect(logs.join('\n') + stderr).toContain('(iOS 27.0) on mini');
+    expect(logs.join('\n') + stderr).not.toContain('(iOS iOS');
+  });
+
+  test('hosted intent starts Metro locally even when tunnel settings are configured', async () => {
+    reserve();
+    const start = vi.fn<NonNullable<IosDeps['startDevServer']>>(async () => devServerStarted());
+    const { logs, exitCode, stderr } = await run(
+      { remote: 'mini', json: true },
+      {
+        resolveSettings: () => ({
+          ios: { remote: 'proxy' },
+          android: { remote: 'eas' },
+          metro: { tunnel: 'ngrok', publicUrl: 'https://fixture.invalid' },
+        }),
+        resolveProjectMetro: async () => ({ metro: null }),
+        startDevServer: start,
+        prepareHostedIos: async () => ({
+          host: { machine: 'mini', connection: { close() {} } },
+          choice: hostedDevice,
+          session: null,
+        }),
+        placeHostedIos: async (_target, args) => {
+          args.reserved(placement);
+          return { placement, launched: 'unverified' };
+        },
+      },
+    );
+    expect(exitCode).toBe(null);
+    expect(logs).toHaveLength(1);
+    expect(start.mock.calls[0]?.[0].remote).toBe(false);
+    expect(start.mock.calls[0]?.[0].settings).toMatchObject({
+      ios: { remote: undefined },
+      android: { remote: undefined },
+    });
+    expect(stderr).toContain('metro.publicUrl and metro.tunnel are ignored');
+  });
+
+  test('a hosted named slot records a separate launch target for reload', async () => {
+    reserve();
+    const { exitCode } = await run(
+      { remote: 'mini', slot: 'tablet', json: true },
+      {
+        prepareHostedIos: async () => ({
+          host: { machine: 'mini', connection: { close() {} } },
+          choice: hostedDevice,
+          session: null,
+        }),
+        placeHostedIos: async (_target, args) => {
+          args.reserved(placement);
+          return { placement, launched: 'unverified' };
+        },
+      },
+    );
+    expect(exitCode).toBe(null);
+    expect(readWorkspaceState(root)?.launches).toMatchObject({ 'ios:tablet': { deviceId: placement.session } });
+    expect(readWorkspaceState(root)?.launches?.ios).toBeUndefined();
   });
 });
 

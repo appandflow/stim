@@ -1,3 +1,5 @@
+import { prepareHostedIos, placeHostedIos } from '../../device-host/hosted-ios.ts';
+import { readHostedIos, writeHostedIos } from '../../device-host/ios-state.ts';
 import { loadCacheProvider } from '@stim-cli/cache';
 import { resolveEasDevelopmentBuild } from '../../engine/eas-build.ts';
 import { fingerprintProject, resolveBuild, storeBuild, untrackedNativeFiles } from '../../cache/build-cache.ts';
@@ -11,7 +13,7 @@ import { checkDeviceCapacity } from '../../engine/device-capacity.ts';
 import { budgetGate } from '../../budget.ts';
 import { clearIosAdoptionPending } from '../../engine/device-ios.ts';
 import { ensureBooted, ensureOwnedDevice } from '../../engine/device.ts';
-import { clearIosAppData, listIosRuntimes } from '../../devices/ios.ts';
+import { clearIosAppData, listIosRuntimes, listAllIosSims } from '../../devices/ios.ts';
 import {
   ensureRemoteBootOwned,
   ensureMetroReachable,
@@ -70,6 +72,10 @@ import { devClientScheme, devClientTakesDevMenuParams } from '../dev-client.ts';
 import { stopPreviousCollector, replaceCollector } from './collector.ts';
 
 export interface IosDeps {
+  prepareHostedIos: typeof prepareHostedIos;
+  placeHostedIos: typeof placeHostedIos;
+  readHostedIos: typeof readHostedIos;
+  writeHostedIos: typeof writeHostedIos;
   resolveEasDevelopmentBuild: typeof resolveEasDevelopmentBuild;
   resolveRemoteContext: typeof resolveRemoteContext;
   ensureMetroReachable: typeof ensureMetroReachable;
@@ -96,6 +102,7 @@ export interface IosDeps {
   budgetGate: typeof budgetGate;
   ensureOwnedDevice: typeof ensureOwnedDevice;
   listIosRuntimes: typeof listIosRuntimes;
+  listAllIosSims: typeof listAllIosSims;
   ensureBooted: typeof ensureBooted;
   resolveProjectMetro: typeof resolveProjectMetro;
   startDevServer: typeof startDevServer;
@@ -161,6 +168,10 @@ export interface IosDeps {
 }
 
 export const DEFAULT_DEPS: IosDeps = {
+  prepareHostedIos,
+  placeHostedIos,
+  readHostedIos,
+  writeHostedIos,
   resolveEasDevelopmentBuild,
   findProjectRoot,
   resolveSettings,
@@ -179,6 +190,7 @@ export const DEFAULT_DEPS: IosDeps = {
   budgetGate,
   ensureOwnedDevice,
   listIosRuntimes,
+  listAllIosSims,
   ensureBooted,
   resolveRemoteContext,
   remoteIosDeps,

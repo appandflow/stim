@@ -599,13 +599,81 @@ the same cleanup and retries. Simulators use the Mac's disk, so iOS has no such
 check. AVDs created before Stim recorded their creation configuration are
 deleted when removed.
 
+## Run iOS on another Mac
+
+If Stim is not installed globally, replace `stim` with `npx stim`.
+Use the [hosting approval setup](#paired-mac-hosting-approval), then name the Mac:
+
+<StimTabs code={`stim ios --remote janics-mac-mini --device-type "iPhone 17 Pro" --runtime "iOS 27.0"
+stim status
+stim reload ios
+stim stop`} />
+
+Set `ios.remote` to that name for a workspace default. `eas` and `proxy` keep
+those backend meanings. No flag or setting runs here. `auto` refuses with
+`STIM_BAD_ARG` until automatic placement ships; Android on a paired Mac is not
+available yet. `--device` and `--simulator-app` cannot target a hosting Mac.
+The host boots headless; this Mac's viewer setting is ignored.
+
+`--slot`, `--scheme`, `--configuration` and `--eas-profile` work as usual.
+Model and runtime selectors use the host's installed choices. The build targets
+its simulator architecture. `--build-machine` independently selects a compatible
+Debug build worker. A named host never falls back: `STIM_HOSTING_REFUSED` names
+unreachable, declined or uncertain placement and its reason.
+
+Metro stays on this Mac. Its supervisor runs a private tailnet gateway to the
+host's loopback bridge; no `stim start --remote` is needed. `metro.tunnel` and
+`metro.publicUrl` are ignored, and non-Debug runs skip Metro. Hosted Debug runs
+require a running supervisor with private gateway support before reserving a
+simulator; `--no-metro-check` refuses with `STIM_BAD_ARG`. If Metro is missing or
+uses an older supervisor, run `stim stop; stim start`, then retry. Fast Refresh and
+`stim reload ios` use this workspace's Metro. `launched` stays `unverified`
+until bundle evidence, or positive native process evidence for a release run.
+
+Reruns reattach to the recorded session and upload a new app attempt. A stopped
+or missing session is replaced. An unreachable or unknown session refuses
+replacement. Switching between this Mac and a hosting Mac, or to a different
+hosting Mac, requires `stim stop` first for that slot.
+`status --json` adds `ios.host` with `machine`, `session`, `selected`, the device's
+`name` and `runtime`, `agent`, and the probed `state`. A shutdown local simulator
+is replaced in status without a warning. A booted or unknown local simulator
+stays visible alongside `ios.host` with a warning; plain status shows both. The
+default slot appears only in `ios`, never in `slots[]`. The host UDID and private gateway never appear
+in local device fields. Stop and worktree removal wait for the host, delete only
+its owned simulator without parking, then clear placement. `stop --json` reports
+each hosted slot under `outcomes.device["ios:host:<slot>"]`, alongside local
+outcomes; one failure does not hide siblings that stopped. An unreachable host
+keeps the placement and fails cleanup; rerun `stim stop` when it answers. Missing
+or unapproved local credentials require `stim doctor` to restore access first.
+Unreadable machine or session state stays recorded: status warns, and stop names
+the workspace-state key to inspect. Only that slot's iOS run refuses; restore
+its recorded machine and session from the host, then run `stim stop` for that
+slot. Reload reports the failure and remedy in JSON when no other app can
+reload, and logs remain readable. A hello refusal after this Mac loses hosting
+access clears its placement during stop or worktree removal; other refusals
+retain it.
+A host server restart stops its sessions.
+
+Native logs, client viewing relays, agent leases, app handoff and upload
+deduplication are later work. JavaScript logs already reach Metro. The agent
+reports `driver: 'none'`. `devices.idleShutdownMinutes` does not stop hosted
+simulators in this phase; their recorded sessions prevent Metro idle stop.
+
+Copy this prompt into your coding agent:
+
+```text
+Run this workspace's iOS app on janics-mac-mini with stim ios --remote janics-mac-mini.
+Use the host's offered simulator architecture, keep Metro here, report launch evidence
+and status, and run stim stop when finished. If the host refuses, report its reason.
+```
+
 ## Paired Mac hosting approval
 
 Device-host approval is separate from build offloading and phone control. On the
 client Mac, set `hosting.machines` to the expected tailnet names, then run
 `stim doctor --fix` in an app directory to request approval. Doctor stores a
 separate private, node-pinned credential and reports its state under
-`deviceHosts` in JSON. This setup does not yet place CLI sessions remotely.
+`deviceHosts` in JSON. iOS and macOS can run on a named approved Mac.
 See [machine settings](/docs/settings#machine-settings).
 Stim Desktop can show and approve an expected `device-host` request from
 another Mac on your tailnet. The server command is
@@ -623,7 +691,7 @@ volume. An unavailable or unknown choice carries a decline reason. This query
 creates no device or session. Offers are advisory snapshots; reserve still
 admits atomically and rechecks native conditions. Ordinary local device
 producers do not participate in hosted capacity, and Android AVD storage can
-be on a different volume. CLI host placement remains a follow-up in #2266.
+be on a different volume. Named iOS placement uses these offers before building or reserving.
 
 An approved client can reserve, boot, reconnect to and stop its own iOS simulator
 through the [hosted session protocol](https://github.com/appandflow/stim/blob/main/packages/server/README.md#hosted-ios-session-protocol).
@@ -672,7 +740,7 @@ identity's preferences domain and plist, the private app home and delivered byte
 keeping logs and receipts. Unresolved sessions retain their app slots.
 Until a driver runs, the host reports `agent: { driver: 'none' }` for installed macOS apps, and `stim doctor` on the host names `hosting.agentDriver`.
 macOS hosting supports viewing and control of the running app on the host. Metro
-is refused; CLI placement and client view/control relays remain pending.
+is refused; see [macOS placement](./macos.md#run-it-on-another-mac).
 See the [macOS session protocol](https://github.com/appandflow/stim/blob/main/packages/server/README.md#hosted-macos-app-sessions).
 
 Development launches remain `unverified` until a Metro bridge proves a bundle

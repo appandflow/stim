@@ -37,6 +37,7 @@ interface RunLeaseFacts {
 }
 
 export interface IosFacts {
+  host?: import('@stim-cli/core/state').HostedIosStatus;
   slot?: string;
   platform: string;
   udid: string;

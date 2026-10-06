@@ -15,6 +15,12 @@ import Testing
     #expect(workspace.devices.map(\.isRunning) == [false, true, true, true])
   }
 
+  @Test func hostedIosSlotsWithoutUdidsHaveDistinctDeviceIds() {
+    let hosted = IosDevice(name: "iPhone 17 Pro", udid: "", owned: false, state: "ready")
+    let devices: [DeviceRef] = [.ios(slot: "default", hosted), .ios(slot: "tablet", hosted)]
+    #expect(Set(devices.map(\.id)).count == devices.count)
+  }
+
   @Test func namesDefaultSlotsAfterTheirDeviceAndNamedSlotsAfterTheSlot() {
     #expect(workspace.devices.map(\.label) == ["iPhone 18 Pro", "Pixel Fold", "ipad", "EAS iOS"])
     #expect(workspace.devices.map(\.detail) == ["iOS 27.0", "stim-wide-insets-mobile", "iPad Pro 11-inch (M5) 27.0", nil])

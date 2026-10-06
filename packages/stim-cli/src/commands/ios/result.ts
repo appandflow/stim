@@ -214,6 +214,7 @@ export async function finishIosUpload(
 }
 
 export interface ReportIosResultArgs {
+  host?: import('@stim-cli/core/state').HostedIosStatus;
   slot?: string;
   root: string;
   json: boolean;
@@ -254,6 +255,7 @@ export interface ReportIosResultArgs {
 }
 
 export function reportIosResult({
+  host,
   slot,
   root,
   json,
@@ -346,11 +348,12 @@ export function reportIosResult({
     offloadedTo,
     offloadFallback,
   });
+  if (host) facts.host = host;
   if (json) {
     console.log(JSON.stringify({ ...facts, ...(links ? { links } : {}), ...(reclaimed.length ? { reclaimed } : {}) }));
   } else {
     const summary =
-      `${launchWarning ? 'WARNING' : 'OK'}: ${bundleId} on ${deviceLabel(device, udid)}, ` +
+      `${launchWarning ? 'WARNING' : 'OK'}: ${bundleId} on ${host ? `${device.deviceName} (iOS ${device.runtime?.replace(/^iOS /, '')}) on ${host.machine}` : deviceLabel(device, udid)}, ` +
       (release ? `${configuration} (embedded JS, no Metro)` : `Metro port ${metroPort}`) +
       ` (${cacheDescription(cacheHit, providerName, offloadedTo)}, ${formatDuration(durationMs)})`;
     const outcome = launchWarning
@@ -374,7 +377,12 @@ export function reportIosResult({
     console.log(
       [
         outcome,
-        phaseLine('device', `${deviceName} (${udid})`),
+        phaseLine(
+          'device',
+          host
+            ? `${deviceName} (iOS ${device.runtime?.replace(/^iOS /, '')}) on ${host.machine}`
+            : `${deviceName} (${udid})`,
+        ),
         phaseLine('app', bundleId),
         phaseLine('metro', metroResult),
         phaseLine('cache', cacheResult),

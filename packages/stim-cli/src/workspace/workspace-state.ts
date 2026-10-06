@@ -29,7 +29,7 @@ function replaceWorkspaceState(root: string, state: WorkspaceState): WorkspaceSt
   const file = workspaceStateFile(root);
   mkdirSync(dirname(file), { recursive: true });
   const tmp = `${file}.tmp-${process.pid}`;
-  writeFileSync(tmp, `${JSON.stringify(state, null, 2)}\n`);
+  writeFileSync(tmp, `${JSON.stringify(state, null, 2)}\n`, { mode: 0o600 });
   renameSync(tmp, file);
   return state;
 }

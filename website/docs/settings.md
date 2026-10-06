@@ -99,7 +99,7 @@ Explicit machine project/repository overrides keep their existing precedence.
 | `ios.deviceType`              | iOS Simulator device type                                                                                  |
 | `ios.runtime`                 | iOS Simulator runtime                                                                                      |
 | `ios.configuration`           | Xcode configuration, such as `Debug` or `Release`                                                          |
-| `ios.remote`                  | Default remote backend, `proxy` or `eas`                                                                   |
+| `ios.remote`                  | `proxy`, `eas`, or an approved hosting Mac; `auto` refuses until available                                 |
 | `ios.simslimProfile`          | SimSlim profile for local iOS devices                                                                      |
 | `ios.signingIdentity`         | Keychain identity used to re-seal a device build                                                           |
 | `ios.signingIdentitySha1`     | SHA-1 of that identity, when two share a name                                                              |
@@ -313,8 +313,8 @@ once. Set it with
 the printed id with `stim-server devices grant <id> --device-host`.
 Hosting approval is separate from `offload.machines` and grants no read,
 control or build access. [`stim macos --remote <machine>`](./macos.md#run-it-on-another-mac)
-runs a macOS app on an approved machine; `stim ios` and `stim android` do not yet
-place sessions on these machines. To view or control a hosted macOS app, a person on
+runs a macOS app on an approved machine. [iOS placement](./owned-devices.md#run-ios-on-another-mac) uses
+`stim ios --remote <machine>` or `ios.remote` and the same approval. Android placement is later work. To view or control a hosted macOS app, a person on
 that Mac approves Screen & System Audio Recording and Device Control and Data Access
 (Accessibility on macOS 26 and earlier) for Stim Host, the app
 `stim-server service install` runs the server under.
@@ -409,12 +409,14 @@ counts as saturated: this Mac stops preferring itself, and a build machine
 declines offloaded builds.
 
 `STIM_OFFLOAD_MODE` overrides it for one command in `auto`. Device, Release and
-`--remote` builds, Android builds with the Apple Clang CAS compiler cache, and
-iOS/Android runs with the build cache off, always build here.
+`--remote eas|proxy` builds, Android builds with the Apple Clang CAS compiler cache, and
+iOS/Android runs with the build cache off, always build here. Hosted iOS Debug
+builds can use a separate `--build-machine`, targeting the hosting Mac's
+architecture and runtime.
 
 In `auto`, an offloaded iOS/Android build runs prebuild (and `pod install` for iOS) here, then asks
 every paired machine what it can build. Stim picks one whose Stim build and
-CPU architecture match this Mac exactly, with at least 10 GB free, that does
+CPU architecture matches the target simulator, with at least 10 GB free, that does
 not decline, preferring the one that already holds this repository, then the
 least loaded. When a machine that offered fails the sync or refuses to start
 the build, for example because it got busy meanwhile, Stim tries the next one

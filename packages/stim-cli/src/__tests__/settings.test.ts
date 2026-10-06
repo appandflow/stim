@@ -343,16 +343,18 @@ describe('Android data partition size settings', () => {
 });
 
 describe('remote device settings', () => {
-  test('accepts only the explicit proxy and eas backends', () => {
-    expect(remoteIosSetting({ ios: { remote: 'proxy' } })).toBe('proxy');
-    expect(remoteIosSetting({ ios: { remote: 'eas' } })).toBe('eas');
+  test('distinguishes iOS hosting machines from the proxy and eas backends', () => {
+    expect(remoteIosSetting({ ios: { remote: 'proxy' } })).toEqual({ kind: 'backend', backend: 'proxy' });
+    expect(remoteIosSetting({ ios: { remote: 'eas' } })).toEqual({ kind: 'backend', backend: 'eas' });
+    expect(remoteIosSetting({ ios: { remote: 'mini' } })).toEqual({ kind: 'machine', machine: 'mini' });
+    expect(remoteIosSetting({ ios: { remote: 'auto' } })).toEqual({ kind: 'machine', machine: 'auto' });
     expect(remoteAndroidSetting({ android: { remote: 'proxy' } })).toBe('proxy');
     expect(remoteAndroidSetting({ android: { remote: 'eas' } })).toBe('eas');
   });
 
   test('reports invalid platform values instead of silently disabling remote mode', () => {
     expect(settingShapeErrors({ ios: { remote: true }, android: { remote: 'cloud' } })).toEqual([
-      'Invalid ios.remote setting true. Expected one of: proxy, eas.',
+      'Invalid ios.remote setting true. Expected a string.',
       'Invalid android.remote setting "cloud". Expected one of: proxy, eas.',
     ]);
   });
@@ -406,7 +408,7 @@ const SHAPE_CASES: Record<string, { valid: unknown; invalid: unknown; expected: 
   'ios.deviceType': { valid: 'iPhone 17 Pro', invalid: {}, expected: 'a string' },
   'ios.runtime': { valid: '26.2', invalid: 26.2, expected: 'a string' },
   'ios.configuration': { valid: 'Release', invalid: { name: 'Release' }, expected: 'a string' },
-  'ios.remote': { valid: 'proxy', invalid: 'cloud', expected: 'one of: proxy, eas' },
+  'ios.remote': { valid: 'mini', invalid: true, expected: 'a string' },
   'ios.simslimProfile': { valid: '.simslim/dev.json', invalid: {}, expected: 'a string path' },
   'ios.signingIdentity': { valid: 'Apple Development: Jane', invalid: [], expected: 'a string' },
   'ios.signingIdentitySha1': { valid: 'A'.repeat(40), invalid: 42, expected: 'a string' },

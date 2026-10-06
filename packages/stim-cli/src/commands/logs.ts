@@ -1,3 +1,4 @@
+import { readHostedIos } from '../device-host/ios-state.ts';
 import { parseDeviceSlotOption } from '../devices/device-slots.ts';
 import chalk from 'chalk';
 import type { ChalkInstance } from 'chalk';
@@ -235,6 +236,10 @@ export default function logsCommand(program: Command): void {
 
       requireLogsWorkspace(root, dir);
 
+      if (Object.keys(readHostedIos(root)).length)
+        console.error(
+          'Native logs of a hosted iOS device are not collected yet; JavaScript logs arrive through Metro.',
+        );
       const hosted = readMacosRecord(root)?.host;
       const hostedReachable = hosted ? await syncHostedMacosLogs(root, hosted) : true;
 

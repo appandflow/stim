@@ -1,8 +1,9 @@
+import { parseDeviceWait } from '../../engine/device-lease-run.ts';
 import { join, basename } from 'node:path';
 import chalk from 'chalk';
 import { workspaceLogsDir } from '../../workspace/paths.ts';
 import { shortUdid, phaseLine } from '../../command-output.ts';
-import type { DeviceLike, PodStateLike, PodVerdictLike, FailArgs } from './types.ts';
+import type { IosCommandOptions, DeviceLike, PodStateLike, PodVerdictLike, FailArgs } from './types.ts';
 import type { BuildIosResult } from '../../engine/xcode.ts';
 import type { SettingsObject } from '../../workspace/settings.ts';
 import type { SettingScope } from '@stim-cli/core/state';
@@ -78,7 +79,7 @@ export function resolveRuntime(
 export function resolveSimulatorAppFlag(
   flag: string | undefined,
   physical: boolean,
-  remoteBackend: RemoteDeviceBackend | null,
+  remoteBackend: string | null,
 ): { simulatorApp?: IosSimulatorApp } | { refusal: FailArgs } {
   if (flag === undefined) return {};
   let simulatorApp: IosSimulatorApp;
@@ -109,6 +110,7 @@ export function deviceModelRefusal({
   runtimeOrigin = null,
   physical,
   remoteBackend,
+  hosted = false,
   listRuntimes,
 }: {
   slot?: string;
@@ -120,6 +122,7 @@ export function deviceModelRefusal({
   runtimeOrigin?: SettingScope | null;
   physical: boolean;
   remoteBackend: RemoteDeviceBackend | null;
+  hosted?: boolean;
   listRuntimes: typeof listIosRuntimes;
 }): { code: string; message: string; remedy: string } | null {
   if (slot && slot !== 'default' && remoteBackend)
@@ -155,7 +158,7 @@ export function deviceModelRefusal({
     }
     return null;
   }
-  if (physical) return null;
+  if (physical || hosted) return null;
   if (!deviceType && !runtime) return null;
   let runtimes;
   try {
@@ -260,4 +263,41 @@ export function printDiagnostics(note: (line: string) => void, result: Extract<B
     note(chalk.red(phaseLine('error', 'xcodebuild failed with no recognizable diagnostic; last lines:')));
     for (const line of result.tail.slice(-5)) note(chalk.dim(phaseLine('', line)));
   }
+}
+
+export function resolveIosWait(
+  opts: IosCommandOptions,
+  physical: boolean,
+): { waitSeconds: number; noWait: boolean } | { failure: FailArgs } {
+  const noWait = opts.wait === false;
+  const waitFlagged = opts.wait !== undefined;
+  if (opts.waitConflict) {
+    return {
+      failure: {
+        code: 'STIM_BAD_ARG',
+        message: '--wait and --no-wait ask for opposite things.',
+        remedy: 'Pass `--wait <seconds>` to wait for the lease, or `--no-wait` to install without one.',
+      },
+    };
+  }
+  if (waitFlagged && !physical) {
+    return {
+      failure: {
+        code: 'STIM_BAD_ARG',
+        message: '--wait and --no-wait only apply to a `--device` run.',
+        remedy: 'This workspace owns its simulator, so nothing contends for it. Drop the flag, or pass `--device`.',
+      },
+    };
+  }
+  const waitParsed = parseDeviceWait(noWait ? undefined : opts.wait);
+  if ('error' in waitParsed) {
+    return {
+      failure: {
+        code: 'STIM_BAD_ARG',
+        message: waitParsed.error,
+        remedy: 'Pass a whole number of seconds, e.g. --wait 90. `--wait 0` refuses a leased device at once.',
+      },
+    };
+  }
+  return { waitSeconds: waitParsed.seconds, noWait };
 }

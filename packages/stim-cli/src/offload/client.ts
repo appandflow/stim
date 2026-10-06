@@ -294,7 +294,7 @@ export class BuildConnection {
     token: string,
     timeoutMs: number,
     capability: 'build' | 'device-host' = 'build',
-  ): Promise<BuildConnection | { failure: string; refused: boolean }> {
+  ): Promise<BuildConnection | { failure: string; refused: boolean; code?: string }> {
     return new Promise((resolve) => {
       const options: ClientOptions & ConnectionOptions = {
         handshakeTimeout: timeoutMs,
@@ -302,12 +302,12 @@ export class BuildConnection {
         headers: { Host: target.host },
       };
       const socket = new WebSocket(target.url, options);
-      const fail = (reason: string, refused = false) => {
+      const fail = (reason: string, refused = false, code?: string) => {
         clearTimeout(timer);
         socket.removeAllListeners();
         socket.on('error', () => {});
         socket.terminate();
-        resolve({ failure: reason, refused });
+        resolve({ failure: reason, refused, ...(code ? { code } : {}) });
       };
       const timer = setTimeout(() => fail('no reply in time'), timeoutMs);
       socket.once('error', (error) =>
@@ -337,11 +337,15 @@ export class BuildConnection {
           return fail('the reply was not a hello result');
         }
         if (isJsonObject(reply) && isJsonObject(reply.error)) {
-          return fail(String(reply.error.message), TURNED_AWAY.has(String(reply.error.code)));
+          return fail(String(reply.error.message), TURNED_AWAY.has(String(reply.error.code)), String(reply.error.code));
         }
         const capabilities = isJsonObject(reply) && isJsonObject(reply.result) ? reply.result.capabilities : null;
         if (!Array.isArray(capabilities) || !capabilities.includes(capability)) {
-          return fail(`it has not granted this Mac ${capability === 'build' ? 'build' : 'hosting'} access`, true);
+          return fail(
+            `it has not granted this Mac ${capability === 'build' ? 'build' : 'hosting'} access`,
+            true,
+            'forbidden',
+          );
         }
         resolve(new BuildConnection(socket));
       });

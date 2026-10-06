@@ -815,6 +815,33 @@ test.each([registerIos, registerAndroid, macosCommand])(
   },
 );
 
+test('hosted iOS safety routes and hosting refusal remedy render through the guides', () => {
+  expect(sectionNames('lifecycle')).toContain('hosted-ios');
+  expect(renderTopic('agent')).toContain('guide lifecycle hosted-ios');
+  expect(renderSection('errors', 'STIM_HOSTING_REFUSED')).toContain('stim stop');
+  const hosted = renderSection('lifecycle', 'hosted-ios');
+  expect(hosted).toContain('STIM_HOSTING_REFUSED');
+  expect(hosted).toContain('--no-metro-check refuses with STIM_BAD_ARG');
+  expect(hosted).toContain('stim stop; stim start');
+  expect(hosted).toContain('workspace-state key to inspect');
+  expect(hosted).toContain('outcomes.device["ios:host:<slot>"]');
+});
+
+test('Android machine placement refuses through the argument parser with its documented command error', () => {
+  const program = new Command().exitOverride().configureOutput({ writeErr: () => {} });
+  registerAndroid(program);
+  expect(() => program.commands[0]!.parseOptions(['--remote', 'mini'])).toThrow(
+    expect.objectContaining({
+      code: 'commander.invalidArgument',
+      message: expect.stringContaining('STIM_BAD_ARG'),
+    }),
+  );
+  const commands = readFileSync(new URL('../../../../website/docs/commands.md', import.meta.url), 'utf8');
+  const android = commands.split('## `android`')[1]!.split('\n## ')[0]!;
+  expect(android.match(/`--remote <machine>`[^\n]+/g)).toEqual([expect.stringContaining('`STIM_BAD_ARG`')]);
+  expect(renderSection('lifecycle', 'hosted-ios')).toContain('Android on a paired Mac');
+});
+
 test('the guide names the workspace agent-device state contract without setting a runner-cache override', () => {
   const agent = renderTopic('agent');
   assert(agent);

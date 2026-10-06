@@ -1,3 +1,4 @@
+import type { HostedIosStatus } from './hosted-ios.ts';
 import type { MaintenanceStatus } from './maintenance.ts';
 import type { ArchivedWorkspace, ArchivedUsage } from './archive.ts';
 import type { MacosAppState } from './macos.ts';
@@ -543,6 +544,7 @@ export interface MetroBundleState {
 }
 
 export interface SimulatorState {
+  host?: HostedIosStatus;
   name: string | null;
   udid: string;
   owned: boolean;

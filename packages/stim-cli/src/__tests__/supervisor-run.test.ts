@@ -40,6 +40,8 @@ import {
   writePidFile,
 } from '../supervisor/run.ts';
 
+vi.mock('../supervisor/hosted-metro.ts', () => ({ watchHostedMetro: () => async () => {} }));
+
 let tmpHome: string;
 let root: string;
 

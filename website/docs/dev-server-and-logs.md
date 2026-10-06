@@ -451,3 +451,16 @@ Read stim guide ports. Allocate a web port for this workspace, start the web
 server using that exact port, and verify it is serving this checkout. When
 finished, stop its named port with stim ports stop web.
 ```
+
+## Metro for hosted iOS
+
+`stim ios --remote <machine>` keeps Metro here and needs no `stim start --remote`.
+Hosted Debug runs require a supervisor with private gateway support before
+reserving the simulator. `--no-metro-check` refuses; restart a missing or older
+supervisor with `stim stop; stim start`.
+The supervisor binds a private gateway only to this Mac's own Tailscale address,
+pins the hosting peer and requires a per-session secret. The host's bridge listens
+only on loopback. Gateway data stays in private workspace state; status and logs
+do not print it. `metro.tunnel` and `metro.publicUrl` are ignored. Non-Debug runs
+skip Metro. A recorded hosted session prevents idle stop; stop or a stopped host
+session closes its gateway. See [hosted iOS](./owned-devices.md#run-ios-on-another-mac).

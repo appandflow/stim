@@ -1,3 +1,5 @@
+import { stopHostedIos } from '../device-host/hosted-ios.ts';
+import { hostedIosRecords, parseHostedIosPlacement } from '@stim-cli/core/state';
 import { stopMacosApp } from '../macos/stop.ts';
 import { withWorkspaceProcessLock } from '../engine/workspace-process-lock.ts';
 import {
@@ -303,6 +305,7 @@ export async function runStop(options: StopArgs & { slot?: string }): ReturnType
     clearRegistration: async () => true,
     teardownBrowser: null,
     stopMacos: false,
+    hostedSlot: slot,
     releaseLeases: (projectRoot) => releaseWorkspaceLeases(projectRoot, { slot }),
   });
   result.outcomes.port = {
@@ -336,6 +339,35 @@ async function stopBrowserOnly({
   if (!outcomes.device.web) return { ok: true, outcomes, summary: `Stopped: no owned Chrome was running (${root})` };
   const ok = outcomes.device.web.status === 'shut-down';
   return { ok, outcomes, summary: summarize(root, outcomes, ok) };
+}
+
+async function stopWorkspaceHostedIos(
+  root: string,
+  slot: string | undefined,
+  report: (line: string) => void,
+  failed: () => void,
+): Promise<{ devices: Record<string, DeviceOutcomeEntry>; failed: boolean }> {
+  const devices: Record<string, DeviceOutcomeEntry> = {};
+  let anyFailed = false;
+  for (const [name, record] of Object.entries(hostedIosRecords(readWorkspaceState(root)))) {
+    if (slot !== undefined && name !== slot) continue;
+    const placement = parseHostedIosPlacement(record);
+    const label = placement
+      ? `${placement.device?.name ?? 'iOS simulator'} on ${placement.machine}`
+      : `hosted iOS simulator for slot ${name}`;
+    try {
+      await stopHostedIos(root, name);
+      devices[`ios:host:${name}`] = { status: 'shut-down', label };
+      report(chalk.dim(phaseLine('device', `stopped ${label}`)));
+    } catch (error) {
+      const reason = (error as Error).message;
+      devices[`ios:host:${name}`] = { status: 'failed', label, reason };
+      report(chalk.red(phaseLine('device', reason)));
+      failed();
+      anyFailed = true;
+    }
+  }
+  return { devices, failed: anyFailed };
 }
 
 async function stopWorkspaceMacos(
@@ -373,6 +405,7 @@ async function stopWorkspace({
   teardownAvd = teardownOwnedAvd,
   teardownBrowser = (projectRoot: string) => teardownOwnedBrowser(projectRoot),
   stopMacos,
+  hostedSlot,
   remoteDevice = undefined,
   teardownRemoteSession = defaultTeardownRemoteSession,
   metroTunnel = undefined,
@@ -400,6 +433,7 @@ async function stopWorkspace({
   teardownIos?: (udid: string, opts: { del?: boolean; label?: string; workspace?: string }) => TeardownResult;
   teardownAvd?: (avdName: string, opts: { del?: boolean; workspace?: string }) => TeardownResult;
   stopMacos?: boolean;
+  hostedSlot?: string;
   teardownBrowser?: ((root: string) => Promise<TeardownResult>) | null;
   remoteDevice?: RemoteDeviceRecord | null;
   metroTunnel?: ReturnType<typeof readMetroTunnel> | undefined;
@@ -561,6 +595,10 @@ async function stopWorkspace({
     stopMacos,
   );
 
+  const hosted = await stopWorkspaceHostedIos(root, hostedSlot, report, () => {
+    ok = false;
+  });
+  Object.assign(outcomes.device, hosted.devices);
   const remote = remoteDevice === undefined ? readRemoteSession(root) : remoteDevice;
   const sessionId = typeof remote?.sessionId === 'string' ? remote.sessionId : null;
   if (sessionId) {
@@ -1026,6 +1064,7 @@ function recordedDeviceSlots(root: string): string[] {
     const parsed = parseDeviceSlotKey(key);
     if (parsed) slots.add(parsed.slot);
   }
+  for (const slot of Object.keys(hostedIosRecords(readWorkspaceState(root)))) slots.add(slot);
   return [...slots].toSorted();
 }
 
@@ -1033,6 +1072,8 @@ function workspaceDeviceSlots(root: string): string[] {
   const slots = projectDeviceSlots(getProject(root))
     .filter(({ platforms }) => Object.values(platforms).some(Boolean))
     .map(({ slot }) => slot);
+  for (const slot of Object.keys(hostedIosRecords(readWorkspaceState(root))))
+    if (!slots.includes(slot)) slots.push(slot);
   if (typeof readRemoteSession(root)?.sessionId === 'string' && !slots.includes('default')) slots.push('default');
   return slots;
 }

@@ -1,277 +1,47 @@
-import { createHash, randomUUID } from 'node:crypto';
-import {
-  lstatSync,
-  mkdirSync,
-  readFileSync,
-  readdirSync,
-  readlinkSync,
-  renameSync,
-  rmSync,
-  writeFileSync,
-} from 'node:fs';
+import { randomUUID } from 'node:crypto';
+import { mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
-  HOSTED_APP_CHUNK_BYTES,
-  hostedMacosAppSlot,
   hostedMacosBundleId,
-  isJsonObject,
   parseHostedAgentGrant,
   parseHostedMacosDevice,
   validHostedAppArguments,
-  readDeviceHostMachines,
   type DeviceHostMachineCredential,
   type HostedAgentAccess,
   type HostedMacosPlacement,
 } from '@stim-cli/core/state';
 import { macosDir } from '../macos/state.ts';
-import { BuildConnection, type BuildHandoff } from '../offload/client.ts';
-import { parseMachine, pinnedEndpoint } from '../offload/tailnet.ts';
+import { type BuildHandoff } from '../offload/client.ts';
+import { parseMachine } from '../offload/tailnet.ts';
 import { phaseLine } from '../command-output.ts';
 import { closeAgentConnection } from './agent-connection.ts';
 import { pullHostedMacosLogs } from './hosted-logs.ts';
-import { configuredMachines } from './machines.ts';
+import {
+  sleep,
+  call,
+  connectHost,
+  hostedSession,
+  attach,
+  settle,
+  heldNoLonger,
+  unknownSession,
+  bundleManifest,
+  upload,
+  sha256,
+  POLL_MS,
+  SESSION_TIMEOUT_MS,
+  INSTALL_TIMEOUT_MS,
+  type HostConnection,
+  type HostedSession,
+} from './hosted-client.ts';
+export {
+  connectHost,
+  probeHostedSession as probeHostedMacos,
+  type HostConnection,
+  type HostedSessionProbe as HostedMacosProbe,
+} from './hosted-client.ts';
 
-const CONNECT_TIMEOUT_MS = 10_000;
-const POLL_MS = 500;
-const SESSION_TIMEOUT_MS = 120_000;
-const INSTALL_TIMEOUT_MS = 5 * 60_000;
 const HANDOFF_TIMEOUT_MS = 5 * 60_000;
-
-interface ManifestFile {
-  path: string;
-  kind: 'file' | 'exec' | 'link';
-  size: number;
-  sha256: string;
-}
-
-interface HostedSession {
-  id: string;
-  state: string;
-  device: unknown;
-  appSlot?: number;
-  notice?: string;
-}
-
-export interface HostConnection {
-  machine: string;
-  credential: DeviceHostMachineCredential;
-  connection: BuildConnection;
-}
-
-const sleep = (ms: number) => new Promise((done) => setTimeout(done, ms));
-const sha256 = (content: Buffer) => createHash('sha256').update(content).digest('hex');
-
-function hostingCredential(machine: string): DeviceHostMachineCredential {
-  const configured = configuredMachines();
-  if (configured === null) throw new Error('hosting.machines is invalid. Run stim guide settings and correct it.');
-  if (!configured.includes(machine)) {
-    throw Object.assign(
-      new Error(
-        `${machine} is not in hosting.machines. Add it with stim settings set hosting.machines, then run stim doctor --fix to ask it for hosting access.`,
-      ),
-      { code: 'STIM_BAD_ARG' },
-    );
-  }
-  let credentials: DeviceHostMachineCredential[];
-  try {
-    credentials = readDeviceHostMachines();
-  } catch {
-    throw new Error('The hosting credentials are unreadable. Run stim doctor.');
-  }
-  const credential = credentials.find((each) => each.machine === machine);
-  if (!credential) throw new Error(`This Mac has not asked ${machine} for hosting access. Run stim doctor --fix.`);
-  if (credential.state !== 'approved') {
-    throw new Error(
-      `${machine} has not confirmed hosting access for this Mac. A person on ${machine} approves it with stim-server devices grant ${credential.deviceId} --device-host; then run stim doctor.`,
-    );
-  }
-  return credential;
-}
-
-/** Connects only to the pinned node of an approved hosting machine, and only when it grants `device-host`. */
-export async function connectHost(machine: string, timeoutMs: number = CONNECT_TIMEOUT_MS): Promise<HostConnection> {
-  const credential = hostingCredential(machine);
-  const target = pinnedEndpoint(credential);
-  if (typeof target === 'string') throw new Error(`Stim does not connect to ${machine}: ${target}.`);
-  const opened = await BuildConnection.open(target, credential.deviceToken, timeoutMs, 'device-host');
-  if (!(opened instanceof BuildConnection)) {
-    throw new Error(
-      opened.refused
-        ? `${machine} refused this Mac: ${opened.failure}. Run stim doctor.`
-        : `${machine} is unreachable: ${opened.failure}. Check stim-server and its tailnet serve route on ${machine}.`,
-    );
-  }
-  return { machine, credential, connection: opened };
-}
-
-async function call(
-  host: HostConnection,
-  method: string,
-  params: unknown,
-  timeoutMs?: number,
-): Promise<Record<string, unknown>> {
-  const reply = await host.connection.request(method, params, timeoutMs);
-  if ('error' in reply)
-    throw Object.assign(new Error(`${host.machine} refused ${method}: ${reply.error.message}`), {
-      code: reply.error.code,
-    });
-  if (!isJsonObject(reply.result)) throw new Error(`${host.machine} answered ${method} without a result.`);
-  return reply.result;
-}
-
-function hostedSession(host: HostConnection, value: Record<string, unknown>): HostedSession {
-  if (typeof value.id !== 'string' || typeof value.state !== 'string' || value.platform !== 'macos') {
-    throw new Error(`${host.machine} answered with a session that is not a hosted macOS session.`);
-  }
-  return {
-    id: value.id,
-    state: value.state,
-    device: value.device,
-    ...(hostedMacosAppSlot(value.appSlot) ? { appSlot: value.appSlot } : {}),
-    ...(typeof value.notice === 'string' ? { notice: value.notice } : {}),
-  };
-}
-
-const heldNoLonger = (error: unknown): boolean =>
-  error instanceof Error && 'code' in error && error.code === 'unknown-session';
-
-async function attach(host: HostConnection, session: string, timeoutMs?: number): Promise<HostedSession> {
-  return hostedSession(host, await call(host, 'device-host.attach', { session }, timeoutMs));
-}
-
-export type HostedMacosProbe =
-  | { state: 'ready' }
-  | { state: 'stopped' }
-  | { state: 'unknown'; notice?: string }
-  | { state: 'unreachable'; reason: string };
-
-interface ProbeOptions {
-  timeoutMs?: number;
-  ttlMs?: number;
-}
-
-const probeCache = new Map<string, { expiresAt: number; promise: Promise<HostedMacosProbe> }>();
-
-export function probeHostedMacos(
-  placement: HostedMacosPlacement,
-  { timeoutMs = 3000, ttlMs = 10_000 }: ProbeOptions = {},
-): Promise<HostedMacosProbe> {
-  const key = JSON.stringify([placement.machine, placement.session]);
-  const cached = probeCache.get(key);
-  if (ttlMs > 0 && cached && cached.expiresAt > Date.now()) return cached.promise;
-  const promise = probeSession(placement, timeoutMs);
-  if (ttlMs > 0) {
-    const entry = { expiresAt: Infinity, promise };
-    probeCache.delete(key);
-    probeCache.set(key, entry);
-    if (probeCache.size > 64) probeCache.delete(probeCache.keys().next().value!);
-    void promise.then((result) => {
-      entry.expiresAt = Date.now() + ttlMs;
-      return result;
-    });
-  }
-  return promise;
-}
-
-async function probeSession(placement: HostedMacosPlacement, timeoutMs: number): Promise<HostedMacosProbe> {
-  let host: HostConnection | undefined;
-  try {
-    host = await connectHost(placement.machine, timeoutMs);
-    const session = await attach(host, placement.session, timeoutMs);
-    if (session.state === 'ready' || session.state === 'stopped') return { state: session.state };
-    return {
-      state: 'unknown',
-      notice:
-        session.state === 'unknown'
-          ? session.notice
-          : `The hosted session ${session.id} on ${host.machine} is ${session.state}.${session.notice ? ` ${session.notice}` : ''}`,
-    };
-  } catch (error) {
-    if (heldNoLonger(error)) return { state: 'stopped' };
-    return { state: 'unreachable', reason: error instanceof Error ? error.message : String(error) };
-  } finally {
-    host?.connection.close();
-  }
-}
-
-async function settle(
-  host: HostConnection,
-  session: HostedSession,
-  passing: string[],
-  timeoutMs: number,
-): Promise<HostedSession> {
-  const deadline = Date.now() + timeoutMs;
-  while (passing.includes(session.state)) {
-    if (Date.now() > deadline)
-      throw new Error(`The hosted session ${session.id} on ${host.machine} stayed ${session.state}.`);
-    await sleep(POLL_MS);
-    session = await attach(host, session.id);
-  }
-  return session;
-}
-
-function unknownSession(host: HostConnection, session: HostedSession): Error {
-  return new Error(
-    `The hosted session ${session.id} on ${host.machine} is in an unknown state${session.notice ? `: ${session.notice}` : ''}. Run stim stop to reconcile it.`,
-  );
-}
-
-function bundleManifest(bundle: string): { files: ManifestFile[]; content: Map<string, () => Buffer> } {
-  const files: ManifestFile[] = [];
-  const content = new Map<string, () => Buffer>();
-  const walk = (dir: string, prefix: string) => {
-    for (const name of readdirSync(dir)) {
-      const absolute = join(dir, name);
-      const path = prefix ? `${prefix}/${name}` : name;
-      const stat = lstatSync(absolute);
-      let read: () => Buffer;
-      let kind: ManifestFile['kind'];
-      if (stat.isDirectory()) {
-        walk(absolute, path);
-        continue;
-      } else if (stat.isSymbolicLink()) {
-        read = () => Buffer.from(readlinkSync(absolute));
-        kind = 'link';
-      } else if (stat.isFile()) {
-        read = () => readFileSync(absolute);
-        kind = stat.mode & 0o111 ? 'exec' : 'file';
-      } else continue;
-      const bytes = read();
-      const digest = sha256(bytes);
-      files.push({ path, kind, size: bytes.length, sha256: digest });
-      content.set(digest, read);
-    }
-  };
-  walk(bundle, '');
-  files.sort((a, b) => a.path.localeCompare(b.path));
-  return { files, content };
-}
-
-async function upload(
-  host: HostConnection,
-  ids: { session: string; attempt: string },
-  missing: unknown,
-  content: Map<string, () => Buffer>,
-): Promise<void> {
-  if (!Array.isArray(missing))
-    throw new Error(`${host.machine} answered device-host.app.offer without missing content.`);
-  for (const entry of missing) {
-    const read = isJsonObject(entry) && typeof entry.sha256 === 'string' ? content.get(entry.sha256) : undefined;
-    if (!read || !isJsonObject(entry) || typeof entry.offset !== 'number') {
-      throw new Error(`${host.machine} asked for content this app does not have.`);
-    }
-    const bytes = read();
-    let offset = entry.offset;
-    do {
-      const data = bytes.subarray(offset, offset + HOSTED_APP_CHUNK_BYTES).toString('base64');
-      const next = (await call(host, 'device-host.app.chunk', { ...ids, sha256: entry.sha256, offset, data })).offset;
-      if (typeof next !== 'number' || (next <= offset && next !== bytes.length)) {
-        throw new Error(`${host.machine} did not accept app content at byte ${offset}.`);
-      }
-      offset = next;
-    } while (offset < bytes.length);
-  }
-}
 
 export const agentRemoteConfig = (root: string): string => join(macosDir(root), 'agent-device-remote.json');
 

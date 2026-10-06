@@ -19,8 +19,22 @@ another worktree's bundler.
   --remote          expose Metro for a remote device
 
 Plain \`stim start\` is local and does not create a tunnel. Remote intent
-comes from \`start --remote\`, \`ios.remote\`, or \`android.remote\`. The
+comes from \`start --remote\`, eas/proxy in \`ios.remote\`, or \`android.remote\`. The
 \`metro.tunnel\` setting selects the provider after remote intent exists.
+
+HOSTED IOS METRO
+  ios --remote <machine> keeps Metro local and needs no start --remote.
+  The supervisor watches private gateway requests in workspace state, binds
+  only this Mac's Tailscale address and accepts only the pinned hosting peer
+  with a per-session secret. The host's bridge is loopback-only. Port and secret
+  stay in 0600 workspace state and never appear in status, JSON or logs.
+  metro.tunnel and metro.publicUrl are ignored. Supervisor restart recreates
+  the recorded gateway; stop or a stopped hosted session closes it. A recorded
+  hosted session prevents Metro idle stop. Release runs skip the bridge.
+  Hosted Debug runs require the supervisor's private gateway support before
+  reservation. --no-metro-check refuses; restart a missing or older supervisor
+  with stim stop; stim start.
+  Read guide lifecycle hosted-ios for placement and cleanup.
 
 TAILNET-ONLY METRO
   Install Tailscale and sign in on this machine and the remote device or

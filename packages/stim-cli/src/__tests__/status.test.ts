@@ -1,3 +1,6 @@
+import { isRpcEvent } from '@stim-cli/core/receive-protocol';
+import { writeHostedIos } from '../device-host/ios-state.ts';
+import * as hostedClient from '../device-host/hosted-client.ts';
 import { writeWorkspaceState } from '../workspace/workspace-state.ts';
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'fs';
 import { execFileSync } from 'child_process';
@@ -1121,6 +1124,96 @@ test.each([
     expect(report).toMatchObject({ buildMachine });
     expect(report.builtOn).toBe(builtOn);
     expect(report.errorCode).toBe(errorCode);
+  },
+);
+
+test.each([false, true])(
+  'an unreadable hosting slot warns without breaking other workspaces: JSON %s',
+  async (json) => {
+    const a = join(tmpHome, 'app-a');
+    const b = join(tmpHome, 'app-b');
+    for (const root of [a, b]) {
+      mkdirSync(root);
+      writeFileSync(join(root, 'package.json'), '{}');
+    }
+    saveConfig(
+      makeConfig({
+        projects: { [a]: { platforms: {} }, [b]: { platforms: { ios: { deviceUdid: 'UDID-ABC', owned: true } } } },
+      }),
+    );
+    writeWorkspaceState(a, { deviceSlots: { tablet: { ios: { host: { machine: 'mini', session: '' } } } } });
+    const output = json ? JSON.stringify(await runStatusJson()) : (await runStatus()).join('\n');
+    expect(output).toContain('deviceSlots.tablet.ios.host.session');
+    expect(output).toContain(json ? 'UDID-ABC' : 'stim-projA');
+  },
+);
+
+test.each(['default', 'tablet'].flatMap((slot) => ['Shutdown', 'Booted', 'unknown'].map((state) => ({ slot, state }))))(
+  'status reconciles a $state local simulator with a hosted record in slot $slot',
+  async ({ slot, state }) => {
+    const executor = getExecutor();
+    setExecutor({
+      ...executor,
+      async runFileAsync(file, args = [], opts) {
+        const output = await executor.runFileAsync(file, args, opts);
+        if (!args.join(' ').includes('simctl list devices --json')) return output;
+        if (state === 'unknown') throw new Error('fixture unreadable simulator inventory');
+        return output.replaceAll('Shutdown', state);
+      },
+    });
+    const root = join(tmpHome, 'app');
+    mkdirSync(root);
+    writeFileSync(join(root, 'package.json'), '{}');
+    const local = { owned: true, deviceUdid: 'UDID-ABC' };
+    saveConfig(
+      makeConfig({
+        projects: {
+          [root]:
+            slot === 'default'
+              ? { platforms: { ios: local } }
+              : { platforms: {}, deviceSlots: { tablet: { ios: local } } },
+        },
+      }),
+    );
+    vi.spyOn(hostedClient, 'probeHostedSession').mockResolvedValue({ state: 'ready' });
+    writeHostedIos(root, slot, {
+      machine: 'mini',
+      selected: 'mini',
+      session: '12345678-1234-1234-1234-123456789abc',
+      appAttempt: 'attempt',
+      device: {
+        udid: '23456789-1234-1234-1234-123456789abc',
+        name: 'iPhone 17 Pro',
+        deviceType: 'iPhone 17 Pro',
+        runtime: '27.0',
+        runtimeId: 'ios27',
+        deviceTypeId: 'iphone',
+        architecture: 'arm64',
+      },
+      agent: { driver: 'none', setting: 'hosting.agentDriver' },
+    });
+    const payload = await runStatusJson();
+    expect(isRpcEvent({ event: 'status', subscription: 'fixture', payload })).toBe(true);
+    const environment = payload.environments[0];
+    expect(environment.slots ?? []).not.toEqual(expect.arrayContaining([expect.objectContaining({ slot: 'default' })]));
+    const ios =
+      slot === 'default'
+        ? environment.ios
+        : environment.slots.find((entry: { slot: string }) => entry.slot === slot).ios;
+    expect(ios).toMatchObject({
+      udid: state === 'Shutdown' ? '' : 'UDID-ABC',
+      state: state === 'Shutdown' ? 'ready' : state,
+      host: { machine: 'mini', state: 'ready' },
+    });
+    expect((environment.slots ?? []).filter((entry: { slot: string }) => entry.slot === slot)).toHaveLength(
+      slot === 'default' ? 0 : 1,
+    );
+    expect(environment.warnings.some((warning: string) => warning.includes('both a local and hosted'))).toBe(
+      state !== 'Shutdown',
+    );
+    const plain = (await runStatus()).join('\n');
+    expect(plain).toContain('iOS 27.0');
+    expect(plain.includes(state === 'unknown' ? 'UDID-ABC' : 'stim-projA')).toBe(state !== 'Shutdown');
   },
 );
 

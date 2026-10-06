@@ -51,6 +51,14 @@ test('offload.machine validates placement text and rejects empty or non-string s
     expect(settingValueError(setting, value)).not.toBeNull();
 });
 
+test('ios.remote validates a host name before settings set writes it', () => {
+  const setting = SETTINGS.find((entry) => entry.key === 'ios.remote')!;
+  for (const value of ['eas', 'proxy', 'auto', 'mini', 'mini:7443'])
+    expect(settingValueError(setting, coerceSettingText(setting, value))).toBeNull();
+  for (const value of ['', 'bad name', 'mini:0', 'mini:65536'])
+    expect(settingValueError(setting, value)).not.toBeNull();
+});
+
 test.each([
   ['archive.enabled', true, 'STIM_ARCHIVE_ENABLED', false],
   ['archive.maxAgeDays', 30, 'STIM_ARCHIVE_MAX_AGE_DAYS', undefined],
