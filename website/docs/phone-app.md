@@ -70,7 +70,7 @@ viewing and server-delivered notifications.
 
 1. In Desktop's **Settings > Phones**, choose **Pair a Phone...**.
 2. In the phone app, choose **Pair with your Mac** from the welcome screen,
-   or **Pair** from Machines. Allow the camera and scan the QR code.
+   or **Pair a machine** from Machines. Allow the camera and scan the QR code.
 3. Name the machine and choose **Save** to open the workspace list.
 
 The code pairs one phone and expires after five minutes. It is consumed once;

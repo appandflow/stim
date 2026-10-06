@@ -133,14 +133,32 @@ or approve requests; use Desktop or perform the setup yourself.
 For a new machine with both capabilities selected, Desktop generates this
 command, with the client node id, ticket and expiry filled in:
 
-<StimTabs
-code={`npx --yes --package @stim-cli/server@1.16.0 stim-server setup \\
-  --client <node-id> \\
-  --ticket <43-base64url-characters> \\
-  --expires <ISO-time> \\
-  --build \\
-  --device-host`}
-/>
+<Tabs groupId="stim-invocation" defaultValue="global">
+<TabItem value="global" label="Global">
+
+```bash
+stim-server setup \
+  --client <node-id> \
+  --ticket <43-base64url-characters> \
+  --expires <ISO-time> \
+  --build \
+  --device-host
+```
+
+</TabItem>
+<TabItem value="npx" label="npx">
+
+```bash
+npx --yes --package @stim-cli/server@1.16.0 stim-server setup \
+  --client <node-id> \
+  --ticket <43-base64url-characters> \
+  --expires <ISO-time> \
+  --build \
+  --device-host
+```
+
+</TabItem>
+</Tabs>
 
 Run the actual copied command on the worker. Desktop tickets last 30 minutes;
 setup accepts a future expiry at most two hours away. `--yes` above belongs
