@@ -60,6 +60,7 @@ const NOT_A_REFUSAL_CODE = new Set([
   'STIM_HOME',
   'STIM_ANDROID_CAS_TOOLCHAIN',
   'STIM_BACKGROUND_LAUNCH',
+  'STIM_ACCESS_TICKET',
   ...SETTINGS.flatMap((setting) => (setting.env ? [setting.env] : [])),
 ]);
 
@@ -787,6 +788,20 @@ test('hosting setup routes approval through doctor and a separate person-granted
   expect(settings).toContain('stim-server devices grant <id> --device-host');
   expect(settings).toContain('$STIM_HOME/device-host-machines.json');
   expect(renderSection('facts', 'payloads')).toContain('deviceHosts');
+});
+
+test('access ticket guidance routes agents to settings and reserves setup for a person', () => {
+  const source = readFileSync(new URL('../offload/access-ticket.ts', import.meta.url), 'utf8');
+  const env = /process\.env\.(STIM_[A-Z_]+)/.exec(source)?.[1];
+  assert(env);
+  for (const topic of ['agent', 'settings']) {
+    const body = renderTopic(topic);
+    expect(body).toContain(env);
+    expect(body).toMatch(/Agents never set up/i);
+    expect(body).toContain('stim-server setup');
+    expect(body).toMatch(/never approve|or approve/);
+  }
+  expect(renderTopic('agent')).toContain('stim guide settings');
 });
 
 test('the macos guide covers the declared command flags and project settings', () => {

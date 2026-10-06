@@ -1,18 +1,20 @@
+import { createHash } from 'node:crypto';
 import { mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { deviceHostMachinesFile, readBuildMachines, readDeviceHostMachines } from '@stim-cli/core/state';
 import { inspectDeviceHostMachines } from '../device-host/machines.ts';
-import type { HelloReply, TailnetMachineIo } from '../offload/tailnet.ts';
+import type { Endpoint, HelloReply, TailnetMachineIo } from '../offload/tailnet.ts';
 import { getConfigPath } from '../workspace/config.ts';
 
 let home: string;
 beforeEach(() => {
   home = mkdtempSync(join(tmpdir(), 'stim-host-machines-'));
-  process.env.STIM_HOME = home;
+  vi.stubEnv('STIM_HOME', home);
+  vi.stubEnv('STIM_ACCESS_TICKET', undefined);
 });
 afterEach(() => {
-  delete process.env.STIM_HOME;
+  vi.unstubAllEnvs();
   rmSync(home, { recursive: true, force: true });
 });
 
@@ -31,7 +33,7 @@ const pending: HelloReply = {
   },
 };
 function fakeIo(replies: HelloReply[], nodeId = 'nMini') {
-  const calls: unknown[] = [];
+  const calls: { endpoint: Endpoint; auth: Record<string, string> }[] = [];
   const io: TailnetMachineIo = {
     status: () => status(nodeId),
     hello: (endpoint, auth) => {
@@ -67,6 +69,7 @@ test('plain doctor does not request hosting; fix requests the separate capabilit
 
 test('the changed node receives neither a token nor a replacement access request', async () => {
   await inspectDeviceHostMachines({ fix: true }, fakeIo([pending]).io, ['mini']);
+  vi.stubEnv('STIM_ACCESS_TICKET', 'new-ticket');
   const { io, calls } = fakeIo([], 'nReplacement');
   expect((await inspectDeviceHostMachines({ fix: true }, io, ['mini'])).machines[0]?.state).toBe('node-changed');
   expect(calls).toEqual([]);
@@ -233,3 +236,104 @@ test('granted host permissions produce no doctor note', async () => {
   expect(result.machines[0]?.state).toBe('approved');
   expect(result.findings).toEqual([]);
 });
+
+test.each([undefined, '', '   ', '  desktop-access-ticket  '])(
+  'access requests carry only a non-empty trimmed ticket and persist only its hash: %j',
+  async (value) => {
+    vi.stubEnv('STIM_ACCESS_TICKET', value);
+    const replies: HelloReply[] = [pending];
+    const { io, calls } = fakeIo(replies);
+    const result = await inspectDeviceHostMachines({ fix: true }, io, ['mini']);
+    const ticket = value?.trim();
+    expect(calls).toEqual([
+      expect.objectContaining({
+        auth: {
+          request: 'device-host',
+          deviceName: 'laptop',
+          ...(ticket ? { setupTicket: ticket } : {}),
+        },
+      }),
+    ]);
+    expect(Object.hasOwn(calls[0]!.auth, 'setupTicket')).toBe(!!ticket);
+    const credential = readDeviceHostMachines()[0]!;
+    expect(credential.ticketHash).toBe(ticket ? createHash('sha256').update(ticket).digest('hex') : undefined);
+    expect(Object.hasOwn(credential, 'ticketHash')).toBe(!!ticket);
+    expect(readFileSync(deviceHostMachinesFile(), 'utf8')).not.toContain('desktop-access-ticket');
+    expect(JSON.stringify(result)).not.toContain('desktop-access-ticket');
+  },
+);
+
+test.each([
+  ['missing hash', undefined, 'new-ticket', true, 'pending', false, true],
+  ['different hash', 'old-ticket', 'new-ticket', true, 'pending', false, true],
+  ['matching hash', 'same-ticket', '  same-ticket  ', true, 'pending', false, false],
+  ['no ticket', 'old-ticket', undefined, true, 'pending', false, false],
+  ['blank ticket', 'old-ticket', '   ', true, 'pending', false, false],
+  ['plain doctor', undefined, 'new-ticket', false, 'pending', false, false],
+  ['approved credential', 'old-ticket', 'new-ticket', true, 'approved', true, false],
+  ['approved credential with pending reply', undefined, 'new-ticket', true, 'approved', false, false],
+  ['approval since last request', undefined, 'new-ticket', true, 'pending', true, false],
+] as const)(
+  'ticket replacement respects approval and fix: %s',
+  async (_name, storedTicket, currentTicket, fix, state, approved, retry) => {
+    vi.stubEnv('STIM_ACCESS_TICKET', storedTicket);
+    const replies: HelloReply[] = [pending];
+    await inspectDeviceHostMachines({ fix: true }, fakeIo(replies).io, ['mini']);
+    const saved = readDeviceHostMachines()[0]!;
+    writeFileSync(deviceHostMachinesFile(), JSON.stringify({ version: 1, machines: [{ ...saved, state }] }));
+    vi.stubEnv('STIM_ACCESS_TICKET', currentTicket);
+    replies.push(
+      approved
+        ? { result: { capabilities: ['device-host'], device: { id: 'host12', name: 'laptop' } } }
+        : { error: { code: 'approval-pending', message: 'wait' } },
+      { result: { ...pending.result, deviceToken: 'replacement-token' } },
+    );
+    const { io, calls } = fakeIo(replies);
+    const result = await inspectDeviceHostMachines({ fix }, io, ['mini']);
+    expect(calls).toMatchObject([
+      { auth: { deviceToken: 'hosting-secret' } },
+      ...(retry
+        ? [
+            {
+              auth: { request: 'device-host', deviceName: 'laptop', setupTicket: currentTicket },
+            },
+          ]
+        : []),
+    ]);
+    expect(result.machines[0]?.state).toBe(approved ? 'approved' : 'pending');
+    expect(readFileSync(deviceHostMachinesFile(), 'utf8')).not.toContain('new-ticket');
+    expect(JSON.stringify(result)).not.toContain('new-ticket');
+    expect(readDeviceHostMachines()[0]?.deviceToken).toBe(retry ? 'replacement-token' : 'hosting-secret');
+    expect(readDeviceHostMachines()[0]?.ticketHash).toBe(
+      retry ? createHash('sha256').update(currentTicket!).digest('hex') : saved.ticketHash,
+    );
+  },
+);
+
+test('credential parsing drops a mistyped optional ticket hash without losing the node pin', async () => {
+  const replies: HelloReply[] = [pending];
+  await inspectDeviceHostMachines({ fix: true }, fakeIo(replies).io, ['mini']);
+  const saved = readDeviceHostMachines()[0]!;
+  writeFileSync(deviceHostMachinesFile(), JSON.stringify({ version: 1, machines: [{ ...saved, ticketHash: 42 }] }));
+  expect(readDeviceHostMachines()).toEqual([saved]);
+});
+
+test.each([undefined, null, { name: 'Stim Host', screenRecording: false, accessibility: true }])(
+  'approved doctor machine entries expose host permissions only when reported: %j',
+  async (host) => {
+    const replies: HelloReply[] = [pending];
+    await inspectDeviceHostMachines({ fix: true }, fakeIo(replies).io, ['mini']);
+    replies.push({
+      result: {
+        capabilities: ['device-host'],
+        device: { id: 'host12', name: 'laptop' },
+        ...(host !== undefined ? { host } : {}),
+      },
+    });
+    const result = await inspectDeviceHostMachines({ fix: false }, fakeIo(replies).io, ['mini']);
+    const [entry] = JSON.parse(JSON.stringify(result.machines));
+    expect(entry.state).toBe('approved');
+    expect(entry.host).toEqual(host ?? undefined);
+    expect(Object.hasOwn(entry, 'host')).toBe(!!host);
+  },
+);

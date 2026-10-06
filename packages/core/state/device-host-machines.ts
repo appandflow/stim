@@ -10,6 +10,7 @@ export interface DeviceHostMachineCredential {
   deviceToken: string;
   state: 'pending' | 'approved';
   requestedAt: string;
+  ticketHash?: string;
 }
 
 /** An absent store is empty; unreadable or malformed credentials refuse access without discarding pins. */
@@ -36,7 +37,11 @@ export function readDeviceHostMachines(): DeviceHostMachineCredential[] {
     ) {
       throw new Error('Invalid device-host machine credential store');
     }
-    machines.push(entry as unknown as DeviceHostMachineCredential);
+    const { ticketHash, ...credential } = entry;
+    machines.push({
+      ...credential,
+      ...(typeof ticketHash === 'string' ? { ticketHash } : {}),
+    } as unknown as DeviceHostMachineCredential);
   }
   return machines;
 }
