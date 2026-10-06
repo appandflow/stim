@@ -594,8 +594,8 @@ export function listUserApps(udid: string): string[] {
   }
 }
 
-export function resolveOwnedIosSim(udid: string): ResolvedIosSim {
-  const sim = listAllIosSims().find((s) => s.udid === udid);
+export function resolveOwnedIosSim(udid: string, listed: IosSimRecord[] = listAllIosSims()): ResolvedIosSim {
+  const sim = listed.find((s) => s.udid === udid && s.available);
   if (!sim) return { missing: true };
   if (!isStimOwnedSim(sim)) return { notOwned: sim.name };
   return { sim };
