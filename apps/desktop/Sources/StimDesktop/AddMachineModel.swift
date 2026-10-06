@@ -12,10 +12,21 @@ final class AddMachineModel {
     var readSettings: () async throws -> SettingsPayload
     var writeSetting: (String, String?) async throws -> Void
     var version: () async -> String?
+    var toolsDoctor: ((String, String) async throws -> DoctorReport)? = nil
     var now: () -> Date = Date.init
     var ticket: (Date) -> SetupTicket = { SetupTicket.generate(now: $0) }
   }
 
+  enum Page { case setup, tools, test, summary }
+  var page: Page = .setup
+  var mode: WizardMode = .off
+  private(set) var toolsStatus: BuildMachineStatus?
+  private(set) var androidStatus: BuildMachineStatus?
+  private(set) var checksAndroid = false
+  let sample: SampleBuildModel?
+  var machines: BuildMachinesModel?
+  private(set) var summary: [String] = []
+  private(set) var finished = false
   private(set) var wizard: SetupWizard
   private(set) var peers: [Tailnet.Peer] = []
   private(set) var selfNode: TailnetMac?
@@ -40,7 +51,8 @@ final class AddMachineModel {
   @ObservationIgnored private var stopped = false
   @ObservationIgnored private var checkingJournal = false
 
-  init(checkout: String?, dependencies: Dependencies, wizard: SetupWizard? = nil) {
+  init(checkout: String?, dependencies: Dependencies, wizard: SetupWizard? = nil, sample: SampleBuildModel? = nil) {
+    self.sample = sample
     self.checkout = checkout
     self.dependencies = dependencies
     self.wizard = wizard ?? SetupWizard(hasWorkspace: checkout != nil)
@@ -76,8 +88,12 @@ final class AddMachineModel {
           var output = await server.versionOutput()
           if output == nil { output = await cli.versionOutput() }
           return output?.trimmingCharacters(in: .whitespacesAndNewlines)
+        },
+        toolsDoctor: { cwd, platform in
+          let output = try await WizardToolsDoctor.read(cli: await cli.value, cwd: cwd, platform: platform)
+          return output
         }
-      ))
+      ), sample: SampleBuildModel(cli: cli))
   }
 
   static func fetchJournal(dnsName: String, port: Int, hash: String) async -> SetupPortProbe.Outcome {
@@ -131,12 +147,19 @@ final class AddMachineModel {
           self.draftTicket = self.dependencies.ticket(self.now)
         }
         if !self.busy {
-          if self.wizard.phase == .pick {
+          if self.page == .tools {
+            if self.now.timeIntervalSince(lastDoctorPoll) >= 5 {
+              lastDoctorPoll = self.now
+              await self.refreshTools()
+            }
+          } else if self.page != .setup {
+          } else if self.wizard.phase == .pick {
             if self.now.timeIntervalSince(lastPeerPoll) >= 5 {
               lastPeerPoll = self.now
               await self.refreshPeers()
             }
           } else if self.wizard.ticket != nil, self.wizard.phase != .cancelled {
+            if self.doctorPath != nil { self.wizard.hasWorkspace = true }
             await self.checkJournal()
             if self.now.timeIntervalSince(lastDoctorPoll) >= 5, self.wizard.journal != nil, self.wizard.entriesWritten {
               lastDoctorPoll = self.now
@@ -154,6 +177,7 @@ final class AddMachineModel {
     stopped = true
     polling?.cancel()
     polling = nil
+    Task { await sample?.end() }
   }
 
   func refreshPeers() async {
@@ -203,12 +227,14 @@ final class AddMachineModel {
         hosts: payload.entry("hosting.machines")?.value.strings ?? [],
         mode: payload.entry("offload.mode")?.value.string, modeOrigin: payload.entry("offload.mode")?.origin)
       commandKnown = known
+      sample?.prepare()
       let current = dependencies.now()
       if let draft = draftTicket, current < draft.expiresAt {
         await send(.next(draft))
       } else {
         await send(.next(dependencies.ticket(current)))
       }
+      if wizard.phase == .approved { await openTools() }
     } catch { self.error = error.localizedDescription }
   }
 
@@ -218,6 +244,11 @@ final class AddMachineModel {
   }
 
   func checkAgain() async {
+    if page == .tools {
+      await refreshTools()
+      return
+    }
+    if doctorPath != nil { wizard.hasWorkspace = true }
     if wizard.phase == .cancelled {
       await send(.cancel)
       return
@@ -301,7 +332,7 @@ final class AddMachineModel {
   }
 
   private func runDoctor(ask: Bool, ticket: String? = nil) async throws {
-    guard !isFixture, let checkout else { return }
+    guard !isFixture, let checkout = doctorPath else { return }
     let report = try await dependencies.doctor(checkout, ask, ticket.map { ["STIM_ACCESS_TICKET": $0] } ?? [:])
     await send(.doctorReported(build: match(report.buildMachines), host: match(report.deviceHosts)))
   }
@@ -314,6 +345,10 @@ final class AddMachineModel {
   }
 
   func send(_ event: SetupWizard.Event) async {
+    if case .cancel = event {
+      await sample?.end()
+      page = .setup
+    }
     now = dependencies.now()
     let effects = wizard.apply(event, now: now)
     if !isFixture {
@@ -321,10 +356,91 @@ final class AddMachineModel {
     }
     if error == nil {
       switch event {
-      case .cancel, .done: stop()
+      case .cancel: stop()
       default: break
       }
     }
+  }
+
+  var doctorPath: String? { checkout ?? (sample?.sampleReady == true ? sample?.folder : nil) }
+  var machineEntry: String? {
+    wizard.mac.map { SetupPortProbe.entry(machine: $0.machine, port: wizard.port ?? 7443) }
+  }
+  var tools: [WizardTool] {
+    var rows = toolsReport(journal: wizard.journal, status: toolsStatus, capabilities: wizard.capabilities)
+    if checksAndroid {
+      let androidRows = toolsReport(
+        journal: wizard.journal, status: androidStatus, capabilities: wizard.capabilities, android: true)
+      let codes: Set<String> = ["jdk", "android-sdk", "ndk", "build-tools", "compile-sdk"]
+      rows.removeAll { codes.contains($0.id) }
+      for row in androidRows {
+        if let index = rows.firstIndex(where: { $0.id == row.id }) {
+          if row.state.blocks { rows[index] = row }
+        } else {
+          rows.append(row)
+        }
+      }
+    }
+    return rows
+  }
+  var toolsBlock: Bool { tools.contains { $0.state.blocks } }
+
+  func openTools() async {
+    guard wizard.phase == .approved else { return }
+    page = .tools
+    await refreshTools()
+  }
+  func refreshTools() async {
+    guard !isFixture, let doctor = dependencies.toolsDoctor,
+      let cwd = sample?.sampleReady == true ? sample?.folder : doctorPath
+    else { return }
+    do {
+      toolsStatus = match(try await doctor(cwd, "ios").buildMachines)
+      if checksAndroid { androidStatus = match(try await doctor(cwd, "android").buildMachines) }
+      error = nil
+    } catch { self.error = error.localizedDescription }
+  }
+  func checkAndroid() async {
+    checksAndroid = true
+    await refreshTools()
+  }
+  func openTest() {
+    guard !toolsBlock else { return }
+    page = .test
+    if wizard.capabilities.contains(.build), let entry = machineEntry {
+      sample?.run(entry: entry)
+    }
+  }
+  func openSummary() async {
+    await sample?.end()
+    do {
+      let payload = try await dependencies.readSettings()
+      mode = WizardMode.defaultChoice(
+        passed: sample?.test.passed == true, changedMode: wizard.modeChanged, current: payload.entry("offload.mode")?.value.string
+      )
+      updateSummary(payload)
+      page = .summary
+    } catch { self.error = error.localizedDescription }
+  }
+  private func updateSummary(_ payload: SettingsPayload) {
+    summary = summaryLines(
+      builds: payload.entry("offload.machines")?.value.strings ?? [],
+      hosts: payload.entry("hosting.machines")?.value.strings ?? [], mode: mode)
+  }
+  func finish() async {
+    guard page == .summary, wizard.phase == .approved, !busy else { return }
+    busy = true
+    defer { busy = false }
+    do {
+      let payload = try await dependencies.readSettings()
+      if payload.entry("offload.mode")?.value.string != mode.rawValue {
+        try await dependencies.writeSetting("offload.mode", mode.rawValue)
+      }
+      updateSummary(payload)
+      error = nil
+      finished = true
+      stop()
+    } catch { self.error = error.localizedDescription }
   }
 
   private func perform(_ effects: [SetupWizard.Effect]) async throws {
@@ -373,6 +489,76 @@ final class AddMachineModel {
 
 #if DEBUG
   extension AddMachineModel {
+    func configureLaterFixture(_ fixture: AddMachineFixture) {
+      let times = BuildTimings(offerMs: 1000, syncMs: 3000, workerMs: 161000, fetchMs: 4000, totalMs: 172000)
+      var status = wizard.build!
+      status.offloadable = true
+      toolsStatus = status
+      switch fixture {
+      case .toolsOK: page = .tools
+      case .toolsFixes:
+        page = .tools
+        toolsStatus = try! JSONDecoder().decode(
+          BuildMachineStatus.self,
+          from: Data(
+            """
+            {"machine":"mini","state":"approved","offloadable":false,"problems":[
+            {"code":"xcode","reason":"Xcode 26.0 there, Xcode 27.0 here"},
+            {"code":"bundler","reason":"no Bundler there to run the CocoaPods this project's Gemfile.lock pins"},
+            {"code":"stim-build","reason":"Stim build old there, current here"}]}
+            """.utf8))
+      case .toolsBusy:
+        page = .tools
+        toolsStatus = try! JSONDecoder().decode(
+          BuildMachineStatus.self,
+          from: Data(
+            """
+            {"machine":"mini","state":"approved","offloadable":false,"problems":[{"code":"busy","reason":"Build Mac is taking another build; this does not block Next."}]}
+            """.utf8))
+      case .toolsAndroid:
+        page = .tools
+        checksAndroid = true
+        androidStatus = status
+      default:
+        page = [.summaryAuto, .summaryNever, .summaryUndo].contains(fixture) ? .summary : .test
+        var events: [BuildTest.Event] = [
+          .prepared, .start, .offload(.success), .timings(times), .localStart, .localFinished(passed: true, ms: 250000),
+        ]
+        switch fixture {
+        case .testPreparingSample: events = []
+        case .sampleFailed:
+          events = [
+            .fail(
+              code: "SAMPLE_PREPARE_FAILED", message: "Could not create the sample app: npm could not reach the registry.",
+              remedy: nil)
+          ]
+        case .offloading: events = [.prepared, .start, .progress("Syncing the sample checkout")]
+        case .offloaded: events.removeLast(2)
+        case .localBuilding: events.removeLast()
+        case .testFailed:
+          let refusal = try! JSONDecoder().decode(
+            CommandRefusal.self,
+            from: Data(
+              """
+              {"code":"STIM_OFFLOAD_REFUSED","message":"mini refused this build: no iOS runtime there","remedy":"xcodebuild -downloadPlatform iOS"}
+              """.utf8))
+          events = [.prepared, .start, .offload(.refused(refusal))]
+        case .testSkipped, .summaryNever: events = [.skip]
+        default: break
+        }
+        sample?.fixture(
+          events,
+          lines: fixture == .offloading || fixture == .localBuilding
+            ? [
+              .init(text: "$ stim ios --build-machine mini --json", kind: .command),
+              .init(text: "offer accepted; syncing checkout", kind: .output),
+              .init(text: "built on mini in 2:52: offer 0:01, sync 0:03, build 2:41, fetch 0:04", kind: .ok),
+            ] : [])
+        mode = fixture == .summaryNever ? .off : .auto
+        summary = summaryLines(builds: ["mini"], hosts: ["mini"], mode: mode)
+      }
+    }
+
     func configureFixture(status: Data?, health: [String: Tailnet.Health], selfNode: TailnetMac, ticket: SetupTicket) {
       isFixture = true
       statusJSON = status

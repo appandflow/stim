@@ -9,7 +9,14 @@ struct AddMachineSheet: View {
   @State private var confirmsCancel = false
 
   private var wizard: SetupWizard { model.wizard }
-  private var step: Int { wizard.phase == .pick ? 0 : wizard.phase == .choose ? 1 : 2 }
+  private var step: Int {
+    switch model.page {
+    case .tools: return 3
+    case .test: return 4
+    case .summary: return 5
+    case .setup: return wizard.phase == .pick ? 0 : wizard.phase == .choose ? 1 : 2
+    }
+  }
   private var name: String { wizard.mac?.hostName ?? "the build Mac" }
   private var allApproved: Bool { wizard.capabilities.allSatisfy { !model.known.needsApproval($0) } }
 
@@ -23,12 +30,11 @@ struct AddMachineSheet: View {
             Image(systemName: index < step ? "checkmark.circle.fill" : index == step ? "circle.inset.filled" : "circle")
             Text(title).font(.stim(.callout, weight: index == step ? .semibold : .regular))
           }
-          .foregroundStyle(index > 2 ? Palette.tertiary : index == step ? Palette.accent : Palette.secondary)
+          .foregroundStyle(index == step ? Palette.accent : index > step ? Palette.tertiary : Palette.secondary)
           .frame(height: 30)
           .accessibilityLabel(
             title
-              + (index > 2
-                ? ", unavailable in this release" : index < step ? ", done" : index == step ? ", current step" : ", waiting"))
+              + (index < step ? ", done" : index == step ? ", current step" : ", waiting"))
         }
         Spacer()
       }
@@ -66,7 +72,15 @@ struct AddMachineSheet: View {
 
   private var content: some View {
     VStack(alignment: .leading, spacing: Space.lg) {
-      if step == 0 { pickContent } else if step == 1 { chooseContent } else { runningContent }
+      if step == 0 {
+        pickContent
+      } else if step == 1 {
+        chooseContent
+      } else if step == 2 {
+        runningContent
+      } else {
+        AddMachineSteps(model: model)
+      }
       if let error = model.error {
         Text(error).foregroundStyle(Palette.error).textSelection(.enabled)
       }
@@ -141,7 +155,7 @@ struct AddMachineSheet: View {
       )
       .id(TerminalLine.spokenSummary(previewLines(capabilities: wizard.capabilities, known: model.known, version: model.version)))
       if allApproved {
-        Text("Every chosen capability is already approved. Tools and the test build arrive in the next release.")
+        Text("Every chosen capability is already approved. Next checks the tools and tests a sample build.")
           .foregroundStyle(Palette.success)
       } else {
         commandBox
@@ -205,10 +219,10 @@ struct AddMachineSheet: View {
     }
     if wizard.phase == .approved {
       return
-        "Every chosen capability is approved for this Mac. offload.mode stays off until a test build passes, so no build runs on \(name) yet (the test build arrives in the next release)."
+        "Every chosen capability is approved for this Mac. Next checks the build Mac's tools."
     }
     if wizard.failure(now: model.now) == .noWorkspace {
-      return "Stim asks the build Mac from a workspace and none is listed yet: start one with Stim first"
+      return "Preparing the sample app for setup requests. If preparation fails, retry from the test below."
     }
     if wizard.journal == nil {
       return model.serverNotReady
@@ -273,7 +287,13 @@ struct AddMachineSheet: View {
       if let fix = wizard.journal?.steps.first(where: { $0.id.hasPrefix("permissions.") && $0.state != .ok })?.fix {
         Text(fix).textSelection(.enabled)
       }
-    case .noWorkspace: EmptyView()
+    case .noWorkspace:
+      if let sample = model.sample {
+        if case .failed(_, let message, _) = sample.test.state {
+          Text(message).foregroundStyle(Palette.error)
+          Button("Retry sample") { sample.prepare() }
+        }
+      }
     }
   }
 
@@ -300,7 +320,7 @@ struct AddMachineSheet: View {
 
   private var footer: some View {
     HStack(spacing: Space.md) {
-      if wizard.phase != .cancelled || model.error != nil {
+      if (step < 4 && wizard.phase != .cancelled) || model.error != nil {
         Button("Check again") { Task { await model.checkAgain() } }.disabled(model.busy)
       }
       if model.busy { ProgressView().controlSize(.small) }
@@ -319,26 +339,25 @@ struct AddMachineSheet: View {
             dismiss()
           }
         }.disabled(model.busy)
-        if step == 0 {
+        if step == 3 {
+          Button("Next") { model.openTest() }.disabled(model.busy || model.toolsBlock)
+        } else if step == 4 {
+          Button("Next") { Task { await model.openSummary() } }.disabled(
+            model.sample?.running == true || (model.sample?.test.passed != true && model.sample?.test.state != .skipped))
+        } else if step == 5 {
+          Button("Done") {
+            Task {
+              await model.finish()
+              if model.finished { dismiss() }
+            }
+          }.disabled(model.busy)
+        } else if step == 0 {
           Button("Next") { Task { await model.pick() } }.disabled(
             model.reachability != .ready || model.selfNode == nil || model.busy)
-        } else if step == 1 && allApproved {
-          Button("Done") {
-            model.stop()
-            dismiss()
-          }
         } else if step == 1 {
           Button("Next") { Task { await model.next() } }.disabled(model.command == nil || model.busy)
         } else if wizard.phase == .approved {
-          Button("Done") {
-            Task {
-              await model.send(.done)
-              if model.error == nil {
-                model.stop()
-                dismiss()
-              }
-            }
-          }.disabled(model.busy)
+          Button("Next") { Task { await model.openTools() } }.disabled(model.busy)
         } else if wizard.failure(now: model.now) == .expired || isGrantedOther {
           Button("New command") { Task { await model.newCommand() } }.disabled(model.busy)
         }

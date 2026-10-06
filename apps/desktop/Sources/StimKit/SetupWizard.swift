@@ -216,7 +216,7 @@ public struct SetupWizard: Sendable {
     case journalUnavailable
     case doctorReported(build: BuildMachineStatus?, host: BuildMachineStatus?)
     case entriesWritten
-    case cancel, done
+    case cancel
     case newCommand(SetupTicket)
     case manualPort(Int)
     case tick
@@ -313,8 +313,7 @@ public struct SetupWizard: Sendable {
     case .cancel:
       phase = .cancelled
       if writeRequested { return [.restoreSettings, .forgetPairing] }
-    case .done:
-      guard phase == .approved else { return [] }
+
     case .manualPort(let port):
       if (1...65535).contains(port), !entriesWritten { self.port = port }
     case .journalUnavailable: break

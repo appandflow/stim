@@ -9,6 +9,7 @@ final class AddMachineModelTests: XCTestCase {
     let now = Date(timeIntervalSince1970: 1_791_284_400)
     var writes: [(String, String?)] = []
     var asks: [(Bool, [String: String])] = []
+    var doctorPaths: [String] = []
     var steps: [String] = []
     var builds: [String] = []
     var hosts: [String] = []
@@ -51,7 +52,7 @@ final class AddMachineModelTests: XCTestCase {
           "deviceHosts": statuses(hosts, id: "h"),
         ]))
     }
-    func make(workspace: Bool = true) -> AddMachineModel {
+    func make(workspace: Bool = true, sample: SampleBuildModel? = nil) -> AddMachineModel {
       AddMachineModel(
         checkout: workspace ? "/fixture" : nil,
         dependencies: .init(
@@ -64,7 +65,8 @@ final class AddMachineModelTests: XCTestCase {
                 capabilities: [.build, .deviceHost], steps: [],
                 granted: self.grantReady ? [.init(capability: .build, id: "b"), .init(capability: .deviceHost, id: "h")] : []))
           },
-          doctor: { _, ask, env in
+          doctor: { cwd, ask, env in
+            self.doctorPaths.append(cwd)
             self.asks.append((ask, env))
             self.steps.append(ask ? "ask" : "readDoctor")
             if self.shouldFailDoctor { throw Failure.refused }
@@ -82,7 +84,7 @@ final class AddMachineModelTests: XCTestCase {
               self.hosts = try value.map { try JSONDecoder().decode([String].self, from: Data($0.utf8)) } ?? []
             default: break
             }
-          }, version: { "1.16.0" }, now: { self.now }, ticket: { SetupTicket.generate(now: $0) }))
+          }, version: { "1.16.0" }, now: { self.now }, ticket: { SetupTicket.generate(now: $0) }), sample: sample)
     }
     private enum Failure: Error { case refused }
   }
@@ -113,7 +115,7 @@ final class AddMachineModelTests: XCTestCase {
     XCTAssertEqual(harness.asks.last?.1, [:])
   }
 
-  @MainActor func testDoneKeepsModeOffWhileKeepingTheApprovedEntries() async {
+  @MainActor func testSkippedTestKeepsModeOffAndApprovedEntries() async {
     let harness = Harness()
     let model = harness.make()
     await model.start()
@@ -126,7 +128,9 @@ final class AddMachineModelTests: XCTestCase {
     await model.checkAgain()
     XCTAssertEqual(model.wizard.phase, .approved)
     XCTAssertEqual(harness.mode, "off")
-    await model.send(.done)
+    await model.openSummary()
+    XCTAssertEqual(model.mode, .off)
+    await model.finish()
     XCTAssertEqual(harness.mode, "off")
     XCTAssertEqual(harness.builds, ["mini:7447"])
     XCTAssertEqual(harness.hosts, ["mini:7447"])
@@ -198,4 +202,66 @@ final class AddMachineModelTests: XCTestCase {
     XCTAssertEqual(harness.mode, "auto")
     XCTAssertFalse(harness.writes.contains { $0.0 == "offload.mode" })
   }
+  @MainActor func testReadySampleSuppliesCheckoutWhenNoWorkspaceIsListed() async {
+    let harness = Harness()
+    let location = WizardSample(applicationSupport: URL(fileURLWithPath: "/fixture"))
+    let sample = SampleBuildModel(
+      dependencies: .init(
+        sample: location,
+        run: { _, _ in
+          WizardCommandOutput(exit: 0, stdout: Data(), stderr: "")
+        }, exists: { $0 == location.marker }))
+    sample.prepare()
+    for _ in 0..<1000 {
+      if sample.sampleReady { break }
+      await Task.yield()
+    }
+    let model = harness.make(workspace: false, sample: sample)
+    await model.start()
+    defer { model.stop() }
+    model.selectedId = "nMini"
+    await model.pick()
+    await model.next()
+    await model.checkAgain()
+    harness.grantReady = true
+    await model.checkAgain()
+    XCTAssertEqual(model.wizard.phase, .approved)
+    XCTAssertTrue(harness.doctorPaths.allSatisfy { $0 == location.folder.path })
+    XCTAssertEqual(harness.builds, ["mini:7447"])
+    await model.send(.cancel)
+    XCTAssertTrue(harness.builds.isEmpty)
+    XCTAssertNil(harness.mode)
+  }
+
+  @MainActor func testPassedTestDefaultsToAutoButOnlyDoneWritesIt() async {
+    let harness = Harness()
+    let sample = SampleBuildModel(
+      dependencies: .init(
+        sample: WizardSample(applicationSupport: URL(fileURLWithPath: "/fixture")),
+        run: { _, _ in
+          WizardCommandOutput(exit: 0, stdout: Data(), stderr: "")
+        }))
+    sample.fixture([
+      .prepared, .start, .offload(.success), .timings(.init(offerMs: 1, syncMs: 1, workerMs: 1, fetchMs: 1, totalMs: 4)),
+      .localStart, .localFinished(passed: true, ms: 5),
+    ])
+    let model = harness.make(sample: sample)
+    await model.start()
+    defer { model.stop() }
+    model.selectedId = "nMini"
+    await model.pick()
+    await model.next()
+    await model.checkAgain()
+    harness.grantReady = true
+    await model.checkAgain()
+    await model.openSummary()
+    XCTAssertEqual(model.mode, .auto)
+    XCTAssertEqual(harness.mode, "off")
+    await model.finish()
+    XCTAssertEqual(harness.mode, "auto")
+    XCTAssertTrue(model.finished)
+    XCTAssertEqual(harness.builds, ["mini:7447"])
+    XCTAssertEqual(harness.hosts, ["mini:7447"])
+  }
+
 }

@@ -369,6 +369,32 @@ starts work, and coding agents share the same link, so you can jump straight to
 a workspace. Settings and other details are in the
 [app's README](https://github.com/appandflow/stim/blob/main/apps/desktop/README.md).
 
+## Add a build machine
+
+**Settings > Build Machines > Add…** guides you through all six steps: pick a
+Mac on your tailnet, choose Builds and/or Hosted simulators, run setup there,
+compare tools, test a sample build, and review settings and undo commands. Run
+the generated setup command in Terminal while signed in at the build Mac and
+answer each y/N approval there. Permission prompts appear on that Mac. There
+is no SSH option.
+
+Tool fixes can be copied to run there. **Install This Mac's Build** handles a
+Stim build mismatch, and **Check Android** adds Java and Android SDK checks.
+Desktop prepares a pinned Expo blank SDK 57 sample in its own Application
+Support folder from step 2. It uses that checkout for setup requests if you have
+no listed workspace. The test verifies an offloaded build and launch, then
+forces a local build without the build cache to prove this Mac can still build.
+Live output, phase timings and a speed comparison show the results. The sample
+workspace stops when the test ends or the sheet closes. **Run again** reuses the
+folder; **Delete sample app** in Build Machines stops and removes it after confirmation.
+
+Done keeps the approved entries and selects Auto / Always / Never. When the
+wizard turned offloading off, a passed test defaults to Auto; a failed or skipped
+test keeps Never selected unless you choose otherwise. Existing machine settings
+keep their effective mode. Cancel removes only settings the wizard added and
+shows revoke commands for the build Mac. The summary explains how to undo setup;
+Stim Host permissions remain in System Settings until you remove them.
+
 ## SwiftUI playground for contributors
 
 A DEBUG build provides **Window > SwiftUI Playground** with production notification filters, build
