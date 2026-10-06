@@ -80,7 +80,7 @@ export function Home() {
     () => filterWorkspaces(entries, filters, macIds),
     [entries, filters, macIds],
   );
-  const sections = useMemo(() => homeSections(shown), [shown]);
+  const sections = useMemo(() => homeSections(shown, filters.sort), [shown, filters.sort]);
   const folders = useMemo(() => checkoutProjects(items), [items]);
   const showsMachine = (macs?.length ?? 0) > 1;
   const now = useNow(30_000);

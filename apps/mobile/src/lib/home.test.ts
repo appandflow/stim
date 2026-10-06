@@ -467,6 +467,115 @@ describe('filterWorkspaces', () => {
     expect(titles({ activity: 'all', remoteOnly: true })).toEqual(['other']);
   });
 
+  it('matches any selected platform, including stopped devices and apps, but excludes source-only and archived rows', () => {
+    const snapshots = [
+      {
+        id: 'a',
+        name: 'Mac',
+        status: status(
+          [
+            env('/u/ios', {
+              slots: [{ slot: 'tablet', ios: { name: 'sim', udid: 'A', owned: true, state: 'Shutdown' } }],
+            }),
+            env('/u/android', { android: { name: 'emu', owned: true, physical: false, state: 'not-detected' } }),
+            env('/u/web', { web: { ...payload.environments.find((e) => e.web)!.web!, running: false } }),
+            env('/u/macos', {
+              macos: {
+                launchId: 'app',
+                product: 'App',
+                arguments: [],
+                state: 'stopped',
+                bundle: '/App.app',
+                bundleId: 'dev.app',
+                executable: '/App.app/Contents/MacOS/App',
+                build: { state: 'ok', startedAt: '2026-10-01T00:00:00Z' },
+              },
+            }),
+            env('/u/empty'),
+          ],
+          [{ path: '/u/source' }],
+        ),
+      },
+    ];
+    const entries = [...mergeWorkspaces(snapshots), ...mergeWorktrees(snapshots), ...mergeArchives(snapshots)];
+    for (const platform of ['ios', 'android', 'web', 'macos'] as const) {
+      expect(
+        filterWorkspaces(entries, { ...DEFAULT_FILTERS, activity: 'all', platforms: [platform] }, ['a']).shown.map(
+          (item) => item.title,
+        ),
+      ).toEqual([platform]);
+      expect(
+        filterWorkspaces(entries, { ...DEFAULT_FILTERS, activity: 'archived', platforms: [platform] }, ['a']).shown,
+      ).toEqual([]);
+    }
+    expect(
+      filterWorkspaces(entries, { ...DEFAULT_FILTERS, activity: 'all', platforms: ['ios', 'web'] }, ['a']).shown.map(
+        (item) => item.title,
+      ),
+    ).toEqual(['ios', 'web']);
+  });
+
+  it('keeps running local, offloaded and macOS builds, excluding stale builds, sessions and physical installs alone', () => {
+    const build = payload.environments.find((e) => e.build)!.build!;
+    const native = {
+      launchId: 'app',
+      product: 'App',
+      arguments: [],
+      state: 'stopped' as const,
+      bundle: '/App.app',
+      bundleId: 'dev.app',
+      executable: '/App.app/Contents/MacOS/App',
+      build: { state: 'running' as const, startedAt: build.startedAt, offloadedTo: 'worker' },
+    };
+    const snapshots = [
+      {
+        id: 'a',
+        name: 'Mac',
+        status: status(
+          [
+            env('/u/local', { build: { ...build, state: 'running', placement: 'local' } }),
+            env('/u/offloaded', {
+              build: {
+                ...build,
+                state: 'running',
+                placement: {
+                  host: 'worker:7443',
+                  phase: 'build',
+                  startedAt: build.startedAt,
+                  phaseStartedAt: build.phaseStartedAt,
+                },
+              },
+            }),
+            env('/u/macos', { macos: native }),
+            env('/u/stale', { build: { ...build, state: 'stale' } }),
+            env('/u/unknown', { build: { ...build, state: 'unknown' } }),
+            env('/u/remote', { remoteDevices: macs[1].status!.environments[1].remoteDevices }),
+            env('/u/install', {
+              physicalDevices: payload.environments.find((e) => e.physicalDevices?.length)!.physicalDevices,
+            }),
+          ],
+          [{ path: '/u/source' }],
+        ),
+      },
+    ];
+    const entries = [...mergeWorkspaces(snapshots), ...mergeWorktrees(snapshots), ...mergeArchives(snapshots)];
+    expect(
+      filterWorkspaces(entries, { ...DEFAULT_FILTERS, activity: 'all', buildingOnly: true }, ['a']).shown.map(
+        (item) => item.title,
+      ),
+    ).toEqual(['local', 'macos', 'offloaded']);
+    expect(
+      filterWorkspaces(entries, { ...DEFAULT_FILTERS, activity: 'archived', buildingOnly: true }, ['a']).shown,
+    ).toEqual([]);
+  });
+
+  it('marks platform, building and non-default sort selections as active', () => {
+    expect(filtersActive(DEFAULT_FILTERS, [], [])).toBe(false);
+    expect(filtersActive({ ...DEFAULT_FILTERS, platforms: ['web'] }, [], [])).toBe(true);
+    expect(filtersActive({ ...DEFAULT_FILTERS, buildingOnly: true }, [], [])).toBe(true);
+    expect(filtersActive({ ...DEFAULT_FILTERS, sort: 'name' }, [], [])).toBe(true);
+  });
+
   it('ignores a selected Mac that is no longer paired', () => {
     expect(titles({ macs: ['gone'] })).toEqual(['building', 'live-one', 'other']);
     expect(filtersActive({ ...DEFAULT_FILTERS, macs: ['gone'] }, ids, [])).toBe(false);
@@ -489,7 +598,7 @@ describe('runningDevices', () => {
         status: status([
           env('/u/app/.worktrees/idle-with-sim', {
             ios: booted,
-            android: { name: 'stim-x', owned: true, physical: false, state: 'not-detected' },
+            android: { name: 'stim-x', owned: true, physical: false, state: 'detected' },
           }),
         ]),
       },
@@ -499,9 +608,14 @@ describe('runningDevices', () => {
       runningDevices(items, { ...DEFAULT_FILTERS, ...f }, ['a', 'b']).map(
         (t) => `${t.item.title}/${t.device.platform}`,
       );
-    expect(keys({})).toEqual(['idle-with-sim/ios', 'other/ios']);
-    expect(keys({ macs: ['a'], errorsOnly: true })).toEqual(['idle-with-sim/ios']);
+    expect(keys({})).toEqual(['idle-with-sim/ios', 'idle-with-sim/android', 'other/ios']);
+    expect(keys({ macs: ['a'], errorsOnly: true, buildingOnly: true })).toEqual([
+      'idle-with-sim/ios',
+      'idle-with-sim/android',
+    ]);
     expect(keys({ projects: ['other'] })).toEqual(['other/ios']);
+    expect(keys({ platforms: ['android'] })).toEqual(['idle-with-sim/android']);
+    expect(keys({ platforms: ['ios'] })).toEqual(['idle-with-sim/ios', 'other/ios']);
   });
 });
 
@@ -590,6 +704,20 @@ describe('gridRows', () => {
 });
 
 describe('parseFilters', () => {
+  it('defaults new fields in old payloads and ignores unknown platforms and invalid selections', () => {
+    expect(parseFilters(JSON.stringify({ macs: ['a'], remoteOnly: true }))).toEqual({
+      ...DEFAULT_FILTERS,
+      macs: ['a'],
+      remoteOnly: true,
+    });
+    expect(
+      parseFilters(JSON.stringify({ platforms: ['ios', 'bogus', 3, null, 'macos'], buildingOnly: true, sort: 'name' })),
+    ).toEqual({ ...DEFAULT_FILTERS, platforms: ['ios', 'macos'], buildingOnly: true, sort: 'name' });
+    expect(parseFilters(JSON.stringify({ platforms: 'ios', buildingOnly: 'true', sort: 'bogus' }))).toEqual(
+      DEFAULT_FILTERS,
+    );
+  });
+
   it('keeps valid saved filters and falls back to defaults for anything else', () => {
     expect(parseFilters(JSON.stringify({ macs: ['a', 3], activity: 'all', errorsOnly: true }))).toEqual({
       ...DEFAULT_FILTERS,

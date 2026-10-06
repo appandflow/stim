@@ -4,7 +4,15 @@ import type { Tone } from '@/design/tone';
 import { formatDuration } from '@/intl/format';
 import { agentsSummary } from '@/lib/agents';
 import { ACTIVE_WINDOW_MS, activityLabel, spokenDuration } from '@/lib/format';
-import { workspaceKey, type HomeArchive, type HomeEntry, type HomeItem, type HomeWorktree } from '@/lib/home';
+import {
+  workspaceActivityMs,
+  workspaceKey,
+  type HomeFilters,
+  type HomeArchive,
+  type HomeEntry,
+  type HomeItem,
+  type HomeWorktree,
+} from '@/lib/home';
 import { STALE_MS } from '@/lib/needs-attention';
 import { buildLabel } from '@/lib/spoken-status';
 import { appPresence, currentPhaseLabel, gitChip } from '@/lib/workspace-view';
@@ -33,10 +41,11 @@ export interface HomeSection {
 }
 
 /**
- * The home list by repo: repos with a live workspace first, then by name. In a repo, live workspaces come before idle
- * ones, each by title and machine, so a row moves only when it turns live or idle.
+ * The home list by repo, with live repos and rows before idle ones. Name sorts repos by name and rows by title
+ * and machine. Recent sorts each group by its newest workspace activity, taking the latest across each checkout's
+ * apps, with no activity last and name order breaking ties. Archives stay ordered by removal time.
  */
-export function homeSections(items: HomeEntry[]): HomeSection[] {
+export function homeSections(items: HomeEntry[], sort: HomeFilters['sort'] = 'recent'): HomeSection[] {
   const checkouts = new Map<string, HomeWorkspace | HomeWorktree | HomeArchive>();
   for (const item of [...items].sort(
     (a, b) =>
@@ -55,14 +64,30 @@ export function homeSections(items: HomeEntry[]): HomeSection[] {
     string,
     { live: HomeWorkspace[]; idle: (HomeWorkspace | HomeWorktree)[]; archived: HomeArchive[] }
   >();
+  const activity = new Map<string, number>();
+  const projectActivity = new Map<string, number>();
   for (const workspace of checkouts.values()) {
     if ('apps' in workspace) workspace.apps.sort((a, b) => a.env.path.localeCompare(b.env.path));
     const project = 'apps' in workspace ? workspace.apps[0].project : workspace.project;
+    const latest =
+      'apps' in workspace
+        ? Math.max(...workspace.apps.map((app) => workspaceActivityMs(app.env) ?? -Infinity))
+        : -Infinity;
+    activity.set(workspace.key, latest);
+    projectActivity.set(project, Math.max(projectActivity.get(project) ?? -Infinity, latest));
     const group = groups.get(project) ?? { live: [], idle: [], archived: [] };
     groups.set(project, group);
     if ('archive' in workspace) group.archived.push(workspace);
     else if ('apps' in workspace && workspace.apps.some((app) => isShownLive(app.env))) group.live.push(workspace);
     else group.idle.push(workspace);
+  }
+  if (sort === 'recent') {
+    const byActivity = (a: HomeWorkspace | HomeWorktree, b: HomeWorkspace | HomeWorktree) =>
+      activity.get(b.key)! - activity.get(a.key)! || 0;
+    for (const { live, idle } of groups.values()) {
+      live.sort(byActivity);
+      idle.sort(byActivity);
+    }
   }
   return [...groups]
     .map(([project, { live, idle, archived }]) => ({
@@ -75,7 +100,12 @@ export function homeSections(items: HomeEntry[]): HomeSection[] {
         ...archived.sort((a, b) => Date.parse(b.archive.removedAt) - Date.parse(a.archive.removedAt)),
       ],
     }))
-    .sort((a, b) => Number(b.live > 0) - Number(a.live > 0) || a.project.localeCompare(b.project));
+    .sort(
+      (a, b) =>
+        Number(b.live > 0) - Number(a.live > 0) ||
+        (sort === 'recent' ? projectActivity.get(b.project)! - projectActivity.get(a.project)! : 0) ||
+        a.project.localeCompare(b.project),
+    );
 }
 
 /** Repos whose workspaces sit in different folders of their checkout, the only ones where the folder tells rows apart. */

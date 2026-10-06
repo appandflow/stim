@@ -4,7 +4,14 @@ import type { ArchivedWorkspace } from '@/lib/archived';
 import type { Tone } from '@/design/tone';
 import { pathInCheckout, projectOf, repositoryRoots, workspaceTitle } from '@/lib/workspace-names';
 import { deviceKey, devicesOf, isShownLive, orderDevices, type DeviceRef } from '@/lib/workspaces';
-import type { EnvironmentState, MachineUsage, StatusPayload, UsageSample, WorktreeFacts } from '@/protocol/types';
+import type {
+  DevicePlatform,
+  EnvironmentState,
+  MachineUsage,
+  StatusPayload,
+  UsageSample,
+  WorktreeFacts,
+} from '@/protocol/types';
 
 export interface MacSnapshot {
   id: string;
@@ -132,6 +139,9 @@ export interface HomeFilters {
   activity: ActivityFilter;
   errorsOnly: boolean;
   remoteOnly: boolean;
+  platforms: DevicePlatform[];
+  buildingOnly: boolean;
+  sort: 'recent' | 'name';
 }
 
 export const DEFAULT_FILTERS: HomeFilters = {
@@ -140,6 +150,9 @@ export const DEFAULT_FILTERS: HomeFilters = {
   activity: 'live',
   errorsOnly: false,
   remoteOnly: false,
+  platforms: [],
+  buildingOnly: false,
+  sort: 'recent',
 };
 
 const strings = (value: unknown): string[] =>
@@ -162,6 +175,12 @@ export function parseFilters(raw: string | null): HomeFilters {
       saved.activity === 'idle' || saved.activity === 'all' || saved.activity === 'archived' ? saved.activity : 'live',
     errorsOnly: saved.errorsOnly === true,
     remoteOnly: saved.remoteOnly === true,
+    platforms: strings(saved.platforms).filter(
+      (platform): platform is DevicePlatform =>
+        platform === 'ios' || platform === 'android' || platform === 'web' || platform === 'macos',
+    ),
+    buildingOnly: saved.buildingOnly === true,
+    sort: saved.sort === 'name' ? 'name' : 'recent',
   };
 }
 
@@ -172,7 +191,10 @@ export function filtersActive(filters: HomeFilters, macIds: string[], projects: 
     filters.projects.some((name) => projects.includes(name)) ||
     filters.activity !== DEFAULT_FILTERS.activity ||
     filters.errorsOnly ||
-    filters.remoteOnly
+    filters.remoteOnly ||
+    filters.platforms.length > 0 ||
+    filters.buildingOnly ||
+    filters.sort !== DEFAULT_FILTERS.sort
   );
 }
 
@@ -203,6 +225,16 @@ export function filterWorkspaces<T extends HomeEntry>(
     )
       continue;
     if (filters.remoteOnly && (!('env' in item) || !hasRemote(item.env))) continue;
+    if (
+      filters.platforms.length &&
+      (!('env' in item) || !devicesOf(item.env).some((device) => filters.platforms.includes(device.platform)))
+    )
+      continue;
+    if (
+      filters.buildingOnly &&
+      (!('env' in item) || (item.env.build?.state !== 'running' && item.env.macos?.build.state !== 'running'))
+    )
+      continue;
     const active = 'env' in item && isShownLive(item.env);
     if ((filters.activity === 'live' && !active) || (filters.activity === 'idle' && active)) {
       hidden.add(workspaceKey(item));
@@ -245,18 +277,18 @@ export function gridRows(tiles: DeviceTileItem[], aspects: ReadonlyMap<string, n
 }
 
 /**
- * Every running device of the workspaces the machine and project filters keep, whatever their activity,
- * errors or remote sessions, in the list's order and each workspace's devices in `orderDevices` order.
+ * Every running device the machine, project and platform filters keep, whatever the workspace activity,
+ * errors, builds or remote sessions, in the list's order and each workspace's devices in `orderDevices` order.
  */
 export function runningDevices(items: HomeItem[], filters: HomeFilters, macIds: string[]): DeviceTileItem[] {
   const { shown } = filterWorkspaces(
     items,
-    { ...filters, activity: 'all', errorsOnly: false, remoteOnly: false },
+    { ...filters, activity: 'all', errorsOnly: false, remoteOnly: false, buildingOnly: false },
     macIds,
   );
   return shown.flatMap((item) =>
     orderDevices(devicesOf(item.env))
-      .filter((device) => device.running)
+      .filter((device) => device.running && (!filters.platforms.length || filters.platforms.includes(device.platform)))
       .map((device) => ({ key: `${item.key}\n${deviceKey(device)}`, item, device })),
   );
 }
