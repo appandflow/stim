@@ -68,7 +68,7 @@ FLAGS
   --slot <name>   only this slot's records plus, once it has launched, the
                   shared untagged Metro and app client records (not the web
                   page's); default also includes untagged legacy records
-  --source <s...>  metro, client, device, build, agent (one or more), or all.
+  --source <s...>  metro, client, device, build, agent, maintenance (one or more), or all.
                    An unknown value is REJECTED rather than quietly matching
                    nothing.
   --level <l>      minimum level: debug, info, warn, error, fatal
@@ -216,7 +216,14 @@ THE RECORD
              there are none. Stim adds it at query time; it is not in the
              log files.
 
+Maintenance records use src: maintenance and appear in the plain timeline.
+  stim logs --source maintenance
+Add --errors to --source maintenance to show only maintenance_failure events;
+failures before a later launch marker are hidden. Machine passes are reported in
+status and maintenance/maintenance.ndjson; this command reads workspace logs.
+
 WHAT WRITES WHAT
+  maintenance.ndjson   workspace maintenance actions, failures and explaining skips
   metro.ndjson         the bundler, in both supervisor modes
   client.ndjson        in-app console logs and redboxes -- BARE PROJECTS ONLY.
                        In expo-child mode everything Expo prints lands in

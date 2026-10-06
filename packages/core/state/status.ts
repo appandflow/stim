@@ -1,3 +1,4 @@
+import type { MaintenanceStatus } from './maintenance.ts';
 import type { ArchivedWorkspace, ArchivedUsage } from './archive.ts';
 import type { MacosAppState } from './macos.ts';
 import type { TunnelMode, WebViewport } from './settings-registry.ts';
@@ -709,6 +710,7 @@ export interface MachineUsageState {
 
 /** The payload `stim status --json` prints, and `status --watch --json` prints on each change. */
 export interface StatusPayload {
+  maintenance?: MaintenanceStatus;
   archived?: ArchivedWorkspace[];
   archivedUsage?: ArchivedUsage;
   environments: (EnvironmentState & { labelOnly?: true })[];

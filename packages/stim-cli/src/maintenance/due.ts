@@ -1,0 +1,20 @@
+import type { MaintenanceCheck, MaintenanceState } from '@stim-cli/core/state';
+import type { MaintenanceSettings } from './settings.ts';
+
+const DEFERRED_RETRY_MS = 5 * 60_000;
+const ATTEMPT_BACKOFF_MS = 60_000;
+
+export function due(
+  state: MaintenanceState | null,
+  settings: Pick<MaintenanceSettings, 'pressureCheckMinutes' | 'sizeCheckMinutes'>,
+  now: number,
+  attemptedAt?: number,
+): MaintenanceCheck[] {
+  const elapsed = (stamp: number | undefined) => (stamp === undefined || stamp > now ? Infinity : now - stamp);
+  if (elapsed(attemptedAt) < ATTEMPT_BACKOFF_MS) return [];
+  return (['pressure', 'size'] as const).filter((check) => {
+    if (elapsed(state?.deferredAt?.[check]) < DEFERRED_RETRY_MS) return false;
+    const interval = check === 'pressure' ? settings.pressureCheckMinutes : settings.sizeCheckMinutes;
+    return elapsed(state?.lastAt[check]) >= interval * 60_000;
+  });
+}

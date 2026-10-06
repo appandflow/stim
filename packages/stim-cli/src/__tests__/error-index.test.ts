@@ -273,3 +273,18 @@ test('counts an Expo bundling failure under its own platform, as logs --errors d
   ]);
   expect(count()).toBe(0);
 });
+
+test('a maintenance failure before a later launch does not keep the workspace error count above zero', () => {
+  write('maintenance.ndjson', [
+    { ts: 100, src: 'maintenance', level: 'error', event: 'maintenance_failure', msg: 'du timed out' },
+  ]);
+  write('build-ios.ndjson', [
+    { ts: 150, src: 'build', level: 'error', msg: 'old build failure' },
+    { ts: 200, src: 'build', level: 'info', marker: true, event: 'launch_attempt' },
+  ]);
+  expect(count()).toBe(0);
+  append('maintenance.ndjson', [
+    { ts: 250, src: 'maintenance', level: 'error', event: 'maintenance_failure', msg: 'new du failure' },
+  ]);
+  expect(count()).toBe(0);
+});

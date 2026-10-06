@@ -40,6 +40,12 @@ try {
     const modules = await Promise.all([...commands.values()].map((load) => load()));
     for (const module of modules) module.default(program, pkg.version);
   }
+  program.hook('preAction', async (_command, action) => {
+    try {
+      const { triggerMaintenance } = await import('../src/maintenance/trigger.ts');
+      triggerMaintenance(action.name());
+    } catch {}
+  });
   await program.parseAsync();
 } catch (err) {
   const code = (err as { code?: unknown })?.code;

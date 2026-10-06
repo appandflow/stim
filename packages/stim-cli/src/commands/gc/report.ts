@@ -1,3 +1,4 @@
+import type { MaintenancePreview } from '../../maintenance/preview.ts';
 import { archiveLines, type ArchiveSelection } from './archives.ts';
 import type { AgentDeviceUsage, SwiftpmCacheUsage } from '@stim-cli/core/state';
 import { swiftpmCacheLines } from '../../devices/swiftpm-cache-usage-output.ts';
@@ -42,6 +43,7 @@ import { recordingLines, type RecordingKeptCode, type WorkspaceRecordings } from
 import { memoryCacheKind, memoryLines, type MemoryProcess, type MemoryReport, type WatchmanRoot } from './memory.ts';
 
 export interface GcReport {
+  maintenance?: MaintenancePreview;
   archives?: ArchiveSelection;
   skipped: GcSkip[];
   deadProjects: string[];
@@ -152,8 +154,23 @@ function scopeLine(cacheScope: string): string {
     : `Cache scope: "${cacheScope}". Devices, project entries and locks were not inspected.`;
 }
 
+function maintenanceReportLines(maintenance: MaintenancePreview | undefined): string[] {
+  const lines: string[] = [];
+  if (maintenance) {
+    lines.push(`Automatic maintenance (${maintenance.mode === 'report' ? 'report only' : 'off'}):`);
+    if (maintenance.note) lines.push(`  ${maintenance.note}`);
+    for (const action of maintenance.actions)
+      lines.push(`  ${action.kind}: ${action.target} (${formatBytes(action.bytes)}): ${action.reason}`);
+    for (const skip of maintenance.skips) lines.push(`  kept ${skip.target}: ${skip.reason}`);
+    for (const reason of maintenance.blocked) lines.push(`  blocked: ${reason}`);
+    if (!maintenance.actions.length && !maintenance.blocked.length) lines.push('  no actions planned');
+  }
+  return lines;
+}
+
 export function formatGcReport(
   {
+    maintenance,
     archives,
     skipped = [],
     deadProjects = [],
@@ -352,6 +369,7 @@ export function formatGcReport(
   lines.push(...agentDeviceLines(agentDeviceUsage, true, now));
   lines.push(...swiftpmCacheLines(swiftpmCacheUsage, now));
   lines.push(...memoryLines(memory, memoryCacheKind(cacheScope), now));
+  lines.push(...maintenanceReportLines(maintenance));
 
   return lines;
 }

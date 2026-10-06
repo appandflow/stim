@@ -124,6 +124,7 @@ export function recordMatches(record: NdjsonRecord | null | undefined, criteria:
   if (minLevel && levelRank(record.level) < levelRank(minLevel)) return false;
 
   if (errorsOnly) {
+    if (record.src === 'maintenance' && record.event !== 'maintenance_failure') return false;
     if (record.level !== 'error' && record.level !== 'fatal') return false;
     if (typeof markerTs === 'number') {
       const ts = tsOf(record);

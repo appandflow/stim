@@ -254,3 +254,47 @@ directory. To stop recording altogether, see
 Set `STIM_BUILD_CACHE` or `STIM_METRO_CACHE` to an absolute path to place the
 shared caches on a different volume. The same values can live in the machine config under
 `caches.buildCache` and `caches.metroCache`.
+
+## Automatic maintenance
+
+CLI commands and `status --watch` start a detached maintenance pass when a
+check is due. This release reports only: it never stops or deletes resources.
+Disk and memory pressure are checked every minute, and Stim-owned directory
+sizes every hour. On macOS the memory signal is the sysctl pressure level,
+with no signal when sysctl fails. Only other platforms use `os.freemem()`.
+Size scans defer under high host load. The scan covers
+workspace build outputs, native build and Metro caches, ccache, Swift
+compilation cache, and other registered Stim caches. Other tools' caches are
+not managed by this feature.
+
+`stim status` shows the last plan and any running pass. `stim gc` previews the
+next pass using live pressure and cached sizes; it does not rescan sizes for
+that preview. `stim gc --json` carries the preview in a top-level `maintenance`
+key; `sections` remains arrays of entries. With `--cache`, the preview excludes
+device actions. `stim logs --source maintenance` shows this workspace's records;
+add `--errors` for failures after the latest launch marker.
+The machine log is `$STIM_HOME/maintenance/maintenance.ndjson`; `stim doctor`
+prints its path. It rotates at 1 MiB by default, retains the rotated generation
+for 30 days, and logs debug checks only with `maintenance.logChecks` enabled.
+Actions and explaining skips are logged only when newly planned. Pass records
+are logged after size checks or changes to actions, skips or blocked reasons.
+The hook skips `gc --delete` and live or unresolved claims. Failed attempts
+back off for at least one minute; child crash logs are truncated above 64 KiB.
+`status` and `doctor` report unresolved claims with a removal command to run
+only after confirming the holder is gone. Invalid maintenance settings appear
+in `invalid` and disable passes; an invalid cache cap falls back to its own
+default and is reported there.
+A pass and `gc --delete` share an exclusive claim; a held claim makes gc refuse
+with the holder and recovery guidance.
+
+The default mode is `report`, or `off` under `STIM_HOME` or `CI` unless
+`STIM_MAINTENANCE` is explicit. Turn it off with:
+
+<StimTabs code="stim settings set maintenance.mode off" />
+
+Copy this agent prompt:
+
+```text
+Run stim status and stim gc. Show me the automatic maintenance plan and any
+blocked targets, then read stim logs --source maintenance in this workspace.
+```

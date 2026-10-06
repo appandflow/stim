@@ -449,6 +449,24 @@ overrides the file:
 budget is off. A value of the wrong shape refuses start, ios and android with
 STIM_BAD_ARG. See \`guide lifecycle budget\` for what each limit reclaims.
 
+AUTOMATIC MAINTENANCE IS MACHINE-LEVEL
+Report-only in this release: it measures and plans, and deletes or stops nothing.
+STIM_HOME and CI make the mode off unless STIM_MAINTENANCE is set.
+See \`guide cleanup\` for checks, plans and log paths.
+
+${SETTINGS.filter((setting) => setting.key.startsWith('maintenance.') || /^caches\..*MaxGb$/.test(setting.key))
+  .map(
+    (
+      setting,
+    ) => `  ${setting.key}  ${setting.env}  ${setting.default === undefined ? 'unset' : `default ${setting.default}`}
+    ${setting.description}`,
+  )
+  .join('\n')}
+
+Maintenance uses the sysctl pressure level on macOS, with no memory signal
+when sysctl fails. os.freemem() and maintenance.minAvailableMemoryGb apply
+only on other platforms.
+
 THE IOS SIMULATOR APP IS MACHINE-LEVEL
 Top-level \`iosSimulatorApp\` in ~/.stim/config.json selects the macOS app that
 displays Stim's owned local iOS simulator after boot. It is not a project

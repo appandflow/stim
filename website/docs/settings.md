@@ -701,3 +701,37 @@ archived recordings on the next retention pass.
 <StimTabs code="stim settings set archive.enabled false --scope repo" />
 
 See [archived workspaces](./worktrees.md#archived-workspaces) for privacy and deletion.
+
+## Automatic maintenance
+
+Maintenance is report-only in this release. It measures and plans without
+stopping or deleting resources. A later release adds an `on` mode that acts.
+`STIM_HOME` and `CI` make the mode `off` unless `STIM_MAINTENANCE` is set.
+All of these settings have machine scope. GB and MB below mean GiB and MiB.
+
+| Setting                             | Type                     | Default           | Environment override                         |
+| ----------------------------------- | ------------------------ | ----------------- | -------------------------------------------- |
+| `maintenance.mode`                  | off / report             | report            | `STIM_MAINTENANCE`                           |
+| `maintenance.pressureCheckMinutes`  | integer >= 1             | 1 minute          | `STIM_MAINTENANCE_PRESSURE_CHECK_MINUTES`    |
+| `maintenance.sizeCheckMinutes`      | integer >= 1             | 60 minutes        | `STIM_MAINTENANCE_SIZE_CHECK_MINUTES`        |
+| `maintenance.maxLoadPerCore`        | number > 0               | 4                 | `STIM_MAINTENANCE_MAX_LOAD_PER_CORE`         |
+| `maintenance.logMaxMb`              | number > 0               | 1 MB              | `STIM_MAINTENANCE_LOG_MAX_MB`                |
+| `maintenance.logRetentionDays`      | integer >= 1             | 30 days           | `STIM_MAINTENANCE_LOG_RETENTION_DAYS`        |
+| `maintenance.logChecks`             | boolean                  | false             | `STIM_MAINTENANCE_LOG_CHECKS`                |
+| `maintenance.memoryPressureLevel`   | warning / critical / off | warning           | `STIM_MAINTENANCE_MEMORY_PRESSURE_LEVEL`     |
+| `maintenance.memoryWarningMinutes`  | integer >= 0             | 10 minutes        | `STIM_MAINTENANCE_MEMORY_WARNING_MINUTES`    |
+| `maintenance.minAvailableMemoryGb`  | number >= 0              | unset: 10% of RAM | `STIM_MAINTENANCE_MIN_AVAILABLE_MEMORY_GB`   |
+| `maintenance.capTargetPercent`      | integer 10..100          | 80                | `STIM_MAINTENANCE_CAP_TARGET_PERCENT`        |
+| `maintenance.workspaceOutputsMaxGb` | number >= 0; 0 = no cap  | 20 GB             | `STIM_MAINTENANCE_WORKSPACE_OUTPUTS_MAX_GB`  |
+| `caches.buildCacheMaxGb`            | number >= 0; 0 = no cap  | 10 GB             | `STIM_CACHES_BUILD_CACHE_MAX_GB`             |
+| `caches.metroCacheMaxGb`            | number >= 0; 0 = no cap  | 5 GB              | `STIM_CACHES_METRO_CACHE_MAX_GB`             |
+| `caches.swiftCompilationCacheMaxGb` | number >= 0; 0 = no cap  | 15 GB             | `STIM_CACHES_SWIFT_COMPILATION_CACHE_MAX_GB` |
+
+Size scans defer above `maintenance.maxLoadPerCore`; pressure checks continue.
+On macOS the memory signal is the sysctl pressure level, with no signal when
+sysctl fails. `os.freemem()` and `maintenance.minAvailableMemoryGb` apply only
+on other platforms.
+Caps plan toward `maintenance.capTargetPercent` of the limit; the Swift
+compilation cache is planned for whole-cache emptying. Memory pressure is
+recorded without planning stops. Debug check logs are off by default.
+See [automatic maintenance](./build-caches.md#automatic-maintenance) for reports.

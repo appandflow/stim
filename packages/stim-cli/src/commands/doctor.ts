@@ -1,3 +1,5 @@
+import { maintenanceNdjsonFile } from '@stim-cli/core/state';
+import { maintenanceStatus, maintenanceLine } from '../maintenance/status.ts';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import chalk from 'chalk';
@@ -312,6 +314,12 @@ export default function doctorCommand(
       const agentDriver = inspectHostedAgentDriver();
       if (agentDriver) findings.push(agentDriver);
 
+      const maintenance = maintenanceStatus();
+      const maintenanceLines = [
+        phaseLine('maintenance.mode', maintenance.mode),
+        phaseLine('maintenance log', maintenanceNdjsonFile()),
+        phaseLine('last pass', maintenanceLine(maintenance, false) ?? 'no pass has run yet'),
+      ];
       if (opts.json) {
         console.log(
           JSON.stringify({
@@ -319,6 +327,7 @@ export default function doctorCommand(
             platform: opts.platform ?? null,
             stim,
             budget: budget.report,
+            maintenance: { ...maintenance, logPath: maintenanceNdjsonFile() },
             buildMachines: buildMachines.machines,
             deviceHosts: deviceHosts.machines,
             findings,
@@ -329,7 +338,7 @@ export default function doctorCommand(
       }
 
       if (findings.length === 0) {
-        const lines = doctorSuccessLines(opts.platform, stim, budget.report);
+        const lines = [...doctorSuccessLines(opts.platform, stim, budget.report), ...maintenanceLines];
         for (const [index, line] of lines.entries()) {
           if (index === 1) console.log(chalk.green(line));
           else if (line && !line.startsWith('  ')) console.log(chalk.bold(line));
@@ -341,7 +350,8 @@ export default function doctorCommand(
 
       const ordered = findings.toSorted((a, b) => (a.level === b.level ? 0 : a.level === 'cost' ? -1 : 1));
       console.log(chalk.bold(`Doctor (${doctorTarget(opts.platform)})`));
-      for (const line of [...stimVersionLines(stim), ...budgetLines(budget.report)]) console.log(chalk.dim(line));
+      for (const line of [...stimVersionLines(stim), ...budgetLines(budget.report), ...maintenanceLines])
+        console.log(chalk.dim(line));
       for (const f of ordered) {
         const tag = f.level === 'cost' ? chalk.yellow('costs time') : chalk.dim('note');
         console.log(`\n${tag}  ${chalk.bold(f.title)}`);

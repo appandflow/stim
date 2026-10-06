@@ -1,3 +1,5 @@
+import { maintenanceStatus, maintenanceLines } from '../maintenance/status.ts';
+import { triggerMaintenance } from '../maintenance/trigger.ts';
 import { machineNumber } from '../budget.ts';
 import { readHostedMacosStatus } from '../device-host/hosted-macos-status.ts';
 import { inspectProcessIdentity } from '../process-identity.ts';
@@ -533,6 +535,7 @@ function renderStatus(
     return { error, line: poolLine({ platform, parked: readParked(platform).length, max }) };
   });
 
+  const maintenance = maintenanceStatus();
   if (json) {
     out.push(
       JSON.stringify({
@@ -546,11 +549,13 @@ function renderStatus(
         unprovisionedWorktrees: orphanWorktrees.map(withGitChip),
         simctlAvailable: simsAvailable,
         machine,
+        maintenance,
       } satisfies StatusPayload),
     );
     return out;
   }
 
+  out.push(...maintenanceLines(maintenance).map((line) => chalk.dim(line)));
   if (usage.count) out.push(`Archived: ${plural(usage.count, 'workspace')}, ${formatBytes(usage.bytes)}`);
 
   if (projects.length === 0 && orphanWorktrees.length === 0) {
@@ -723,6 +728,7 @@ async function watchStatus(json: boolean): Promise<void> {
     debounceMs: WATCH_DEBOUNCE_MS,
     lightIntervalMs: WATCH_LIGHT_INTERVAL_MS,
     run: async (kind) => {
+      triggerMaintenance('status-watch');
       let text: string;
       try {
         if (kind === 'light' && snapshot) await refreshLightFacts(snapshot, json);

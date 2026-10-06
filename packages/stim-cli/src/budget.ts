@@ -107,7 +107,7 @@ export function resolveBudget({
   };
 }
 
-interface VolumeSpace {
+export interface VolumeSpace {
   volume: string;
   freeMb: number;
 }
@@ -118,7 +118,7 @@ function existingAncestor(path: string): string {
   return current;
 }
 
-function readVolumeSpace(paths: readonly string[]): VolumeSpace[] {
+export function readVolumeSpace(paths: readonly string[]): VolumeSpace[] {
   const seen = new Set<number>();
   const volumes: VolumeSpace[] = [];
   for (const path of paths) {

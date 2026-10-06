@@ -204,8 +204,8 @@ export function planWorkspaceOutputs(
 
 const SIZE_TIMEOUT_MS = 60_000;
 
-function sizeOf(dir: string): number | null {
-  return measuredDirectorySize(dir, { timeoutMs: SIZE_TIMEOUT_MS });
+function sizeOf(dir: string, timeoutMs = SIZE_TIMEOUT_MS): number | null {
+  return measuredDirectorySize(dir, { timeoutMs });
 }
 
 function outputPaths(dir: string): string[] {
@@ -226,10 +226,10 @@ function outputPaths(dir: string): string[] {
   return paths;
 }
 
-function outputBytes(paths: readonly string[]): number | null {
+function outputBytes(paths: readonly string[], timeoutMs: number): number | null {
   let total = 0;
   for (const path of paths) {
-    const size = sizeOf(path);
+    const size = sizeOf(path, timeoutMs);
     if (size === null) return null;
     total += size;
   }
@@ -241,11 +241,13 @@ export function collectWorkspaceOutputs({
   now,
   exclude = [],
   measure = true,
+  sizeTimeoutMs = SIZE_TIMEOUT_MS,
 }: {
   olderThan: number | null;
   now: number;
   exclude?: readonly string[];
   measure?: boolean;
+  sizeTimeoutMs?: number;
 }): WorkspaceOutputsReport {
   const mountedVolumes = listMountedVolumes();
   const entries = listWorkspaceDirs()
@@ -253,7 +255,9 @@ export function collectWorkspaceOutputs({
     .filter((entry) => entry.projectRoot === null || isOnMountedVolume(entry.projectRoot, mountedVolumes))
     .map((entry) => Object.assign({}, entry, { paths: outputPaths(entry.dir) }))
     .filter((entry) => entry.paths.length > 0)
-    .map(({ paths, ...entry }) => Object.assign({}, entry, { bytes: measure ? outputBytes(paths) : null }))
+    .map(({ paths, ...entry }) =>
+      Object.assign({}, entry, { bytes: measure ? outputBytes(paths, sizeTimeoutMs) : null }),
+    )
     .map((entry) =>
       Object.assign({}, entry, {
         lastUsed: entry.projectRoot === null ? NaN : workspaceLastUsed(entry.projectRoot),
