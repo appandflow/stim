@@ -27,6 +27,7 @@
     case simulator = "Simulator controls"
     case hostedIos = "Hosted iOS"
     case settings = "Settings"
+    case addMachine = "Add build machine"
     case tokens = "Design tokens"
     var id: Self { self }
 
@@ -39,7 +40,7 @@
       case .hostedIos: return [.ready, .loading, .error, .empty]
       case .simulator: return [.ready, .loading, .empty, .error]
       case .settings: return [.ready, .loading, .empty, .error, .longText]
-      case .tokens: return [.ready]
+      case .tokens, .addMachine: return [.ready]
       }
     }
   }
@@ -139,6 +140,8 @@
           }
         }
         .padding(Space.md)
+      case .addMachine:
+        AddMachinePlayground()
       case .tokens:
         EmptyView()
       }

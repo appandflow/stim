@@ -11,6 +11,7 @@ struct BuildMachinesView: View {
   var workspace: String?
 
   @State private var removing: String?
+  @State private var adding: AddMachineModel?
   @AppStorage(AppPreferences.Key.updatesBuildMachines) private var updatesAutomatically = false
 
   private var checkout: String? {
@@ -52,6 +53,8 @@ struct BuildMachinesView: View {
         HStack {
           Text("This Mac builds on")
           Spacer()
+          Button("Add\u{2026}") { adding = model.addMachine(checkout: checkout) }
+            .disabled(model.isBusy || model.probing || model.updates.values.contains { !$0.isDone })
           Button("Refresh") { Task { await model.load(checkout: checkout) } }
             .disabled(model.isBusy || model.probing)
         }
@@ -84,6 +87,25 @@ struct BuildMachinesView: View {
         try? await Task.sleep(for: .seconds(15))
         if !model.isBusy, !Task.isCancelled { await model.refreshStatuses(checkout: checkout, ask: false) }
       }
+    }
+    .sheet(
+      isPresented: Binding(
+        get: { adding != nil },
+        set: {
+          if !$0 {
+            adding?.stop()
+            adding = nil
+          }
+        }),
+      onDismiss: {
+        Task { await model.load(checkout: checkout) }
+      }
+    ) {
+      if let adding { AddMachineSheet(model: adding) }
+    }
+    .onQuitRequested {
+      adding?.stop()
+      adding = nil
     }
     .confirmationDialog(
       "Stop building on \(removing ?? "")?", isPresented: .init(get: { removing != nil }, set: { if !$0 { removing = nil } }),

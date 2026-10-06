@@ -112,7 +112,11 @@ performance traces. Every release is listed under
   Click the toolbar's CPU, memory or disk figure for details; **Open Machines**
   in each popover opens the Machines page. CPU covers live workspace processes,
   while memory covers the whole Mac.
-  **Link machine** opens the existing **Build Machines** settings flow.
+  **Link machine** opens the existing **Build Machines** settings flow, whose
+  **Add...** button walks through picking a Mac, choosing Builds and Hosted
+  simulators, and running a generated `stim-server setup` command in Terminal on
+  that Mac. Running it there, and answering its y/N question for each request, is
+  the approval. Desktop mirrors the setup live and waits for both approvals.
   A build machine on another Stim build offers **Install This Mac's Build**. It
   installs this Mac's npm release there, or this checkout's own build when the
   machine allows it with `server.acceptClientBuilds`. The update goes over the

@@ -19,6 +19,42 @@ import Testing
     #expect(Tailnet.macs(statusJSON: Data(#"{"BackendState":"Stopped"}"#.utf8)) == nil)
   }
 
+  @Test func readsSelfAndOfflinePeersWithoutChangingOnlineDiscovery() throws {
+    let data = Data(
+      #"""
+      {"BackendState":"Running","Self":{"ID":"nSelf","HostName":"Laptop","DNSName":"Laptop.tail.test."},
+      "Peer":{"a":{"ID":"nOff","OS":"macOS","HostName":"Air","DNSName":"Air.tail.test.","Online":false},
+      "b":{"ID":"nOn","OS":"macOS","HostName":"Mini","DNSName":"Mini.tail.test.","Online":true},
+      "c":{"ID":"nPhone","OS":"iOS","DNSName":"phone.tail.test.","Online":true}}}
+      """#.utf8)
+    #expect(Tailnet.selfNode(statusJSON: data) == TailnetMac(id: "nSelf", hostName: "Laptop", dnsName: "laptop.tail.test"))
+    let peers = Tailnet.peers(statusJSON: data)
+    #expect(peers.map(\.online) == [false, true])
+    #expect(peers.map(\.mac.machine) == ["air", "mini"])
+    #expect(Tailnet.reachability(statusJSON: nil, peer: nil) == .tailscaleMissing)
+    #expect(Tailnet.reachability(statusJSON: Data(#"{"BackendState":"Stopped"}"#.utf8), peer: peers[1]) == .tailscaleStopped)
+    #expect(Tailnet.reachability(statusJSON: data, peer: peers[0]) == .peerOffline)
+    #expect(Tailnet.reachability(statusJSON: data, peer: peers[1]) == .ready)
+    #expect(Tailnet.macs(statusJSON: data)?.map(\.id) == ["nOn"])
+  }
+
+  @Test func readsHostingPermissionsFromApprovedDoctorEntries() throws {
+    let report = try JSONDecoder().decode(
+      DoctorReport.self,
+      from: Data(
+        #"""
+        {"project":"/p","findings":[],"buildMachines":[{"machine":"mini","state":"approved","host":{"name":"Mini","screenRecording":true,"accessibility":false}}],
+        "deviceHosts":[{"machine":"mini","state":"approved","deviceId":"host-id","host":{"name":"Mini","screenRecording":true,"accessibility":false}},
+        {"machine":"air","state":"pending"}]}
+        """#.utf8))
+    #expect(report.deviceHosts?.first?.deviceId == "host-id")
+    #expect(report.deviceHosts?.first?.host?.screenRecording == true)
+    #expect(report.deviceHosts?.first?.host?.accessibility == false)
+    #expect(report.deviceHosts?.last?.host == nil)
+    #expect(report.buildMachines?.first?.host == report.deviceHosts?.first?.host)
+    #expect(try JSONDecoder().decode(DoctorReport.self, from: Data(#"{"project":"/p","findings":[]}"#.utf8)).deviceHosts == nil)
+  }
+
   @Test func readsPlacementsFromStatsAndSplitsThemByMachine() throws {
     let stats = try JSONDecoder().decode(
       MachineStats.self,

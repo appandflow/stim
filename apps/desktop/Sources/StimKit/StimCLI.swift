@@ -105,8 +105,13 @@ public struct StimCLI: Sendable {
   /// each named machine this Mac has no pairing with for build access, and again one that revoked it; the iOS
   /// platform keeps `--fix` from cleaning Android build state in that checkout.
   public func buildMachines(cwd: String, ask: Bool) async throws -> [BuildMachineStatus]? {
+    try await machineAccess(cwd: cwd, ask: ask).buildMachines
+  }
+
+  /// Both build and device-host access states. Extra environment applies only to this doctor process.
+  public func machineAccess(cwd: String, ask: Bool, extraEnvironment: [String: String] = [:]) async throws -> DoctorReport {
     let args = ["doctor", "--json", "--platform", "ios"] + (ask ? ["--fix"] : [])
-    return try JSONDecoder().decode(DoctorReport.self, from: await run(args, cwd: cwd)).buildMachines
+    return try JSONDecoder().decode(DoctorReport.self, from: await run(args, cwd: cwd, extraEnvironment: extraEnvironment))
   }
 
   /// `stim settings --json` in `cwd`: every setting with its origin and layers.
@@ -129,15 +134,18 @@ public struct StimCLI: Sendable {
     return .refused(refusal)
   }
 
-  func run(_ args: [String], cwd: String? = nil) async throws -> Data {
-    let (status, data, stderr) = try await execute(args, cwd: cwd)
+  func run(_ args: [String], cwd: String? = nil, extraEnvironment: [String: String] = [:]) async throws -> Data {
+    let (status, data, stderr) = try await execute(args, cwd: cwd, extraEnvironment: extraEnvironment)
     guard status == 0 else { throw Failure.exited(status, stderr: stderr) }
     return data
   }
 
-  private func execute(_ args: [String], cwd: String?) async throws -> (Int32, Data, String) {
+  private func execute(_ args: [String], cwd: String?, extraEnvironment: [String: String] = [:]) async throws -> (
+    Int32, Data, String
+  ) {
     let command = try command(args)
-    var request = ProcessRequest(command.program, command.arguments, cwd: cwd, environment: environment)
+    var request = ProcessRequest(
+      command.program, command.arguments, cwd: cwd, environment: environment.merging(extraEnvironment) { _, extra in extra })
     request.captureStderr = true
     let result = try await request.run()
     return (result.status, result.stdout, stderrTail(result.stderrText))

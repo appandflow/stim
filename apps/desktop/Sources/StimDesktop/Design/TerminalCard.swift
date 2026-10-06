@@ -9,6 +9,8 @@ struct TerminalCard: View {
 
   var lines: [TerminalLine]
   var mode: Mode
+  var width: CGFloat = 236
+  var animates = true
   var height: CGFloat?
   var maxVisibleLines: Int?
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -21,6 +23,7 @@ struct TerminalCard: View {
     var lines: [TerminalLine]
     var mode: Mode
     var reduceMotion: Bool
+    var animates: Bool
   }
 
   private var cardHeight: CGFloat { height ?? (mode == .live ? 199 : 112) }
@@ -59,11 +62,13 @@ struct TerminalCard: View {
       Spacer(minLength: 0)
     }
     .padding(Space.lg)
-    .frame(width: 236, height: cardHeight, alignment: .topLeading)
+    .frame(width: width, height: cardHeight, alignment: .topLeading)
     .background(RoundedRectangle(cornerRadius: Radius.card).fill(Media.screen))
     .overlay(RoundedRectangle(cornerRadius: Radius.card).strokeBorder(Palette.accent.opacity(0.4)))
     .shadow(color: Palette.brand.opacity(0.3), radius: 16, y: 8)
-    .task(id: AnimationInput(lines: mode == .live ? lines : [], mode: mode, reduceMotion: reduceMotion)) {
+    .accessibilityElement(children: .ignore)
+    .accessibilityLabel(TerminalLine.spokenSummary(lines))
+    .task(id: AnimationInput(lines: mode == .live ? lines : [], mode: mode, reduceMotion: reduceMotion, animates: animates)) {
       switch mode {
       case .scripted(let loop): await playScript(loop: loop)
       case .live: await typeLiveLines()
@@ -72,7 +77,7 @@ struct TerminalCard: View {
   }
 
   private var displayedLines: [TerminalLine] {
-    if reduceMotion { return lines }
+    if reduceMotion || !animates { return lines }
     if mode == .live { return liveLines }
     var left = typed
     var out: [TerminalLine] = []
@@ -93,7 +98,7 @@ struct TerminalCard: View {
   }
 
   private func playScript(loop: Bool) async {
-    guard !reduceMotion else {
+    guard !reduceMotion, animates else {
       typed = total
       cursorOn = true
       return
@@ -118,7 +123,7 @@ struct TerminalCard: View {
     let changed = TerminalLine.indexesToType(previous: previousLines, lines: lines)
     liveLines = lines
     cursorOn = true
-    guard !reduceMotion else {
+    guard !reduceMotion, animates else {
       previousLines = lines
       return
     }
@@ -134,5 +139,10 @@ struct TerminalCard: View {
       previousLines = Array(lines.prefix(index + 1)) + previousLines.dropFirst(index + 1)
     }
     previousLines = lines
+    while !Task.isCancelled {
+      try? await Task.sleep(for: .milliseconds(500))
+      guard !Task.isCancelled else { return }
+      cursorOn.toggle()
+    }
   }
 }

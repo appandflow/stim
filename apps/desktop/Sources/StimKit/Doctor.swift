@@ -15,6 +15,7 @@ public struct DoctorReport: Decodable, Hashable, Sendable {
   public var findings: [Finding]
   /// Each `offload.machines` entry's state; nil from a `stim` older than the field.
   public var buildMachines: [BuildMachineStatus]?
+  public var deviceHosts: [BuildMachineStatus]?
 }
 
 /// The first `stim ...` command a doctor fix names in backticks, such as `stim doctor --fix --platform android`.
