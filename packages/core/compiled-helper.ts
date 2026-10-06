@@ -3,6 +3,9 @@ import { createHash, randomBytes } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync } from 'node:fs';
 import { basename, join } from 'node:path';
 
+const RECENT_MS = 10 * 60_000;
+const pruned = new Set<string>();
+
 function isHelperName(entry: string, name: string): boolean {
   return (
     entry.length === name.length + 17 &&
@@ -56,9 +59,16 @@ export function pruneCompiledHelpers(
         canonicalPaths.add(realpathSync(path));
       } catch {}
     }
-    const running = new Set(
-      entries.filter((entry) => canonicalPaths.has(realpathSync(join(dir, entry.name)))).map((entry) => entry.name),
-    );
+    const running = new Set<string>();
+    for (const entry of entries) {
+      try {
+        if (canonicalPaths.has(realpathSync(join(dir, entry.name)))) running.add(entry.name);
+      } catch {
+        running.add(entry.name);
+      }
+    }
+    const recent = Date.now() - RECENT_MS;
+    for (const entry of entries) if (entry.mtimeMs > recent) running.add(entry.name);
     for (const entry of selectHelpersToPrune(entries, currentName, name, running))
       rmSync(join(dir, entry), { force: true });
   } catch {}
@@ -68,7 +78,7 @@ export function pruneCompiledHelpers(
  * Returns `<dir>/<name>-<hash>`, compiling it with `compile` first when it is missing. The hash covers `version` and
  * each input's name and bytes, so a changed source or compiler builds a new helper beside the old one. `compile`
  * writes to a private temporary path that is renamed into place, so concurrent builders never expose a partial file.
- * Pruning is best effort and keeps this helper, the newest previous build and any running helpers.
+ * Pruning is best effort and keeps this helper, the newest previous build, helpers modified in the last ten minutes and running helpers. It runs after a build and on the first call per process.
  */
 export async function compiledHelper({
   dir,
@@ -86,7 +96,8 @@ export async function compiledHelper({
   const hash = createHash('sha256').update(version);
   for (const input of inputs) hash.update(basename(input)).update(readFileSync(input));
   const helper = join(dir, `${name}-${hash.digest('hex').slice(0, 16)}`);
-  if (!existsSync(helper)) {
+  const built = !existsSync(helper);
+  if (built) {
     mkdirSync(dir, { recursive: true, mode: 0o700 });
     const output = `${helper}.tmp-${process.pid}-${randomBytes(4).toString('hex')}`;
     try {
@@ -96,6 +107,7 @@ export async function compiledHelper({
       rmSync(output, { force: true });
     }
   }
-  pruneCompiledHelpers(dir, basename(helper), name);
+  if (built || !pruned.has(`${dir}/${name}`)) pruneCompiledHelpers(dir, basename(helper), name);
+  pruned.add(`${dir}/${name}`);
   return helper;
 }

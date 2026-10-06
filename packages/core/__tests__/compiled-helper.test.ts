@@ -195,7 +195,7 @@ describe('pruning on disk', () => {
     expect(readdirSync(dir).toSorted()).toEqual([current, older, previous].toSorted());
   });
 
-  test.each([false, true])('compiledHelper prunes after resolving a build (cache hit: %s)', async (cached) => {
+  test('compiledHelper prunes after a fresh build and on the first cache hit of a process', async () => {
     vi.mocked(spawnSync).mockReturnValue({
       pid: 0,
       output: [],
@@ -208,7 +208,6 @@ describe('pruning on disk', () => {
       writeFileSync(output, 'compiled bytes');
     });
     const options = { dir, name: 'stim-frames', inputs: [], version: 'v1', compile };
-    const cachedPath = cached ? await compiledHelper(options) : null;
     build(older, 1);
     build(previous, 2);
 
@@ -216,7 +215,21 @@ describe('pruning on disk', () => {
 
     expect(readFileSync(helper, 'utf8')).toBe('compiled bytes');
     expect(readdirSync(dir).toSorted()).toEqual([basename(helper), previous].toSorted());
+
+    build(older, 1);
+    await compiledHelper(options);
+    expect(readdirSync(dir)).toContain(older);
     expect(compile).toHaveBeenCalledTimes(1);
-    expect(cachedPath).toBe(cached ? helper : null);
+  });
+
+  test('keeps builds modified within the last ten minutes', () => {
+    build(current, 1);
+    build(oldest, 3);
+    writeFileSync(join(dir, older), 'fresh');
+    writeFileSync(join(dir, previous), 'fresh');
+
+    pruneCompiledHelpers(dir, current, 'stim-frames', () => new Set());
+
+    expect(readdirSync(dir).toSorted()).toEqual([current, older, previous].toSorted());
   });
 });
