@@ -1549,11 +1549,30 @@ it.
 `store.config.js` is the App Store listing for [EAS Metadata](https://docs.expo.dev/eas/metadata/):
 name ("Stim Mobile"; the home-screen name stays "Stim"), subtitle, description,
 keywords, support, marketing and privacy URLs, copyright, categories (Developer
-Tools, Productivity), the age rating answers and the App Review notes.
+Tools, Productivity), the screenshots, the age rating answers and the App Review
+notes.
 `eas.json` points `submit.production.ios.metadataPath` at it. `apple.version`
 names the App Store version that `eas metadata:push` edits, or creates when it
 does not exist; set it to the version being released, which must equal `version`
 in `app.config.ts` for App Store Connect to accept the uploaded build.
+
+The screenshots are the framed light images in `store/screenshots/en-US/`, which
+sit outside `src/` and `assets/`, so the app bundle never contains them. They
+are listed per display type, in the order App Store Connect shows them:
+
+| Directory    | Display type            | Size      | Images |
+| ------------ | ----------------------- | --------- | ------ |
+| `iphone-6.9` | `APP_IPHONE_67`         | 1320x2868 | 6      |
+| `ipad-13`    | `APP_IPAD_PRO_3GEN_129` | 2064x2752 | 4      |
+
+App Store Connect files its 6.9-inch iPhone and 13-inch iPad images under those
+two display types. To change a screenshot, replace the PNG (RGB, no alpha, same
+size) and keep the file name, or edit the list in `store.config.js`, then push.
+`eas metadata:push` matches an image by file name and size: it uploads new or
+changed ones, deletes ones no longer listed and reorders the rest. Renaming a
+file uploads it again. `eas metadata:lint` does not check that the files exist.
+Screenshots need eas-cli 24.10 or later; an older one ignores them, so run
+`npx eas-cli@latest metadata:push` if `npx eas-cli` resolves to a cached release.
 
 The App Review notes tell the reviewer to pair with the demo server at
 `wss://stim-demo.appandflow.workers.dev` (see `apps/demo-server`). The pairing

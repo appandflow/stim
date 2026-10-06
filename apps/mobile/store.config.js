@@ -52,6 +52,12 @@ const reviewNotes = [
   "The device viewer can show a web page that the user's own Mac runs; the app has no address bar and no in-app browser. Links to GitHub and other sites open in the system browser. The app contains no in-app purchases and no advertising.",
 ].join('\n');
 
+const screenshotDir = 'store/screenshots/en-US';
+
+function screenshots(directory, names) {
+  return names.map((name) => `${screenshotDir}/${directory}/${name}-light.png`);
+}
+
 function optional(entries) {
   return Object.fromEntries(entries.filter(([, value]) => value));
 }
@@ -90,6 +96,17 @@ module.exports = {
         marketingUrl: 'https://stim.appandflow.com',
         supportUrl: 'https://stim.appandflow.com/support',
         privacyPolicyUrl: 'https://stim.appandflow.com/privacy',
+        screenshots: {
+          APP_IPHONE_67: screenshots('iphone-6.9', [
+            '01-workspaces',
+            '02-devices',
+            '03-live-device',
+            '04-control',
+            '05-build-progress',
+            '06-logs',
+          ]),
+          APP_IPAD_PRO_3GEN_129: screenshots('ipad-13', ['01-devices', '02-live-control', '03-workspace', '04-logs']),
+        },
       },
     },
     advisory: {
