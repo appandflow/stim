@@ -821,6 +821,8 @@ test('hosted iOS safety routes and hosting refusal remedy render through the gui
   expect(renderSection('errors', 'STIM_HOSTING_REFUSED')).toContain('stim stop');
   const hosted = renderSection('lifecycle', 'hosted-ios');
   expect(hosted).toContain('STIM_HOSTING_REFUSED');
+  expect(hosted).toContain('stim ios --remote');
+  expect(hosted).toContain('--slot');
   expect(hosted).toContain('--no-metro-check refuses with STIM_BAD_ARG');
   expect(hosted).toContain('stim stop; stim start');
   expect(hosted).toContain('workspace-state key to inspect');

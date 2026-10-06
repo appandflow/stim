@@ -23,6 +23,7 @@
     case builds = "Builds"
     case buildSheet = "Build sheet"
     case simulator = "Simulator controls"
+    case hostedIos = "Hosted iOS"
     case settings = "Settings"
     case tokens = "Design tokens"
     var id: Self { self }
@@ -32,6 +33,7 @@
       case .notifications: return [.ready, .empty, .longText, .largeData]
       case .builds: return PlaygroundScenario.allCases
       case .buildSheet: return [.ready, .loading, .error, .longText, .largeData]
+      case .hostedIos: return [.ready, .loading, .error, .empty]
       case .simulator: return [.ready, .loading, .empty, .error]
       case .settings: return [.ready, .loading, .empty, .error, .longText]
       case .tokens: return [.ready]
@@ -106,6 +108,8 @@
           cli: Task { StimCLI(environment: ProcessInfo.processInfo.environment) }, env: fixtures.environment,
           selection: BuildSheetSelection(workspace: fixtures.environment.path, platform: "ios"),
           openLogs: { _ in action = "Selected build logs panel (fixture only)." })
+      case .hostedIos:
+        HostedIosGallery(scenario: scenario)
       case .simulator:
         ScrollView {
           SimulatorOptionsView(fixture: PlaygroundSimulator(scenario: scenario))

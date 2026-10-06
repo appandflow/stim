@@ -11,6 +11,8 @@ import {
   listSegments,
   loadConfig,
   readMacosRecord,
+  readWorkspaceState,
+  hostedIosPlacements,
   parseNdjsonLine,
   RECORDING_PLATFORMS,
   stimBuildDigest,
@@ -134,6 +136,12 @@ const INPUT_METHODS = [
   'input.key',
   'input.window',
 ] as const;
+
+function hostedPlacement(dir: string, platform: string, slot = 'default') {
+  if (platform === 'macos') return readMacosRecord(dir)?.host;
+  if (platform === 'ios') return hostedIosPlacements(readWorkspaceState(dir))[slot];
+  return undefined;
+}
 
 export interface ServerOptions {
   host?: { executable: string; name: string };
@@ -938,6 +946,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
           action: raw.takeOver === true ? 'control.take-over' : 'control.begin',
           workspace: clip(raw.workspace),
           ...(typeof raw.platform === 'string' ? { platform: clip(raw.platform)! } : {}),
+          ...(raw.platform === 'ios' ? { slot: typeof raw.slot === 'string' ? clip(raw.slot)! : 'default' } : {}),
           ok: false,
           error: { code, message: clip(message)! },
         });
@@ -954,11 +963,19 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       if ('code' in parsed) return refuseControl(parsed.code, parsed.message);
       const resolved = registeredWorkspace(parsed.value.workspace);
       if ('code' in resolved) return refuseControl(resolved.code, resolved.message);
-      const host = parsed.value.platform === 'macos' ? readMacosRecord(resolved.dir)?.host : undefined;
+      const host = hostedPlacement(resolved.dir, parsed.value.platform, parsed.value.slot);
       const owner = controller(session);
       if (host) {
-        if (parsed.value.physical || (parsed.value.slot !== undefined && parsed.value.slot !== 'default')) {
-          return refuseControl('bad-request', 'Hosted macOS control requires the default, non-physical target.');
+        if (
+          parsed.value.physical ||
+          (parsed.value.platform === 'macos' && parsed.value.slot !== undefined && parsed.value.slot !== 'default')
+        ) {
+          return refuseControl(
+            'bad-request',
+            parsed.value.platform === 'ios'
+              ? 'Hosted iOS control requires a non-physical target.'
+              : 'Hosted macOS control requires the default, non-physical target.',
+          );
         }
         return relay.begin(
           id,
@@ -968,7 +985,12 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
             socket.readyState === socket.OPEN &&
             controllers.get(socket) === owner &&
             readDevices().some((entry) => entry.id === session.id && entry.capabilities.includes('control')),
-          { workspace: resolved.dir, device: { id: session.id, name: session.name } },
+          {
+            workspace: resolved.dir,
+            device: { id: session.id, name: session.name },
+            platform: parsed.value.platform as 'ios' | 'macos',
+            slot: parsed.value.slot,
+          },
         );
       }
       const outcome = await control.begin(
@@ -1164,13 +1186,24 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       }
       const resolvedDir = hosted ? null : workspaceDir(id, workspace, true);
       if (!hosted && !resolvedDir) return;
-      const host = !hosted && platform === 'macos' && resolvedDir ? readMacosRecord(resolvedDir)?.host : undefined;
+      const host =
+        hosted || !resolvedDir
+          ? undefined
+          : hostedPlacement(resolvedDir, platform as Platform, slot as string | undefined);
       if (host) {
-        if ((slot !== undefined && slot !== 'default') || physical || at !== undefined || rate !== undefined) {
+        if (
+          (platform === 'macos' && slot !== undefined && slot !== 'default') ||
+          physical ||
+          duoFrame ||
+          at !== undefined ||
+          rate !== undefined
+        ) {
           return error(
             id,
             'bad-request',
-            'Hosted macOS frames require the default, non-physical target without replay.',
+            platform === 'ios'
+              ? 'Hosted iOS frames require a non-physical target without replay or duoFrame.'
+              : 'Hosted macOS frames require the default, non-physical target without replay.',
           );
         }
         return void relay.subscribe(id, host, target, (subscription, stop) => subscriptions.set(subscription, stop));

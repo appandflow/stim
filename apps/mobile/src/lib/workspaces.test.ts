@@ -1,3 +1,4 @@
+import hostedFixture from '../../mock-server/fixtures/hosted-ios.json';
 import fixture from '../../mock-server/fixtures/status.json';
 
 import { pathInCheckout, projectOf, repositoryRoots, workspaceTitle, workspaceTitleAt } from '@/lib/workspace-names';
@@ -415,4 +416,29 @@ describe('attentionGroups', () => {
       },
     ]);
   });
+});
+
+it('routes each hosted iOS slot through the paired Mac without using an empty local UDID', () => {
+  const workspace = hostedFixture[0] as EnvironmentState;
+  const [phone, tablet] = devicesOf(workspace);
+  expect(phone).toMatchObject({
+    platform: 'ios',
+    slot: 'default',
+    id: null,
+    owned: false,
+    physical: false,
+    running: true,
+    host: 'janics-mac-mini',
+  });
+  expect(tablet).toMatchObject({ platform: 'ios', slot: 'tablet', model: 'iPad Pro 27.0', host: 'janics-mac-mini' });
+  expect(deviceKey(phone!)).not.toBe(deviceKey(tablet!));
+  expect(streamsFrames(phone!, ['ios-hosted'])).toBe(true);
+  expect(streamsFrames(phone!, [])).toBe(false);
+  expect(livePlatforms(workspace)).toEqual(['ios']);
+  expect(isActive({ ...workspace, live: false })).toBe(true);
+  const [stopped] = devicesOf(hostedFixture[1] as EnvironmentState);
+  const [unverified] = devicesOf(hostedFixture[2] as EnvironmentState);
+  expect(streamsFrames(stopped!, ['ios-hosted'])).toBe(false);
+  expect(streamsFrames(unverified!, ['ios-hosted'])).toBe(true);
+  expect(unverified?.running).toBe(false);
 });

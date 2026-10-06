@@ -77,6 +77,7 @@ export interface AuditRecord {
   action: string | null;
   workspace: string | null;
   platform?: string;
+  slot?: string;
   ok: boolean;
   error?: ProtocolError;
   durationMs?: number;

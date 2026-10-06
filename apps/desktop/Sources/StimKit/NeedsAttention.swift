@@ -123,7 +123,9 @@ private func overseenDevices(_ env: Workspace) -> [OverseenDevice] {
   func add(_ ios: IosDevice?, _ android: AndroidDevice?) {
     if let ios {
       out.append(
-        OverseenDevice(model: Format.simulatorModel(ios.name), running: ios.state == "Booted", activity: ios.activity, web: false)
+        OverseenDevice(
+          model: Format.simulatorModel(ios.name), running: DeviceRef.ios(slot: "default", ios).isRunning, activity: ios.activity,
+          web: false)
       )
     }
     if let android {

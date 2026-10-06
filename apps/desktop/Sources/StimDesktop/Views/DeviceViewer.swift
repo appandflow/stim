@@ -82,7 +82,8 @@ struct DeviceViewer: View {
     }
     .task(id: deviceID) {
       switch device {
-      case .ios(_, let sim) where !sim.physical: displayMetrics = SimulatorDisplayMetrics.load(udid: sim.udid)
+      case .ios where device?.localSimulatorUDID != nil:
+        displayMetrics = SimulatorDisplayMetrics.load(udid: device!.localSimulatorUDID!)
       case .android(_, let avd) where !avd.physical: displayMetrics = EmulatorDisplayMetrics.load(avdName: avd.name)
       default: displayMetrics = nil
       }
@@ -92,7 +93,8 @@ struct DeviceViewer: View {
       watchEscape()
       takenOver =
         device.map {
-          $0.isInteractive && (!$0.isPhysical || PhysicalScreen(device: $0, link: server.link, now: Date()).canControl)
+          $0.isInteractive
+            && ((!$0.isPhysical && $0.hostedIos == nil) || PhysicalScreen(device: $0, link: server.link, now: Date()).canControl)
         } ?? false
       actionsFocused = !takenOver
     }
@@ -242,7 +244,7 @@ struct DeviceViewer: View {
   private func replayTarget(_ device: DeviceRef) -> ReplayTarget? {
     switch device {
     case .remote: return nil
-    case _ where device.isPhysical: return nil
+    case _ where device.isPhysical || device.hostedIos != nil: return nil
     default: return ReplayTarget(workspace: env.path, platform: device.platform, slot: device.slot)
     }
   }

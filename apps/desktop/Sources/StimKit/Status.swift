@@ -319,7 +319,19 @@ public struct Slot: Decodable, Hashable, Sendable {
   public var android: AndroidDevice?
 }
 
+public struct HostedIos: Decodable, Hashable, Sendable {
+  public struct Device: Decodable, Hashable, Sendable {
+    public var name: String
+    public var runtime: String
+  }
+
+  public var machine: String
+  public var session: String
+  public var device: Device?
+}
+
 public struct IosDevice: Decodable, Hashable, Sendable {
+  public var host: HostedIos?
   public var name: String
   public var udid: String
   public var owned: Bool
@@ -334,7 +346,7 @@ public struct IosDevice: Decodable, Hashable, Sendable {
   public var model: String?
   public var leaseExpiresAt: String?
 
-  enum CodingKeys: String, CodingKey { case name, udid, owned, state, activity, app, appPresence, disk }
+  enum CodingKeys: String, CodingKey { case name, udid, owned, state, activity, app, appPresence, disk, host }
 
   public init(name: String, udid: String, owned: Bool, state: String, activity: DeviceActivity? = nil) {
     self.name = name
@@ -346,6 +358,7 @@ public struct IosDevice: Decodable, Hashable, Sendable {
 
   public init(from decoder: Decoder) throws {
     let c = try decoder.container(keyedBy: CodingKeys.self)
+    host = try c.decodeIfPresent(HostedIos.self, forKey: .host)
     udid = try c.decode(String.self, forKey: .udid)
     name = try c.decodeIfPresent(String.self, forKey: .name) ?? "Missing simulator"
     owned = try c.decode(Bool.self, forKey: .owned)

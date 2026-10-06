@@ -1632,6 +1632,8 @@ export function protocolJsonSchema(): JsonSchema {
             additionalProperties: false,
             properties: {
               event: { const: 'device-frame' },
+              platform: { enum: [...PLATFORMS] },
+              slot: { type: 'string' },
               subscription: { type: 'string' },
               artwork: { oneOf: [{ type: 'null' }, { $ref: '#/$defs/DeviceFrameArtwork' }] },
             },
@@ -1716,6 +1718,8 @@ export function protocolJsonSchema(): JsonSchema {
             additionalProperties: false,
             properties: {
               event: { const: 'frame-delayed' },
+              platform: { enum: [...PLATFORMS] },
+              slot: { type: 'string' },
               subscription: { type: 'string' },
               delayed: { type: 'boolean' },
               reason: { type: 'string' },
@@ -1737,6 +1741,8 @@ export function protocolJsonSchema(): JsonSchema {
             additionalProperties: false,
             properties: {
               event: { const: 'control-ended' },
+              platform: { enum: [...PLATFORMS] },
+              slot: { type: 'string' },
               session: { type: 'string' },
               reason: { enum: [...CONTROL_END_REASONS] },
               message: { type: 'string' },
@@ -1748,6 +1754,8 @@ export function protocolJsonSchema(): JsonSchema {
             additionalProperties: false,
             properties: {
               event: { const: 'error' },
+              platform: { enum: [...PLATFORMS] },
+              slot: { type: 'string' },
               subscription: { type: 'string' },
               error: { $ref: '#/$defs/ProtocolError' },
             },
