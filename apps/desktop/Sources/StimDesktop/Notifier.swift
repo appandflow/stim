@@ -88,6 +88,33 @@ final class Notifier: ObservableObject {
     }
   }
 
+  nonisolated static let discoveryPrefix = "discovery:"
+  nonisolated static let discoveryCategory = "discovery"
+  nonisolated static let discoveryNeverAction = "discoveryNever"
+
+  static func postDiscovery(_ prompt: DiscoveryPrompt, allowed: @MainActor () -> Bool) async -> Bool {
+    guard isAvailable else { return false }
+    let center = UNUserNotificationCenter.current()
+    let settings = await center.notificationSettings()
+    switch settings.authorizationStatus {
+    case .notDetermined:
+      guard (try? await center.requestAuthorization(options: [.alert, .sound])) == true else { return false }
+    case .denied: return false
+    default: break
+    }
+    guard allowed() else { return false }
+    let content = UNMutableNotificationContent()
+    content.title = prompt.title
+    content.body = prompt.detail ?? ""
+    content.categoryIdentifier = discoveryCategory
+    content.sound = .default
+    do {
+      try await center.add(
+        UNNotificationRequest(identifier: discoveryPrefix + prompt.type.rawValue, content: content, trigger: nil))
+      return true
+    } catch { return false }
+  }
+
   func start() {
     guard subscription == nil else { return }
     subscription = store.$payload.compactMap { $0 }.sink { [weak self] payload in
@@ -118,6 +145,7 @@ final class NotificationResponder: NSObject, UNUserNotificationCenterDelegate, @
   static let shared = NotificationResponder()
 
   @MainActor var runPlan: (() -> Void)?
+  @MainActor var discoveryResponse: ((DiscoveryType, Bool) -> Void)?
 
   @MainActor func install() {
     guard Notifier.isAvailable else { return }
@@ -126,7 +154,11 @@ final class NotificationResponder: NSObject, UNUserNotificationCenterDelegate, @
       UNNotificationCategory(
         identifier: Notifier.pressureCategory,
         actions: [UNNotificationAction(identifier: Notifier.doItAction, title: "Do it", options: [.foreground])],
-        intentIdentifiers: [])
+        intentIdentifiers: []),
+      UNNotificationCategory(
+        identifier: Notifier.discoveryCategory,
+        actions: [UNNotificationAction(identifier: Notifier.discoveryNeverAction, title: "Don't suggest again", options: [])],
+        intentIdentifiers: []),
     ])
     center.delegate = self
   }
@@ -139,7 +171,13 @@ final class NotificationResponder: NSObject, UNUserNotificationCenterDelegate, @
     let id = response.notification.request.identifier
     DispatchQueue.main.async {
       MainActor.assumeIsolated {
-        if action == Notifier.doItAction {
+        if id.hasPrefix(Notifier.discoveryPrefix) {
+          if let type = DiscoveryType(rawValue: String(id.dropFirst(Notifier.discoveryPrefix.count))),
+            action != UNNotificationDismissActionIdentifier
+          {
+            self.discoveryResponse?(type, action == Notifier.discoveryNeverAction)
+          }
+        } else if action == Notifier.doItAction {
           self.runPlan?()
         } else if id.hasPrefix("pressure") {
           OpenRequests.shared.showsMachine = true
@@ -164,6 +202,8 @@ final class NotificationResponder: NSObject, UNUserNotificationCenterDelegate, @
     withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
   ) {
     let id = notification.request.identifier
-    completionHandler(id.hasPrefix("pressure") || id.hasPrefix(Notifier.oversightPrefix) ? [.banner, .sound] : [])
+    completionHandler(
+      id.hasPrefix("pressure") || id.hasPrefix(Notifier.oversightPrefix) || id.hasPrefix(Notifier.discoveryPrefix)
+        ? [.banner, .sound] : [])
   }
 }

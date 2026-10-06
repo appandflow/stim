@@ -4,6 +4,11 @@ import StimKit
 import StimStores
 import SwiftUI
 
+struct AddMachineRequest {
+  var machineID: String?
+  var hostedSimulators: Bool
+}
+
 @MainActor
 final class OpenRequests: ObservableObject {
   static let shared = OpenRequests()
@@ -15,6 +20,7 @@ final class OpenRequests: ObservableObject {
   @Published var selectedWorkspace: String?
   @Published var showsMachine = false
   @Published var pairsPhone = false
+  @Published var addMachine: AddMachineRequest?
   @Published var showsSetupGuide = false
   @Published var target: OversightTarget?
   var openMainWindow: (() -> Void)?
@@ -129,6 +135,7 @@ struct StimDesktopApp: App {
   private let store: StatusStore
   private let notifier: Notifier
   private let oversight: OversightNotifier
+  private let discovery: DiscoveryCoordinator
   private let actions: ActionCenter
   private let autopilot: AutopilotRunner
   private let onboarding: Onboarding
@@ -189,16 +196,21 @@ struct StimDesktopApp: App {
     }
     let machineSettings = MachineSettingsStore(cli: cli)
     self.machineSettings = machineSettings
-    self.buildMachines = BuildMachinesModel(cli: cli, settings: machineSettings, statsReader: statsReader)
+    let buildMachines = BuildMachinesModel(cli: cli, settings: machineSettings, statsReader: statsReader)
+    self.buildMachines = buildMachines
     let autopilot = AutopilotRunner(
       status: store, actions: actions, gc: gc, disks: disks, settings: machineSettings, cli: cli)
     self.autopilot = autopilot
+    let discovery = DiscoveryCoordinator(
+      status: store, machines: buildMachines, stats: statsReader, autopilot: autopilot, gc: gc, environment: environment)
+    self.discovery = discovery
     oversight.keptWorktrees = { [autopilot] in autopilot.finishedPullRequests }
     let onboarding = Onboarding(environment: environment, cli: cli, actions: actions)
     self.onboarding = onboarding
     DispatchQueue.main.async {
       store.start()
       oversight.start()
+      discovery.start(actions: actions)
       metrics.start()
       autopilot.start()
       onboarding.check()

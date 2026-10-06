@@ -405,3 +405,7 @@ Run `swift run StimDesktop --playground` from `apps/desktop` to open only the pl
 starting the normal app's CLI or server. Fixture interactions stay in memory. Compact/regular
 viewports, light/dark, large text and increased contrast help inspect layout without
 changing system preferences. Release builds exclude it. See the [desktop development guide](https://github.com/appandflow/stim/blob/main/apps/desktop/README.md#swiftui-playground) for adding a fixture.
+
+## Suggestions
+
+Desktop suggests build machines, hosted simulators, cache review, or phone pairing when recent builds, tailnet peers, disk pressure, or device limits make them useful. Each kind shows once unless you dismiss it with the X to snooze it for 7 days, after which it may show again. Choose **Don't suggest again** to dismiss that kind permanently. Suggestions never appear during a build or install, before setup is complete, or on the first launch, and appear at most once per day. Nothing is set up until you open and follow the wizard.

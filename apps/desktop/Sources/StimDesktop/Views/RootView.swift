@@ -49,6 +49,8 @@ struct RootView: View {
   @AppStorage(AppPreferences.Key.dismissedStimUpdate) private var dismissedStimUpdate = ""
   @State private var pendingLink: PendingWorkspaceLink?
   @Environment(\.openWindow) private var openWindow
+  @Environment(\.openSettings) private var openSettings
+  @AppStorage("settingsTab") private var settingsTab = "app"
 
   private let cli: Task<StimCLI, Never>
 
@@ -163,6 +165,16 @@ struct RootView: View {
     .onDisappear { notices.removeAll() }
     .onChange(of: onboarding.stimUpdate, initial: true) { _, latest in showStimUpdate(latest) }
     .onChange(of: openRequests.target, initial: true) { _, target in show(target, in: store.payload) }
+    .onReceive(openRequests.$addMachine) { request in
+      guard request != nil else { return }
+      settingsTab = "build-machines"
+      openSettings()
+    }
+    .onReceive(openRequests.$pairsPhone) { pair in
+      guard pair else { return }
+      settingsTab = "phones"
+      openSettings()
+    }
     .onReceive(openRequests.$device) { request in showDevice(request, in: store.payload) }
     .onReceive(openRequests.$workspaceLink) { link in
       guard link != nil else { return }

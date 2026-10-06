@@ -98,6 +98,33 @@ final class AddMachineModelTests: XCTestCase {
     private enum Failure: Error { case refused }
   }
 
+  @MainActor func testDiscoveryPreselectionWaitsForPeersAndRequiresTheUserToPick() async {
+    let harness = Harness()
+    let model = harness.make()
+    model.preselect(machineID: "nMini", hostedSimulators: true)
+    XCTAssertNil(model.selectedId)
+    await model.refreshPeers()
+    XCTAssertEqual(model.selectedId, "nMini")
+    XCTAssertEqual(model.wizard.phase, .pick)
+    XCTAssertTrue(harness.writes.isEmpty)
+    await model.pick()
+    XCTAssertEqual(model.wizard.phase, .choose)
+    XCTAssertEqual(model.wizard.capabilities, [.deviceHost])
+    XCTAssertTrue(harness.writes.isEmpty)
+  }
+
+  @MainActor func testDiscoveryPreselectionPreservesTheUsersPeerAndDefaultCapabilities() async {
+    let harness = Harness()
+    let model = harness.make()
+    model.preselect(machineID: "nMini", hostedSimulators: false)
+    model.selectedId = "user-choice"
+    await model.refreshPeers()
+    XCTAssertEqual(model.selectedId, "user-choice")
+    model.selectedId = "nMini"
+    await model.pick()
+    XCTAssertEqual(model.wizard.capabilities, [.build, .deviceHost])
+  }
+
   @MainActor func testRequestsFollowSettingsAndTicketEnvironmentDoesNotLeakIntoPollOrCancel() async throws {
     let harness = Harness()
     let model = harness.make()
