@@ -44,8 +44,10 @@ struct Sidebar: View {
         case .none:
           let entries = store.sidebarList(options)
           ForEach(entries) { entry in
+            let project =
+              if case .archived(let archive) = entry { archive.sidebarProject } else { store.project(ofPath: entry.path) }
             EntryRow(
-              entry: entry, subtitle: store.title(of: store.project(ofPath: entry.path)), showsFolder: true,
+              entry: entry, subtitle: store.title(of: project), showsFolder: true,
               showsGit: options.showsGitStatus, selection: rowSelection.wrappedValue, openLogs: openLogs)
           }
           if entries.isEmpty { emptyText(options) }
@@ -247,7 +249,7 @@ struct EntryRow: View {
     switch entry {
     case .archived(let archive):
       TimelineView(.everyMinute) { context in
-        ArchivedRow(archive: archive, now: context.date)
+        ArchivedRow(archive: archive, now: context.date, subtitle: subtitle)
       }
       .sidebarTag(.archived(archive.id), selection: selection)
     case .workspace(let env):

@@ -108,13 +108,15 @@ including records whose `replacedBy` points to that workspace. The archive page 
 back to its replacement when there is one.
 
 Logs use the existing source, slot, level, error and search filters, querying the connected
-loopback stim-server without following. Replay probes iOS, Android and Web recordings
-in the default slot and appears only when a recorded span exists. Archived pages offer
+loopback stim-server without following. Busy-server refusals retry briefly. Replay probes
+iOS, Android and Web recordings sequentially in the default slot, reading each archive
+range once. Replay appears only when a recorded span exists. Archived pages offer
 no live device or workspace actions. An older server shows an update hint for archive
-requests it refuses. Connect through the Phones page to read logs and replay.
+requests that require a workspace instead of an archive; other refusals show the server's
+message. Connect through the Phones page to read logs and replay.
 
-Delete names the archive in a confirmation and permanently removes its logs, recordings,
-agent actions and record through `stim gc --delete --cache archived:<id>`. The page
+Delete names the archive and removal age in a confirmation and permanently removes its
+logs, recordings, agent actions and record through `stim gc --delete --cache archived:<id>`. The page
 returns to the previous selection once status stops reporting the archive. Machines
 shows archive count, total size, per-kind sizes and retention setting names separately;
 archives are never selected as safe space to free. The retained build list is available

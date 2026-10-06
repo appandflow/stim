@@ -19,7 +19,15 @@ public struct StatusPayload: Decodable, Sendable {
     capacity = try c.decodeIfPresent(Capacity.self, forKey: .capacity)
     unprovisionedWorktrees = try c.decodeIfPresent([UnprovisionedWorktree].self, forKey: .unprovisionedWorktrees)
     machine = try c.decodeIfPresent(MachineUsage.self, forKey: .machine)
-    archived = try c.decodeIfPresent([ArchivedWorkspace].self, forKey: .archived)
+    if c.contains(.archived), try !c.decodeNil(forKey: .archived) {
+      var records = try c.nestedUnkeyedContainer(forKey: .archived)
+      var decoded: [ArchivedWorkspace] = []
+      while !records.isAtEnd {
+        let record = try records.superDecoder()
+        if let archive = try? ArchivedWorkspace(from: record) { decoded.append(archive) }
+      }
+      archived = decoded
+    }
     archivedUsage = try c.decodeIfPresent(ArchivedUsage.self, forKey: .archivedUsage)
     oversight = try? OversightStatus(from: decoder)
   }

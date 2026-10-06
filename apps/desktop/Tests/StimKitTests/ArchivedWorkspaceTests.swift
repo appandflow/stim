@@ -32,7 +32,7 @@ import Testing
     records[0].removeValue(forKey: "lastUsedAt")
     records[0]["worktree"] = [:] as [String: Any]
     records[0]["expires"] = [:] as [String: Any]
-    records[0]["builds"] = ["count": 0, "lastErrorCount": 0]
+    records[0]["builds"] = [:] as [String: Any]
     records[0]["removedBy"] = "future-cleanup"
     object["archived"] = records
     let decoded = try JSONDecoder().decode(StatusPayload.self, from: JSONSerialization.data(withJSONObject: object))
@@ -40,6 +40,8 @@ import Testing
     #expect(archive.removedBy == "future-cleanup")
     #expect(archive.removedByLabel == "future cleanup")
     #expect(archive.title == "Example")
+    #expect(archive.builds.count == 0)
+    #expect(archive.builds.lastErrorCount == 0)
     #expect(archive.builds.last == nil)
     #expect(archive.lastUsedAt == nil)
     #expect(archive.replacedBy == nil)
@@ -110,10 +112,9 @@ import Testing
     #expect(usage.storageRows.isEmpty)
   }
 
-  @Test func archiveDeletionRequiresConfirmationAndTargetsOnlyTheSelectedArchive() throws {
+  @Test func archiveDeletionTargetsOnlyTheSelectedArchive() throws {
     let archive = try #require(payload().archived?.first)
-    #expect(archive.deleteCommand(confirmed: false, cwd: "/home") == nil)
-    let command = try #require(archive.deleteCommand(confirmed: true, cwd: "/home"))
+    let command = archive.deleteCommand(cwd: "/home")
     #expect(command.arguments == ["gc", "--delete", "--cache", "archived:archive-older"])
     #expect(command.cwd == "/home")
   }
@@ -133,13 +134,60 @@ import Testing
       ])
   }
 
-  @Test func oldServerArchiveRefusalsExplainHowToReadHistory() {
-    let refusal = ServerError(code: "bad-request", message: "workspace is required")
+  @Test(arguments: [
+    "params.workspace is required.",
+    "replay.range needs params.workspace and params.platform (ios, android or web).",
+    "frames.subscribe needs params.workspace and params.platform (ios, android or web).",
+    "replay.keyframe needs params.workspace and params.platform (ios, android or web).",
+  ])
+  func oldServerArchiveRefusalsExplainHowToReadHistory(_ message: String) {
+    let refusal = ServerError(code: "bad-request", message: message)
     #expect(archivedReadError(refusal, content: "logs") == "Update stim-server to view archived logs")
     #expect(archivedReadError(refusal, content: "replay") == "Update stim-server to view archived replay")
+  }
+
+  @Test(arguments: [
+    ServerError(code: "bad-request", message: "grep must be a valid regular expression without NUL characters."),
+    ServerError(code: "bad-request", message: "params.workspace or params.archive is required."),
+    ServerError(code: "forbidden", message: "Read access required"),
+  ])
+  func currentServerRefusalsKeepTheirOwnMessage(_ refusal: ServerError) {
+    #expect(archivedReadError(refusal, content: "logs") == refusal.message)
+    #expect(archivedReadError(refusal, content: "replay") == refusal.message)
+  }
+
+  @Test func malformedArchivesDoNotHideLiveWorkspacesOrOtherHistory() throws {
+    let data = try Data(contentsOf: Bundle.module.url(forResource: "Fixtures/archived-status.json", withExtension: nil)!)
+    var object = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+    let records = try #require(object["archived"] as? [[String: Any]])
+    var valid = records[0]
+    valid["builds"] = ["count": "unknown", "lastErrorCount": NSNull()]
+    var malformed = records[0]
+    malformed["id"] = 123
+    object["archived"] = [malformed, valid, NSNull(), records[0]] as [Any]
+    let decoded = try JSONDecoder().decode(StatusPayload.self, from: JSONSerialization.data(withJSONObject: object))
+    #expect(decoded.environments.map(\.path) == (try payload()).environments.map(\.path))
+    #expect(decoded.archived?.map(\.id) == ["archive-older", "archive-older"])
+    #expect(decoded.archived?.first?.builds.count == 0)
+    #expect(decoded.archived?.first?.builds.lastErrorCount == 0)
+    #expect(decoded.archived?.last?.builds.count == 4)
+  }
+
+  @Test func archivesWithoutRepositoryFactsUseTheLiveProjectFallback() throws {
+    var archive = try #require(payload().archived?.first)
+    archive.worktree.repository = nil
+    archive.projectRoot = "/work/example/.worktrees/feature/app"
+    #expect(archive.sidebarProject == Project(fallbackFor: archive.projectRoot))
+    var options = SidebarOptions()
+    options.status = .archived
+    let trees = sidebarTrees(
+      environments: [], unprovisioned: [], project: { Project(fallbackFor: $0) }, options: options, archived: [archive])
+    #expect(trees.first?.summary.project.root == "/work/example")
+    options.hiddenProjects = ["/work/example"]
     #expect(
-      archivedReadError(ServerError(code: "forbidden", message: "Read access required"), content: "logs")
-        == "Read access required")
+      sidebarList(
+        environments: [], unprovisioned: [], project: { Project(fallbackFor: $0) }, options: options, archived: [archive]
+      ).isEmpty)
   }
 
   @MainActor @Test func archiveReplayHoverRequestsKeyframesFromTheSameArchive() async throws {
@@ -158,6 +206,65 @@ import Testing
     previews.connect(nil)
   }
 
+  @MainActor @Test(arguments: ["subscribe", "seek"])
+  func archiveRangeIsReadOnceAndPreservesAFrameError(_ operation: String) async throws {
+    let server = FakeServer()
+    var scheduled: [TimeInterval] = []
+    let controller = ReplayController(
+      target: ReplayTarget(archive: "ended", platform: "ios"),
+      scheduler: { delay, _ in
+        scheduled.append(delay)
+        return {}
+      })
+    let loaded = controller.connect(server)
+    await settle()
+    let request = try #require(server.take("replay.range"))
+    controller.seek(at: 1000, rate: 0)
+    let sub = try #require(server.subs.first)
+    if operation == "subscribe" {
+      sub.onEvent(
+        ServerEvent(
+          name: "error", subscription: "",
+          fields: [
+            "error": .object(["code": .string("no-recording"), "message": .string("Recording was removed.")])
+          ]))
+    } else {
+      sub.onSubscribed(["subscription": .string("frames"), "video": .string("h264")])
+      controller.seek(at: 1500, rate: 0)
+      await settle()
+      try #require(server.take("frames.seek")).reply.resume(
+        throwing: ServerError(code: "no-recording", message: "Recording was removed."))
+      await settle()
+    }
+    request.reply.resume(
+      returning: .object([
+        "enabled": .bool(true), "recording": .bool(false),
+        "spans": .array([.object(["start": .number(1000), "end": .number(2000)])]), "markers": .array([]),
+      ]))
+    await loaded?.value
+    #expect(controller.range?.spans == [ReplaySpan(start: 1000, end: 2000)])
+    #expect(controller.error == "Recording was removed.")
+    #expect(scheduled.isEmpty)
+    controller.stop()
+  }
+
+  @MainActor @Test func aBusyArchiveRangeRetriesAndThenLoads() async throws {
+    let server = FakeServer()
+    let controller = ReplayController(target: ReplayTarget(archive: "ended", platform: "ios"))
+    let loaded = controller.connect(server)
+    await settle()
+    try #require(server.take("replay.range")).reply.resume(
+      throwing: ServerError(code: "limit-exceeded", message: "A connection can run 4 requests at a time."))
+    try await Task.sleep(for: .milliseconds(300))
+    let retry = try #require(server.take("replay.range"))
+    #expect(controller.error == nil)
+    retry.reply.resume(
+      returning: .object(["enabled": .bool(true), "recording": .bool(false), "spans": .array([]), "markers": .array([])]))
+    await loaded?.value
+    #expect(controller.range != nil && controller.error == nil)
+    controller.stop()
+  }
+
   @MainActor @Test func archiveReplayRangeAndFramesNeverTargetALiveWorkspace() async throws {
     let server = FakeServer()
     let target = ReplayTarget(archive: "ended", platform: "web")
@@ -166,7 +273,7 @@ import Testing
     await settle()
     let request = try #require(server.take("replay.range"))
     #expect(request.params == ["archive": .string("ended"), "platform": .string("web"), "slot": .string("default")])
-    request.reply.resume(throwing: ServerError(code: "bad-request", message: "workspace is required"))
+    request.reply.resume(throwing: ServerError(code: "bad-request", message: "params.workspace is required."))
     await settle()
     #expect(controller.error == "Update stim-server to view archived replay")
     controller.seek(at: 1234, rate: 0)

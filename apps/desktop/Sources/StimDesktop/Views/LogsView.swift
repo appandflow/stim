@@ -3,7 +3,7 @@ import StimKit
 import SwiftUI
 
 struct LogsView: View {
-  var cli: Task<StimCLI, Never>
+  var cli: Task<StimCLI, Never>? = nil
   var env: Workspace?
   @Binding var query: LogQuery
   /// A moment to scroll to and select, taken and cleared once the logs follow `query`.
@@ -19,7 +19,7 @@ struct LogsView: View {
   private var slots: [String] {
     var seen = Set<String>()
     return
-      ((env?.devices.map(\.slot) ?? (["default"] + model.rawRows.compactMap { $0.entry.lead.slot }))
+      ((env?.devices.map(\.slot) ?? (["default"] + model.archiveSlots))
       + [query.slot].compactMap { $0 }).filter {
         seen.insert($0).inserted
       }
@@ -74,7 +74,8 @@ struct LogsView: View {
         await model.loadArchive(archive, query: effectiveQuery, server: server.isOpen ? server.client : nil)
         return
       }
-      let cli = await cli.value
+      guard let cliTask = cli else { return }
+      let cli = await cliTask.value
       guard !Task.isCancelled, let env else { return }
       let session = model.start(effectiveQuery, cli: cli, cwd: env.path)
       while !Task.isCancelled { try? await Task.sleep(for: .seconds(3600)) }
@@ -181,6 +182,9 @@ struct LogsView: View {
   @ViewBuilder private var overlay: some View {
     if case .ended(let message) = model.phase, model.count == 0 {
       EmptyState(title: "No logs", message: message)
+    } else if model.phase == .loading {
+      ProgressView("Loading archived logs")
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     } else if model.count == 0 {
       Text(archive != nil ? "No matching records" : model.phase == .following ? "No matching records yet" : "")
         .foregroundStyle(Palette.tertiary)
@@ -206,6 +210,8 @@ struct LogsView: View {
       case .ended(let message):
         StatusDot(color: Palette.error)
         Text(abbreviatingHome(message)).lineLimit(1).truncationMode(.middle).help(abbreviatingHome(message))
+      case .loading:
+        Text("Loading archived logs")
       case .loaded:
         Text("Archived logs")
       case .idle:

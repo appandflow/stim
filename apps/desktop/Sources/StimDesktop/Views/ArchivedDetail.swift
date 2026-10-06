@@ -5,10 +5,12 @@ import SwiftUI
 struct ArchivedRow: View {
   var archive: ArchivedWorkspace
   var now: Date
+  var subtitle: String? = nil
 
   var body: some View {
     VStack(alignment: .leading, spacing: Space.xxs) {
       Label(archive.title, systemImage: "archivebox").lineLimit(1)
+      if let subtitle { Text(subtitle).font(.stim(.caption)).foregroundStyle(Palette.secondary) }
       HStack {
         Text(archive.removedLabel(now: now))
         Spacer(minLength: Space.sm)
@@ -49,7 +51,7 @@ struct ArchivedDetail: View {
           }
           Spacer()
           Button("Delete", role: .destructive) { confirmingDelete = true }
-            .buttonStyle(.stim(.destructive)).disabled(actions.active(for: "archive:\(archive.id)") != nil)
+            .buttonStyle(.stim(.destructive)).disabled(actions.active(for: ActionCenter.machineKey) != nil)
         }
         TimelineView(.everyMinute) { context in
           VStack(alignment: .leading, spacing: Space.sm) {
@@ -74,18 +76,14 @@ struct ArchivedDetail: View {
         VStack(alignment: .leading, spacing: Space.md) {
           SectionLabel(title: "Logs")
           if readsServer {
-            LogsView(cli: Task { StimCLI(environment: [:]) }, env: nil, query: $query, moment: $moment, archive: archive)
+            LogsView(env: nil, query: $query, moment: $moment, archive: archive)
               .frame(height: 400)
           } else {
             InlineEmpty("Archived logs are read through stim-server.")
           }
         }
         if readsServer && archive.bytes.recordings > 0 {
-          ForEach(["ios", "android", "web"], id: \.self) { platform in
-            ReplayHost(target: ReplayTarget(archive: archive.id, platform: platform)) { controller in
-              ArchivedReplay(controller: controller, platform: platform)
-            }
-          }
+          ArchivedReplays(archive: archive.id).id(archive.id)
         }
         if !archive.agents.isEmpty {
           AgentSessionsSection(agents: AgentSession.associated(agents: nil, endedAgents: archive.agents))
@@ -94,11 +92,13 @@ struct ArchivedDetail: View {
       .padding(Space.xxl).frame(maxWidth: .infinity, alignment: .leading)
     }
     .background(Palette.background)
-    .confirmationDialog("Delete \(archive.title)?", isPresented: $confirmingDelete, titleVisibility: .visible) {
+    .confirmationDialog(
+      "Delete \(archive.title) (\(archive.removedLabel(now: fixtureDate ?? Date())))?", isPresented: $confirmingDelete,
+      titleVisibility: .visible
+    ) {
       Button("Delete permanently", role: .destructive) {
-        if let command = archive.deleteCommand(confirmed: true, cwd: NSHomeDirectory()) {
-          actions.run("Delete \(archive.title)", steps: [command], key: "archive:\(archive.id)")
-        }
+        actions.run(
+          "Delete \(archive.title)", steps: [archive.deleteCommand(cwd: NSHomeDirectory())], key: ActionCenter.machineKey)
       }
     } message: {
       Text("This permanently deletes this archive's logs, recordings, agent actions and record.")
@@ -121,6 +121,50 @@ struct ArchivedLastBuild: View {
         BuildDiagnosticsView(diagnostics: diagnostics, workspace: workspace)
       }
     }
+  }
+}
+
+@MainActor final class ArchivedReplayModel: ObservableObject {
+  let controllers: [ReplayController]
+
+  init(archive: String) {
+    controllers = ["ios", "android", "web"].map { platform in
+      let controller = ReplayController(target: ReplayTarget(archive: archive, platform: platform))
+      controller.previews.decode = ReplayPreviewDecoder.shared.decode
+      return controller
+    }
+  }
+
+  func connect(_ server: ReplayServer?) async {
+    for controller in controllers { controller.connect(nil) }
+    guard let server else { return }
+    for controller in controllers {
+      guard !Task.isCancelled else { return }
+      await controller.connect(server)?.value
+    }
+  }
+
+  func stop() {
+    for controller in controllers { controller.stop() }
+  }
+}
+
+private struct ArchivedReplays: View {
+  @ObservedObject private var session = ServerSession.shared
+  @StateObject private var model: ArchivedReplayModel
+
+  init(archive: String) {
+    _model = StateObject(wrappedValue: ArchivedReplayModel(archive: archive))
+  }
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: Space.xxl) {
+      ForEach(model.controllers, id: \.target.platform) { controller in
+        ArchivedReplay(controller: controller, platform: controller.target.platform)
+      }
+    }
+    .task(id: session.isOpen) { await model.connect(session.isOpen ? session.client : nil) }
+    .onDisappear { model.stop() }
   }
 }
 

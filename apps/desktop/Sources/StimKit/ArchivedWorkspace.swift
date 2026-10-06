@@ -14,6 +14,15 @@ public struct ArchivedWorkspace: Decodable, Hashable, Identifiable, Sendable {
     public var count: Int
     public var last: LastBuild?
     public var lastErrorCount: Int
+
+    enum CodingKeys: String, CodingKey { case count, last, lastErrorCount }
+
+    public init(from decoder: Decoder) throws {
+      let c = try decoder.container(keyedBy: CodingKeys.self)
+      count = (try? c.decode(Int.self, forKey: .count)) ?? 0
+      last = try c.decodeIfPresent(LastBuild.self, forKey: .last)
+      lastErrorCount = (try? c.decode(Int.self, forKey: .lastErrorCount)) ?? 0
+    }
   }
 
   public struct Bytes: Decodable, Hashable, Sendable {
@@ -47,7 +56,9 @@ public struct ArchivedWorkspace: Decodable, Hashable, Identifiable, Sendable {
   public var replacedBy: String?
 
   public var title: String { worktree.branch ?? project }
-  public var sidebarProject: Project { Project(root: worktree.repository ?? projectRoot) }
+  public var sidebarProject: Project {
+    worktree.repository.map { Project(root: $0) } ?? Project(fallbackFor: projectRoot)
+  }
   public var sizeLabel: String { Format.fileSize(bytes.total) }
   public var removedByLabel: String {
     switch removedBy {
@@ -80,8 +91,8 @@ public struct ArchivedWorkspace: Decodable, Hashable, Identifiable, Sendable {
     }
   }
 
-  public func deleteCommand(confirmed: Bool, cwd: String) -> StimCommand? {
-    confirmed ? StimCommand(["gc", "--delete", "--cache", "archived:\(id)"], cwd: cwd) : nil
+  public func deleteCommand(cwd: String) -> StimCommand {
+    StimCommand(["gc", "--delete", "--cache", "archived:\(id)"], cwd: cwd)
   }
 }
 
@@ -115,8 +126,23 @@ public struct ArchivedUsage: Decodable, Equatable, Sendable {
 }
 
 public func archivedReadError(_ error: Error, content: String) -> String {
-  if let error = error as? ServerError, error.code == "bad-request" {
+  if let error = error as? ServerError, error.code == "bad-request",
+    error.message.contains("params.workspace"), !error.message.contains("params.archive")
+  {
     return "Update stim-server to view archived \(content)"
   }
   return error.localizedDescription
+}
+
+@MainActor func retryArchiveRead<T>(_ read: @MainActor () async throws -> T) async throws -> T {
+  for _ in 0..<3 {
+    try Task.checkCancellation()
+    do {
+      return try await read()
+    } catch let error as ServerError where error.code == "limit-exceeded" {
+      try await Task.sleep(for: .milliseconds(250))
+    }
+  }
+  try Task.checkCancellation()
+  return try await read()
 }

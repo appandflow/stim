@@ -2,7 +2,7 @@ import Combine
 import Foundation
 
 /// Replay of one device slot through stim-server, following the phone's `useReplayRange` and `useDeviceStream`.
-/// It polls `replay.range` while `server` is set and opens a video subscription only to replay: Desktop shows the
+/// It polls `replay.range` for live targets and reads an archive once while `server` is set and opens a video subscription only to replay: Desktop shows the
 /// live screen itself, so going live closes the subscription.
 @MainActor public final class ReplayController: ObservableObject {
   /// The recorded frame shown and how it plays.
@@ -25,7 +25,10 @@ import Foundation
   @Published public private(set) var replay: Replay?
   /// Whether the server sends this device H.264 and so can replay; nil until a replay subscription is answered.
   @Published public private(set) var replayable: Bool?
-  @Published public private(set) var error: String?
+  @Published public private(set) var error: String? {
+    didSet { rangeFailed = false }
+  }
+  private var rangeFailed = false
   /// The playback rate the replay bar plays at, 1 or 2.
   @Published public var speed = 1
   /// The agent action the last step or action click went to, so the next step counts from it; nil after any other
@@ -39,6 +42,7 @@ import Foundation
   private weak var server: ReplayServer?
   private let schedule: ServerScheduler
   private var cancelPoll: (() -> Void)?
+  private var pollTask: Task<Void, Never>?
   private var polls = (sent: 0, shown: 0)
   private var pollsSupported = true
   private var unsubscribe: (() -> Void)?
@@ -75,18 +79,21 @@ import Foundation
   }
 
   /// Starts polling `server`, or with nil stops; a replay in progress stays until `live`, since its subscription
-  /// is sent again when the connection comes back.
-  public func connect(_ server: ReplayServer?) {
-    guard server !== self.server else { return }
+  /// is sent again when the connection comes back. Returns the initial range read so archive platforms can
+  /// be probed sequentially.
+  @discardableResult public func connect(_ server: ReplayServer?) -> Task<Void, Never>? {
+    guard server !== self.server else { return pollTask }
     let replayAt = replay.map { $0.at ?? startAt }
     closeSubscription()
     cancelPoll?()
     cancelPoll = nil
+    pollTask?.cancel()
+    pollTask = nil
     self.server = server
     previews.connect(server)
     cancelDropWatch?()
     cancelDropWatch = nil
-    guard let server else { return }
+    guard let server else { return nil }
     if let device = server as? DeviceServer {
       cancelDropWatch = device.observeControlEnded { [weak self] ended in
         guard let self, ended.session == nil, self.subscriptionID != nil else { return }
@@ -95,8 +102,9 @@ import Foundation
       }
     }
     pollsSupported = true
-    poll(server)
+    pollTask = poll(server)
     if let replayAt { seek(at: replayAt, rate: 0) }
+    return pollTask
   }
 
   public func stop() {
@@ -129,17 +137,22 @@ import Foundation
     error = nil
   }
 
-  private func poll(_ server: ReplayServer) {
+  private func poll(_ server: ReplayServer) -> Task<Void, Never> {
     polls.sent += 1
     let sequence = polls.sent
-    Task {
+    let task = Task {
       do {
-        let result = try await server.request("replay.range", target.params)
-        guard server === self.server, sequence >= polls.shown else { return }
+        let result: JSONValue
+        if target.archive != nil {
+          result = try await retryArchiveRead { try await server.request("replay.range", target.params) }
+        } else {
+          result = try await server.request("replay.range", target.params)
+        }
+        guard server === self.server, sequence >= polls.shown, !Task.isCancelled else { return }
         polls.shown = sequence
         rangeReceivedAt = clock()
         range = try JSONDecoder().decode(ReplayRange.self, from: JSONEncoder().encode(result))
-        if target.archive != nil { error = nil }
+        if rangeFailed { error = nil }
       } catch let failure as ServerError where failure.code == "unknown-method" {
         if server === self.server {
           pollsSupported = false
@@ -147,8 +160,9 @@ import Foundation
           cancelPoll = nil
         }
       } catch {
-        guard server === self.server, self.target.archive != nil else { return }
+        guard server === self.server, self.target.archive != nil, !Task.isCancelled else { return }
         self.error = archivedReadError(error, content: "replay")
+        rangeFailed = true
         if let failure = error as? ServerError, failure.code == "bad-request" {
           pollsSupported = false
           cancelPoll?()
@@ -156,10 +170,13 @@ import Foundation
         }
       }
     }
-    cancelPoll = schedule(Self.pollInterval) { [weak self, weak server] in
-      guard let self, let server, server === self.server, self.pollsSupported else { return }
-      self.poll(server)
+    if target.archive == nil {
+      cancelPoll = schedule(Self.pollInterval) { [weak self, weak server] in
+        guard let self, let server, server === self.server, self.pollsSupported else { return }
+        self.pollTask = self.poll(server)
+      }
     }
+    return task
   }
 
   private func open(_ server: ReplayServer, at: Double, rate: Int) {
@@ -245,9 +262,15 @@ import Foundation
     let generation = subscriptionGeneration
     Task {
       do {
-        let result = try await server.request(
-          "frames.seek",
-          ["subscription": .string(subscription), "at": .number(seek.at), "rate": .number(Double(seek.rate))])
+        let params: [String: JSONValue] = [
+          "subscription": .string(subscription), "at": .number(seek.at), "rate": .number(Double(seek.rate)),
+        ]
+        let result: JSONValue
+        if target.archive != nil {
+          result = try await retryArchiveRead { try await server.request("frames.seek", params) }
+        } else {
+          result = try await server.request("frames.seek", params)
+        }
         guard generation == subscriptionGeneration, subscriptionID == subscription else { return }
         if seeks.finish() {
           let shown = result.objectValue?["at"]?.number ?? seek.at

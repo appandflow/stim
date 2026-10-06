@@ -140,7 +140,7 @@ public typealias ServerScheduler = @MainActor (TimeInterval, @escaping @MainActo
 
   public func archivedLogs(_ request: ArchivedLogsRequest) async throws -> [LogRecord] {
     struct Result: Decodable { var records: [LogRecord] }
-    let result = try await self.request("logs.query", request.params)
+    let result = try await retryArchiveRead { try await self.request("logs.query", request.params) }
     return try JSONDecoder().decode(Result.self, from: JSONEncoder().encode(result)).records
   }
 
@@ -290,7 +290,17 @@ public typealias ServerScheduler = @MainActor (TimeInterval, @escaping @MainActo
   private func sendSubscribe(_ sub: Subscription, on transport: ServerTransport) {
     Task {
       do {
-        let result = try await send(on: transport, sub.method, sub.params())
+        let result: JSONValue
+        if sub.params()["archive"] != nil {
+          result = try await retryArchiveRead {
+            guard subscriptions[ObjectIdentifier(sub)] === sub, transport === self.transport else {
+              throw CancellationError()
+            }
+            return try await send(on: transport, sub.method, sub.params())
+          }
+        } else {
+          result = try await send(on: transport, sub.method, sub.params())
+        }
         guard case .object(let fields) = result, let id = fields["subscription"]?.string else { return }
         guard subscriptions[ObjectIdentifier(sub)] === sub, transport === self.transport else {
           if transport === self.transport, isOpen {
