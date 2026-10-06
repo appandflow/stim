@@ -62,7 +62,7 @@ import {
   deviceUsage,
   gitChip,
   metroHealth,
-  usedPlatforms,
+  supportedPlatforms,
   workspaceStage,
   workspaceUsage,
 } from '@/lib/workspace-view';
@@ -107,8 +107,9 @@ export function WorkspaceDetail({ path, scrollsToApp = true }: { path: string; s
   const now = useNow(30_000);
   const status = useMachineStatus(macId);
   const machine = status?.machine;
-  const used = env ? usedPlatforms(env) : [];
-  const platforms: Platform[] = used.length ? used : env?.macos ? [] : ['ios', 'android'];
+  const platforms: Platform[] = env
+    ? supportedPlatforms(env).filter((platform): platform is Platform => platform === 'ios' || platform === 'android')
+    : [];
   const apps = worktreeApps(path, status?.environments ?? []);
   const multi = apps.length > 1;
   const entries = buildEntries(apps);
@@ -486,7 +487,8 @@ export function WorkspaceDetail({ path, scrollsToApp = true }: { path: string; s
                     router.push({ pathname: '/mac/[id]/logs', params: { id: macId, path, source: 'build' } })
                   }
                 />
-              ) : build ? null : (
+              ) : null}
+              {!build && lines.length > 0 && (
                 <BuildCard lines={lines} onPress={() => open('/mac/[id]/build', failed ?? lines[0]?.platform)} />
               )}
               <LogsCard
@@ -641,7 +643,7 @@ function WorktreeContent({
           usage={worktreeUsage(apps, machine)}
           onPress={() => open('/mac/[id]/resources', path)}
         />
-        {builds.length ? null : (
+        {builds.length || !lines.length ? null : (
           <BuildCard
             lines={lines}
             onPress={() => chosenBuild && open('/mac/[id]/build', chosenBuild.path, chosenBuild.platform)}

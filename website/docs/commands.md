@@ -1072,6 +1072,17 @@ Each workspace also shows its last build per platform:
   last build: ios local cache in 12s, android compiled in 7m02s
 ```
 
+In `--json`, every environment carries `platforms: string[]`, ordered
+`ios`, `android`, `macos`, `web`, with `[]` when no platform is detected.
+Expo uses an explicit `platforms` list from `app.json` or a literal array in
+`app.config.js/ts/cjs/mjs`; otherwise it defaults to iOS and Android, adding web
+when `react-native-web` is declared or resolves. Bare apps use `.xcodeproj` or
+`.xcworkspace` entries in `ios/` and Gradle project files in `android/`.
+`web.url` adds web to any app, even when Expo has an explicit platform list; a
+bare app has no other route to web. macOS needs `Package.swift`,
+`macos.product` and `macos.infoPlist`. Detection never runs project scripts or
+executes app config code.
+
 In `--json`, an environment with a recorded run carries
 `lastBuilds: { ios?, android? }`, each
 `{ platform, status, cacheHit, cacheSkipped, durationMs, fingerprint, startedAt, finishedAt, errorCode?, missReason?, buildMachine?, builtOn?, offloadedTo?, offloadFallback?, diagnostics? }`.

@@ -10,6 +10,7 @@ import type {
   BuildPhase,
   BuildReport,
   DeviceActivity,
+  DevicePlatform,
   EnvironmentState,
   GitChipFacts,
   LastBuild,
@@ -454,7 +455,7 @@ export function buildLine(platform: Platform, last: LastBuild | undefined, plan:
   return line(t`No build`, null, 'secondary', t`${name} no build`);
 }
 
-export function usedPlatforms(env: EnvironmentState): Platform[] {
+function usedPlatforms(env: EnvironmentState): Platform[] {
   const build = runningBuild(env);
   return (['ios', 'android'] as const).filter(
     (platform) =>
@@ -463,6 +464,18 @@ export function usedPlatforms(env: EnvironmentState): Platform[] {
       env[platform] ||
       env.slots?.some((slot) => slot[platform]) ||
       env.remoteDevices?.some((remote) => remote.platform === platform),
+  );
+}
+
+export function supportedPlatforms(env: EnvironmentState): DevicePlatform[] {
+  const used: DevicePlatform[] = [
+    ...usedPlatforms(env),
+    ...(env.macos ? ['macos' as const] : []),
+    ...(env.web ? ['web' as const] : []),
+  ];
+  const detected = env.platforms ?? (used.length ? [] : ['ios', 'android']);
+  return (['ios', 'android', 'macos', 'web'] as const).filter(
+    (platform) => detected.includes(platform) || used.includes(platform),
   );
 }
 

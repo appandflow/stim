@@ -653,10 +653,21 @@ test('a label-only worktree root is flagged labelOnly in --json and relabelled i
   assert(rootEntry);
   assert(appEntry);
   expect(rootEntry.labelOnly).toBe(true);
+  expect(rootEntry.platforms).toEqual([]);
+  expect(appEntry.platforms).toEqual([]);
   expect('labelOnly' in appEntry).toBe(false);
 
   const logs = await runStatus();
   expect(logs.some((l) => /worktree root \(holds the label/.test(l))).toBeTruthy();
+});
+
+test('status reports detected platforms before a run, including resolved project settings', async () => {
+  const root = process.cwd();
+  writeFileSync(join(root, 'package.json'), JSON.stringify({ dependencies: { expo: '54' } }));
+  writeFileSync(join(root, 'app.json'), JSON.stringify({ expo: { platforms: ['ios'] } }));
+  writeFileSync(join(root, '.stim.json'), JSON.stringify({ web: { url: 'http://localhost:5173' } }));
+  saveConfig(makeConfig({ version: 2, projects: { [root]: { label: 'fresh', platforms: {} } } }));
+  expect((await runStatusJson()).environments[0].platforms).toEqual(['ios', 'web']);
 });
 
 test('a running build reports what its build tool is doing only while it compiles', async () => {

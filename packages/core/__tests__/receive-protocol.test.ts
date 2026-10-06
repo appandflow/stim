@@ -138,6 +138,7 @@ test('accepts a server clearing the provisional cache-miss flag while rejecting 
 test.each([
   ...statusEnumPaths.map((path) => [path, 'future-kind'] as const),
   ['environments.0.build.missProvisional', false] as const,
+  ['environments.0.platforms', ['ios', 'future-platform']] as const,
 ])('a newer server does not invalidate status at %s', (path, value) => {
   expect(isRpcEvent(statusFixture)).toBe(true);
   expect(isRpcEvent(replaceReceivedField(statusFixture, `payload.${path}`, value))).toBe(true);

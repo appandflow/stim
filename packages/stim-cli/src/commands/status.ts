@@ -33,7 +33,7 @@ import type { MetroResolution } from '../metro.ts';
 import { countErrorsSinceMarker } from '../diagnostics/error-index.ts';
 import { workspaceLogErrorIndex, workspaceLogsDir } from '../workspace/paths.ts';
 import { readSupervisorState } from './stop.ts';
-import { detectIsExpo, findServerWorkspace, projectShortcut } from '../workspace/project.ts';
+import { detectIsExpo, detectPlatforms, findServerWorkspace, projectShortcut } from '../workspace/project.ts';
 import { listAllIosSimsAsync, parseSimctlList } from '../devices/ios.ts';
 import {
   listAdbDevices,
@@ -58,6 +58,7 @@ import {
 import { volumeRootFor } from '../fs-util.ts';
 import { workspacePhase } from '../engine/warm-progress.ts';
 import { workspaceRecordingEnabled } from '../workspace/recordings.ts';
+import { resolveSettings } from '../workspace/settings.ts';
 import { formatDuration } from '../command-output.ts';
 import { listLeaseFiles, parseWorkspaceLeases } from '../engine/device-lease.ts';
 import { readIosDevices, type IosDeviceEntry } from '../engine/ios-device.ts';
@@ -324,6 +325,14 @@ async function readStatusFacts(gitMaxAgeMs: number, simctlListing: string | null
         state.live ||= macos.state === 'running' || macos.state === 'orphaned' || macos.build.state === 'running';
       }
       Object.assign(state, builds, workspacePhase(state.live, saved, { now: leaseNow }), {
+        platforms: detectPlatforms(
+          path,
+          resolveSettings({
+            projectPath: path,
+            gitCommonDir: gitCommonDirOnDisk(path),
+            repoRoot: state.worktree?.path ?? path,
+          }),
+        ),
         recording: { enabled: workspaceRecordingEnabled(path, proj, cfg, process.env) },
       });
     }

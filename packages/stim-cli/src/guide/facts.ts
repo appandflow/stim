@@ -929,6 +929,15 @@ RULES
               for "live" and "idle"
   warmStep    "refresh" or "copy", the step a warming workspace is in;
               absent in other phases
+  platforms   ordered supported app platforms: ios, android, macos, web;
+              always present, [] when none are detected. Expo uses its
+              explicit platforms list, otherwise ios and android plus web
+              with react-native-web. Bare apps use ios/*.xcodeproj or
+              *.xcworkspace and android/ Gradle project files. web.url adds
+              web to any app and overrides an Expo list; a bare app has no
+              other route to web. macOS needs Package.swift, macos.product
+              and macos.infoPlist. Detection reads config literals and
+              files, never runs project scripts.
   recording   { enabled }: whether stim-server may record the workspace's
               device screens for replay, from recording.enabled
 

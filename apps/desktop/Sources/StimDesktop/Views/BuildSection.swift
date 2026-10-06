@@ -21,14 +21,13 @@ struct BuildSection: View {
 
   private var platforms: [String] {
     if let onlyPlatform { return onlyPlatform == "macos" ? [] : [onlyPlatform] }
-    guard let running, !env.runPlatforms.contains(running.platform) else { return env.runPlatforms.filter { $0 != "macos" } }
-    return env.runPlatforms.filter { $0 != "macos" } + [running.platform]
+    return env.runPlatforms.filter { $0 == "ios" || $0 == "android" }
   }
 
   private var cancellationPlatforms: [String] { onlyPlatform == nil ? ["ios", "android"] : platforms }
 
   private var trigger: [String] {
-    [running == nil ? "idle" : "building"] + platforms.map(buildKey)
+    [running == nil ? "idle" : "building"] + platforms.map { $0 + "|" + buildKey($0) }
   }
 
   var body: some View {

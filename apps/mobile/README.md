@@ -222,8 +222,10 @@ gc --json` dry run and `stim stats --json`, which the server refreshes at
     run's time and whether it hit the cache, **Failed** in red, or the next
     build's prediction from `build.plan` before any run, in grey with a tilde
     and **est.** (`~0:40 est.`) so it never reads as a finished run. A
-    workspace that has used neither platform shows both, and the screen asks
-    for both predictions when it opens. A row reads **Checking…** while its prediction is pending,
+    workspace shows the platforms `stim status` reports in `platforms`, plus any
+    it has used, so a fresh native app shows both before its first run (an older
+    `stim` that reports none shows both when nothing has run), and the screen
+    asks for each shown platform's prediction when it opens. A row reads **Checking…** while its prediction is pending,
     and **No build** only when there is no run and no prediction. It opens the
     **Build** sheet on that platform.
   - **Logs**: the error count since the marker, with a red dot above zero,

@@ -1,9 +1,10 @@
-import { existsSync, readFileSync, realpathSync } from 'fs';
+import { existsSync, readFileSync, readdirSync, realpathSync } from 'fs';
 import { basename, join, dirname, resolve } from 'path';
 import { type ProjectRecord, loadConfig, findEnclosingWorktreeRoot, getProject, isPathPrefix } from './config.ts';
 import { findProjectRoot } from '@stim-cli/core/state';
 export { findProjectRoot } from '@stim-cli/core/state';
 import { repoRoot } from './worktree.ts';
+import { settingValueAt, webSettings, type SettingsObject } from './settings.ts';
 
 interface PackageJson {
   scripts?: Record<string, unknown>;
@@ -215,6 +216,76 @@ export function detectIsExpo(projectRoot: string): boolean {
   if (looksLikeExpoConfig(appJson)) return true;
   if (podfileUsesExpoModules(projectRoot)) return true;
   return false;
+}
+
+export function detectPlatforms(root: string, settings: SettingsObject): string[] {
+  const platforms = new Set<string>();
+  const product = settingValueAt(settings, 'macos.product');
+  const infoPlist = settingValueAt(settings, 'macos.infoPlist');
+  if (existsSync(join(root, 'Package.swift')) && product && infoPlist) platforms.add('macos');
+  const webUrl = webSettings(settings).url;
+  if (webUrl !== null) platforms.add('web');
+  const pkg = readPackageJson(root);
+  const deps = { ...pkg?.dependencies, ...pkg?.devDependencies };
+  const expo = detectIsExpo(root);
+  if (expo) {
+    const appJson = readAppJson(root);
+    const config = appJson?.expo ?? appJson;
+    const text = readAppConfigText(root);
+    const explicit = (text ? literalPlatforms(text) : null) ?? config?.platforms;
+    if (Array.isArray(explicit)) {
+      for (const platform of explicit)
+        if (platform === 'ios' || platform === 'android' || platform === 'web') platforms.add(platform);
+    } else {
+      platforms.add('ios');
+      platforms.add('android');
+      if ('react-native-web' in deps || isPackageResolvable(root, 'react-native-web')) platforms.add('web');
+    }
+  } else if (declaresAppDependency(pkg)) {
+    let ios: string[] = [];
+    try {
+      ios = readdirSync(join(root, 'ios'));
+    } catch {}
+    if (ios.some((name) => name.endsWith('.xcodeproj') || name.endsWith('.xcworkspace'))) platforms.add('ios');
+    if (
+      ['build.gradle', 'build.gradle.kts', 'settings.gradle', 'settings.gradle.kts'].some((name) =>
+        existsSync(join(root, 'android', name)),
+      )
+    )
+      platforms.add('android');
+  }
+  return ['ios', 'android', 'macos', 'web'].filter((platform) => platforms.has(platform));
+}
+
+function literalPlatforms(text: string): string[] | null {
+  const tokens =
+    text
+      .match(
+        /\/\*[\s\S]*?\*\/|\/\/[^\n]*|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`|[A-Za-z_$][\w$]*|[^\s]/g,
+      )
+      ?.filter((token) => !token.startsWith('//') && !token.startsWith('/*')) ?? [];
+  let open = 0;
+  const index = tokens.findIndex((token, i) => {
+    if (token === '[') open++;
+    else if (token === ']') open--;
+    return (
+      open === 0 &&
+      (token === 'platforms' || token === '"platforms"' || token === "'platforms'") &&
+      tokens[i + 1] === ':'
+    );
+  });
+  if (index < 0 || tokens[index + 2] !== '[') return null;
+  const platforms: string[] = [];
+  let i = index + 3;
+  while (tokens[i] !== ']') {
+    const value = tokens[i]?.match(/^(['"])([a-z]+)\1$/)?.[2];
+    if (value === undefined) return null;
+    platforms.push(value);
+    i++;
+    if (tokens[i] === ',') i++;
+    else if (tokens[i] !== ']') return null;
+  }
+  return tokens[i + 1] === ',' || tokens[i + 1] === '}' ? platforms : null;
 }
 
 function looksLikeExpoConfig(appJson: AnyJson | null): boolean {

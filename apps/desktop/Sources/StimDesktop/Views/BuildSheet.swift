@@ -161,12 +161,14 @@ struct BuildSheet: View {
         let titles = entries.map { entry in
           platformName(entry.platform) + (page.subtitle(for: entry, among: entries).map { " \u{00B7} " + $0 } ?? "")
         }
-        Picker("Platform", selection: $selectedEntry) {
-          ForEach(Array(zip(entries, titles)), id: \.0) { entry, title in Text(title).tag(entry) }
+        if !entries.isEmpty {
+          Picker("Platform", selection: $selectedEntry) {
+            ForEach(Array(zip(entries, titles)), id: \.0) { entry, title in Text(title).tag(entry) }
+          }
+          .pickerStyle(.segmented)
+          .labelsHidden()
+          .fixedSize()
         }
-        .pickerStyle(.segmented)
-        .labelsHidden()
-        .fixedSize()
       } else if platforms.count > 1 {
         Picker("Platform", selection: $nativePlatform) {
           ForEach(platforms, id: \.self) { Text(platformName($0)).tag($0) }
