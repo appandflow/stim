@@ -137,6 +137,10 @@ const INPUT_METHODS = [
   'input.window',
 ] as const;
 
+function viewHostedPlacement(dir: string, platform: string, slot: string | undefined, physical: unknown) {
+  return platform === 'ios' && physical === true ? undefined : hostedPlacement(dir, platform, slot);
+}
+
 function hostedPlacement(dir: string, platform: string, slot = 'default') {
   if (platform === 'macos') return readMacosRecord(dir)?.host;
   if (platform === 'ios') return hostedIosPlacements(readWorkspaceState(dir))[slot];
@@ -963,10 +967,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       if ('code' in parsed) return refuseControl(parsed.code, parsed.message);
       const resolved = registeredWorkspace(parsed.value.workspace);
       if ('code' in resolved) return refuseControl(resolved.code, resolved.message);
-      const host =
-        parsed.value.platform === 'ios' && parsed.value.physical
-          ? undefined
-          : hostedPlacement(resolved.dir, parsed.value.platform, parsed.value.slot);
+      const host = viewHostedPlacement(resolved.dir, parsed.value.platform, parsed.value.slot, parsed.value.physical);
       const owner = controller(session);
       if (host) {
         if (
@@ -1190,9 +1191,9 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       const resolvedDir = hosted ? null : workspaceDir(id, workspace, true);
       if (!hosted && !resolvedDir) return;
       const host =
-        hosted || !resolvedDir || (platform === 'ios' && physical === true)
+        hosted || !resolvedDir
           ? undefined
-          : hostedPlacement(resolvedDir, platform as Platform, slot as string | undefined);
+          : viewHostedPlacement(resolvedDir, platform as Platform, slot as string | undefined, physical);
       if (host) {
         if (
           (platform === 'macos' && slot !== undefined && slot !== 'default') ||
