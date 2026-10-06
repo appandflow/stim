@@ -13,7 +13,8 @@ public struct WizardSample: Sendable {
   public func permitsRemoval(_ candidate: URL) -> Bool {
     let root = onboarding.standardizedFileURL.resolvingSymlinksInPath()
     let target = candidate.standardizedFileURL.resolvingSymlinksInPath()
-    return candidate.standardizedFileURL == folder.standardizedFileURL && target.deletingLastPathComponent() == root
+    return candidate.standardizedFileURL.path == folder.standardizedFileURL.path
+      && target.deletingLastPathComponent().path == root.path
       && target.lastPathComponent == "sample-sdk58"
   }
   public var prepareCommands: [StimCommand] {
