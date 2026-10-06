@@ -963,7 +963,10 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       if ('code' in parsed) return refuseControl(parsed.code, parsed.message);
       const resolved = registeredWorkspace(parsed.value.workspace);
       if ('code' in resolved) return refuseControl(resolved.code, resolved.message);
-      const host = hostedPlacement(resolved.dir, parsed.value.platform, parsed.value.slot);
+      const host =
+        parsed.value.platform === 'ios' && parsed.value.physical
+          ? undefined
+          : hostedPlacement(resolved.dir, parsed.value.platform, parsed.value.slot);
       const owner = controller(session);
       if (host) {
         if (
@@ -1187,7 +1190,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       const resolvedDir = hosted ? null : workspaceDir(id, workspace, true);
       if (!hosted && !resolvedDir) return;
       const host =
-        hosted || !resolvedDir
+        hosted || !resolvedDir || (platform === 'ios' && physical === true)
           ? undefined
           : hostedPlacement(resolvedDir, platform as Platform, slot as string | undefined);
       if (host) {

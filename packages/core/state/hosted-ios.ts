@@ -73,10 +73,13 @@ export function unreadableHostedIos(slot: string): string {
 }
 
 export function hostedIosPlacements(state: WorkspaceState | null): Record<string, HostedIosPlacement> {
-  return Object.fromEntries(
-    Object.entries(hostedIosRecords(state)).flatMap(([slot, record]) => {
-      const placement = parseHostedIosPlacement(record);
-      return placement ? [[slot, placement]] : [];
-    }),
+  return Object.assign(
+    Object.create(null) as Record<string, HostedIosPlacement>,
+    Object.fromEntries(
+      Object.entries(hostedIosRecords(state)).flatMap(([slot, record]) => {
+        const placement = parseHostedIosPlacement(record);
+        return placement ? [[slot, placement]] : [];
+      }),
+    ),
   );
 }

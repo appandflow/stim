@@ -914,14 +914,28 @@ it.each(['default', 'tablet'])(
   },
 );
 
-it('refuses hosted iOS replay, duo frames and physical targets before opening a host connection', async () => {
+it('refuses hosted iOS replay and duo frames before opening a host connection', async () => {
   const ios = placeIos('tablet');
   const local = await client();
-  for (const options of [{ at: 123 }, { rate: 1 }, { duoFrame: true }, { physical: true }])
+  for (const options of [{ at: 123 }, { rate: 1 }, { duoFrame: true }])
     expect(await local.request('frames.subscribe', { ...ios, ...options })).toMatchObject({
       error: { code: 'bad-request' },
     });
+  expect(connections).toBe(0);
+});
+
+it('routes a physical iPhone on a slot with a hosted placement to the local path, and ignores prototype slot names', async () => {
+  const ios = placeIos('tablet');
+  const local = await client();
   expect(await local.request('control.begin', { ...ios, physical: true })).toHaveProperty('error.code');
+  expect(await local.request('frames.subscribe', { ...ios, physical: true })).not.toHaveProperty(
+    'error.message',
+    expect.stringContaining('Hosted iOS'),
+  );
+  expect(await local.request('frames.subscribe', { ...ios, slot: 'constructor' })).not.toHaveProperty(
+    'error.code',
+    'frames-failed',
+  );
   expect(connections).toBe(0);
 });
 

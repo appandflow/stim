@@ -1074,6 +1074,7 @@ export function protocolJsonSchema(): JsonSchema {
               fps: { type: 'integer', minimum: 1, maximum: FRAME_FPS.video },
               maxEdge: { type: 'integer', minimum: FRAME_EDGE.min, maximum: FRAME_EDGE.max },
               video: { type: 'array', items: { type: 'string' } },
+              deviceFrame: { type: 'boolean' },
             }),
           ),
           request('device-host.frames.keyframe', {
