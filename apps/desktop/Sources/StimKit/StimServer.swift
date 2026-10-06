@@ -62,6 +62,18 @@ public struct ServerHealth: Decodable, Equatable, Sendable {
   }
 }
 
+/// A stim-server that answers health requests but is not ready to serve its Stim home.
+public enum ServerStartup: Equatable, Sendable {
+  case pending
+  case degraded(String)
+}
+
+/// A loopback health answer, including HTTP 503 while stim-server reads its Stim home.
+public enum ServerHealthProbe: Equatable, Sendable {
+  case ready(ServerHealth)
+  case notReady(ServerStartup, stimHome: String?)
+}
+
 /// `stim-server pair --json`: the QR payload and when its single-use token expires.
 public struct PairingCode: Decodable, Equatable, Sendable {
   public struct QR: Codable, Equatable, Sendable {
@@ -251,15 +263,41 @@ public struct StimServerCLI: Sendable {
   }
 
   /// The server answering on `port` of this Mac, or nil when none does.
-  public static func health(port: Int = defaultPort) async -> ServerHealth? {
+  public static func health(port: Int = defaultPort) async -> ServerHealthProbe? {
     var request = URLRequest(url: URL(string: "http://127.0.0.1:\(port)/health")!)
     request.timeoutInterval = 2
     guard let (data, response) = try? await URLSession.shared.data(for: request),
-      (response as? HTTPURLResponse)?.statusCode == 200,
-      let health = try? decoder.decode(ServerHealth.self, from: data),
-      health.server == "stim-server"
+      let response = response as? HTTPURLResponse
     else { return nil }
-    return health
+    return decodeHealth(data, statusCode: response.statusCode)
+  }
+
+  static func decodeHealth(_ data: Data, statusCode: Int) -> ServerHealthProbe? {
+    if statusCode == 200 {
+      guard let health = try? decoder.decode(ServerHealth.self, from: data), health.server == "stim-server" else {
+        return nil
+      }
+      return .ready(health)
+    }
+    struct Answer: Decodable {
+      struct Startup: Decodable {
+        var state: String
+        var reason: String?
+      }
+      var server: String
+      var stimHome: String?
+      var startup: Startup
+    }
+    guard statusCode == 503,
+      let answer = try? decoder.decode(Answer.self, from: data), answer.server == "stim-server"
+    else { return nil }
+    let startup: ServerStartup
+    switch answer.startup.state {
+    case "pending": startup = .pending
+    case "degraded": startup = .degraded(answer.startup.reason ?? "The server could not read its Stim home.")
+    default: startup = .degraded("Unknown server startup state: \(answer.startup.state).")
+    }
+    return .notReady(startup, stimHome: answer.stimHome)
   }
 
   private func run(_ args: [String]) async throws -> Data {

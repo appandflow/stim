@@ -154,7 +154,8 @@ struct PhonesView: View {
       }
       return nil
     case .off: return "Pairing needs stim-server. Turn on Serve to phones to pair a phone."
-    case .starting: return "Pairing is available once stim-server has started."
+    case .starting, .notReady(.pending, _): return "Pairing is available once stim-server has started."
+    case .notReady(.degraded, _): return "Pairing is unavailable until stim-server can read its Stim home."
     case .failed: return "Pairing is unavailable because stim-server failed to start."
     }
   }
@@ -168,10 +169,15 @@ struct PhonesView: View {
     switch server.state {
     case .off:
       Label("Not serving", systemImage: "circle").foregroundStyle(Palette.secondary)
-    case .starting:
+    case .starting, .notReady(.pending, _):
       HStack(spacing: Space.md) {
         ProgressView().controlSize(.small)
-        Text("Starting stim-server\u{2026}").foregroundStyle(Palette.secondary)
+        Text("Starting").foregroundStyle(Palette.secondary)
+      }
+    case .notReady(.degraded(let reason), _):
+      VStack(alignment: .leading, spacing: Space.md) {
+        Text("Degraded: \(abbreviatingHome(reason))").foregroundStyle(Palette.warning).textSelection(.enabled)
+        Text("The server retries every 30 seconds.").foregroundStyle(Palette.tertiary)
       }
     case .running(let health, let owned):
       VStack(alignment: .leading, spacing: Space.md) {
