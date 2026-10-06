@@ -69,6 +69,7 @@ module.exports = {
   apple: {
     copyright: '2026 App & Flow',
     version: '1.0.0',
+    release: { automaticRelease: false },
     categories: ['DEVELOPER_TOOLS', 'PRODUCTIVITY'],
     info: {
       'en-US': {

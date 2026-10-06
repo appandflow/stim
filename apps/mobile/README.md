@@ -1558,6 +1558,10 @@ notes.
 names the App Store version that `eas metadata:push` edits, or creates when it
 does not exist; set it to the version being released, which must equal `version`
 in `app.config.ts` for App Store Connect to accept the uploaded build.
+`apple.release.automaticRelease` is `false`, so the version uses manual release:
+after Apple approves it, it waits in App Store Connect until you choose
+**Release This Version**. A push sets this on the version it edits, so
+a new `apple.version` is manual too.
 
 The screenshots are the framed light images in `store/screenshots/en-US/`, which
 sit outside `src/` and `assets/`, so the app bundle never contains them. They
