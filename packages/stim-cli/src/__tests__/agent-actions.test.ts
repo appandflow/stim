@@ -9,7 +9,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { workspaceAgentDeviceDir } from '../workspace/paths.ts';
 import type { ProjectRecord } from '@stim-cli/core/state';
 import type { ProcessStart } from '../process-identity.ts';
@@ -213,7 +213,7 @@ test('workspace-only sessions are read through iOS runner logs and shared Androi
     'Tapped (541, 2265)',
   ]);
   expect(reader()).toEqual([]);
-  cpSync(join(stateDir, 'sessions', IOS_SESSION.split('/')[1]!), join(root, IOS_SESSION), { recursive: true });
+  cpSync(join(stateDir, 'sessions', basename(IOS_SESSION)), join(root, IOS_SESSION), { recursive: true });
   expect(reader().map((record) => record.msg)).toEqual([
     'Opened com.appandflow.stim',
     'Ran snapshot',

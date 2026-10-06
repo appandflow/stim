@@ -235,7 +235,7 @@ test('offers before reservation, uploads digest-matching bytes, and development 
   expect(readHostedIos(root).default?.device?.udid === device.udid).toBe(true);
   expect(getProject(root)?.platforms?.ios).toBeUndefined();
   for (const [digest, bytes] of blobs) expect(createHash('sha256').update(bytes).digest('hex')).toBe(digest);
-  expect(statSync(workspaceStateFile(root)).mode & 0o777).toBe(0o600);
+  expect(statSync(workspaceStateFile(root)).mode & 0o777).toBe(process.platform === 'win32' ? 0o666 : 0o600);
   expect(workspaceIdleProbe(root).blocker()).toContain('runs on mini');
 });
 
@@ -424,7 +424,7 @@ test.skipIf(!loopbackAvailable)(
       expect(await awaitPort('second')).toBe(port);
       clearHostedMetro(root, sessionId);
       await vi.waitFor(() => expect(Object.keys(readWorkspaceState(root)?.hostedMetroGateways ?? {})).toEqual([]));
-      expect(statSync(workspaceStateFile(root)).mode & 0o777).toBe(0o600);
+      expect(statSync(workspaceStateFile(root)).mode & 0o777).toBe(process.platform === 'win32' ? 0o666 : 0o600);
       expect(readFileSync(workspaceStateFile(root), 'utf8').includes('fixture-token')).toBe(false);
     } finally {
       await closeAgain();
@@ -727,7 +727,7 @@ test('iOS grants keep credentials in separate slot files and close only the sele
     expect(run.placement.agent.driver).toBe('agent-device');
     expect(existsSync(file)).toBe(true);
     writeHostedIos(root, slot, run.placement);
-    expect(statSync(file).mode & 0o777).toBe(0o600);
+    expect(statSync(file).mode & 0o777).toBe(process.platform === 'win32' ? 0o666 : 0o600);
     expect(JSON.parse(readFileSync(file, 'utf8'))).toEqual({
       daemonBaseUrl: `https://mini.tail.ts.net:7443/device-host/agent/${sessionId}/`,
       daemonAuthToken: 's'.repeat(43),
