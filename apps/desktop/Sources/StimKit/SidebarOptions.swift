@@ -1,7 +1,7 @@
 import Foundation
 
 public enum StatusFilter: String, CaseIterable, Sendable {
-  case all, live, idle
+  case all, live, idle, archived
 
   public var title: String { rawValue.capitalized }
 }
@@ -52,27 +52,32 @@ public struct SidebarOptions: Equatable, Sendable {
   }
 }
 
-/// A sidebar row: one app, a multi-app worktree, or a worktree with no environment.
+/// A sidebar row: an archive, one app, a multi-app worktree, or a worktree with no environment.
 public enum SidebarEntry: Hashable, Identifiable, Sendable {
+  case archived(ArchivedWorkspace)
   case workspace(Workspace)
   case worktreeGroup(WorktreePage)
   case worktree(UnprovisionedWorktree)
 
   public var path: String {
     switch self {
+    case .archived(let archive): return archive.projectRoot
     case .workspace(let env): return env.path
     case .worktreeGroup(let page): return page.id
     case .worktree(let worktree): return worktree.path
     }
   }
 
-  public var id: String { path }
+  public var id: String {
+    if case .archived(let archive) = self { return "archive:\(archive.id)" }
+    return path
+  }
 
   var active: Bool {
     switch self {
     case .workspace(let env): return env.isActive
     case .worktreeGroup(let page): return page.apps.contains(where: \.isActive)
-    case .worktree: return false
+    case .worktree, .archived: return false
     }
   }
 
@@ -80,7 +85,7 @@ public enum SidebarEntry: Hashable, Identifiable, Sendable {
     switch self {
     case .workspace(let env): return env.memoryMb ?? 0
     case .worktreeGroup(let page): return page.apps.reduce(0) { $0 + ($1.memoryMb ?? 0) }
-    case .worktree: return 0
+    case .worktree, .archived: return 0
     }
   }
 
@@ -88,12 +93,14 @@ public enum SidebarEntry: Hashable, Identifiable, Sendable {
     switch self {
     case .workspace(let env): return env.lastActivityAt
     case .worktreeGroup(let page): return page.apps.compactMap(\.lastActivityAt).max()
+    case .archived(let archive): return parseTimestamp(archive.removedAt)
     case .worktree: return nil
     }
   }
 
   var sortName: String {
     switch self {
+    case .archived(let archive): return archive.title.lowercased()
     case .workspace(let env): return env.names.title.lowercased()
     case .worktreeGroup(let page): return page.apps[0].names.title.lowercased()
     case .worktree(let worktree): return worktree.names.title.lowercased()
@@ -123,10 +130,20 @@ public struct ProjectTree: Hashable, Sendable {
 /// The sidebar grouped by project. A project left with no rows is omitted unless `showsEmptyProjects` is set.
 public func sidebarTrees(
   environments: [Workspace], unprovisioned: [UnprovisionedWorktree], project: (String) -> Project,
-  options: SidebarOptions
+  options: SidebarOptions, archived: [ArchivedWorkspace] = []
 ) -> [ProjectTree] {
-  let grouped = Dictionary(grouping: visibleEntries(environments, unprovisioned, project, options)) {
-    project($0.path)
+  let grouped = Dictionary(grouping: visibleEntries(environments, unprovisioned, project, options, archived)) {
+    if case .archived(let archive) = $0 { return archive.sidebarProject }
+    return project($0.path)
+  }
+  if options.status == .archived {
+    return grouped.map { key, entries in
+      ProjectTree(summary: ProjectSummary(project: key, live: 0, total: entries.count), entries: entries)
+    }.sorted {
+      ($0.summary.project.name.lowercased(), $0.summary.project.root) < (
+        $1.summary.project.name.lowercased(), $1.summary.project.root
+      )
+    }
   }
   let trees = projectSummaries(environments: environments, unprovisioned: unprovisioned, project: project)
     .filter { !options.hiddenProjects.contains($0.project.root) }
@@ -148,15 +165,20 @@ public func sidebarTrees(
 /// The sidebar as one list, with no grouping.
 public func sidebarList(
   environments: [Workspace], unprovisioned: [UnprovisionedWorktree], project: (String) -> Project,
-  options: SidebarOptions
+  options: SidebarOptions, archived: [ArchivedWorkspace] = []
 ) -> [SidebarEntry] {
-  sorted(visibleEntries(environments, unprovisioned, project, options), by: options.sort, project: project)
+  let entries = visibleEntries(environments, unprovisioned, project, options, archived)
+  return options.status == .archived ? entries : sorted(entries, by: options.sort, project: project)
 }
 
 private func visibleEntries(
   _ environments: [Workspace], _ unprovisioned: [UnprovisionedWorktree], _ project: (String) -> Project,
-  _ options: SidebarOptions
+  _ options: SidebarOptions, _ archived: [ArchivedWorkspace]
 ) -> [SidebarEntry] {
+  if options.status == .archived {
+    return ArchivedWorkspace.newestFirst(archived)
+      .filter { !options.hiddenProjects.contains($0.sidebarProject.root) }.map(SidebarEntry.archived)
+  }
   let worktrees = options.showsNoEnvironment ? unprovisioned.map(SidebarEntry.worktree) : []
   let apps = WorktreePage.groups(environments: environments).map { page in
     page.isUnified ? SidebarEntry.worktreeGroup(page) : .workspace(page.apps[0])
@@ -167,6 +189,7 @@ private func visibleEntries(
     case .all: return true
     case .live: return entry.active
     case .idle: return !entry.active
+    case .archived: return false
     }
   }
 }
@@ -174,7 +197,7 @@ private func visibleEntries(
 private func sorted(
   _ entries: [SidebarEntry], by sort: SidebarSort, project: (String) -> Project
 ) -> [SidebarEntry] {
-  entries.sorted { a, b in
+  return entries.sorted { a, b in
     if sort == .name {
       let (x, y) = (project(a.path).name.lowercased(), project(b.path).name.lowercased())
       if x != y { return x < y }

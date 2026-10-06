@@ -41,6 +41,9 @@ struct WorkspaceDetail: View {
   private static let minimumContentWidth: CGFloat = 440
   private static let maximumCardWidth: CGFloat = 640
 
+  var archived: [ArchivedWorkspace] = []
+  var openArchive: (String) -> Void = { _ in }
+
   var body: some View {
     let devices = env.orderedDevices
     let focused = devices.first { $0.id == focusedID } ?? devices.first
@@ -153,6 +156,18 @@ struct WorkspaceDetail: View {
       )
       .padding(.horizontal, Space.xxl)
       .padding(.vertical, Space.md)
+      let earlier = ArchivedWorkspace.newestFirst(
+        archived.filter { archive in page.apps.contains { archive.isEarlierRun(of: $0.path) } })
+      if !earlier.isEmpty {
+        FlowLayout(spacing: Space.md) {
+          Text("Earlier runs").foregroundStyle(Palette.secondary)
+          ForEach(earlier) { archive in
+            Button(archive.removedLabel(now: Date())) { openArchive(archive.id) }
+              .buttonStyle(.link).help(archive.title)
+          }
+        }
+        .font(.stim(.footnote)).padding(.horizontal, Space.xxl).padding(.bottom, Space.md)
+      }
       Rectangle().fill(Palette.border).frame(height: 1)
       VStack(spacing: 0) {
         Group {
