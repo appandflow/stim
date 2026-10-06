@@ -23,7 +23,7 @@ import XCTest
     await settle()
     let transport = try XCTUnwrap(socket)
     transport.answer(
-      try transport.take("hello"),
+      try await transport.take("hello"),
       .object([
         "protocol": .number(1), "server": .object(["name": .string("Mac"), "version": .string("1"), "stim": .string("1")]),
         "capabilities": .array([.string("read")]),
@@ -60,7 +60,7 @@ import XCTest
     await settle()
     XCTAssertEqual(model.phase, .loading)
     XCTAssertTrue(model.pinnedToLatest)
-    socket.answer(try socket.take("logs.query"), records(["default", "fold"]))
+    socket.answer(try await socket.take("logs.query"), records(["default", "fold"]))
     await first.value
     XCTAssertEqual(model.phase, .loaded)
     XCTAssertEqual(model.archiveSlots, ["default", "fold"])
@@ -68,7 +68,7 @@ import XCTest
     let second = Task { await model.loadArchive(archive, query: filtered, server: client) }
     await settle()
     XCTAssertTrue(model.pinnedToLatest)
-    socket.answer(try socket.take("logs.query"), records(["fold"]))
+    socket.answer(try await socket.take("logs.query"), records(["fold"]))
     await second.value
     XCTAssertEqual(model.archiveSlots, ["default", "fold"])
     XCTAssertTrue(revealed.isEmpty)
@@ -77,7 +77,7 @@ import XCTest
     other.id = "other"
     let third = Task { await model.loadArchive(other, query: query, server: client) }
     await settle()
-    socket.answer(try socket.take("logs.query"), records(["tablet"]))
+    socket.answer(try await socket.take("logs.query"), records(["tablet"]))
     await third.value
     XCTAssertEqual(model.archiveSlots, ["tablet"])
   }
@@ -89,17 +89,19 @@ import XCTest
     let model = LogsModel()
     let first = Task { await model.loadArchive(archive, query: LogQuery(), server: client) }
     await settle()
-    socket.refuse(try socket.take("logs.query"), code: "limit-exceeded", message: "A connection can run 4 requests at a time.")
+    socket.refuse(
+      try await socket.take("logs.query"), code: "limit-exceeded", message: "A connection can run 4 requests at a time.")
     XCTAssertEqual(model.phase, .loading)
     try await Task.sleep(for: .milliseconds(300))
-    socket.answer(try socket.take("logs.query"), records(["default"]))
+    socket.answer(try await socket.take("logs.query"), records(["default"]))
     await first.value
     XCTAssertEqual(model.phase, .loaded)
     XCTAssertEqual(model.count, 1)
     let exhausted = Task { await model.loadArchive(archive, query: LogQuery(), server: client) }
     await settle()
     for attempt in 0..<4 {
-      socket.refuse(try socket.take("logs.query"), code: "limit-exceeded", message: "A connection can run 4 requests at a time.")
+      socket.refuse(
+        try await socket.take("logs.query"), code: "limit-exceeded", message: "A connection can run 4 requests at a time.")
       if attempt < 3 { try await Task.sleep(for: .milliseconds(300)) }
     }
     await exhausted.value
@@ -120,19 +122,20 @@ import XCTest
     let unsubscribe = subscribe()
     await settle()
     socket.refuse(
-      try socket.take("frames.subscribe"), code: "limit-exceeded", message: "A connection can run 4 requests at a time.")
+      try await socket.take("frames.subscribe"), code: "limit-exceeded", message: "A connection can run 4 requests at a time.")
     try await Task.sleep(for: .milliseconds(300))
-    socket.answer(try socket.take("frames.subscribe"), .object(["subscription": .string("frames"), "video": .string("h264")]))
+    socket.answer(
+      try await socket.take("frames.subscribe"), .object(["subscription": .string("frames"), "video": .string("h264")]))
     await settle()
     XCTAssertTrue(subscribed)
     XCTAssertTrue(errors.isEmpty)
     unsubscribe()
     await settle()
-    socket.answer(try socket.take("unsubscribe"), .object([:]))
+    socket.answer(try await socket.take("unsubscribe"), .object([:]))
     let cancel = subscribe()
     await settle()
     socket.refuse(
-      try socket.take("frames.subscribe"), code: "limit-exceeded", message: "A connection can run 4 requests at a time.")
+      try await socket.take("frames.subscribe"), code: "limit-exceeded", message: "A connection can run 4 requests at a time.")
     cancel()
     try await Task.sleep(for: .milliseconds(300))
     XCTAssertTrue(socket.requests.isEmpty)
@@ -150,7 +153,7 @@ import XCTest
     ])
     for platform in ["ios", "android", "web"] {
       await settle()
-      let request = try socket.take("replay.range")
+      let request = try await socket.take("replay.range")
       XCTAssertEqual(
         request["params"], .object(["archive": .string("ended"), "platform": .string(platform), "slot": .string("default")]))
       XCTAssertTrue(socket.requests.isEmpty)
@@ -168,6 +171,8 @@ import XCTest
   }
 }
 
+private struct ArchiveTransportTimeout: Error {}
+
 @MainActor private final class ArchiveTransport: ServerTransport {
   var requests: [[String: JSONValue]] = []
   let onEvent: @MainActor (ServerTransportEvent) -> Void
@@ -181,9 +186,13 @@ import XCTest
 
   func close() {}
 
-  func take(_ method: String) throws -> [String: JSONValue] {
-    let index = try XCTUnwrap(requests.firstIndex { $0["method"] == .string(method) })
-    return requests.remove(at: index)
+  func take(_ method: String) async throws -> [String: JSONValue] {
+    for _ in 0..<100 {
+      if let index = requests.firstIndex(where: { $0["method"] == .string(method) }) { return requests.remove(at: index) }
+      try await Task.sleep(for: .milliseconds(50))
+    }
+    XCTFail("No \(method) request arrived")
+    throw ArchiveTransportTimeout()
   }
 
   func answer(_ request: [String: JSONValue], _ value: JSONValue) {
