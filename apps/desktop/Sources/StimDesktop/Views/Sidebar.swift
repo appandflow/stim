@@ -282,7 +282,9 @@ struct WorkspaceRow: View {
         onShowLastOutput: actions.latest(for: env.path).map { last in { actions.presented = last } },
         onRun: { platform in actions.runApp(env, platform: platform) },
         onReload: { actions.run("Reload \(env.names.title)", steps: [StimCommand(["reload"], cwd: env.path)], present: false) },
-        onStartDevServer: { actions.run("Start \(env.names.title)", StimCommand(["start"], cwd: env.path)) },
+        onStartDevServer: {
+          actions.run("Start \(env.names.title)", steps: [StimCommand(["start"], cwd: env.path)], present: false)
+        },
         onStopDevServer: {
           if env.remoteDevices?.isEmpty == false {
             confirmingStop = true

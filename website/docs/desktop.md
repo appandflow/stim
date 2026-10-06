@@ -256,8 +256,9 @@ On the All devices and project wall, active workspaces without running or buildi
 devices use compact cards labelled **No running devices**, with Metro status,
 warnings and error links. CPU and RAM stay on the workspace page.
 
-Run, Reload app and Stop from the workspace or sidebar menus keep you on the
-workspace page. Open **Last output** or **Operations** for command details,
+Run, Reload app, Start dev server and Stop from the workspace or sidebar menus keep
+you on the workspace page, as do Stop or Shut down in the now band and Build and run and Stop
+on a macOS app card. Open **Last output** or **Operations** for command details,
 including failed runs. Click the **Recent builds** label or chevron to expand
 the build history. Each row shows outcome, duration and age; click a row to
 open that run in the build details sheet. Disclosure content and chevrons animate

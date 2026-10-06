@@ -32,11 +32,12 @@ struct MacosAppCard: View {
         if app.host != nil || app.state == "running" || app.state == "orphaned" {
           IconButton(systemImage: "stop.fill", tint: Palette.error, help: "Stop \u{2014} runs stim stop for this workspace's app")
           {
-            actions.run("Stop \(app.product)", StimCommand(["stop"], cwd: workspace))
+            actions.run("Stop \(app.product)", steps: [StimCommand(["stop"], cwd: workspace)], present: false)
           }
+          .disabled(actions.active(for: workspace) != nil)
         }
         Button("Build and run", systemImage: "play.fill") {
-          actions.run("Build \(app.product)", StimCommand(runArguments, cwd: workspace))
+          actions.run("Build \(app.product)", steps: [StimCommand(runArguments, cwd: workspace)], present: false)
         }
         .nativeControlStyle(.primary)
         .help(

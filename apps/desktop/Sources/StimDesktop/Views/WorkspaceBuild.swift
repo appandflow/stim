@@ -124,7 +124,9 @@ struct WorkspaceActionsButton: View {
         onShowLastOutput: actions.latest(for: env.path).map { last in { actions.presented = last } },
         onRun: { platform in actions.runApp(env, platform: platform) },
         onReload: { actions.run("Reload \(env.names.title)", steps: [StimCommand(["reload"], cwd: env.path)], present: false) },
-        onStartDevServer: { actions.run("Start \(env.names.title)", StimCommand(["start"], cwd: env.path)) },
+        onStartDevServer: {
+          actions.run("Start \(env.names.title)", steps: [StimCommand(["start"], cwd: env.path)], present: false)
+        },
         onStopDevServer: {
           if env.remoteDevices?.isEmpty == false {
             confirmingStop = true
@@ -285,7 +287,9 @@ struct WorktreeActionsMenuContent: View {
       onShowLastOutput: actions.latest(for: app.path).map { last in { actions.presented = last } },
       onRun: { actions.runApp(app, platform: $0) },
       onReload: { actions.run("Reload \(app.names.title)", steps: [StimCommand(["reload"], cwd: app.path)], present: false) },
-      onStartDevServer: { actions.run("Start \(app.names.title)", StimCommand(["start"], cwd: app.path)) },
+      onStartDevServer: {
+        actions.run("Start \(app.names.title)", steps: [StimCommand(["start"], cwd: app.path)], present: false)
+      },
       onStopDevServer: {
         if app.remoteDevices?.isEmpty == false { stopping = app } else { onStop(app) }
       },
