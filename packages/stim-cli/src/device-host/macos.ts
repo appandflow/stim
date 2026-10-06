@@ -13,7 +13,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { homedir } from 'node:os';
-import { isAbsolute, join, relative } from 'node:path';
+import { isAbsolute, join, relative, sep } from 'node:path';
 import { withDirLock } from '@stim-cli/core';
 import {
   assertHostedDeviceLedger,
@@ -89,7 +89,7 @@ function removePreferences(bundleId: string): void {
 
 function assertInside(root: string, path: string): void {
   const diff = relative(root, realpathSync(path));
-  if (!diff || diff === '..' || diff.startsWith('../') || isAbsolute(diff))
+  if (!diff || diff === '..' || diff.startsWith(`..${sep}`) || isAbsolute(diff))
     throw new Error('Hosted macOS app data resolves outside its private area.');
 }
 
@@ -168,7 +168,7 @@ export async function runHostedMacosApp(
       throw new Error('The app minimum OS is incompatible with the hosted Mac.');
     const executable = realpathSync(join(bundle, 'Contents', 'MacOS', product));
     const diff = relative(root, executable);
-    if (!diff || diff === '..' || diff.startsWith('../') || isAbsolute(diff))
+    if (!diff || diff === '..' || diff.startsWith(`..${sep}`) || isAbsolute(diff))
       throw new Error('The app executable resolves outside its bundle.');
     const architectures = exec.runFile('xcrun', ['lipo', '-archs', executable], options).split(/\s+/);
     if (!architectures.includes(device.architecture))

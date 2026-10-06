@@ -32,6 +32,7 @@ const avdName = 'stim-setup';
 const envKeys = [
   'STIM_HOME',
   'HOME',
+  'USERPROFILE',
   'ANDROID_HOME',
   'ANDROID_SDK_ROOT',
   'ANDROID_AVD_HOME',
@@ -56,6 +57,7 @@ beforeEach(() => {
   Object.assign(process.env, {
     STIM_HOME: join(home, 'stim'),
     HOME: home,
+    USERPROFILE: home,
     ANDROID_HOME: join(home, 'sdk'),
     ANDROID_SDK_ROOT: join(home, 'sdk'),
     ANDROID_AVD_HOME: avdRoot,

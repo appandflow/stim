@@ -1,5 +1,5 @@
 import { cpSync, existsSync, mkdirSync, readdirSync, realpathSync, rmSync, statSync } from 'node:fs';
-import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { validMacosResourceDestination } from '@stim-cli/core';
 import { getExecutor } from '../exec.ts';
 
@@ -61,7 +61,7 @@ export function resolveBundleExtras(
       resourceError(key, entry, 'source does not exist');
     }
     const path = relative(boundary, source);
-    if (path === '..' || path.startsWith('../') || isAbsolute(path))
+    if (path === '..' || path.startsWith(`..${sep}`) || isAbsolute(path))
       resourceError(key, entry, 'source leaves the repository');
     if (path === '') resourceError(key, entry, 'source is the repository root');
     const stat = statSync(source);

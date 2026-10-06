@@ -27,6 +27,7 @@ process.exit(ok ? 0 : 1);
 
 let dir: string;
 let home: string | undefined;
+let userProfile: string | undefined;
 const sha = (text: string) => createHash('sha256').update(text).digest('hex');
 const by = { id: 'client-1', name: 'Laptop' };
 
@@ -69,11 +70,16 @@ function updates(overrides: Partial<ServerUpdateOptions> = {}) {
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'stim-server-update-'));
   home = process.env.HOME;
+  userProfile = process.env.USERPROFILE;
   process.env.HOME = dir;
+  process.env.USERPROFILE = dir;
 });
 
 afterEach(() => {
-  process.env.HOME = home;
+  if (home === undefined) delete process.env.HOME;
+  else process.env.HOME = home;
+  if (userProfile === undefined) delete process.env.USERPROFILE;
+  else process.env.USERPROFILE = userProfile;
   rmSync(dir, { recursive: true, force: true });
 });
 

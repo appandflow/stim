@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, realpathSync } from 'node:fs';
-import { basename, dirname, isAbsolute, join, relative } from 'node:path';
+import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path';
 import { isIP, type AddressInfo } from 'node:net';
 import { withDirLock, createMetroBridge, type MetroBridge } from '@stim-cli/core';
 import {
@@ -460,7 +460,7 @@ export class DeviceHost {
           bundle !== join(realpathSync(join(deviceHostArea(record.id), 'apps')), attempt, 'App.app') ||
           !executable ||
           executable === '..' ||
-          executable.startsWith('../') ||
+          executable.startsWith(`..${sep}`) ||
           isAbsolute(executable)
         )
           throw foreign;
