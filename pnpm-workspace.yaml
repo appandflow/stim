@@ -19,6 +19,7 @@ minimumReleaseAgeExclude:
   - stim
   - '@stim-cli/*'
   - unique-pid@0.1.1
+  - react-native-unistyles@3.5.0
 allowBuilds:
   '@sentry/cli': false
   '@swc/core': false
