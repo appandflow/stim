@@ -228,7 +228,12 @@ outside it moves to its own issue and pull request.
 - **Build access.** stim-server's `build` capability lets another Mac on the
   tailnet run its project code on this Mac to build. The client asks with a
   build request and a person approves it on the worker with
-  `stim-server devices grant <id> --build`; there is no pairing code for it.
+  `stim-server devices grant <id> --build`, or by running `stim-server setup`
+  on the worker. Running setup is the worker-side approval: a person on the
+  worker pre-approves at most one request per capability, from one node,
+  carrying one ticket, until one expiry, with a per-grant y/N confirmation in
+  a terminal (`--yes` otherwise). An SSH-driven run is not offered. Setup
+  never enables Funnel or changes TCC. There is no pairing code for build.
   It never comes with `read` or `control`, and an honest loopback connection
   never gets it. Build clients live in `server/build-clients.json`, apart from
   `devices.json`. The client names its build machines in `offload.machines`,
@@ -273,6 +278,11 @@ outside it moves to its own issue and pull request.
   through core's `tryAcquireBuildSlotClaim`.
 - **Hosted devices.** `device-host` approval is separate from read, control and
   build, and permits the client's native app code in its own hosted simulator.
+  A person on the worker approves it by id or runs `stim-server setup` there:
+  at most one request per capability, from one node, carrying one ticket,
+  until one expiry, with a per-grant y/N confirmation in a terminal (`--yes`
+  otherwise). An SSH-driven run is not offered. Setup never changes TCC or
+  enables Funnel; the person approves normal macOS permission prompts.
   The server owns its opaque journal under `server/device-host-sessions/` and
   app receipts under `device-host/sessions/<id>/apps/`; core owns the readers. A hosted native worker
   uses a server-chosen private home under `device-host/sessions/` and the CLI's

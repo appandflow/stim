@@ -5,6 +5,8 @@ description: 'Every Stim command and option'
 ---
 
 import StimTabs from '@site/src/components/StimTabs';
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
 
 :::note[Command examples]
 
@@ -1718,3 +1720,32 @@ staging and keeps live or unresolved claims, naming the claim removal command.
 
 `status --json` adds `archived` and `archivedUsage`, and `stats` prints an
 archive usage line. See [archived workspaces](./worktrees.md#archived-workspaces).
+
+## stim-server setup
+
+A person on the worker Mac runs `stim-server setup` to set it up and approve
+at most one build and/or device-host request from one tailnet node, carrying
+one ticket, until one expiry. Each grant asks y/N in a terminal; `--yes` is
+required without a terminal. Agents never run setup or approve requests.
+Setup reuses Desktop's server when it already answers, never enables Funnel,
+and never changes macOS permission settings. An SSH-driven run is not offered.
+
+<Tabs groupId="stim-invocation" defaultValue="global">
+<TabItem value="global" label="Global">
+
+```bash
+stim-server setup --client <node-id> --ticket <ticket> --expires <ISO-time> --build --device-host
+```
+
+</TabItem>
+<TabItem value="npx" label="npx">
+
+```bash
+npx --yes stim-server@<version> setup --client <node-id> --ticket <ticket> --expires <ISO-time> --build --device-host
+```
+
+</TabItem>
+</Tabs>
+
+See the [server command reference](https://github.com/appandflow/stim/blob/main/packages/server/README.md#set-up-a-worker-mac)
+for flags, permissions, journals, exit codes and undo commands.

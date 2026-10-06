@@ -221,7 +221,8 @@ ON ANOTHER MAC
 stim macos --remote <machine> builds the Debug app on this Mac and runs it on an
 approved hosting Mac over the tailnet, without SSH. The machine must be listed
 in hosting.machines and approved: stim doctor --fix asks it, a person on that
-Mac runs stim-server devices grant <id> --device-host, and stim doctor then
+Mac runs stim-server devices grant <id> --device-host or stim-server setup
+with that client node, ticket and expiry (guide settings), and stim doctor then
 records the approval. Stim connects only to the machine's pinned tailnet node.
 A refusal or an unreachable host fails the command; it never launches here
 instead.

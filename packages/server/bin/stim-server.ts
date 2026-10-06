@@ -35,6 +35,7 @@ import {
   type PairedDevice,
 } from '../src/registry.ts';
 import { hostFromExecutable, hostPermissionPanes } from '../src/stim-host.ts';
+import { defaultSetupDeps, runSetup } from '../src/setup.ts';
 import { startServer } from '../src/server.ts';
 import { watchTailscale } from '../src/tailscale-monitor.ts';
 import {
@@ -51,6 +52,10 @@ const USAGE = `Usage:
   stim-server [--port <n>] [--env KEY=VALUE]... [--path-prepend <dir>]...
                                     serve paired clients (default port ${DEFAULT_PORT});
                                     --env and --path-prepend apply after the login shell's environment
+  stim-server setup --client <node-id> --ticket <t> --expires <iso>
+                    [--build] [--device-host] [--port <n>] [--label <name>]
+                    [--env KEY=VALUE]... [--path-prepend <dir>]... [--yes] [--json]
+                                    worker-side approval for this node and ticket until expiry
   stim-server service install [--port <n>] [--label <name>] [--serve]
                               [--env KEY=VALUE]... [--path-prepend <dir>]...
                                     run stim-server as a macOS LaunchAgent that starts at login;
@@ -322,6 +327,11 @@ async function runService(
 }
 
 async function main(): Promise<void> {
+  if (process.argv[2] === 'setup') {
+    if (process.argv.slice(3).some((arg) => arg === '--help' || arg === '-h')) return void console.log(USAGE);
+    process.exitCode = await runSetup(process.argv.slice(3), pkg.version, defaultSetupDeps());
+    return;
+  }
   const { values, positionals } = parseArgs({
     allowPositionals: true,
     options: {
