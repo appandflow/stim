@@ -840,16 +840,19 @@ test('worktree reclaim releases named ports and keeps the entry when a listener 
   expect(getProject(root)).toBeNull();
 });
 
-test.each(['success', 'failure', 'missing', 'timeout'])(
+test.each(['success', 'failure', 'missing', 'stale'])(
   'workspace daemon stop %s controls state removal',
   async (outcome) => {
     const stateDir = workspaceAgentDeviceDir('/proj');
     upsertProject('/proj', {});
     ensureWorkspaceStorage('/proj');
     mkdirSync(stateDir);
-    writeFileSync(join(stateDir, 'daemon.json'), '{}');
+    writeFileSync(
+      join(stateDir, 'daemon.json'),
+      outcome === 'stale' ? JSON.stringify({ pid: 2147483646, processStartTime: 'Mon Oct  5 11:10:09 2026' }) : '{}',
+    );
     const runFile = vi.fn<(file: string, args: string[]) => string>((_file, _args) => {
-      if (outcome === 'failure' || outcome === 'timeout') throw new Error(outcome);
+      if (outcome === 'failure') throw new Error(outcome);
       expect(existsSync(stateDir)).toBe(true);
       return '';
     });
@@ -862,7 +865,7 @@ test.each(['success', 'failure', 'missing', 'timeout'])(
     const stdout = vi.spyOn(process.stdout, 'write').mockReturnValue(true);
     try {
       const result = await reclaimProject('/proj');
-      const succeeds = outcome === 'success';
+      const succeeds = outcome === 'success' || outcome === 'stale';
       expect(existsSync(stateDir)).toBe(!succeeds);
       expect(result.removedWorkspaceDirs).toEqual(succeeds ? [workspaceDir('/proj')] : []);
       expect(result.failedWorkspaceDirs).toEqual(succeeds ? [] : [workspaceDir('/proj')]);
@@ -870,11 +873,11 @@ test.each(['success', 'failure', 'missing', 'timeout'])(
       expect(getProject('/proj') === null).toBe(succeeds);
       const stopCall = [
         'agent-device',
-        ['daemon', 'stop', '--state-dir', stateDir],
+        ['daemon', 'stop', '--state-dir', stateDir, '--clean'],
         expect.objectContaining({ timeoutMs: 20_000 }),
       ];
-      const stopMessage = expect.stringContaining(`agent-device daemon stop --state-dir "${stateDir}"`);
-      expect(runFile.mock.calls).toEqual(outcome === 'missing' ? [] : [stopCall]);
+      const stopMessage = expect.stringContaining(`agent-device daemon stop --state-dir "${stateDir}" --clean`);
+      expect(runFile.mock.calls).toEqual(outcome === 'missing' || outcome === 'stale' ? [] : [stopCall]);
       expect(
         stderr.mock.calls.map(([line]) => String(line)).filter((line) => line.includes('daemon could not be stopped')),
       ).toEqual(succeeds ? [] : [stopMessage]);

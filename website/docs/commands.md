@@ -23,9 +23,6 @@ entry in the [troubleshooting reference](./troubleshooting.md).
 reports the same field, shared by its slots, without creating the directory.
 Set `AGENT_DEVICE_STATE_DIR` to it when driving a device yourself; see
 [agent-device actions](./dev-server-and-logs.md#agent-device-actions).
-The existing log fields stay the same: `start` has `logsDir`, `ios` has
-`logs: { dir }`, `android` has `logs`, and each status environment has
-`logs: { dir, errorsSinceMarker }` or `null`.
 
 ## Normal workflow
 

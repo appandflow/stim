@@ -1,10 +1,10 @@
-import { existsSync, realpathSync } from 'node:fs';
+import { realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { isAbsolute, join, relative, sep } from 'node:path';
+import { isAbsolute, relative, sep } from 'node:path';
 import { workspaceAgentDeviceDir } from '../workspace/paths.ts';
 import { phaseLine } from '../command-output.ts';
 import { getExecutor } from '../exec.ts';
-import { readAgentDeviceRecords } from './activity.ts';
+import { agentDeviceDaemon, readAgentDeviceRecords } from './activity.ts';
 
 type Device = { platform: 'ios'; id: string } | { platform: 'android'; id: string | null; avdName: string };
 interface Session {
@@ -117,7 +117,10 @@ export function closeOwnedDeviceSessions(
         ? undefined
         : { workspace: root, repoRoot: repoRoot && (canonical(repoRoot) ?? undefined), claims: deviceClaims(device) };
     const stateDir = root === undefined ? undefined : workspaceAgentDeviceDir(root);
-    const stateDirs = [undefined, ...(stateDir && existsSync(join(stateDir, 'daemon.json')) ? [stateDir] : [])];
+    const stateDirs = [
+      undefined,
+      ...(stateDir && !['none', 'dead'].includes(agentDeviceDaemon(stateDir)) ? [stateDir] : []),
+    ];
     for (const dir of stateDirs) {
       const deadline = Date.now() + 15000;
       const run = (args: string[]) => {

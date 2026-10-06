@@ -1,6 +1,6 @@
-import { closeSync, fstatSync, openSync, readdirSync, readFileSync, readSync, statSync } from 'node:fs';
+import { closeSync, fstatSync, openSync, readdirSync, readFileSync, readSync, realpathSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import type { NdjsonRecord, ProjectRecord } from '@stim-cli/core/state';
 import { inspectProcessStart, type ProcessStart } from '../process-identity.ts';
 import { projectDeviceSlots } from './device-slots.ts';
@@ -189,6 +189,14 @@ export function workspaceAgentTargets(project: ProjectRecord | null | undefined)
   return targets;
 }
 
+function canonicalDir(path: string): string {
+  try {
+    return realpathSync(path);
+  } catch {
+    return resolve(path);
+  }
+}
+
 function readCompleteLines(path: string, start: number): { text: string; next: number; size: number } | null {
   let fd: number | undefined;
   try {
@@ -244,14 +252,14 @@ export function createAgentActionReader({
     const sessionDirs = agentDeviceStateDirs(home).flatMap((root) => {
       const sessionsDir = join(root, 'sessions');
       try {
-        return readdirSync(sessionsDir).map((name) => ({ name, dir: join(sessionsDir, name) }));
+        return readdirSync(sessionsDir).map((name) => ({ name, root, dir: join(sessionsDir, name) }));
       } catch {
         return [];
       }
     });
     let claimed: Map<string, string> | undefined;
-    const claimedDevice = (session: string) =>
-      (claimed ??= new Map(
+    const claimedDevice = (session: string, root: string) => {
+      claimed ??= new Map(
         readAgentDeviceRecords(home)
           .filter((record) => record.kind === 'claim' && record.session && record.deviceId)
           .filter((record) => {
@@ -259,11 +267,16 @@ export function createAgentActionReader({
             return target?.name === undefined || target.name === record.deviceName;
           })
           .filter((record) => agentDeviceLiveness(record, startOf) === 'live')
-          .map((record) => [record.session!, record.deviceId!]),
-      )).get(session) ?? null;
+          .map((record) => [
+            `${record.stateDir ? canonicalDir(record.stateDir) : ''}\0${record.session}`,
+            record.deviceId!,
+          ]),
+      );
+      return claimed.get(`${canonicalDir(root)}\0${session}`) ?? claimed.get(`\0${session}`) ?? null;
+    };
 
     const out: NdjsonRecord[] = [];
-    for (const { name, dir } of sessionDirs) {
+    for (const { name, root, dir } of sessionDirs) {
       const eventsPath = join(dir, 'events.ndjson');
       const lines: string[] = [];
       let cursor = cursors.get(dir);
@@ -318,10 +331,10 @@ export function createAgentActionReader({
       // agent-device starts an iOS runner lazily, on the first command that needs it, so the runner log dates a
       // device change late. A session that closes and reopens on another simulator changes device at the close.
       const spans = sessionSpans(cursor.runner.spans, cursor.closes);
-      const deviceAt = (ts: number) => (spans.length ? spanDevice(spans, ts) : session && claimedDevice(session));
+      const deviceAt = (ts: number) => (spans.length ? spanDevice(spans, ts) : session && claimedDevice(session, root));
 
       if (parsed.unknownVersion && !cursor.unknownReported) {
-        const deviceId = spans.at(-1)?.deviceId ?? (session && claimedDevice(session));
+        const deviceId = spans.at(-1)?.deviceId ?? (session && claimedDevice(session, root));
         const target = deviceId ? byId.get(deviceId) : undefined;
         if (target) {
           cursor.unknownReported = true;

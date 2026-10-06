@@ -2,7 +2,7 @@ export default {
   summary: 'Querying the merged NDJSON timeline, and what --errors means',
   body: () => `LOGS
 
-Replace stim with npx stim when it is not installed globally.
+If Stim is not installed globally, replace stim with npx stim.
 
 AGENT-DEVICE WORKSPACE STATE
 
@@ -10,7 +10,7 @@ When you drive a device yourself with agent-device, opt in to the workspace's
 state directory reported as agentDevice.stateDir in the stim ios, android and
 macos output and in status. Read it once from status, run from the app root:
 
-  STATE_DIR="$(stim status --json | jq -r '.environments[] | select(.path=="'"$PWD"'") | .agentDevice.stateDir')"
+  STATE_DIR="$(stim status --json | jq -r '.environments[] | select(.path=="'"$(pwd -P)"'") | .agentDevice.stateDir')"
 
 Then prefix each agent-device command, so the choice survives shells that do
 not keep exports:
@@ -24,7 +24,7 @@ metro-sessions, allocations and daemon files move there. The apple-runner build
 cache and device claims stay shared; do not set
 AGENT_DEVICE_IOS_RUNNER_DERIVED_PATH or AGENT_DEVICE_CLAIMS_DIR.
 Each active workspace adds one agent-device daemon, which exits after five
-idle minutes. The variable is opt-in per command: forgetting it falls back to
+idle minutes with no open session. The variable is opt-in per command: forgetting it falls back to
 ~/.agent-device.
 stim stop closes owned-device sessions there, stim logs --source agent reads
 them, and stim worktree remove stops the daemon and removes the directory.

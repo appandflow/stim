@@ -364,7 +364,7 @@ For agent-device you run yourself, use the `agentDevice.stateDir` reported by
 from `status`, run from the app root, and prefix each agent-device command:
 
 ```sh
-STATE_DIR="$(stim status --json | jq -r '.environments[] | select(.path=="'"$PWD"'") | .agentDevice.stateDir')"
+STATE_DIR="$(stim status --json | jq -r '.environments[] | select(.path=="'"$(pwd -P)"'") | .agentDevice.stateDir')"
 AGENT_DEVICE_STATE_DIR="$STATE_DIR" agent-device open <bundle id> --platform ios --session <name>
 AGENT_DEVICE_STATE_DIR="$STATE_DIR" agent-device snapshot --session <name>
 ```
@@ -373,7 +373,7 @@ Sessions, logs, metro-sessions, allocations and daemon files live under
 `$STIM_HOME/workspaces/<name>/agent-device/`. The Apple runner build cache and
 device claims stay shared: leave `AGENT_DEVICE_IOS_RUNNER_DERIVED_PATH` and
 `AGENT_DEVICE_CLAIMS_DIR` unset. Each active workspace adds one daemon, which
-exits after five idle minutes. This is opt-in per command; forgetting the
+exits after five idle minutes with no open session. This is opt-in per command; forgetting the
 variable uses `~/.agent-device`.
 `stim stop` closes owned-device sessions there; `stim worktree remove` stops its
 daemon and removes the directory. Hosted/stim-server sessions already use their

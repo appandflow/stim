@@ -16,7 +16,9 @@ CLEANUP AND DISK
 worktree remove stops the agent-device daemon when the workspace's
 agent-device/daemon.json exists, then removes its state directory with the
 workspace. If agent-device is missing or the stop fails, it keeps the directory
-and reports the retry command: agent-device daemon stop --state-dir <dir>.
+and reports the retry command: agent-device daemon stop --state-dir <dir> --clean.
+A daemon.json whose process is gone is stale and does not block removal.
+gc --delete of a finished worktree does the same.
 stop closes owned-device sessions in that directory without deleting it.
 See stim guide logs for AGENT_DEVICE_STATE_DIR examples.
 

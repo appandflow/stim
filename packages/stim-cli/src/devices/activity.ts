@@ -73,6 +73,7 @@ export interface AgentDeviceRecord {
   deviceId: string | null;
   session: string | null;
   workspace: string | null;
+  stateDir: string | null;
   deviceName: string | null;
   readable: boolean;
   owner: PidStart | null;
@@ -119,6 +120,7 @@ export function parseAgentDeviceRecord(
     deviceId,
     session: kind === 'claim' && typeof entry?.session === 'string' && entry.session ? entry.session : null,
     workspace: kind === 'claim' && typeof entry?.workspace === 'string' && entry.workspace ? entry.workspace : null,
+    stateDir: kind === 'claim' && typeof entry?.stateDir === 'string' && entry.stateDir ? entry.stateDir : null,
     deviceName: kind === 'claim' && typeof device?.name === 'string' ? device.name : null,
     readable: Boolean(entry && deviceId),
     owner: entry ? field(entry, 'ownerPid', 'ownerStartTime') : null,
@@ -137,6 +139,21 @@ function processMatches(entry: PidStart, startOf: (pid: number) => ProcessStart)
   const recorded = Date.parse(entry.startTime);
   if (!Number.isFinite(recorded)) return 'unknown';
   return Math.floor(start.startedAtMs / 1000) === Math.floor(recorded / 1000) ? 'live' : 'dead';
+}
+
+export function agentDeviceDaemon(
+  stateDir: string,
+  startOf: (pid: number) => ProcessStart = inspectProcessStart,
+): 'none' | Liveness {
+  let raw: string;
+  try {
+    raw = readFileSync(join(stateDir, 'daemon.json'), 'utf8');
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === 'ENOENT' ? 'none' : 'unknown';
+  }
+  const entry = parseObject(raw);
+  const owner = entry && field(entry, 'pid', 'processStartTime');
+  return owner ? processMatches(owner, startOf) : 'unknown';
 }
 
 export function agentDeviceLiveness(record: AgentDeviceRecord, startOf: (pid: number) => ProcessStart): Liveness {
@@ -262,9 +279,9 @@ function agentDeviceDirs(home: string): { kind: AgentDeviceRecord['kind']; dir: 
  * When an agent-device session last recorded an event: its events file's modification time. agent-device names a
  * session's directory after the session with every character outside `[a-zA-Z0-9._-]` replaced by `_`.
  */
-function agentSessionActedAt(home: string, session: string): number | null {
+function agentSessionActedAt(home: string, session: string, stateDir: string | null): number | null {
   let latest: number | null = null;
-  for (const root of agentDeviceStateDirs(home)) {
+  for (const root of stateDir ? [stateDir] : agentDeviceStateDirs(home)) {
     try {
       const at = statSync(join(root, 'sessions', session.replaceAll(/[^a-zA-Z0-9._-]/g, '_'), 'events.ndjson')).mtimeMs;
       latest = latest === null ? at : Math.max(latest, at);
@@ -403,7 +420,7 @@ export function createActivityReader({
           pid: record.owner?.pid ?? null,
           since: record.createdAtMs !== null ? new Date(record.createdAtMs).toISOString() : null,
         });
-        const actedAt = record.session ? agentSessionActedAt(home, record.session) : null;
+        const actedAt = record.session ? agentSessionActedAt(home, record.session, record.stateDir) : null;
         if (actedAt !== null) evidence.recency.push({ basis: 'agent-action', at: actedAt });
       } else if (liveness === 'unknown') {
         evidence.unknown.push(basis);

@@ -246,7 +246,8 @@ a branch only when it has no unique commits.
 Removal also stops the agent-device daemon in the workspace's
 `agentDevice.stateDir` and removes its sessions and logs. If agent-device is
 missing or the stop fails, Stim keeps the workspace directory and prints the
-`agent-device daemon stop --state-dir <dir>` command to retry.
+`agent-device daemon stop --state-dir <dir> --clean` command to retry. A
+`daemon.json` whose process is gone is stale and does not block removal.
 See [agent-device workspace state](./dev-server-and-logs.md#agent-device-actions).
 
 On the source checkout, `worktree remove` only reclaims the Stim environment.

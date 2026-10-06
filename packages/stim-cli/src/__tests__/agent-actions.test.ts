@@ -1,4 +1,13 @@
-import { appendFileSync, cpSync, mkdirSync, renameSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  appendFileSync,
+  cpSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  mkdtempSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { workspaceAgentDeviceDir } from '../workspace/paths.ts';
@@ -19,6 +28,14 @@ const gone: (pid: number) => ProcessStart = () => ({ status: 'gone' });
 let home: string;
 let root: string;
 
+function claimStateDir(stateDir: string) {
+  for (const name of ['ios', 'android']) {
+    const file = join(root, 'device-claims', `${name}.json`);
+    const claim = JSON.parse(readFileSync(file, 'utf8')) as Record<string, unknown>;
+    writeFileSync(file, JSON.stringify({ ...claim, stateDir }));
+  }
+}
+
 beforeEach(() => {
   for (const name of ['AGENT_DEVICE_STATE_DIR', 'AGENT_DEVICE_CLAIMS_DIR', 'AGENT_DEVICE_IOS_RUNNER_LEASE_DIR'])
     vi.stubEnv(name, '');
@@ -26,6 +43,7 @@ beforeEach(() => {
   vi.stubEnv('STIM_HOME', join(home, 'stim'));
   root = join(home, '.agent-device');
   cpSync(FIXTURE, root, { recursive: true });
+  claimStateDir(root);
 });
 
 afterEach(() => {
@@ -173,6 +191,7 @@ test('workspace-only sessions are read through iOS runner logs and shared Androi
   const stateDir = workspaceAgentDeviceDir('/projects/app');
   mkdirSync(stateDir, { recursive: true });
   renameSync(join(root, 'sessions'), join(stateDir, 'sessions'));
+  claimStateDir(stateDir);
   const reader = createAgentActionReader({
     targets: [
       { platform: 'ios', id: FIRST_SIM, slot: 'default' },
@@ -200,5 +219,17 @@ test('workspace-only sessions are read through iOS runner logs and shared Androi
     'Ran snapshot',
     'Tapped @e7',
     'Closed default',
+  ]);
+});
+
+test('a session name shared by two workspaces is attributed through the claim that names its state directory', () => {
+  const other = workspaceAgentDeviceDir('/projects/other');
+  mkdirSync(other, { recursive: true });
+  cpSync(join(root, 'sessions'), join(other, 'sessions'), { recursive: true });
+  const records = read([{ platform: 'android', id: 'emulator-5560', slot: 'default', name: 'stim-app' }]);
+  expect(records.map((record) => record.msg)).toEqual([
+    'Failed open: DEVICE_NOT_FOUND',
+    'Opened io.tlon.groups',
+    'Tapped (541, 2265)',
   ]);
 });

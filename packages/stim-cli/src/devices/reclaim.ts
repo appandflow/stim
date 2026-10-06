@@ -30,8 +30,8 @@ import { endRecordedSession } from '../engine/device-remote.ts';
 import { releaseWorkspaceLeases, type ReleasedLease } from '../engine/device-lease.ts';
 import { resolveEasCliBin } from '../engine/remote-cache.ts';
 import { stopTunnel, type StopTunnelResult } from '../engine/tunnel.ts';
-import { join } from 'node:path';
 import { getExecutor } from '../exec.ts';
+import { agentDeviceDaemon } from './activity.ts';
 import { phaseLine } from '../command-output.ts';
 import { workspaceAgentDeviceDir, workspaceDir } from '../workspace/paths.ts';
 import { resolveSupervisorTarget } from '../supervisor/ownership.ts';
@@ -542,18 +542,18 @@ async function reclaimIdleProject(
     if (existsSync(dir)) {
       try {
         const stateDir = workspaceAgentDeviceDir(path);
-        if (existsSync(join(stateDir, 'daemon.json'))) {
+        if (!['none', 'dead'].includes(agentDeviceDaemon(stateDir))) {
           const exec = getExecutor();
           try {
             if (!exec.findExecutable('agent-device')) throw new Error('agent-device is not on PATH');
-            exec.runFile('agent-device', ['daemon', 'stop', '--state-dir', stateDir], {
+            exec.runFile('agent-device', ['daemon', 'stop', '--state-dir', stateDir, '--clean'], {
               timeoutMs: 20_000,
               killSignal: 'SIGKILL',
               env: { AGENT_DEVICE_NO_UPDATE_NOTIFIER: '1' },
             });
           } catch (error) {
             process.stderr.write(
-              `${phaseLine('agent-device', `daemon could not be stopped: ${(error as Error).message}; run agent-device daemon stop --state-dir "${stateDir}"`)}\n`,
+              `${phaseLine('agent-device', `daemon could not be stopped: ${(error as Error).message}; run agent-device daemon stop --state-dir "${stateDir}" --clean`)}\n`,
             );
             throw error;
           }
