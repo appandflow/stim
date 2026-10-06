@@ -376,17 +376,42 @@ public struct GcReport: Decodable, Equatable, Sendable {
   public struct AgentDeviceUsage: Decodable, Equatable, Sendable {
     public struct Part: Decodable, Equatable, Sendable {
       public var bytes: Int64?
+
+      private enum CodingKeys: String, CodingKey { case bytes }
+
+      public init(from decoder: Decoder) throws {
+        let values = try? decoder.container(keyedBy: CodingKeys.self)
+        bytes = try? values?.decode(Int64.self, forKey: .bytes)
+      }
     }
 
     public struct State: Decodable, Equatable, Sendable {
-      public var dir: String
-      public var sessions: Part
-      public var logs: Part
+      public var dir: String?
+      public var sessions: Part?
+      public var logs: Part?
+
+      private enum CodingKeys: String, CodingKey { case dir, sessions, logs }
+
+      public init(from decoder: Decoder) throws {
+        let values = try? decoder.container(keyedBy: CodingKeys.self)
+        dir = try? values?.decode(String.self, forKey: .dir)
+        sessions = try? values?.decode(Part.self, forKey: .sessions)
+        logs = try? values?.decode(Part.self, forKey: .logs)
+      }
     }
 
-    public var bytes: Int64
-    public var stateDir: State
-    public var runnerBuilds: Part
+    public var bytes: Int64?
+    public var stateDir: State?
+    public var runnerBuilds: Part?
+
+    private enum CodingKeys: String, CodingKey { case bytes, stateDir, runnerBuilds }
+
+    public init(from decoder: Decoder) throws {
+      let values = try? decoder.container(keyedBy: CodingKeys.self)
+      bytes = try? values?.decode(Int64.self, forKey: .bytes)
+      stateDir = try? values?.decode(State.self, forKey: .stateDir)
+      runnerBuilds = try? values?.decode(Part.self, forKey: .runnerBuilds)
+    }
   }
 
   public struct SwiftpmCacheUsage: Decodable, Equatable, Sendable {

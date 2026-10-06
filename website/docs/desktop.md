@@ -98,6 +98,8 @@ performance traces. Every release is listed under
   The `~/Library/Caches` row excludes SwiftPM bytes counted in that separate
   row, as it excludes Stim caches, so **Other tools** counts them once.
   Stim never offers a cleanup action for either report-only location.
+  Stim never trims or deletes the shared runner builds, sessions, logs and other state or the hosted driver dir; a workspace's own agent-device dir goes only with its workspace.
+  Stim never deletes the SwiftPM cache.
 - **Machines.** Select **This Mac** for local disk, memory and cleanup, or a
   configured build machine for its readiness, capacity and build history.
   Click the toolbar's CPU, memory or disk figure for details; **Open Machines**

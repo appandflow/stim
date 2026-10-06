@@ -45,16 +45,21 @@ export function runnerInUse(
   dir: string,
   leases: readonly AgentDeviceRecord[],
   unreadable: boolean,
-  lock: boolean,
+  lock: { pid: number; startTime: string } | 'unreadable' | null,
   startOf: (pid: number) => ProcessStart,
 ): Pick<AgentDeviceUsage['runnerBuilds']['platforms'][number]['entries'][number], 'inUse' | 'inUseReason'> {
   if (unreadable || leases.some((lease) => !lease.readable)) return { inUse: true, inUseReason: 'unreadable' };
   for (const lease of leases) {
     if (!lease.xctestrunPath || !contains(dir, lease.xctestrunPath)) continue;
-    if ([lease.owner, lease.runner].some((process) => process && processMatches(process, startOf) === 'live'))
-      return { inUse: true, inUseReason: 'lease' };
+    const liveness = [lease.owner, lease.runner].flatMap((process) =>
+      process ? [processMatches(process, startOf)] : [],
+    );
+    if (liveness.includes('live')) return { inUse: true, inUseReason: 'lease' };
+    if (liveness.includes('unknown')) return { inUse: true, inUseReason: 'unreadable' };
   }
-  return lock ? { inUse: true, inUseReason: 'lock' } : { inUse: false, inUseReason: null };
+  if (lock === 'unreadable') return { inUse: true, inUseReason: 'unreadable' };
+  if (lock && processMatches(lock, startOf) !== 'dead') return { inUse: true, inUseReason: 'lock' };
+  return { inUse: false, inUseReason: null };
 }
 
 interface UsageTree {
@@ -178,13 +183,45 @@ function workspaceAgentDeviceDir(dir: string): string {
   return join(dir, 'agent-device');
 }
 
+function readRunnerLock(dir: string): { pid: number; startTime: string } | 'unreadable' | null {
+  if (!existsSync(dir)) return null;
+  try {
+    const owner: unknown = JSON.parse(readFileSync(join(dir, 'owner.json'), 'utf8'));
+    if (
+      owner &&
+      typeof owner === 'object' &&
+      !Array.isArray(owner) &&
+      'pid' in owner &&
+      typeof owner.pid === 'number' &&
+      Number.isInteger(owner.pid) &&
+      owner.pid > 0 &&
+      'startTime' in owner &&
+      typeof owner.startTime === 'string' &&
+      Number.isFinite(Date.parse(owner.startTime))
+    ) {
+      return { pid: owner.pid, startTime: owner.startTime };
+    }
+  } catch {}
+  return 'unreadable';
+}
+
 function discover(): UsageTree {
-  const stateDir = canonical(envDir('AGENT_DEVICE_STATE_DIR') ?? join(homedir(), '.agent-device'));
   const runnerRoot = canonical(join(homedir(), '.agent-device', 'apple-runner'));
   const hostedDir = canonical(join(configDir(), 'server', 'agent-device'));
-  const workspaces = listWorkspaceDirs()
-    .map(({ dir, projectRoot }) => ({ dir: canonical(workspaceAgentDeviceDir(dir)), projectRoot, bytes: null }))
-    .filter(({ dir }) => existsSync(dir));
+  const workspaceDirs = listWorkspaceDirs().map(({ dir, projectRoot }) => ({
+    dir: canonical(workspaceAgentDeviceDir(dir)),
+    projectRoot,
+    bytes: null,
+  }));
+  const override = envDir('AGENT_DEVICE_STATE_DIR');
+  const candidate = override ? canonical(override) : null;
+  const overlaps =
+    candidate &&
+    [...workspaceDirs.map(({ dir }) => dir), hostedDir].some(
+      (dir) => contains(dir, candidate) || contains(candidate, dir),
+    );
+  const stateDir = candidate && !overlaps ? candidate : canonical(join(homedir(), '.agent-device'));
+  const workspaces = workspaceDirs.filter(({ dir }) => existsSync(dir));
   const roots = { stateDir, runnerRoot, hostedDir, workspaceDirs: workspaces.map(({ dir }) => dir).toSorted() };
   const leaseDir = envDir('AGENT_DEVICE_IOS_RUNNER_LEASE_DIR') ?? join(runnerRoot, 'leases');
   let leases: AgentDeviceRecord[] = [];
@@ -225,7 +262,7 @@ function discover(): UsageTree {
             lastUsedAt: runnerLastUsedAt(readText(join(entryDir, 'info.plist')), mtime),
           },
           parseRunnerMetadata(readText(join(entryDir, '.agent-device-runner-cache.json'))),
-          runnerInUse(canonical(entryDir), leases, unreadable, existsSync(`${entryDir}.lock`), startOf),
+          runnerInUse(canonical(entryDir), leases, unreadable, readRunnerLock(`${entryDir}.lock`), startOf),
         );
       });
     return entries.length ? [{ platform, dir, bytes: null, entries }] : [];
@@ -253,7 +290,7 @@ function discover(): UsageTree {
     otherChildren,
     platforms,
     workspaces,
-    hosted: existsSync(hostedDir) ? { dir: hostedDir, bytes: null, sessions: children(hostedDir).length } : null,
+    hosted: existsSync(hostedDir) ? { dir: hostedDir, bytes: null, sessions: directories(hostedDir).length } : null,
     absent,
   };
 }

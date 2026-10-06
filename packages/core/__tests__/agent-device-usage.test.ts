@@ -1,7 +1,14 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { agentDeviceUsageFile, readAgentDeviceUsage, readStatsReport, type AgentDeviceUsage } from '../state/index.ts';
+import {
+  agentDeviceUsageFile,
+  readAgentDeviceUsage,
+  readStatsReport,
+  readSwiftpmCacheUsage,
+  swiftpmCacheUsageFile,
+  type AgentDeviceUsage,
+} from '../state/index.ts';
 
 let home: string;
 beforeEach(() => {
@@ -49,4 +56,17 @@ test('core stats reads only the cached measurement, tolerates additive fields an
     writeFileSync(agentDeviceUsageFile(), raw);
     expect(readAgentDeviceUsage()).toBe(null);
   }
+});
+
+test('the unscoped gc documentation example supplies valid agent-device and SwiftPM payloads', () => {
+  const docs = readFileSync(new URL('../../../website/docs/commands.md', import.meta.url), 'utf8');
+  const example = docs.split('`stim gc --worktrees --json`')[1]!.split('```json')[1]!.split('```')[0]!;
+  const report = JSON.parse(example);
+  expect(report.cacheScope).toBe(null);
+  expect(report.sections.agentDevice).not.toBe(null);
+  expect(report.sections.swiftpmCache).not.toBe(null);
+  writeFileSync(agentDeviceUsageFile(), JSON.stringify(report.sections.agentDevice));
+  writeFileSync(swiftpmCacheUsageFile(), JSON.stringify(report.sections.swiftpmCache));
+  expect(readAgentDeviceUsage()).toEqual(report.sections.agentDevice);
+  expect(readSwiftpmCacheUsage()).toEqual(report.sections.swiftpmCache);
 });

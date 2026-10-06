@@ -174,6 +174,29 @@ import Testing
     #expect(report.unmanaged.first == row)
   }
 
+  @Test func partialAgentDeviceUsagePreservesTheRestOfTheReport() throws {
+    for usage in [
+      "{}", "null", "42",
+      #"{"bytes":null,"stateDir":null,"runnerBuilds":null}"#,
+      #"{"bytes":"wrong","stateDir":{"dir":42,"sessions":{"bytes":"wrong"},"logs":false},"runnerBuilds":[]}"#,
+      #"{"bytes":100,"stateDir":{"dir":"/Users/example/.agent-device"}}"#,
+      #"{"bytes":100,"stateDir":{"sessions":{},"logs":{}},"runnerBuilds":{}}"#,
+    ] {
+      let json = #"{"sections":{"agentDevice":\#(usage),"caches":[{"name":"Build cache","dir":"/s/build-cache","bytes":4096}]}}"#
+      let gc = try JSONDecoder().decode(GcReport.self, from: Data(json.utf8))
+      #expect(gc.sections.caches?.first?.bytes == 4096)
+      let report = StorageReport.make(environments: [], gc: gc, disk: DiskMeasurements(), paths: paths)
+      #expect(!report.unmanaged.contains { $0.title == "agent-device" })
+      #expect(report.free.first?.title == "Build cache")
+    }
+    let json =
+      #"{"sections":{"agentDevice":{"bytes":100,"stateDir":{"dir":"/Users/example/.agent-device","sessions":{"bytes":"wrong"},"logs":{"bytes":null}},"runnerBuilds":{"bytes":false}}}}"#
+    let gc = try JSONDecoder().decode(GcReport.self, from: Data(json.utf8))
+    let report = StorageReport.make(environments: [], gc: gc, disk: DiskMeasurements(), paths: paths)
+    #expect(
+      report.unmanaged.first { $0.title == "agent-device" }?.detail == "Runner builds unknown, sessions unknown, logs unknown")
+  }
+
   /// Catches an older CLI without an inventory blanking the page or crediting the user's simulators to Stim.
   @Test func withoutAnInventoryFallsBackToTheWorkspaceRecords() throws {
     let du = """

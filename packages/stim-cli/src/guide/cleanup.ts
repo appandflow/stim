@@ -97,9 +97,12 @@ to stats.json.corrupt-<unix ms> and starts a new one.`,
       body: () => `AGENT-DEVICE (REPORT ONLY)
 Unscoped gc reports agent-device runner builds by platform and entry, last use,
 agent-device and Xcode versions, sessions, logs, other state, workspace state
-and hosted driver state. Stim never selects this state as a cache or deletes it.
-A live owner or runner lease marks an entry in use; sibling lock directories and
-unreadable leases also conservatively mark entries in use. Dead leases do not.
+and hosted driver state. Stim never selects this state as a cache.
+Stim never trims or deletes the shared runner builds, sessions, logs and other
+state or the hosted driver dir; a workspace's own agent-device dir goes only with its workspace.
+A live owner or runner lease marks an entry in use. A lock marks it in use only
+when its owner is live or unknown. Unreadable lock owners and unreadable or unknown
+leases conservatively mark entries in use. Dead lock owners and leases do not.
 Use agent-device's own tooling or remove directories yourself to clear unused
 state. --cache scopes omit this report, including --cache all.
 

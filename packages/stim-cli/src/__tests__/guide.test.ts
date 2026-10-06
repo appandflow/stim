@@ -836,3 +836,10 @@ test('facts keep the SwiftPM stats and gc keys and measurement cache filename di
   expect(stats).toContain('$STIM_HOME/swiftpm-cache-usage.json');
   expect(gc).toContain('swiftpmCache');
 });
+
+test('agent-device cleanup guidance distinguishes shared state from workspace teardown', () => {
+  for (const body of [renderSection('cleanup', 'gc'), renderSection('facts', 'stats')]) {
+    expect(body).toContain('never trims or deletes the shared runner builds');
+    expect(body).toContain("workspace's own agent-device dir goes only with its workspace");
+  }
+});

@@ -866,7 +866,8 @@ RULES
                               directories that --delete removes whole (dead
                               projects and orphanedWorkspaces), and --cache
                               all does not
-    agentDevice             <AgentDeviceUsage|null>  report-only, never deleted;
+    agentDevice             <AgentDeviceUsage|null>  report-only; workspace state
+                              goes only with its workspace;
                               null with any --cache scope
     swiftpmCache            <SwiftpmCacheUsage|null> report-only, never deleted;
                               null with any --cache scope
@@ -1611,17 +1612,23 @@ AGENT-DEVICE DISK USAGE
   bytes sums known state, separate runner builds, workspace and hosted bytes;
   complete is false when a measurement fails. Individual unknown byte fields
   are null. Absent directories have zero bytes and present: false.
+  stateDir defaults to ~/.agent-device. AGENT_DEVICE_STATE_DIR overrides it
+  only when it does not overlap a workspace agent-device dir or the hosted dir.
   stateDir: { dir, present, bytes, sessions: { dir, bytes, count },
               logs: { dir, bytes }, other: { bytes, largest: [{ name, bytes }] } }
   runnerBuilds: { dir, present, bytes, sharedBytes, platforms: [
     { platform, dir, bytes, entries: [{ name, dir, bytes, lastUsedAt,
       packageVersion, xcodeBuildVersion, inUse, inUseReason }] }] }
   inUseReason is lease, lock, unreadable or null. Lease means a live owner or
-  runner matched by start time; lock and unreadable are conservative flags.
+  runner matched by start time; lock means a live or unknown lock owner.
+  Unreadable lock owners and unreadable or unknown leases use unreadable.
+  Dead lock owners and leases do not mark entries in use.
   workspaces: [{ dir, projectRoot, bytes }]; hosted: { dir, bytes, sessions } | null.
   $STIM_HOME/agent-device-usage.json caches the measurement and resolved roots
   for 10 minutes. stats and unscoped gc measure; no other command measures this
-  state. Server stats.get reads only the cached value. Stim never deletes it.
+  state. Server stats.get reads only the cached value.
+  Stim never trims or deletes the shared runner builds, sessions, logs and other
+  state or the hosted driver dir; a workspace's own agent-device dir goes only with its workspace.
 
 SWIFTPM CACHE DISK USAGE
   swiftpmCache: { version: 1, measuredAt, dir, present, bytes, complete } | null.
@@ -1632,7 +1639,7 @@ SWIFTPM CACHE DISK USAGE
   present: false, bytes: 0 and complete: true. Plain output omits absent caches.
   $STIM_HOME/swiftpm-cache-usage.json caches the measurement for 10 minutes,
   keyed on the resolved dir. stats and unscoped gc alone run du -sk with a
-  60-second timeout. Server stats.get reads only the cached value. status,
+  20-second timeout. Server stats.get reads only the cached value. status,
   start, ios, android and the budget gate never measure it. gc reports it as
   sections.swiftpmCache, never in caches or actionable; --delete and
   --older-than leave it untouched, and any --cache scope reports null.

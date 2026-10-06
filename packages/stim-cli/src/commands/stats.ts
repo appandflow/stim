@@ -52,7 +52,13 @@ export default function statsCommand(program: Command): void {
       lines.push('machine', ...sectionLines(machine));
       if (offload.placements.length || Object.keys(offload.machines).length) lines.push(...placementLines(offload));
       const agentLines = agentDeviceLines(report.agentDevice);
-      if (agentLines.length) lines.push(...agentLines, chalk.dim('  Stim reports this state and never deletes it.'));
+      if (agentLines.length)
+        lines.push(
+          ...agentLines,
+          chalk.dim(
+            "  Stim never trims or deletes the shared runner builds, sessions, logs and other state or the hosted driver dir; a workspace's own agent-device dir goes only with its workspace.",
+          ),
+        );
       lines.push(...swiftpmCacheLines(report.swiftpmCache));
       for (const line of lines) console.log(line);
     });

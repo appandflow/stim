@@ -37,7 +37,7 @@ test('reports measured allocated bytes without modifying the shared SwiftPM cach
   writeFileSync(join(dir, 'keep'), 'shared build data');
   const usage = await getSwiftpmCacheUsage();
   expect(usage).toMatchObject({ version: 1, dir, present: true, bytes: 1536 * 1024, complete: true });
-  expect(du).toHaveBeenCalledWith('du', ['-sk', dir], { timeoutMs: 60_000 });
+  expect(du).toHaveBeenCalledWith('du', ['-sk', dir], { timeoutMs: 20_000 });
   expect(readSwiftpmCacheUsage()).toEqual(usage);
   expect(readFileSync(join(dir, 'keep'), 'utf8')).toBe('shared build data');
   expect(swiftpmCacheLines({ ...usage, bytes: 1.5 * 1024 ** 3 }, Date.parse(usage.measuredAt) + 120_000)[0]).toBe(

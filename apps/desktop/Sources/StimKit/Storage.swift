@@ -469,15 +469,18 @@ public struct StorageReport: Sendable {
           size: measured.bytes.map { .size(max(0, $0 - stimBytes - (swiftpmInside ?? 0))) } ?? measured,
           detail: exclusions.isEmpty ? nil : "Excludes \(exclusions.joined(separator: "; "))"))
     }
-    if let usage = gc?.sections.agentDevice, usage.bytes > 0 {
+    if let usage = gc?.sections.agentDevice, let bytes = usage.bytes, bytes > 0,
+      let state = usage.stateDir, let dir = state.dir,
+      let runner = usage.runnerBuilds, let sessions = state.sessions, let logs = state.logs
+    {
       let parts: [(String, Int64?)] = [
-        ("Runner builds", usage.runnerBuilds.bytes),
-        ("sessions", usage.stateDir.sessions.bytes),
-        ("logs", usage.stateDir.logs.bytes),
+        ("Runner builds", runner.bytes),
+        ("sessions", sessions.bytes),
+        ("logs", logs.bytes),
       ]
       unmanaged.append(
         StorageLocation(
-          title: "agent-device", path: usage.stateDir.dir, size: .size(usage.bytes),
+          title: "agent-device", path: dir, size: .size(bytes),
           detail: parts.map { name, bytes in
             "\(name) \(bytes.map { Format.fileSize($0) } ?? "unknown")"
           }.joined(separator: ", ")))

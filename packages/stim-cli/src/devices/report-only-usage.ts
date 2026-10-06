@@ -24,7 +24,7 @@ export async function measureDu(args: string[]): Promise<{ sizes: Map<string, nu
   let output = '';
   let complete = true;
   try {
-    output = await getExecutor().runFileAsync('du', args, { timeoutMs: 60_000 });
+    output = await getExecutor().runFileAsync('du', args, { timeoutMs: 20_000 });
   } catch (error) {
     complete = false;
     const failure = error as { status?: number; code?: string; stdout?: string };

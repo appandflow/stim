@@ -135,7 +135,7 @@ test('the fixture tree reports platforms, shared builds, small entries, locks, o
     packageVersion: '0.21.20',
     xcodeBuildVersion: '27A266a',
     lastUsedAt: '2026-10-05T17:44:35.000Z',
-    inUseReason: 'lock',
+    inUseReason: 'unreadable',
   });
   expect(report.runnerBuilds.platforms[0]!.entries[1]).toMatchObject({
     packageVersion: null,
@@ -152,12 +152,12 @@ test('the fixture tree reports platforms, shared builds, small entries, locks, o
   ]);
   expect(report.stateDir.sessions.count).toBe(1);
   expect(report.workspaces).toEqual([{ dir: workspace, projectRoot: project, bytes: 8192 }]);
-  expect(report.hosted).toEqual({ dir: hosted, bytes: 9216, sessions: 2 });
+  expect(report.hosted).toEqual({ dir: hosted, bytes: 9216, sessions: 1 });
   expect(du.mock.calls.map((call) => call[1])).toEqual([
     ['-k', '-d', '4', state],
     ['-sk', workspace, hosted],
   ]);
-  expect(agentDeviceLines(report, true).join('\n')).toContain('in use (lock)');
+  expect(agentDeviceLines(report, true).join('\n')).toContain('in use (unreadable)');
 });
 
 test('an overridden state root measures runner builds separately without counting them in other state', async () => {
@@ -175,6 +175,32 @@ test('an overridden state root measures runner builds separately without countin
     ['-k', '-d', '4', runner],
   ]);
 });
+
+test.each(['workspace', 'hosted'] as const)(
+  'a %s state override overlapping managed state uses the home default and counts each directory once',
+  async (kind) => {
+    directory(state, 100);
+    const project = directory(join(home, 'project'), 0);
+    ensureWorkspaceStorage(project);
+    const managed = directory(
+      kind === 'workspace'
+        ? join(workspaceStateDir(project), 'agent-device')
+        : join(process.env.STIM_HOME!, 'server', 'agent-device'),
+      8,
+    );
+    const child = directory(join(managed, 'sessions'), 4);
+    for (const override of [managed, child, process.env.STIM_HOME!]) {
+      vi.stubEnv('AGENT_DEVICE_STATE_DIR', override);
+      const report = await getAgentDeviceUsage({ maxAgeMs: 0 });
+      expect(report.stateDir.dir).toBe(state);
+      expect(report.bytes).toBe(108 * 1024);
+      expect(report.workspaces).toEqual(
+        kind === 'workspace' ? [{ dir: managed, projectRoot: project, bytes: 8192 }] : [],
+      );
+    }
+    expect((await getAgentDeviceUsage()).stateDir.dir).toBe(state);
+  },
+);
 
 function lease(dir: string, fields: Record<string, unknown> = {}) {
   return parseAgentDeviceRecord(
@@ -195,35 +221,83 @@ test('lease liveness accepts either owner or runner, compares start seconds and 
     runnerPid: 43,
     runnerStartTime: new Date(at).toISOString(),
   });
-  expect(runnerInUse(dir, [live], false, false, start)).toEqual({ inUse: true, inUseReason: 'lease' });
-  expect(runnerInUse(`${dir}-sibling`, [live], false, false, start).inUse).toBe(false);
+  expect(runnerInUse(dir, [live], false, null, start)).toEqual({ inUse: true, inUseReason: 'lease' });
+  expect(runnerInUse(`${dir}-sibling`, [live], false, null, start).inUse).toBe(false);
   expect(
     runnerInUse(
       dir,
       [lease(`${dir}-sibling`, { ownerPid: 42, ownerStartTime: new Date(at).toISOString() })],
       false,
-      false,
+      null,
       start,
     ).inUse,
   ).toBe(false);
   const dead = lease(dir, { ownerPid: 43, ownerStartTime: new Date(at).toISOString() });
-  expect(runnerInUse(dir, [dead], false, false, start).inUse).toBe(false);
+  expect(runnerInUse(dir, [dead], false, null, start).inUse).toBe(false);
   expect(
     runnerInUse(
       dir,
       [lease(dir, { runnerPid: 42, runnerStartTime: new Date(at + 2000).toISOString() })],
       false,
-      false,
+      null,
       start,
     ).inUse,
   ).toBe(false);
-  expect(runnerInUse(dir, [], false, true, start)).toEqual({ inUse: true, inUseReason: 'lock' });
-  expect(runnerInUse(dir, [], true, false, start)).toEqual({ inUse: true, inUseReason: 'unreadable' });
-  expect(runnerInUse(dir, [parseAgentDeviceRecord('runner-lease', 'bad.json', '{')], false, false, start)).toEqual({
+  expect(runnerInUse(dir, [], false, { pid: 42, startTime: new Date(at).toISOString() }, start)).toEqual({
+    inUse: true,
+    inUseReason: 'lock',
+  });
+  expect(runnerInUse(dir, [], true, null, start)).toEqual({ inUse: true, inUseReason: 'unreadable' });
+  expect(runnerInUse(dir, [parseAgentDeviceRecord('runner-lease', 'bad.json', '{')], false, null, start)).toEqual({
     inUse: true,
     inUseReason: 'unreadable',
   });
 });
+
+test('unknown lease identities keep their runner entry in use', () => {
+  const dir = join(runner, 'derived', 'ios-simulator', 'cache-a');
+  const at = 'Tue Sep 29 10:12:06 2026';
+  for (const fields of [
+    { ownerPid: 42, ownerStartTime: at },
+    { runnerPid: 42, runnerStartTime: at },
+  ]) {
+    expect(runnerInUse(dir, [lease(dir, fields)], false, null, () => ({ status: 'unknown' }))).toEqual({
+      inUse: true,
+      inUseReason: 'unreadable',
+    });
+  }
+});
+
+test('runner locks compare the recorded owner start time and preserve unknown identities', () => {
+  const dir = join(runner, 'derived', 'ios-simulator', 'cache-a');
+  const lock = { pid: 42, startTime: 'Tue Sep 29 10:12:06 2026' };
+  const at = Date.parse(lock.startTime);
+  expect(runnerInUse(dir, [], false, lock, () => ({ status: 'running', startedAtMs: at + 234 }))).toEqual({
+    inUse: true,
+    inUseReason: 'lock',
+  });
+  for (const start of [{ status: 'gone' }, { status: 'running', startedAtMs: at + 2000 }] as ProcessStart[]) {
+    expect(runnerInUse(dir, [], false, lock, () => start)).toEqual({ inUse: false, inUseReason: null });
+  }
+  expect(runnerInUse(dir, [], false, lock, () => ({ status: 'unknown' }))).toEqual({
+    inUse: true,
+    inUseReason: 'lock',
+  });
+});
+
+test.each([null, '{', '{}', '{"pid":"42","startTime":"Tue Sep 29 10:12:06 2026"}'])(
+  'a missing or malformed lock owner (%s) conservatively protects the entry',
+  async (raw) => {
+    directory(state, 100);
+    const dir = entry('ios-simulator', 'cache-a', 8);
+    directory(`${dir}.lock`, 1);
+    if (raw !== null) writeFileSync(join(`${dir}.lock`, 'owner.json'), raw);
+    expect((await getAgentDeviceUsage()).runnerBuilds.platforms[0]!.entries[0]).toMatchObject({
+      inUse: true,
+      inUseReason: 'unreadable',
+    });
+  },
+);
 
 test('malformed leases and unreadable lease directories protect every entry', async () => {
   directory(state, 100);
@@ -265,6 +339,21 @@ test.skipIf(process.platform !== 'darwin')(
       }),
     );
     expect((await getAgentDeviceUsage()).runnerBuilds.platforms[0]!.entries[0]!.inUseReason).toBe('lease');
+    rmSync(join(leaseDir, 'live.json'));
+    directory(`${dir}.lock`, 1);
+    const ownerFile = join(`${dir}.lock`, 'owner.json');
+    writeFileSync(
+      ownerFile,
+      JSON.stringify({ pid: process.pid, startTime: new Date(start.startedAtMs).toISOString() }),
+    );
+    expect((await getAgentDeviceUsage({ maxAgeMs: 0 })).runnerBuilds.platforms[0]!.entries[0]!.inUseReason).toBe(
+      'lock',
+    );
+    writeFileSync(
+      ownerFile,
+      JSON.stringify({ pid: process.pid, startTime: new Date(start.startedAtMs - 2000).toISOString() }),
+    );
+    expect((await getAgentDeviceUsage({ maxAgeMs: 0 })).runnerBuilds.platforms[0]!.entries[0]!.inUse).toBe(false);
   },
 );
 
@@ -297,6 +386,7 @@ test.each(['ETIMEDOUT', 'ENOENT'])(
     expect(report.stateDir.bytes).toBe(null);
     expect(report.stateDir.other.bytes).toBe(null);
     expect(report.complete).toBe(false);
+    expect(du.mock.calls[0]).toEqual(['du', ['-k', '-d', '4', state], { timeoutMs: 20_000 }]);
     expect(readAgentDeviceUsage()).toEqual(report);
   },
 );

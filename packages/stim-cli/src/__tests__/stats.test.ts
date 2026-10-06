@@ -855,7 +855,10 @@ test('plain stats reports agent-device state after the machine section', async (
   const { out } = await inDir(root, () => runStats());
   expect(out.join('\n')).toMatch(/agent-device .*measured .* ago/);
   expect(out.join('\n')).toContain('sessions: 10K, 1 entries');
-  expect(out.at(-1)).toContain('never deletes it');
+  expect(out.join('\n')).toContain(
+    'never trims or deletes the shared runner builds, sessions, logs and other state or the hosted driver dir',
+  );
+  expect(out.at(-1)).toContain("a workspace's own agent-device dir goes only with its workspace");
 });
 
 test('stats JSON returns its measured usage even when the cache cannot be replaced', async () => {

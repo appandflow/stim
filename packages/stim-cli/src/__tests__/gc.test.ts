@@ -4156,7 +4156,7 @@ test('unscoped gc JSON reports agent-device separately without adding actionable
   expect(stderr).toContain('agent-device');
   expect(report.actionable).toBe(false);
   expect(formatGcReport({ agentDeviceUsage: report.sections.agentDevice }).join('\n')).toContain(
-    'Stim does not manage this state',
+    "a workspace's own agent-device dir goes only with its workspace",
   );
   expect(readFileSync(join(dir, 'keep'), 'utf8')).toBe('agent-device-owned');
 });

@@ -50,7 +50,8 @@ export function agentDeviceLines(
     );
   if (detailed)
     lines.push(
-      '  Stim does not manage this state and never deletes it. A lease flag identifies a live runner; lock and unreadable flags conservatively keep entries in use.',
+      "  Stim never trims or deletes the shared runner builds, sessions, logs and other state or the hosted driver dir; a workspace's own agent-device dir goes only with its workspace.",
+      '  A lease flag identifies a live owner or runner; a lock flag identifies a live or unverified lock owner, and unreadable flags conservatively keep entries in use.',
       "  Clear the rest with agent-device's own tooling or by removing the directories yourself.",
     );
   return lines;
