@@ -1105,8 +1105,12 @@ Events are `{ "event", "subscription", ... }`.
   scope. They run `stim logs --json` and `stim logs --json --follow` in the
   workspace. Subscribers with the same workspace and filters share one
   `--follow` child, which stops with the last of them. Archive requests read
-  retained logs locally through core, with the same JSON filters, ordering,
-  markers and error context. They never follow files or use a hosted relay.
+  retained logs and agent-device session actions locally through core, with the same JSON filters, ordering,
+  markers and error context. Archive reads are synchronous and queued per
+  connection, yielding to the event loop between requests. Pending archive
+  reads share the four-request limit with commands. Archived session actions
+  retain available platform and device attribution; device ids and Stim slot
+  assignments absent from retained files are unavailable after removal. They never follow files or use a hosted relay.
   An archive subscription sends its records in the same batches and limits,
   then `{ "event": "logs-ended", "subscription": "s3" }` and releases the
   subscription, including when no records match. These reads need `read`.
@@ -1335,7 +1339,7 @@ Events are `{ "event", "subscription", ... }`.
 
   Archive replay reads only closed segments under the archive's recordings
   directory. Its `enabled` and `recording` are false; spans and markers come
-  from those segments and archived logs. It never requires the former checkout
+  from those segments, archived logs and agent-device session actions. It never requires the former checkout
   or reads a live replacement at that path, and never uses a hosted relay.
   `frames.subscribe` with `archive` requires `at` and `video: ["h264"]`,
   rejects physical targets, and supports `frames.seek` on that subscription.

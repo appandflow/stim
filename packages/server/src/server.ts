@@ -8,7 +8,7 @@ import { WebSocketServer, type WebSocket } from 'ws';
 import { configDir } from '@stim-cli/core';
 import {
   archiveDir,
-  readArchives,
+  readArchive,
   queryJsonLogs,
   isJsonObject,
   listSegments,
@@ -45,7 +45,15 @@ import {
   type Frame,
   type FrameLimits,
 } from './frames.ts';
-import { archivedLogs, LogBatcher, logArgs, parseLogFilter, readTargetError, type LogLimits } from './logs.ts';
+import {
+  archivedLogs,
+  archivedTimeline,
+  LogBatcher,
+  logArgs,
+  parseLogFilter,
+  readTargetError,
+  type LogLimits,
+} from './logs.ts';
 import { readDiskVolumes, readMachineUsage, readMemoryPressure, UsageSampler } from './machine.ts';
 import {
   BuildMachinesCache,
@@ -824,6 +832,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     let device: PairedDevice | null = null;
     let buildSession: BuildSession | null = null;
     let queue = Promise.resolve();
+    let archiveReads = Promise.resolve();
     const relay = new HostedRelay(
       hostConnections,
       (message) => {
@@ -1059,7 +1068,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
 
     function readDir(id: RequestId, target: { workspace?: string; archive?: string }): string | null {
       if (target.archive === undefined) return workspaceDir(id, target.workspace, true);
-      if (!readArchives().some((archive) => archive.id === target.archive)) {
+      if (!readArchive(target.archive)) {
         error(id, 'unknown-workspace', `Archive ${target.archive} is not a Stim archive on this Mac.`);
         return null;
       }
@@ -1136,7 +1145,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       );
       if (parsed.filter.archive !== undefined) {
         subscriptions.set(subscription, () => batcher.stop());
-        for (const record of archivedLogs(join(cwd, 'logs'), parsed.filter)) batcher.push(record);
+        for (const record of archivedLogs(cwd, parsed.filter)) batcher.push(record);
         batcher.finish();
         return;
       }
@@ -1470,13 +1479,37 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       return released;
     }
 
+    function archiveRead(id: RequestId, read: () => void | Promise<void>): void {
+      if (commands.size >= MAX_COMMANDS) {
+        return error(id, 'limit-exceeded', `A connection can run ${MAX_COMMANDS} requests at a time.`);
+      }
+      let dropped = false;
+      const cancel = async () => {
+        dropped = true;
+        await task;
+      };
+      commands.add(cancel);
+      running.add(cancel);
+      const task = archiveReads
+        .then(() => new Promise<void>((resolve) => setImmediate(resolve)))
+        .then(() => {
+          if (!dropped && socket.readyState === socket.OPEN) return read();
+          return undefined;
+        })
+        .finally(() => {
+          commands.delete(cancel);
+          running.delete(cancel);
+        });
+      archiveReads = task.catch(() => socket.close(1011, 'internal error'));
+    }
+
     function queryLogs(id: RequestId, params: unknown): void {
       const parsed = parseLogFilter(params);
       if ('error' in parsed) return error(id, 'bad-request', parsed.error);
       const cwd = readDir(id, parsed.filter);
       if (!cwd) return;
       if (parsed.filter.archive !== undefined) {
-        send(socket, { id, result: { records: archivedLogs(join(cwd, 'logs'), parsed.filter) } });
+        send(socket, { id, result: { records: archivedLogs(cwd, parsed.filter) } });
         return;
       }
       command<'logs.query'>(id, logArgs(parsed.filter, false), cwd, (stdout) => ({
@@ -1667,7 +1700,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       }
       const cwd = readDir(id, { workspace, archive });
       if (!cwd) return;
-      if (commands.size + 2 > MAX_COMMANDS) {
+      if (archive === undefined && commands.size + 2 > MAX_COMMANDS) {
         return error(id, 'limit-exceeded', `A connection can run ${MAX_COMMANDS} requests at a time.`);
       }
       const slotName = slot ?? 'default';
@@ -1682,10 +1715,15 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       };
       if (!spans.length) return send(socket, { id, result: { ...state, markers: [] } });
       if (archive !== undefined) {
-        const dir = join(cwd, 'logs');
+        const timeline = archivedTimeline(cwd);
         const records = [
-          ...queryJsonLogs({ dir, sources: ['agent'], tail: 5000 }),
-          ...queryJsonLogs({ dir, sources: ['metro', 'client', 'build', 'device'], minLevel: 'error', tail: 5000 }),
+          ...queryJsonLogs({ records: timeline, sources: ['agent'], tail: 5000 }),
+          ...queryJsonLogs({
+            records: timeline,
+            sources: ['metro', 'client', 'build', 'device'],
+            minLevel: 'error',
+            tail: 5000,
+          }),
         ];
         const markers = timelineMarkers(records, platform as RecordingPlatform, slotName, spans[0]!.start);
         send(socket, { id, result: { ...state, markers } });
@@ -1707,7 +1745,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       });
     }
 
-    function replayKeyframe(id: RequestId, params: unknown): void {
+    function replayKeyframe(id: RequestId, params: unknown): void | Promise<void> {
       const target = isJsonObject(params) ? params : {};
       const { platform, slot, at } = target;
       const targetError = readTargetError(target);
@@ -1731,7 +1769,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         return error(id, 'limit-exceeded', `A connection can read ${MAX_KEYFRAME_READS} keyframes at a time.`);
       }
       keyframeReads++;
-      void segmentKeyframe(
+      return segmentKeyframe(
         recordingDir(workspace, platform as RecordingPlatform, slot ?? 'default', archive),
         at,
         archive !== undefined,
@@ -2124,6 +2162,22 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       }
       const desktop = desktopMethod(id, message.method, message.params, device);
       if (desktop) return desktop;
+      if (isJsonObject(message.params) && typeof message.params.archive === 'string') {
+        const params = message.params;
+        const read =
+          message.method === 'logs.subscribe'
+            ? () => subscribeLogs(id, params)
+            : message.method === 'logs.query'
+              ? () => queryLogs(id, params)
+              : message.method === 'frames.subscribe'
+                ? () => subscribeFrames(id, params)
+                : message.method === 'replay.range'
+                  ? () => replayRange(id, params)
+                  : message.method === 'replay.keyframe'
+                    ? () => replayKeyframe(id, params)
+                    : null;
+        if (read) return archiveRead(id, read);
+      }
       if (message.method === 'status.subscribe') return subscribeStatus(id);
       if (message.method === 'logs.subscribe') return subscribeLogs(id, message.params);
       if (message.method === 'logs.query') return queryLogs(id, message.params);
@@ -2160,7 +2214,10 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         return send(socket, { id, result: { at: shown } });
       }
       if (message.method === 'replay.range') return replayRange(id, message.params);
-      if (message.method === 'replay.keyframe') return replayKeyframe(id, message.params);
+      if (message.method === 'replay.keyframe') {
+        void replayKeyframe(id, message.params);
+        return;
+      }
       if (message.method === 'recording.set') return setRecording(id, message.params, device);
       if (message.method === 'build.plan') return planBuild(id, message.params);
       if (message.method === 'machine.get') return send(socket, { id, result: await readMachineUsage() });

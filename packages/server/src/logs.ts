@@ -1,4 +1,13 @@
-import { compileGrep, isJsonObject, queryJsonLogs } from '@stim-cli/core/state';
+import { join } from 'node:path';
+import {
+  compileGrep,
+  createAgentActionReader,
+  isJsonObject,
+  queryJsonLogs,
+  readLogTimeline,
+  sortByTs,
+  type NdjsonRecord,
+} from '@stim-cli/core/state';
 import { SLOT_NAME } from './control.ts';
 import type { JsonObject } from './feed.ts';
 import { LOG_LEVELS, LOG_SOURCES, MAX_LOG_TAIL, type LogFilter, type LogLevel, type LogSource } from './protocol.ts';
@@ -54,9 +63,16 @@ export function readTargetError(params: JsonObject): string | null {
   return typeof params.workspace === 'string' ? null : 'params.workspace is required.';
 }
 
+export function archivedTimeline(dir: string): NdjsonRecord[] {
+  return sortByTs([
+    ...readLogTimeline(join(dir, 'logs')),
+    ...createAgentActionReader({ sessionsDirs: [join(dir, 'agent-device', 'sessions')] })(),
+  ]);
+}
+
 export function archivedLogs(dir: string, filter: LogFilter): JsonObject[] {
   return queryJsonLogs({
-    dir,
+    records: archivedTimeline(dir),
     sources: filter.sources,
     minLevel: filter.level,
     slot: filter.slot,

@@ -2487,8 +2487,8 @@ function archiveFixture(logged: unknown[] = []): { id: string; dir: string } {
   return { id, dir };
 }
 
-function archivedFootage(dir: string, first: number, count: number): void {
-  const device = join(dir, 'recordings', recordingDeviceName('ios', 'default'));
+function archivedFootage(dir: string, first: number, count: number, platform: 'ios' | 'android' = 'ios'): void {
+  const device = join(dir, 'recordings', recordingDeviceName(platform, 'default'));
   mkdirSync(device, { recursive: true });
   const units = Array.from({ length: count }, (_, i) => {
     const header = Buffer.alloc(17);
@@ -2503,6 +2503,99 @@ function archivedFootage(dir: string, first: number, count: number): void {
 }
 
 describe('archived reads', () => {
+  it('merges archived agent-device sessions into queries, subscriptions and replay markers', async () => {
+    const { id, dir } = archiveFixture();
+    cpSync(
+      join(import.meta.dirname, '../../stim-cli/src/__tests__/fixtures/agent-device/sessions'),
+      join(dir, 'agent-device', 'sessions'),
+      { recursive: true },
+    );
+    const base = Date.parse('2026-09-25T12:12:00Z');
+    archivedFootage(dir, base, 10);
+    archivedFootage(dir, Date.parse('2026-09-13T01:56:00Z'), 10, 'android');
+    rmSync(workspace, { recursive: true });
+    const client = await authed(await start());
+    const queried = await client.request('logs.query', { archive: id, sources: ['agent'] });
+    expect(queried).toMatchObject({
+      result: {
+        records: expect.arrayContaining([
+          {
+            ts: Date.parse('2026-09-25T12:16:03.448Z'),
+            startedAt: Date.parse('2026-09-25T12:15:57.453Z'),
+            src: 'agent',
+            level: 'info',
+            event: 'agent_action',
+            session: 'cwd:b764dacffe51e890:default',
+            platform: 'ios',
+            deviceId: 'AD45387C-599D-4EDB-A62B-18176FF3A2A7',
+            command: 'press',
+            msg: 'Tapped (201, 542)',
+            details: {
+              command: 'press',
+              positionals: ['<arg>'],
+              targetLabel: '(201, 542)',
+              selectorChainLength: 2,
+              x: 201,
+              y: 542,
+            },
+          },
+          expect.objectContaining({ platform: 'android', event: 'agent_failed', msg: 'Failed open: DEVICE_NOT_FOUND' }),
+        ]),
+      },
+    });
+    expect(await client.request('logs.query', { archive: id })).toMatchObject({
+      result: (queried as { result: unknown }).result,
+    });
+    await client.request('logs.subscribe', { archive: id, sources: ['agent'] });
+    expect(await client.next()).toMatchObject({ event: 'logs', ...(queried as { result: object }).result });
+    expect(await client.next()).toMatchObject({ event: 'logs-ended' });
+    expect(await client.request('replay.range', { archive: id, platform: 'ios' })).toMatchObject({
+      result: {
+        markers: expect.arrayContaining([
+          { at: Date.parse('2026-09-25T12:15:57.453Z'), kind: 'action', command: 'press', label: 'Tapped (201, 542)' },
+          {
+            at: Date.parse('2026-09-25T12:16:03.541Z'),
+            kind: 'action',
+            command: 'press',
+            label: 'Failed press: COMMAND_FAILED',
+          },
+        ]),
+      },
+    });
+    expect(await client.request('replay.range', { archive: id, platform: 'android' })).toMatchObject({
+      result: {
+        markers: expect.arrayContaining([
+          {
+            at: Date.parse('2026-09-13T01:56:45.575Z'),
+            kind: 'action',
+            command: 'open',
+            label: 'Failed open: DEVICE_NOT_FOUND',
+          },
+          { at: Date.parse('2026-09-13T01:58:25.718Z'), kind: 'action', command: 'press', label: 'Tapped (541, 2265)' },
+        ]),
+      },
+    });
+    expect(stimCalls()).toEqual([]);
+  });
+
+  it('bounds pending archive reads and releases their request slots', async () => {
+    const { id, dir } = archiveFixture();
+    archivedFootage(dir, 1000, 10);
+    const client = await authed(await start());
+    const params = { archive: id, platform: 'ios', at: 1000, video: ['h264'] };
+    const replies = await Promise.all(
+      ['logs.query', 'logs.subscribe', 'replay.range', 'replay.keyframe', 'frames.subscribe'].map((method) =>
+        client.request(method, params),
+      ),
+    );
+    expect(replies.slice(0, 4).every((reply) => 'result' in reply)).toBe(true);
+    expect(replies[4]).toMatchObject({
+      error: { code: 'limit-exceeded', message: 'A connection can run 4 requests at a time.' },
+    });
+    expect(await client.request('frames.subscribe', params)).toMatchObject({ result: { video: 'h264' } });
+    expect(await client.request('logs.query', { archive: id })).toMatchObject({ result: { records: [] } });
+  });
+
   it('queries real archived logs with the same JSON filters and context as the CLI', async () => {
     const { id, dir } = archiveFixture([
       { ts: 2, src: 'client', level: 'error', msg: 'previous error' },
