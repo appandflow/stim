@@ -113,7 +113,7 @@ final class AddMachineModelTests: XCTestCase {
     XCTAssertEqual(harness.asks.last?.1, [:])
   }
 
-  @MainActor func testDoneRestoresUnsetModeWhileKeepingTheApprovedEntries() async {
+  @MainActor func testDoneKeepsModeOffWhileKeepingTheApprovedEntries() async {
     let harness = Harness()
     let model = harness.make()
     await model.start()
@@ -127,7 +127,7 @@ final class AddMachineModelTests: XCTestCase {
     XCTAssertEqual(model.wizard.phase, .approved)
     XCTAssertEqual(harness.mode, "off")
     await model.send(.done)
-    XCTAssertNil(harness.mode)
+    XCTAssertEqual(harness.mode, "off")
     XCTAssertEqual(harness.builds, ["mini:7447"])
     XCTAssertEqual(harness.hosts, ["mini:7447"])
     XCTAssertNil(model.error)

@@ -224,7 +224,7 @@ public struct SetupWizard: Sendable {
   public enum Effect: Equatable, Sendable {
     case writeEntries(port: Int)
     case askDoctor(ticket: String)
-    case restoreSettings, forgetPairing, restoreMode
+    case restoreSettings, forgetPairing
   }
 
   public private(set) var phase: Phase = .pick
@@ -254,10 +254,6 @@ public struct SetupWizard: Sendable {
     SetupKnown(
       buildApproved: hasApproval(.build), hostApproved: hasApproval(.deviceHost),
       screenRecordingGranted: host?.host?.screenRecording, deviceControlGranted: host?.host?.accessibility)
-  }
-
-  public var previousMode: String {
-    settings.modeOrigin == nil || settings.modeOrigin == "default" ? "unset" : settings.mode ?? "unset"
   }
 
   public mutating func apply(_ event: Event, now: Date) -> [Effect] {
@@ -309,15 +305,16 @@ public struct SetupWizard: Sendable {
       self.build = build
       self.host = host
       mirrorHostPermissions()
-      revokeIds.formUnion([build?.deviceId, host?.deviceId].compactMap { $0 })
+      if ticket != nil {
+        for capability in capabilities {
+          if let id = status(for: capability)?.deviceId, id != existingIds[capability] { revokeIds.insert(id) }
+        }
+      }
     case .cancel:
       phase = .cancelled
       if writeRequested { return [.restoreSettings, .forgetPairing] }
     case .done:
       guard phase == .approved else { return [] }
-      if modeChanged {
-        return [.restoreMode]
-      }
     case .manualPort(let port):
       if (1...65535).contains(port), !entriesWritten { self.port = port }
     case .journalUnavailable: break
@@ -389,10 +386,7 @@ public struct SetupWizard: Sendable {
         return .grantedOther(capability: capability, journalId: grant.id, doctorId: id)
       }
     }
-    if !allApproved,
-      ticket.map({ now >= $0.expiresAt }) == true
-        || journal?.steps.contains(where: { $0.id == "approve" && $0.state == .pending && $0.title == "Ticket expired" }) == true
-    {
+    if !allApproved, ticket.map({ now >= $0.expiresAt }) == true {
       return .expired
     }
     if let step = journal?.steps.first(where: { $0.state == .failed }) {

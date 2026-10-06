@@ -205,7 +205,7 @@ struct AddMachineSheet: View {
     }
     if wizard.phase == .approved {
       return
-        "Every chosen capability is approved for this Mac. Builds on \(name) are not enabled until a test build passes (next release); offload.mode is back to \(wizard.previousMode) when you press Done."
+        "Every chosen capability is approved for this Mac. offload.mode stays off until a test build passes, so no build runs on \(name) yet (the test build arrives in the next release)."
     }
     if wizard.failure(now: model.now) == .noWorkspace {
       return "Stim asks the build Mac from a workspace and none is listed yet: start one with Stim first"
@@ -233,6 +233,11 @@ struct AddMachineSheet: View {
       Text(
         "No answer yet. Check the terminal on \(name). Run the command there and check the port setup printed (Route: https port 7447)."
       )
+      if let older = model.olderThanSetup {
+        Text(
+          "stim-server \(older) on \(name) predates setup support (1.16.0). If an app there runs it, update that app, then run the command again; setup prints the exact update command."
+        )
+      }
       HStack {
         Group {
           if model.isFixture {

@@ -103,6 +103,12 @@ final class AddMachineModel {
     known.clientName = selfNode?.hostName ?? "this Mac"
     return known
   }
+  var olderThanSetup: String? {
+    guard let text = wizard.mac.flatMap({ health[$0.id]?.version }), let found = SemanticVersion(text),
+      found < SemanticVersion("1.16.0")!
+    else { return nil }
+    return text
+  }
   var command: String? {
     guard let version, let selfNode, let ticket = wizard.ticket ?? draftTicket else { return nil }
     return setupCommand(
@@ -121,6 +127,9 @@ final class AddMachineModel {
       while !Task.isCancelled {
         guard let self, !self.stopped else { return }
         self.now = self.dependencies.now()
+        if self.wizard.phase == .choose, let draft = self.draftTicket, self.now >= draft.expiresAt {
+          self.draftTicket = self.dependencies.ticket(self.now)
+        }
         if !self.busy {
           if self.wizard.phase == .pick {
             if self.now.timeIntervalSince(lastPeerPoll) >= 5 {
@@ -194,7 +203,12 @@ final class AddMachineModel {
         hosts: payload.entry("hosting.machines")?.value.strings ?? [],
         mode: payload.entry("offload.mode")?.value.string, modeOrigin: payload.entry("offload.mode")?.origin)
       commandKnown = known
-      await send(.next(dependencies.ticket(dependencies.now())))
+      let current = dependencies.now()
+      if let draft = draftTicket, current < draft.expiresAt {
+        await send(.next(draft))
+      } else {
+        await send(.next(dependencies.ticket(current)))
+      }
     } catch { self.error = error.localizedDescription }
   }
 
@@ -346,11 +360,6 @@ final class AddMachineModel {
             key, OffloadMachines.removing(entry, from: payload.entry(key)?.value.strings ?? []))
         }
         addedEntries = [:]
-        if modeWritten {
-          try await dependencies.writeSetting("offload.mode", nil)
-          modeWritten = false
-        }
-      case .restoreMode:
         if modeWritten {
           try await dependencies.writeSetting("offload.mode", nil)
           modeWritten = false

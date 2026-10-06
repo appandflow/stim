@@ -139,7 +139,7 @@ final class SetupWizardTests: XCTestCase {
     _ = wizard.apply(.doctorReported(build: status(.approved, id: "b"), host: status(.approved, id: "h")), now: now)
     XCTAssertEqual(wizard.phase, .approved)
     XCTAssertNil(wizard.failure(now: now))
-    XCTAssertEqual(wizard.apply(.done, now: now), [.restoreMode])
+    XCTAssertEqual(wizard.apply(.done, now: now), [])
   }
 
   func testAlreadyApprovedCapabilityCanBeOmittedFromSetupWithoutLosingVerifiedApproval() {
@@ -203,11 +203,9 @@ final class SetupWizardTests: XCTestCase {
       _ = wizard.apply(.journalAnswered(port: 7443, journal: journal(steps: [step], done: true)), now: now)
       XCTAssertEqual(wizard.failure(now: now), expected)
     }
-    var wizard = wizard()
-    _ = wizard.apply(
-      .journalAnswered(port: 7443, journal: journal(steps: [.init(id: "approve", state: .pending, title: "Ticket expired")])),
-      now: now)
-    XCTAssertEqual(wizard.failure(now: ticket.expiresAt), .expired)
+    var expiring = wizard()
+    _ = expiring.apply(.journalAnswered(port: 7443, journal: journal()), now: now)
+    XCTAssertEqual(expiring.failure(now: ticket.expiresAt), .expired)
   }
 
   func testCancelRestoresOnlyWizardChangesForgetsPairingAndRetainsAllRevokeIds() {
@@ -221,6 +219,15 @@ final class SetupWizardTests: XCTestCase {
     XCTAssertEqual(wizard.apply(.cancel, now: now), [.restoreSettings, .forgetPairing])
     XCTAssertEqual(wizard.revokeIds, ["journal-id", "doctor-id"])
     XCTAssertEqual(wizard.phase, .cancelled)
+  }
+
+  func testCancelDoesNotListApprovalsThatExistedBeforeTheWizard() {
+    var wizard = SetupWizard(settings: .init(), hasWorkspace: true)
+    _ = wizard.apply(.macChosen(mac), now: now)
+    _ = wizard.apply(.doctorReported(build: status(.approved, id: "old-build"), host: nil), now: now)
+    _ = wizard.apply(.next(ticket), now: now)
+    _ = wizard.apply(.doctorReported(build: status(.approved, id: "old-build"), host: status(.pending, id: "new-host")), now: now)
+    XCTAssertEqual(wizard.revokeIds, ["new-host"])
   }
 
   func testDoctorPermissionsReplaceCompletedJournalChecksAfterSettingsChangesOnTheWorker() {
