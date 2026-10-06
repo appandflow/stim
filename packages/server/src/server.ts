@@ -737,7 +737,11 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       if (setupNodes.size > 256) setupNodes.delete(setupNodes.keys().next().value!);
     }
     const identity = await known.identity;
-    if (identity?.kind !== 'tailnet' || identity.nodeId !== journal.client.nodeId) {
+    if (identity?.kind !== 'tailnet') {
+      if (setupNodes.get(peer) === known) setupNodes.delete(peer);
+      return refuse();
+    }
+    if (identity.nodeId !== journal.client.nodeId) {
       setupLimiter.record(peer);
       return refuse();
     }

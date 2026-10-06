@@ -70,7 +70,7 @@ only by stim-server and read through core's state reader. It contains the
 client node, ISO `expiresAt`, requested capabilities, steps, granted request
 ids, completion state and optional exit code; it contains no tokens. Only the
 matching tailnet node can read an unexpired journal. Browser requests, loopback,
-invalid paths, missing or malformed journals and other nodes get the same 404.
+invalid paths, missing or malformed journals and other nodes get the same 404. Like the agent route, the caller address is the `X-Forwarded-For` header the tailnet route sets, so a local process that forges it is outside this model.
 The route returns 503 until startup is ready, caches peer identity for 30 seconds
 and returns 429 after repeated identity failures. All responses use
 `cache-control: no-store`. Steps whose ids start with `tools` appear only after
