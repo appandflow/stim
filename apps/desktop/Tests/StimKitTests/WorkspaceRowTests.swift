@@ -120,10 +120,10 @@ import Testing
     #expect(summary.apps.map(\.active) == [true, true])
     #expect(summary.drivers == "agent-device")
     #expect(summary.remote == 3)
-    #expect(summary.problems == ["2 errors", "CI failing"])
+    #expect(summary.problems == ["4 errors", "CI failing"])
     #expect(summary.agents.map(\.id) == ["codex:shared", "claude-code:other"])
     let spoken =
-      "topic, Driven by an agent for 5 minutes, iOS \u{00B7} a: Driven by an agent for 5 minutes, iOS \u{00B7} b: Building iOS, Codex \u{00B7} Fix +1, 2 errors, CI failing"
+      "topic, Driven by an agent for 5 minutes, iOS \u{00B7} a: Driven by an agent for 5 minutes, iOS \u{00B7} b: Building iOS, Codex \u{00B7} Fix +1, 4 errors, CI failing, driven by agent-device, 3 EAS sessions"
     #expect(summary.label == spoken + ", Pull request 7, open, checks failing, Repo")
     #expect(page.rowSummary(now: Self.now, subtitle: nil, showsGit: false).label == spoken)
 
@@ -143,6 +143,24 @@ import Testing
     #expect(idle.apps.map(\.active) == [false, false])
     #expect(idle.status.kind == .idle)
     #expect(idle.status.tone == .tertiary)
+  }
+
+  @Test func headlinesALiveAppEvenWhenAStoppedAppRanksFirstByItsFailedBuild() throws {
+    let envs = try JSONDecoder().decode(
+      [Workspace].self,
+      from: Data(
+        #"""
+        [
+          {"path":"/w/a","live":false,"warnings":[],"worktree":{"path":"/w"},
+            "lastBuilds":{"ios":{"platform":"ios","status":"failed","cacheHit":false,"cacheSkipped":false,"durationMs":1,"fingerprint":null,"startedAt":"2026-09-01T00:00:00Z","finishedAt":null}}},
+          {"path":"/w/b","live":true,"warnings":[],"worktree":{"path":"/w"},"logs":{"dir":"/b","errorsSinceMarker":3}}
+        ]
+        """#.utf8))
+    let page = try #require(WorktreePage(path: "/w/a", environments: envs))
+    #expect(page.lead(now: Self.now).path == "/w/a")
+    let summary = page.rowSummary(now: Self.now, subtitle: nil, showsGit: false)
+    #expect(summary.status.kind == .running)
+    #expect(summary.problems == ["3 errors"])
   }
 
   @Test func speaksADrivenWorkspaceOnceThroughItsDevices() throws {

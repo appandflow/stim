@@ -48,6 +48,14 @@ struct WorktreePageTests {
     #expect(page.appLabels(entries: c.input.entries) == c.expected.appLabels)
   }
 
+  @Test func rowPathMapsAnyAppOfAMultiAppWorktreeToItsFirstApp() throws {
+    let c = Self.vectors.cases[1]
+    let pages = WorktreePage.groups(environments: c.input.environments)
+    #expect(WorktreePage.rowPath(containing: "/w/wt/apps/mobile", in: pages) == "/w/wt/apps/desktop")
+    #expect(WorktreePage.rowPath(containing: "/w/wt/apps/desktop", in: pages) == "/w/wt/apps/desktop")
+    #expect(WorktreePage.rowPath(containing: "/w/other/apps/mobile", in: pages) == nil)
+  }
+
   @Test func singleAppUsesPlainPresentationWithoutSubtitles() throws {
     let c = Self.vectors.cases[0]
     let page = try #require(WorktreePage(path: c.input.path, environments: c.input.environments))

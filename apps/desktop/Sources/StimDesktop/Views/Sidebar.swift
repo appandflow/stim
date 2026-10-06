@@ -16,7 +16,7 @@ struct Sidebar: View {
 
   var body: some View {
     let options = prefs.options
-    let pages = WorktreePage.groups(environments: store.environments(in: nil)).filter(\.isUnified)
+    let pages = WorktreePage.groups(environments: store.environments(in: nil))
     let rowSelection = listSelection(pages: pages)
     List(selection: rowSelection) {
       Section {
@@ -66,10 +66,9 @@ struct Sidebar: View {
 
   private func listSelection(pages: [WorktreePage]) -> Binding<SidebarItem?> {
     func rowTag(_ item: SidebarItem?) -> SidebarItem? {
-      guard case .environment(let path) = item,
-        let page = pages.first(where: { $0.apps.contains { $0.path == path } })
+      guard case .environment(let path) = item, let row = WorktreePage.rowPath(containing: path, in: pages)
       else { return item }
-      return .environment(page.id)
+      return .environment(row)
     }
     return Binding(
       get: { rowTag(selection) },

@@ -56,6 +56,11 @@ public struct WorktreePage: Hashable, Sendable {
     return groups.map { WorktreePage(apps: $0.sorted { $0.path < $1.path }) }
   }
 
+  /// The path a sidebar row of a multi-app worktree is tagged with, for a selection on any of its apps.
+  public static func rowPath(containing path: String, in pages: [WorktreePage]) -> String? {
+    pages.first { $0.isUnified && $0.apps.contains { $0.path == path } }?.id
+  }
+
   public var projects: [String] { apps.map(Self.project) }
 
   public static func project(_ app: Workspace) -> String {
@@ -65,8 +70,9 @@ public struct WorktreePage: Hashable, Sendable {
     return (app.path as NSString).lastPathComponent
   }
 
-  public func lead(now: Date) -> Workspace {
-    apps.enumerated().min {
+  public func lead(now: Date, among candidates: [Workspace]? = nil) -> Workspace {
+    let candidates = candidates ?? apps
+    return candidates.enumerated().min {
       let a = Self.urgency($0.element.stage(now: now))
       let b = Self.urgency($1.element.stage(now: now))
       return a == b ? $0.offset < $1.offset : a < b

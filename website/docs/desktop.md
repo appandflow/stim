@@ -144,7 +144,7 @@ performance traces. Every release is listed under
   Log followers pause while their route is covered or the phone app is in the
   background and refresh the retained window when visible again. This reduces
   initial phone transfer; the server still reads its captured log timeline.
-  Desktop's sidebar shows one row per worktree, with platform badges for each app.
+  Desktop's sidebar shows one row per multi-app worktree, with platform badges for each app.
   On wide iPad and Duo windows, the app keeps its navigation beside the main screen; details use the full window. A book fold aligns the panes with the display
   division; a narrow cover screen uses the menu drawer. Duo fold detection
   needs an app built with the iOS 27.1 SDK and an iOS 27.1 runtime.

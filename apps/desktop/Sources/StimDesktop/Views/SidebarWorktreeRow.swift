@@ -34,7 +34,7 @@ struct SidebarWorktreeRow: View {
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(summary.label)
         .accessibilityActions {
-          if let app = page.soleErrorApp ?? page.apps.first(where: { ($0.logs?.errorsSinceMarker ?? 0) > 0 }) {
+          if let app = page.apps.first(where: { ($0.logs?.errorsSinceMarker ?? 0) > 0 }) {
             Button("Show errors") { openLogs(app.path) }
           }
         }
