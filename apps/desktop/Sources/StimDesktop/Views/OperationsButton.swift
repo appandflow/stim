@@ -75,7 +75,7 @@ private struct OperationsList: View {
     ScrollView {
       VStack(alignment: .leading, spacing: Space.md) {
         if running.isEmpty && finished.isEmpty {
-          Text("No operations yet").foregroundStyle(Palette.tertiary)
+          InlineEmpty("No operations yet")
         }
         section("Running", running)
         section("Recent", finished)

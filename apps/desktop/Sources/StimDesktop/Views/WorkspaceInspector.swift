@@ -290,7 +290,7 @@ struct MetroLogsSection: View {
         }
         .help(env.supervisor.map { "\($0.mode ?? "supervisor") \u{00B7} \(health.rawValue)" } ?? "Metro \(health.rawValue)")
       } else {
-        Text("No dev server").foregroundStyle(Palette.tertiary)
+        InlineEmpty("No dev server")
       }
       TimelineView(.periodic(from: .now, by: 15)) { context in
         if let bundle = env.bundleLine(now: context.date, reportsBundles: reportsBundles) {
@@ -344,7 +344,7 @@ struct WorktreeInspector: View {
           SectionLabel(title: "Metro")
           let metros = labeledApps.filter { $0.0.metro != nil }
           if metros.isEmpty {
-            Text("No dev server").foregroundStyle(Palette.tertiary)
+            InlineEmpty("No dev server")
           } else {
             ForEach(metros, id: \.0.path) { app, label in
               MetroLogsSection(

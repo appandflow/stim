@@ -45,7 +45,7 @@ struct PhonesView: View {
           Text(abbreviatingHome(error)).foregroundStyle(Palette.error)
         }
         if server.phones.isEmpty {
-          Text("No paired phones.").foregroundStyle(Palette.secondary)
+          InlineEmpty("No paired phones.")
         }
         if let reason = pairingUnavailable {
           Text(reason).foregroundStyle(Palette.tertiary)
@@ -68,7 +68,7 @@ struct PhonesView: View {
 
       Section {
         if server.buildClients.isEmpty {
-          Text("No Mac builds here.").foregroundStyle(Palette.secondary)
+          InlineEmpty("No Mac builds here.")
         }
         ForEach(server.buildClients) { device in
           BuildClientRow(device: device, review: { BuildRequestPrompt.present(id: device.id) }) { revoking = device }
@@ -86,7 +86,7 @@ struct PhonesView: View {
 
       Section {
         if server.deviceHostClients.isEmpty {
-          Text("No device hosting approvals.").foregroundStyle(Palette.secondary)
+          InlineEmpty("No device hosting approvals.")
         }
         ForEach(server.deviceHostClients) { device in
           BuildClientRow(device: device, review: { BuildRequestPrompt.present(id: device.id) }) { revoking = device }

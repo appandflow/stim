@@ -124,13 +124,13 @@ struct Sidebar: View {
   private func emptyText(_ options: SidebarOptions) -> some View {
     HStack(spacing: Space.xs) {
       if options.status != .all {
-        Text("No \(options.status.rawValue) workspaces \u{00B7}").foregroundStyle(Palette.tertiary)
+        InlineEmpty("No \(options.status.rawValue) workspaces \u{00B7}")
         Button("Show all") { prefs.status = .all }.buttonStyle(.hoverRow(outset: Space.xs)).foregroundStyle(Palette.primary)
       } else if options.differsFromDefaults(projects: store.projectList.map(\.project)) {
-        Text("Nothing matches \u{00B7}").foregroundStyle(Palette.tertiary)
+        InlineEmpty("Nothing matches \u{00B7}")
         Button("Reset") { prefs.reset() }.buttonStyle(.hoverRow(outset: Space.xs)).foregroundStyle(Palette.primary)
       } else {
-        Text("No workspaces").foregroundStyle(Palette.tertiary)
+        InlineEmpty("No workspaces")
       }
     }
     .font(.stim(.callout))

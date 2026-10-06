@@ -178,7 +178,7 @@ struct BuildSection: View {
         BuildDiagnosticsView(diagnostics: diagnostics, workspace: env.path)
       }
     } else {
-      Text("No build recorded").foregroundStyle(Palette.tertiary)
+      InlineEmpty("No build recorded")
     }
   }
 
