@@ -39,6 +39,7 @@ export interface PairedDevice {
   requestedCapability?: RequestedCapability;
   /** Set until `grantDevice` approves the client; the request lapses at this time. */
   pendingUntil?: string;
+  setupTicketHash?: string;
 }
 
 export interface PushRegistration {
@@ -217,6 +218,11 @@ function parseDevice(value: unknown): PairedDevice | null {
     capabilities: parseCapabilities(value.capabilities),
     ...(push ? { push } : {}),
     ...(pendingUntil ? { pendingUntil } : {}),
+    ...(typeof value.setupTicketHash === 'string' &&
+    /^[a-f0-9]{64}$/.test(value.setupTicketHash) &&
+    value.setupTicketHash.length === 64
+      ? { setupTicketHash: value.setupTicketHash }
+      : {}),
     ...(value.requestedCapability === 'build' || value.requestedCapability === 'device-host'
       ? { requestedCapability: value.requestedCapability }
       : {}),
@@ -342,13 +348,23 @@ export function spendPairingToken(
  * Records a pending request from a tailnet peer to build here, replacing that node's earlier request.
  * The returned token authenticates only after `grantDevice` approves it with `build`.
  */
-export function requestBuildAccess(name: string, identity: PeerIdentity, now: number = Date.now()): AuthOutcome {
-  return requestClientAccess('build', name, identity, now);
+export function requestBuildAccess(
+  name: string,
+  identity: PeerIdentity,
+  now: number = Date.now(),
+  setupTicket?: unknown,
+): AuthOutcome {
+  return requestClientAccess('build', name, identity, now, setupTicket);
 }
 
 /** Requests separately approved, tailnet-bound hosting access without read, control or build access. */
-export function requestDeviceHostAccess(name: string, identity: PeerIdentity, now: number = Date.now()): AuthOutcome {
-  return requestClientAccess('device-host', name, identity, now);
+export function requestDeviceHostAccess(
+  name: string,
+  identity: PeerIdentity,
+  now: number = Date.now(),
+  setupTicket?: unknown,
+): AuthOutcome {
+  return requestClientAccess('device-host', name, identity, now, setupTicket);
 }
 
 function requestClientAccess(
@@ -356,6 +372,7 @@ function requestClientAccess(
   name: string,
   identity: PeerIdentity,
   now: number,
+  setupTicket: unknown,
 ): AuthOutcome {
   if (identity.kind === 'local') return { ok: false, reason: `${capability}-needs-tailnet` };
   if (!validClientName(name)) return { ok: false, reason: 'bad-device-name' };
@@ -376,6 +393,9 @@ function requestClientAccess(
       lastSeenAt: null,
       capabilities: [],
       requestedCapability: capability,
+      ...(typeof setupTicket === 'string' && setupTicket.length === 43 && /^[A-Za-z0-9_-]{43}$/.test(setupTicket)
+        ? { setupTicketHash: hashToken(setupTicket) }
+        : {}),
       pendingUntil: new Date(now + BUILD_REQUEST_TTL_MS).toISOString(),
     };
     writeJson(clientsFile(capability), { version: 1, devices: [...clients, device] });

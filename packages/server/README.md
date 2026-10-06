@@ -59,6 +59,24 @@ Desktop's Build machines list uses to find stim-server on the other Macs of the
 tailnet. A request from this Mac with a `Host` other than `127.0.0.1` or
 `localhost` gets HTTP 426, like any other plain HTTP request.
 
+`GET /setup/<hash>` returns a setup journal over the tailnet HTTP route. The
+hash is exactly 64 lowercase hex characters: SHA-256 of the optional
+`auth.setupTicket` on a build or device-host request (43 base64url characters).
+The registry stores only `setupTicketHash` and retains it after approval;
+missing or invalid tickets leave ordinary access requests unchanged.
+
+The journal lives at `$STIM_HOME/server/setup/<hash>.json`, written atomically
+only by stim-server and read through core's state reader. It contains the
+client node, ISO `expiresAt`, requested capabilities, steps, granted request
+ids, completion state and optional exit code; it contains no tokens. Only the
+matching tailnet node can read an unexpired journal. Browser requests, loopback,
+invalid paths, missing or malformed journals and other nodes get the same 404.
+The route returns 503 until startup is ready, caches peer identity for 30 seconds
+and returns 429 after repeated identity failures. All responses use
+`cache-control: no-store`. Steps whose ids start with `tools` appear only after
+a build grant. The server prunes journals more than one hour past expiry at
+startup and hourly.
+
 `stim-server` runs the `stim` version this package was released with, not the
 one on your PATH. It reads the login shell's environment once at start, so
 `PATH`, `ANDROID_HOME`, and `STIM_*` variables match your terminal even when

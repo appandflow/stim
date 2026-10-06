@@ -1,4 +1,7 @@
-import { mkdtempSync, rmSync } from 'node:fs';
+import Ajv2020 from 'ajv/dist/2020.js';
+import { protocolJsonSchema } from '../src/protocol.ts';
+import { createHash } from 'node:crypto';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -139,4 +142,60 @@ describe('device-host clients', () => {
     expect(grantDevice(current.id, ['device-host'], later)).toBe('unknown');
     expect(readDeviceHostClients(later)).toEqual([]);
   });
+});
+
+describe.each(['build', 'device-host'] as const)('%s setup binding', (capability) => {
+  const ask = capability === 'build' ? requestBuildAccess : requestDeviceHostAccess;
+  const read = capability === 'build' ? readBuildClients : readDeviceHostClients;
+
+  it('persists only the ticket hash and retains the binding after approval and authentication', () => {
+    const ticket = 'Ab_9-'.repeat(8) + 'xyz';
+    const hash = createHash('sha256').update(ticket).digest('hex');
+    const outcome = ask('Laptop', node('nA'), undefined, ticket);
+    if (!outcome.ok) throw new Error(outcome.reason);
+    const file = join(home, 'server', `${capability}-clients.json`);
+    expect(readFileSync(file, 'utf8')).not.toContain(ticket);
+    expect(read()[0]).toMatchObject({ setupTicketHash: hash, capabilities: [] });
+    expect(grantDevice(outcome.device.id, [capability])).toBe('granted');
+    expect(authenticateDevice(outcome.deviceToken!, node('nA'))).toMatchObject({
+      ok: true,
+      device: { setupTicketHash: hash, capabilities: [capability] },
+    });
+    expect(read()[0]).toHaveProperty('setupTicketHash', hash);
+    expect(readFileSync(file, 'utf8')).not.toContain(ticket);
+  });
+
+  it('replaces an older binding and accepts absent or invalid optional tickets as ordinary requests', () => {
+    ask('Laptop', node('nA'), undefined, 'a'.repeat(43));
+    for (const ticket of [undefined, null, 42, 'a'.repeat(42), 'a'.repeat(44), '!'.repeat(43), 'a'.repeat(43) + '\n']) {
+      const outcome = ask('Laptop', node('nA'), undefined, ticket);
+      if (!outcome.ok) throw new Error(outcome.reason);
+      expect(read()).toEqual([outcome.device]);
+      expect(read()[0]).not.toHaveProperty('setupTicketHash');
+      expect(outcome.device).toMatchObject({
+        requestedCapability: capability,
+        capabilities: [],
+        pendingUntil: expect.any(String),
+      });
+    }
+  });
+});
+
+test('the published hello schema accepts ticket-bound and legacy access requests for both capabilities', () => {
+  const validate = new Ajv2020({ strict: false, validateFormats: false }).compile(protocolJsonSchema());
+  for (const capability of ['build', 'device-host']) {
+    for (const binding of [{}, { setupTicket: 'Ab_9-'.repeat(8) + 'xyz' }]) {
+      expect(
+        validate({
+          id: 1,
+          method: 'hello',
+          params: {
+            protocol: 1,
+            client: { name: 'Test', version: '1' },
+            auth: { request: capability, deviceName: 'Laptop', ...binding },
+          },
+        }),
+      ).toBe(true);
+    }
+  }
 });

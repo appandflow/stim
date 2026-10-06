@@ -478,6 +478,7 @@ export function protocolJsonSchema(): JsonSchema {
                 properties: {
                   request: { enum: ['build', 'device-host'] },
                   deviceName: { type: 'string', minLength: 1 },
+                  setupTicket: { type: 'string', minLength: 43, maxLength: 43, pattern: '^[A-Za-z0-9_-]{43}$' },
                 },
               },
             ],

@@ -191,3 +191,11 @@ export function archiveDir(id: string): string {
 export function archiveLock(): string {
   return join(archiveRoot(), '.lock');
 }
+
+export function serverSetupDir(): string {
+  return join(configDir(), 'server', 'setup');
+}
+
+export function setupJournalFile(hash: string): string | null {
+  return hash.length === 64 && /^[a-f0-9]{64}$/.test(hash) ? join(serverSetupDir(), `${hash}.json`) : null;
+}

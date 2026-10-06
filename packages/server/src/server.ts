@@ -10,6 +10,8 @@ import {
   archiveDir,
   deviceHostArea,
   readArchive,
+  readSetupJournal,
+  isJournalExpired,
   queryJsonLogs,
   isJsonObject,
   listSegments,
@@ -34,6 +36,7 @@ import { LatestFrames, FRAME_RETRY_MS } from './frame-delivery.ts';
 import { BuildHost, type BuildLimits, type BuildSession } from './build.ts';
 import { ControlHub, parseControlBegin, parseInput, SLOT_NAME, type Controller } from './control.ts';
 import { Recorder, type RecordLimits } from './recorder.ts';
+import { pruneSetupJournals, setupJournalForClient } from './setup-journal.ts';
 import { probeDirectories, STARTUP_PROBE_MS, STARTUP_RETRY_MS, type StartupState } from './startup.ts';
 import { exclusiveClaimDir, sharedClaimDir } from '@stim-cli/core/ownership-claim';
 import { Player, recordedSpans, recordingDir, segmentKeyframe, timelineMarkers } from './replay.ts';
@@ -509,6 +512,14 @@ const closeListener = ({ server, sockets }: { server: Server; sockets: Set<Socke
     for (const socket of sockets) socket.destroy();
   });
 
+function pruneSetup(): void {
+  try {
+    pruneSetupJournals();
+  } catch (error) {
+    console.error(`stim-server: could not prune setup journals: ${(error as Error).message}`);
+  }
+}
+
 export async function startServer(options: ServerOptions): Promise<RunningServer> {
   let hostProbe: Promise<HelloResult['host']> | undefined;
   let hostExpires = 0;
@@ -559,6 +570,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   let startup: StartupState = { state: 'pending' };
   let startupProbe: ReturnType<typeof probeDirectories> | null = null;
   let startupRetry: NodeJS.Timeout | null = null;
+  let setupPruneTimer: NodeJS.Timeout | null = null;
   let foldBuild: Promise<string> | null = null;
   const foldHelper = () => {
     if (options.foldHelper !== undefined) return Promise.resolve(options.foldHelper);
@@ -692,6 +704,47 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       if (agentNodes.size > 256) agentNodes.delete(agentNodes.keys().next().value!);
     }
     if (agentDrivers.forward(session, token, known.node, request, response) === 'forbidden') agentLimiter.record(peer);
+  }
+  const setupNodes = new Map<string, { identity: Promise<PeerIdentity | null>; until: number }>();
+  const setupLimiter = new FailureLimiter(30, options.failureWindowMs ?? 60_000);
+  async function answerSetup(request: IncomingMessage, response: ServerResponse): Promise<void> {
+    const refuse = (status = 404, text = 'Not found.') =>
+      void response.writeHead(status, { 'content-type': 'text/plain', 'cache-control': 'no-store' }).end(`${text}\n`);
+    const peer = peerAddress(request);
+    const match = /^\/setup\/([a-f0-9]{64})$/.exec(request.url ?? '');
+    if (
+      request.method !== 'GET' ||
+      !match ||
+      match[0] !== request.url ||
+      request.headers.origin !== undefined ||
+      request.headers['sec-fetch-site'] !== undefined ||
+      !peer ||
+      !isIP(peer) ||
+      isLoopback(peer)
+    )
+      return refuse();
+    if (startup.state !== 'ready') return refuse(503, 'stim-server is not ready.');
+    const journal = readSetupJournal(match[1]!);
+    if (!journal || isJournalExpired(journal)) return refuse();
+    if (setupLimiter.blocked(peer)) return refuse(429, 'Too many attempts. Try again in a minute.');
+    let known = setupNodes.get(peer);
+    if (!known || known.until <= Date.now()) {
+      known = {
+        identity: whois(tailscaleNow().binary, options.env, peer).catch(() => null),
+        until: Date.now() + 30_000,
+      };
+      setupNodes.set(peer, known);
+      if (setupNodes.size > 256) setupNodes.delete(setupNodes.keys().next().value!);
+    }
+    const identity = await known.identity;
+    if (identity?.kind !== 'tailnet' || identity.nodeId !== journal.client.nodeId) {
+      setupLimiter.record(peer);
+      return refuse();
+    }
+    if (isJournalExpired(journal)) return refuse();
+    response
+      .writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' })
+      .end(JSON.stringify(setupJournalForClient(journal)));
   }
   const builds = new BuildHost({
     worker: join(dirname(options.stimCli), 'offload-worker.mjs'),
@@ -920,8 +973,8 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         }
         outcome =
           auth.request === 'build'
-            ? requestBuildAccess(deviceName, identity)
-            : requestDeviceHostAccess(deviceName, identity);
+            ? requestBuildAccess(deviceName, identity, undefined, auth.setupTicket)
+            : requestDeviceHostAccess(deviceName, identity, undefined, auth.setupTicket);
       } else if (typeof auth.deviceToken === 'string') {
         outcome = authenticateDevice(auth.deviceToken, identity);
       } else {
@@ -2428,6 +2481,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     };
     closing = true;
     if (startupRetry) clearTimeout(startupRetry);
+    if (setupPruneTimer) clearInterval(setupPruneTimer);
     startupProbe?.cancel();
     watcher?.close();
     if (revocationPoll) clearInterval(revocationPoll);
@@ -2469,6 +2523,14 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         response
           .writeHead(startup.state === 'ready' ? 200 : 503, { 'content-type': 'application/json' })
           .end(JSON.stringify(peerHealth));
+        return;
+      }
+      if (request.url?.startsWith('/setup')) {
+        answerSetup(request, response).catch(() => {
+          if (response.headersSent) response.destroy();
+          else
+            response.writeHead(404, { 'content-type': 'text/plain', 'cache-control': 'no-store' }).end('Not found.\n');
+        });
         return;
       }
       const agent = /^\/device-host\/agent\/([a-f0-9-]{36})(?:[/?]|$)/.exec(request.url ?? '');
@@ -2573,6 +2635,8 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     if (reason === null) {
       if (startup.state === 'degraded') console.error('stim-server: the Stim home answers again; serving clients.');
       startup = { state: 'ready' };
+      pruneSetup();
+      setupPruneTimer ??= setInterval(pruneSetup, 60 * 60_000).unref();
       return settle(startup);
     }
     if (startup.state !== 'degraded' || startup.reason !== reason) {
