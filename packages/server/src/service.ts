@@ -144,28 +144,47 @@ async function portFree(port: number): Promise<boolean> {
   });
 }
 
+async function listenerPids(port: number): Promise<string[]> {
+  const listener = await run('lsof', ['-nP', `-iTCP:${port}`, '-sTCP:LISTEN', '-t']);
+  return listener.ok ? listener.stdout.trim().split(/\s+/).filter(Boolean) : [];
+}
+
 async function unload(label: string, port: number | null): Promise<void> {
   const job = await loaded(label);
-  const stopped = job ? await run('launchctl', ['bootout', `${domain()}/${label}`]) : null;
+  if (!job) return;
+  const listeners = port === null ? [] : await listenerPids(port);
+  const stopped = await run('launchctl', ['bootout', `${domain()}/${label}`]);
   const deadline = Date.now() + UNLOAD_WAIT_MS;
   while (Date.now() < deadline) {
-    if (!(await loaded(label)) && (job?.pid == null || !alive(job.pid)) && (port === null || (await portFree(port))))
+    if (
+      !(await loaded(label)) &&
+      (job.pid == null || !alive(job.pid)) &&
+      (port === null ||
+        listeners.length === 0 ||
+        (await portFree(port)) ||
+        !(await listenerPids(port)).some((pid) => listeners.includes(pid)))
+    )
       return;
     await sleep(250);
   }
-  const listener = port === null ? null : await run('lsof', ['-nP', `-iTCP:${port}`, '-sTCP:LISTEN', '-t']);
-  const pid = listener?.ok ? listener.stdout.trim() : '';
+  const pids = port === null ? [] : await listenerPids(port);
   throw new ServiceError(
-    `${label} did not stop${port === null ? '' : ` and release port ${port}${pid ? ` (listening pid ${pid})` : ''}`} within ${UNLOAD_WAIT_MS / 1000} s. ${stopped?.stderr.trim() ?? ''}`.trim(),
+    `${label} did not stop${port === null ? '' : ` and release port ${port}${pids.length ? ` (listening pid ${pids.join(', ')})` : ''}`} within ${UNLOAD_WAIT_MS / 1000} s. ${stopped.stderr.trim()}`.trim(),
   );
 }
 
 async function requireRunning(label: string): Promise<void> {
-  const job = await loaded(label);
-  if (!job?.pid) {
-    throw new ServiceError(
-      `${label} is not running${job?.lastExitCode ? ` (last exit code ${job.lastExitCode})` : ''}. Check ${logPath(label)}.`,
-    );
+  const deadline = Date.now() + 2000;
+  for (;;) {
+    const job = await loaded(label);
+    if (job?.pid) return;
+    const lastExitCode = job?.lastExitCode && !job.lastExitCode.includes('never exited') ? job.lastExitCode : null;
+    if (lastExitCode || Date.now() >= deadline) {
+      throw new ServiceError(
+        `${label} is not running${lastExitCode ? ` (last exit code ${lastExitCode})` : ''}. Check ${logPath(label)}.`,
+      );
+    }
+    await sleep(250);
   }
 }
 
@@ -281,11 +300,9 @@ async function installJob(options: ServiceOptions): Promise<string[]> {
   const wasLoaded = (await loaded(options.label)) !== null;
   let routeCreated = false;
   let bootstrapped = false;
-  let unloaded = false;
   let health: Health | null;
   try {
     await unload(options.label, previous?.port ?? null);
-    unloaded = true;
     if (await fetchHealth(options.port)) {
       throw new ServiceError(
         `port ${options.port} already answers as a stim-server that is not ${options.label} (Stim Desktop runs one on 7787). Pass --port to use another.`,
@@ -307,12 +324,19 @@ async function installJob(options: ServiceOptions): Promise<string[]> {
     if (oldPlist === null) rmSync(path, { force: true });
     else writeFileSync(path, oldPlist, { mode: 0o644 });
     if (routeCreated && serve) await run(tailscale, ['serve', `--https=${serve.port}`, 'off']);
-    if (bootstrapped) await unload(options.label, options.port);
+    if (bootstrapped) {
+      try {
+        await unload(options.label, options.port);
+      } catch (cleanupError) {
+        (error as Error).message += ` ${(cleanupError as Error).message}`;
+      }
+    }
     if (oldPlist === null) throw error;
-    const restored = wasLoaded && unloaded ? await run('launchctl', ['bootstrap', domain(), path]) : null;
-    if (restored && !restored.ok && !(await loaded(options.label))) {
+    const restored =
+      wasLoaded && !(await loaded(options.label)) ? await run('launchctl', ['bootstrap', domain(), path]) : null;
+    if (wasLoaded && !restored?.ok) {
       throw new ServiceError(
-        `${(error as Error).message} The previous service could not be restarted either (${restored.stderr.trim()}); run install again.`,
+        `${(error as Error).message} The previous plist was restored, but the service could not be restarted (${restored?.stderr.trim() || 'the job is still loaded'}); run \`launchctl bootout ${domain()}/${options.label}\` and \`launchctl bootstrap ${domain()} ${path}\`.`,
       );
     }
     throw error;
@@ -577,7 +601,7 @@ async function uninstallJob(label: string): Promise<string[]> {
     notes.push(`Kept the tailscale serve route on https port ${installed.serve.port}; install did not create it.`);
   }
   if (installed.host) notes.push(`Kept ${dirname(dirname(dirname(installed.host)))}; other service labels may use it.`);
-  await unload(label, installed.port);
+  await unload(label, null);
   if (routeOff && tailscale) {
     const removed = await run(tailscale, ['serve', `--https=${routeOff}`, 'off']);
     notes.push(

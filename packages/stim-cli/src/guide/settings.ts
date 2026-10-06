@@ -759,9 +759,11 @@ to the previous server. A client Mac approved for builds or device hosting
 there can ask for the same update over its tailnet connection: an npm release
 always, and its own packed build only while \`server.acceptClientBuilds\` is
 true on that machine (default false).
-Replacing a service waits up to 45 seconds for the old server to release its
-port. Install fails if the new job exits during startup and restores any previous
-LaunchAgent. A running LaunchAgent does not prove readiness; check \`stim-server service status\`
+Replacing a loaded service waits up to 45 seconds for its existing listeners to
+release the port. Uninstall does not wait for the port. If stopping the old job
+or starting the new one fails, install restores the previous plist and attempts
+to restart a previously loaded LaunchAgent; if it cannot, it prints the
+launchctl bootout/bootstrap remedy. A running LaunchAgent does not prove readiness; check \`stim-server service status\`
 and its reported log. The server listens before it touches the Stim home; a
 read-only child process reads the Stim home, server and recording directories,
 and until it returns \`/health\` answers 503 with \`startup.state\` pending.
