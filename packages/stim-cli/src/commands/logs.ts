@@ -13,7 +13,6 @@ import { workspaceLogsDir } from '../workspace/paths.ts';
 import { LEVELS, SOURCES } from '../ndjson.ts';
 import type { NdjsonRecord } from '../ndjson.ts';
 import {
-  attachExpoErrorContext,
   buildCriteria,
   compileGrep,
   fileSizes,
@@ -21,6 +20,7 @@ import {
   logFiles,
   parseSince,
   queryLogs,
+  queryJsonLogs,
   readLogRecords,
   readMacosRecord,
   recordMatches,
@@ -280,12 +280,10 @@ export default function logsCommand(program: Command): void {
             })
           : null;
       const timeline = readAgent ? sortByTs([...workspaceTimeline, ...readAgent()]) : workspaceTimeline;
-      const rawRecords = queryLogs({ ...query, records: timeline });
+      const rawRecords = (opts.json ? queryJsonLogs : queryLogs)({ ...query, records: timeline });
       const supervisorPort = readWorkspaceState(root)?.supervisor?.port;
       const records = opts.json
-        ? opts.errors
-          ? attachExpoErrorContext(timeline, rawRecords, 'field')
-          : rawRecords
+        ? rawRecords
         : await errorDiagnostics(rawRecords, {
             root,
             logsDir: dir,

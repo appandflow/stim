@@ -1,7 +1,7 @@
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { archiveEnabled, archivedUsage, readArchives } from '../state/archive.ts';
+import { archiveEnabled, archivedUsage, readArchive, readArchives } from '../state/archive.ts';
 
 let home: string;
 beforeEach(() => {
@@ -53,9 +53,13 @@ test('records missing a status field or reached through a symlink are not listed
   record('whole', '2026-01-01T00:00:00Z', 1);
   record('no-worktree', '2026-01-02T00:00:00Z', 1, 'worktree');
   record('no-agents', '2026-01-02T00:00:00Z', 1, 'agents');
+  record('.incoming', '2026-01-02T00:00:00Z', 1);
   record('target', '2026-01-03T00:00:00Z', 1);
   symlinkSync(join(home, 'archive', 'target'), join(home, 'archive', 'link'));
   expect(readArchives().map((archive) => archive.id)).toEqual(['target', 'whole']);
+  for (const id of ['no-worktree', 'no-agents', 'link', '.incoming', 'missing', '../archive/whole'])
+    expect(readArchive(id)).toBeNull();
+  expect(readArchive('whole')).toEqual(readArchives().find((archive) => archive.id === 'whole'));
 });
 
 test('repo and machine archive disable values stop archiving unless the environment overrides them', () => {

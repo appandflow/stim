@@ -7,6 +7,9 @@ import { homedir } from 'node:os';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { configDir } from '@stim-cli/core';
 import {
+  archiveDir,
+  readArchive,
+  queryJsonLogs,
   isJsonObject,
   listSegments,
   loadConfig,
@@ -42,7 +45,15 @@ import {
   type Frame,
   type FrameLimits,
 } from './frames.ts';
-import { LogBatcher, logArgs, parseLogFilter, type LogLimits } from './logs.ts';
+import {
+  archivedLogs,
+  archivedTimeline,
+  LogBatcher,
+  logArgs,
+  parseLogFilter,
+  readTargetError,
+  type LogLimits,
+} from './logs.ts';
 import { readDiskVolumes, readMachineUsage, readMemoryPressure, UsageSampler } from './machine.ts';
 import {
   BuildMachinesCache,
@@ -443,8 +454,32 @@ function parseReplay(at: unknown, rate: unknown): { at: number; rate: FramesSeek
   return { at, rate: parsed as FramesSeekParams['rate'] };
 }
 
-function hasFootage(dir: string): boolean {
-  return listSegments(dir).length > 0;
+function frameTargetError(target: JsonObject, hosted: boolean): string | null {
+  const error = readTargetError(target);
+  if (error) return error;
+  const { archive, platform, slot, physical, at, deviceFrame, duoFrame } = target;
+  if (archive !== undefined && (at === undefined || physical)) {
+    return 'Archived frames require params.at and cannot be physical.';
+  }
+  if (!PLATFORMS.includes(platform as Platform)) {
+    return 'frames.subscribe needs params.workspace or params.archive and params.platform (ios, android, web or macos).';
+  }
+  if (slot !== undefined && (typeof slot !== 'string' || !SLOT_NAME.test(slot))) {
+    return 'slot must be 1-64 letters, digits, underscores or hyphens.';
+  }
+  if (physical !== undefined && typeof physical !== 'boolean') return 'physical must be true or false.';
+  if (deviceFrame !== undefined && typeof deviceFrame !== 'boolean') return 'deviceFrame must be true or false.';
+  if (
+    duoFrame !== undefined &&
+    (typeof duoFrame !== 'boolean' || (duoFrame && (platform !== 'ios' || physical || hosted)))
+  ) {
+    return 'duoFrame needs a local owned iOS simulator.';
+  }
+  return null;
+}
+
+function hasFootage(dir: string, closedOnly = false): boolean {
+  return listSegments(dir, closedOnly).length > 0;
 }
 
 function doctorTarget(): DoctorTarget {
@@ -797,6 +832,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     let device: PairedDevice | null = null;
     let buildSession: BuildSession | null = null;
     let queue = Promise.resolve();
+    let archiveReads = Promise.resolve();
     const relay = new HostedRelay(
       hostConnections,
       (message) => {
@@ -1030,6 +1066,15 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       return resolved.dir;
     }
 
+    function readDir(id: RequestId, target: { workspace?: string; archive?: string }): string | null {
+      if (target.archive === undefined) return workspaceDir(id, target.workspace, true);
+      if (!readArchive(target.archive)) {
+        error(id, 'unknown-workspace', `Archive ${target.archive} is not a Stim archive on this Mac.`);
+        return null;
+      }
+      return archiveDir(target.archive);
+    }
+
     function openSubscription(id: RequestId, result: { video?: VideoCodec } = {}): string | null {
       if (subscriptions.size >= MAX_SUBSCRIPTIONS) {
         error(id, 'limit-exceeded', `A connection can hold ${MAX_SUBSCRIPTIONS} subscriptions.`);
@@ -1071,7 +1116,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     function subscribeLogs(id: RequestId, params: unknown): void {
       const parsed = parseLogFilter(params);
       if ('error' in parsed) return error(id, 'bad-request', parsed.error);
-      const cwd = workspaceDir(id, parsed.filter.workspace, true);
+      const cwd = readDir(id, parsed.filter);
       if (!cwd) return;
       const subscription = openSubscription(id);
       if (!subscription) return;
@@ -1083,6 +1128,10 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         {
           send: (records) => send(socket, { event: 'logs', subscription, records }),
           bufferedBytes: () => socket.bufferedAmount,
+          ended: () => {
+            end();
+            send(socket, { event: 'logs-ended', subscription });
+          },
           overflow: () => {
             end();
             send(socket, {
@@ -1094,6 +1143,12 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         },
         logLimits,
       );
+      if (parsed.filter.archive !== undefined) {
+        subscriptions.set(subscription, () => batcher.stop());
+        for (const record of archivedLogs(cwd, parsed.filter)) batcher.push(record);
+        batcher.finish();
+        return;
+      }
       const unsubscribe = feeds.subscribe(
         { args: logArgs(parsed.filter, true), cwd, keep: parsed.filter.tail!, label: 'stim logs --follow' },
         {
@@ -1119,29 +1174,13 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     ): void {
       const framePool = hosted?.view.frames ?? frames;
       const target = isJsonObject(params) ? params : {};
-      const { workspace, platform, slot, physical, fps, maxEdge, video, at, rate, deviceFrame, duoFrame } = target;
-      if (typeof workspace !== 'string' || !PLATFORMS.includes(platform as Platform)) {
-        return error(
-          id,
-          'bad-request',
-          'frames.subscribe needs params.workspace and params.platform (ios, android, web or macos).',
-        );
-      }
-      if (slot !== undefined && (typeof slot !== 'string' || !SLOT_NAME.test(slot))) {
-        return error(id, 'bad-request', 'slot must be 1-64 letters, digits, underscores or hyphens.');
-      }
-      if (physical !== undefined && typeof physical !== 'boolean') {
-        return error(id, 'bad-request', 'physical must be true or false.');
-      }
-      if (deviceFrame !== undefined && typeof deviceFrame !== 'boolean') {
-        return error(id, 'bad-request', 'deviceFrame must be true or false.');
-      }
-      if (
-        duoFrame !== undefined &&
-        (typeof duoFrame !== 'boolean' || (duoFrame && (platform !== 'ios' || physical || hosted)))
-      ) {
-        return error(id, 'bad-request', 'duoFrame needs a local owned iOS simulator.');
-      }
+      const { platform, fps, maxEdge, video, at, rate, deviceFrame, duoFrame } = target;
+      const targetError = frameTargetError(target, hosted !== undefined);
+      if (targetError) return error(id, 'bad-request', targetError);
+      const slot = target.slot as string | undefined;
+      const physical = target.physical as boolean | undefined;
+      const workspace = target.workspace as string | undefined;
+      const archive = target.archive as string | undefined;
       const wantsDuo = duoFrame === true && at === undefined;
       const wantsArtwork = deviceFrame === true && !physical && platform !== 'web';
       if (video !== undefined && (!Array.isArray(video) || !video.every((codec) => typeof codec === 'string'))) {
@@ -1162,9 +1201,10 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
           `maxEdge must be a whole number of pixels from ${FRAME_EDGE.min} to ${FRAME_EDGE.max}.`,
         );
       }
-      const resolvedDir = hosted ? null : workspaceDir(id, workspace, true);
+      const resolvedDir = hosted ? null : readDir(id, { workspace, archive });
       if (!hosted && !resolvedDir) return;
-      const host = !hosted && platform === 'macos' && resolvedDir ? readMacosRecord(resolvedDir)?.host : undefined;
+      const host =
+        !archive && !hosted && platform === 'macos' && resolvedDir ? readMacosRecord(resolvedDir)?.host : undefined;
       if (host) {
         if ((slot !== undefined && slot !== 'default') || physical || at !== undefined || rate !== undefined) {
           return error(
@@ -1175,7 +1215,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         }
         return void relay.subscribe(id, host, target, (subscription, stop) => subscriptions.set(subscription, stop));
       }
-      const offersVideo = wantsVideo && !wantsDuo && frameHelper() !== null;
+      const offersVideo = wantsVideo && !wantsDuo && (archive !== undefined || frameHelper() !== null);
       const replayAt = parseReplay(at, rate);
       if (typeof replayAt === 'string') return error(id, 'bad-request', replayAt);
       if (replayAt && !offersVideo) {
@@ -1188,18 +1228,23 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       const replayDir =
         platform === 'macos'
           ? null
-          : recordingDir(workspace, platform as RecordingPlatform, typeof slot === 'string' ? slot : 'default');
-      if (replayAt && (physical || replayDir === null || !hasFootage(replayDir))) {
+          : recordingDir(
+              workspace,
+              platform as RecordingPlatform,
+              typeof slot === 'string' ? slot : 'default',
+              archive,
+            );
+      if (replayAt && (physical || replayDir === null || !hasFootage(replayDir, archive !== undefined))) {
         return error(
           id,
           'no-recording',
-          `Nothing was recorded for ${physical ? 'a physical ' : ''}${platform} in ${workspace}.`,
+          `Nothing was recorded for ${physical ? 'a physical ' : ''}${platform} in ${archive ?? workspace}.`,
         );
       }
       const subscription = openSubscription(id, offersVideo ? { video: 'h264' } : {});
       if (!subscription) return;
       const frameTarget: FrameTarget = {
-        workspace,
+        ...(archive === undefined ? { workspace } : { archive }),
         platform: platform as Platform,
         ...(slot ? { slot } : {}),
         ...(physical ? { physical } : {}),
@@ -1323,10 +1368,12 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
               }),
           },
           DEFAULT_VIDEO_LIMITS.congestedBytes,
+          archive !== undefined,
         );
         return player;
       };
       const goLive = (): string | null => {
+        if (archive !== undefined) return `Archive ${archive} cannot go live.`;
         const resolved = latest
           ? ownedDevice(latest, frameTarget, null, { adbEmulators })
           : 'The device status is not known yet.';
@@ -1347,7 +1394,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         });
         replays.set(subscription, {
           seek: (seekAt, seekRate) => {
-            if (physical || replayDir === null || !hasFootage(replayDir)) return null;
+            if (physical || replayDir === null || !hasFootage(replayDir, archive !== undefined)) return null;
             const wasLive = player === null;
             const shown = replay().seek(seekAt, seekRate);
             if (shown === null && wasLive) goLive();
@@ -1359,10 +1406,10 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       if (replayAt && replay().seek(replayAt.at, replayAt.rate) === null) {
         send(socket, { event: 'replay-ended', subscription, at: replayAt.at });
       }
-      const stopViewing = physical || hosted ? undefined : recorder?.viewing(frameTarget);
+      const stopViewing = archive !== undefined || physical || hosted ? undefined : recorder?.viewing(frameTarget);
       let unsubscribeStatus: (() => void) | null = null;
       if (hosted) attach(hosted.view.device);
-      else
+      else if (archive === undefined)
         unsubscribeStatus = feeds.subscribe(STATUS_FEED, {
           item: (payload) => {
             if (ended) return;
@@ -1432,11 +1479,39 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       return released;
     }
 
+    function archiveRead(id: RequestId, read: () => void | Promise<void>): void {
+      if (commands.size >= MAX_COMMANDS) {
+        return error(id, 'limit-exceeded', `A connection can run ${MAX_COMMANDS} requests at a time.`);
+      }
+      let dropped = false;
+      const cancel = async () => {
+        dropped = true;
+        await task;
+      };
+      commands.add(cancel);
+      running.add(cancel);
+      const task = archiveReads
+        .then(() => new Promise<void>((resolve) => setImmediate(resolve)))
+        .then(() => {
+          if (!dropped && socket.readyState === socket.OPEN) return read();
+          return undefined;
+        })
+        .finally(() => {
+          commands.delete(cancel);
+          running.delete(cancel);
+        });
+      archiveReads = task.catch(() => socket.close(1011, 'internal error'));
+    }
+
     function queryLogs(id: RequestId, params: unknown): void {
       const parsed = parseLogFilter(params);
       if ('error' in parsed) return error(id, 'bad-request', parsed.error);
-      const cwd = workspaceDir(id, parsed.filter.workspace, true);
+      const cwd = readDir(id, parsed.filter);
       if (!cwd) return;
+      if (parsed.filter.archive !== undefined) {
+        send(socket, { id, result: { records: archivedLogs(cwd, parsed.filter) } });
+        return;
+      }
       command<'logs.query'>(id, logArgs(parsed.filter, false), cwd, (stdout) => ({
         records: stdout
           .split('\n')
@@ -1608,31 +1683,52 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
 
     function replayRange(id: RequestId, params: unknown): void {
       const target = isJsonObject(params) ? params : {};
-      const { workspace, platform, slot } = target;
-      if (typeof workspace !== 'string' || !RECORDING_PLATFORMS.includes(platform as RecordingPlatform)) {
+      const { platform, slot } = target;
+      const targetError = readTargetError(target);
+      if (targetError) return error(id, 'bad-request', targetError);
+      const workspace = target.workspace as string | undefined;
+      const archive = target.archive as string | undefined;
+      if (!RECORDING_PLATFORMS.includes(platform as RecordingPlatform)) {
         return error(
           id,
           'bad-request',
-          'replay.range needs params.workspace and params.platform (ios, android or web).',
+          'replay.range needs params.workspace or params.archive and params.platform (ios, android or web).',
         );
       }
       if (slot !== undefined && (typeof slot !== 'string' || !SLOT_NAME.test(slot))) {
         return error(id, 'bad-request', 'params.slot must be 1-64 letters, digits, underscores or hyphens.');
       }
-      const cwd = workspaceDir(id, workspace, true);
+      const cwd = readDir(id, { workspace, archive });
       if (!cwd) return;
-      if (commands.size + 2 > MAX_COMMANDS) {
+      if (archive === undefined && commands.size + 2 > MAX_COMMANDS) {
         return error(id, 'limit-exceeded', `A connection can run ${MAX_COMMANDS} requests at a time.`);
       }
       const slotName = slot ?? 'default';
-      const spans = recordedSpans(listSegments(recordingDir(workspace, platform as RecordingPlatform, slotName)));
+      const spans = recordedSpans(
+        listSegments(recordingDir(workspace, platform as RecordingPlatform, slotName, archive), archive !== undefined),
+      );
       const replayTarget = { workspace, platform: platform as RecordingPlatform, slot: slotName };
       const state = {
-        enabled: recorder?.enabled(workspace) ?? false,
-        recording: recorder?.recording(replayTarget) ?? false,
+        enabled: archive === undefined ? (recorder?.enabled(workspace!) ?? false) : false,
+        recording: archive === undefined ? (recorder?.recording(replayTarget) ?? false) : false,
         spans,
       };
       if (!spans.length) return send(socket, { id, result: { ...state, markers: [] } });
+      if (archive !== undefined) {
+        const timeline = archivedTimeline(cwd);
+        const records = [
+          ...queryJsonLogs({ records: timeline, sources: ['agent'], tail: 5000 }),
+          ...queryJsonLogs({
+            records: timeline,
+            sources: ['metro', 'client', 'build', 'device'],
+            minLevel: 'error',
+            tail: 5000,
+          }),
+        ];
+        const markers = timelineMarkers(records, platform as RecordingPlatform, slotName, spans[0]!.start);
+        send(socket, { id, result: { ...state, markers } });
+        return;
+      }
       const since = `--since=${Math.ceil((Date.now() - spans[0]!.start) / 60_000) + 1}m`;
       void Promise.all([
         collect(['logs', '--json', '--source', 'agent', since, '--tail=5000'], cwd),
@@ -1649,14 +1745,18 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       });
     }
 
-    function replayKeyframe(id: RequestId, params: unknown): void {
+    function replayKeyframe(id: RequestId, params: unknown): void | Promise<void> {
       const target = isJsonObject(params) ? params : {};
-      const { workspace, platform, slot, at } = target;
-      if (typeof workspace !== 'string' || !RECORDING_PLATFORMS.includes(platform as RecordingPlatform)) {
+      const { platform, slot, at } = target;
+      const targetError = readTargetError(target);
+      if (targetError) return error(id, 'bad-request', targetError);
+      const workspace = target.workspace as string | undefined;
+      const archive = target.archive as string | undefined;
+      if (!RECORDING_PLATFORMS.includes(platform as RecordingPlatform)) {
         return error(
           id,
           'bad-request',
-          'replay.keyframe needs params.workspace and params.platform (ios, android or web).',
+          'replay.keyframe needs params.workspace or params.archive and params.platform (ios, android or web).',
         );
       }
       if (slot !== undefined && (typeof slot !== 'string' || !SLOT_NAME.test(slot))) {
@@ -1664,30 +1764,32 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       }
       if (typeof at !== 'number' || !Number.isFinite(at))
         return error(id, 'bad-request', 'at must be epoch milliseconds.');
-      if (!workspaceDir(id, workspace, true)) return;
+      if (!readDir(id, { workspace, archive })) return;
       if (keyframeReads >= MAX_KEYFRAME_READS) {
         return error(id, 'limit-exceeded', `A connection can read ${MAX_KEYFRAME_READS} keyframes at a time.`);
       }
       keyframeReads++;
-      void segmentKeyframe(recordingDir(workspace, platform as RecordingPlatform, slot ?? 'default'), at).then(
-        (found) => {
-          keyframeReads--;
-          if (!found) return error(id, 'no-recording', 'Nothing was recorded for this device.');
-          const { segment, unit } = found;
-          return send(socket, {
-            id,
-            result: {
-              start: segment.start,
-              end: segment.end,
-              at: unit.capturedAt,
-              width: unit.width,
-              height: unit.height,
-              ...(unit.posture ? { posture: unit.posture } : {}),
-              data: unit.data.toString('base64'),
-            },
-          });
-        },
-      );
+      return segmentKeyframe(
+        recordingDir(workspace, platform as RecordingPlatform, slot ?? 'default', archive),
+        at,
+        archive !== undefined,
+      ).then((found) => {
+        keyframeReads--;
+        if (!found) return error(id, 'no-recording', 'Nothing was recorded for this device.');
+        const { segment, unit } = found;
+        return send(socket, {
+          id,
+          result: {
+            start: segment.start,
+            end: segment.end,
+            at: unit.capturedAt,
+            width: unit.width,
+            height: unit.height,
+            ...(unit.posture ? { posture: unit.posture } : {}),
+            data: unit.data.toString('base64'),
+          },
+        });
+      });
     }
 
     function setRecording(id: RequestId, params: unknown, session: PairedDevice): void {
@@ -2060,6 +2162,22 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       }
       const desktop = desktopMethod(id, message.method, message.params, device);
       if (desktop) return desktop;
+      if (isJsonObject(message.params) && typeof message.params.archive === 'string') {
+        const params = message.params;
+        const read =
+          message.method === 'logs.subscribe'
+            ? () => subscribeLogs(id, params)
+            : message.method === 'logs.query'
+              ? () => queryLogs(id, params)
+              : message.method === 'frames.subscribe'
+                ? () => subscribeFrames(id, params)
+                : message.method === 'replay.range'
+                  ? () => replayRange(id, params)
+                  : message.method === 'replay.keyframe'
+                    ? () => replayKeyframe(id, params)
+                    : null;
+        if (read) return archiveRead(id, read);
+      }
       if (message.method === 'status.subscribe') return subscribeStatus(id);
       if (message.method === 'logs.subscribe') return subscribeLogs(id, message.params);
       if (message.method === 'logs.query') return queryLogs(id, message.params);
@@ -2096,7 +2214,10 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         return send(socket, { id, result: { at: shown } });
       }
       if (message.method === 'replay.range') return replayRange(id, message.params);
-      if (message.method === 'replay.keyframe') return replayKeyframe(id, message.params);
+      if (message.method === 'replay.keyframe') {
+        void replayKeyframe(id, message.params);
+        return;
+      }
       if (message.method === 'recording.set') return setRecording(id, message.params, device);
       if (message.method === 'build.plan') return planBuild(id, message.params);
       if (message.method === 'machine.get') return send(socket, { id, result: await readMachineUsage() });

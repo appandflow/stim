@@ -4,6 +4,7 @@ import {
   statusEnumPaths,
   resultEnumCases,
   eventEnumCases,
+  archivedLogsEnded,
   replaceReceivedField,
 } from '../../../apps/mobile/mock-server/receive-fixtures.ts';
 import type { StatusPayload } from '../phone-protocol.ts';
@@ -119,6 +120,12 @@ test.each(['metro', 'maintenance'])(
     expect(isRpcEvent({ event: 'logs', subscription: 's', records: [record] })).toBe(true);
   },
 );
+
+test('validates archive log completion and its subscription identifier', () => {
+  expect(isRpcEvent(archivedLogsEnded)).toBe(true);
+  expect(isRpcEvent({ event: 'logs-ended' })).toBe(false);
+  expect(isRpcEvent({ event: 'logs-ended', subscription: 1 })).toBe(false);
+});
 
 test('validates notification targets, frame artwork and future error codes', () => {
   expect(isRpcError({ code: 'future-error', message: 'Unavailable' })).toBe(true);
