@@ -209,3 +209,43 @@ test('accepts new display kinds without requiring the known kind details', () =>
     false,
   );
 });
+
+test('archives accept future enum strings while older status remains valid', () => {
+  const payload = structuredClone(captured);
+  expect(isRpcEvent({ event: 'status', subscription: 's', payload })).toBe(true);
+  const archive = {
+    id: 'app--1',
+    projectRoot: '/app',
+    project: 'app',
+    workspace: 'app',
+    worktree: {
+      repository: null,
+      branch: null,
+      head: null,
+      subject: null,
+      merged: null,
+      pullRequest: { number: 1, state: 'future-state', title: 'PR', url: 'https://example.test/pr' },
+    },
+    removedAt: '2026-01-01T00:00:00Z',
+    removedBy: 'future-remover',
+    lastUsedAt: null,
+    builds: { count: 0, last: null, lastErrorCount: 0 },
+    agents: [{ tool: 'future-agent', sessionId: 's', cwd: '/app', endedAt: '2026-01-01T00:00:00Z' }],
+    bytes: { logs: 1, recordings: 2, agentActions: 3, record: 4, total: 10 },
+    expires: { logs: null, recordings: null, agentActions: null, record: null },
+    version: 1,
+  };
+  const updated = {
+    ...payload,
+    archived: [archive],
+    archivedUsage: { count: 1, bytes: 10, byKind: { logs: 1, recordings: 2, agentActions: 3, record: 4 } },
+  };
+  expect(isRpcEvent({ event: 'status', subscription: 's', payload: updated })).toBe(true);
+  expect(
+    isRpcEvent({
+      event: 'status',
+      subscription: 's',
+      payload: { ...updated, archived: [{ ...archive, bytes: { ...archive.bytes, logs: 'bad' } }] },
+    }),
+  ).toBe(false);
+});

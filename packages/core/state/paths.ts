@@ -155,3 +155,15 @@ export function deviceViewersDir(): string {
 export function statsFile(): string {
   return join(configDir(), 'stats.json');
 }
+
+export function archiveRoot(): string {
+  return join(configDir(), 'archive');
+}
+
+export function archiveDir(id: string): string {
+  return join(archiveRoot(), id);
+}
+
+export function archiveLock(): string {
+  return join(archiveRoot(), '.lock');
+}

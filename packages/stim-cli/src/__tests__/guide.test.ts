@@ -1,3 +1,4 @@
+import { includesArchives } from '../commands/gc/caches.ts';
 import { registerIos } from '../commands/ios.ts';
 import { registerAndroid } from '../commands/android.ts';
 import { Command } from 'commander';
@@ -827,4 +828,12 @@ test('the guide names the workspace agent-device state contract without setting 
   const status = renderSection('facts', 'status');
   assert(status);
   expect(status).toContain('agentDevice');
+});
+
+test('archive cleanup guidance names each code-supported cache selector', () => {
+  const section = renderSection('cleanup', 'archive');
+  for (const selector of ['archived', 'archived:example', 'archived-logs', 'archived-recordings', 'archived-agent']) {
+    expect(includesArchives(selector)).toBe(true);
+    expect(section).toContain(selector.replace('example', '<id>'));
+  }
 });

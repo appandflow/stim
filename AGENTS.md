@@ -260,10 +260,13 @@ outside it moves to its own issue and pull request.
   default being `false`.
 - **Shared state reads.** `@stim-cli/core/state` owns the `$STIM_HOME` path
   layout, the state and payload types, and the readers of config, workspace
-  state, ledgers, and logs. The CLI owns every write to that state and imports
-  the readers instead of parsing those files itself. The exceptions are
+  state, ledgers, logs, and archives under `archive/`. The CLI owns every write
+  to that state and imports the readers instead of parsing those files itself. The exceptions are
   stim-server's device recordings under `workspaces/<id>/recordings/`, which
-  stim-server writes and prunes (it never creates a workspace directory), and
+  stim-server writes and prunes (it never creates a workspace directory). The CLI
+  moves closed segments into `archive/` during removal under `native-run.lock`.
+  stim-server never writes or prunes under `archive/` and reads archived segments
+  through core's recording readers. The other exceptions are
   the build worker root (`offload.workerRoot`, default `build-worker/`),
   which stim-server and the builds it runs own, and the build slot
   stim-server takes under `build-slots/` for each offloaded build it runs,

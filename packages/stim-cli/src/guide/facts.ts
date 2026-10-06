@@ -18,6 +18,15 @@ stdout for \`--json\`. Every other line goes to stderr, so it is always safe
 to pipe. \`logs --json\` is the one exception: it is NDJSON, one record per
 line by design (see \`guide logs\`), not this single-payload contract.
 
+status adds archived (newest first, bounded by archive.maxCount) and
+archivedUsage { count, bytes, byKind: { logs, recordings, agentActions, record } }.
+Each archive carries id, projectRoot, project, workspace, worktree facts,
+removedAt, removedBy, lastUsedAt, builds, agents, bytes, expires and version.
+replacedBy is the live environment path when its canonical root matches.
+Older producers may omit both fields.
+Plain status prints Archived: <count> workspace(s), <size> when count is positive;
+status --watch reuses archive reads until archive changes and emits no duplicates.
+
 status's unprovisionedWorktrees lists the linked worktrees with no Stim
 environment in every repository with a registered environment, plus the
 repository status runs from. A worktree counts as having an

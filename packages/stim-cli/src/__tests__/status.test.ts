@@ -1123,3 +1123,25 @@ test.each([
     expect(report.errorCode).toBe(errorCode);
   },
 );
+
+test('status emits one archive payload and links earlier runs to a live environment', async () => {
+  const { archiveWorkspace } = await import('../archive.ts');
+  const root = '/proj/archive-test';
+  process.env.STIM_ARCHIVE_ENABLED = 'true';
+  try {
+    saveConfig(makeConfig({ projects: { [root]: {} } }));
+    ensureWorkspaceStorage(root);
+    writeFileSync(workspaceStateFile(root), '{}');
+    archiveWorkspace(root, 'worktree-remove');
+    const payload = await runStatusJson();
+    expect(payload.archived).toHaveLength(1);
+    expect(payload.archived[0]).toMatchObject({ projectRoot: root, replacedBy: root, removedBy: 'worktree-remove' });
+    expect(payload.archivedUsage.count).toBe(1);
+    expect(payload.archivedUsage.bytes).toBeGreaterThan(0);
+    expect((await runStatus()).filter((line) => line.startsWith('Archived:'))).toEqual([
+      expect.stringContaining('Archived: 1 workspace, '),
+    ]);
+  } finally {
+    delete process.env.STIM_ARCHIVE_ENABLED;
+  }
+});

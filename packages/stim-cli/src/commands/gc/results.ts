@@ -1,4 +1,5 @@
 export type GcResultKind =
+  | 'archive'
   | 'device'
   | 'parkedDevice'
   | 'idleDevice'

@@ -72,7 +72,8 @@ export function machineNumber(
       ? { value: undefined, error: `Invalid ${setting.env} value ${JSON.stringify(fromEnv)}. Expected ${problem}.` }
       : { value, error: null };
   }
-  if (env.STIM_HOME && setting.scopedHomeValue !== undefined) return { value: setting.scopedHomeValue, error: null };
+  if (env.STIM_HOME && typeof setting.scopedHomeValue === 'number')
+    return { value: setting.scopedHomeValue, error: null };
   const raw = valueAt(config, key);
   if (raw === undefined)
     return { value: typeof setting.default === 'number' ? setting.default : undefined, error: null };

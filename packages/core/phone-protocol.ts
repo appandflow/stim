@@ -208,7 +208,14 @@ export type PhoneLastBuild = Omit<State.LastBuildReport, 'platform' | 'status' |
 };
 export type PhoneBuildDiagnostic = State.BuildDiagnostic;
 export type PhoneDeviceLeaseState = State.DeviceLeaseState;
-export type PhoneStatusPayload = Omit<State.StatusPayload, 'environments' | 'machine' | 'unprovisionedWorktrees'> & {
+export type PhoneStatusPayload = Omit<
+  State.StatusPayload,
+  'environments' | 'machine' | 'unprovisionedWorktrees' | 'archived'
+> & {
+  archived?: (Omit<State.ArchivedWorkspace, 'agents' | 'builds'> & {
+    agents: PhoneEndedAgentSession[];
+    builds: Omit<State.ArchivedWorkspace['builds'], 'last'> & { last: PhoneLastBuild | null };
+  })[];
   unprovisionedWorktrees?: PhoneWorktreeFacts[];
   environments: PhoneEnvironmentState[];
   machine?: PhoneMachineUsageState | null;

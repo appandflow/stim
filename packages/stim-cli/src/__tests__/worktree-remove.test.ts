@@ -1,3 +1,4 @@
+import { readArchives } from '@stim-cli/core/state';
 import { execSync, spawn, type ChildProcess } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
@@ -645,7 +646,8 @@ test('action: removes the branch that Stim created when it has no unique commits
   expect(exec.calls.run.some((call) => /update-ref -d refs\/heads\/worktree-feat-x abc123/.test(call))).toBe(true);
 });
 
-test('action: on success, prints only the label-column vocabulary on stderr and nothing on stdout', async () => {
+test('action: removal archives history and keeps stdout empty', async () => {
+  process.env.STIM_ARCHIVE_ENABLED = 'true';
   upsertProject(wtDir, {
     worktreeRoot: true,
     worktreeBranch: 'worktree-feat-x',
@@ -654,7 +656,7 @@ test('action: on success, prints only the label-column vocabulary on stderr and 
     platforms: { ios: { deviceUdid: 'U1', owned: true, deviceName: 'stim-x' } },
   });
   ensureWorkspaceStorage(wtDir);
-  writeFileSync(join(workspaceDir(wtDir), 'state.json'), '{}');
+  writeFileSync(join(workspaceDir(wtDir), 'state.json'), '{"lastUsedAt":"2026-01-01T00:00:00Z"}');
   expect(takeLease({ root: wtDir, platform: 'android', id: 'R5CT', kind: 'run' }).status).toBe('taken');
   const exec = makeExecutor({
     worktrees: porcelain([
@@ -677,8 +679,12 @@ test('action: on success, prints only the label-column vocabulary on stderr and 
   } finally {
     console.log = originalLog;
     console.error = originalError;
+    delete process.env.STIM_ARCHIVE_ENABLED;
   }
 
+  expect(errs.filter((line) => line.startsWith('could not archive:'))).toEqual([]);
+  expect(readArchives()).toHaveLength(1);
+  expect(readArchives()[0]?.projectRoot).toBe(wtDir);
   expect(process.exitCode).not.toBe(1);
   expect(logs).toEqual([]);
   expect(errs.some((line) => /^\s*device\s+deleted stim-x$/.test(line))).toBe(true);
@@ -1786,10 +1792,20 @@ test('against a real repo: a worktree dirty only with watchman cookies is remove
     expect(execSync('git status --porcelain', { cwd: wt, encoding: 'utf-8', timeout: 15_000 })).toMatch(
       /\?\? \.watchman-cookie-/,
     );
+    process.env.STIM_ARCHIVE_ENABLED = 'true';
+    upsertProject(wt, {});
+    ensureWorkspaceStorage(wt);
+    writeFileSync(workspaceStateFile(wt), '{"lastUsedAt":"2026-01-01T00:00:00Z"}');
+    const stdout = vi.spyOn(console, 'log');
     await removeCapturingErrors(wt);
+    expect(stdout).not.toHaveBeenCalled();
+    stdout.mockRestore();
+    expect(readArchives().find((entry) => entry.projectRoot === wt)?.removedBy).toBe('worktree-remove');
     expect(process.exitCode).not.toBe(1);
     expect(existsSync(wt)).toBe(false);
   } finally {
+    vi.restoreAllMocks();
+    delete process.env.STIM_ARCHIVE_ENABLED;
     process.chdir(originalCwd);
     process.exitCode = 0;
     rmSync(base, { recursive: true, force: true });

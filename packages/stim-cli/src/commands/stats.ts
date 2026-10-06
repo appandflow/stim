@@ -1,7 +1,8 @@
+import { formatBytes } from '../fs-util.ts';
 import chalk from 'chalk';
 import type { Command } from 'commander';
 import { formatLongDuration } from '../command-output.ts';
-import { readStatsReport, statsProjectKey } from '@stim-cli/core/state';
+import { archivedUsage, readArchives, readStatsReport, statsProjectKey } from '@stim-cli/core/state';
 import type { OffloadSummary, StatsBucket, StatsPlatform } from '../engine/stats.ts';
 import { findProjectRoot } from '../workspace/project.ts';
 import { gitCommonDir, repoRoot } from '../workspace/worktree.ts';
@@ -42,6 +43,8 @@ export default function statsCommand(program: Command): void {
       const lines: string[] = [];
       if (project) lines.push(`project ${project.key}`, ...sectionLines(project));
       lines.push('machine', ...sectionLines(machine));
+      const usage = archivedUsage(readArchives());
+      lines.push('archive', `  archived workspaces: ${usage.count}, ${formatBytes(usage.bytes)}`);
       if (offload.placements.length || Object.keys(offload.machines).length) lines.push(...placementLines(offload));
       for (const line of lines) console.log(line);
     });
