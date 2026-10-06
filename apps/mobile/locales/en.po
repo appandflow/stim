@@ -2544,6 +2544,10 @@ msgstr "No notifications"
 msgid "No recording available."
 msgstr "No recording available."
 
+#: src/lib/device-unavailable.ts
+msgid "No recording for this device."
+msgstr "No recording for this device."
+
 #: src/screens/logs.tsx
 msgid "No records match these filters."
 msgstr "No records match these filters."
@@ -3104,6 +3108,10 @@ msgstr "Recording for replay"
 #: src/components/replay-bar.tsx
 msgid "Recording timeline"
 msgstr "Recording timeline"
+
+#: src/lib/device-unavailable.ts
+msgid "Recording was off for this workspace."
+msgstr "Recording was off for this workspace."
 
 #: src/lib/machine-report.ts
 #: src/screens/mac-status.tsx
@@ -3781,7 +3789,7 @@ msgstr "the upstream"
 msgid "This archive is no longer available."
 msgstr "This archive is no longer available."
 
-#: src/screens/device-view.tsx
+#: src/lib/device-unavailable.ts
 msgid "This device is not running."
 msgstr "This device is not running."
 
@@ -3838,6 +3846,10 @@ msgstr "This workspace · last {minutes} min"
 #: src/screens/workspace-resources.tsx
 msgid "This workspace is no longer in the status."
 msgstr "This workspace is no longer in the status."
+
+#: src/lib/device-unavailable.ts
+msgid "This workspace is no longer on this Mac."
+msgstr "This workspace is no longer on this Mac."
 
 #: src/lib/inbox.ts
 msgid "Today"

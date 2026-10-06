@@ -77,6 +77,12 @@ export function buildTimeline(
   return { start: shown[0]!.start, end: shown.at(-1)!.end, spans, length, pieces };
 }
 
+export function clampReplayTime(timeline: Timeline, at: number): number {
+  const clamped = Math.min(timeline.end, Math.max(timeline.start, at));
+  const span = timeline.spans.find((span) => span.end >= clamped);
+  return span ? Math.max(span.start, clamped) : timeline.end;
+}
+
 /** Where `at` sits on the track, 0 to 1; a time before the oldest footage sits where the footage starts. */
 export function positionOf(timeline: Timeline, at: number): number {
   for (const piece of timeline.pieces) {
