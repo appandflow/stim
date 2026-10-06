@@ -94,7 +94,7 @@ stim-server setup --client <node-id> --ticket <43-base64url-characters> --expire
   [--env KEY=VALUE]... [--path-prepend <dir>]... [--yes] [--json]
 ```
 
-If the server is not installed globally, use `npx --yes stim-server@<version>`
+If the server is not installed globally, use `npx --yes --package @stim-cli/server@<version> stim-server`
 in place of `stim-server`, with the exact version from the client Mac.
 At least one capability is required. The expiry must be in the future and at
 most two hours ahead. The defaults are port 7787 and label `dev.stim.server`.
@@ -105,7 +105,9 @@ GUI login session.
 Running setup on the worker is the worker-side approval. It pre-approves at
 most one request per chosen capability, from this node, carrying this ticket,
 until this expiry. A terminal asks y/N for each grant (default No); use `--yes`
-to approve without those questions, including without a terminal. A person on
+to approve without those questions, including without a terminal. Without
+a terminal or `--yes`, setup refuses before installing anything unless every
+chosen capability already has a matching approval. A person on
 the worker still approves; an SSH-driven run is not offered. Build and
 device-host requests are separate grants. Build never includes read or control.
 A rerun before expiry reports matching approved requests as already approved
@@ -118,11 +120,12 @@ Stim Host, installs or reuses the managed LaunchAgent, and creates or reuses a
 tailnet-only HTTPS route on 7443 or the next free port. Older managed services
 use the service update busy-wait and rollback behavior. Newer versions stay
 installed; tools report a Stim build difference. A reused server must be at
-least **1.16.0**, the first version with setup ticket storage and the journal
+least **1.16.0** (ignoring its prerelease suffix for this floor), the first version with setup ticket storage and the journal
 route. An older app server refuses immediately with an update remedy.
 
 When a Desktop-run server already answers on the port, setup reuses it and
-installs no LaunchAgent. Its permissions belong to that app. The server must
+installs no LaunchAgent. It requires an existing tailnet route and refuses
+to create one it cannot record. Its permissions belong to that app. The server must
 use the same Stim home. Export a scratch `STIM_HOME` in the shell before
 running setup; `--env` cannot set it. Repeatable `--env KEY=VALUE` and
 `--path-prepend <absolute-dir>` have the same validation and environment order
@@ -164,7 +167,10 @@ hiding tools until a build grant. Each valid setup run prunes journals more
 than one hour past expiry. A dedicated `server/setup.claims` ownership claim
 serializes runs; the service update claim is released before waiting for
 requests and permissions. A competing setup refuses with the exact claim
-and removal command.
+and removal command. Ctrl-C or SIGTERM finishes the running step as failed
+with detail `interrupted`, completes the journal, releases the setup claim,
+and exits 1. A typed N also exits 1; a question timeout follows ticket expiry
+and exits 2.
 
 The summary lists what is ready and the undo commands:
 
@@ -174,7 +180,9 @@ stim-server devices revoke <device-host-request-id>
 stim-server service uninstall --label <label>
 ```
 
-Uninstall removes only a route the managed install created. A reused app's
+If route verification or recording fails, setup removes the route it just
+created; a failed removal prints the exact `tailscale serve --https=<port> off`
+remedy. Uninstall removes only a route the managed install created. A reused app's
 server and route remain managed by that app. If its health response omits
 permission grants, setup keeps those checks pending or lets a terminal skip
 them; Stim Host's grants do not stand in for another app's permissions. Pairings, Stim Host and its macOS

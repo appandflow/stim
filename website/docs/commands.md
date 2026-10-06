@@ -1726,8 +1726,13 @@ archive usage line. See [archived workspaces](./worktrees.md#archived-workspaces
 A person on the worker Mac runs `stim-server setup` to set it up and approve
 at most one build and/or device-host request from one tailnet node, carrying
 one ticket, until one expiry. Each grant asks y/N in a terminal; `--yes` is
-required without a terminal. Agents never run setup or approve requests.
-Setup reuses Desktop's server when it already answers, never enables Funnel,
+required to approve new requests without a terminal. Agents never run setup
+or approve requests.
+Setup reuses Desktop's server when it already answers and has a tailnet route.
+Without a terminal or `--yes`, it refuses before installing anything unless
+every requested capability already has a matching approval. A typed N, Ctrl-C
+or SIGTERM exits 1; an interrupt completes the journal and releases the setup
+claim. Setup never enables Funnel,
 and never changes macOS permission settings. An SSH-driven run is not offered.
 
 <Tabs groupId="stim-invocation" defaultValue="global">
@@ -1741,7 +1746,7 @@ stim-server setup --client <node-id> --ticket <ticket> --expires <ISO-time> --bu
 <TabItem value="npx" label="npx">
 
 ```bash
-npx --yes stim-server@<version> setup --client <node-id> --ticket <ticket> --expires <ISO-time> --build --device-host
+npx --yes --package @stim-cli/server@<version> stim-server setup --client <node-id> --ticket <ticket> --expires <ISO-time> --build --device-host
 ```
 
 </TabItem>

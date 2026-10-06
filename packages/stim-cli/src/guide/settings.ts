@@ -588,7 +588,11 @@ A person can also run \`stim-server setup\` on the worker: one node, one ticket,
 one expiry, at most one request per capability, with per-grant y/N in a
 terminal or \`--yes\` otherwise. Agents never run \`stim-server setup\` or
 approve requests. Setup never changes TCC or enables Funnel; an SSH-driven
-run is not offered. Hosting grants include no read, control or build capability.
+run is not offered. Without a terminal or --yes, setup refuses before installing
+unless every chosen capability already has a matching approval. Desktop reuse
+requires an existing tailnet route. Ctrl-C or SIGTERM completes the journal,
+releases the setup claim and exits 1; a typed N also exits 1. Hosting grants
+include no read, control or build capability.
 $STIM_HOME/device-host-machines.json stores a private token and pinned tailnet
 node. Doctor never prints the token; it reports each machine under deviceHosts
 in JSON. Stim sends tokens only to the pinned node's own tailnet address,

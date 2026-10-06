@@ -329,7 +329,20 @@ async function runService(
 async function main(): Promise<void> {
   if (process.argv[2] === 'setup') {
     if (process.argv.slice(3).some((arg) => arg === '--help' || arg === '-h')) return void console.log(USAGE);
-    process.exitCode = await runSetup(process.argv.slice(3), pkg.version, defaultSetupDeps());
+    const controller = new AbortController();
+    const interrupt = () => controller.abort();
+    process.on('SIGINT', interrupt);
+    process.on('SIGTERM', interrupt);
+    try {
+      process.exitCode = await runSetup(process.argv.slice(3), pkg.version, {
+        ...defaultSetupDeps(),
+        signal: controller.signal,
+      });
+    } finally {
+      process.off('SIGINT', interrupt);
+      process.off('SIGTERM', interrupt);
+    }
+    if (controller.signal.aborted) process.exit(1);
     return;
   }
   const { values, positionals } = parseArgs({
