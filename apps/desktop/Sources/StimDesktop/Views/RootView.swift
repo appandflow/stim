@@ -36,6 +36,7 @@ struct RootView: View {
   @State private var inspectorWidth = WorkspaceDetail.inspectorWidth
   @State private var windowSize = CGSize.zero
   @State private var sidebarWidth: CGFloat = 0
+  @State private var settledInspectorFits: Bool?
   @State private var detailWidth: CGFloat = 0
   @State private var logWorkspacePath: String?
   @State private var columnVisibility = NavigationSplitViewVisibility.all
@@ -131,6 +132,7 @@ struct RootView: View {
     )
     .focusedSceneValue(\.sidebarNavigation, SidebarNavigation { selection = $0 })
     .onChange(of: inspectorFits) { showsInspectorOverlay = false }
+    .task(id: [windowSize.width, detailRoom]) { await settleInspectorFit() }
     .onGeometryChange(for: CGSize.self) {
       $0.size
     } action: {
@@ -225,8 +227,24 @@ struct RootView: View {
       })
   }
 
+  private var detailRoom: CGFloat {
+    windowSize.width - (columnVisibility == .detailOnly ? 0 : sidebarWidth)
+  }
+
   private var inspectorFits: Bool {
-    windowSize.width - (columnVisibility == .detailOnly ? 0 : sidebarWidth) >= WorkspaceDetail.widthWithInspector
+    settledInspectorFits ?? (detailRoom >= WorkspaceDetail.widthWithInspector)
+  }
+
+  private func settleInspectorFit() async {
+    let fits = detailRoom >= WorkspaceDetail.widthWithInspector
+    guard windowSize.width > 0, columnVisibility == .detailOnly || sidebarWidth > 0, settledInspectorFits != fits else {
+      return
+    }
+    if fits, settledInspectorFits != nil {
+      try? await Task.sleep(for: .milliseconds(150))
+      if Task.isCancelled { return }
+    }
+    settledInspectorFits = fits
   }
 
   private var inspector: InspectorPresentation {
