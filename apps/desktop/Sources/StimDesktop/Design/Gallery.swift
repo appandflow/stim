@@ -240,6 +240,17 @@
               }
             }
           }
+          section("Terminal") {
+            TerminalCard(
+              lines: [
+                TerminalLine(text: "$ stim ios", kind: .command),
+                TerminalLine(text: "Checking workspace", kind: .output),
+                TerminalLine(text: "Dependencies ready", kind: .ok),
+                TerminalLine(text: "Cache miss", kind: .failed),
+                TerminalLine(text: "Prebuild skipped", kind: .skipped),
+                TerminalLine(text: "Building app", kind: .pending),
+              ], mode: .live)
+          }
           section("Status dots") {
             ForEach([CGFloat(6), CGFloat(7)], id: \.self) { size in
               HStack(spacing: Space.md) {

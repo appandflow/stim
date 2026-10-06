@@ -122,7 +122,12 @@ struct SetupIllustration: View {
       switch step {
       case .welcome: JarArt(showsCheck: false)
       case .done: JarArt(showsCheck: complete)
-      case .cli: TerminalArt(version: stimVersion, installer: installer).id(installer)
+      case .cli:
+        ZStack {
+          BrandHalo(size: 150)
+          TerminalCard(lines: terminalLines, mode: .scripted(loop: true), height: 112)
+        }
+        .id(installer)
       case .skill: SkillArt()
       case .notifications: NotificationArt()
       case .check: DoctorArt()
@@ -131,6 +136,16 @@ struct SetupIllustration: View {
     .frame(height: 150)
     .frame(maxWidth: .infinity)
     .accessibilityHidden(true)
+  }
+
+  private var terminalLines: [TerminalLine] {
+    let command = installer.installCommand("stim", cwd: "")
+    return [
+      TerminalLine(text: "$ \(([command.program] + command.arguments).joined(separator: " "))", kind: .command),
+      TerminalLine(text: "added 1 package", kind: .output),
+      TerminalLine(text: "$ stim --version", kind: .command),
+      TerminalLine(text: stimVersion ?? "1.0.0", kind: .output),
+    ]
   }
 }
 
@@ -207,83 +222,6 @@ private struct JarArt: View {
       }
     }
     .animation(reduceMotion ? nil : .spring(response: 0.4, dampingFraction: 0.55), value: showsCheck)
-  }
-}
-
-private struct TerminalArt: View {
-  var version: String?
-  var installer: PackageManager
-  private var lines: [String] {
-    let command = installer.installCommand("stim", cwd: "")
-    return [
-      "$ \(([command.program] + command.arguments).joined(separator: " "))", "added 1 package", "$ stim --version",
-      version ?? "1.0.0",
-    ]
-  }
-  @Environment(\.accessibilityReduceMotion) private var reduceMotion
-  @State private var typed = 0
-  @State private var cursorOn = true
-
-  private var total: Int { lines.reduce(0) { $0 + $1.count } }
-
-  var body: some View {
-    ZStack {
-      BrandHalo(size: 150)
-      VStack(alignment: .leading, spacing: 0) {
-        HStack(spacing: 5) {
-          ForEach([Color(rgba: 0xFF5F57FF), Color(rgba: 0xFEBC2EFF), Color(rgba: 0x28C840FF)], id: \.self) {
-            Circle().fill($0).frame(width: 7, height: 7)
-          }
-        }
-        .padding(.bottom, Space.md)
-        ForEach(Array(visibleLines.enumerated()), id: \.offset) { index, line in
-          HStack(spacing: 0) {
-            Text(line)
-              .foregroundStyle(line.hasPrefix("$") ? Media.text : Media.textTertiary)
-            if index == visibleLines.count - 1 {
-              Rectangle().fill(Palette.accent).frame(width: 6, height: 11).opacity(cursorOn ? 1 : 0)
-            }
-          }
-          .font(.stim(.caption, mono: true))
-          .lineLimit(1)
-          .frame(height: 16)
-        }
-        Spacer(minLength: 0)
-      }
-      .padding(Space.lg)
-      .frame(width: 236, height: 112, alignment: .topLeading)
-      .background(RoundedRectangle(cornerRadius: Radius.card).fill(Media.screen))
-      .overlay(RoundedRectangle(cornerRadius: Radius.card).strokeBorder(Palette.accent.opacity(0.4)))
-      .shadow(color: Palette.brand.opacity(0.3), radius: 16, y: 8)
-    }
-    .task {
-      guard !reduceMotion else {
-        typed = total
-        return
-      }
-      while !Task.isCancelled {
-        for count in 0...total {
-          typed = count
-          cursorOn = true
-          try? await Task.sleep(for: .milliseconds(lines[0].count > count ? 55 : 30))
-        }
-        for _ in 0..<6 {
-          try? await Task.sleep(for: .milliseconds(450))
-          cursorOn.toggle()
-        }
-      }
-    }
-  }
-
-  private var visibleLines: [String] {
-    var left = typed
-    var out: [String] = []
-    for line in lines {
-      guard left > 0 || out.isEmpty else { break }
-      out.append(String(line.prefix(left)))
-      left -= min(left, line.count)
-    }
-    return out
   }
 }
 
