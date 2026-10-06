@@ -56,7 +56,8 @@ export function collectArchives(scope: string, olderThan: number | null, now: nu
   };
 }
 
-export function archiveLines(selection: ArchiveSelection): string[] {
+export function archiveLines(selection: ArchiveSelection | undefined): string[] {
+  if (!selection) return [];
   return [
     `Archived workspaces (${selection.records.length}):`,
     ...selection.records.map(

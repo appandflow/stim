@@ -187,7 +187,7 @@ export function formatGcReport(
   }: Partial<GcReport>,
   { now = Date.now() }: { now?: number } = {},
 ): string[] {
-  const lines: string[] = archives ? archiveLines(archives) : [];
+  const lines: string[] = archiveLines(archives);
   const staleLocks = buildLocks?.stale ?? [];
   const liveLocks = buildLocks?.live ?? [];
   const staleSlots = buildSlots?.stale ?? [];
