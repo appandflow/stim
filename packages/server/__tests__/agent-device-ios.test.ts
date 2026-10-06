@@ -8,12 +8,20 @@ import { PassThrough, Readable } from 'node:stream';
 import { createHash } from 'node:crypto';
 import { readClaimSet } from '@stim-cli/core/ownership-claim';
 import { parseHostedAgentGrant } from '@stim-cli/core/state';
+import type { ProcessIdentityStatus } from '@stim-cli/core/process-identity';
 import { AgentDeviceDriver } from '../src/agent-device-driver.ts';
 
 const fixture = vi.hoisted(() => ({
   policy: true,
   backend: true,
   proxyStopped: true,
+  ps: [] as string[],
+  psError: false,
+  uncaptured: new Set<number>(),
+  waits: [] as [number, number][],
+  identities: {} as Record<number, ProcessIdentityStatus>,
+  stubborn: new Set<number>(),
+  events: [] as string[],
   calls: [] as { path: string; body: string; headers: Record<string, string> }[],
 }));
 
@@ -22,14 +30,29 @@ vi.mock('@stim-cli/core/process-identity', async (original) => {
   return {
     ...actual,
     captureProcessIdentity: (pid: number) =>
-      [777777, 777778].includes(pid) ? { ok: true, token: 'fixture-process' } : actual.captureProcessIdentity(pid),
+      fixture.uncaptured.has(pid)
+        ? { ok: false, reason: 'unavailable' }
+        : pid in fixture.identities
+          ? { ok: true, token: `runner-${pid}` }
+          : [777777, 777778].includes(pid)
+            ? { ok: true, token: 'fixture-process' }
+            : actual.captureProcessIdentity(pid),
     inspectProcessIdentity: (record: Parameters<typeof actual.inspectProcessIdentity>[0]) =>
-      record?.pid === 777778 && !fixture.proxyStopped
-        ? 'unknown'
-        : record && typeof record.pid === 'number' && [777777, 777778].includes(record.pid)
-          ? 'gone'
-          : actual.inspectProcessIdentity(record),
-    waitForProcessExit: () => Promise.resolve(fixture.proxyStopped),
+      record && typeof record.pid === 'number' && record.pid in fixture.identities
+        ? fixture.identities[record.pid]
+        : record?.pid === 777778 && !fixture.proxyStopped
+          ? 'unknown'
+          : record && typeof record.pid === 'number' && [777777, 777778].includes(record.pid)
+            ? 'gone'
+            : actual.inspectProcessIdentity(record),
+    waitForProcessExit: (record: { pid: number }, timeoutMs: number) => {
+      if (record.pid in fixture.identities) fixture.waits.push([record.pid, timeoutMs]);
+      return Promise.resolve(
+        record.pid in fixture.identities
+          ? ['gone', 'different'].includes(fixture.identities[record.pid]!)
+          : fixture.proxyStopped,
+      );
+    },
   };
 });
 
@@ -60,7 +83,15 @@ vi.mock('node:child_process', async (original) => ({
     queueMicrotask(() => child.stdout.write('Proxy listening at http://127.0.0.1:4310\n'));
     return child;
   },
-  execFile: (...args: unknown[]) => (args.at(-1) as () => void)(),
+  execFile: (command: string, ...args: unknown[]) => {
+    fixture.events.push(command === '/bin/ps' ? 'ps' : 'daemon-stop');
+    if (command === '/bin/ps' && fixture.psError) {
+      (args.at(-1) as (error: Error) => void)(new Error('process listing unavailable'));
+      return;
+    }
+    const ps = command === '/bin/ps' && fixture.ps.length > 1 ? fixture.ps.shift() : fixture.ps[0];
+    (args.at(-1) as (error: null, stdout: string) => void)(null, command === '/bin/ps' ? (ps ?? '') : '');
+  },
 }));
 
 vi.mock('node:http', async (original) => ({
@@ -89,7 +120,7 @@ vi.mock('node:http', async (original) => ({
 }));
 
 const SESSION = '11111111-1111-4111-8111-111111111111';
-const UDID = '22222222-2222-4222-8222-222222222222';
+const UDID = '22222222-abcd-4222-8222-222222222222';
 const upstream =
   '/private/tmp/claude-501/-Users-janicduplessis-Developer-stim/0dc300cd-42a3-4758-8d35-79edf2904001/scratchpad/ad-937471b/build-src';
 let home: string;
@@ -104,6 +135,22 @@ beforeEach(() => {
   fixture.backend = true;
   fixture.proxyStopped = true;
   fixture.calls = [];
+  fixture.ps = [];
+  fixture.psError = false;
+  fixture.uncaptured = new Set();
+  fixture.waits = [];
+  fixture.identities = {};
+  fixture.stubborn = new Set();
+  fixture.events = [];
+  const kill = process.kill.bind(process);
+  vi.spyOn(process, 'kill').mockImplementation((pid, signal) => {
+    if (Math.abs(pid) in fixture.identities) {
+      fixture.events.push(`signal:${pid}:${signal}`);
+      if (!fixture.stubborn.has(Math.abs(pid)) || signal === 'SIGKILL') fixture.identities[Math.abs(pid)] = 'gone';
+      return true;
+    }
+    return kill(pid, signal);
+  });
   driver = new AgentDeviceDriver({
     env: { STIM_AGENT_DEVICE_BIN: bin },
     stateDir: join(home, 'agent'),
@@ -114,6 +161,7 @@ beforeEach(() => {
 
 afterEach(async () => {
   await driver.stop();
+  vi.restoreAllMocks();
   delete process.env.STIM_HOME;
   rmSync(home, { recursive: true, force: true });
 });
@@ -229,6 +277,93 @@ test('keeps the daemon claim until both its proxy and daemon are proven stopped'
   expect(readClaimSet(join(home, 'claims')).live).toHaveLength(1);
   fixture.proxyStopped = true;
   await driver.stop();
+  expect(readClaimSet(join(home, 'claims')).live).toHaveLength(0);
+});
+
+function runner(pid: number, udid = UDID, group = pid): string {
+  return `${pid} ${group} /Applications/Xcode.app/Contents/Developer/usr/bin/xcodebuild test-without-building -only-testing AgentDeviceRunnerUITests/RunnerTests/testCommand -xctestrun /host/AgentDeviceRunner.env.session-${udid}-owner-1.xctestrun -destination platform=iOS Simulator,id=${udid}`;
+}
+
+test('stops orphaned runners only for the exact session UDID, after the daemon clean path', async () => {
+  await start();
+  fixture.ps = [
+    [
+      runner(888880, UDID.toUpperCase()),
+      runner(888881, SESSION),
+      runner(888882, `${UDID}0`),
+      runner(888883).replace('-destination ', '--destination '),
+      runner(888884).replace('AgentDeviceRunnerUITests', 'OtherUITests'),
+      runner(888885, UDID, 900000),
+    ].join('\n'),
+  ];
+  fixture.identities = Object.fromEntries([888880, 888881, 888882, 888883, 888884, 888885].map((pid) => [pid, 'same']));
+  await driver.stop();
+  expect(fixture.events).toEqual(['daemon-stop', 'ps', 'ps', 'signal:-888880:SIGTERM', 'signal:888885:SIGTERM']);
+  expect(fixture.identities[888881]).toBe('same');
+  expect(readClaimSet(join(home, 'claims')).live).toHaveLength(0);
+});
+
+test('escalates a surviving runner group to SIGKILL after waiting for SIGTERM', async () => {
+  await start();
+  fixture.ps = [runner(888880)];
+  fixture.identities = { 888880: 'same' };
+  fixture.stubborn.add(888880);
+  await driver.stop();
+  expect(fixture.events).toEqual(['daemon-stop', 'ps', 'ps', 'signal:-888880:SIGTERM', 'signal:-888880:SIGKILL']);
+  expect(fixture.waits).toEqual([
+    [888880, 3000],
+    [888880, 2000],
+  ]);
+});
+
+test('never signals a runner whose captured identity changed or whose destination changed before signalling', async () => {
+  await start();
+  fixture.ps = [runner(888880) + '\n' + runner(888881), runner(888880) + '\n' + runner(888881, SESSION)];
+  fixture.identities = { 888880: 'different', 888881: 'same' };
+  await driver.stop();
+  expect(fixture.events).toEqual(['daemon-stop', 'ps', 'ps']);
+});
+
+test('keeps an unresolved runner claim, continues stopping other runners and retries cleanup', async () => {
+  await start();
+  fixture.ps = [runner(888880) + '\n' + runner(888881)];
+  fixture.identities = { 888880: 'unknown', 888881: 'same' };
+  await expect(driver.stop()).rejects.toThrow('iOS runners did not stop (888880)');
+  expect(fixture.events).toEqual(['daemon-stop', 'ps', 'ps', 'signal:-888881:SIGTERM']);
+  expect(readClaimSet(join(home, 'claims')).live).toHaveLength(1);
+  fixture.identities[888880] = 'same';
+  await driver.stop();
+  expect(fixture.identities[888880]).toBe('gone');
+  expect(readClaimSet(join(home, 'claims')).live).toHaveLength(0);
+});
+
+test('keeps the daemon claim when the process inventory cannot be read and retries cleanup', async () => {
+  await start();
+  fixture.psError = true;
+  await expect(driver.stop()).rejects.toThrow('process listing unavailable');
+  expect(readClaimSet(join(home, 'claims')).live).toHaveLength(1);
+  fixture.psError = false;
+  await driver.stop();
+  expect(readClaimSet(join(home, 'claims')).live).toHaveLength(0);
+});
+
+test('never signals a runner whose identity cannot be captured', async () => {
+  await start();
+  fixture.ps = [runner(888880)];
+  fixture.identities = { 888880: 'same' };
+  fixture.uncaptured.add(888880);
+  await expect(driver.stop()).rejects.toThrow('iOS runners did not stop (888880)');
+  expect(fixture.events).toEqual(['daemon-stop', 'ps', 'ps']);
+  fixture.uncaptured.clear();
+  await driver.stop();
+});
+
+test('cleans session runners when daemon startup fails', async () => {
+  fixture.backend = false;
+  fixture.ps = [runner(888880)];
+  fixture.identities = { 888880: 'same' };
+  await expect(driver.start()).rejects.toThrow('requires agent-device');
+  expect(fixture.identities[888880]).toBe('gone');
   expect(readClaimSet(join(home, 'claims')).live).toHaveLength(0);
 });
 
@@ -498,6 +633,22 @@ test.each([
 ])('refuses unsafe requests before any step reaches the daemon: %j', async (params) => {
   await start();
   fixture.calls = [];
+  fixture.ps = [];
+  fixture.psError = false;
+  fixture.uncaptured = new Set();
+  fixture.waits = [];
+  fixture.identities = {};
+  fixture.stubborn = new Set();
+  fixture.events = [];
+  const kill = process.kill.bind(process);
+  vi.spyOn(process, 'kill').mockImplementation((pid, signal) => {
+    if (Math.abs(pid) in fixture.identities) {
+      fixture.events.push(`signal:${pid}:${signal}`);
+      if (!fixture.stubborn.has(Math.abs(pid)) || signal === 'SIGKILL') fixture.identities[Math.abs(pid)] = 'gone';
+      return true;
+    }
+    return kill(pid, signal);
+  });
   expect((await rpc(params)).status).toBe(400);
   expect(fixture.calls).toEqual([]);
 });
@@ -535,6 +686,22 @@ test('allows screenshot artifacts but refuses uploads and stops forwarding after
     ).status,
   ).toBe(200);
   fixture.calls = [];
+  fixture.ps = [];
+  fixture.psError = false;
+  fixture.uncaptured = new Set();
+  fixture.waits = [];
+  fixture.identities = {};
+  fixture.stubborn = new Set();
+  fixture.events = [];
+  const kill = process.kill.bind(process);
+  vi.spyOn(process, 'kill').mockImplementation((pid, signal) => {
+    if (Math.abs(pid) in fixture.identities) {
+      fixture.events.push(`signal:${pid}:${signal}`);
+      if (!fixture.stubborn.has(Math.abs(pid)) || signal === 'SIGKILL') fixture.identities[Math.abs(pid)] = 'gone';
+      return true;
+    }
+    return kill(pid, signal);
+  });
   expect((await rpc({}, 'agent_device.command', '/upload')).status).toBe(404);
   await driver.revoke(SESSION);
   expect((await rpc({ command: 'snapshot' })).status).toBe(503);

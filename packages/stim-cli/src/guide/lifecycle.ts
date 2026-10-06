@@ -374,6 +374,8 @@ The config names daemonBaseUrl, daemonAuthToken, tenant, sessionIsolation,
 runId, clientId, deviceKey, leaseBackend, leaseProvider and platform; it carries
 no preallocated leaseId. stim stop closes the matching agent-device connection
 and removes that slot's config after the host confirms stop or revocation.
+The host stops the session daemon and identity-checked agent-device runners
+targeting its exact simulator UDID before deleting the simulator, even without close.
 
 Allowed: devices, open, close, snapshot, diff, wait, find, get, is, click, fill,
 press, type, focus, scroll, screenshot, longpress, swipe, back, home, orientation,

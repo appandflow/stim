@@ -719,6 +719,8 @@ this session's tenant. The config contains `daemonBaseUrl`, `daemonAuthToken`,
 the lease. `stim stop` closes the matching connection and removes that slot's
 config once the host confirms stop or revocation. An unreachable host keeps the
 config and placement for retry.
+The host stops the session daemon and identity-checked agent-device runners
+targeting its exact simulator UDID before deleting the simulator, even without `close`.
 
 Allowed commands are `devices`, `open`, `close`, `snapshot`, `diff`, `wait`, `find`, `get`,
 `is`, `click`, `fill`, `press`, `type`, `focus`, `scroll`, `screenshot`,

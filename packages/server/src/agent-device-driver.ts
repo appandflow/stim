@@ -38,6 +38,7 @@ import {
   type HostedAgentApp,
   type HostedAgentDriver,
 } from './agent-driver.ts';
+import { listProcesses } from './processes.ts';
 
 const UNSCOPED =
   'Agent control is unavailable: the agent-device on the hosting Mac has no macos-app lease to limit a client to one app, and Stim never hands a client the hosting Mac desktop.';
@@ -422,6 +423,8 @@ export class AgentDeviceDriver implements HostedAgentDriver {
         );
     }
     await this.stopDaemon();
+    await this.stopIosRunners();
+    this.daemonRecord = null;
     this.iosProxy = null;
     if (!this.claim) return;
     clearClaimChild(this.claim);
@@ -452,7 +455,6 @@ export class AgentDeviceDriver implements HostedAgentDriver {
       );
     if (this.daemonRecord && !(await this.signalAndWait(this.daemonRecord, false)))
       throw new Error('The agent-device daemon did not stop; its claim was kept.');
-    this.daemonRecord = null;
   }
 
   private async signalAndWait(record: ProcessRecord, group: boolean): Promise<boolean> {
@@ -467,6 +469,41 @@ export class AgentDeviceDriver implements HostedAgentDriver {
       if (await waitForProcessExit(record, signal === 'SIGTERM' ? 3000 : 2000)) return true;
     }
     return false;
+  }
+
+  private async stopIosRunners(): Promise<void> {
+    if (!this.options.ios) return;
+    const udid = this.options.ios.udid.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const destination = new RegExp(`(?:^|\\s)-destination\\s+platform=iOS Simulator,id=${udid}(?=\\s|$)`, 'i');
+    const runners = (ps: string) =>
+      ps.split('\n').flatMap((line) => {
+        const match = /^\s*(\d+)\s+(\d+)\s+(.*)$/.exec(line);
+        if (
+          !match ||
+          !/^(?:\S*\/)?xcodebuild\s/.test(match[3]!) ||
+          !/\stest-without-building(?:\s|$)/.test(match[3]!) ||
+          !/\s-only-testing\s+AgentDeviceRunnerUITests\/RunnerTests\/testCommand(?:\s|$)/.test(match[3]!) ||
+          !destination.test(match[3]!)
+        )
+          return [];
+        return [{ pid: Number(match[1]), group: Number(match[1]) === Number(match[2]) }];
+      });
+    const candidates = runners(await listProcesses('pid=,pgid=,command=')).map((runner) => ({
+      pid: runner.pid,
+      group: runner.group,
+      record: this.captured(runner.pid),
+    }));
+    if (!candidates.length) return;
+    const current = runners(await listProcesses('pid=,pgid=,command='));
+    const failures: number[] = [];
+    for (const runner of candidates) {
+      if (!current.some((live) => live.pid === runner.pid && live.group === runner.group)) continue;
+      if (!runner.record || !(await this.signalAndWait(runner.record, runner.group))) failures.push(runner.pid);
+    }
+    if (failures.length)
+      throw new Error(
+        `The agent-device iOS runners did not stop (${failures.join(', ')}); their daemon claim was kept.`,
+      );
   }
 
   /**
