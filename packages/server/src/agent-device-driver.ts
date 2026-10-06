@@ -721,6 +721,27 @@ function pinLease(body: Buffer | null, lease: Lease): Buffer | Refusal {
 
 const IOS_LEASE_METHODS = new Set([...LEASE_METHODS, 'agent_device.lease.allocate', 'agent-device.lease.allocate']);
 
+// agent-device's buildRequestFlags sends client-local state and routing alongside command options.
+const IOS_CLIENT_AMBIENT_INPUTS = [
+  'cwd',
+  'stateDir',
+  'config',
+  'remoteConfig',
+  'daemonBaseUrl',
+  'daemonAuthToken',
+  'daemonTransport',
+  'daemonServerMode',
+  'tenant',
+  'tenantId',
+  'runId',
+  'clientId',
+  'deviceKey',
+  'leaseBackend',
+  'sessionIsolation',
+  'leaseProvider',
+  'provider',
+];
+
 // agent-device's macos-app lease rejects these host inputs; ios-instance does not (ADR 0007).
 const HOST_INPUTS = [
   'out',
@@ -741,11 +762,7 @@ const HOST_INPUTS = [
   'iosXctestrunFile',
   'iosXctestDerivedDataPath',
   'iosXctestEnvDir',
-  'cwd',
   'developerDir',
-  'stateDir',
-  'config',
-  'remoteConfig',
   'artifact',
   'dsym',
   'reportJunit',
@@ -842,6 +859,7 @@ function pinIosCommand(params: Record<string, unknown>, udid: string): Record<st
   const { runtime: _runtime, meta: _meta, flags, input, ...rest } = params;
   const fields = (value: unknown): Record<string, unknown> => {
     const source = withoutDeviceSelectors(value);
+    for (const key of IOS_CLIENT_AMBIENT_INPUTS) delete source[key];
     return {
       ...source,
       platform: 'ios',

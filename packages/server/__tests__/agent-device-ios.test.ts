@@ -119,7 +119,11 @@ afterEach(async () => {
 });
 
 async function rpc(params: object, method = 'agent_device.command', path = '/rpc') {
-  const request = Object.assign(Readable.from([Buffer.from(JSON.stringify({ id: 4, method, params }))]), {
+  return rpcBody({ id: 4, method, params }, path);
+}
+
+async function rpcBody(body: object, path = '/rpc') {
+  const request = Object.assign(Readable.from([Buffer.from(JSON.stringify(body))]), {
     url: `/device-host/agent/${SESSION}${path}`,
     method: 'POST',
     headers: { authorization: 'Bearer client-private' },
@@ -228,6 +232,173 @@ test('keeps the daemon claim until both its proxy and daemon are proven stopped'
   expect(readClaimSet(join(home, 'claims')).live).toHaveLength(0);
 });
 
+test.each([
+  { command: 'devices', positionals: [], flags: {} },
+  { command: 'open', positionals: ['dev.app'], flags: { udid: UDID } },
+  { command: 'snapshot', positionals: [], flags: { snapshotInteractiveOnly: true } },
+  { command: 'click', positionals: ['e1'], flags: {} },
+  {
+    command: 'screenshot',
+    positionals: [],
+    flags: { out: '/tmp/agent-device-screenshot-123-ab12.png' },
+  },
+  {
+    command: 'screenshot',
+    positionals: ['/tmp/agent-device-screenshot-123-ab12.png'],
+    flags: {},
+  },
+  { command: 'close', positionals: [], flags: {} },
+])('accepts the real client envelope for $command without forwarding ambient paths or routing', async (command) => {
+  await start();
+  const captured = {
+    jsonrpc: '2.0',
+    id: 'b6dc81fbd6708d93',
+    method: 'agent_device.command',
+    params: {
+      session: 'default',
+      command: 'devices',
+      positionals: [],
+      flags: {
+        stateDir: '/var/folders/48/xx/T/tmp.8d2DWWsIz6',
+        daemonBaseUrl: 'http://127.0.0.1:4399/x',
+        tenant: 'stim.<session>',
+        runId: '<session>',
+        leaseBackend: 'ios-instance',
+        sessionIsolation: 'tenant',
+        platform: 'ios',
+        verbose: false,
+      },
+      meta: {
+        requestId: 'b6dc81fbd6708d93',
+        cwd: '/private/tmp/.../2266-p1',
+        sessionExplicit: false,
+        debug: false,
+        lockPlatform: 'ios',
+        tenantId: 'stim.<session>',
+        runId: '<session>',
+        leaseBackend: 'ios-instance',
+        sessionIsolation: 'tenant',
+      },
+      token: '<token>',
+    },
+  };
+  const screenshot = command.command === 'screenshot';
+  const scope =
+    command.command === 'devices'
+      ? {}
+      : { leaseId: 'client-lease', leaseProvider: 'proxy', clientId: 'client', deviceKey: `ios:mobile:${UDID}` };
+  const params = {
+    ...captured.params,
+    ...command,
+    flags: { ...captured.params.flags, ...command.flags, ...scope },
+    meta: {
+      ...captured.params.meta,
+      ...scope,
+      ...(screenshot ? { clientArtifactPaths: { path: '/client/shot.png' } } : {}),
+    },
+  };
+  expect((await rpcBody({ ...captured, params })).status).toBe(200);
+  const forwarded = JSON.parse(fixture.calls.at(-1)!.body);
+  expect(forwarded.params).toEqual({
+    command: command.command,
+    session: 'default',
+    positionals: command.positionals,
+    flags: {
+      ...command.flags,
+      ...(scope.leaseId ? { leaseId: scope.leaseId } : {}),
+      verbose: false,
+      platform: 'ios',
+      udid: UDID,
+    },
+    meta: {
+      requestId: 'b6dc81fbd6708d93',
+      sessionExplicit: false,
+      debug: false,
+      ...(scope.leaseId ? { leaseId: scope.leaseId } : {}),
+      ...(screenshot ? { clientArtifactPaths: { path: '/client/shot.png' } } : {}),
+      tenantId: `stim.${SESSION}`,
+      runId: SESSION,
+      clientId: 'agent',
+      deviceKey: `ios:mobile:${UDID}`,
+      leaseProvider: 'proxy',
+      leaseBackend: 'ios-instance',
+      sessionIsolation: 'tenant',
+    },
+  });
+  expect(fixture.calls.at(-1)!.body).not.toContain(captured.params.flags.stateDir);
+  expect(fixture.calls.at(-1)!.body).not.toContain(captured.params.meta.cwd);
+});
+
+test.each(['flags', 'input'])('strips client configuration and connection scope from %s', async (field) => {
+  await start();
+  const ambient = {
+    stateDir: '/client/state',
+    cwd: '/client/worktree',
+    config: '/client/config.json',
+    remoteConfig: '/client/remote.json',
+    daemonBaseUrl: 'http://client/rpc',
+    daemonAuthToken: 'client-token',
+    daemonTransport: 'http',
+    daemonServerMode: 'dual',
+    tenant: 'other',
+    tenantId: 'other',
+    runId: 'other',
+    clientId: 'other',
+    deviceKey: 'other',
+    leaseBackend: 'macos-app',
+    sessionIsolation: 'none',
+    leaseProvider: 'limrun',
+    provider: 'limrun',
+  };
+  expect((await rpc({ command: 'snapshot', [field]: ambient, meta: ambient })).status).toBe(200);
+  const forwarded = JSON.parse(fixture.calls.at(-1)!.body).params;
+  expect(forwarded[field]).toEqual({ platform: 'ios', udid: UDID });
+  expect(forwarded.meta).toEqual({
+    tenantId: `stim.${SESSION}`,
+    runId: SESSION,
+    clientId: 'agent',
+    deviceKey: `ios:mobile:${UDID}`,
+    leaseProvider: 'proxy',
+    leaseBackend: 'ios-instance',
+    sessionIsolation: 'tenant',
+  });
+  expect(fixture.calls.at(-1)!.body).not.toContain('/client/');
+  expect(fixture.calls.at(-1)!.body).not.toContain('client-token');
+});
+
+test.each(['heartbeat', 'release'])('accepts the real client lease %s scope and pins its owner', async (command) => {
+  await start();
+  expect(
+    (
+      await rpc(
+        {
+          session: 'default',
+          token: '<token>',
+          tenantId: 'stim.<session>',
+          runId: '<session>',
+          leaseProvider: 'proxy',
+          clientId: 'client',
+          deviceKey: `ios:mobile:${UDID}`,
+          leaseId: 'client-lease',
+          ...(command === 'heartbeat' ? { ttlMs: 300000 } : {}),
+        },
+        `agent_device.lease.${command}`,
+      )
+    ).status,
+  ).toBe(200);
+  expect(JSON.parse(fixture.calls.at(-1)!.body).params).toEqual({
+    session: 'default',
+    tenantId: `stim.${SESSION}`,
+    runId: SESSION,
+    leaseProvider: 'proxy',
+    clientId: 'agent',
+    deviceKey: `ios:mobile:${UDID}`,
+    backend: 'ios-instance',
+    leaseId: 'client-lease',
+    ...(command === 'heartbeat' ? { ttlMs: 300000 } : {}),
+  });
+});
+
 test('pins automatic iOS lease allocation and every batch step to the simulator and tenant', async () => {
   await start();
   const allocated = await rpc(
@@ -263,8 +434,9 @@ test('pins automatic iOS lease allocation and every batch step to the simulator 
           command: 'open',
           positionals: ['dev.app'],
           runtime: { bundleUrl: '/host' },
-          flags: { udid: UDID, target: 'mobile', serial: 'foreign' },
-          input: { platform: 'macos', device: 'other' },
+          flags: { udid: UDID, target: 'mobile', serial: 'foreign', stateDir: '/client/state' },
+          input: { platform: 'macos', device: 'other', config: '/client/config', cwd: '/client/worktree' },
+          meta: { cwd: '/client/worktree', tenantId: 'other' },
         },
         { command: 'click', positionals: ['e1'] },
       ],
@@ -310,6 +482,9 @@ test.each([
   { command: 'screenshot', positionals: ['/host/file.png'] },
   { command: 'open', positionals: ['https://host/'] },
   { command: 'open', flags: { launchConsole: '/host/console' } },
+  { command: 'open', flags: { launchUrl: 'https://host/' } },
+  { command: 'snapshot', flags: { baseline: '/host/baseline.png' } },
+  { command: 'open', input: { installSource: { kind: 'path', path: '/host/app' } } },
   { command: 'snapshot', input: { developerDir: '/host' } },
   {
     command: 'batch',
