@@ -300,6 +300,18 @@ describe('parseGcReport', () => {
   it('takes a gc payload and drops an inventory an older stim does not send', () => {
     expect(parseGcReport({ command: 'stats' })).toBeNull();
     expect(parseGcReport({ sections: {}, inventory: null })).toEqual({ sections: {}, inventory: null });
+    const agentDevice = { version: 1, bytes: 4600000000, stateDir: { dir: '/home/.agent-device' } };
+    const swiftpmCache = {
+      version: 1,
+      dir: '/home/.cache/org.swift.swiftpm',
+      present: true,
+      bytes: 1500000000,
+      complete: true,
+    };
+    expect(parseGcReport({ sections: { agentDevice, swiftpmCache }, inventory: null })?.sections).toEqual({
+      agentDevice,
+      swiftpmCache,
+    });
   });
 });
 
@@ -318,7 +330,17 @@ describe('rankedOwners', () => {
 describe('buildStats', () => {
   it('reads each platform of the stats machine section with its cache hit rate', () => {
     expect(
-      buildStats({ machine: { ios: { runs: 10, failed: 1, hits: 3, misses: 1, timeSavedMs: 60_000 }, android: {} } }),
+      buildStats({
+        machine: { ios: { runs: 10, failed: 1, hits: 3, misses: 1, timeSavedMs: 60_000 }, android: {} },
+        agentDevice: { version: 1, bytes: 4600000000 },
+        swiftpmCache: {
+          version: 1,
+          dir: '/home/.cache/org.swift.swiftpm',
+          present: true,
+          bytes: 1500000000,
+          complete: true,
+        },
+      }),
     ).toEqual([{ platform: 'ios', runs: 10, failed: 1, hitRate: 0.75, timeSavedMs: 60_000 }]);
     expect(buildStats(null)).toEqual([]);
   });

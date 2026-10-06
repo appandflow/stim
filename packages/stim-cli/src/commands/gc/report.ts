@@ -1,3 +1,6 @@
+import type { AgentDeviceUsage, SwiftpmCacheUsage } from '@stim-cli/core/state';
+import { swiftpmCacheLines } from '../../devices/swiftpm-cache-usage-output.ts';
+import { agentDeviceLines } from '../../devices/agent-device-usage-output.ts';
 import { formatLongDuration, shortUdid } from '../../command-output.ts';
 import { claimRemoveCommand } from '../../ownership-claim.ts';
 import { formatBytes } from '../../fs-util.ts';
@@ -57,6 +60,8 @@ export interface GcReport {
   idleDevices: IdleDevice[];
   deviceSweepNotices: string[];
   easSessionSweep: EasSessionSweep;
+  agentDeviceUsage?: AgentDeviceUsage | null;
+  swiftpmCacheUsage?: SwiftpmCacheUsage | null;
   caches: GcCache[];
   workspaceOutputs: WorkspaceOutputsReport | null;
   workspaceLogs: WorkspaceLogs[];
@@ -166,6 +171,8 @@ export function formatGcReport(
     idleDevices = [],
     deviceSweepNotices = [],
     easSessionSweep = { projectScope: null, orphaned: [], notices: [], deletionSafe: true },
+    agentDeviceUsage = null,
+    swiftpmCacheUsage,
     caches = [],
     workspaceOutputs = null,
     workspaceLogs = [],
@@ -339,6 +346,8 @@ export function formatGcReport(
   lines.push(...workspaceLogLines(workspaceLogs));
   lines.push(...recordingLines(recordings));
   lines.push(...cacheLines(caches, workspaceOutputs));
+  lines.push(...agentDeviceLines(agentDeviceUsage, true, now));
+  lines.push(...swiftpmCacheLines(swiftpmCacheUsage, now));
   lines.push(...memoryLines(memory, memoryCacheKind(cacheScope), now));
 
   return lines;
@@ -510,7 +519,7 @@ function jsonPullRequest(lookup: PullRequestLookup | null): GcJsonSections['link
   return pr ? { number: pr.number, state: pr.state, url: pr.url, containsHead: pr.containsHead } : null;
 }
 
-/** The `gc --json` sections, in text report order. Each section is an array of entries. */
+/** The `gc --json` sections, in text report order. Sections contain entries or a report-only usage payload. */
 export interface GcJsonSections {
   deadProjects: { path: string }[];
   invalidProjects: { path: string }[];
@@ -601,6 +610,8 @@ export interface GcJsonSections {
     reason: WorkspaceKeptCode | null;
     detail: string | null;
   }[];
+  agentDevice: AgentDeviceUsage | null;
+  swiftpmCache: SwiftpmCacheUsage | null;
   caches: {
     name: string;
     dir: string;
@@ -640,6 +651,8 @@ export function gcReportSections({
   workspaceOutputs = null,
   workspaceLogs = [],
   recordings = [],
+  agentDeviceUsage = null,
+  swiftpmCacheUsage = null,
   caches = [],
   memory = null,
 }: Partial<GcReport>): GcJsonSections {
@@ -791,6 +804,8 @@ export function gcReportSections({
       emptySkipped: c.emptySkipped ?? null,
       scopedEmpty: c.scopedEmpty ?? null,
     })),
+    agentDevice: agentDeviceUsage,
+    swiftpmCache: swiftpmCacheUsage,
     memory: memory?.processes ?? [],
     watchmanRoots: memory?.watchmanRoots ?? [],
     memoryNotices: (memory?.notices ?? []).map((message) => ({ message })),

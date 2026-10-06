@@ -1251,6 +1251,29 @@ fallbacks, for today (this Mac's calendar day) and in total. The plain output
 adds a `build placement` section with the same counts and the last 5
 placements. `stim guide facts stats` has every field.
 
+The top-level JSON `agentDevice` reports agent-device disk usage: `version: 1`,
+`measuredAt`, total known `bytes`, `complete`, `stateDir`, `runnerBuilds`,
+`workspaces`, and `hosted`. Unknown byte fields are `null`. Runner entries
+include last use, agent-device and Xcode versions, and lease/lock/unreadable
+in-use flags. Plain output adds an `agent-device` block when state exists.
+`$STIM_HOME/agent-device-usage.json` caches the result for 10 minutes when roots
+match. Only `stats` and unscoped `gc` measure it; server and phone stats read
+the cache. Stim reports this state and never deletes it.
+
+The top-level `swiftpmCache` reports the user-level SwiftPM cache with
+`version: 1`, `measuredAt`, `dir`, `present`, `bytes`, and `complete`, or `null`
+before a cached measurement exists. The directory is
+`~/Library/Caches/org.swift.swiftpm` on macOS, or `org.swift.swiftpm` under
+`XDG_CACHE_HOME` (default `~/.cache`) elsewhere. Missing directories have
+`present: false`, `bytes: 0`; failed measurements have `bytes: null`,
+`complete: false`. Plain output adds a **SwiftPM cache** block after agent-device
+only when present. This cache is shared by every SwiftPM build on the machine;
+Stim reports it and never deletes it. `$STIM_HOME/swiftpm-cache-usage.json`
+caches `du -sk` measurements for 10 minutes, keyed on the resolved directory,
+with a 60-second timeout. Only `stats` and unscoped `gc` measure it; server and
+phone stats read the cache. `status`, `start`, `ios`, `android` and the budget
+gate never measure it.
+
 Try it with an agent:
 
 ```text
@@ -1380,6 +1403,22 @@ stop them; each kind has its own `--cache` value:
 Anything gc cannot prove idle is kept, with the reason. With `STIM_HOME` set,
 gc skips these machine-global processes. `stim doctor` notes a watchman
 footprint over 2 GiB.
+
+Unscoped `gc` also reports agent-device state, including runner builds per
+platform and entry, last use and versions, sessions, logs, other state,
+workspace directories and stim-server hosted state. JSON `sections.agentDevice`
+contains the same payload as `stats.agentDevice`; it is `null` with any
+`--cache` scope, including `all`. This state never appears under `caches` and
+never changes `actionable`. Neither `--delete` nor `--older-than` selects it.
+A lease flag means a live owner or runner matched by start time. Lock and
+unreadable flags conservatively mark entries in use. Clear unused state with
+agent-device's own tooling or by removing the directories yourself.
+
+Unscoped `gc` reports the shared user-level SwiftPM cache after agent-device.
+JSON `sections.swiftpmCache` carries the same payload as `stats.swiftpmCache`.
+Any `--cache` scope, including `all`, reports `null` without measuring it.
+It never appears in `caches` or changes `actionable`; `--delete` and
+`--older-than` leave it untouched. Stim never deletes this cache.
 
 While it works, `gc` prints each slow step on stderr as it starts, such as
 `daemons     watchman pid 49040: checking 12 roots`, so a long run shows what it
@@ -1514,7 +1553,9 @@ prints, for example:
         "detail": "in use: its dev server supervisor (pid 4242) is running"
       }
     ],
-    "caches": []
+    "caches": [],
+    "agentDevice": null,
+    "swiftpmCache": null
   }
 }
 ```

@@ -866,6 +866,10 @@ RULES
                               directories that --delete removes whole (dead
                               projects and orphanedWorkspaces), and --cache
                               all does not
+    agentDevice             <AgentDeviceUsage|null>  report-only, never deleted;
+                              null with any --cache scope
+    swiftpmCache            <SwiftpmCacheUsage|null> report-only, never deleted;
+                              null with any --cache scope
     caches                  { name, dir, source, bytes, note, willEmpty,
                               emptySkipped, scopedEmpty }  alive, not
                               garbage; willEmpty marks the ones --delete
@@ -1588,7 +1592,9 @@ RULES
     "offload": { "today": { "here", "offloaded", "fellBack" },
                  "machines": { "<machine>": { "today": <day>,
                                               "total": <totals> } },
-                 "placements": [<placement>, ...] } }
+                 "placements": [<placement>, ...] },
+    "agentDevice": <AgentDeviceUsage|null>,
+    "swiftpmCache": <SwiftpmCacheUsage|null> }
 
   \`project\` is null outside a project; a platform with no run yet is null.
   A bucket carries runs, failed, hits, misses, coldRuns, coldRunMs, hitRuns,
@@ -1598,6 +1604,38 @@ RULES
   compiled one. An offloaded run is a miss but not a cold run, so the cold
   average, time saved and build estimates stay local. Milliseconds are
   integers.
+
+AGENT-DEVICE DISK USAGE
+  agentDevice: { version: 1, measuredAt, bytes, complete, stateDir,
+                 runnerBuilds, workspaces, hosted }
+  bytes sums known state, separate runner builds, workspace and hosted bytes;
+  complete is false when a measurement fails. Individual unknown byte fields
+  are null. Absent directories have zero bytes and present: false.
+  stateDir: { dir, present, bytes, sessions: { dir, bytes, count },
+              logs: { dir, bytes }, other: { bytes, largest: [{ name, bytes }] } }
+  runnerBuilds: { dir, present, bytes, sharedBytes, platforms: [
+    { platform, dir, bytes, entries: [{ name, dir, bytes, lastUsedAt,
+      packageVersion, xcodeBuildVersion, inUse, inUseReason }] }] }
+  inUseReason is lease, lock, unreadable or null. Lease means a live owner or
+  runner matched by start time; lock and unreadable are conservative flags.
+  workspaces: [{ dir, projectRoot, bytes }]; hosted: { dir, bytes, sessions } | null.
+  $STIM_HOME/agent-device-usage.json caches the measurement and resolved roots
+  for 10 minutes. stats and unscoped gc measure; no other command measures this
+  state. Server stats.get reads only the cached value. Stim never deletes it.
+
+SWIFTPM CACHE DISK USAGE
+  swiftpmCache: { version: 1, measuredAt, dir, present, bytes, complete } | null.
+  The user-level cache is ~/Library/Caches/org.swift.swiftpm on macOS and
+  org.swift.swiftpm under XDG_CACHE_HOME (default ~/.cache) elsewhere.
+  It is shared by every SwiftPM build on the machine; Stim never deletes it.
+  bytes is null and complete is false if du fails; absent directories have
+  present: false, bytes: 0 and complete: true. Plain output omits absent caches.
+  $STIM_HOME/swiftpm-cache-usage.json caches the measurement for 10 minutes,
+  keyed on the resolved dir. stats and unscoped gc alone run du -sk with a
+  60-second timeout. Server stats.get reads only the cached value. status,
+  start, ios, android and the budget gate never measure it. gc reports it as
+  sections.swiftpmCache, never in caches or actionable; --delete and
+  --older-than leave it untouched, and any --cache scope reports null.
 
 HOW A RUN IS COUNTED (\`stats\`)
   Every \`ios\` or \`android\` invocation that got as far as computing a

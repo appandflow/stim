@@ -828,3 +828,11 @@ test('the guide names the workspace agent-device state contract without setting 
   assert(status);
   expect(status).toContain('agentDevice');
 });
+
+test('facts keep the SwiftPM stats and gc keys and measurement cache filename discoverable', () => {
+  const stats = renderSection('facts', 'stats');
+  const gc = renderSection('facts', 'gc');
+  expect(stats).toContain('swiftpmCache:');
+  expect(stats).toContain('$STIM_HOME/swiftpm-cache-usage.json');
+  expect(gc).toContain('swiftpmCache');
+});
