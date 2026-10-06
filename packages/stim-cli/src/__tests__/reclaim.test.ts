@@ -2,7 +2,7 @@ import { type ChildProcess, spawn } from 'node:child_process';
 import * as identity from '../process-identity.ts';
 import { captureProcessToken } from '../process-identity.ts';
 import { once } from 'node:events';
-import { realpathSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
+import { realpathSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { setExecutor, resetExecutor } from '../exec.ts';
@@ -10,7 +10,12 @@ import { recordCreatedDevice } from '../devices/created-devices.ts';
 import { upsertProject, setDevice, getProject } from '../workspace/config.ts';
 import { describeDereferenced, reclaimProject } from '../devices/reclaim.ts';
 import { endRecordedSession } from '../engine/device-remote.ts';
-import { ensureWorkspaceStorage, workspaceDir, workspaceStateFile } from '../workspace/paths.ts';
+import {
+  ensureWorkspaceStorage,
+  workspaceAgentDeviceDir,
+  workspaceDir,
+  workspaceStateFile,
+} from '../workspace/paths.ts';
 import { liveClaimOwner, plantClaim } from './_factories.ts';
 import { writeWebRecord } from '../web/state.ts';
 import { listLeaseFiles, takeLease } from '../engine/device-lease.ts';
@@ -834,3 +839,52 @@ test('worktree reclaim releases named ports and keeps the entry when a listener 
   expect(result.keptEntry).toBe(false);
   expect(getProject(root)).toBeNull();
 });
+
+test.each(['success', 'failure', 'missing', 'stale'])(
+  'workspace daemon stop %s controls state removal',
+  async (outcome) => {
+    const stateDir = workspaceAgentDeviceDir('/proj');
+    upsertProject('/proj', {});
+    ensureWorkspaceStorage('/proj');
+    mkdirSync(stateDir);
+    writeFileSync(
+      join(stateDir, 'daemon.json'),
+      outcome === 'stale' ? JSON.stringify({ pid: 2147483646, processStartTime: 'Mon Oct  5 11:10:09 2026' }) : '{}',
+    );
+    const runFile = vi.fn<(file: string, args: string[]) => string>((_file, _args) => {
+      if (outcome === 'failure') throw new Error(outcome);
+      expect(existsSync(stateDir)).toBe(true);
+      return '';
+    });
+    setExecutor({
+      runQuiet: () => null,
+      findExecutable: () => (outcome === 'missing' ? null : '/bin/agent-device'),
+      runFile,
+    });
+    const stderr = vi.spyOn(process.stderr, 'write').mockReturnValue(true);
+    const stdout = vi.spyOn(process.stdout, 'write').mockReturnValue(true);
+    try {
+      const result = await reclaimProject('/proj');
+      const succeeds = outcome === 'success' || outcome === 'stale';
+      expect(existsSync(stateDir)).toBe(!succeeds);
+      expect(result.removedWorkspaceDirs).toEqual(succeeds ? [workspaceDir('/proj')] : []);
+      expect(result.failedWorkspaceDirs).toEqual(succeeds ? [] : [workspaceDir('/proj')]);
+      expect(result.keptEntry).toBe(!succeeds);
+      expect(getProject('/proj') === null).toBe(succeeds);
+      const stopCall = [
+        'agent-device',
+        ['daemon', 'stop', '--state-dir', stateDir, '--clean'],
+        expect.objectContaining({ timeoutMs: 20_000 }),
+      ];
+      const stopMessage = expect.stringContaining(`agent-device daemon stop --state-dir "${stateDir}" --clean`);
+      expect(runFile.mock.calls).toEqual(outcome === 'missing' || outcome === 'stale' ? [] : [stopCall]);
+      expect(
+        stderr.mock.calls.map(([line]) => String(line)).filter((line) => line.includes('daemon could not be stopped')),
+      ).toEqual(succeeds ? [] : [stopMessage]);
+      expect(stdout).not.toHaveBeenCalled();
+    } finally {
+      stderr.mockRestore();
+      stdout.mockRestore();
+    }
+  },
+);

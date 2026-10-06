@@ -891,6 +891,7 @@ export async function finishAndroidRun({
   releaseLease();
 
   const facts = reportAndroidResult({
+    root,
     slot,
     json,
     useBuildCache,

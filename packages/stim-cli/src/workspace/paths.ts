@@ -15,6 +15,7 @@ export {
   workspaceDerivedData,
   workspaceLogErrorIndex,
   workspaceLogsDir,
+  workspaceAgentDeviceDir,
   workspaceMetadataFile,
   workspaceStateFile,
   workspaceStateLock,

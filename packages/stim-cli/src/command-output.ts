@@ -89,6 +89,7 @@ export function shortHash(hash: unknown): string {
  */
 export const OUTPUT_LABELS: readonly string[] = [
   '',
+  'agent-device',
   'app',
   'branch',
   'budget',
