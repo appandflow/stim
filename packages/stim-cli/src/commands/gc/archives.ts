@@ -24,10 +24,10 @@ export function collectArchives(scope: string, olderThan: number | null, now: nu
         : wanted === 'archived-agent'
           ? 'agentActions'
           : null;
-  const match = id ? records.find((record) => record.id.toLowerCase() === id.toLowerCase()) : null;
+  const match = id !== null ? records.find((record) => record.id.toLowerCase() === id.toLowerCase()) : null;
   return {
     records: records
-      .filter((record) => !id || record.id === match?.id)
+      .filter((record) => id === null || record.id === match?.id)
       .map((record) => ({
         id: record.id,
         kinds: kind
@@ -38,11 +38,11 @@ export function collectArchives(scope: string, olderThan: number | null, now: nu
         bytes: kind ? record.bytes[kind] : record.bytes.total,
         expires: record.expires,
         willDelete:
-          (!id && olderThan !== null ? now - Date.parse(record.removedAt) >= olderThan * 86_400_000 : true) &&
+          (id === null && olderThan !== null ? now - Date.parse(record.removedAt) >= olderThan * 86_400_000 : true) &&
           (!kind || record.bytes[kind] > 0),
       })),
     staging: sweepArchiveStaging(false),
-    unknownId: id && !match ? id : null,
+    unknownId: id !== null && !match ? id : null,
     knownIds: records.map((record) => record.id),
     kind,
   };
@@ -91,9 +91,9 @@ export function deleteArchives(selection: ArchiveSelection | undefined): number 
 export function archiveRefusal(
   selection: ArchiveSelection | undefined,
 ): { code: string; message: string; remedy: string } | null {
-  if (!selection?.unknownId) return null;
+  if (selection?.unknownId === undefined || selection.unknownId === null) return null;
   process.exitCode = 1;
-  const message = `Unknown archive ${selection.unknownId}.`;
+  const message = `Unknown archive "${selection.unknownId}".`;
   const remedy = `Known archive ids: ${selection.knownIds.join(', ') || '(none)'}`;
   console.error(chalk.red(message));
   console.error(chalk.dim(remedy));

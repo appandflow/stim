@@ -155,7 +155,7 @@ export interface ArchiveStaging {
   removeCommand: string | null;
 }
 
-export function sweepArchiveStaging(remove: boolean): ArchiveStaging[] {
+export function sweepArchiveStaging(remove: boolean, waitMs = 0): ArchiveStaging[] {
   if (!existsSync(archiveRoot())) return [];
   return withDirLock(
     archiveLock(),
@@ -182,7 +182,7 @@ export function sweepArchiveStaging(remove: boolean): ArchiveStaging[] {
           }
           return [entry];
         }),
-    { waitMs: 0 },
+    { waitMs },
   );
 }
 
@@ -249,7 +249,7 @@ export function archiveWorkspace(
     const dir = workspaceDir(root);
     if (!existsSync(dir) || lstatSync(dir).isSymbolicLink()) return;
     if (existsSync(root)) root = realpathSync(root);
-    sweepArchiveStaging(true);
+    sweepArchiveStaging(true, 5000);
     if (!enabled(root)) return;
     const limits = archiveSettings();
     if (!limits.maxAgeDays || !limits.maxCount) return;
@@ -310,9 +310,13 @@ export function archiveWorkspace(
             const to = join(staging!, 'recordings', `${device.platform}-${device.slot}`);
             for (const segment of device.segments.filter((entry) => !entry.open)) {
               mkdirSync(to, { recursive: true, mode: 0o700 });
-              if (lstatSync(segment.file).isSymbolicLink()) throw new Error(`refusing symlink ${segment.file}`);
-              renameSync(segment.file, join(to, basename(segment.file)));
-              chmodSync(join(to, basename(segment.file)), 0o600);
+              try {
+                if (lstatSync(segment.file).isSymbolicLink()) throw new Error(`refusing symlink ${segment.file}`);
+                renameSync(segment.file, join(to, basename(segment.file)));
+                chmodSync(join(to, basename(segment.file)), 0o600);
+              } catch (error) {
+                if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+              }
             }
           }
         }
@@ -404,7 +408,14 @@ export function enforceArchiveRetention(now: number = Date.now()): void {
   withDirLock(
     archiveLock(),
     () => {
-      const records = readArchives().toReversed();
+      const listed = readArchives().toReversed();
+      const records = listed.filter(
+        (record, index) =>
+          limits.maxAgeDays! > 0 &&
+          now - Date.parse(record.removedAt) < limits.maxAgeDays! * DAY &&
+          index >= listed.length - limits.maxCount!,
+      );
+      for (const record of listed) if (!records.includes(record)) removeRecord(record.id);
       const recordings = recordingEnabled(process.env, [loadConfig()]);
       for (const record of records) {
         for (const kind of ['recordings', 'agentActions', 'logs'] as const) {
@@ -449,21 +460,13 @@ export function enforceArchiveRetention(now: number = Date.now()): void {
           removeKind(record, candidates[0]!);
         }
       }
-      for (const [index, record] of records.entries()) {
-        if (
-          !limits.maxAgeDays ||
-          now - Date.parse(record.removedAt) >= limits.maxAgeDays! * DAY ||
-          index < records.length - limits.maxCount!
-        )
-          removeRecord(record.id);
-        else {
-          for (const kind of KINDS)
-            record.expires[kind] = record.bytes[kind]
-              ? new Date(Date.parse(record.removedAt) + limits[`${kind}.maxAgeDays`]! * DAY).toISOString()
-              : null;
-          record.expires.record = new Date(Date.parse(record.removedAt) + limits.maxAgeDays! * DAY).toISOString();
-          writeRecord(archiveDir(record.id), record);
-        }
+      for (const record of records) {
+        for (const kind of KINDS)
+          record.expires[kind] = record.bytes[kind]
+            ? new Date(Date.parse(record.removedAt) + limits[`${kind}.maxAgeDays`]! * DAY).toISOString()
+            : null;
+        record.expires.record = new Date(Date.parse(record.removedAt) + limits.maxAgeDays! * DAY).toISOString();
+        writeRecord(archiveDir(record.id), record);
       }
     },
     { waitMs: 5000 },
@@ -479,6 +482,6 @@ export function deleteSelectedArchives(ids: readonly string[], kind: Kind | null
         else removeRecord(record.id);
       }
     },
-    { waitMs: 0 },
+    { waitMs: 5000 },
   );
 }

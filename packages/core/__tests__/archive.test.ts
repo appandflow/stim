@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { archiveEnabled, archivedUsage, readArchives } from '../state/archive.ts';
@@ -13,19 +13,26 @@ afterEach(() => {
   delete process.env.STIM_HOME;
 });
 
-function record(id: string, removedAt: string, logs: number) {
+function record(id: string, removedAt: string, logs: number, omit?: string) {
   const dir = join(home, 'archive', id);
   mkdirSync(dir, { recursive: true });
-  writeFileSync(
-    join(dir, 'archive.json'),
-    JSON.stringify({
-      id,
-      projectRoot: '/project',
-      removedAt,
-      bytes: { logs, recordings: 3, agentActions: 4, record: 5, total: logs + 12 },
-      expires: {},
-    }),
-  );
+  const body: Record<string, unknown> = {
+    id,
+    projectRoot: '/project',
+    project: 'project',
+    workspace: 'project--abc',
+    worktree: { repository: null, branch: null, head: null, subject: null, merged: null, pullRequest: null },
+    removedAt,
+    removedBy: 'worktree-remove',
+    lastUsedAt: null,
+    builds: { count: 0, last: null, lastErrorCount: 0 },
+    agents: [],
+    bytes: { logs, recordings: 3, agentActions: 4, record: 5, total: logs + 12 },
+    expires: {},
+    version: 1,
+  };
+  if (omit) delete body[omit];
+  writeFileSync(join(dir, 'archive.json'), JSON.stringify(body));
 }
 
 test('missing and malformed records do not hide readable archives', () => {
@@ -40,6 +47,15 @@ test('missing and malformed records do not hide readable archives', () => {
     bytes: 27,
     byKind: { logs: 3, recordings: 6, agentActions: 8, record: 10 },
   });
+});
+
+test('records missing a status field or reached through a symlink are not listed', () => {
+  record('whole', '2026-01-01T00:00:00Z', 1);
+  record('no-worktree', '2026-01-02T00:00:00Z', 1, 'worktree');
+  record('no-agents', '2026-01-02T00:00:00Z', 1, 'agents');
+  record('target', '2026-01-03T00:00:00Z', 1);
+  symlinkSync(join(home, 'archive', 'target'), join(home, 'archive', 'link'));
+  expect(readArchives().map((archive) => archive.id)).toEqual(['target', 'whole']);
 });
 
 test('repo and machine archive disable values stop archiving unless the environment overrides them', () => {

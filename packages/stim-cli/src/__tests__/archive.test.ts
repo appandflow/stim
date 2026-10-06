@@ -254,6 +254,16 @@ test('total cap removes the oldest archive largest kind before touching newer ar
   expect(readArchives().find((entry) => entry.id === 'new')?.bytes.logs).toBe(100_000);
 });
 
+test('records evicted by count do not count against the total cap that trims survivors', () => {
+  const now = Date.now();
+  fixture('old', now - DAY);
+  fixture('new', now, { logs: 3000 });
+  process.env.STIM_ARCHIVE_MAX_COUNT = '1';
+  process.env.STIM_ARCHIVE_MAX_TOTAL_GB = String(3150 / 1024 ** 3);
+  enforceArchiveRetention(now);
+  expect(readArchives().map((entry) => [entry.id, entry.bytes.logs])).toEqual([['new', 3000]]);
+});
+
 test('recording cap removes only recordings, oldest archive first', () => {
   const now = Date.now();
   fixture('old', now - DAY, { recordings: 100_000, logs: 150_000 });

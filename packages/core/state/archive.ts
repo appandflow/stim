@@ -1,8 +1,8 @@
 import { coerceSettingText, settingDefinition, settingValueError } from './settings-registry.ts';
-import { readdirSync, realpathSync } from 'node:fs';
+import { lstatSync, readdirSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
 import { archiveRoot } from './paths.ts';
-import { readJsonObject } from './json-file.ts';
+import { isJsonObject, readJsonObject } from './json-file.ts';
 import type { EndedAgentSession, LastBuildReport } from './status.ts';
 
 export interface ArchivedBytes {
@@ -53,16 +53,25 @@ export function readArchives(): ArchivedWorkspace[] {
   return names
     .filter((name) => !name.startsWith('.'))
     .flatMap((name) => {
+      try {
+        if (!lstatSync(join(archiveRoot(), name)).isDirectory()) return [];
+      } catch {
+        return [];
+      }
       const record = readJsonObject(join(archiveRoot(), name, 'archive.json'));
       if (
         !record ||
         record.id !== name ||
-        typeof record.projectRoot !== 'string' ||
-        typeof record.removedAt !== 'string' ||
-        !Number.isFinite(Date.parse(record.removedAt)) ||
-        !record.bytes ||
-        typeof record.bytes !== 'object' ||
-        !record.expires
+        ['projectRoot', 'project', 'workspace', 'removedAt', 'removedBy'].some(
+          (key) => typeof record[key] !== 'string',
+        ) ||
+        !Number.isFinite(Date.parse(record.removedAt as string)) ||
+        !isJsonObject(record.bytes) ||
+        !isJsonObject(record.expires) ||
+        !isJsonObject(record.worktree) ||
+        !isJsonObject(record.builds) ||
+        !Array.isArray(record.agents) ||
+        typeof record.version !== 'number'
       )
         return [];
       const bytes = record.bytes as Record<string, unknown>;

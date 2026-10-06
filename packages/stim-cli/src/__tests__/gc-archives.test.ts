@@ -106,12 +106,15 @@ test('an explicit id ignores older-than and leaves other archives alone', async 
   expect(readArchives().map((entry) => entry.id)).toEqual(['two']);
 });
 
-test('unknown archive ids refuse with known ids instead of silently doing nothing', async () => {
-  fixture('one');
-  const payload = await gc({ cache: 'archived:missing', delete: true });
-  expect(payload).toMatchObject({ code: 'STIM_BAD_ARG', remedy: 'Known archive ids: one' });
-  expect(readArchives()).toHaveLength(1);
-});
+test.each(['archived:missing', 'archived:'])(
+  'unknown or empty archive id %s refuses with known ids instead of deleting everything',
+  async (cache) => {
+    fixture('one');
+    const payload = await gc({ cache, delete: true });
+    expect(payload).toMatchObject({ code: 'STIM_BAD_ARG', remedy: 'Known archive ids: one' });
+    expect(readArchives()).toHaveLength(1);
+  },
+);
 
 test.each([
   ['archived-logs', 'logs'],
