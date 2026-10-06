@@ -831,8 +831,6 @@ test('hosted iOS safety routes and hosting refusal remedy render through the gui
   expect(hosted).toContain('agent-device <command> --remote-config <file>');
   expect(hosted).toContain('hosting.agentDriver');
   expect(hosted).toContain('hosted-ios-agent');
-  expect(hosted).toContain('boot/shutdown/erase');
-  expect(hosted).toContain('including inside batch steps');
   expect(renderTopic('agent')).toContain('--remote-config');
 });
 

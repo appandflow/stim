@@ -81,12 +81,13 @@ const POLICY = {
 
 const IOS_COMMANDS = [
   ...POLICY.commands.allow,
+  'devices',
   'diff',
   'longpress',
   'swipe',
   'back',
   'home',
-  'rotate',
+  'orientation',
   'appstate',
   'alert',
 ];
@@ -757,7 +758,7 @@ function pinIosRequest(rpc: Record<string, unknown>, id: Refusal['id'], lease: L
   const { tenant, runId, clientId, deviceKey } = lease.scope;
   const owner = { tenantId: tenant, runId, clientId, deviceKey, leaseProvider: 'proxy' };
   if (COMMAND_METHODS.has(rpc.method as string)) {
-    const refusal = inspectIosCommand(params, id);
+    const refusal = inspectIosCommand(params, id, deviceKey.slice('ios:mobile:'.length));
     if (refusal) return refusal;
     rpc.params = {
       ...pinIosCommand(params, deviceKey.slice('ios:mobile:'.length)),
@@ -788,7 +789,7 @@ function remoteScreenshot(value: unknown): boolean {
   return typeof value === 'string' && /^\/tmp\/agent-device-screenshot-\d+-[a-z0-9]+\.png$/.test(value);
 }
 
-function inspectIosCommand(params: Record<string, unknown>, id: Refusal['id']): Refusal | null {
+function inspectIosCommand(params: Record<string, unknown>, id: Refusal['id'], udid: string): Refusal | null {
   const refuse = (rule: Refusal['rule'], message: string): Refusal => ({ id, rule, message, details: {} });
   if (typeof params.command !== 'string' || !IOS_COMMANDS.includes(params.command))
     return refuse(
@@ -798,8 +799,8 @@ function inspectIosCommand(params: Record<string, unknown>, id: Refusal['id']): 
   const screenshot = params.command === 'screenshot';
   for (const fields of [params.flags, params.input]) {
     if (!isJsonObject(fields)) continue;
-    if (DEVICE_SELECTORS.some((key) => fields[key] !== undefined))
-      return refuse('device', 'Device selectors are refused; this connection targets one hosted simulator.');
+    if (typeof fields.udid === 'string' && fields.udid.trim() !== udid)
+      return refuse('device', 'Another simulator is refused; this connection targets one hosted simulator.');
     if (
       HOST_INPUTS.some(
         (key) =>
@@ -830,7 +831,7 @@ function inspectIosCommand(params: Record<string, unknown>, id: Refusal['id']): 
     if (!Array.isArray(fields.batchSteps)) return refuse('request', 'Invalid batch steps.');
     for (const step of fields.batchSteps) {
       if (!isJsonObject(step)) return refuse('request', 'Invalid batch step.');
-      const failure = inspectIosCommand(step, id);
+      const failure = inspectIosCommand(step, id, udid);
       if (failure) return failure;
     }
   }
@@ -840,7 +841,7 @@ function inspectIosCommand(params: Record<string, unknown>, id: Refusal['id']): 
 function pinIosCommand(params: Record<string, unknown>, udid: string): Record<string, unknown> {
   const { runtime: _runtime, meta: _meta, flags, input, ...rest } = params;
   const fields = (value: unknown): Record<string, unknown> => {
-    const source = isJsonObject(value) ? value : {};
+    const source = withoutDeviceSelectors(value);
     return {
       ...source,
       platform: 'ios',

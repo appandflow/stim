@@ -386,6 +386,41 @@ test('iOS none starts no daemon, and a failed daemon stop refuses replacement', 
   await agents.close();
 });
 
+test('close attempts every iOS daemon and macOS cleanup, retains failed children and retries their stop', async () => {
+  const macos = new FakeDriver();
+  const first = new FakeDriver();
+  const second = new FakeDriver();
+  const agents = new HostedAgentHost({
+    resolve: () => macos,
+    resolveIos: (target) => (target.session === A ? first : second),
+    nodeOf: () => 'node',
+  });
+  await agents.appRunning({ session: A, client: 'c', udid: A, bundleId: 'dev.app' });
+  await agents.appRunning({ session: B, client: 'c', udid: B, bundleId: 'dev.app' });
+  const mac = '33333333-3333-4333-8333-333333333333';
+  await agents.appRunning(app(mac, 10));
+  const stop = vi.spyOn(first, 'stop').mockRejectedValue(new Error('daemon unresolved'));
+  try {
+    await expect(agents.close()).rejects.toMatchObject({
+      errors: [expect.objectContaining({ errors: [expect.objectContaining({ message: 'daemon unresolved' })] })],
+    });
+    expect(stop).toHaveBeenCalledOnce();
+    expect(first.running).toBe(true);
+    expect(second.running).toBe(false);
+    expect(second.stops).toBe(1);
+    expect(macos.running).toBe(false);
+    expect(macos.revoked).toEqual([mac]);
+    expect(agents.access(B)).toBeUndefined();
+    expect(agents.access(mac)).toBeUndefined();
+  } finally {
+    stop.mockRestore();
+    await agents.close();
+  }
+  expect(first.running).toBe(false);
+  expect(agents.access(A)).toBeUndefined();
+  expect(second.stops).toBe(1);
+});
+
 test('retains a partially started iOS daemon until its shutdown is verified', async () => {
   const driver = new FakeDriver();
   const agents = new HostedAgentHost({ resolve: () => null, resolveIos: () => driver, nodeOf: () => 'node' });

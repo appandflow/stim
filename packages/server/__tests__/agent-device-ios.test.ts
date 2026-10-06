@@ -1,5 +1,6 @@
 import { EventEmitter } from 'node:events';
-import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -89,6 +90,8 @@ vi.mock('node:http', async (original) => ({
 
 const SESSION = '11111111-1111-4111-8111-111111111111';
 const UDID = '22222222-2222-4222-8222-222222222222';
+const upstream =
+  '/private/tmp/claude-501/-Users-janicduplessis-Developer-stim/0dc300cd-42a3-4758-8d35-79edf2904001/scratchpad/ad-937471b/build-src';
 let home: string;
 let driver: AgentDeviceDriver;
 
@@ -160,6 +163,55 @@ test('starts with exactly one simulator policy, requires its digest and allocate
   expect(readClaimSet(join(home, 'claims')).live).toHaveLength(0);
 });
 
+// agent-device 0.21.20 ADR 0029: src/daemon-policy-file.ts and src/daemon/daemon-policy.ts.
+test.skipIf(!existsSync(join(upstream, 'src/daemon-policy-file.ts')))(
+  'the real upstream parser accepts the generated policy and inventory filtering exposes only its simulator',
+  async () => {
+    await start();
+    const result = JSON.parse(
+      execFileSync(
+        process.execPath,
+        [
+          '--experimental-strip-types',
+          '--input-type=module',
+          '-e',
+          `
+            import { readFileSync } from 'node:fs';
+            import { pathToFileURL } from 'node:url';
+            import assert from 'node:assert/strict';
+            const root = process.argv[1];
+            const { parseDaemonPolicy } = await import(pathToFileURL(root + '/src/daemon-policy-file.ts'));
+            const { assertDaemonPolicyAdmitsRequest, restrictDeviceInventoryToDaemonPolicy } =
+              await import(pathToFileURL(root + '/src/daemon/daemon-policy.ts'));
+            const raw = JSON.parse(readFileSync(process.argv[2], 'utf8'));
+            const policy = parseDaemonPolicy(raw, process.argv[2]);
+            assert.throws(() => parseDaemonPolicy({ ...raw, commands: { allow: ['rotate'] } }, 'invalid'));
+            assertDaemonPolicyAdmitsRequest(policy, { command: 'devices' });
+            const devices = [{ id: raw.devices.allow[0].udid }, { id: 'foreign-simulator' }];
+            const gateways = restrictDeviceInventoryToDaemonPolicy({
+              localOnly: { discover: async () => devices },
+              providerFirst: { discoverWithSource: async () => ({ devices, source: 'local' }) },
+            }, policy);
+            console.log(JSON.stringify({
+              digest: policy.digest,
+              local: await gateways.localOnly.discover(),
+              provider: await gateways.providerFirst.discover(),
+            }));
+          `,
+          upstream,
+          join(home, 'agent', 'policy.json'),
+        ],
+        { encoding: 'utf8', timeout: 10000 },
+      ),
+    );
+    expect(result).toEqual({
+      digest: JSON.parse(readFileSync(join(home, 'agent', 'daemon.json'), 'utf8')).policyDigest,
+      local: [{ id: UDID }],
+      provider: [{ id: UDID }],
+    });
+  },
+);
+
 test.each(['policy', 'backend'] as const)('grants nothing when the daemon lacks the required %s', async (missing) => {
   fixture[missing] = false;
   await expect(driver.start()).rejects.toThrow(/requires agent-device/);
@@ -207,7 +259,13 @@ test('pins automatic iOS lease allocation and every batch step to the simulator 
     flags: {
       platform: 'macos',
       batchSteps: [
-        { command: 'open', positionals: ['dev.app'], runtime: { bundleUrl: '/host' } },
+        {
+          command: 'open',
+          positionals: ['dev.app'],
+          runtime: { bundleUrl: '/host' },
+          flags: { udid: UDID, target: 'mobile', serial: 'foreign' },
+          input: { platform: 'macos', device: 'other' },
+        },
         { command: 'click', positionals: ['e1'] },
       ],
     },
@@ -232,12 +290,13 @@ test('pins automatic iOS lease allocation and every batch step to the simulator 
     batchSteps: [{ flags: { platform: 'ios', udid: UDID } }, { flags: { platform: 'ios', udid: UDID } }],
   });
   expect(forwarded.flags.batchSteps[0]).not.toHaveProperty('runtime');
+  expect(forwarded.flags.batchSteps[0].flags).toEqual({ platform: 'ios', udid: UDID });
+  expect(forwarded.flags.batchSteps[0].input).toEqual({ platform: 'ios', udid: UDID });
   expect(fixture.calls.at(-1)!.headers).toMatchObject({ 'x-agent-device-tenant': `stim.${SESSION}` });
   expect(fixture.calls.at(-1)!.headers.authorization).not.toContain('client-private');
 });
 
 test.each([
-  { command: 'devices' },
   { command: 'install' },
   { command: 'reinstall' },
   { command: 'uninstall' },
@@ -246,9 +305,8 @@ test.each([
   { command: 'boot' },
   { command: 'shutdown' },
   { command: 'close', flags: { shutdown: true } },
-  { command: 'snapshot', flags: { udid: UDID } },
   { command: 'snapshot', flags: { udid: SESSION } },
-  { command: 'snapshot', flags: { serial: 'foreign' } },
+  { command: 'batch', flags: { batchSteps: [{ command: 'snapshot', input: { udid: SESSION } }] } },
   { command: 'screenshot', positionals: ['/host/file.png'] },
   { command: 'open', positionals: ['https://host/'] },
   { command: 'open', flags: { launchConsole: '/host/console' } },
@@ -268,6 +326,27 @@ test.each([
   expect((await rpc(params)).status).toBe(400);
   expect(fixture.calls).toEqual([]);
 });
+
+test.each(['devices', 'open', 'snapshot', 'orientation'])(
+  'forwards %s with client selectors stripped and the hosted simulator forced',
+  async (command) => {
+    await start();
+    const selectors = {
+      udid: UDID,
+      serial: 'foreign',
+      target: 'mobile',
+      device: 'other',
+      platform: 'android',
+      iosSimulatorDeviceSet: '/other',
+      androidDeviceAllowlist: ['other'],
+    };
+    expect((await rpc({ command, flags: selectors, input: selectors })).status).toBe(200);
+    const forwarded = JSON.parse(fixture.calls.at(-1)!.body).params;
+    expect(forwarded.command).toBe(command);
+    expect(forwarded.flags).toEqual({ platform: 'ios', udid: UDID });
+    expect(forwarded.input).toEqual({ platform: 'ios', udid: UDID });
+  },
+);
 
 test('allows screenshot artifacts but refuses uploads and stops forwarding after revoke', async () => {
   await start();

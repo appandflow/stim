@@ -280,11 +280,25 @@ export class HostedAgentHost {
   close(): Promise<void> {
     this.closed = true;
     return this.serialize(async () => {
-      for (const child of this.ios.values()) await child.close();
-      this.ios.clear();
+      const children = [...this.ios.entries()];
+      const results = await Promise.allSettled(children.map(([, child]) => child.close()));
+      const failures: unknown[] = [];
+      for (const [index, result] of results.entries()) {
+        if (result.status === 'fulfilled') this.ios.delete(children[index]![0]);
+        else failures.push(result.reason);
+      }
       const sessions = [...this.entries.keys()];
-      for (const session of sessions) await this.drop(session);
-      await this.stopDriver();
+      for (const session of sessions) await this.drop(session, false);
+      try {
+        await this.stopDriver();
+      } catch (error) {
+        failures.push(error);
+      }
+      if (failures.length)
+        throw new AggregateError(
+          failures,
+          `Hosted agent drivers did not stop cleanly: ${failures.map((error) => (error as Error).message).join('; ')}`,
+        );
     });
   }
 }

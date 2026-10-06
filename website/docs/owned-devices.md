@@ -693,8 +693,9 @@ For agent control, set `hosting.agentDriver` to `agent-device` on the hosting Ma
 Both Macs need agent-device **0.21.20 or later**, with the daemon policy and remote-config contract.
 The host starts one loopback daemon per installed session, under an ownership claim
 whose child is that daemon. Its policy allows exactly the session's simulator UDID and
-refuses shutdown. Stop, close, revocation, reinstall and host restart stop the daemon
-and invalidate its grant. An unexpected exit restarts only that session; rerun
+refuses shutdown. Stop, close, revocation, reinstall and graceful server close stop
+the daemon and invalidate its grant. A server crash can leave detached daemon
+processes and claims; restart alone does not prove they stopped. An unexpected exit restarts only that session; rerun
 `stim ios` to refresh the rotated grant.
 An unresolved proxy or daemon retains its claim and blocks reinstall and native
 teardown. Clear a named claim only after proving its owner and child are gone.
@@ -719,14 +720,16 @@ the lease. `stim stop` closes the matching connection and removes that slot's
 config once the host confirms stop or revocation. An unreachable host keeps the
 config and placement for retry.
 
-Allowed commands are `open`, `close`, `snapshot`, `diff`, `wait`, `find`, `get`,
+Allowed commands are `devices`, `open`, `close`, `snapshot`, `diff`, `wait`, `find`, `get`,
 `is`, `click`, `fill`, `press`, `type`, `focus`, `scroll`, `screenshot`,
-`longpress`, `swipe`, `back`, `home`, `rotate`, `appstate`, `alert` and `batch`.
-They inspect and interact with the simulator and its installed apps. `devices`,
-device selectors, boot/shutdown/erase, installs, uninstall, uploads, `push`,
-`record`, `logs`, `network`, `perf`, `trace`, `clipboard` and `settings` are
-refused. Stim installs the app; agents cannot enumerate the host or write its
-files. Host paths and launch inputs (`--out`, baseline, launchConsole, cwd,
+`longpress`, `swipe`, `back`, `home`, `orientation`, `appstate`, `alert` and `batch`.
+They inspect and interact with the simulator and its installed apps. `devices`
+lists only the session's simulator, filtered by the daemon policy. Client device
+selectors are stripped and requests are pinned to iOS and that UDID; an explicitly
+named foreign UDID is refused. Selecting another device, boot/shutdown/erase,
+installs, uninstall, uploads, `push`, `record`, `logs`, `network`, `perf`, `trace`,
+`clipboard` and `settings` are refused. Stim installs the app; agents cannot
+enumerate other host devices or write host files. Host paths and launch inputs (`--out`, baseline, launchConsole, cwd,
 developerDir, installSource and similar fields) are refused, including within
 batch steps. Runtime hints are dropped and only reporting/artifact metadata is
 forwarded. Screenshots accept agent-device's generated remote temp artifact,
@@ -736,6 +739,9 @@ If the setting is `none`, the daemon cannot enforce the policy, or the host
 lacks the `hosted-ios-agent` hello feature, agent access stays
 `{ driver: 'none', setting: 'hosting.agentDriver' }`. Update the host and check
 its agent-device installation and setting. This never grants another device.
+Client hello carries only name and version, not features, so the host cannot gate
+daemon startup or grant issuance on client support. The client checks the host's
+`hosted-ios-agent` feature before using a grant.
 
 Copy this prompt into your coding agent:
 

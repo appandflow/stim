@@ -35,7 +35,10 @@ import {
   tryAcquireBuildSlotClaim,
 } from '@stim-cli/core/state';
 import { BuildHost } from '../src/build.ts';
-import { ownedDevice } from '../src/frames.ts';
+import { HostedAgentHost } from '../src/agent-driver.ts';
+import { DeviceHost } from '../src/device-host.ts';
+import { FeedPool } from '../src/feed.ts';
+import { FramePool, ownedDevice } from '../src/frames.ts';
 import {
   protocolJsonSchema,
   type HelloResult,
@@ -478,6 +481,31 @@ afterEach(async () => {
   await server?.close();
   delete process.env.STIM_HOME;
   rmSync(root, { recursive: true, force: true });
+});
+
+test('an agent shutdown failure still closes hosted devices, frames, feeds and listeners', async () => {
+  const port = await start();
+  const client = await authed(port);
+  const agentClose = vi.spyOn(HostedAgentHost.prototype, 'close').mockRejectedValue(new Error('daemon unresolved'));
+  const hostedClose = vi.spyOn(DeviceHost.prototype, 'close');
+  const frameClose = vi.spyOn(FramePool.prototype, 'close');
+  const feedClose = vi.spyOn(FeedPool.prototype, 'close');
+  try {
+    await expect(server!.close()).rejects.toMatchObject({
+      errors: [expect.objectContaining({ message: 'daemon unresolved' })],
+    });
+    expect(hostedClose).toHaveBeenCalledOnce();
+    expect(frameClose).toHaveBeenCalledOnce();
+    expect(feedClose).toHaveBeenCalledOnce();
+    await client.closed;
+    await expect(fetch(`http://127.0.0.1:${port}/health`)).rejects.toThrow('fetch failed');
+    server = null;
+  } finally {
+    agentClose.mockRestore();
+    hostedClose.mockRestore();
+    frameClose.mockRestore();
+    feedClose.mockRestore();
+  }
 });
 
 describe('recorder startup', () => {
