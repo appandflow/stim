@@ -606,15 +606,17 @@ RULES
   that is the URL the launcher hands to the check; on the
   outer deep link it does nothing there. Android reads it on
   either.
-  ON A SIMULATOR, before a local dev-client openurl, Stim
-  preapproves CoreSimulatorBridge for exactly the installed
-  bundle id and discovered scheme on its owned simulator. That
-  suppresses iOS's first-launch confirmation;
-  unrelated schemes remain unapproved. The approvals persist
-  until the simulator is erased, so Stim records the ones it
-  wrote on the workspace's device record and writes only the
-  ones missing from it. Parking drops the record, so an
-  adopted simulator gets them again once.
+  ON AN OWNED SIMULATOR, Stim preapproves CoreSimulatorBridge
+  for the installed bundle id and every URL scheme its Info.plist
+  declares, except system and third-party SDK schemes, also for
+  apps without expo-dev-client. The "Open in <App>?" alert can
+  still appear for an unapproved scheme, on a physical device or
+  user-created simulator, or from another opener such as Safari.
+  After \`simctl openurl\` or \`agent-device open <url>\`, expect
+  it for such schemes; take a snapshot and tap Open.
+  Approvals persist until erasure; Stim records them and writes
+  only missing ones. Parking drops the record, so adoption
+  rewrites them once.
   THE DEV MENU AND ITS BUTTON stay off a simulator two ways,
   which the onboarding flag does NOT cover. Stim's own
   \`simctl launch --initialUrl\` ends in

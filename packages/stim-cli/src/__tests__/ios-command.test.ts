@@ -1,3 +1,4 @@
+import { approvableSchemes } from '../engine/app-schemes.ts';
 import * as offloadClient from '../offload/client.ts';
 import * as tailnet from '../offload/tailnet.ts';
 import { requestNativeRunCancel } from '../engine/native-run.ts';
@@ -3049,9 +3050,37 @@ describe('devClientScheme', () => {
     expect(schemesFromInfoPlist(null)).toEqual([]);
   });
 
+  test('approvableSchemes keeps app schemes and excludes system and third-party SDK schemes', () => {
+    expect(
+      approvableSchemes([
+        ' stim ',
+        'stim-dev',
+        'exp+foo',
+        '',
+        null,
+        'http',
+        'HTTPS',
+        'mailto',
+        'tel',
+        'sms',
+        'itms',
+        'itms-apps',
+        'fb123456',
+        'com.googleusercontent.apps.123',
+        'msauth.app',
+        'msauthv2',
+        'twitterkit-app',
+        'db-123abc',
+        'spotify',
+        'snapchat',
+        'com.facebook.app',
+      ]),
+    ).toEqual(['stim', 'stim-dev', 'exp+foo']);
+  });
+
   describe('pickDevClientScheme', () => {
     test("prefers exp+<slug>, as Expo's own CLI does", () => {
-      expect(pickDevClientScheme(['myapp', 'exp+my-app'])).toBe('exp+my-app');
+      expect(pickDevClientScheme(['longer-app-scheme', 'exp+my-app', 'exp+x'])).toBe('exp+my-app');
     });
 
     test('drops third-party callback schemes rather than deep-linking through them', () => {
@@ -3064,7 +3093,8 @@ describe('devClientScheme', () => {
     });
 
     test("otherwise the longest, which is Expo's uniqueness tie-break", () => {
-      expect(pickDevClientScheme(['a', 'io.tlon.groups'])).toBe('io.tlon.groups');
+      expect(pickDevClientScheme(['a', ' io.tlon.groups '])).toBe('io.tlon.groups');
+      expect(pickDevClientScheme(['first', 'other'])).toBe('first');
       expect(pickDevClientScheme(['https', 'mailto'])).toBe(null);
       expect(pickDevClientScheme([])).toBe(null);
       expect(pickDevClientScheme(null)).toBe(null);
