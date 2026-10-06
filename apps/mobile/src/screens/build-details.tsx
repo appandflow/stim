@@ -554,33 +554,35 @@ function PhaseList({
           ) : (
             <View style={styles.pending} />
           )}
-          <Text
-            variant="callout"
-            weight={step.state === 'current' ? 'semibold' : undefined}
-            tone={step.state === 'pending' ? 'tertiary' : 'default'}
-          >
-            {phaseName(step.phase)}
-          </Text>
-          {step.phase === 'cache-lookup' && step.state === 'done' && cacheLabel ? (
-            <Text variant="caption" tone={cacheLabel === 'hit' ? 'success' : 'warning'}>
-              {cacheLabel === 'hit' ? t`hit` : t`miss`}
+          <View style={styles.phaseText}>
+            <Text
+              variant="callout"
+              weight={step.state === 'current' ? 'semibold' : undefined}
+              tone={step.state === 'pending' ? 'tertiary' : 'default'}
+            >
+              {phaseName(step.phase)}
             </Text>
-          ) : null}
-          {step.state === 'current' && counts ? (
-            <Text variant="caption" tone="secondary" numberOfLines={1} style={styles.shrink}>
-              {counts}
+            {step.phase === 'cache-lookup' && step.state === 'done' && cacheLabel ? (
+              <Text variant="caption" tone={cacheLabel === 'hit' ? 'success' : 'warning'}>
+                {cacheLabel === 'hit' ? t`hit` : t`miss`}
+              </Text>
+            ) : null}
+            {step.state === 'current' && counts ? (
+              <Text variant="caption" tone="secondary" numberOfLines={1} style={styles.shrink}>
+                {counts}
+              </Text>
+            ) : null}
+            <View style={styles.grow} />
+            <Text variant="footnote" tone={step.state === 'pending' ? 'tertiary' : 'secondary'} style={styles.tabular}>
+              {step.state === 'pending' && step.elapsedMs === null
+                ? step.expectedMs === null
+                  ? ''
+                  : `~${clockDuration(step.expectedMs)}`
+                : step.elapsedMs === null
+                  ? ''
+                  : clockDuration(step.elapsedMs)}
             </Text>
-          ) : null}
-          <View style={styles.grow} />
-          <Text variant="footnote" tone={step.state === 'pending' ? 'tertiary' : 'secondary'} style={styles.tabular}>
-            {step.state === 'pending' && step.elapsedMs === null
-              ? step.expectedMs === null
-                ? ''
-                : `~${clockDuration(step.expectedMs)}`
-              : step.elapsedMs === null
-                ? ''
-                : clockDuration(step.elapsedMs)}
-          </Text>
+          </View>
         </View>
       ))}
     </ListSection>
@@ -671,12 +673,14 @@ function History({ entries, now, root }: { entries: BuildHistoryEntry[]; now: nu
               >
                 <View style={styles.row}>
                   <View style={[styles.dot, { backgroundColor: resultColor(entry.result, theme) }]} />
-                  <Text style={styles.grow} numberOfLines={1}>
-                    {historyTitle(entry)}
-                  </Text>
-                  <Text variant="footnote" tone="secondary">
-                    {entry.durationMs === null ? '\u2014' : clockDuration(entry.durationMs)}
-                  </Text>
+                  <View style={styles.phaseText}>
+                    <Text style={styles.grow} numberOfLines={1}>
+                      {historyTitle(entry)}
+                    </Text>
+                    <Text variant="footnote" tone="secondary">
+                      {entry.durationMs === null ? '\u2014' : clockDuration(entry.durationMs)}
+                    </Text>
+                  </View>
                   <DisclosureChevron open={expanded} size={12} />
                 </View>
                 <Text
@@ -873,6 +877,7 @@ const styles = StyleSheet.create((theme) => ({
     paddingHorizontal: theme.space.lg,
     paddingVertical: theme.space.sm + 2,
   },
+  phaseText: { flex: 1, flexDirection: 'row', alignItems: 'baseline', gap: theme.space.md + 2 },
   phaseCurrent: { backgroundColor: withAlpha(theme.colors.primary, 0.06) },
   check: {
     width: 18,
