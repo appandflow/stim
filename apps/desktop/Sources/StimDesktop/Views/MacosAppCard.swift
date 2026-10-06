@@ -34,6 +34,7 @@ struct MacosAppCard: View {
           {
             actions.run("Stop \(app.product)", steps: [StimCommand(["stop"], cwd: workspace)], present: false)
           }
+          .disabled(actions.active(for: workspace) != nil)
         }
         Button("Build and run", systemImage: "play.fill") {
           actions.run("Build \(app.product)", steps: [StimCommand(runArguments, cwd: workspace)], present: false)
