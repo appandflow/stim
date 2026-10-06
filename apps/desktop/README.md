@@ -971,8 +971,9 @@ There is no SSH option. Tool fixes come from setup or doctor. Shell commands hav
 Copy buttons; prose fixes appear as text. Desktop never runs these fixes.
 **Install This Mac's Build** updates a mismatched Stim build through the existing
 machine update action. Tools are checked on entry, with **Check again**, and at
-most every 30 seconds while step 4 is open. Only Xcode, the iOS runtime,
-CocoaPods / Bundler, and Stim build for the chosen capabilities block Next.
+most every 30 seconds while step 4 is open. Any missing or mismatched
+row for the chosen capabilities (Xcode, runtime, CocoaPods / Bundler, Stim build,
+CPU, checkout, disk, access) blocks Next.
 **Check Android** adds an informational Android tool comparison that never blocks Next.
 
 From step 2, Desktop prepares a pinned Expo blank SDK 58 app in

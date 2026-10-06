@@ -24,7 +24,7 @@ public struct WizardTool: Equatable, Identifiable, Sendable {
   public var detail: String?
   public var state: State
   public var onThisMac = false
-  public var blocks: Bool { ["xcode", "runtime", "cocoapods", "stim-build"].contains(id) && state.blocks }
+  public var blocks: Bool { !["jdk", "android-sdk", "ndk", "build-tools", "compile-sdk"].contains(id) && state.blocks }
 }
 
 public func toolsReport(
