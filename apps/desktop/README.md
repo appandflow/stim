@@ -298,8 +298,9 @@ folder. It has no action. Selecting it shows its path and
 branch and the `stim start`, `stim ios` and `stim android` commands that create
 its environment, each with a Copy button.
 
-Run, Reload app and Stop from a workspace or its sidebar menu run without opening
-an activity sheet. Follow progress on the workspace page and open **Last output**
+Run, Reload app, Start dev server and Stop from a workspace or its sidebar menu,
+Stop in the now band, and Build and run and Stop on a macOS app card run without
+opening an activity sheet. Follow progress on the workspace page and open **Last output**
 or **Operations** to inspect the command; pending and failed runs remain there.
 Other actions open an activity sheet. While the command runs, the sheet shows a
 spinner and its latest progress line; only the CLI's progress labels (`stim
