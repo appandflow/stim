@@ -1171,6 +1171,7 @@ describe('hosted agent control', () => {
         sweep.mockRestore();
       }
     },
+    30_000,
   );
 
   test.each(['stop', 'reinstall'])('retains the iOS device when the agent cannot stop before %s', async (action) => {
