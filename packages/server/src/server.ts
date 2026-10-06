@@ -611,6 +611,9 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       });
     },
   });
+  void hostedDevices.reconcileStopped().catch((error: unknown) => {
+    process.stderr.write(`Hosted device retirement failed: ${(error as Error).message}\n`);
+  });
   const agentNodes = new Map<string, { node: string; until: number }>();
   const agentLimiter = new FailureLimiter(30, options.failureWindowMs ?? 60_000);
   async function answerAgent(request: IncomingMessage, response: ServerResponse, session: string): Promise<void> {

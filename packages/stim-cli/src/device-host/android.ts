@@ -26,7 +26,9 @@ import {
   pickDefaultSystemImage,
   waitForBoot,
 } from '../devices/android.ts';
+import { forgetCreatedDevice } from '../devices/created-devices.ts';
 import { teardownOwnedAvd } from '../devices/teardown.ts';
+import { ensureConfig, loadConfig, withConfigLock } from '../workspace/config.ts';
 import type { HostedWorkerResult } from './worker.ts';
 import { installHostedAndroidApp } from './android-app.ts';
 
@@ -108,12 +110,20 @@ export async function runHostedAndroidDevice(
       return { state: 'ready', device: selected };
     }
     device = readHostedDevice(home, 'android');
-    assertHostedDeviceLedger(home, device.avdName, 'android');
-    const outcome = teardownOwnedAvd(device.avdName);
-    if (outcome.status !== 'torn-down' && outcome.status !== 'missing')
-      throw new Error(outcome.reason ?? 'Hosted Android shutdown was not established.');
+    const ledger = assertHostedDeviceLedger(home, device.avdName, 'android', { allowEmpty: true });
+    if (ledger === 'listed') {
+      withConfigLock(() => {
+        if (!loadConfig()) ensureConfig();
+      });
+      const outcome = teardownOwnedAvd(device.avdName, { del: true });
+      if (outcome.status !== 'torn-down' && outcome.status !== 'missing')
+        throw new Error(outcome.reason ?? 'Hosted Android deletion was not established.');
+    }
+    if (listAvds({ timeoutMs: 5000 }).includes(device.avdName))
+      throw new Error('The hosted AVD still exists; deletion could not be verified.');
     if (getAvdNameForSerial(device.serial) === device.avdName)
       throw new Error('The hosted Android emulator is still running.');
+    if (ledger === 'listed') forgetCreatedDevice('android', device.avdName);
     return { state: 'stopped', device };
   } catch (error) {
     return {
