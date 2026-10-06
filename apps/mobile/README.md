@@ -1552,7 +1552,8 @@ keywords, support, marketing and privacy URLs, copyright, categories (Developer
 Tools, Productivity), the age rating answers and the App Review notes.
 `eas.json` points `submit.production.ios.metadataPath` at it. `apple.version`
 names the App Store version that `eas metadata:push` edits, or creates when it
-does not exist; set it to the version being released.
+does not exist; set it to the version being released, which must equal `version`
+in `app.config.ts` for App Store Connect to accept the uploaded build.
 
 The App Review notes tell the reviewer to pair with the demo server at
 `wss://stim-demo.appandflow.workers.dev` (see `apps/demo-server`). The pairing
