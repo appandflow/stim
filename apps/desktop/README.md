@@ -302,6 +302,9 @@ Run, Reload app, Start dev server and Stop from a workspace or its sidebar menu,
 Stop (or Shut down) in the now band, and Build and run and Stop on a macOS app card run without
 opening an activity sheet. Follow progress on the workspace page and open **Last output**
 or **Operations** to inspect the command; pending and failed runs remain there.
+The device viewer's Run, Stop (including a remote session's), Reload web and Close web also run without opening
+a sheet. Progress and failures appear on a line under the viewer toolbar; **Show output**
+opens the failed run's output, and **Dismiss** hides that failure.
 Other actions open an activity sheet. While the command runs, the sheet shows a
 spinner and its latest progress line; only the CLI's progress labels (`stim
 guide lifecycle progress`) count as progress. When it finishes, the sheet

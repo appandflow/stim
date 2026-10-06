@@ -259,7 +259,10 @@ warnings and error links. CPU and RAM stay on the workspace page.
 Run, Reload app, Start dev server and Stop from the workspace or sidebar menus keep
 you on the workspace page, as do Stop or Shut down in the now band and Build and run and Stop
 on a macOS app card. Open **Last output** or **Operations** for command details,
-including failed runs. Click the **Recent builds** label or chevron to expand
+including failed runs. The device viewer's Run, Stop (including a remote session's), Reload web and Close web
+also run without opening a sheet. Progress and failures appear on a line under
+the viewer toolbar; **Show output** opens the failed run's output, and **Dismiss**
+hides that failure. Click the **Recent builds** label or chevron to expand
 the build history. Each row shows outcome, duration and age; click a row to
 open that run in the build details sheet. Disclosure content and chevrons animate
 unless Reduce Motion is enabled.
