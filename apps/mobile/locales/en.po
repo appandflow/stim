@@ -1901,6 +1901,7 @@ msgstr "High"
 
 #: src/lib/workspace-view.ts
 #: src/lib/workspace-view.ts
+#: src/screens/build-details.tsx
 msgid "hit"
 msgstr "hit"
 
@@ -2325,6 +2326,10 @@ msgstr "Metro {metroState}"
 #: src/lib/settings-options.ts
 msgid "Midnight to 8 AM"
 msgstr "Midnight to 8 AM"
+
+#: src/screens/build-details.tsx
+msgid "miss"
+msgstr "miss"
 
 #: src/lib/format.ts
 msgid "miss: {summary}"

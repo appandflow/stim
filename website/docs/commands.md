@@ -1008,7 +1008,7 @@ and an estimate of the time left:
 ```
 
 In `--json`, each environment carries `build`: `null`, or
-`{ platform, slot, state, phase, startedAt, phaseStartedAt, outcome, outcomeKnown, cacheLookupOutcome?, expectedMs, expectedPhaseMs, basis, plannedPhases }`.
+`{ platform, slot, state, phase, startedAt, phaseStartedAt, outcome, outcomeKnown, cacheLookupOutcome?, expectedMs, expectedPhaseMs, completedPhaseMs?, basis, plannedPhases }`.
 `phase` is one of `prepare`, `cache-lookup`, `wait`, `prebuild`, `pods`,
 `compile`, `device`, `install` and `launch`. Creating, adopting or booting the
 owned simulator or emulator before the cache lookup counts as `prepare`.
@@ -1023,6 +1023,9 @@ prebuild or pods. A later recheck can replace the first lookup's outcome.
 Before resolution it follows the project's most recent run and `outcomeKnown`
 is `false`. `cacheLookupOutcome` is `hit` or `miss` after an actual lookup resolves;
 it is absent before resolution and on runs that skip lookup, such as `--eas-profile`.
+`completedPhaseMs` holds milliseconds spent in each phase the run already left,
+summing repeated visits. It excludes the current visit; the current phase appears
+only if visited earlier. It is absent before any phase completes and on older Stim versions.
 `expectedMs` and `expectedPhaseMs` are
 medians of this project's last successful runs with that outcome, and `basis`
 counts the runs behind `expectedMs`. Both are `null` until the project has such

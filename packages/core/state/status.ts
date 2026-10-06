@@ -44,6 +44,8 @@ export interface BuildReport {
   cacheLookupOutcome?: 'hit' | 'miss';
   expectedMs: number | null;
   expectedPhaseMs: number | null;
+  /** Milliseconds spent in phases already left; sums repeat visits, excludes the current visit, and is omitted before any phase completes and by older Stim. */
+  completedPhaseMs?: Partial<Record<BuildPhase, number>>;
   basis: number;
   /**
    * The phases a run like this one goes through, in order, with each one's median in milliseconds, from the same

@@ -36,9 +36,11 @@ import {
 import { relativeTo, tildeHome } from '@/lib/paths';
 import { planKey } from '@/lib/plan-checks';
 import {
+  cacheLookupLabel,
   currentPhaseLabel,
   deviceTitle,
   fallbackLine,
+  finishedCacheLookupLabel,
   PHASE_ORDER,
   phaseName,
   phaseSteps,
@@ -255,7 +257,7 @@ function NativeBuildDetails({
               <Trans>No {name} build recorded.</Trans>
             </Note>
           )}
-          {lastRun ? <PhaseList steps={finishedSteps(lastRun)} /> : null}
+          {lastRun ? <PhaseList steps={finishedSteps(lastRun)} cacheLabel={finishedCacheLookupLabel(lastRun)} /> : null}
         </Section>
       )}
 
@@ -454,6 +456,7 @@ function RunningBuild({
       {build.phase === 'wait' && build.waitingOn ? <WaitingOn path={build.waitingOn.path} current={path} /> : null}
       <PhaseList
         steps={phaseSteps(build, history, now)}
+        cacheLabel={cacheLookupLabel(build)}
         counts={remote ? remoteStep(remote, build) : currentPhaseLabel(build).counts}
       />
       {lines.length ? (
@@ -526,7 +529,15 @@ function finishedSteps(entry: BuildHistoryEntry): PhaseStep[] {
   }));
 }
 
-function PhaseList({ steps, counts }: { steps: PhaseStep[]; counts?: string | null }) {
+function PhaseList({
+  steps,
+  counts,
+  cacheLabel,
+}: {
+  steps: PhaseStep[];
+  counts?: string | null;
+  cacheLabel?: 'hit' | 'miss' | null;
+}) {
   const { theme } = useUnistyles();
   return (
     <ListSection>
@@ -550,6 +561,11 @@ function PhaseList({ steps, counts }: { steps: PhaseStep[]; counts?: string | nu
           >
             {phaseName(step.phase)}
           </Text>
+          {step.phase === 'cache-lookup' && step.state === 'done' && cacheLabel ? (
+            <Text variant="caption" tone={cacheLabel === 'hit' ? 'success' : 'warning'}>
+              {cacheLabel === 'hit' ? t`hit` : t`miss`}
+            </Text>
+          ) : null}
           {step.state === 'current' && counts ? (
             <Text variant="caption" tone="secondary" numberOfLines={1} style={styles.shrink}>
               {counts}

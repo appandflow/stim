@@ -1239,7 +1239,8 @@ RULES
   run that holds this workspace's native-run.lock:
 
   build   { platform, slot, state, phase, startedAt, phaseStartedAt,
-            outcome, outcomeKnown, cacheLookupOutcome?, expectedMs, expectedPhaseMs, basis,
+            outcome, outcomeKnown, cacheLookupOutcome?, expectedMs, expectedPhaseMs,
+            completedPhaseMs?, basis,
             plannedPhases, missReason?, missProvisional?, detail?, placement,
             waitingOn? }
 
@@ -1284,6 +1285,10 @@ RULES
                    not change the estimate.
   expectedPhaseMs  the median duration of this phase in those runs, or null
                    when none of them entered it
+  completedPhaseMs  milliseconds spent in each phase the run already left,
+                   summing repeated visits. The current visit is excluded;
+                   its phase appears only if visited earlier. Absent before
+                   any phase completes and on older Stim versions
   basis            how many runs the expectedMs median comes from (at most
                    10 per kind: device-setup runs keep their own 10)
   plannedPhases    [{ phase, expectedMs }] in phase order: the phases at

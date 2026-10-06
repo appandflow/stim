@@ -8,6 +8,7 @@ import {
   activeBuildState,
   buildReport,
   buildStatusLine,
+  completedPhaseDurations,
   estimateBuild,
   parseActiveBuild,
   recordFinishedBuild,
@@ -52,6 +53,47 @@ function takeClaim(): ClaimHandle {
 function activeRecord(): ActiveBuildRecord | null {
   return parseActiveBuild(readWorkspaceState(root)?.[ACTIVE_BUILD_KEY]);
 }
+
+describe('completedPhaseDurations', () => {
+  const at = (ms: number) => new Date(T0 + ms).toISOString();
+
+  test('reports elapsed time for completed phases, excluding the current visit', () => {
+    expect(
+      completedPhaseDurations([
+        { phase: 'prepare', startedAt: at(0) },
+        { phase: 'cache-lookup', startedAt: at(2000) },
+        { phase: 'compile', startedAt: at(5000) },
+      ]),
+    ).toEqual({ prepare: 2000, 'cache-lookup': 3000 });
+  });
+
+  test('sums completed repeat visits even when that phase is current again', () => {
+    expect(
+      completedPhaseDurations([
+        { phase: 'cache-lookup', startedAt: at(0) },
+        { phase: 'prebuild', startedAt: at(1000) },
+        { phase: 'cache-lookup', startedAt: at(5000) },
+        { phase: 'pods', startedAt: at(7000) },
+        { phase: 'cache-lookup', startedAt: at(9000) },
+      ]),
+    ).toEqual({ 'cache-lookup': 3000, prebuild: 4000, pods: 2000 });
+  });
+
+  test('omits durations before a phase completes', () => {
+    expect(completedPhaseDurations([{ phase: 'prepare', startedAt: at(0) }])).toBeUndefined();
+  });
+
+  test('ignores intervals with an unparsable start or end', () => {
+    expect(
+      completedPhaseDurations([
+        { phase: 'prepare', startedAt: at(0) },
+        { phase: 'cache-lookup', startedAt: 'invalid' },
+        { phase: 'prebuild', startedAt: at(3000) },
+        { phase: 'compile', startedAt: at(5000) },
+      ]),
+    ).toEqual({ prebuild: 2000 });
+  });
+});
 
 describe('active build record', () => {
   test('writes the tool detail for its own claim at most every 2 seconds, and the miss reason once known', () => {
@@ -173,6 +215,9 @@ describe('active build record', () => {
     let now = T0;
     const progress = startBuildProgress({ root, platform: 'ios', slot: 'default', claim, now: () => now });
     expect(activeRecord()).toMatchObject({ phase: 'prepare', startedAt: '2026-09-24T10:00:00.000Z' });
+    expect(buildReport(activeRecord()!, { state: 'running', history: undefined })).not.toHaveProperty(
+      'completedPhaseMs',
+    );
 
     now += 2_000;
     progress.step('cache-lookup');
@@ -187,6 +232,10 @@ describe('active build record', () => {
     expect(record.phases.map((entry) => entry.phase)).toEqual(['prepare', 'cache-lookup', 'compile']);
     expect(activeBuildState(record.claim)).toBe('running');
     expect(progress.durations()).toEqual({ prepare: 2_000, 'cache-lookup': 3_000, compile: 60_000 });
+    expect(buildReport(record, { state: 'running', history: undefined }).completedPhaseMs).toEqual({
+      prepare: 2000,
+      'cache-lookup': 3000,
+    });
 
     progress.clear();
     expect(readWorkspaceState(root)?.[ACTIVE_BUILD_KEY]).toBeUndefined();

@@ -327,6 +327,12 @@ function phaseDurations(phases: ActiveBuildRecord['phases'], now: number): Recor
   return out;
 }
 
+export function completedPhaseDurations(phases: ActiveBuildRecord['phases']): BuildReport['completedPhaseMs'] {
+  if (phases.length < 2) return undefined;
+  const durations = phaseDurations(phases.slice(0, -1), Date.parse(phases.at(-1)!.startedAt));
+  return Object.keys(durations).length ? durations : undefined;
+}
+
 const HISTORY_FIELDS = [
   'platform',
   'status',
@@ -555,6 +561,7 @@ export function buildReport(
     const expectedMs = estimate.phaseMs[phase];
     return expectedMs === undefined ? [] : [{ phase, expectedMs }];
   });
+  const completedPhaseMs = completedPhaseDurations(record.phases);
   return {
     platform: record.platform,
     slot: record.slot,
@@ -569,6 +576,7 @@ export function buildReport(
       : {}),
     expectedMs: estimate.expectedMs,
     expectedPhaseMs: estimate.phaseMs[record.phase] ?? null,
+    ...(completedPhaseMs ? { completedPhaseMs } : {}),
     basis: estimate.basis,
     plannedPhases: plannedPhases.length ? plannedPhases : null,
     ...(record.missReason ? { missReason: record.missReason } : {}),

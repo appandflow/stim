@@ -524,6 +524,16 @@ export interface PhaseStep {
   fraction: number | null;
 }
 
+export function cacheLookupLabel(build: BuildReport): 'hit' | 'miss' | null {
+  return build.cacheLookupOutcome === 'hit' || build.cacheLookupOutcome === 'miss' ? build.cacheLookupOutcome : null;
+}
+
+export function finishedCacheLookupLabel(build: LastBuild): 'hit' | 'miss' | null {
+  if (build.cacheSkipped) return null;
+  if (build.cacheHit === 'local' || build.cacheHit === 'remote') return 'hit';
+  return build.cacheHit === false ? 'miss' : null;
+}
+
 function referenceRun(build: BuildReport, history: readonly BuildHistoryEntry[]): BuildHistoryEntry | null {
   const hit = build.outcome === 'hit';
   return (
@@ -555,8 +565,11 @@ function compileDetail(build: BuildReport): BuildReport['detail'] {
 
 export function phaseSteps(build: BuildReport, history: readonly BuildHistoryEntry[], now: number): PhaseStep[] {
   const reference = plannedDurations(build, history);
+  const completed: Partial<Record<BuildPhase, number>> = build.completedPhaseMs ?? {};
   const currentIndex = PHASE_ORDER.indexOf(build.phase);
-  const phases = PHASE_ORDER.filter((phase, i) => i === currentIndex || reference[phase] !== undefined);
+  const phases = PHASE_ORDER.filter(
+    (phase, i) => i === currentIndex || reference[phase] !== undefined || completed[phase] !== undefined,
+  );
   const phaseStart = Date.parse(build.phaseStartedAt);
   const inPhase = Number.isFinite(phaseStart) ? Math.max(0, now - phaseStart) : null;
   if (currentIndex < 0)
@@ -565,7 +578,7 @@ export function phaseSteps(build: BuildReport, history: readonly BuildHistoryEnt
     const i = PHASE_ORDER.indexOf(phase);
     const expectedMs =
       phase === build.phase ? (build.expectedPhaseMs ?? reference[phase] ?? null) : (reference[phase] ?? null);
-    if (i < currentIndex) return { phase, state: 'done', elapsedMs: null, expectedMs, fraction: 1 };
+    if (i < currentIndex) return { phase, state: 'done', elapsedMs: completed[phase] ?? null, expectedMs, fraction: 1 };
     if (i > currentIndex) return { phase, state: 'pending', elapsedMs: null, expectedMs, fraction: 0 };
     const { done, total } = compileDetail(build) ?? {};
     const counted = typeof done === 'number' && typeof total === 'number' && total > 0 ? done / total : null;

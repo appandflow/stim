@@ -25,11 +25,13 @@ import {
   barFills,
   buildLine,
   bundleLine,
+  cacheLookupLabel,
   currentPhaseLabel,
   otherPlatformLine,
   deviceTitle,
   deviceUsage,
   fallbackLine,
+  finishedCacheLookupLabel,
   diskParts,
   diskPartsLabel,
   gitChip,
@@ -338,6 +340,28 @@ describe('offloaded builds', () => {
   });
 });
 
+describe('cache lookup labels', () => {
+  it.each([
+    [{ cacheLookupOutcome: 'hit' }, 'hit'],
+    [{ cacheLookupOutcome: 'miss' }, 'miss'],
+    [{ cacheLookupOutcome: 'miss', missProvisional: true }, 'miss'],
+    [{}, null],
+    [{ cacheLookupOutcome: 'unknown' }, null],
+  ] as const)('labels the latest lookup report %j as %s', (patch, label) => {
+    expect(cacheLookupLabel(build(patch))).toBe(label);
+  });
+
+  it.each([
+    [{ cacheHit: 'local' }, 'hit'],
+    [{ cacheHit: 'remote' }, 'hit'],
+    [{ cacheHit: false }, 'miss'],
+    [{ cacheHit: false, cacheSkipped: true }, null],
+    [{ cacheHit: 'local', cacheSkipped: true }, null],
+  ] as const)('labels the finished build %j as %s', (patch, label) => {
+    expect(finishedCacheLookupLabel(last(patch))).toBe(label);
+  });
+});
+
 describe('phaseSteps', () => {
   const history: BuildHistoryEntry[] = [
     {
@@ -361,6 +385,27 @@ describe('phaseSteps', () => {
     ]);
     expect(steps[3]).toMatchObject({ elapsedMs: 47_000, fraction: 0.5 });
     expect(steps[4]).toMatchObject({ expectedMs: 8000 });
+    expect(steps.filter((step) => step.state === 'done').map((step) => step.elapsedMs)).toEqual([null, null, null]);
+  });
+
+  it("uses this run's completed times even for a phase missing from the plan", () => {
+    const steps = phaseSteps(
+      build({
+        plannedPhases: [
+          { phase: 'prepare', expectedMs: 2000 },
+          { phase: 'compile', expectedMs: 94_000 },
+        ],
+        completedPhaseMs: { prepare: 1000, 'cache-lookup': 0, pods: 15_000 },
+      }),
+      history,
+      NOW,
+    );
+    expect(steps.map((step) => [step.phase, step.state, step.elapsedMs])).toEqual([
+      ['prepare', 'done', 1000],
+      ['cache-lookup', 'done', 0],
+      ['pods', 'done', 15_000],
+      ['compile', 'current', 47_000],
+    ]);
   });
 
   it('folds the short prepare phases into one bar segment and launch into install', () => {
@@ -702,7 +747,12 @@ test.each([
   } else if (field === 'build.outcome') {
     expect(outcomeLabel(workspace.build!)).toBeNull();
   } else if (field === 'build.plannedPhases.0.phase') {
-    expect(barSteps(phaseSteps(workspace.build!, [], NOW)).map((step) => step.phase)).toEqual(['compile']);
+    expect(barSteps(phaseSteps(workspace.build!, [], NOW)).map((step) => step.phase)).toEqual([
+      'prepare',
+      'prebuild',
+      'pods',
+      'compile',
+    ]);
   } else if (field === 'lastBuilds.ios.status' || field === 'lastBuilds.ios.cacheHit') {
     expect(buildLine('ios', workspace.lastBuilds!.ios, undefined)).toMatchObject({
       main: 'Unknown',
