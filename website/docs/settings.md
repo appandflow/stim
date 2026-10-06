@@ -337,6 +337,8 @@ otherwise agent control reports `none` with a notice, and no client is handed
 the Mac's desktop. `STIM_AGENT_DEVICE_BIN` in `stim-server`'s environment names
 an agent-device binary to use instead of `~/.local/bin/agent-device`. Hosted iOS uses one daemon per session, pinned to its simulator UDID by the daemon policy. Both Macs need agent-device 0.21.20 or later. `doctor` counts installed hosted iOS and macOS apps with no driver. See [hosted iOS](./owned-devices.md#run-ios-on-another-mac).
 
+For a setup walkthrough covering build and hosting approvals, see [Remote machines](./remote-machines.md).
+
 `offload.machines` lists the Macs on your tailnet that may build for this one,
 by MagicDNS name (`janics-mac-mini`), optionally with the port of their
 `tailscale serve` route (`janics-mac-mini:7444`; default 7443). Set it with

@@ -1754,3 +1754,4 @@ npx --yes --package @stim-cli/server@<version> stim-server setup --client <node-
 
 See the [server command reference](https://github.com/appandflow/stim/blob/main/packages/server/README.md#set-up-a-worker-mac)
 for flags, permissions, journals, exit codes and undo commands.
+The [remote machines guide](./remote-machines.md) walks through Desktop and manual setup.

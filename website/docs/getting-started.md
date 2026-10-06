@@ -221,6 +221,10 @@ OK: com.appandflow.trailhead on stim-trailhead (iPhone 17 26.5) (4F2A..), Metro 
   `stim guide errors <CODE>` for its cause and remedy, or look it up on the
   [troubleshooting page](./troubleshooting.md).
 
+Use [remote machines](./remote-machines.md) to build or run on an approved Mac,
+and the [phone app](./phone-app.md) to watch workspaces, devices and logs away
+from your desk.
+
 ## Next steps
 
 - Read [Why Stim](/docs/why) for the design and benefits.
