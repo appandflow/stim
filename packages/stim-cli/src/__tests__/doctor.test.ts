@@ -88,7 +88,7 @@ describe('offload-candidate', () => {
     expect(result).toEqual({
       code: 'offload-candidate',
       level: 'note',
-      title: 'offload-candidate',
+      title: 'Builds could run on another Mac',
       detail: 'Cold builds averaged ~4 min over 3 builds this week.',
       fix: 'In Stim Desktop, open Settings > Build machines > Add.',
     });
@@ -144,7 +144,7 @@ describe('offload-candidate', () => {
       JSON.stringify({ version: 1, machine: {}, projects: {}, placements: [cold, cold, cold] }),
     );
     const options = {
-      host: 'linux' as const,
+      host: 'darwin' as const,
       platform: 'ios' as const,
       now: () => now,
       concurrency: { maxBuilds: 0, maxDevices: 0 },
@@ -154,7 +154,13 @@ describe('offload-candidate', () => {
         runDoctor(project, { ...options, tailnetStatus: () => ({ Peer: { mini: peer } }) }).find(
           (entry) => entry.code === 'offload-candidate',
         ),
-      ).toEqual(checkOffloadCandidate([cold, cold, cold], [], [peer], now));
+      ).toEqual({
+        code: 'offload-candidate',
+        level: 'note',
+        title: 'Builds could run on another Mac',
+        detail: 'Cold builds averaged ~4 min over 3 builds this week.',
+        fix: 'In Stim Desktop, open Settings > Build machines > Add.',
+      });
       expect(
         runDoctor(project, {
           ...options,

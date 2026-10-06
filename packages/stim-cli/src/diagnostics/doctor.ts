@@ -109,14 +109,15 @@ export function checkOffloadCandidate(
     code: 'offload-candidate',
     ...finding(
       'note',
-      'offload-candidate',
+      'Builds could run on another Mac',
       `Cold builds averaged ~${Math.round(average / 60_000)} min over ${cold.length} builds this week.`,
       'In Stim Desktop, open Settings > Build machines > Add.',
     ),
   };
 }
 
-function readOffloadCandidate(tailnetStatus: () => unknown, now: number): Finding | null {
+function readOffloadCandidate(tailnetStatus: () => unknown, now: number, host: NodeJS.Platform): Finding | null {
+  if (host !== 'darwin') return null;
   try {
     const entries = loadConfig()?.offload?.machines;
     const machines = Array.isArray(entries)
@@ -1073,7 +1074,7 @@ export function runDoctor(
     easFinding,
     easBuildDownloadFinding,
     concurrencyFinding,
-    readOffloadCandidate(tailnetStatus, now()),
+    readOffloadCandidate(tailnetStatus, now(), host),
     memoryAdvice
       ? finding(
           'cost',

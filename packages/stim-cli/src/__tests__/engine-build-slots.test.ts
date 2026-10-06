@@ -136,14 +136,14 @@ describe('acquireBuildSlot', () => {
         throw new Error('a free slot must not sleep');
       },
     });
-    expect(got.slotWaitMs ?? 0).toBe(0);
+    expect(got.slotWaitMs).toBe(0);
     releaseBuildSlot(got);
   });
 
   test('unlimited (max 0) acquires immediately without a slot on disk', async () => {
     const got = await acquireBuildSlot({ max: 0 });
     expect(got.unlimited).toBe(true);
-    expect(got.slotWaitMs ?? 0).toBe(0);
+    expect(got.slotWaitMs).toBeUndefined();
     expect(existsSync(buildSlotsDir())).toBe(false);
   });
 });
