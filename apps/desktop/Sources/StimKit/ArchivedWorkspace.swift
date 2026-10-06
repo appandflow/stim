@@ -83,6 +83,10 @@ public struct ArchivedWorkspace: Decodable, Hashable, Identifiable, Sendable {
     projectRoot == path || replacedBy == path
   }
 
+  public static func newest(removedFrom path: String, in archives: [Self]) -> Self? {
+    newestFirst(archives.filter { $0.projectRoot == path }).first
+  }
+
   public static func newestFirst(_ archives: [Self]) -> [Self] {
     archives.sorted {
       let a = parseTimestamp($0.removedAt) ?? .distantPast

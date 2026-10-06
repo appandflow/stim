@@ -406,6 +406,12 @@ struct RootView: View {
     guard let target, let payload else { return }
     let env = target.path.flatMap { path in payload.environments.first { $0.path == path } }
     openRequests.target = nil
+    if env == nil, let path = target.path,
+      let archive = ArchivedWorkspace.newest(removedFrom: path, in: payload.archived ?? [])
+    {
+      selection = .archived(archive.id)
+      return
+    }
     switch target {
     case .machine:
       selection = .machine
