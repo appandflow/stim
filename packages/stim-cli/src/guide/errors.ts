@@ -338,7 +338,9 @@ no build and does not contact the selected machine.
 
 Run stim doctor --fix to ask for build access if not paired. Check
 stim settings get offload.machines. A person on the worker finds the id with
-stim-server devices and approves this Mac with stim-server devices grant <id> --build.
+stim-server devices and approves this Mac with stim-server devices grant <id> --build,
+or runs stim-server setup on the worker with its node, ticket and expiry
+(guide settings). Agents never run setup or approve requests.
 Rerun with --build-machine auto for normal placement and local fallback, or
 --build-machine local to keep the build here.
 `,

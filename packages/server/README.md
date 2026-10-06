@@ -22,6 +22,8 @@ stim-server devices grant <id> --control|--read|--build|--device-host
                                   # --build approves builds; --device-host approves device hosting
 stim-server devices revoke <id>   # revoke a paired device or client, or deny a request
 stim-server log                   # list the actions paired devices ran
+stim-server setup --client <node-id> --ticket <t> --expires <iso> --build|--device-host
+                                  # worker-side approval and setup, see below
 stim-server service install|status|update|rollback|uninstall
                                   # run stim-server as a macOS LaunchAgent, see below
 ```
@@ -81,6 +83,110 @@ startup and hourly.
 one on your PATH. It reads the login shell's environment once at start, so
 `PATH`, `ANDROID_HOME`, and `STIM_*` variables match your terminal even when
 another app starts it.
+
+## Set up a worker Mac
+
+A person on the worker runs the command generated for their client Mac:
+
+```bash
+stim-server setup --client <node-id> --ticket <43-base64url-characters> --expires <ISO-time> \
+  --build --device-host [--port <n>] [--label <name>] \
+  [--env KEY=VALUE]... [--path-prepend <dir>]... [--yes] [--json]
+```
+
+If the server is not installed globally, use `npx --yes --package @stim-cli/server@<version> stim-server`
+in place of `stim-server`, with the exact version from the client Mac.
+At least one capability is required. The expiry must be in the future and at
+most two hours ahead. The defaults are port 7787 and label `dev.stim.server`.
+Argument and preflight refusals change nothing. Preflight requires macOS,
+Node 22.12+, running Tailscale, the client node on this tailnet, and this user's
+GUI login session.
+
+Running setup on the worker is the worker-side approval. It pre-approves at
+most one request per chosen capability, from this node, carrying this ticket,
+until this expiry. A terminal asks y/N for each grant (default No); use `--yes`
+to approve without those questions, including without a terminal. Without
+a terminal or `--yes`, setup refuses before installing anything unless every
+chosen capability already has a matching approval. A person on
+the worker still approves; an SSH-driven run is not offered. Build and
+device-host requests are separate grants. Build never includes read or control.
+A rerun before expiry reports matching approved requests as already approved
+and never grants a second request. After expiry it refuses with exit 2 before
+any change. Requests themselves lapse after 15 minutes.
+
+Setup installs its exact server release into
+`~/Library/Application Support/Stim/services/<label>/versions/`, installs
+Stim Host, installs or reuses the managed LaunchAgent, and creates or reuses a
+tailnet-only HTTPS route on 7443 or the next free port. Older managed services
+use the service update busy-wait and rollback behavior. Newer versions stay
+installed; tools report a Stim build difference. A reused server must be at
+least **1.16.0** (ignoring its prerelease suffix for this floor), the first version with setup ticket storage and the journal
+route. An older app server refuses immediately with an update remedy.
+
+When a Desktop-run server already answers on the port, setup reuses it and
+installs no LaunchAgent. It requires an existing tailnet route and refuses
+to create one it cannot record. Its permissions belong to that app. The server must
+use the same Stim home. Export a scratch `STIM_HOME` in the shell before
+running setup; `--env` cannot set it. Repeatable `--env KEY=VALUE` and
+`--path-prepend <absolute-dir>` have the same validation and environment order
+as service install. A new LaunchAgent inherits only `STIM_HOME` and `SHELL`;
+pass paths and variables needed for CocoaPods, Java or Android explicitly.
+
+For device hosting, setup checks screen recording and device control, requests
+normal macOS prompts, and opens the matching Privacy & Security panes after
+about ten seconds without a grant. Prompts appear on this Mac's screen. A
+terminal accepts `s` to skip each permission. Without a terminal, each missing
+permission waits at most five minutes and remains pending in the journal.
+Missing screen recording prevents viewing hosted simulators; missing device
+control prevents controlling them. For a Desktop-run server, allow its app
+in the same panes. Setup never changes TCC or enables Funnel. Funneled or
+unreadable routes refuse with a remedy. Tool checks print fixes for Xcode,
+simulator runtimes, CocoaPods, JDK, Android SDK and the Stim build; they install
+nothing. Android and CocoaPods checks are not needed for hosting alone.
+
+Plain progress goes to stdout; errors use `stim-server: <message>` on stderr.
+`--json` sends progress to stderr and prints one final payload with `ok`,
+`label`, `port`, `route` (state, DNS name, HTTPS port), `server` (version and
+Stim build), `managed`, separate `granted` request ids and client identities,
+`permissions`, `tools` and `warnings`. Final permission values are `granted`,
+`denied` (not authorized), `skipped` or `not-needed`; a timed-out wait remains
+`pending` in the journal and names its unavailable feature. Exit codes come
+from the final journal:
+
+| Exit | Meaning                                                                                                               |
+| ---- | --------------------------------------------------------------------------------------------------------------------- |
+| 0    | Every chosen capability, needed permission and tool is ready.                                                         |
+| 1    | A refusal or failed step. Completed earlier steps remain in place.                                                    |
+| 2    | No grant before expiry, or an already expired command.                                                                |
+| 3    | At least one grant, but another chosen capability, permission or tool is missing; the output names affected features. |
+
+Setup writes `$STIM_HOME/server/setup/<sha256(ticket)>.json` from its first
+step and after every change, including completion and the exit code. The
+node-bound `GET /setup/<hash>` route described above mirrors it until expiry,
+hiding tools until a build grant. Each valid setup run prunes journals more
+than one hour past expiry. A dedicated `server/setup.claims` ownership claim
+serializes runs; the service update claim is released before waiting for
+requests and permissions. A competing setup refuses with the exact claim
+and removal command. Ctrl-C or SIGTERM finishes the running step as failed
+with detail `interrupted`, completes the journal, releases the setup claim,
+and exits 1. A typed N also exits 1; a question timeout follows ticket expiry
+and exits 2.
+
+The summary lists what is ready and the undo commands:
+
+```bash
+stim-server devices revoke <build-request-id>
+stim-server devices revoke <device-host-request-id>
+stim-server service uninstall --label <label>
+```
+
+If route verification or recording fails, setup removes the route it just
+created; a failed removal prints the exact `tailscale serve --https=<port> off`
+remedy. Uninstall removes only a route the managed install created. A reused app's
+server and route remain managed by that app. If its health response omits
+permission grants, setup keeps those checks pending or lets a terminal skip
+them; Stim Host's grants do not stand in for another app's permissions. Pairings, Stim Host and its macOS
+permissions remain; remove permission grants in System Settings if desired.
 
 ## Tailscale
 
@@ -203,7 +309,8 @@ The server records a pending build client bound to the peer's node, answers
 with a `deviceToken`, no capabilities and
 `approval: { "state": "pending", "expiresAt" }`, and closes the connection.
 `stim-server devices` lists it as `pending build`. On this Mac,
-`stim-server devices grant <id> --build` approves it and
+`stim-server devices grant <id> --build` approves it, or a person runs
+[`stim-server setup`](#set-up-a-worker-mac) on this Mac with its node and ticket, and
 `stim-server devices revoke <id>` denies it; Stim Desktop's **Allow** and
 **Deny** run those commands. Until then, `hello` with its token
 fails with `approval-pending`, which does not count as a failed attempt, while
@@ -244,7 +351,8 @@ and at most eight device-host requests can be pending. Build requests have a
 separate limit. The same name validation and failed-attempt limit apply.
 
 On the hosting Mac, inspect `stim-server devices`, then approve the matching
-request with `stim-server devices grant <id> --device-host`, or use **Allow**
+request with `stim-server devices grant <id> --device-host`, run
+[`stim-server setup`](#set-up-a-worker-mac) there with its node and ticket, or use **Allow**
 in Stim Desktop. Approve only an expected request: it authorizes that Mac to
 reserve session-owned simulators or emulators and run native app code. **Deny**
 or `stim-server devices revoke <id>` removes it; revocation also closes its

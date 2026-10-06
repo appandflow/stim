@@ -1,10 +1,10 @@
 import { execFileSync } from 'node:child_process';
 import { EventEmitter } from 'node:events';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { installService, rollbackService, uninstallService } from '../src/service.ts';
-import { renderPlist } from '../src/service-plist.ts';
+import { installJob, installService, recordServiceRoute, rollbackService, uninstallService } from '../src/service.ts';
+import { parseInstalledPlist, renderPlist } from '../src/service-plist.ts';
 
 const launchd = vi.hoisted(() => ({
   job: null as 'old' | 'new' | null,
@@ -189,6 +189,57 @@ describe.skipIf(process.platform !== 'darwin')('service lifecycle', () => {
     vi.unstubAllGlobals();
     vi.unstubAllEnvs();
     rmSync(home, { recursive: true, force: true });
+  });
+
+  it('setup records only the created route without restarting or changing the installed invocation', async () => {
+    await recordServiceRoute(label, launchd.port, { port: 7449, created: true });
+    const saved = parseInstalledPlist(
+      JSON.parse(execFileSync('plutil', ['-convert', 'json', '-o', '-', plist], { encoding: 'utf8' })),
+    );
+    const before = parseInstalledPlist(
+      JSON.parse(
+        execFileSync('plutil', ['-convert', 'json', '-o', '-', '-'], { input: launchd.original, encoding: 'utf8' }),
+      ),
+    );
+    expect(saved?.serve).toEqual({ port: 7449, created: true });
+    expect(saved?.programArguments).toEqual(before?.programArguments);
+    expect(launchd.bootstraps).toEqual([]);
+  });
+
+  it('setup applies explicit worker environment paths while preserving unspecified existing environment', async () => {
+    const host = {
+      app: '/tmp/Stim Host.app',
+      executable: '/tmp/Stim Host.app/Contents/MacOS/stim-host',
+      name: 'Stim Host',
+      bundleId: 'dev.stim.host',
+      replaced: false,
+      adHoc: false,
+    };
+    await finish(
+      installJob(
+        { label, port: launchd.port, env: ['ANDROID_HOME=/sdk'], pathPrepend: ['/jdk/bin'], serve: false },
+        { script: process.argv[1]!, host, requestPermissions: false },
+      ),
+    );
+    const installed = parseInstalledPlist(
+      JSON.parse(execFileSync('plutil', ['-convert', 'json', '-o', '-', plist], { encoding: 'utf8' })),
+    );
+    expect(installed?.env).toEqual(['ANDROID_HOME=/sdk']);
+    expect(installed?.pathPrepend).toEqual(['/jdk/bin']);
+    expect(installed?.script).toBe(realpathSync(process.argv[1]!));
+    const bootstraps = launchd.bootstraps.length;
+    await finish(
+      installJob(
+        { label, port: launchd.port, env: [], pathPrepend: [], serve: false },
+        { script: process.argv[1]!, host, requestPermissions: false },
+      ),
+    );
+    expect(launchd.bootstraps).toHaveLength(bootstraps);
+    expect(
+      parseInstalledPlist(
+        JSON.parse(execFileSync('plutil', ['-convert', 'json', '-o', '-', plist], { encoding: 'utf8' })),
+      )?.env,
+    ).toEqual(['ANDROID_HOME=/sdk']);
   });
 
   it('waits for the old child listener to release the port before bootstrapping', async () => {

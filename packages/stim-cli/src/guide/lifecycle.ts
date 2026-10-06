@@ -264,6 +264,7 @@ If Stim is not installed globally, replace stim with npx stim.
   stim settings set hosting.machines '["janics-mac-mini"]'
   stim doctor --fix
   # A person there approves: stim-server devices grant <id> --device-host
+  # Or runs stim-server setup on the worker with its client node, ticket and expiry.
   stim doctor
   stim ios --remote janics-mac-mini --device-type "iPhone 17 Pro" --runtime "iOS 27.0"
   stim status --json

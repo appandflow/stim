@@ -584,7 +584,15 @@ and port once. This is separate from build offloading:
 
 Only \`doctor --fix\` asks for device-host access. A person on that Mac
 approves the printed id with \`stim-server devices grant <id> --device-host\`.
-Hosting grants include no read, control or build capability.
+A person can also run \`stim-server setup\` on the worker: one node, one ticket,
+one expiry, at most one request per capability, with per-grant y/N in a
+terminal or \`--yes\` otherwise. Agents never run \`stim-server setup\` or
+approve requests. Setup never changes TCC or enables Funnel; an SSH-driven
+run is not offered. Without a terminal or --yes, setup refuses before installing
+unless every chosen capability already has a matching approval. Desktop reuse
+requires an existing tailnet route. Ctrl-C or SIGTERM completes the journal,
+releases the setup claim and exits 1; a typed N also exits 1. Hosting grants
+include no read, control or build capability.
 $STIM_HOME/device-host-machines.json stores a private token and pinned tailnet
 node. Doctor never prints the token; it reports each machine under deviceHosts
 in JSON. Stim sends tokens only to the pinned node's own tailnet address,
@@ -626,6 +634,9 @@ route (default 7443):
 \`doctor --fix\`, run in any app directory, asks each named Mac for build access and pins its tailnet
 node in $STIM_HOME/build-machines.json. A person approves the request on that
 Mac with \`stim-server devices grant <id> --build\`; doctor prints the id.
+A person can instead run \`stim-server setup\` on the worker with a node,
+ticket and expiry, under the approval rule above. Build never includes read
+or control.
 Stim connects to a named Mac only while its name still belongs to the pinned
 node and never sends the token to another node. \`doctor\` reports each
 machine's pairing state and, for an approved machine, asks it for one build
@@ -660,7 +671,8 @@ Prebuild and pod install still run on this Mac before a named offload. A refusal
 starts no local xcodebuild, Gradle or SwiftPM compile.
 Run stim doctor --fix to ask for build access if not paired. A person on the
 worker finds the id with stim-server devices and approves it with
-stim-server devices grant <id> --build. Check stim settings get offload.machines,
+stim-server devices grant <id> --build, or runs stim-server setup there with
+the client node, ticket and expiry. Check stim settings get offload.machines,
 or rerun with --build-machine auto or --build-machine local. Ctrl-C cancels
 the remote build without a local xcodebuild, Gradle or SwiftPM compile.
 

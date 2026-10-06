@@ -35,7 +35,7 @@ import {
   type ServerBuild,
   type ServiceSpec,
 } from './service-plist.ts';
-import { hostPermissionPanes, installHostApp, requestHostPermissions } from './stim-host.ts';
+import { hostPermissionPanes, installHostApp, requestHostPermissions, type HostApp } from './stim-host.ts';
 import { findTailscale, serveCommand, serveRoute, tailscaleStatus } from './tailscale.ts';
 import type { StartupState } from './startup.ts';
 
@@ -58,7 +58,7 @@ interface Run {
   stderr: string;
 }
 
-function run(
+export function run(
   file: string,
   args: string[],
   env: NodeJS.ProcessEnv = process.env,
@@ -92,7 +92,7 @@ const logPath = (label: string) => join(homedir(), 'Library', 'Logs', 'Stim', `$
  * The `node` to put in the plist: `process.execPath` is a resolved path such as a Homebrew Cellar version that
  * disappears on the next upgrade, so prefer a `node` on PATH that resolves to the same binary.
  */
-function stableNode(pathEnv: string | undefined): string {
+export function stableNode(pathEnv: string | undefined): string {
   const real = realpathSync(process.execPath);
   for (const dir of (pathEnv ?? '').split(delimiter)) {
     if (!dir) continue;
@@ -200,7 +200,7 @@ interface Health {
   route?: { state: string; port?: number; ports?: number[]; reason?: string };
 }
 
-async function fetchHealth(port: number): Promise<Health | null> {
+export async function fetchHealth(port: number): Promise<Health | null> {
   try {
     const response = await fetch(`http://127.0.0.1:${port}/health`, { signal: AbortSignal.timeout(HEALTH_TIMEOUT_MS) });
     const body = (await response.json()) as Partial<Health> & { server?: string };
@@ -220,7 +220,7 @@ async function waitForHealth(port: number, label: string): Promise<Health | null
   }
 }
 
-async function prepareRoute(
+export async function prepareRoute(
   port: number,
   previous: InstalledService | null,
 ): Promise<{ record: ServeRecord; create: string[] | null }> {
@@ -234,7 +234,7 @@ async function prepareRoute(
   return { record: plan.record, create: plan.create ? serveCommand(plan.record.port, port).split(' ').slice(1) : null };
 }
 
-async function requireManaged(label: string): Promise<InstalledService | null> {
+export async function requireManaged(label: string): Promise<InstalledService | null> {
   const installed = await readInstalled(label);
   if (!installed && existsSync(plistPath(label))) {
     throw new ServiceError(
@@ -259,8 +259,11 @@ export async function installService(options: ServiceOptions): Promise<string[]>
   return holdingUpdateClaim(options.label, () => installJob(options));
 }
 
-async function installJob(options: ServiceOptions): Promise<string[]> {
-  const script = realpathSync(process.argv[1] ?? '');
+export async function installJob(
+  options: ServiceOptions,
+  setup?: { script: string; host: HostApp; requestPermissions: false },
+): Promise<string[]> {
+  const script = realpathSync(setup?.script ?? process.argv[1] ?? '');
   const previous = await requireManaged(options.label);
   if (previous?.serve?.created && previous.port !== options.port) {
     throw new ServiceError(
@@ -277,15 +280,15 @@ async function installJob(options: ServiceOptions): Promise<string[]> {
   const environment: Record<string, string> = {};
   if (process.env.STIM_HOME) environment.STIM_HOME = process.env.STIM_HOME;
   if (process.env.SHELL) environment.SHELL = process.env.SHELL;
-  const host = await installHostApp();
+  const host = setup?.host ?? (await installHostApp());
   const spec: ServiceSpec = {
     host: host.executable,
     label: options.label,
     node: stableNode(process.env.PATH),
     script,
     port: options.port,
-    env: options.env,
-    pathPrepend: options.pathPrepend,
+    env: setup && !options.env.length ? (previous?.env ?? []) : options.env,
+    pathPrepend: setup && !options.pathPrepend.length ? (previous?.pathPrepend ?? []) : options.pathPrepend,
     environment,
     logPath: logPath(options.label),
     workingDirectory: homedir(),
@@ -293,6 +296,19 @@ async function installJob(options: ServiceOptions): Promise<string[]> {
   };
   const path = plistPath(options.label);
   const tailscale = findTailscale(process.env) ?? 'tailscale';
+  if (
+    setup &&
+    previous?.script === script &&
+    previous.port === options.port &&
+    previous.host === spec.host &&
+    JSON.stringify(previous.env) === JSON.stringify(spec.env) &&
+    JSON.stringify(previous.pathPrepend) === JSON.stringify(spec.pathPrepend)
+  ) {
+    const health = await fetchHealth(options.port);
+    if (health && health.startup?.state !== 'pending' && health.startup?.state !== 'degraded') {
+      return [`${options.label} already runs stim-server ${health.version}.`];
+    }
+  }
   const oldPlist = previous ? readFileSync(path, 'utf8') : null;
   mkdirSync(dirname(path), { recursive: true });
   mkdirSync(dirname(spec.logPath), { recursive: true });
@@ -353,17 +369,19 @@ async function installJob(options: ServiceOptions): Promise<string[]> {
           ? `LaunchAgent installed and listening on 127.0.0.1:${options.port}, still reading its Stim home. ${follow}`
           : `stim-server ${health.version} answers on 127.0.0.1:${options.port}.`,
   );
-  try {
-    await requestHostPermissions(host.app);
-  } catch (error) {
-    notes.push(`Could not show macOS permission requests: ${(error as Error).message}`);
+  if (setup?.requestPermissions !== false) {
+    try {
+      await requestHostPermissions(host.app);
+    } catch (error) {
+      notes.push(`Could not show macOS permission requests: ${(error as Error).message}`);
+    }
+    const panes = await hostPermissionPanes();
+    notes.push(
+      `The service runs under ${host.name}: ${host.app}.`,
+      "macOS shows its own permission requests on this Mac's screen; you only approve them. Over SSH, use Screen Sharing to see this Mac's screen.",
+      `If a request does not appear, turn ${host.name} on in System Settings > Privacy & Security > ${panes.screen} and System Settings > Privacy & Security > ${panes.control}. Stim never changes these settings itself.`,
+    );
   }
-  const panes = await hostPermissionPanes();
-  notes.push(
-    `The service runs under ${host.name}: ${host.app}.`,
-    "macOS shows its own permission requests on this Mac's screen; you only approve them. Over SSH, use Screen Sharing to see this Mac's screen.",
-    `If a request does not appear, turn ${host.name} on in System Settings > Privacy & Security > ${panes.screen} and System Settings > Privacy & Security > ${panes.control}. Stim never changes these settings itself.`,
-  );
   if (host.adHoc) {
     notes.push(
       `${host.name} is signed ad hoc, so macOS keeps its approvals only while the launcher source and Xcode toolchain are unchanged.`,
@@ -380,6 +398,29 @@ async function installJob(options: ServiceOptions): Promise<string[]> {
     'The service runs in your GUI login session (gui/<uid>), so after a reboot it starts when you log in. On a headless Mac, turn on automatic login.',
   );
   return notes;
+}
+
+export async function recordServiceRoute(label: string, port: number, record: ServeRecord): Promise<void> {
+  await withUpdateClaim(label, async (installed) => {
+    if (installed.port !== port)
+      throw new ServiceError(`${label} moved to port ${installed.port}; not recording this route.`);
+    const path = plistPath(label);
+    if (installed.serve?.port === record.port && installed.serve.created === record.created) return;
+    const staged = `${path}.${process.pid}.tmp`;
+    copyFileSync(path, staged);
+    try {
+      for (const args of [
+        ['-replace', 'StimService.ServePort', '-integer', String(record.port), staged],
+        ['-replace', 'StimService.ServeCreated', '-bool', String(record.created), staged],
+      ]) {
+        const edited = await run('plutil', args);
+        if (!edited.ok) throw new ServiceError(`Could not record the setup route: ${edited.stderr.trim()}`);
+      }
+      renameSync(staged, path);
+    } finally {
+      rmSync(staged, { force: true });
+    }
+  });
 }
 
 export interface ServiceStatus {
@@ -678,7 +719,7 @@ export async function runsAsService(label: string, port: number): Promise<boolea
 export const describeSource = (source: UpdateSource): string =>
   'release' in source ? `release ${source.release}` : `packages in ${source.from}`;
 
-function serverBuild(script: string): ServerBuild | null {
+export function serverBuild(script: string): ServerBuild | null {
   try {
     const pkg = JSON.parse(readFileSync(join(dirname(script), '..', 'package.json'), 'utf8')) as { version?: unknown };
     if (typeof pkg.version !== 'string') return null;
@@ -724,7 +765,7 @@ function installedIntegrity(staging: string): string | null {
   }
 }
 
-async function installServer(
+export async function installServer(
   versions: string,
   source: UpdateSource,
   node: string,
@@ -958,7 +999,7 @@ function prune(versions: string, keep: string[]): void {
   }
 }
 
-async function holdingUpdateClaim<T>(label: string, work: () => Promise<T>): Promise<T> {
+export async function holdingUpdateClaim<T>(label: string, work: () => Promise<T>): Promise<T> {
   const root = serviceRoot(label);
   mkdirSync(root, { recursive: true });
   let attempt;
@@ -1011,17 +1052,24 @@ export async function updateService(
 ): Promise<string[]> {
   requireMacOs();
   if (!existsSync(plistPath(label))) throw new ServiceError(`${label} is not installed.`);
-  return withUpdateClaim(label, async (installed) => {
-    const at = new Date().toISOString();
-    try {
-      const notes = await switchToSource(label, installed, source, log);
-      recordOutcome(label, { at, target: describeSource(source), ok: true, message: notes[0]! });
-      return notes;
-    } catch (error) {
-      recordOutcome(label, { at, target: describeSource(source), ok: false, message: (error as Error).message });
-      throw error;
-    }
-  });
+  return withUpdateClaim(label, (installed) => updateInstalledService(label, installed, source, log));
+}
+
+export async function updateInstalledService(
+  label: string,
+  installed: InstalledService & { script: string; node: string; port: number },
+  source: UpdateSource,
+  log: (line: string) => void,
+): Promise<string[]> {
+  const at = new Date().toISOString();
+  try {
+    const notes = await switchToSource(label, installed, source, log);
+    recordOutcome(label, { at, target: describeSource(source), ok: true, message: notes[0]! });
+    return notes;
+  } catch (error) {
+    recordOutcome(label, { at, target: describeSource(source), ok: false, message: (error as Error).message });
+    throw error;
+  }
 }
 
 async function switchToSource(

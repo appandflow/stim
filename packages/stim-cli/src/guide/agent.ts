@@ -150,6 +150,8 @@ waiting times out.
 
 RULES DURING THE LOOP
 
+- Agents never run stim-server setup and never approve access requests.
+  A person on the worker approves builds and device hosting (guide settings).
 - Run Stim from the app directory: the one whose package.json depends on
   react-native or expo. Anywhere else -- a monorepo root, a tools package --
   start, ios and android refuse with STIM_NO_PROJECT naming that package.json,
