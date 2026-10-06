@@ -245,7 +245,7 @@ final class ServerController: ObservableObject {
   }
 
   func refresh() {
-    reloadDevices()
+    if case .notReady = state {} else { reloadDevices() }
     let owned: Bool
     switch state {
     case .running(_, let value), .notReady(_, let value): owned = value

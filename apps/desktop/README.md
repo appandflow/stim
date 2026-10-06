@@ -882,8 +882,10 @@ ready or the 15-second startup deadline passes, then uses its regular poller.
 The server retries reading its Stim home every 30 seconds. Desktop applies the
 usual home checks to an external server whenever health reports its Stim home,
 including while it is not ready. Until health is ready, Desktop does not connect
-a session or offer pairing or route setup. Listing, approving and revoking
-paired devices remain available while the server is off, failed or not ready.
+a session or offer pairing or route setup, and its poller does not list paired
+devices, because that read of the Stim home can hang while it is degraded.
+Listing, approving and revoking paired devices work as before while the server is
+off, failed or running.
 
 A read-only phone sees workspaces, devices and logs. With workspace diff support,
 it can also read changed and untracked text files in registered workspaces,
