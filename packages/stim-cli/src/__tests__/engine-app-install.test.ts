@@ -178,12 +178,12 @@ describe('the two pure port-wiring shapes', () => {
     });
   });
 
-  test('iOS scheme approvals cover the bundle id and dev-client scheme without duplicates', () => {
-    expect(iosSchemeApprovalKeys('com.example.app', 'myapp')).toEqual([
+  test('iOS scheme approvals cover the bundle id and all schemes without duplicates', () => {
+    expect(iosSchemeApprovalKeys('com.example.app', ['myapp', 'myapp'])).toEqual([
       'com.apple.CoreSimulator.CoreSimulatorBridge-->com.example.app',
       'com.apple.CoreSimulator.CoreSimulatorBridge-->myapp',
     ]);
-    expect(iosSchemeApprovalKeys('com.example.app', 'com.example.app')).toEqual([
+    expect(iosSchemeApprovalKeys('com.example.app', ['com.example.app'])).toEqual([
       'com.apple.CoreSimulator.CoreSimulatorBridge-->com.example.app',
     ]);
   });
@@ -251,8 +251,8 @@ describe('ios', () => {
     expect(result.reason).toMatch(/device not booted/);
   });
 
-  test('installIosApp skips the dev menu and approves the exact app and scheme after installation', () => {
-    const exec = recordingExec();
+  test('installIosApp falls back to the dev-client scheme when plutil fails', () => {
+    const exec = recordingExec({ fail: 'plutil' });
     const appPath = '/tmp/My App.app';
     expect(
       installIosApp(
@@ -275,6 +275,7 @@ describe('ios', () => {
     expect(exec.calls).toEqual([
       ['xcrun', 'simctl', 'get_app_container', 'U1', 'com.example.app'],
       ['xcrun', 'simctl', 'install', 'U1', appPath],
+      ['plutil', '-convert', 'json', '-o', '-', join(appPath, 'Info.plist')],
       [
         'xcrun',
         'simctl',
@@ -324,7 +325,38 @@ describe('ios', () => {
         'com.example.app',
       ],
     ]);
-    expect(exec.options.slice(2)).toEqual(Array.from({ length: 4 }, () => ({ timeoutMs: 60000 })));
+    expect(exec.options.slice(3)).toEqual(Array.from({ length: 4 }, () => ({ timeoutMs: 60000 })));
+  });
+
+  test.each(['exp+foo', null])('approves all eligible bundle schemes with dev-client scheme %s', (devClientScheme) => {
+    const exec = recordingExec({
+      outputs: {
+        plutil: JSON.stringify({
+          CFBundleURLTypes: [{ CFBundleURLSchemes: ['stim', 'stim-dev', 'fb123456', 'https', 'exp+foo'] }],
+        }),
+      },
+    });
+    const result = installIosApp(
+      { udid: 'U1', appPath: '/tmp/My App.app', bundleId: 'com.example.app', devClientScheme },
+      { exec },
+    );
+    expect(result.schemeApprovals).toEqual([
+      'com.apple.CoreSimulator.CoreSimulatorBridge-->com.example.app=com.example.app',
+      'com.apple.CoreSimulator.CoreSimulatorBridge-->stim=com.example.app',
+      'com.apple.CoreSimulator.CoreSimulatorBridge-->stim-dev=com.example.app',
+      'com.apple.CoreSimulator.CoreSimulatorBridge-->exp+foo=com.example.app',
+    ]);
+    expect(
+      exec.calls
+        .filter((call) => call.includes('com.apple.launchservices.schemeapproval'))
+        .map((call) => call.slice(7)),
+    ).toEqual([
+      ['com.apple.CoreSimulator.CoreSimulatorBridge-->com.example.app', '-string', 'com.example.app'],
+      ['com.apple.CoreSimulator.CoreSimulatorBridge-->stim', '-string', 'com.example.app'],
+      ['com.apple.CoreSimulator.CoreSimulatorBridge-->stim-dev', '-string', 'com.example.app'],
+      ['com.apple.CoreSimulator.CoreSimulatorBridge-->exp+foo', '-string', 'com.example.app'],
+    ]);
+    expect(exec.calls.some((call) => call.includes('EXDevMenuShowsAtLaunch'))).toBe(devClientScheme !== null);
   });
 
   test('installIosApp times the artifact step separately from dev-client preparation', () => {
@@ -360,7 +392,9 @@ describe('ios', () => {
   });
 
   test('only the approvals missing from the record are written, and the record grows by them', () => {
-    const exec = recordingExec();
+    const exec = recordingExec({
+      outputs: { plutil: JSON.stringify({ CFBundleURLTypes: [{ CFBundleURLSchemes: ['myapp', 'stim'] }] }) },
+    });
     const result = installIosApp(
       {
         udid: 'U1',
@@ -370,6 +404,7 @@ describe('ios', () => {
         schemeApprovals: [
           'com.apple.CoreSimulator.CoreSimulatorBridge-->com.example.app=com.example.app',
           'com.apple.CoreSimulator.CoreSimulatorBridge-->myapp=com.example.other',
+          'com.apple.CoreSimulator.CoreSimulatorBridge-->stim=com.example.app',
         ],
       },
       { exec, now: () => 0 },
@@ -391,6 +426,7 @@ describe('ios', () => {
     expect(result.schemeApprovals).toEqual([
       'com.apple.CoreSimulator.CoreSimulatorBridge-->com.example.app=com.example.app',
       'com.apple.CoreSimulator.CoreSimulatorBridge-->myapp=com.example.other',
+      'com.apple.CoreSimulator.CoreSimulatorBridge-->stim=com.example.app',
       'com.apple.CoreSimulator.CoreSimulatorBridge-->myapp=com.example.app',
     ]);
   });
@@ -3090,7 +3126,11 @@ describe('skipping an install the device already holds', () => {
     const appPath = localApp('js-swap.app', 'macho with this workspaces js');
     const exec = recordingExec({ outputs: { get_app_container: `${installed}\n` } });
     const result = installIosApp({ udid: 'U1', appPath, bundleId: 'com.example.app' }, { exec });
-    expect(result).toEqual({ ok: true, appPath });
+    expect(result).toEqual({
+      ok: true,
+      appPath,
+      schemeApprovals: ['com.apple.CoreSimulator.CoreSimulatorBridge-->com.example.app=com.example.app'],
+    });
     expect(exec.calls).toContainEqual(['xcrun', 'simctl', 'install', 'U1', appPath]);
   });
 });

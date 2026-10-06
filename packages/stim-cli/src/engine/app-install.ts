@@ -1,4 +1,5 @@
 import { getExecutor, type Executor } from '../exec.ts';
+import { approvableSchemes, readBundleSchemes } from './app-schemes.ts';
 import { deviceHoldsApk, deviceHoldsBundle } from './installed-artifact.ts';
 import { iosSimulatorFailureAdvice, listUserApps, uninstallIosApp } from '../devices/ios.ts';
 import { DEV_MENU_LAUNCH_ARGS } from '../collector/ios-device.ts';
@@ -140,7 +141,12 @@ export function installIosApp(
   // taps). A skipped install keeps the domain the last install wrote, or the
   // one adoption imported when it cleared the app's data.
   const devMenuKeys = bundleId && devClientScheme && !skipped ? IOS_DEV_MENU_OFF_KEYS : [];
-  const approvalKeys = bundleId && devClientScheme ? iosSchemeApprovalKeys(bundleId, devClientScheme) : [];
+  const approvalKeys = bundleId
+    ? iosSchemeApprovalKeys(bundleId, [
+        ...approvableSchemes(readBundleSchemes(appPath, { exec: e })),
+        ...(devClientScheme ? [devClientScheme] : []),
+      ])
+    : [];
   const missingApprovals = approvalKeys.filter((key) => !schemeApprovals.includes(`${key}=${bundleId}`));
   const preparing = bundleId && (devMenuKeys.length > 0 || missingApprovals.length > 0);
   const preparationStartedAt = preparing ? artifactFinishedAt : undefined;
@@ -235,8 +241,8 @@ export function devClientUrl(
   return devClientDeepLink(scheme, `http://${host}:${metroPort}`, options);
 }
 
-export function iosSchemeApprovalKeys(bundleId: string, devClientScheme: string): string[] {
-  return [...new Set([bundleId, devClientScheme])].map((target) => `${IOS_SCHEME_APPROVAL_OPENER}-->${target}`);
+export function iosSchemeApprovalKeys(bundleId: string, schemes: string[]): string[] {
+  return [...new Set([bundleId, ...schemes])].map((target) => `${IOS_SCHEME_APPROVAL_OPENER}-->${target}`);
 }
 
 export function restartedAppNote(restartedPid: number | undefined, lead = ' '): string {
