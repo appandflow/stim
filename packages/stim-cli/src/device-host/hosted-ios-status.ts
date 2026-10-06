@@ -25,7 +25,7 @@ export function applyHostedIosProbe(
           warning:
             probe.state === 'stopped'
               ? `The iOS session on ${placement.machine} stopped or no longer exists. Run ${rerun} to launch it again, or stim stop to clear the placement.`
-              : `${placement.machine} could not confirm its iOS session${probe.state === 'unknown' ? (probe.notice ? `: ${probe.notice}` : '') : `: ${probe.reason}`}. The placement stays recorded; run stim stop when the host answers.`,
+              : `${placement.machine} could not confirm its iOS session${probe.state === 'unknown' ? (probe.notice ? `: ${probe.notice}` : '') : `: ${probe.reason.replace(/\.+$/, '')}`}. The placement stays recorded; run stim stop when the host answers.`,
         }),
   };
 }

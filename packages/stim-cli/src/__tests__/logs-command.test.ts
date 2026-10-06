@@ -168,8 +168,12 @@ describe('option validation', () => {
   });
 
   test('validateSources expands all to every Contract-1 source', async () => {
-    expect(validateSources(['all'])).toEqual({ sources: ['metro', 'client', 'device', 'build', 'agent'] });
-    expect(validateSources(['client', 'all'])).toEqual({ sources: ['metro', 'client', 'device', 'build', 'agent'] });
+    expect(validateSources(['all'])).toEqual({
+      sources: ['metro', 'client', 'device', 'build', 'agent', 'maintenance'],
+    });
+    expect(validateSources(['client', 'all'])).toEqual({
+      sources: ['metro', 'client', 'device', 'build', 'agent', 'maintenance'],
+    });
     expect(validateSources(['metrro']).error).toMatch(/or all/);
   });
 

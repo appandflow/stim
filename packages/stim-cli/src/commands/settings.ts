@@ -130,6 +130,7 @@ function settingEntry(context: SettingsContext, setting: SettingDefinition): Set
   const envValue = setting.env ? context.env[setting.env] : undefined;
   const env = setting.env && envValue ? { name: setting.env, value: String(masked(setting, envValue)) } : undefined;
   const scopedHome = !env && setting.scopedHomeValue !== undefined && context.env.STIM_HOME;
+  const ci = !env && setting.ciValue !== undefined && context.env.CI;
   const winner = PRECEDENCE.find((scope) => scope in layers);
   let value: unknown = null;
   let origin: SettingEntry['origin'] = null;
@@ -139,6 +140,9 @@ function settingEntry(context: SettingsContext, setting: SettingDefinition): Set
     origin = 'env';
   } else if (scopedHome) {
     value = setting.scopedHomeValue;
+    origin = 'env';
+  } else if (ci) {
+    value = setting.ciValue;
     origin = 'env';
   } else if (winner) {
     value = layers[winner];
@@ -154,7 +158,13 @@ function settingEntry(context: SettingsContext, setting: SettingDefinition): Set
     value,
     origin,
     layers,
-    ...(env ? { env } : scopedHome ? { env: { name: 'STIM_HOME', value: context.env.STIM_HOME! } } : {}),
+    ...(env
+      ? { env }
+      : scopedHome
+        ? { env: { name: 'STIM_HOME', value: context.env.STIM_HOME! } }
+        : ci
+          ? { env: { name: 'CI', value: context.env.CI! } }
+          : {}),
     ...(setting.sensitive ? { sensitive: true as const } : {}),
     ...(defaultReason ? { defaultReason } : {}),
   };

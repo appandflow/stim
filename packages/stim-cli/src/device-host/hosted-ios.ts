@@ -218,13 +218,9 @@ export async function stopHostedIos(root: string, slot?: string): Promise<void> 
       );
       if (stopped.state !== 'stopped') throw unknownSession(host, stopped);
     } catch (error) {
-      const code =
-        error instanceof Error && 'hostCode' in error && typeof error.hostCode === 'string'
-          ? error.hostCode
-          : error instanceof Error && 'code' in error
-            ? error.code
-            : undefined;
-      if (code !== 'unknown-session' && code !== 'forbidden') {
+      const code = error instanceof Error && 'code' in error ? error.code : undefined;
+      const hostCode = error instanceof Error && 'hostCode' in error ? error.hostCode : code;
+      if (hostCode !== 'unknown-session' && hostCode !== 'forbidden') {
         const remedy =
           code === 'closed' || code === 'timeout'
             ? 'rerun stim stop when that machine answers.'
@@ -232,7 +228,7 @@ export async function stopHostedIos(root: string, slot?: string): Promise<void> 
               ? 'run stim doctor, restore hosting access, then rerun stim stop.'
               : 'run stim stop to reconcile the session.';
         failures.push(
-          `Could not stop the iOS simulator on ${placement.machine}: ${error instanceof Error ? error.message : String(error)}. The placement is kept; ${remedy}`,
+          `Could not stop the iOS simulator on ${placement.machine}: ${(error instanceof Error ? error.message : String(error)).replace(/\.+$/, '')}. The placement is kept; ${remedy}`,
         );
         continue;
       }

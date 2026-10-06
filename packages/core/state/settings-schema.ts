@@ -25,6 +25,7 @@ function leafSchema(setting: SettingDefinition, scope: SettingScope): JsonSchema
     case 'number':
       schema.type = type.integer ? 'integer' : 'number';
       if (type.minimum !== undefined) schema.minimum = type.minimum;
+      if (type.exclusiveMinimum !== undefined) schema.exclusiveMinimum = type.exclusiveMinimum;
       if (type.maximum !== undefined) schema.maximum = type.maximum;
       break;
     case 'boolean':

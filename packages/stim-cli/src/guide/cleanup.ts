@@ -16,6 +16,40 @@ ARCHIVE
 Linked-worktree removal and gc dead-project pruning keep history under
 $STIM_HOME/archive by default. See stim guide cleanup archive.
 
+MAINTENANCE
+
+Automatic maintenance is report-only in this release: it measures, plans and
+logs, and never stops or deletes resources. The default mode is report; it is
+off in CI and scoped STIM_HOME homes unless STIM_MAINTENANCE is explicit.
+Commands trigger a detached pass when disk and memory checks (every minute)
+or directory sizes (hourly) are due. guide, settings and help do not trigger
+it; gc --delete also skips the hook. status --watch also triggers checks.
+Size checks defer under high load. Attempts back off for at least one minute.
+Measured directories are workspace build outputs and Stim's shared native,
+Metro, ccache, Swift compilation and registered caches. Pressure checks read
+free disk on the Stim home, projects and worker root volumes. On macOS the
+memory signal is the sysctl pressure level, with no signal if sysctl fails.
+Other platforms use os.freemem(); macOS never falls back to it.
+Memory pressure is recorded only; memory stops are deferred to a later phase.
+
+  stim status                     last checks, plan and running pass
+  stim status --json              maintenance observations and recent records
+  stim logs --source maintenance  this workspace's maintenance records
+  stim gc                         live pressure and cached-size preview
+  stim settings set maintenance.mode off
+
+The machine log is $STIM_HOME/maintenance/maintenance.ndjson, rotated at
+maintenance.logMaxMb with the old generation retained for
+maintenance.logRetentionDays. Child crashes use maintenance/child.log.
+Actions and explaining skips are logged only when newly planned. A pass is
+logged after a size check or a change to actions, skips or blocked reasons.
+maintenance.logChecks enables debug observations; default false.
+status and doctor report invalid settings and unresolved claims with a removal
+command to run only after confirming the holder is gone. Invalid cache caps
+fall back to their own defaults; invalid maintenance settings disable passes.
+The run claim serializes passes with gc --delete; gc refuses a held claim
+with the holder and recovery guidance instead of waiting.
+
 CLEANUP AND DISK
 
 worktree remove stops the agent-device daemon when the workspace's

@@ -432,13 +432,20 @@ test.each([false, true])('workspace removal preserves an unreachable hosting own
   expect(Object.keys(readHostedIos(root)).length).toBe(unreachable ? 1 : 0);
 });
 
-test.each(['forbidden', 'capacity'])('stop handles a hello refusal with host code %s', async (code) => {
+test.each([
+  ['forbidden', true, ''],
+  ['capacity', false, 'run stim doctor, restore hosting access, then rerun stim stop'],
+  ['unauthorized', false, 'run stim doctor, restore hosting access, then rerun stim stop'],
+])('stop handles a hello refusal with host code %s', async (code, cleared, remedy) => {
   writeHostedIos(root, 'default', placement());
   open.mockResolvedValue({ refused: true, code, failure: 'This Mac is refused.' });
   const result = await runStop({ root, report: () => {} });
-  expect(result.ok).toBe(code === 'forbidden');
-  expect(readHostedIos(root)).toEqual(code === 'forbidden' ? {} : { default: placement() });
+  const outcome = JSON.stringify(result.outcomes.device);
+  expect(result.ok).toBe(cleared);
+  expect(readHostedIos(root)).toEqual(cleared ? {} : { default: placement() });
   expect(methods).toEqual([]);
+  expect(outcome).toContain(remedy);
+  expect(outcome).not.toContain('..');
 });
 
 test('worktree removal clears placement when hosting was revoked at hello', async () => {

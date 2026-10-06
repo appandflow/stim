@@ -156,6 +156,30 @@ export function statsFile(): string {
   return join(configDir(), 'stats.json');
 }
 
+export function maintenanceDir(): string {
+  return join(configDir(), 'maintenance');
+}
+
+export function maintenanceStateFile(): string {
+  return join(maintenanceDir(), 'state.json');
+}
+
+export function maintenanceAttemptFile(): string {
+  return join(maintenanceDir(), 'attempt.json');
+}
+
+export function maintenanceNdjsonFile(): string {
+  return join(maintenanceDir(), 'maintenance.ndjson');
+}
+
+export function maintenanceChildLogFile(): string {
+  return join(maintenanceDir(), 'child.log');
+}
+
+export function maintenanceRunClaims(): string {
+  return join(maintenanceDir(), 'run.claims');
+}
+
 export function archiveRoot(): string {
   return join(configDir(), 'archive');
 }

@@ -1,3 +1,5 @@
+import { maintenanceRunClaims } from '@stim-cli/core/state';
+import { previewMaintenance, type MaintenancePreview } from '../maintenance/preview.ts';
 import { collectArchives, deleteArchives, archiveRefusal, archiveWorkPending } from './gc/archives.ts';
 import { getSwiftpmCacheUsage } from '../devices/swiftpm-cache-usage.ts';
 import { getAgentDeviceUsage } from '../devices/agent-device-usage.ts';
@@ -11,7 +13,13 @@ import { directorySize, isOnMountedVolume, listMountedVolumes, volumeRootFor } f
 import { listBuildLocks } from '../engine/build-lock.ts';
 import { listBuildSlots } from '../engine/build-slots.ts';
 import { removeExpiredLease } from '../engine/device-lease.ts';
-import { clearFreeClaimSet } from '../ownership-claim.ts';
+import {
+  ClaimRefusedError,
+  claimFailure,
+  tryAcquireClaim,
+  releaseClaim,
+  clearFreeClaimSet,
+} from '../ownership-claim.ts';
 import { detectIsExpo, findProjectRoot } from '../workspace/project.ts';
 import { describeDereferenced, reclaimProject } from '../devices/reclaim.ts';
 import { listAllIosSims, type IosSimRecord } from '../devices/ios.ts';
@@ -147,6 +155,7 @@ type GcPayload =
       actionable: boolean;
       failures: number | null;
       sections: GcJsonSections;
+      maintenance?: MaintenancePreview;
       results: GcResult[];
       inventory: GcInventory | null;
     }
@@ -468,18 +477,53 @@ export async function collectGcReport(
 
 export async function runGc(opts: RunGcOptions = {}, deps: GcDependencies = {}): Promise<void> {
   if (!opts.json) {
-    await sweep(opts, deps);
+    await maintenanceGuardedSweep(opts, deps);
     return;
   }
   const log = console.log;
   console.log = console.error;
   let payload: GcPayload;
   try {
-    payload = await sweep(opts, deps);
+    payload = await maintenanceGuardedSweep(opts, deps);
   } finally {
     console.log = log;
   }
   console.log(JSON.stringify(payload));
+}
+
+async function maintenanceGuardedSweep(opts: RunGcOptions, deps: GcDependencies): Promise<GcPayload> {
+  if (!opts.delete) return sweep(opts, deps);
+  let claim;
+  try {
+    const root = maintenanceRunClaims();
+    const attempt = tryAcquireClaim({
+      root,
+      mode: 'exclusive',
+      label: 'maintenance',
+      details: { trigger: 'gc --delete' },
+    });
+    if (attempt.pending) releaseClaim(attempt.pending);
+    claim = attempt.acquired;
+    if (!claim) {
+      const holder = attempt.held ?? attempt.waitingFor?.[0];
+      throw new ClaimRefusedError({
+        root,
+        claimPath: holder?.path ?? root,
+        label: 'maintenance',
+        reason: `held by pid ${holder?.owner.pid ?? '?'} since ${holder?.startedAt ?? '?'} (${String(holder?.details.trigger ?? 'maintenance')})`,
+      });
+    }
+    return await sweep(opts, deps);
+  } catch (error) {
+    const failure = claimFailure(error, 'stim gc --delete');
+    if (!failure) throw error;
+    console.error(`${failure.code}: ${failure.message}`);
+    console.error(failure.remedy);
+    process.exitCode = 1;
+    return failure;
+  } finally {
+    if (claim) releaseClaim(claim);
+  }
 }
 
 async function sweep(opts: RunGcOptions, deps: GcDependencies): Promise<GcPayload> {
@@ -632,6 +676,10 @@ async function pruneDeadProjects(deadProjects: string[]): Promise<number> {
   return deleteFailures;
 }
 
+async function attachMaintenancePreview(report: GcReport, deleting: boolean, cache: string | null): Promise<void> {
+  if (!deleting) report.maintenance = await previewMaintenance({ devices: !cache });
+}
+
 function scopedDryRunAction(cache: string | null): string {
   const memory = memoryCacheKind(cache);
   if (memory === WATCHMAN_KIND) return 'remove the stale roots and shut down the unused watchman';
@@ -687,6 +735,7 @@ async function runGcCore(opts: RunGcOptions, deps: GcDependencies): Promise<GcPa
     };
   }
 
+  await attachMaintenancePreview(report, opts.delete === true, cache);
   const refusal = archiveRefusal(report.archives);
   if (refusal !== null) return refusal;
   const all = report.all;
@@ -748,6 +797,7 @@ async function runGcCore(opts: RunGcOptions, deps: GcDependencies): Promise<GcPa
     actionable,
     failures,
     sections: gcReportSections(report),
+    ...(report.maintenance ? { maintenance: report.maintenance } : {}),
     results: takeGcResults(),
     inventory,
   });

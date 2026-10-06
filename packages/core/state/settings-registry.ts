@@ -19,7 +19,7 @@ export type SettingType =
   | { kind: 'string'; pattern?: string; patternHelp?: string }
   | { kind: 'path'; absolute?: boolean; relative?: boolean }
   | { kind: 'strings' }
-  | { kind: 'number'; integer?: boolean; minimum?: number; maximum?: number }
+  | { kind: 'number'; integer?: boolean; minimum?: number; exclusiveMinimum?: number; maximum?: number }
   | { kind: 'boolean' }
   | { kind: 'choice'; choices: readonly string[] }
   | { kind: 'object' }
@@ -31,6 +31,7 @@ export type SettingType =
  * `.stim.json` instead of the app's. A `sensitive` value is never printed and is
  * written to `.stim.json` only as an `env:` or `file:` reference. `scopedHomeValue`
  * replaces every layer and the default while STIM_HOME is set and `env` is not.
+ * `ciValue` replaces every layer and the default while CI is set and `env` is not.
  * `desktopDefault` replaces `default` on macOS while Stim Desktop is installed.
  */
 export interface SettingDefinition {
@@ -42,7 +43,8 @@ export interface SettingDefinition {
   env?: string;
   sensitive?: boolean;
   committedAt?: 'repository';
-  scopedHomeValue?: number | boolean;
+  scopedHomeValue?: string | number | boolean;
+  ciValue?: string | number | boolean;
   desktopDefault?: string;
 }
 
@@ -484,6 +486,128 @@ export const SETTINGS: readonly SettingDefinition[] = [
     description: 'Live workspaces before idle ones are reclaimed; unset or 0 means no limit',
   },
   {
+    key: 'maintenance.mode',
+    type: { kind: 'choice', choices: ['off', 'report'] },
+    scopes: MACHINE,
+    default: 'report',
+    env: 'STIM_MAINTENANCE',
+    scopedHomeValue: 'off',
+    ciValue: 'off',
+    description:
+      'Automatic resource maintenance. report measures, plans and logs what it would do and never deletes or stops anything; off disables it. Off under STIM_HOME or CI unless STIM_MAINTENANCE is set',
+  },
+  {
+    key: 'maintenance.pressureCheckMinutes',
+    type: { kind: 'number', integer: true, minimum: 1 },
+    scopes: MACHINE,
+    default: 1,
+    env: 'STIM_MAINTENANCE_PRESSURE_CHECK_MINUTES',
+    description: 'Disk and memory check interval in minutes',
+  },
+  {
+    key: 'maintenance.sizeCheckMinutes',
+    type: { kind: 'number', integer: true, minimum: 1 },
+    scopes: MACHINE,
+    default: 60,
+    env: 'STIM_MAINTENANCE_SIZE_CHECK_MINUTES',
+    description: 'Directory size check interval in minutes',
+  },
+  {
+    key: 'maintenance.maxLoadPerCore',
+    type: { kind: 'number', exclusiveMinimum: 0 },
+    scopes: MACHINE,
+    default: 4,
+    env: 'STIM_MAINTENANCE_MAX_LOAD_PER_CORE',
+    description: 'Defer size scans above this one-minute load per CPU',
+  },
+  {
+    key: 'maintenance.logMaxMb',
+    type: { kind: 'number', exclusiveMinimum: 0 },
+    scopes: MACHINE,
+    default: 1,
+    env: 'STIM_MAINTENANCE_LOG_MAX_MB',
+    description: 'Machine maintenance log rotation size in MiB',
+  },
+  {
+    key: 'maintenance.logRetentionDays',
+    type: { kind: 'number', integer: true, minimum: 1 },
+    scopes: MACHINE,
+    default: 30,
+    env: 'STIM_MAINTENANCE_LOG_RETENTION_DAYS',
+    description: 'Retention of the rotated machine maintenance log in days',
+  },
+  {
+    key: 'maintenance.logChecks',
+    type: BOOLEAN,
+    scopes: MACHINE,
+    default: false,
+    env: 'STIM_MAINTENANCE_LOG_CHECKS',
+    description: 'Write debug check records and routine skips',
+  },
+  {
+    key: 'maintenance.memoryPressureLevel',
+    type: { kind: 'choice', choices: ['warning', 'critical', 'off'] },
+    scopes: MACHINE,
+    default: 'warning',
+    env: 'STIM_MAINTENANCE_MEMORY_PRESSURE_LEVEL',
+    description: 'Lowest macOS memory pressure level considered; off disables memory pressure reporting',
+  },
+  {
+    key: 'maintenance.memoryWarningMinutes',
+    type: { kind: 'number', integer: true, minimum: 0 },
+    scopes: MACHINE,
+    default: 10,
+    env: 'STIM_MAINTENANCE_MEMORY_WARNING_MINUTES',
+    description: 'Consecutive warning minutes before memory counts as pressure',
+  },
+  {
+    key: 'maintenance.minAvailableMemoryGb',
+    type: { kind: 'number', minimum: 0 },
+    scopes: MACHINE,
+    env: 'STIM_MAINTENANCE_MIN_AVAILABLE_MEMORY_GB',
+    description: 'Available-memory threshold in GiB; unset is 10% of RAM',
+  },
+  {
+    key: 'maintenance.capTargetPercent',
+    type: { kind: 'number', integer: true, minimum: 10, maximum: 100 },
+    scopes: MACHINE,
+    default: 80,
+    env: 'STIM_MAINTENANCE_CAP_TARGET_PERCENT',
+    description: 'Plan toward this percentage of each size cap',
+  },
+  {
+    key: 'maintenance.workspaceOutputsMaxGb',
+    type: { kind: 'number', minimum: 0 },
+    scopes: MACHINE,
+    default: 20,
+    env: 'STIM_MAINTENANCE_WORKSPACE_OUTPUTS_MAX_GB',
+    description: 'Workspace build-output cap in GiB; 0 means no cap',
+  },
+  {
+    key: 'caches.buildCacheMaxGb',
+    type: { kind: 'number', minimum: 0 },
+    scopes: MACHINE,
+    default: 10,
+    env: 'STIM_CACHES_BUILD_CACHE_MAX_GB',
+    description: 'Shared native build-cache cap in GiB; 0 means no cap',
+  },
+  {
+    key: 'caches.metroCacheMaxGb',
+    type: { kind: 'number', minimum: 0 },
+    scopes: MACHINE,
+    default: 5,
+    env: 'STIM_CACHES_METRO_CACHE_MAX_GB',
+    description: 'Combined Metro transform-cache cap in GiB; 0 means no cap',
+  },
+  {
+    key: 'caches.swiftCompilationCacheMaxGb',
+    type: { kind: 'number', minimum: 0 },
+    scopes: MACHINE,
+    default: 15,
+    env: 'STIM_CACHES_SWIFT_COMPILATION_CACHE_MAX_GB',
+    description: 'Swift compilation-cache cap in GiB; planned emptying is whole; 0 means no cap',
+  },
+  {
     key: 'gc.worktreeGraceMinutes',
     type: CAPACITY,
     scopes: MACHINE,
@@ -685,10 +809,16 @@ export function acceptsShape(setting: SettingDefinition, value: unknown): boolea
   }
 }
 
-function numberBounds(type: { integer?: boolean; minimum?: number; maximum?: number }): string {
+function numberBounds(type: {
+  integer?: boolean;
+  minimum?: number;
+  exclusiveMinimum?: number;
+  maximum?: number;
+}): string {
   const noun = type.integer ? 'a whole number' : 'a number';
   if (type.minimum !== undefined && type.maximum !== undefined)
     return `${noun} from ${type.minimum} through ${type.maximum}`;
+  if (type.exclusiveMinimum !== undefined) return `${noun}, greater than ${type.exclusiveMinimum}`;
   if (type.minimum !== undefined) return `${noun}, ${type.minimum} or more`;
   return noun;
 }
@@ -704,6 +834,7 @@ export function settingValueError(setting: SettingDefinition, value: unknown): s
       !Number.isFinite(number) ||
       (type.integer && !Number.isSafeInteger(number)) ||
       (type.minimum !== undefined && number < type.minimum) ||
+      (type.exclusiveMinimum !== undefined && number <= type.exclusiveMinimum) ||
       (type.maximum !== undefined && number > type.maximum)
     ) {
       return numberBounds(type);
