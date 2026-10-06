@@ -19,14 +19,13 @@ export function useLogs(filter: LogFilter | null, onChange: (change: LogsChange)
   const focused = useIsFocused();
   const foreground = useAppForeground();
   const active = focused && foreground;
-  const key = filter ? JSON.stringify(filter) : null;
+  const key = filter && (!filter.archive || open) ? JSON.stringify(filter) : null;
   useEffect(() => {
     if (!connection || !key || !active) return;
     let stopped = false;
     onChange({ kind: 'reset' });
     const params = JSON.parse(key) as LogFilter;
     if (params.archive) {
-      if (!open) return;
       connection.request('logs.query', params).then(
         ({ records }) => {
           if (!stopped) onChange({ kind: 'records', records });
@@ -55,6 +54,6 @@ export function useLogs(filter: LogFilter | null, onChange: (change: LogsChange)
       stopped = true;
       unsubscribe();
     };
-  }, [connection, key, onChange, active, open]);
+  }, [connection, key, onChange, active]);
   return active;
 }

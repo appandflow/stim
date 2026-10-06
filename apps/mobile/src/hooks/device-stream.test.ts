@@ -285,12 +285,4 @@ test('opens archives only at recorded times and never sends a live request', asy
   await act(async () => mockAnswers[0]!({ subscription: 's1', video: 'h264' }));
   await act(async () => result.current.live());
   expect(mockRequests).toEqual([]);
-  await act(async () =>
-    mockEvents[0]!({
-      event: 'error',
-      subscription: 's1',
-      error: { code: 'bad-request', message: 'workspace is required' },
-    }),
-  );
-  expect(result.current.error).toBe('Update stim-server to view archived replay');
 });

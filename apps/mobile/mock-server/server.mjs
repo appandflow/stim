@@ -553,7 +553,7 @@ server.on('connection', (socket) => {
         if (Boolean(params.workspace) === Boolean(params.archive))
           return fail(id, 'bad-request', 'Send exactly one workspace or archive.');
         if (params.archive && !fixtures.status.archived.some((archive) => archive.id === params.archive))
-          return fail(id, 'unknown-archive', 'Archive not found.');
+          return fail(id, 'unknown-workspace', `Archive ${params.archive} is not a Stim archive on this Mac.`);
       }
       outcome = handler(params, id);
     } catch (error) {

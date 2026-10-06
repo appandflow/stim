@@ -43,9 +43,11 @@ export function ArchivedWorkspace({ archive: id }: { archive: string }) {
   const web = useReplayRangeState({ archive: id, platform: 'web', slot: 'default' }, enabled);
   if (!archive)
     return (
-      <SheetScreen title={t`Archived workspace`}>
+      <ScrollView contentInsetAdjustmentBehavior="automatic" contentContainerStyle={styles.content}>
+        <Stack.Screen options={{ title: t`Archived workspace` }} />
+        <ConnectionBanner state={state} />
         <Text tone="secondary">{t`This archive is no longer available.`}</Text>
-      </SheetScreen>
+      </ScrollView>
     );
   const view = archivedView(archive, now);
   const pr = archive.worktree.pullRequest;
@@ -59,6 +61,7 @@ export function ArchivedWorkspace({ archive: id }: { archive: string }) {
     { platform: 'web' as const, ...web },
   ];
   const problem = probes.find((probe) => probe.error)?.error;
+  const recordings = probes.filter((probe) => probe.data?.spans.length);
   return (
     <ScrollView contentInsetAdjustmentBehavior="automatic" contentContainerStyle={styles.content}>
       <Stack.Screen
@@ -111,19 +114,20 @@ export function ArchivedWorkspace({ archive: id }: { archive: string }) {
         />
       </ListSection>
       {problem ? <Text tone="secondary">{archiveError(problem, 'replay')}</Text> : null}
-      {probes.map(({ platform, data }) =>
-        data?.spans.length ? (
-          <ListSection key={platform} title={t`Replay`}>
+      {recordings.length ? (
+        <ListSection title={t`Replay`}>
+          {recordings.map(({ platform }) => (
             <ListRow
+              key={platform}
               title={platformName(platform)}
               accessory="chevron"
               onPress={() =>
                 router.push({ pathname: '/mac/[id]/archived-replay', params: { id: mac!.id, archive: id, platform } })
               }
             />
-          </ListSection>
-        ) : null,
-      )}
+          ))}
+        </ListSection>
+      ) : null}
       {archive.agents.length ? (
         <ListSection title={t`Agents`}>
           {archive.agents.map((agent) => (

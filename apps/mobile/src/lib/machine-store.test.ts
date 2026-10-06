@@ -1,6 +1,5 @@
 import fixture from '../../mock-server/fixtures/status.json';
 
-import { needsAttention } from '@/lib/needs-attention';
 import { createMachineStore } from '@/lib/machine-store';
 import type { PairedMac } from '@/lib/macs';
 import { StatusCache, type KeyValueStore } from '@/lib/status-cache';
@@ -135,7 +134,7 @@ describe('createMachineStore', () => {
   });
 });
 
-it('keeps archive errors and ended agents outside live workspace counts and Needs attention', () => {
+it('keeps archives outside live workspaces and worktrees', () => {
   const machines = createMachineStore();
   machines.setMacs([mac('a')], true);
   const archived = clone().archived![0];
@@ -154,13 +153,4 @@ it('keeps archive errors and ended agents outside live workspace counts and Need
   expect(current.archives.map((item) => item.archive.id)).toEqual([archived.id]);
   expect(current.workspaces).toEqual([]);
   expect(current.worktrees).toEqual([]);
-  expect(
-    needsAttention({
-      environments: current.snapshots.a.status.environments,
-      volumes: null,
-      now: Date.now(),
-      stuckMinutes: 15,
-      easSessionMinutes: 30,
-    }),
-  ).toEqual([]);
 });

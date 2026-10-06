@@ -167,8 +167,17 @@ test('does not subscribe when mounted in the background and starts on foreground
 });
 
 test('reconnect replaces the current display window and preserves distinct equal-time records', async () => {
-  await render(body());
+  const screen = await render(body());
   await push(Array.from({ length: 240 }, (_, i) => record(i)));
+  const subscription = latest();
+  mockOpen = false;
+  await screen.rerender(body());
+  expect(mockEntries).toHaveLength(240);
+  expect(subscription.stop).not.toHaveBeenCalled();
+  mockOpen = true;
+  await screen.rerender(body());
+  expect(mockSubscriptions).toHaveLength(1);
+  expect(subscription.stop).not.toHaveBeenCalled();
   await act(async () => latest().reset());
   expect(latest().filter.tail).toBe(240);
   const records = [record(1), { ...record(1), msg: 'another record at the same time' }];

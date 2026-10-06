@@ -451,8 +451,8 @@ export function shareText(view: EntryView, entry: LogEntry, workspace: string): 
   return parts.join('\n\n');
 }
 
-export function agentFeedFilter(workspace: string | WorkspaceTarget, slot: string): LogFilter {
-  return { ...(typeof workspace === 'string' ? { workspace } : workspace), sources: ['agent'], slot, tail: 200 };
+export function agentFeedFilter(workspace: string, slot: string): LogFilter {
+  return { workspace, sources: ['agent'], slot, tail: 200 };
 }
 
 export interface AgentAction {

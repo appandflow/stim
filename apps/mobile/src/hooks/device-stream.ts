@@ -1,8 +1,6 @@
 import { useCallback, useEffect, useId, useRef, useState, useSyncExternalStore } from 'react';
 import { createStore, type StoreApi } from 'zustand/vanilla';
 
-import { RequestError } from '@/lib/connection';
-import { archiveError } from '@/lib/archived';
 import { frameTarget, type FrameTarget } from '@/hooks/frame-target';
 import { useMacConnection } from '@/hooks/machines';
 import { SeekQueue, type Seek } from '@/lib/replay-seek';
@@ -239,7 +237,7 @@ export function useDeviceStream(
             frame: null,
             video: null,
             displayedDuoRevision: null,
-            error: archive ? archiveError(new RequestError(event.error), 'replay') : event.error.message,
+            error: event.error.message,
             delayed: false,
             delayedReason: null,
           });

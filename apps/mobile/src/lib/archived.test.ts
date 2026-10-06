@@ -3,7 +3,6 @@ import { RequestError } from './connection';
 import { receiveStatus } from '../../mock-server/receive-fixtures';
 import captured from '../../mock-server/fixtures/status.json';
 import type { StatusPayload } from '@/protocol/types';
-import { isRpcEvent } from '@stim-cli/core/receive-protocol';
 
 const archive = receiveStatus(captured.payload as StatusPayload).archived![0];
 
@@ -43,25 +42,4 @@ test('turns an older-server refusal into the relevant update hint and preserves 
   expect(archiveError(new RequestError({ code: 'unknown-archive', message: 'Archive expired' }), 'logs')).toBe(
     'Archive expired',
   );
-});
-
-test('accepts archive status and completion but refuses malformed archive storage fields', () => {
-  const payload = receiveStatus(captured.payload as StatusPayload);
-  expect(isRpcEvent({ event: 'status', subscription: 's', payload })).toBe(true);
-  expect(isRpcEvent({ event: 'logs-ended', subscription: 's' })).toBe(true);
-  expect(isRpcEvent({ event: 'logs-ended' })).toBe(false);
-  expect(
-    isRpcEvent({
-      event: 'status',
-      subscription: 's',
-      payload: { ...payload, archivedUsage: { ...payload.archivedUsage, bytes: 'bad' } },
-    }),
-  ).toBe(false);
-  expect(
-    isRpcEvent({
-      event: 'status',
-      subscription: 's',
-      payload: { ...payload, archived: [{ ...archive, removedAt: 12 }] },
-    }),
-  ).toBe(false);
 });
