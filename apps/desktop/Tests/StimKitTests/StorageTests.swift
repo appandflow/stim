@@ -111,6 +111,92 @@ import Testing
     #expect(unmanaged["Xcode DerivedData"] == nil)
   }
 
+  @Test func swiftpmCacheIsReportedWithoutDoubleCountingLibraryCaches() throws {
+    let dir = "/Users/me/Library/Caches/org.swift.swiftpm"
+    let json = """
+      {"sections":{"swiftpmCache":{"version":1,"measuredAt":"2026-10-06T00:00:00Z",
+        "dir":"\(dir)","present":true,"bytes":1500,"complete":true,"futureField":true},
+        "caches":[{"name":"Build cache","dir":"/Users/me/Library/Caches/stim","bytes":200}]}}
+      """
+    let gc = try JSONDecoder().decode(GcReport.self, from: Data(json.utf8))
+    let report = StorageReport.make(
+      environments: [], gc: gc, disk: DiskMeasurements(sizes: [paths.libraryCaches: 2000]), paths: paths)
+    let row = try #require(report.unmanaged.first { $0.title == "SwiftPM cache" })
+    #expect(row.path == dir && row.size == .size(1500))
+    #expect(row.detail == "Shared by every SwiftPM build; Stim never deletes it")
+    let library = try #require(report.unmanaged.first { $0.path == paths.libraryCaches })
+    #expect(library.size == .size(300))
+    #expect(library.detail?.contains("counted under Stim") == true)
+    #expect(library.detail?.contains("SwiftPM cache, counted separately") == true)
+    #expect(report.total(.otherTools).bytes == 1800)
+    #expect(report.free.map(\.action) == [.cache("Build cache")])
+  }
+
+  @Test func absentOrUnreadableSwiftpmCacheDoesNotCreateAStorageRow() throws {
+    for sections in [
+      "{}", "{\"swiftpmCache\":null}", "{\"swiftpmCache\":false}",
+      "{\"swiftpmCache\":{\"dir\":\"/cache\",\"present\":false,\"bytes\":0}}",
+      "{\"swiftpmCache\":{\"dir\":\"/cache\",\"present\":true,\"bytes\":null}}",
+    ] {
+      let gc = try JSONDecoder().decode(GcReport.self, from: Data("{\"sections\":\(sections)}".utf8))
+      let report = StorageReport.make(
+        environments: [], gc: gc, disk: DiskMeasurements(sizes: [paths.libraryCaches: 2000]), paths: paths)
+      #expect(report.unmanaged.allSatisfy { $0.title != "SwiftPM cache" })
+      #expect(report.total(.otherTools).bytes == 2000)
+    }
+  }
+
+  @Test func swiftpmCacheOutsideLibraryCachesDoesNotSubtractFromIt() throws {
+    let json = """
+      {"sections":{"swiftpmCache":{"dir":"/Users/me/Library/Caches-other/org.swift.swiftpm","present":true,"bytes":1500}}}
+      """
+    let gc = try JSONDecoder().decode(GcReport.self, from: Data(json.utf8))
+    let report = StorageReport.make(
+      environments: [], gc: gc, disk: DiskMeasurements(sizes: [paths.libraryCaches: 2000]), paths: paths)
+    #expect(report.total(.otherTools).bytes == 3500)
+  }
+
+  @Test func agentDeviceIsUnmanagedAndNeverOffersFreeAction() throws {
+    let json = """
+      {"sections":{"agentDevice":{"version":1,"bytes":4600000000,"complete":true,
+        "stateDir":{"dir":"/Users/me/.agent-device","sessions":{"bytes":100000000},"logs":{"bytes":14000000}},
+        "runnerBuilds":{"bytes":4400000000,"platforms":[]},"futureField":true}}}
+      """
+    let gc = try JSONDecoder().decode(GcReport.self, from: Data(json.utf8))
+    let report = StorageReport.make(
+      environments: [], gc: gc, disk: DiskMeasurements(sizes: [:]), paths: paths)
+    let row = try #require(report.unmanaged.first { $0.title == "agent-device" })
+    #expect(row.path == "/Users/me/.agent-device")
+    #expect(row.size == .size(4_600_000_000))
+    #expect(row.detail == "Runner builds 4.4 GB, sessions 100 MB, logs 14 MB")
+    #expect(report.total(.otherTools).bytes == 4_600_000_000)
+    #expect(report.free.isEmpty)
+    #expect(report.unmanaged.first == row)
+  }
+
+  @Test func partialAgentDeviceUsagePreservesTheRestOfTheReport() throws {
+    for usage in [
+      "{}", "null", "42",
+      #"{"bytes":null,"stateDir":null,"runnerBuilds":null}"#,
+      #"{"bytes":"wrong","stateDir":{"dir":42,"sessions":{"bytes":"wrong"},"logs":false},"runnerBuilds":[]}"#,
+      #"{"bytes":100,"stateDir":{"dir":"/Users/example/.agent-device"}}"#,
+      #"{"bytes":100,"stateDir":{"sessions":{},"logs":{}},"runnerBuilds":{}}"#,
+    ] {
+      let json = #"{"sections":{"agentDevice":\#(usage),"caches":[{"name":"Build cache","dir":"/s/build-cache","bytes":4096}]}}"#
+      let gc = try JSONDecoder().decode(GcReport.self, from: Data(json.utf8))
+      #expect(gc.sections.caches?.first?.bytes == 4096)
+      let report = StorageReport.make(environments: [], gc: gc, disk: DiskMeasurements(), paths: paths)
+      #expect(!report.unmanaged.contains { $0.title == "agent-device" })
+      #expect(report.free.first?.title == "Build cache")
+    }
+    let json =
+      #"{"sections":{"agentDevice":{"bytes":100,"stateDir":{"dir":"/Users/example/.agent-device","sessions":{"bytes":"wrong"},"logs":{"bytes":null}},"runnerBuilds":{"bytes":false}}}}"#
+    let gc = try JSONDecoder().decode(GcReport.self, from: Data(json.utf8))
+    let report = StorageReport.make(environments: [], gc: gc, disk: DiskMeasurements(), paths: paths)
+    #expect(
+      report.unmanaged.first { $0.title == "agent-device" }?.detail == "Runner builds unknown, sessions unknown, logs unknown")
+  }
+
   /// Catches an older CLI without an inventory blanking the page or crediting the user's simulators to Stim.
   @Test func withoutAnInventoryFallsBackToTheWorkspaceRecords() throws {
     let du = """

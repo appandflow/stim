@@ -1,3 +1,7 @@
+import { getSwiftpmCacheUsage } from '../devices/swiftpm-cache-usage.ts';
+import { swiftpmCacheLines } from '../devices/swiftpm-cache-usage-output.ts';
+import { getAgentDeviceUsage } from '../devices/agent-device-usage.ts';
+import { agentDeviceLines } from '../devices/agent-device-usage-output.ts';
 import chalk from 'chalk';
 import type { Command } from 'commander';
 import { formatLongDuration } from '../command-output.ts';
@@ -22,7 +26,9 @@ export default function statsCommand(program: Command): void {
         'cache, and an estimate of the time that cache saved.',
     )
     .option('--json', 'print the aggregates as JSON')
-    .action((opts: StatsOptions) => {
+    .action(async (opts: StatsOptions) => {
+      const agentDevice = await getAgentDeviceUsage();
+      const swiftpmCache = await getSwiftpmCacheUsage();
       const root = findProjectRoot(process.cwd());
       const key = root
         ? statsProjectKey({
@@ -32,6 +38,8 @@ export default function statsCommand(program: Command): void {
           })
         : null;
       const { report, note } = readStatsReport(key, Date.now());
+      report.agentDevice = agentDevice;
+      report.swiftpmCache = swiftpmCache;
       if (note) console.error(chalk.dim(note));
       const { machine, project, offload } = report;
       if (opts.json) {
@@ -43,6 +51,15 @@ export default function statsCommand(program: Command): void {
       if (project) lines.push(`project ${project.key}`, ...sectionLines(project));
       lines.push('machine', ...sectionLines(machine));
       if (offload.placements.length || Object.keys(offload.machines).length) lines.push(...placementLines(offload));
+      const agentLines = agentDeviceLines(report.agentDevice);
+      if (agentLines.length)
+        lines.push(
+          ...agentLines,
+          chalk.dim(
+            "  Stim never trims or deletes the shared runner builds, sessions, logs and other state or the hosted driver dir; a workspace's own agent-device dir goes only with its workspace.",
+          ),
+        );
+      lines.push(...swiftpmCacheLines(report.swiftpmCache));
       for (const line of lines) console.log(line);
     });
 }
