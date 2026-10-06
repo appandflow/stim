@@ -105,9 +105,10 @@ final class SampleBuildModel {
     build = Task {
       do {
         try await checked(["start"])
-        let output = try await dependencies.run(StimCommand(["ios", "--build-machine", entry, "--json"], cwd: folder), receive)
+        let output = try await dependencies.run(
+          StimCommand(["ios", "--build-machine", entry, "--no-build-cache", "--json"], cwd: folder), receive)
         try Task.checkCancellation()
-        let result = try OffloadResult.parse(output.stdout, machine: entry, exit: output.exit)
+        let result = try OffloadResult.parse(output.stdout, machine: entry, exit: output.exit, stderr: output.stderr)
         test.apply(.offload(result))
         if result == .success {
           let log = try await checked(["logs", "--json", "--source", "build", "--grep", "^built on ", "--tail", "5"])
@@ -123,7 +124,7 @@ final class SampleBuildModel {
           } else {
             test.apply(
               .localFinished(
-                passed: OffloadResult.localPassed(local.stdout, exit: local.exit),
+                passed: try OffloadResult.localPassed(local.stdout, exit: local.exit, stderr: local.stderr),
                 ms: dependencies.now().timeIntervalSince(began) * 1000))
           }
         }
@@ -252,6 +253,9 @@ final class SampleBuildModel {
     let output = try await WizardStream.run(
       cli: cli, command: StimCommand(["doctor", "--json", "--platform", platform], cwd: cwd), onLine: { _ in })
     guard output.exit == 0 else { throw StimCLI.Failure.exited(output.exit, stderr: output.stderr) }
-    return try JSONDecoder().decode(DoctorReport.self, from: output.stdout)
+    guard let report = DoctorReport.decode(output.stdout) else {
+      throw StimCLI.Failure.exited(output.exit, stderr: output.stderr)
+    }
+    return report
   }
 }

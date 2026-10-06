@@ -60,7 +60,7 @@ struct AddMachineSheet: View {
       dismiss()
     }
     .confirmationDialog("Cancel setup for \(name)?", isPresented: $confirmsCancel) {
-      Button("Cancel setup", role: .destructive) { Task { await model.send(.cancel) } }
+      Button("Cancel setup", role: .destructive) { Task { await model.send(.cancel) } }.disabled(model.cancelling)
       Button("Keep setting up", role: .cancel) {}
     } message: {
       Text(
@@ -338,7 +338,7 @@ struct AddMachineSheet: View {
             model.stop()
             dismiss()
           }
-        }.disabled(model.busy)
+        }.disabled(model.busy || model.cancelling)
         if step == 3 {
           Button("Next") { model.openTest() }.disabled(model.busy || model.toolsBlock)
         } else if step == 4 {

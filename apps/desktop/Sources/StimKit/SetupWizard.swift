@@ -313,7 +313,6 @@ public struct SetupWizard: Sendable {
     case .cancel:
       phase = .cancelled
       if writeRequested { return [.restoreSettings, .forgetPairing] }
-
     case .manualPort(let port):
       if (1...65535).contains(port), !entriesWritten { self.port = port }
     case .journalUnavailable: break

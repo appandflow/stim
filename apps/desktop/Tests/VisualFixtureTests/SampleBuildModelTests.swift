@@ -16,6 +16,8 @@ final class SampleBuildModelTests: XCTestCase {
     var waitForCancel = false
     var failInstall = false
     var cancelled = false
+    var invalidOutput: WizardCommandOutput?
+    var invalidLocal = false
     func make() -> SampleBuildModel {
       SampleBuildModel(
         dependencies: .init(
@@ -28,6 +30,7 @@ final class SampleBuildModelTests: XCTestCase {
             }
             if command.arguments.first == "ios" {
               onLine(OutputLine(.stderr, "building"))
+              if command.arguments.contains("local") == self.invalidLocal, let output = self.invalidOutput { return output }
               if self.waitForCancel {
                 do { try await Task.sleep(for: .seconds(100)) } catch {
                   self.cancelled = true
@@ -149,5 +152,25 @@ final class SampleBuildModelTests: XCTestCase {
     XCTAssertEqual(running.test.state, .skipped)
     XCTAssertFalse(running.running)
     XCTAssertEqual(harness.commands.last?.arguments, ["stop"])
+  }
+
+  @MainActor func testNonObjectBuildOutputShowsStderrAndStillStopsTheSample() async {
+    for local in [false, true] {
+      for stdout in ["", "Usage: stim ios", "[]"] {
+        let harness = Harness()
+        harness.files.insert(harness.sample.marker)
+        harness.invalidLocal = local
+        harness.invalidOutput = WizardCommandOutput(exit: 9, stdout: Data(stdout.utf8), stderr: "Unknown build option")
+        let model = harness.make()
+        model.prepare()
+        await settle(model)
+        model.run(entry: "mini")
+        await settle(model)
+        guard case .failed(_, let message, _) = model.test.state else { return XCTFail("Invalid output passed") }
+        XCTAssertTrue(message.contains("Unknown build option"))
+        XCTAssertTrue(message.contains("9"))
+        XCTAssertEqual(harness.commands.last?.arguments, ["stop"])
+      }
+    }
   }
 }

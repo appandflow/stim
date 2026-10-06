@@ -23,11 +23,24 @@ public struct WizardTool: Equatable, Identifiable, Sendable {
   public var title: String
   public var detail: String?
   public var state: State
+  public var onThisMac = false
+  public var blocks: Bool { ["xcode", "runtime", "cocoapods", "stim-build"].contains(id) && state.blocks }
 }
 
 public func toolsReport(
-  journal: SetupJournal?, status: BuildMachineStatus?, capabilities: Set<SetupCapability>, android: Bool = false
+  journal: SetupJournal?, status: BuildMachineStatus?, capabilities: Set<SetupCapability>, android: Bool = false,
+  findings: [DoctorReport.Finding] = []
 ) -> [WizardTool] {
+  func fix(code: String, reason: String, step: SetupJournal.Step? = nil) -> String {
+    let finding = status.flatMap { status in
+      findings.first { $0.code == "build-machine-\(code)" && $0.title.hasPrefix("Build machine \(status.machine) ") }
+    }
+    return step?.fix ?? finding?.fix
+      ?? (isLocal(code, reason) ? "Check this problem on this Mac." : "Check this problem on the build Mac.")
+  }
+  func isLocal(_ code: String, _ reason: String) -> Bool {
+    code == "checkout" || (code == "jdk" && reason.contains("none here"))
+  }
   let definitions: [(String, String, String)] =
     [
       ("xcode", "Xcode", "Xcode"), ("runtime", "iOS simulator runtime", "iOS runtime"),
@@ -53,14 +66,15 @@ public func toolsReport(
       code == "xcode" ? ["xcode", "simulator-sdk", "macos-sdk"] : code == "cocoapods" ? ["cocoapods", "bundler"] : [code]
     let problems = status?.problems?.filter { codes.contains($0.code) } ?? []
     if !problems.isEmpty {
-      let fixes = problems.map { step?.fix ?? toolFix(code: $0.code, reason: $0.reason, detail: step?.detail) }
+      let fixes = problems.map { fix(code: $0.code, reason: $0.reason, step: step) }
       let missing = problems.contains {
         $0.reason.hasPrefix("no ") || $0.reason.contains("none") || $0.reason.contains("null") || $0.reason.contains("undefined")
       }
       let fix = fixes.enumerated().filter { fixes.firstIndex(of: $0.element) == $0.offset }.map(\.element)
       return WizardTool(
         id: code, title: title, detail: problems.map(\.reason).joined(separator: "\n"),
-        state: missing ? .missing(fix.joined(separator: "\n")) : .mismatch(fix.joined(separator: "\n")))
+        state: missing ? .missing(fix.joined(separator: "\n")) : .mismatch(fix.joined(separator: "\n")),
+        onThisMac: problems.contains { isLocal($0.code, $0.reason) })
     }
     if status?.state == .approved, status?.offloadable != nil {
       return WizardTool(id: code, title: title, detail: nil, state: .ok)
@@ -73,7 +87,8 @@ public func toolsReport(
     rows.append(
       WizardTool(
         id: problem.code, title: problem.code == "busy" ? "Build Mac is busy" : "Build readiness", detail: problem.reason,
-        state: problem.code == "busy" ? .busy : .missing(toolFix(code: problem.code, reason: problem.reason, detail: nil))))
+        state: problem.code == "busy" ? .busy : .missing(fix(code: problem.code, reason: problem.reason)),
+        onThisMac: isLocal(problem.code, problem.reason)))
   }
   if let status, capabilities.contains(.build), status.state != .approved {
     rows.append(
@@ -88,22 +103,10 @@ public func toolsReport(
   return rows
 }
 
-private func toolFix(code: String, reason: String, detail: String?) -> String {
-  switch code {
-  case "xcode", "simulator-sdk", "macos-sdk":
-    let local = reason.components(separatedBy: " there, ").last?.replacingOccurrences(of: " here", with: "") ?? detail ?? ""
-    let version = local.range(of: "[0-9]+\\.[0-9]+(?:\\.[0-9]+)?", options: .regularExpression).map { String(local[$0]) }
-    return "Install Xcode\(version.map { " " + $0 } ?? "") from the App Store, then run `sudo xcodebuild -runFirstLaunch`"
-  case "runtime": return "xcodebuild -downloadPlatform iOS"
-  case "cocoapods": return "brew install cocoapods"
-  case "bundler": return "gem install bundler"
-  case "jdk": return "brew install --cask zulu@17"
-  case "android-sdk": return "Install Android Studio, or set ANDROID_HOME"
-  case "ndk", "build-tools", "compile-sdk": return "install it with sdkmanager there"
-  case "stim-build": return "Install This Mac's Build"
-  case "arch": return "Use a Mac with the same CPU"
-  case "checkout": return "Run Stim from a git checkout"
-  case "disk": return "Free disk space on the build Mac"
-  default: return "Check stim-server on the build Mac"
-  }
+public func wizardFixIsCommand(_ fix: String) -> Bool {
+  let commands = [
+    "sudo", "brew", "gem", "bundle", "xcodebuild", "xcode-select", "sdkmanager", "stim", "stim-server", "npx", "npm",
+  ]
+  return !fix.contains("\n") && !fix.contains("`") && !fix.contains("<")
+    && commands.contains(String(fix.split(separator: " ").first ?? ""))
 }

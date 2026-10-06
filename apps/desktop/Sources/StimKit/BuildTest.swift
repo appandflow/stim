@@ -5,22 +5,33 @@ public enum OffloadResult: Equatable, Sendable {
   case refused(CommandRefusal)
   case unproven
 
-  public static func parse(_ data: Data, machine: String, exit: Int32) throws -> Self {
+  public static func parse(_ data: Data, machine: String, exit: Int32, stderr: String = "") throws -> Self {
     if let refusal = try? JSONDecoder().decode(CommandRefusal.self, from: data) { return .refused(refusal) }
-    let facts = try JSONDecoder().decode([String: JSONValue].self, from: data)
+    guard let facts = try? JSONDecoder().decode([String: JSONValue].self, from: data) else {
+      throw StimCLI.Failure.exited(exit, stderr: stderr)
+    }
     guard exit == 0, facts["offloadedTo"]?.string == machine,
       facts["launched"] == .bool(true) || facts["launched"] == .string("bundling")
     else { return .unproven }
     return .success
   }
 
-  public static func localPassed(_ data: Data, exit: Int32) -> Bool {
-    guard exit == 0, let facts = try? JSONDecoder().decode([String: JSONValue].self, from: data) else { return false }
+  public static func localPassed(_ data: Data, exit: Int32, stderr: String = "") throws -> Bool {
+    guard let facts = try? JSONDecoder().decode([String: JSONValue].self, from: data) else {
+      throw StimCLI.Failure.exited(exit, stderr: stderr)
+    }
+    guard exit == 0 else { return false }
     return facts["offloadedTo"]?.string == nil && (facts["launched"] == .bool(true) || facts["launched"] == .string("bundling"))
   }
 }
 
 public struct BuildTimings: Decodable, Equatable, Sendable {
+  public enum Failure: LocalizedError {
+    case missingRecord
+    public var errorDescription: String? {
+      "The offloaded build launched, but its phase timings were not found in the build logs."
+    }
+  }
   public var offerMs: Double
   public var syncMs: Double
   public var workerMs: Double
@@ -44,7 +55,7 @@ public struct BuildTimings: Decodable, Equatable, Sendable {
         return record.timings
       }
     }
-    throw CocoaError(.coderInvalidValue)
+    throw Failure.missingRecord
   }
 }
 
@@ -149,9 +160,8 @@ public enum WizardMode: String, CaseIterable, Sendable {
   }
 }
 
-public func summaryLines(builds: [String], hosts: [String], mode: WizardMode) -> [String] {
-  func json(_ entries: [String]) -> String { String(decoding: try! JSONEncoder().encode(entries), as: UTF8.self) }
-  return [
-    "Wrote offload.machines = \(json(builds))", "Wrote hosting.machines = \(json(hosts))", "offload.mode = \(mode.rawValue)",
-  ]
+public func summaryLines(addedEntries: [String: String], mode: WizardMode) -> [String] {
+  ["offload.machines", "hosting.machines"].compactMap { key in
+    addedEntries[key].map { "Added \($0) to \(key)" }
+  } + ["offload.mode = \(mode.rawValue)"]
 }

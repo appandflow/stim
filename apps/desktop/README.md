@@ -967,16 +967,22 @@ pick a Mac on the tailnet, choose Builds and/or Hosted simulators, mirror setup
 live, compare tools, test a sample build, and choose when to offload. Run the
 generated command in Terminal while signed in at the build Mac; answering each
 y/N request there approves access. Permission prompts appear on that Mac's screen.
-There is no SSH option. Tool fixes have Copy buttons; Desktop never runs them.
+There is no SSH option. Tool fixes come from setup or doctor. Shell commands have
+Copy buttons; prose fixes appear as text. Desktop never runs these fixes.
 **Install This Mac's Build** updates a mismatched Stim build through the existing
-machine update action. **Check Android** adds the Android tool comparison.
+machine update action. Tools are checked on entry, with **Check again**, and at
+most every 30 seconds while step 4 is open. Only Xcode, the iOS runtime,
+CocoaPods / Bundler, and Stim build for the chosen capabilities block Next.
+**Check Android** adds an informational Android tool comparison that never blocks Next.
 
 From step 2, Desktop prepares a pinned Expo blank SDK 58 app in
 `~/Library/Application Support/Stim Desktop/Onboarding/sample-sdk58/`, outside
 user projects and Stim's state directory. It also uses this checkout for setup
 requests when no workspace is listed. The test requires a build on the selected
-Mac and a verified launch, then forces a local build without the build cache to
-prove the fallback path. Live output and phase timings show both runs. Desktop
+Mac and a verified launch, then forces a local build to prove the fallback path.
+Both runs bypass the build cache. Live output shows both runs; phase timings
+describe the offloaded run, and the local run shows its total time. The optional
+hosted-simulator check is not part of this wizard. Desktop
 stops the sample workspace when the test ends or the sheet closes; its folder
 stays for **Run again**. **Delete sample app** in Build Machines stops it and
 removes only that folder after confirmation.

@@ -18,12 +18,21 @@ struct AddMachineSteps: View {
   private var tools: some View {
     VStack(alignment: .leading, spacing: Space.lg) {
       Text("Tools on \(name)").font(.stim(.title))
-      Text("Compared with this Mac. Run fixes in Terminal on \(name).").foregroundStyle(Palette.secondary)
+      Text("Compared with this Mac. Follow the fixes below; run commands yourself.").foregroundStyle(Palette.secondary)
       ForEach(model.tools) { tool in
         VStack(alignment: .leading, spacing: Space.xs) {
           Label(tool.title, systemImage: icon(tool.state)).font(.stim(.body, weight: .semibold))
             .foregroundStyle(color(tool.state))
           if let detail = tool.detail { Text(detail).font(.stim(.footnote)).textSelection(.enabled) }
+          if let fix = tool.state.fix {
+            Text(tool.onThisMac ? "Problem on this Mac:" : "Fix for \(name):")
+              .font(.stim(.footnote, weight: .semibold))
+            if wizardFixIsCommand(fix) {
+              copyCommand(fix)
+            } else {
+              Text(fix).font(.stim(.footnote)).textSelection(.enabled)
+            }
+          }
           if tool.id == "stim-build" {
             MachineUpdateLine(phase: model.machineEntry.flatMap { model.machines?.updates[$0] }, needed: tool.state.fix != nil) {
               Task {
@@ -31,8 +40,6 @@ struct AddMachineSteps: View {
                 await model.refreshTools()
               }
             }
-          } else if let fix = tool.state.fix {
-            copyCommand(fix)
           }
         }
       }

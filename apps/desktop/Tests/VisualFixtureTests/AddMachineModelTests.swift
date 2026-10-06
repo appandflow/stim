@@ -6,7 +6,7 @@ import XCTest
 
 final class AddMachineModelTests: XCTestCase {
   @MainActor private final class Harness {
-    let now = Date(timeIntervalSince1970: 1_791_284_400)
+    var now = Date(timeIntervalSince1970: 1_791_284_400)
     var writes: [(String, String?)] = []
     var asks: [(Bool, [String: String])] = []
     var doctorPaths: [String] = []
@@ -20,6 +20,8 @@ final class AddMachineModelTests: XCTestCase {
     var peerId = "nMini"
     var shouldFailHostWrite = false
     var shouldFailDoctor = false
+    var toolProblems: [String: [[String: String]]] = [:]
+    var toolCalls: [String] = []
 
     var status: Data {
       Data(
@@ -39,10 +41,13 @@ final class AddMachineModelTests: XCTestCase {
       ]
       return try JSONDecoder().decode(SettingsPayload.self, from: JSONSerialization.data(withJSONObject: object))
     }
-    func report() throws -> DoctorReport {
+    func report(platform: String? = nil) throws -> DoctorReport {
       func statuses(_ entries: [String], id: String) -> [[String: Any]] {
         entries.map {
-          ["machine": $0, "state": grantReady ? "approved" : "pending", "deviceId": id, "dnsName": "mini.tail.test"]
+          [
+            "machine": $0, "state": grantReady ? "approved" : "pending", "deviceId": id, "dnsName": "mini.tail.test",
+            "offloadable": true, "problems": toolProblems[platform ?? ""] ?? [],
+          ]
         }
       }
       return try JSONDecoder().decode(
@@ -84,7 +89,11 @@ final class AddMachineModelTests: XCTestCase {
               self.hosts = try value.map { try JSONDecoder().decode([String].self, from: Data($0.utf8)) } ?? []
             default: break
             }
-          }, version: { "1.16.0" }, now: { self.now }, ticket: { SetupTicket.generate(now: $0) }), sample: sample)
+          }, version: { "1.16.0" },
+          toolsDoctor: { _, platform in
+            self.toolCalls.append(platform)
+            return try self.report(platform: platform)
+          }, now: { self.now }, ticket: { SetupTicket.generate(now: $0) }), sample: sample)
     }
     private enum Failure: Error { case refused }
   }
@@ -262,6 +271,141 @@ final class AddMachineModelTests: XCTestCase {
     XCTAssertTrue(model.finished)
     XCTAssertEqual(harness.builds, ["mini:7447"])
     XCTAssertEqual(harness.hosts, ["mini:7447"])
+  }
+
+  @MainActor func testCancelAfterTheTestAtStepsFiveAndSixRestoresSettingsAndStopsTheSample() async {
+    for summary in [false, true] {
+      let harness = Harness()
+      let location = WizardSample(applicationSupport: URL(fileURLWithPath: "/fixture"))
+      var stops = 0
+      let sample = SampleBuildModel(
+        dependencies: .init(
+          sample: location,
+          run: { command, _ in
+            var stdout = ""
+            switch command.arguments.first {
+            case "ios":
+              stdout =
+                command.arguments.contains("local")
+                ? "{\"launched\":true}" : "{\"offloadedTo\":\"mini:7447\",\"launched\":true}"
+            case "logs":
+              stdout =
+                "{\"event\":\"offload_done\",\"timings\":{\"offerMs\":1,\"syncMs\":1,\"workerMs\":1,\"fetchMs\":1,\"totalMs\":4}}"
+            case "stop": stops += 1
+            default: break
+            }
+            return WizardCommandOutput(exit: 0, stdout: Data(stdout.utf8), stderr: "")
+          }, exists: { $0 == location.marker }))
+      let model = harness.make(sample: sample)
+      await model.start()
+      defer { model.stop() }
+      model.selectedId = "nMini"
+      await model.pick()
+      await model.next()
+      await model.checkAgain()
+      harness.grantReady = true
+      await model.checkAgain()
+      await model.openTools()
+      for _ in 0..<1000 {
+        if sample.sampleReady { break }
+        await Task.yield()
+      }
+      model.openTest()
+      for _ in 0..<1000 {
+        if !sample.running { break }
+        await Task.yield()
+      }
+      XCTAssertTrue(sample.test.passed)
+      XCTAssertEqual(model.page, .test)
+      XCTAssertEqual(harness.mode, "off")
+      if summary { await model.openSummary() }
+      let stopsBeforeCancel = stops
+      await model.send(.cancel)
+      XCTAssertGreaterThan(stops, stopsBeforeCancel)
+      XCTAssertFalse(sample.running)
+      XCTAssertTrue(harness.builds.isEmpty)
+      XCTAssertTrue(harness.hosts.isEmpty)
+      XCTAssertNil(harness.mode)
+      XCTAssertEqual(model.wizard.phase, .cancelled)
+    }
+  }
+
+  @MainActor func testSummaryNamesOnlyEntriesAddedForChosenCapabilities() async {
+    for alreadyListed in [false, true] {
+      for buildsChosen in [false, true] {
+        let harness = Harness()
+        harness.builds = alreadyListed ? ["mini"] : ["other-build"]
+        harness.hosts = alreadyListed ? ["mini"] : ["other-host"]
+        harness.grantReady = alreadyListed
+        let model = harness.make()
+        await model.start()
+        defer { model.stop() }
+        model.selectedId = "nMini"
+        await model.pick()
+        if !buildsChosen { model.setCapability(.build, enabled: false) }
+        await model.next()
+        if !alreadyListed {
+          await model.checkAgain()
+          harness.grantReady = true
+          await model.checkAgain()
+        }
+        await model.openSummary()
+        XCTAssertEqual(model.summary.contains { $0.contains("offload.machines") }, !alreadyListed && buildsChosen)
+        XCTAssertEqual(model.summary.contains { $0.contains("hosting.machines") }, !alreadyListed)
+        XCTAssertFalse(model.summary.contains { $0.contains("other-build") || $0.contains("other-host") })
+        if !alreadyListed { XCTAssertTrue(model.summary.contains { $0.contains("mini:7447") }) }
+      }
+    }
+  }
+
+  @MainActor func testAndroidFailuresNeverBlockTheIosTest() async {
+    let harness = Harness()
+    harness.builds = ["mini"]
+    harness.hosts = ["mini"]
+    harness.grantReady = true
+    harness.toolProblems["android"] = [
+      ["code": "jdk", "reason": "JDK 17 there, none here"],
+      ["code": "android-sdk", "reason": "no Android SDK there"],
+      ["code": "ndk", "reason": "no NDK there"],
+      ["code": "build-tools", "reason": "no build-tools there"],
+      ["code": "compile-sdk", "reason": "no platform there"],
+      ["code": "stim-build", "reason": "Android-only comparison failure"],
+    ]
+    let model = harness.make()
+    await model.start()
+    defer { model.stop() }
+    model.selectedId = "nMini"
+    await model.pick()
+    await model.next()
+    XCTAssertFalse(harness.toolCalls.contains("android"))
+    await model.checkAndroid()
+    XCTAssertTrue(harness.toolCalls.contains("android"))
+    XCTAssertNotNil(model.tools.first { $0.id == "jdk" }?.state.fix)
+    XCTAssertFalse(model.toolsBlock)
+    model.openTest()
+    XCTAssertEqual(model.page, .test)
+  }
+
+  @MainActor func testAutomaticToolsChecksWaitThirtySecondsAfterEntryAndManualCheck() async throws {
+    let harness = Harness()
+    harness.builds = ["mini"]
+    harness.hosts = ["mini"]
+    harness.grantReady = true
+    let model = harness.make()
+    await model.start()
+    defer { model.stop() }
+    model.selectedId = "nMini"
+    await model.pick()
+    await model.next()
+    XCTAssertEqual(harness.toolCalls, ["ios"])
+    await model.checkAgain()
+    XCTAssertEqual(harness.toolCalls, ["ios", "ios"])
+    harness.now = harness.now.addingTimeInterval(29)
+    try await Task.sleep(for: .milliseconds(1100))
+    XCTAssertEqual(harness.toolCalls, ["ios", "ios"])
+    harness.now = harness.now.addingTimeInterval(1)
+    try await Task.sleep(for: .milliseconds(1100))
+    XCTAssertEqual(harness.toolCalls, ["ios", "ios", "ios"])
   }
 
 }
