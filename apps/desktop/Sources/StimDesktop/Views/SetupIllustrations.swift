@@ -125,6 +125,7 @@ struct SetupIllustration: View {
       case .cli: TerminalArt(version: stimVersion, installer: installer).id(installer)
       case .skill: SkillArt()
       case .notifications: NotificationArt()
+      case .phone: PhoneArt()
       case .check: DoctorArt()
       }
     }
@@ -368,6 +369,27 @@ private struct NotificationArt: View {
       }
       withAnimation(.easeInOut(duration: 0.5).repeatForever(autoreverses: true)) { ringing = true }
       withAnimation(.spring(response: 0.6, dampingFraction: 0.75).delay(0.4)) { bannerIn = true }
+    }
+  }
+}
+
+private struct PhoneArt: View {
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+  var body: some View {
+    ZStack {
+      BrandHalo(size: 150).id(reduceMotion)
+      RoundedRectangle(cornerRadius: 18, style: .continuous)
+        .fill(Palette.surface)
+        .frame(width: 68, height: 120)
+        .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).strokeBorder(Palette.brand, lineWidth: 3))
+        .overlay(alignment: .top) {
+          Capsule().fill(Palette.brand).frame(width: 24, height: 5).padding(.top, Space.sm)
+        }
+      Image(systemName: "antenna.radiowaves.left.and.right")
+        .font(.system(size: 28, weight: .semibold))
+        .foregroundStyle(Palette.brand)
+        .symbolEffect(.pulse, isActive: !reduceMotion)
     }
   }
 }

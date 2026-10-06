@@ -2,7 +2,7 @@ import Foundation
 
 /// The screens of Stim Desktop's first-run setup guide, in order.
 public enum SetupStep: String, CaseIterable, Sendable {
-  case welcome, cli, skill, notifications, check, done
+  case welcome, cli, skill, notifications, phone, check, done
 
   public var title: String {
     switch self {
@@ -10,6 +10,7 @@ public enum SetupStep: String, CaseIterable, Sendable {
     case .cli: return "Install the CLI"
     case .skill: return "Add the agent skill"
     case .notifications: return "Notifications"
+    case .phone: return "Pair your phone"
     case .check: return "Check your setup"
     case .done: return "You're set"
     }
@@ -51,6 +52,22 @@ public enum CheckOutcome: Equatable, Sendable {
   case failed
 }
 
+public struct PhoneSetup: Equatable, Sendable {
+  public var servesPhones: Bool
+  public var tailscaleRunning: Bool?
+  public var routeState: String?
+  public var hasPhone: Bool
+
+  public init(
+    servesPhones: Bool = false, tailscaleRunning: Bool? = nil, routeState: String? = nil, hasPhone: Bool = false
+  ) {
+    self.servesPhones = servesPhones
+    self.tailscaleRunning = tailscaleRunning
+    self.routeState = routeState
+    self.hasPhone = hasPhone
+  }
+}
+
 /// What the setup guide found on this Mac. A nil field has not been checked yet.
 public struct SetupChecks: Equatable, Sendable {
   /// `engines.node` of the `stim` package.
@@ -66,6 +83,7 @@ public struct SetupChecks: Equatable, Sendable {
   public var skillPath: String?
   public var skillChecked = false
   public var notifications: NotificationAccess?
+  public var phone: PhoneSetup
   /// The commands of the check step as run in this session: `xcodebuild -version`, `java -version` and `stim doctor`
   /// in the chosen project. Nil until the command has run.
   public var xcodeCheck: CheckOutcome?
@@ -75,7 +93,7 @@ public struct SetupChecks: Equatable, Sendable {
   public init(
     stim: CLICompatibility? = nil, node: CLICompatibility? = nil, brewPath: String? = nil, skillPath: String? = nil,
     skillChecked: Bool = false, notifications: NotificationAccess? = nil, xcodeCheck: CheckOutcome? = nil,
-    javaCheck: CheckOutcome? = nil, projectCheck: CheckOutcome? = nil
+    javaCheck: CheckOutcome? = nil, projectCheck: CheckOutcome? = nil, phone: PhoneSetup = PhoneSetup()
   ) {
     self.stim = stim
     self.node = node
@@ -83,6 +101,7 @@ public struct SetupChecks: Equatable, Sendable {
     self.skillPath = skillPath
     self.skillChecked = skillChecked
     self.notifications = notifications
+    self.phone = phone
     self.xcodeCheck = xcodeCheck
     self.javaCheck = javaCheck
     self.projectCheck = projectCheck
@@ -108,6 +127,9 @@ public struct SetupChecks: Equatable, Sendable {
       case .denied: return .blocked
       case .allowed: return .done
       }
+    case .phone:
+      if phone.hasPhone { return .done }
+      return phone.tailscaleRunning == false ? .blocked : .pending
     case .check:
       let outcomes = [xcodeCheck, javaCheck, projectCheck]
       if outcomes.contains(.failed) { return .blocked }
@@ -116,7 +138,7 @@ public struct SetupChecks: Equatable, Sendable {
   }
 
   /// Every step the guide can finish on its own is done: the CLI, the skill and notifications. The checks of this
-  /// Mac and of a project stay optional.
+  /// Mac and of a project, and pairing a phone, stay optional.
   public var isComplete: Bool {
     [SetupStep.cli, .skill, .notifications].allSatisfy {
       let state = state(of: $0)

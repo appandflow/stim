@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import Foundation
 import StimKit
 import StimStores
@@ -65,12 +66,25 @@ final class Onboarding: ObservableObject {
   private let environment: Task<[String: String], Never>
   private let cli: Task<StimCLI, Never>
   private let actions: ActionCenter
+  private var phoneSubscription: AnyCancellable?
 
   init(environment: Task<[String: String], Never>, cli: Task<StimCLI, Never>, actions: ActionCenter) {
     self.environment = environment
     self.cli = cli
     self.actions = actions
     latestStim = releases.latest
+    let servesPhones = NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification)
+      .map { _ in UserDefaults.standard.bool(forKey: AppPreferences.Key.servesPhones) }
+      .prepend(UserDefaults.standard.bool(forKey: AppPreferences.Key.servesPhones))
+      .removeDuplicates()
+    phoneSubscription = ServerController.shared.$state.combineLatest(ServerController.shared.$devices, servesPhones)
+      .receive(on: DispatchQueue.main)
+      .sink { [weak self] state, devices, servesPhones in
+        let health: ServerHealth? = if case .running(let health, _) = state { health } else { nil }
+        self?.setup.phone = PhoneSetup(
+          servesPhones: servesPhones, tailscaleRunning: health?.tailscale.isRunning, routeState: health?.route?.state,
+          hasPhone: devices.contains(where: \.isPhone))
+      }
     Task { [weak self] in
       while !Task.isCancelled {
         self?.refreshLatestStim()

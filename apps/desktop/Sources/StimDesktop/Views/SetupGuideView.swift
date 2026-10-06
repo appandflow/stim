@@ -115,10 +115,10 @@ struct SetupGuideView: View {
   private func stateDescription(_ item: SetupStep) -> String {
     switch setup.state(of: item) {
     case .done: return "done"
-    case .pending: return "to do"
+    case .pending: return item == .phone ? "optional" : "to do"
     case .blocked: return "needs attention"
     case .checking: return "checking"
-    case .notApplicable: return item == .check ? "optional" : ""
+    case .notApplicable: return item == .check || item == .phone ? "optional" : ""
     }
   }
 
@@ -128,6 +128,7 @@ struct SetupGuideView: View {
     case .cli: cli
     case .skill: skill
     case .notifications: notifications
+    case .phone: PhoneSetupStep(state: setup.state(of: .phone))
     case .check: check
     case .done: done
     }
@@ -458,6 +459,7 @@ struct SetupGuideView: View {
       return state == .pending || (state == .blocked && setup.brewPath != nil)
     case .skill: return setup.state(of: .skill) == .pending
     case .notifications: return setup.notifications == .notDetermined
+    case .phone: return false
     case .check: return onboarding.runsStim && onboarding.projectFolder != nil
     default: return false
     }

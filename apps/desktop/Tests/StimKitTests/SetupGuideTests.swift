@@ -51,6 +51,41 @@ private func node(_ output: String?) -> CLICompatibility {
   #expect(!unchecked.isComplete)
 }
 
+@Test func phoneStepIsReachedAfterNotificationsAndContinuesToChecks() {
+  #expect(SetupStep.notifications.next == .phone)
+  #expect(SetupStep.phone.previous == .notifications)
+  #expect(SetupStep.phone.next == .check)
+  #expect(SetupStep.check.previous == .phone)
+}
+
+@Test func pairedPhoneIsDoneEvenWhenTailscaleIsDownAndOnlyReportedDowntimeBlocksPairing() {
+  #expect(SetupChecks().state(of: .phone) == .pending)
+  #expect(SetupChecks(phone: PhoneSetup(servesPhones: false, tailscaleRunning: nil)).state(of: .phone) == .pending)
+  for servesPhones in [false, true] {
+    for route in [nil, "routed", "missing", "funneled", "unknown"] as [String?] {
+      for running in [nil, false, true] as [Bool?] {
+        let phone = PhoneSetup(servesPhones: servesPhones, tailscaleRunning: running, routeState: route)
+        #expect(SetupChecks(phone: phone).state(of: .phone) == (running == false ? .blocked : .pending))
+        var paired = phone
+        paired.hasPhone = true
+        #expect(SetupChecks(phone: paired).state(of: .phone) == .done)
+      }
+    }
+  }
+}
+
+@Test func optionalPhonePairingNeverPreventsCompletionOrCompletesMissingRequiredSteps() {
+  for phone in [PhoneSetup(), PhoneSetup(tailscaleRunning: false), PhoneSetup(hasPhone: true)] {
+    var ready = setUp
+    ready.phone = phone
+    #expect(ready.isComplete)
+    #expect(ready.startStep(resuming: nil) == .done)
+    ready.skillPath = nil
+    #expect(!ready.isComplete)
+    #expect(ready.startStep(resuming: nil) == .welcome)
+  }
+}
+
 @Test func findsTheSkillWhereverTheSkillsCLIPutIt() {
   let home = "/Users/me"
   #expect(

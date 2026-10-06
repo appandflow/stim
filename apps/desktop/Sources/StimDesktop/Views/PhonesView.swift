@@ -257,7 +257,7 @@ private struct TailscaleSetup: View {
   }
 }
 
-private struct RouteSection: View {
+struct RouteSection: View {
   @ObservedObject var server: ServerController
   var route: ServeRoute
   var dnsName: String
