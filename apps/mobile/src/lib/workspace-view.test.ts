@@ -419,6 +419,7 @@ describe('phaseSteps', () => {
       NOW,
     );
     expect(steps.find((step) => step.phase === 'compile')).toMatchObject({ state: 'pending', elapsedMs: 30_000 });
+    expect(barSteps(steps).map((step) => step.phase)).toEqual(['prebuild', 'compile']);
   });
 
   it('folds the short prepare phases into one bar segment and launch into install', () => {
