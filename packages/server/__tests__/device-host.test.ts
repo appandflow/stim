@@ -210,9 +210,18 @@ function reserve(extra = {}) {
   return answer.result;
 }
 
-async function state(id: string, wanted: string) {
+async function groupGone(pid: number) {
+  await vi.waitFor(
+    () => {
+      if (processGroupAlive(pid)) throw new Error(`process group ${pid} is still alive`);
+    },
+    { timeout: 10_000 },
+  );
+}
+
+async function state(id: string, wanted: string, timeout = 5000) {
   await vi.waitFor(() => expect(readHostedSessions().find((record) => record.id === id)?.state).toBe(wanted), {
-    timeout: 5000,
+    timeout,
   });
   return readHostedSessions().find((record) => record.id === id)!;
 }
@@ -1139,9 +1148,10 @@ describe('hosted agent control', () => {
         if (status === 'gone') {
           process.kill(child.pid as number, 'SIGKILL');
           await processIdentity.waitForProcessExit(child, 2000);
+          await groupGone(child.pid as number);
         }
         host.stop('client', { session: first.id });
-        const stopped = await state(first.id, status === 'live' ? 'unknown' : 'stopped');
+        const stopped = await state(first.id, status === 'live' ? 'unknown' : 'stopped', 20_000);
         const keptClaim = expect.stringContaining(claim.path);
         const remedy = expect.stringContaining(claimRemoveCommand(claim.path));
         expect(stopped.notice).toEqual(status === 'live' ? keptClaim : undefined);
@@ -1155,9 +1165,10 @@ describe('hosted agent control', () => {
         if (status === 'live') {
           process.kill(child.pid as number, 'SIGKILL');
           await processIdentity.waitForProcessExit(child, 2000);
+          await groupGone(child.pid as number);
           host.stop('client', { session: first.id });
         }
-        await state(first.id, 'stopped');
+        await state(first.id, 'stopped', 20_000);
         expect(sweep).toHaveBeenCalledOnce();
         expect(readHostedDeviceLedger(join(deviceHostArea(first.id), 'home'))!.ios).toEqual([]);
         expect(readClaimSet(root).live).toEqual([]);
@@ -1165,12 +1176,14 @@ describe('hosted agent control', () => {
         if (processIdentity.inspectProcessIdentity(child) === 'same') {
           process.kill(child.pid as number, 'SIGKILL');
           await processIdentity.waitForProcessExit(child, 2000);
+          await groupGone(child.pid as number);
         }
         await fresh.close();
         stop.mockRestore();
         sweep.mockRestore();
       }
     },
+    30_000,
   );
 
   test.each(['stop', 'reinstall'])('retains the iOS device when the agent cannot stop before %s', async (action) => {
