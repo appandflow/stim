@@ -117,7 +117,7 @@ function through(
   headers = {},
 ) {
   const front = createServer((request, response) => driver.forward(session, request, response));
-  return new Promise<{ status: number; text: string }>((resolve, reject) => {
+  return new Promise<{ status: number; text: string; contentType: string | undefined }>((resolve, reject) => {
     front.listen(0, '127.0.0.1', () => {
       const outgoing = httpRequest(
         {
@@ -133,7 +133,7 @@ function through(
           answer.on('end', () => {
             front.closeAllConnections();
             front.close();
-            resolve({ status: answer.statusCode ?? 0, text });
+            resolve({ status: answer.statusCode ?? 0, text, contentType: answer.headers['content-type'] });
           });
         },
       );
@@ -404,18 +404,18 @@ describe.skipIf(process.platform === 'win32')('agent-device driver', () => {
         pid: 4242,
       });
       if (grant.driver === 'none') throw new Error('expected a grant');
-      const rpc = (body: object) =>
-        through(driver, SESSION, 'POST', '/rpc', JSON.stringify(body), { 'content-type': 'application/json' }).then(
-          (answer) => ({
-            status: answer.status,
-            upstream:
-              answer.status === 200
-                ? (JSON.parse((JSON.parse(answer.text) as { body: string }).body) as {
-                    params: Record<string, unknown>;
-                  })
-                : null,
-          }),
-        );
+      const rpc = (body: object | string) =>
+        through(driver, SESSION, 'POST', '/rpc', typeof body === 'string' ? body : JSON.stringify(body), {
+          'content-type': 'application/json',
+        }).then((answer) => ({
+          ...answer,
+          upstream:
+            answer.status === 200
+              ? (JSON.parse((JSON.parse(answer.text) as { body: string }).body) as {
+                  params: Record<string, unknown>;
+                })
+              : null,
+        }));
       const command = await rpc({
         jsonrpc: '2.0',
         method: 'agent_device.command',
@@ -529,6 +529,65 @@ describe.skipIf(process.platform === 'win32')('agent-device driver', () => {
       ])
         expect((await rpc(body)).status).toBe(400);
       expect((await through(driver, SESSION, 'POST', '/rpc', 'not json')).status).toBe(400);
+      for (const { body, id, rule, details } of [
+        {
+          body: {
+            id: 'doctor-request',
+            method: 'agent_device.command',
+            params: { command: 'doctor', flags: { platform: 'macos' } },
+          },
+          id: 'doctor-request',
+          rule: 'command',
+          details: { command: 'doctor' },
+        },
+        {
+          body: {
+            id: 0,
+            method: 'agent_device.command',
+            params: { command: 'batch', flags: { batchSteps: [{ command: 'snapshot' }, { command: 'doctor' }] } },
+          },
+          id: 0,
+          rule: 'command',
+          details: { command: 'doctor' },
+        },
+        {
+          body: { id: 2, method: 'agent_device.lease.allocate', params: {} },
+          id: 2,
+          rule: 'method',
+          details: { method: 'agent_device.lease.allocate' },
+        },
+        { body: 'not json', id: null, rule: 'request', details: {} },
+        { body: { id: 'malformed', method: 'agent_device.command' }, id: 'malformed', rule: 'request', details: {} },
+        {
+          body: { id: true, method: 'agent_device.lease.allocate', params: {} },
+          id: null,
+          rule: 'method',
+          details: {},
+        },
+        { body: 'x'.repeat(1024 * 1024 + 1), id: null, rule: 'request', details: {} },
+      ]) {
+        const answer = await rpc(body);
+        expect(answer.status).toBe(400);
+        expect(answer.contentType).toBe('application/json');
+        const envelope = JSON.parse(answer.text);
+        expect(envelope).toMatchObject({
+          jsonrpc: '2.0',
+          id,
+          error: {
+            code: -32000,
+            message: expect.any(String),
+            data: {
+              code: 'UNAUTHORIZED',
+              message: envelope.error.message,
+              hint: expect.any(String),
+              retriable: false,
+              details: { reason: 'STIM_AGENT_REQUEST_REFUSED', rule, ...details },
+            },
+          },
+        });
+        for (const name of [...Object.values(details), ...(rule === 'command' ? ['snapshot', 'batch'] : [])])
+          expect(envelope.error.message).toContain(name);
+      }
     } finally {
       await driver.stop();
     }

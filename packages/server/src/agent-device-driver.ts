@@ -501,8 +501,25 @@ export class AgentDeviceDriver implements HostedAgentDriver {
       response.destroy();
       return;
     }
-    const pinned = body === null ? null : pinLease(body, lease);
-    if (pinned === null) response.writeHead(400, { 'content-type': 'text/plain' }).end('Unsupported request.\n');
+    const pinned = pinLease(body, lease);
+    if (!Buffer.isBuffer(pinned))
+      response.writeHead(400, { 'content-type': 'application/json' }).end(
+        JSON.stringify({
+          jsonrpc: '2.0',
+          id: pinned.id,
+          error: {
+            code: -32000,
+            message: pinned.message,
+            data: {
+              code: 'UNAUTHORIZED',
+              message: pinned.message,
+              hint: `The hosted agent connection allows only ${POLICY.commands.allow.join(', ')} on the one leased macOS app; retrying will not help.`,
+              retriable: false,
+              details: { reason: 'STIM_AGENT_REQUEST_REFUSED', rule: pinned.rule, ...pinned.details },
+            },
+          },
+        }),
+      );
     else this.relay(running, lease, request, response, target, pinned);
   }
 
@@ -546,26 +563,47 @@ export class AgentDeviceDriver implements HostedAgentDriver {
   }
 }
 
+interface Refusal {
+  id: string | number | null;
+  rule: 'command' | 'method' | 'request';
+  message: string;
+  details: { command?: string; method?: string };
+}
+
 /**
  * Rewrites one JSON-RPC body so it can act only under the session's lease. The proxy token is one credential
  * for every client, so the lease, its owner scope and tenant session isolation come from the host, never from
  * the client. Methods other than commands and lease renewal or release are refused.
  */
-function pinLease(body: Buffer, lease: Lease): Buffer | null {
+function pinLease(body: Buffer | null, lease: Lease): Buffer | Refusal {
   let rpc: unknown;
   try {
-    rpc = JSON.parse(body.toString('utf8'));
-  } catch {
-    return null;
-  }
-  if (!isJsonObject(rpc) || typeof rpc.method !== 'string' || !isJsonObject(rpc.params)) return null;
+    rpc = body === null ? undefined : JSON.parse(body.toString('utf8'));
+  } catch {}
+  const id = isJsonObject(rpc) && (typeof rpc.id === 'string' || typeof rpc.id === 'number') ? rpc.id : null;
+  if (!isJsonObject(rpc) || typeof rpc.method !== 'string' || !isJsonObject(rpc.params))
+    return {
+      id,
+      rule: 'request',
+      message:
+        'Refused request: expected a JSON object with a string method and object params within the body size limit.',
+      details: {},
+    };
   const { tenant, runId, clientId, deviceKey } = lease.scope;
   const owner = { runId, leaseId: lease.id, clientId, deviceKey, leaseProvider: 'proxy' };
   if (COMMAND_METHODS.has(rpc.method)) {
     const { runtime: _runtime, meta, flags, input, ...params } = rpc.params;
-    if (!isAllowedCommand(params.command)) return null;
+    const refuseCommand = (command: unknown) => ({
+      id,
+      rule: 'command' as const,
+      message: `Refused command${typeof command === 'string' ? ` "${command}"` : ''}. Allowed commands: ${POLICY.commands.allow.join(', ')}.`,
+      details: typeof command === 'string' ? { command } : {},
+    });
+    if (!isAllowedCommand(params.command)) return refuseCommand(params.command);
     const steps = isJsonObject(flags) && Array.isArray(flags.batchSteps) ? flags.batchSteps : [];
-    if (steps.some((step) => !isJsonObject(step) || !isAllowedCommand(step.command))) return null;
+    for (const step of steps)
+      if (!isJsonObject(step) || !isAllowedCommand(step.command))
+        return refuseCommand(isJsonObject(step) ? step.command : undefined);
     rpc.params = {
       ...params,
       flags: {
@@ -585,7 +623,7 @@ function pinLease(body: Buffer, lease: Lease): Buffer | null {
   } else if (LEASE_METHODS.has(rpc.method)) {
     const { tenant: _tenant, provider: _provider, ...params } = rpc.params;
     rpc.params = { ...params, ...owner, tenantId: tenant, backend: 'macos-app' };
-  } else return null;
+  } else return { id, rule: 'method', message: `Refused method "${rpc.method}".`, details: { method: rpc.method } };
   return Buffer.from(JSON.stringify(rpc));
 }
 
