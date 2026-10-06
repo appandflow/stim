@@ -16,7 +16,10 @@ import {
   mergeWorktrees,
   parseFilters,
   projectNames,
+  projectsByActivity,
   runningDevices,
+  visibleProjects,
+  workspaceActivityMs,
   type DeviceTileItem,
 } from '@/lib/home';
 import type { EnvironmentState, MachineUsage, StatusPayload, UsageSample, WorktreeFacts } from '@/protocol/types';
@@ -94,6 +97,261 @@ describe('mergeWorkspaces', () => {
     const older = status([]);
     delete older.unprovisionedWorktrees;
     expect(mergeWorktrees([{ id: 'old', name: 'Old Mac', status: older }])).toEqual([]);
+  });
+});
+
+describe('projectsByActivity', () => {
+  const older = '2026-10-01T00:00:00Z';
+  const newest = '2026-10-03T00:00:00Z';
+  const activity = () => ({
+    state: 'idle' as const,
+    lastActivityAt: older,
+    driver: { tool: 'agent-device', pid: 1, since: older },
+    basis: [],
+  });
+  const ios = () => ({ name: 'sim', udid: 'A', owned: true, state: 'Shutdown', activity: activity() });
+  const android = () => ({ name: 'emu', owned: true, physical: false, activity: activity() });
+  const activityEnv = () =>
+    env('/u/zeta', {
+      supervisor: { pid: 1, mode: null, healthy: true, startedAt: older },
+      build: {
+        ...payload.environments.find((e) => e.build)!.build!,
+        startedAt: older,
+        phaseStartedAt: older,
+      },
+      phaseSince: older,
+      ios: ios(),
+      android: android(),
+      web: { ...payload.environments.find((e) => e.web)!.web!, activity: activity() },
+      slots: [{ slot: 'tablet', ios: ios(), android: android() }],
+      remoteDevices: ['first', 'second'].map((sessionId) => ({
+        platform: 'ios',
+        backend: 'eas',
+        sessionId,
+        state: 'claimed',
+        startedAt: older,
+        webPreviewUrl: null,
+      })),
+      lastBuilds: {
+        ios: {
+          ...payload.environments.find((e) => e.lastBuilds?.ios)!.lastBuilds!.ios!,
+          startedAt: older,
+          finishedAt: older,
+        },
+        android: {
+          ...payload.environments.find((e) => e.lastBuilds?.android)!.lastBuilds!.android!,
+          startedAt: older,
+          finishedAt: older,
+        },
+      },
+    });
+
+  it.each<[string, (workspace: EnvironmentState) => void]>([
+    [
+      'supervisor start',
+      (e) => {
+        e.supervisor!.startedAt = newest;
+      },
+    ],
+    [
+      'build start',
+      (e) => {
+        e.build!.startedAt = newest;
+      },
+    ],
+    [
+      'build phase start',
+      (e) => {
+        e.build!.phaseStartedAt = newest;
+      },
+    ],
+    [
+      'workspace phase',
+      (e) => {
+        e.phaseSince = newest;
+      },
+    ],
+    [
+      'iOS activity',
+      (e) => {
+        e.ios!.activity!.lastActivityAt = newest;
+      },
+    ],
+    [
+      'iOS driver',
+      (e) => {
+        e.ios!.activity!.driver!.since = newest;
+      },
+    ],
+    [
+      'Android activity',
+      (e) => {
+        e.android!.activity!.lastActivityAt = newest;
+      },
+    ],
+    [
+      'Android driver',
+      (e) => {
+        e.android!.activity!.driver!.since = newest;
+      },
+    ],
+    [
+      'web activity',
+      (e) => {
+        e.web!.activity!.lastActivityAt = newest;
+      },
+    ],
+    [
+      'web driver',
+      (e) => {
+        e.web!.activity!.driver!.since = newest;
+      },
+    ],
+    [
+      'slot iOS activity',
+      (e) => {
+        e.slots![0]!.ios!.activity!.lastActivityAt = newest;
+      },
+    ],
+    [
+      'slot iOS driver',
+      (e) => {
+        e.slots![0]!.ios!.activity!.driver!.since = newest;
+      },
+    ],
+    [
+      'slot Android activity',
+      (e) => {
+        e.slots![0]!.android!.activity!.lastActivityAt = newest;
+      },
+    ],
+    [
+      'slot Android driver',
+      (e) => {
+        e.slots![0]!.android!.activity!.driver!.since = newest;
+      },
+    ],
+    [
+      'remote session',
+      (e) => {
+        e.remoteDevices![1]!.startedAt = newest;
+      },
+    ],
+    [
+      'iOS build finish',
+      (e) => {
+        e.lastBuilds!.ios!.finishedAt = newest;
+      },
+    ],
+    [
+      'Android build finish',
+      (e) => {
+        e.lastBuilds!.android!.finishedAt = newest;
+      },
+    ],
+    [
+      'unfinished iOS build start',
+      (e) => {
+        e.lastBuilds!.ios!.finishedAt = null;
+        e.lastBuilds!.ios!.startedAt = newest;
+      },
+    ],
+    [
+      'unfinished Android build start',
+      (e) => {
+        e.lastBuilds!.android!.finishedAt = null;
+        e.lastBuilds!.android!.startedAt = newest;
+      },
+    ],
+  ])('ranks the project first when %s is its newest stamp', (_source, setNewest) => {
+    const workspace = activityEnv();
+    setNewest(workspace);
+    const items = mergeWorkspaces([
+      { id: 'a', name: 'Mac', status: status([workspace, env('/u/alpha', { phaseSince: '2026-10-02T00:00:00Z' })]) },
+    ]);
+    expect(projectsByActivity(items)).toEqual(['zeta', 'alpha']);
+  });
+
+  it('takes the newest workspace across Macs, breaks ties by name and puts undated entries last', () => {
+    const snapshots = [
+      {
+        id: 'a',
+        name: 'Mac',
+        status: status(
+          [
+            env('/u/zeta/.worktrees/one', { phaseSince: newest }),
+            env('/u/beta', { phaseSince: older }),
+            env('/u/alpha', { phaseSince: older }),
+            env('/u/idle'),
+          ],
+          [{ path: '/u/source/.worktrees/one' }],
+        ),
+      },
+      { id: 'b', name: 'Other Mac', status: status([env('/u/zeta/.worktrees/two', { phaseSince: older })]) },
+    ];
+    const archive = { ...mergeArchives([{ id: 'a', name: 'Mac', status: payload }])[0]!, project: 'archive' };
+    expect(projectsByActivity([...mergeWorkspaces(snapshots), ...mergeWorktrees(snapshots), archive])).toEqual([
+      'zeta',
+      'alpha',
+      'beta',
+      'archive',
+      'idle',
+      'source',
+    ]);
+  });
+
+  it('ignores malformed stamps and uses a completed build finish instead of its start', () => {
+    const workspace = activityEnv();
+    workspace.supervisor!.startedAt = 'invalid';
+    workspace.phaseSince = 'invalid';
+    workspace.lastBuilds!.ios!.startedAt = newest;
+    expect(workspaceActivityMs(workspace)).toBe(Date.parse(older));
+    expect(workspaceActivityMs(env('/u/empty', { phaseSince: null, supervisor: null }))).toBeNull();
+    expect(workspaceActivityMs(env('/u/invalid', { phaseSince: 'invalid' }))).toBeNull();
+  });
+});
+
+describe('visibleProjects', () => {
+  const sorted = ['Alpha', 'Beta', 'Gamma', 'Delta', 'Echo', 'Foxtrot', 'Golf', 'Hotel', 'India', 'Juliet', 'Kilo'];
+  const options = { sorted, selected: [], query: '', expanded: false };
+
+  it('limits collapsed projects to eight by default and respects an explicit limit', () => {
+    expect(visibleProjects(options)).toEqual({
+      projects: ['Alpha', 'Beta', 'Gamma', 'Delta', 'Echo', 'Foxtrot', 'Golf', 'Hotel'],
+      showToggle: true,
+    });
+    expect(visibleProjects({ ...options, limit: 2 })).toEqual({ projects: ['Alpha', 'Beta'], showToggle: true });
+  });
+
+  it('appends selected projects beyond the limit in activity order without duplicating visible selections', () => {
+    expect(visibleProjects({ ...options, selected: ['Kilo', 'Alpha', 'India', 'removed'] })).toEqual({
+      projects: ['Alpha', 'Beta', 'Gamma', 'Delta', 'Echo', 'Foxtrot', 'Golf', 'Hotel', 'India', 'Kilo'],
+      showToggle: true,
+    });
+  });
+
+  it('shows every project when expanded', () => {
+    expect(visibleProjects({ ...options, expanded: true })).toEqual({ projects: sorted, showToggle: true });
+  });
+
+  it.each([false, true])('searches beyond the limit and keeps selected nonmatches when expanded is %s', (expanded) => {
+    expect(visibleProjects({ ...options, query: '  i  ', selected: ['Alpha', 'India'], limit: 1, expanded })).toEqual({
+      projects: ['Alpha', 'India', 'Juliet', 'Kilo'],
+      showToggle: false,
+    });
+    expect(visibleProjects({ ...options, query: 'missing' })).toEqual({ projects: [], showToggle: false });
+    expect(visibleProjects({ ...options, query: 'missing', selected: ['Kilo'] })).toEqual({
+      projects: ['Kilo'],
+      showToggle: false,
+    });
+  });
+
+  it('offers a toggle only above the limit without a trimmed query', () => {
+    expect(visibleProjects({ ...options, sorted: ['Alpha', 'Beta'], limit: 2 }).showToggle).toBe(false);
+    expect(visibleProjects({ ...options, sorted: [], limit: 2 }).showToggle).toBe(false);
+    expect(visibleProjects({ ...options, limit: 11, expanded: true }).showToggle).toBe(false);
+    expect(visibleProjects({ ...options, query: ' \t ' }).showToggle).toBe(true);
+    expect(visibleProjects({ ...options, query: 'Alpha' }).showToggle).toBe(false);
   });
 });
 

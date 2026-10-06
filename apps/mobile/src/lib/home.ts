@@ -265,6 +265,56 @@ export function projectNames(items: HomeEntry[]): string[] {
   return [...new Set(items.map((item) => item.project))].sort((a, b) => a.localeCompare(b));
 }
 
+export function workspaceActivityMs(env: EnvironmentState): number | null {
+  const stamps = [
+    env.supervisor?.startedAt,
+    env.build?.startedAt,
+    env.build?.phaseStartedAt,
+    env.phaseSince,
+    ...devicesOf(env).flatMap((device) => [device.activity?.lastActivityAt, device.activity?.driver?.since]),
+    ...(env.remoteDevices ?? []).map((device) => device.startedAt),
+    ...Object.values(env.lastBuilds ?? {}).map((build) => build?.finishedAt ?? build?.startedAt),
+  ];
+  let latest: number | null = null;
+  for (const stamp of stamps) {
+    const ms = stamp ? Date.parse(stamp) : NaN;
+    if (Number.isFinite(ms) && (latest === null || ms > latest)) latest = ms;
+  }
+  return latest;
+}
+
+export function projectsByActivity(items: HomeEntry[]): string[] {
+  const activity = new Map<string, number>();
+  for (const item of items) {
+    const ms = 'env' in item ? workspaceActivityMs(item.env) : null;
+    activity.set(item.project, Math.max(activity.get(item.project) ?? -Infinity, ms ?? -Infinity));
+  }
+  return [...activity.keys()].sort((a, b) => activity.get(b)! - activity.get(a)! || a.localeCompare(b));
+}
+
+export function visibleProjects({
+  sorted,
+  selected,
+  query,
+  expanded,
+  limit = 8,
+}: {
+  sorted: string[];
+  selected: string[];
+  query: string;
+  expanded: boolean;
+  limit?: number;
+}): { projects: string[]; showToggle: boolean } {
+  const search = query.trim().toLowerCase();
+  return {
+    projects: sorted.filter(
+      (project, index) =>
+        selected.includes(project) || (search ? project.toLowerCase().includes(search) : expanded || index < limit),
+    ),
+    showToggle: sorted.length > limit && !search,
+  };
+}
+
 const LOW_DISK_BYTES = 20e9;
 
 /** Binary units labeled GB, like Activity Monitor's memory figures. */

@@ -808,6 +808,10 @@ msgstr "All categories"
 msgid "All machines"
 msgstr "All machines"
 
+#: src/screens/filters.tsx
+msgid "All shows live and idle workspaces. Archived shows only removed worktrees."
+msgstr "All shows live and idle workspaces. Archived shows only removed worktrees."
+
 #: src/screens/logs.tsx
 msgid "All slots"
 msgstr "All slots"
@@ -2541,6 +2545,10 @@ msgstr "No machine connected"
 msgid "No machine paired"
 msgstr "No machine paired"
 
+#: src/screens/filters.tsx
+msgid "No matching projects"
+msgstr "No matching projects"
+
 #: src/screens/inbox.tsx
 msgid "No notifications"
 msgstr "No notifications"
@@ -3342,6 +3350,11 @@ msgstr "Search (regular expression)"
 msgid "Search logs"
 msgstr "Search logs"
 
+#: src/screens/filters.tsx
+#: src/screens/filters.tsx
+msgid "Search projects"
+msgstr "Search projects"
+
 #: src/components/viewer-keyboard.tsx
 msgid "Select all"
 msgstr "Select all"
@@ -3392,6 +3405,10 @@ msgstr "Show"
 msgid "Show all"
 msgstr "Show all"
 
+#: src/screens/filters.tsx
+msgid "Show all ({projectCount})"
+msgstr "Show all ({projectCount})"
+
 #: src/lib/sections.ts
 msgid "Show all {count}"
 msgstr "Show all {count}"
@@ -3406,6 +3423,7 @@ msgid "Show errors"
 msgstr "Show errors"
 
 #: src/lib/sections.ts
+#: src/screens/filters.tsx
 msgid "Show fewer"
 msgstr "Show fewer"
 
