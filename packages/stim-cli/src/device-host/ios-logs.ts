@@ -38,7 +38,8 @@ export function collectHostedIosLogs(
   let from = Math.max(beginning, checkpoint - 5000);
   const now = Math.floor(Date.now() / 1000) * 1000;
   if (now < checkpoint) return false;
-  let windowMs = !final && previous?.windowMs ? previous.windowMs * 2 : Math.max(1000, now - checkpoint);
+  const backlogMs = Math.max(1000, now - checkpoint);
+  let windowMs = !final && previous?.windowMs ? Math.min(previous.windowMs * 2, backlogMs) : backlogMs;
   let until = Math.min(now, checkpoint + windowMs);
   let end = until === now ? until + 1000 : until;
   const deadline = Date.now() + 10_000;
@@ -97,6 +98,14 @@ export function collectHostedIosLogs(
   for (const digest of previous?.boundary ?? []) seen.set(digest, (seen.get(digest) ?? 0) + 1);
   const boundary: string[] = [];
   const records: NdjsonRecord[] = [];
+  if (final && from > checkpoint)
+    records.push({
+      ts: from,
+      src: 'device',
+      platform: 'ios',
+      level: 'warn',
+      msg: `Hosted iOS native log gap: dropped interval [${new Date(checkpoint).toISOString()}, ${new Date(from).toISOString()}) to collect the final tail within its budget.`,
+    });
   for (const line of output.split('\n')) {
     const parsed = parseLogStreamLine(line);
     if (!parsed || typeof parsed.ts !== 'number' || parsed.ts < from || parsed.ts > end) continue;

@@ -214,15 +214,17 @@ test('an empty ledger refuses to report stopped while the AVD data remains on di
 test('stop removes session blobs and materialized apps while retaining receipts and native logs', async () => {
   await runHostedAndroidDevice('prepare', request);
   const blobs = join(area, 'blobs');
-  const bundle = join(area, 'apps', 'first', 'App.app');
+  const bundle = join(area, 'apps', 'first', 'App.apk');
+  const temporary = `${bundle}.tmp`;
   const legacy = join(area, 'apps', 'first', 'blobs');
-  for (const path of [blobs, bundle, legacy, join(home, 'ios-logs')]) mkdirSync(path, { recursive: true });
+  for (const path of [blobs, legacy, join(home, 'ios-logs')]) mkdirSync(path, { recursive: true });
   writeFileSync(join(blobs, 'digest'), 'app bytes');
-  writeFileSync(join(bundle, 'binary'), 'installed bytes');
+  writeFileSync(bundle, 'installed bytes');
+  writeFileSync(temporary, 'unfinished bytes');
   writeFileSync(join(area, 'apps', 'first', 'receipt.json'), '{}');
   writeFileSync(join(home, 'ios-logs', 'device.ndjson'), 'native logs');
   expect(await runHostedAndroidDevice('stop', request)).toMatchObject({ state: 'stopped' });
-  expect([blobs, bundle, legacy].map(existsSync)).toEqual([false, false, false]);
+  expect([blobs, bundle, temporary, legacy].map(existsSync)).toEqual([false, false, false, false]);
   expect(readFileSync(join(area, 'apps', 'first', 'receipt.json'), 'utf8')).toBe('{}');
   expect(readFileSync(join(home, 'ios-logs', 'device.ndjson'), 'utf8')).toBe('native logs');
 });

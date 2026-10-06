@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import fs, { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { hostedAppBlobs, readHostedApp, type HostedAppFile, type HostedAppOffer } from '@stim-cli/core/state';
@@ -120,15 +121,26 @@ test('chunk refuses a symlinked partial without modifying its target', async () 
   expect(readFileSync(target, 'utf8')).toBe('verified');
 });
 
-test('cached blob verification invalidates when bytes are replaced at the same size', async () => {
-  const file = entry('Info.plist', 'verified bytes');
-  const offer = await manifest('first', [file]);
-  await chunkHostedApp(readHostedApp(session, 'first'), {
-    sha256: file.sha256,
-    offset: 0,
-    data: Buffer.from('verified bytes').toString('base64'),
-  });
-  expect(offerHostedApp(offer).missing).toEqual([]);
-  writeFileSync(join(hostedAppBlobs(session), file.sha256), 'corrupt! bytes');
-  expect(offerHostedApp(offer).missing).toEqual([{ sha256: file.sha256, size: file.size, offset: 0 }]);
+test('the first offer reuses uploaded verification, but same-size edits invalidate it', async () => {
+  const reads = vi.spyOn(fs, 'readSync');
+  syncBuiltinESMExports();
+  try {
+    const file = entry('Info.plist', 'verified bytes');
+    const offer = await manifest('first', [file]);
+    await chunkHostedApp(readHostedApp(session, 'first'), {
+      sha256: file.sha256,
+      offset: 0,
+      data: Buffer.from('verified bytes').toString('base64'),
+    });
+    expect(reads).toHaveBeenCalled();
+    reads.mockClear();
+    expect(offerHostedApp(offer).missing).toEqual([]);
+    expect(reads).not.toHaveBeenCalled();
+    writeFileSync(join(hostedAppBlobs(session), file.sha256), 'corrupt! bytes');
+    expect(offerHostedApp(offer).missing).toEqual([{ sha256: file.sha256, size: file.size, offset: 0 }]);
+    expect(reads).toHaveBeenCalled();
+  } finally {
+    reads.mockRestore();
+    syncBuiltinESMExports();
+  }
 });

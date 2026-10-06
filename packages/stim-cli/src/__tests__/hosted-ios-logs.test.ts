@@ -116,6 +116,41 @@ test('catches up a sparse eight-hour backlog in one window and preserves progres
   expect(readHostedIosLogsCheckpoint(home)?.until).toBe(start + 8 * 60 * 60_000);
 });
 
+test('sixty steady-state collections keep a readable checkpoint and every collected record', () => {
+  for (let index = 0; index < 60; index++) {
+    const offset = 10_000 + index * 3000;
+    vi.setSystemTime(start + offset);
+    native.runFile.mockImplementation((file) =>
+      file === '/usr/libexec/PlistBuddy' ? 'Fixture' : event(offset, `record ${index}`),
+    );
+    expect(collectHostedIosLogs(home, session, 'app', start)).toBe(false);
+    expect(readHostedIosLogsCheckpoint(home)).toMatchObject({ until: start + offset });
+  }
+  expect(readLogsSince(hostedIosLogsDir(home), {}).records.map((record) => record.msg)).toEqual(
+    Array.from({ length: 60 }, (_, index) => `record ${index}`),
+  );
+  expect(collectHostedIosLogs(home, session, 'app', start, true)).toBe(false);
+  expect(readLogsSince(hostedIosLogsDir(home), {}).records).toHaveLength(60);
+});
+
+test('collection rebuilds a damaged checkpoint without losing saved records', () => {
+  vi.setSystemTime(start + 10_000);
+  native.runFile.mockImplementation((file) =>
+    file === '/usr/libexec/PlistBuddy' ? 'Fixture' : event(1000, 'saved failure'),
+  );
+  collectHostedIosLogs(home, session, 'app', start);
+  writeFileSync(join(hostedIosLogsDir(home), 'checkpoint.json'), '{broken');
+  native.runFile.mockImplementation((file) =>
+    file === '/usr/libexec/PlistBuddy' ? 'Fixture' : event(9000, 'new failure'),
+  );
+  expect(collectHostedIosLogs(home, session, 'app', start)).toBe(false);
+  expect(readHostedIosLogsCheckpoint(home)?.until).toBe(start + 10_000);
+  expect(readLogsSince(hostedIosLogsDir(home), {}).records.map((record) => record.msg)).toEqual([
+    'saved failure',
+    'new failure',
+  ]);
+});
+
 test('refuses a foreign device or unsafe executable before querying native logs', () => {
   writeFileSync(join(home, 'created-devices.json'), JSON.stringify({ version: 1, ios: [], android: [], web: [] }));
   expect(() => collectHostedIosLogs(home, session, 'app', start)).toThrow(/ledger|owned/);
@@ -172,7 +207,15 @@ test('final collection shrinks toward the recent tail instead of spending its bo
   });
   expect(collectHostedIosLogs(home, session, 'app', start, true)).toBe(false);
   expect(readHostedIosLogsCheckpoint(home)?.until).toBe(start + 240_000);
-  expect(readLogsSince(hostedIosLogsDir(home), {}).records.map((record) => record.msg)).toEqual(['stop tail']);
+  expect(readLogsSince(hostedIosLogsDir(home), {}).records).toMatchObject([
+    {
+      src: 'device',
+      platform: 'ios',
+      level: 'warn',
+      msg: expect.stringContaining('[2026-10-06T12:00:00.000Z, 2026-10-06T12:03:00.000Z)'),
+    },
+    { msg: 'stop tail' },
+  ]);
   expect(native.runFile.mock.calls.at(-1)?.[1]?.slice(-4)).toEqual([
     '--start',
     '2026-10-06 12:03:00+0000',

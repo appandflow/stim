@@ -50,6 +50,17 @@ export function hostedAppBlobs(session: string, workerHome?: string): string {
 
 const verifiedBlobs = new Map<string, string>();
 
+/** Transfers cached verification after a rename, only for the same inode, size, mtime and digest. */
+export function rememberHostedAppBlobRename(from: string, to: string, file: { size: number; sha256: string }): void {
+  const previous = verifiedBlobs.get(from);
+  verifiedBlobs.delete(from);
+  const stat = lstatSync(to, { throwIfNoEntry: false });
+  if (!previous || !stat?.isFile() || stat.size !== file.size) return;
+  const prefix = `${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeMs}:`;
+  if (previous.startsWith(prefix) && previous.endsWith(`:${file.sha256}`))
+    verifiedBlobs.set(to, `${prefix}${stat.ctimeMs}:${file.sha256}`);
+}
+
 /** Checks regular blob bytes, including their size, before content-addressed reuse. */
 export function validHostedAppBlob(path: string, file: { size: number; sha256: string }): boolean {
   const stat = lstatSync(path, { throwIfNoEntry: false });

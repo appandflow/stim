@@ -573,6 +573,11 @@ bounded worker and termination deadlines before native work. Each native collect
 a 30-second bound, reports progress on stderr and stops on a stalled cursor and
 checkpoint. The host collects once more before deletion on stop, revocation or
 server close, preferring the recent tail if the remaining backlog will not fit.
+One `device` warning record names the dropped interval. Missing or damaged
+checkpoints are ignored and rebuilt; they never prevent reading collected logs.
+The client waits 180 seconds for session settlement: the 90-second stop worker,
+15-second final collection and up to three 10-second worker group-settle bounds
+leave 45 seconds for polling and transport.
 The client pulls that final collection after stop. Stop removes the session blob
 store and materialized apps, retaining receipts and collected logs. `cursor` maps each log file name to the
 byte offset after the last complete line read; pass the previous result's cursor to

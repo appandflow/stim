@@ -52,7 +52,10 @@ export function removeHostedAppData(home: string): void {
     for (const attempt of readdirSync(apps)) {
       const directory = join(apps, attempt);
       assertInside(directory);
+      if (!lstatSync(directory).isDirectory()) continue;
       remove(join(directory, 'App.app'));
+      remove(join(directory, 'App.apk'));
+      remove(join(directory, 'App.apk.tmp'));
       remove(join(directory, 'blobs'));
     }
   }

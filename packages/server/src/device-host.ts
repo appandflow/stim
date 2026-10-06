@@ -685,11 +685,11 @@ export class DeviceHost {
       ) {
         if (!owned) throw new Error('The hosted log owner is unavailable. Stop this session before retrying.');
         if (!owned.stopping && !owned.installing) {
-          if (owned.logs?.more && !owned.logs.pending) {
-            const delay = Math.max(0, owned.logs.started + 3000 - Date.now());
+          const delay = owned.logs && !owned.logs.pending ? Math.max(0, owned.logs.started + 3000 - Date.now()) : 0;
+          if (!delay || owned.logs?.more) {
             if (delay) await new Promise((resolve) => setTimeout(resolve, delay));
+            if (!owned.stopping && !owned.installing) await this.collectLogs(record, owned);
           }
-          if (!owned.stopping && !owned.installing) await this.collectLogs(record, owned);
         }
       }
       const page = dir ? readLogsSince(dir, cursor) : saved;
@@ -722,7 +722,6 @@ export class DeviceHost {
 
   private collectLogs(record: HostedDeviceSession, owned: OwnedSession, final = false): Promise<void> {
     if (owned.logs?.pending) return owned.logs.pending;
-    if (!final && owned.logs && Date.now() - owned.logs.started < 3000) return Promise.resolve();
     const attempt = owned.installedAttempt ?? record.appAttempt;
     if (record.platform !== 'ios' || !attempt || readHostedAppMetadata(record.id, attempt).state !== 'installed')
       return Promise.resolve();

@@ -24,6 +24,7 @@ import {
   hostedAppArea,
   hostedAppBlobs,
   validHostedAppBlob,
+  rememberHostedAppBlobRename,
   isJsonObject,
   readHostedApp,
   readHostedAppMetadata,
@@ -115,6 +116,7 @@ export function offerHostedApp(offer: HostedAppOffer): {
         if (stat && (!stat.isFile() || stat.size >= file.size)) {
           if (validHostedAppBlob(partial, file)) {
             renameSync(partial, complete);
+            rememberHostedAppBlobRename(partial, complete, file);
             return [];
           }
           rmSync(partial, { force: true });
@@ -187,6 +189,7 @@ export async function chunkHostedApp(record: HostedAppRecord, params: unknown): 
       throw new Error('App content digest mismatch; the partial file was discarded.');
     }
     renameSync(partial, complete);
+    rememberHostedAppBlobRename(partial, complete, file);
     if (file.sha256 === record.manifest.sha256) {
       try {
         readHostedApp(record.session, record.attempt);

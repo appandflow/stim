@@ -43,7 +43,7 @@ export function hostedMacosLogsDir(home: string): string | null {
 
 export const hostedIosLogsDir = (home: string): string => join(home, 'ios-logs');
 
-/** The host worker's completed query window, adaptive span and event digests covering its overlapping boundary. */
+/** The completed query window and overlap digests, or null for a missing, malformed or unreadable checkpoint. */
 export function readHostedIosLogsCheckpoint(
   home: string,
 ): { until: number; boundary: string[]; windowMs?: number } | null {
@@ -57,15 +57,14 @@ export function readHostedIosLogsCheckpoint(
       !Array.isArray(value.boundary) ||
       !value.boundary.every((each) => typeof each === 'string' && /^[a-f0-9]{64}$/.test(each))
     )
-      throw new Error('The hosted iOS log checkpoint is malformed.');
+      return null;
     return {
       until: value.until as number,
       boundary: value.boundary as string[],
       ...(typeof value.windowMs === 'number' ? { windowMs: value.windowMs } : {}),
     };
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
-    throw error;
+  } catch {
+    return null;
   }
 }
 

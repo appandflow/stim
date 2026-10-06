@@ -94,7 +94,7 @@ if(input.mode === 'prepare') {
     if(input.deviceType === 'logs-delayed') await new Promise(resolve=>setTimeout(resolve,150));
     const logs=join(home,'ios-logs');mkdirSync(logs,{recursive:true});
     appendFileSync(join(logs,'device.ndjson'),JSON.stringify({ts:1,src:'device',platform:'ios',level:'error',msg:existsSync(join(logs,'device.ndjson'))?'final native tail':'native failure'})+'\\n');
-    out({more:false});
+    out({more:input.deviceType === 'logs-backlog' && !input.final});
   }
 } else if(input.mode === 'install') {
   appendFileSync(join(home,'installed'),input.attempt+'\\n');
@@ -1944,6 +1944,50 @@ test('iOS followers coalesce and throttle without blocking rerun offers, chunks,
   );
   expect(await host.logsQuery('client', query)).toHaveProperty('result.records.0.msg', 'native failure');
 });
+
+test('a backlog query collects after its throttle timer fires before the wall-clock deadline', async () => {
+  const session = reserve({ deviceType: 'logs-backlog' });
+  await state(session.id, 'ready');
+  const app = appOffer(session.id);
+  host.appOffer('client', app.params);
+  await uploadManifest(app);
+  await host.appChunk('client', { ...app.params, sha256: app.sha256, offset: 0, data: app.content.toString('base64') });
+  host.appLaunch('client', app.params);
+  await vi.waitFor(() => expect(host.appAttach('client', app.params)).toHaveProperty('result.state', 'installed'));
+  const now = vi.spyOn(Date, 'now').mockReturnValue(Date.now());
+  const timer = globalThis.setTimeout;
+  const earlyTimer = vi
+    .spyOn(globalThis, 'setTimeout')
+    .mockImplementation((callback, ms, ...args) => timer(callback, ms === 3000 ? 0 : ms, ...args));
+  try {
+    const first = await host.logsQuery('client', { session: session.id });
+    if ('error' in first) throw new Error(first.error.message);
+    expect(first.result.more).toBe(true);
+    const second = await host.logsQuery('client', { session: session.id, cursor: first.result.cursor });
+    if ('error' in second) throw new Error(second.error.message);
+    expect(second.result.records).toHaveLength(1);
+    expect(second.result.cursor).not.toEqual(first.result.cursor);
+  } finally {
+    earlyTimer.mockRestore();
+    now.mockRestore();
+  }
+});
+
+test.each(['{broken', JSON.stringify({ until: 1, boundary: [], windowMs: 10995116277760000 })])(
+  'a damaged checkpoint cannot refuse saved logs before or after stop (%s)',
+  async (checkpoint) => {
+    const session = reserve();
+    await state(session.id, 'ready');
+    const directory = join(deviceHostArea(session.id), 'home', 'ios-logs');
+    mkdirSync(directory);
+    writeFileSync(join(directory, 'device.ndjson'), JSON.stringify({ ts: 1, src: 'device', msg: 'saved log' }) + '\n');
+    writeFileSync(join(directory, 'checkpoint.json'), checkpoint);
+    expect(await host.logsQuery('client', { session: session.id })).toHaveProperty('result.records.0.msg', 'saved log');
+    host.stop('client', { session: session.id });
+    await state(session.id, 'stopped');
+    expect(await host.logsQuery('client', { session: session.id })).toHaveProperty('result.records.0.msg', 'saved log');
+  },
+);
 
 test('rerun launch cancels and settles a follower before installation without refusing admission', async () => {
   const session = reserve({ deviceType: 'logs-hang' });

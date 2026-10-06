@@ -146,7 +146,7 @@ test.each(['failed', 'skipped'])(
   },
 );
 
-test('stop removes session blobs and materialized apps while retaining receipts and native logs', async () => {
+test('stop skips stray files and removes app data while retaining receipts and native logs', async () => {
   await runHostedDevice('prepare', {});
   const blobs = join(area, 'blobs');
   const bundle = join(area, 'apps', 'first', 'App.app');
@@ -154,10 +154,12 @@ test('stop removes session blobs and materialized apps while retaining receipts 
   for (const path of [blobs, bundle, legacy, join(home, 'ios-logs')]) mkdirSync(path, { recursive: true });
   writeFileSync(join(blobs, 'digest'), 'app bytes');
   writeFileSync(join(bundle, 'binary'), 'installed bytes');
+  writeFileSync(join(area, 'apps', 'stray-file'), 'unrelated bytes');
   writeFileSync(join(area, 'apps', 'first', 'receipt.json'), '{}');
   writeFileSync(join(home, 'ios-logs', 'device.ndjson'), 'native logs');
   expect(await runHostedDevice('stop', {})).toMatchObject({ state: 'stopped' });
   expect([blobs, bundle, legacy].map(existsSync)).toEqual([false, false, false]);
   expect(readFileSync(join(area, 'apps', 'first', 'receipt.json'), 'utf8')).toBe('{}');
+  expect(readFileSync(join(area, 'apps', 'stray-file'), 'utf8')).toBe('unrelated bytes');
   expect(readFileSync(join(home, 'ios-logs', 'device.ndjson'), 'utf8')).toBe('native logs');
 });
