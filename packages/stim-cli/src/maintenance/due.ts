@@ -7,7 +7,9 @@ export function due(
   state: MaintenanceState | null,
   settings: Pick<MaintenanceSettings, 'pressureCheckMinutes' | 'sizeCheckMinutes'>,
   now: number,
+  attemptedAt?: number,
 ): MaintenanceCheck[] {
+  if (attemptedAt !== undefined && now - attemptedAt < 60_000) return [];
   return (['pressure', 'size'] as const).filter((check) => {
     const deferred = state?.deferredAt?.[check];
     if (deferred !== undefined && now - deferred < DEFERRED_RETRY_MS) return false;

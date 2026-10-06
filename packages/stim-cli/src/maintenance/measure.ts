@@ -12,7 +12,7 @@ import {
 import { readVolumeSpace } from '../budget.ts';
 import { measuredDirectorySize } from '../fs-util.ts';
 import { readHostMemoryPressure } from '../host-memory.ts';
-import { discoverCaches } from '../cache/caches.ts';
+import { discoverCaches, type CacheDescriptor } from '../cache/caches.ts';
 import { planCacheEmptying } from '../commands/gc/caches.ts';
 import { canonicalPath } from '../commands/gc/paths.ts';
 import { collectWorkspaceOutputs } from '../commands/gc/workspaces.ts';
@@ -49,6 +49,33 @@ export function measurePressure(
 
 export function sizeScanDeferred(settings: MaintenanceSettings): boolean {
   return loadavg()[0]! / Math.max(1, cpus().length) > settings.maxLoadPerCore;
+}
+
+export function cacheBlocked(
+  entry: Pick<MaintenanceSize, 'name' | 'dir' | 'category'>,
+  discovered: CacheDescriptor[] = discoverCaches(),
+): string | undefined {
+  return (
+    planCacheEmptying(
+      [
+        {
+          ...entry,
+          note: '',
+          prune: 'entries',
+          ...(discovered.some(
+            (cache) => canonicalPath(cache.dir) === canonicalPath(entry.dir) && cache.source === 'registered',
+          )
+            ? { source: 'registered' as const }
+            : {}),
+        },
+      ],
+      false,
+    )[0]?.machineGlobal ??
+    (entry.category === 'compilation-cache' &&
+    [...listBuildLocks(), ...listBuildSlots()].some((item) => item.alive || item.unresolved)
+      ? 'a build lock or slot is live or unresolved'
+      : undefined)
+  );
 }
 
 export function measureSizes(now: number, failure: (target: string, workspace?: string) => void): MaintenanceSize[] {
@@ -97,7 +124,6 @@ export function measureSizes(now: number, failure: (target: string, workspace?: 
       category: 'compilation-cache',
     },
   ];
-  const buildBusy = [...listBuildLocks(), ...listBuildSlots()].some((entry) => entry.alive || entry.unresolved);
   const discovered = discoverCaches();
   for (const cache of discovered) {
     if (cache.source !== 'registered' && !canonicalPath(cache.dir).startsWith(`${canonicalPath(configDir())}/`))
@@ -120,23 +146,7 @@ export function measureSizes(now: number, failure: (target: string, workspace?: 
       failure(entry.dir);
       continue;
     }
-    const blocked =
-      planCacheEmptying(
-        [
-          {
-            ...entry,
-            note: '',
-            prune: 'entries',
-            ...(discovered.some(
-              (cache) => canonicalPath(cache.dir) === canonicalPath(entry.dir) && cache.source === 'registered',
-            )
-              ? { source: 'registered' as const }
-              : {}),
-          },
-        ],
-        false,
-      )[0]?.machineGlobal ??
-      (entry.category === 'compilation-cache' && buildBusy ? 'a build lock or slot is live or unresolved' : null);
+    const blocked = cacheBlocked(entry, discovered);
     sizes.push({
       ...entry,
       bytes,

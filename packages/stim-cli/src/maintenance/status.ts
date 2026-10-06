@@ -1,12 +1,24 @@
 import { maintenanceRunClaims, readMaintenanceState, type MaintenanceStatus } from '@stim-cli/core/state';
-import { readClaimSet } from '@stim-cli/core/ownership-claim';
+import { claimRemoveCommand, readClaimSet } from '@stim-cli/core/ownership-claim';
 import { resolveMaintenanceSettings } from './settings.ts';
 
 export function maintenanceStatus(): MaintenanceStatus {
   const state = readMaintenanceState();
-  const holder = readClaimSet(maintenanceRunClaims()).live[0];
+  const claims = readClaimSet(maintenanceRunClaims());
+  const holder = claims.live[0];
+  const unresolved = claims.unresolved[0];
+  const settings = resolveMaintenanceSettings();
   return {
-    mode: resolveMaintenanceSettings()?.mode ?? 'off',
+    mode: settings.mode,
+    ...(settings.invalid ? { invalid: settings.invalid } : {}),
+    ...(unresolved
+      ? {
+          claim: {
+            unresolved: `${unresolved.path}: ${unresolved.reason}`,
+            removeCommand: claimRemoveCommand(unresolved.path),
+          },
+        }
+      : {}),
     lastChecks: {
       pressure: state?.lastAt.pressure ?? null,
       size: state?.lastAt.size ?? null,
@@ -25,8 +37,8 @@ export function maintenanceStatus(): MaintenanceStatus {
   };
 }
 
-export function maintenanceLine(status: MaintenanceStatus): string | null {
-  if (status.mode === 'off' && !status.lastPass && !status.running) return null;
+export function maintenanceLine(status: MaintenanceStatus, includeLabel = true): string | null {
+  if (status.mode === 'off' && !status.lastPass && !status.running && !status.invalid && !status.claim) return null;
   const at = status.lastPass
     ? new Date(status.lastPass.startedAt).toLocaleTimeString('en-GB', {
         hour: '2-digit',
@@ -40,5 +52,5 @@ export function maintenanceLine(status: MaintenanceStatus): string | null {
   const disk = status.pressure?.disk
     .map((volume) => `disk ${(volume.freeMb / 1024).toFixed(1)} GB free on ${volume.volume}`)
     .join(', ');
-  return `Auto maintenance (${status.mode === 'report' ? 'report only' : 'off'})${at ? ` ${at}` : ''}: ${status.lastPass ? summary : 'no pass has run yet'}${disk ? `; ${disk}` : ''}${status.running ? '; running' : ''}${status.lastPass?.blocked.length ? `; ${status.lastPass.blocked.join('; ')}` : ''}`;
+  return `${includeLabel ? `Auto maintenance (${status.mode === 'report' ? 'report only' : 'off'}): ` : ''}${at ? `${at}: ` : ''}${status.lastPass ? summary : 'no pass has run yet'}${disk ? `; ${disk}` : ''}${status.running ? '; running' : ''}${status.lastPass?.blocked.length ? `; ${status.lastPass.blocked.join('; ')}` : ''}${status.invalid ? `; invalid: ${status.invalid}` : ''}${status.claim ? `; unresolved claim: ${status.claim.unresolved}; ${status.claim.removeCommand}` : ''}`;
 }

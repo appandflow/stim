@@ -11,7 +11,7 @@ import { enforceBudget, resolveBudget } from '../budget.ts';
 import { findProjectRoot } from '../workspace/project.ts';
 import { canonicalPath } from '../commands/gc/paths.ts';
 import { collectWorkspaceOutputs } from '../commands/gc/workspaces.ts';
-import { measurePressure } from './measure.ts';
+import { cacheBlocked, measurePressure } from './measure.ts';
 import { plan, type MaintenancePlan } from './plan.ts';
 import { resolveMaintenanceSettings, type MaintenanceSettings } from './settings.ts';
 
@@ -23,6 +23,7 @@ export async function plannedMaintenance(
   pressure: MaintenancePressure | null,
   sizes: readonly MaintenanceSize[],
   settings: MaintenanceSettings,
+  { devices = true }: { devices?: boolean } = {},
 ): Promise<MaintenancePlan> {
   const resolved = resolveBudget();
   if (resolved.error) throw new Error(resolved.error);
@@ -44,6 +45,7 @@ export async function plannedMaintenance(
     measure: false,
   });
   const currentSizes = sizes.map((size) => {
+    if (size.category === 'compilation-cache') return { ...size, blocked: cacheBlocked(size) };
     if (!size.workspace) return size;
     const current = outputs.workspaces.find(
       (entry) => entry.projectRoot && canonicalPath(entry.projectRoot) === size.workspace,
@@ -57,7 +59,8 @@ export async function plannedMaintenance(
     sizes: currentSizes,
     settings,
     budget,
-    diskSteps: outcome?.status === 'ok' ? outcome.reclaimed : [],
+    diskSteps:
+      outcome?.status === 'ok' ? outcome.reclaimed.filter((step) => devices || step.step !== 'idle-devices') : [],
     protectedRoot: root,
     scoped: Boolean(process.env.STIM_HOME),
     projects: Object.keys(loadConfig()?.projects ?? {}).map(canonicalPath),
@@ -78,22 +81,25 @@ export async function plannedMaintenance(
 
 export interface MaintenancePreview extends MaintenancePlan {
   mode: MaintenanceMode;
+  invalid?: string;
   pressure: MaintenancePressure | null;
   note: string | null;
 }
 
-export async function previewMaintenance(): Promise<MaintenancePreview> {
+export async function previewMaintenance({ devices = true }: { devices?: boolean } = {}): Promise<MaintenancePreview> {
+  let settings: MaintenanceSettings | undefined;
   try {
+    settings = resolveMaintenanceSettings();
     const state = readMaintenanceState();
-    const settings = resolveMaintenanceSettings();
-    if (!settings)
+    if (settings.invalid && settings.mode === 'off')
       return {
         mode: 'off',
         pressure: null,
         actions: [],
         blocked: [],
         skips: [],
-        note: 'maintenance settings are invalid',
+        invalid: settings.invalid,
+        note: settings.invalid,
       };
     if (settings.mode === 'off')
       return {
@@ -105,16 +111,18 @@ export async function previewMaintenance(): Promise<MaintenancePreview> {
         note: 'maintenance.mode is off',
       };
     const pressure = measurePressure(settings, state?.pressure ?? null, Date.now());
-    const result = await plannedMaintenance(pressure, state?.sizes ?? [], settings);
+    const result = await plannedMaintenance(pressure, state?.sizes ?? [], settings, { devices });
     return {
       ...result,
       mode: settings.mode,
+      ...(settings.invalid ? { invalid: settings.invalid } : {}),
       pressure,
-      note: state === null ? 'no pass has run yet; sizes have not been measured' : null,
+      note: settings.invalid ?? (state === null ? 'no pass has run yet; sizes have not been measured' : null),
     };
   } catch (error) {
     return {
-      mode: 'off',
+      mode: settings?.mode ?? 'off',
+      ...(settings?.invalid ? { invalid: settings.invalid } : {}),
       pressure: null,
       actions: [],
       blocked: [String(error)],

@@ -452,6 +452,10 @@ ${SETTINGS.filter((setting) => setting.key.startsWith('maintenance.') || /^cache
   )
   .join('\n')}
 
+Maintenance uses the sysctl pressure level on macOS, with no memory signal
+when sysctl fails. os.freemem() and maintenance.minAvailableMemoryGb apply
+only on other platforms.
+
 THE IOS SIMULATOR APP IS MACHINE-LEVEL
 Top-level \`iosSimulatorApp\` in ~/.stim/config.json selects the macOS app that
 displays Stim's owned local iOS simulator after boot. It is not a project

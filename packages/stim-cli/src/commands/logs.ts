@@ -190,7 +190,7 @@ export default function logsCommand(program: Command): void {
     .option('--tail <n>', 'Only the last n matching records')
     .option(
       '--errors',
-      'Errors and fatals since the last marker, from metro, client and build, plus maintenance failures, confirmed native app-crash reports and stim web browser errors. Add --source device or --source all for general device errors.',
+      'Errors and fatals since the last marker, from metro, client and build, plus confirmed native app-crash reports and stim web browser errors. Add --source maintenance for maintenance failures, or --source device or --source all for general device errors.',
     )
     .option('--follow', 'Keep streaming new records until interrupted')
     .option('--json', 'Emit the raw records, one per line (valid NDJSON; zero matches is zero bytes, exit 0)')

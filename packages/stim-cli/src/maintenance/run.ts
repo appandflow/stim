@@ -1,11 +1,14 @@
-import { appendFileSync, mkdirSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
-import { basename, join } from 'node:path';
+import { appendFileSync, mkdirSync, renameSync, statSync, truncateSync, unlinkSync, writeFileSync } from 'node:fs';
+import { basename, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { withDirLock } from '@stim-cli/core';
 import {
   maintenanceChildLogFile,
   maintenanceDir,
   maintenanceRunClaims,
   maintenanceStateFile,
+  maintenanceAttemptFile,
+  readMaintenanceAttempt,
   readMaintenanceState,
   type MaintenanceState,
   type MaintenanceRecord,
@@ -36,9 +39,26 @@ function writeState(state: MaintenanceState): void {
   });
 }
 
+const actionKey = (action: MaintenanceState['plan'][number]) => JSON.stringify([action.kind, action.target]);
+const sameSet = (before: Set<string>, after: Set<string>) =>
+  before.size === after.size && [...before].every((key) => after.has(key));
+
 export async function runMaintenance(trigger: string): Promise<void> {
+  const startedAt = Date.now();
+  const attemptedAt = readMaintenanceAttempt();
   let claim: ClaimHandle | undefined;
   try {
+    mkdirSync(maintenanceDir(), { recursive: true });
+    const file = maintenanceAttemptFile();
+    const tmp = `${file}.${process.pid}.tmp`;
+    writeFileSync(tmp, `${JSON.stringify({ attemptedAt: startedAt })}\n`);
+    try {
+      renameSync(tmp, file);
+    } finally {
+      try {
+        unlinkSync(tmp);
+      } catch {}
+    }
     const attempt = tryAcquireClaim({
       root: maintenanceRunClaims(),
       mode: 'exclusive',
@@ -55,8 +75,7 @@ export async function runMaintenance(trigger: string): Promise<void> {
   let logger: ReturnType<typeof maintenanceLogger> | undefined;
   try {
     const settings = resolveMaintenanceSettings();
-    if (!settings || settings.mode === 'off') return;
-    const startedAt = Date.now();
+    if (settings.mode === 'off') return;
     const state: MaintenanceState = readMaintenanceState() ?? {
       version: 1,
       lastAt: {},
@@ -66,7 +85,7 @@ export async function runMaintenance(trigger: string): Promise<void> {
       recent: [],
       plan: [],
     };
-    const checks = due(state, settings, startedAt);
+    const checks = due(state, settings, startedAt, attemptedAt);
     if (checks.length === 0) return;
     logger = maintenanceLogger(settings, `p-${claim.claimId}`, trigger);
     const record = (
@@ -85,6 +104,8 @@ export async function runMaintenance(trigger: string): Promise<void> {
         state.recent = [...state.recent, entry].slice(-20);
     };
     const failures: string[] = [];
+    let measuredSizes = false;
+    const budget = resolveBudget().budget;
     for (const check of checks) {
       if (check === 'size' && sizeScanDeferred(settings)) {
         record('maintenance_skip', 'debug', 'Size check deferred: host load exceeds maintenance.maxLoadPerCore', {
@@ -101,7 +122,7 @@ export async function runMaintenance(trigger: string): Promise<void> {
       try {
         if (check === 'pressure') {
           state.pressure = measurePressure(settings, state.pressure, state.lastAt[check]!);
-          const floor = Math.max(resolveBudget().budget.minFreeDiskMb, resolveBudget().budget.hardFloorDiskMb);
+          const floor = Math.max(budget.minFreeDiskMb, budget.hardFloorDiskMb);
           for (const disk of state.pressure.disk)
             record('maintenance_check', 'debug', `Disk free on ${disk.volume}: ${(disk.freeMb / 1024).toFixed(1)}G`, {
               check: {
@@ -126,6 +147,7 @@ export async function runMaintenance(trigger: string): Promise<void> {
             },
           });
         } else {
+          measuredSizes = true;
           state.sizes = measureSizes(state.lastAt[check]!, (target, workspace) => {
             failures.push(`Could not measure ${target}`);
             record('maintenance_failure', 'error', `Could not measure ${target}`, {
@@ -162,8 +184,19 @@ export async function runMaintenance(trigger: string): Promise<void> {
       });
       result = { actions: [], blocked: [], skips: [] };
     }
-    state.plan = result.actions;
+    const previousActions = new Set(state.plan.map(actionKey));
+    const nextActions = new Set(result.actions.map(actionKey));
+    const previousSkips = new Set(state.skipKeys ?? []);
+    const nextSkips = new Set(result.skips.map((skip) => skip.target));
+    const blocked = [...result.blocked, ...failures];
+    const changed =
+      !state.lastPass ||
+      !sameSet(previousActions, nextActions) ||
+      !sameSet(previousSkips, nextSkips) ||
+      !sameSet(new Set(state.lastPass.blocked), new Set(blocked));
     for (const action of result.actions) {
+      if (previousActions.has(actionKey(action))) continue;
+      previousActions.add(actionKey(action));
       const label =
         action.kind === 'would-clear-outputs'
           ? `clear build outputs of ${basename(action.workspace ?? action.target)}`
@@ -173,7 +206,13 @@ export async function runMaintenance(trigger: string): Promise<void> {
         ...(action.workspace ? { workspace: action.workspace } : {}),
       });
     }
-    for (const skip of result.skips) record('maintenance_skip', 'info', `Kept ${skip.target}: ${skip.reason}`, skip);
+    for (const skip of result.skips) {
+      if (previousSkips.has(skip.target)) continue;
+      previousSkips.add(skip.target);
+      record('maintenance_skip', 'info', `Kept ${skip.target}: ${skip.reason}`, skip);
+    }
+    state.plan = result.actions;
+    state.skipKeys = [...nextSkips];
     state.lastPass = {
       startedAt,
       durationMs: Date.now() - startedAt,
@@ -182,14 +221,15 @@ export async function runMaintenance(trigger: string): Promise<void> {
       freedBytes: 0,
       actions: result.actions.length,
       stopped: 0,
-      blocked: [...result.blocked, ...failures],
+      blocked,
     };
-    record(
-      'maintenance_pass',
-      state.lastPass.blocked.length ? 'warn' : 'info',
-      `Report-only pass: ${result.actions.length} planned actions${state.lastPass.blocked.length ? `; ${state.lastPass.blocked.join('; ')}` : ''}`,
-      { ...state.lastPass },
-    );
+    if (measuredSizes || changed)
+      record(
+        'maintenance_pass',
+        state.lastPass.blocked.length ? 'warn' : 'info',
+        `Report-only pass: ${result.actions.length} planned actions${state.lastPass.blocked.length ? `; ${state.lastPass.blocked.join('; ')}` : ''}`,
+        { ...state.lastPass },
+      );
     writeState(state);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -209,13 +249,14 @@ export async function runMaintenance(trigger: string): Promise<void> {
 function crashLine(error: unknown): void {
   try {
     mkdirSync(maintenanceDir(), { recursive: true });
-    appendFileSync(maintenanceChildLogFile(), `${String(error).replaceAll('\n', ' ')}\n`);
+    const file = maintenanceChildLogFile();
+    try {
+      if (statSync(file).size > 64 * 1024) truncateSync(file);
+    } catch {}
+    appendFileSync(file, `${String(error).replaceAll('\n', ' ')}\n`);
   } catch {}
 }
 
-if (
-  ['maintenance-run.mjs', 'run.ts'].includes(basename(process.argv[1] ?? '')) &&
-  /maintenance(?:-run|[\\/]run)/.test(process.argv[1] ?? '')
-) {
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   if (!relaunchWithLogFile(process.argv.slice(2))) await runMaintenance(process.argv[2] ?? 'command');
 }

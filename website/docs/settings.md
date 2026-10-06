@@ -695,6 +695,9 @@ All of these settings have machine scope. GB and MB below mean GiB and MiB.
 | `caches.swiftCompilationCacheMaxGb` | number >= 0; 0 = no cap  | 15 GB             | `STIM_CACHES_SWIFT_COMPILATION_CACHE_MAX_GB` |
 
 Size scans defer above `maintenance.maxLoadPerCore`; pressure checks continue.
+On macOS the memory signal is the sysctl pressure level, with no signal when
+sysctl fails. `os.freemem()` and `maintenance.minAvailableMemoryGb` apply only
+on other platforms.
 Caps plan toward `maintenance.capTargetPercent` of the limit; the Swift
 compilation cache is planned for whole-cache emptying. Memory pressure is
 recorded without planning stops. Debug check logs are off by default.

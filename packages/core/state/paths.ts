@@ -160,6 +160,10 @@ export function maintenanceStateFile(): string {
   return join(maintenanceDir(), 'state.json');
 }
 
+export function maintenanceAttemptFile(): string {
+  return join(maintenanceDir(), 'attempt.json');
+}
+
 export function maintenanceNdjsonFile(): string {
   return join(maintenanceDir(), 'maintenance.ndjson');
 }

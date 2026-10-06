@@ -49,7 +49,7 @@ FLAGS
   --tail <n>       only the last n MATCHING records (applied after filtering,
                    so --level error --tail 5 is the last five ERRORS)
   --errors         errors and fatals since the last marker, from metro, client
-                   and build, plus maintenance failures, confirmed native app-crash reports and the
+                   and build, plus confirmed native app-crash reports and the
                    owned Chrome's device errors (platform web: failed
                    requests, browser errors).
                    Capped at 20 printed records.
@@ -190,8 +190,8 @@ THE RECORD
 
 Maintenance records use src: maintenance and appear in the plain timeline.
   stim logs --source maintenance
-Only maintenance_failure events from that source appear with --errors, even
-when they predate the app's launch marker. Machine passes are reported in
+Add --errors to --source maintenance to show only maintenance_failure events;
+failures before a later launch marker are hidden. Machine passes are reported in
 status and maintenance/maintenance.ndjson; this command reads workspace logs.
 
 WHAT WRITES WHAT

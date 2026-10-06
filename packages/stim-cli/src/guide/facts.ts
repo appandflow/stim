@@ -767,8 +767,8 @@ RULES
                     timing out or an AVD or system image folder Stim
                     cannot read. A macOS privacy denial (EPERM) names the
                     Privacy & Security setting to grant
-  maintenance     within sections: { mode, pressure, actions, blocked,
-                  skips, note }, the next report-only maintenance plan
+  maintenance     top-level { mode, pressure, actions, blocked,
+                  skips, note, invalid? }, the next report-only maintenance plan
                   from live pressure and cached sizes. note says when no
                   pass has run yet. No du runs for this preview.
   sections        one array per report section, in the text order. Every key
@@ -1481,13 +1481,17 @@ RULES
   top-level machine section:
 
   maintenance { mode, lastChecks: { pressure, size }, pressure, sizes,
-                lastPass, running, recent, plan }
+                lastPass, running, recent, plan, invalid?, claim? }
     Report-only observations; every plan action's kind starts with would-.
     lastChecks are epoch milliseconds or null. running comes only from a
     live maintenance/run.claims owner, never from a check stamp.
     lastPass carries startedAt, durationMs, trigger, mode, freedBytes (0),
     actions, stopped (0), blocked. recent holds the last 20 action, failure
     and blocked NDJSON records from maintenance/maintenance.ndjson.
+    invalid names invalid settings; invalid cache caps use their defaults,
+    while invalid maintenance settings disable passes. claim contains an
+    unresolved claim's path and reason, plus removeCommand from the claim
+    protocol; inspect the holder before running that command.
 
   machine   null, or { memorySource, owners: [{ kind, name, workspace,
             slot?, id, owned, cpuPercent, residentMb, memoryMb,

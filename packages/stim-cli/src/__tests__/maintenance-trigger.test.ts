@@ -1,10 +1,16 @@
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, writeSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { maintenanceDir, maintenanceStateFile, maintenanceChildLogFile } from '@stim-cli/core/state';
+import {
+  maintenanceDir,
+  maintenanceStateFile,
+  maintenanceChildLogFile,
+  maintenanceRunClaims,
+} from '@stim-cli/core/state';
 import { triggerMaintenance } from '../maintenance/trigger.ts';
 import { setExecutor, resetExecutor, type Executor } from '../exec.ts';
-import { makeChildProcess } from './_factories.ts';
+import { tryAcquireClaim, releaseClaim } from '../ownership-claim.ts';
+import { makeChildProcess, goneClaimOwner } from './_factories.ts';
 
 let home: string;
 const spawned = vi.fn<Executor['spawn']>();
@@ -25,13 +31,19 @@ afterEach(() => {
   for (const key of ['STIM_HOME', 'STIM_MAINTENANCE', 'STIM_MAINTENANCE_CHILD', 'CI']) delete process.env[key];
 });
 
-test.each([['guide'], ['settings'], ['help'], ['status', '--help'], ['--version'], ['-V']])(
-  'discovery command %s never spawns maintenance',
-  (...argv) => {
-    triggerMaintenance('command', { argv });
-    expect(spawned).not.toHaveBeenCalled();
-  },
-);
+test.each([
+  ['guide'],
+  ['settings'],
+  ['help'],
+  ['status', '--help'],
+  ['--version'],
+  ['-V'],
+  ['gc', '--delete'],
+  ['gc', '--delete', '--json'],
+])('excluded command %s never spawns maintenance', (...argv) => {
+  triggerMaintenance('command', { argv });
+  expect(spawned).not.toHaveBeenCalled();
+});
 
 test('child, scoped home, CI, off and invalid config cannot launch maintenance accidentally', () => {
   process.env.STIM_MAINTENANCE_CHILD = '1';
@@ -105,4 +117,25 @@ test('a spawn failure is silent and cannot turn a command into a failure', () =>
   expect(() => triggerMaintenance('status', { argv: ['status'] })).not.toThrow();
   expect(out).not.toHaveBeenCalled();
   expect(err).not.toHaveBeenCalled();
+});
+
+test('live and unresolved pass claims suppress detached children, while a dead holder can be reaped', () => {
+  const attempt = tryAcquireClaim({ root: maintenanceRunClaims(), mode: 'exclusive', label: 'maintenance' });
+  expect(attempt.acquired).toBeDefined();
+  try {
+    triggerMaintenance('status', { argv: ['status'] });
+    expect(spawned).not.toHaveBeenCalled();
+    const path = attempt.acquired!.path;
+    const holder = JSON.parse(readFileSync(path, 'utf8'));
+    holder.owner = goneClaimOwner();
+    writeFileSync(path, JSON.stringify(holder));
+    triggerMaintenance('status', { argv: ['status'] });
+    expect(spawned).toHaveBeenCalledTimes(1);
+    spawned.mockClear();
+    writeFileSync(path, '{');
+    triggerMaintenance('status', { argv: ['status'] });
+    expect(spawned).not.toHaveBeenCalled();
+  } finally {
+    releaseClaim(attempt.acquired!);
+  }
 });

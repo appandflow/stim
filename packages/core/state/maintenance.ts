@@ -1,5 +1,5 @@
 import { readJsonObject, isJsonObject } from './json-file.ts';
-import { maintenanceStateFile } from './paths.ts';
+import { maintenanceStateFile, maintenanceAttemptFile } from './paths.ts';
 import type { NdjsonRecord } from './ndjson.ts';
 
 export type MaintenanceMode = 'off' | 'report';
@@ -72,10 +72,13 @@ export interface MaintenanceState {
   lastPass: MaintenancePass | null;
   recent: MaintenanceRecord[];
   plan: MaintenanceAction[];
+  skipKeys?: string[];
 }
 
 export interface MaintenanceStatus {
   mode: MaintenanceMode;
+  invalid?: string;
+  claim?: { unresolved: string; removeCommand: string };
   lastChecks: { pressure: number | null; size: number | null };
   pressure: MaintenancePressure | null;
   sizes: MaintenanceSize[];
@@ -100,6 +103,7 @@ const KINDS: readonly string[] = [
 export function parseMaintenanceState(value: unknown): MaintenanceState | null {
   if (!isJsonObject(value) || value.version !== 1 || !isJsonObject(value.lastAt)) return null;
   if (!Object.values(value.lastAt).every(finite)) return null;
+  if (value.skipKeys !== undefined && !strings(value.skipKeys)) return null;
   if (
     value.deferredAt !== undefined &&
     (!isJsonObject(value.deferredAt) || !Object.values(value.deferredAt).every(finite))
@@ -190,4 +194,9 @@ export function parseMaintenanceState(value: unknown): MaintenanceState | null {
 
 export function readMaintenanceState(): MaintenanceState | null {
   return parseMaintenanceState(readJsonObject(maintenanceStateFile()));
+}
+
+export function readMaintenanceAttempt(): number | undefined {
+  const value = readJsonObject(maintenanceAttemptFile())?.attemptedAt;
+  return finite(value) ? value : undefined;
 }

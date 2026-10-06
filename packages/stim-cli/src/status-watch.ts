@@ -99,17 +99,13 @@ export function statusChange(dir: WatchedDir, name: string | null): RefreshKind 
   if (name === null) return 'full';
   switch (dir) {
     case 'home':
-      return name.startsWith('config.json') ||
-        name === 'workspaces' ||
-        name === 'device-locks' ||
-        name === 'maintenance'
-        ? 'full'
-        : null;
+      if (name === 'maintenance') return 'light';
+      return name.startsWith('config.json') || name === 'workspaces' || name === 'device-locks' ? 'full' : null;
     case 'workspace':
       if (name.startsWith('build-detail.json')) return 'light';
       return name.startsWith('state.json') || name.startsWith('ended-agents.json') || name === 'logs' ? 'full' : null;
     case 'maintenance':
-      return name.startsWith('state.json') || name === 'run.claims' ? 'full' : null;
+      return name === 'state.json' ? 'light' : null;
     case 'eas':
       return name.startsWith('sessions.json') ? 'full' : null;
     default:

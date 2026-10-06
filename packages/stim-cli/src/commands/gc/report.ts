@@ -195,7 +195,6 @@ export function formatGcReport(
   { now = Date.now() }: { now?: number } = {},
 ): string[] {
   const lines: string[] = [];
-  lines.push(...maintenanceReportLines(maintenance));
   const staleLocks = buildLocks?.stale ?? [];
   const liveLocks = buildLocks?.live ?? [];
   const staleSlots = buildSlots?.stale ?? [];
@@ -358,6 +357,7 @@ export function formatGcReport(
   lines.push(...recordingLines(recordings));
   lines.push(...cacheLines(caches, workspaceOutputs));
   lines.push(...memoryLines(memory, memoryCacheKind(cacheScope), now));
+  lines.push(...maintenanceReportLines(maintenance));
 
   return lines;
 }
@@ -530,7 +530,6 @@ function jsonPullRequest(lookup: PullRequestLookup | null): GcJsonSections['link
 
 /** The `gc --json` sections, in text report order. Each section is an array of entries. */
 export interface GcJsonSections {
-  maintenance?: MaintenancePreview;
   deadProjects: { path: string }[];
   invalidProjects: { path: string }[];
   orphanedPorts: { project: string; label: string; port: number }[];
@@ -636,7 +635,6 @@ export interface GcJsonSections {
 }
 
 export function gcReportSections({
-  maintenance,
   skipped = [],
   deadProjects = [],
   orphanedPorts = [],
@@ -664,7 +662,6 @@ export function gcReportSections({
   memory = null,
 }: Partial<GcReport>): GcJsonSections {
   return {
-    ...(maintenance ? { maintenance } : {}),
     deadProjects: deadProjects.map((path) => ({ path })),
     invalidProjects: invalidProjects.map((path) => ({ path })),
     orphanedPorts: orphanedPorts.map(({ project, label, port }) => ({ project, label, port })),

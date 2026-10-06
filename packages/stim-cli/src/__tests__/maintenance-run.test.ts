@@ -9,11 +9,18 @@ import {
   maintenanceNdjsonFile,
   maintenanceRunClaims,
   readMaintenanceState,
+  readMaintenanceAttempt,
+  workspaceLogsDir,
+  sharedCompilationCache,
 } from '@stim-cli/core/state';
 import { runMaintenance } from '../maintenance/run.ts';
 import { resolveMaintenanceSettings } from '../maintenance/settings.ts';
 import * as measurements from '../maintenance/measure.ts';
 import * as budget from '../budget.ts';
+import * as preview from '../maintenance/preview.ts';
+import * as log from '../maintenance/log.ts';
+import * as buildLocks from '../engine/build-lock.ts';
+import { maintenanceStatus } from '../maintenance/status.ts';
 import { releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
 import { runGc } from '../commands/gc.ts';
 import statusCommand from '../commands/status.ts';
@@ -123,7 +130,13 @@ test('an unresolved claim produces only one child crash-log line', async () => {
   mkdirSync(join(maintenanceRunClaims(), 'exclusive'), { recursive: true });
   writeFileSync(join(maintenanceRunClaims(), 'exclusive', 'bad.claim'), '{');
   const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+  writeFileSync(maintenanceChildLogFile(), 'x'.repeat(65 * 1024));
   await runMaintenance('status');
+  expect(readMaintenanceAttempt()).toEqual(expect.any(Number));
+  expect(maintenanceStatus().claim).toMatchObject({
+    unresolved: expect.stringContaining('bad.claim'),
+    removeCommand: expect.stringContaining('bad.claim'),
+  });
   expect(readFileSync(maintenanceChildLogFile(), 'utf8').trim().split('\n')).toHaveLength(1);
   expect(readMaintenanceState()).toBeNull();
   expect(err).not.toHaveBeenCalled();
@@ -156,7 +169,7 @@ test('status and gc JSON remain a single payload while their preAction hook star
   expect(out).toHaveBeenCalledTimes(1);
   expect(JSON.parse(String(out.mock.calls[0]![0]))).toMatchObject({
     mode: 'dry-run',
-    sections: { maintenance: { note: expect.stringContaining('no pass has run yet') } },
+    maintenance: { note: expect.stringContaining('no pass has run yet') },
   });
   expect(spawn).toHaveBeenCalledTimes(2);
   for (const call of spawn.mock.calls)
@@ -197,4 +210,144 @@ test('GC maintenance preview uses cached sizes and never calls du for a size sca
   expect(result.actions).toContainEqual(expect.objectContaining({ kind: 'would-trim-cache', bytes: 4 * 1024 ** 3 }));
   expect(measurements.measureSizes).not.toHaveBeenCalled();
   expect(resolveMaintenanceSettings()?.mode).toBe('report');
+});
+
+test.each([
+  ['two consecutive identical passes produce one set of action and skip records and one pass record', false],
+  ['a changed plan logs only newly planned actions and skips', true],
+] as const)('%s', async (_name, changed) => {
+  let now = Date.now();
+  vi.spyOn(Date, 'now').mockImplementation(() => now);
+  const workspace = join(home, 'idle');
+  const action = {
+    kind: 'would-clear-outputs' as const,
+    target: workspace,
+    workspace,
+    bytes: 1024,
+    reason: 'low disk',
+  };
+  const skip = { target: 'busy', workspace, reason: 'build in progress' };
+  const planned = vi
+    .spyOn(preview, 'plannedMaintenance')
+    .mockResolvedValue({ actions: [action], skips: [skip], blocked: ['busy'] });
+  await runMaintenance('status');
+  now += 60_000;
+  if (changed)
+    planned.mockResolvedValue({
+      actions: [action, { ...action, target: 'new-output' }],
+      skips: [skip, { ...skip, target: 'new-busy' }],
+      blocked: ['busy'],
+    });
+  await runMaintenance('status');
+  const records = readFileSync(maintenanceNdjsonFile(), 'utf8')
+    .trim()
+    .split('\n')
+    .map((line) => JSON.parse(line));
+  const actions = records.filter((record) => record.event === 'maintenance_action');
+  const skips = records.filter((record) => record.event === 'maintenance_skip');
+  expect(actions.map((record) => record.action.target)).toEqual(changed ? [workspace, 'new-output'] : [workspace]);
+  expect(skips.map((record) => record.target)).toEqual(changed ? ['busy', 'new-busy'] : ['busy']);
+  expect(records.filter((record) => record.event === 'maintenance_pass')).toHaveLength(changed ? 2 : 1);
+  const mirrored = readFileSync(join(workspaceLogsDir(workspace), 'maintenance.ndjson'), 'utf8')
+    .trim()
+    .split('\n')
+    .map((line) => JSON.parse(line));
+  expect(
+    mirrored.filter((record) => record.event === 'maintenance_action').map((record) => record.action.target),
+  ).toEqual(actions.map((record) => record.action.target));
+  expect(mirrored.filter((record) => record.event === 'maintenance_skip').map((record) => record.target)).toEqual(
+    skips.map((record) => record.target),
+  );
+  expect(readMaintenanceState()).toMatchObject({
+    lastPass: { startedAt: now },
+    plan: changed ? [action, { ...action, target: 'new-output' }] : [action],
+  });
+});
+
+test('failure before the first check stamp backs off child spawns for one minute', async () => {
+  let now = Date.now();
+  vi.spyOn(Date, 'now').mockImplementation(() => now);
+  vi.spyOn(log, 'maintenanceLogger').mockImplementation(() => {
+    throw new Error('log lock blocked');
+  });
+  await runMaintenance('status');
+  expect(readMaintenanceState()).toBeNull();
+  expect(readMaintenanceAttempt()).toBe(now);
+  const spawn = vi.fn<Executor['spawn']>(() => makeChildProcess());
+  setExecutor({ spawn });
+  triggerMaintenance('status', { argv: ['status'] });
+  now += 59_999;
+  triggerMaintenance('status', { argv: ['status'] });
+  expect(spawn).not.toHaveBeenCalled();
+  now++;
+  triggerMaintenance('status', { argv: ['status'] });
+  expect(spawn).toHaveBeenCalledTimes(1);
+});
+
+test('cached Swift CAS observations refresh build protection before each plan', async () => {
+  vi.spyOn(measurements, 'measurePressure').mockReturnValue({
+    disk: [],
+    memory: { level: 'normal', availableBytes: null, pressured: false },
+    warningSince: null,
+  });
+  const locks = vi.spyOn(buildLocks, 'listBuildLocks').mockReturnValue([]);
+  mkdirSync(sharedCompilationCache());
+  const sizes = [
+    {
+      name: 'Swift compilation cache',
+      dir: sharedCompilationCache(),
+      category: 'compilation-cache' as const,
+      bytes: 16 * 1024 ** 3,
+      measuredAt: 1,
+      blocked: 'a build lock or slot is live or unresolved',
+    },
+  ];
+  const settings = { ...resolveMaintenanceSettings(), swiftCompilationCacheMaxGb: 15 };
+  expect((await preview.plannedMaintenance(null, sizes, settings)).actions).toContainEqual(
+    expect.objectContaining({ kind: 'would-empty-cache' }),
+  );
+  locks.mockReturnValue([{ alive: true } as ReturnType<typeof buildLocks.listBuildLocks>[number]]);
+  const busy = await preview.plannedMaintenance(null, sizes, settings);
+  expect(busy.actions).toEqual([]);
+  expect(busy.skips).toContainEqual(
+    expect.objectContaining({ target: sharedCompilationCache(), reason: 'a build lock or slot is live or unresolved' }),
+  );
+});
+
+test('invalid maintenance settings are explained in status and gc rather than silently reported as off', async () => {
+  process.env.STIM_MAINTENANCE_SIZE_CHECK_MINUTES = 'bad';
+  try {
+    expect(maintenanceStatus()).toMatchObject({
+      mode: 'off',
+      invalid: expect.stringContaining('maintenance.sizeCheckMinutes'),
+    });
+    expect(await preview.previewMaintenance()).toMatchObject({
+      mode: 'off',
+      invalid: expect.stringContaining('maintenance.sizeCheckMinutes'),
+      note: expect.stringContaining('maintenance.sizeCheckMinutes'),
+    });
+  } finally {
+    delete process.env.STIM_MAINTENANCE_SIZE_CHECK_MINUTES;
+  }
+});
+
+test('an invalid cache cap falls back only that cap while report mode remains enabled', async () => {
+  process.env.STIM_CACHES_BUILD_CACHE_MAX_GB = '-1';
+  try {
+    expect(resolveMaintenanceSettings()).toMatchObject({
+      mode: 'report',
+      buildCacheMaxGb: 10,
+      invalid: expect.stringContaining('caches.buildCacheMaxGb'),
+    });
+    expect(maintenanceStatus()).toMatchObject({
+      mode: 'report',
+      invalid: expect.stringContaining('caches.buildCacheMaxGb'),
+    });
+    expect(await preview.previewMaintenance()).toMatchObject({
+      mode: 'report',
+      invalid: expect.stringContaining('caches.buildCacheMaxGb'),
+    });
+  } finally {
+    delete process.env.STIM_CACHES_BUILD_CACHE_MAX_GB;
+  }
 });

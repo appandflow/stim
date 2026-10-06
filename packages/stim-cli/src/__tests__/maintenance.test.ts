@@ -117,7 +117,10 @@ test('maintenance settings reject acting mode and invalid ranges before they can
       STIM_MAINTENANCE_SIZE_CHECK_MINUTES: '2',
     }),
   ).toMatchObject({ mode: 'report', sizeCheckMinutes: 2 });
-  expect(resolveMaintenanceSettings(null, { STIM_MAINTENANCE: 'on' })).toBeNull();
+  expect(resolveMaintenanceSettings(null, { STIM_MAINTENANCE: 'on' })).toMatchObject({
+    mode: 'off',
+    invalid: expect.stringContaining('maintenance.mode'),
+  });
 });
 
 test('disk shortfall maps existing dry-run targets while excluding the triggering workspace and scoped devices', () => {
@@ -280,7 +283,7 @@ test('maintenance records stay parseable, mirror named workspace actions and rot
   silent.close();
 });
 
-test('maintenance failures remain visible with errors filtering, even before an unrelated launch marker', () => {
+test('maintenance failures require an explicit source and age out at a later launch marker', () => {
   const records = [
     {
       ts: 1,
@@ -305,15 +308,17 @@ test('maintenance failures remain visible with errors filtering, even before an 
     },
     { ts: 4, src: 'device', level: 'info', marker: true },
     { ts: 5, src: 'metro', level: 'error', msg: 'bundle error' },
+    { ts: 6, src: 'maintenance', level: 'error', msg: 'new failure', event: 'maintenance_failure' },
   ];
   expect(queryLogs({ records, sources: ['maintenance'] }).map((record) => record.msg)).toEqual([
     'failed',
     'not a failure',
     'would clear',
+    'new failure',
   ]);
-  expect(queryLogs({ records, errorsOnly: true }).map((record) => record.msg)).toEqual(['failed', 'bundle error']);
+  expect(queryLogs({ records, errorsOnly: true }).map((record) => record.msg)).toEqual(['bundle error']);
   expect(queryLogs({ records, errorsOnly: true, sources: ['maintenance'] }).map((record) => record.msg)).toEqual([
-    'failed',
+    'new failure',
   ]);
 });
 
@@ -338,4 +343,26 @@ test('status does not infer a live pass from a check stamp', () => {
     releaseClaim(attempt.acquired!);
   }
   expect(parseMaintenanceState({ ...emptyState(), lastPass: { stopped: 1 } })).toBeNull();
+});
+
+test('cache and device reasons do not borrow an unrelated output idle age', () => {
+  const result = plan({
+    pressure: pressure(4 * 1024),
+    sizes: [
+      size('workspace-outputs', 1, { idleDays: 99 }),
+      size('workspace-outputs', 1, { workspace: '/idle', idleDays: 77 }),
+    ],
+    settings,
+    budget,
+    protectedRoot: '/self',
+    projects: ['/idle'],
+    diskSteps: [
+      { step: 'stale-cache-entries', targets: ['/cache'], failures: 0 },
+      { step: 'idle-devices', targets: ['sim in /idle'], failures: 0 },
+      { step: 'workspace-outputs', targets: ['/idle'], failures: 0 },
+    ],
+  });
+  expect(result.actions.find((action) => action.target === '/cache')?.reason).not.toMatch(/idle/);
+  expect(result.actions.find((action) => action.target === 'sim in /idle')?.reason).not.toMatch(/idle/);
+  expect(result.actions.find((action) => action.target === '/idle')?.reason).toMatch(/idle 77 days/);
 });

@@ -318,7 +318,7 @@ export default function doctorCommand(
       const maintenanceLines = [
         phaseLine('maintenance.mode', maintenance.mode),
         phaseLine('maintenance log', maintenanceNdjsonFile()),
-        phaseLine('last pass', maintenanceLine(maintenance) ?? 'no pass has run yet'),
+        phaseLine('last pass', maintenanceLine(maintenance, false) ?? 'no pass has run yet'),
       ];
       if (opts.json) {
         console.log(

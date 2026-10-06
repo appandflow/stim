@@ -3601,13 +3601,14 @@ describe('gc --json', () => {
       actionable: true,
       failures: null,
     });
+    expect(payload.maintenance).toMatchObject({ mode: 'off' });
+    expect(Object.values(payload.sections).every(Array.isArray)).toBe(true);
     expect(payload.sections.deadProjects).toEqual([{ path: deadPath() }]);
     expect(payload.sections.orphanedPorts).toEqual([{ project: deadPath(), label: 'web', port: 8102 }]);
     expect(payload.sections.staleBuildLocks).toEqual([
       { path: lock, platform: 'android', key: 'def-debug-sim', pid: 999999, projectRoot: '/w/dead' },
     ]);
     expect(Object.keys(payload.sections)).toEqual([
-      'maintenance',
       'deadProjects',
       'invalidProjects',
       'orphanedPorts',

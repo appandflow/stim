@@ -55,7 +55,10 @@ export function plan({
           projects.find((root) => root === target || target.endsWith(` in ${root}`)) ??
           (step.step === 'idle-dev-servers' || step.step === 'workspace-outputs' ? target : undefined);
         if (workspace === protectedRoot || target === protectedRoot) continue;
-        const size = sizes.find((entry) => entry.workspace === workspace && entry.category === 'workspace-outputs');
+        const size =
+          workspace && step.step !== 'idle-devices'
+            ? sizes.find((entry) => entry.workspace === workspace && entry.category === 'workspace-outputs')
+            : undefined;
         add({
           kind: kinds[step.step],
           target,
@@ -98,7 +101,7 @@ export function plan({
         kind,
         target: size.workspace ?? size.dir,
         bytes,
-        reason: `${size.idleDays == null ? '' : `idle ${size.idleDays} days, `}${why}`,
+        reason: `${!size.workspace || size.idleDays == null ? '' : `idle ${size.idleDays} days, `}${why}`,
         ...(size.workspace ? { workspace: size.workspace } : {}),
       });
       remaining -= bytes;

@@ -208,7 +208,30 @@ export type PhoneLastBuild = Omit<State.LastBuildReport, 'platform' | 'status' |
 };
 export type PhoneBuildDiagnostic = State.BuildDiagnostic;
 export type PhoneDeviceLeaseState = State.DeviceLeaseState;
-export type PhoneStatusPayload = Omit<State.StatusPayload, 'environments' | 'machine' | 'unprovisionedWorktrees'> & {
+export type PhoneMaintenanceStatus = Omit<
+  State.MaintenanceStatus,
+  'mode' | 'lastPass' | 'plan' | 'pressure' | 'sizes' | 'recent'
+> & {
+  mode: string;
+  lastPass:
+    | (Omit<State.MaintenancePass, 'mode' | 'freedBytes' | 'stopped'> & {
+        mode: string;
+        freedBytes: number;
+        stopped: number;
+      })
+    | null;
+  plan: (Omit<State.MaintenanceAction, 'kind'> & { kind: string })[];
+  pressure:
+    | (Omit<State.MaintenancePressure, 'memory'> & {
+        memory: Omit<State.MaintenancePressure['memory'], 'level'> & { level: string | null };
+      })
+    | null;
+};
+export type PhoneStatusPayload = Omit<
+  State.StatusPayload,
+  'environments' | 'machine' | 'unprovisionedWorktrees' | 'maintenance'
+> & {
+  maintenance?: PhoneMaintenanceStatus;
   unprovisionedWorktrees?: PhoneWorktreeFacts[];
   environments: PhoneEnvironmentState[];
   machine?: PhoneMachineUsageState | null;

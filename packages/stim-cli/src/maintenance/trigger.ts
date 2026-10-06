@@ -1,5 +1,12 @@
 import { closeSync, mkdirSync, openSync } from 'node:fs';
-import { maintenanceDir, maintenanceChildLogFile, readMaintenanceState } from '@stim-cli/core/state';
+import {
+  maintenanceDir,
+  maintenanceChildLogFile,
+  maintenanceRunClaims,
+  readMaintenanceState,
+  readMaintenanceAttempt,
+} from '@stim-cli/core/state';
+import { readClaimSet } from '@stim-cli/core/ownership-claim';
 import { getExecutor } from '../exec.ts';
 import { windowsLauncherArgs } from '../detached-entry.ts';
 import { spawnEntry } from '../spawn-entry.ts';
@@ -17,12 +24,19 @@ export function triggerMaintenance(
     const env = process.env;
     if (
       ['guide', 'settings', 'help'].includes(argv[0] ?? '') ||
+      (argv[0] === 'gc' && argv.includes('--delete')) ||
       argv.some((arg) => ['--help', '-h', '--version', '-V'].includes(arg))
     )
       return;
     if (env.STIM_MAINTENANCE_CHILD === '1' || ((env.STIM_HOME || env.CI) && env.STIM_MAINTENANCE === undefined)) return;
     const settings = resolveMaintenanceSettings();
-    if (!settings || settings.mode === 'off' || due(readMaintenanceState(), settings, Date.now()).length === 0) return;
+    if (
+      settings.mode === 'off' ||
+      due(readMaintenanceState(), settings, Date.now(), readMaintenanceAttempt()).length === 0
+    )
+      return;
+    const claims = readClaimSet(maintenanceRunClaims());
+    if (claims.live.length || claims.unresolved.length) return;
     mkdirSync(maintenanceDir(), { recursive: true });
     const logFile = maintenanceChildLogFile();
     const fd = openSync(logFile, 'a');

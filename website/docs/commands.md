@@ -644,7 +644,8 @@ result.
   an explicit `--source device` or `--source all`.
 - `--source device` includes operating-system device logs.
 - `--source maintenance` shows report-only maintenance actions and failures
-  for this workspace. `--errors` includes only maintenance failures from it.
+  for this workspace. Add `--errors` to show only maintenance failures from it;
+  failures before a later launch marker are hidden.
 - `--source agent` shows what agent-device did on this workspace's owned
   simulators and emulators: taps, typing, app opens, screenshots, and failed
   commands. A plain `logs` includes it; `--errors` includes it only when

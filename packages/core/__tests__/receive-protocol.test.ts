@@ -40,6 +40,54 @@ test('accepts captured older status while checking Android runtime fields', () =
   expect(isRpcEvent({ event: 'status', subscription: 's', payload })).toBe(false);
 });
 
+test('accepts future maintenance modes and nonzero outcomes without disconnecting the phone', () => {
+  const payload = receiveStatus(captured);
+  const maintenance = {
+    mode: 'on',
+    lastChecks: { pressure: 1, size: 1 },
+    pressure: {
+      disk: [],
+      memory: { level: 'future-level', availableBytes: null, pressured: true },
+      warningSince: null,
+    },
+    lastPass: {
+      startedAt: 1,
+      durationMs: 2,
+      trigger: 'status',
+      mode: 'on',
+      freedBytes: 5,
+      actions: 1,
+      stopped: 1,
+      blocked: [],
+    },
+    running: null,
+    plan: [{ kind: 'future-action', target: '/cache', bytes: 5, reason: 'future policy' }],
+    sizes: [{ name: 'future cache', dir: '/cache', bytes: 5, measuredAt: 1, category: 'future-category' }],
+    recent: [
+      {
+        ts: 1,
+        src: 'maintenance',
+        level: 'future-level',
+        msg: 'future record',
+        event: 'future-event',
+        pass: 'p',
+        trigger: 'status',
+        mode: 'on',
+      },
+    ],
+  };
+  expect(isRpcEvent({ event: 'status', subscription: 's', payload: { ...payload, maintenance } })).toBe(true);
+  const { sizes: _sizes, recent: _recent, ...compact } = maintenance;
+  expect(isRpcEvent({ event: 'status', subscription: 's', payload: { ...payload, maintenance: compact } })).toBe(true);
+  expect(
+    isRpcEvent({
+      event: 'status',
+      subscription: 's',
+      payload: { ...payload, maintenance: { ...maintenance, lastPass: { ...maintenance.lastPass, freedBytes: '5' } } },
+    }),
+  ).toBe(false);
+});
+
 test('accepts the original hello and unknown compatible fields but refuses malformed nested server data', () => {
   expect(isRpcResult('hello', hello)).toBe(true);
   expect(isRpcResult('hello', { ...hello, features: ['future-feature'], future: 1 })).toBe(true);
@@ -51,24 +99,26 @@ test('accepts the original hello and unknown compatible fields but refuses malfo
   expect(isRpcResult('status.subscribe', { subscription: 's', future: true })).toBe(true);
 });
 
-test('validates nested log records and their stack while allowing structured metadata', () => {
-  const record = {
-    ts: 1,
-    src: 'maintenance',
-    event: 'maintenance_failure',
-    mode: 'report',
-    level: 'error',
-    msg: 'Error',
-    stack: [{ file: 'app.ts', line: 1 }],
-    metadata: { key: 'value' },
-  };
-  expect(isRpcResult('logs.query', { records: [record] })).toBe(true);
-  expect(isRpcResult('logs.query', { records: [{ ...record, msg: 1 }] })).toBe(false);
-  expect(isRpcEvent({ event: 'logs', subscription: 's', records: [{ ...record, stack: [{ line: 'wrong' }] }] })).toBe(
-    false,
-  );
-  expect(isRpcEvent({ event: 'logs', subscription: 's', records: [record] })).toBe(true);
-});
+test.each(['metro', 'maintenance'])(
+  'validates %s nested log records and their stack while allowing structured metadata',
+  (src) => {
+    const record = {
+      ts: 1,
+      src,
+      ...(src === 'maintenance' ? { event: 'maintenance_failure', mode: 'report' } : {}),
+      level: 'error',
+      msg: 'Error',
+      stack: [{ file: 'app.ts', line: 1 }],
+      metadata: { key: 'value' },
+    };
+    expect(isRpcResult('logs.query', { records: [record] })).toBe(true);
+    expect(isRpcResult('logs.query', { records: [{ ...record, msg: 1 }] })).toBe(false);
+    expect(isRpcEvent({ event: 'logs', subscription: 's', records: [{ ...record, stack: [{ line: 'wrong' }] }] })).toBe(
+      false,
+    );
+    expect(isRpcEvent({ event: 'logs', subscription: 's', records: [record] })).toBe(true);
+  },
+);
 
 test('validates notification targets, frame artwork and future error codes', () => {
   expect(isRpcError({ code: 'future-error', message: 'Unavailable' })).toBe(true);

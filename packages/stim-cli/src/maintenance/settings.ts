@@ -9,6 +9,7 @@ import {
 
 export interface MaintenanceSettings {
   mode: MaintenanceMode;
+  invalid?: string;
   pressureCheckMinutes: number;
   sizeCheckMinutes: number;
   maxLoadPerCore: number;
@@ -28,8 +29,10 @@ export interface MaintenanceSettings {
 export function resolveMaintenanceSettings(
   config: Config | null = loadConfig(),
   env: NodeJS.ProcessEnv = process.env,
-): MaintenanceSettings | null {
+): MaintenanceSettings {
   const result: Record<string, unknown> = {};
+  const invalid: string[] = [];
+  let disabled = false;
   for (const setting of SETTINGS.filter(
     (entry) => entry.key.startsWith('maintenance.') || /^caches\..*MaxGb$/.test(entry.key),
   )) {
@@ -47,8 +50,14 @@ export function resolveMaintenanceSettings(
             : configured === undefined
               ? setting.default
               : configured;
-    if (value !== undefined && settingValueError(setting, value)) return null;
-    result[name] = value;
+    const error = value === undefined ? null : settingValueError(setting, value);
+    if (error) {
+      invalid.push(`${setting.key}: expected ${error}`);
+      if (group === 'maintenance') disabled = true;
+    }
+    result[name] = error ? setting.default : value;
   }
+  if (disabled) result.mode = 'off';
+  if (invalid.length) result.invalid = invalid.join('; ');
   return result as unknown as MaintenanceSettings;
 }

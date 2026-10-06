@@ -1,5 +1,5 @@
 import { maintenanceRunClaims } from '@stim-cli/core/state';
-import { previewMaintenance } from '../maintenance/preview.ts';
+import { previewMaintenance, type MaintenancePreview } from '../maintenance/preview.ts';
 import { existsSync } from 'fs';
 import { isAbsolute } from 'path';
 import chalk from 'chalk';
@@ -151,6 +151,7 @@ type GcPayload =
       actionable: boolean;
       failures: number | null;
       sections: GcJsonSections;
+      maintenance?: MaintenancePreview;
       results: GcResult[];
       inventory: GcInventory | null;
     }
@@ -714,7 +715,7 @@ async function runGcCore(opts: RunGcOptions, deps: GcDependencies): Promise<GcPa
     };
   }
 
-  if (!opts.delete) report.maintenance = await previewMaintenance();
+  if (!opts.delete) report.maintenance = await previewMaintenance({ devices: !cache });
   const all = report.all;
 
   for (const line of formatGcReport(report)) console.log(line);
@@ -772,6 +773,7 @@ async function runGcCore(opts: RunGcOptions, deps: GcDependencies): Promise<GcPa
     actionable,
     failures,
     sections: gcReportSections(report),
+    ...(report.maintenance ? { maintenance: report.maintenance } : {}),
     results: takeGcResults(),
     inventory,
   });

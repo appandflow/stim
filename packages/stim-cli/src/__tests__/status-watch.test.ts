@@ -143,6 +143,11 @@ describe('createRefreshScheduler', () => {
 test('a log append or build detail needs only a log refresh; other state changes need a full one, and locks none', () => {
   expect(statusChange('home', 'config.json')).toBe('full');
   expect(statusChange('home', 'build-cache')).toBe(null);
+  expect(statusChange('home', 'maintenance')).toBe('light');
+  expect(statusChange('maintenance', 'state.json')).toBe('light');
+  expect(statusChange('maintenance', 'state.json.123.tmp')).toBe(null);
+  expect(statusChange('maintenance', 'run.claims')).toBe(null);
+  expect(statusChange('maintenance', 'child.log')).toBe(null);
   expect(statusChange('workspace', 'state.json')).toBe('full');
   expect(statusChange('workspace', 'logs')).toBe('full');
   expect(statusChange('workspace', 'ended-agents.json')).toBe('full');
