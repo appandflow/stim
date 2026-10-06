@@ -98,6 +98,18 @@ import Testing
     #expect(!archive.isEarlierRun(of: "/work/example"))
   }
 
+  @Test func aRemovedWorkspacePathFindsItsNewestArchive() throws {
+    let archive = try #require(payload().archived?.first)
+    var older = archive
+    older.id = "older"
+    older.removedAt = "2026-10-01T12:00:00Z"
+    var newer = archive
+    newer.id = "newer"
+    newer.removedAt = "2026-10-05T12:00:00Z"
+    #expect(ArchivedWorkspace.newest(removedFrom: archive.projectRoot, in: [older, newer])?.id == "newer")
+    #expect(ArchivedWorkspace.newest(removedFrom: archive.projectRoot + "-other", in: [older, newer]) == nil)
+  }
+
   @Test func archiveStorageKeepsEachRetentionSettingAndHidesAnEmptyCollection() throws {
     var usage = try #require(payload().archivedUsage)
     #expect(usage.count == 1)
