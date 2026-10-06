@@ -48,6 +48,7 @@ export function archivedDeviceRoute({
   path,
   platform,
   slot,
+  physical = false,
   at,
   hasStatus,
   workspaceListed,
@@ -57,6 +58,7 @@ export function archivedDeviceRoute({
   path: string;
   platform: DevicePlatform;
   slot: string;
+  physical?: boolean;
   at?: string;
   hasStatus: boolean;
   workspaceListed: boolean;
@@ -80,6 +82,7 @@ export function archivedDeviceRoute({
   if (
     archive.bytes.recordings > 0 &&
     slot === 'default' &&
+    !physical &&
     (platform === 'ios' || platform === 'android' || platform === 'web')
   ) {
     return {

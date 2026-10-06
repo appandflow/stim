@@ -62,6 +62,7 @@ jest.mock('react-native-safe-area-context', () => ({
 jest.mock('@/hooks/settings', () => ({ useSettings: () => ({ videoQuality: 'auto' }) }));
 jest.mock('@/hooks/machines', () => ({
   useHasStatus: () => true,
+  useMachinePresence: () => ({ online: true, cached: false, lastSeenAt: null }),
   useMachineStatus: () => null,
   useWorkspace: () => ({
     title: 'Duo fixture',

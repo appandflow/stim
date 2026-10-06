@@ -52,7 +52,7 @@ import { LANDED_SCREEN_RADIUS, useDeviceZoom, zoomKey } from '@/hooks/device-zoo
 import { useScreenZoom } from '@/hooks/screen-zoom';
 import { grantCommand, readOnlyReason, allowControlSteps } from '@/components/read-only';
 import { useDeviceControl } from '@/hooks/device-control';
-import { useHasStatus, useMachineStatus, useMacConnection, useWorkspace } from '@/hooks/machines';
+import { useHasStatus, useMachinePresence, useMachineStatus, useMacConnection, useWorkspace } from '@/hooks/machines';
 import { useSettings, type VideoQuality } from '@/hooks/settings';
 import { framePoint, orientationOf, otherDriver } from '@/lib/device-control';
 import { matchingDeviceFrame } from '@/lib/device-frame';
@@ -141,7 +141,9 @@ export function DeviceView({
   const maxEdge = preset.maxEdge ?? windowMaxEdge;
   const { id: macId } = useLocalSearchParams<{ id?: string }>();
   const item = useWorkspace(macId ?? '', workspace);
-  const hasStatus = useHasStatus(macId ?? '');
+  const loaded = useHasStatus(macId ?? '');
+  const cached = useMachinePresence(macId ?? '').cached;
+  const hasStatus = loaded && !cached;
   const status = useMachineStatus(macId);
   const env = item?.env;
   const device = env

@@ -84,6 +84,7 @@ test.each([
   { archives: [{ ...archive, bytes: { ...archive.bytes, recordings: 0 } }] },
   { slot: 'secondary' },
   { platform: 'macos' as const },
+  { physical: true },
 ])('opens archive details when device replay is unavailable: %s', (overrides) => {
   expect(archivedDeviceRoute({ ...deviceTarget, ...overrides })).toEqual({
     pathname: '/mac/[id]/archived',
