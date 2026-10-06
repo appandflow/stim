@@ -59,6 +59,7 @@
     let inbox: NotificationInbox
     let settings: SettingsModel
     let environment: Workspace
+    let archive: ArchivedWorkspace
     let checks: BuildPlanChecks
 
     static func make(_ scenario: PlaygroundScenario, now: Date = Date()) throws -> Self {
@@ -190,11 +191,41 @@
           error: scenario == .error ? "The settings response could not be read. Check the selected workspace and retry." : nil
         ),
         environment: try decode(env),
+        archive: try archived(now: now, last: env["lastBuilds"] as? [String: Any], miss: miss),
         checks: BuildPlanChecks { _, _ in
           if scenario == .error { throw PlaygroundFailure.plan }
           return .plan(plan)
         }
       )
+    }
+
+    private static func archived(now: Date, last: [String: Any]?, miss: [String: Any]) throws -> ArchivedWorkspace {
+      var build = last?["ios"] as? [String: Any]
+      build?["cacheHit"] = false
+      build?["missReason"] = miss
+      let stamp = ISO8601DateFormatter()
+      return try decode([
+        "id": "playground-archive", "projectRoot": workspace, "project": "Example", "workspace": "feature-search",
+        "worktree": [
+          "repository": "/Playground/checkout", "branch": "feature-search", "head": "abc123",
+          "subject": "Add search", "merged": true,
+          "pullRequest": [
+            "number": 2602, "state": "merged", "title": "Keep earlier workspace runs", "url": "https://example.invalid/pull/2602",
+          ],
+        ],
+        "removedAt": stamp.string(from: now.addingTimeInterval(-172800)), "removedBy": "worktree-remove",
+        "lastUsedAt": stamp.string(from: now.addingTimeInterval(-173000)),
+        "builds": ["count": 4, "last": build.map { $0 as Any } ?? NSNull(), "lastErrorCount": 0],
+        "agents": [
+          [
+            "tool": "codex", "sessionId": "ended-fixture", "cwd": workspace, "title": "Add search",
+            "endedAt": stamp.string(from: now.addingTimeInterval(-173000)),
+          ]
+        ],
+        "bytes": ["logs": 1048576, "recordings": 2097152, "agentActions": 1024, "record": 1024, "total": 3147776],
+        "expires": ["logs": NSNull(), "recordings": NSNull(), "agentActions": NSNull(), "record": NSNull()],
+        "version": 1, "replacedBy": workspace,
+      ])
     }
 
     private static func field(

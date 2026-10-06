@@ -4,6 +4,8 @@ import {
   copyFileSync,
   chmodSync,
   lstatSync,
+  existsSync,
+  readdirSync,
   mkdirSync,
   readFileSync,
   realpathSync,
@@ -14,6 +16,7 @@ import { dirname, join, posix, relative, isAbsolute } from 'node:path';
 import {
   assertHostedDeviceLedger,
   hostedAppArea,
+  hostedAppBlobs,
   readHostedApp,
   readHostedDevice,
   type HostedIosDevice,
@@ -30,6 +33,33 @@ function inside(root: string, path: string): boolean {
     !diff.startsWith(`..${process.platform === 'win32' ? '\\' : '/'}`) &&
     !isAbsolute(diff)
   );
+}
+
+export function removeHostedAppData(home: string): void {
+  const area = realpathSync(join(home, '..'));
+  const assertInside = (path: string) => {
+    if (!inside(area, realpathSync(path))) throw new Error('Hosted app data resolves outside its private area.');
+  };
+  const remove = (path: string) => {
+    if (!lstatSync(path, { throwIfNoEntry: false })) return;
+    assertInside(path);
+    rmSync(path, { recursive: true, force: true });
+  };
+  assertInside(home);
+  const apps = join(area, 'apps');
+  if (existsSync(apps)) {
+    assertInside(apps);
+    for (const attempt of readdirSync(apps)) {
+      const directory = join(apps, attempt);
+      if (!lstatSync(directory).isDirectory()) continue;
+      assertInside(directory);
+      remove(join(directory, 'App.app'));
+      remove(join(directory, 'App.apk'));
+      remove(join(directory, 'App.apk.tmp'));
+      remove(join(directory, 'blobs'));
+    }
+  }
+  remove(join(area, 'blobs'));
 }
 
 async function digest(path: string): Promise<string> {
@@ -61,15 +91,16 @@ export async function materializeHostedApp(
 ): Promise<{ app: string; root: string; record: HostedAppRecord }> {
   const record = readHostedApp(session, attempt, home);
   const area = hostedAppArea(session, attempt, home);
+  const blobs = hostedAppBlobs(session, home);
   const app = join(area, 'App.app');
   if (record.state !== 'installing') throw new Error('This app attempt has not been admitted for installation.');
-  const manifest = join(area, 'blobs', record.manifest.sha256);
+  const manifest = join(blobs, record.manifest.sha256);
   if (lstatSync(manifest).size !== record.manifest.size || (await digest(manifest)) !== record.manifest.sha256)
     throw new Error('The hosted app manifest differs from its digest.');
   rmSync(app, { recursive: true, force: true });
   mkdirSync(app, { mode: 0o700 });
   for (const file of record.files) {
-    const blob = join(area, 'blobs', file.sha256);
+    const blob = join(blobs, file.sha256);
     const stat = lstatSync(blob);
     if (!stat.isFile() || stat.size !== file.size || (await digest(blob)) !== file.sha256)
       throw new Error(`App content is incomplete or differs from its digest: ${file.path}`);
@@ -80,7 +111,7 @@ export async function materializeHostedApp(
     chmodSync(target, file.kind === 'exec' ? 0o755 : 0o644);
   }
   for (const file of record.files.filter((each) => each.kind === 'link')) {
-    const bytes = readFileSync(join(area, 'blobs', file.sha256));
+    const bytes = readFileSync(join(blobs, file.sha256));
     const target = bytes.toString('utf8');
     const destination = posix.normalize(posix.join(posix.dirname(file.path), target));
     if (

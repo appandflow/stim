@@ -8,7 +8,7 @@ import { WebSocketServer } from 'ws';
 
 import { loadFixtures } from './fixtures.mjs';
 import { filterRecords, shiftTimestamps, usageHistory } from './payloads.mjs';
-import { loadRecording, replayRange, VideoFeed } from './replay.mjs';
+import { loadRecording, replayKeyframe, replayRange, VideoFeed } from './replay.mjs';
 
 const { values } = parseArgs({
   options: {
@@ -24,6 +24,7 @@ const { values } = parseArgs({
 const PAIRING_TTL_MS = 5 * 60 * 1000;
 const TOKENS_FILE = join(tmpdir(), 'stim-mobile-mock-server-tokens.json');
 const fixtures = loadFixtures();
+const legacyArchives = process.env.STIM_MOCK_LEGACY_ARCHIVES === '1';
 const recording = loadRecording();
 let recordingEnabled = true;
 const hash = (token) => createHash('sha256').update(token).digest('hex');
@@ -86,6 +87,17 @@ const overlaid = (payload) => {
 };
 const status = () => {
   const payload = overlaid(shiftTimestamps(fixtures.status, shiftMs));
+  const archived = payload.archived ?? [];
+  payload.archivedUsage = {
+    count: archived.length,
+    bytes: archived.reduce((sum, archive) => sum + archive.bytes.total, 0),
+    byKind: Object.fromEntries(
+      ['logs', 'recordings', 'agentActions', 'record'].map((kind) => [
+        kind,
+        archived.reduce((sum, archive) => sum + archive.bytes[kind], 0),
+      ]),
+    ),
+  };
   if (!only) return payload;
   const environments = payload.environments.filter((env) => only.test(env.path));
   const live = environments.filter((env) => env.live);
@@ -313,6 +325,14 @@ server.on('connection', (socket) => {
       return { result: { records: filterRecords(logs, params) } };
     },
     'logs.subscribe'(params) {
+      if (params.archive) {
+        const subscription = `s${nextSubscription++}`;
+        setImmediate(() => {
+          send({ event: 'logs', subscription, records: filterRecords(logs, params) });
+          send({ event: 'logs-ended', subscription });
+        });
+        return { result: { subscription } };
+      }
       let cursor = 0;
       const subscription = every(2000, (id) => {
         const record = { ...logs[cursor++ % logs.length], ts: Date.now() };
@@ -329,10 +349,16 @@ server.on('connection', (socket) => {
         (params.physical || params.duoFrame || params.at !== undefined || params.rate !== undefined)
       )
         return { error: ['bad-request', 'Hosted iOS frames do not support physical targets, duoFrame or replay.'] };
-
+      if (params.archive && params.at === undefined) return { error: ['bad-request', 'An archive requires at.'] };
+      if (
+        params.archive &&
+        !fixtures.status.archived.find((archive) => archive.id === params.archive)?.bytes.recordings
+      )
+        return { error: ['no-recording', 'No archived recording remains.'] };
       if (params.platform === 'ios' && params.video?.includes('h264')) {
         const subscription = `s${nextSubscription++}`;
         const feed = new VideoFeed(recording, subscription, socket, send);
+        feed.archived = Boolean(params.archive);
         feeds.set(subscription, feed);
         if (params.at === undefined) setImmediate(() => feed.live());
         else setImmediate(() => feed.seek(params.at, params.rate ?? 0));
@@ -415,11 +441,21 @@ server.on('connection', (socket) => {
     },
     'replay.range'(params) {
       if (hostedTarget(params)) return { result: { enabled: false, recording: false, spans: [], markers: [] } };
-
-      if (params.platform !== 'ios' || !recordingEnabled) {
+      const archived = params.archive
+        ? fixtures.status.archived.find((archive) => archive.id === params.archive)
+        : null;
+      if (params.platform !== 'ios' || (params.archive ? !archived?.bytes.recordings : !recordingEnabled)) {
         return { result: { enabled: recordingEnabled, recording: false, spans: [], markers: [] } };
       }
-      return { result: replayRange(recording) };
+      return { result: { ...replayRange(recording), recording: !params.archive } };
+    },
+    'replay.keyframe'(params) {
+      const archived = params.archive
+        ? fixtures.status.archived.find((archive) => archive.id === params.archive)
+        : null;
+      if (params.platform !== 'ios' || (params.archive && !archived?.bytes.recordings))
+        return { error: ['no-recording', 'No recording remains.'] };
+      return { result: replayKeyframe(recording, params.at) };
     },
     'frames.seek'(params) {
       const feed = feeds.get(params.subscription);
@@ -429,6 +465,7 @@ server.on('connection', (socket) => {
     'frames.live'(params) {
       const feed = feeds.get(params.subscription);
       if (!feed) return { error: ['unknown-subscription', `No video subscription ${params.subscription}.`] };
+      if (feed.archived) return { error: ['bad-request', 'An archive cannot go live.'] };
       feed.live();
       return { result: {} };
     },
@@ -511,6 +548,13 @@ server.on('connection', (socket) => {
     if (method !== 'hello' && !authed) return fail(id, 'unauthorized', 'Send hello first.');
     let outcome;
     try {
+      if (['logs.query', 'logs.subscribe', 'replay.range', 'replay.keyframe', 'frames.subscribe'].includes(method)) {
+        if (legacyArchives && !params.workspace) return fail(id, 'bad-request', 'workspace is required.');
+        if (Boolean(params.workspace) === Boolean(params.archive))
+          return fail(id, 'bad-request', 'Send exactly one workspace or archive.');
+        if (params.archive && !fixtures.status.archived.some((archive) => archive.id === params.archive))
+          return fail(id, 'unknown-workspace', `Archive ${params.archive} is not a Stim archive on this Mac.`);
+      }
       outcome = handler(params, id);
     } catch (error) {
       return fail(id, 'bad-request', error.message);

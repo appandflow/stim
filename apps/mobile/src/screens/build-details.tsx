@@ -571,7 +571,7 @@ function PhaseList({ steps, counts }: { steps: PhaseStep[]; counts?: string | nu
   );
 }
 
-function LastBuildDetails({ last, now, root }: { last: LastBuild; now: number; root: string }) {
+export function LastBuildDetails({ last, now, root }: { last: LastBuild; now: number; root: string }) {
   const failed = last.status === 'failed';
   const startedAt = formatDateTime(last.startedAt, DATE_TIME);
   const finishedAt = last.finishedAt

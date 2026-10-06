@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useId, useRef, useState, useSyncExternalStore } from 'react';
 import { createStore, type StoreApi } from 'zustand/vanilla';
 
-import { frameTarget } from '@/hooks/frame-target';
+import { frameTarget, type FrameTarget } from '@/hooks/frame-target';
 import { useMacConnection } from '@/hooks/machines';
 import { SeekQueue, type Seek } from '@/lib/replay-seek';
 import { VideoMeter } from '@/lib/video';
 import { supportsFrame } from '@/lib/device-frame';
 
-import type { DeviceFrameArtwork, DevicePlatform, FrameEvent, MacosWindowsEvent, ReplayRate } from '@/protocol/types';
+import type { DeviceFrameArtwork, FrameEvent, MacosWindowsEvent, ReplayRate } from '@/protocol/types';
 import { pushAccessUnit, supportsFrameOrientation } from '../../modules/stim-video/src';
 
 export interface DeviceStream {
@@ -105,7 +105,7 @@ export function useReplayAt(playhead: ReplayPlayhead | null): number | null {
  * running.
  */
 export function useDeviceStream(
-  target: { workspace: string; platform: DevicePlatform; slot: string; physical?: boolean },
+  target: FrameTarget,
   options: {
     enabled: boolean;
     fps: number;
@@ -118,7 +118,7 @@ export function useDeviceStream(
 ): DeviceStream {
   const { connection } = useMacConnection();
   const streamId = useId();
-  const { workspace, platform, slot, physical } = target;
+  const { workspace, archive, platform, slot, physical } = target;
   const { fps, maxEdge, video } = options;
   const deviceFrame = options.deviceFrame === true;
   const duoFrame = options.duoFrame === true;
@@ -138,9 +138,11 @@ export function useDeviceStream(
     if (current?.generation === nativeEvent.generation) updateRef.current?.({ video: current.video });
   }, []);
   const key =
-    connection && options.enabled
-      ? frameTarget({ workspace, platform, slot, physical }, { fps, maxEdge, video, startAt, deviceFrame, duoFrame })
-          .key
+    connection && options.enabled && (!archive || startAt !== null)
+      ? frameTarget(
+          { ...(archive ? { archive } : { workspace: workspace! }), platform, slot, physical },
+          { fps, maxEdge, video, startAt, deviceFrame, duoFrame },
+        ).key
       : null;
   const [meter] = useState(() => new VideoMeter());
   const [playhead] = useState<ReplayPlayhead>(() => createStore(() => ({ at: null })));
@@ -194,7 +196,7 @@ export function useDeviceStream(
     const unsubscribe = connection.subscribe(
       'frames.subscribe',
       {
-        ...frameTarget({ workspace, platform, slot, physical }).params,
+        ...frameTarget({ ...(archive ? { archive } : { workspace: workspace! }), platform, slot, physical }).params,
         fps,
         maxEdge,
         video,
@@ -303,6 +305,7 @@ export function useDeviceStream(
     key,
     streamId,
     workspace,
+    archive,
     platform,
     slot,
     physical,
@@ -327,7 +330,7 @@ export function useDeviceStream(
   };
   const live = useCallback(() => {
     const current = subscription.current;
-    if (!connection || !current) return;
+    if (!connection || !current || archive) return;
     seeks.current.clear();
     updateRef.current?.({ seeking: false });
     connection.request('frames.live', { subscription: current }).then(
@@ -338,7 +341,7 @@ export function useDeviceStream(
       },
       (cause: Error) => updateRef.current?.({ error: cause.message }),
     );
-  }, [connection]);
+  }, [connection, archive]);
   const state = latest && latest.key === key ? latest : EMPTY;
   return { ...state, streamId, meter, playhead, requestKeyframe, orientationCleared, frameDisplayed, seek, live };
 }

@@ -65,7 +65,7 @@ worktree's branch, else the worktree's folder, else its project for a main
 checkout. The second line is where it sits inside its checkout, such as
 `apps/mobile`. The view options button next to the logo opens a menu:
 
-- **Status**: All, Live or Idle workspaces. Live also shows a workspace with a
+- **Status**: All, Live, Idle or Archived workspaces. All, Live and Idle exclude archives. Archived lists removed workspaces by project, newest first, with removal time and retained size. Live also shows a workspace with a
   running build, and one that `stim worktree warm` is preparing ("Warming...",
   with an activity indicator) or has prepared before its first run ("Ready").
 - **Projects**: which projects the sidebar lists.
@@ -98,6 +98,29 @@ dot with the number of uncommitted files, arrows for commits ahead of and
 behind the upstream, and **merged** when `gc` would call the branch merged. A
 clean branch level with its upstream shows nothing. Hovering the row indicator
 spells it out.
+
+## Archived workspaces
+
+The Archived sidebar filter opens a read-only page with branch and pull request details,
+removal reason, last use, build count and the last build, and ended agent sessions.
+Earlier runs on a live workspace link to archives for the same canonical project path,
+including records whose `replacedBy` points to that workspace. The archive page links
+back to its replacement when there is one.
+
+Logs use the existing source, slot, level, error and search filters, querying the connected
+loopback stim-server without following. Busy-server refusals retry briefly. Replay probes
+iOS, Android and Web recordings sequentially in the default slot, reading each archive
+range once. Replay appears only when a recorded span exists. Archived pages offer
+no live device or workspace actions. An older server shows an update hint for archive
+requests that require a workspace instead of an archive; other refusals show the server's
+message. Connect through the Phones page to read logs and replay.
+
+Delete names the archive and removal age in a confirmation and permanently removes its
+logs, recordings, agent actions and record through `stim gc --delete --cache archived:<id>`. The page
+returns to the previous selection once status stops reporting the archive. Machines
+shows archive count, total size, per-kind sizes and retention setting names separately;
+archives are never selected as safe space to free. The retained build list is available
+only as count plus last build.
 
 ## Workspace page
 
@@ -1378,6 +1401,7 @@ for long-text Notifications at the detail's 440-point minimum, simulator control
 in dark appearance, and the simulator error message in light appearance. It also
 compares a failed build history row collapsed and expanded, including its wrapped
 diagnostic, at the inspector's 320-point default width.
+Archived sidebar and workspace pages have light and dark fixtures with native 1x references; their comparisons skip on 2x until matching references are captured.
 The DEBUG fixtures use a fixed date. Captures pin en_US, UTC, InterVariable,
 320/380/440 by 640 points and arm64 on macOS 27.0 build 26A428. Native 1x and
 2x windows use separate references; Retina reference names end in `.2x.png`.

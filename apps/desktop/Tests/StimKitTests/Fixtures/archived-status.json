@@ -1,0 +1,104 @@
+{
+  "environments": [
+    {
+      "path": "/work/new/app",
+      "live": true,
+      "warnings": []
+    },
+    {
+      "path": "/work/idle/app",
+      "live": false,
+      "warnings": []
+    }
+  ],
+  "archived": [
+    {
+      "id": "archive-older",
+      "projectRoot": "/work/feature/app",
+      "project": "Example",
+      "workspace": "feature-search",
+      "worktree": {
+        "repository": "/work/example",
+        "branch": "feature-search",
+        "head": "abc123",
+        "subject": "Add search",
+        "merged": true,
+        "pullRequest": {
+          "number": 2602,
+          "state": "merged",
+          "title": "Keep earlier workspace runs",
+          "url": "https://example.invalid/pull/2602"
+        }
+      },
+      "removedAt": "2026-10-04T12:00:00Z",
+      "removedBy": "worktree-remove",
+      "lastUsedAt": "2026-10-04T11:00:00Z",
+      "builds": {
+        "count": 4,
+        "last": {
+          "platform": "ios",
+          "status": "ok",
+          "cacheHit": false,
+          "cacheSkipped": false,
+          "durationMs": 42000,
+          "fingerprint": "abc123",
+          "startedAt": "2026-10-04T10:00:00Z",
+          "finishedAt": "2026-10-04T10:00:42Z",
+          "missReason": {
+            "kind": "changed",
+            "summary": "Native sources changed",
+            "changes": [
+              {
+                "source": "ios/App.swift",
+                "change": "modified",
+                "category": "native"
+              }
+            ],
+            "changeCount": 1,
+            "baseline": {
+              "fingerprint": "def456",
+              "from": "workspace"
+            },
+            "rekeyedBy": []
+          }
+        },
+        "lastErrorCount": 0
+      },
+      "agents": [
+        {
+          "tool": "codex",
+          "sessionId": "ended-session",
+          "cwd": "/work/feature/app",
+          "title": "Build search",
+          "startedAt": "2026-10-04T09:00:00Z",
+          "endedAt": "2026-10-04T11:00:00Z"
+        }
+      ],
+      "bytes": {
+        "logs": 1048576,
+        "recordings": 2097152,
+        "agentActions": 1024,
+        "record": 1024,
+        "total": 3147776
+      },
+      "expires": {
+        "logs": "2026-11-04T12:00:00Z",
+        "recordings": null,
+        "agentActions": null,
+        "record": null
+      },
+      "version": 1,
+      "replacedBy": "/work/new/app"
+    }
+  ],
+  "archivedUsage": {
+    "count": 1,
+    "bytes": 3147776,
+    "byKind": {
+      "logs": 1048576,
+      "recordings": 2097152,
+      "agentActions": 1024,
+      "record": 1024
+    }
+  }
+}

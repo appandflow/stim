@@ -30,7 +30,8 @@ beforeEach(() => {
   area = join(root, 'apps', 'app');
   process.env.STIM_HOME = home;
   mkdirSync(home);
-  mkdirSync(join(area, 'blobs'), { recursive: true });
+  mkdirSync(area, { recursive: true });
+  mkdirSync(join(home, '..', 'blobs'), { recursive: true });
   writeFileSync(join(home, 'hosted-device.json'), JSON.stringify(device));
   writeFileSync(
     join(home, 'created-devices.json'),
@@ -75,12 +76,12 @@ function receipt(extra: { path: string; kind: HostedAppFile['kind']; content: st
   const files = entries.map((entry) => {
     const bytes = Buffer.from(entry.content);
     const sha256 = createHash('sha256').update(bytes).digest('hex');
-    writeFileSync(join(area, 'blobs', sha256), bytes);
+    writeFileSync(join(home, '..', 'blobs', sha256), bytes);
     return { path: entry.path, kind: entry.kind, sha256, size: bytes.length };
   });
   const manifest = Buffer.from(JSON.stringify(files));
   const sha256 = createHash('sha256').update(manifest).digest('hex');
-  writeFileSync(join(area, 'blobs', sha256), manifest);
+  writeFileSync(join(home, '..', 'blobs', sha256), manifest);
   writeFileSync(
     join(area, 'receipt.json'),
     JSON.stringify({
@@ -169,7 +170,7 @@ test('rejects a device Mach-O disguised by simulator plist metadata without inst
 test('refuses altered bytes and a lost device ledger before installing onto a simulator', async () => {
   receipt();
   const sha256 = createHash('sha256').update('plist fixture').digest('hex');
-  writeFileSync(join(area, 'blobs', sha256), 'altered');
+  writeFileSync(join(home, '..', 'blobs', sha256), 'altered');
   await expect(installHostedApp(home, session, 'app', device)).rejects.toThrow('digest');
   expect(native.runFile).not.toHaveBeenCalled();
   receipt();

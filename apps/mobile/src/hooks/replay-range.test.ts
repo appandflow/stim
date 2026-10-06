@@ -38,3 +38,17 @@ test('an answer to an older poll does not replace a newer one', async () => {
   await act(async () => mockAnswers[0]!(range(1000)));
   expect(result.current?.spans).toEqual([{ start: 0, end: 2000 }]);
 });
+
+test('probes an archive without workspace and does not poll a closed recording', async () => {
+  mockConnection.request.mockClear();
+  const { result } = await renderHook(() => useReplayRange({ archive: 'app--old', platform: 'web', slot: 'default' }));
+  expect(mockConnection.request).toHaveBeenCalledWith('replay.range', {
+    archive: 'app--old',
+    platform: 'web',
+    slot: 'default',
+  });
+  await act(async () => mockAnswers[0]!({ ...range(2000), recording: false }));
+  await act(async () => jest.advanceTimersByTime(30_000));
+  expect(mockConnection.request).toHaveBeenCalledTimes(1);
+  expect(result.current?.spans).toEqual([{ start: 0, end: 2000 }]);
+});

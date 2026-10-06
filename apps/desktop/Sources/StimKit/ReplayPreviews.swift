@@ -90,7 +90,11 @@ import Foundation
     Task {
       let result: Result<JSONValue, Error>
       do {
-        result = .success(try await server.request("replay.keyframe", params))
+        if target.archive != nil {
+          result = .success(try await retryArchiveRead { try await server.request("replay.keyframe", params) })
+        } else {
+          result = .success(try await server.request("replay.keyframe", params))
+        }
       } catch {
         result = .failure(error)
       }

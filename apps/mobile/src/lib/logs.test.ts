@@ -396,3 +396,14 @@ describe('the log entry vectors Stim Desktop replays', () => {
     expect(tildeHome(relativeTo(c.text, c.root), c.home)).toBe(c.shown);
   });
 });
+
+test('uses exactly the archive selector while preserving severity, sources and pagination', () => {
+  expect(
+    logFilter(
+      { archive: 'app--old' },
+      { ...DEFAULT_FILTER, severity: 'errors', chips: ['build'], slot: 'default' },
+      400,
+    ),
+  ).toEqual({ archive: 'app--old', errors: true, sources: ['build'], slot: 'default', tail: 400 });
+  expect(logFilter({ workspace: '/app' }, DEFAULT_FILTER, 200)).toEqual({ workspace: '/app', tail: 200 });
+});

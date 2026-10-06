@@ -7,6 +7,22 @@
   @testable import StimDesktop
 
   final class VisualFixtureTests: XCTestCase {
+    @MainActor func testArchivedSidebarLight() async throws {
+      try await check(screen: .archivedSidebar, scenario: .ready, dark: false, width: 320, nativeScale: 1)
+    }
+
+    @MainActor func testArchivedSidebarDark() async throws {
+      try await check(screen: .archivedSidebar, scenario: .ready, dark: true, width: 320, nativeScale: 1)
+    }
+
+    @MainActor func testArchivedWorkspaceLight() async throws {
+      try await check(screen: .archivedWorkspace, scenario: .ready, dark: false, width: 900, nativeScale: 1)
+    }
+
+    @MainActor func testArchivedWorkspaceDark() async throws {
+      try await check(screen: .archivedWorkspace, scenario: .ready, dark: true, width: 900, nativeScale: 1)
+    }
+
     @MainActor func testCompactNotifications() async throws {
       try await check(screen: .notifications, scenario: .longText, dark: false, width: 440)
     }
@@ -41,17 +57,17 @@
     }
 
     @MainActor private func check(
-      screen: PlaygroundScreen, scenario: PlaygroundScenario, dark: Bool, width: CGFloat,
+      screen: PlaygroundScreen, scenario: PlaygroundScenario, dark: Bool, width: CGFloat, nativeScale: CGFloat? = nil,
       file: StaticString = #filePath, testName: String = #function, line: UInt = #line
     ) async throws {
       try await check(
         content: PlaygroundScreenView(
           screen: screen, scenario: scenario, fixtureDate: Date(timeIntervalSince1970: 946728000)),
-        dark: dark, width: width, file: file, testName: testName, line: line)
+        dark: dark, width: width, nativeScale: nativeScale, file: file, testName: testName, line: line)
     }
 
     @MainActor private func check<Content: View>(
-      content: Content, dark: Bool, width: CGFloat, retinaOnly: Bool = false,
+      content: Content, dark: Bool, width: CGFloat, retinaOnly: Bool = false, nativeScale: CGFloat? = nil,
       file: StaticString, testName: String, line: UInt
     ) async throws {
       #if !arch(arm64)
@@ -92,6 +108,7 @@
       window.orderFront(nil)
       let scale = window.backingScaleFactor
       try XCTSkipUnless(scale == 1 || scale == 2, "Visual references require a 1x or 2x native window backing scale.")
+      try XCTSkipUnless(nativeScale == nil || scale == nativeScale, "Archive references currently cover only native 1x windows.")
       try XCTSkipUnless(!retinaOnly || scale == 2, "Build row references currently cover only native 2x windows.")
       try await Task.sleep(for: .seconds(1))
       view.layoutSubtreeIfNeeded()

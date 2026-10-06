@@ -3,6 +3,7 @@ import {
   chmodSync,
   constants,
   copyFileSync,
+  cpSync,
   createReadStream,
   existsSync,
   lstatSync,
@@ -411,6 +412,12 @@ async function build(job: WorkerJob): Promise<WorkerResult> {
   mkdirSync(out, { recursive: true });
   const archive = join(out, 'app.tgz');
   const name = basename(compiled.path);
+  if (job.platform === 'ios')
+    cpSync(compiled.path, join(out, name), {
+      recursive: true,
+      verbatimSymlinks: true,
+      mode: constants.COPYFILE_FICLONE,
+    });
   await time('packageMs', () =>
     getExecutor().runFileAsync(
       'tar',

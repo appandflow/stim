@@ -14,7 +14,7 @@ import { readHostMemoryPressure } from '../host-memory.ts';
 import { bootIosSim, createOwnedIosSim, listAllIosSims, resolveIosCreation } from '../devices/ios.ts';
 import { forgetCreatedDevice } from '../devices/created-devices.ts';
 import { teardownOwnedIosSim } from '../devices/teardown.ts';
-import { installHostedApp } from './app.ts';
+import { installHostedApp, removeHostedAppData } from './app.ts';
 
 export type HostedWorkerResult = {
   state: 'ready' | 'stopped' | 'installed' | 'unknown';
@@ -86,6 +86,7 @@ export async function runHostedDevice(
     }
     if (ledger === 'empty') {
       if (current) throw new Error('The hosted simulator remains without ledger ownership; it was kept.');
+      removeHostedAppData(home);
       return { state: 'stopped', device };
     }
     const outcome = teardownOwnedIosSim(device.udid, { del: true });
@@ -97,6 +98,7 @@ export async function runHostedDevice(
         `Hosted simulator ${device.udid} is still listed (${after.state}); deletion could not be verified. If its runtime is unavailable, delete it with xcrun simctl delete and stop the session again.`,
       );
     forgetCreatedDevice('ios', device.udid);
+    removeHostedAppData(home);
     return { state: 'stopped', device };
   } catch (error) {
     return {

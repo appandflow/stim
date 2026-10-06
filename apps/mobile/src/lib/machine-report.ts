@@ -208,6 +208,7 @@ export interface MachineReport {
   runtimes: RuntimeRow[];
   recordings: SizedRow[];
   caches: SizedRow[];
+  archived: { count: number; bytes: number; rows: SizedRow[] } | null;
 }
 
 /** "com.apple.CoreSimulator.SimRuntime.iOS-27-0" reads "iOS 27.0". */
@@ -653,6 +654,23 @@ export function machineReport(status: StatusPayload | null, gc: GcReport | null,
     runtimes,
     recordings,
     caches,
+    archived: status?.archivedUsage?.count
+      ? {
+          count: status.archivedUsage.count,
+          bytes: status.archivedUsage.bytes,
+          rows: [
+            { id: 'logs', title: t`Logs`, bytes: status.archivedUsage.byKind.logs, detail: null },
+            { id: 'recordings', title: t`Recordings`, bytes: status.archivedUsage.byKind.recordings, detail: null },
+            {
+              id: 'agentActions',
+              title: t`Agent actions`,
+              bytes: status.archivedUsage.byKind.agentActions,
+              detail: null,
+            },
+            { id: 'record', title: t`Records`, bytes: status.archivedUsage.byKind.record, detail: null },
+          ],
+        }
+      : null,
   };
 }
 

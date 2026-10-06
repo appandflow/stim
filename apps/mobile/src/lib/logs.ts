@@ -1,3 +1,4 @@
+import type { WorkspaceTarget } from '@/lib/archived';
 import { t } from '@lingui/core/macro';
 
 import { relativeTo, tildeHome } from '@/lib/paths';
@@ -73,8 +74,8 @@ export function initialFilter(params: { errors?: string; source?: string; slot?:
  * The same arguments apps/desktop passes to `stim logs`: every source selected sends no `sources`, so Errors keeps
  * the CLI's default scope. Warnings asks for `warn` and up; `showsEntry` keeps the warnings.
  */
-export function logFilter(workspace: string, state: LogFilterState, tail = MAX_RECORDS): LogFilter {
-  const filter: LogFilter = { workspace, tail };
+export function logFilter(target: string | WorkspaceTarget, state: LogFilterState, tail = MAX_RECORDS): LogFilter {
+  const filter: LogFilter = { ...(typeof target === 'string' ? { workspace: target } : target), tail };
   const sources = [...new Set(CHIPS.filter((c) => state.chips.includes(c.chip)).map((c) => c.source))];
   if (sources.length > 0 && sources.length < SOURCE_COUNT) filter.sources = sources;
   if (state.severity === 'warnings') filter.level = 'warn';

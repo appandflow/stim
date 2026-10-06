@@ -41,6 +41,7 @@ export type Capability = (typeof CAPABILITIES)[number];
  * whose client is behind.
  * `macos-window-select` is `input.window`, which pins the view to a macOS app window named by `macos-windows`,
  * bringing it to the front, or with null resumes following the front window.
+ * `hosted-ios-data` is iOS build handoff and native log queries, persisted before device deletion.
  * `server-update` is `server.update.status`, `server.update.start` and `server.update.chunk`.
  */
 export const FEATURES = [
@@ -59,6 +60,7 @@ export const FEATURES = [
   'duo-frames',
   'workspace-diff',
   'hosted-congestion',
+  'hosted-ios-data',
   'server-update',
 ] as const;
 

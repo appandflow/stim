@@ -10,7 +10,9 @@ final class LogsModel: ObservableObject {
 
   enum Phase: Equatable {
     case idle
+    case loading
     case following
+    case loaded
     case ended(String)
   }
 
@@ -88,6 +90,45 @@ final class LogsModel: ObservableObject {
     onChange?(.reset)
     follower.start(query, cli: cli, cwd: cwd)
     return session
+  }
+
+  @Published private(set) var archiveSlots: [String] = []
+  private var archiveID: String?
+
+  func loadArchive(_ archive: ArchivedWorkspace, query: LogQuery, server: ServerClient?) async {
+    session += 1
+    let generation = session
+    follower.stop()
+    following = query
+    if let pending, pending.query != query { self.pending = nil }
+    if archiveID != archive.id {
+      archiveID = archive.id
+      archiveSlots = []
+    }
+    pinnedToLatest = true
+    list = LogEntryList()
+    rows = []
+    rawRows = []
+    displayStarts = [0]
+    presentation = XcodeLogPresentation()
+    root = archive.projectRoot
+    count = 0
+    phase = .loading
+    onChange?(.reset)
+    guard let server else {
+      phase = .ended("Connect to stim-server on the Phones page to view archived logs.")
+      return
+    }
+    do {
+      let records = try await server.archivedLogs(ArchivedLogsRequest(archive: archive.id, query: query))
+      guard generation == session, !Task.isCancelled else { return }
+      for slot in records.compactMap(\.slot) where !archiveSlots.contains(slot) { archiveSlots.append(slot) }
+      handle(.records(records))
+      phase = .loaded
+    } catch {
+      guard generation == session, !Task.isCancelled else { return }
+      phase = .ended(archivedReadError(error, content: "logs"))
+    }
   }
 
   func stop(session: Int) {

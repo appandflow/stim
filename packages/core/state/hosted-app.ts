@@ -1,4 +1,5 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { closeSync, existsSync, lstatSync, openSync, readFileSync, readSync } from 'node:fs';
 import { join, posix } from 'node:path';
 import { deviceHostArea } from './device-host.ts';
 import { isJsonObject } from './json-file.ts';
@@ -41,6 +42,46 @@ export function hostedAppArea(session: string, attempt: string, workerHome?: str
   if (!hostedAppAttempt(attempt)) throw new Error('Invalid hosted app attempt.');
   if (workerHome) return join(workerHome, '..', 'apps', attempt);
   return join(deviceHostArea(session), 'apps', attempt);
+}
+
+export function hostedAppBlobs(session: string, workerHome?: string): string {
+  return join(workerHome ? join(workerHome, '..') : deviceHostArea(session), 'blobs');
+}
+
+const verifiedBlobs = new Map<string, string>();
+
+/** Transfers cached verification after a rename, only for the same inode, size, mtime and digest. */
+export function rememberHostedAppBlobRename(from: string, to: string, file: { size: number; sha256: string }): void {
+  const previous = verifiedBlobs.get(from);
+  verifiedBlobs.delete(from);
+  const stat = lstatSync(to, { throwIfNoEntry: false });
+  if (!previous || !stat?.isFile() || stat.size !== file.size) return;
+  const prefix = `${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeMs}:`;
+  if (previous.startsWith(prefix) && previous.endsWith(`:${file.sha256}`))
+    verifiedBlobs.set(to, `${prefix}${stat.ctimeMs}:${file.sha256}`);
+}
+
+/** Checks regular blob bytes, including their size, before content-addressed reuse. */
+export function validHostedAppBlob(path: string, file: { size: number; sha256: string }): boolean {
+  const stat = lstatSync(path, { throwIfNoEntry: false });
+  if (!stat?.isFile() || stat.size !== file.size) return false;
+  const key = `${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeMs}:${stat.ctimeMs}:${file.sha256}`;
+  if (verifiedBlobs.get(path) === key) return true;
+  const hash = createHash('sha256');
+  const fd = openSync(path, 'r');
+  try {
+    const buffer = Buffer.alloc(64 * 1024);
+    let count: number;
+    while ((count = readSync(fd, buffer, 0, buffer.length, null))) hash.update(buffer.subarray(0, count));
+  } finally {
+    closeSync(fd);
+  }
+  const valid = hash.digest('hex') === file.sha256;
+  if (valid) {
+    if (verifiedBlobs.size >= 20_001) verifiedBlobs.delete(verifiedBlobs.keys().next().value!);
+    verifiedBlobs.set(path, key);
+  } else verifiedBlobs.delete(path);
+  return valid;
 }
 
 /** At most 32 plain arguments of 1024 characters (8192 in total), with no NUL, CR or LF. */
@@ -169,7 +210,9 @@ export function readHostedAppMetadata(
 
 export function readHostedApp(session: string, attempt: string, workerHome?: string): HostedAppRecord {
   const record = readHostedAppMetadata(session, attempt, workerHome);
-  const manifest = join(hostedAppArea(session, attempt, workerHome), 'blobs', record.manifest.sha256);
+  const manifest = join(hostedAppBlobs(session, workerHome), record.manifest.sha256);
+  if (existsSync(manifest) && !validHostedAppBlob(manifest, record.manifest))
+    throw new Error('The hosted app manifest differs from its digest.');
   const files = existsSync(manifest) ? parseHostedAppManifest(JSON.parse(readFileSync(manifest, 'utf8'))) : [];
   if (!files || (!files.length && record.state !== 'receiving'))
     throw new Error('The hosted app manifest is missing or malformed.');

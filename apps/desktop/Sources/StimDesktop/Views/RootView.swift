@@ -6,6 +6,7 @@ enum SidebarItem: Hashable {
   case wall
   case project(Project)
   case environment(String)
+  case archived(String)
   case worktree(String)
   case notifications
   case machine
@@ -24,6 +25,7 @@ struct RootView: View {
   private let planChecks: BuildPlanChecks
   private let statsReader: StatsReader
   @State private var selection: SidebarItem? = .wall
+  @State private var previousSelection: SidebarItem? = .wall
   @State private var restoredProject = false
   @AppStorage(AppPreferences.Key.defaultView) private var defaultView = DefaultView.allDevices
   @AppStorage(AppPreferences.Key.lastProjectPath) private var lastProjectPath = ""
@@ -190,7 +192,16 @@ struct RootView: View {
       openRequests.workspacePath = nil
       selection = .environment(path)
     }
-    .onChange(of: selection) { _, item in
+    .onReceive(store.$payload) { payload in
+      guard let payload, case .archived(let id) = selection,
+        !(payload.archived ?? []).contains(where: { $0.id == id })
+      else { return }
+      selection = previousSelection ?? .wall
+    }
+    .onChange(of: selection) { old, item in
+      if case .archived = item {
+        if case .archived = old {} else { previousSelection = old }
+      }
       restoredProject = true
       switch item {
       case .wall:
@@ -202,7 +213,7 @@ struct RootView: View {
         openRequests.selectedWorkspace = store.environments(in: project).first?.path
       case .environment(let path):
         openRequests.selectedWorkspace = path
-      case .worktree:
+      case .worktree, .archived:
         openRequests.selectedWorkspace = nil
       default: break
       }
@@ -437,7 +448,7 @@ struct RootView: View {
           statsReader: statsReader, cli: cli, page: page, selectedPath: path, metrics: metrics, machine: store.payload?.machine,
           reportsBundles: store.payload?.environments.contains { $0.metro?.bundle != nil } ?? false,
           inspector: inspector, inspectorWidth: $inspectorWidth, focusedID: $focusedDeviceID, logQuery: $logQuery,
-          logWorkspacePath: logsWorkspace
+          logWorkspacePath: logsWorkspace, archived: store.payload?.archived ?? [], selection: $selection
         )
         if page.isUnified {
           host.id(page.identity)
@@ -446,6 +457,11 @@ struct RootView: View {
         }
       } else {
         EmptyState(title: "Workspace gone", message: "stim status no longer reports this workspace.")
+      }
+    case .archived(let id):
+      if let archive = store.payload?.archived?.first(where: { $0.id == id }) {
+        ArchivedDetail(archive: archive, environments: store.payload?.environments ?? [], selection: $selection)
+          .id(id)
       }
     case .worktree(let path):
       if let worktree = store.payload?.unprovisionedWorktrees?.first(where: { $0.path == path }) {
@@ -476,6 +492,8 @@ private struct WorkspaceDetailHost: View {
   @Binding var focusedID: String?
   @Binding var logQuery: LogQuery
   @Binding var logWorkspacePath: String?
+  var archived: [ArchivedWorkspace]
+  @Binding var selection: SidebarItem?
 
   var body: some View {
     let env = page.apps[0]
@@ -484,7 +502,7 @@ private struct WorkspaceDetailHost: View {
       usage: metrics.usage[env.path], machine: machine,
       reportsBundles: reportsBundles,
       history: metrics.owners, inspector: inspector, inspectorWidth: $inspectorWidth, focusedID: $focusedID,
-      logQuery: $logQuery, logWorkspacePath: $logWorkspacePath)
+      logQuery: $logQuery, logWorkspacePath: $logWorkspacePath, archived: archived, openArchive: { selection = .archived($0) })
   }
 }
 

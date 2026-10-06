@@ -1,4 +1,13 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  lstatSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { forgetCreatedDevice, recordCreatedDevice } from '../devices/created-devices.ts';
@@ -22,12 +31,15 @@ vi.mock('../devices/teardown.ts', () => ({
   teardownOwnedIosSim: (...args: Parameters<typeof native.teardown>) => native.teardown(...args),
 }));
 let home: string;
+let area: string;
 const udid = '12345678-1234-1234-1234-123456789abc';
 let simulatorState: string | null;
 
 beforeEach(() => {
   vi.resetAllMocks();
-  home = mkdtempSync(join(tmpdir(), 'stim-host-worker-'));
+  area = mkdtempSync(join(tmpdir(), 'stim-host-worker-'));
+  home = join(area, 'home');
+  mkdirSync(home);
   process.env.STIM_HOME = home;
   simulatorState = 'Shutdown';
   native.inventory.mockImplementation(() => (simulatorState ? [{ udid, state: simulatorState }] : []));
@@ -47,7 +59,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   delete process.env.STIM_HOME;
-  rmSync(home, { recursive: true, force: true });
+  rmSync(area, { recursive: true, force: true });
 });
 
 test('records exact ownership before boot, keeps the host viewer closed and verifies retirement', async () => {
@@ -142,3 +154,23 @@ test.each(['failed', 'skipped'])(
     expect(await runHostedDevice('stop', {})).toMatchObject({ state: 'unknown', device: { udid } });
   },
 );
+
+test('stop skips stray files and removes app data while retaining receipts and native logs', async () => {
+  await runHostedDevice('prepare', {});
+  const blobs = join(area, 'blobs');
+  const bundle = join(area, 'apps', 'first', 'App.app');
+  const legacy = join(area, 'apps', 'first', 'blobs');
+  for (const path of [blobs, bundle, legacy, join(home, 'ios-logs')]) mkdirSync(path, { recursive: true });
+  writeFileSync(join(blobs, 'digest'), 'app bytes');
+  writeFileSync(join(bundle, 'binary'), 'installed bytes');
+  writeFileSync(join(area, 'apps', 'stray-file'), 'unrelated bytes');
+  symlinkSync(join(area, 'missing'), join(area, 'apps', 'dangling-link'));
+  writeFileSync(join(area, 'apps', 'first', 'receipt.json'), '{}');
+  writeFileSync(join(home, 'ios-logs', 'device.ndjson'), 'native logs');
+  expect(await runHostedDevice('stop', {})).toMatchObject({ state: 'stopped' });
+  expect([blobs, bundle, legacy].map(existsSync)).toEqual([false, false, false]);
+  expect(readFileSync(join(area, 'apps', 'first', 'receipt.json'), 'utf8')).toBe('{}');
+  expect(readFileSync(join(area, 'apps', 'stray-file'), 'utf8')).toBe('unrelated bytes');
+  expect(lstatSync(join(area, 'apps', 'dangling-link')).isSymbolicLink()).toBe(true);
+  expect(readFileSync(join(home, 'ios-logs', 'device.ndjson'), 'utf8')).toBe('native logs');
+});

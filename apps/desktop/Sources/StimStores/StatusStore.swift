@@ -216,13 +216,13 @@ public final class StatusStore: ObservableObject {
   public func sidebarTrees(_ options: SidebarOptions) -> [ProjectTree] {
     StimKit.sidebarTrees(
       environments: payload?.environments ?? [], unprovisioned: payload?.unprovisionedWorktrees ?? [],
-      project: project(ofPath:), options: options)
+      project: project(ofPath:), options: options, archived: payload?.archived ?? [])
   }
 
   public func sidebarList(_ options: SidebarOptions) -> [SidebarEntry] {
     StimKit.sidebarList(
       environments: payload?.environments ?? [], unprovisioned: payload?.unprovisionedWorktrees ?? [],
-      project: project(ofPath:), options: options)
+      project: project(ofPath:), options: options, archived: payload?.archived ?? [])
   }
 
   private func checkDoctor() {

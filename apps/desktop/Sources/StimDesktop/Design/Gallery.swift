@@ -39,7 +39,8 @@
           Toggle("Large text", isOn: $largeText)
           Toggle("Increase contrast", isOn: $highContrast)
           Spacer()
-          Text("DEBUG fixtures").foregroundStyle(Palette.secondary)
+          Text(screen == .archivedSidebar || screen == .archivedWorkspace ? "Archived history fixtures" : "DEBUG fixtures")
+            .foregroundStyle(Palette.secondary)
         }
         .font(.stim(.caption)).padding(.horizontal, Space.md).padding(.bottom, Space.md)
         Divider()

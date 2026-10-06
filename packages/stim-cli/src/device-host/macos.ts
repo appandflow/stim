@@ -146,6 +146,7 @@ export async function runHostedMacosApp(
           removeAppData(area, join(directory, 'blobs'));
         }
       }
+      removeAppData(area, join(home, '..', 'blobs'));
       return { state: 'stopped', device };
     }
     if (!app) throw new Error('Hosted macOS installation needs its admitted app attempt.');

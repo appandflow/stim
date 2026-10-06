@@ -1,7 +1,14 @@
 import { createStore } from 'zustand/vanilla';
 
 import type { ConnectionState, StimConnection } from '@/lib/connection';
-import { mergeWorkspaces, mergeWorktrees, type HomeItem, type HomeWorktree } from '@/lib/home';
+import {
+  mergeArchives,
+  mergeWorkspaces,
+  mergeWorktrees,
+  type HomeArchive,
+  type HomeItem,
+  type HomeWorktree,
+} from '@/lib/home';
 import type { PairedMac } from '@/lib/macs';
 import type { StatusCache } from '@/lib/status-cache';
 import { shareItems, shareStatus } from '@/lib/status-share';
@@ -35,6 +42,7 @@ export interface MachinesState {
   /** Every workspace of every machine, in home's order; an unchanged workspace keeps its item. */
   workspaces: HomeItem[];
   worktrees: HomeWorktree[];
+  archives: HomeArchive[];
 }
 
 export const IDLE_LINK: MachineLink = {
@@ -48,8 +56,8 @@ export const IDLE_LINK: MachineLink = {
 const CACHE_WRITE_DELAY_MS = 5000;
 
 function homeItemsOf(
-  state: Pick<MachinesState, 'macs' | 'snapshots' | 'workspaces' | 'worktrees'>,
-): Pick<MachinesState, 'workspaces' | 'worktrees'> {
+  state: Pick<MachinesState, 'macs' | 'snapshots' | 'workspaces' | 'worktrees' | 'archives'>,
+): Pick<MachinesState, 'workspaces' | 'worktrees' | 'archives'> {
   const machines = state.macs
     ? state.macs.map((mac) => ({ id: mac.id, name: mac.name }))
     : Object.entries(state.snapshots).map(([id, snapshot]) => ({ id, name: snapshot.name }));
@@ -57,6 +65,7 @@ function homeItemsOf(
   return {
     workspaces: shareItems(state.workspaces, mergeWorkspaces(snapshots)),
     worktrees: shareItems(state.worktrees, mergeWorktrees(snapshots)),
+    archives: shareItems(state.archives, mergeArchives(snapshots)),
   };
 }
 
@@ -86,7 +95,7 @@ export function createMachineStore({
     snapshots,
     usage: {},
     history: {},
-    ...homeItemsOf({ macs: null, snapshots, workspaces: [], worktrees: [] }),
+    ...homeItemsOf({ macs: null, snapshots, workspaces: [], worktrees: [], archives: [] }),
   }));
   const timers = new Map<string, ReturnType<typeof setTimeout>>();
 

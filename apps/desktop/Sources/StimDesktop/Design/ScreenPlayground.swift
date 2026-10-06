@@ -19,6 +19,8 @@
   }
 
   enum PlaygroundScreen: String, CaseIterable, Identifiable {
+    case archivedSidebar = "Archived sidebar"
+    case archivedWorkspace = "Archived workspace"
     case notifications = "Notifications"
     case builds = "Builds"
     case buildSheet = "Build sheet"
@@ -30,6 +32,7 @@
 
     var scenarios: [PlaygroundScenario] {
       switch self {
+      case .archivedSidebar, .archivedWorkspace: return [.ready]
       case .notifications: return [.ready, .empty, .longText, .largeData]
       case .builds: return PlaygroundScenario.allCases
       case .buildSheet: return [.ready, .loading, .error, .longText, .largeData]
@@ -92,6 +95,16 @@
 
     @ViewBuilder private func content(_ fixtures: PlaygroundFixtures) -> some View {
       switch screen {
+      case .archivedSidebar:
+        List {
+          DisclosureGroup("Example", isExpanded: .constant(true)) {
+            ArchivedRow(archive: fixtures.archive, now: fixtureDate)
+          }
+        }.scrollContentBackground(.hidden).background(Palette.sidebar)
+      case .archivedWorkspace:
+        ArchivedDetail(
+          archive: fixtures.archive, environments: [fixtures.environment], selection: .constant(nil), fixtureDate: fixtureDate,
+          readsServer: false)
       case .notifications:
         InboxView(inbox: fixtures.inbox) { _ in action = "Selected notification logs (fixture only)." }
       case .builds:

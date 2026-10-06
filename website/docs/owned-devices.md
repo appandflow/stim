@@ -654,6 +654,28 @@ access clears its placement during stop or worktree removal; other refusals
 retain it.
 A host server restart stops its sessions.
 
+Reruns upload only missing manifest and file digests from a session-scoped store;
+the host verifies bytes before reuse. When an offloaded iOS simulator build ran
+on the hosting Mac's pinned node, the host takes files that match the client's
+manifest from that build. A refused or timed-out handoff falls back to upload, retrying a still-busy host for at most one minute.
+
+`stim logs` and `stim logs --errors` pull native device records through bounded
+host queries. Concurrent followers share a collection, throttled per session,
+without blocking app delivery, viewing or control. Stop limits each log drain to
+30 seconds with progress on stderr and stops if neither cursor nor collection
+checkpoint advances. The host captures a bounded final tail before deletion,
+also on revocation or server close, and stop copies it back afterwards. If that
+collection drops a backlog interval and eventually succeeds, a device warning
+record names the interval.
+A damaged collection checkpoint is ignored and rebuilt; collected records remain
+readable. The client waits up to 180 seconds for stop. The final collection and
+worker termination paths fit within that wait; an in-flight handoff copy and
+closing Metro or view transports are outside those worker bounds. Collected
+records remain in the session home; app blobs and materialized bundles are removed.
+Native queries read persisted entries, overlap by five seconds and de-duplicate;
+info-level or later-persisted entries may be unavailable. JavaScript logs reach Metro.
+An older host prints an update note, uses uploads and shows previously copied logs.
+
 Stim Desktop and the phone app show the simulator with an **on &lt;machine&gt;**
 label. Turn on **Serve to phones** in Desktop and pair the phone with the client
 Mac. Both view and control it through that Mac's local stim-server relay;
@@ -664,7 +686,7 @@ rotation and the postures reported by the host. Hosted viewing has no replay,
 Duo frame rendering or physical-device target. A stopped session shows a rerun
 command; an unavailable host reports the connection failure.
 
-Native logs, app handoff and upload deduplication are later work. JavaScript logs already reach Metro. `devices.idleShutdownMinutes` does not stop hosted
+`devices.idleShutdownMinutes` does not stop hosted
 simulators in this phase; their recorded sessions prevent Metro idle stop.
 
 For agent control, set `hosting.agentDriver` to `agent-device` on the hosting Mac.

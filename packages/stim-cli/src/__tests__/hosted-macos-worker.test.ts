@@ -69,7 +69,8 @@ beforeEach(() => {
   vi.stubEnv('USERPROFILE', join(root, 'user-home'));
   mkdirSync(join(process.env.HOME!, 'Library', 'Preferences'), { recursive: true });
   mkdirSync(home);
-  mkdirSync(join(area, 'blobs'), { recursive: true });
+  mkdirSync(area, { recursive: true });
+  mkdirSync(join(home, '..', 'blobs'), { recursive: true });
   writeFileSync(join(home, 'hosted-device.json'), JSON.stringify(device));
   plist = { CFBundleIdentifier: bundleId, CFBundleExecutable: 'Fixture', LSMinimumSystemVersion: '26.0' };
   arch = 'arm64 x86_64';
@@ -115,12 +116,12 @@ function receipt(args?: string[]) {
   ].map(({ path, kind, content }) => {
     const bytes = Buffer.from(content);
     const sha256 = createHash('sha256').update(bytes).digest('hex');
-    writeFileSync(join(area, 'blobs', sha256), bytes);
+    writeFileSync(join(home, '..', 'blobs', sha256), bytes);
     return { path, kind, sha256, size: bytes.length };
   });
   const manifest = Buffer.from(JSON.stringify(files));
   const sha256 = createHash('sha256').update(manifest).digest('hex');
-  writeFileSync(join(area, 'blobs', sha256), manifest);
+  writeFileSync(join(home, '..', 'blobs', sha256), manifest);
   writeFileSync(
     join(area, 'receipt.json'),
     JSON.stringify({
@@ -308,7 +309,9 @@ test.each(['app-home', 'attempt', 'bundle', 'blobs', 'apps'])(
             ? area
             : target === 'apps'
               ? join(root, 'apps')
-              : join(area, target === 'bundle' ? 'App.app' : 'blobs');
+              : target === 'bundle'
+                ? join(area, 'App.app')
+                : join(home, '..', 'blobs');
       rmSync(path, { recursive: true, force: true });
       symlinkSync(outside, path);
       expect(await runHostedMacosApp('stop', request)).toMatchObject({
@@ -330,7 +333,7 @@ test('stop retains app data and preferences when process shutdown cannot be veri
   expect(native.quiet).not.toHaveBeenCalled();
   expect(existsSync(join(home, 'app-home'))).toBe(true);
   expect(existsSync(join(area, 'App.app'))).toBe(true);
-  expect(existsSync(join(area, 'blobs'))).toBe(true);
+  expect(existsSync(join(home, '..', 'blobs'))).toBe(true);
 });
 
 test('a preference plist removal failure leaves stop unresolved and app data intact', async () => {
@@ -377,7 +380,7 @@ test.each(['foo.hosted4', `${'a'.repeat(242)}.hosted3`])(
     expect(readFileSync(file, 'utf8')).toBe('another slot');
     expect(existsSync(join(home, 'app-home'))).toBe(true);
     expect(existsSync(join(area, 'App.app'))).toBe(true);
-    expect(existsSync(join(area, 'blobs'))).toBe(true);
+    expect(existsSync(join(home, '..', 'blobs'))).toBe(true);
   },
 );
 

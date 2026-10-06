@@ -63,6 +63,13 @@ msgstr ": {summary}"
 msgid "{0, plural, one {# action} other {# actions}}"
 msgstr "{0, plural, one {# action} other {# actions}}"
 
+#. placeholder {0}: archive.builds.count
+#. placeholder {0}: archive?.builds.count ?? 0
+#: src/screens/archived-workspace.tsx
+#: src/screens/archived-workspace.tsx
+msgid "{0, plural, one {# build} other {# builds}}"
+msgstr "{0, plural, one {# build} other {# builds}}"
+
 #. placeholder {0}: total.fallbacks
 #: src/screens/mac-status.tsx
 msgid "{0, plural, one {# fallback} other {# fallbacks}}"
@@ -87,6 +94,11 @@ msgstr "{0, plural, one {# record} other {# records}}"
 #: src/lib/notifications.ts
 msgid "{0, plural, one {# thing needs a look} other {# things need a look}}"
 msgstr "{0, plural, one {# thing needs a look} other {# things need a look}}"
+
+#. placeholder {0}: report.archived.count
+#: src/screens/mac-status.tsx
+msgid "{0, plural, one {# workspace} other {# workspaces}}"
+msgstr "{0, plural, one {# workspace} other {# workspaces}}"
 
 #. placeholder {0}: runtime.deviceCount
 #: src/screens/mac-status.tsx
@@ -744,6 +756,10 @@ msgstr "Activity unknown"
 msgid "Agent"
 msgstr "Agent"
 
+#: src/lib/machine-report.ts
+msgid "Agent actions"
+msgstr "Agent actions"
+
 #: src/components/agent-feed.tsx
 msgid "Agent actions, loading"
 msgstr "Agent actions, loading"
@@ -759,6 +775,10 @@ msgstr "Agent looks stuck"
 #: src/lib/settings-options.ts
 msgid "Agent repeats the same failure"
 msgstr "Agent repeats the same failure"
+
+#: src/screens/archived-workspace.tsx
+msgid "Agents"
+msgstr "Agents"
 
 #: src/screens/workspace-work.tsx
 msgid "Ahead"
@@ -901,9 +921,32 @@ msgstr "Approved"
 msgid "Apps"
 msgstr "Apps"
 
+#: src/screens/filters.tsx
+msgid "Archived"
+msgstr "Archived"
+
+#: src/app/_layout.tsx
+#: src/screens/archived-workspace.tsx
+msgid "Archived replay"
+msgstr "Archived replay"
+
+#: src/app/_layout.tsx
+#: src/screens/archived-workspace.tsx
+#: src/screens/archived-workspace.tsx
+msgid "Archived workspace"
+msgstr "Archived workspace"
+
+#: src/screens/mac-status.tsx
+msgid "Archived workspaces"
+msgstr "Archived workspaces"
+
 #: src/lib/settings-options.ts
 msgid "Auto"
 msgstr "Auto"
+
+#: src/lib/archived.ts
+msgid "automatic maintenance"
+msgstr "automatic maintenance"
 
 #: src/components/route-error-boundary.tsx
 #: src/screens/device-view.tsx
@@ -947,6 +990,8 @@ msgstr "Budgets"
 #: src/components/workspace-cards.tsx
 #: src/lib/logs.ts
 #: src/lib/workspace-view.ts
+#: src/screens/archived-workspace.tsx
+#: src/screens/archived-workspace.tsx
 #: src/screens/build-details.tsx
 #: src/screens/build-details.tsx
 msgid "Build"
@@ -1287,6 +1332,10 @@ msgstr "Claimed by this workspace"
 #: src/lib/agents.ts
 msgid "Claude Code"
 msgstr "Claude Code"
+
+#: src/lib/archived.ts
+msgid "cleanup"
+msgstr "cleanup"
 
 #: src/screens/device-view.tsx
 #: src/screens/pair.tsx
@@ -2128,6 +2177,7 @@ msgid "Loading changes..."
 msgstr "Loading changes..."
 
 #: src/components/replay-bar.tsx
+#: src/screens/archived-workspace.tsx
 msgid "Loading..."
 msgstr "Loading..."
 
@@ -2138,6 +2188,8 @@ msgstr "Lock"
 #: src/app/_layout.tsx
 #: src/components/workspace-cards.tsx
 #: src/components/workspace-cards.tsx
+#: src/lib/machine-report.ts
+#: src/screens/archived-workspace.tsx
 #: src/screens/logs.tsx
 #: src/screens/workspace-detail.tsx
 msgid "Logs"
@@ -2409,7 +2461,13 @@ msgstr "No Android SDK"
 msgid "No app installed"
 msgstr "No app installed"
 
+#: src/screens/home.tsx
+msgid "No archived workspaces. Removed workspaces appear here when the server keeps an archive."
+msgstr "No archived workspaces. Removed workspaces appear here when the server keeps an archive."
+
 #: src/lib/workspace-view.ts
+#: src/screens/archived-workspace.tsx
+#: src/screens/archived-workspace.tsx
 msgid "No build"
 msgstr "No build"
 
@@ -2481,6 +2539,10 @@ msgstr "No machine paired"
 #: src/screens/inbox.tsx
 msgid "No notifications"
 msgstr "No notifications"
+
+#: src/screens/archived-workspace.tsx
+msgid "No recording available."
+msgstr "No recording available."
 
 #: src/screens/logs.tsx
 msgid "No records match these filters."
@@ -3027,6 +3089,10 @@ msgstr "Record on {name} (set by STIM_RECORDING)"
 msgid "Record on {name}: {error}"
 msgstr "Record on {name}: {error}"
 
+#: src/components/device-screen.tsx
+msgid "Recorded screen of {label}"
+msgstr "Recorded screen of {label}"
+
 #: src/screens/device-view.tsx
 msgid "Recording"
 msgstr "Recording"
@@ -3039,9 +3105,14 @@ msgstr "Recording for replay"
 msgid "Recording timeline"
 msgstr "Recording timeline"
 
+#: src/lib/machine-report.ts
 #: src/screens/mac-status.tsx
 msgid "Recordings"
 msgstr "Recordings"
+
+#: src/lib/machine-report.ts
+msgid "Records"
+msgstr "Records"
 
 #: src/lib/home.ts
 msgid "Refuses to run"
@@ -3081,6 +3152,14 @@ msgstr "Reloading the {name} app"
 msgid "Reloading the web page"
 msgstr "Reloading the web page"
 
+#: src/lib/archived.ts
+msgid "Removed {age} ago"
+msgstr "Removed {age} ago"
+
+#: src/lib/archived.ts
+msgid "Removed {age} ago by {by}"
+msgstr "Removed {age} ago by {by}"
+
 #: src/screens/mac-list.tsx
 msgid "Rename"
 msgstr "Rename"
@@ -3093,6 +3172,11 @@ msgstr "Rename {name}"
 msgid "Rename machine"
 msgstr "Rename machine"
 
+#: src/screens/archived-workspace.tsx
+msgid "Replaced by"
+msgstr "Replaced by"
+
+#: src/screens/archived-workspace.tsx
 #: src/screens/device-view.tsx
 #: src/screens/settings.ios.tsx
 #: src/screens/settings.tsx
@@ -3211,6 +3295,10 @@ msgstr "Same {name} build error {count}x at {file}:{line}"
 #: src/screens/rename.tsx
 msgid "Save"
 msgstr "Save"
+
+#: src/screens/archived-workspace.tsx
+msgid "Saved logs from this workspace"
+msgstr "Saved logs from this workspace"
 
 #: src/screens/pair.tsx
 msgid "Scan a QR code instead"
@@ -3689,6 +3777,10 @@ msgstr "The server did not issue a device token."
 msgid "the upstream"
 msgstr "the upstream"
 
+#: src/screens/archived-workspace.tsx
+msgid "This archive is no longer available."
+msgstr "This archive is no longer available."
+
 #: src/screens/device-view.tsx
 msgid "This device is not running."
 msgstr "This device is not running."
@@ -3904,6 +3996,14 @@ msgstr "Update stim-server on the Mac to view this app window."
 msgid "Update stim-server on your Macs to keep a history of their notifications."
 msgstr "Update stim-server on your Macs to keep a history of their notifications."
 
+#: src/lib/archived.ts
+msgid "Update stim-server to view archived logs"
+msgstr "Update stim-server to view archived logs"
+
+#: src/lib/archived.ts
+msgid "Update stim-server to view archived replay"
+msgstr "Update stim-server to view archived replay"
+
 #: src/lib/build-machines.ts
 msgid "update the build machine"
 msgstr "update the build machine"
@@ -4070,6 +4170,10 @@ msgstr "Worktree"
 #: src/lib/machine-report.ts
 msgid "Worktree {name}"
 msgstr "Worktree {name}"
+
+#: src/lib/archived.ts
+msgid "worktree removal"
+msgstr "worktree removal"
 
 #: src/lib/format.ts
 msgid "would refuse ({code})"

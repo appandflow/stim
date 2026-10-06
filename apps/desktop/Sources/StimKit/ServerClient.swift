@@ -138,6 +138,12 @@ public typealias ServerScheduler = @MainActor (TimeInterval, @escaping @MainActo
     state = .idle
   }
 
+  public func archivedLogs(_ request: ArchivedLogsRequest) async throws -> [LogRecord] {
+    struct Result: Decodable { var records: [LogRecord] }
+    let result = try await retryArchiveRead { try await self.request("logs.query", request.params) }
+    return try JSONDecoder().decode(Result.self, from: JSONEncoder().encode(result)).records
+  }
+
   /// Cancellation ends only this local await and ignores a late reply, keeping shared subscriptions connected.
   /// The protocol has no request cancellation: sent work continues until completion or its server limit
   /// (60 seconds for stats), and can occupy a request slot until then.
@@ -284,7 +290,17 @@ public typealias ServerScheduler = @MainActor (TimeInterval, @escaping @MainActo
   private func sendSubscribe(_ sub: Subscription, on transport: ServerTransport) {
     Task {
       do {
-        let result = try await send(on: transport, sub.method, sub.params())
+        let result: JSONValue
+        if sub.params()["archive"] != nil {
+          result = try await retryArchiveRead {
+            guard subscriptions[ObjectIdentifier(sub)] === sub, transport === self.transport else {
+              throw CancellationError()
+            }
+            return try await send(on: transport, sub.method, sub.params())
+          }
+        } else {
+          result = try await send(on: transport, sub.method, sub.params())
+        }
         guard case .object(let fields) = result, let id = fields["subscription"]?.string else { return }
         guard subscriptions[ObjectIdentifier(sub)] === sub, transport === self.transport else {
           if transport === self.transport, isOpen {

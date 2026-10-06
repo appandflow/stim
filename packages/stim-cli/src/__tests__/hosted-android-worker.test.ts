@@ -41,12 +41,15 @@ vi.mock('../devices/teardown.ts', () => ({
 }));
 
 let home: string;
+let area: string;
 const session = '12345678-1234-1234-1234-123456789abc';
 const avd = `stim-hosted-${session}`;
 const request = { session, consolePort: 5554 };
 beforeEach(() => {
   vi.resetAllMocks();
-  home = mkdtempSync(join(tmpdir(), 'stim-hosted-android-'));
+  area = mkdtempSync(join(tmpdir(), 'stim-hosted-android-'));
+  home = join(area, 'home');
+  mkdirSync(home);
   process.env.STIM_HOME = home;
   native.pressure.mockReturnValue('normal');
   native.adb.mockReturnValue({ emulators: [], unhealthy: [] });
@@ -74,7 +77,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   delete process.env.STIM_HOME;
-  rmSync(home, { recursive: true, force: true });
+  rmSync(area, { recursive: true, force: true });
 });
 
 test('persists exact ownership before a viewer-free boot and stops only that AVD', async () => {
@@ -206,4 +209,22 @@ test('an empty ledger refuses to report stopped while the AVD data remains on di
   mkdirSync(join(home, `${avd}.avd`));
   expect(await runHostedAndroidDevice('stop', request)).toMatchObject({ state: 'unknown' });
   expect(native.teardown).not.toHaveBeenCalled();
+});
+
+test('stop removes session blobs and materialized apps while retaining receipts and native logs', async () => {
+  await runHostedAndroidDevice('prepare', request);
+  const blobs = join(area, 'blobs');
+  const bundle = join(area, 'apps', 'first', 'App.apk');
+  const temporary = `${bundle}.tmp`;
+  const legacy = join(area, 'apps', 'first', 'blobs');
+  for (const path of [blobs, legacy, join(home, 'ios-logs')]) mkdirSync(path, { recursive: true });
+  writeFileSync(join(blobs, 'digest'), 'app bytes');
+  writeFileSync(bundle, 'installed bytes');
+  writeFileSync(temporary, 'unfinished bytes');
+  writeFileSync(join(area, 'apps', 'first', 'receipt.json'), '{}');
+  writeFileSync(join(home, 'ios-logs', 'device.ndjson'), 'native logs');
+  expect(await runHostedAndroidDevice('stop', request)).toMatchObject({ state: 'stopped' });
+  expect([blobs, bundle, temporary, legacy].map(existsSync)).toEqual([false, false, false, false]);
+  expect(readFileSync(join(area, 'apps', 'first', 'receipt.json'), 'utf8')).toBe('{}');
+  expect(readFileSync(join(home, 'ios-logs', 'device.ndjson'), 'utf8')).toBe('native logs');
 });
