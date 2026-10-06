@@ -3606,7 +3606,7 @@ describe('gc --json', () => {
       failures: null,
     });
     expect(payload.maintenance).toMatchObject({ mode: 'off' });
-    expect(Object.values(payload.sections).every(Array.isArray)).toBe(true);
+    expect(payload.sections).not.toHaveProperty('maintenance');
     expect(payload.sections.deadProjects).toEqual([{ path: deadPath() }]);
     expect(payload.sections.orphanedPorts).toEqual([{ project: deadPath(), label: 'web', port: 8102 }]);
     expect(payload.sections.staleBuildLocks).toEqual([
