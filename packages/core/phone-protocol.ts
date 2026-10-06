@@ -229,9 +229,13 @@ export type PhoneMaintenanceStatus = Omit<
 };
 export type PhoneStatusPayload = Omit<
   State.StatusPayload,
-  'environments' | 'machine' | 'unprovisionedWorktrees' | 'maintenance'
+  'environments' | 'machine' | 'unprovisionedWorktrees' | 'archived' | 'maintenance'
 > & {
   maintenance?: PhoneMaintenanceStatus;
+  archived?: (Omit<State.ArchivedWorkspace, 'agents' | 'builds'> & {
+    agents: PhoneEndedAgentSession[];
+    builds: Omit<State.ArchivedWorkspace['builds'], 'last'> & { last: PhoneLastBuild | null };
+  })[];
   unprovisionedWorktrees?: PhoneWorktreeFacts[];
   environments: PhoneEnvironmentState[];
   machine?: PhoneMachineUsageState | null;

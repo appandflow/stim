@@ -4,6 +4,8 @@ sidebar_position: 2
 description: 'Project, repository, machine, and environment settings'
 ---
 
+import StimTabs from '@site/src/components/StimTabs';
+
 :::note[Command examples]
 
 Commands use `stim`. If it is not installed globally, replace `stim` with
@@ -668,6 +670,37 @@ or the default.
 Proxy remote devices also use `AGENT_DEVICE_DAEMON_BASE_URL` and
 `AGENT_DEVICE_DAEMON_AUTH_TOKEN`. Those variables belong to the optional proxy
 service, not to Stim.
+
+## Archive retention
+
+`archive.enabled` accepts machine, workspace, repo, and committed layers.
+The other archive settings are machine settings. Environment overrides win.
+With `STIM_HOME`, archiving defaults off unless `STIM_ARCHIVE_ENABLED` is set.
+Sizes use binary GB and MB; 0 means keep none.
+
+| Key                               | Default | Environment override                      |
+| --------------------------------- | ------- | ----------------------------------------- |
+| `archive.enabled`                 | true    | `STIM_ARCHIVE_ENABLED`                    |
+| `archive.maxAgeDays`              | 30      | `STIM_ARCHIVE_MAX_AGE_DAYS`               |
+| `archive.maxCount`                | 200     | `STIM_ARCHIVE_MAX_COUNT`                  |
+| `archive.maxTotalGb`              | 5       | `STIM_ARCHIVE_MAX_TOTAL_GB`               |
+| `archive.logs.maxAgeDays`         | 14      | `STIM_ARCHIVE_LOGS_MAX_AGE_DAYS`          |
+| `archive.logs.maxMbPerWorkspace`  | 100     | `STIM_ARCHIVE_LOGS_MAX_MB_PER_WORKSPACE`  |
+| `archive.recordings.maxAgeDays`   | 3       | `STIM_ARCHIVE_RECORDINGS_MAX_AGE_DAYS`    |
+| `archive.recordings.maxTotalGb`   | 2       | `STIM_ARCHIVE_RECORDINGS_MAX_TOTAL_GB`    |
+| `archive.agentActions.maxAgeDays` | 7       | `STIM_ARCHIVE_AGENT_ACTIONS_MAX_AGE_DAYS` |
+
+Retention runs on every worktree removal, archived or not, once an archive
+exists. It deletes records past their age or count limit first, then expires
+recordings, agent actions and logs by age from removal; trims logs by oldest
+rotated generation, then build logs, then oldest other files; and removes the
+largest kind of the oldest archive while total caps are exceeded. Artifact
+expiry keeps records. Turning `recording.enabled` off at machine scope deletes
+archived recordings on the next retention pass.
+
+<StimTabs code="stim settings set archive.enabled false --scope repo" />
+
+See [archived workspaces](./worktrees.md#archived-workspaces) for privacy and deletion.
 
 ## Automatic maintenance
 

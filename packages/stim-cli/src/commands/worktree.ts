@@ -489,7 +489,10 @@ async function withReclaimLocks<T>(rootPath: string, fn: (lockedKeys: readonly s
 async function reclaimAll(
   rootPath: string,
   keys: readonly string[] = reclaimKeys(rootPath),
-  { preserveRootProject = false }: { preserveRootProject?: boolean } = {},
+  {
+    preserveRootProject = false,
+    removedBy,
+  }: { preserveRootProject?: boolean; removedBy?: 'worktree-remove' | 'gc' | 'maintenance' } = {},
 ): Promise<ReclaimAllResult> {
   const dereferenced: string[] = [];
   const killedPids: number[] = [];
@@ -509,6 +512,7 @@ async function reclaimAll(
     let r: ReclaimResult;
     try {
       r = await reclaimProject(key, {
+        archive: removedBy ? { removedBy } : undefined,
         deleteOwnedDevices: true,
         parkOwnedDevices: true,
         preserveProjectRecord: preserveRootProject && key === rootPath,
@@ -666,6 +670,7 @@ async function reclaimEnvironment(root: string, why: string): Promise<void> {
 }
 
 interface RemoveOptions {
+  removedBy?: 'worktree-remove' | 'gc' | 'maintenance';
   force?: boolean;
   linkedOnly?: boolean;
   guard?: (lockedKeys: readonly string[]) => string[];
@@ -957,7 +962,10 @@ async function runRemove(target: string | undefined, opts: RemoveOptions, onRemo
         printRemovalRefusal(path, current);
         return;
       }
-      const result = await reclaimAll(path, lockedKeys, { preserveRootProject: true });
+      const result = await reclaimAll(path, lockedKeys, {
+        preserveRootProject: true,
+        removedBy: opts.removedBy ?? 'worktree-remove',
+      });
       if (result.keptEntries.length) {
         reportRetainedResources(path, result);
         return;

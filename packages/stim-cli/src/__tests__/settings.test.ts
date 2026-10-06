@@ -444,6 +444,7 @@ const SHAPE_CASES: Record<string, { valid: unknown; invalid: unknown; expected: 
     invalid: false,
     expected: 'an HTTP(S) URL or /path ending in .bundle with a matching platform query and no fragment',
   },
+  'archive.enabled': { valid: false, invalid: 'false', expected: 'true or false' },
   'worktree.exclude': { valid: ['node_modules'], invalid: ['ok', 7], expected: 'an array of strings' },
   'worktree.defaultBranch': { valid: 'main', invalid: ['main'], expected: 'a string' },
   'cache.provider': { valid: './cache.cjs', invalid: {}, expected: 'a string' },

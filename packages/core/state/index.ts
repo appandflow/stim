@@ -29,3 +29,4 @@ export * from './tailnet.ts';
 export * from './hosted-logs.ts';
 export * from './maintenance.ts';
 export * from './agent-device.ts';
+export * from './archive.ts';

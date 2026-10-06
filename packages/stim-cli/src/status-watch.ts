@@ -86,7 +86,7 @@ export function createRefreshScheduler({
   };
 }
 
-type WatchedDir = 'home' | 'workspaces' | 'workspace' | 'logs' | 'leases' | 'eas' | 'maintenance';
+type WatchedDir = 'archive' | 'home' | 'workspaces' | 'workspace' | 'logs' | 'leases' | 'eas' | 'maintenance';
 
 /**
  * Which refresh a change to `name` in a watched `$STIM_HOME` directory needs: `light` for a log append or a running
@@ -94,13 +94,20 @@ type WatchedDir = 'home' | 'workspaces' | 'workspace' | 'logs' | 'leases' | 'eas
  * null for none. A null name means the platform did not report one.
  */
 export function statusChange(dir: WatchedDir, name: string | null): RefreshKind | null {
+  if (
+    dir === 'archive' &&
+    (name?.startsWith('.incoming-') || name?.startsWith('.removing-') || name?.startsWith('.lock'))
+  )
+    return null;
   if (name?.includes('.lock')) return null;
   if (dir === 'logs') return 'light';
   if (name === null) return 'full';
   switch (dir) {
     case 'home':
       if (name === 'maintenance') return 'light';
-      return name.startsWith('config.json') || name === 'workspaces' || name === 'device-locks' ? 'full' : null;
+      return name.startsWith('config.json') || name === 'archive' || name === 'workspaces' || name === 'device-locks'
+        ? 'full'
+        : null;
     case 'workspace':
       if (name.startsWith('build-detail.json')) return 'light';
       return name.startsWith('state.json') || name.startsWith('ended-agents.json') || name === 'logs' ? 'full' : null;
@@ -158,6 +165,7 @@ export function watchStatusSources({
   const desiredDirs = (): Map<string, WatchedDir> => {
     const dirs = new Map<string, WatchedDir>([
       [home, 'home'],
+      [join(home, 'archive'), 'archive'],
       [join(home, 'workspaces'), 'workspaces'],
       [join(home, 'maintenance'), 'maintenance'],
       [join(home, 'device-locks'), 'leases'],

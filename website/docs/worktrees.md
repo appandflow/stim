@@ -349,3 +349,37 @@ Ask your agent:
 Run `stim gc --json` and show me which merged worktrees it would remove and
 why it keeps the others. Do not pass --delete until I confirm.
 ```
+
+## Archived workspaces
+
+Removing a linked worktree keeps its workspace history under
+`$STIM_HOME/archive/<name>--<removedAtMs>/`: state, ended agents, the error
+index, logs, closed recording segments, and workspace-local agent-device
+sessions when present. Build outputs and open recording segments are deleted.
+An archive has no checkout, devices, ports, or processes. Recreating the path
+starts fresh; `status --json` links the earlier archive through `replacedBy`.
+
+Archives are enabled by default. Set `archive.enabled` to `false` at machine,
+workspace, repo, or committed scope to disable them. With `STIM_HOME`, they
+are disabled unless `STIM_ARCHIVE_ENABLED` is explicitly set. Archives are
+local, with directories mode 0700 and files 0600. Logs and agent actions can
+contain secrets; no redaction is applied.
+
+Retention keeps records for 30 days, at most 200 workspaces and 5 binary GB.
+Logs last 14 days with a 100 binary MB cap per workspace; recordings last
+3 days with a 2 binary GB total cap; agent actions last 7 days. Artifact expiry
+keeps the workspace record until its record limit. See [settings](./settings.md).
+Archiving is best effort: a failure prints `could not archive: <reason>` on
+stderr and removal continues. Removal stdout stays empty.
+
+Normal gc, `--cache all` and unscoped `--older-than` leave archives alone.
+Explicit archive selection lists ids, kinds, bytes, and expiry. Add `--delete`
+to act. `archived:<id>` selects one archive; `archived-logs`,
+`archived-recordings`, and `archived-agent` delete that kind while keeping records.
+`--older-than` filters by removal age except with an explicit id, where it is ignored.
+
+<StimTabs code="stim gc --cache archived" />
+
+<StimTabs code="stim gc --delete --cache archived --older-than 14" />
+
+Archived logs and replay are not available through the apps yet.

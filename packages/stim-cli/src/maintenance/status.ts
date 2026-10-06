@@ -54,3 +54,8 @@ export function maintenanceLine(status: MaintenanceStatus, includeLabel = true):
     .join(', ');
   return `${includeLabel ? `Auto maintenance (${status.mode === 'report' ? 'report only' : 'off'}): ` : ''}${at ? `${at}: ` : ''}${status.lastPass ? summary : 'no pass has run yet'}${disk ? `; ${disk}` : ''}${status.running ? '; running' : ''}${status.lastPass?.blocked.length ? `; ${status.lastPass.blocked.join('; ')}` : ''}${status.invalid ? `; invalid: ${status.invalid}` : ''}${status.claim ? `; unresolved claim: ${status.claim.unresolved}; ${status.claim.removeCommand}` : ''}`;
 }
+
+export function maintenanceLines(status: MaintenanceStatus): string[] {
+  const line = maintenanceLine(status);
+  return line === null ? [] : [line];
+}

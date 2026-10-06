@@ -1,5 +1,6 @@
-import { maintenanceStatus, maintenanceLine } from '../maintenance/status.ts';
+import { maintenanceStatus, maintenanceLines } from '../maintenance/status.ts';
 import { triggerMaintenance } from '../maintenance/trigger.ts';
+import { machineNumber } from '../budget.ts';
 import { readHostedMacosStatus } from '../device-host/hosted-macos-status.ts';
 import { inspectProcessIdentity } from '../process-identity.ts';
 import { deviceSlotKey, projectDeviceSlots } from '../devices/device-slots.ts';
@@ -13,7 +14,7 @@ import {
 import type { StatusSources } from '../status-watch.ts';
 import { watchStdoutReader } from '../stdout-reader.ts';
 import chalk from 'chalk';
-import { existsSync } from 'fs';
+import { existsSync, statSync } from 'fs';
 import { homedir, totalmem } from 'os';
 import { basename, dirname, join } from 'path';
 import type { Command } from 'commander';
@@ -57,11 +58,11 @@ import {
   parseActiveBuild,
   type BuildReport,
 } from '../engine/build-progress.ts';
-import { volumeRootFor } from '../fs-util.ts';
+import { formatBytes, volumeRootFor } from '../fs-util.ts';
 import { workspacePhase } from '../engine/warm-progress.ts';
 import { workspaceRecordingEnabled } from '../workspace/recordings.ts';
 import { resolveSettings } from '../workspace/settings.ts';
-import { formatDuration } from '../command-output.ts';
+import { formatDuration, plural } from '../command-output.ts';
 import { listLeaseFiles, parseWorkspaceLeases } from '../engine/device-lease.ts';
 import { readIosDevices, type IosDeviceEntry } from '../engine/ios-device.ts';
 import { readEasSessionLedger } from '../engine/eas-session-ledger.ts';
@@ -83,6 +84,12 @@ import {
   type LastBuildReport,
   type MachineUsageState,
   type StatusPayload,
+  archiveRoot,
+  archivedUsage,
+  linkReplacedArchives,
+  readArchives,
+  type ArchivedWorkspace,
+  type ArchivedUsage,
 } from '@stim-cli/core/state';
 import {
   createActivityReader,
@@ -159,6 +166,8 @@ export default function statusCommand(program: Command): void {
 }
 
 interface StatusSnapshot {
+  archived: ArchivedWorkspace[];
+  archivedUsage: ArchivedUsage;
   projects: [string, ProjectRecord][];
   states: EnvironmentState[];
   labelOnlyRoots: boolean[];
@@ -175,11 +184,19 @@ interface StatusSnapshot {
   simNames: Record<string, string>;
 }
 
-function readStatus(gitMaxAgeMs: number, simctlListing: string | null = null): Promise<StatusSnapshot> {
-  return withStateReadCache(() => readStatusFacts(gitMaxAgeMs, simctlListing));
+function readStatus(
+  gitMaxAgeMs: number,
+  simctlListing: string | null = null,
+  archives?: ArchivedWorkspace[],
+): Promise<StatusSnapshot> {
+  return withStateReadCache(() => readStatusFacts(gitMaxAgeMs, simctlListing, archives));
 }
 
-async function readStatusFacts(gitMaxAgeMs: number, simctlListing: string | null): Promise<StatusSnapshot> {
+async function readStatusFacts(
+  gitMaxAgeMs: number,
+  simctlListing: string | null,
+  cachedArchives?: ArchivedWorkspace[],
+): Promise<StatusSnapshot> {
   const cfg = loadConfig();
   const projects = Object.entries(cfg?.projects || {});
   const macosReads = projects.map(([path]) => readHostedMacosStatus(readMacosRecord(path)));
@@ -367,7 +384,14 @@ async function readStatusFacts(gitMaxAgeMs: number, simctlListing: string | null
   const simNames = Object.fromEntries(sims.map((sim) => [sim.udid.toUpperCase(), sim.name]));
   const busy = sims.some((sim) => sim.state === 'Booted');
   const machine = await readMachineUsage({ states, roots, simNames, tables, busy });
+  const archives = cachedArchives ?? readArchives();
+  const maxCount = machineNumber('archive.maxCount', cfg, process.env);
   return {
+    archived: linkReplacedArchives(
+      archives.slice(0, maxCount.value ?? 200),
+      states.map((state) => state.path),
+    ),
+    archivedUsage: archivedUsage(archives),
     projects,
     states,
     labelOnlyRoots,
@@ -488,6 +512,8 @@ async function refreshLightFacts(snapshot: StatusSnapshot, machine: boolean): Pr
 
 function renderStatus(
   {
+    archived,
+    archivedUsage: usage,
     projects,
     states,
     labelOnlyRoots,
@@ -516,6 +542,8 @@ function renderStatus(
         environments: states.map((state, i) =>
           withDerivedFacts(labelOnlyRoots[i] ? { ...state, labelOnly: true as const } : state),
         ),
+        archived,
+        archivedUsage: usage,
         capacity: cap,
         deviceLeases: leases,
         unprovisionedWorktrees: orphanWorktrees.map(withGitChip),
@@ -527,8 +555,8 @@ function renderStatus(
     return out;
   }
 
-  const autoLine = maintenanceLine(maintenance);
-  if (autoLine) out.push(chalk.dim(autoLine));
+  out.push(...maintenanceLines(maintenance).map((line) => chalk.dim(line)));
+  if (usage.count) out.push(`Archived: ${plural(usage.count, 'workspace')}, ${formatBytes(usage.bytes)}`);
 
   if (projects.length === 0 && orphanWorktrees.length === 0) {
     out.push(chalk.dim('No projects registered.'));
@@ -691,6 +719,8 @@ function renderStatus(
 
 async function watchStatus(json: boolean): Promise<void> {
   let last: string | null = null;
+  let archiveStamp: number | null = null;
+  let archives: ArchivedWorkspace[] | undefined;
   let snapshot: StatusSnapshot | null = null;
   let sources: StatusSources | null = null;
   const measurer: StatusMeasurer = createStatusMeasurer({ updated: () => scheduler.trigger('light') });
@@ -702,7 +732,17 @@ async function watchStatus(json: boolean): Promise<void> {
       let text: string;
       try {
         if (kind === 'light' && snapshot) await refreshLightFacts(snapshot, json);
-        else snapshot = await readStatus(WATCH_GIT_MAX_AGE_MS, sources?.simulatorListing());
+        else {
+          let stamp: number | null = null;
+          try {
+            stamp = statSync(archiveRoot()).mtimeMs;
+          } catch {}
+          if (archives === undefined || stamp !== archiveStamp) {
+            archives = readArchives();
+            archiveStamp = stamp;
+          }
+          snapshot = await readStatus(WATCH_GIT_MAX_AGE_MS, sources?.simulatorListing(), archives);
+        }
         measurer.schedule(snapshot.states, snapshot.worktrees);
         text = renderStatus(snapshot, json).join('\n');
       } catch (error) {

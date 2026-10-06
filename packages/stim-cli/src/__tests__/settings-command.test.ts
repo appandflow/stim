@@ -323,3 +323,18 @@ test('a recording.enabled write that turns nothing off deletes nothing, whatever
   await settings(['unset', 'recording.enabled', '--scope', 'workspace']);
   expect(existsSync(workspaceRecordingsDir(app))).toBe(true);
 });
+
+test('archive settings persist in their declared layers and scoped homes resolve disabled', async () => {
+  expect((await settings(['set', 'archive.enabled', 'false', '--scope', 'repo'])).exitCode).toBe(0);
+  expect(loadConfig()?.repos).toMatchObject({ [join(repo, '.git')]: { settings: { archive: { enabled: false } } } });
+  expect((await settings(['set', 'archive.maxCount', '2'])).exitCode).toBe(0);
+  const scoped = JSON.parse((await settings(['--json'], { STIM_HOME: home })).out[0]!);
+  expect(entry(scoped, 'archive.enabled')).toMatchObject({ value: false, origin: 'env' });
+  expect(entry(scoped, 'archive.maxCount')).toMatchObject({ value: 2, origin: 'machine' });
+  const overridden = JSON.parse(
+    (await settings(['--json'], { STIM_HOME: home, STIM_ARCHIVE_ENABLED: 'true' })).out[0]!,
+  );
+  expect(entry(overridden, 'archive.enabled')).toMatchObject({ value: true, origin: 'env' });
+  const failure = await settings(['set', 'archive.maxCount', '1.5', '--json']);
+  expect(JSON.parse(failure.out[0]!).code).toBe('STIM_BAD_ARG');
+});

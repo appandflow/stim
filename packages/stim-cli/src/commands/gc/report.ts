@@ -1,4 +1,5 @@
 import type { MaintenancePreview } from '../../maintenance/preview.ts';
+import { archiveLines, type ArchiveSelection } from './archives.ts';
 import type { AgentDeviceUsage, SwiftpmCacheUsage } from '@stim-cli/core/state';
 import { swiftpmCacheLines } from '../../devices/swiftpm-cache-usage-output.ts';
 import { agentDeviceLines } from '../../devices/agent-device-usage-output.ts';
@@ -43,6 +44,7 @@ import { memoryCacheKind, memoryLines, type MemoryProcess, type MemoryReport, ty
 
 export interface GcReport {
   maintenance?: MaintenancePreview;
+  archives?: ArchiveSelection;
   skipped: GcSkip[];
   deadProjects: string[];
   orphanedPorts?: { project: string; label: string; port: number }[];
@@ -169,6 +171,7 @@ function maintenanceReportLines(maintenance: MaintenancePreview | undefined): st
 export function formatGcReport(
   {
     maintenance,
+    archives,
     skipped = [],
     deadProjects = [],
     orphanedPorts,
@@ -201,7 +204,7 @@ export function formatGcReport(
   }: Partial<GcReport>,
   { now = Date.now() }: { now?: number } = {},
 ): string[] {
-  const lines: string[] = [];
+  const lines: string[] = archiveLines(archives);
   const staleLocks = buildLocks?.stale ?? [];
   const liveLocks = buildLocks?.live ?? [];
   const staleSlots = buildSlots?.stale ?? [];
@@ -539,6 +542,8 @@ function jsonPullRequest(lookup: PullRequestLookup | null): GcJsonSections['link
 
 /** The `gc --json` sections, in text report order. Sections contain entries or a report-only usage payload. */
 export interface GcJsonSections {
+  archived?: ArchiveSelection['records'];
+  archiveStaging?: ArchiveSelection['staging'];
   deadProjects: { path: string }[];
   invalidProjects: { path: string }[];
   orphanedPorts: { project: string; label: string; port: number }[];
@@ -646,6 +651,7 @@ export interface GcJsonSections {
 }
 
 export function gcReportSections({
+  archives,
   skipped = [],
   deadProjects = [],
   orphanedPorts = [],
@@ -675,6 +681,7 @@ export function gcReportSections({
   memory = null,
 }: Partial<GcReport>): GcJsonSections {
   return {
+    ...(archives ? { archived: archives.records, archiveStaging: archives.staging } : {}),
     deadProjects: deadProjects.map((path) => ({ path })),
     invalidProjects: invalidProjects.map((path) => ({ path })),
     orphanedPorts: orphanedPorts.map(({ project, label, port }) => ({ project, label, port })),

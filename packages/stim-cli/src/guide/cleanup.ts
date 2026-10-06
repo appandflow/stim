@@ -11,6 +11,11 @@ wipe state to upgrade: it records ownership needed for safe teardown. Use the
 same slot-aware CLI for all commands while named assignments exist; older
 versions cannot reliably manage their assignments.
 
+ARCHIVE
+
+Linked-worktree removal and gc dead-project pruning keep history under
+$STIM_HOME/archive by default. See stim guide cleanup archive.
+
 MAINTENANCE
 
 Automatic maintenance is report-only in this release: it measures, plans and
@@ -125,6 +130,46 @@ written by a newer Stim -- costs one dim line on stderr and is otherwise left
 alone; only the next \`ios\` or \`android\` run moves an unparseable one aside
 to stats.json.corrupt-<unix ms> and starts a new one.`,
   sections: {
+    archive: {
+      summary: 'retained workspace history and explicit archive cleanup',
+      body: () => `ARCHIVE
+  Linked-worktree removal and gc pruning a registered root that is gone keep
+  state, ended agents, the error index, logs, closed recording segments and
+  workspace-local agent-device sessions under $STIM_HOME/archive.
+  Build outputs and open recording segments are deleted with the workspace.
+  Archives have no checkout, devices, ports or running processes. A recreated
+  path starts fresh; status links its earlier archives with replacedBy.
+  archive.enabled defaults true and accepts every settings layer. STIM_HOME
+  disables archives unless STIM_ARCHIVE_ENABLED is set. Empty stubs and orphaned
+  workspace directories are not archived. A failure prints one stderr line
+  beginning "could not archive:" and removal continues with empty stdout.
+
+  Retention runs on every worktree removal, archived or not, once an archive
+  exists. It deletes records past their age or count limit first, then expires
+  recordings, agent actions and logs by age from removedAt; trims per-workspace
+  logs (oldest rotated generations, then build logs, then oldest other files);
+  and removes the largest kind of the oldest archive while over total caps.
+  Archives with expired artifacts keep their record until the record limit. recording.enabled false at machine scope deletes archived
+  recordings on the next retention pass. Sizes are binary GB/MB; 0 keeps none.
+  See stim guide settings for the nine archive.* keys and overrides.
+
+  stim gc --cache archived                     list ids, kinds, bytes and expiry
+  stim gc --delete --cache archived             delete every archive
+  stim gc --delete --cache archived --older-than 14
+                                                only removed at least 14 days ago
+  stim gc --delete --cache archived:<id>         delete one; ignores --older-than
+  stim gc --delete --cache archived-logs        delete logs, keep records
+  stim gc --delete --cache archived-recordings  delete recordings, keep records
+  stim gc --delete --cache archived-agent       delete agent actions, keep records
+  Per-kind selectors also accept --older-than, measured from removedAt.
+  Normal gc, --cache all, --worktrees and unscoped --older-than exclude archives.
+  Archive scopes report abandoned staging directories and delete only those
+  with no live or unresolved claim. An unresolved claim names its removal command.
+
+  Directories are 0700 and files 0600. No redaction is applied; logs and agent
+  actions can contain secrets. Use archive.enabled false for a sensitive repo.
+  Archived logs and replay are not exposed through CLI or app readers yet.`,
+    },
     gc: {
       summary:
         'what gc and worktree remove delete, keep and refuse: orphans, stale records, locks, leases, EAS sessions',

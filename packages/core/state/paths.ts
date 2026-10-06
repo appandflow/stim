@@ -179,3 +179,15 @@ export function maintenanceChildLogFile(): string {
 export function maintenanceRunClaims(): string {
   return join(maintenanceDir(), 'run.claims');
 }
+
+export function archiveRoot(): string {
+  return join(configDir(), 'archive');
+}
+
+export function archiveDir(id: string): string {
+  return join(archiveRoot(), id);
+}
+
+export function archiveLock(): string {
+  return join(archiveRoot(), '.lock');
+}
