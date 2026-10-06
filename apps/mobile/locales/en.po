@@ -222,6 +222,14 @@ msgstr "{gb} GB"
 msgid "{hidden, plural, one {# more source changed.} other {# more sources changed.}}"
 msgstr "{hidden, plural, one {# more source changed.} other {# more sources changed.}}"
 
+#: src/screens/filters.tsx
+msgid "{hidden, plural, one {Show # more project} other {Show # more projects}}"
+msgstr "{hidden, plural, one {Show # more project} other {Show # more projects}}"
+
+#: src/screens/filters.tsx
+msgid "{hidden} more"
+msgstr "{hidden} more"
+
 #: src/screens/home.tsx
 msgid "{hiddenByActivity, plural, one {# idle workspace hidden.} other {# idle workspaces hidden.}}"
 msgstr "{hiddenByActivity, plural, one {# idle workspace hidden.} other {# idle workspaces hidden.}}"
@@ -807,6 +815,10 @@ msgstr "All categories"
 #: src/screens/inbox.tsx
 msgid "All machines"
 msgstr "All machines"
+
+#: src/screens/filters.tsx
+msgid "All shows live and idle workspaces. Archived shows only removed worktrees."
+msgstr "All shows live and idle workspaces. Archived shows only removed worktrees."
 
 #: src/screens/logs.tsx
 msgid "All slots"
@@ -1716,6 +1728,10 @@ msgstr "Error"
 msgid "Errors"
 msgstr "Errors"
 
+#: src/screens/filters.tsx
+msgid "Errors in the logs"
+msgstr "Errors in the logs"
+
 #: src/components/viewer-keyboard.tsx
 #: src/components/viewer-keyboard.tsx
 msgid "Esc"
@@ -2541,6 +2557,10 @@ msgstr "No machine connected"
 msgid "No machine paired"
 msgstr "No machine paired"
 
+#: src/screens/filters.tsx
+msgid "No matching projects"
+msgstr "No matching projects"
+
 #: src/screens/inbox.tsx
 msgid "No notifications"
 msgstr "No notifications"
@@ -2858,6 +2878,10 @@ msgstr "Opens this action in the agent log"
 #: src/components/viewer-keyboard.tsx
 msgid "Option"
 msgstr "Option"
+
+#: src/screens/filters.tsx
+msgid "Options"
+msgstr "Options"
 
 #: src/lib/build-machines.ts
 msgid "Other CPU"
@@ -3342,6 +3366,12 @@ msgstr "Search (regular expression)"
 msgid "Search logs"
 msgstr "Search logs"
 
+#: src/screens/filters.tsx
+#: src/screens/filters.tsx
+#: src/screens/filters.tsx
+msgid "Search projects"
+msgstr "Search projects"
+
 #: src/components/viewer-keyboard.tsx
 msgid "Select all"
 msgstr "Select all"
@@ -3409,10 +3439,18 @@ msgstr "Show errors"
 msgid "Show fewer"
 msgstr "Show fewer"
 
+#: src/screens/filters.tsx
+msgid "Show fewer projects"
+msgstr "Show fewer projects"
+
 #: src/screens/settings.ios.tsx
 #: src/screens/settings.tsx
 msgid "Show idle workspaces"
 msgstr "Show idle workspaces"
+
+#: src/screens/filters.tsx
+msgid "Show less"
+msgstr "Show less"
 
 #: src/components/collapsible-section.tsx
 msgid "Show the first 10 {title}"

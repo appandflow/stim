@@ -27,7 +27,11 @@ export function SheetScreen({
 }: SheetScreenProps) {
   const { theme } = useUnistyles();
   return (
-    <ScrollView style={{ backgroundColor: theme.colors.background }} contentContainerStyle={styles.container(gap)}>
+    <ScrollView
+      keyboardShouldPersistTaps="handled"
+      style={{ backgroundColor: theme.colors.background }}
+      contentContainerStyle={styles.container(gap)}
+    >
       {title === undefined ? null : (
         <View style={styles.titleRow}>
           {leading}
