@@ -1,7 +1,9 @@
 import { plural, t } from '@lingui/core/macro';
 import * as Linking from 'expo-linking';
 import { Stack, useIsFocused, useRouter } from 'expo-router';
+import { useState } from 'react';
 import { View } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { StyleSheet } from 'react-native-unistyles';
 
 import { AgentSessionRow } from '@/components/agent-sessions';
@@ -23,6 +25,7 @@ import { archiveError, archivedView } from '@/lib/archived';
 import { buildTimeline } from '@/lib/replay';
 import { buildLine } from '@/lib/workspace-view';
 import { platformName } from '@/lib/workspaces';
+import { aspectOf, fitRect, type Rect } from '@/lib/zoom';
 import type { DevicePlatform, ReplayRange } from '@/protocol/types';
 import { LastBuildDetails } from '@/screens/build-details';
 
@@ -154,7 +157,7 @@ export function ArchivedReplay({ archive, platform }: { archive: string; platfor
   const range = useReplayRangeState({ archive, platform, slot: 'default' }, focused && foreground);
   const title = t`Archived replay`;
   return (
-    <ScrollView contentInsetAdjustmentBehavior="automatic" contentContainerStyle={styles.content}>
+    <SafeAreaView edges={['bottom', 'left', 'right']} style={styles.replay}>
       <Stack.Screen options={{ title }} />
       {range.error ? <Text tone="secondary">{archiveError(range.error, 'replay')}</Text> : null}
       {range.data?.spans.length ? (
@@ -162,7 +165,7 @@ export function ArchivedReplay({ archive, platform }: { archive: string; platfor
       ) : !range.error ? (
         <Text tone="secondary">{range.data ? t`No recording available.` : t`Loading...`}</Text>
       ) : null}
-    </ScrollView>
+    </SafeAreaView>
   );
 }
 
@@ -181,16 +184,17 @@ function RecordedDevice({
     { archive, platform, slot: 'default' },
     { enabled: focused && foreground, fps: 5, maxEdge: 1280, video: VIDEO, startAt: range.spans[0].start },
   );
-  const source = stream.video ?? stream.frame;
+  const [stage, setStage] = useState<Rect>([0, 0, 0, 0]);
+  const [, , width, height] = fitRect(aspectOf(stream.video ?? stream.frame) ?? 0.5, stage);
   const timeline = buildTimeline(range.spans);
   return (
     <View style={styles.recording}>
-      <DeviceScreen
-        stream={stream}
-        recorded
-        label={platformName(platform)}
-        style={{ aspectRatio: source ? source.width / source.height : 0.5 }}
-      />
+      <View
+        style={styles.stage}
+        onLayout={({ nativeEvent: { layout } }) => setStage([0, 0, layout.width, layout.height])}
+      >
+        <DeviceScreen stream={stream} recorded label={platformName(platform)} style={{ width, height }} />
+      </View>
       <ReplayBar
         archived
         timeline={timeline}
@@ -211,5 +215,7 @@ function RecordedDevice({
 const VIDEO: 'h264'[] = ['h264'];
 const styles = StyleSheet.create((theme) => ({
   content: { padding: theme.space.lg, gap: theme.space.lg, backgroundColor: theme.colors.background },
-  recording: { gap: theme.space.md },
+  replay: { flex: 1, padding: theme.space.lg, backgroundColor: theme.colors.background },
+  recording: { flex: 1, gap: theme.space.md },
+  stage: { flex: 1, alignItems: 'center', justifyContent: 'center' },
 }));

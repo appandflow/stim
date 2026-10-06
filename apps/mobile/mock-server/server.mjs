@@ -87,6 +87,17 @@ const overlaid = (payload) => {
 };
 const status = () => {
   const payload = overlaid(shiftTimestamps(fixtures.status, shiftMs));
+  const archived = payload.archived ?? [];
+  payload.archivedUsage = {
+    count: archived.length,
+    bytes: archived.reduce((sum, archive) => sum + archive.bytes.total, 0),
+    byKind: Object.fromEntries(
+      ['logs', 'recordings', 'agentActions', 'record'].map((kind) => [
+        kind,
+        archived.reduce((sum, archive) => sum + archive.bytes[kind], 0),
+      ]),
+    ),
+  };
   if (!only) return payload;
   const environments = payload.environments.filter((env) => only.test(env.path));
   const live = environments.filter((env) => env.live);
