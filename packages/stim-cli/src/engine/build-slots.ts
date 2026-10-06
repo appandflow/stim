@@ -33,6 +33,7 @@ interface AcquireBuildSlotOptions extends TryAcquireBuildSlotOptions {
 }
 
 export interface BuildSlotHandle {
+  slotWaitMs?: number;
   acquired?: true;
   unlimited?: true;
   path?: string;
@@ -120,10 +121,12 @@ export async function acquireBuildSlot({
   if (!max || max <= 0) return { acquired: true, unlimited: true };
   const started = now();
   let lastProgress = started;
+  let waited = false;
   for (;;) {
     const got = tryAcquireBuildSlot({ max, root, logFile });
-    if (got) return got;
+    if (got) return { ...got, slotWaitMs: waited ? Math.max(0, Math.round(now() - started)) : 0 };
 
+    waited = true;
     const elapsed = now() - started;
     if (elapsed >= ceilingMs) {
       const err = new Error(

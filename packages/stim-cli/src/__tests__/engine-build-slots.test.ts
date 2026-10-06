@@ -105,7 +105,7 @@ describe('releaseBuildSlot', () => {
 });
 
 describe('acquireBuildSlot', () => {
-  test('a queued build keeps its progress cadence and points to concurrency guidance', async () => {
+  test('a queued build reports its slot wait and keeps progress pointing to concurrency guidance', async () => {
     const held = tryAcquireBuildSlot({ max: 1 });
     assert(held);
     let clock = 0;
@@ -119,6 +119,7 @@ describe('acquireBuildSlot', () => {
         if (clock === 90000) releaseBuildSlot(held);
       },
     });
+    expect(acquired.slotWaitMs).toBe(90_000);
     expect(lines).toHaveLength(2);
     expect(lines.every((line) => line.endsWith(' -- stim guide lifecycle concurrency'))).toBe(true);
     expect(lines[0]).toContain('30s elapsed');
@@ -126,9 +127,23 @@ describe('acquireBuildSlot', () => {
     releaseBuildSlot(acquired);
   });
 
+  test('a free slot reports no wait even when acquiring the claim takes time', async () => {
+    let clock = 0;
+    const got = await acquireBuildSlot({
+      max: 1,
+      now: () => clock++,
+      sleep: async () => {
+        throw new Error('a free slot must not sleep');
+      },
+    });
+    expect(got.slotWaitMs ?? 0).toBe(0);
+    releaseBuildSlot(got);
+  });
+
   test('unlimited (max 0) acquires immediately without a slot on disk', async () => {
     const got = await acquireBuildSlot({ max: 0 });
     expect(got.unlimited).toBe(true);
+    expect(got.slotWaitMs ?? 0).toBe(0);
     expect(existsSync(buildSlotsDir())).toBe(false);
   });
 });

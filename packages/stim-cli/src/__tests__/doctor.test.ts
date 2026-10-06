@@ -17,6 +17,7 @@ import { Command } from 'commander';
 import { getProject } from '../workspace/config.ts';
 import {
   checkBuildCacheProvider,
+  checkOffloadCandidate,
   checkCompilationCache,
   checkCcacheConflict,
   checkCcacheInstalled,
@@ -38,6 +39,7 @@ import {
   checkAndroidSdk,
 } from '../diagnostics/doctor.ts';
 import doctorCommand, { doctorSuccessLines, parseDoctorPlatform, shadowedStimFinding } from '../commands/doctor.ts';
+import { statsFile, type StatsPlacement } from '@stim-cli/core/state';
 import type { Finding } from '../diagnostics/doctor.ts';
 import { resetExecutor, setExecutor } from '../exec.ts';
 import type { EasAuthResult } from '../engine/remote-cache.ts';
@@ -62,6 +64,119 @@ beforeEach(() => {
 afterEach(() => {
   delete process.env.STIM_HOME;
   rmSync(testHome, { recursive: true, force: true });
+});
+
+describe('offload-candidate', () => {
+  const now = Date.parse('2026-10-06T12:00:00Z');
+  const peer = { OS: 'macOS', Online: true };
+  const cold: StatsPlacement = {
+    at: new Date(now).toISOString(),
+    project: '/app',
+    platform: 'ios',
+    decision: 'here',
+    reason: 'no build machine is paired',
+    buildMs: 240_000,
+  };
+
+  test('three local cold builds averaging over three minutes suggest Desktop build machine setup', () => {
+    const result = checkOffloadCandidate(
+      [cold, { ...cold, buildMs: 180_000 }, { ...cold, buildMs: 300_000 }],
+      [],
+      [peer],
+      now,
+    );
+    expect(result).toEqual({
+      code: 'offload-candidate',
+      level: 'note',
+      title: 'offload-candidate',
+      detail: 'Cold builds averaged ~4 min over 3 builds this week.',
+      fix: 'In Stim Desktop, open Settings > Build machines > Add.',
+    });
+  });
+
+  test.each([
+    ['two builds', [cold, cold]],
+    ['exactly three minutes', [cold, cold, { ...cold, buildMs: 60_000 }]],
+    ['under three minutes', [cold, cold, { ...cold, buildMs: 30_000 }]],
+    ['older than a week', [cold, cold, { ...cold, at: new Date(now - 7 * 86_400_000 - 1).toISOString() }]],
+    ['failed', [cold, cold, { ...cold, failed: true }]],
+    ['offloaded', [cold, cold, { ...cold, decision: 'offloaded' }]],
+    ['fell back', [cold, cold, { ...cold, decision: 'fell-back' }]],
+    ['without compile time', [cold, cold, { ...cold, buildMs: undefined }]],
+    ['zero compile time', [cold, cold, { ...cold, buildMs: 0 }]],
+  ] satisfies [string, StatsPlacement[]][])(
+    'does not count %s as three slow local cold builds',
+    (_name, placements) => {
+      expect(checkOffloadCandidate(placements, [], [peer], now)).toBeNull();
+    },
+  );
+
+  test('a build exactly one week old still counts', () => {
+    expect(
+      checkOffloadCandidate(
+        [cold, cold, { ...cold, at: new Date(now - 7 * 86_400_000).toISOString() }],
+        [],
+        [peer],
+        now,
+      ),
+    ).not.toBeNull();
+  });
+
+  test('configured build machines suppress the candidate', () => {
+    expect(checkOffloadCandidate([cold, cold, cold], ['mini'], [peer], now)).toBeNull();
+  });
+
+  test.each([
+    { name: 'no peers', peers: [] },
+    { name: 'a Linux peer', peers: [{ OS: 'linux', Online: true }] },
+    { name: 'an offline Mac', peers: [{ OS: 'macOS', Online: false }] },
+  ])('an online Mac peer is required: $name', ({ peers }) => {
+    expect(checkOffloadCandidate([cold, cold, cold], [], peers, now)).toBeNull();
+  });
+
+  test('doctor reads retained placements and treats a failed peer lookup as no candidate', () => {
+    setExecutor({ runQuiet: () => null, runFileQuiet: () => null });
+    const project = join(testHome, 'app');
+    mkdirSync(project);
+    writeFileSync(join(project, 'package.json'), JSON.stringify({ dependencies: { 'react-native': '*' } }));
+    writeFileSync(
+      statsFile(),
+      JSON.stringify({ version: 1, machine: {}, projects: {}, placements: [cold, cold, cold] }),
+    );
+    const options = {
+      host: 'linux' as const,
+      platform: 'ios' as const,
+      now: () => now,
+      concurrency: { maxBuilds: 0, maxDevices: 0 },
+    };
+    try {
+      expect(
+        runDoctor(project, { ...options, tailnetStatus: () => ({ Peer: { mini: peer } }) }).find(
+          (entry) => entry.code === 'offload-candidate',
+        ),
+      ).toEqual(checkOffloadCandidate([cold, cold, cold], [], [peer], now));
+      expect(
+        runDoctor(project, {
+          ...options,
+          tailnetStatus: () => {
+            throw new Error('Tailscale unavailable');
+          },
+        }).some((entry) => entry.code === 'offload-candidate'),
+      ).toBe(false);
+      writeFileSync(
+        join(testHome, 'config.json'),
+        JSON.stringify({ version: 1, projects: {}, offload: { machines: ['mini'] } }),
+      );
+      expect(
+        runDoctor(project, {
+          ...options,
+          tailnetStatus: () => ({ Peer: { mini: peer } }),
+        }).some((entry) => entry.code === 'offload-candidate'),
+      ).toBe(false);
+    } finally {
+      resetExecutor();
+    }
+  });
 });
 
 test('checkMainCheckout reports missing dependencies, Pods, and native output', () => {

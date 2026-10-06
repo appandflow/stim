@@ -324,6 +324,54 @@ describe('build placements', () => {
     expect(record.buildMachines).toBeUndefined();
   });
 
+  test.each([
+    { slotWaitMs: 12.6, expected: { slotWaitMs: 13 } },
+    { slotWaitMs: 0, expected: {} },
+  ])('a compiling run persists whole positive slot wait milliseconds ($slotWaitMs)', ({ slotWaitMs, expected }) => {
+    const recorder = createRunRecorder({
+      platform: 'ios',
+      write: recordRunStats,
+      now: () => T0,
+      note: () => {},
+    });
+    recorder.setProject(root);
+    recorder.setCacheKey('ios-abc');
+    recorder.setBuildMs(250_000);
+    recorder.setPlacement({ ...here, slotWaitMs });
+    recorder.record({ failed: false, durationMs: 300_000 });
+
+    const stored = JSON.parse(readFileSync(statsFile(), 'utf-8')).placements[0];
+    const loaded = readStats().record?.placements?.[0];
+    expect(stored).toEqual({
+      ...here,
+      at: new Date(T0).toISOString(),
+      project: root,
+      platform: 'ios',
+      buildMs: 250_000,
+      ...expected,
+    });
+    expect(loaded).toEqual(stored);
+  });
+
+  test.each([-1, 0, 'invalid', 'Infinity', null, {}])(
+    'invalid slot wait values are dropped on read (%s)',
+    (slotWaitMs) => {
+      writeFileSync(
+        statsFile(),
+        JSON.stringify({
+          ...emptyStats(),
+          placements: [
+            { ...here, at: new Date(T0).toISOString(), project: root, platform: 'ios', buildMs: 250_000, slotWaitMs },
+          ],
+        }),
+      );
+
+      const placement = readStats().record?.placements?.[0];
+      expect(placement?.buildMs).toBe(250_000);
+      expect(placement).not.toHaveProperty('slotWaitMs');
+    },
+  );
+
   test('a fallback counts against its machine', () => {
     const record = updateStats(
       emptyStats(),
@@ -752,7 +800,10 @@ describe('stim stats', async () => {
     let record = updateStats(emptyStats(), run({ coldBuildMs: 300_000 }), now);
     record = updateStats(
       record,
-      run({ coldBuildMs: 290_000, placement: { decision: 'here', reason: 'load 0.6/core, 1 build here' } }),
+      run({
+        coldBuildMs: 290_000,
+        placement: { decision: 'here', reason: 'load 0.6/core, 1 build here', slotWaitMs: 25_000 },
+      }),
       now,
     );
     record = updateStats(
@@ -773,6 +824,8 @@ describe('stim stats', async () => {
       fallbacks: 0,
     });
     expect(json.offload.placements.map((each: { decision: string }) => each.decision)).toEqual(['offloaded', 'here']);
+    expect(json.offload.placements[1].slotWaitMs).toBe(25_000);
+    expect(json.offload.placements[0]).not.toHaveProperty('slotWaitMs');
     expect(plain).toContain('build placement');
     expect(plain.some((line) => line.includes('here: load 0.6/core, 1 build here'))).toBe(true);
   });

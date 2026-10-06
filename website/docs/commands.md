@@ -83,6 +83,8 @@ registers the project for `stim status`, and a run without `--platform` counts
 for both, so `stim guide` can tell when doctor is due again. A run in a
 directory that is not an app records nothing.
 
+The `offload-candidate` note appears after at least 3 successful local cold builds in 7 days average over 3 minutes, with no `offload.machines` and an online tailnet Mac; it points to Stim Desktop **Settings > Build machines > Add**.
+
 Doctor also prints the running CLI version and the `stim` installation resolved
 from `PATH`, and flags a resolved installation that is older than another
 available one.
@@ -1254,8 +1256,7 @@ prints (`build       still compiling (1m00s of ~3m10s)`). The saved figure is
 an estimate: each cache hit is credited this project's mean cold run at that
 moment, minus its own duration, floored at zero.
 
-While a [build machine](./settings.md#machine-settings) is paired, every run
-that compiles also records its placement: where it built (`here`,
+Every run that compiles also records its placement: where it built (`here`,
 `offloaded`, or `fell-back` when it tried a machine and built here), the
 reason the run printed on its `placement:` line, the build time and this
 project's last cold build here to compare it with. `offload.placements` lists
@@ -1263,7 +1264,7 @@ the last 100 from the last 7 days, newest first. `offload.machines` gives each
 build machine's offloaded builds, offloaded time, estimated time saved and
 fallbacks, for today (this Mac's calendar day) and in total. The plain output
 adds a `build placement` section with the same counts and the last 5
-placements. `stim guide facts stats` has every field.
+placements. Placements include `slotWaitMs` as whole milliseconds waiting for a build slot only when positive. `stim guide facts stats` has every field.
 
 The top-level JSON `agentDevice` reports agent-device disk usage: `version: 1`,
 `measuredAt`, total known `bytes`, `complete`, `stateDir`, `runnerBuilds`,
