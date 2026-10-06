@@ -47,6 +47,11 @@ public enum AppPreferences {
     public static let viewerShowsActions = "viewer.showsActions"
     public static let viewerOfferDismissed = "onboarding.viewerOfferDismissed"
 
+    public static let discoveryLaunches = "discovery.launches"
+    public static let discoveryLastShown = "discovery.lastShown"
+    public static let discoverySeenPeers = "discovery.seenPeers"
+    public static func discovery(_ type: DiscoveryType) -> String { "discovery.\(type.rawValue)" }
+
     public static func notifies(_ kind: StatusEvent.Kind) -> String { "notify.\(kind.rawValue)" }
     public static func sectionCollapsed(_ id: String) -> String { "section.\(id).collapsed" }
     public static func sectionShowsAll(_ id: String) -> String { "section.\(id).showsAll" }

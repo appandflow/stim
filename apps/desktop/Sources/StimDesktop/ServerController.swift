@@ -50,8 +50,13 @@ final class ServerController: ObservableObject {
     }
   }
 
-  @Published private(set) var state = State.off
+  @Published private(set) var state = State.off {
+    didSet {
+      if case .running = state {} else { hasDeviceList = false }
+    }
+  }
   @Published private(set) var devices: [PairedDevice] = []
+  private var hasDeviceList = false
   @Published private(set) var devicesError: String?
   @Published private(set) var changeError: String?
   @Published private(set) var pendingGrants: [String: Bool] = [:]
@@ -277,15 +282,22 @@ final class ServerController: ObservableObject {
     }
   }
 
+  var pairedPhoneCount: Int? {
+    guard case .running = state, hasDeviceList, devicesError == nil else { return nil }
+    return devices.filter(\.isPhone).count
+  }
+
   func reloadDevices() {
     let epoch = devicesEpoch
+    let current = generation
     let health: ServerHealth? = if case .running(let health, _) = state { health } else { nil }
     Task {
       let cli = await cli()
       let result = await Result.awaiting { try await cli.devices() }
-      guard epoch == devicesEpoch else { return }
+      guard epoch == devicesEpoch, current == generation else { return }
       switch result {
       case .success(let devices):
+        hasDeviceList = health != nil
         let own = health.flatMap { ServerSession.ownDeviceID(home: $0.stimHome) }
         self.devices = devices.filter { $0.id != own }.map { device in
           guard let control = pendingGrants[device.id] else { return device }

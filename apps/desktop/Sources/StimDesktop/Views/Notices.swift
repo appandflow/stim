@@ -13,6 +13,12 @@ struct Notice: Identifiable {
   var onDismiss: (@MainActor () -> Void)?
   var key: String?
   var workspacePath: String?
+  struct Action {
+    var title: String
+    var perform: @MainActor () -> Void
+  }
+  var secondaryAction: Action?
+  var alternateAction: Action?
 }
 
 @MainActor
@@ -107,7 +113,7 @@ private struct NoticeCard: View {
   var body: some View {
     Banner(tone: notice.tone, icon: notice.icon, style: .floating, onDismiss: { center.dismiss(notice.id) }) {
       if center.notices.count > 1 { stepper }
-      Text(notice.title).font(.stim(.headline)).lineLimit(2)
+      Text(notice.title).font(.stim(.headline)).fixedSize(horizontal: false, vertical: true)
       if let detail = notice.detail {
         Text(detail).foregroundStyle(Palette.secondary).lineLimit(1).truncationMode(.middle)
       }
@@ -117,6 +123,24 @@ private struct NoticeCard: View {
       }
       .buttonStyle(.stim(.primary))
       .padding(.top, Space.xxs)
+      if let secondary = notice.secondaryAction {
+        VStack(alignment: .leading, spacing: Space.xxs) {
+          Button(secondary.title) {
+            center.remove(notice.id)
+            secondary.perform()
+          }
+          .buttonStyle(.plain)
+          if let alternate = notice.alternateAction {
+            Button(alternate.title) {
+              center.remove(notice.id)
+              alternate.perform()
+            }
+            .buttonStyle(.plain)
+          }
+        }
+        .foregroundStyle(Palette.secondary)
+        .font(.stim(.caption))
+      }
     }
     .accessibilityElement(children: .contain)
   }

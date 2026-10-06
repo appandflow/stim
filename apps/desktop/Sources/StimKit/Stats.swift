@@ -63,6 +63,7 @@ public struct BuildPlacements: Decodable, Sendable {
     public var buildMs: Double?
     public var localEstimateMs: Double?
     public var failed: Bool?
+    public var slotWaitMs: Double?
 
     /// The reason without the `<machine>: ` prefix a fallback carries, since `title` already names the machine.
     public var shortReason: String {

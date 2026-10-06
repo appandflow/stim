@@ -28,6 +28,7 @@
     case hostedIos = "Hosted iOS"
     case settings = "Settings"
     case addMachine = "Add build machine"
+    case discovery = "Suggestions"
     case tokens = "Design tokens"
     var id: Self { self }
 
@@ -40,7 +41,7 @@
       case .hostedIos: return [.ready, .loading, .error, .empty]
       case .simulator: return [.ready, .loading, .empty, .error]
       case .settings: return [.ready, .loading, .empty, .error, .longText]
-      case .tokens, .addMachine: return [.ready]
+      case .tokens, .addMachine, .discovery: return [.ready]
       }
     }
   }
@@ -140,6 +141,8 @@
           }
         }
         .padding(Space.md)
+      case .discovery:
+        DiscoveryPlayground()
       case .addMachine:
         AddMachinePlayground()
       case .tokens:

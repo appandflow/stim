@@ -43,6 +43,8 @@ final class AddMachineModel {
   private(set) var error: String?
   private(set) var serverNotReady = false
   private(set) var now: Date
+  private var preferredMachineID: String?
+  private var prefersHostedSimulators = false
   var selectedId: String?
   var manualPort = ""
   var isFixture = false
@@ -184,10 +186,23 @@ final class AddMachineModel {
     Task { await sample?.end() }
   }
 
+  func preselect(machineID: String?, hostedSimulators: Bool) {
+    preferredMachineID = machineID
+    prefersHostedSimulators = hostedSimulators
+    applyPreselection()
+  }
+
+  private func applyPreselection() {
+    if selectedId == nil, let preferredMachineID, peers.contains(where: { $0.id == preferredMachineID }) {
+      selectedId = preferredMachineID
+    }
+  }
+
   func refreshPeers() async {
     guard !isFixture else { return }
     statusJSON = await dependencies.status()
     peers = statusJSON.map(Tailnet.peers) ?? []
+    applyPreselection()
     selfNode = statusJSON.flatMap(Tailnet.selfNode)
     await withTaskGroup(of: (String, Tailnet.Health?).self) { group in
       for peer in peers where peer.online {
@@ -207,6 +222,10 @@ final class AddMachineModel {
   func pick() async {
     guard reachability == .ready, let selected, selfNode != nil else { return }
     await send(.macChosen(selected.mac))
+    if wizard.phase == .choose, prefersHostedSimulators {
+      setCapability(.deviceHost, enabled: true)
+      setCapability(.build, enabled: false)
+    }
     draftTicket = dependencies.ticket(dependencies.now())
     if let checkout {
       do {
