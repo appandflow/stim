@@ -116,10 +116,12 @@ struct TerminalCard: View {
 
   private func typeLiveLines() async {
     let changed = TerminalLine.indexesToType(previous: previousLines, lines: lines)
-    previousLines = lines
     liveLines = lines
     cursorOn = true
-    guard !reduceMotion else { return }
+    guard !reduceMotion else {
+      previousLines = lines
+      return
+    }
     let visible = TerminalLine.visibleWindow(lines, maxVisibleLines: lineLimit)
     let indexes = changed.filter { visible.indices.contains($0) }
     for index in indexes { liveLines[index].text = "" }
@@ -129,6 +131,8 @@ struct TerminalCard: View {
         liveLines[index].text.append(character)
         try? await Task.sleep(for: .milliseconds(index == 0 ? 55 : 30))
       }
+      previousLines = Array(lines.prefix(index + 1)) + previousLines.dropFirst(index + 1)
     }
+    previousLines = lines
   }
 }
