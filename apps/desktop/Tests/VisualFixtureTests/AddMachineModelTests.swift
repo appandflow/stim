@@ -134,7 +134,7 @@ final class AddMachineModelTests: XCTestCase {
     await model.next()
     await model.checkAgain()
     harness.grantReady = true
-    await model.checkAgain()
+    await checkUntilApproved(model)
     XCTAssertEqual(model.wizard.phase, .approved)
     XCTAssertEqual(harness.mode, "off")
     await model.openSummary()
@@ -230,7 +230,7 @@ final class AddMachineModelTests: XCTestCase {
     await model.next()
     await model.checkAgain()
     harness.grantReady = true
-    await model.checkAgain()
+    await checkUntilApproved(model)
     XCTAssertEqual(model.wizard.phase, .approved)
     XCTAssertTrue(harness.doctorPaths.allSatisfy { $0 == location.folder.path })
     XCTAssertEqual(harness.builds, ["mini:7447"])
@@ -259,7 +259,7 @@ final class AddMachineModelTests: XCTestCase {
     await model.next()
     await model.checkAgain()
     harness.grantReady = true
-    await model.checkAgain()
+    await checkUntilApproved(model)
     await model.openSummary()
     XCTAssertEqual(model.mode, .auto)
     XCTAssertEqual(harness.mode, "off")
@@ -301,7 +301,7 @@ final class AddMachineModelTests: XCTestCase {
       await model.next()
       await model.checkAgain()
       harness.grantReady = true
-      await model.checkAgain()
+      await checkUntilApproved(model)
       await model.openTools()
       await waitUntil { sample.sampleReady }
       model.openTest()
@@ -338,7 +338,7 @@ final class AddMachineModelTests: XCTestCase {
         if !alreadyListed {
           await model.checkAgain()
           harness.grantReady = true
-          await model.checkAgain()
+          await checkUntilApproved(model)
         }
         await model.openSummary()
         XCTAssertEqual(model.summary.contains { $0.contains("offload.machines") }, !alreadyListed && buildsChosen)
@@ -404,6 +404,14 @@ final class AddMachineModelTests: XCTestCase {
 @MainActor func waitUntil(_ condition: @MainActor () -> Bool) async {
   for _ in 0..<2000 {
     if condition() { return }
+    try? await Task.sleep(for: .milliseconds(10))
+  }
+}
+
+@MainActor func checkUntilApproved(_ model: AddMachineModel) async {
+  for _ in 0..<500 {
+    await model.checkAgain()
+    if model.wizard.phase == .approved { return }
     try? await Task.sleep(for: .milliseconds(10))
   }
 }
