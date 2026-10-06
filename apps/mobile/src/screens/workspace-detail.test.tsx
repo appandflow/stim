@@ -57,6 +57,10 @@ jest.mock('@/components/touch', () => ({
   Touch: jest.requireActual<typeof import('react-native')>('react-native').Pressable,
 }));
 jest.mock('@/components/icon', () => ({ Icon: () => null }));
+jest.mock('@/components/brand-animation', () => ({
+  BrandAnimation: () => null,
+  deviceWaitAnimation: () => 'device-boot-ios',
+}));
 jest.mock('@/components/platform-glyph', () => ({
   PlatformGlyph: ({ platform }: { platform: string }) => {
     const { Text } = jest.requireActual('react-native');

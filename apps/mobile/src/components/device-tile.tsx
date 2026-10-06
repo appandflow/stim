@@ -6,6 +6,7 @@ import { useRef, useState, type ReactNode } from 'react';
 import { View, type ViewInstance } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
+import { BrandAnimation, deviceWaitAnimation } from '@/components/brand-animation';
 import { Card } from '@/components/card';
 import { HostLabel } from '@/components/host-label';
 import { Icon } from '@/components/icon';
@@ -202,9 +203,14 @@ export function DeviceTile({
               ) : null}
             </Touch>
           ) : (
-            <Text variant="footnote" style={styles.waiting}>
-              {error ?? t`Waiting for frames`}
-            </Text>
+            <View style={styles.waitingState} pointerEvents="none">
+              {!error ? (
+                <BrandAnimation name={deviceWaitAnimation(device.platform)} width={112} playing onDark />
+              ) : null}
+              <Text variant="footnote" style={styles.waiting}>
+                {error ?? t`Waiting for frames`}
+              </Text>
+            </View>
           )}
         </View>
       )}
@@ -305,6 +311,7 @@ const styles = StyleSheet.create((theme) => ({
     backgroundColor: theme.media.screen,
     padding: SCREEN_PADDING,
   },
+  waitingState: { alignItems: 'center', gap: theme.space.sm },
   waiting: { textAlign: 'center', color: theme.media.textTertiary },
   away: { opacity: 0 },
   dimmed: { opacity: 0.35 },

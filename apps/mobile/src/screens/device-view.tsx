@@ -726,6 +726,7 @@ export function DeviceView({
                 <Animated.View style={[styles.flying, zoom.screenStyle, lift]}>
                   <DeviceFrame artwork={snapshot ? null : activeArtwork}>
                     <DeviceScreen
+                      platform={platform}
                       stream={heldFrame ? { ...stream, frame: heldFrame, video: null } : stream}
                       label={model}
                       style={StyleSheet.absoluteFill}

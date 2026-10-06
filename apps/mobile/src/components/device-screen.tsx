@@ -4,8 +4,10 @@ import { useEffect, useState, type ReactNode } from 'react';
 import { View, type ViewProps } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
+import { BrandAnimation, deviceWaitAnimation } from '@/components/brand-animation';
 import { Text } from '@/components/text';
 import type { DeviceStream } from '@/hooks/device-stream';
+import type { DevicePlatform } from '@/protocol/types';
 import { StimVideoView, supportsFrameOrientation } from '../../modules/stim-video/src';
 
 /**
@@ -20,6 +22,7 @@ export function DeviceScreen({
   style,
   children,
   requested,
+  platform,
 }: {
   stream: DeviceStream;
   recorded?: boolean;
@@ -28,11 +31,17 @@ export function DeviceScreen({
   children?: ReactNode;
   /** The fps and max edge asked of the server, shown in the dev-only stats overlay next to the measured rate. */
   requested?: { fps: number; maxEdge: number };
+  platform?: DevicePlatform;
 }) {
+  const [animationFits, setAnimationFits] = useState(false);
   const source = stream.video ?? stream.frame;
   const screenLabel = recorded ? t`Recorded screen of ${label}` : t`Live screen of ${label}`;
   return (
-    <View style={[styles.screen, style]} accessibilityLabel={screenLabel}>
+    <View
+      style={[styles.screen, style]}
+      accessibilityLabel={screenLabel}
+      onLayout={({ nativeEvent: { layout } }) => setAnimationFits(layout.width >= 150 && layout.height >= 230)}
+    >
       <StimVideoView
         streamId={stream.streamId}
         style={StyleSheet.absoluteFill}
@@ -51,9 +60,14 @@ export function DeviceScreen({
         />
       ) : null}
       {!source ? (
-        <Text variant="footnote" tone="tertiary" style={styles.placeholder}>
-          {stream.error ?? t`Waiting for frames`}
-        </Text>
+        <View style={styles.placeholder} pointerEvents="none">
+          {!stream.error && animationFits ? (
+            <BrandAnimation name={deviceWaitAnimation(platform)} playing width={112} onDark />
+          ) : null}
+          <Text variant="footnote" tone="tertiary" style={styles.placeholderText}>
+            {stream.error ?? t`Waiting for frames`}
+          </Text>
+        </View>
       ) : null}
       {children}
       {__DEV__ ? (
@@ -102,7 +116,14 @@ const askedLabel = (fps: number, edge: number) => t` (asked ${fps}fps/${edge}px)
 
 const styles = StyleSheet.create((theme) => ({
   screen: { backgroundColor: theme.media.frame, overflow: 'hidden', justifyContent: 'center' },
-  placeholder: { textAlign: 'center', position: 'absolute', left: theme.space.lg, right: theme.space.lg },
+  placeholder: {
+    position: 'absolute',
+    left: theme.space.lg,
+    right: theme.space.lg,
+    alignItems: 'center',
+    gap: theme.space.sm,
+  },
+  placeholderText: { textAlign: 'center' },
   stats: {
     position: 'absolute',
     top: theme.space.xs,
