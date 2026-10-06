@@ -32,6 +32,7 @@ export function Filters() {
   const [query, setQuery] = useState('');
   const [searchShown, setSearchShown] = useState(false);
   const searchInput = useRef<TextInputInstance>(null);
+  const blurHidAt = useRef(0);
   const [projectOrder, setProjectOrder] = useState(() =>
     projectsByActivity([...workspaces, ...worktrees, ...archives]),
   );
@@ -132,6 +133,7 @@ export function Filters() {
                   accessibilityLabel={t`Search projects`}
                   hitSlop={12}
                   onPress={() => {
+                    if (Date.now() - blurHidAt.current < 400) return;
                     if (searchShown) setQuery('');
                     setSearchShown((shown) => !shown);
                   }}
@@ -144,11 +146,12 @@ export function Filters() {
           {canSearch && searchShown ? (
             <TextInput
               ref={searchInput}
-              autoFocus
               value={query}
               onChangeText={setQuery}
               onBlur={() => {
-                if (!query) setSearchShown(false);
+                if (query) return;
+                blurHidAt.current = Date.now();
+                setSearchShown(false);
               }}
               placeholder={t`Search projects`}
               placeholderTextColor={theme.colors.tertiary}
