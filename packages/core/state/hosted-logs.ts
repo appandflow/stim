@@ -1,4 +1,4 @@
-import { closeSync, openSync, readSync, realpathSync, statSync } from 'node:fs';
+import { closeSync, openSync, readFileSync, readSync, realpathSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { workspaceName } from '../index.ts';
 import { isJsonObject } from './json-file.ts';
@@ -10,6 +10,8 @@ export type HostedLogsCursor = Record<string, number>;
 export interface HostedLogsPage {
   records: NdjsonRecord[];
   cursor: HostedLogsCursor;
+  /** Last completed iOS collection window, for detecting catch-up progress independently of file offsets. */
+  checkpoint?: number;
   /** True when the budget ended this page before the end of the logs; ask again with `cursor`. */
   more: boolean;
 }
@@ -34,6 +36,33 @@ export function parseHostedLogsCursor(value: unknown): HostedLogsCursor | null {
 export function hostedMacosLogsDir(home: string): string | null {
   try {
     return join(home, 'workspaces', workspaceName(realpathSync(join(home, 'macos-app'))), 'logs');
+  } catch {
+    return null;
+  }
+}
+
+export const hostedIosLogsDir = (home: string): string => join(home, 'ios-logs');
+
+/** The completed query window and overlap digests, or null for a missing, malformed or unreadable checkpoint. */
+export function readHostedIosLogsCheckpoint(
+  home: string,
+): { until: number; boundary: string[]; windowMs?: number } | null {
+  try {
+    const value: unknown = JSON.parse(readFileSync(join(hostedIosLogsDir(home), 'checkpoint.json'), 'utf8'));
+    if (
+      !isJsonObject(value) ||
+      !Number.isSafeInteger(value.until) ||
+      (value.until as number) < 0 ||
+      (value.windowMs !== undefined && (!Number.isSafeInteger(value.windowMs) || (value.windowMs as number) < 1000)) ||
+      !Array.isArray(value.boundary) ||
+      !value.boundary.every((each) => typeof each === 'string' && /^[a-f0-9]{64}$/.test(each))
+    )
+      return null;
+    return {
+      until: value.until as number,
+      boundary: value.boundary as string[],
+      ...(typeof value.windowMs === 'number' ? { windowMs: value.windowMs } : {}),
+    };
   } catch {
     return null;
   }

@@ -847,6 +847,7 @@ describe('pairing', () => {
           'duo-frames',
           'workspace-diff',
           'hosted-congestion',
+          'hosted-ios-data',
           'server-update',
         ],
         actions: [],
@@ -1323,9 +1324,14 @@ describe('offloaded builds', () => {
       expect(frame.binary.subarray(32).toString()).toBe('app archive bytes');
       expect(await client.next()).toEqual({
         id: 99,
-        result: { name: 'App.app', size: 17, sha256: sha('app archive bytes') },
+        result: {
+          name: 'App.app',
+          size: 17,
+          sha256: sha('app archive bytes'),
+          handoff: expect.stringMatching(/^[0-9a-f]{64}$/),
+        },
       });
-      expect(existsSync(join(area, 'out', job))).toBe(false);
+      expect(existsSync(join(area, 'out', job))).toBe(true);
       expect(readAudit()).toMatchObject([{ action: 'build', workspace: 'app-1', ok: true }]);
 
       const viewer = await authed(port);
@@ -1593,7 +1599,7 @@ describe('offloaded builds', () => {
       });
       expect(existsSync(own.out)).toBe(false);
       expect(await handoff(own.build)).toHaveProperty('error.message', expect.stringContaining('no longer holds'));
-      const blobs = join(deviceHostArea(session), 'apps', 'app', 'blobs');
+      const blobs = join(deviceHostArea(session), 'blobs');
       expect(readFileSync(join(blobs, sha('APPL????')), 'utf8')).toBe('APPL????');
       expect(readFileSync(join(blobs, sha('MacOS')), 'utf8')).toBe('MacOS');
       const offered = await hosting.request('device-host.app.offer', app);

@@ -322,9 +322,30 @@ Reload returns a JSON error with that remedy when no other app can reload;
 logs remain readable. Unknown selection or agent metadata is normalized
 without discarding the owner. devices.idleShutdownMinutes
 does not stop a hosted simulator in this phase; its recorded session keeps Metro
-from idle stopping. Native hosted iOS logs are not collected yet; JavaScript
-logs already arrive through Metro. App handoff, upload deduplication and agent
-control are later work.
+from idle stopping. Reruns upload only missing manifest and file digests from a
+session-scoped store; the host verifies bytes before reuse. When the iOS build
+ran on the hosting Mac's pinned node, it takes matching files from that build.
+A refused or timed-out handoff falls back to upload, retrying a still-busy host
+for at most one minute.
+
+stim logs and stim logs --errors pull native device records from bounded host
+queries. Concurrent followers share a collection, throttled per session, without
+blocking app delivery, viewing or control. Stop limits each log drain to 30 seconds with
+progress on stderr and a no-progress guard. The host collects a bounded final
+tail before deletion, including on revocation or server close; stop copies it
+back afterwards. If the final collection drops a backlog interval and eventually
+succeeds, a device warning record names that interval. A damaged collection checkpoint is ignored and
+rebuilt; it never blocks reading collected records. The client waits up to
+180 seconds for stop. The final collection and worker termination paths fit within
+that wait; an in-flight handoff copy and closing Metro or view transports are
+outside those worker bounds.
+Collected records remain in the session home after deletion;
+app blobs and materialized bundles are removed. Native queries read persisted
+entries, overlap by five seconds and de-duplicate; info-level or later-persisted
+entries may be unavailable. JavaScript logs arrive through Metro.
+The host advertises hosted-ios-data for iOS handoff and native logs. An older
+host gets an update note, uses uploads and shows logs already copied here.
+Agent control is later work.
 
 Stim Desktop and the phone app view and control the simulator through this
 Mac's stim-server relay, with an "on <machine>" label. Turn on Serve to phones

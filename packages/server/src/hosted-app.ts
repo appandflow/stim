@@ -22,6 +22,9 @@ import { withDirLock } from '@stim-cli/core';
 import {
   HOSTED_APP_CHUNK_BYTES,
   hostedAppArea,
+  hostedAppBlobs,
+  validHostedAppBlob,
+  rememberHostedAppBlobRename,
   isJsonObject,
   readHostedApp,
   readHostedAppMetadata,
@@ -60,48 +63,72 @@ export function offerHostedApp(offer: HostedAppOffer): {
   delivery: HostedAppDelivery;
   missing: { sha256: string; size: number; offset: number }[];
 } {
-  const next = {
-    session: offer.session,
-    attempt: offer.attempt,
-    bundleId: offer.bundleId,
-    mode: offer.mode,
-    ...(offer.devClientScheme ? { devClientScheme: offer.devClientScheme } : {}),
-    ...(offer.arguments ? { arguments: offer.arguments } : {}),
-    manifest: offer.manifest,
-  };
-  const area = hostedAppArea(offer.session, offer.attempt);
-  const record = withDirLock(
-    `${area}.lock`,
+  const blobs = hostedAppBlobs(offer.session);
+  return withDirLock(
+    `${blobs}.lock`,
     () => {
-      if (!existsSync(area)) {
-        mkdirSync(join(area, 'blobs'), { recursive: true, mode: 0o700 });
-        writeHostedApp({ ...next, files: [], state: 'receiving', launched: null });
-      }
-      const stored = readHostedApp(offer.session, offer.attempt);
-      const previous = {
-        session: stored.session,
-        attempt: stored.attempt,
-        bundleId: stored.bundleId,
-        mode: stored.mode,
-        ...(stored.devClientScheme ? { devClientScheme: stored.devClientScheme } : {}),
-        ...(stored.arguments ? { arguments: stored.arguments } : {}),
-        manifest: stored.manifest,
+      mkdirSync(blobs, { recursive: true, mode: 0o700 });
+      const manifest = join(blobs, offer.manifest.sha256);
+      if (existsSync(manifest) && !validHostedAppBlob(manifest, offer.manifest)) rmSync(manifest, { force: true });
+      const next = {
+        session: offer.session,
+        attempt: offer.attempt,
+        bundleId: offer.bundleId,
+        mode: offer.mode,
+        ...(offer.devClientScheme ? { devClientScheme: offer.devClientScheme } : {}),
+        ...(offer.arguments ? { arguments: offer.arguments } : {}),
+        manifest: offer.manifest,
       };
-      if (JSON.stringify(previous) !== JSON.stringify(next))
-        throw new Error('This app attempt already describes different content.');
-      return stored;
+      const area = hostedAppArea(offer.session, offer.attempt);
+      const record = withDirLock(
+        `${area}.lock`,
+        () => {
+          if (!existsSync(area)) {
+            mkdirSync(area, { recursive: true, mode: 0o700 });
+            writeHostedApp({ ...next, files: [], state: 'receiving', launched: null });
+          }
+          const stored = readHostedApp(offer.session, offer.attempt);
+          const previous = {
+            session: stored.session,
+            attempt: stored.attempt,
+            bundleId: stored.bundleId,
+            mode: stored.mode,
+            ...(stored.devClientScheme ? { devClientScheme: stored.devClientScheme } : {}),
+            ...(stored.arguments ? { arguments: stored.arguments } : {}),
+            manifest: stored.manifest,
+          };
+          if (JSON.stringify(previous) !== JSON.stringify(next))
+            throw new Error('This app attempt already describes different content.');
+          return stored;
+        },
+        { ensureParent: () => mkdirSync(join(area, '..'), { recursive: true, mode: 0o700 }) },
+      );
+      const missing = [
+        ...new Map(
+          (record.files.length ? record.files : [record.manifest]).map((file) => [file.sha256, file]),
+        ).values(),
+      ].flatMap((file) => {
+        const complete = join(blobs, file.sha256);
+        if (validHostedAppBlob(complete, file)) return [];
+        rmSync(complete, { force: true });
+        const partial = `${complete}.part`;
+        const stat = lstatSync(partial, { throwIfNoEntry: false });
+        if (stat && (!stat.isFile() || stat.size >= file.size)) {
+          if (validHostedAppBlob(partial, file)) {
+            renameSync(partial, complete);
+            rememberHostedAppBlobRename(partial, complete, file);
+            return [];
+          }
+          rmSync(partial, { force: true });
+        }
+        return [
+          { sha256: file.sha256, size: file.size, offset: stat?.isFile() && stat.size < file.size ? stat.size : 0 },
+        ];
+      });
+      return { delivery: appDelivery(record), missing };
     },
-    { ensureParent: () => mkdirSync(join(area, '..'), { recursive: true, mode: 0o700 }) },
+    { ensureParent: () => mkdirSync(join(blobs, '..'), { recursive: true, mode: 0o700 }) },
   );
-  const missing = [
-    ...new Map((record.files.length ? record.files : [record.manifest]).map((file) => [file.sha256, file])).values(),
-  ]
-    .filter((file) => !existsSync(join(area, 'blobs', file.sha256)))
-    .map((file) => {
-      const partial = join(area, 'blobs', `${file.sha256}.part`);
-      return { sha256: file.sha256, size: file.size, offset: existsSync(partial) ? statSync(partial).size : 0 };
-    });
-  return { delivery: appDelivery(record), missing };
 }
 
 async function digest(path: string): Promise<string> {
@@ -131,14 +158,17 @@ export async function chunkHostedApp(record: HostedAppRecord, params: unknown): 
   const start = params.offset;
   if (bytes.length > HOSTED_APP_CHUNK_BYTES || params.offset + bytes.length > file.size || (!bytes.length && file.size))
     throw new Error('The chunk exceeds the declared file.');
-  const area = hostedAppArea(record.session, record.attempt);
-  const complete = join(area, 'blobs', file.sha256);
+  const blobs = hostedAppBlobs(record.session);
+  const complete = join(blobs, file.sha256);
   const partial = `${complete}.part`;
-  const offset = withDirLock(`${area}.lock`, () => {
-    if (existsSync(complete)) return file.size;
+  const offset = withDirLock(`${blobs}.lock`, () => {
+    if (validHostedAppBlob(complete, file)) return file.size;
+    rmSync(complete, { force: true });
     if (readHostedAppMetadata(record.session, record.attempt).state !== 'receiving')
       throw new Error('This app attempt is no longer receiving content.');
-    const current = existsSync(partial) ? statSync(partial).size : 0;
+    const stat = lstatSync(partial, { throwIfNoEntry: false });
+    if (stat && !stat.isFile()) throw new Error('The partial app blob is not a regular file.');
+    const current = stat?.size ?? 0;
     if (start !== current) {
       if (start + bytes.length > current) throw new Error(`Resume this file at byte ${current}.`);
       const previous = Buffer.alloc(bytes.length);
@@ -152,25 +182,24 @@ export async function chunkHostedApp(record: HostedAppRecord, params: unknown): 
       return current;
     }
     appendFileSync(partial, bytes, { mode: 0o600 });
-    return current + bytes.length;
-  });
-  if (offset === file.size && !existsSync(complete)) {
-    if ((await digest(partial)) !== file.sha256) {
-      withDirLock(`${area}.lock`, () => rmSync(partial, { force: true }));
+    const received = current + bytes.length;
+    if (received !== file.size) return received;
+    if (!validHostedAppBlob(partial, file)) {
+      rmSync(partial, { force: true });
       throw new Error('App content digest mismatch; the partial file was discarded.');
     }
-    withDirLock(`${area}.lock`, () => {
-      if (!existsSync(complete)) renameSync(partial, complete);
-    });
+    renameSync(partial, complete);
+    rememberHostedAppBlobRename(partial, complete, file);
     if (file.sha256 === record.manifest.sha256) {
       try {
         readHostedApp(record.session, record.attempt);
       } catch (error) {
-        withDirLock(`${area}.lock`, () => rmSync(complete, { force: true }));
+        rmSync(complete, { force: true });
         throw error;
       }
     }
-  }
+    return received;
+  });
   return { offset };
 }
 
@@ -183,13 +212,13 @@ export async function handOverHostedApp(
   record: HostedAppRecord,
   bundle: string,
 ): Promise<{ files: number; bytes: number }> {
-  const area = hostedAppArea(record.session, record.attempt);
+  const blobs = hostedAppBlobs(record.session);
   const root = realpathSync(bundle);
   let files = 0;
   let bytes = 0;
   for (const file of record.files) {
-    const blob = join(area, 'blobs', file.sha256);
-    if (existsSync(blob)) continue;
+    const blob = join(blobs, file.sha256);
+    if (validHostedAppBlob(blob, file)) continue;
     const source = join(root, file.path);
     const temp = `${blob}.handoff-${randomUUID()}`;
     try {
@@ -201,8 +230,8 @@ export async function handOverHostedApp(
       if (file.kind === 'link') writeFileSync(temp, readlinkSync(source, { encoding: 'buffer' }), { mode: 0o600 });
       else await copyFile(source, temp, constants.COPYFILE_FICLONE);
       if (statSync(temp).size !== file.size || (await digest(temp)) !== file.sha256) continue;
-      const placed = withDirLock(`${area}.lock`, () => {
-        if (existsSync(blob)) return false;
+      const placed = withDirLock(`${blobs}.lock`, () => {
+        if (validHostedAppBlob(blob, file)) return false;
         if (readHostedAppMetadata(record.session, record.attempt).state !== 'receiving')
           throw new Error('This app attempt is no longer receiving content.');
         renameSync(temp, blob);

@@ -442,9 +442,11 @@ offsets. Upload the manifest first, then re-offer for its missing file content.
 The manifest is limited to 8 MiB and 20,000 entries, with at most 1 GiB per file,
 1 KiB per link, and 4 GiB of declared bundle content. An app attempt cannot
 change its identity, mode, arguments or manifest. Complete a receiving attempt or stop the
-session before starting another transfer.
+session before starting another transfer. Manifest, file and partial blobs are shared
+by attempts of one session in its content-addressed store; offers recheck complete
+blob digests and request only missing bytes.
 
-A macOS session can take its content from a build this Mac ran instead: after
+An iOS simulator or macOS session can take its content from a build this Mac ran instead: after
 the manifest arrives, send `device-host.app.handoff` with
 `{session, attempt, build: {handoff, sha256}}`, where `handoff` is the token
 and `sha256` the archive digest from that job's `build.artifact` answer. The
@@ -454,7 +456,8 @@ tailnet node. It copies only regular files, and links where the manifest
 declares links, whose directory resolves inside the staged bundle and whose
 bytes match their manifest digest; it answers `{files, bytes}` for what it
 took. The token is spent once the handoff starts. Re-offer and upload whatever
-is still missing; an older server answers `unknown-method`.
+is still missing; an older server answers `unknown-method`. For iOS, check the
+`hosted-ios-data` hello feature before requesting handoff; without it, upload.
 
 After every digest is verified, call `device-host.app.launch` with
 `{session, attempt}`. Poll `device-host.app.attach` for `installed` or `unknown`.
@@ -553,15 +556,40 @@ reports the app's pid, `DeviceHost` registers the running app with the agent
 driver before the receipt reads `installed`, and ends that registration when the
 session stops, is revoked or the server closes.
 
-`device-host.logs.query` with `{session, cursor?}` returns `{records, cursor, more}`:
+`device-host.logs.query` with `{session, cursor?}` returns `{records, cursor, more, checkpoint?}`:
 the NDJSON records the session's macOS app wrote to its captured log (stdout and
-stderr as `client` records, and its exit). `cursor` maps each log file name to the
+stderr as `client` records, and its exit). iOS sessions capture app-filtered native
+logs as `device` records through bounded `simctl log show` worker queries, with
+a persisted time checkpoint in the isolated home. Windows adapt to the backlog,
+overlap by five seconds and de-duplicate event identities. `checkpoint` is the last
+completed iOS window in epoch milliseconds. `log show` reads persisted entries;
+info-level entries and persistence delayed beyond the overlap may be unavailable.
+The worker holds a separate child-aware log claim. Queries coalesce onto an
+in-flight collection or read captured files; collection starts at most once every
+three seconds per session. App offers, chunks, handoff, launch admission, view and
+control stay available. Installation and stop cancel and settle collection under
+bounded worker and termination deadlines before native work. Each native collection has a
+10-second step budget inside its 15-second worker deadline. The client drain has
+a 30-second bound, reports progress on stderr and stops on a stalled cursor and
+checkpoint. The host collects once more before deletion on stop, revocation or
+server close, preferring the recent tail if the remaining backlog will not fit.
+If the final collection drops a backlog interval and eventually succeeds, one
+`device` warning record names the interval. Missing or damaged checkpoints are
+ignored and rebuilt; they never prevent reading collected logs.
+The client waits up to 180 seconds for stop. The worker paths fit within that
+wait: the 90-second stop worker,
+15-second final collection and up to three 10-second worker group-settle bounds
+leave 45 seconds for polling and transport. An in-flight handoff copy and closing
+Metro or view transports are outside those worker bounds.
+The client pulls that final collection after stop. Stop removes the session blob
+store and materialized apps, retaining receipts and collected logs. `cursor` maps each log file name to the
 byte offset after the last complete line read; pass the previous result's cursor to
 receive only newer records, and repeat while `more` is true. Without a cursor, each
 file starts at most 4 MiB before its end. A page holds at most 1 MiB; a file that
 rotated since the cursor is read from the end of its previous generation. The
-session's own client only, for macOS sessions, and also after the session stopped,
-because stop keeps logs. Servers that predate it answer `forbidden` or
+session's own client only, for iOS and macOS sessions, and also after the session stopped,
+because stop keeps captured logs. iOS clients check hello feature `hosted-ios-data`;
+without it, they show an update note and copied logs. Servers that predate macOS queries answer `forbidden` or
 `unknown-method`.
 
 macOS sessions refuse Metro. Viewing and control are supported while the hosted
@@ -1023,11 +1051,11 @@ closes its connections and cancels its builds.
   another client, gets `bad-request`.
 - `build.artifact` takes the `job` of a successful build and sends the archive
   as binary frames, each 32 bytes of its sha256 and then the next bytes, then
-  answers `{ "name", "size", "sha256" }`, and deletes it here. For a macOS
+  answers `{ "name", "size", "sha256" }`, and deletes it here. For an iOS simulator or macOS
   job the answer also carries `handoff`, a single-use token, and the staged
   `.app` stays for 10 minutes so a hosted session on this Mac can take it with
   `device-host.app.handoff`. A client keeps at most one such bundle; its next
-  fetched macOS build or a revoked approval deletes it. An archive nobody fetched is deleted when its job
+  fetched iOS or macOS build or a revoked approval deletes it. An archive nobody fetched is deleted when its job
   is cancelled; one left by a server that crashed stays under
   `repos/<repo>/out/` until you delete it.
 

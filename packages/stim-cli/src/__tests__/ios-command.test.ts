@@ -8036,6 +8036,76 @@ describe('strict build machine selection', () => {
     },
   );
 
+  test('an offloaded hosted iOS build carries its handoff through artifact caching into delivery', async () => {
+    reserve();
+    configureMini();
+    const handoff = { nodeId: 'nMini', token: 'a'.repeat(64), sha256: 'b'.repeat(64) };
+    const artifactPath = join(root, 'fetched.app');
+    mkdirSync(artifactPath);
+    vi.spyOn(offloadClient, 'chooseBuildMachine').mockResolvedValue({
+      machine: 'mini',
+      offer: { capacity: {} },
+    } as offloadClient.OffloadChoice);
+    vi.spyOn(offloadClient, 'offloadBuild').mockResolvedValue({
+      ok: true,
+      machine: 'mini',
+      artifactPath,
+      handoff,
+      compilationCache: { status: 'not-run', hits: null, cacheableTasks: null, hitRatePercent: null },
+      ccache: { status: 'not-run', hits: null, misses: null, hitRatePercent: null },
+      timings: {
+        offerMs: 0,
+        syncMs: 0,
+        workerMs: 10,
+        fetchMs: 0,
+        totalMs: 10,
+        worker: {},
+        uploadedBytes: 0,
+        artifactBytes: 0,
+      },
+    });
+    const placement: HostedIosPlacement = {
+      machine: 'mini',
+      selected: 'mini',
+      session: '23456789-1234-1234-1234-123456789abc',
+      appAttempt: 'app',
+      device: {
+        udid: '12345678-1234-1234-1234-123456789abc',
+        name: 'stim-hosted',
+        deviceType: 'iPhone',
+        deviceTypeId: 'iphone',
+        runtime: 'iOS 27.0',
+        runtimeId: 'ios27',
+        architecture: 'arm64',
+      },
+      agent: { driver: 'none', setting: 'hosting.agentDriver' },
+    };
+    let delivered = false;
+    const result = await run(
+      { remote: 'mini', buildMachine: 'mini', json: true },
+      {
+        prepareHostedIos: async () => ({
+          host: { machine: 'mini', connection: { close: () => {} } },
+          choice: placement.device!,
+          session: null,
+        }),
+        storeBuild: (_platform, _key, path) => path,
+        buildIos: () => {
+          throw new Error('unexpected local compile');
+        },
+        placeHostedIos: async (_target, args) => {
+          expect(args.handoff).toEqual(handoff);
+          args.reserved(placement);
+          delivered = true;
+          return { placement, launched: 'unverified' };
+        },
+      },
+    );
+    expect(result.exitCode).toBeNull();
+    expect(delivered).toBe(true);
+    expect(parseFirst(result.logs).offloadedTo).toBe('mini');
+  });
+
   test('SIGINT requested by stop records cancellation of a strict offload without any local compiler', async () => {
     reserve();
     configureMini();

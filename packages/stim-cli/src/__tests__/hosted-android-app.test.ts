@@ -36,7 +36,8 @@ beforeEach(() => {
   area = join(root, 'apps', 'app');
   process.env.STIM_HOME = home;
   mkdirSync(home);
-  mkdirSync(join(area, 'blobs'), { recursive: true });
+  mkdirSync(area, { recursive: true });
+  mkdirSync(join(home, '..', 'blobs'), { recursive: true });
   const sdk = join(root, 'sdk');
   mkdirSync(join(sdk, 'platform-tools'), { recursive: true });
   writeFileSync(join(sdk, 'platform-tools', sdkAdbName), 'fixture');
@@ -74,10 +75,10 @@ afterEach(() => {
 function receipt(mode = 'release') {
   const apk = Buffer.from('verified APK fixture');
   const sha256 = hash(apk);
-  writeFileSync(join(area, 'blobs', sha256), apk);
+  writeFileSync(join(home, '..', 'blobs', sha256), apk);
   const manifest = Buffer.from(JSON.stringify([{ path: 'App.apk', kind: 'file', size: apk.length, sha256 }]));
   const digest = hash(manifest);
-  writeFileSync(join(area, 'blobs', digest), manifest);
+  writeFileSync(join(home, '..', 'blobs', digest), manifest);
   writeFileSync(
     join(area, 'receipt.json'),
     JSON.stringify({
@@ -131,7 +132,7 @@ test.each(['package', 'SDK', 'ABI'])('incompatible %s metadata refuses before in
 
 test('corrupt upload bytes refuse before SDK or native effects', async () => {
   const digest = receipt();
-  writeFileSync(join(area, 'blobs', digest), 'corrupt');
+  writeFileSync(join(home, '..', 'blobs', digest), 'corrupt');
   await expect(installHostedAndroidApp(home, session, 'app', device)).rejects.toThrow(/differs/);
   expect(native.runFile).not.toHaveBeenCalled();
 });

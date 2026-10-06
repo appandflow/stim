@@ -2163,7 +2163,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
                         : method === 'device-host.app.attach'
                           ? hostedDevices.appAttach(session.id, raw)
                           : method === 'device-host.logs.query'
-                            ? hostedDevices.logsQuery(session.id, raw)
+                            ? await hostedDevices.logsQuery(session.id, raw)
                             : method === 'device-host.metro.open'
                               ? await hostedDevices.metroOpen(session.id, raw, peer)
                               : await hostedDevices.metroClose(session.id, raw);

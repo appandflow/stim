@@ -59,6 +59,7 @@ export async function finishHostedIosRun({
       root,
       slot,
       bundle: artifact.path,
+      handoff: artifact.handoff,
       bundleId,
       selectors,
       release,

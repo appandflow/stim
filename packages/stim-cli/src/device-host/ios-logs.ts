@@ -1,0 +1,153 @@
+import { createHash } from 'node:crypto';
+import { mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { LOG_ROTATE_BYTES, withDirLock } from '@stim-cli/core';
+import {
+  assertHostedDeviceLedger,
+  hostedAppArea,
+  hostedIosLogsDir,
+  readHostedAppMetadata,
+  readHostedDevice,
+  readHostedIosLogsCheckpoint,
+  readNdjsonGenerations,
+  type NdjsonRecord,
+} from '@stim-cli/core/state';
+import { parseLogStreamLine } from '../collector/ios.ts';
+import { getExecutor } from '../exec.ts';
+import { createNdjsonWriter } from '../ndjson.ts';
+
+function logDate(ms: number): string {
+  return new Date(ms).toISOString().replace('T', ' ').replace('.000Z', '+0000');
+}
+
+/** Captures a bounded unified-log window only from this home's exact ledger-owned simulator. */
+export function collectHostedIosLogs(
+  home: string,
+  session: string,
+  attempt: string,
+  since: number,
+  final = false,
+): boolean {
+  const device = readHostedDevice(home);
+  assertHostedDeviceLedger(home, device.udid);
+  const record = readHostedAppMetadata(session, attempt, home);
+  if (record.state !== 'installed') return false;
+  const directory = hostedIosLogsDir(home);
+  const previous = readHostedIosLogsCheckpoint(home);
+  const beginning = Math.floor(since / 1000) * 1000;
+  let newest: number | undefined;
+  if (!previous)
+    for (const entry of readNdjsonGenerations(join(directory, 'device.ndjson')))
+      if (typeof entry.ts === 'number' && (newest === undefined || entry.ts > newest)) newest = entry.ts;
+  const checkpoint = previous?.until ?? Math.max(beginning, Math.floor((newest ?? beginning) / 1000) * 1000);
+  let from = Math.max(beginning, previous ? checkpoint - 5000 : checkpoint);
+  const now = Math.floor(Date.now() / 1000) * 1000;
+  if (now < checkpoint) return false;
+  const backlogMs = Math.max(1000, now - checkpoint);
+  let windowMs = !final && previous?.windowMs ? Math.min(previous.windowMs * 2, backlogMs) : backlogMs;
+  let until = Math.min(now, checkpoint + windowMs);
+  let end = until === now ? until + 1000 : until;
+  const deadline = Date.now() + 10_000;
+  const exec = getExecutor();
+  const executable = exec.runFile(
+    '/usr/libexec/PlistBuddy',
+    ['-c', 'Print :CFBundleExecutable', join(hostedAppArea(session, attempt, home), 'App.app', 'Info.plist')],
+    { timeoutMs: 2000, killSignal: 'SIGKILL' },
+  );
+  if (!executable || /["\\/\0\r\n]/.test(executable))
+    throw new Error('The app executable cannot form a log predicate.');
+  let output: string;
+  for (;;) {
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) throw new Error('Hosted native log query exceeded its collection budget.');
+    try {
+      output = exec.runFile(
+        'xcrun',
+        [
+          'simctl',
+          'spawn',
+          device.udid,
+          'log',
+          'show',
+          '--style',
+          'ndjson',
+          '--predicate',
+          `processImagePath ENDSWITH "/App.app/${executable}"`,
+          '--info',
+          '--start',
+          logDate(from),
+          '--end',
+          logDate(end),
+        ],
+        { timeoutMs: Math.min(remaining, 4000), killSignal: 'SIGKILL' },
+      );
+      break;
+    } catch (error) {
+      const span = final ? until - from : until - checkpoint;
+      if (span <= 1000) throw error;
+      windowMs = Math.max(1000, Math.floor(span / 4 / 1000) * 1000);
+      if (final) from = Math.max(beginning, now - windowMs);
+      else until = Math.min(now, checkpoint + windowMs);
+      end = until === now ? until + 1000 : until;
+      if (previous) {
+        mkdirSync(directory, { recursive: true, mode: 0o700 });
+        withDirLock(join(directory, 'query.lock'), () => {
+          const temporary = join(directory, 'checkpoint.json.tmp');
+          writeFileSync(temporary, JSON.stringify({ until: checkpoint, boundary: previous.boundary, windowMs }), {
+            mode: 0o600,
+          });
+          renameSync(temporary, join(directory, 'checkpoint.json'));
+        });
+      }
+    }
+  }
+  const seen = new Map<string, number>();
+  for (const digest of previous?.boundary ?? []) seen.set(digest, (seen.get(digest) ?? 0) + 1);
+  const boundary: string[] = [];
+  const records: NdjsonRecord[] = [];
+  if (final && from > checkpoint)
+    records.push({
+      ts: from,
+      src: 'device',
+      platform: 'ios',
+      level: 'warn',
+      msg: `Hosted iOS native log gap: dropped interval [${new Date(checkpoint).toISOString()}, ${new Date(from).toISOString()}) to collect the final tail within its budget.`,
+    });
+  for (const line of output.split('\n')) {
+    const parsed = parseLogStreamLine(line);
+    if (!parsed || typeof parsed.ts !== 'number' || parsed.ts < from || parsed.ts > end) continue;
+    const entry = JSON.parse(line) as Record<string, unknown>;
+    const digest = createHash('sha256')
+      .update(JSON.stringify(Object.entries(entry).toSorted(([a], [b]) => a.localeCompare(b))))
+      .digest('hex');
+    if (parsed.ts >= until - 5000) boundary.push(digest);
+    if (newest !== undefined && parsed.ts <= newest) continue;
+    const count = seen.get(digest) ?? 0;
+    if (count) {
+      seen.set(digest, count - 1);
+      continue;
+    }
+    records.push({ ...parsed, platform: 'ios' });
+  }
+  mkdirSync(directory, { recursive: true, mode: 0o700 });
+  withDirLock(join(directory, 'query.lock'), () => {
+    const writer = createNdjsonWriter(join(directory, 'device.ndjson'), { maxBytes: LOG_ROTATE_BYTES });
+    try {
+      for (const entry of records) {
+        if (!writer.write(entry)) throw new Error('Could not persist hosted iOS native logs.');
+      }
+    } finally {
+      writer.close();
+    }
+    const temporary = join(directory, 'checkpoint.json.tmp');
+    try {
+      writeFileSync(temporary, JSON.stringify({ until, boundary, ...(until < now ? { windowMs } : {}) }), {
+        mode: 0o600,
+      });
+      renameSync(temporary, join(directory, 'checkpoint.json'));
+    } finally {
+      rmSync(temporary, { force: true });
+    }
+  });
+  return until < now;
+}
