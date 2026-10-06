@@ -154,8 +154,9 @@ beforeEach(() => {
 function isFixtureDaemon(pid: number): boolean {
   try {
     return execFileSync('ps', ['-o', 'command=', '-p', String(pid)], { encoding: 'utf8' }).includes('setInterval');
-  } catch {
-    return false;
+  } catch (error) {
+    if ((error as { status?: number }).status === 1) return false;
+    throw error;
   }
 }
 
