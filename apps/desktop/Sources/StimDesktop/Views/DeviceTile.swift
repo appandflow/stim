@@ -806,7 +806,7 @@ struct DeviceTile: View {
       if let hostedPreview {
         switch hostedPreview {
         case .message(let text, let remedy): PhysicalMessage(text: text, remedy: remedy)
-        case .stream: placeholder("Connecting to the hosted simulator")
+        case .stream: placeholder("Connecting to the hosted simulator", loading: true)
         }
       } else if let workspace {
         PhysicalDeviceScreen(
