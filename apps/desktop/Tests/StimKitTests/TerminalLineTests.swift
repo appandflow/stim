@@ -11,7 +11,7 @@ final class TerminalLineTests: XCTestCase {
     XCTAssertEqual(TerminalLine.indexesToType(previous: [], lines: lines), [0, 1, 2])
   }
 
-  func testTextAndKindChangesAreTypedWithoutRetypingUnchangedRows() {
+  func testOnlyTextChangesAreTypedWithoutRetypingKindChanges() {
     let previous = [
       TerminalLine(text: "$ stim ios", kind: .command),
       TerminalLine(text: "Building", kind: .pending),
@@ -20,7 +20,7 @@ final class TerminalLineTests: XCTestCase {
     let lines = [
       previous[0], TerminalLine(text: "Built", kind: .pending), TerminalLine(text: "Installed", kind: .ok),
     ]
-    XCTAssertEqual(TerminalLine.indexesToType(previous: previous, lines: lines), [1, 2])
+    XCTAssertEqual(TerminalLine.indexesToType(previous: previous, lines: lines), [1])
   }
 
   func testShrinkingLinesDoesNotRetypeSurvivorsOrReturnRemovedIndexes() {
@@ -29,6 +29,18 @@ final class TerminalLineTests: XCTestCase {
     XCTAssertEqual(
       TerminalLine.indexesToType(previous: previous, lines: [TerminalLine(text: "Build failed", kind: .failed)]), [0])
     XCTAssertEqual(TerminalLine.indexesToType(previous: previous, lines: []), [])
+  }
+
+  func testSpokenSummaryNamesStatesInsteadOfRelyingOnSymbols() {
+    let lines: [TerminalLine] = [
+      .init(text: "$ setup", kind: .command), .init(text: "Ready", kind: .ok),
+      .init(text: "Denied", kind: .failed), .init(text: "Approval", kind: .pending),
+      .init(text: "Permission", kind: .skipped), .init(text: "Fix", kind: .output),
+    ]
+    XCTAssertEqual(
+      TerminalLine.spokenSummary(lines),
+      "command: $ setup. done: Ready. failed: Denied. in progress: Approval. skipped: Permission. output: Fix")
+    XCTAssertEqual(TerminalLine.spokenSummary([]), "")
   }
 
   func testVisibleWindowScrollsOldLinesOffAndKeepsTheRunningLineAndItsIndex() {

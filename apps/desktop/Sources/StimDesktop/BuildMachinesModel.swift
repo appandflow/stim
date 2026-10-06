@@ -131,6 +131,10 @@ final class BuildMachinesModel {
     settings.payload.map { $0.entry("offload.machines")?.value.strings ?? [] }
   }
 
+  func addMachine(checkout: String?) -> AddMachineModel {
+    AddMachineModel(cli: cli, settings: settings, checkout: checkout)
+  }
+
   var isBusy: Bool { working != nil || runs > 0 }
 
   func check(in checkout: String?) -> Check? { checkout.flatMap { checks[$0] } }

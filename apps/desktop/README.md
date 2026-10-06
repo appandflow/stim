@@ -962,6 +962,17 @@ shows an assumed endpoint when the route is missing or unknown.
 
 ## Build machines
 
+**Add...** in **Settings > Build Machines** opens the first three steps of the
+setup wizard: pick a Mac on the tailnet, choose Builds and/or Hosted simulators,
+and mirror setup live. Run the generated command in Terminal while signed in
+at the build Mac; running it and answering each y/N request there approves
+access. Permission prompts appear on that Mac's screen. Stim needs a listed
+workspace to send requests. Cancel removes entries added by the wizard,
+restores `offload.mode` only if the wizard changed it, and runs doctor to forget
+the pairing; it shows revoke commands to run on the build Mac. Tools and the
+test build arrive in the next release. Done leaves `offload.mode` at `off` when
+the wizard set it, so no build runs on the new machine before a test passes.
+
 Another Mac on the tailnet can build for this one once a person on it approves
 this Mac (see [Build access](../../packages/server/README.md#build-access)).
 

@@ -21,9 +21,25 @@ public struct TerminalLine: Equatable, Sendable {
     self.kind = kind
   }
 
-  /// Indexes in `lines` that are new or differ in text or kind from the same index in `previous`.
+  /// Indexes in `lines` that are new or differ in text from the same index in `previous`.
   public static func indexesToType(previous: [TerminalLine], lines: [TerminalLine]) -> [Int] {
-    lines.indices.filter { !previous.indices.contains($0) || previous[$0] != lines[$0] }
+    lines.indices.filter { !previous.indices.contains($0) || previous[$0].text != lines[$0].text }
+  }
+
+  /// A spoken description of the complete terminal, including each check's state.
+  public static func spokenSummary(_ lines: [TerminalLine]) -> String {
+    lines.map { line in
+      let state: String
+      switch line.kind {
+      case .command: state = "command"
+      case .output: state = "output"
+      case .ok: state = "done"
+      case .failed: state = "failed"
+      case .pending: state = "in progress"
+      case .skipped: state = "skipped"
+      }
+      return "\(state): \(line.text)"
+    }.joined(separator: ". ")
   }
 
   /// The last `maxVisibleLines` rows, preserving their indexes in `lines` and always retaining the last row.

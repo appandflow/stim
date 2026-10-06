@@ -48,16 +48,68 @@ public enum Tailnet {
     return nil
   }
 
-  /// Whether `stim-server` answers `GET /health` on the Mac's `tailscale serve` route at `port`.
-  public static func servesStim(dnsName: String, port: Int = servePort) async -> Bool {
-    guard let url = URL(string: "https://\(dnsName):\(port)/health") else { return false }
+  public struct Peer: Hashable, Identifiable, Sendable {
+    public var mac: TailnetMac
+    public var online: Bool
+    public var id: String { mac.id }
+  }
+
+  public enum Reachability: Equatable, Sendable {
+    case tailscaleMissing, tailscaleStopped, peerOffline, ready
+  }
+
+  public struct Health: Decodable, Equatable, Sendable {
+    public var server: String
+    public var version: String
+    public var `protocol`: Int
+  }
+
+  public static func selfNode(statusJSON: Data) -> TailnetMac? {
+    guard let status = try? JSONSerialization.jsonObject(with: statusJSON) as? [String: Any],
+      let node = status["Self"] as? [String: Any]
+    else { return nil }
+    return parseNode(node)
+  }
+
+  public static func peers(statusJSON: Data) -> [Peer] {
+    guard let status = try? JSONSerialization.jsonObject(with: statusJSON) as? [String: Any] else { return [] }
+    return (status["Peer"] as? [String: Any] ?? [:]).values.compactMap { value in
+      guard let node = value as? [String: Any], node["OS"] as? String == "macOS", let mac = parseNode(node)
+      else { return nil }
+      return Peer(mac: mac, online: node["Online"] as? Bool == true)
+    }.sorted { $0.mac.dnsName < $1.mac.dnsName }
+  }
+
+  public static func reachability(statusJSON: Data?, peer: Peer?) -> Reachability {
+    guard let statusJSON else { return .tailscaleMissing }
+    guard let status = try? JSONSerialization.jsonObject(with: statusJSON) as? [String: Any],
+      status["BackendState"] as? String == "Running"
+    else { return .tailscaleStopped }
+    return peer?.online == true ? .ready : .peerOffline
+  }
+
+  private static func parseNode(_ node: [String: Any]) -> TailnetMac? {
+    guard let id = node["ID"] as? String, !id.isEmpty,
+      let dns = node["DNSName"] as? String, !dns.isEmpty
+    else { return nil }
+    let name = dns.trimmingCharacters(in: CharacterSet(charactersIn: ".")).lowercased()
+    return TailnetMac(id: id, hostName: node["HostName"] as? String ?? name, dnsName: name)
+  }
+
+  public static func health(dnsName: String, port: Int = servePort) async -> Health? {
+    guard let url = URL(string: "https://\(dnsName):\(port)/health") else { return nil }
     var request = URLRequest(url: url)
     request.timeoutInterval = 3
     guard let (data, response) = try? await URLSession.shared.data(for: request),
       (response as? HTTPURLResponse)?.statusCode == 200,
-      let body = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-    else { return false }
-    return body["server"] as? String == "stim-server"
+      let health = try? JSONDecoder().decode(Health.self, from: data), health.server == "stim-server"
+    else { return nil }
+    return health
+  }
+
+  /// Whether `stim-server` answers `GET /health` on the Mac's `tailscale serve` route at `port`.
+  public static func servesStim(dnsName: String, port: Int = servePort) async -> Bool {
+    await health(dnsName: dnsName, port: port) != nil
   }
 }
 
@@ -132,6 +184,19 @@ public struct BuildMachineStatus: Decodable, Hashable, Identifiable, Sendable {
     }
   }
 
+  public struct Host: Decodable, Hashable, Sendable {
+    public var name: String
+    public var screenRecording: Bool
+    public var accessibility: Bool
+
+    public init(name: String, screenRecording: Bool, accessibility: Bool) {
+      self.name = name
+      self.screenRecording = screenRecording
+      self.accessibility = accessibility
+    }
+  }
+
+  public var host: Host?
   public var machine: String
   public var state: State
   public var dnsName: String?
