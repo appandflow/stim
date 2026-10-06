@@ -959,12 +959,12 @@ export async function offloadBuild({
       return fail(`fetch: ${name} is not a file`);
     }
     if (request.platform === 'macos') {
-      for (const path of [
-        join(artifactPath, 'Contents', 'Info.plist'),
-        join(artifactPath, 'Contents', 'MacOS', request.product),
+      for (const segments of [
+        ['Contents', 'Info.plist'],
+        ['Contents', 'MacOS', request.product],
       ]) {
-        if (!lstatSync(path, { throwIfNoEntry: false })?.isFile())
-          return fail(`fetch: ${name} has no regular ${relative(artifactPath, path)}`);
+        if (!lstatSync(join(artifactPath, ...segments), { throwIfNoEntry: false })?.isFile())
+          return fail(`fetch: ${name} has no regular ${segments.join('/')}`);
       }
     }
     const fetchMs = Date.now() - fetchStarted;
