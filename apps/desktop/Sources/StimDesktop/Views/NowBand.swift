@@ -138,7 +138,9 @@ struct NowBand: View {
   @ViewBuilder private func action(_ owner: MachineOwner) -> some View {
     if let command = owner.stopCommand, let title = owner.stopTitle, let workspace = owner.workspace {
       Button(title) {
-        actions.run("\(title) \(owner.kind == .metro ? status.names(ofPath: workspace).title : owner.name)", command)
+        actions.run(
+          "\(title) \(owner.kind == .metro ? status.names(ofPath: workspace).title : owner.name)", steps: [command],
+          present: false)
       }
       .buttonStyle(.stim(.destructive))
       .fixedSize()
