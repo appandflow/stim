@@ -2275,7 +2275,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         ...[...running].map((cancel) => cancel()),
         cancelling.settled(),
       ]);
-    } else await hostedDevices.close();
+    }
     wss.close();
     await Promise.all([...servers.values()].map(closeListener));
   };
