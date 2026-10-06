@@ -12,6 +12,14 @@ export interface ArchiveSelection {
   kind: 'logs' | 'recordings' | 'agentActions' | null;
 }
 
+function stagingOrNone(): ArchiveStaging[] {
+  try {
+    return sweepArchiveStaging(false, 5000);
+  } catch {
+    return [];
+  }
+}
+
 export function collectArchives(scope: string, olderThan: number | null, now: number): ArchiveSelection {
   const wanted = scope.trim().toLowerCase();
   const records = readArchives();
@@ -41,7 +49,7 @@ export function collectArchives(scope: string, olderThan: number | null, now: nu
           (id === null && olderThan !== null ? now - Date.parse(record.removedAt) >= olderThan * 86_400_000 : true) &&
           (!kind || record.bytes[kind] > 0),
       })),
-    staging: sweepArchiveStaging(false),
+    staging: stagingOrNone(),
     unknownId: id !== null && !match ? id : null,
     knownIds: records.map((record) => record.id),
     kind,

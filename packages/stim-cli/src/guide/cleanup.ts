@@ -110,12 +110,12 @@ to stats.json.corrupt-<unix ms> and starts a new one.`,
   workspace directories are not archived. A failure prints one stderr line
   beginning "could not archive:" and removal continues with empty stdout.
 
-  Retention runs after each archive is written. It expires
+  Retention runs on every worktree removal, archived or not, once an archive
+  exists. It deletes records past their age or count limit first, then expires
   recordings, agent actions and logs by age from removedAt; trims per-workspace
   logs (oldest rotated generations, then build logs, then oldest other files);
-  removes the largest kind of the oldest archive while over total caps; then
-  deletes records past their age or count limit. Empty records stay until their
-  record limit. recording.enabled false at machine scope deletes archived
+  and removes the largest kind of the oldest archive while over total caps.
+  Archives with expired artifacts keep their record until the record limit. recording.enabled false at machine scope deletes archived
   recordings on the next retention pass. Sizes are binary GB/MB; 0 keeps none.
   See stim guide settings for the nine archive.* keys and overrides.
 

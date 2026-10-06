@@ -46,6 +46,7 @@ import {
 } from '@stim-cli/core/state';
 import { machineNumber } from './budget.ts';
 import { getExecutor } from './exec.ts';
+import { mergeState } from './workspace/merge-state.ts';
 import { gitCommonDirOnDisk } from './workspace/worktree.ts';
 import { readCommittedSettings } from './workspace/settings.ts';
 import { workspaceDir } from './workspace/paths.ts';
@@ -83,16 +84,15 @@ function archiveSettings() {
 
 function enabled(root: string): boolean {
   const config = loadConfig();
-  const common = existsSync(root) ? gitCommonDirOnDisk(root) : null;
-  const layers = existsSync(root)
-    ? [
-        config?.projects?.[root]?.settings,
-        common ? config?.repos?.[common]?.settings : undefined,
-        readCommittedSettings(root),
-        config,
-      ]
-    : [config];
-  return archiveEnabled(process.env, layers);
+  const project = config?.projects?.[root];
+  const checkout = existsSync(root) ? root : project?.worktreeMainRoot;
+  const common = checkout && existsSync(checkout) ? gitCommonDirOnDisk(checkout) : null;
+  return archiveEnabled(process.env, [
+    project?.settings,
+    common ? config?.repos?.[common]?.settings : undefined,
+    existsSync(root) ? readCommittedSettings(root) : undefined,
+    config,
+  ]);
 }
 
 function files(dir: string): { path: string; bytes: number; at: number }[] {
@@ -161,9 +161,14 @@ export function sweepArchiveStaging(remove: boolean, waitMs = 0): ArchiveStaging
     archiveLock(),
     () =>
       readdirSync(archiveRoot())
-        .filter((name) => (name.startsWith('.incoming-') && !name.endsWith('.claims')) || name.startsWith('.removing-'))
+        .filter(
+          (name) =>
+            (name.startsWith('.incoming-') &&
+              (!name.endsWith('.claims') || !existsSync(join(archiveRoot(), name.slice(0, -'.claims'.length))))) ||
+            name.startsWith('.removing-'),
+        )
         .flatMap((name) => {
-          const path = join(archiveRoot(), name);
+          const path = join(archiveRoot(), name.endsWith('.claims') ? name.slice(0, -'.claims'.length) : name);
           const root = `${path}.claims`;
           const survey = name.startsWith('.incoming-') ? readClaimSet(root) : null;
           const unresolved = survey?.unresolved[0];
@@ -215,19 +220,20 @@ function gitFacts(root: string): ArchivedWorkspace['worktree'] {
   const branch = location?.[1] && location[1] !== 'HEAD' ? location[1] : null;
   const defaultRef = run(['symbolic-ref', '--quiet', 'refs/remotes/origin/HEAD']);
   let merged: boolean | null = null;
-  if (defaultRef) {
-    try {
-      exec.runFile('git', ['-C', root, 'merge-base', '--is-ancestor', 'HEAD', defaultRef], { timeoutMs: 1000 });
-      merged = true;
-    } catch (error) {
-      if ((error as { status?: number }).status === 1) merged = false;
-    }
+  if (defaultRef?.startsWith('refs/remotes/')) {
+    const state = mergeState(
+      root,
+      { ref: defaultRef, name: defaultRef.slice('refs/remotes/'.length) },
+      { timeoutMs: 2000 },
+    );
+    merged = state.merged ? true : state.unknown ? null : false;
   }
   let prPath = root;
   try {
     if (location?.[0]) prPath = realpathSync(location[0]);
   } catch {}
   const pr = readPullRequestCache(prPath)?.pullRequest;
+  if (pr?.state === 'merged') merged = true;
   return {
     repository: common ? (basename(common) === '.git' ? dirname(common) : common) : null,
     branch,
@@ -243,13 +249,28 @@ export function archiveWorkspace(
   removedBy: 'worktree-remove' | 'gc' | 'maintenance',
   state: WorkspaceState | null = readWorkspaceState(root),
 ): void {
+  writeArchive(root, removedBy, state);
+  try {
+    enforceArchiveRetention();
+  } catch (error) {
+    console.error(`could not enforce archive retention: ${String((error as Error)?.message ?? error).split('\n')[0]}`);
+  }
+}
+
+function writeArchive(
+  root: string,
+  removedBy: 'worktree-remove' | 'gc' | 'maintenance',
+  state: WorkspaceState | null,
+): void {
   let staging: string | null = null;
   let claim: ReturnType<typeof tryAcquireClaim>['acquired'];
   try {
     const dir = workspaceDir(root);
     if (!existsSync(dir) || lstatSync(dir).isSymbolicLink()) return;
     if (existsSync(root)) root = realpathSync(root);
-    sweepArchiveStaging(true, 5000);
+    try {
+      sweepArchiveStaging(true, 5000);
+    } catch {}
     if (!enabled(root)) return;
     const limits = archiveSettings();
     if (!limits.maxAgeDays || !limits.maxCount) return;
@@ -361,18 +382,11 @@ export function archiveWorkspace(
         writeRecord(staging!, record);
         renameSync(staging!, archiveDir(id));
       },
-      { waitMs: 5000 },
+      { waitMs: 30_000 },
     );
     releaseClaim(claim);
     claim = undefined;
     staging = null;
-    try {
-      enforceArchiveRetention();
-    } catch (error) {
-      console.error(
-        `could not enforce archive retention: ${String((error as Error)?.message ?? error).split('\n')[0]}`,
-      );
-    }
   } catch (error) {
     if (staging) {
       try {
@@ -461,15 +475,16 @@ export function enforceArchiveRetention(now: number = Date.now()): void {
         }
       }
       for (const record of records) {
+        const before = JSON.stringify(record.expires);
         for (const kind of KINDS)
           record.expires[kind] = record.bytes[kind]
             ? new Date(Date.parse(record.removedAt) + limits[`${kind}.maxAgeDays`]! * DAY).toISOString()
             : null;
         record.expires.record = new Date(Date.parse(record.removedAt) + limits.maxAgeDays! * DAY).toISOString();
-        writeRecord(archiveDir(record.id), record);
+        if (JSON.stringify(record.expires) !== before) writeRecord(archiveDir(record.id), record);
       }
     },
-    { waitMs: 5000 },
+    { waitMs: 30_000 },
   );
 }
 
@@ -482,6 +497,6 @@ export function deleteSelectedArchives(ids: readonly string[], kind: Kind | null
         else removeRecord(record.id);
       }
     },
-    { waitMs: 5000 },
+    { waitMs: 30_000 },
   );
 }

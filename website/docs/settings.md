@@ -4,6 +4,8 @@ sidebar_position: 2
 description: 'Project, repository, machine, and environment settings'
 ---
 
+import StimTabs from '@site/src/components/StimTabs';
+
 :::note[Command examples]
 
 Commands use `stim`. If it is not installed globally, replace `stim` with
@@ -688,13 +690,13 @@ Sizes use binary GB and MB; 0 means keep none.
 | `archive.recordings.maxTotalGb`   | 2       | `STIM_ARCHIVE_RECORDINGS_MAX_TOTAL_GB`    |
 | `archive.agentActions.maxAgeDays` | 7       | `STIM_ARCHIVE_AGENT_ACTIONS_MAX_AGE_DAYS` |
 
-Retention runs after each archive is written.
-It expires recordings, agent actions and logs by age from removal; trims logs
-by oldest rotated generation, then build logs, then oldest other files; removes
-the largest kind of the oldest archive while total caps are exceeded; and
-finally removes records past their age or count limit. Artifact expiry keeps
-records. Turning `recording.enabled` off at machine scope deletes archived
-recordings on the next retention pass.
+Retention runs on every worktree removal, archived or not, once an archive
+exists. It deletes records past their age or count limit first, then expires
+recordings, agent actions and logs by age from removal; trims logs by oldest
+rotated generation, then build logs, then oldest other files; and removes the
+largest kind of the oldest archive while total caps are exceeded. Artifact
+expiry keeps records. Turning `recording.enabled` off at machine scope deletes
+archived recordings on the next retention pass.
 
 <StimTabs code="stim settings set archive.enabled false --scope repo" />
 
