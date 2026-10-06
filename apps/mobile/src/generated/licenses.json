@@ -2,7 +2,7 @@
  "packages": [
   {
    "name": "Stim",
-   "version": "0.1.0",
+   "version": "1.0.0",
    "license": "MIT",
    "url": "https://github.com/appandflow/stim",
    "text": 0
@@ -219,7 +219,7 @@
   },
   {
    "name": "@stim-cli/core",
-   "version": "1.14.0",
+   "version": "1.15.0",
    "license": "MIT",
    "url": "https://github.com/appandflow/stim",
    "text": 0
@@ -611,7 +611,7 @@
   },
   {
    "name": "react-native-unistyles",
-   "version": "3.4.0",
+   "version": "3.5.0",
    "license": "MIT",
    "url": "https://github.com/jpudysz/react-native-unistyles",
    "text": null

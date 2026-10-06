@@ -117,6 +117,7 @@ patchedDependencies:
   react-native-nitro-modules@0.37.1: 96fc694a2c8c9daae180069ea817b3558e3f94dca577c8675485c6b4e60900c7
   react-native-screens@4.28.0: f836c6730ea553d6d619590aee9423b8e6cbb9aa28875c9c97a2ef4faa13ff94
   react-native-transformer-text-input@0.4.2: 8107512b4c2c1f79c691e189704d20221cdf60ae9e36d1d1b261d1b2cfb1ff3c
+  react-native-unistyles@3.5.0: 54b34241ff1c2b627e54320889fea6fb0db5b40bef3695fe9808f32dde7d8c97
 
 importers:
 
@@ -285,8 +286,8 @@ importers:
         specifier: 0.4.2
         version: 0.4.2(patch_hash=8107512b4c2c1f79c691e189704d20221cdf60ae9e36d1d1b261d1b2cfb1ff3c)(react-native-worklets@0.13.0(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.0-rc.1(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1))(react-native@0.88.0-rc.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.0-rc.1(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1))(@types/react@19.3.0)(react@19.3.0)(supports-color@8.1.1))(react@19.3.0)(supports-color@8.1.1))(react-native@0.88.0-rc.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.0-rc.1(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1))(@types/react@19.3.0)(react@19.3.0)(supports-color@8.1.1))(react@19.3.0)
       react-native-unistyles:
-        specifier: 3.4.0
-        version: 3.4.0(043c1484499494672a43fe6c98860761)
+        specifier: 3.5.0
+        version: 3.5.0(patch_hash=54b34241ff1c2b627e54320889fea6fb0db5b40bef3695fe9808f32dde7d8c97)(043c1484499494672a43fe6c98860761)
       react-native-worklets:
         specifier: 0.13.0
         version: 0.13.0(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.0-rc.1(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1))(react-native@0.88.0-rc.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.0-rc.1(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1))(@types/react@19.3.0)(react@19.3.0)(supports-color@8.1.1))(react@19.3.0)(supports-color@8.1.1)
@@ -9594,8 +9595,8 @@ packages:
       react-native: '*'
       react-native-worklets: '*'
 
-  react-native-unistyles@3.4.0:
-    resolution: {integrity: sha512-5/PXnrcOm6YuEgseb+4VvNEp+ehUd8VR67NUwsITL0w2KpdSt8016hRheYweLqpTMJgLwG9fdl0ynEiVCziopg==}
+  react-native-unistyles@3.5.0:
+    resolution: {integrity: sha512-CFbR1UA8NzQBjZK5OB5L/MPJlAFHdCoDdMSzogv00MVqYwduKV/9PLDLY45SqJT1X6oQLWO1nO6F5l4PTH5LQw==}
     engines: {node: '>= 20.18.0'}
     peerDependencies:
       '@react-native/normalize-colors': '*'
@@ -22213,7 +22214,7 @@ snapshots:
       react-native: 0.88.0-rc.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.0-rc.1(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1))(@types/react@19.3.0)(react@19.3.0)(supports-color@8.1.1)
       react-native-worklets: 0.13.0(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.0-rc.1(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1))(react-native@0.88.0-rc.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.0-rc.1(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1))(@types/react@19.3.0)(react@19.3.0)(supports-color@8.1.1))(react@19.3.0)(supports-color@8.1.1)
 
-  react-native-unistyles@3.4.0(043c1484499494672a43fe6c98860761):
+  react-native-unistyles@3.5.0(patch_hash=54b34241ff1c2b627e54320889fea6fb0db5b40bef3695fe9808f32dde7d8c97)(043c1484499494672a43fe6c98860761):
     dependencies:
       '@babel/types': 7.29.8
       '@react-native/normalize-colors': 0.88.0-rc.1

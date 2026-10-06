@@ -10,7 +10,7 @@ const id = dev ? 'com.appandflow.stim.dev' : 'com.appandflow.stim';
 const config: ExpoConfig = {
   name: dev ? 'Stim Dev' : 'Stim',
   slug: 'stim-mobile',
-  version: '0.1.0',
+  version: '1.0.0',
   orientation: 'default',
   icon: dev ? './assets/images/icon-dev.png' : './assets/images/icon.png',
   scheme: dev ? ['stim', 'stim-dev'] : 'stim',
