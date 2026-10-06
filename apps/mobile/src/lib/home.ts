@@ -292,12 +292,19 @@ export function projectsByActivity(items: HomeEntry[]): string[] {
   return [...activity.keys()].sort((a, b) => activity.get(b)! - activity.get(a)! || a.localeCompare(b));
 }
 
+export function keepProjectOrder(previous: string[], current: string[]): string[] {
+  return [
+    ...previous.filter((project) => current.includes(project)),
+    ...current.filter((project) => !previous.includes(project)).sort((a, b) => a.localeCompare(b)),
+  ];
+}
+
 export function visibleProjects({
   sorted,
   selected,
   query,
   expanded,
-  limit = 8,
+  limit = 6,
 }: {
   sorted: string[];
   selected: string[];

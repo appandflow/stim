@@ -7,6 +7,7 @@ import {
   filterWorkspaces,
   filtersActive,
   gridRows,
+  keepProjectOrder,
   machineStats,
   mergeUsageSamples,
   minFreeDiskGb,
@@ -311,13 +312,22 @@ describe('projectsByActivity', () => {
   });
 });
 
+it('keeps the opening project order as activity changes, appends new names and drops removed projects', () => {
+  expect(keepProjectOrder(['Gamma', 'Alpha', 'Beta'], ['Beta', 'Delta', 'Charlie', 'Gamma'])).toEqual([
+    'Gamma',
+    'Beta',
+    'Charlie',
+    'Delta',
+  ]);
+});
+
 describe('visibleProjects', () => {
   const sorted = ['Alpha', 'Beta', 'Gamma', 'Delta', 'Echo', 'Foxtrot', 'Golf', 'Hotel', 'India', 'Juliet', 'Kilo'];
   const options = { sorted, selected: [], query: '', expanded: false };
 
-  it('limits collapsed projects to eight by default and respects an explicit limit', () => {
+  it('limits collapsed projects to six by default and respects an explicit limit', () => {
     expect(visibleProjects(options)).toEqual({
-      projects: ['Alpha', 'Beta', 'Gamma', 'Delta', 'Echo', 'Foxtrot', 'Golf', 'Hotel'],
+      projects: ['Alpha', 'Beta', 'Gamma', 'Delta', 'Echo', 'Foxtrot'],
       showToggle: true,
     });
     expect(visibleProjects({ ...options, limit: 2 })).toEqual({ projects: ['Alpha', 'Beta'], showToggle: true });
@@ -325,7 +335,7 @@ describe('visibleProjects', () => {
 
   it('appends selected projects beyond the limit in activity order without duplicating visible selections', () => {
     expect(visibleProjects({ ...options, selected: ['Kilo', 'Alpha', 'India', 'removed'] })).toEqual({
-      projects: ['Alpha', 'Beta', 'Gamma', 'Delta', 'Echo', 'Foxtrot', 'Golf', 'Hotel', 'India', 'Kilo'],
+      projects: ['Alpha', 'Beta', 'Gamma', 'Delta', 'Echo', 'Foxtrot', 'India', 'Kilo'],
       showToggle: true,
     });
   });

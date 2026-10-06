@@ -222,6 +222,10 @@ msgstr "{gb} GB"
 msgid "{hidden, plural, one {# more source changed.} other {# more sources changed.}}"
 msgstr "{hidden, plural, one {# more source changed.} other {# more sources changed.}}"
 
+#: src/screens/filters.tsx
+msgid "{hidden} more"
+msgstr "{hidden} more"
+
 #: src/screens/home.tsx
 msgid "{hiddenByActivity, plural, one {# idle workspace hidden.} other {# idle workspaces hidden.}}"
 msgstr "{hiddenByActivity, plural, one {# idle workspace hidden.} other {# idle workspaces hidden.}}"
@@ -1720,6 +1724,10 @@ msgstr "Error"
 msgid "Errors"
 msgstr "Errors"
 
+#: src/screens/filters.tsx
+msgid "Errors in the logs"
+msgstr "Errors in the logs"
+
 #: src/components/viewer-keyboard.tsx
 #: src/components/viewer-keyboard.tsx
 msgid "Esc"
@@ -2867,6 +2875,10 @@ msgstr "Opens this action in the agent log"
 msgid "Option"
 msgstr "Option"
 
+#: src/screens/filters.tsx
+msgid "Options"
+msgstr "Options"
+
 #: src/lib/build-machines.ts
 msgid "Other CPU"
 msgstr "Other CPU"
@@ -3352,6 +3364,7 @@ msgstr "Search logs"
 
 #: src/screens/filters.tsx
 #: src/screens/filters.tsx
+#: src/screens/filters.tsx
 msgid "Search projects"
 msgstr "Search projects"
 
@@ -3401,13 +3414,13 @@ msgstr "Shift"
 msgid "Show"
 msgstr "Show"
 
+#: src/screens/filters.tsx
+msgid "Show {hidden} more projects"
+msgstr "Show {hidden} more projects"
+
 #: src/screens/home.tsx
 msgid "Show all"
 msgstr "Show all"
-
-#: src/screens/filters.tsx
-msgid "Show all ({projectCount})"
-msgstr "Show all ({projectCount})"
 
 #: src/lib/sections.ts
 msgid "Show all {count}"
@@ -3423,14 +3436,21 @@ msgid "Show errors"
 msgstr "Show errors"
 
 #: src/lib/sections.ts
-#: src/screens/filters.tsx
 msgid "Show fewer"
 msgstr "Show fewer"
+
+#: src/screens/filters.tsx
+msgid "Show fewer projects"
+msgstr "Show fewer projects"
 
 #: src/screens/settings.ios.tsx
 #: src/screens/settings.tsx
 msgid "Show idle workspaces"
 msgstr "Show idle workspaces"
+
+#: src/screens/filters.tsx
+msgid "Show less"
+msgstr "Show less"
 
 #: src/components/collapsible-section.tsx
 msgid "Show the first 10 {title}"
