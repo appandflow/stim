@@ -28,12 +28,12 @@ final class OpenRequests: ObservableObject {
   @Published var target: OversightTarget?
   var openMainWindow: (() -> Void)?
 
-  /// Brings the main window forward, opening one when none is left, and shows the setup guide over it.
   func showTutorial(_ entry: TutorialEntry = .resume) {
     MainWindow.show()
     tutorialRequest = entry
   }
 
+  /// Brings the main window forward, opening one when none is left, and shows the setup guide over it.
   func showSetupGuide() {
     MainWindow.show()
     showsSetupGuide = true

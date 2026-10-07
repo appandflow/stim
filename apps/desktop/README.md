@@ -1444,16 +1444,21 @@ ones show Done. Closing preserves progress. Restart shows the agent prompt and
 resets progress when the tracked tour disappears and returns, or its oldest build
 started after Restart. A newer phase timestamp alone does not reset progress.
 The three-minute workspace warning starts at the first Copy of the run prompt
-and survives relaunch. Only archives removed after this run started can complete
-the tutorial.
+and survives relaunch. Copying manual commands does not start it. Only archives
+removed after this run started can complete the tutorial.
 
 The panel follows workspace creation, the first iOS build, a cached rebuild,
 live view and control, app logs, agent actions and replay, Fast Refresh, optional
-phone and build machine steps, then stop/removal and Archived. Optional steps
+phone and build machine steps, then stop/removal and Archived.
+Open the live view, then tap Log an error. Optional steps
 show text and Skip; their panel actions are not wired yet. Mark done appears
 after two minutes. Manual mode copies the generated commands, including app-file
 heredocs, with the tracked paths substituted. Expand First iOS build after the
 base app is created to copy the worktree and build commands. Desktop never runs them.
+The panel cannot see a removal refusal from an agent-run command: the finish
+step keeps showing the finish prompt. Check the agent's output and revert the
+tutorial edit before retrying. Removals started through Desktop's workspace
+actions can show a refusal in the panel.
 
 All tutorial Stim reads go through the CLI: the panel waits for the first loaded
 status snapshot, which supplies live workspaces and archive removal times.
@@ -1466,7 +1471,7 @@ disappearance grace period only when a stop was observed. Viewer events and
 paired-phone counts come from the existing Desktop controllers. No tutorial
 reader touches `$STIM_HOME` directly.
 
-To render every step, a waiting timeout, a failure and manual mode in light and dark at 2x:
+To render every step, a waiting timeout, a restart, a failure and manual mode in light and dark at 2x:
 
 ```sh
 STIM_TUTORIAL_SHOTS=/tmp/stim-tutorial-shots swift test --filter TutorialScreenshotTests

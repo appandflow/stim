@@ -144,19 +144,29 @@ struct WorkspaceDetail: View {
 
   private func content(devices: [DeviceRef], focused: DeviceRef?) -> some View {
     VStack(spacing: 0) {
-      WorkspaceHeaderLine(
-        cli: cli, env: env, page: page.isUnified ? page : nil,
-        openAppLogs: { app in
-          logWorkspacePath = app.path
-          logQuery.errorsOnly = false
-          showsLogs = true
-        },
-        openLogs: {
-          logQuery.errorsOnly = false
-          showsLogs = true
-        },
-        openBuild: { buildSheet = $0 }
-      )
+      HStack(spacing: Space.md) {
+        WorkspaceHeaderLine(
+          cli: cli, env: env, page: page.isUnified ? page : nil,
+          openAppLogs: { app in
+            logWorkspacePath = app.path
+            logQuery.errorsOnly = false
+            showsLogs = true
+          },
+          openLogs: {
+            logQuery.errorsOnly = false
+            showsLogs = true
+          },
+          openBuild: { buildSheet = $0 }
+        )
+        if !showsLogs, tutorialHint?.path == env.path,
+          ["logs", "refresh"].contains(tutorialHint?.step ?? "")
+        {
+          LogsToggleButton(isShown: false, errors: env.logs?.errorsSinceMarker ?? 0) {
+            showsLogs = true
+          }
+          .tutorialAnchor(.logsTab, workspace: env.path)
+        }
+      }
       .padding(.horizontal, Space.xxl)
       .padding(.vertical, Space.md)
       let earlier = ArchivedWorkspace.newestFirst(

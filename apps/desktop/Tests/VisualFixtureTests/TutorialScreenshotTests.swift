@@ -1,5 +1,6 @@
 #if DEBUG
   import AppKit
+  import PDFKit
   import StimKit
   import SwiftUI
   import XCTest
@@ -7,6 +8,32 @@
   @testable import StimDesktop
 
   final class TutorialScreenshotTests: XCTestCase {
+    @MainActor func testRestartShowsPromptAndWaitingMessageOnce() throws {
+      _ = NSApplication.shared
+      BrandAssets.registerFonts()
+      var engine = TutorialProgress()
+      let now = Date()
+      let snapshot = engine.update(
+        TutorialInput(environment: nil, now: now, record: TutorialRecord(version: 1, startedAt: now)))
+      let panel = TutorialPanel(
+        snapshot: snapshot, fixtureRendering: true, restarting: true,
+        message: "Waiting for a restarted tutorial workspace...", prompt: TutorialSteps.restartPrompt,
+        commands: { _ in "" })
+      let data = NSMutableData()
+      let consumer = try XCTUnwrap(CGDataConsumer(data: data))
+      var bounds = CGRect(x: 0, y: 0, width: 320, height: 960)
+      let context = try XCTUnwrap(CGContext(consumer: consumer, mediaBox: &bounds, nil))
+      ImageRenderer(content: panel.frame(width: bounds.width, height: bounds.height)).render { _, draw in
+        context.beginPDFPage(nil)
+        draw(context)
+        context.endPDFPage()
+      }
+      context.closePDF()
+      let rendered = try XCTUnwrap(PDFDocument(data: data as Data)?.string)
+      XCTAssertEqual(rendered.components(separatedBy: TutorialSteps.restartPrompt).count - 1, 1)
+      XCTAssertEqual(rendered.components(separatedBy: "Waiting for a restarted tutorial").count - 1, 1)
+    }
+
     @MainActor func testTutorialScreenshots() throws {
       guard let directory = ProcessInfo.processInfo.environment["STIM_TUTORIAL_SHOTS"] else {
         throw XCTSkip("Set STIM_TUTORIAL_SHOTS to render tutorial fixtures.")
@@ -14,7 +41,7 @@
       _ = NSApplication.shared
       BrandAssets.registerFonts()
       try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
-      for name in TutorialSteps.all.map(\.id) + ["done", "failure", "manual", "begin-timeout"] {
+      for name in TutorialSteps.all.map(\.id) + ["done", "failure", "manual", "begin-timeout", "restarting"] {
         for dark in [false, true] {
           let renderer = ImageRenderer(
             content: TutorialFixtureView(name: name)
@@ -36,7 +63,7 @@
     var body: some View {
       let snapshot = fixture()
       TutorialPanel(
-        snapshot: snapshot, fixtureRendering: true,
+        snapshot: snapshot, fixtureRendering: true, restarting: name == "restarting",
         message: name == "begin" ? "Waiting for the tutorial workspace..." : nil,
         prompt: name == "failure" ? "Continue the Stim tutorial: run" : nil,
         commands: { step in
@@ -49,7 +76,8 @@
     }
 
     private func fixture() -> TutorialSnapshot {
-      let id = name == "failure" ? "build" : name == "manual" ? "agent" : name == "begin-timeout" ? "begin" : name
+      let id =
+        ["failure", "restarting"].contains(name) ? "build" : name == "manual" ? "agent" : name == "begin-timeout" ? "begin" : name
       let now = Date(timeIntervalSince1970: 1_791_374_400)
       var engine = TutorialProgress()
       let done = name == "done" ? TutorialSteps.all.map(\.id) : TutorialSteps.all.prefix { $0.id != id }.map(\.id)

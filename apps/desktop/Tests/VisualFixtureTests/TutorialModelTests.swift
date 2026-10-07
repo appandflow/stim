@@ -157,6 +157,14 @@
       relaunched.open()
       relaunched.update(workspaces: [], archived: [], sheetOpen: false, now: now.addingTimeInterval(480))
       XCTAssertEqual(relaunched.message, "No tutorial workspace yet. Ask your agent what failed")
+      relaunched.setManual(true)
+      XCTAssertEqual(relaunched.message, "Waiting for the tutorial workspace...")
+      model.open(beginning: true)
+      model.setManual(true)
+      model.copiedPrompt(now: now)
+      model.update(workspaces: [], archived: [], sheetOpen: false, now: now.addingTimeInterval(300))
+      XCTAssertNil(model.snapshot?.record.runPromptCopiedAt)
+      XCTAssertEqual(model.message, "Waiting for the tutorial workspace...")
     }
 
     @MainActor func testOldViewerEventsCannotCompleteANewTourOnAReusedDevice() throws {
@@ -167,15 +175,24 @@
           {"path":"/tmp/new-tour","live":true,"warnings":[],"tutorial":{"version":1},"phase":"ready",
            "ios":{"udid":"reused-simulator","state":"Booted","owned":true,"app":{"id":"dev.stim.tutorial","state":"running"}}}
           """.utf8))
-      let previous: [TutorialViewerEvent] = [.opened("reused-simulator"), .input("reused-simulator")]
-      let model = TutorialModel(defaults: isolatedDefaults())
-      model.update(workspaces: [env], archived: [], sheetOpen: false, viewerEvents: previous)
-      for _ in 0..<3 { model.skip() }
-      XCTAssertEqual(model.snapshot?.currentStep, "device")
-      model.update(workspaces: [env], archived: [], sheetOpen: false, viewerEvents: previous)
-      XCTAssertEqual(model.snapshot?.currentStep, "device")
-      model.update(workspaces: [env], archived: [], sheetOpen: false, viewerEvents: previous + previous)
-      XCTAssertEqual(model.snapshot?.currentStep, "logs")
+      for (count, beginning) in [(62, false), (64, false), (64, true)] {
+        let events = TutorialViewerEvents()
+        for _ in 0..<(count / 2) {
+          events.opened("reused-simulator")
+          events.input("reused-simulator")
+        }
+        let model = TutorialModel(defaults: isolatedDefaults())
+        model.update(workspaces: [env], archived: [], sheetOpen: false, viewerEvents: events.events)
+        if beginning { model.open(beginning: true) }
+        for _ in 0..<3 { model.skip() }
+        XCTAssertEqual(model.snapshot?.currentStep, "device")
+        events.opened("reused-simulator")
+        model.update(workspaces: [env], archived: [], sheetOpen: false, viewerEvents: events.events)
+        XCTAssertEqual(model.snapshot?.currentStep, "device")
+        events.input("reused-simulator")
+        model.update(workspaces: [env], archived: [], sheetOpen: false, viewerEvents: events.events)
+        XCTAssertEqual(model.snapshot?.currentStep, "logs")
+      }
     }
 
     @MainActor func testSetupEntryBeginsWhileHelpResumes() {

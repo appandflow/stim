@@ -143,7 +143,6 @@ struct RootView: View {
               }
               showsLogs.toggle()
             }
-            .tutorialAnchor(.logsTab, workspace: selectedPage?.apps.first?.path)
           }
           ToolbarItem(placement: .primaryAction) {
             InspectorToggleButton(isShown: inspector != .hidden, action: toggleInspector)
@@ -276,14 +275,13 @@ struct RootView: View {
         if tutorial.snapshot?.isComplete == true {
           openTutorialArchive()
         } else if let path = tutorial.tourPath {
-          UserDefaults.standard.set(StatusFilter.all.rawValue, forKey: AppPreferences.Key.sidebarStatus)
           selection = .environment(path)
           if ["logs", "refresh", "agent"].contains(tutorial.snapshot?.currentStep ?? "") { showsLogs = true }
         }
       })
   }
 
-  private func updateTutorial(_ payload: StatusPayload?, events: [TutorialViewerEvent]? = nil) {
+  private func updateTutorial(_ payload: StatusPayload?, events: [TutorialViewerEvents.Entry]? = nil) {
     guard let payload else { return }
     tutorial.update(
       workspaces: payload.environments, archived: payload.archived ?? [],
@@ -301,7 +299,6 @@ struct RootView: View {
   }
 
   private func openTutorialArchive() {
-    UserDefaults.standard.set(StatusFilter.archived.rawValue, forKey: AppPreferences.Key.sidebarStatus)
     if let archive = ArchivedWorkspace.newest(removedFrom: tutorial.tourPath ?? "", in: store.payload?.archived ?? []) {
       selection = .archived(archive.id)
     }

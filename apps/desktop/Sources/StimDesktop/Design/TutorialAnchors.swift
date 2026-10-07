@@ -41,7 +41,7 @@ struct TutorialHint {
     case "sidebar": return "Select the tutorial workspace"
     case "build": return "Follow the iOS build"
     case "rebuild": return "See the cache outcome in build details"
-    case "device": return "Open the live view and choose Control"
+    case "device": return "Open the live view, then tap Log an error."
     case "logs", "refresh": return "Open Logs"
     case "agent": return "Watch Agent actions and Replay"
     case "finish", "done": return "Find the run in Archived"
@@ -84,6 +84,8 @@ private struct TutorialHighlights: ViewModifier {
           let match =
             anchors.first {
               $0.key.id == id && ($0.key.workspace == nil || $0.key.workspace == hint.path)
+            } ?? anchors.first {
+              hint.step == "rebuild" && $0.key.id == .buildSection && $0.key.workspace == hint.path
             } ?? anchors.first {
               hint.step == "device" && $0.key.id == .viewerControl
             }

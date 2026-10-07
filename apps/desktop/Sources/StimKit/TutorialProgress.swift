@@ -90,7 +90,7 @@ public struct TutorialRecord: Codable, Equatable, Sendable {
   }
 
   public func beginWaitTimedOut(now: Date) -> Bool {
-    runPromptCopiedAt.map { now.timeIntervalSince($0) >= 180 } == true
+    !manual && runPromptCopiedAt.map { now.timeIntervalSince($0) >= 180 } == true
   }
 }
 
@@ -208,7 +208,7 @@ public struct TutorialProgress: Sendable {
   public mutating func setManual(_ manual: Bool) { record?.manual = manual }
 
   public mutating func copiedRunPrompt(now: Date) {
-    guard record?.step == "begin", record?.runPromptCopiedAt == nil else { return }
+    guard record?.step == "begin", record?.manual == false, record?.runPromptCopiedAt == nil else { return }
     record?.runPromptCopiedAt = now
   }
 
@@ -389,7 +389,7 @@ public struct TutorialProgress: Sendable {
         return Checkpoint(failure: "Ask your agent to run the app again")
       }
       return Checkpoint(
-        completed: viewerOpened && viewerInput ? now : nil, detail: "Open the live view and tap Log an error",
+        completed: viewerOpened && viewerInput ? now : nil, detail: "Open the live view, then tap Log an error.",
         ticks: [tick("opened", viewerOpened), tick("input", viewerInput)])
     case "logs":
       return Checkpoint(

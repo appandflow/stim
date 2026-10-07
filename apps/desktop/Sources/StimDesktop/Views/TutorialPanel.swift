@@ -99,7 +99,7 @@ struct TutorialPanel: View {
 
   private func stepRow(_ step: TutorialStep, state: TutorialStepProgress) -> some View {
     let current = snapshot.currentStep == step.id
-    let open = current || expanded == step.id
+    let open = !restarting && (current || expanded == step.id)
     return VStack(alignment: .leading, spacing: Space.md) {
       Button {
         expanded = expanded == step.id ? nil : step.id
@@ -120,11 +120,11 @@ struct TutorialPanel: View {
           Text(explanation(step.id)).foregroundStyle(Palette.secondary)
           if snapshot.record.manual, !step.manual.isEmpty {
             if rendersStatic {
-              CommandBlock(commandText: commands(step), onCopy: copied)
+              CommandBlock(commandText: commands(step))
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(height: 280, alignment: .top).clipped()
             } else {
-              ScrollView { CommandBlock(commandText: commands(step), onCopy: copied) }
+              ScrollView { CommandBlock(commandText: commands(step)) }
                 .frame(maxHeight: 280)
             }
             if step.id == "begin" {
@@ -135,7 +135,7 @@ struct TutorialPanel: View {
             TutorialPromptBox(prompt: text, onCopy: copied)
           }
           let detail = current ? message ?? state.detail : state.detail
-          if !detail.isEmpty, current || ["build", "rebuild"].contains(step.id) {
+          if !detail.isEmpty, detail != explanation(step.id), current || ["build", "rebuild"].contains(step.id) {
             Text(detail).foregroundStyle(color(state.state)).textSelection(.enabled)
           }
           if detail.contains("Update Stim Desktop") {
@@ -243,7 +243,7 @@ struct TutorialPanel: View {
     case "build":
       return "Watch the first iOS build: prebuild, pods, compile and launch. Open the build details for phase timings."
     case "rebuild": return "Run iOS again. The cache badge shows a hit, or explains why Stim rebuilt."
-    case "device": return "Open the simulator's live view, choose Control, then tap Log an error."
+    case "device": return "Open the live view, then tap Log an error."
     case "logs": return "Open Logs to find the tagged error. Try Crash me and Slow request too."
     case "agent":
       return

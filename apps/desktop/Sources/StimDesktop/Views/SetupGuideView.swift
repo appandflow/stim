@@ -423,7 +423,7 @@ struct SetupGuideView: View {
         onboarding.finishGuide()
         OpenRequests.shared.showTutorial(.begin)
       }
-      .buttonStyle(.stim(.primary, .regular))
+      .buttonStyle(.stim(.secondary, .regular))
       .accessibilityLabel("Take the Stim tutorial")
       if onboarding.report?.needsRelaunch == true {
         restartBanner("The app picks its stim when it starts.", action: onboarding.finishAndRestart)
@@ -511,7 +511,6 @@ struct CommandBlock: View {
   var isDefault = false
   var caption: String?
   var commandText: String?
-  var onCopy: () -> Void = {}
   var showsOutput = true
   var showsDirectory = true
   var start: (() -> Void)?
@@ -531,9 +530,8 @@ struct CommandBlock: View {
     self.start = start
   }
 
-  init(commandText: String, onCopy: @escaping () -> Void) {
+  init(commandText: String) {
     self.commandText = commandText
-    self.onCopy = onCopy
     showsDirectory = false
   }
 
@@ -551,13 +549,12 @@ struct CommandBlock: View {
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(text, forType: .string)
             copied = true
-            onCopy()
           } label: {
             Image(systemName: copied ? "checkmark" : "doc.on.doc")
           }
           .buttonStyle(.stim(.plain))
           .help("Copy the command")
-          .accessibilityLabel(copied ? "Copied" : "Copy \(text)")
+          .accessibilityLabel(copied ? "Copied" : commandText != nil ? "Copy commands" : "Copy \(text)")
           .task(id: copied) {
             guard copied else { return }
             try? await Task.sleep(for: .seconds(2))

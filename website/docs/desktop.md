@@ -71,12 +71,12 @@ The panel follows a small iOS app in its own worktree. It shows:
 - **Create the tutorial / Workspace in sidebar:** the run prompt and the new workspace.
 - **First iOS build:** build progress, phase timings and build failures.
 - **Rebuild from cache:** the repeated build's cache hit or miss reason.
-- **Live view and control:** open the simulator, choose Control and tap **Log an error**.
+- **Live view and control:** Open the live view, then tap Log an error.
 - **App logs:** find the tagged error; **Crash me** and **Slow request** are optional checks.
 - **Agent actions and replay:** watch the agent drive the simulator and inspect its recording. If recording is off, the panel points to Settings.
 - **Fast Refresh:** change the title to purple and watch the app update; new errors point to Logs.
 - **Watch on your phone / Build on another Mac:** optional steps with **Skip**. Pairing and approval remain in Settings; the panel does not perform them.
-- **Finish and archive:** revert the tutorial edit, stop, then remove only its worktree. **Open Archived** selects the Archived filter.
+- **Finish and archive:** revert the tutorial edit, stop, then remove only its worktree. **Open Archived** opens the archived run.
 
 Accent rings and short callouts point to existing controls without covering the
 app with a dimming layer. **Show me** selects the tutorial workspace when its
@@ -88,7 +88,8 @@ Help reopens it. At launch an unfinished tutorial resumes when Stim still lists
 its path, and an archived tour opens as complete. **Skip step** advances without
 waiting for a signal. **Mark done** appears after two minutes. The **…** menu
 also offers **Restart tutorial**, which shows a restart prompt and resets
-checkpoints when a newer tutorial workspace appears.
+checkpoints when the tracked tour disappears and returns, or its oldest build
+starts after Restart. A newer phase timestamp alone does not reset progress.
 
 Choose **Show commands instead of prompts** for manual mode. Copy the commands
 into your terminal, including the app-file heredocs. After creating the base
@@ -96,6 +97,7 @@ app, expand **First iOS build** to copy the worktree and build commands; the
 workspace checkpoint ticks once those run. Paths come from the tour's
 repository and agent-device state directory when known; the default base is
 `~/stim-tutorial`. A machine command needs the name of an approved Mac.
+Copying manual commands does not start the three-minute workspace warning.
 Desktop never executes these tutorial commands. To read the complete manual:
 
 <StimTabs code={`stim guide tutorial manual`} />
@@ -104,6 +106,11 @@ Desktop reads the archive setting through `stim settings --json`. If that
 setting cannot be read, finish waits ten seconds after a previously stopped
 workspace disappears before completing without an archive. In that fallback, a
 workspace that vanishes without an observed stop offers Restart.
+
+The panel cannot see a removal refusal from a command run by your agent. If
+removal is refused, the finish step keeps showing the finish prompt; check the
+agent's output and revert the tutorial edit before trying again. Desktop can
+show refusals for removals started from its own workspace actions.
 
 ## What it does
 

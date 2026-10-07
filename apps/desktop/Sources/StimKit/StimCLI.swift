@@ -68,8 +68,8 @@ public struct StimCLI: Sendable {
     (try? await run(["--version"])).map { String(decoding: $0, as: UTF8.self) }
   }
 
-  public func tutorialGuide() async throws -> String {
-    String(decoding: try await run(["guide", "tutorial"]), as: UTF8.self)
+  public func tutorialGuide() async throws {
+    _ = try await run(["guide", "tutorial"])
   }
 
   public func status() async throws -> StatusPayload {

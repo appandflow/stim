@@ -20,8 +20,8 @@ final class TutorialModel: ObservableObject {
   private var openPending = false
   private var logs: [LogRecord] = []
   private var now = Date()
-  private var viewerEvents: [TutorialViewerEvent] = []
-  private var viewerEventOffset = 0
+  private var viewerEvents: [TutorialViewerEvents.Entry] = []
+  private var viewerEventSequence = 0
   private var pairedPhoneCount: Int?
   private var removalRefused = false
   private var missingSince: Date?
@@ -68,16 +68,7 @@ final class TutorialModel: ObservableObject {
       return "Tutorial workspace gone: Restart"
     }
     if snapshot?.currentStep == "finish", removalRefused {
-      return "Your agent reported a refusal: ask it to revert the tutorial edit"
-    }
-    if snapshot?.currentStep == "finish",
-      workspace?.issues?.contains(where: {
-        $0.message.localizedCaseInsensitiveContains("refus")
-          || $0.message.localizedCaseInsensitiveContains("dirty")
-          || $0.message.localizedCaseInsensitiveContains("unpushed")
-      }) == true
-    {
-      return "Your agent reported a refusal: ask it to revert the tutorial edit"
+      return "Removal was refused: revert the tutorial edit and try again"
     }
     return nil
   }
@@ -91,11 +82,10 @@ final class TutorialModel: ObservableObject {
 
   func update(
     workspaces: [Workspace], archived: [ArchivedWorkspace], sheetOpen: Bool, now: Date = Date(),
-    viewerEvents: [TutorialViewerEvent] = [], pairedPhoneCount: Int? = nil, removalRefused: Bool = false
+    viewerEvents: [TutorialViewerEvents.Entry] = [], pairedPhoneCount: Int? = nil, removalRefused: Bool = false
   ) {
     self.now = now
     self.viewerEvents = viewerEvents
-    if viewerEvents.count < viewerEventOffset { viewerEventOffset = 0 }
     self.pairedPhoneCount = pairedPhoneCount
     self.removalRefused = removalRefused
     self.workspaces = workspaces
@@ -119,7 +109,7 @@ final class TutorialModel: ObservableObject {
       snapshot = nil
       archiveEnabled = nil
       logs = []
-      viewerEventOffset = viewerEvents.count
+      viewerEventSequence = viewerEvents.last?.sequence ?? 0
       records.record = nil
       workspace = workspaces.first { $0.path == candidate.path }
       openPending = true
@@ -144,7 +134,8 @@ final class TutorialModel: ObservableObject {
     snapshot = progress.update(
       TutorialInput(
         environment: workspace.flatMap(TutorialEnvironment.init), archivedProjectRoots: archivedRoots,
-        logRecords: logs, viewerEvents: Array(viewerEvents.dropFirst(viewerEventOffset)), pairedPhoneCount: pairedPhoneCount,
+        logRecords: logs, viewerEvents: viewerEvents.filter { $0.sequence > viewerEventSequence }.map(\.event),
+        pairedPhoneCount: pairedPhoneCount,
         replayOff: workspace?.replayOff ?? false, archiveEnabled: fallback ? false : archiveEnabled ?? true,
         now: now, record: records.record))
     if restarting, oldStart != snapshot?.record.startedAt {
@@ -163,7 +154,7 @@ final class TutorialModel: ObservableObject {
       snapshot = nil
       workspace = nil
       logs = []
-      viewerEventOffset = viewerEvents.count
+      viewerEventSequence = viewerEvents.last?.sequence ?? 0
       restarting = false
     }
     isOpen = true
@@ -192,15 +183,13 @@ final class TutorialModel: ObservableObject {
     refresh()
   }
   func copiedPrompt(now: Date = Date()) {
-    guard !restarting else { return }
+    guard !restarting, !manual else { return }
     progress.copiedRunPrompt(now: now)
     refresh(now: now)
   }
 
   func restart(now: Date = Date()) {
-    viewerEvents = []
-    viewerEventOffset = 0
-    TutorialViewerEvents.shared.reset()
+    viewerEventSequence = viewerEvents.last?.sequence ?? 0
     progress.requestRestart(now: now)
     restarting = true
     isOpen = true
@@ -251,7 +240,18 @@ final class TutorialModel: ObservableObject {
 
   private func receive(_ event: LogFollower.Event) {
     guard case .records(let batch) = event else { return }
-    logs = Array((logs + batch).suffix(10000))
+    struct Key: Hashable {
+      var ts: Double
+      var src: String
+      var msg: String
+      init(_ record: LogRecord) {
+        ts = record.ts
+        src = record.src
+        msg = record.msg
+      }
+    }
+    var seen = Set(logs.map(Key.init))
+    logs = Array((logs + batch.filter { seen.insert(Key($0)).inserted }).suffix(10000))
     refresh()
   }
 
@@ -264,7 +264,7 @@ final class TutorialModel: ObservableObject {
         return
       }
       do {
-        _ = try await cli.tutorialGuide()
+        try await cli.tutorialGuide()
         cliFailure = nil
       } catch { cliFailure = "Update the Stim CLI to run the tutorial" }
     }

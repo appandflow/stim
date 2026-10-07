@@ -57,21 +57,13 @@ private func log(
   #expect(record.archivedProjectRoots(in: [entry]).isEmpty)
 }
 
-@Test func tutorialBeginTimeoutWaitsThreeMinutesAfterCopyAndLegacyRecordsHaveNoTimer() throws {
-  var record = try JSONDecoder().decode(
+@Test func tutorialBeginCheckpointDoesNotOfferRestartBeforeRunPromptCopy() throws {
+  let legacy = try JSONDecoder().decode(
     TutorialRecord.self,
     from: Data(
       #"{"version":1,"startedAt":0,"step":"begin","done":[],"skipped":[],"manual":false}"#.utf8))
-  #expect(!record.beginWaitTimedOut(now: tourStart))
-  record.runPromptCopiedAt = tourStart
-  #expect(!record.beginWaitTimedOut(now: tourStart.addingTimeInterval(179)))
-  #expect(record.beginWaitTimedOut(now: tourStart.addingTimeInterval(180)))
-}
-
-@Test func tutorialBeginCheckpointDoesNotOfferRestartBeforeRunPromptCopy() {
   var progress = TutorialProgress()
-  let waiting = progress.update(
-    TutorialInput(environment: nil, now: afterBuild, record: TutorialRecord(version: 1, startedAt: tourStart)))
+  let waiting = progress.update(TutorialInput(environment: nil, now: afterBuild, record: legacy))
   #expect(!state("begin", in: waiting).detail.hasPrefix("No tutorial workspace"))
   progress.copiedRunPrompt(now: afterBuild)
   let beforeTimeout = progress.update(TutorialInput(environment: nil, now: afterBuild.addingTimeInterval(179)))
@@ -542,9 +534,9 @@ func tutorialArchiveDisabledRelaunchDoesNotCompleteBeforeFinish(step: String) {
   let viewer = TutorialViewerEvents()
   viewer.opened("old-tour")
   for _ in 0..<64 { viewer.input("new-tour") }
-  #expect(viewer.events == Array(repeating: .input("new-tour"), count: 64))
+  #expect(viewer.events.map(\.event) == Array(repeating: .input("new-tour"), count: 64))
   viewer.opened("latest-tour")
-  #expect(viewer.events.last == .opened("latest-tour"))
+  #expect(viewer.events.last?.event == .opened("latest-tour"))
   #expect(viewer.events.count == 64)
   viewer.reset()
   #expect(viewer.events.isEmpty)
