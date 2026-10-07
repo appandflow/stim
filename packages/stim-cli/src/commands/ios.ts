@@ -1,3 +1,4 @@
+import type { DevicePlacement } from '@stim-cli/core/state';
 import { hostedMetroSettings } from '../device-host/metro-gateway.ts';
 import { workspaceId } from '@stim-cli/core';
 import { acquireIosArtifact, type PreparedIosArtifact } from './ios/artifact.ts';
@@ -24,7 +25,7 @@ import {
   connectIosTarget,
   hostedIosBuildTarget,
   hostedIosSelectors,
-  selectIosTarget,
+  selectIosPlacement,
 } from './ios/remote.ts';
 import { finishHostedIosRun } from './ios/hosted.ts';
 import type { CompilationCacheActivity, DevServerStart } from '../engine/build-facts.ts';
@@ -186,7 +187,7 @@ export function registerIos(program: Command, deps: Partial<IosDeps> = {}): void
     )
     .option(
       '--remote <target>',
-      'Run on eas, proxy, or an approved Mac in hosting.machines; named Macs never fall back locally. auto is not available yet.',
+      'Run on eas, proxy, or an approved Mac in hosting.machines; named Macs never fall back locally. auto places on an approved Mac when this Mac is full or busy.',
       (value) => {
         if (parseMachine(value)) return value.trim();
         throw new InvalidArgumentError('expected eas, proxy, auto, or a hosting Mac name');
@@ -393,6 +394,7 @@ async function runIos(
   let compilationCache: CompilationCacheActivity = COMPILATION_CACHE_NOT_RUN;
   let reclaimed: ReclaimedStep[] = [];
   let buildMachine = 'auto';
+  let devicePlacement: DevicePlacement | undefined;
   let builtConfiguration: string | null = null;
 
   const fail = ({
@@ -416,10 +418,11 @@ async function runIos(
     for (const line of lines) note(chalk.dim(phaseLine('', line)));
     if (remedy) note(chalk.dim(phaseLine('remedy', remedy)));
     if (logPath) note(chalk.dim(phaseLine('log', logPath)));
-    if (build)
+    if (build || devicePlacement)
       writeLastBuild(
         root,
         lastBuildRecord({
+          devicePlacement,
           buildMachine,
           ...build,
           configuration: builtConfiguration,
@@ -437,6 +440,7 @@ async function runIos(
           code,
           message: message ?? null,
           remedy: remedy ?? null,
+          ...(devicePlacement ? { devicePlacement } : {}),
           ...(compilationCache.status === 'not-run' ? {} : { compilationCache }),
           ...(lease === undefined ? {} : { lease }),
           ...(reclaimed.length ? { reclaimed } : {}),
@@ -534,13 +538,32 @@ async function runIos(
     waitMs: deviceSlotWaitMs,
     displayName: basename(root),
     ...deviceWaitRun.policy,
+    onWait: (ms: number) => {
+      deviceWaitRun.policy.onWait?.(ms);
+      if (devicePlacement?.decision === 'local' && ms > 0) devicePlacement.decision = 'waited-locally';
+    },
   };
 
   const isExpo = d.detectIsExpo(root);
   const schemeRefusal = explicitSchemeRefusal(root, buildScheme, isExpo, d);
   if (schemeRefusal) return fail(schemeRefusal);
-  const remoteSelection = selectIosTarget({ root, slot, opts, settings, physical, release, metroCheck, d });
+  const remoteSelection = await selectIosPlacement({
+    root,
+    slot,
+    opts,
+    settings,
+    physical,
+    release,
+    metroCheck,
+    d,
+    deviceType,
+    runtime,
+    noWait: deviceSlotWaitMs === 0,
+    note,
+    phase,
+  });
   if ('failure' in remoteSelection) return fail(remoteSelection.failure);
+  devicePlacement = remoteSelection.devicePlacement;
   const { machine: hostedMachine, backend: remoteBackend } = remoteSelection;
   const viewer = resolveSimulatorAppFlag(opts.simulatorApp, physical, hostedMachine ?? remoteBackend);
   if ('refusal' in viewer) return fail(viewer.refusal);
@@ -565,7 +588,7 @@ async function runIos(
   if ('failure' in connected) return fail(connected.failure);
   const hostedTarget = connected.target;
   try {
-    const budget = await iosPlacementBudget(d, root, note, Boolean(hostedTarget));
+    const budget = await iosPlacementBudget(d, root, note, Boolean(hostedTarget), remoteSelection.budget);
     reclaimed = budget.reclaimed;
     if (budget.refusal) return fail(budget.refusal);
     const backendConnection = await connectIosBackend(root, remoteBackend, opts.deviceType, d);
@@ -932,6 +955,7 @@ async function runIos(
           elapsed,
           startedAt,
           closeWriter: () => writer?.close(),
+          devicePlacement,
           recordRun,
           reclaimed,
           devServer,
@@ -1016,6 +1040,7 @@ async function runIos(
           closeWriter: () => writer?.close?.(),
           lease: leaseHandle,
           releaseLease,
+          devicePlacement,
           recordRun,
           reclaimed,
           devServer,

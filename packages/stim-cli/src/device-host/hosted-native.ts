@@ -55,6 +55,7 @@ export interface HostedNativeTarget {
   host: HostConnection;
   choice: HostedIosChoice | HostedAndroidChoice;
   session: HostedSession | null;
+  selection?: { selected: string; reason: string };
 }
 
 export const androidAgentRemoteConfig = (root: string, slot: string): string =>
@@ -63,12 +64,26 @@ export const androidAgentRemoteConfig = (root: string, slot: string): string =>
 export const iosAgentRemoteConfig = (root: string, slot: string): string =>
   join(workspaceDir(root), 'hosted-ios', slot, 'agent-device-remote.json');
 
+export function prepareHostedNative(
+  machine: string,
+  selectors: HostedDeviceSelectors,
+  recorded: HostedNativePlacement<HostedIosDevice | HostedAndroidDevice> | undefined,
+  platform: 'ios' | 'android',
+  resumeOnly: true,
+): Promise<HostedNativeTarget | null>;
+export function prepareHostedNative(
+  machine: string,
+  selectors: HostedDeviceSelectors,
+  recorded?: HostedNativePlacement<HostedIosDevice | HostedAndroidDevice>,
+  platform?: 'ios' | 'android',
+): Promise<HostedNativeTarget>;
 export async function prepareHostedNative(
   machine: string,
   selectors: HostedDeviceSelectors,
   recorded?: HostedNativePlacement<HostedIosDevice | HostedAndroidDevice>,
   platform: 'ios' | 'android' = 'ios',
-): Promise<HostedNativeTarget> {
+  resumeOnly = false,
+): Promise<HostedNativeTarget | null> {
   let host: HostConnection | undefined;
   try {
     host = await connectHost(machine, undefined, true);
@@ -105,6 +120,7 @@ export async function prepareHostedNative(
         return { host, choice: device, session };
       }
     }
+    if (resumeOnly) return null;
     const offer = await call(host, 'device-host.offer', { platform, ...selectors }, 3000);
     const parsedOffer = parseHostedNativeOffer(offer);
     const choice =
@@ -132,6 +148,25 @@ export async function prepareHostedNative(
     throw hostingRefusal(machine, error);
   } finally {
     host?.connection.close();
+  }
+}
+
+async function reserveHostedNative(
+  host: HostConnection,
+  target: HostedNativeTarget,
+  params: Record<string, unknown>,
+  platform: 'ios' | 'android',
+): Promise<HostedSession> {
+  try {
+    return hostedSession(host, await call(host, 'device-host.reserve', params), platform);
+  } catch (error) {
+    if (!target.selection) throw error;
+    throw Object.assign(
+      new Error(
+        `${error instanceof Error ? error.message : String(error)} Retry stim ${platform} --remote auto; the build already targets ${host.machine}'s architecture.`,
+      ),
+      { remedy: `Retry stim ${platform} --remote auto.` },
+    );
   }
 }
 
@@ -174,9 +209,10 @@ export async function placeHostedNative(
     target.host = host;
     let session =
       (target.session ? await attach(host, target.session.id, undefined, platform) : null) ??
-      hostedSession(
+      (await reserveHostedNative(
         host,
-        await call(host, 'device-host.reserve', {
+        target,
+        {
           platform,
           workspace: root,
           slot,
@@ -185,12 +221,13 @@ export async function placeHostedNative(
           ...(platform === 'android' && 'systemImage' in target.choice
             ? { systemImage: target.choice.systemImage, deviceProfile: target.choice.deviceProfile }
             : {}),
-        }),
+        },
         platform,
-      );
+      ));
     let placement: HostedNativePlacement<HostedIosDevice | HostedAndroidDevice> = {
       machine: host.machine,
-      selected: host.machine,
+      selected: target.selection?.selected ?? host.machine,
+      ...(target.selection ? { reason: target.selection.reason } : {}),
       session: session.id,
       appAttempt: randomUUID(),
       device: platform === 'ios' ? parseHostedDevice(session.device) : parseHostedAndroidDevice(session.device),

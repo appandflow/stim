@@ -99,7 +99,7 @@ Explicit machine project/repository overrides keep their existing precedence.
 | `ios.deviceType`              | iOS Simulator device type                                                                                  |
 | `ios.runtime`                 | iOS Simulator runtime                                                                                      |
 | `ios.configuration`           | Xcode configuration, such as `Debug` or `Release`                                                          |
-| `ios.remote`                  | `proxy`, `eas`, or an approved hosting Mac; `auto` refuses until available                                 |
+| `ios.remote`                  | `proxy`, `eas`, an approved hosting Mac, or `auto` when this Mac is full or busy                           |
 | `ios.simslimProfile`          | SimSlim profile for local iOS devices                                                                      |
 | `ios.signingIdentity`         | Keychain identity used to re-seal a device build                                                           |
 | `ios.signingIdentitySha1`     | SHA-1 of that identity, when two share a name                                                              |
@@ -112,7 +112,7 @@ Explicit machine project/repository overrides keep their existing precedence.
 | `android.variant`             | Gradle build variant                                                                                       |
 | `android.keystore`            | Release keystore path                                                                                      |
 | `android.keystorePassword`    | Release keystore password source                                                                           |
-| `android.remote`              | Default remote backend, `proxy` or `eas`                                                                   |
+| `android.remote`              | `proxy`, `eas`, an approved hosting Mac, or `auto` when this Mac is full or busy                           |
 | `metro.tunnel`                | Remote tunnel mode: `auto`, `off`, `expo`, `cloudflared`, `ngrok`, or `tailscale` (explicit, tailnet-only) |
 | `metro.ngrokUrl`              | Existing ngrok URL                                                                                         |
 | `metro.publicUrl`             | Existing public Metro URL                                                                                  |
@@ -349,7 +349,7 @@ the printed id with `stim-server devices grant <id> --device-host`.
 Hosting approval is separate from `offload.machines` and grants no read,
 control or build access. [`stim macos --remote <machine>`](./macos.md#run-it-on-another-mac)
 runs a macOS app on an approved machine. [iOS placement](./owned-devices.md#run-ios-on-another-mac) uses
-`stim ios --remote <machine>` or `ios.remote` and the same approval. Android placement is later work. To view or control a hosted macOS app, a person on
+`stim ios|android --remote <machine>` or `ios.remote` / `android.remote` and the same approval. `auto` places on an approved Mac when this Mac is full or busy. To view or control a hosted macOS app, a person on
 that Mac approves Screen & System Audio Recording and Device Control and Data Access
 (Accessibility on macOS 26 and earlier) for Stim Host, the app
 `stim-server service install` runs the server under.
@@ -439,7 +439,8 @@ compiles a SwiftPM Debug build:
 - `off` always builds here.
 
 Load per core is the 5-minute load average divided by the CPU count.
-`offload.maxLoadPerCore` (default 2) is the load per core at which a Mac
+`offload.maxLoadPerCore` (default 2) is also the busy threshold for automatic
+iOS and Android device placement. It is the load per core at which a Mac
 counts as saturated: this Mac stops preferring itself, and a build machine
 declines offloaded builds.
 

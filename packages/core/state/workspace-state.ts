@@ -1,6 +1,6 @@
 import { readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
-import { readJsonObject } from './json-file.ts';
+import { isJsonObject, readJsonObject } from './json-file.ts';
 import { agentSessionOf } from './status-measures.ts';
 import { workspaceLogsDir, workspaceStateFile } from './paths.ts';
 import {
@@ -8,6 +8,7 @@ import {
   BUILD_RESULTS,
   type AgentSession,
   type BuildDiagnostic,
+  type DevicePlacement,
   type BuildHistoryEntry,
   type BuildMissChange,
   type BuildMissReason,
@@ -253,6 +254,32 @@ export function buildDiagnostics(value: unknown): BuildDiagnostic[] {
     .slice(0, DIAGNOSTIC_CAP);
 }
 
+function devicePlacement(value: unknown): DevicePlacement | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  if (
+    (record.decision !== 'local' && record.decision !== 'hosted' && record.decision !== 'waited-locally') ||
+    typeof record.reason !== 'string'
+  )
+    return null;
+  return {
+    decision: record.decision,
+    reason: record.reason,
+    ...(typeof record.machine === 'string' ? { machine: record.machine } : {}),
+  };
+}
+
+export function readDevicePlacement(
+  state: WorkspaceState | null,
+  platform: StatsPlatform,
+  slot = 'default',
+): DevicePlacement | null {
+  const slots = isJsonObject(state?.deviceSlots) ? state.deviceSlots : {};
+  const saved = isJsonObject(slots[slot]) ? slots[slot] : {};
+  const device = slot === 'default' ? state?.[platform] : saved[platform];
+  return devicePlacement(isJsonObject(device) ? device.devicePlacement : undefined);
+}
+
 function lastBuildReport(platform: StatsPlatform, value: unknown): LastBuildReport | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const record = value as Record<string, unknown>;
@@ -263,6 +290,7 @@ function lastBuildReport(platform: StatsPlatform, value: unknown): LastBuildRepo
   const reason =
     record.cacheHit === 'local' || record.cacheHit === 'remote' ? null : parseMissReason(record.missReason);
   const diagnostics = record.status === 'failed' ? buildDiagnostics(record.diagnostics) : [];
+  const placed = devicePlacement(record.devicePlacement);
   return {
     platform,
     status: record.status,
@@ -274,6 +302,7 @@ function lastBuildReport(platform: StatsPlatform, value: unknown): LastBuildRepo
     finishedAt: Number.isNaN(finished.getTime()) ? null : finished.toISOString(),
     ...(typeof record.errorCode === 'string' ? { errorCode: record.errorCode } : {}),
     ...(reason ? { missReason: reason } : {}),
+    ...(placed ? { devicePlacement: placed } : {}),
     ...(typeof record.buildMachine === 'string' ? { buildMachine: record.buildMachine } : {}),
     ...(typeof record.builtOn === 'string' ? { builtOn: record.builtOn } : {}),
     ...(typeof record.offloadedTo === 'string' ? { offloadedTo: record.offloadedTo } : {}),

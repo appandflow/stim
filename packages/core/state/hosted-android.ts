@@ -11,7 +11,10 @@ import type { WorkspaceState } from './workspace-state.ts';
 export interface HostedAndroidPlacement extends HostedNativePlacement<HostedAndroidDevice> {}
 
 /** Public hosting facts; the host's serial, AVD name and private Metro gateway are excluded. */
-export type HostedAndroidStatus = Pick<HostedAndroidPlacement, 'machine' | 'session' | 'selected' | 'agent'> & {
+export type HostedAndroidStatus = Pick<
+  HostedAndroidPlacement,
+  'machine' | 'session' | 'selected' | 'reason' | 'agent'
+> & {
   device: { name: string; systemImage: string; api: number } | null;
   /** The latest session probe in status, independent of a conflicting local emulator's state. */
   state?: string;
@@ -26,6 +29,7 @@ export function hostedAndroidStatus(placement: HostedAndroidPlacement): HostedAn
     machine: placement.machine,
     session: placement.session,
     selected: placement.selected,
+    ...(placement.reason ? { reason: placement.reason } : {}),
     agent: placement.agent,
     device: placement.device
       ? {

@@ -52,7 +52,7 @@ The host boots its owned simulator headless. Debug keeps Metro on this Mac
 and connects it through a private tailnet bridge; no `stim start --remote` is
 needed. `--device-type`, `--runtime` and `--slot` select the hosted simulator.
 `--build-machine` independently selects a compatible worker for a Debug cache
-miss. Hosting has no local fallback. Stop the slot with `stim stop` before
+miss. Named hosting has no local fallback. Stop the slot with `stim stop` before
 moving it between local and hosted devices or between hosts.
 
 `--remote` also accepts two backend names: `eas` creates an EAS Simulator
@@ -61,7 +61,8 @@ session; `proxy` uses an existing agent-device daemon configured with
 creating a session. Those targets prepare remote Metro exposure, as
 `stim start --remote` does, and compile locally. They do not select a Mac in
 `hosting.machines`. See [remote devices and Metro](./owned-devices.md#remote-devices).
-`--remote auto` refuses until automatic hosting placement is available.
+`--remote auto` places iOS or Android on an approved Mac when this Mac is full
+or busy; see [automatic device placement](#automatic-device-placement).
 Android also accepts these backends. The [macOS prototype](./macos.md) also supports named hosts.
 
 ## Run Android on a hosting Mac
@@ -74,7 +75,7 @@ stim stop`} />
 
 `android.remote` sets the workspace default. `--system-image` and
 `--device-profile` select choices installed on the host; the build targets
-its offered ABI. `--build-machine` remains independent. Hosting is strict:
+its offered ABI. `--build-machine` remains independent. Named hosting is strict:
 refusal or an unreachable host fails with `STIM_HOSTING_REFUSED`. Stop before
 changing hosts or moving between local and hosted devices. `--device`, a running
 local emulator in that slot, and `--no-metro-check` for hosted Debug refuse.
@@ -442,3 +443,49 @@ com.appandflow.trailhead · ready · errors clean`}
     {`Run the app on a hosted iOS simulator on janics-mac-mini.`}
   </PromptBox>
 </PromptGrid>
+
+## Automatic device placement
+
+Use `stim ios --remote auto` or `stim android --remote auto`, or set `ios.remote`
+or `android.remote` to `auto`. Without a flag or setting, runs stay on this Mac.
+With no `hosting.machines`, auto is local.
+
+Auto stays local when the device cap has room (0 means unlimited), no run is
+queued ahead, host memory pressure is normal, the committed-memory budget
+allows the run, and five-minute load per core is below `offload.maxLoadPerCore`.
+An unknown device count stays local for the binding boot admission to decide.
+A recorded hosted session is reused regardless of load; a live local owned
+slot stays here. A stopped hosted session places again, while an unreachable
+or unknown one refuses.
+
+When this Mac is full or busy, Stim probes every approved host in parallel with
+three seconds per probe and the run's device selectors. It skips declined
+hosts, incompatible choices, elevated or unknown memory pressure and zero
+available capacity. If this Mac has a free slot, the host must report a lower
+load. When the cap is full or a queue is ahead, unknown host load is allowed.
+It ranks hosts by an explicit `--build-machine` or named `offload.machine`
+first, then lowest load, most free memory and configuration order. Automatic
+build offload resolves later, using the device's offered architecture.
+
+If none admits, the run stays local and may wait in the FIFO device slot queue.
+`--no-wait` or `--wait 0` refuses with `STIM_AT_CAPACITY`; an admitted host can
+still take those runs. The `placement:` line reports the decision and skipped
+hosts; JSON mode sends it to stderr. Run facts and each status slot include
+`devicePlacement: { decision, reason, machine? }`. Hosted status also preserves
+`host.selected: "auto"` and `host.reason`.
+
+A reservation can be refused after a successful offer because another run
+wins the capacity race. That run fails with `STIM_HOSTING_REFUSED`, names the
+host and asks to retry. Stim does not re-place because the build already
+targets the host's architecture. There is no fallback once a session exists.
+Named machines stay strict, physical `--device` cannot combine with auto,
+and eas/proxy and native macOS placement keep their existing behavior.
+
+Try this with your agent:
+
+```text
+Run this workspace's iOS app with stim ios --remote auto using the approved
+hosting.machines. Report the placement reason and verify the launched app on
+the reported device. Keep using any recorded session, then stop this workspace
+when finished.
+```

@@ -156,7 +156,7 @@ function fail(
   message: string,
   remedy: string,
   { lines = [] }: { lines?: string[] } = {},
-): AndroidPlanResult {
+): Extract<AndroidPlanResult, { ok: false }> {
   return { ok: false, code, message, remedy, lines };
 }
 
@@ -296,12 +296,6 @@ export function resolveAndroidRunPlan(
 
   const remoteTarget =
     commandRemoteBackend !== null ? parseAndroidRemote(commandRemoteBackend) : remoteAndroidSetting(settings);
-  if (remoteTarget?.kind === 'machine' && remoteTarget.machine === 'auto')
-    return fail(
-      'STIM_BAD_ARG',
-      'stim android --remote auto is not available yet: automatic placement has not shipped.',
-      'Name a hosting Mac from hosting.machines.',
-    );
   if (physical && remoteTarget?.kind === 'machine')
     return fail(
       'STIM_BAD_ARG',
@@ -311,53 +305,20 @@ export function resolveAndroidRunPlan(
   const machine = remoteTarget?.kind === 'machine' ? remoteTarget.machine : null;
   const remoteBackend = !physical && remoteTarget?.kind === 'backend' ? remoteTarget.backend : null;
   if (!machine) {
-    const settingsLayersForOrigin = settingsLayers(settingsContext);
-    const imageRefusal = systemImageRefusal({
-      slot,
-      flag: systemImageFlag,
-      resolved: systemImage,
-      origin: settingOriginScope(settingsLayersForOrigin, 'android.systemImage'),
-      physical,
-      remoteBackend,
-      listImages: listSystemImages,
-    });
-    if (imageRefusal) return fail(imageRefusal.code, imageRefusal.message, imageRefusal.remedy);
-    const profileRefusal = deviceProfileRefusal({
-      flag: deviceProfileFlag,
-      resolved: deviceProfile,
-      origin: settingOriginScope(settingsLayersForOrigin, 'android.deviceProfile'),
-      physical,
-      remoteBackend,
-      listProfiles: listDeviceProfiles,
-    });
-    if (profileRefusal) return fail(profileRefusal.code, profileRefusal.message, profileRefusal.remedy);
-    const avdFlagRefusal = remoteAvdFlagRefusal({
-      systemImageFlag,
-      deviceProfileFlag,
-      remoteBackend,
-    });
-    if (avdFlagRefusal) return fail(avdFlagRefusal.code, avdFlagRefusal.message, avdFlagRefusal.remedy);
-    if (!physical && !remoteBackend) {
-      const flagImage = typeof systemImageFlag === 'string' && systemImageFlag.trim() ? systemImageFlag.trim() : null;
-      const existing = ownedAvd(root, slot);
-      const profile = deviceProfile ?? existing?.deviceProfile ?? DEFAULT_AVD_DEVICE_PROFILE;
-      const image = () =>
-        flagImage ?? existing?.systemImage ?? systemImage ?? pickDefaultSystemImage(listSystemImages())?.pkg ?? null;
-      const checked = profileNeedsFoldFeature(profile) ? image() : null;
-      const foldRefusal =
-        checked !== null &&
-        foldableImageRefusal({
-          profile,
-          image: checked,
-          avdName:
-            existing && existing.systemImage === checked && existing.deviceProfile === profile
-              ? existing.avdName
-              : null,
-          images: listSystemImages,
-          supportsFold,
-        });
-      if (foldRefusal) return fail(foldRefusal.code, foldRefusal.message, foldRefusal.remedy);
-    }
+    const refusal = androidDeviceSelectorRefusal(
+      {
+        settingsContext,
+        slot,
+        systemImageFlag,
+        deviceProfileFlag,
+        systemImage,
+        deviceProfile,
+        physical,
+        remoteBackend,
+      },
+      { listSystemImages, listDeviceProfiles, supportsFold, ownedAvd },
+    );
+    if (refusal) return refusal;
   }
   const target: AndroidTargetPlan = physical
     ? { kind: 'physical', serial: typeof deviceFlag === 'string' ? deviceFlag : null, lease: { waitSeconds, noWait } }
@@ -391,4 +352,80 @@ export function resolveAndroidRunPlan(
       cacheProviderConfig,
     },
   };
+}
+
+export function androidDeviceSelectorRefusal(
+  {
+    settingsContext,
+    slot,
+    systemImageFlag,
+    deviceProfileFlag,
+    systemImage,
+    deviceProfile,
+    physical,
+    remoteBackend,
+  }: {
+    settingsContext: SettingsContext;
+    slot: string;
+    systemImageFlag: string | null;
+    deviceProfileFlag?: string | null;
+    systemImage: string | null;
+    deviceProfile: string | null;
+    physical: boolean;
+    remoteBackend: RemoteDeviceBackend | null;
+  },
+  {
+    listSystemImages = listInstalledSystemImages,
+    listDeviceProfiles = listAvdDeviceProfiles,
+    supportsFold = systemImageSupportsFold,
+    ownedAvd = slotOwnedAvd,
+  }: Pick<AndroidPlanDependencies, 'listSystemImages' | 'listDeviceProfiles' | 'supportsFold' | 'ownedAvd'> = {},
+): Extract<AndroidPlanResult, { ok: false }> | null {
+  const root = settingsContext.projectPath;
+  const settingsLayersForOrigin = settingsLayers(settingsContext);
+  const imageRefusal = systemImageRefusal({
+    slot,
+    flag: systemImageFlag,
+    resolved: systemImage,
+    origin: settingOriginScope(settingsLayersForOrigin, 'android.systemImage'),
+    physical,
+    remoteBackend,
+    listImages: listSystemImages,
+  });
+  if (imageRefusal) return fail(imageRefusal.code, imageRefusal.message, imageRefusal.remedy);
+  const profileRefusal = deviceProfileRefusal({
+    flag: deviceProfileFlag,
+    resolved: deviceProfile,
+    origin: settingOriginScope(settingsLayersForOrigin, 'android.deviceProfile'),
+    physical,
+    remoteBackend,
+    listProfiles: listDeviceProfiles,
+  });
+  if (profileRefusal) return fail(profileRefusal.code, profileRefusal.message, profileRefusal.remedy);
+  const avdFlagRefusal = remoteAvdFlagRefusal({
+    systemImageFlag,
+    deviceProfileFlag,
+    remoteBackend,
+  });
+  if (avdFlagRefusal) return fail(avdFlagRefusal.code, avdFlagRefusal.message, avdFlagRefusal.remedy);
+  if (!physical && !remoteBackend) {
+    const flagImage = typeof systemImageFlag === 'string' && systemImageFlag.trim() ? systemImageFlag.trim() : null;
+    const existing = ownedAvd(root, slot);
+    const profile = deviceProfile ?? existing?.deviceProfile ?? DEFAULT_AVD_DEVICE_PROFILE;
+    const image = () =>
+      flagImage ?? existing?.systemImage ?? systemImage ?? pickDefaultSystemImage(listSystemImages())?.pkg ?? null;
+    const checked = profileNeedsFoldFeature(profile) ? image() : null;
+    const foldRefusal =
+      checked !== null &&
+      foldableImageRefusal({
+        profile,
+        image: checked,
+        avdName:
+          existing && existing.systemImage === checked && existing.deviceProfile === profile ? existing.avdName : null,
+        images: listSystemImages,
+        supportsFold,
+      });
+    if (foldRefusal) return fail(foldRefusal.code, foldRefusal.message, foldRefusal.remedy);
+  }
+  return null;
 }

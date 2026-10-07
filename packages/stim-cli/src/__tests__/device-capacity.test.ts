@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { readStatsReport } from '@stim-cli/core/state';
 import { workspaceId } from '@stim-cli/core';
 import {
+  peekDeviceSlots,
   withDeviceBootAdmission,
   deviceSlotWaitingLine,
   type DeviceSlotWaitPolicy,
@@ -575,4 +576,43 @@ test('reclaim attempts are at least fifteen seconds apart while capacity is poll
   }
   expect(polls).toBeGreaterThan(attempts.length);
   expect(readStats().record?.capacityWaits?.[0]?.reclaimed).toBe(2);
+});
+
+test('the non-binding slot peek reports a live owned slot and FIFO waiters without taking capacity', () => {
+  const ticket = tryAcquireClaim({
+    root: join(root, 'device-waits'),
+    mode: 'shared',
+    label: 'device wait',
+    details: { sequence: 1 },
+  }).acquired!;
+  try {
+    const project = { platforms: { ios: { owned: true, deviceUdid: 'holder' } } };
+    expect(
+      peekDeviceSlots({
+        platform: 'ios',
+        project,
+        max: 3,
+        sources: { ...empty, sims: occupied, config: makeConfig({ projects: { [root]: project } }) },
+      }),
+    ).toEqual({ count: 1, max: 3, queued: 1, localLive: true });
+    expect(readClaimSet(join(root, 'device-waits')).live).toHaveLength(1);
+  } finally {
+    releaseClaim(ticket);
+  }
+});
+
+test('the non-binding peek preserves an unknown count for the binding boot admission', () => {
+  expect(
+    peekDeviceSlots({
+      platform: 'ios',
+      project: null,
+      max: 1,
+      sources: {
+        ...empty,
+        sims: () => {
+          throw new Error('simctl unavailable');
+        },
+      },
+    }),
+  ).toMatchObject({ count: null, max: 1, localLive: false });
 });

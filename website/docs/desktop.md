@@ -43,8 +43,9 @@ tiles with an **on &lt;machine&gt;** label. Turn on **Serve to phones** to view 
 control them through this Mac's stim-server relay. Touch and text reach the
 hosting Mac; controls that need a local simulator, and replay, are hidden.
 The tile reports connecting, unavailable or stopped sessions. Android hardware
-buttons also use the relay; rotation and posture are unavailable. Automatic
-placement is not available yet. See [iOS on an approved Mac](./owned-devices#run-ios-on-another-mac).
+buttons also use the relay; rotation and posture are unavailable.
+`stim ios|android --remote auto` selects local or hosted devices and reports
+the placement reason. See [iOS on an approved Mac](./owned-devices#run-ios-on-another-mac).
 
 Desktop uses the non-empty launch `STIM_HOME`, then the login shell's value, then
 `~/.stim`; **Settings > App > Stim CLI** shows the home, and private-home copies

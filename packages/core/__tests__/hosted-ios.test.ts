@@ -70,3 +70,12 @@ test('agent access survives placement reads and status without a token or local 
   expect(hostedIosStatus(parsed).agent).toEqual(agent);
   expect(JSON.stringify(hostedIosStatus(parsed))).not.toContain(placement.device.udid);
 });
+
+test('automatic placement selection and reason survive public status and old records remain readable', () => {
+  const automatic = { ...placement, selected: 'auto', reason: 'load 3.1/core here' };
+  const parsed = parseHostedIosPlacement(automatic)!;
+  expect(parsed).toEqual(automatic);
+  expect(hostedIosStatus(parsed)).toMatchObject({ selected: 'auto', reason: automatic.reason });
+  const { selected, ...old } = placement;
+  expect(parseHostedIosPlacement(old)?.selected).toBe(selected);
+});

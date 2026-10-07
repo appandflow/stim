@@ -37,6 +37,7 @@ interface RunLeaseFacts {
 }
 
 export interface IosFacts {
+  devicePlacement?: import('@stim-cli/core/state').DevicePlacement;
   host?: import('@stim-cli/core/state').HostedIosStatus;
   slot?: string;
   platform: string;
@@ -72,6 +73,7 @@ export interface IosFacts {
 }
 
 export interface AndroidFacts {
+  devicePlacement?: import('@stim-cli/core/state').DevicePlacement;
   host?: import('@stim-cli/core/state').HostedAndroidStatus;
   slot?: string;
   platform: string;

@@ -1360,7 +1360,7 @@ RULES
   lastBuilds   { ios?, android? }, each { platform, status, cacheHit,
                cacheSkipped, durationMs, fingerprint, startedAt, finishedAt,
                errorCode?, missReason?, buildMachine?, builtOn?, offloadedTo?, offloadFallback?,
-               diagnostics? }
+               diagnostics?, devicePlacement? }
 
   status       "ok" or "failed"
   cacheHit     "local" or "remote" for an app from that cache tier; false
@@ -1755,6 +1755,15 @@ HOW A RUN IS COUNTED (\`stats\`)
   and a warm run has no long phase to size. That read takes no lock and
   ignores what it cannot read, so nothing about statistics can change a
   run's outcome.
+
+DEVICE PLACEMENT (\`ios|android --remote auto\`)
+  Auto runs include devicePlacement: { decision, reason, machine? } in the run
+  facts, lastBuilds and build history. decision is "local", "hosted" or
+  "waited-locally" (the local run actually waited for a device slot). The same
+  optional devicePlacement appears on the status device entry for each slot.
+  Hosted host facts include selected: "auto" or the named machine, and reason
+  for automatic placement. Plain status prints (auto: <reason>) after the host.
+  Old hosted records without selected still read as the machine name.
 
 BUILD PLACEMENT (\`offload\`)
   Every run that compiles records where it built and why, in a placement: { at, project, platform,

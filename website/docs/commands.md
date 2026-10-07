@@ -313,7 +313,8 @@ build can compile on a paired build machine instead: see `offload.mode` in
   Without `--device`, it refuses a full device cap or existing slot queue
   immediately. It cannot be combined with `--wait`.
 - `--remote <machine>` runs on a named approved Mac in `hosting.machines`, with no local fallback.
-  `auto` refuses until automatic placement ships. See [hosted iOS](./owned-devices.md#run-ios-on-another-mac).
+  `auto` places on an approved Mac when this Mac is full or busy, falling back
+  to the local device queue when no host admits. See [hosted iOS](./owned-devices.md#run-ios-on-another-mac).
   With `hosting.agentDriver=agent-device` on the host and agent-device 0.21.20 or later on both Macs,
   `ios.host.agent` returns a per-slot 0600 remote config. Use `agent-device <command> --remote-config <file>`
   from status, starting with `open <bundleId>`. It reaches only that hosted simulator; inventory, installs,
@@ -455,7 +456,7 @@ on a paired build machine instead: see `offload.mode` in
   the same app terminates that workspace's running app. Without `--device`, it
   refuses a full device cap or existing slot queue immediately. It cannot be
   combined with `--wait`.
-- `--remote <machine>` runs on a named approved Mac in `hosting.machines`, with no fallback. `--system-image` and `--device-profile` select the host's installed choices. See [remote machines](./remote-machines.md#run-android-on-a-hosting-mac).
+- `--remote <machine>` runs on a named approved Mac in `hosting.machines`, with no fallback. `--remote auto` places on an approved host when this Mac is full or busy, or joins the local device queue when no host admits. `--system-image` and `--device-profile` select the host's installed choices. See [remote machines](./remote-machines.md#run-android-on-a-hosting-mac).
 - `--remote proxy` uses a configured Agent Device daemon.
 - `--remote eas` uses an EAS remote emulator. It needs eas-cli 21.6.0 or later.
 - `--eas-profile <name>` selects a compatible [EAS development build](./eas-builds.md),

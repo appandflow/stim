@@ -1,3 +1,5 @@
+import { automaticDevicePlacement } from '../device-host/auto-placement.ts';
+import type { HostedNativeTarget } from '../device-host/hosted-native.ts';
 import { withDeviceBootAdmission } from '../engine/device-capacity.ts';
 import { workspaceId } from '@stim-cli/core';
 import { approvableSchemes } from '../engine/app-schemes.ts';
@@ -7609,6 +7611,100 @@ describe('iOS placement on a hosting Mac', () => {
     agent: { driver: 'none', setting: 'hosting.agentDriver' },
   };
 
+  test.each([false, true])(
+    'auto no-wait uses a host when admitted and the local capacity refusal otherwise: %s',
+    async (admits) => {
+      reserve();
+      const connection = Object.create(offloadClient.BuildConnection.prototype) as offloadClient.BuildConnection;
+      connection.close = () => {};
+      const target: HostedNativeTarget = {
+        host: {
+          machine: 'mini',
+          connection,
+          credential: {
+            machine: 'mini',
+            nodeId: 'nMini',
+            dnsName: 'mini.tail.ts.net',
+            deviceId: 'client',
+            deviceToken: 'fixture-token',
+            state: 'approved',
+            requestedAt: '2026-10-07T12:00:00Z',
+          },
+        },
+        choice: hostedDevice,
+        session: null,
+      };
+      const { logs, stderr, exitCode, calls } = await run(
+        { remote: 'auto', wait: false, json: true },
+        {
+          automaticDevicePlacement: (args) =>
+            automaticDevicePlacement(args, {
+              machines: () => ['mini'],
+              peek: () => ({ count: 3, max: 3, queued: 0, localLive: false }),
+              capacity: () => ({ cpus: 4, loadPerCore: 3, maxLoadPerCore: 2, builds: 0, maxBuilds: 0 }),
+              memory: () => 'normal',
+              probe: async (machine) =>
+                admits
+                  ? {
+                      target,
+                      probe: {
+                        machine,
+                        offer: {
+                          platform: 'ios',
+                          choice: hostedDevice,
+                          declined: null,
+                          capacity: { available: 1 },
+                          resources: { loadPerCore: 0.5, memoryFreeBytes: 100, memoryPressure: 'normal' },
+                        },
+                      },
+                    }
+                  : { probe: { machine, failure: 'declined: occupied' } },
+            }),
+          budgetGate: async () => ({ reclaimed: [], refusal: null }),
+          checkDeviceCapacity: () => ({ code: 'STIM_AT_CAPACITY', message: '3/3 devices in use', remedy: 'stim stop' }),
+          placeHostedIos: async (_target, args) => {
+            const hosted = { ...placement, selected: 'auto', reason: target.selection!.reason };
+            args.reserved(hosted);
+            return { placement: hosted, launched: 'unverified' };
+          },
+        },
+      );
+      expect(logs).toHaveLength(1);
+      expect(stderr).toContain('placement:');
+      expect(exitCode).toBe(admits ? null : 1);
+      expect(parseFirst(logs)).toMatchObject(
+        admits
+          ? { devicePlacement: { decision: 'hosted', machine: 'mini' }, host: { selected: 'auto' } }
+          : { code: 'STIM_AT_CAPACITY' },
+      );
+      expect(calls.order).not.toContain('ensureOwnedDevice');
+    },
+  );
+
+  test.each([false, true])(
+    'auto local decisions survive run facts and status state with setting: %s',
+    async (setting) => {
+      reserve();
+      if (setting) writeConfigSetting({ scope: 'workspace', projectPath: root }, 'ios.remote', 'auto');
+      const { logs, exitCode } = await run(
+        { ...(setting ? {} : { remote: 'auto' }), json: true },
+        {
+          automaticDevicePlacement: (args) =>
+            automaticDevicePlacement(args, {
+              machines: () => [],
+              peek: () => ({ count: 1, max: 3, queued: 0, localLive: true }),
+            }),
+          budgetGate: async () => ({ reclaimed: [], refusal: null }),
+        },
+      );
+      expect(exitCode).toBe(null);
+      expect(parseFirst(logs)).toMatchObject({
+        devicePlacement: { decision: 'local', reason: "this workspace's device runs here" },
+      });
+      expect(readLastBuilds(readWorkspaceState(root)).ios?.devicePlacement).toMatchObject({ decision: 'local' });
+      expect(readWorkspaceState(root)?.ios).toMatchObject({ devicePlacement: { decision: 'local' } });
+    },
+  );
   test.each([false, true])('missing hosting approval is a coded command refusal in JSON mode %s', async (json) => {
     writeConfigSetting({ scope: 'machine' }, 'hosting.machines', ['mini']);
     writeFileSync(deviceHostMachinesFile(), JSON.stringify({ version: 1, machines: [] }));
@@ -7749,19 +7845,19 @@ describe('iOS placement on a hosting Mac', () => {
     expect(connect).not.toHaveBeenCalled();
   });
 
-  test.each([{ remote: 'auto' }, { device: true, remote: 'mini' }, { remote: 'mini', simulatorApp: 'xcode' }])(
-    'refuses unsupported target flags before host access or local creation: %j',
-    async (opts) => {
-      const connect = vi.fn<() => never>(() => {
-        throw new Error('unexpected connection');
-      });
-      const { logs, calls, exitCode } = await run({ ...opts, json: true }, { prepareHostedIos: connect });
-      expect(exitCode).toBe(1);
-      expect(parseFirst(logs).code).toBe('STIM_BAD_ARG');
-      expect(connect).not.toHaveBeenCalled();
-      expect(calls.order).not.toContain('ensureOwnedDevice');
-    },
-  );
+  test.each([
+    { device: true, remote: 'mini' },
+    { remote: 'mini', simulatorApp: 'xcode' },
+  ])('refuses unsupported target flags before host access or local creation: %j', async (opts) => {
+    const connect = vi.fn<() => never>(() => {
+      throw new Error('unexpected connection');
+    });
+    const { logs, calls, exitCode } = await run({ ...opts, json: true }, { prepareHostedIos: connect });
+    expect(exitCode).toBe(1);
+    expect(parseFirst(logs).code).toBe('STIM_BAD_ARG');
+    expect(connect).not.toHaveBeenCalled();
+    expect(calls.order).not.toContain('ensureOwnedDevice');
+  });
 
   test.each([undefined, 'other', 'proxy'])('a recorded host refuses switching to %s until stop', async (remote) => {
     writeHostedIos(root, 'default', placement);

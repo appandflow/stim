@@ -1,3 +1,5 @@
+import { automaticDevicePlacement } from '../device-host/auto-placement.ts';
+import type { HostedNativeTarget } from '../device-host/hosted-native.ts';
 import { workspaceId } from '@stim-cli/core';
 import * as offloadClient from '../offload/client.ts';
 import { SETTING_SHAPE_REMEDY } from '../workspace/settings.ts';
@@ -7055,7 +7057,110 @@ describe('named Android hosting placement', () => {
     agent: { driver: 'none' as const, setting: 'hosting.agentDriver' as const },
   };
 
-  test.each(['auto', 'physical', 'no Metro', 'different host', 'local running', 'unreadable slot'])(
+  test.each([false, true])(
+    'auto no-wait chooses hosted admission or the local capacity refusal: %s',
+    async (admits) => {
+      const connection = Object.create(offloadClient.BuildConnection.prototype) as offloadClient.BuildConnection;
+      connection.close = () => {};
+      const target: HostedNativeTarget = {
+        host: {
+          machine: 'mini',
+          connection,
+          credential: {
+            machine: 'mini',
+            nodeId: 'nMini',
+            dnsName: 'mini.tail.ts.net',
+            deviceId: 'client',
+            deviceToken: 'fixture-token',
+            state: 'approved',
+            requestedAt: '2026-10-07T12:00:00Z',
+          },
+        },
+        choice: hostDevice,
+        session: null,
+      };
+      const h = harness({
+        remoteDevice: 'auto',
+        json: true,
+        wait: false,
+        automaticDevicePlacement: (args: Parameters<typeof automaticDevicePlacement>[0]) =>
+          automaticDevicePlacement(args, {
+            machines: () => ['mini'],
+            peek: () => ({ count: 3, max: 3, queued: 1, localLive: false }),
+            capacity: () => ({ cpus: 4, loadPerCore: 3, maxLoadPerCore: 2, builds: 0, maxBuilds: 0 }),
+            memory: () => 'normal',
+            probe: async (machine) =>
+              admits
+                ? {
+                    target,
+                    probe: {
+                      machine,
+                      offer: {
+                        platform: 'android',
+                        choice: hostDevice,
+                        declined: null,
+                        capacity: { available: 1 },
+                        resources: { loadPerCore: 0.5, memoryFreeBytes: 100, memoryPressure: 'normal' },
+                      },
+                    },
+                  }
+                : { probe: { machine, failure: 'declined: occupied' } },
+          }),
+        checkBudget: async () => ({ reclaimed: [], refusal: null }),
+        checkCapacity: () => ({ code: 'STIM_AT_CAPACITY', message: '3/3 devices in use', remedy: 'stim stop' }),
+        placeHostedAndroid: async (_target: unknown, args: { reserved: (value: typeof placement) => void }) => {
+          const hosted = { ...placement, selected: 'auto', reason: target.selection!.reason };
+          args.reserved(hosted);
+          return { placement: hosted, launched: 'unverified' };
+        },
+      });
+      const result = await h.run();
+      expect(result.ok).toBe(admits);
+      expect(admits ? result.facts : result.error).toMatchObject(
+        admits
+          ? { devicePlacement: { decision: 'hosted', machine: 'mini' }, host: { selected: 'auto' } }
+          : { code: 'STIM_AT_CAPACITY' },
+      );
+      expect(h.calls.ensureDevice).toEqual([]);
+    },
+  );
+
+  test('auto with no hosts validates local selectors before Metro or native creation', async () => {
+    const h = harness({
+      remoteDevice: 'auto',
+      json: true,
+      systemImage: '   ',
+      automaticDevicePlacement: (args: Parameters<typeof automaticDevicePlacement>[0]) =>
+        automaticDevicePlacement(args, {
+          machines: () => [],
+          peek: () => ({ count: 0, max: 0, queued: 0, localLive: false }),
+          memory: () => 'normal',
+        }),
+      checkBudget: async () => ({ reclaimed: [], refusal: null }),
+    });
+    expect((await h.run()).error?.code).toBe('STIM_BAD_ARG');
+    expect(h.calls.ensureDevice).toEqual([]);
+    expect(h.calls.metro).toEqual([]);
+  });
+
+  test('android.remote auto keeps a live local slot and records the local decision', async () => {
+    setProjectSetting(root, 'android', { remote: 'auto' });
+    const h = harness({
+      json: true,
+      automaticDevicePlacement: (args: Parameters<typeof automaticDevicePlacement>[0]) =>
+        automaticDevicePlacement(args, {
+          machines: () => [],
+          peek: () => ({ count: 1, max: 3, queued: 0, localLive: true }),
+        }),
+      checkBudget: async () => ({ reclaimed: [], refusal: null }),
+    });
+    const result = await h.run();
+    expect(result.ok).toBe(true);
+    expect(result.facts?.devicePlacement).toEqual({ decision: 'local', reason: "this workspace's device runs here" });
+    expect(readLastBuilds(readWorkspaceState(root)).android?.devicePlacement).toMatchObject({ decision: 'local' });
+    expect(readWorkspaceState(root)?.android).toMatchObject({ devicePlacement: { decision: 'local' } });
+  });
+  test.each(['physical', 'no Metro', 'different host', 'local running', 'unreadable slot'])(
     'refuses %s before preparing or building a device',
     async (kind) => {
       if (kind === 'different host')
@@ -7066,7 +7171,7 @@ describe('named Android hosting placement', () => {
         writeWorkspaceState(root, { android: { host: { machine: 'mini', session: '' } } });
       const h = harness({
         json: true,
-        remoteDevice: kind === 'auto' ? 'auto' : 'mini',
+        remoteDevice: 'mini',
         ...(kind === 'physical' ? { device: true } : {}),
         ...(kind === 'no Metro' ? { metroCheck: false } : {}),
         prepareHostedAndroid: never('hosting prepare'),

@@ -9,12 +9,16 @@ Every refusal listed here carries a stable CODE, whichever command prints it.
 Branch on the code, never on the message.`,
   sections: {
     STIM_HOSTING_REFUSED: {
-      summary: 'a named hosting Mac refused or could not confirm its native session; no local fallback',
+      summary: 'a hosting Mac refused or could not confirm its native session; no fallback after reservation',
       body: () => `STIM_HOSTING_REFUSED
   The message names the hosting Mac and its reason: unreachable or changed
   tailnet node, no installed simulator or emulator choice, no capacity, elevated or unknown
   memory pressure, or an unresolved reservation or delivery. Stim boots nothing
-  locally and never tries another Mac. Check stim-server and Tailscale there,
+  locally and never tries another Mac after choosing a named host or creating a
+  hosted session. Auto skips declined offers before building, then uses the
+  local queue if none admits. A reserve refusal after an accepted offer fails
+  with this code and asks to retry; it does not re-place the built architecture.
+  Check stim-server and Tailscale there,
   then run stim doctor. Correct --device-type / --runtime for iOS or
   --system-image / --device-profile for Android when the offer names
   an unavailable choice. A session that exists stays recorded even if delivery

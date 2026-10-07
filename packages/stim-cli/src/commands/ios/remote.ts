@@ -1,7 +1,8 @@
+import { devicePlacementLine } from '../../device-host/auto-placement.ts';
 import { deviceSlotPlatforms } from '../../devices/device-slots.ts';
 import chalk from 'chalk';
 import { phaseLine } from '../../command-output.ts';
-import { type HostedIosPlacement } from '@stim-cli/core/state';
+import { type DevicePlacement, type HostedIosPlacement } from '@stim-cli/core/state';
 import {
   parseIosRemote,
   remoteIosSetting,
@@ -29,14 +30,6 @@ export function resolveIosRemote({
   | { machine: string | null; backend: RemoteDeviceBackend | null; recorded?: HostedIosPlacement }
   | { failure: FailArgs } {
   const target = opts.remote !== undefined ? parseIosRemote(opts.remote) : remoteIosSetting(settings);
-  if (target?.kind === 'machine' && target.machine === 'auto')
-    return {
-      failure: {
-        code: 'STIM_BAD_ARG',
-        message:
-          'stim ios --remote auto is not available yet: automatic placement has not shipped. Name a hosting Mac from hosting.machines.',
-      },
-    };
   if (physical && target?.kind === 'machine')
     return {
       failure: {
@@ -46,7 +39,7 @@ export function resolveIosRemote({
       },
     };
   const machine = target?.kind === 'machine' ? target.machine : null;
-  if (recorded && recorded.machine !== machine)
+  if (recorded && recorded.machine !== machine && machine !== 'auto')
     return {
       failure: {
         code: 'STIM_BAD_ARG',
@@ -92,7 +85,7 @@ export function selectIosTarget({
   const selection = resolveIosRemote({ opts, settings, physical, recorded });
   if ('failure' in selection) return selection;
   const localIos = selection.machine ? deviceSlotPlatforms(d.getProject(root), slot)?.ios : undefined;
-  if (selection.machine && localIos?.owned && localIos.deviceUdid) {
+  if (selection.machine !== 'auto' && selection.machine && localIos?.owned && localIos.deviceUdid) {
     let localRunning = true;
     try {
       localRunning = d
@@ -107,7 +100,7 @@ export function selectIosTarget({
         },
       };
   }
-  if (selection.machine && !release && !metroCheck)
+  if (selection.machine !== 'auto' && selection.machine && !release && !metroCheck)
     return {
       failure: {
         code: 'STIM_BAD_ARG',
@@ -118,6 +111,64 @@ export function selectIosTarget({
   return selection;
 }
 
+export async function selectIosPlacement(
+  args: Parameters<typeof selectIosTarget>[0] & {
+    deviceType: string | null;
+    runtime: string | null;
+    noWait: boolean;
+    note: (line: string) => void;
+    phase: (label: string, line: string) => void;
+  },
+): Promise<
+  | (ReturnType<typeof resolveIosRemote> & {
+      machine: string | null;
+      auto?: { target: HostedIosTarget | null };
+      budget?: Awaited<ReturnType<IosDeps['budgetGate']>>;
+      devicePlacement?: DevicePlacement;
+    })
+  | { failure: FailArgs }
+> {
+  const selection = selectIosTarget(args);
+  if ('failure' in selection || selection.machine !== 'auto') return selection;
+  const { root, slot, d, opts, deviceType, runtime, noWait, note, phase, release, metroCheck } = args;
+  const budget = await d.budgetGate({ root, note });
+  try {
+    const placed = await d.automaticDevicePlacement({
+      root,
+      slot,
+      platform: 'ios',
+      selectors: hostedIosSelectors(deviceType, runtime),
+      budgetRefusal: budget.refusal?.message ?? null,
+      buildMachine: opts.buildMachine,
+      noWait,
+    });
+    phase('placement:', devicePlacementLine(placed.placement, placed.skipped));
+    if (placed.target && !release && !metroCheck)
+      return {
+        failure: {
+          code: 'STIM_BAD_ARG',
+          message: 'Hosted Debug runs require the local Metro supervisor; --no-metro-check cannot be used.',
+          remedy: 'Run stim stop; stim start, then retry without --no-metro-check.',
+        },
+      };
+    return {
+      ...selection,
+      machine: placed.target?.host.machine ?? null,
+      recorded: undefined,
+      auto: { target: placed.target as HostedIosTarget | null },
+      budget,
+      devicePlacement: placed.placement,
+    };
+  } catch (error) {
+    return {
+      failure: {
+        code: (error as Error & { code?: string }).code ?? 'STIM_HOSTING_REFUSED',
+        message: (error as Error).message,
+      },
+    };
+  }
+}
+
 export function hostedIosSelectors(
   deviceType: string | null,
   runtime: string | null,
@@ -126,10 +177,15 @@ export function hostedIosSelectors(
 }
 
 export async function connectIosTarget(
-  selection: ReturnType<typeof resolveIosRemote> & { machine: string | null; recorded?: HostedIosPlacement },
+  selection: ReturnType<typeof resolveIosRemote> & {
+    machine: string | null;
+    recorded?: HostedIosPlacement;
+    auto?: { target: HostedIosTarget | null };
+  },
   selectors: ReturnType<typeof hostedIosSelectors>,
   d: IosDeps,
 ): Promise<{ target: HostedIosTarget | null } | { failure: FailArgs }> {
+  if (selection.auto) return { target: selection.auto.target };
   if (!selection.machine) return { target: null };
   try {
     return { target: await d.prepareHostedIos(selection.machine, selectors, selection.recorded) };
@@ -162,7 +218,9 @@ export async function iosPlacementBudget(
   root: string,
   note: (line: string) => void,
   hosted: boolean,
+  automatic?: Awaited<ReturnType<IosDeps['budgetGate']>>,
 ): ReturnType<IosDeps['budgetGate']> {
+  if (automatic) return { ...automatic, refusal: hosted ? null : automatic.refusal };
   return hosted ? { reclaimed: [], refusal: null } : d.budgetGate({ root, note });
 }
 

@@ -1,3 +1,4 @@
+import { automaticDevicePlacement } from '../device-host/auto-placement.ts';
 import { createServer } from 'node:net';
 import { createHash } from 'node:crypto';
 import {
@@ -114,7 +115,7 @@ beforeEach(async () => {
   hostFeatures = [];
   agentGrant = undefined;
   const connection = Object.create(BuildConnection.prototype) as BuildConnection;
-  connection.close = () => {};
+  connection.close = vi.fn<() => void>();
   connection.supports = (feature) => (feature === 'hosted-ios-agent' ? hostFeatures.includes(feature) : features);
   connection.request = async (method, raw) => {
     const params = raw as Record<string, unknown> & {
@@ -242,6 +243,7 @@ test('offers before reservation, uploads digest-matching bytes, and development 
 test.each(['declined', 'capacity', 'pressure', 'changed-node'])(
   'strict %s refusal reserves nothing',
   async (reason) => {
+    writeFileSync(getConfigPath(), JSON.stringify({ hosting: { machines: ['mini', 'other'] } }));
     if (reason === 'declined') declined = 'Installed runtimes: iOS 26.5; iOS 27.0 is unavailable';
     if (reason === 'capacity') capacity = 0;
     if (reason === 'pressure') pressure = 'warning';
@@ -252,6 +254,7 @@ test.each(['declined', 'capacity', 'pressure', 'changed-node'])(
     });
     expect(methods.some((entry) => entry.method === 'device-host.reserve')).toBe(false);
     expect(readHostedIos(root)).toEqual({});
+    expect(open).toHaveBeenCalledTimes(reason === 'changed-node' ? 0 : 1);
   },
 );
 
@@ -1024,4 +1027,146 @@ test('a timed-out handoff retries busy offers within the upload fallback', async
   } finally {
     request.mockRestore();
   }
+});
+
+const autoPlacement = (localLive = false) =>
+  automaticDevicePlacement(
+    {
+      root,
+      slot: 'default',
+      platform: 'ios',
+      selectors: {},
+      budgetRefusal: null,
+      noWait: true,
+    },
+    {
+      peek: () => ({ count: 3, max: 3, queued: 1, localLive }),
+      capacity: () => ({ cpus: 4, loadPerCore: 5, builds: 0, maxBuilds: 0, maxLoadPerCore: 2 }),
+      memory: () => 'normal',
+    },
+  );
+
+test('auto uses an admitted offer with no-wait and closes its probe before reservation', async () => {
+  const result = await autoPlacement();
+  expect(result.placement).toMatchObject({ decision: 'hosted', machine: 'mini' });
+  expect(result.target?.selection).toMatchObject({ selected: 'auto' });
+  expect(result.target?.host.connection.close).toHaveBeenCalledOnce();
+  expect(methods.map((each) => each.method)).toContain('device-host.offer');
+  expect(methods.map((each) => each.method)).not.toContain('device-host.reserve');
+});
+
+test('auto reports a declined offer and falls to the local path without reserving', async () => {
+  declined = 'All configured hosted device reservations are occupied';
+  const result = await autoPlacement();
+  expect(result).toMatchObject({
+    target: null,
+    placement: { decision: 'local' },
+    skipped: [{ machine: 'mini', reason: 'declined: ' + declined }],
+  });
+  expect(methods.map((each) => each.method)).not.toContain('device-host.reserve');
+});
+
+test('a recorded session wins regardless of the current load and unknown sessions refuse', async () => {
+  writeHostedIos(root, 'default', placement());
+  const result = await autoPlacement();
+  expect(result.placement).toMatchObject({ decision: 'hosted', machine: 'mini', reason: 'recorded session on mini' });
+  expect(methods.map((each) => each.method)).not.toContain('device-host.offer');
+  sessionState = 'unknown';
+  await expect(autoPlacement()).rejects.toMatchObject({ code: 'STIM_HOSTING_REFUSED' });
+  expect(readHostedIos(root).default?.session).toBe(sessionId);
+});
+
+test.each([false, true])('a stopped recorded session places again, with live local device: %s', async (localLive) => {
+  writeHostedIos(root, 'default', placement());
+  sessionState = 'stopped';
+  const result = await autoPlacement(localLive);
+  expect(result.placement).toMatchObject(
+    localLive
+      ? { decision: 'local', reason: "this workspace's device runs here" }
+      : { decision: 'hosted', machine: 'mini' },
+  );
+  expect(result.placement.reason).not.toBe('recorded session on mini');
+  expect(readHostedIos(root)).toEqual({});
+  expect(methods.filter((each) => each.method === 'device-host.offer')).toHaveLength(localLive ? 0 : 1);
+});
+
+test('auto stores its selection and reason after delivery, and a reserve race fails without re-placement', async () => {
+  const selected = await autoPlacement();
+  const options = {
+    root,
+    slot: 'default',
+    bundle: join(root, 'Fixture.app'),
+    bundleId: 'dev.fixture',
+    release: true,
+    selectors: {},
+    note: () => {},
+    reserved: (value: HostedIosPlacement) => writeHostedIos(root, 'default', value),
+  };
+  const run = await placeHostedIos(selected.target! as Awaited<ReturnType<typeof prepareHostedIos>>, options);
+  writeHostedIos(root, 'default', run.placement);
+  expect(readHostedIos(root).default).toMatchObject({ selected: 'auto', reason: selected.placement.reason });
+  writeHostedIos(root, 'default', null);
+  methods = [];
+  const racing = await autoPlacement();
+  errorMethod = 'device-host.reserve';
+  errorCode = 'at-capacity';
+  errorMessage = 'All configured hosted device reservations are occupied';
+  await expect(
+    placeHostedIos(racing.target! as Awaited<ReturnType<typeof prepareHostedIos>>, options),
+  ).rejects.toMatchObject({
+    code: 'STIM_HOSTING_REFUSED',
+    message: expect.stringContaining('mini'),
+    remedy: 'Retry stim ios --remote auto.',
+  });
+  expect(methods.filter((each) => each.method === 'device-host.offer')).toHaveLength(1);
+  expect(readHostedIos(root)).toEqual({});
+});
+
+test('auto probes every approved host concurrently and closes every probe, preferring the named build machine', async () => {
+  writeFileSync(
+    getConfigPath(),
+    JSON.stringify({ hosting: { machines: ['mini', 'other'] }, offload: { machine: 'other' } }),
+  );
+  writeFileSync(
+    deviceHostMachinesFile(),
+    JSON.stringify({
+      version: 1,
+      machines: [credential, { ...credential, machine: 'other', deviceToken: 'other-token', nodeId: 'nOther' }],
+    }),
+  );
+  const started: string[] = [];
+  const closes: ReturnType<typeof vi.fn<() => void>>[] = [];
+  let finish!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  open.mockImplementation(async (_target: Parameters<typeof BuildConnection.open>[0], token: string) => {
+    const machine = token === 'other-token' ? 'other' : 'mini';
+    const connection = Object.create(BuildConnection.prototype) as BuildConnection;
+    connection.close = vi.fn<() => void>();
+    closes.push(connection.close as ReturnType<typeof vi.fn<() => void>>);
+    connection.request = async () => {
+      started.push(machine);
+      await gate;
+      return {
+        result: {
+          platform: 'ios',
+          choice: device,
+          declined: null,
+          capacity: { available: 1 },
+          resources: { memoryPressure: 'normal', loadPerCore: machine === 'mini' ? 0.1 : 4, memoryFreeBytes: 100 },
+        },
+      };
+    };
+    return connection;
+  });
+  const pending = autoPlacement();
+  try {
+    await vi.waitFor(() => expect(started).toEqual(['mini', 'other']));
+  } finally {
+    finish();
+  }
+  const selected = await pending;
+  expect(selected.placement).toMatchObject({ decision: 'hosted', machine: 'other' });
+  expect(closes.map((close) => close.mock.calls.length)).toEqual([1, 1]);
 });

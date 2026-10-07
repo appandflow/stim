@@ -641,9 +641,9 @@ stim reload ios
 stim stop`} />
 
 Set `ios.remote` to that name for a workspace default. `eas` and `proxy` keep
-those backend meanings. No flag or setting runs here. `auto` refuses with
-`STIM_BAD_ARG` until automatic placement ships; Android on a paired Mac is not
-available yet. `--device` and `--simulator-app` cannot target a hosting Mac.
+those backend meanings. No flag or setting runs here. `auto` places iOS or
+Android on an approved Mac when this Mac is full or busy; see
+[automatic device placement](./remote-machines.md#automatic-device-placement). `--device` and `--simulator-app` cannot target a hosting Mac.
 The host boots headless; this Mac's viewer setting is ignored.
 
 `--slot`, `--scheme`, `--configuration` and `--eas-profile` work as usual.

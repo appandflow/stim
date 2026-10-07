@@ -92,6 +92,7 @@ import {
   readIdleStop,
   readBuildHistory,
   readLastBuilds,
+  readDevicePlacement,
   withDerivedFacts,
   withGitChip,
   withStateReadCache,
@@ -167,7 +168,7 @@ const WATCH_GIT_MAX_AGE_MS = 60_000;
 function iosStatusName(ios: NonNullable<EnvironmentState['ios']>): string {
   const host = ios.host;
   return host && !ios.udid
-    ? `${host.device?.name ?? 'iOS simulator'} (${host.device ? `iOS ${host.device.runtime.replace(/^iOS /, '')}` : 'runtime pending'}) on ${host.machine}`
+    ? `${host.device?.name ?? 'iOS simulator'} (${host.device ? `iOS ${host.device.runtime.replace(/^iOS /, '')}` : 'runtime pending'}) on ${host.machine}${host.selected === 'auto' && host.reason ? ` (auto: ${host.reason})` : ''}`
     : (ios.name ?? ios.udid);
 }
 
@@ -234,7 +235,7 @@ function androidStatusLines(record: EnvironmentState['android'], slotLabel: stri
   if (record?.host && !record.serial) {
     const host = record.host;
     out.push(
-      `  android${slotLabel}: ${chalk.cyan(`${host.device?.name ?? 'Android emulator'} on ${host.machine}`)} ${host.state ?? 'unverified'}`,
+      `  android${slotLabel}: ${chalk.cyan(`${host.device?.name ?? 'Android emulator'} on ${host.machine}${host.selected === 'auto' && host.reason ? ` (auto: ${host.reason})` : ''}`)} ${host.state ?? 'unverified'}`,
     );
   } else if (record) {
     const kind = record.physical ? chalk.dim('(physical)') : chalk.dim('(emulator)');
@@ -245,7 +246,7 @@ function androidStatusLines(record: EnvironmentState['android'], slotLabel: stri
     if (record.host) {
       const host = record.host;
       out.push(
-        `  android${slotLabel}: ${chalk.cyan(`${host.device?.name ?? 'Android emulator'} on ${host.machine}`)} ${host.state ?? 'unverified'}`,
+        `  android${slotLabel}: ${chalk.cyan(`${host.device?.name ?? 'Android emulator'} on ${host.machine}${host.selected === 'auto' && host.reason ? ` (auto: ${host.reason})` : ''}`)} ${host.state ?? 'unverified'}`,
       );
     }
   }
@@ -548,6 +549,17 @@ async function readStatusFacts(
 function readLogDerivedFacts(states: EnvironmentState[]): void {
   const now = Date.now();
   for (const state of states) {
+    const saved = readWorkspaceState(state.path);
+    for (const devices of [{ slot: 'default', ios: state.ios, android: state.android }, ...(state.slots ?? [])]) {
+      for (const platform of ['ios', 'android'] as const) {
+        const device = devices[platform];
+        const placement = readDevicePlacement(saved, platform, devices.slot);
+        if (device) {
+          if (placement) device.devicePlacement = placement;
+          else delete device.devicePlacement;
+        }
+      }
+    }
     if (state.metro) {
       const bundle = metroBundleState(tailLines(join(workspaceLogsDir(state.path), 'metro.ndjson')) ?? [], {
         running: state.metro.running,

@@ -112,8 +112,8 @@ KEYS STIM READS
                         flag overrides this per invocation. Unset means Debug.
   ios.remote            "proxy", "eas", or a named approved Mac from
                         hosting.machines, with the same meaning as --remote.
-                        "auto" is accepted but refuses until automatic placement
-                        ships. Unset runs here. See lifecycle hosted-ios.
+                        "auto" places on an approved Mac when this Mac is full or
+                        busy. Unset runs here. See lifecycle hosted-ios.
   ios.simslimProfile    a SimSlim JSON profile under the app directory,
                         at most 64 KiB. Install the
                         external tool once with
@@ -254,7 +254,8 @@ ${ANDROID_AVD_CONFIG_HELP.map((line) => `                          ${line}`).joi
                         bare string is used as the literal password. Unset
                         means the debug keystore's fixed "android".
   android.remote        "proxy", "eas", or a named approved Mac in
-                        hosting.machines; "auto" is reserved and refuses.
+                        hosting.machines; "auto" places on an approved Mac when
+                        this Mac is full or busy. Unset runs here.
                         See lifecycle hosted-android.
   metro.tunnel          selects how a remote device reaches this workspace's
                         Metro after remote intent exists. Plain \`start\` stays
@@ -719,7 +720,8 @@ emulator debug build or a stim macos SwiftPM Debug build compiles:
 Load per core is the 5-minute load average divided by the CPU count; a Mac's
 native builds are its Stim runs in prebuild, pods or compile on that Mac, not
 the ones it offloaded.
-\`offload.maxLoadPerCore\` (default 2) is the load per core at which a Mac
+\`offload.maxLoadPerCore\` (default 2) is also the busy threshold for
+automatic iOS and Android device placement. It is the load per core at which a Mac
 counts as saturated, both here and on a build machine.
 
 STIM_OFFLOAD_MODE overrides it for one command. Device, Release and

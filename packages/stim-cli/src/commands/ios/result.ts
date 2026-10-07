@@ -20,6 +20,7 @@ import type { ReclaimedStep } from '../../budget.ts';
 import { type WorkspaceLinks, workspaceLinkLine } from '../../devices/stim-desktop.ts';
 
 export function lastBuildRecord({
+  devicePlacement,
   fingerprint = null,
   cacheKey = null,
   cacheHit = false,
@@ -38,6 +39,7 @@ export function lastBuildRecord({
   offloadedTo = null,
   offloadFallback = null,
 }: {
+  devicePlacement?: import('@stim-cli/core/state').DevicePlacement;
   buildMachine?: string;
   builtOn?: string;
   offloadedTo?: string | null;
@@ -70,6 +72,7 @@ export function lastBuildRecord({
     configuration,
   };
   if (errorCode) record.errorCode = errorCode;
+  if (devicePlacement) record.devicePlacement = devicePlacement;
   record.buildMachine = buildMachine;
   if (builtOn) record.builtOn = builtOn;
   if (offloadedTo) record.offloadedTo = offloadedTo;
@@ -214,6 +217,7 @@ export async function finishIosUpload(
 }
 
 export interface ReportIosResultArgs {
+  devicePlacement?: import('@stim-cli/core/state').DevicePlacement;
   host?: import('@stim-cli/core/state').HostedIosStatus;
   slot?: string;
   root: string;
@@ -255,6 +259,7 @@ export interface ReportIosResultArgs {
 }
 
 export function reportIosResult({
+  devicePlacement,
   host,
   slot,
   root,
@@ -299,6 +304,7 @@ export function reportIosResult({
   writeLastBuild(
     root,
     lastBuildRecord({
+      devicePlacement,
       fingerprint: storeHash,
       cacheKey: storeKey,
       cacheHit,
@@ -348,6 +354,7 @@ export function reportIosResult({
     offloadedTo,
     offloadFallback,
   });
+  if (devicePlacement) facts.devicePlacement = devicePlacement;
   if (host) facts.host = host;
   if (json) {
     console.log(JSON.stringify({ ...facts, ...(links ? { links } : {}), ...(reclaimed.length ? { reclaimed } : {}) }));
