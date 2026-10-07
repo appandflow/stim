@@ -281,7 +281,7 @@ private struct TailscaleSetup: View {
       Text(title)
       HStack {
         CommandText(command: command)
-        Button("Copy") { copy(command) }
+        CopyButton(command)
       }
     }
   }
@@ -356,7 +356,7 @@ struct RouteSection: View {
     let command = route.setupCommand(serverPort: port)
     return HStack {
       CommandText(command: command)
-      Button("Copy") { copy(command) }
+      CopyButton(command)
     }
   }
 }
@@ -616,7 +616,7 @@ struct PairSheet: View {
         .accessibilityLabel(showsToken ? "Hide token" : "Show token")
         .help(showsToken ? "Hide token" : "Show token")
       }
-      Button("Copy") { copy(value) }.controlSize(.small)
+      CopyButton(value)
     }
     .font(.stim(.callout))
   }
@@ -660,11 +660,6 @@ struct QRCodeImage: View {
     else { return nil }
     return NSImage(cgImage: cgImage, size: output.extent.size)
   }
-}
-
-private func copy(_ text: String) {
-  NSPasteboard.general.clearContents()
-  NSPasteboard.general.setString(text, forType: .string)
 }
 
 /// `recording.enabled` in the machine layer: whether stim-server records device screens on this Mac for replay.

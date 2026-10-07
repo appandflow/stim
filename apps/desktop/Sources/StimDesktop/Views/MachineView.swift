@@ -757,14 +757,7 @@ struct MachineView: View {
       size(runtime.size, reason: runtime.size == .notMeasured ? "simctl does not report its size" : nil)
       Group {
         if let command = runtime.command {
-          Button {
-            NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString(command, forType: .string)
-          } label: {
-            Label("Copy", systemImage: "doc.on.doc")
-          }
-          .buttonStyle(.stim(runtime.unused ? .primary : .secondary))
-          .help("Copies: \(command)")
+          CopyButton(command, variant: runtime.unused ? .primary : .secondary, help: "Copies: \(command)")
         } else {
           Text("\u{2014}").foregroundStyle(Palette.tertiary).help("simctl reports no delete command for it")
         }

@@ -185,14 +185,9 @@ struct ActivitySheet: View {
       VStack(alignment: .leading, spacing: Space.md) {
         HStack(alignment: .top, spacing: Space.md) {
           CommandText(command: run.steps.map { $0.displayLine() }.joined(separator: "\n"))
-          Button {
-            NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString(run.steps.map { $0.shellLine }.joined(separator: "\n"), forType: .string)
-          } label: {
-            Image(systemName: "doc.on.doc")
-          }
-          .buttonStyle(.stim())
-          .help("Copy the command")
+          CopyButton(
+            run.steps.map { $0.shellLine }.joined(separator: "\n"), showsTitle: false, help: "Copy the command",
+            accessibilityLabel: "Copy the command")
         }
         output.frame(height: 160)
       }

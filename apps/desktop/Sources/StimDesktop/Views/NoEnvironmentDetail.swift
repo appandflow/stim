@@ -27,10 +27,7 @@ struct NoEnvironmentDetail: View {
           ForEach(environmentCommands(worktree: worktree.path), id: \.self) { command in
             HStack(spacing: Space.md) {
               CommandText(command: command.displayLine())
-              Button("Copy") {
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(command.shellLine, forType: .string)
-              }
+              CopyButton(command.shellLine)
             }
           }
         }

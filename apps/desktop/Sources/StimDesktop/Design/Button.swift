@@ -33,6 +33,18 @@ extension ButtonStyle where Self == StimButtonStyle {
   }
 }
 
+private struct StimButtonAccentKey: EnvironmentKey {
+  static let defaultValue: Color? = nil
+}
+
+extension EnvironmentValues {
+  /// Replaces the tint of every `StimButtonStyle` below this view, for a button that confirms what it did.
+  var stimButtonAccent: Color? {
+    get { self[StimButtonAccentKey.self] }
+    set { self[StimButtonAccentKey.self] = newValue }
+  }
+}
+
 private struct StimButtonBody: View {
   var configuration: ButtonStyleConfiguration
   var variant: ButtonVariant
@@ -40,6 +52,7 @@ private struct StimButtonBody: View {
   @Environment(\.isEnabled) private var isEnabled
   @Environment(\.isFocused) private var isFocused
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
+  @Environment(\.stimButtonAccent) private var accentOverride
   @State private var hovering = false
 
   var body: some View {
@@ -59,6 +72,7 @@ private struct StimButtonBody: View {
   }
 
   private var accent: Color {
+    if let accentOverride { return accentOverride }
     switch variant {
     case .primary: return Palette.brand
     case .secondary, .plain: return Palette.accent
