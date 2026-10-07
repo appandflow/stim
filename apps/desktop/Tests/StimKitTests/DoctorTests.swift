@@ -65,6 +65,28 @@ struct DoctorTests {
     #expect(doctorCheckout(for: "/unlisted", in: envs, project: project)?.path == "/r/apps/m")
   }
 
+  @Test func neverRunsInAScratchFolderAndPrefersTheMostRecentlyActiveApp() throws {
+    let envs = try JSONDecoder().decode(
+      [Workspace].self,
+      from: Data(
+        #"""
+        [{"path":"/private/tmp/stim-codex-resume/c/guest-worktree","live":false,"warnings":[],"phaseSince":"2026-10-07T12:00:00Z"},
+         {"path":"/tmp/x","live":false,"warnings":[]},
+         {"path":"/private/var/folders/ab/T/wt","live":false,"warnings":[]},
+         {"path":"/old","live":false,"warnings":[],"phaseSince":"2026-10-01T12:00:00Z"},
+         {"path":"/new","live":false,"warnings":[],"phaseSince":"2026-10-06T12:00:00Z"},
+         {"path":"/never","live":false,"warnings":[]}]
+        """#.utf8))
+    let project = { (path: String) in Project(root: path) }
+    #expect(doctorCheckouts(envs, project: project).map(\.path) == ["/new", "/old", "/never"])
+    #expect(doctorCheckout(for: "/tmp/x", in: envs, project: project)?.path == "/new")
+    #expect(doctorCheckout(for: nil, in: envs, project: project)?.path == "/new")
+    #expect(doctorCheckout(for: "/old", in: envs, project: project)?.path == "/old")
+    let onlyScratch = Array(envs.prefix(3))
+    #expect(doctorCheckout(for: nil, in: onlyScratch, project: project) == nil)
+    #expect(isScratchPath("/private/tmp") && !isScratchPath("/Users/me/tmpfiles/app") && !isScratchPath("/temp/app"))
+  }
+
   @Test func isDueWhenNeverRunNewStimOldRunOrChangedSetup() {
     let now = Date(timeIntervalSince1970: 1_000_000)
     let inputs = now.addingTimeInterval(-3600)

@@ -64,9 +64,11 @@ struct ArchivedHeaderLine: View {
   var page: ArchivedPage
   var delete: () -> Void
   @EnvironmentObject private var actions: ActionCenter
+  let prefs = SidebarPreferences()
 
   var body: some View {
     let folder = page.record.worktreeRoot
+    let isHidden = prefs.hiddenWorkspaces.archives.contains(page.record.id)
     HStack(spacing: Space.md) {
       HStack(spacing: Space.sm) {
         StatusDot(color: Palette.tertiary)
@@ -93,6 +95,10 @@ struct ArchivedHeaderLine: View {
           }
           Divider()
         }
+        Button(isHidden ? "Unhide" : "Hide", systemImage: isHidden ? "eye" : "eye.slash") {
+          prefs.setHidden(!isHidden, archives: [page.record.id])
+        }
+        Divider()
         Button("Delete archive\u{2026}", systemImage: "trash", role: .destructive, action: delete)
           .disabled(actions.active(for: ActionCenter.machineKey) != nil)
       } label: {

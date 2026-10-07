@@ -366,6 +366,12 @@ test('the facts topic documents every reload strategy the command can report', (
   for (const value of values) expect(body).toContain(`"${value}"`);
 });
 
+test('the facts topic documents the lapsed request state and expiresAt of doctor machine entries', () => {
+  const body = renderSection('facts', 'payloads');
+  expect(body).toContain('"lapsed"');
+  expect(body).toContain('expiresAt');
+});
+
 test('the facts topic documents the status remote device fields and states', () => {
   const body = renderTopic('facts');
   for (const field of ['remoteDevices', 'backend', 'sessionId', 'state', 'webPreviewUrl']) {

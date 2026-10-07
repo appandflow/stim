@@ -81,6 +81,8 @@ checkout. The second line is where it sits inside its checkout, such as
   Live also shows a workspace with a running build, and one that
   `stim worktree warm` is preparing ("Warming...", with an activity indicator)
   or has prepared before its first run ("Ready").
+- **Hidden**: off by default and not part of All. It shows the workspaces you hid
+  with **Hide** (see below), each marked with a small eye-slash.
 - **Projects**: which projects the sidebar lists.
 - **Group by**: Project (the tree) or None (one list, each row subtitled with
   its project too).
@@ -110,6 +112,20 @@ dot with the number of uncommitted files, arrows for commits ahead of and
 behind the upstream, and **merged** when `gc` would call the branch merged. A
 clean branch level with its upstream shows nothing. Hovering the row indicator
 spells it out.
+
+## Hiding a workspace
+
+**Hide** and **Unhide** are in the sidebar row's context menu and in the page's "..." menu for a worktree
+row, a multi-app worktree, a Not set up worktree and an archived workspace. A hidden workspace leaves Live,
+Idle, Not set up and Archived and shows only under the Hidden status. When the filter hides at least one,
+a quiet sidebar footer reads "3 hidden - Show"; once Hidden is on it reads "Hide again". The list is kept in
+this Desktop's own preferences on this Mac, by the workspace path Stim reports (and the archive id for an
+archive). It is not shared with the phone app or another Mac, and Stim itself does not know about it.
+
+A hidden workspace is shown again when it becomes active: its dev server runs, a build starts, a device boots
+or connects, it is being set up, or a run starts from Desktop. Recent idle activity does not count. A
+workspace in use cannot be hidden. Entries for a workspace that is no longer live, idle, not set up or
+archived are dropped.
 
 ## Archived workspaces
 
@@ -951,6 +967,17 @@ there. This warning appears when Desktop uses the default home and
 has adopted a server started with another home. Those phones stop working once Stim Desktop
 serves `~/.stim` again.
 
+Desktop also watches a stim-server that already answers on the port with a
+matching Stim home when **Serve to phones** is off, such as the LaunchAgent
+that `stim-server setup` or `stim-server service install` creates, through the
+same adoption path and as not started by the app. The app probes the port on
+its regular poller while the server state is off, so build and device-host
+requests from other Macs reach the Allow / Deny dialog. Turning **Serve to
+phones** off stops a server the app started and never stops watching one it did
+not. A server with another Stim home is not watched. The Phones page shows "A
+stim-server already runs on this Mac, and Desktop shows its build requests."
+while a server the app did not start runs and the toggle is off.
+
 A server answering health with HTTP 503 appears as **Starting** or
 **Degraded** with its reason in Phones and the sidebar tooltip. Desktop keeps
 checking it without starting another server or terminating one it launched.
@@ -1070,25 +1097,35 @@ Another Mac on the tailnet can build for this one once a person on it approves
 this Mac (see [Build access](../../packages/server/README.md#build-access)).
 
 On the Mac that wants to build elsewhere, **Stim > Settings > Build Machines**
-lists the entries of the `offload.machines` machine setting, each with its
-state from the `buildMachines` field of `stim doctor --json --platform ios`:
-**Approved**, **Waiting for approval** (with the approval command to copy),
-**Not asked**, **Revoked** (revoked, denied, or the request lapsed),
-**Different Mac** (the name now belongs to another tailnet node than the one
-this Mac asked, so Stim does not connect to it), **Not on the tailnet**,
-**Tailscale is off**,
-**Unreachable** or **Not a tailnet name**. Doctor runs in the first workspace
-`stim status` lists, like the doctor checks that notify as **Needs you**; with no
-workspace listed, the tab says so. While a machine waits for approval the tab
-checks again every 15 seconds. Below, **Macs on your tailnet** lists the other
-online macOS peers from `tailscale status --json` whose `tailscale serve` route
-on port 7443 answers `GET /health` as stim-server. **Use for Builds** adds a Mac
-to the setting with `stim settings set offload.machines <list> --scope machine`
-and asks it with `stim doctor --json --platform ios --fix`, which also asks
-again any listed Mac that has not approved this one. **Ask** and **Ask Again**
-run the same `--fix`. **Remove** takes a Mac out of the setting after a
-confirmation, unsetting it when the list is empty; removing a **Different Mac**
-also runs `--fix`, which forgets the old node so the Mac can be asked again.
+is a list of the entries of the `offload.machines` machine setting. Each row
+shows the Mac's name, one status pill, what it does (**Builds**, plus
+**Simulators** when its device-host access is approved), and a **...** menu with
+**Details...** and **Remove**. The pill reads **Approved**, **Waiting for
+approval** (the row keeps the approval command to copy), **Unreachable**,
+**Build mismatch** (doctor's `stim-build`, `arch`, `xcode`, `simulator-sdk`,
+`cocoapods`, `bundler` or `jdk` reason), or the machine's other readiness or
+pairing state, such as **Busy**, **Not asked**, **Revoked** (revoked, denied,
+or the request lapsed), **Different Mac** (the name now belongs to another
+tailnet node than the one this Mac asked, so Stim does not connect to it),
+**Not on the tailnet**, **Tailscale is off** or **Not a tailnet name**. The
+states come from the `buildMachines` field of `stim doctor --json --platform
+ios`.
+
+**Add Build Machine...** opens the wizard, which owns tailnet discovery and the
+setup; the tab has no separate list of tailnet Macs. With no machines, the tab
+shows an illustration, one sentence on what a build machine does, and the same
+button. A short notice appears when Tailscale is not running. The tab checks
+again when it opens, every 60 seconds, and every 15 seconds while a machine
+waits for approval; it has no Refresh button. Doctor runs in the most recently
+active workspace `stim status` lists, like the doctor checks that notify as
+**Needs you**. A workspace under `/tmp`, `/private/tmp` or `/var/folders`, such
+as an agent's scratch worktree, never qualifies; with no other workspace
+listed, the tab says to start one. **Ask** and **Ask Again** run `stim doctor
+--json --platform ios --fix`, which also asks again any listed Mac that has not
+approved this one. **Remove** takes a Mac out of the setting with `stim settings
+set offload.machines <list> --scope machine` after a confirmation, unsetting it
+when the list is empty; removing a **Different Mac** also runs `--fix`, which
+forgets the old node so the Mac can be asked again.
 
 A build machine that runs another Stim build than this Mac (doctor's
 `stim-build` reason) offers **Install This Mac's Build**, here and on its
@@ -1115,7 +1152,8 @@ reason each time Desktop launches. Either way, the machine gets this Mac's build
 whether it is newer or older than the one it runs.
 
 On the Mac that builds, the app checks `stim-server devices --json` every 10
-seconds while a server runs. Each new build request adds "<Mac> wants to build
+seconds while a server runs, including one it did not start while **Serve to
+phones** is off. Each new build request adds "<Mac> wants to build
 on this Mac" to **Notifications** (category **A Mac asks to build here**,
 Alert by default) and shows it as a card or a macOS notification. Its
 **Review** opens a dialog with the Mac's name, its tailnet node and user, the

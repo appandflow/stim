@@ -20,6 +20,8 @@
 
   enum PlaygroundScreen: String, CaseIterable, Identifiable {
     case archivedSidebar = "Archived sidebar"
+    case hiddenSidebar = "Hidden sidebar"
+    case viewOptions = "View options"
     case realArchiveSidebar = "Real archive sidebar"
     case realArchiveWorkspace = "Real archive workspace"
     case realArchiveBuildSheet = "Real archive build sheet"
@@ -40,7 +42,9 @@
 
     var scenarios: [PlaygroundScenario] {
       switch self {
-      case .archivedSidebar, .archivedBuildSheet, .realArchiveSidebar, .realArchiveWorkspace, .realArchiveBuildSheet:
+      case .hiddenSidebar: return [.ready, .empty]
+      case .archivedSidebar, .viewOptions, .archivedBuildSheet, .realArchiveSidebar, .realArchiveWorkspace,
+        .realArchiveBuildSheet:
         return [.ready]
       case .workspace, .archivedWorkspace: return [.ready, .empty, .error]
       case .notifications: return [.ready, .empty, .longText, .largeData]
@@ -115,6 +119,44 @@
       return view
     }
 
+    private func hiddenSidebar(_ fixtures: PlaygroundFixtures) -> some View {
+      let json = """
+        [{"path":"/Playground/app/.worktrees/checkout-flow","live":true,"warnings":[]},
+         {"path":"/Playground/app/.worktrees/profile-edit","live":false,"warnings":[]},
+         {"path":"/Playground/app/.worktrees/dark-mode","live":false,"warnings":[]}]
+        """
+      let environments = (try? JSONDecoder().decode([Workspace].self, from: Data(json.utf8))) ?? []
+      let worktrees =
+        (try? JSONDecoder().decode(
+          [UnprovisionedWorktree].self,
+          from: Data(#"[{"path":"/Playground/app/.worktrees/spike","branch":"spike"}]"#.utf8))) ?? []
+      let archives = sidebarArchives(fixtures)
+      var options = SidebarOptions()
+      options.statuses = StatusFilter.all.union(scenario == .empty ? [.archived] : [.archived, .hidden])
+      options.hiddenWorkspaces = HiddenWorkspaces(
+        paths: ["/Playground/app/.worktrees/profile-edit", "/Playground/app/.worktrees/spike"],
+        archives: [archives[0].id])
+      UserDefaults.standard.set(
+        HiddenWorkspaces.encode(options.hiddenWorkspaces), forKey: AppPreferences.Key.hiddenWorkspaces)
+      let project: (String) -> Project = { Project(fallbackFor: $0) }
+      let trees = sidebarTrees(
+        environments: environments, unprovisioned: worktrees, project: project, options: options, archived: archives)
+      let count = sidebarStatusCounts(
+        environments: environments, unprovisioned: worktrees, project: project, options: options, archived: archives)
+      return VStack(spacing: 0) {
+        List {
+          ForEach(trees, id: \.summary.project) { tree in
+            DisclosureGroup(tree.summary.project.name, isExpanded: .constant(true)) {
+              ForEach(tree.entries) { entry in
+                EntryRow(entry: entry, subtitle: nil, showsFolder: true, showsGit: true, selection: nil, openLogs: { _ in })
+              }
+            }
+          }
+        }.scrollContentBackground(.hidden)
+        HiddenWorkspacesFooter(count: count[.hidden] ?? 0, showing: scenario != .empty) {}
+      }.background(Palette.sidebar)
+    }
+
     private func sidebarArchives(_ fixtures: PlaygroundFixtures) -> [ArchivedWorkspace] {
       if screen == .realArchiveSidebar { return [fixtures.archive] }
       var mobile = fixtures.archive
@@ -170,6 +212,14 @@
             }
           }
         }.scrollContentBackground(.hidden).background(Palette.sidebar)
+      case .hiddenSidebar:
+        hiddenSidebar(fixtures)
+      case .viewOptions:
+        ViewOptionsMenu(
+          projects: [Project(root: "/Playground/app"), Project(root: "/Playground/stim")],
+          counts: [.live: 1, .idle: 2, .notSetUp: 0, .archived: 3, .hidden: 3], title: { $0.name }
+        )
+        .frame(width: 260).padding(Space.lg)
       case .workspace, .archivedWorkspace, .realArchiveWorkspace:
         workspacePage(fixtures)
       case .notifications:

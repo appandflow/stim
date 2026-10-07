@@ -106,11 +106,6 @@ public enum Tailnet {
     else { return nil }
     return health
   }
-
-  /// Whether `stim-server` answers `GET /health` on the Mac's `tailscale serve` route at `port`.
-  public static func servesStim(dnsName: String, port: Int = servePort) async -> Bool {
-    await health(dnsName: dnsName, port: port) != nil
-  }
 }
 
 /// Where this Mac stands with one `offload.machines` entry, as `stim doctor --json` reports it.
@@ -238,6 +233,24 @@ public struct BuildMachineStatus: Decodable, Hashable, Identifiable, Sendable {
     return MachineReadiness(title: reasons?.first ?? "Cannot take builds", remedy: nil, tone: .error, reasons: all)
   }
 
+  /// The one pill a row of the build machine list shows: Approved, Waiting for approval, Unreachable or Build
+  /// mismatch for the states that matter most, else the readiness title (Busy, Revoked, Not asked, ...).
+  public var listStatus: MachineListStatus {
+    let ready = readiness
+    switch state {
+    case .approved:
+      guard offloadable == false else { return MachineListStatus(title: "Approved", tone: .success) }
+      let code = problems?.first?.code
+      if code == "unreachable" { return MachineListStatus(title: "Unreachable", tone: .warning) }
+      if let code, MachineListStatus.mismatchCodes.contains(code) {
+        return MachineListStatus(title: "Build mismatch", tone: .warning)
+      }
+      return MachineListStatus(title: ready.title, tone: ready.tone)
+    case .pending: return MachineListStatus(title: "Waiting for approval", tone: .warning)
+    default: return MachineListStatus(title: state.title, tone: state.readinessTone)
+    }
+  }
+
   /// For a request waiting for approval: the command a person runs on that Mac to approve this one, when doctor
   /// reported the request's id.
   public var approvalCommand: String? {
@@ -271,6 +284,25 @@ public struct BuildMachineStatus: Decodable, Hashable, Identifiable, Sendable {
     case .unknown: return "Update Stim Desktop to show this state."
     }
   }
+}
+
+/// The pill text and tone of a build machine in the list.
+public struct MachineListStatus: Equatable, Sendable {
+  public var title: String
+  public var tone: Tone
+
+  /// The `stim doctor` reason codes that mean the machine runs a different toolchain than this Mac.
+  static let mismatchCodes: Set<String> = [
+    "stim-build", "arch", "xcode", "simulator-sdk", "cocoapods", "bundler", "jdk",
+  ]
+}
+
+/// What a listed build machine does for this Mac: it always builds, and hosts simulators when its device-host access
+/// is approved. `hosts` is the doctor report's `deviceHosts`, nil when unknown.
+public func buildMachineCapabilities(_ machine: String, hosts: [BuildMachineStatus]?) -> [String] {
+  let name = OffloadMachines.name(machine)
+  let simulators = hosts?.contains { $0.state == .approved && OffloadMachines.name($0.machine) == name } == true
+  return simulators ? ["Builds", "Simulators"] : ["Builds"]
 }
 
 /// A build machine's readiness for builds, as `BuildMachineStatus.readiness` reads it from `stim doctor`.

@@ -366,8 +366,9 @@ Connections use the pinned node's own tailnet address and MagicDNS TLS name;
 a changed node refuses access. Uncertain replies or unreadable credentials
 preserve the pin. To approve a replacement node, remove the name, run
 `stim doctor --fix` to forget it, then re-add it and run `--fix` again.
-Only `--fix` requests access, retries a definite revoked or lapsed request,
-or forgets names removed from the setting. A concurrent approval inspection
+Only `--fix` requests access, retries a revoked or `lapsed` request,
+or forgets names removed from the setting. A pending request reports its
+`expiresAt`. A concurrent approval inspection
 reports `busy` instead of rotating a pending token.
 
 On a hosting Mac, `hosting.agentDriver` names the tool it starts so a client's
@@ -561,7 +562,9 @@ stim-server service rollback                   # back to the previous server
 
 `--release` installs that exact version from the public npm registry, and
 the update stops unless npm verifies each package's integrity and registry
-signature. `--from` installs the `.tgz` packages in the directory. Either way
+signature. `--from` installs the `.tgz` packages in the directory, checks the
+registry signature of every dependency they bring from npm, and does not look up
+Stim's own packages on the registry, so an unpublished version installs. Either way
 the new server is installed beside the running one and must start before the
 switch. The update waits up to 30 minutes for offloaded builds and hosted
 sessions to finish, restarts the job, and switches back to the previous server

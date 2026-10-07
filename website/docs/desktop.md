@@ -44,6 +44,9 @@ control them through this Mac's stim-server relay. Touch and text reach the
 hosting Mac; controls that need a local simulator, and replay, are hidden.
 The tile reports connecting, unavailable or stopped sessions. Android hardware
 buttons also use the relay; rotation and posture are unavailable.
+On a build machine, Stim Desktop shows build requests from other Macs as a
+notification and inbox entry with **Allow** and **Deny**. It watches a
+stim-server already running there even when **Serve to phones** is off.
 Placement is set by config or agents: use
 `stim settings set ios.remote auto --scope workspace` (or `android.remote`),
 or per run `stim ios --remote auto` / `stim ios --remote <machine>`.
@@ -135,6 +138,14 @@ show refusals for removals started from its own workspace actions.
 - **Every workspace at a glance.** Each workspace shows its stage (warming,
   building, running, failed), its devices side by side, and its branch and pull
   request status.
+- **Hide a workspace.** **Hide** in a sidebar row's context menu or the page's
+  "..." menu moves a worktree, a multi-app worktree, a Not set up worktree or an
+  archive out of the list. Turn on **Hidden** in the sidebar's Status filter, or
+  use the "3 hidden - Show" line at the foot of the sidebar, to see them again;
+  **Hide again** turns it off. Hidden is not part of All. A hidden workspace
+  that becomes active (its dev server runs, a build starts, a device boots or
+  connects, or a run starts) shows again. The list lives in this Desktop's own
+  preferences on this Mac and is not shared with the phone app.
 - **Watch and take over a device.** Open a device to see its screen large,
   take it over with your mouse and keyboard, and read what the agent did
   and when. Hardware, rotation and posture controls sit in groups below the
@@ -470,7 +481,11 @@ belonging to that path at once. Settings and other details are in the
 
 ## Add a build machine
 
-**Settings > Build Machines > Add…** guides you through all six steps: pick a
+**Settings > Build Machines** lists your build machines with a status
+(**Approved**, **Waiting for approval**, **Unreachable** or **Build mismatch**),
+what each does (**Builds**, **Simulators**) and a **...** menu with **Details**
+and **Remove**. It updates itself; there is no Refresh button. With none, it
+offers **Add Build Machine…**, which guides you through all six steps: pick a
 Mac on your tailnet, choose Builds and/or Hosted simulators, run setup there,
 compare tools, test a sample build, and review settings and undo commands. Run
 the generated setup command in Terminal while signed in at the build Mac and

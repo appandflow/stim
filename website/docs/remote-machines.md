@@ -233,8 +233,11 @@ full toolchain and placement rules.
 
 ## Use the Desktop wizard
 
-Open **Stim > Settings > Build Machines > Add...** on your main Mac. The
-wizard has six steps:
+Open **Stim > Settings > Build Machines** on your main Mac. It lists your
+build machines, each with a status (**Approved**, **Waiting for approval**,
+**Unreachable** or **Build mismatch**), what it does and a **...** menu with
+**Details** and **Remove**. Choose **Add Build Machine...** to start the wizard,
+which finds the Macs on your tailnet itself. The wizard has six steps:
 
 1. **Pick a Mac.** Select an online macOS peer from your tailnet. Start
    Tailscale on either Mac if it is missing or stopped.
@@ -361,11 +364,15 @@ stim settings set hosting.machines '["janics-mac-mini"]'
 stim doctor --fix`}
 />
 
-On the worker, inspect `stim-server devices` and approve the printed build
+Stim Desktop on the worker shows each build request and device-host request as a
+notification with **Allow** and **Deny**, including when a stim-server already
+runs there as a LaunchAgent and **Serve to phones** is off. Without Desktop, on the worker, inspect `stim-server devices` and approve the printed build
 request with `stim-server devices grant <build-id> --build`, and the separate
 hosting request with `stim-server devices grant <host-id> --device-host`.
 Use the server package's npx prefix above if it is not installed globally.
-Requests lapse after 15 minutes. Run `stim doctor` on the main Mac to check
+Requests lapse after 15 minutes. While a request is pending, `stim doctor --json`
+reports its `expiresAt`; after it lapses doctor reports `lapsed`, and
+`stim doctor --fix` asks again. Run `stim doctor` on the main Mac to check
 approval and compatibility before running the app.
 
 ## Permissions

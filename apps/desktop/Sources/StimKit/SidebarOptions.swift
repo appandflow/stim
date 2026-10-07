@@ -1,7 +1,7 @@
 import Foundation
 
 public enum StatusFilter: String, CaseIterable, Sendable {
-  case live, idle, notSetUp, archived
+  case live, idle, notSetUp, archived, hidden
 
   public var title: String {
     switch self {
@@ -9,10 +9,11 @@ public enum StatusFilter: String, CaseIterable, Sendable {
     case .idle: "Idle"
     case .notSetUp: "Not set up"
     case .archived: "Archived"
+    case .hidden: "Hidden"
     }
   }
 
-  public static let all = Set(allCases)
+  public static let all: Set<StatusFilter> = [.live, .idle, .notSetUp, .archived]
   public static let defaultSelection: Set<StatusFilter> = [.live, .idle]
 
   public static func encode(_ statuses: Set<StatusFilter>) -> String {
@@ -25,6 +26,10 @@ public enum StatusFilter: String, CaseIterable, Sendable {
   }
 
   public static func summary(_ statuses: Set<StatusFilter>) -> String {
+    if statuses.contains(.hidden) {
+      let rest = statuses.subtracting([.hidden])
+      return rest.isEmpty ? "Hidden" : "\(summary(rest)) + Hidden"
+    }
     if statuses == all { return "All" }
     if statuses.isEmpty { return "None" }
     if statuses.count <= 2 { return allCases.filter { statuses.contains($0) }.map(\.title).joined(separator: ", ") }
@@ -54,6 +59,7 @@ public enum SidebarSort: String, CaseIterable, Sendable {
 public struct SidebarOptions: Equatable, Sendable {
   public var statuses: Set<StatusFilter> = StatusFilter.defaultSelection
   public var hiddenProjects: Set<String> = []
+  public var hiddenWorkspaces = HiddenWorkspaces()
   public var grouping = SidebarGrouping.project
   public var sort = SidebarSort.name
   public var showsGitStatus = true
@@ -65,6 +71,7 @@ public struct SidebarOptions: Equatable, Sendable {
   public func differsFromDefaults(projects: [Project]) -> Bool {
     var shown = self
     shown.hiddenProjects.formIntersection(projects.map(\.root))
+    shown.hiddenWorkspaces = HiddenWorkspaces()
     return shown != SidebarOptions()
   }
 
@@ -116,6 +123,12 @@ public enum SidebarEntry: Hashable, Identifiable, Sendable {
     default: active ? .live : .idle
     }
   }
+
+  public func status(hidden: HiddenWorkspaces) -> StatusFilter {
+    hidden.contains(self) ? .hidden : status
+  }
+
+  var isArchive: Bool { status == .archived }
 
   var active: Bool {
     switch self {
@@ -228,31 +241,28 @@ private func visibleEntries(
   _ environments: [Workspace], _ unprovisioned: [UnprovisionedWorktree], _ project: (String) -> Project,
   _ options: SidebarOptions, _ archived: [ArchivedWorkspace]
 ) -> [SidebarEntry] {
-  var archiveEntries: [SidebarEntry] = []
-  if options.statuses.contains(.archived) {
-    let archives = ArchivedWorkspace.newestFirst(archived)
-      .filter { !options.hiddenProjects.contains($0.sidebarProject.root) }
-    var groups: [[ArchivedWorkspace]] = []
-    for archive in archives {
-      if let index = groups.firstIndex(where: {
-        $0[0].sidebarProject == archive.sidebarProject && $0[0].worktreeRoot == archive.worktreeRoot
-          && !$0.contains(where: { $0.projectRoot == archive.projectRoot })
-      }) {
-        groups[index].append(archive)
-      } else {
-        groups.append([archive])
-      }
+  let archives = ArchivedWorkspace.newestFirst(archived)
+    .filter { !options.hiddenProjects.contains($0.sidebarProject.root) }
+  var groups: [[ArchivedWorkspace]] = []
+  for archive in archives {
+    if let index = groups.firstIndex(where: {
+      $0[0].sidebarProject == archive.sidebarProject && $0[0].worktreeRoot == archive.worktreeRoot
+        && options.hiddenWorkspaces.archives.contains($0[0].id) == options.hiddenWorkspaces.archives.contains(archive.id)
+        && !$0.contains(where: { $0.projectRoot == archive.projectRoot })
+    }) {
+      groups[index].append(archive)
+    } else {
+      groups.append([archive])
     }
-    archiveEntries = groups.map { $0.count > 1 ? .archivedGroup($0) : .archived($0[0]) }
   }
-  let worktrees = options.statuses.contains(.notSetUp) ? unprovisioned.map(SidebarEntry.worktree) : []
+  let archiveEntries = groups.map { $0.count > 1 ? SidebarEntry.archivedGroup($0) : .archived($0[0]) }
   let apps = WorktreePage.groups(environments: environments).map { page in
     page.isUnified ? SidebarEntry.worktreeGroup(page) : .workspace(page.apps[0])
   }
-  return (apps + worktrees).filter { entry in
-    guard !options.hiddenProjects.contains(project(entry.path).root) else { return false }
-    return options.statuses.contains(entry.status)
-  } + archiveEntries
+  let current = (apps + unprovisioned.map(SidebarEntry.worktree)).filter {
+    !options.hiddenProjects.contains(project($0.path).root)
+  }
+  return (current + archiveEntries).filter { options.statuses.contains($0.status(hidden: options.hiddenWorkspaces)) }
 }
 
 public func sidebarStatusCounts(
@@ -263,7 +273,7 @@ public func sidebarStatusCounts(
   options.statuses = Set(StatusFilter.allCases)
   var counts = Dictionary(uniqueKeysWithValues: StatusFilter.allCases.map { ($0, 0) })
   for entry in visibleEntries(environments, unprovisioned, project, options, archived) {
-    counts[entry.status, default: 0] += 1
+    counts[entry.status(hidden: options.hiddenWorkspaces), default: 0] += 1
   }
   return counts
 }
@@ -271,8 +281,8 @@ public func sidebarStatusCounts(
 private func orderedEntries(
   _ entries: [SidebarEntry], _ options: SidebarOptions, _ project: (String) -> Project
 ) -> [SidebarEntry] {
-  sorted(entries.filter { $0.status != .archived }, by: options.sort, project: project)
-    + entries.filter { $0.status == .archived }
+  sorted(entries.filter { !$0.isArchive }, by: options.sort, project: project)
+    + entries.filter(\.isArchive)
 }
 
 private func sorted(

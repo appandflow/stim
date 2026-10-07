@@ -20,6 +20,11 @@ export type HelloReply =
   | { error: { code: string; message: string } }
   | { failed: string };
 
+/** True for a pending credential whose stored expiry has passed; one without an expiry or already approved is not. */
+export function lapsedRequest(credential: { state: string; expiresAt?: string }): boolean {
+  return credential.state === 'pending' && !!credential.expiresAt && Date.parse(credential.expiresAt) <= Date.now();
+}
+
 export interface TailnetMachineIo {
   /** `tailscale status --json`, or null when Tailscale is not running. */
   status: () => unknown;

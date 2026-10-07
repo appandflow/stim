@@ -5,6 +5,7 @@ import SwiftUI
 struct SidebarPreferences: DynamicProperty {
   @AppStorage(AppPreferences.Key.sidebarStatuses) var statuses = StatusFilter.encode(StatusFilter.defaultSelection)
   @AppStorage(AppPreferences.Key.hiddenProjects) var hiddenProjects = ""
+  @AppStorage(AppPreferences.Key.hiddenWorkspaces) var hiddenWorkspacesRaw = ""
   @AppStorage(AppPreferences.Key.sidebarGrouping) var grouping = SidebarGrouping.project
   @AppStorage(AppPreferences.Key.sidebarSort) var sort = SidebarSort.name
   @AppStorage(AppPreferences.Key.showsGitStatus) var showsGitStatus = true
@@ -14,11 +15,30 @@ struct SidebarPreferences: DynamicProperty {
     var options = SidebarOptions()
     options.statuses = StatusFilter.decode(statuses)
     options.hiddenProjects = SidebarOptions.decode(hiddenProjects: hiddenProjects)
+    options.hiddenWorkspaces = hiddenWorkspaces
     options.grouping = grouping
     options.sort = sort
     options.showsGitStatus = showsGitStatus
     options.showsEmptyProjects = showsEmptyProjects
     return options
+  }
+
+  var hiddenWorkspaces: HiddenWorkspaces { HiddenWorkspaces.decode(hiddenWorkspacesRaw) }
+
+  func setHidden(_ hidden: Bool, path: String) {
+    hiddenWorkspacesRaw = HiddenWorkspaces.encode(hiddenWorkspaces.setting(path: path, hidden: hidden))
+  }
+
+  func setHidden(_ hidden: Bool, archives ids: [String]) {
+    hiddenWorkspacesRaw = HiddenWorkspaces.encode(hiddenWorkspaces.setting(archives: ids, hidden: hidden))
+  }
+
+  func setHidden(_ hidden: Bool, entry: SidebarEntry) {
+    switch entry {
+    case .archived(let archive): setHidden(hidden, archives: [archive.id])
+    case .archivedGroup(let group): setHidden(hidden, archives: group.map(\.id))
+    default: setHidden(hidden, path: entry.path)
+    }
   }
 
   func reset() {
@@ -63,7 +83,7 @@ struct ViewOptionsButton: View {
   }
 }
 
-private struct ViewOptionsMenu: View {
+struct ViewOptionsMenu: View {
   var projects: [Project]
   var counts: [StatusFilter: Int]
   var title: (Project) -> String
@@ -116,15 +136,18 @@ private struct ViewOptionsMenu: View {
 
   private func statusItems(_ statuses: Set<StatusFilter>) -> [MenuItem] {
     var items = [
-      MenuItem(id: "all", title: "All", accessory: .check(statuses == StatusFilter.all), keepsOpen: true) {
-        prefs.statuses = StatusFilter.encode(StatusFilter.all)
+      MenuItem(
+        id: "all", title: "All", accessory: .check(statuses.subtracting([.hidden]) == StatusFilter.all),
+        keepsOpen: true
+      ) {
+        prefs.statuses = StatusFilter.encode(StatusFilter.all.union(statuses.intersection([.hidden])))
       }
     ]
     for (index, status) in StatusFilter.allCases.enumerated() {
       items.append(
         MenuItem(
           id: status.rawValue, title: status.title, detail: "\(counts[status] ?? 0)",
-          accessory: .check(statuses.contains(status)), dividerBefore: index == 0, keepsOpen: true
+          accessory: .check(statuses.contains(status)), dividerBefore: index == 0 || status == .hidden, keepsOpen: true
         ) {
           var updated = statuses
           if updated.contains(status) { updated.remove(status) } else { updated.insert(status) }
