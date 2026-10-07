@@ -10,6 +10,7 @@ import {
   type Endpoint,
   type HelloReply,
 } from '../offload/build-machines.ts';
+import { getConfigPath } from '../workspace/config.ts';
 
 let home: string;
 
@@ -348,5 +349,19 @@ test.each([undefined, null, { name: 'Stim Host', screenRecording: false, accessi
     expect(entry.state).toBe('approved');
     expect(entry.host).toEqual(host ?? undefined);
     expect(Object.hasOwn(entry, 'host')).toBe(!!host);
+  },
+);
+
+it.each([{ machines: 'mini' }, { machines: ['mini', 42] }, 'mini'])(
+  'doctor --fix keeps saved credentials when remote is invalid: %j',
+  async (remote) => {
+    await inspectBuildMachines({ fix: true }, fakeIo('nMini', [pending]).io, ['mini']);
+    const saved = readFileSync(buildMachinesFile(), 'utf8');
+    writeFileSync(getConfigPath(), JSON.stringify({ remote }));
+    const { io, calls } = fakeIo('nMini', []);
+    const result = await inspectBuildMachines({ fix: true }, io);
+    expect(result.findings).toEqual([expect.objectContaining({ title: 'Invalid remote.machines setting' })]);
+    expect(readFileSync(buildMachinesFile(), 'utf8')).toBe(saved);
+    expect(calls).toEqual([]);
   },
 );

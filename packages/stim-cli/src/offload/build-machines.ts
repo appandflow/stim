@@ -11,7 +11,8 @@ import {
 import type { Finding } from '../diagnostics/doctor.ts';
 import type { OffloadProblem } from './toolchain.ts';
 import { withDirLock } from '../dir-lock.ts';
-import { getConfigDir, loadConfig } from '../workspace/config.ts';
+import { getConfigDir } from '../workspace/config.ts';
+import { configuredMachines } from '../device-host/machines.ts';
 import { readAccessTicket, readHostPermissions } from './access-ticket.ts';
 
 import { endpoint, findPeer, parseMachine, realIo, type TailnetPeer, type TailnetMachineIo } from './tailnet.ts';
@@ -19,14 +20,9 @@ export { findPeer, parseMachine, pinnedEndpoint, type Endpoint, type HelloReply 
 export type BuildMachineIo = TailnetMachineIo;
 
 /** The `remote.machines` entries that this Mac asked for build access, in that order. */
-export function pairedMachines(entries: string[] = configuredMachines()): BuildMachineCredential[] {
+export function pairedMachines(entries: string[] = configuredMachines() ?? []): BuildMachineCredential[] {
   const credentials = readBuildMachines();
   return entries.flatMap((entry) => credentials.filter((each) => each.machine === entry));
-}
-
-function configuredMachines(): string[] {
-  const machines = loadConfig()?.remote?.machines;
-  return Array.isArray(machines) ? machines.filter((entry): entry is string => typeof entry === 'string') : [];
 }
 
 function updateCredentials(change: (credentials: BuildMachineCredential[]) => BuildMachineCredential[]): void {
@@ -52,7 +48,7 @@ function updateCredentials(change: (credentials: BuildMachineCredential[]) => Bu
 
 /**
  * Where this Mac stands with one `remote.machines` entry, as `stim doctor --json` reports it under
- * `buildMachines`. `dnsName` is the peer's MagicDNS name when the name resolved; `deviceId` is the id the worker
+ * `remoteMachines`. `dnsName` is the peer's MagicDNS name when the name resolved; `deviceId` is the id the worker
  * lists this Mac under once it asked.
  */
 interface BuildMachineReport {
@@ -330,8 +326,20 @@ async function inspectMachine(
 export async function inspectBuildMachines(
   { fix, check = null }: { fix: boolean; check?: OffloadCheck | null },
   io: BuildMachineIo = realIo,
-  entries: string[] = configuredMachines(),
+  entries: string[] | null = configuredMachines(),
 ): Promise<BuildMachinesInspection> {
+  if (entries === null) {
+    return {
+      findings: [
+        note(
+          'Invalid remote.machines setting',
+          'Use a remote object with machines as an array of tailnet names. Existing credentials and pinned nodes are preserved.',
+          'Run `stim guide settings` and correct the setting before running doctor again.',
+        ),
+      ],
+      machines: [],
+    };
+  }
   const unnamed = (each: BuildMachineCredential) => !entries.includes(each.machine);
   if (fix && readBuildMachines().some(unnamed)) {
     updateCredentials((credentials) => credentials.filter((each) => !unnamed(each)));
