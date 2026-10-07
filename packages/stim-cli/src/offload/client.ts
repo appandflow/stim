@@ -50,7 +50,7 @@ const MAX_BUFFERED = 8 * 1024 * 1024;
 const DIGEST_BYTES = 32;
 
 function offloadMode(env: NodeJS.ProcessEnv = process.env): OffloadMode {
-  const raw = env.STIM_OFFLOAD_MODE || loadConfig()?.remote?.buildMode;
+  const raw = env.STIM_REMOTE_BUILD_MODE || loadConfig()?.remote?.buildMode;
   return OFFLOAD_MODES.includes(raw as OffloadMode) ? (raw as OffloadMode) : 'auto';
 }
 
