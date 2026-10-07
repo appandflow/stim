@@ -194,7 +194,7 @@ public enum TutorialSteps {
         "agent-device screenshot tutorial.png",
         "agent-device close",
         "grep -v -e 'target-v1' -e 'dismiss-overlay' tutorial.ad > tutorial-replay.ad",
-        "agent-device replay tutorial-replay.ad",
+        "agent-device replay tutorial-replay.ad --platform ios --udid \"$iosUdid\"",
         "stim logs --source agent --tail 10",
       ]),
     TutorialStep(

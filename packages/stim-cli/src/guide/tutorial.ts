@@ -152,6 +152,7 @@ ${commands('agent').replace('read -r iosUdid', 'iosUdid="<ios.udid>"')}
 
 Use --save-script=tutorial.ad with the equals sign: agent-device treats a
 separate path as a URL and refuses. The dismiss-overlay step clears a red box that would cover the buttons.
+Replay with the same --platform and --udid so its steps reach the agent log.
 Remove the target-v1 evidence and dismiss-overlay lines before replay: replaying
 them can fail with REPLAY_DIVERGENCE on the recorded button identity.
 The scripts and screenshot stay in the tour worktree and are git-ignored.
