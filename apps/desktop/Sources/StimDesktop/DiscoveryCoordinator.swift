@@ -47,6 +47,7 @@ final class DiscoveryCoordinator: ObservableObject {
 
   func start(actions: ActionCenter) {
     guard subscription == nil else { return }
+    persistence.migrate()
     if !Self.countedLaunch {
       persistence.launched()
       Self.countedLaunch = true
@@ -258,8 +259,24 @@ final class DiscoveryCoordinator: ObservableObject {
   private func perform(_ action: DiscoveryAction) {
     guard case .runOnAuto(let id, let platform) = action else { return Self.open(action) }
     guard let path = workspacePath(id) else { return }
-    for platform in platform.map({ [$0] }) ?? ["ios", "android"] {
-      UserDefaults.standard.set("auto", forKey: AppPreferences.Key.runDestination(workspace: path, platform: platform))
+    Task {
+      for key in Discovery.runOnAutoPlatforms(platform).map({ "\($0).remote" }) {
+        let result = await machines.settings.write(key, value: "auto", scope: .workspace, cwd: path)
+        if let problem = Self.problem(result) {
+          NoticeCenter.shared.show(
+            Notice(
+              icon: "exclamationmark.triangle", tone: .caution, title: "Could not set \(key) to auto", detail: problem,
+              actionTitle: "OK", perform: {}))
+        }
+      }
+    }
+  }
+
+  private static func problem(_ result: Result<SettingsWriteResult, any Error>) -> String? {
+    switch result {
+    case .success(.written): return nil
+    case .success(.refused(let refusal)): return [refusal.message, refusal.remedy].compactMap { $0 }.joined(separator: " ")
+    case .failure(let error): return error.localizedDescription
     }
   }
 
