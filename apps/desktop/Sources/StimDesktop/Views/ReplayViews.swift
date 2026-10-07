@@ -155,6 +155,7 @@ struct ReplayHost<Content: View>: View {
 struct ReplayBar: View {
   /// stim-server's `frames.seek` shows the newest frame for a time past every recording; the phone sends the same.
   private static let newestFrame = 9_007_199_254_740_991.0
+  private static let iconWidth: CGFloat = 16
 
   @ObservedObject var controller: ReplayController
   var running: Bool
@@ -170,18 +171,19 @@ struct ReplayBar: View {
           stepButton(timeline, forward: false)
           playButton(timeline)
           stepButton(timeline, forward: true)
-          Button("\(controller.speed)x") { toggleSpeed() }
-            .buttonStyle(.stim())
-            .fixedSize()
-            .help("Playback speed")
-            .opacity(isLive ? 0 : 1)
-            .disabled(isLive)
-            .accessibilityHidden(isLive)
+          Button {
+            toggleSpeed()
+          } label: {
+            Text("\(controller.speed)x").frame(minWidth: Self.iconWidth)
+          }
+          .buttonStyle(.stim())
+          .fixedSize()
+          .help("Playback speed")
+          .opacity(isLive ? 0 : 1)
+          .disabled(isLive)
+          .accessibilityHidden(isLive)
           TimelineView(.periodic(from: .now, by: 1)) { context in
-            Text(caption(timeline, now: context.date))
-              .font(.stim(.caption, mono: true))
-              .foregroundStyle(Palette.secondary)
-              .lineLimit(1)
+            captionView(caption(timeline, now: context.date))
           }
         }
         Spacer(minLength: 0)
@@ -246,7 +248,7 @@ struct ReplayBar: View {
         controller.live()
       }
     } label: {
-      Image(systemName: forward ? "forward.end.fill" : "backward.end.fill")
+      Image(systemName: forward ? "forward.end.fill" : "backward.end.fill").frame(width: Self.iconWidth)
     }
     .buttonStyle(.stim())
     .fixedSize()
@@ -262,7 +264,7 @@ struct ReplayBar: View {
     return Button {
       Self.playOrPause(controller, timeline: timeline, running: running, onSeek: onSeek)
     } label: {
-      Image(systemName: showsPause ? "pause.fill" : "play.fill")
+      Image(systemName: showsPause ? "pause.fill" : "play.fill").frame(width: Self.iconWidth)
     }
     .buttonStyle(.stim())
     .fixedSize()
@@ -301,14 +303,31 @@ struct ReplayBar: View {
     }
   }
 
-  private func caption(_ timeline: ReplayTimeline, now: Date) -> String {
+  private struct Caption {
+    var time: String
+    var ago: String?
+    var end = false
+  }
+
+  private func caption(_ timeline: ReplayTimeline, now: Date) -> Caption {
     guard let replay = controller.replay else {
-      return "Replay \(Format.roundedDuration(ms: timeline.recordedLength)) recorded"
+      return Caption(time: "Replay \(Format.roundedDuration(ms: timeline.recordedLength)) recorded")
     }
-    guard let at = replay.at else { return "Loading..." }
+    guard let at = replay.at else { return Caption(time: "Loading...") }
     let date = Date(timeIntervalSince1970: at / 1000)
     let ago = Format.roundedDuration(ms: now.timeIntervalSince(date) * 1000)
-    return "\(date.formatted(date: .omitted, time: .standard)) \u{00B7} \(ago) ago\(replay.ended ? " \u{00B7} end" : "")"
+    return Caption(time: date.formatted(date: .omitted, time: .standard), ago: "\(ago) ago", end: replay.ended)
+  }
+
+  private func captionView(_ caption: Caption) -> some View {
+    HStack(spacing: Space.sm) {
+      Text(caption.time).foregroundStyle(Palette.text).monospacedDigit()
+      if let ago = caption.ago { Text(ago).foregroundStyle(Palette.tertiary) }
+      if caption.end { Pill(tone: .neutral, size: .small) { Text("End") } }
+    }
+    .font(.stim(.caption))
+    .lineLimit(1)
+    .fixedSize()
   }
 
   private func seek(_ at: Double, rate: Int, action: Double? = nil) {
@@ -347,7 +366,9 @@ struct ReplayTrack: View {
   @State private var trackLength: Double?
 
   private var track: ReplayTimeline {
-    held ?? ReplayTimeline(spans: timeline.spans, liveEnd: liveEnd, previousLength: trackLength) ?? timeline
+    held
+      ?? ReplayTimeline(spans: timeline.spans, liveEnd: liveEnd, previousLength: trackLength, fit: liveEnd == nil)
+      ?? timeline
   }
 
   var body: some View {
@@ -355,6 +376,9 @@ struct ReplayTrack: View {
     let position = dragging.map { fraction($0) } ?? (isLive ? 1 : shownAt.map(track.position(of:)) ?? 1)
     let hasGaps = track.pieces.contains(where: \.isGap)
     ZStack(alignment: .topLeading) {
+      if let first = track.pieces.first, first.from > 0 {
+        Capsule().fill(Palette.border).frame(width: first.from * width, height: 2).offset(y: 13)
+      }
       ForEach(Array(track.pieces.enumerated()), id: \.offset) { _, piece in
         let x = piece.from * width
         let w = max(1, (piece.to - piece.from) * width)
@@ -367,9 +391,16 @@ struct ReplayTrack: View {
           .frame(width: w, height: 2)
           .offset(x: x, y: 13)
         } else if piece.isGap {
-          Rectangle().fill(Palette.border).frame(width: w, height: 2).offset(x: x, y: 13)
+          Path { path in
+            path.move(to: CGPoint(x: 0, y: 1))
+            path.addLine(to: CGPoint(x: w, y: 1))
+          }
+          .stroke(Palette.tertiary, style: StrokeStyle(lineWidth: 2, dash: [2, 3]))
+          .frame(width: w, height: 2)
+          .offset(x: x, y: 13)
         } else {
-          RoundedRectangle(cornerRadius: Radius.small).fill(Palette.raised).frame(width: w, height: 16)
+          RoundedRectangle(cornerRadius: Radius.small).fill(Palette.accent.opacity(Opacity.track))
+            .frame(width: w, height: 16)
             .offset(x: x, y: 6)
         }
       }
@@ -392,6 +423,10 @@ struct ReplayTrack: View {
         .fill(isLive ? Palette.tertiary : Palette.text)
         .frame(width: 2, height: 24)
         .offset(x: position * width - 1, y: 2)
+      Circle()
+        .fill(isLive ? Palette.tertiary : Palette.text)
+        .frame(width: 10, height: 10)
+        .offset(x: position * width - 5, y: 0)
     }
     .frame(height: Self.barHeight + (hasGaps ? Self.labelHeight : 0), alignment: .top)
     .frame(maxWidth: .infinity, alignment: .leading)
