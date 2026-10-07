@@ -67,6 +67,8 @@ public struct TutorialRecord: Codable, Equatable, Sendable {
   public var restartDisappeared: Bool?
   public var firstTitle: String?
   public var runPromptCopiedAt: Date?
+  public var phonePairedAtStart: Bool?
+  public var approvedMachine: String?
   fileprivate var refreshActionAt: Date?
 
   public init(
@@ -121,6 +123,7 @@ public struct TutorialInput: Sendable {
   public var viewerEvents: [TutorialViewerEvent]
   public var pairedPhoneCount: Int?
   public var machineApproved: Bool
+  public var approvedMachine: String?
   public var replayOff: Bool
   public var archiveEnabled: Bool
   public var now: Date
@@ -129,7 +132,7 @@ public struct TutorialInput: Sendable {
   public init(
     environment: TutorialEnvironment?, archivedProjectRoots: [String] = [], logRecords: [LogRecord] = [],
     viewerEvents: [TutorialViewerEvent] = [], pairedPhoneCount: Int? = nil, machineApproved: Bool = false,
-    replayOff: Bool = false, archiveEnabled: Bool = true, now: Date, record: TutorialRecord? = nil
+    approvedMachine: String? = nil, replayOff: Bool = false, archiveEnabled: Bool = true, now: Date, record: TutorialRecord? = nil
   ) {
     self.environment = environment
     self.archivedProjectRoots = archivedProjectRoots
@@ -137,6 +140,7 @@ public struct TutorialInput: Sendable {
     self.viewerEvents = viewerEvents
     self.pairedPhoneCount = pairedPhoneCount
     self.machineApproved = machineApproved
+    self.approvedMachine = approvedMachine
     self.replayOff = replayOff
     self.archiveEnabled = archiveEnabled
     self.now = now
@@ -278,6 +282,9 @@ public struct TutorialProgress: Sendable {
     } else {
       while record!.step != "done" {
         let id = record!.step
+        if id == "phone", record?.phonePairedAtStart == nil {
+          record?.phonePairedAtStart = (input.pairedPhoneCount ?? 0) > 0
+        }
         let since = record!.stepSince ?? record!.startedAt
         let checkpoint = checkpoint(id, since: since, environment: tracked, logs: logs, input: input)
         details[id] = checkpoint.detail
@@ -289,6 +296,11 @@ public struct TutorialProgress: Sendable {
         complete(at: completed)
         if record?.step == "refresh" { record?.refreshErrors = tracked?.errorsSinceMarker }
       }
+    }
+    if input.machineApproved, let machine = input.approvedMachine,
+      record?.step == "machine" || record?.done.contains("machine") == true
+    {
+      record?.approvedMachine = machine
     }
     let current = record!.step == "done" ? nil : record!.step
     let steps = TutorialSteps.all.map { step in
@@ -441,7 +453,10 @@ public struct TutorialProgress: Sendable {
       let offloaded = last?.offloadedTo != nil && last.flatMap { parseTimestamp($0.startedAt) }.map { $0 >= since } == true
       return Checkpoint(
         completed: input.machineApproved ? now : nil, detail: "Choose an approved build machine",
-        ticks: [tick("approved", input.machineApproved), tick("offloaded", offloaded, optional: true)])
+        ticks: [
+          tick("approved", input.machineApproved || record?.done.contains("machine") == true),
+          tick("offloaded", offloaded, optional: true),
+        ])
     case "finish":
       if record?.step == "finish", environment?.live == false { record?.stopped = true }
       let absent = environment == nil && record?.tourPath != nil

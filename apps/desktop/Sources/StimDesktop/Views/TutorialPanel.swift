@@ -11,6 +11,8 @@ struct TutorialPanel: View {
   var message: String? = nil
   var prompt: String? = nil
   var issues: [StatusIssue] = []
+  var phoneState = TutorialPhoneState(pairedPhoneCount: nil)
+  var machineState = TutorialMachineState.none
   var commands: (TutorialStep) -> String
   var copied: () -> Void = {}
   var skip: () -> Void = {}
@@ -19,8 +21,11 @@ struct TutorialPanel: View {
   var setManual: (Bool) -> Void = { _ in }
   var close: () -> Void = {}
   var openArchived: () -> Void = {}
+  var pairPhone: () -> Void = {}
+  var addMachine: () -> Void = {}
   var updateCLI: () -> Void = {}
   @State private var expanded: String?
+  @State private var collapsedOptional: Set<String> = []
   @ObservedObject private var updater = AppUpdater.shared
 
   var body: some View {
@@ -99,10 +104,21 @@ struct TutorialPanel: View {
 
   private func stepRow(_ step: TutorialStep, state: TutorialStepProgress) -> some View {
     let current = snapshot.currentStep == step.id
-    let open = !restarting && (current || expanded == step.id)
+    let open =
+      !restarting
+      && (current || expanded == step.id || (step.optional && state.state == .done && !collapsedOptional.contains(step.id)))
     return VStack(alignment: .leading, spacing: Space.md) {
       Button {
-        expanded = expanded == step.id ? nil : step.id
+        if step.optional, state.state == .done {
+          if expanded == step.id { expanded = nil }
+          if collapsedOptional.contains(step.id) {
+            collapsedOptional.remove(step.id)
+          } else {
+            collapsedOptional.insert(step.id)
+          }
+        } else {
+          expanded = expanded == step.id ? nil : step.id
+        }
       } label: {
         HStack(alignment: .firstTextBaseline, spacing: Space.sm) {
           Image(systemName: icon(state.state)).foregroundStyle(color(state.state)).frame(width: 16)
@@ -118,7 +134,7 @@ struct TutorialPanel: View {
       if open {
         VStack(alignment: .leading, spacing: Space.md) {
           Text(explanation(step.id)).foregroundStyle(Palette.secondary)
-          if snapshot.record.manual, !step.manual.isEmpty {
+          if snapshot.record.manual, !step.manual.isEmpty, step.id != "machine" || machineState.showsPrompt {
             if rendersStatic {
               CommandBlock(commandText: commands(step))
                 .fixedSize(horizontal: false, vertical: true)
@@ -131,11 +147,25 @@ struct TutorialPanel: View {
               Text("Then expand First iOS build below for the worktree and build commands.")
                 .font(.stim(.footnote)).foregroundStyle(Palette.secondary)
             }
-          } else if !step.optional, let text = current ? prompt ?? step.prompt : step.prompt {
+          } else if !step.optional || (step.id == "machine" && machineState.showsPrompt),
+            let text = current ? prompt ?? step.prompt : step.prompt
+          {
             TutorialPromptBox(prompt: text, onCopy: copied)
           }
+          if step.id == "machine", machineState.showsPrompt {
+            if !snapshot.record.manual {
+              Text(
+                snapshot.record.approvedMachine.map { "Tell your agent to use \($0) when you paste this prompt." }
+                  ?? "Name the approved machine to your agent when you paste this prompt."
+              )
+              .font(.stim(.footnote)).foregroundStyle(Palette.secondary)
+            }
+          }
+          if step.id == "phone", snapshot.record.phonePairedAtStart == true {
+            Text(phoneState.buttonTitle).font(.stim(.footnote)).foregroundStyle(Palette.success)
+          }
           let detail = current ? message ?? state.detail : state.detail
-          if !detail.isEmpty, detail != explanation(step.id), current || ["build", "rebuild"].contains(step.id) {
+          if !detail.isEmpty, detail != explanation(step.id), current || ["build", "rebuild", "phone"].contains(step.id) {
             Text(detail).foregroundStyle(color(state.state)).textSelection(.enabled)
           }
           if detail.contains("Update Stim Desktop") {
@@ -163,8 +193,16 @@ struct TutorialPanel: View {
               Text("\(issue.code): \(issue.message) \(issue.remedy)").foregroundStyle(Palette.warning)
                 .textSelection(.enabled)
             }
+            if step.id == "phone", phoneState != .paired {
+              Button(phoneState.buttonTitle, action: pairPhone).buttonStyle(.stim(.primary))
+            }
+            if step.id == "machine", !machineState.showsPrompt {
+              Button(machineState.buttonTitle, action: addMachine)
+                .buttonStyle(.stim(machineState.skipIsPrimary ? .secondary : .primary))
+            }
             if step.optional {
-              Button("Skip", action: skip).buttonStyle(.stim(.primary))
+              Button("Skip", action: skip)
+                .buttonStyle(.stim(step.id == "machine" && machineState.skipIsPrimary ? .primary : .secondary))
                 .accessibilityLabel("Skip \(step.title)")
             }
             if state.canMarkDone {

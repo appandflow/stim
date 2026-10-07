@@ -20,5 +20,4 @@ public final class TutorialViewerEvents: ObservableObject {
     sequence += 1
     events = Array((events + [Entry(sequence: sequence, event: event)]).suffix(64))
   }
-  public func reset() { events.removeAll() }
 }

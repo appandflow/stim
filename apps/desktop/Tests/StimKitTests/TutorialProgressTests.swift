@@ -433,6 +433,7 @@ func tutorialRestartWaitsForTrackedTourToDisappearAndReturnWithoutPhaseSince(pha
       environment: try environment(), pairedPhoneCount: 1, machineApproved: true,
       now: afterRebuild, record: saved(at: "phone", since: afterRebuild)))
   #expect(result.currentStep == "finish")
+  #expect(result.record.phonePairedAtStart == true)
   #expect(state("phone", in: result).detail.contains("Open Stim on your phone"))
   #expect(state("machine", in: result).ticks.first { $0.id == "offloaded" }?.done == false)
   var env = try environment()
@@ -440,6 +441,21 @@ func tutorialRestartWaitsForTrackedTourToDisappearAndReturnWithoutPhaseSince(pha
   env.lastBuild?.startedAt = "2026-10-07T05:07:00.000Z"
   let offloaded = progress.update(TutorialInput(environment: env, now: afterRebuild.addingTimeInterval(120)))
   #expect(state("machine", in: offloaded).ticks.first { $0.id == "offloaded" }?.done == true)
+}
+
+@Test func tutorialPhonePairingDuringStepDoesNotBecomeAnExistingPairingAfterRelaunch() throws {
+  var progress = TutorialProgress()
+  var input = TutorialInput(
+    environment: try environment(), pairedPhoneCount: 0, now: afterRebuild,
+    record: saved(at: "phone", since: afterRebuild))
+  let waiting = progress.update(input)
+  #expect(waiting.currentStep == "phone")
+  input.record = try JSONDecoder().decode(TutorialRecord.self, from: JSONEncoder().encode(waiting.record))
+  var relaunched = TutorialProgress()
+  input.pairedPhoneCount = 1
+  let paired = relaunched.update(input)
+  #expect(state("phone", in: paired).state == .done)
+  #expect(paired.record.phonePairedAtStart == false)
 }
 
 @Test func tutorialAgentWithoutAnIosDeviceDoesNotAcceptUntargetedActions() throws {
@@ -538,6 +554,4 @@ func tutorialArchiveDisabledRelaunchDoesNotCompleteBeforeFinish(step: String) {
   viewer.opened("latest-tour")
   #expect(viewer.events.last?.event == .opened("latest-tour"))
   #expect(viewer.events.count == 64)
-  viewer.reset()
-  #expect(viewer.events.isEmpty)
 }

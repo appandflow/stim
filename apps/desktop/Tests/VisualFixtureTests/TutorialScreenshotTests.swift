@@ -41,7 +41,12 @@
       _ = NSApplication.shared
       BrandAssets.registerFonts()
       try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
-      for name in TutorialSteps.all.map(\.id) + ["done", "failure", "manual", "begin-timeout", "restarting"] {
+      let variants = [
+        "done", "failure", "manual", "begin-timeout", "restarting", "phone-not-paired", "phone-server-off",
+        "phone-already-paired", "phone-paired-during-step",
+        "machine-none", "machine-approved", "machine-offloaded", "machine-approved-manual",
+      ]
+      for name in TutorialSteps.all.map(\.id) + variants {
         for dark in [false, true] {
           let renderer = ImageRenderer(
             content: TutorialFixtureView(name: name)
@@ -60,28 +65,51 @@
   private struct TutorialFixtureView: View {
     var name: String
 
+    private var phoneCount: Int? {
+      if name == "phone-server-off" { return nil }
+      return ["phone-already-paired", "phone-paired-during-step"].contains(name) ? 1 : 0
+    }
+
+    private var machineState: TutorialMachineState {
+      TutorialMachineState(
+        configured: name.hasPrefix("machine-approved") || name == "machine-offloaded",
+        approved: name.hasPrefix("machine-approved") || name == "machine-offloaded")
+    }
+
     var body: some View {
       let snapshot = fixture()
       TutorialPanel(
         snapshot: snapshot, fixtureRendering: true, restarting: name == "restarting",
         message: name == "begin" ? "Waiting for the tutorial workspace..." : nil,
         prompt: name == "failure" ? "Continue the Stim tutorial: run" : nil,
+        phoneState: TutorialPhoneState(pairedPhoneCount: phoneCount), machineState: machineState,
         commands: { step in
           tutorialCommands(
             step.manual, tourPath: "/Users/example/stim-tutorial-tour", repository: "/Users/example/stim-tutorial",
             stateDir: "/Users/example/.stim/workspaces/tutorial/agent-device", machine: "Studio")
         }
       )
-      .frame(width: 320, height: 960)
+      .frame(width: 320, height: name == "machine-approved-manual" ? 1440 : machineState.showsPrompt ? 1120 : 960)
     }
 
     private func fixture() -> TutorialSnapshot {
       let id =
-        ["failure", "restarting"].contains(name) ? "build" : name == "manual" ? "agent" : name == "begin-timeout" ? "begin" : name
+        name.hasPrefix("phone-")
+        ? "phone"
+        : name.hasPrefix("machine-")
+          ? "machine"
+          : ["failure", "restarting"].contains(name)
+            ? "build" : name == "manual" ? "agent" : name == "begin-timeout" ? "begin" : name
       let now = Date(timeIntervalSince1970: 1_791_374_400)
       var engine = TutorialProgress()
       let done = name == "done" ? TutorialSteps.all.map(\.id) : TutorialSteps.all.prefix { $0.id != id }.map(\.id)
-      var record = TutorialRecord(version: 1, startedAt: now, step: id, done: done, manual: name == "manual")
+      var record = TutorialRecord(
+        version: 1, startedAt: now, step: id, done: done, manual: name == "manual" || name == "machine-approved-manual")
+      if name == "phone-paired-during-step" { record.phonePairedAtStart = false }
+      if ["machine", "finish"].contains(id) {
+        record.done.removeAll { $0 == "phone" }
+        record.skipped = ["phone"]
+      }
       if name == "begin-timeout" {
         record.startedAt = now.addingTimeInterval(-300)
         record.runPromptCopiedAt = now.addingTimeInterval(-180)
@@ -93,9 +121,22 @@
           {"path":"/Users/example/stim-tutorial-tour","live":true,"warnings":[],"tutorial":{"version":1},
            "ios":{"udid":"tutorial-simulator","state":"Booted","owned":true,"app":{"id":"dev.stim.tutorial","state":"running"}}}
           """.utf8))
+      var workspace = deviceWorkspace
+      if name == "machine-offloaded" {
+        workspace.lastBuilds = try! JSONDecoder().decode(
+          LastBuilds.self,
+          from: Data(
+            """
+            {"ios":{"platform":"ios","status":"ok","cacheHit":false,
+            "startedAt":"\(ISO8601DateFormatter().string(from: now))","offloadedTo":"Studio"}}
+            """.utf8))
+      }
       var snapshot = engine.update(
-        TutorialInput(environment: name == "device" ? TutorialEnvironment(deviceWorkspace) : nil, now: now, record: record))
-      if let index = snapshot.steps.firstIndex(where: { $0.id == id }) {
+        TutorialInput(
+          environment: id == "device" || id == "machine" ? TutorialEnvironment(workspace) : nil,
+          pairedPhoneCount: phoneCount, machineApproved: machineState.showsPrompt,
+          approvedMachine: machineState.showsPrompt ? "Studio" : nil, now: now, record: record))
+      if let index = snapshot.steps.firstIndex(where: { $0.id == id }), !["phone", "machine"].contains(id) {
         snapshot.steps[index].state = name == "failure" ? .failed("compile-failed: App.js: Unexpected token") : .current
         snapshot.steps[index].detail =
           name == "failure" ? "compile-failed: App.js: Unexpected token" : snapshot.steps[index].detail

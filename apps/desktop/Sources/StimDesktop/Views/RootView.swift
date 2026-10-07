@@ -95,10 +95,16 @@ struct RootView: View {
           Divider()
           TutorialPanel(
             snapshot: snapshot, restarting: tutorial.restarting, message: tutorial.message, prompt: tutorial.prompt,
-            issues: tutorial.workspace?.issues ?? [], commands: tutorial.commands,
+            issues: tutorial.workspace?.issues ?? [], phoneState: tutorial.phoneState, machineState: tutorial.machineState,
+            commands: tutorial.commands,
             copied: { tutorial.copiedPrompt() }, skip: tutorial.skip, markDone: tutorial.markDone,
             restart: { tutorial.restart() }, setManual: tutorial.setManual, close: tutorial.close,
             openArchived: openTutorialArchive,
+            pairPhone: { openRequests.pairsPhone = true },
+            addMachine: {
+              openRequests.addMachine = AddMachineRequest(
+                machineID: nil, hostedSimulators: false, checkout: tutorial.tourPath)
+            },
             updateCLI: {
               onboarding.openGuide()
               onboarding.guideStep = .cli
@@ -223,6 +229,19 @@ struct RootView: View {
       openRequests.tutorialRequest = nil
       tutorial.open(beginning: entry == .begin)
     }
+    .task(id: tutorialMachineCheckout) {
+      guard let checkout = tutorialMachineCheckout else { return }
+      while !Task.isCancelled, tutorialMachineCheckout == checkout {
+        if !buildMachines.isBusy {
+          await buildMachines.settings.refresh()
+          guard !Task.isCancelled, tutorialMachineCheckout == checkout else { return }
+          if !buildMachines.isBusy { await buildMachines.refreshStatuses(checkout: checkout, ask: false) }
+          if !Task.isCancelled { updateTutorial(store.payload) }
+        }
+        guard tutorialMachineCheckout == checkout else { return }
+        try? await Task.sleep(for: .seconds(15))
+      }
+    }
     .onReceive(tutorialClock) { _ in
       updateTutorial(store.payload)
     }
@@ -281,14 +300,24 @@ struct RootView: View {
       })
   }
 
+  private var tutorialMachineCheckout: String? {
+    tutorial.isOpen && !tutorial.restarting && tutorial.workspace != nil && tutorial.snapshot?.currentStep == "machine"
+      ? tutorial.tourPath : nil
+  }
+
   private func updateTutorial(_ payload: StatusPayload?, events: [TutorialViewerEvents.Entry]? = nil) {
     guard let payload else { return }
+    let check = buildMachines.check(in: tutorial.tourPath)
+    let approvedMachine = check?.problem == nil ? check?.statuses.first { $0.state == .approved }?.machine : nil
+    let machineState = TutorialMachineState(
+      configured: !(buildMachines.entries ?? []).isEmpty,
+      approved: approvedMachine != nil)
     tutorial.update(
       workspaces: payload.environments, archived: payload.archived ?? [],
       sheetOpen: onboarding.showsGuide || nativePermissions.showsSetup || actions.presented != nil
         || NSApp.windows.contains { $0.attachedSheet != nil },
       viewerEvents: events ?? TutorialViewerEvents.shared.events,
-      pairedPhoneCount: ServerController.shared.pairedPhoneCount,
+      pairedPhoneCount: ServerController.shared.pairedPhoneCount, machineState: machineState, approvedMachine: approvedMachine,
       removalRefused: operations.runs.contains { run in
         run.needsAttention && run.startedAt >= (tutorial.snapshot?.record.stepSince ?? .distantFuture)
           && run.steps.contains { command in

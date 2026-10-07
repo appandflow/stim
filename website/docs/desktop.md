@@ -77,8 +77,17 @@ The panel follows a small iOS app in its own worktree. It shows:
 - **App logs:** find the tagged error; **Crash me** and **Slow request** are optional checks.
 - **Agent actions and replay:** watch the agent drive the simulator and inspect its recording. If recording is off, the panel points to Settings.
 - **Fast Refresh:** change the title to purple and watch the app update; new errors point to Logs.
-- **Watch on your phone / Build on another Mac:** optional steps with **Skip**. Pairing and approval remain in Settings; the panel does not perform them.
+- **Watch on your phone:** **Pair a phone** opens Settings > Phones > Pair. If the server is off, **Turn on Serve to phones** opens Phones so you can enable it. An existing pairing shows **Done already**, then "Open Stim on your phone: the tour workspace is there". **Skip** stays available.
+- **Build on another Mac:** **Add build machine** opens the wizard for the tour workspace. With no machine configured, **Skip** is the primary action. Approval completes the step and reveals the prompt below; name the approved machine to your agent. An iOS build offloaded after this step started ticks **Build ran on another Mac**.
 - **Finish and archive:** revert the tutorial edit, stop, then remove only its worktree. **Open Archived** opens the archived run.
+
+<PromptBox title="Try an approved build machine">
+{`Continue the Stim tutorial: machine`}
+</PromptBox>
+
+Completed optional steps stay expanded so you can follow the phone handoff or
+copy the machine prompt. The tutorial does not start the server, pair phones,
+grant access or run builds.
 
 Accent rings and short callouts point to existing controls without covering the
 app with a dimming layer. **Show me** selects the tutorial workspace when its
