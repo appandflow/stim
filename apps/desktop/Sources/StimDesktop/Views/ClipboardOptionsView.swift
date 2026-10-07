@@ -13,6 +13,7 @@ struct ClipboardOptionsView: View {
         .help("Copy text between this Mac and the device while this window is focused")
       HStack(spacing: Space.sm) {
         Button("Paste Mac clipboard", action: paste)
+          .buttonStyle(.stim(.secondary))
           .help("Paste the Mac clipboard's text into the focused device field")
         CopyButton(
           variant: .secondary, title: "Copy device clipboard", help: "Replace the Mac clipboard with the device clipboard's text",
