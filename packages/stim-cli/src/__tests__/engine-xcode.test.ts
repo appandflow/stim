@@ -560,6 +560,21 @@ describe('compilationCacheSettings', () => {
     },
   );
 
+  test.skipIf(process.platform === 'win32')(
+    'a workspace root with a space stays one quoted list entry, since Xcode splits OTHER_PREFIX_MAPPINGS on whitespace (xcodebuild settings; skipped on win32)',
+    () => {
+      const settings = compilationCacheSettings({
+        workspaceRoot: '/Users/me/Library/Application Support/Stim Desktop/sample',
+        derivedDataPath: '/state/sample/derived-data',
+        casPath: '/cas',
+        xcodeMajor: 27,
+      });
+      expect(settings).toContain(
+        'CLANG_OTHER_PREFIX_MAPPINGS="/Users/me/Library/Application Support/Stim Desktop/sample=/^src" /state/sample/derived-data=/^derived-data',
+      );
+    },
+  );
+
   const rn87 = { major: 0, minor: 87 };
 
   test.skipIf(process.platform === 'win32')(
