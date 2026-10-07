@@ -16,6 +16,7 @@ struct DeviceViewer: View {
   var revealInLogs: (_ slot: String, _ at: Double?) -> Void
   var close: () -> Void
   @State private var takenOver = false
+  @State private var recordedInput = false
   @State private var openedAt = Date()
   @State private var escapeMonitor: Any?
   @State private var window = WindowRef()
@@ -91,6 +92,8 @@ struct DeviceViewer: View {
     }
     .onAppear {
       watchEscape()
+      recordedInput = false
+      if let udid = device?.localSimulatorUDID { TutorialViewerEvents.shared.opened(udid) }
       takenOver =
         device.map {
           $0.isInteractive
@@ -188,7 +191,12 @@ struct DeviceViewer: View {
             mode: replaying ? .fit : scalingMode, device: displayMetrics,
             backingScale: backingScale, displayPointsPerInch: displayPointsPerInch),
           framePixelsPerUnit: device.platform == "ios" ? displayMetrics?.pixelsPerPoint ?? 1 : 1,
-          onControlLost: { takenOver = false }
+          onControlLost: { takenOver = false },
+          onInput: {
+            guard !recordedInput, let udid = device.localSimulatorUDID else { return }
+            recordedInput = true
+            TutorialViewerEvents.shared.input(udid)
+          }
         )
         .frame(minWidth: geo.size.width, minHeight: geo.size.height)
       }

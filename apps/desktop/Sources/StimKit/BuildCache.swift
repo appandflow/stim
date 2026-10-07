@@ -34,6 +34,7 @@ public struct LastBuild: Decodable, Hashable, Sendable {
   public var offloadFallback: String?
   /// The first compiler errors of a failed run; absent from an older `stim`.
   public var diagnostics: [BuildDiagnostic]?
+  public var cause: BuildCause?
 
   public var summary: String {
     let took = durationMs.map { " in \(Format.elapsed(ms: $0))" } ?? ""
@@ -256,4 +257,10 @@ extension Build {
     default: return nil
     }
   }
+}
+
+public struct BuildCause: Decodable, Hashable, Sendable {
+  public var key: String
+  public var file: String?
+  public var line: Int?
 }

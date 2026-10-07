@@ -1,0 +1,100 @@
+{
+  "environments": [
+    {
+      "live": true,
+      "build": null,
+      "lastBuilds": {
+        "ios": {
+          "platform": "ios",
+          "status": "ok",
+          "cacheHit": "local",
+          "cacheSkipped": false,
+          "durationMs": 7665,
+          "startedAt": "2026-10-07T05:04:57.981Z",
+          "finishedAt": "2026-10-07T05:05:05.646Z"
+        }
+      },
+      "builds": {
+        "ios": [
+          {
+            "platform": "ios",
+            "status": "ok",
+            "cacheHit": "local",
+            "cacheSkipped": false,
+            "durationMs": 7665,
+            "startedAt": "2026-10-07T05:04:57.981Z",
+            "finishedAt": "2026-10-07T05:05:05.646Z",
+            "result": "succeeded",
+            "slot": "default",
+            "configuration": "Debug",
+            "phases": {
+              "prepare": 696,
+              "cache-lookup": 590,
+              "device": 7,
+              "install": 289,
+              "launch": 6092
+            }
+          },
+          {
+            "platform": "ios",
+            "status": "ok",
+            "cacheHit": false,
+            "cacheSkipped": false,
+            "durationMs": 264197,
+            "startedAt": "2026-10-07T04:57:09.561Z",
+            "finishedAt": "2026-10-07T05:01:33.758Z",
+            "missReason": {
+              "kind": "no-baseline",
+              "summary": "no earlier build of this project in the cache to compare with",
+              "changes": [],
+              "changeCount": 0,
+              "baseline": null,
+              "rekeyedBy": []
+            },
+            "result": "succeeded",
+            "slot": "default",
+            "configuration": "Debug",
+            "phases": {
+              "prepare": 1229,
+              "cache-lookup": 827,
+              "prebuild": 5522,
+              "pods": 122176,
+              "compile": 117409,
+              "device": 29,
+              "install": 9070,
+              "launch": 7953
+            }
+          }
+        ]
+      },
+      "phase": "live",
+      "phaseSince": null,
+      "recording": {
+        "enabled": true
+      },
+      "tutorial": {
+        "version": 1
+      },
+      "path": "/Users/example/stim-tutorial-tour",
+      "warnings": [],
+      "agentDevice": {
+        "stateDir": "/Users/example/stim-state/agent-device"
+      },
+      "logs": {
+        "dir": "/Users/example/stim-state/logs",
+        "errorsSinceMarker": 0
+      },
+      "ios": {
+        "owned": true,
+        "state": "Booted",
+        "app": {
+          "id": "dev.stim.tutorial",
+          "state": "running"
+        },
+        "name": "Tutorial simulator",
+        "udid": "tutorial-simulator"
+      }
+    }
+  ],
+  "archived": []
+}

@@ -57,6 +57,8 @@ public struct UnprovisionedWorktree: Decodable, Hashable, Sendable {
 
 public struct Workspace: Decodable, Identifiable, Hashable, Sendable {
   public var path: String
+  public var tutorial: TutorialMarker?
+  public var agentDevice: AgentDevice?
   public var platforms: [String]?
   public var live: Bool
   /// `warming`, `ready`, `live` or `idle`; absent from a `stim` that does not report lifecycle phases.
@@ -105,7 +107,7 @@ public struct Workspace: Decodable, Identifiable, Hashable, Sendable {
     case path, platforms, live, phase, phaseSince, warmStep, memoryMb, memorySource, warnings, issues, ios, android, web, metro
     case macos, supervisor, logs, slots, remoteDevices, physicalDevices, build
     case lastBuilds, builds, worktree, recording
-    case agents, endedAgents, disk
+    case agents, endedAgents, disk, tutorial, agentDevice
     case stageFacts = "stage"
   }
 
@@ -534,4 +536,12 @@ extension DeviceRef {
     if ra != rb { return ra < rb }
     return a.slot.localizedCompare(b.slot) == .orderedAscending
   }
+}
+
+public struct TutorialMarker: Decodable, Hashable, Sendable {
+  public var version: Int
+}
+
+public struct AgentDevice: Decodable, Hashable, Sendable {
+  public var stateDir: String
 }
