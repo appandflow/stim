@@ -228,7 +228,7 @@ function androidMismatches(
   return out;
 }
 
-function versions(tool: string, there: string | null, here: string | null): string {
+function versionMismatch(tool: string, there: string | null, here: string | null): string {
   const side = (version: string | null) =>
     version ? (version.startsWith(tool) ? version : `${tool} ${version}`) : `no ${tool}`;
   return `${side(there)} there, ${side(here)} here`;
@@ -249,24 +249,27 @@ export function toolchainMismatches(target: BuildTarget, worker: WorkerToolchain
   if (target.platform === 'macos') {
     const macos = target.local;
     if (!macos.xcode || worker.xcode !== macos.xcode)
-      out.push({ code: 'xcode', reason: versions('Xcode', worker.xcode, macos.xcode) });
+      out.push({ code: 'xcode', reason: versionMismatch('Xcode', worker.xcode, macos.xcode) });
     if (!macos.macosSdk || worker.macosSdk !== macos.macosSdk)
-      out.push({ code: 'macos-sdk', reason: versions('macOS SDK', worker.macosSdk, macos.macosSdk) });
+      out.push({ code: 'macos-sdk', reason: versionMismatch('macOS SDK', worker.macosSdk, macos.macosSdk) });
     return out;
   }
   const ios = target.local;
   if (!ios.xcode || worker.xcode !== ios.xcode) {
-    out.push({ code: 'xcode', reason: versions('Xcode', worker.xcode, ios.xcode) });
+    out.push({ code: 'xcode', reason: versionMismatch('Xcode', worker.xcode, ios.xcode) });
   }
   if (!ios.simulatorSdk || worker.simulatorSdk !== ios.simulatorSdk) {
-    out.push({ code: 'simulator-sdk', reason: versions('simulator SDK', worker.simulatorSdk, ios.simulatorSdk) });
+    out.push({
+      code: 'simulator-sdk',
+      reason: versionMismatch('simulator SDK', worker.simulatorSdk, ios.simulatorSdk),
+    });
   }
   if (target.cocoapodsPinned) {
     if (!worker.bundler) {
       out.push({ code: 'bundler', reason: "no Bundler there to run the CocoaPods this project's Gemfile.lock pins" });
     }
   } else if (worker.cocoapods !== ios.cocoapods) {
-    out.push({ code: 'cocoapods', reason: versions('CocoaPods', worker.cocoapods, ios.cocoapods) });
+    out.push({ code: 'cocoapods', reason: versionMismatch('CocoaPods', worker.cocoapods, ios.cocoapods) });
   }
   if (target.runtime && !worker.runtimes.includes(target.runtime)) {
     out.push({ code: 'runtime', reason: `no iPhone simulator on ${target.runtime} there` });
