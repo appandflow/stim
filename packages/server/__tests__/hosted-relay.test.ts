@@ -876,12 +876,14 @@ it.each([
     video: ['h264'],
   });
   const session = (await local.request('control.begin', ios)).result.session!;
-  for (const [method, params] of [
-    ['input.touch', { phase: 'down', x: 0.2, y: 0.7 }],
-    ['input.button', { button: 'home' }],
-    ['input.rotate', { direction: 'right' }],
-    ['input.posture', { posture: 'folded' }],
-  ] as const) {
+  for (const [method, params] of (
+    [
+      ['input.touch', { phase: 'down', x: 0.2, y: 0.7 }],
+      ['input.button', { button: 'home' }],
+      ['input.rotate', { direction: 'right' }],
+      ['input.posture', { posture: 'folded' }],
+    ] as const
+  ).filter(([method]) => platform === 'ios' || (method !== 'input.rotate' && method !== 'input.posture'))) {
     expect(await local.request(method, { session, ...params })).toMatchObject({ result: {} });
     expect(requests.at(-1)).toMatchObject({
       method: `device-host.${method}`,

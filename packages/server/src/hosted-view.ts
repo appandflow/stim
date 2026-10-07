@@ -45,8 +45,8 @@ export class HostedViews {
   }
 
   target(client: string, session: string): HostedView {
-    const target = this.host.viewTarget(client, session);
     const existing = this.views.get(session);
+    const target = this.host.viewTarget(client, session, !existing);
     if (existing) {
       if (existing.closed) throw new Error('Hosted capture is stopping; retry after it has closed.');
       if (!sameTarget(existing.device, target))

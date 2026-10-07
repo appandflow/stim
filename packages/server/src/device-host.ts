@@ -507,7 +507,7 @@ export class DeviceHost {
     if (owned.metro === metro) delete owned.metro;
   }
 
-  viewTarget(client: string, session: string): HostedViewTarget {
+  viewTarget(client: string, session: string, probeRunning = false): HostedViewTarget {
     if (this.closed || !this.options.allowed(client)) throw new Error('Current device-host approval is required.');
     const record = readHostedSessions().find((each) => each.client === client && each.id === session);
     const owned = this.owned.get(session);
@@ -538,8 +538,9 @@ export class DeviceHost {
           stdio: ['ignore', 'pipe', 'pipe'],
         }).trim();
       if (
-        adb(['emu', 'avd', 'name']).split('\n')[0]?.trim() !== device.avdName ||
-        adb(['shell', 'getprop', 'ro.product.cpu.abi']) !== device.architecture
+        probeRunning &&
+        (adb(['emu', 'avd', 'name']).split('\n')[0]?.trim() !== device.avdName ||
+          adb(['shell', 'getprop', 'ro.product.cpu.abi']) !== device.architecture)
       )
         throw new Error('The hosted Android device identity or running ABI changed.');
       return { platform: 'android', session: { ...record, device: record.device }, home, claim: owned.claim };

@@ -1381,7 +1381,7 @@ test('hosted Android viewing refuses changed ledger, serial, AVD or ABI instead 
   writeFileSync(record, JSON.stringify(device));
   for (const change of [{ avdName: 'stim-foreign-avd' }, { architecture: 'x86_64' }]) {
     writeFileSync(probe, JSON.stringify({ ...device, ...change }));
-    expect(() => host.viewTarget('client', session.id)).toThrow('identity or running ABI changed');
+    expect(() => host.viewTarget('client', session.id, true)).toThrow('identity or running ABI changed');
   }
   writeFileSync(probe, JSON.stringify(device));
   writeFileSync(

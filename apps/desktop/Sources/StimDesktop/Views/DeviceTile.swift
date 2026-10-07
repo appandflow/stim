@@ -807,7 +807,7 @@ struct DeviceTile: View {
       if let hostedPreview {
         switch hostedPreview {
         case .message(let text, let remedy): PhysicalMessage(text: text, remedy: remedy)
-        case .stream: placeholder("Connecting to the hosted simulator")
+        case .stream: placeholder("Connecting to the hosted device")
         }
       } else if let workspace {
         PhysicalDeviceScreen(
@@ -818,7 +818,7 @@ struct DeviceTile: View {
         .frame(width: screenWidth(1))
         .padding(screenPadding)
       } else {
-        placeholder("A workspace is required to view this hosted simulator.")
+        placeholder("A workspace is required to view this hosted device.")
       }
     case .ios(_, let sim) where device.isRunning && device.localSimulatorUDID != nil:
       HStack(alignment: .bottom, spacing: displayedScreenIDs.count > 1 ? screenPadding : 0) {
