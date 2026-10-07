@@ -670,8 +670,9 @@ hosting Mac, requires `stim stop` first for that slot.
 is replaced in status without a warning. A booted or unknown local simulator
 stays visible alongside `ios.host` with a warning; plain status shows both. The
 default slot appears only in `ios`, never in `slots[]`. The host UDID and private gateway never appear
-in local device fields. Stop and worktree removal wait for the host, delete only
-its owned simulator without parking, then clear placement. `stop --json` reports
+in local device fields. Stop and worktree removal wait for the host, park its
+eligible owned simulator within the host's `pool.iosParkedMax` limit (delete
+otherwise), then clear placement. `stop --json` reports
 each hosted slot under `outcomes.device["ios:host:<slot>"]`, alongside local
 outcomes; one failure does not hide siblings that stopped. An unreachable host
 keeps the placement and fails cleanup; rerun `stim stop` when it answers. Missing
@@ -683,7 +684,11 @@ slot. Reload reports the failure and remedy in JSON when no other app can
 reload, and logs remain readable. A hello refusal after this Mac loses hosting
 access clears its placement during stop or worktree removal; other refusals
 retain it.
-A host server restart stops its sessions.
+A clean host server restart stops its sessions and preserves eligible parked
+devices for adoption by the same client. A running session left by a crash stays
+`unknown` until explicit stop; booted devices are never re-attached after restart.
+See [hosted parking](./remote-machines.md#hosted-parking-and-restart) for cleanup,
+compatibility and eviction.
 
 Reruns upload only missing manifest and file digests from a session-scoped store;
 the host verifies bytes before reuse. When an offloaded iOS simulator build ran
@@ -694,7 +699,7 @@ manifest from that build. A refused or timed-out handoff falls back to upload, r
 host queries. Concurrent followers share a collection, throttled per session,
 without blocking app delivery, viewing or control. Stop limits each log drain to
 30 seconds with progress on stderr and stops if neither cursor nor collection
-checkpoint advances. The host captures a bounded final tail before deletion,
+checkpoint advances. The host captures a bounded final tail before parking or deletion,
 also on revocation or server close, and stop copies it back afterwards. If that
 collection drops a backlog interval and eventually succeeds, a device warning
 record names the interval.

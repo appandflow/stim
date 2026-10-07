@@ -88,6 +88,7 @@ export interface HostedDeviceSession extends HostedDeviceRequest {
   consolePort?: number;
   appSlot?: number;
   createdAt: string;
+  parked?: { at: string };
   notice?: string;
   appAttempt?: string;
   agent?: HostedAgentGrant;
@@ -329,6 +330,13 @@ export function readHostedSessions(): HostedDeviceSession[] {
         entry.device !== null &&
         (entry.device as HostedAndroidDevice).consolePort !== entry.consolePort) ||
       (entry.state === 'ready' && entry.device === null) ||
+      (entry.parked !== undefined &&
+        (!isJsonObject(entry.parked) ||
+          typeof entry.parked.at !== 'string' ||
+          !Number.isFinite(Date.parse(entry.parked.at)) ||
+          new Date(entry.parked.at).toISOString() !== entry.parked.at ||
+          entry.state !== 'stopped' ||
+          entry.platform === 'macos')) ||
       (entry.notice !== undefined && typeof entry.notice !== 'string') ||
       (entry.appAttempt !== undefined &&
         (typeof entry.appAttempt !== 'string' || !/^[a-zA-Z0-9_-]{1,128}$/.test(entry.appAttempt))) ||

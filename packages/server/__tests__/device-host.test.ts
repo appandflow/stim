@@ -84,7 +84,24 @@ const home = process.env.STIM_HOME;
 const iosDevice = {udid:'12345678-1234-1234-1234-123456789abc',name:'stim-hosted',deviceTypeId:'iphone',runtimeId:'ios',deviceType:'iPhone',runtime:'27.1',architecture:'arm64'};
 const device = input.platform === 'macos' ? {architecture:'arm64',macosVersion:'27.0',appSlot:input.appSlot} : input.platform === 'android' ? {avdName:'stim-hosted-'+input.session,serial:'emulator-'+input.consolePort,consolePort:input.consolePort,systemImage:'system-images;android-30;google_apis;arm64-v8a',deviceProfile:'pixel_6',architecture:'arm64-v8a'} : iosDevice;
 const out = value => process.stdout.write(JSON.stringify(value));
-if(input.mode === 'prepare') {
+appendFileSync(join(home,'modes'),input.mode+'\\n');
+if(input.mode === 'inspect') {
+  writeFileSync(join(home,'inspect-entered'),String(process.pid));
+  if(existsSync(join(home,'delay-inspection'))) while(!existsSync(join(home,'release-inspection'))) await new Promise(resolve=>setTimeout(resolve,20));
+  const stored=JSON.parse(readFileSync(join(home,'hosted-device.json'),'utf8'));
+  const unusable=existsSync(join(home,'unusable'));
+  const incompatible=(input.deviceType && input.deviceType !== stored.deviceType) || (input.runtime && input.runtime !== stored.runtime) || (input.systemImage && input.systemImage !== stored.systemImage) || (input.deviceProfile && input.deviceProfile !== stored.deviceProfile);
+  out({state:unusable?'unusable':incompatible?'incompatible':'compatible'});
+} else if(input.mode === 'adopt') {
+  const stored=JSON.parse(readFileSync(join(home,'hosted-device.json'),'utf8'));
+  if(existsSync(join(home,'fail-adoption'))) { out({state:'unknown',device:stored,notice:'device verification failed'}); process.exit(0); }
+  const adopted=input.platform === 'android' ? {...stored,consolePort:input.consolePort,serial:'emulator-'+input.consolePort} : stored;
+  writeFileSync(join(home,'hosted-device.json'),JSON.stringify(adopted));
+  out({state:input.deviceType === 'adopt-failure'?'unknown':'ready',device:adopted});
+} else if(input.mode === 'park') {
+  const stored=JSON.parse(readFileSync(join(home,'hosted-device.json'),'utf8'));
+  out({state:input.deviceType === 'park-failure'?'unknown':'parked',device:input.deviceType === 'wrong-park'?{...stored,udid:'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'}:stored});
+} else if(input.mode === 'prepare') {
   writeFileSync(join(home,'entered'),String(process.pid));
   if(input.deviceType === 'refused' || input.deviceType === 'delayed-refusal') {
     if(input.deviceType === 'delayed-refusal') await new Promise(resolve=>setTimeout(resolve,150));
@@ -2880,4 +2897,328 @@ test('Android handoff refuses a mixed bundle manifest before spending a build to
     await host.appHandoff('client', { ...params, build: { handoff: 'a'.repeat(64), sha256: 'b'.repeat(64) } }),
   ).toHaveProperty('error.message', expect.stringContaining('single file entry named App.apk'));
   expect(builtBundle).not.toHaveBeenCalled();
+});
+
+function hostedModes(id: string): string[] {
+  const path = join(deviceHostArea(id), 'home', 'modes');
+  return existsSync(path) ? readFileSync(path, 'utf8').trim().split('\n') : [];
+}
+
+function parkingLimits(ios = '3', android = '3'): void {
+  hostEnv.STIM_POOL_IOS_PARKED_MAX = ios;
+  hostEnv.STIM_POOL_ANDROID_PARKED_MAX = android;
+}
+
+test.each(['ios', 'android'] as const)(
+  'stop parks a healthy approved %s device, releases its claim and reports stopped to its client',
+  async (platform) => {
+    parkingLimits();
+    const first = await reserve({ platform });
+    await state(first.id, 'ready');
+    expect(host.stop('client', { session: first.id })).toHaveProperty('result.state', 'stopping');
+    const stopped = await state(first.id, 'stopped');
+    expect(stopped.parked?.at).toEqual(expect.any(String));
+    const validator = new Ajv2020({ strict: false, validateFormats: false });
+    validator.addSchema(protocolJsonSchema(), 'protocol');
+    const valid = validator.getSchema('protocol#/$defs/HostedDeviceSession')!;
+    for (const answer of [
+      host.attach('client', { session: first.id }),
+      host.stop('client', { session: first.id }),
+      await host.reserve('client', { ...request, platform }),
+    ]) {
+      expect(answer).toHaveProperty('result.state', 'stopped');
+      if ('error' in answer) throw new Error(answer.error.message);
+      expect(answer.result.parked).toBeUndefined();
+      expect(valid(answer.result)).toBe(true);
+    }
+    expect(hostedModes(first.id)).toContain('park');
+    expect(hostedModes(first.id)).not.toContain('stop');
+    expect(readClaimSet(join(deviceHostRoot(), `${first.id}.claims`)).live).toEqual([]);
+    expect(readHostedDeviceLedger(join(deviceHostArea(first.id), 'home'))?.[platform]).toHaveLength(1);
+  },
+);
+
+test.each(['disabled', 'revoked', 'park-failure', 'wrong-park', 'unhealthy'])(
+  '%s parking deletes through the existing stop path',
+  async (reason) => {
+    parkingLimits(reason === 'disabled' ? '0' : '3');
+    const first = await reserve({ deviceType: ['park-failure', 'wrong-park'].includes(reason) ? reason : undefined });
+    await state(first.id, 'ready');
+    if (reason === 'unhealthy') {
+      const records = readHostedSessions();
+      records[0]!.state = 'unknown';
+      writeFileSync(join(deviceHostRoot(), 'sessions.json'), JSON.stringify({ version: 1, sessions: records }));
+    }
+    if (reason === 'revoked') {
+      allowed.delete('client');
+      host.revoke();
+    } else host.stop('client', { session: first.id });
+    const stopped = await state(first.id, 'stopped');
+    expect(stopped.parked).toBeUndefined();
+    expectRetired(first.id);
+    expect(hostedModes(first.id)).toContain('stop');
+    expect(hostedModes(first.id).includes('park')).toBe(['park-failure', 'wrong-park'].includes(reason));
+  },
+);
+
+test.each(['ios', 'android'] as const)(
+  'a compatible same-client %s reserve adopts the session id and preserves attempt retry',
+  async (platform) => {
+    parkingLimits();
+    const first = await reserve({ platform });
+    await state(first.id, 'ready');
+    host.stop('client', { session: first.id });
+    await state(first.id, 'stopped');
+    const adopted = await reserve({ platform, workspace: '/client/next', attempt: 'next', slot: 'second' });
+    expect(adopted.id).toBe(first.id);
+    expect(adopted.parked).toBeUndefined();
+    expect(adopted.appAttempt).toBeUndefined();
+    await state(first.id, 'ready');
+    expect((await reserve({ platform, workspace: '/client/next', attempt: 'next', slot: 'second' })).id).toBe(first.id);
+    expect(hostedModes(first.id).filter((mode) => ['inspect', 'adopt', 'prepare'].includes(mode))).toEqual([
+      'prepare',
+      'inspect',
+      'adopt',
+    ]);
+  },
+);
+
+test('Android adoption reserves a new free console port and keeps the AVD session identity', async () => {
+  parkingLimits();
+  hostEnv.STIM_MAX_DEVICES = '0';
+  const parked = seedHosted({ platform: 'android', parked: { at: '2026-10-01T00:00:00.000Z' } });
+  const active = await host.reserve('other', { ...request, platform: 'android', attempt: 'active' });
+  expect(active).toHaveProperty('result.consolePort', 5554);
+  if ('error' in active) throw new Error(active.error.message);
+  await state(active.result.id, 'ready');
+  const adopted = await reserve({ platform: 'android', attempt: 'new' });
+  expect(adopted).toMatchObject({ id: parked.id, consolePort: 5556 });
+  const ready = await state(adopted.id, 'ready');
+  expect(ready.device).toMatchObject({
+    avdName: `stim-hosted-${parked.id}`,
+    serial: 'emulator-5556',
+    consolePort: 5556,
+  });
+});
+
+test('a different client cannot adopt an identically selected parked device', async () => {
+  parkingLimits();
+  const parked = seedHosted({ parked: { at: '2026-10-01T00:00:00.000Z' } });
+  const answer = await host.reserve('other', { ...request, attempt: 'new' });
+  expect(answer).toHaveProperty('result.state', 'preparing');
+  if ('error' in answer) throw new Error(answer.error.message);
+  expect(answer.result.id).not.toBe(parked.id);
+  await state(answer.result.id, 'ready');
+  expect(hostedModes(parked.id)).toEqual([]);
+  expect(readHostedSessions().find((record) => record.id === parked.id)?.parked).toBeDefined();
+  expect(hostedModes(answer.result.id)).toEqual(['prepare']);
+});
+
+test('incompatible candidates remain parked while an unusable candidate is retired before creating', async () => {
+  parkingLimits();
+  const incompatible = seedHosted({ parked: { at: '2026-10-01T00:00:00.000Z' } });
+  const unusable = seedHosted({ parked: { at: '2026-10-02T00:00:00.000Z' } });
+  writeFileSync(join(deviceHostArea(unusable.id), 'home', 'unusable'), 'missing device');
+  const created = await reserve({ attempt: 'new', deviceType: 'iPad' });
+  await state(created.id, 'ready');
+  expect(created.id).not.toBe(incompatible.id);
+  expect(created.id).not.toBe(unusable.id);
+  expect(hostedModes(incompatible.id)).toEqual(['inspect']);
+  expect(readHostedSessions().find((record) => record.id === incompatible.id)?.parked).toBeDefined();
+  expect(hostedModes(unusable.id)).toEqual(['inspect', 'stop']);
+  expectRetired(unusable.id);
+  expect(readHostedSessions().find((record) => record.id === unusable.id)?.parked).toBeUndefined();
+  expect(hostedModes(created.id)).toEqual(['prepare']);
+});
+
+test('adoption still refuses occupied capacity and draining hosts without consuming the parked record', async () => {
+  parkingLimits();
+  const parked = seedHosted({ parked: { at: '2026-10-01T00:00:00.000Z' } });
+  hostEnv.LOCAL_COUNT = '1';
+  expect(await host.reserve('client', { ...request, attempt: 'new' })).toHaveProperty('error.code', 'device-busy');
+  hostEnv.LOCAL_COUNT = '0';
+  host.drain('server update');
+  expect(await host.reserve('client', { ...request, attempt: 'new' })).toHaveProperty('error.code', 'device-busy');
+  expect(readHostedSessions().find((record) => record.id === parked.id)?.parked).toBeDefined();
+  expect(hostedModes(parked.id)).toEqual(['inspect', 'inspect']);
+  expect(readClaimSet(join(deviceHostRoot(), `${parked.id}.claims`)).live).toEqual([]);
+});
+
+test('parking evicts only the oldest excess devices across clients and keeps platform limits separate', async () => {
+  parkingLimits('2', '1');
+  const oldest = seedHosted({ client: 'other', parked: { at: '2026-10-01T00:00:00.000Z' } });
+  const recent = seedHosted({ parked: { at: '2026-10-02T00:00:00.000Z' } });
+  const android = seedHosted({ platform: 'android', parked: { at: '2026-10-01T00:00:00.000Z' } });
+  const first = await reserve({ attempt: 'new', deviceType: 'iPad' });
+  await state(first.id, 'ready');
+  host.stop('client', { session: first.id });
+  await state(first.id, 'stopped');
+  await vi.waitFor(() =>
+    expect(readHostedSessions().find((record) => record.id === oldest.id)?.parked).toBeUndefined(),
+  );
+  expectRetired(oldest.id);
+  expect(hostedModes(recent.id)).not.toContain('stop');
+  expect(hostedModes(android.id)).toEqual([]);
+  expect(
+    readHostedSessions()
+      .filter((record) => record.platform === 'ios' && record.parked)
+      .map((record) => record.id),
+  ).toEqual([recent.id, first.id]);
+});
+
+test('reconciliation preserves parked records, clears markers for GC-deleted devices and evicts after a limit decrease', async () => {
+  parkingLimits();
+  const oldest = seedHosted({ parked: { at: '2026-10-01T00:00:00.000Z' } });
+  const recent = seedHosted({ client: 'other', parked: { at: '2026-10-02T00:00:00.000Z' } });
+  const deleted = seedHosted({ parked: { at: '2026-10-03T00:00:00.000Z' } }, 'empty');
+  await host.reconcileStopped();
+  expect(hostedModes(oldest.id)).toEqual([]);
+  expect(hostedModes(recent.id)).toEqual([]);
+  expect(hostedModes(deleted.id)).toEqual([]);
+  expect(readHostedSessions().find((record) => record.id === deleted.id)).toMatchObject({ state: 'stopped' });
+  expect(readHostedSessions().find((record) => record.id === deleted.id)?.parked).toBeUndefined();
+  parkingLimits('1');
+  await host.reconcileStopped();
+  expectRetired(oldest.id);
+  expect(hostedModes(recent.id)).toEqual([]);
+  expect(readHostedSessions().find((record) => record.id === recent.id)?.parked).toBeDefined();
+});
+
+test('failed eviction keeps the oldest parked record and never deletes a newer one instead', async () => {
+  parkingLimits('1');
+  const oldest = seedHosted({ deviceType: 'fail-stop', parked: { at: '2026-10-01T00:00:00.000Z' } });
+  const recent = seedHosted({ parked: { at: '2026-10-02T00:00:00.000Z' } });
+  const stderr = vi.spyOn(process.stderr, 'write').mockReturnValue(true);
+  try {
+    await host.reconcileStopped();
+    expect(readHostedSessions().find((record) => record.id === oldest.id)?.parked).toBeDefined();
+    expect(hostedModes(recent.id)).toEqual([]);
+    expect(stderr.mock.calls.flat().join('')).toContain('retirement failed');
+  } finally {
+    stderr.mockRestore();
+  }
+});
+
+test('revocation retires only the revoked client parked records', async () => {
+  parkingLimits();
+  const revoked = seedHosted({ parked: { at: '2026-10-01T00:00:00.000Z' } });
+  const kept = seedHosted({ client: 'other', parked: { at: '2026-10-02T00:00:00.000Z' } });
+  allowed.delete('client');
+  host.revoke();
+  await vi.waitFor(() =>
+    expect(readHostedSessions().find((record) => record.id === revoked.id)?.parked).toBeUndefined(),
+  );
+  expectRetired(revoked.id);
+  expect(hostedModes(kept.id)).toEqual([]);
+  expect(readHostedSessions().find((record) => record.id === kept.id)?.parked).toBeDefined();
+});
+
+test('a clean server close parks and a restarted host adopts, while crashed running sessions stay unknown', async () => {
+  parkingLimits();
+  const first = await reserve();
+  await state(first.id, 'ready');
+  host.drain('stim-server is updating');
+  await host.close();
+  expect(readHostedSessions().find((record) => record.id === first.id)?.parked).toBeDefined();
+  host = new DeviceHost({
+    worker: join(home, 'worker.mjs'),
+    env: hostEnv,
+    agents,
+    allowed: (client) => allowed.has(client),
+  });
+  await host.reconcileStopped();
+  expect(host.attach('client', { session: first.id })).toHaveProperty('result.state', 'stopped');
+  const adopted = await reserve({ attempt: 'after-restart' });
+  expect(adopted.id).toBe(first.id);
+  await state(adopted.id, 'ready');
+  const crashed = seedHosted({ state: 'ready', attempt: 'crashed', workspace: '/client/crashed' });
+  expect(host.attach('client', { session: crashed.id })).toHaveProperty('result.state', 'unknown');
+  expect(
+    await host.reserve('client', { ...request, workspace: '/client/crashed', attempt: 'replacement' }),
+  ).toHaveProperty('error.code', 'device-busy');
+  expect(hostedModes(crashed.id)).toEqual([]);
+});
+
+test('a failed Android adoption before rebinding keeps a readable unknown journal and explicit stop retires it', async () => {
+  parkingLimits();
+  hostEnv.STIM_MAX_DEVICES = '0';
+  const parked = seedHosted({ platform: 'android', parked: { at: '2026-10-01T00:00:00.000Z' } });
+  writeFileSync(join(deviceHostArea(parked.id), 'home', 'fail-adoption'), 'verification failed');
+  const active = await host.reserve('other', { ...request, platform: 'android', attempt: 'active' });
+  if ('error' in active) throw new Error(active.error.message);
+  await state(active.result.id, 'ready');
+  const adopted = await reserve({ platform: 'android', attempt: 'new' });
+  expect(adopted).toMatchObject({ id: parked.id, consolePort: 5556 });
+  const unknown = await state(parked.id, 'unknown');
+  expect(unknown).toMatchObject({ consolePort: 5554, device: { serial: 'emulator-5554' } });
+  expect(readClaimSet(join(deviceHostRoot(), `${parked.id}.claims`)).live).toHaveLength(1);
+  expect(host.stop('client', { session: parked.id })).toHaveProperty('result.state', 'stopping');
+  await state(parked.id, 'stopped');
+  expectRetired(parked.id);
+});
+
+test('candidate inspection is bounded to the three oldest parked records', async () => {
+  parkingLimits('5');
+  const candidates = [1, 2, 3, 4].map((day) => seedHosted({ parked: { at: `2026-10-0${day}T00:00:00.000Z` } }));
+  const last = candidates[3]!;
+  const device = { ...last.device!, deviceType: 'iPad' };
+  writeFileSync(join(deviceHostArea(last.id), 'home', 'hosted-device.json'), JSON.stringify(device));
+  const records = readHostedSessions();
+  records.find((record) => record.id === last.id)!.device = device;
+  writeFileSync(join(deviceHostRoot(), 'sessions.json'), JSON.stringify({ version: 1, sessions: records }));
+  const created = await reserve({ attempt: 'new', deviceType: 'iPad' });
+  await state(created.id, 'ready');
+  expect(candidates.map((record) => hostedModes(record.id))).toEqual([['inspect'], ['inspect'], ['inspect'], []]);
+  expect(candidates.map((record) => record.id)).not.toContain(created.id);
+});
+
+test.each([null, {}, { at: 'not-a-time' }, { at: 123 }, { at: '2026-10-01' }])(
+  'an invalid parking marker refuses journal reads: %j',
+  (parked) => {
+    seedHosted();
+    const records = readHostedSessions();
+    const malformed = { ...records[0], parked };
+    writeFileSync(join(deviceHostRoot(), 'sessions.json'), JSON.stringify({ version: 1, sessions: [malformed] }));
+    expect(() => readHostedSessions()).toThrow('Malformed hosted session record');
+  },
+);
+
+test('revocation during inspection refuses adoption and retires the parked device after releasing its claim', async () => {
+  parkingLimits();
+  const parked = seedHosted({ parked: { at: '2026-10-01T00:00:00.000Z' } });
+  const area = join(deviceHostArea(parked.id), 'home');
+  writeFileSync(join(area, 'delay-inspection'), 'wait');
+  const reservation = host.reserve('client', { ...request, attempt: 'new' });
+  await vi.waitFor(() => expect(existsSync(join(area, 'inspect-entered'))).toBe(true));
+  allowed.delete('client');
+  host.revoke();
+  writeFileSync(join(area, 'release-inspection'), 'continue');
+  expect(await reservation).toHaveProperty('error.code', 'forbidden');
+  expectRetired(parked.id);
+  expect(readHostedSessions().find((record) => record.id === parked.id)?.parked).toBeUndefined();
+  expect(hostedModes(parked.id)).toEqual(['inspect', 'stop']);
+  expect(readClaimSet(join(deviceHostRoot(), `${parked.id}.claims`)).live).toEqual([]);
+});
+
+test('an eviction snapshot cannot retire a device adopted and parked again while an older retirement runs', async () => {
+  parkingLimits('1');
+  const oldest = seedHosted({ deviceType: 'delayed-stop', parked: { at: '2026-10-01T00:00:00.000Z' } });
+  const reused = seedHosted({ parked: { at: '2026-10-02T00:00:00.000Z' } });
+  const third = seedHosted({ parked: { at: '2026-10-03T00:00:00.000Z' } });
+  const oldHome = join(deviceHostArea(oldest.id), 'home');
+  const reconciliation = host.reconcileStopped();
+  await vi.waitFor(() => expect(existsSync(join(oldHome, 'stopped'))).toBe(true));
+  const adopted = await reserve({ attempt: 'new' });
+  expect(adopted.id).toBe(reused.id);
+  await state(reused.id, 'ready');
+  host.stop('client', { session: reused.id });
+  await state(reused.id, 'stopped');
+  await vi.waitFor(() => expect(readHostedSessions().find((record) => record.id === third.id)?.parked).toBeUndefined());
+  writeFileSync(join(oldHome, 'release-stop'), 'continue');
+  await reconciliation;
+  expectRetired(oldest.id);
+  expectRetired(third.id);
+  expect(readHostedSessions().find((record) => record.id === reused.id)?.parked).toBeDefined();
+  expect(readHostedDeviceLedger(join(deviceHostArea(reused.id), 'home'))?.ios).toHaveLength(1);
+  expect(hostedModes(reused.id)).not.toContain('stop');
 });

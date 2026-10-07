@@ -9,22 +9,28 @@ import { getExecutor, type Executor } from '../exec.ts';
 const native = vi.hoisted(() => ({
   create: vi.fn<(_label: string, options: { spawn: Executor['spawn'] }) => Promise<void>>(),
   boot: vi.fn<(...args: unknown[]) => void>(),
-  teardown: vi.fn<(target: string, options: { del: boolean }) => { status: string; reason?: string }>(),
+  teardown: vi.fn<(target: string, options: { del?: boolean }) => { status: string; reason?: string }>(),
   avds: vi.fn<() => string[]>(),
   name: vi.fn<() => string | null>(),
   abi: vi.fn<() => string | null>(),
   adb: vi.fn<
     () => { emulators: { consolePort: number; serial?: string }[]; unhealthy: { consolePort: number | null }[] }
   >(),
+  stopped: vi.fn<() => void>(),
+  reset: vi.fn<(_avd: string, _serial: string, keep: string) => Promise<void>>(),
+  image: vi.fn<() => string | null>(),
+  resolved: vi.fn<() => { notRunning?: true; missing?: true; notOwned?: true; serial?: string }>(),
   pressure: vi.fn<() => string | null>(),
 }));
 vi.mock('../host-memory.ts', () => ({ readHostMemoryPressure: () => native.pressure() }));
 vi.mock('../devices/android.ts', () => ({
   DEFAULT_AVD_DEVICE_PROFILE: 'pixel_6',
   hostSystemImageArch: () => 'arm64-v8a',
-  listInstalledSystemImages: () => [{ pkg: 'system-images;android-30;google_apis;arm64-v8a', arch: 'arm64-v8a' }],
-  pickDefaultSystemImage: (images: unknown[]) => images[0],
-  listAvdDeviceProfiles: () => ['pixel_6'],
+  listInstalledSystemImages: () =>
+    [30, 31].map((api) => ({ pkg: `system-images;android-${api};google_apis;arm64-v8a`, arch: 'arm64-v8a' })),
+  pickDefaultSystemImage: (images: { pkg: string }[], request: { systemImage?: string }) =>
+    images.find((image) => !request.systemImage || image.pkg === request.systemImage),
+  listAvdDeviceProfiles: () => ['pixel_6', 'pixel_7'],
   listAvds: () => native.avds(),
   ownedAvdName: (label: string) => `stim-${label}`,
   listAdbDevices: () => native.adb(),
@@ -34,6 +40,10 @@ vi.mock('../devices/android.ts', () => ({
   getAvdNameForSerial: () => native.name(),
   androidDeviceAbi: () => native.abi(),
   avdStorageRoots: () => [home],
+  assertOwnedAvdStopped: () => native.stopped(),
+  ownedAvdSystemImage: () => native.image(),
+  resolveOwnedAvdSerial: () => native.resolved(),
+  resetAdoptedAvd: (avd: string, serial: string, keep: string) => native.reset(avd, serial, keep),
   avdPathExists: (path: string) => existsSync(path),
 }));
 vi.mock('../devices/teardown.ts', () => ({
@@ -52,6 +62,8 @@ beforeEach(() => {
   mkdirSync(home);
   process.env.STIM_HOME = home;
   native.pressure.mockReturnValue('normal');
+  native.image.mockReturnValue('system-images;android-30;google_apis;arm64-v8a');
+  native.resolved.mockReturnValue({ notRunning: true });
   native.adb.mockReturnValue({ emulators: [], unhealthy: [] });
   native.avds.mockReturnValue([]);
   native.name.mockReturnValue(avd);
@@ -227,4 +239,92 @@ test('stop removes session blobs and materialized apps while retaining receipts 
   expect([blobs, bundle, temporary, legacy].map(existsSync)).toEqual([false, false, false, false]);
   expect(readFileSync(join(area, 'apps', 'first', 'receipt.json'), 'utf8')).toBe('{}');
   expect(readFileSync(join(home, 'ios-logs', 'device.ndjson'), 'utf8')).toBe('native logs');
+});
+
+async function parkedEmulator() {
+  await runHostedAndroidDevice('prepare', request);
+  native.teardown.mockImplementation(() => {
+    native.name.mockReturnValue(null);
+    return { status: 'torn-down' };
+  });
+  return runHostedAndroidDevice('park', request);
+}
+
+test('park shuts down without deletion or a local pool entry and keeps the private ledger', async () => {
+  mkdirSync(join(area, 'blobs'));
+  expect(await parkedEmulator()).toMatchObject({ state: 'parked', device: { avdName: avd } });
+  expect(native.teardown).toHaveBeenCalledExactlyOnceWith(avd, {});
+  expect(native.avds()).toEqual([avd]);
+  expect(JSON.parse(readFileSync(join(home, 'created-devices.json'), 'utf8')).android).toEqual([avd]);
+  expect(existsSync(join(home, 'config.json'))).toBe(false);
+  expect(existsSync(join(area, 'blobs'))).toBe(false);
+});
+
+test.each([{ deviceProfile: 'pixel_7' }, { systemImage: 'system-images;android-31;google_apis;arm64-v8a' }])(
+  'inspect distinguishes compatible from different selectors without booting: %j',
+  async (selectors) => {
+    await parkedEmulator();
+    native.boot.mockClear();
+    expect(await runHostedAndroidDevice('inspect', request)).toMatchObject({ state: 'compatible' });
+    expect(await runHostedAndroidDevice('inspect', { ...request, ...selectors })).toMatchObject({
+      state: 'incompatible',
+    });
+    expect(native.boot).not.toHaveBeenCalled();
+  },
+);
+
+test.each(['ledger', 'missing', 'running', 'image'])('inspect refuses an unusable emulator: %s', async (failure) => {
+  await parkedEmulator();
+  if (failure === 'ledger') forgetCreatedDevice('android', avd);
+  if (failure === 'missing') native.avds.mockReturnValue([]);
+  if (failure === 'running')
+    native.stopped.mockImplementation(() => {
+      throw new Error('still running');
+    });
+  if (failure === 'image') native.image.mockReturnValue('other');
+  expect(await runHostedAndroidDevice('inspect', request)).toMatchObject({
+    state: 'unusable',
+    notice: expect.any(String),
+  });
+});
+
+test('adoption removes all third-party apps and persists the newly reserved console port', async () => {
+  await parkedEmulator();
+  const apps = new Set(['com.example.old', 'com.example.other']);
+  native.reset.mockImplementation(async (_avd, _serial, keep) => {
+    for (const app of apps) if (app !== keep) apps.delete(app);
+  });
+  native.boot.mockImplementation(() => {
+    native.name.mockReturnValue(avd);
+  });
+  mkdirSync(join(area, 'blobs'));
+  expect(await runHostedAndroidDevice('adopt', { ...request, consolePort: 5556 })).toMatchObject({
+    state: 'ready',
+    device: { avdName: avd, consolePort: 5556, serial: 'emulator-5556' },
+  });
+  expect([...apps]).toEqual([]);
+  expect(JSON.parse(readFileSync(join(home, 'hosted-device.json'), 'utf8'))).toMatchObject({
+    avdName: avd,
+    consolePort: 5556,
+    serial: 'emulator-5556',
+  });
+  expect(existsSync(join(area, 'blobs'))).toBe(false);
+});
+
+test('adoption refuses an occupied new port before boot and keeps partial reset failures unknown', async () => {
+  await parkedEmulator();
+  native.boot.mockClear();
+  native.adb.mockReturnValue({ emulators: [{ consolePort: 5556 }], unhealthy: [] });
+  expect(await runHostedAndroidDevice('adopt', { ...request, consolePort: 5556 })).toMatchObject({ state: 'unknown' });
+  expect(native.boot).not.toHaveBeenCalled();
+  native.adb.mockReturnValue({ emulators: [], unhealthy: [] });
+  native.boot.mockImplementation(() => {
+    native.name.mockReturnValue(avd);
+  });
+  native.reset.mockRejectedValue(new Error('uninstall failed'));
+  expect(await runHostedAndroidDevice('adopt', { ...request, consolePort: 5556 })).toMatchObject({
+    state: 'unknown',
+    device: { avdName: avd },
+  });
+  expect(JSON.parse(readFileSync(join(home, 'created-devices.json'), 'utf8')).android).toEqual([avd]);
 });

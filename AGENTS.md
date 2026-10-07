@@ -287,6 +287,8 @@ outside it moves to its own issue and pull request.
   app receipts under `device-host/sessions/<id>/apps/`; core owns the readers. A hosted native worker
   uses a server-chosen private home under `device-host/sessions/` and the CLI's
   existing created-device ledger, ownership checks and centralized teardown.
+  Parked hosted devices stay ledger-owned in their session home and are adopted
+  only by the same client.
   Keep a child-aware ownership claim across native work and a claim for the
   session lifetime. Serialize hosted admission, including unresolved sessions;
   ordinary local producers do not participate, so it is not a machine-wide hard

@@ -11,13 +11,22 @@ import {
 } from '@stim-cli/core/state';
 import { getExecutor } from '../exec.ts';
 import { readHostMemoryPressure } from '../host-memory.ts';
-import { bootIosSim, createOwnedIosSim, listAllIosSims, resolveIosCreation } from '../devices/ios.ts';
+import {
+  bootIosSim,
+  createOwnedIosSim,
+  listAllIosSims,
+  resolveIosCreation,
+  resetIosPrivacy,
+  resetIosKeychain,
+  listUserApps,
+  uninstallIosApp,
+} from '../devices/ios.ts';
 import { forgetCreatedDevice } from '../devices/created-devices.ts';
 import { teardownOwnedIosSim } from '../devices/teardown.ts';
 import { installHostedApp, removeHostedAppData } from './app.ts';
 
 export type HostedWorkerResult = {
-  state: 'ready' | 'stopped' | 'installed' | 'unknown';
+  state: 'ready' | 'stopped' | 'installed' | 'unknown' | 'parked' | 'compatible' | 'incompatible' | 'unusable';
   device: HostedDevice | null;
   notice?: string;
   launched?: true | 'unverified';
@@ -47,7 +56,7 @@ export function selectHostedIosDevice(selectors: HostedDeviceSelectors): HostedI
 
 /** Called only in the private server-owned worker home; native effects use Stim's existing ownership and teardown. */
 export async function runHostedDevice(
-  mode: 'prepare' | 'stop' | 'install',
+  mode: 'prepare' | 'stop' | 'install' | 'park' | 'inspect' | 'adopt',
   selectors: HostedDeviceSelectors,
   app?: { session: string; attempt: string; metroPort?: number },
 ): Promise<HostedWorkerResult> {
@@ -78,6 +87,52 @@ export async function runHostedDevice(
     device = readHostedDevice(home);
     const ledger = assertHostedDeviceLedger(home, device.udid, 'ios', { allowEmpty: mode === 'stop' });
     const current = inventory().find((sim) => sim.udid === device!.udid);
+    if (mode === 'inspect' || mode === 'adopt') {
+      if (
+        !current ||
+        !current.available ||
+        !current.name.startsWith('stim-') ||
+        current.name !== device.name ||
+        current.state !== 'Shutdown'
+      )
+        throw new Error('The parked hosted simulator is missing, renamed or not Shutdown.');
+      let choice: HostedIosChoice;
+      try {
+        choice = selectHostedIosDevice(selectors);
+      } catch (error) {
+        if (mode === 'inspect') return { state: 'incompatible', device, notice: (error as Error).message };
+        throw error;
+      }
+      if (
+        choice.deviceTypeId !== device.deviceTypeId ||
+        choice.runtimeId !== device.runtimeId ||
+        choice.architecture !== device.architecture
+      ) {
+        if (mode === 'inspect') return { state: 'incompatible', device };
+        throw new Error('The parked hosted simulator does not match the requested selectors.');
+      }
+      if (mode === 'inspect') return { state: 'compatible', device };
+      await bootIosSim(device.udid, { openViewer: false });
+      if (inventory().find((sim) => sim.udid === device!.udid)?.state !== 'Booted')
+        throw new Error('Hosted simulator boot could not be verified.');
+      resetIosPrivacy(device.udid);
+      resetIosKeychain(device.udid);
+      for (const bundleId of listUserApps(device.udid)) uninstallIosApp(device.udid, bundleId);
+      withDirLock(join(home, 'hosted-device.lock'), () => {
+        const temporary = join(home, 'hosted-device.json.tmp');
+        writeFileSync(temporary, JSON.stringify(device), { mode: 0o600 });
+        renameSync(temporary, join(home, 'hosted-device.json'));
+      });
+      removeHostedAppData(home);
+      return { state: 'ready', device };
+    }
+    if (mode === 'park') {
+      const outcome = teardownOwnedIosSim(device.udid);
+      if (outcome.status !== 'torn-down' || inventory().find((sim) => sim.udid === device!.udid)?.state !== 'Shutdown')
+        throw new Error(outcome.reason ?? 'Hosted simulator shutdown could not be verified.');
+      removeHostedAppData(home);
+      return { state: 'parked', device };
+    }
     if (mode === 'install') {
       if (!app || current?.state !== 'Booted')
         throw new Error('Hosted app installation requires its booted owned simulator.');
@@ -102,7 +157,8 @@ export async function runHostedDevice(
     return { state: 'stopped', device };
   } catch (error) {
     return {
-      state: mode === 'prepare' && !creationStarted && !device ? 'stopped' : 'unknown',
+      state:
+        mode === 'inspect' ? 'unusable' : mode === 'prepare' && !creationStarted && !device ? 'stopped' : 'unknown',
       device,
       notice: (error as Error).message,
     };

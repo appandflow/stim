@@ -338,7 +338,13 @@ set always wins over that default. `stim settings` shows such a default as
 workspace to adopt. Absent means 3; `0` turns parking and adoption off. When
 `STIM_HOME` is set, parking is off unless `STIM_POOL_IOS_PARKED_MAX` is set too.
 `pool.androidParkedMax` and `STIM_POOL_ANDROID_PARKED_MAX` apply the same rules
-to Android emulators. See [owned devices](/docs/owned-devices) for adoption cleanup.
+to Android emulators. The hosting Mac also uses these bounds for hosted devices
+on stop, separately from its local pool and across all clients per platform.
+Hosted adoption is limited to the same client, clears app data and removes other
+apps. Parked hosted devices persist across a clean server restart; the oldest
+excess devices, unusable adoption candidates and a revoked client's devices are
+retired. See [hosted parking](./remote-machines.md#hosted-parking-and-restart)
+and [owned devices](/docs/owned-devices) for adoption cleanup.
 
 `hosting.machines` names Macs that may host owned simulator sessions, by
 MagicDNS name and optional serve port (default 7443). Name each node and port

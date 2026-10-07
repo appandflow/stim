@@ -13,6 +13,10 @@ import { getExecutor } from '../exec.ts';
 import { readHostMemoryPressure } from '../host-memory.ts';
 import {
   androidDeviceAbi,
+  assertOwnedAvdStopped,
+  ownedAvdSystemImage,
+  resetAdoptedAvd,
+  resolveOwnedAvdSerial,
   avdPathExists,
   avdStorageRoots,
   bootAndroidEmulator,
@@ -56,7 +60,7 @@ export function selectHostedAndroidDevice(request: HostedDeviceSelectors): Hoste
 
 /** Runs only in the private worker home; a caller cannot select or tear down an existing AVD. */
 export async function runHostedAndroidDevice(
-  mode: 'prepare' | 'stop' | 'install' | 'reverse',
+  mode: 'prepare' | 'stop' | 'install' | 'reverse' | 'park' | 'inspect' | 'adopt',
   request: { session: string; consolePort?: unknown; systemImage?: string; deviceProfile?: string },
   app?: { attempt: string; metroPort?: number; clientMetroPort?: number },
 ): Promise<HostedWorkerResult> {
@@ -124,7 +128,68 @@ export async function runHostedAndroidDevice(
       return { state: 'ready', device: selected };
     }
     device = readHostedDevice(home, 'android');
-    const ledger = assertHostedDeviceLedger(home, device.avdName, 'android', { allowEmpty: true });
+    const ledger = assertHostedDeviceLedger(home, device.avdName, 'android', { allowEmpty: mode === 'stop' });
+    if (mode === 'inspect' || mode === 'adopt') {
+      if (
+        device.avdName !== ownedAvdName(`hosted-${request.session}`) ||
+        !listAvds({ timeoutMs: 5000 }).includes(device.avdName)
+      )
+        throw new Error('The parked hosted AVD is missing or names another session.');
+      const resolved = resolveOwnedAvdSerial(device.avdName, { timeoutMs: 5000 });
+      if (!resolved.notRunning) throw new Error('The parked hosted AVD is missing, not owned or running.');
+      assertOwnedAvdStopped(device.avdName);
+      if (getAvdNameForSerial(device.serial) === device.avdName)
+        throw new Error('The parked hosted emulator is still running.');
+      if (ownedAvdSystemImage(device.avdName) !== device.systemImage)
+        throw new Error('The parked hosted AVD system image no longer matches its device record.');
+      let choice: HostedAndroidChoice;
+      try {
+        choice = selectHostedAndroidDevice(request);
+      } catch (error) {
+        if (mode === 'inspect') return { state: 'incompatible', device, notice: (error as Error).message };
+        throw error;
+      }
+      if (
+        choice.systemImage !== device.systemImage ||
+        choice.deviceProfile !== device.deviceProfile ||
+        choice.architecture !== device.architecture
+      ) {
+        if (mode === 'inspect') return { state: 'incompatible', device };
+        throw new Error('The parked hosted emulator does not match the requested selectors.');
+      }
+      if (mode === 'inspect') return { state: 'compatible', device };
+      if (!hostedConsolePort(request.consolePort) || portIsOccupied(request.consolePort))
+        throw new Error('The selected Android console port is invalid or occupied.');
+      device = { ...device, consolePort: request.consolePort, serial: `emulator-${request.consolePort}` };
+      withDirLock(join(home, 'hosted-device.lock'), () => {
+        const temporary = join(home, 'hosted-device.json.tmp');
+        writeFileSync(temporary, JSON.stringify(device), { mode: 0o600 });
+        renameSync(temporary, join(home, 'hosted-device.json'));
+      });
+      bootAndroidEmulator(device.avdName, device.consolePort, {
+        openViewer: false,
+        logFile: join(home, 'emulator.log'),
+      });
+      if (
+        !(await waitForBoot(device.serial, 240000, { commandTimeoutMs: 5000 })).ok ||
+        getAvdNameForSerial(device.serial) !== device.avdName ||
+        androidDeviceAbi(device.serial) !== device.architecture
+      )
+        throw new Error('Hosted Android boot could not be verified for its exact owned AVD.');
+      await resetAdoptedAvd(device.avdName, device.serial, '');
+      removeHostedAppData(home);
+      return { state: 'ready', device };
+    }
+    if (mode === 'park') {
+      const outcome = teardownOwnedAvd(device.avdName, {});
+      if (outcome.status !== 'torn-down')
+        throw new Error(outcome.reason ?? 'Hosted Android shutdown was not established.');
+      assertOwnedAvdStopped(device.avdName);
+      if (getAvdNameForSerial(device.serial) === device.avdName)
+        throw new Error('The hosted Android emulator is still running.');
+      removeHostedAppData(home);
+      return { state: 'parked', device };
+    }
     if (ledger === 'listed') {
       withConfigLock(() => {
         if (!loadConfig()) ensureConfig();
@@ -148,7 +213,8 @@ export async function runHostedAndroidDevice(
     return { state: 'stopped', device };
   } catch (error) {
     return {
-      state: mode === 'prepare' && !creationStarted && !device ? 'stopped' : 'unknown',
+      state:
+        mode === 'inspect' ? 'unusable' : mode === 'prepare' && !creationStarted && !device ? 'stopped' : 'unknown',
       device,
       notice: (error as Error).message,
     };

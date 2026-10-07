@@ -67,6 +67,34 @@ creating a session. Those targets prepare remote Metro exposure, as
 or busy; see [automatic device placement](#automatic-device-placement).
 Android also accepts these backends. The [macOS prototype](./macos.md) also supports named hosts.
 
+## Hosted parking and restart
+
+On stop, the host parks healthy iOS simulators and Android emulators of approved
+clients up to its `pool.iosParkedMax` and `pool.androidParkedMax`. The host reads
+these settings from its own Stim home, with `STIM_POOL_IOS_PARKED_MAX` and
+`STIM_POOL_ANDROID_PARKED_MAX` overrides. Each platform's hosted limit applies
+across all clients, separately from the local parked pool. `0` disables parking;
+with `STIM_HOME` set, the corresponding environment override is required.
+
+A parked device stays ledger-owned in its session's private home and reports
+`stopped` to the client. A later reserve by the same client adopts the oldest
+compatible device: the resolved model, runtime and architecture match for iOS;
+the system image, device profile and architecture match for Android. Adoption
+clears app data by uninstalling every third-party app, and resets iOS privacy and
+keychain. Another client never adopts it. Parking and adoption remove session
+app copies and blobs, so the first run after adoption uploads them again.
+
+The oldest parked devices beyond the host's platform limit are deleted, also
+after a limit decrease. Adoption-time reconciliation retires unusable devices;
+revocation retires that client's parked devices. All deletion rechecks ownership
+and uses centralized teardown. If GC removes a ledger-owned device, the next
+reconciliation clears its parked marker.
+
+A clean `stim-server` close parks eligible devices, which persist across restart
+and can be adopted by the next reserve. The server never re-attaches to a booted
+device after restart. A running session left by a crashed server stays `unknown`
+until an explicit `stim stop` reconciles it.
+
 ## Run Android on a hosting Mac
 
 Use the same device-host approval and name from `hosting.machines`:
@@ -82,7 +110,8 @@ refusal or an unreachable host fails with `STIM_HOSTING_REFUSED`. Stop before
 changing hosts or moving between local and hosted devices. `--device`, a running
 local emulator in that slot, and `--no-metro-check` for hosted Debug refuse.
 
-The owned emulator boots headless and is deleted on stop. Debug keeps Metro
+The owned emulator boots headless and is parked on stop within the host's
+`pool.androidParkedMax` limit, or deleted when ineligible. Debug keeps Metro
 here through a private tailnet bridge; `metro.publicUrl`, `metro.tunnel` and
 `androidEmulatorApp` are ignored. Each run and reload restores the host's adb
 reverse, including after an adb server restart. Release variants skip Metro.
@@ -106,7 +135,7 @@ emulator. It allows inspection and interaction with installed apps and refuses
 install, reinstall, uninstall, boot, shutdown, `close --shutdown`, record, logs,
 other devices and host paths. Stim installs the app. An unavailable or older
 driver reports `none` with the host's reason. Stop closes the matching agent
-connection and stops the daemon and its helpers before deleting the emulator.
+connection and stops the daemon and its helpers before parking or deleting the emulator.
 An unresolved daemon claim blocks replacement and deletion.
 
 Copy this prompt to try it: "Run this app with `stim android --remote <machine>`.
@@ -143,7 +172,7 @@ evicted logcat entries and entries persisted beyond the five-second overlap may
 be unavailable. Collection has a bounded output and time budget; an oversized
 query retries the recent tail and records any dropped interval. Stop copies logs
 before and after the host's final collection and retains them locally after
-emulator deletion. Older hosts without `hosted-android-data` get an update note,
+emulator parking or deletion. Older hosts without `hosted-android-data` get an update note,
 use uploads and show logs already copied here.
 
 Try this with your agent: "Run this app with `stim android --remote mini`, inspect
