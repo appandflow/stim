@@ -11,7 +11,7 @@ import assert from 'node:assert';
 import { vi } from 'vitest';
 import * as crashDiagnostics from '../diagnostics/native-crash.ts';
 import { captureProcessToken } from '../process-identity.ts';
-import { ACTIVE_BUILD_KEY, parseActiveBuild } from '../engine/build-progress.ts';
+import { ACTIVE_BUILD_KEY, buildReport, parseActiveBuild } from '../engine/build-progress.ts';
 import { ClaimUnavailableError, readClaimSet } from '../ownership-claim.ts';
 import { once } from 'node:events';
 import { type ChildProcess, spawn } from 'node:child_process';
@@ -1498,10 +1498,17 @@ describe('the cache', () => {
 
   test('--no-build-cache looks nothing up: not the local cache, not the provider', async () => {
     reserve();
+    let activeReport: ReturnType<typeof buildReport> | undefined;
     const cachedApp = join(tmpHome, 'build-cache', 'ios', 'k', 'Fixture.app');
     const { exitCode, calls, logs } = await run(
       { json: true, buildCache: false },
       {
+        storeBuild: (_platform, _key, path) => {
+          const active = parseActiveBuild(readWorkspaceState(root)?.[ACTIVE_BUILD_KEY]);
+          assert(active);
+          activeReport = buildReport(active, { state: 'running', history: undefined });
+          return path;
+        },
         resolveBuild: () => {
           throw new Error('the local cache must not be consulted');
         },
@@ -1517,6 +1524,8 @@ describe('the cache', () => {
     const facts = parseFirst(logs);
     expect(facts.cacheHit).toBe(false);
     expect(facts.cacheSkipped).toBe(true);
+    expect(activeReport).toMatchObject({ outcome: 'cold', outcomeKnown: true });
+    expect(activeReport).not.toHaveProperty('cacheLookupOutcome');
     expect(!facts.appPath.startsWith(cachedApp)).toBeTruthy();
   });
 

@@ -336,7 +336,7 @@ export async function acquireIosArtifact(
       }
       return;
     }
-    step('cache-lookup');
+    if (useBuildCache) step('cache-lookup');
     const fingerprintTimer = stepTimer(d.now);
     let computedFingerprint: string | null;
     let fingerprintError = 'no hash';
