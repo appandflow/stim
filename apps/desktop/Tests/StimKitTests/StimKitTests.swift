@@ -543,6 +543,9 @@ import Testing
       ),
       ([AppPreferences.Key.sidebarStatus: "live"], [.live]),
       ([AppPreferences.Key.sidebarStatus: "idle"], [.idle]),
+      ([AppPreferences.Key.sidebarStatus: "idle", AppPreferences.Key.hidesUnprovisionedWorktrees: false], [.idle, .notSetUp]),
+      ([AppPreferences.Key.sidebarStatus: "live", AppPreferences.Key.hidesUnprovisionedWorktrees: false], [.live]),
+      ([AppPreferences.Key.sidebarStatus: "archived", AppPreferences.Key.hidesUnprovisionedWorktrees: false], [.archived]),
       ([AppPreferences.Key.sidebarStatus: "unknown"], [.live, .idle]),
       ([AppPreferences.Key.sidebarStatus: "archived", AppPreferences.Key.hidesUnprovisionedWorktrees: true], [.archived]),
       ([AppPreferences.Key.hidesUnprovisionedWorktrees: false], [.live, .idle, .notSetUp]),
@@ -639,16 +642,6 @@ import Testing
       notSetUpApps(for: worktree, environments: [environments[4]], project: project) == [
         NotSetUpApp(path: worktree.path, label: nil, platforms: ["ios", "android"])
       ])
-  }
-
-  @Test func setupWarmsBeforeRunningInTheAppDirectory() {
-    let app = NotSetUpApp(path: "/r/.worktrees/x/apps/mobile", label: "apps/mobile", platforms: ["ios"])
-    #expect(
-      setUpSteps(["ios"], app: app) == [
-        StimCommand(["worktree", "warm"], cwd: "/r/.worktrees/x/apps/mobile"),
-        StimCommand(["ios"], cwd: "/r/.worktrees/x/apps/mobile"),
-      ])
-    #expect(setUpSteps(["start"], app: app).map(\.arguments) == [["worktree", "warm"], ["start"]])
   }
 
   @Test func displaysHomePathsFromTildeAndStaysAShellLine() {

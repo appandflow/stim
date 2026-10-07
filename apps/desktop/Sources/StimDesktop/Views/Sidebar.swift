@@ -153,7 +153,7 @@ struct Sidebar: View {
     let root = tree.summary.project.root
     let choices = (try? JSONDecoder().decode([String: Bool].self, from: expandedProjects)) ?? [:]
     return Binding(
-      get: { choices[root] ?? (tree.isArchiveOnly || tree.summary.hasActive) },
+      get: { choices[root] ?? (tree.showsOnlyArchives || tree.summary.hasActive) },
       set: { expanded in
         var updated = choices
         updated[root] = expanded

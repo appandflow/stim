@@ -14,6 +14,12 @@ struct NoEnvironmentDetail: View {
 
   private var app: NotSetUpApp { apps.first { $0.path == selectedPath } ?? apps[0] }
 
+  private var runKeys: [String] { [worktree.path] + apps.map(\.path).filter { $0 != worktree.path } }
+
+  private var busy: Bool { runKeys.contains { actions.active(for: $0) != nil } }
+
+  private var latestRun: ActionRun? { runKeys.compactMap { actions.latest(for: $0) }.max { $0.startedAt < $1.startedAt } }
+
   var body: some View {
     VStack(spacing: 0) {
       header
@@ -42,19 +48,19 @@ struct NoEnvironmentDetail: View {
                 Button("Run on \(platformName(platform))") {
                   actions.run(
                     "Run \(worktree.names.title) on \(platformName(platform))", steps: setUpSteps([platform], app: app),
-                    key: worktree.path, present: false)
+                    key: app.path, present: false)
                 }
                 .buttonStyle(.stim(index == 0 ? .primary : .secondary, .regular))
               }
               if app.platforms.contains("ios") || app.platforms.contains("android") {
                 Button("Start dev server") {
                   actions.run(
-                    "Start \(worktree.names.title)", steps: setUpSteps(["start"], app: app), key: worktree.path, present: false)
+                    "Start \(worktree.names.title)", steps: setUpSteps(["start"], app: app), key: app.path, present: false)
                 }
                 .buttonStyle(.stim(.secondary, .regular))
               }
             }
-            .disabled(actions.active(for: worktree.path) != nil)
+            .disabled(busy)
             facts
           }
           .frame(maxWidth: 460)
@@ -90,12 +96,12 @@ struct NoEnvironmentDetail: View {
         GitChipButton(cli: cli, chip: chip, worktree: worktree.info, workspace: worktree.path)
       }
       Spacer(minLength: Space.md)
-      if let run = actions.latest(for: worktree.path) {
+      if let run = latestRun {
         NotSetUpRunStatus(run: run)
       }
       Menu {
         WorkspaceActionsMenu(
-          kind: .worktree, path: worktree.path, busy: actions.active(for: worktree.path) != nil,
+          kind: .worktree, path: worktree.path, busy: busy,
           removalAllowed: worktreeRemovalAllowed(git: worktree.git),
           onWarmWorktree: {
             actions.run("Warm \(worktree.names.title)", StimCommand(["worktree", "warm"], cwd: worktree.path))

@@ -221,7 +221,7 @@ struct RootView: View {
       showWorkspaceLink(in: payload)
       show(openRequests.target, in: payload)
       if case .worktree(let path) = selection,
-        let environment = payload?.environments.map(\.path).filter({ $0 == path || $0.hasPrefix(path + "/") })
+        let environment = payload?.environments.filter({ $0.path == path || $0.worktree?.path == path }).map(\.path)
           .sorted().first
       {
         selection = .environment(environment)

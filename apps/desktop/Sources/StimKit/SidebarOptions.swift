@@ -178,7 +178,10 @@ public struct ProjectTree: Hashable, Sendable {
   public var summary: ProjectSummary
   public var entries: [SidebarEntry]
 
-  public var isArchiveOnly: Bool { !entries.isEmpty && entries.allSatisfy { $0.status == .archived } }
+  /// Whether every visible row is an archive, which opens the project by default.
+  public var showsOnlyArchives: Bool { !entries.isEmpty && entries.allSatisfy { $0.status == .archived } }
+  /// Whether the project has no current worktree and appears only for its archives.
+  public var isArchiveOnly = false
 }
 
 /// The sidebar grouped by project. A project left with no rows is omitted unless `showsEmptyProjects` is set.
@@ -197,7 +200,8 @@ public func sidebarTrees(
     (summaries.map { ProjectTree(summary: $0, entries: orderedEntries(grouped[$0.project] ?? [], options, project)) }
     + grouped.filter { !known.contains($0.key) }.map { key, entries in
       ProjectTree(
-        summary: ProjectSummary(project: key, live: 0, total: entries.count), entries: orderedEntries(entries, options, project))
+        summary: ProjectSummary(project: key, live: 0, total: entries.count), entries: orderedEntries(entries, options, project),
+        isArchiveOnly: true)
     }).filter { options.showsEmptyProjects || !$0.entries.isEmpty }
   func key(_ tree: ProjectTree) -> (activity: Date?, memory: Int) {
     let current = tree.entries.filter { $0.status != .archived }

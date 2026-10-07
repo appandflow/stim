@@ -5,9 +5,7 @@ public enum AppPreferences {
   public enum Key {
     public static let appearance = "appearance"
     public static let showsIdleWorkspaces = "showsIdleWorkspaces"
-    /// Retired checkbox value, read only for migration to `sidebarStatuses`.
     public static let hidesUnprovisionedWorktrees = "hidesUnprovisionedWorktrees"
-    /// Retired single status value, read only for migration to `sidebarStatuses`.
     public static let sidebarStatus = "sidebar.status"
     public static let sidebarStatuses = "sidebar.statuses"
     public static let hiddenProjects = "sidebar.hiddenProjects"
@@ -90,7 +88,8 @@ public enum AppPreferences {
     ].merging(NotificationSettings.defaults) { current, _ in current }
   }
 
-  /// Carries retired sidebar switches and the single status into the status selection, preserving saved choices.
+  /// Carries the retired "Show idle workspaces" and "Show no-environment worktrees" switches and the single sidebar status
+  /// over to the sidebar status selection.
   public static func migrate(_ defaults: UserDefaults) {
     removeLegacyRunDestinations(defaults)
     if let showsIdle = defaults.object(forKey: Key.showsIdleWorkspaces) as? Bool {
@@ -103,13 +102,14 @@ public enum AppPreferences {
     let hides = defaults.object(forKey: Key.hidesUnprovisionedWorktrees)
     if defaults.object(forKey: Key.sidebarStatuses) == nil, oldStatus != nil || hides != nil {
       var statuses: Set<StatusFilter>
+      var showedNotSetUp = true
       switch defaults.string(forKey: Key.sidebarStatus) {
-      case "live": statuses = [.live]
+      case "live": (statuses, showedNotSetUp) = ([.live], false)
       case "idle": statuses = [.idle]
-      case "archived": statuses = [.archived]
+      case "archived": (statuses, showedNotSetUp) = ([.archived], false)
       default: statuses = StatusFilter.defaultSelection
       }
-      if let hides = hides as? Bool, !hides { statuses.insert(.notSetUp) }
+      if showedNotSetUp, let hides = hides as? Bool, !hides { statuses.insert(.notSetUp) }
       defaults.set(StatusFilter.encode(statuses), forKey: Key.sidebarStatuses)
     }
     if oldStatus != nil { defaults.removeObject(forKey: Key.sidebarStatus) }

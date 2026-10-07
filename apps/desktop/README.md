@@ -78,9 +78,9 @@ checkout. The second line is where it sits inside its checkout, such as
   rows, archives follow those rows within each project, newest removal first.
   Archived uses the same repository and worktree grouping, with app labels, PR
   number or Merged, removal time, retained size and a media expiry indicator.
-  Live also shows a workspace with a running build, and one that `stim worktree
-warm` is preparing ("Warming...", with an activity indicator) or has prepared
-  before its first run ("Ready").
+  Live also shows a workspace with a running build, and one that
+  `stim worktree warm` is preparing ("Warming...", with an activity indicator)
+  or has prepared before its first run ("Ready").
 - **Projects**: which projects the sidebar lists.
 - **Group by**: Project (the tree) or None (one list, each row subtitled with
   its project too).

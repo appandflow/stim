@@ -22,7 +22,7 @@ public func notSetUpApps(
     guard env.path == root || env.path.hasPrefix(root + "/") else { continue }
     let relative = pathInCheckout(env.path, worktree: root)
     let path = relative.map { worktree.path + "/" + $0 } ?? worktree.path
-    let platforms = Set((apps[path]?.platforms ?? []) + env.runPlatforms)
+    let platforms = Set((apps[path]?.platforms ?? []) + (env.runPlatforms.isEmpty ? ["ios", "android"] : env.runPlatforms))
     apps[path] = NotSetUpApp(
       path: path, label: relative, platforms: ["ios", "android", "macos", "web"].filter { platforms.contains($0) })
   }
