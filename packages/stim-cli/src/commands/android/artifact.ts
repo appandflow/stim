@@ -69,6 +69,7 @@ import {
   placementLoad,
   remotePhaseText,
   type OffloadChoice,
+  type BuildHandoff,
 } from '../../offload/client.ts';
 import { namedBuildMachine, OffloadRefusal } from '../../offload/selection.ts';
 import { androidRequirements, androidToolchain } from '../../offload/toolchain.ts';
@@ -145,6 +146,7 @@ interface AndroidArtifactDeps {
 /** The installable APK plus the cache work this run still owes the caller. */
 export interface PreparedAndroidArtifact {
   apkPath: string | null;
+  handoff?: BuildHandoff | null;
   androidPackage: string | null;
   swapDir: string | null;
   waitedForBuild: WaitedForBuild | null;
@@ -301,6 +303,7 @@ export async function acquireAndroidArtifact(
   let storeKey = '';
   let storeSources: FingerprintSource[] = [];
   let apkPath: string | null = null;
+  let handoff: BuildHandoff | null = null;
   let swapFellBack = false;
 
   async function resolveInitialFingerprint(): Promise<boolean> {
@@ -723,6 +726,7 @@ export async function acquireAndroidArtifact(
     }
     const { timings } = outcome;
     apkPath = stored;
+    handoff = outcome.handoff ?? null;
     record.builtOn = outcome.machine;
     record.offloadedTo = outcome.machine;
     stats.setPlacement({
@@ -998,6 +1002,7 @@ export async function acquireAndroidArtifact(
     ok: true,
     artifact: {
       apkPath,
+      handoff,
       androidPackage,
       swapDir,
       waitedForBuild,

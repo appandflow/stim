@@ -99,16 +99,21 @@ export async function installHostedAndroidApp(
   return 'unverified';
 }
 
-function assertHostedAndroidTarget(home: string, device: HostedAndroidDevice): void {
+export function assertHostedAndroidSerial(home: string, device: HostedAndroidDevice): void {
   assertHostedDeviceLedger(home, device.avdName, 'android');
   const current = readHostedDevice(home, 'android');
   if (
     current.avdName !== device.avdName ||
     current.serial !== device.serial ||
     current.systemImage !== device.systemImage ||
-    getAvdNameForSerial(device.serial) !== device.avdName ||
-    androidDeviceAbi(device.serial) !== device.architecture
+    getAvdNameForSerial(device.serial, { timeoutMs: 2000 }) !== device.avdName
   )
+    throw new Error('The hosted Android device identity changed.');
+}
+
+function assertHostedAndroidTarget(home: string, device: HostedAndroidDevice): void {
+  assertHostedAndroidSerial(home, device);
+  if (androidDeviceAbi(device.serial) !== device.architecture)
     throw new Error('The hosted Android device identity or running ABI changed.');
 }
 

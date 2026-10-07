@@ -5,7 +5,7 @@ import { agentAccess } from './hosted-agent.ts';
 import { closeAgentConnection } from './agent-connection.ts';
 import { randomUUID } from 'node:crypto';
 import type { BuildHandoff } from '../offload/client.ts';
-import { pullHostedIosLogs } from './hosted-logs.ts';
+import { pullHostedNativeLogs } from './hosted-logs.ts';
 import {
   parseHostedChoice,
   parseHostedAndroidDevice,
@@ -18,7 +18,6 @@ import {
   isJsonObject,
   type HostedDeviceSelectors,
   type HostedIosChoice,
-  type HostedIosPlacement,
   hostedNativeRecords,
   parseHostedNativePlacement,
   unreadableHostedNative,
@@ -249,15 +248,11 @@ export async function placeHostedNative(
     );
     await upload(host, ids, (await call(host, 'device-host.app.offer', offer)).missing, content);
     let missing = (await call(host, 'device-host.app.offer', offer)).missing;
-    if (
-      platform === 'ios' &&
-      handoff &&
-      handoff.nodeId === host.credential.nodeId &&
-      Array.isArray(missing) &&
-      missing.length
-    ) {
-      if (!host.connection.supports('hosted-ios-data')) {
-        note(`${host.machine} needs a newer stim-server for iOS build handoff; uploading the app instead`);
+    if (handoff && handoff.nodeId === host.credential.nodeId && Array.isArray(missing) && missing.length) {
+      if (!host.connection.supports(platform === 'android' ? 'hosted-android-data' : 'hosted-ios-data')) {
+        note(
+          `${host.machine} needs a newer stim-server for ${platform === 'ios' ? 'iOS' : 'Android'} build handoff; uploading the app instead`,
+        );
       } else {
         try {
           const taken = await call(
@@ -344,7 +339,7 @@ export async function stopHostedNative(
     try {
       host = await connectHost(placement.machine);
       try {
-        if (platform === 'ios') await pullHostedIosLogs(root, name, placement as HostedIosPlacement, host, true);
+        await pullHostedNativeLogs(root, name, placement, host, true, platform);
       } catch (error) {
         process.stderr.write(
           `Could not copy final native logs from ${placement.machine}: ${(error as Error).message}\n`,
@@ -359,7 +354,7 @@ export async function stopHostedNative(
       );
       if (stopped.state !== 'stopped') throw unknownSession(host, stopped);
       try {
-        if (platform === 'ios') await pullHostedIosLogs(root, name, placement as HostedIosPlacement, host, true);
+        await pullHostedNativeLogs(root, name, placement, host, true, platform);
       } catch (error) {
         process.stderr.write(
           `Could not copy the host's final native logs from ${placement.machine}: ${(error as Error).message}\n`,

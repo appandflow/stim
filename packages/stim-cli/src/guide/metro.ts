@@ -34,9 +34,10 @@ HOSTED IOS METRO
   Hosted Debug runs require the supervisor's private gateway support before
   reservation. --no-metro-check refuses; restart a missing or older supervisor
   with stim stop; stim start.
-  Native iOS logs are pulled from the host by stim logs, including --errors;
+  Native iOS and Android logs are pulled from the host by stim logs, including --errors;
   JavaScript logs still arrive through Metro. Stop pulls native logs before
-  deleting the simulator. Read guide lifecycle hosted-ios for placement and cleanup.
+  deleting the owned device and copies the final host tail afterwards. Read guide
+  lifecycle hosted-ios or hosted-android for placement and cleanup.
 
 TAILNET-ONLY METRO
   Install Tailscale and sign in on this machine and the remote device or

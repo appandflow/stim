@@ -412,7 +412,7 @@ async function build(job: WorkerJob): Promise<WorkerResult> {
   mkdirSync(out, { recursive: true });
   const archive = join(out, 'app.tgz');
   const name = basename(compiled.path);
-  if (job.platform === 'ios')
+  if (job.platform === 'ios' || job.platform === 'android')
     cpSync(compiled.path, join(out, name), {
       recursive: true,
       verbatimSymlinks: true,

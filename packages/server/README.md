@@ -572,7 +572,7 @@ session before starting another transfer. Manifest, file and partial blobs are s
 by attempts of one session in its content-addressed store; offers recheck complete
 blob digests and request only missing bytes.
 
-An iOS simulator or macOS session can take its content from a build this Mac ran instead: after
+An iOS simulator, Android emulator or macOS session can take its content from a build this Mac ran instead: after
 the manifest arrives, send `device-host.app.handoff` with
 `{session, attempt, build: {handoff, sha256}}`, where `handoff` is the token
 and `sha256` the archive digest from that job's `build.artifact` answer. The
@@ -583,7 +583,10 @@ declares links, whose directory resolves inside the staged bundle and whose
 bytes match their manifest digest; it answers `{files, bytes}` for what it
 took. The token is spent once the handoff starts. Re-offer and upload whatever
 is still missing; an older server answers `unknown-method`. For iOS, check the
-`hosted-ios-data` hello feature before requesting handoff; without it, upload.
+`hosted-ios-data` hello feature before requesting handoff; for Android check
+`hosted-android-data`. Without the feature, upload. Android takes only a regular
+APK file matching the single `App.apk` manifest entry. Handoff failure falls back
+to upload. Reused APK blobs skip transfer, while every new attempt still installs.
 
 After every digest is verified, call `device-host.app.launch` with
 `{session, attempt}`. Poll `device-host.app.attach` for `installed` or `unknown`.
@@ -686,9 +689,19 @@ session stops, is revoked or the server closes.
 the NDJSON records the session's macOS app wrote to its captured log (stdout and
 stderr as `client` records, and its exit). iOS sessions capture app-filtered native
 logs as `device` records through bounded `simctl log show` worker queries, with
-a persisted time checkpoint in the isolated home. Windows adapt to the backlog,
+a persisted time checkpoint in the isolated home. Android sessions use
+`logcat -d -v epoch -T <epoch> --pid <pid>` on the exact ledger-owned serial after
+re-verifying its AVD name. Each collection resolves `pidof <package>` and also
+queries the last observed PID of that app attempt, to drain a crash or restart.
+Without any observed PID, logs cannot be attributed to the app. PID-based logcat
+cannot distinguish historical reuse of an exited PID. Output is bounded
+by the executor's 64 MiB limit per command and the collection's ten-second budget;
+an oversized query retries the recent tail and emits a `device` warning naming
+the dropped interval. Logcat entries already evicted from its finite buffer are
+unavailable. Both native collectors use the same checkpoint and NDJSON writer.
+Windows adapt to the backlog,
 overlap by five seconds and de-duplicate event identities. `checkpoint` is the last
-completed iOS window in epoch milliseconds. `log show` reads persisted entries;
+completed native window in epoch milliseconds. `log show` reads persisted entries;
 info-level entries and persistence delayed beyond the overlap may be unavailable.
 The worker holds a separate child-aware log claim. Queries coalesce onto an
 in-flight collection or read captured files; collection starts at most once every
@@ -713,8 +726,9 @@ byte offset after the last complete line read; pass the previous result's cursor
 receive only newer records, and repeat while `more` is true. Without a cursor, each
 file starts at most 4 MiB before its end. A page holds at most 1 MiB; a file that
 rotated since the cursor is read from the end of its previous generation. The
-session's own client only, for iOS and macOS sessions, and also after the session stopped,
-because stop keeps captured logs. iOS clients check hello feature `hosted-ios-data`;
+session's own client only, for iOS, Android and macOS sessions, and also after the session stopped,
+because stop keeps captured logs. iOS clients check hello feature `hosted-ios-data`
+and Android clients check `hosted-android-data`;
 without it, they show an update note and copied logs. Servers that predate macOS queries answer `forbidden` or
 `unknown-method`.
 
@@ -1185,11 +1199,11 @@ closes its connections and cancels its builds.
   another client, gets `bad-request`.
 - `build.artifact` takes the `job` of a successful build and sends the archive
   as binary frames, each 32 bytes of its sha256 and then the next bytes, then
-  answers `{ "name", "size", "sha256" }`, and deletes it here. For an iOS simulator or macOS
+  answers `{ "name", "size", "sha256" }`, and deletes it here. For an iOS simulator, Android emulator or macOS
   job the answer also carries `handoff`, a single-use token, and the staged
-  `.app` stays for 10 minutes so a hosted session on this Mac can take it with
+  `.app` or APK stays for 10 minutes so a hosted session on this Mac can take it with
   `device-host.app.handoff`. A client keeps at most one such bundle; its next
-  fetched iOS or macOS build or a revoked approval deletes it. An archive nobody fetched is deleted when its job
+  fetched native build or a revoked approval deletes it. An archive nobody fetched is deleted when its job
   is cancelled; one left by a server that crashed stays under
   `repos/<repo>/out/` until you delete it.
 

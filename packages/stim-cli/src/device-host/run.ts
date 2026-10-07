@@ -1,4 +1,5 @@
 import { hostedAppAttempt, hostedMacosAppSlot, isJsonObject, parseHostedOfferRequest } from '@stim-cli/core/state';
+import { collectHostedAndroidLogs } from './android-logs.ts';
 import { collectHostedIosLogs } from './ios-logs.ts';
 import { runHostedDevice } from './worker.ts';
 import { runHostedAndroidDevice } from './android.ts';
@@ -42,13 +43,13 @@ async function main(): Promise<void> {
     throw new Error('Invalid hosted macOS app slot.');
   if (input.mode === 'logs') {
     if (
-      input.platform !== 'ios' ||
+      (input.platform !== 'ios' && input.platform !== 'android') ||
       !process.env.STIM_HOME ||
       typeof input.since !== 'number' ||
       !Number.isFinite(input.since)
     )
-      throw new Error('Invalid hosted iOS log request.');
-    const more = collectHostedIosLogs(
+      throw new Error('Invalid hosted native log request.');
+    const more = (input.platform === 'android' ? collectHostedAndroidLogs : collectHostedIosLogs)(
       process.env.STIM_HOME,
       input.session as string,
       input.attempt as string,

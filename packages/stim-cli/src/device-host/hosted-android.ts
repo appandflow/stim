@@ -14,7 +14,7 @@ export async function prepareHostedAndroid(
 }
 export async function placeHostedAndroid(
   target: HostedAndroidTarget,
-  options: Omit<Parameters<typeof placeHostedNative>[1], 'platform' | 'reserved' | 'handoff'> & {
+  options: Omit<Parameters<typeof placeHostedNative>[1], 'platform' | 'reserved'> & {
     reserved: (placement: HostedAndroidPlacement) => void;
   },
 ): Promise<{ placement: HostedAndroidPlacement; launched: true | 'unverified' }> {

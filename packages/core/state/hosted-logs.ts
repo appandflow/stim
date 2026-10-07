@@ -10,7 +10,7 @@ export type HostedLogsCursor = Record<string, number>;
 export interface HostedLogsPage {
   records: NdjsonRecord[];
   cursor: HostedLogsCursor;
-  /** Last completed iOS collection window, for detecting catch-up progress independently of file offsets. */
+  /** Last completed native collection window, for detecting catch-up progress independently of file offsets. */
   checkpoint?: number;
   /** True when the budget ended this page before the end of the logs; ask again with `cursor`. */
   more: boolean;
@@ -41,14 +41,19 @@ export function hostedMacosLogsDir(home: string): string | null {
   }
 }
 
-export const hostedIosLogsDir = (home: string): string => join(home, 'ios-logs');
+export const hostedNativeLogsDir = (home: string, platform: 'ios' | 'android'): string =>
+  join(home, `${platform}-logs`);
+export const hostedIosLogsDir = (home: string): string => hostedNativeLogsDir(home, 'ios');
 
 /** The completed query window and overlap digests, or null for a missing, malformed or unreadable checkpoint. */
-export function readHostedIosLogsCheckpoint(
+export function readHostedNativeLogsCheckpoint(
   home: string,
-): { until: number; boundary: string[]; windowMs?: number } | null {
+  platform: 'ios' | 'android' = 'ios',
+): { until: number; boundary: string[]; windowMs?: number; appAttempt?: string; pid?: number } | null {
   try {
-    const value: unknown = JSON.parse(readFileSync(join(hostedIosLogsDir(home), 'checkpoint.json'), 'utf8'));
+    const value: unknown = JSON.parse(
+      readFileSync(join(hostedNativeLogsDir(home, platform), 'checkpoint.json'), 'utf8'),
+    );
     if (
       !isJsonObject(value) ||
       !Number.isSafeInteger(value.until) ||
@@ -61,12 +66,17 @@ export function readHostedIosLogsCheckpoint(
     return {
       until: value.until as number,
       boundary: value.boundary as string[],
+      ...(typeof value.appAttempt === 'string' && Number.isSafeInteger(value.pid) && (value.pid as number) > 0
+        ? { appAttempt: value.appAttempt, pid: value.pid as number }
+        : {}),
       ...(typeof value.windowMs === 'number' ? { windowMs: value.windowMs } : {}),
     };
   } catch {
     return null;
   }
 }
+
+export { readHostedNativeLogsCheckpoint as readHostedIosLogsCheckpoint };
 
 function readSpan(path: string, from: number, to: number): Buffer {
   const fd = openSync(path, 'r');

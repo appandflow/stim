@@ -973,9 +973,12 @@ test('agent-device cleanup guidance distinguishes shared state from workspace te
   }
 });
 
-test('hosted iOS data paths name their feature flag in the guides', () => {
-  const feature = FEATURES.find((entry) => entry === 'hosted-ios-data');
+test.each(['ios', 'android'])('hosted %s data paths name their feature flag in the guides', (platform) => {
+  const feature = FEATURES.find((entry) => entry === `hosted-${platform}-data`);
   assert(feature);
-  for (const body of [renderSection('lifecycle', 'hosted-ios'), renderSection('errors', 'STIM_HOSTING_REFUSED')])
+  for (const body of [
+    renderSection('lifecycle', `hosted-${platform}`),
+    renderSection('errors', 'STIM_HOSTING_REFUSED'),
+  ])
     expect(body).toContain(feature);
 });

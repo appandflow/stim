@@ -211,15 +211,20 @@ export async function chunkHostedApp(record: HostedAppRecord, params: unknown): 
 export async function handOverHostedApp(
   record: HostedAppRecord,
   bundle: string,
+  platform?: 'ios' | 'android' | 'macos',
 ): Promise<{ files: number; bytes: number }> {
   const blobs = hostedAppBlobs(record.session);
-  const root = realpathSync(bundle);
+  const apk = lstatSync(bundle).isFile();
+  if (platform === 'android' && !apk) throw new Error('Hosted Android handoff requires an APK file.');
+  if (apk && (record.files.length !== 1 || record.files[0]?.path !== 'App.apk' || record.files[0]?.kind !== 'file'))
+    throw new Error('Hosted Android handoff requires a single file entry named App.apk.');
+  const root = realpathSync(apk ? dirname(bundle) : bundle);
   let files = 0;
   let bytes = 0;
   for (const file of record.files) {
     const blob = join(blobs, file.sha256);
     if (validHostedAppBlob(blob, file)) continue;
-    const source = join(root, file.path);
+    const source = apk ? bundle : join(root, file.path);
     const temp = `${blob}.handoff-${randomUUID()}`;
     try {
       const stat = lstatSync(source, { throwIfNoEntry: false });

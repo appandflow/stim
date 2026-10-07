@@ -1,5 +1,11 @@
+import { createHash } from 'node:crypto';
+import { Command } from 'commander';
+import logsCommand from '../commands/logs.ts';
+import { pullHostedNativeLogs } from '../device-host/hosted-logs.ts';
+import { syncHostedLogs, followHostedLogs } from '../device-host/hosted-logs-sync.ts';
+import { workspaceLogsDir } from '../workspace/paths.ts';
 import { runStop } from '../commands/stop.ts';
-import { mkdtempSync, mkdirSync, rmSync, realpathSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, realpathSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { deviceHostMachinesFile, type HostedAndroidPlacement } from '@stim-cli/core/state';
@@ -40,6 +46,12 @@ let failure: string;
 let declined: string | null;
 let methods: { method: string; params: Record<string, unknown> }[];
 let manifest: Buffer;
+let blobs: Map<string, Buffer>;
+let retained: Map<string, Buffer>;
+let dataFeature: boolean;
+let handoffFailure: boolean;
+let logRecords: Record<string, unknown>[];
+const sha = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex');
 
 beforeEach(() => {
   home = mkdtempSync(join(tmpdir(), 'stim-android-host-'));
@@ -70,9 +82,18 @@ beforeEach(() => {
   declined = null;
   methods = [];
   manifest = Buffer.alloc(0);
+  blobs = new Map();
+  retained = new Map();
+  dataFeature = true;
+  handoffFailure = false;
+  logRecords = [];
+  writeFileSync(
+    join(root, 'package.json'),
+    JSON.stringify({ name: 'fixture', dependencies: { 'react-native': '0.0.0' } }),
+  );
   const connection = Object.create(BuildConnection.prototype) as BuildConnection;
   connection.close = () => {};
-  connection.supports = () => true;
+  connection.supports = (feature) => feature !== 'hosted-android-data' || dataFeature;
   connection.request = async (method, raw) => {
     const params = raw as Record<string, unknown>;
     methods.push({ method, params });
@@ -93,26 +114,46 @@ beforeEach(() => {
           },
         },
       };
+    if (method === 'device-host.stop')
+      logRecords.push({ ts: 100, src: 'device', level: 'error', msg: 'stop-time native tail' });
     if (method === 'device-host.reserve' || method === 'device-host.attach' || method === 'device-host.stop')
       return {
         result: { id: session, platform: 'android', state: method === 'device-host.stop' ? 'stopped' : state, device },
       };
-    if (method === 'device-host.app.offer')
+    if (method === 'device-host.logs.query') {
+      const cursor = params.cursor as Record<string, number> | undefined;
+      const from = cursor?.['device.ndjson'] ?? 0;
+      const end = Math.min(logRecords.length, from + 2);
       return {
         result: {
-          missing: manifest.length
-            ? JSON.parse(manifest.toString()).map((file: { sha256: string; size: number }) => ({
-                sha256: file.sha256,
-                size: file.size,
-                offset: 0,
-              }))
-            : [{ ...(params.manifest as object), offset: 0 }],
+          records: logRecords.slice(from, end),
+          cursor: { 'device.ndjson': end },
+          more: end < logRecords.length,
         },
       };
+    }
+    if (method === 'device-host.app.offer') {
+      const declared = params.manifest as { sha256: string; size: number };
+      manifest = blobs.get(declared.sha256) ?? Buffer.alloc(0);
+      const files = manifest.length ? JSON.parse(manifest.toString()) : [declared];
+      return {
+        result: {
+          missing: files
+            .filter((file: { sha256: string }) => !blobs.has(file.sha256))
+            .map((file: { sha256: string; size: number }) => ({ sha256: file.sha256, size: file.size, offset: 0 })),
+        },
+      };
+    }
     if (method === 'device-host.app.chunk') {
       const bytes = Buffer.from(params.data as string, 'base64');
-      if (!manifest.length) manifest = bytes;
+      if (sha(bytes) !== params.sha256) throw new Error('chunk digest mismatch');
+      blobs.set(params.sha256 as string, bytes);
       return { result: { offset: (params.offset as number) + bytes.length } };
+    }
+    if (method === 'device-host.app.handoff') {
+      if (handoffFailure) return { error: { code: 'action-failed', message: 'build digest refused' } };
+      for (const [digest, bytes] of retained) blobs.set(digest, bytes);
+      return { result: { files: retained.size, bytes: 11 } };
     }
     if (method === 'device-host.app.launch') return { result: { state: 'installed', launched: true } };
     return { result: {} };
@@ -260,4 +301,130 @@ test('stop clears a hosted slot and keeps successful siblings when another place
   });
   expect(readHostedAndroid(root, 'default')).toEqual({});
   expect(() => readHostedAndroid(root, 'tablet')).toThrow('deviceSlots.tablet.android.host');
+});
+
+async function deliver(
+  handoff?: { nodeId: string; token: string; sha256: string },
+  note: (line: string) => void = () => {},
+) {
+  const target = await prepareHostedAndroid('mini', {}, readHostedAndroid(root).default);
+  return placeHostedAndroid(target, {
+    root,
+    slot: 'default',
+    bundle: join(root, 'App.apk'),
+    bundleId: 'dev.fixture',
+    selectors: {},
+    release: true,
+    handoff,
+    note,
+    reserved: (value) => writeHostedAndroid(root, 'default', value),
+  });
+}
+
+test('an unchanged APK rerun sends no chunks and a changed APK sends its verified manifest and content', async () => {
+  await deliver();
+  methods = [];
+  await deliver();
+  expect(methods.filter((entry) => entry.method === 'device-host.app.chunk')).toEqual([]);
+  expect(methods.filter((entry) => entry.method === 'device-host.app.launch')).toHaveLength(1);
+  writeFileSync(join(root, 'App.apk'), 'changed APK');
+  methods = [];
+  await deliver();
+  const chunks = methods.filter((entry) => entry.method === 'device-host.app.chunk');
+  expect(chunks).toHaveLength(2);
+  expect(chunks.map((entry) => Buffer.from(entry.params.data as string, 'base64').toString())).toContain('changed APK');
+});
+
+test.each(['same-node', 'other-node', 'older-host', 'refused'])(
+  'Android handoff %s retains verified upload fallback',
+  async (scenario) => {
+    await deliver();
+    retained = new Map(blobs);
+    const apk = JSON.parse(manifest.toString())[0];
+    retained.delete(sha(manifest));
+    blobs.clear();
+    manifest = Buffer.alloc(0);
+    methods = [];
+    dataFeature = scenario !== 'older-host';
+    handoffFailure = scenario === 'refused';
+    const note = vi.fn<(line: string) => void>();
+    await deliver(
+      { nodeId: scenario === 'other-node' ? 'other' : 'node', token: 'a'.repeat(64), sha256: 'b'.repeat(64) },
+      note,
+    );
+    expect(methods.some((entry) => entry.method === 'device-host.app.handoff')).toBe(
+      ['same-node', 'refused'].includes(scenario),
+    );
+    expect(
+      methods.filter((entry) => entry.method === 'device-host.app.chunk' && entry.params.sha256 === apk.sha256),
+    ).toHaveLength(scenario === 'same-node' ? 0 : 1);
+    expect(note.mock.calls.some(([line]) => line.includes('uploading the app instead'))).toBe(
+      ['older-host', 'refused'].includes(scenario),
+    );
+  },
+);
+
+test('Android errors are paged into the workspace once per slot and stop copies the host final drain', async () => {
+  writeHostedAndroid(root, 'tablet', placement);
+  logRecords = [
+    { ts: 1, src: 'device', level: 'info', msg: 'startup' },
+    { ts: 2, src: 'device', level: 'error', msg: 'FATAL EXCEPTION: main' },
+    { ts: 3, src: 'device', level: 'error', msg: 'AndroidRuntime crash' },
+  ];
+  const target = await prepareHostedAndroid('mini', {}, placement);
+  await Promise.all([1, 2].map(() => pullHostedNativeLogs(root, 'tablet', placement, target.host, false, 'android')));
+  const file = join(workspaceLogsDir(root), 'android.tablet-host.ndjson');
+  const stored = readFileSync(file, 'utf8')
+    .trim()
+    .split('\n')
+    .map((line) => JSON.parse(line));
+  expect(stored.map((record) => record.msg)).toEqual(['startup', 'FATAL EXCEPTION: main', 'AndroidRuntime crash']);
+  expect(
+    stored.every((record) => record.src === 'device' && record.platform === 'android' && record.slot === 'tablet'),
+  ).toBe(true);
+  methods = [];
+  await stopHostedAndroid(root, 'tablet');
+  const stop = methods.findIndex((entry) => entry.method === 'device-host.stop');
+  expect(methods.slice(0, stop).some((entry) => entry.method === 'device-host.logs.query')).toBe(true);
+  expect(methods.slice(stop + 1).some((entry) => entry.method === 'device-host.logs.query')).toBe(true);
+  expect(readFileSync(file, 'utf8')).toContain('stop-time native tail');
+  expect(readHostedAndroid(root)).toEqual({});
+});
+
+test('stim logs --errors --json pulls Android native records without progress on stdout', async () => {
+  mkdirSync(workspaceLogsDir(root), { recursive: true });
+  writeFileSync(join(workspaceLogsDir(root), 'build-android.ndjson'), '');
+  writeHostedAndroid(root, 'default', placement);
+  logRecords = [
+    { ts: 1, src: 'device', level: 'info', msg: 'startup' },
+    { ts: 2, src: 'device', level: 'error', msg: 'FATAL EXCEPTION: main' },
+  ];
+  const output = vi.spyOn(console, 'log').mockImplementation(() => {});
+  const cwd = process.cwd();
+  process.chdir(root);
+  try {
+    const program = new Command();
+    logsCommand(program);
+    await program.parseAsync(['node', 'stim', 'logs', '--errors', '--json']);
+    expect(output.mock.calls.map(([line]) => JSON.parse(String(line)))).toMatchObject([
+      { src: 'device', platform: 'android', level: 'error', msg: 'FATAL EXCEPTION: main' },
+    ]);
+  } finally {
+    process.chdir(cwd);
+  }
+});
+
+test('older Android hosts get an update note and no log queries during sync or follow', async () => {
+  writeHostedAndroid(root, 'default', placement);
+  dataFeature = false;
+  const warning = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+  expect(await syncHostedLogs(root)).toBe(false);
+  expect(warning).toHaveBeenCalledWith(expect.stringContaining('needs a newer stim-server'));
+  const stop = followHostedLogs(root, false);
+  try {
+    await vi.waitFor(() => expect(warning.mock.calls.length).toBe(2), { timeout: 2000 });
+    expect(methods.some((entry) => entry.method === 'device-host.logs.query')).toBe(false);
+  } finally {
+    stop();
+  }
 });

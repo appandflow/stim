@@ -307,9 +307,32 @@ stop and worktree remove wait for device-host.stop, delete the host's owned
 emulator, close the gateway and clear placement. stop --json reports
 outcomes.device["android:host:<slot>"]. Forbidden or unknown-session also clears
 placement; an unreachable host keeps it and fails cleanup. A host restart stops
-sessions. Rerun the same machine to replace a stopped session. Host logcat,
-view/control and agent driving are not available yet; use local Metro logs
-for bundle errors.`,
+sessions. Rerun the same machine to replace a stopped session. View/control and
+agent driving are not available yet. JavaScript logs arrive through local Metro.
+
+Reruns send only missing manifest and APK digests from the session-scoped blob
+store. The host verifies reused bytes; each new attempt still installs the APK.
+When an Android build ran on the hosting Mac's pinned node, the host takes only
+the single App.apk matching the client's manifest. The build and hosting approvals
+must belong to the same tailnet node. Handoff failure falls back to upload,
+retrying a busy host for at most one minute.
+
+stim logs, including --errors and --json, pulls native logcat records as src: device.
+The host rechecks the exact ledger-owned serial and AVD name, resolves the app's
+pid on each collection and also drains its last observed pid after a crash or
+restart. If no pid was ever observed, native logs cannot be attributed to the app.
+PID-based logcat cannot distinguish historical reuse of an exited pid.
+Queries use bounded logcat -d -v epoch -T <epoch> --pid <pid> output, a ten-second
+budget, a persisted checkpoint and five-second overlap to deduplicate records.
+Logcat retains a finite buffer; records already evicted or persisted beyond the
+overlap may be unavailable. An oversized query retries the recent tail and writes
+a device warning naming any dropped interval. Followers share a child-aware log
+claim; install and stop cancel and settle the worker before native operations.
+Stop copies logs before and after the host's final collection and deletion, with
+each client drain bounded to 30 seconds and progress on stderr. Collected logs
+remain readable after stop. The host advertises hosted-android-data for Android
+handoff and native logs. Older hosts get a newer stim-server note, use upload
+and show records already copied here.`,
     },
     'hosted-ios': {
       summary: 'iOS on a named approved Mac: strict placement, private Metro, status and stop',

@@ -163,3 +163,36 @@ test('the first offer reuses uploaded verification, but same-size edits invalida
     syncBuiltinESMExports();
   }
 });
+
+test.each(['match', 'different-digest'])(
+  'Android handoff %s verifies a single App.apk or leaves it for upload',
+  async (scenario) => {
+    const file = entry('App.apk', 'client APK');
+    const offer = await manifest('android', [file]);
+    const apk = join(home, 'worker.apk');
+    writeFileSync(apk, scenario === 'different-digest' ? 'worker APK' : 'client APK');
+    expect(await handOverHostedApp(readHostedApp(session, 'android'), apk, 'android')).toEqual({
+      files: scenario === 'match' ? 1 : 0,
+      bytes: scenario === 'match' ? 10 : 0,
+    });
+    expect(offerHostedApp(offer).missing).toEqual(
+      scenario === 'match' ? [] : [{ sha256: file.sha256, size: file.size, offset: 0 }],
+    );
+  },
+);
+
+test.each(['extra-file', 'link', 'wrong-path'])(
+  'Android handoff refuses the %s manifest instead of taking unrelated build bytes',
+  async (scenario) => {
+    const file = {
+      ...entry(scenario === 'wrong-path' ? 'Other.apk' : 'App.apk', 'client APK'),
+      kind: scenario === 'link' ? ('link' as const) : ('file' as const),
+    };
+    await manifest('android', [file, entry('Info.plist', 'plist')]);
+    const apk = join(home, 'worker.apk');
+    writeFileSync(apk, 'client APK');
+    await expect(handOverHostedApp(readHostedApp(session, 'android'), apk, 'android')).rejects.toThrow(
+      'single file entry named App.apk',
+    );
+  },
+);
