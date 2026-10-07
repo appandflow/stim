@@ -35,6 +35,7 @@ import {
   type InstalledService,
   type ServerBuild,
 } from './service-plist.ts';
+import { SetupPrinter, setupDisplayFor, type SetupDisplay, type StepText } from './setup-output.ts';
 import { pruneSetupJournals, writeSetupJournal } from './setup-journal.ts';
 import { hostPermissionPanes, installHostApp, requestHostPermissions, type HostApp } from './stim-host.ts';
 import { findTailscale, readRawTailscaleStatus, serveRoute, type ServeRoute } from './tailscale.ts';
@@ -52,6 +53,7 @@ export interface SetupOptions {
   pathPrepend: string[];
   yes: boolean;
   json: boolean;
+  verbose: boolean;
 }
 
 class SetupRefusal extends Error {
@@ -79,6 +81,7 @@ export function parseSetupArgs(args: string[], now: number): SetupOptions {
       'path-prepend': { type: 'string', multiple: true },
       yes: { type: 'boolean' },
       json: { type: 'boolean' },
+      verbose: { type: 'boolean' },
     },
   });
   if (!values.client?.trim()) throw new SetupRefusal('--client takes a tailnet node id.');
@@ -116,6 +119,7 @@ export function parseSetupArgs(args: string[], now: number): SetupOptions {
     pathPrepend,
     yes: values.yes === true,
     json: values.json === true,
+    verbose: values.verbose === true,
   };
 }
 
@@ -210,6 +214,7 @@ interface SetupOutput {
 }
 
 export interface SetupDeps {
+  display?: SetupDisplay;
   signal?: AbortSignal;
   now(): number;
   sleep(ms: number): Promise<void>;
@@ -303,6 +308,7 @@ export function defaultSetupDeps(): SetupDeps {
     now: Date.now,
     sleep,
     tty: process.stdin.isTTY === true,
+    display: setupDisplayFor(process.stdout.isTTY === true, process.env, (text) => void process.stdout.write(text)),
     stdout: (line) => console.log(line),
     stderr: (line) => console.error(line),
     confirm: (question, timeoutMs) =>
@@ -411,12 +417,15 @@ function requireApprovalMode(deps: SetupDeps, options: SetupOptions): void {
     throw new SetupRefusal('To approve requests, rerun with --yes or in a terminal.');
 }
 
+type StepView = Pick<StepText, 'text' | 'running' | 'hidden'>;
+
 type StepWriter = (
   id: string,
   state: SetupJournal['steps'][number]['state'],
   title: string,
   detail?: string,
   fix?: string,
+  view?: StepView,
 ) => void;
 
 async function checkPermissions(
@@ -429,16 +438,30 @@ async function checkPermissions(
 ): Promise<void> {
   const wait = <T>(work: Promise<T>) => interruptible(work, deps.signal);
   const panes = await wait(deps.panes());
-  for (const [key, field, title, pane, feature] of [
-    ['screenRecording', 'screenRecording', panes.screen, 'Privacy_ScreenCapture', 'viewing hosted simulators'],
-    ['deviceControl', 'accessibility', panes.control, 'Privacy_Accessibility', 'controlling hosted simulators'],
+  for (const [key, field, title, pane, feature, label] of [
+    [
+      'screenRecording',
+      'screenRecording',
+      panes.screen,
+      'Privacy_ScreenCapture',
+      'viewing hosted simulators',
+      'Screen recording',
+    ],
+    [
+      'deviceControl',
+      'accessibility',
+      panes.control,
+      'Privacy_Accessibility',
+      'controlling hosted simulators',
+      'Device control',
+    ],
   ] as const) {
     const id = `permissions.${key}`;
     const read = async () => (await wait(deps.health(options.port)))?.host ?? null;
     let permissions = await read();
     if (permissions?.[field]) {
       output.permissions[key] = 'granted';
-      report(id, 'ok', title, 'Already granted.');
+      report(id, 'ok', title, 'Already granted.', undefined, { text: `${label} permission already granted` });
       continue;
     }
     report(
@@ -446,6 +469,10 @@ async function checkPermissions(
       'running',
       title,
       `Click Allow for ${desktop ? 'the app serving this port' : host.name}. Prompts appear on this Mac's screen. Press s in a terminal to skip.`,
+      undefined,
+      {
+        running: `${label} permission: click Allow for ${desktop ? 'the app serving this port' : host.name} on this Mac's screen (press s to skip)`,
+      },
     );
     if (!desktop) await wait(deps.requestPermissions(host.app));
     const start = deps.now();
@@ -472,11 +499,50 @@ async function checkPermissions(
       title,
       permissions?.[field] ? 'Granted.' : `${skipped ? 'skipped' : 'pending'}: ${feature} will not work.`,
       `System Settings > Privacy & Security > ${title}`,
+      {
+        text: permissions?.[field]
+          ? `${label} permission granted`
+          : `${label} permission ${skipped ? 'skipped' : 'not granted'}: ${feature} will not work`,
+      },
     );
   }
 }
 
-function summarizeSetup(output: SetupOutput, options: SetupOptions, log: (line: string) => void): void {
+function printSuccess(
+  output: SetupOutput,
+  options: SetupOptions,
+  concise: { printer: SetupPrinter; gaps: { subject: string; fix: string }[]; exit: number | undefined },
+): void {
+  const { printer, gaps, exit } = concise;
+  const machine = output.route.dnsName?.split('.')[0] ?? output.label;
+  const client = output.granted[0]?.client.name ?? options.nodeId;
+  const names = { build: 'build', 'device-host': 'host simulators' };
+  const what = options.capabilities.map((c) => names[c]).join(' and ');
+  if (exit === 0) printer.headline('ok', `${machine} is ready to ${what} for ${client}`);
+  else if (exit === 1) printer.headline('failed', 'Setup did not finish');
+  else if (exit === 2) printer.headline('pending', 'No request was approved before the ticket expired');
+  else printer.headline('pending', `${machine} is set up, with gaps`);
+  printer.result(
+    output.granted.map((g) => ({
+      state: 'ok' as const,
+      text: `${g.capability === 'build' ? 'builds' : 'hosted simulators'}: approved for ${g.client.name} (request ${g.id})`,
+    })),
+  );
+  for (const gap of gaps) printer.line(`  Fix (${gap.subject}): ${gap.fix}`);
+  const undo = [
+    ...output.granted.map((g) => `stim-server devices revoke ${g.id}`),
+    ...(output.managed && output.granted.length ? [`stim-server service uninstall --label ${output.label}`] : []),
+  ];
+  if (undo.length) printer.dim(`To undo: ${undo.join('; ')}`);
+}
+
+function summarizeSetup(
+  output: SetupOutput,
+  options: SetupOptions,
+  log: (line: string) => void,
+  concise?: { printer: SetupPrinter; gaps: { subject: string; fix: string }[]; exit: number | undefined },
+): void {
+  if (concise) return printSuccess(output, options, concise);
   for (const capability of options.capabilities) {
     if (!output.granted.some((g) => g.capability === capability))
       output.warnings.push(`${capability === 'build' ? 'Builds' : 'Hosted simulators'} have no approval.`);
@@ -533,6 +599,13 @@ export async function runSetup(args: string[], version: string, deps: SetupDeps)
     warnings: [],
   };
   const log = (line: string) => (json ? deps.stderr : deps.stdout)(line);
+  const verbose = args.includes('--verbose');
+  const display = deps.display ?? { tty: false, color: false, raw: () => {} };
+  const printer = new SetupPrinter(log, display, json || verbose);
+  const concise = !json && !verbose;
+  const chatter = concise ? () => {} : log;
+  const gaps: { subject: string; fix: string }[] = [];
+  if (!json) printer.banner();
   const wait = <T>(work: Promise<T>) => interruptible(work, deps.signal);
   let release: (() => void) | undefined;
   let active = 'args';
@@ -553,6 +626,7 @@ export async function runSetup(args: string[], version: string, deps: SetupDeps)
     title: string,
     detail?: string,
     fix?: string,
+    view: StepView = {},
   ) => {
     if (deps.signal?.aborted && state !== 'failed') throw new SetupRefusal('interrupted');
     active = id;
@@ -561,9 +635,8 @@ export async function runSetup(args: string[], version: string, deps: SetupDeps)
     if (index < 0) journal.steps.push(value);
     else journal.steps[index] = value;
     save();
-    log(
-      `${state === 'ok' ? '[ok]' : state === 'failed' ? '[failed]' : `[${state}]`} ${title}${detail ? `: ${detail}` : ''}${fix ? `\nFix: ${fix}` : ''}`,
-    );
+    if (fix && state !== 'ok' && state !== 'running') gaps.push({ subject: title, fix });
+    printer.step({ ...value, ...view });
   };
   try {
     options = parseSetupArgs(args, deps.now());
@@ -581,14 +654,14 @@ export async function runSetup(args: string[], version: string, deps: SetupDeps)
     requireApprovalMode(deps, options);
     release = deps.claim();
     deps.prune(deps.now());
-    step('preflight', 'ok', 'Preflight');
+    step('preflight', 'ok', 'Preflight', undefined, undefined, { hidden: true });
     const opts = options;
     let installed: InstalledService | null = null;
     let host: HostApp | undefined;
     let script = '';
     let desktop = false;
     await deps.withInstallClaim(opts.label, async () => {
-      step('server', 'running', 'stim-server');
+      step('server', 'running', 'stim-server', undefined, undefined, { running: 'Checking stim-server' });
       installed = await wait(deps.installed(opts.label));
       if (installed && installed.port !== opts.port)
         throw new SetupRefusal(`${opts.label} uses port ${installed.port}; rerun with that --port or another --label.`);
@@ -619,17 +692,17 @@ export async function runSetup(args: string[], version: string, deps: SetupDeps)
             opts.label,
             { ...installed, script: installed.script, node: installed.node, port: installed.port },
             { release: version },
-            log,
+            chatter,
           ),
         ))
-          log(note);
+          chatter(note);
         installed = await wait(deps.installed(opts.label));
         const updated = await wait(deps.health(opts.port));
         if (!updated) throw new SetupRefusal('The updated server is not answering.');
         output.server = { version: updated.version, stimBuild: updated.stimBuild ?? null };
         script = installed?.script ?? '';
       } else if (decision === 'install') {
-        const target = await wait(deps.install(deps.versions(opts.label), { release: version }, deps.node, log));
+        const target = await wait(deps.install(deps.versions(opts.label), { release: version }, deps.node, chatter));
         script = target.script;
         output.server = target.build;
       } else {
@@ -645,20 +718,26 @@ export async function runSetup(args: string[], version: string, deps: SetupDeps)
           : decision === 'reuse'
             ? 'Already installed; never downgrades.'
             : 'Installed exact release.',
+        undefined,
+        {
+          text: desktop
+            ? `using the app's stim-server ${output.server.version}`
+            : `stim-server ${output.server.version} ${decision === 'reuse' ? 'already installed' : 'installed'}`,
+        },
       );
-      step('host', 'running', 'Stim Host');
+      step('host', 'running', 'Stim Host', undefined, undefined, { running: 'Installing Stim Host' });
       host = await wait(deps.installHost());
-      step('host', 'ok', 'Stim Host', host.app);
+      step('host', 'ok', 'Stim Host', host.app, undefined, { text: 'Stim Host installed' });
       if (installed?.host) {
         const app = dirname(dirname(dirname(installed.host)));
         host = { ...host, executable: installed.host, app, name: basename(app, '.app') };
       }
-      step('service', 'running', 'Service');
+      step('service', 'running', 'Service', undefined, undefined, { running: 'Starting the service' });
       if (!desktop) {
         for (const note of await wait(
           deps.installJob({ ...opts, serve: false }, { script, host, requestPermissions: false }),
         ))
-          log(note);
+          chatter(note);
         const ready = await wait(deps.health(opts.port));
         if (!ready || (ready.startup && ready.startup.state !== 'ready'))
           throw new SetupRefusal('The installed server is not ready; check service status.');
@@ -668,10 +747,12 @@ export async function runSetup(args: string[], version: string, deps: SetupDeps)
         'ok',
         'Service',
         desktop ? 'Reusing app server; no LaunchAgent installed.' : `${opts.label} running.`,
+        undefined,
+        { text: desktop ? 'reusing the app server (no LaunchAgent)' : `LaunchAgent ${opts.label} running` },
       );
     });
     const previous = desktop ? null : await wait(deps.installed(opts.label));
-    step('route', 'running', 'Tailnet route');
+    step('route', 'running', 'Tailnet route', undefined, undefined, { running: 'Checking the tailnet route' });
     const route = await wait(deps.route(opts.port));
     output.route.state = route.state;
     output.route.port = route.port;
@@ -719,8 +800,12 @@ export async function runSetup(args: string[], version: string, deps: SetupDeps)
       }
       throw error;
     }
-    step('route', 'ok', 'Tailnet route', `${preflight.dnsName}: https port ${verified.port}`);
-    step('approve', 'running', 'Access approval', `Waiting until ${opts.expiresAt}.`);
+    step('route', 'ok', 'Tailnet route', `${preflight.dnsName}: https port ${verified.port}`, undefined, {
+      text: `tailnet route https ${verified.port} (no Funnel)`,
+    });
+    step('approve', 'running', 'Access approval', `Waiting until ${opts.expiresAt}.`, undefined, {
+      running: `Waiting for approval until ${opts.expiresAt}`,
+    });
     const declined = new Set<SetupCapability>();
     requireApprovalMode(deps, opts);
     while (deps.now() < Date.parse(opts.expiresAt)) {
@@ -734,20 +819,21 @@ export async function runSetup(args: string[], version: string, deps: SetupDeps)
         if (!approved && !opts.yes && !deps.tty)
           throw new SetupRefusal('To approve requests, rerun with --yes or in a terminal.');
         if (!approved && !opts.yes) {
-          log(
-            capability === 'build'
-              ? 'This runs its project code on this Mac to build.'
-              : 'This runs its native app code in session-owned simulators on this Mac.',
-          );
-          const yes = await wait(
-            deps.confirm(
-              `${record.name} (node ${opts.nodeId.slice(0, 4)}...) asks to ${verb}. Approve? [y/N] `,
-              Math.max(1, Date.parse(opts.expiresAt) - deps.now()),
-            ),
-          );
+          printer.clear();
+          if (!concise)
+            log(
+              capability === 'build'
+                ? 'This runs its project code on this Mac to build.'
+                : 'This runs its native app code in session-owned simulators on this Mac.',
+            );
+          const question = concise
+            ? `Approve ${record.name} to ${capability === 'build' ? 'build' : 'host simulators'} here (runs its ${capability === 'build' ? 'project' : 'app'} code on this Mac)? [y/N] `
+            : `${record.name} (node ${opts.nodeId.slice(0, 4)}...) asks to ${verb}. Approve? [y/N] `;
+          const yes = await wait(deps.confirm(question, Math.max(1, Date.parse(opts.expiresAt) - deps.now())));
           if (deps.now() >= Date.parse(opts.expiresAt)) break;
           if (!yes) {
             declined.add(capability);
+            printer.clear();
             deps.stderr(`stim-server: ${capability} approval refused.`);
             step(`approve.${capability}`, 'failed', `${capability} refused`, 'No approval given.');
             continue;
@@ -763,6 +849,10 @@ export async function runSetup(args: string[], version: string, deps: SetupDeps)
           'ok',
           `${approved ? 'Already approved' : 'Approved'} ${record.name} (${opts.nodeId}) for ${capability === 'build' ? 'builds' : 'hosted simulators'}`,
           `request ${record.id}`,
+          undefined,
+          {
+            text: `${approved ? 'already approved' : 'approved'} ${record.name} for ${capability === 'build' ? 'builds' : 'hosted simulators'}`,
+          },
         );
       }
       if (opts.capabilities.every((c) => declined.has(c) || journal.granted.some((g) => g.capability === c))) break;
@@ -775,10 +865,14 @@ export async function runSetup(args: string[], version: string, deps: SetupDeps)
       journal.granted.length === opts.capabilities.length
         ? 'Chosen capabilities approved.'
         : 'Missing approval: builds or hosted simulators will not work. Generate a new command after expiry.',
+      undefined,
+      journal.granted.length === opts.capabilities.length
+        ? { hidden: true }
+        : { text: 'no approval before the ticket expired: builds or hosted simulators will not work' },
     );
     if (journal.granted.length) {
       if (opts.capabilities.includes('device-host')) await checkPermissions(deps, opts, host!, desktop, output, step);
-      step('tools', 'running', 'Tools');
+      step('tools', 'running', 'Tools', undefined, undefined, { running: 'Checking build tools' });
       const tools = await wait(deps.toolchain(opts));
       if (!tools) throw new SetupRefusal('Could not read the local build toolchain.');
       const checks: [string, boolean, string, string][] = [
@@ -828,9 +922,13 @@ export async function runSetup(args: string[], version: string, deps: SetupDeps)
               ? detail
               : `${detail}; ${opts.capabilities.includes('build') ? 'builds requiring this tool' : 'hosted simulators'} will not work.`,
           present || !needed ? undefined : fix,
+          { hidden: present || !needed },
         );
       }
-      step('tools', 'ok', 'Tools', 'Checked; installs nothing.');
+      step('tools', 'ok', 'Tools', 'Checked; installs nothing.', undefined, {
+        text: 'build tools ready',
+        hidden: output.tools.some((t) => t.state === 'missing'),
+      });
     }
   } catch (error) {
     const message = deps.signal?.aborted ? 'interrupted' : error instanceof Error ? error.message : String(error);
@@ -849,7 +947,8 @@ export async function runSetup(args: string[], version: string, deps: SetupDeps)
       output.warnings.push(detail);
     }
     const code = (error as { code?: string }).code;
-    deps.stderr(`stim-server: ${code ? `${code}: ` : ''}${message}`);
+    printer.clear();
+    if (!(concise && display.tty)) deps.stderr(`stim-server: ${code ? `${code}: ` : ''}${message}`);
     output.warnings.push(message);
   } finally {
     try {
@@ -871,7 +970,7 @@ export async function runSetup(args: string[], version: string, deps: SetupDeps)
         output.warnings.push(message);
       }
       output.ok = journal.exit === 0;
-      if (options) summarizeSetup(output, options, log);
+      if (options) summarizeSetup(output, options, log, concise ? { printer, gaps, exit: journal.exit } : undefined);
       if (json) deps.stdout(JSON.stringify(output));
     } finally {
       release?.();
