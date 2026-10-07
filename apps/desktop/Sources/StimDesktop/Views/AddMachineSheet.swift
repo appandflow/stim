@@ -158,11 +158,14 @@ struct AddMachineSheet: View {
         Text("Every chosen capability is already approved. Next checks the tools and tests a sample build.")
           .foregroundStyle(Palette.success)
       } else {
-        commandBox
+        if model.command != nil { commandBox }
         Text(
           "Needs Node 22.12+ there. Run it in Terminal while signed in at that Mac: macOS shows permission prompts on its screen."
         )
         .font(.stim(.footnote)).foregroundStyle(Palette.secondary)
+      }
+      if wizard.failure(now: model.now) == .noWorkspace {
+        failureContent(.noWorkspace)
       }
     }
   }
@@ -355,7 +358,7 @@ struct AddMachineSheet: View {
           Button("Next") { Task { await model.pick() } }.disabled(
             model.reachability != .ready || model.selfNode == nil || model.busy)
         } else if step == 1 {
-          Button("Next") { Task { await model.next() } }.disabled(model.command == nil || model.busy)
+          Button("Next") { Task { await model.next() } }.disabled(model.version == nil || model.selfNode == nil || model.busy)
         } else if wizard.phase == .approved {
           Button("Next") { Task { await model.openTools() } }.disabled(model.busy)
         } else if wizard.failure(now: model.now) == .expired || isGrantedOther {

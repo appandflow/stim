@@ -244,6 +244,7 @@ public struct SetupWizard: Sendable {
   private var writeRequested = false
   private var lastAsk: Date?
   private var existingIds: [SetupCapability: String] = [:]
+  private var preStateKnown = false
 
   public init(settings: Settings = Settings(), hasWorkspace: Bool = true) {
     self.settings = settings
@@ -305,7 +306,8 @@ public struct SetupWizard: Sendable {
       self.build = build
       self.host = host
       mirrorHostPermissions()
-      if ticket != nil {
+      if ticket == nil { preStateKnown = true }
+      if ticket != nil, preStateKnown {
         for capability in capabilities {
           if let id = status(for: capability)?.deviceId, id != existingIds[capability] { revokeIds.insert(id) }
         }
@@ -376,7 +378,7 @@ public struct SetupWizard: Sendable {
   }
 
   public func failure(now: Date) -> Failure? {
-    if !hasWorkspace, phase != .pick, phase != .choose { return .noWorkspace }
+    if !hasWorkspace, phase != .pick { return .noWorkspace }
     for capability in SetupCapability.allCases where capabilities.contains(capability) {
       if let grant = journal?.granted.first(where: { $0.capability == capability }),
         let id = status(for: capability)?.deviceId, grant.id != id
