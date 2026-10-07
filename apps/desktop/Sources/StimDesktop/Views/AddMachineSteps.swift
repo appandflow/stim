@@ -77,7 +77,7 @@ struct AddMachineSteps: View {
           }
         }
         if !sample.lines.isEmpty {
-          TerminalCard(lines: sample.lines, mode: .live, width: 650, animates: !model.isFixture, height: 208, maxVisibleLines: 10)
+          TerminalCard(lines: sample.lines, mode: .live, width: nil, animates: !model.isFixture, height: 208, maxVisibleLines: 10)
         }
         if let error = sample.cleanupError { Text("Could not stop the sample: \(error)").foregroundStyle(Palette.error) }
         HStack {
