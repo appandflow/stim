@@ -4172,6 +4172,14 @@ msgstr "Wait"
 msgid "Waiting for {name}'s build of the same app"
 msgstr "Waiting for {name}'s build of the same app"
 
+#: src/lib/format.ts
+msgid "Waiting for a build slot ({inUse}/{max} in use) {elapsed}"
+msgstr "Waiting for a build slot ({inUse}/{max} in use) {elapsed}"
+
+#: src/lib/format.ts
+msgid "Waiting for a device slot ({inUse}/{max} in use) {elapsed}"
+msgstr "Waiting for a device slot ({inUse}/{max} in use) {elapsed}"
+
 #: src/components/device-grid-tile.tsx
 msgid "Waiting for a frame"
 msgstr "Waiting for a frame"

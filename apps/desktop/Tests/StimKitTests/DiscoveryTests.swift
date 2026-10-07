@@ -148,6 +148,27 @@ struct DiscoveryTests {
     #expect(!Discovery.fresh(event.prompt.type, rememberedAt: event.rememberedAt, now: now.addingTimeInterval(120)))
   }
 
+  @Test func capacityWaitsRequireThreeMinuteLongDeviceWaitsWithinSixHours() throws {
+    func wait(age: TimeInterval = 0, ms: Double? = 60_000, kind: String = "device-wait") -> CapacityWait {
+      CapacityWait(
+        at: ISO8601DateFormatter().string(from: now.addingTimeInterval(-age)), kind: kind,
+        platform: "ios", max: 1, workspace: "fixture", ms: ms)
+    }
+    #expect(Discovery.capHit(events: [], waits: [wait(), wait()], now: now, mac: mini) == nil)
+    let waits = [wait(age: 6 * 3600), wait(age: 120), wait(age: 60)]
+    let event = try #require(Discovery.capHit(events: [], waits: waits, now: now, mac: mini))
+    #expect(event.prompt.action == .addMachine(mac: mini, hostedSimulators: true))
+    #expect(event.rememberedAt == now.addingTimeInterval(-60))
+    #expect(Discovery.capHit(events: [], waits: Array(repeating: wait(ms: 59_999), count: 3), now: now, mac: mini) == nil)
+    #expect(Discovery.capHit(events: [], waits: Array(repeating: wait(age: 6 * 3600 + 1), count: 3), now: now, mac: mini) == nil)
+    for ignored in [wait(age: -1), wait(ms: nil), wait(kind: "build-wait")] {
+      #expect(Discovery.capHit(events: [], waits: [wait(), wait(), ignored], now: now, mac: mini) == nil)
+    }
+    let refusalEvent = try #require(Discovery.capHit(events: [refusal()], waits: waits, now: now, mac: mini))
+    #expect(refusalEvent.rememberedAt == now)
+    #expect(Discovery.capHit(events: [refusal()], waits: [], now: now, mac: mini) != nil)
+  }
+
   @Test func awayRequiresALongRunAnIdleUserAndNoPairedPhone() {
     #expect(Discovery.away(pairedPhones: 0, durationMs: 600_000, idleSeconds: 301) == nil)
     #expect(Discovery.away(pairedPhones: 0, durationMs: 600_001, idleSeconds: 300) == nil)

@@ -18,12 +18,13 @@ const { values } = parseArgs({
     workspaces: { type: 'string' },
     'free-gb': { type: 'string', default: '212' },
     overlay: { type: 'string' },
+    'slot-waits': { type: 'boolean', default: false },
   },
 });
 
 const PAIRING_TTL_MS = 5 * 60 * 1000;
 const TOKENS_FILE = join(tmpdir(), 'stim-mobile-mock-server-tokens.json');
-const fixtures = loadFixtures();
+const fixtures = loadFixtures({ slotWaits: values['slot-waits'] });
 const legacyArchives = process.env.STIM_MOCK_LEGACY_ARCHIVES === '1';
 const recording = loadRecording();
 let recordingEnabled = true;

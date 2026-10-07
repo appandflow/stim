@@ -92,7 +92,7 @@ final class DiscoveryCoordinator: ObservableObject {
         await machines.settings.refresh()
         let report = try? await stats.machine()
         placements = report?.offload?.placements
-        rememberCapacityRefusal(report?.capacityRefusals)
+        rememberCapacityEvents(report)
         evaluate()
       }
     } else {
@@ -111,7 +111,7 @@ final class DiscoveryCoordinator: ObservableObject {
       let report = try? await stats.machine()
       polling = false
       if let report { placements = report.offload?.placements }
-      rememberCapacityRefusal(report?.capacityRefusals)
+      rememberCapacityEvents(report)
       if let peers {
         let result = Discovery.newMac(macs: peers, seen: persistence.seenPeers, machines: machines.entries ?? [], now: Date())
         persistence.seenPeers = result.seen
@@ -121,8 +121,10 @@ final class DiscoveryCoordinator: ObservableObject {
     }
   }
 
-  private func rememberCapacityRefusal(_ events: [CapacityRefusal]?) {
-    if let event = Discovery.capHit(events: events ?? [], now: Date(), mac: macs.first) {
+  private func rememberCapacityEvents(_ report: MachineStats?) {
+    if let event = Discovery.capHit(
+      events: report?.capacityRefusals ?? [], waits: report?.capacityWaits ?? [], now: Date(), mac: macs.first)
+    {
       remember(event.prompt, rememberedAt: event.rememberedAt)
     }
   }

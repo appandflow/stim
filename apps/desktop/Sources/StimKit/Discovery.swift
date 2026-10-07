@@ -148,14 +148,16 @@ public enum Discovery {
   }
 
   public static func capHit(
-    events: [CapacityRefusal], now: Date, mac: TailnetMac?
+    events: [CapacityRefusal], waits: [CapacityWait] = [], now: Date, mac: TailnetMac?
   ) -> (prompt: DiscoveryPrompt, rememberedAt: Date)? {
-    let dates = events.filter { $0.kind == "device" }.compactMap { parseTimestamp($0.at) }
-    guard
-      let at = dates.filter({
+    func freshDates(_ timestamps: [String]) -> [Date] {
+      timestamps.compactMap(parseTimestamp).filter {
         now.timeIntervalSince($0) >= 0 && fresh(.capHit, rememberedAt: $0, now: now)
-      }).max()
-    else { return nil }
+      }
+    }
+    let refusals = freshDates(events.filter { $0.kind == "device" }.map(\.at))
+    let longWaits = freshDates(waits.filter { $0.kind == "device-wait" && ($0.ms ?? 0) >= 60_000 }.map(\.at))
+    guard let at = (refusals + (longWaits.count >= 3 ? longWaits : [])).max() else { return nil }
     let prompt = banner(
       .capHit, title: "Device limit reached. Run simulators on \(mac?.machine ?? "another Mac")?",
       mac: mac, hostedSimulators: true)

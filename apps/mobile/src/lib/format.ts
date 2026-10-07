@@ -136,6 +136,17 @@ export function buildTiming(build: BuildReport, now: number): { elapsed: string;
   };
 }
 
+export function slotWait(build: BuildReport, now: number): string | null {
+  const wait = build.waitingFor;
+  if (!wait || (wait.kind !== 'build-slot' && wait.kind !== 'device-slot')) return null;
+  const { inUse, max } = wait;
+  const since = Date.parse(wait.since);
+  const elapsed = Number.isFinite(since) ? clockDuration(now - since) : '';
+  return wait.kind === 'build-slot'
+    ? t`Waiting for a build slot (${inUse}/${max} in use) ${elapsed}`.trim()
+    : t`Waiting for a device slot (${inUse}/${max} in use) ${elapsed}`.trim();
+}
+
 /**
  * Until the run knows its outcome, `stim status` reports the outcome of the project's previous run. An older stim
  * sends no `outcomeKnown`; its outcome is settled from prebuild, pods, compile or install on.

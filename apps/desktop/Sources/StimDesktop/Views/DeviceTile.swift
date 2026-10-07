@@ -1062,6 +1062,9 @@ private struct BuildCover: View {
             : "Waiting for the \(platformName(build.platform)) build"
         )
         .font(.stim(.callout)).foregroundStyle(.white.opacity(0.85))
+        if let text = build.waitingFor?.text(at: context.date) {
+          Text(text).font(.stim(.caption)).foregroundStyle(.white.opacity(0.85)).monospacedDigit()
+        }
         Text([phase, counts].compactMap { $0 }.joined(separator: " \u{00B7} "))
           .font(.stim(.caption))
           .foregroundStyle(.white.opacity(0.6))

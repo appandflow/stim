@@ -30,6 +30,7 @@ import {
   nextBuild,
   planDetail,
   buildTiming,
+  slotWait,
   macosBuildLabel,
   recheckNote,
 } from '@/lib/format';
@@ -439,6 +440,7 @@ function RunningBuild({
 }) {
   const { elapsed, estimate } = buildTiming(build, now);
   const remote = remoteBuild(build, now);
+  const waiting = slotWait(build, now);
   const output = useBuildOutput(path, build.slot, build.startedAt, OUTPUT_LINES).map((record) => record.msg);
   const reported = build.detail?.line;
   const lines = reported && output.at(-1) !== reported ? [...output, reported].slice(-OUTPUT_LINES) : output;
@@ -454,6 +456,11 @@ function RunningBuild({
         </Text>
       </View>
       {build.phase === 'wait' && build.waitingOn ? <WaitingOn path={build.waitingOn.path} current={path} /> : null}
+      {waiting ? (
+        <Text variant="callout" tone="secondary" style={styles.waiting}>
+          {waiting}
+        </Text>
+      ) : null}
       <PhaseList
         steps={phaseSteps(build, history, now)}
         cacheLabel={cacheLookupLabel(build)}
@@ -862,6 +869,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   segmentLabelOverlay: { ...StyleSheet.absoluteFill },
   buildingDot: { width: 6, height: 6, borderRadius: theme.radius.round, backgroundColor: theme.colors.primary },
+  waiting: { fontVariant: ['tabular-nums'] },
   elapsed: { flexDirection: 'row', alignItems: 'baseline', gap: theme.space.md },
   big: {
     ...theme.typography.title,
