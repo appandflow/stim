@@ -13,7 +13,8 @@ The design is in
 ## Commands
 
 ```bash
-stim-server [--port <n>]          # serve paired clients, port 7787 by default
+stim-server [--port <n>] [--loopback-only]
+                                  # serve paired clients, port 7787 by default
 stim-server pair [--port <n>] [--control]
                                   # print a single-use pairing payload
 stim-server devices [list]        # list pairings, approvals, requests and hosted sessions
@@ -27,6 +28,11 @@ stim-server setup --client <node-id> --ticket <t> --expires <iso> --build|--devi
 stim-server service install|status|update|rollback|uninstall
                                   # run stim-server as a macOS LaunchAgent, see below
 ```
+
+`--loopback-only` makes the server listen on `127.0.0.1` only. Without it, the
+server also listens on this Mac's Tailscale addresses while Tailscale runs (see
+[Tailscale](#tailscale)). Stim Desktop starts its own server with the flag
+unless it serves phones.
 
 `--env KEY=VALUE` and `--path-prepend <dir>` (each repeatable) apply to the
 serving command: see [Run as a service](#run-as-a-service).

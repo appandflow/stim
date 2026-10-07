@@ -51,8 +51,9 @@ import {
 } from '../src/tailscale.ts';
 
 const USAGE = `Usage:
-  stim-server [--port <n>] [--env KEY=VALUE]... [--path-prepend <dir>]...
+  stim-server [--port <n>] [--loopback-only] [--env KEY=VALUE]... [--path-prepend <dir>]...
                                     serve paired clients (default port ${DEFAULT_PORT});
+                                    --loopback-only listens on 127.0.0.1 and never on a Tailscale address;
                                     --env and --path-prepend apply after the login shell's environment
   stim-server setup --client <node-id> --ticket <t> --expires <iso>
                     [--build] [--device-host] [--port <n>] [--label <name>]
@@ -115,7 +116,7 @@ function macName(tailscale: TailscaleState): string {
   return (tailscale.state === 'running' && tailscale.hostName) || hostname();
 }
 
-async function serve(port: number, extraEnv: string[], pathPrepend: string[]): Promise<void> {
+async function serve(port: number, extraEnv: string[], pathPrepend: string[], loopbackOnly: boolean): Promise<void> {
   const captureHost = hostFromExecutable(process.env.STIM_HOST_EXECUTABLE);
   const login = loginShellEnvironment();
   if (!login) console.error('stim-server: could not read the login shell environment; using this process environment.');
@@ -129,7 +130,7 @@ async function serve(port: number, extraEnv: string[], pathPrepend: string[]): P
   const tailscaleBinary = findTailscale(env);
   const tailscale = tailscaleStatus(tailscaleBinary, env);
   const stim = bundledStim();
-  const monitor = watchTailscale({ env, initial: { binary: tailscaleBinary, state: tailscale } });
+  const monitor = loopbackOnly ? null : watchTailscale({ env, initial: { binary: tailscaleBinary, state: tailscale } });
   let server;
   try {
     server = await startServer({
@@ -143,7 +144,7 @@ async function serve(port: number, extraEnv: string[], pathPrepend: string[]): P
       env,
       tailscale: tailscaleBinary,
       tailscaleState: tailscale,
-      tailscaleMonitor: monitor,
+      ...(monitor ? { tailscaleMonitor: monitor } : {}),
       service: {
         label: launchdLabel && !validateLabel(launchdLabel) ? launchdLabel : null,
         node: process.execPath,
@@ -170,15 +171,15 @@ async function serve(port: number, extraEnv: string[], pathPrepend: string[]): P
     }
     if (note) console.error(note);
   };
-  await announce(tailscaleBinary, tailscale);
-  monitor.onChange((snapshot, previous) => {
+  monitor?.onChange((snapshot, previous) => {
     const { state } = snapshot;
     if (state.state === 'running') console.log('Tailscale is running.');
     else if (previous.state.state === 'running') console.error('Tailscale stopped.');
     if (state.state === 'running' || previous.state.state === 'running') void announce(snapshot.binary, state);
   });
+  if (!loopbackOnly) await announce(tailscaleBinary, tailscale);
   const shutdown = () => {
-    monitor.stop();
+    monitor?.stop();
     void server
       .close()
       .catch((error: unknown) => {
@@ -351,6 +352,7 @@ async function main(): Promise<void> {
     allowPositionals: true,
     options: {
       port: { type: 'string' },
+      'loopback-only': { type: 'boolean' },
       json: { type: 'boolean' },
       control: { type: 'boolean' },
       read: { type: 'boolean' },
@@ -387,7 +389,10 @@ async function main(): Promise<void> {
   if ((values.release !== undefined || values.from !== undefined) && !service) {
     fail(`--release and --from apply only to \`service update\`.\n${USAGE}`);
   }
-  if (command === undefined) return serve(port, extraEnv, pathPrepend);
+  if (values['loopback-only'] && command !== undefined) {
+    fail(`--loopback-only applies only to serving.\n${USAGE}`);
+  }
+  if (command === undefined) return serve(port, extraEnv, pathPrepend, values['loopback-only'] === true);
   const grant = command === 'devices' && sub === 'grant';
   if (values.read && !grant) fail(`--read applies only to \`devices grant\`.\n${USAGE}`);
   if (values.build && !grant) fail(`--build applies only to \`devices grant\`.\n${USAGE}`);
