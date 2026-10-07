@@ -494,7 +494,7 @@ struct RootView: View {
   private func showWorkspaceLink(in payload: StatusPayload?) {
     guard let pending = pendingLink, let payload else { return }
     guard let target = payload.target(of: pending.request) else {
-      if let archive = payload.archive(for: pending.request, waited: false) {
+      if let archive = payload.archive(for: pending.request, waited: pending.waited) {
         pendingLink = nil
         selection = .archived(archive.id)
         return
@@ -504,6 +504,7 @@ struct RootView: View {
       Task {
         try? await Task.sleep(for: .seconds(10))
         guard pendingLink?.id == pending.id else { return }
+        pendingLink?.waited = true
         if let archive = store.payload?.archive(for: pending.request, waited: true) {
           pendingLink = nil
           selection = .archived(archive.id)
@@ -649,6 +650,7 @@ private struct PendingWorkspaceLink {
   let id = UUID()
   let request: WorkspaceOpenRequest
   var expiring = false
+  var waited = false
 }
 
 struct MachineSummary: View {
