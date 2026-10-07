@@ -218,6 +218,13 @@ export function detectIsExpo(projectRoot: string): boolean {
   return false;
 }
 
+export function detectTutorial(appJson: AnyJson | null): { version: number } | undefined {
+  const extra = appJson?.expo?.extra;
+  const version =
+    typeof extra === 'object' && extra !== null ? (extra as { stimTutorial?: unknown }).stimTutorial : null;
+  return typeof version === 'number' && Number.isInteger(version) && version > 0 ? { version } : undefined;
+}
+
 export function detectPlatforms(root: string, settings: SettingsObject): string[] {
   const platforms = new Set<string>();
   const product = settingValueAt(settings, 'macos.product');

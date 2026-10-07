@@ -7,6 +7,7 @@ import {
   findProjectRoot,
   detectIsExpo,
   detectPlatforms,
+  detectTutorial,
   resolveRegisteredProject,
   projectShortcut,
   ownedDeviceLabel,
@@ -411,4 +412,18 @@ test('projectShortcut prefers an explicit label over worktree inheritance', () =
 
 test('projectShortcut falls back to the basename when not inside any registered worktree', () => {
   expect(projectShortcut('/Users/x/Developer/standalone', null)).toBe('standalone');
+});
+
+describe('detectTutorial', () => {
+  test('reports a positive integer expo.extra.stimTutorial and nothing else', () => {
+    const app = (extra: unknown) => ({ expo: { extra } });
+    expect(detectTutorial(app({ stimTutorial: 1 }))).toEqual({ version: 1 });
+    expect(detectTutorial(app({ stimTutorial: 7 }))).toEqual({ version: 7 });
+    for (const value of [0, -1, '1', 1.5, null, true])
+      expect(detectTutorial(app({ stimTutorial: value }))).toBeUndefined();
+    expect(detectTutorial(app({}))).toBeUndefined();
+    expect(detectTutorial(app(null))).toBeUndefined();
+    expect(detectTutorial({ expo: {} })).toBeUndefined();
+    expect(detectTutorial(null)).toBeUndefined();
+  });
 });

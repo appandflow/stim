@@ -576,11 +576,16 @@ export interface AndroidDeviceState {
   idleShutdown?: DeviceIdleShutdownRecord;
 }
 
+/** The tutorial format version the installed Stim writes into the tutorial app. */
+export const TUTORIAL_VERSION = 1;
+
 export interface EnvironmentState {
   slots?: { slot: string; ios: SimulatorState | null | undefined; android: AndroidDeviceState | null | undefined }[];
   path: string;
   /** Statically detected app platforms; always set by status, empty when none are detected. */
   platforms?: string[];
+  /** Present when the app's app.json sets expo.extra.stimTutorial to a positive integer: that version. */
+  tutorial?: { version: number };
   live: boolean;
   phase?: WorkspacePhase;
   /** When the warm started (`warming`) or finished (`ready`); null for `live` and `idle`. */
