@@ -1085,6 +1085,8 @@ finished and `total` the targets in its dependency graph. A target counts once
 xcodebuild touches or signs its product, so an incremental build can end below
 `total`. For Gradle,
 `unit` is `tasks`, `done` counts the tasks it reported and `total` is `null`.
+For SwiftPM (`stim macos`), `unit` is `steps`, and `done` and `total` are the
+`[done / total]` of its latest progress line; `total` can grow while SwiftPM plans the build.
 `line` is the latest compile, link or task line with paths shortened to file
 names. These are counts, not a completion percentage: one target can take ten
 minutes and a cached one no time at all.

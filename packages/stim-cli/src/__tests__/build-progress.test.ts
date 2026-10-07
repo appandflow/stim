@@ -423,6 +423,88 @@ describe('build history', () => {
   });
 });
 
+describe('macOS builds', () => {
+  const macosFinished = {
+    platform: 'macos',
+    status: 'ok',
+    configuration: 'Debug',
+    fingerprint: null,
+    cacheKey: null,
+    cacheHit: false,
+    cacheSkipped: false,
+    durationMs: 90_000,
+    startedAt: '2026-09-24T10:00:00.000Z',
+  };
+
+  test('a run reports its phases and SwiftPM counts without a cache outcome, and keeps only history', () => {
+    vi.useFakeTimers({ now: T0 });
+    try {
+      const claim = takeClaim();
+      let now = T0;
+      const progress = startBuildProgress({ root, platform: 'macos', slot: 'default', claim, now: () => now });
+      now += 2_000;
+      progress.step('compile');
+      progress.output({ src: 'build', level: 'debug', msg: '[12 / 40] StimDesktop' });
+      vi.advanceTimersByTime(0);
+      expect(readBuildDetail(root, claim.claimId)).toMatchObject({
+        step: 'compile',
+        unit: 'steps',
+        done: 12,
+        total: 40,
+      });
+
+      const record = activeRecord()!;
+      expect(record).toMatchObject({ platform: 'macos', phase: 'compile' });
+      expect(record.outcome).toBeUndefined();
+      const report = buildReport(record, { state: 'running', history: undefined });
+      expect(report).toMatchObject({ platform: 'macos', phase: 'compile', outcome: null, plannedPhases: null });
+
+      now += 60_000;
+      progress.step('install');
+      now += 3_000;
+      recordFinishedBuild(root, macosFinished, { now: () => now });
+      progress.clear();
+      releaseClaim(claim);
+
+      const state = readWorkspaceState(root);
+      expect(state?.lastBuild).toBeUndefined();
+      expect(readLastBuilds(state).ios).toBeUndefined();
+      expect(readBuildHistory(state).macos).toEqual([
+        expect.objectContaining({
+          platform: 'macos',
+          result: 'succeeded',
+          phases: { prepare: 2_000, compile: 60_000, install: 3_000 },
+        }),
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test('a macOS run that left no result is an interrupted run in the macOS history', () => {
+    const first = takeClaim();
+    startBuildProgress({ root, platform: 'macos', slot: 'default', claim: first, now: () => T0 });
+    releaseClaim(first);
+    const second = takeClaim();
+    startBuildProgress({ root, platform: 'macos', slot: 'default', claim: second, now: () => T0 + 60_000 }).clear();
+    releaseClaim(second);
+
+    expect(readBuildHistory(readWorkspaceState(root)).macos!.map((entry) => entry.result)).toEqual(['interrupted']);
+  });
+
+  test('a finished macOS run is not mistaken for an interrupted one', () => {
+    const first = takeClaim();
+    startBuildProgress({ root, platform: 'macos', slot: 'default', claim: first, now: () => T0 });
+    recordFinishedBuild(root, macosFinished);
+    releaseClaim(first);
+    const second = takeClaim();
+    startBuildProgress({ root, platform: 'macos', slot: 'default', claim: second, now: () => T0 + 60_000 }).clear();
+    releaseClaim(second);
+
+    expect(readBuildHistory(readWorkspaceState(root)).macos!.map((entry) => entry.result)).toEqual(['succeeded']);
+  });
+});
+
 function run(overrides: Partial<StatsRun>): StatsRun {
   return {
     platform: 'ios',
