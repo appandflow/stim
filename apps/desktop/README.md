@@ -1152,9 +1152,9 @@ follows `machines.update.status` every 2 seconds:
 - the outcome, or the refusal (for example, the setting the machine needs).
 
 If the machine stops answering for 5 minutes, or answers for 4 minutes without an update running or an outcome, the update shows as failed with the reason.
-Then the row checks the machine again. **Install this Mac's build on build
-machines automatically** (off by default) does the same the next time Desktop
-checks a machine that reports another Stim build. It runs once per machine and
+Then the row checks the machine again. **Do this automatically next time**
+(off by default), shown only beside **Install This Mac's Build**, does the same
+the next time Desktop checks a machine that reports another Stim build. It runs once per machine and
 reason each time Desktop launches. Either way, the machine gets this Mac's build,
 whether it is newer or older than the one it runs.
 

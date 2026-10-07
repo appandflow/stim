@@ -14,7 +14,6 @@ struct BuildMachinesView: View {
   @State private var removing: String?
   @State private var detailed: String?
   @State private var adding: AddMachineModel?
-  @AppStorage(AppPreferences.Key.updatesBuildMachines) private var updatesAutomatically = false
 
   private var checkout: String? {
     doctorCheckout(for: workspace, in: store.payload?.environments ?? [], project: store.project(ofPath:))?.path
@@ -26,7 +25,6 @@ struct BuildMachinesView: View {
       working: model.working, progress: model.progress, failure: failure, tailscaleRunning: model.tailscaleRunning,
       canAsk: checkout != nil,
       addDisabled: model.isBusy || model.updates.values.contains { !$0.isDone }, sampleExists: model.sampleExists,
-      updatesAutomatically: $updatesAutomatically,
       add: { adding = model.addMachine(checkout: checkout) },
       ask: { entry in Task { await model.ask(entry, checkout: checkout) } },
       update: { entry in Task { await model.update(entry, checkout: checkout) } },
@@ -141,7 +139,6 @@ struct BuildMachinesContent: View {
   var canAsk: Bool
   var addDisabled: Bool
   var sampleExists: Bool
-  @Binding var updatesAutomatically: Bool
   var add: () -> Void
   var ask: (String) -> Void
   var update: (String) -> Void
@@ -201,12 +198,6 @@ struct BuildMachinesContent: View {
         if !canAsk {
           Text("Start a workspace with Stim to check these machines.").foregroundStyle(Palette.tertiary)
         }
-      }
-      Section {
-        Toggle("Install this Mac's build on build machines automatically", isOn: $updatesAutomatically)
-          .help(
-            "When a build machine runs another Stim build than this Mac, Desktop installs this Mac's build there the next time it checks the machine."
-          )
       }
       if sampleExists { Section { deleteSampleButton } }
     }

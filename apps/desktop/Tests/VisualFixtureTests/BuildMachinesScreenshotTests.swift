@@ -18,18 +18,31 @@
     }
 
     @MainActor private func content(
-      entries: [String], statuses: [BuildMachineStatus]?, tailscale: Bool
+      entries: [String], statuses: [BuildMachineStatus]?, tailscale: Bool, updates: [String: MachineUpdatePhase] = [:]
     ) -> some View {
       BuildMachinesContent(
-        entries: entries, statuses: statuses, hosts: [BuildMachineStatus(machine: "mini", state: .approved)], updates: [:],
+        entries: entries, statuses: statuses, hosts: [BuildMachineStatus(machine: "mini", state: .approved)], updates: updates,
         working: nil, failure: nil, tailscaleRunning: tailscale, canAsk: true, addDisabled: false, sampleExists: false,
-        updatesAutomatically: .constant(false), add: {}, ask: { _ in }, update: { _ in }, showDetails: { _ in },
+        add: {}, ask: { _ in }, update: { _ in }, showDetails: { _ in },
         remove: { _ in }, deleteSample: {}
       )
       .font(.stim(.body))
       .foregroundStyle(Palette.text)
       .background(Palette.background)
       .frame(width: 780, height: 560)
+    }
+
+    private func blocked() throws -> [BuildMachineStatus] {
+      try JSONDecoder().decode(
+        [BuildMachineStatus].self,
+        from: Data(
+          #"""
+          [{"machine":"mini","state":"approved","offloadable":true,"dnsName":"mini.tail1234.ts.net"},
+           {"machine":"studio","state":"approved","offloadable":false,"dnsName":"studio.tail1234.ts.net",
+            "reasons":["Stim build 6bbe9103995f7eb6 there, e7749c9011f4d423 here","no CocoaPods there"],
+            "problems":[{"code":"stim-build","reason":"Stim build 6bbe9103995f7eb6 there, e7749c9011f4d423 here"},
+                        {"code":"cocoapods","reason":"no CocoaPods there"}]}]
+          """#.utf8))
     }
 
     @MainActor func testBuildMachinesScreenshots() throws {
@@ -57,6 +70,10 @@
                    {"machine":"studio","state":"lapsed","deviceId":"a1b2c3d4","dnsName":"studio.tail1234.ts.net"}]
                   """#.utf8)),
               tailscale: true))
+        ),
+        (
+          "update-toggle",
+          AnyView(content(entries: ["mini", "studio"], statuses: try blocked(), tailscale: true))
         ),
         ("tailscale-off", AnyView(content(entries: ["mini", "studio"], statuses: try statuses(), tailscale: false))),
         ("empty-tailscale-off", AnyView(content(entries: [], statuses: [], tailscale: false))),

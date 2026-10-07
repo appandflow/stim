@@ -119,6 +119,7 @@ struct MachineUpdateLine: View {
   var phase: MachineUpdatePhase?
   var needed: Bool
   var update: () -> Void
+  @AppStorage(AppPreferences.Key.updatesBuildMachines) private var updatesAutomatically = false
 
   var body: some View {
     if phase != nil || needed {
@@ -134,6 +135,12 @@ struct MachineUpdateLine: View {
         if needed, phase?.isDone ?? true {
           Button("Install This Mac's Build", action: update)
             .help("Installs this Mac's Stim build on it over the tailnet, then restarts its stim-server.")
+          Toggle("Do this automatically next time", isOn: $updatesAutomatically)
+            .toggleStyle(.checkbox)
+            .font(.stim(.footnote))
+            .help(
+              "When a build machine runs another Stim build than this Mac, Desktop installs this Mac's build there the next time it checks the machine."
+            )
         }
       }
     }
