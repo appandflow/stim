@@ -10,7 +10,8 @@ import {
   withConfigLock,
 } from '../workspace/config.ts';
 import { clearClaimChild, markClaimChildPending, releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
-import type { Config, DeviceRecord } from '@stim-cli/core/state';
+import { getParkedMax, type ParkedMax, type Config, type DeviceRecord } from '@stim-cli/core/state';
+export type { ParkedMax } from '@stim-cli/core/state';
 
 export type PoolPlatform = 'ios' | 'android';
 
@@ -44,48 +45,11 @@ export const DEFAULT_PARKED_MAX = 3;
 export const POOL_SETTING_REMEDY: string =
   'Run `stim guide settings` for the device pool bounds and where it can be set.';
 
-const MAX_SETTING: Record<PoolPlatform, { key: string; env: string }> = {
-  ios: { key: 'iosParkedMax', env: 'STIM_POOL_IOS_PARKED_MAX' },
-  android: { key: 'androidParkedMax', env: 'STIM_POOL_ANDROID_PARKED_MAX' },
-};
-
-export interface ParkedMax {
-  max: number;
-  error: string | null;
-}
-
-function parseMax(raw: unknown, strings: boolean): number | null {
-  const value = strings && typeof raw === 'string' ? (/^\d+$/.test(raw.trim()) ? Number(raw.trim()) : Number.NaN) : raw;
-  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) return null;
-  return value;
-}
-
 export function parkedMaxSetting(
   platform: PoolPlatform,
-  { config, env = process.env }: { config?: Config | null; env?: NodeJS.ProcessEnv } = {},
+  options: { config?: Config | null; env?: NodeJS.ProcessEnv } = {},
 ): ParkedMax {
-  const { key, env: envKey } = MAX_SETTING[platform];
-  const fromEnv = env[envKey];
-  const explicit = fromEnv !== undefined && fromEnv !== '';
-  const cfg = config === undefined ? loadConfig() : config;
-  const pool = cfg?.pool;
-  if (!explicit && pool !== undefined && (pool === null || typeof pool !== 'object' || Array.isArray(pool))) {
-    return { max: 0, error: 'Invalid pool value. Expected an object with simulator and emulator bounds.' };
-  }
-  const fromConfig =
-    pool !== null && typeof pool === 'object' && !Array.isArray(pool)
-      ? (pool as Record<string, unknown>)[key]
-      : undefined;
-  const raw = explicit ? fromEnv : fromConfig;
-  if (raw === undefined) return { max: env.STIM_HOME ? 0 : DEFAULT_PARKED_MAX, error: null };
-  const parsed = parseMax(raw, explicit);
-  if (parsed === null) {
-    return {
-      max: 0,
-      error: `Invalid ${explicit ? envKey : `pool.${key}`} value ${JSON.stringify(raw)}. Expected a whole number of parked ${platform === 'ios' ? 'simulators' : 'emulators'}, 0 or more.`,
-    };
-  }
-  return { max: explicit ? parsed : env.STIM_HOME ? 0 : parsed, error: null };
+  return getParkedMax(platform, options);
 }
 
 function isParkedRecord(value: unknown, platform: PoolPlatform): value is PoolRecords[PoolPlatform] {

@@ -568,6 +568,13 @@ platform bounds. Android adoption matches the system image and AVD creation
 settings, preserves the APK, and clears app data before launch. See
 \`guide lifecycle pool\` for cleanup and the system state that remains.
 
+The host also uses these bounds for hosted iOS and Android parking on stop,
+separately from its local pool and across all hosted clients per platform.
+It adopts only a compatible device of the same client, clears app data and
+removes other apps. Parked devices persist across a clean stim-server restart;
+eviction, adoption-time reconciliation and revocation delete them through
+owned-device teardown. See guide lifecycle hosted-ios.
+
 When STIM_HOME is set, parking and adoption are OFF unless
 the corresponding STIM_POOL_IOS_PARKED_MAX or STIM_POOL_ANDROID_PARKED_MAX
 is set too. A redirected home is a scoped config --

@@ -1,7 +1,7 @@
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { getConcurrencyLimits, getRepoSettings, loadConfig, withConfigLock } from '../state/config.ts';
+import { getConcurrencyLimits, getParkedMax, getRepoSettings, loadConfig, withConfigLock } from '../state/config.ts';
 import { withStateReadCache } from '../state/json-file.ts';
 import { readCreatedDevices } from '../state/ledgers.ts';
 
@@ -129,3 +129,18 @@ test.each([
   expect((err as { code?: string } | undefined)?.code).toBe('STIM_CONFIG_CORRUPT');
   expect((err as Error).message).toMatch(reason);
 });
+
+test.each(['ios', 'android'] as const)(
+  'parked %s limits use the host config and explicit env, with scoped homes disabled',
+  (platform) => {
+    const envKey = platform === 'ios' ? 'STIM_POOL_IOS_PARKED_MAX' : 'STIM_POOL_ANDROID_PARKED_MAX';
+    writeConfig({ version: 2, projects: {}, repos: {}, pool: { iosParkedMax: 2, androidParkedMax: 4 } });
+    expect(getParkedMax(platform, { env: {} })).toEqual({ max: platform === 'ios' ? 2 : 4, error: null });
+    expect(getParkedMax(platform, { env: { STIM_HOME: tmpHome } })).toEqual({ max: 0, error: null });
+    expect(getParkedMax(platform, { env: { STIM_HOME: tmpHome, [envKey]: '5' } })).toEqual({ max: 5, error: null });
+    expect(getParkedMax(platform, { env: { [envKey]: '-1' } })).toMatchObject({ max: 0, error: expect.any(String) });
+    writeConfig({ projects: {}, repos: {} });
+    expect(getParkedMax(platform, { env: { STIM_HOME: tmpHome } })).toEqual({ max: 0, error: null });
+    expect(getParkedMax(platform, { env: {} })).toEqual({ max: 3, error: null });
+  },
+);

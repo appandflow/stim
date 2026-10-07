@@ -304,11 +304,14 @@ level, never the host serial or AVD name. ready, stopped and unverified are
 session probe states; a conflicting local emulator remains visible with a
 warning. A recorded placement keeps the workspace in use and blocks idle stop.
 
-stop and worktree remove wait for device-host.stop, delete the host's owned
-emulator, close the gateway and clear placement. stop --json reports
+stop and worktree remove wait for device-host.stop, park the host's eligible owned
+emulator within pool.androidParkedMax (delete otherwise), close the gateway and clear placement. stop --json reports
 outcomes.device["android:host:<slot>"]. Forbidden or unknown-session also clears
-placement; an unreachable host keeps it and fails cleanup. A host restart stops
-sessions. Rerun the same machine to replace a stopped session. JavaScript logs
+placement; an unreachable host keeps it and fails cleanup. A clean host restart
+parks eligible devices; a later reserve by the same client adopts a compatible
+parked emulator with all third-party apps removed. Running sessions left by a
+crash stay unknown until explicit stop; booted devices are never re-attached
+after restart. See hosted-ios for retention and eviction. JavaScript logs
 arrive through local Metro.
 
 AGENT CONTROL
@@ -385,7 +388,7 @@ Logcat retains a finite buffer; records already evicted or persisted beyond the
 overlap may be unavailable. An oversized query retries the recent tail and writes
 a device warning naming any dropped interval. Followers share a child-aware log
 claim; install and stop cancel and settle the worker before native operations.
-Stop copies logs before and after the host's final collection and deletion, with
+Stop copies logs before and after the host's final collection and teardown, with
 each client drain bounded to 30 seconds and progress on stderr. Collected logs
 remain readable after stop. The host advertises hosted-android-data for Android
 handoff and native logs. Older hosts get a newer stim-server note, use upload
@@ -471,10 +474,12 @@ agent, state } per slot. A shutdown local simulator is replaced in status; a
 booted or unknown local simulator stays visible alongside ios.host with a warning.
 The default slot appears only in ios, never in slots[]. No host UDID or gateway secret enters local device state or
 status. Ready is normal; stopped has a rerun hint; unknown or unreachable is
-unverified. A host server restart stops its sessions.
+unverified. A clean host server restart stops its sessions and retains eligible
+parked devices. A running session left by a crash stays unknown until explicit
+stop; the restarted server never re-attaches to a booted device.
 
-stop and worktree remove wait for the host to stop, delete exactly its owned
-simulator without parking, close the gateway and clear placement. stop --json
+stop and worktree remove wait for the host to stop, park its eligible owned
+simulator within pool.iosParkedMax (delete otherwise), close the gateway and clear placement. stop --json
 reports each hosted slot under outcomes.device["ios:host:<slot>"], retaining
 local device outcomes and successful siblings when another slot fails. Revoked or
 missing sessions clear placement too. An unreachable host retains placement
@@ -493,18 +498,41 @@ ran on the hosting Mac's pinned node, it takes matching files from that build.
 A refused or timed-out handoff falls back to upload, retrying a still-busy host
 for at most one minute.
 
+HOSTED PARKING
+
+The host reads pool.iosParkedMax and pool.androidParkedMax from its own home,
+with STIM_POOL_IOS_PARKED_MAX and STIM_POOL_ANDROID_PARKED_MAX overrides.
+Each platform has a separate hosted limit across all clients; 0 disables parking.
+With STIM_HOME set, parking requires the explicit platform environment override.
+Only healthy devices of still-approved clients are parked. The journal reports
+stopped to clients, and the device stays ledger-owned in its session's private
+home, outside the host's local parked pool. Parked devices persist across a clean
+stim-server restart.
+
+A new reserve adopts the oldest compatible parked device of the same client.
+iOS matches resolved device type, runtime and architecture; Android matches
+system image, device profile and architecture. Adoption clears app data by
+removing every third-party app; iOS also resets privacy and keychain. Parking and
+adoption remove session app copies and blobs, so the first run after adoption
+uploads them again. Devices are never reused across clients.
+The oldest parked devices beyond the host's platform limit are deleted through
+owned-device teardown, also after a limit decrease. Adoption-time reconciliation
+retires missing, renamed, running or unowned candidates; failed retirement keeps
+the record. Revocation retires that client's parked devices. If GC removes a
+ledger-owned device, reconciliation clears its parked marker without a worker.
+
 stim logs and stim logs --errors pull native device records from bounded host
 queries. Concurrent followers share a collection, throttled per session, without
 blocking app delivery, viewing or control. Stop limits each log drain to 30 seconds with
 progress on stderr and a no-progress guard. The host collects a bounded final
-tail before deletion, including on revocation or server close; stop copies it
+tail before parking or deletion, including on revocation or server close; stop copies it
 back afterwards. If the final collection drops a backlog interval and eventually
 succeeds, a device warning record names that interval. A damaged collection checkpoint is ignored and
 rebuilt; it never blocks reading collected records. The client waits up to
 180 seconds for stop. The final collection and worker termination paths fit within
 that wait; an in-flight handoff copy and closing Metro or view transports are
 outside those worker bounds.
-Collected records remain in the session home after deletion;
+Collected records remain in the session home after parking or deletion;
 app blobs and materialized bundles are removed. Native queries read persisted
 entries, overlap by five seconds and de-duplicate; info-level or later-persisted
 entries may be unavailable. JavaScript logs arrive through Metro.

@@ -20,6 +20,7 @@ import {
   deviceHostArea,
   deviceHostRoot,
   getConcurrencyLimits,
+  getParkedMax,
   isJsonObject,
   parseHostedPlatformDevice,
   hostedDeviceId,
@@ -78,6 +79,8 @@ interface WorkerRun {
 
 interface OwnedSession {
   claim: ClaimHandle;
+  adopting?: boolean;
+  reachedReady?: boolean;
   run?: WorkerRun;
   data?: Promise<void>;
   logs?: { started: number; more: boolean; run?: WorkerRun; pending?: Promise<void> };
@@ -293,6 +296,9 @@ export class DeviceHost {
     try {
       const max = getConcurrencyLimits({ env: this.options.env }).maxDevices;
       const recordsBefore = readHostedSessions();
+      const candidate = await this.parkedCandidate(client, request, recordsBefore);
+      if (this.closed || !this.options.allowed(client))
+        return refused('forbidden', 'Current device-host approval is required.');
       let local: number | { unknown: string } = 0;
       if (max > 0 && !recordsBefore.some((record) => record.client === client && record.attempt === request.attempt)) {
         const probe = await this.probe(client, { mode: 'count', exclude: hostedDeviceExclusions(recordsBefore) });
@@ -326,6 +332,46 @@ export class DeviceHost {
           throw new Error(
             `${hosted} hosted + ${local} local of ${max} device reservations are occupied, including unresolved sessions.`,
           );
+        const adopted =
+          candidate &&
+          records.find(
+            (record) =>
+              record.id === candidate.id &&
+              record.state === 'stopped' &&
+              record.parked &&
+              record.client === client &&
+              !this.owned.has(record.id) &&
+              !this.revoked.has(record.id),
+          );
+        if (adopted) {
+          const consolePort = request.platform === 'android' ? reserveAndroidPort(records) : undefined;
+          const owned = this.acquire(adopted);
+          owned.adopting = true;
+          for (const key of [
+            'deviceType',
+            'runtime',
+            'systemImage',
+            'deviceProfile',
+            'parked',
+            'notice',
+            'appAttempt',
+            'agent',
+            'metroPort',
+            'clientMetroPort',
+          ] as const)
+            delete adopted[key];
+          Object.assign(adopted, request, { state: 'preparing', createdAt: new Date().toISOString() });
+          if (consolePort !== undefined) {
+            adopted.consolePort = consolePort;
+            adopted.device = {
+              ...(adopted.device as HostedAndroidDevice),
+              consolePort,
+              serial: `emulator-${consolePort}`,
+            };
+          }
+          start = adopted;
+          return adopted;
+        }
         const record: HostedDeviceSession = {
           ...request,
           id: randomUUID(),
@@ -348,15 +394,77 @@ export class DeviceHost {
     }
   }
 
+  private async parkedCandidate(
+    client: string,
+    request: HostedDeviceRequest,
+    records: HostedDeviceSession[],
+  ): Promise<HostedDeviceSession | null> {
+    if (
+      request.platform === 'macos' ||
+      getParkedMax(request.platform, { env: this.options.env }).max === 0 ||
+      records.some((record) => record.client === client && record.attempt === request.attempt)
+    )
+      return null;
+    const candidates = records
+      .filter(
+        (record) =>
+          record.state === 'stopped' &&
+          record.parked &&
+          record.client === client &&
+          record.platform === request.platform &&
+          !this.owned.has(record.id) &&
+          !this.revoked.has(record.id),
+      )
+      .toSorted((a, b) => a.parked!.at.localeCompare(b.parked!.at))
+      .slice(0, 3);
+    for (const record of candidates) {
+      if (this.closed || !this.options.allowed(client)) break;
+      let owned: OwnedSession;
+      try {
+        owned = this.acquire(record);
+      } catch {
+        continue;
+      }
+      let unusable = false;
+      try {
+        const home = join(deviceHostArea(record.id), 'home');
+        const run = this.runWorker({
+          cwd: home,
+          env: { ...this.options.env, STIM_HOME: home },
+          input: { ...request, session: record.id, mode: 'inspect' },
+          timeoutMs: this.limits.offerMs,
+          maxOutputBytes: 16_384,
+        });
+        owned.run = run;
+        const outcome = await run.done;
+        if (outcome.settled && !outcome.notice && isJsonObject(outcome.value)) {
+          if (outcome.value.state === 'compatible') return record;
+          unusable = outcome.value.state === 'unusable';
+        }
+      } catch (error) {
+        process.stderr.write(
+          `Hosted session ${record.id} inspection failed: ${(error as Error).message.replace(/[\r\n]+/g, ' ')}\n`,
+        );
+      } finally {
+        this.release(record.id, owned);
+        if (!this.options.allowed(client)) await this.retire(record);
+      }
+      if (unusable) await this.retire(record);
+    }
+    return null;
+  }
+
   private observed(record: HostedDeviceSession): HostedDeviceSession {
+    const observed = { ...record };
+    delete observed.parked;
     if (record.state !== 'stopped' && !this.owned.has(record.id))
       return {
-        ...record,
+        ...observed,
         state: 'unknown',
         notice:
           'The previous session owner is not attached to this server. Explicit stop must reconcile the retained device before another reservation.',
       };
-    return { ...record };
+    return observed;
   }
 
   attach(client: string, params: unknown): Answer {
@@ -385,7 +493,7 @@ export class DeviceHost {
       const record = readHostedSessions().find((each) => each.client === client && each.id === params.session);
       if (!record) return refused('unknown-session', 'This client has no such hosted session.');
       this.beginStop(record);
-      return { result: { ...record, state: record.state === 'stopped' ? 'stopped' : 'stopping' } };
+      return { result: this.observed({ ...record, state: record.state === 'stopped' ? 'stopped' : 'stopping' }) };
     } catch (error) {
       return refused('action-failed', (error as Error).message);
     }
@@ -1042,7 +1150,7 @@ export class DeviceHost {
       this.beginStop(record);
       return;
     }
-    const run = this.run(record, owned, 'prepare');
+    const run = this.run(record, owned, owned.adopting ? 'adopt' : 'prepare');
     owned.run = run;
     const outcome = await run.done;
     if (owned.stopping) return;
@@ -1057,12 +1165,23 @@ export class DeviceHost {
     }
     this.change(record.id, (current) => {
       current.device = device;
+      if (
+        owned.adopting &&
+        record.platform === 'android' &&
+        device &&
+        'avdName' in device &&
+        device.avdName === `stim-hosted-${record.id}` &&
+        isJsonObject(value) &&
+        value.state === 'unknown'
+      )
+        current.consolePort = device.consolePort;
       current.state =
         !outcome.notice && outcome.settled && isJsonObject(value) && value.state === 'ready' && device
           ? 'ready'
           : !outcome.notice && outcome.settled && isJsonObject(value) && value.state === 'stopped'
             ? 'stopped'
             : 'unknown';
+      if (current.state === 'ready') owned.reachedReady = true;
       if (current.state === 'unknown')
         current.notice =
           outcome.notice ??
@@ -1107,6 +1226,7 @@ export class DeviceHost {
   private async finishStop(record: HostedDeviceSession, owned: OwnedSession, agentStop: Promise<void>): Promise<void> {
     if (record.platform !== 'macos') await agentStop;
     const home = join(deviceHostArea(record.id), 'home');
+    let healthy = owned.reachedReady === true && record.state === 'ready';
     owned.run?.cancel();
     await this.closeMetro(owned);
     await this.closeView(owned);
@@ -1117,6 +1237,11 @@ export class DeviceHost {
       owned.run.cancel();
       const outcome = await owned.run.done;
       const value = outcome.value;
+      healthy &&=
+        !outcome.notice &&
+        outcome.settled &&
+        isJsonObject(value) &&
+        (value.state === 'ready' || value.state === 'installed');
       if (!outcome.settled)
         throw new Error('The prior worker group is unresolved. Its claim and device were retained.');
       if (
@@ -1149,6 +1274,48 @@ export class DeviceHost {
       process.stderr.write(`Could not collect final hosted native logs: ${(error as Error).message}\n`);
     }
     await this.settleLogs(owned);
+    if (
+      (record.platform === 'ios' || record.platform === 'android') &&
+      healthy &&
+      record.device &&
+      getParkedMax(record.platform, { env: this.options.env }).max > 0 &&
+      this.options.allowed(record.client) &&
+      !this.revoked.has(record.id)
+    ) {
+      let run: WorkerRun | undefined;
+      try {
+        run = this.run(record, owned, 'park');
+      } catch {}
+      if (run) {
+        owned.run = run;
+        const outcome = await run.done;
+        if (!outcome.settled)
+          throw new Error('The park worker group is unresolved. Its claim and device were retained.');
+        const parked = isJsonObject(outcome.value) && parseHostedPlatformDevice(outcome.value.device, record.platform);
+        if (
+          !outcome.notice &&
+          isJsonObject(outcome.value) &&
+          outcome.value.state === 'parked' &&
+          parked &&
+          hostedDeviceId(parked) === hostedDeviceId(device) &&
+          this.options.allowed(record.client) &&
+          !this.revoked.has(record.id)
+        ) {
+          this.change(record.id, (current) => {
+            current.state = 'stopped';
+            current.parked = { at: new Date().toISOString() };
+            delete current.notice;
+          });
+          this.release(record.id, owned);
+          await this.evictParked().catch((error: unknown) => {
+            process.stderr.write(
+              `Hosted parking eviction failed: ${(error as Error).message.replace(/[\r\n]+/g, ' ')}\n`,
+            );
+          });
+          return;
+        }
+      }
+    }
     const run = this.run(record, owned, 'stop');
     owned.run = run;
     const outcome = await run.done;
@@ -1191,8 +1358,12 @@ export class DeviceHost {
     for (const [probe, client] of this.probes) if (!this.options.allowed(client)) probe.cancel();
     try {
       for (const record of readHostedSessions()) {
-        if (record.state === 'stopped' || this.options.allowed(record.client) || this.revoked.has(record.id)) continue;
+        if (this.options.allowed(record.client) || this.revoked.has(record.id)) continue;
         this.revoked.add(record.id);
+        if (record.state === 'stopped') {
+          if (record.parked) void this.retire(record);
+          continue;
+        }
         try {
           this.beginStop(record);
         } catch (error) {
@@ -1230,49 +1401,86 @@ export class DeviceHost {
     }));
   }
 
+  private async evictParked(): Promise<void> {
+    for (const platform of ['ios', 'android'] as const) {
+      const max = getParkedMax(platform, { env: this.options.env }).max;
+      const records = readHostedSessions()
+        .filter((record) => record.platform === platform && record.state === 'stopped' && record.parked)
+        .toSorted((a, b) => a.parked!.at.localeCompare(b.parked!.at));
+      for (const record of records.slice(0, Math.max(0, records.length - max))) await this.retire(record);
+    }
+  }
+
   private async retireStopped(): Promise<void> {
     for (const record of readHostedSessions()) {
-      if (this.closed) break;
-      if (record.state !== 'stopped' || record.platform === 'macos' || this.owned.has(record.id)) continue;
-      let owned: OwnedSession | undefined;
-      let settled = true;
+      if (record.state !== 'stopped' || !record.parked || record.platform === 'macos') continue;
       try {
-        const home = join(deviceHostArea(record.id), 'home');
-        const ledger = readHostedDeviceLedger(home);
-        if (!ledger || (!ledger.ios.length && !ledger.android.length && !ledger.web.length)) continue;
-        try {
-          owned = this.acquire(record);
-        } catch {
-          continue;
-        }
-        const device = readHostedDevice(home, record.platform);
-        assertSessionDevice(record, device);
-        if (record.device && hostedDeviceId(record.device) !== hostedDeviceId(device))
-          throw new Error('The device record no longer matches this session.');
-        const run = this.run(record, owned, 'stop');
-        owned.run = run;
-        const outcome = await run.done;
-        settled = outcome.settled;
-        const result = isJsonObject(outcome.value) ? outcome.value : null;
-        const stopped = result && parseHostedPlatformDevice(result.device, record.platform);
-        if (
-          outcome.notice ||
-          !outcome.settled ||
-          result?.state !== 'stopped' ||
-          !stopped ||
-          hostedDeviceId(stopped) !== hostedDeviceId(device)
-        )
-          throw new Error(
-            outcome.notice ??
-              (typeof result?.notice === 'string' ? result.notice : 'Hosted device retirement could not be verified.'),
-          );
+        const ledger = readHostedDeviceLedger(join(deviceHostArea(record.id), 'home'));
+        if (ledger && ledger[record.platform].length === 0)
+          this.change(record.id, (current) => {
+            if (current.state === 'stopped') delete current.parked;
+          });
       } catch (error) {
         process.stderr.write(
-          `Hosted session ${record.id} retirement failed: ${(error as Error).message.replace(/[\r\n]+/g, ' ')}\n`,
+          `Hosted session ${record.id} reconciliation failed: ${(error as Error).message.replace(/[\r\n]+/g, ' ')}\n`,
         );
-      } finally {
-        if (owned && settled) this.release(record.id, owned);
       }
+    }
+    await this.evictParked();
+    for (const record of readHostedSessions()) {
+      if (this.closed) break;
+      if (record.state !== 'stopped' || record.parked || record.platform === 'macos' || this.owned.has(record.id))
+        continue;
+      await this.retire(record);
+    }
+  }
+
+  private async retire(record: HostedDeviceSession): Promise<void> {
+    let owned: OwnedSession | undefined;
+    let settled = true;
+    try {
+      if (this.owned.has(record.id)) return;
+      const home = join(deviceHostArea(record.id), 'home');
+      const ledger = readHostedDeviceLedger(home);
+      if (!ledger || (!ledger.ios.length && !ledger.android.length && !ledger.web.length)) return;
+      try {
+        owned = this.acquire(record);
+      } catch {
+        return;
+      }
+      const current = readHostedSessions().find((each) => each.id === record.id);
+      if (current?.state !== 'stopped' || current.parked?.at !== record.parked?.at) return;
+      const device = readHostedDevice(home, record.platform);
+      assertSessionDevice(record, device);
+      if (record.device && hostedDeviceId(record.device) !== hostedDeviceId(device))
+        throw new Error('The device record no longer matches this session.');
+      const run = this.run(record, owned, 'stop');
+      owned.run = run;
+      const outcome = await run.done;
+      settled = outcome.settled;
+      const result = isJsonObject(outcome.value) ? outcome.value : null;
+      const stopped = result && parseHostedPlatformDevice(result.device, record.platform);
+      if (
+        outcome.notice ||
+        !outcome.settled ||
+        result?.state !== 'stopped' ||
+        !stopped ||
+        hostedDeviceId(stopped) !== hostedDeviceId(device)
+      )
+        throw new Error(
+          outcome.notice ??
+            (typeof result?.notice === 'string' ? result.notice : 'Hosted device retirement could not be verified.'),
+        );
+      if (record.parked)
+        this.change(record.id, (each) => {
+          delete each.parked;
+        });
+    } catch (error) {
+      process.stderr.write(
+        `Hosted session ${record.id} retirement failed: ${(error as Error).message.replace(/[\r\n]+/g, ' ')}\n`,
+      );
+    } finally {
+      if (owned && settled) this.release(record.id, owned);
     }
   }
 
@@ -1305,7 +1513,7 @@ export class DeviceHost {
   private run(
     record: HostedDeviceSession,
     owned: OwnedSession,
-    mode: 'prepare' | 'stop' | 'install' | 'logs' | 'reverse',
+    mode: 'prepare' | 'stop' | 'install' | 'logs' | 'reverse' | 'park' | 'adopt',
     attempt?: string,
     claim: ClaimHandle = owned.claim,
     finalLogs = false,
@@ -1332,7 +1540,12 @@ export class DeviceHost {
         clientMetroPort: mode === 'install' || mode === 'reverse' ? owned.metro?.clientMetroPort : undefined,
       },
       claim,
-      timeoutMs: mode === 'stop' ? this.limits.stopMs : mode === 'logs' ? this.limits.logsMs : this.limits.prepareMs,
+      timeoutMs:
+        mode === 'stop' || mode === 'park'
+          ? this.limits.stopMs
+          : mode === 'logs'
+            ? this.limits.logsMs
+            : this.limits.prepareMs,
       maxOutputBytes: 16_384,
     });
   }
