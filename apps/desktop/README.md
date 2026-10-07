@@ -278,17 +278,21 @@ valid observed hinge angle enable genuine posed hardware around its live panels.
 Missing model data retains the frameless view. Stim ships no Apple or Android
 artwork; mobile asset delivery is not included.
 
-While **Control** is active for an owned local simulator or emulator,
-**Paste into device** copies the Mac's text clipboard and pastes it into the
-focused guest field. On an iOS simulator it runs `simctl pbcopy` and presses
-Command-V, and iOS asks "Allow Paste" for text that came from another source;
-the field stays empty until that prompt is accepted in the viewer. Owned local iOS
-simulators and Android emulators also offer **Copy device clipboard**, which replaces
-the Mac's text clipboard with the guest's current text, including an empty clipboard.
-Transfers preserve Unicode and line breaks and happen only when pressed; there is no
-background clipboard synchronization. Empty or non-text Mac clipboards are reported without
-changing the guest. Disconnects and unavailable native clipboard APIs report a
-failure. Physical devices, remote sessions and replay do not offer these actions.
+While **Control** is active for an owned local simulator or emulator, the Mac
+and the device share their text clipboard unless **Sync clipboard** (on by
+default, in the options popover) is off. When the viewer window becomes key, or the
+Mac pasteboard changes while it is key, the Mac text is set on the device with
+`simctl pbcopy` or the emulator's `setClipboard`; it is not pasted. While the window is key
+the device is read every two seconds (`simctl pbpaste`, or `getClipboard`) and its
+text replaces the Mac's when it changed; one more read follows when the window stops
+being key. Nothing syncs while the window is hidden, minimized or covered. The first
+read of a session only records the device's text. Concealed and transient items
+(`org.nspasteboard.ConcealedType`, `org.nspasteboard.TransientType`), items with
+files or images, empty text and text over 256 KB are skipped. The popover also has
+**Paste Mac clipboard**, which presses Command-V on an iOS simulator (iOS asks
+"Allow Paste" for text from another source) and **Copy device clipboard**.
+Physical devices, hosted and remote sessions and replay never sync: clipboard text
+would otherwise cross the network to another Mac.
 
 On the right, 360 points wide, the **agent actions** list what agents did on
 the device (`stim logs --source agent`), oldest first, with filter chips (All,
