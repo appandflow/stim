@@ -28,13 +28,14 @@ public struct SimulatorDisplayView: NSViewRepresentable {
   public var duoHingeAngle: Double?
   public var artworkScale: CGFloat?
   public var accurateScreenSize: CGSize?
+  public var onInput: (() -> Void)?
 
   public init(
     udid: String, screenID: UInt32 = 1, interactive: Bool = false,
     onPixelSizeChange: @escaping (CGSize) -> Void = { _ in }, onLitChange: ((Bool) -> Void)? = nil,
     buttons: SimulatorButtons? = nil, hingeAngle: Double? = nil, showsDeviceFrame: Bool = false,
     onFrameSizeChange: ((CGSize?) -> Void)? = nil, duoFrame: SimulatorDuoFrame? = nil, activeScreenID: UInt32? = nil,
-    duoHingeAngle: Double? = nil, artworkScale: CGFloat? = nil, accurateScreenSize: CGSize? = nil
+    duoHingeAngle: Double? = nil, artworkScale: CGFloat? = nil, accurateScreenSize: CGSize? = nil, onInput: (() -> Void)? = nil
   ) {
     self.udid = udid
     self.screenID = screenID
@@ -50,6 +51,7 @@ public struct SimulatorDisplayView: NSViewRepresentable {
     self.duoHingeAngle = duoHingeAngle
     self.artworkScale = artworkScale
     self.accurateScreenSize = accurateScreenSize
+    self.onInput = onInput
   }
 
   public final class Coordinator {
@@ -71,6 +73,7 @@ public struct SimulatorDisplayView: NSViewRepresentable {
     view.onOrientationChange = { [weak canvas] orientation in
       canvas?.quarterTurns = orientation == 3 ? 1 : orientation == 4 ? 3 : orientation == 2 ? 2 : 0
     }
+    view.onInput = onInput
     view.onPixelSizeChange = onPixelSizeChange
     view.onLitChange = onLitChange
     view.attach(udid: udid, screenID: screenID)
@@ -94,6 +97,7 @@ public struct SimulatorDisplayView: NSViewRepresentable {
     canvas.showsFrame = showsDeviceFrame
     canvas.artworkScale = artworkScale
     canvas.accurateScreenSize = accurateScreenSize
+    view.onInput = onInput
     view.onPixelSizeChange = onPixelSizeChange
     view.onLitChange = onLitChange
     view.attach(udid: udid, screenID: screenID)
@@ -134,6 +138,7 @@ private final class SimulatorInputStatusLabel: NSTextField {
 }
 
 public final class SimulatorDisplayNSView: NSView {
+  var onInput: (() -> Void)?
   var onPixelSizeChange: (CGSize) -> Void = { _ in }
   var onOrientationChange: (UInt32) -> Void = { _ in }
   var onLitChange: ((Bool) -> Void)? {
@@ -540,6 +545,7 @@ public final class SimulatorDisplayNSView: NSView {
   private func touch(_ phase: TouchPhase, at point: CGPoint) {
     guard let hid = inputClient() else { return }
     hid.touch(phase, at: nativeScreenPoint(point, orientation: orientation), screenID: screenID)
+    if phase == .down { onInput?() }
     touchPoint = phase == .up ? nil : point
   }
 
@@ -622,7 +628,10 @@ public final class SimulatorDisplayNSView: NSView {
   public override func keyDown(with event: NSEvent) {
     guard interactive, !event.modifierFlags.contains(.option) else { return super.keyDown(with: event) }
     guard let hid = inputClient() else { return }
-    if !event.isARepeat { hid.hardwareKey(code: event.keyCode, down: true) }
+    if !event.isARepeat {
+      hid.hardwareKey(code: event.keyCode, down: true)
+      onInput?()
+    }
   }
 
   public override func keyUp(with event: NSEvent) {

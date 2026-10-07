@@ -1333,8 +1333,10 @@ introducing one.
 design tokens in `apps/mobile/src/design/tokens.ts`: spacing, radii, opacity,
 the text styles with their macOS sizes from `macosText`, and the light and dark
 colors. `Sources/StimDesktop/AgentPrompts.swift` is generated from the phone
-app's empty-state prompts in `apps/mobile/src/lib/agent-prompts.ts`. After
-changing either file, regenerate both with
+app's empty-state prompts in `apps/mobile/src/lib/agent-prompts.ts`.
+`Sources/StimKit/TutorialSteps.swift` is generated from
+`packages/stim-cli/src/guide/tutorial-data.ts` and the supported version in
+`packages/core/state/status.ts`. After changing these inputs, regenerate with
 `node apps/desktop/scripts/generate-tokens.mjs`. Desktop CI runs the same
 script with `--check` and fails when a committed file is stale. The color
 names match the phone's; `Palette` colors follow the system appearance and the

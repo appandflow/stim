@@ -36,6 +36,7 @@ struct DeviceTile: View {
   var framePixelsPerUnit: CGFloat = 1
   /// A physical device's stream stopped taking input.
   var onControlLost: () -> Void = {}
+  var onInput: (() -> Void)?
   @State private var isOnscreen = false
   @State private var pixelSizes: [UInt32: CGSize] = [:]
   @State private var frameSizes: [UInt32: CGSize] = [:]
@@ -832,7 +833,7 @@ struct DeviceTile: View {
             showsDeviceFrame: viewer && showsDeviceFrame, onFrameSizeChange: viewer ? { frameSizes[screenID] = $0 } : nil,
             duoFrame: viewer && device.formFactor == .dual ? duoFrame : nil, activeScreenID: mainScreenID,
             duoHingeAngle: observedHingeAngle, artworkScale: pixelScale.map { $0 * framePixelsPerUnit },
-            accurateScreenSize: accurateScreenSize(screenID)
+            accurateScreenSize: accurateScreenSize(screenID), onInput: onInput
           )
           .frame(
             width: displayedScreenIDs.contains(screenID) ? screenWidth(screenID) : 0,

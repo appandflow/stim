@@ -1,0 +1,30 @@
+{
+  "environments": [],
+  "archived": [
+    {
+      "id": "tutorial-archive",
+      "projectRoot": "/Users/example/stim-tutorial-tour",
+      "project": "stim-tutorial",
+      "workspace": "tour",
+      "worktree": {
+        "branch": "stim-tutorial/tour"
+      },
+      "removedAt": "2026-10-07T05:06:58.324Z",
+      "removedBy": "worktree-remove",
+      "builds": {
+        "count": 2,
+        "lastErrorCount": 0
+      },
+      "agents": [],
+      "bytes": {
+        "logs": 0,
+        "recordings": 0,
+        "agentActions": 0,
+        "record": 0,
+        "total": 0
+      },
+      "expires": {},
+      "version": 1
+    }
+  ]
+}

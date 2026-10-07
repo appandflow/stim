@@ -46,7 +46,7 @@ jobs:
         with:
           node-version: 22
           package-manager-cache: false
-      - name: Check the generated design tokens and agent prompts
+      - name: Check the generated design tokens, agent prompts and tutorial steps
         run: node scripts/generate-tokens.mjs --check
       - name: Check Sources stay ASCII
         run: node scripts/check-ascii.mjs

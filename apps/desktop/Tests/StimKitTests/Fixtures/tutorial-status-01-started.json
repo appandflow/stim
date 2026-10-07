@@ -1,0 +1,26 @@
+{
+  "environments": [
+    {
+      "live": true,
+      "build": null,
+      "phase": "live",
+      "phaseSince": null,
+      "recording": {
+        "enabled": true
+      },
+      "tutorial": {
+        "version": 1
+      },
+      "path": "/Users/example/stim-tutorial-tour",
+      "warnings": [],
+      "agentDevice": {
+        "stateDir": "/Users/example/stim-state/agent-device"
+      },
+      "logs": {
+        "dir": "/Users/example/stim-state/logs",
+        "errorsSinceMarker": 0
+      }
+    }
+  ],
+  "archived": []
+}

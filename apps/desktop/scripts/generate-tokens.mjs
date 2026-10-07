@@ -14,6 +14,9 @@ process.on('warning', (warning) => {
 });
 const tokens = await import('../../mobile/src/design/tokens.ts');
 const { AGENT_PROMPTS } = await import('../../mobile/src/lib/agent-prompts.ts');
+const { TUTORIAL_STEPS, TUTORIAL_RESTART_PROMPT } =
+  await import('../../../packages/stim-cli/src/guide/tutorial-data.ts');
+const { TUTORIAL_VERSION } = await import('../../../packages/core/state/status.ts');
 
 const weights = { regular: '.regular', medium: '.medium', semibold: '.semibold', bold: '.bold' };
 
@@ -112,9 +115,42 @@ ${AGENT_PROMPTS.map((prompt) => `    ${JSON.stringify(prompt)},`).join('\n')}
 }
 `;
 
+function swiftString(value) {
+  return Array.from(JSON.stringify(value), (char) =>
+    char.codePointAt(0) > 127 ? `\\u{${char.codePointAt(0).toString(16)}}` : char,
+  ).join('');
+}
+
+const tutorial = `public struct TutorialStep: Sendable {
+  public let id: String
+  public let title: String
+  public let who: String
+  public let optional: Bool
+  public let prompt: String?
+  public let section: String?
+  public let manual: [String]
+}
+
+public enum TutorialSteps {
+  public static let supportedVersions: Set<Int> = [${TUTORIAL_VERSION}]
+  public static let restartPrompt = ${swiftString(TUTORIAL_RESTART_PROMPT)}
+  public static let all: [TutorialStep] = [
+${TUTORIAL_STEPS.map(
+  (step) => `    TutorialStep(
+      id: ${swiftString(step.id)}, title: ${swiftString(step.title)}, who: ${swiftString(step.who)}, optional: ${step.optional},
+      prompt: ${step.prompt === null ? 'nil' : swiftString(step.prompt)}, section: ${step.section === null ? 'nil' : swiftString(step.section)},
+      manual: [
+${step.manual.map((line) => `        ${swiftString(line)}${step.manual.length === 1 ? '' : ','}`).join('\n')}
+      ]),`,
+).join('\n')}
+  ]
+}
+`;
+
 const outputs = [
   [output, swift],
   [promptsOutput, prompts],
+  [join(desktop, 'Sources/StimKit/TutorialSteps.swift'), tutorial],
 ];
 
 if (process.argv.includes('--check')) {
