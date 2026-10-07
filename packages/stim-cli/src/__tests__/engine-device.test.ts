@@ -13,6 +13,7 @@ import {
   unknownAndroidSystemImageRefusal,
   unknownIosDeviceTypeRefusal,
   unknownIosRuntimeRefusal,
+  countLiveOwnedDevices,
   withDeviceBootAdmission,
   DeviceAdmissionRefusal,
 } from '../engine/device-capacity.ts';
@@ -2729,6 +2730,25 @@ describe('a boot refused at admission', () => {
 
 describe('withDeviceBootAdmission', () => {
   const sources = { sims: [], adb: makeAdbDevices(), config: makeConfig() };
+
+  describe('with a booting claim Stim cannot verify', () => {
+    const listings = sources;
+    beforeEach(() => {
+      const shared = join(tmpHome, 'device-boots', 'shared');
+      mkdirSync(shared, { recursive: true });
+      writeFileSync(join(shared, 'stray'), 'x');
+    });
+
+    test('the count is unknown, not zero', () => {
+      expect(countLiveOwnedDevices(listings)).toMatchObject({ unknown: expect.stringContaining('device boot claim') });
+    });
+
+    test('the boot is refused with the claim code and the command that removes it', async () => {
+      await expect(
+        withDeviceBootAdmission({ platform: 'ios', key: 'u1' }, async () => 'booted', { max: 2, sources: listings }),
+      ).rejects.toMatchObject({ code: 'STIM_CLAIM_REFUSED', removeCommand: expect.stringContaining('rm ') });
+    });
+  });
 
   test('a boot in flight keeps its place, so a racing run for the last slot is refused', async () => {
     let finishBoot!: () => void;

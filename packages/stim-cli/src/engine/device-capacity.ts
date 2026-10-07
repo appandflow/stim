@@ -19,7 +19,14 @@ import { workspaceId } from '@stim-cli/core';
 import { formatElapsed, phaseLine } from '../command-output.ts';
 import { recordCapacityRefusal } from './stats.ts';
 import { findProjectRoot } from '../workspace/project.ts';
-import { readClaimSet, releaseClaim, tryAcquireClaim, type ClaimHandle } from '../ownership-claim.ts';
+import {
+  ClaimRefusedError,
+  isClaimRefusal,
+  readClaimSet,
+  releaseClaim,
+  tryAcquireClaim,
+  type ClaimHandle,
+} from '../ownership-claim.ts';
 import { withWorkspaceProcessLock, workspaceProcessLockError } from './workspace-process-lock.ts';
 import type { SettingScope } from '@stim-cli/core/state';
 
@@ -89,6 +96,15 @@ function liveEmulatorPorts(adb: AdbDevices): EmulatorPort[] {
 
 function readBootingDevices(): BootingDevice[] {
   const survey = readClaimSet(bootingDevicesRoot());
+  const unresolved = survey.unresolved[0];
+  if (unresolved) {
+    throw new ClaimRefusedError({
+      claimPath: unresolved.path,
+      root: bootingDevicesRoot(),
+      reason: unresolved.reason,
+      label: 'device boot',
+    });
+  }
   const booting: BootingDevice[] = [];
   for (const holder of survey.live) {
     const { platform, key } = holder.details;
@@ -195,7 +211,10 @@ function readInventory({
       config: recorded,
     };
   } catch (error) {
-    if (error instanceof DeviceCountUnavailable) return uncountedRefusal(error.cause);
+    if (error instanceof DeviceCountUnavailable) {
+      if (isClaimRefusal(error.cause)) throw error.cause;
+      return uncountedRefusal(error.cause);
+    }
     throw error;
   }
 }
@@ -205,8 +224,13 @@ function readInventory({
  * run is booting under `concurrency.maxDevices`, each counted once; when a listing fails, why the count is unknown.
  */
 export function countLiveOwnedDevices(sources: InventorySources = {}): number | { unknown: string } {
-  const inventory = readInventory(sources);
-  return 'code' in inventory ? { unknown: inventory.message } : inventoryKeys(inventory).size;
+  try {
+    const inventory = readInventory(sources);
+    return 'code' in inventory ? { unknown: inventory.message } : inventoryKeys(inventory).size;
+  } catch (error) {
+    if (isClaimRefusal(error)) return { unknown: error.message };
+    throw error;
+  }
 }
 
 function workspaceHasLiveDevice({
@@ -275,7 +299,13 @@ export function checkDeviceCapacity({
 }> &
   InventorySources = {}): CapacityRefusal | null {
   if (!max || max <= 0) return null;
-  const inventory = readInventory(sources);
+  let inventory: ReturnType<typeof readInventory>;
+  try {
+    inventory = readInventory(sources);
+  } catch (error) {
+    if (isClaimRefusal(error)) return null;
+    throw error;
+  }
   if ('code' in inventory) return null;
   return deviceCapacityRefusal({ platform, project, slot, max, ...inventory });
 }
@@ -298,10 +328,11 @@ function takeBootMarker(device: BootingDevice): ClaimHandle {
     details: { platform: device.platform, key: device.key },
   });
   if (attempt.acquired) return attempt.acquired;
-  throw new DeviceAdmissionRefusal({
-    code: 'STIM_NO_DEVICE',
-    message: `Another process holds ${bootingDevicesRoot()} exclusively, so this boot cannot be counted toward concurrency.maxDevices.`,
-    remedy: 'Retry once that process finishes.',
+  throw new ClaimRefusedError({
+    claimPath: attempt.held?.path ?? attempt.waitingFor?.[0]?.path ?? bootingDevicesRoot(),
+    root: bootingDevicesRoot(),
+    reason: 'another process holds it exclusively, so this boot cannot be counted toward concurrency.maxDevices',
+    label: 'device boot',
   });
 }
 
