@@ -33,7 +33,7 @@ controls placement:
 
 Automatic selection falls back to a local build when offloading fails.
 `--remote-build <auto|local|name>` overrides `STIM_REMOTE_BUILD`, which
-also overrides `remote.build`. `STIM_OFFLOAD_MODE` overrides `remote.buildMode`
+also overrides `remote.build`. `STIM_REMOTE_BUILD_MODE` overrides `remote.buildMode`
 for automatic selection. A named worker ignores that mode and local capacity;
 it refuses with `STIM_OFFLOAD_REFUSED` instead of trying another worker or
 building locally. For a configured, paired worker, a cache hit needs no

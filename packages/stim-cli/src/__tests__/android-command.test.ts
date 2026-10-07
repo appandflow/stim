@@ -6079,11 +6079,11 @@ describe('run statistics', () => {
   }
 
   async function runWithMode(mode: string, overrides: Parameters<typeof harness>[0]) {
-    process.env.STIM_OFFLOAD_MODE = mode;
+    process.env.STIM_REMOTE_BUILD_MODE = mode;
     try {
       return await harness(overrides).run();
     } finally {
-      delete process.env.STIM_OFFLOAD_MODE;
+      delete process.env.STIM_REMOTE_BUILD_MODE;
     }
   }
 

@@ -749,7 +749,7 @@ the ones it offloaded.
 automatic iOS and Android device placement. It is the load per core at which a Mac
 counts as saturated, both here and on a remote Mac.
 
-STIM_OFFLOAD_MODE overrides it for one command. Device, Release and
+STIM_REMOTE_BUILD_MODE overrides it for one command. Device, Release and
 \`--remote eas|proxy\` builds, Android builds with the Apple Clang CAS compiler cache,
 and iOS/Android runs with the build cache off, always build here. Hosted iOS
 Debug builds can use a separate --remote-build, targeting the hosting Mac's

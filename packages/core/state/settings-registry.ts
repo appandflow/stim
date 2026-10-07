@@ -692,7 +692,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
     type: { kind: 'choice', choices: OFFLOAD_MODES },
     scopes: MACHINE,
     default: 'auto',
-    env: 'STIM_OFFLOAD_MODE',
+    env: 'STIM_REMOTE_BUILD_MODE',
     description:
       'When remote.build is auto, where iOS simulator Debug, Android emulator debug and macOS SwiftPM Debug builds run: auto builds here while this Mac has a free concurrency.maxBuilds slot and its load is under server.maxLoadPerCore, and otherwise builds on a less loaded Mac in remote.machines; force builds on a remote Mac whenever one can take the build; off always builds here',
   },

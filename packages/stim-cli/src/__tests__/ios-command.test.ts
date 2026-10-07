@@ -6799,12 +6799,12 @@ describe('run statistics', () => {
       requestedAt: '2026-09-01T00:00:00.000Z',
     };
     writeFileSync(buildMachinesFile(), JSON.stringify({ version: 1, machines: [credential] }));
-    process.env.STIM_OFFLOAD_MODE = 'off';
+    process.env.STIM_REMOTE_BUILD_MODE = 'off';
     const { runs, recordStats } = recorder();
     try {
       await run({}, { recordStats });
     } finally {
-      delete process.env.STIM_OFFLOAD_MODE;
+      delete process.env.STIM_REMOTE_BUILD_MODE;
     }
 
     expect(runs[0]?.run.placement).toEqual({ decision: 'here', reason: 'remote.buildMode is off' });
