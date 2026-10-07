@@ -26,15 +26,21 @@ struct AddMachineSheet: View {
         Text("Add a build machine").font(.stim(.headline)).padding(.bottom, Space.xl)
         ForEach(Array(["Pick a Mac", "What it does", "Set it up", "Tools", "Test build", "Done"].enumerated()), id: \.offset) {
           index, title in
+          let outcome: BuildTest.Outcome? = index == 4 && index < step ? model.testOutcome : nil
           HStack(spacing: Space.md) {
-            Image(systemName: index < step ? "checkmark.circle.fill" : index == step ? "circle.inset.filled" : "circle")
+            Image(
+              systemName: outcome?.symbol
+                ?? (index < step ? "checkmark.circle.fill" : index == step ? "circle.inset.filled" : "circle")
+            )
             Text(title).font(.stim(.callout, weight: index == step ? .semibold : .regular))
           }
-          .foregroundStyle(index == step ? Palette.accent : index > step ? Palette.tertiary : Palette.secondary)
+          .foregroundStyle(
+            outcome.map(testColor) ?? (index == step ? Palette.accent : index > step ? Palette.tertiary : Palette.secondary)
+          )
           .frame(height: 30)
           .accessibilityLabel(
-            title
-              + (index < step ? ", done" : index == step ? ", current step" : ", waiting"))
+            outcome?.accessibilityLabel
+              ?? (title + (index < step ? ", done" : index == step ? ", current step" : ", waiting")))
         }
         Spacer()
       }
@@ -387,5 +393,13 @@ struct AddMachineSheet: View {
   private func checkLine(_ text: String, ready: Bool) -> some View {
     Label(text, systemImage: ready ? "checkmark.circle.fill" : "xmark.circle.fill")
       .foregroundStyle(ready ? Palette.success : Palette.warning)
+  }
+
+  private func testColor(_ outcome: BuildTest.Outcome) -> Color {
+    switch outcome {
+    case .passed: return Palette.secondary
+    case .failed: return Palette.error
+    case .skipped, .skippedAfterFailure, .notRun: return Palette.tertiary
+    }
   }
 }

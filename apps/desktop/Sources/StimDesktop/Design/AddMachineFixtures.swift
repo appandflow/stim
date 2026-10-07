@@ -10,13 +10,14 @@
     case noAnswer, stepFailed, serverTooOld, requestLapsed, grantedOther, funneled, permissionSkipped, noWorkspace
     case toolsOK, toolsFixes, toolsBusy, toolsAndroid
     case testPreparingSample, sampleFailed, offloading, offloaded, localBuilding, testPassed, testFailed, testSkipped
-    case summaryAuto, summaryNever, summaryUndo
+    case summaryAuto, summaryNever, summaryUndo, summarySkippedAfterFailure
     var id: Self { self }
 
     @MainActor func make() -> AddMachineModel {
       let later: [Self] = [
         .toolsOK, .toolsFixes, .toolsBusy, .toolsAndroid, .testPreparingSample, .sampleFailed, .offloading, .offloaded,
         .localBuilding, .testPassed, .testFailed, .testSkipped, .summaryAuto, .summaryNever, .summaryUndo,
+        .summarySkippedAfterFailure,
       ]
       if later.contains(self) {
         let model = Self.approved.make()

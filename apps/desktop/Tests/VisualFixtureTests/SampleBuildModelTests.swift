@@ -229,6 +229,8 @@ final class SampleBuildModelTests: XCTestCase {
     await settle(model)
     XCTAssertEqual(model.test.state, .failed(code: "STIM_OFFLOAD_REFUSED", message: "Worker refused", remedy: "Exact fix"))
     XCTAssertEqual(refused.commands.last?.arguments, ["stop"])
+    await model.skip()
+    XCTAssertEqual(model.test.outcome, .skippedAfterFailure("Worker refused"))
     let harness = Harness()
     harness.files.insert(harness.sample.marker)
     harness.waitForCancel = true
@@ -243,6 +245,7 @@ final class SampleBuildModelTests: XCTestCase {
     await running.skip()
     XCTAssertTrue(harness.cancelled)
     XCTAssertEqual(running.test.state, .skipped)
+    XCTAssertEqual(running.test.outcome, .skipped)
     XCTAssertFalse(running.running)
     XCTAssertEqual(harness.commands.last?.arguments, ["stop"])
   }

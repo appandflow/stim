@@ -27,6 +27,9 @@ final class AddMachineModel {
   private(set) var checksAndroid = false
   let sample: SampleBuildModel?
   var preparingSample: Bool { sample?.preparing == true }
+  var testOutcome: BuildTest.Outcome {
+    wizard.capabilities.contains(.build) ? sample?.test.outcome ?? .notRun : .notRun
+  }
   var machines: BuildMachinesModel?
   private(set) var summary: [String] = []
   private(set) var finished = false
@@ -576,7 +579,7 @@ final class AddMachineModel {
         checksAndroid = true
         androidStatus = status
       default:
-        page = [.summaryAuto, .summaryNever, .summaryUndo].contains(fixture) ? .summary : .test
+        page = [.summaryAuto, .summaryNever, .summaryUndo, .summarySkippedAfterFailure].contains(fixture) ? .summary : .test
         var events: [BuildTest.Event] = [
           .prepared, .start, .offload(.success), .timings(times), .localStart, .localFinished(passed: true, ms: 250000),
         ]
@@ -600,6 +603,11 @@ final class AddMachineModel {
               """.utf8))
           events = [.prepared, .start, .offload(.refused(refusal))]
         case .testSkipped, .summaryNever: events = [.skip]
+        case .summarySkippedAfterFailure:
+          events = [
+            .prepared, .start,
+            .fail(code: "STIM_OFFLOAD_REFUSED", message: "mini refused this build: no iOS runtime there", remedy: nil), .skip,
+          ]
         default: break
         }
         sample?.fixture(
@@ -610,7 +618,7 @@ final class AddMachineModel {
               .init(text: "offer accepted; syncing checkout", kind: .output),
               .init(text: "built on mini in 2:52: offer 0:01, sync 0:03, build 2:41, fetch 0:04", kind: .ok),
             ] : [])
-        mode = fixture == .summaryNever ? .off : .auto
+        mode = fixture == .summaryNever || fixture == .summarySkippedAfterFailure ? .off : .auto
         summary = summaryLines(addedEntries: ["offload.machines": "mini", "hosting.machines": "mini"], mode: mode)
       }
     }
