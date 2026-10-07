@@ -194,7 +194,7 @@ public enum Discovery {
       title: "Device limit reached. Run on \(hosts.count == 1 ? machineName(hosts[0]) : "a hosting Mac")?",
       detail: runOnAutoPlatforms(source.platform).count == 1
         ? "Project setting: \(runOnAutoPlatforms(source.platform)[0]).remote = auto"
-        : "Project settings: remote = auto",
+        : "Project: ios/android.remote = auto",
       actionTitle: "Use Auto",
       action: .runOnAuto(workspaceID: workspaceID, platform: source.platform), surface: .banner)
   }

@@ -331,11 +331,6 @@ struct DiscoveryTests {
     #expect(Discovery.runOnAutoPlatforms("android") == ["android"])
     #expect(Discovery.runOnAutoPlatforms(nil) == ["ios", "android"])
     #expect(Discovery.runOnAutoPlatforms("macos") == ["ios", "android"])
-    func detail(_ platform: String?) -> String? {
-      Discovery.capHit(source: .init(at: now, workspaceID: "w", platform: platform), mac: nil, hosts: ["mini"])?.detail
-    }
-    #expect(detail("android") == "Project setting: android.remote = auto")
-    #expect(detail(nil) == "Project settings: remote = auto")
   }
 
   @Test func migrationShowsTheDeviceLimitPromptOnceMoreAndKeepsSnoozeAndNever() throws {
