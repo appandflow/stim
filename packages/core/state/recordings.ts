@@ -1,4 +1,4 @@
-import { lstatSync, readdirSync } from 'node:fs';
+import { readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { isJsonObject } from './json-file.ts';
 import { coerceSettingText, settingDefinition } from './settings-registry.ts';
@@ -53,7 +53,6 @@ export function openSegmentName(start: number): string {
 
 function listDir(dir: string): string[] {
   try {
-    if (!lstatSync(dir).isDirectory()) return [];
     return readdirSync(dir);
   } catch {
     return [];
@@ -69,8 +68,7 @@ export function listSegments(dir: string, closedOnly = false): RecordedSegment[]
     if (!closed && (closedOnly || !part)) continue;
     let stat;
     try {
-      stat = lstatSync(join(dir, name));
-      if (!stat.isFile()) continue;
+      stat = statSync(join(dir, name));
     } catch {
       continue;
     }

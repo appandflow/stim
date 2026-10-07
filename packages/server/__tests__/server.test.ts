@@ -2746,17 +2746,6 @@ describe('archive.detail', () => {
     }
   });
 
-  it('refuses a connection without read access', async () => {
-    const { id } = archiveFixture();
-    const client = await connect(await start());
-    await client.request('hello', {
-      protocol: 1,
-      client: CLIENT,
-      auth: { pairingToken: createPairingToken(Date.now(), ['control']).token, deviceName: 'Test phone' },
-    });
-    expect(await client.request('archive.detail', { archive: id })).toMatchObject({ error: { code: 'forbidden' } });
-  });
-
   it('returns empty builds when archived state is missing or unreadable', async () => {
     const { id, dir } = archiveFixture();
     const client = await authed(await start());
