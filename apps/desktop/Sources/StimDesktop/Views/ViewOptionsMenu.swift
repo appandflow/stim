@@ -83,7 +83,7 @@ struct ViewOptionsButton: View {
   }
 }
 
-private struct ViewOptionsMenu: View {
+struct ViewOptionsMenu: View {
   var projects: [Project]
   var counts: [StatusFilter: Int]
   var title: (Project) -> String
