@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import { processGroupAlive } from '@stim-cli/core/ownership-claim';
-import type { ProcessRecord } from '@stim-cli/core/process-identity';
+import { waitForProcessExit, type ProcessRecord } from '@stim-cli/core/process-identity';
 
 export function keepAgentClaim(root: string): ProcessRecord {
   const script = `
@@ -22,10 +22,11 @@ process.stdout.write(JSON.stringify(record));
 
 export async function killKeptChild(child: ProcessRecord, timeoutMs = 10_000): Promise<void> {
   const pid = child.pid as number;
+  const deadline = Date.now() + timeoutMs;
   try {
     process.kill(pid, 'SIGKILL');
   } catch {}
-  const deadline = Date.now() + timeoutMs;
+  if (!(await waitForProcessExit(child, timeoutMs))) throw new Error(`process ${pid} did not exit in ${timeoutMs} ms`);
   while (processGroupAlive(pid)) {
     if (Date.now() > deadline) throw new Error(`process group ${pid} was not reaped in ${timeoutMs} ms`);
     await new Promise((resolve) => setTimeout(resolve, 50));
