@@ -38,7 +38,7 @@ struct AddMachineSheet: View {
         }
         Spacer()
       }
-      .padding(Space.xl).frame(width: 205).background(Palette.sidebar)
+      .padding(Space.xl).frame(width: 170).background(Palette.sidebar)
       Divider()
       VStack(spacing: 0) {
         if model.isFixture {
@@ -50,7 +50,7 @@ struct AddMachineSheet: View {
         footer.padding(Space.xl)
       }
     }
-    .frame(width: 920, height: 740)
+    .frame(width: 740, height: 640)
     .font(.stim(.body)).foregroundStyle(Palette.text).tint(Palette.brand)
     .background(Palette.background)
     .task { await model.start() }
@@ -151,7 +151,7 @@ struct AddMachineSheet: View {
       TerminalCard(
         lines: previewLines(capabilities: wizard.capabilities, known: model.known, version: model.version),
         mode: .scripted(loop: false),
-        width: 650, animates: !model.isFixture, height: 208, maxVisibleLines: 10
+        width: nil, animates: !model.isFixture, height: 208, maxVisibleLines: 10
       )
       .id(TerminalLine.spokenSummary(previewLines(capabilities: wizard.capabilities, known: model.known, version: model.version)))
       if allApproved {
@@ -190,7 +190,7 @@ struct AddMachineSheet: View {
       Text(wizard.phase == .cancelled ? "Setup cancelled" : "Setting up \(name)").font(.stim(.title))
       if let journal = wizard.journal {
         TerminalCard(
-          lines: journalLines(journal), mode: .live, width: 650, animates: !model.isFixture,
+          lines: journalLines(journal), mode: .live, width: nil, animates: !model.isFixture,
           height: 272, maxVisibleLines: 14)
       }
       Text(statusText).foregroundStyle(wizard.phase == .approved ? Palette.success : Palette.secondary)
