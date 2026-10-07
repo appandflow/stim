@@ -1004,6 +1004,9 @@ Auto / Always / Never mode only when it differs. If the wizard turned offloading
 off, Auto is the default after both builds pass; skipping or failing keeps Never
 selected unless you choose otherwise. Existing machine settings keep their
 current effective mode. The summary lists approvals, settings and undo commands.
+The Test build mark and summary show whether the test passed, was skipped, failed,
+or did not run. Skipping after a failed run keeps that outcome visible. Only a
+passed test labels the machine ready; otherwise it is set up.
 Uninstalling the server service is optional; Stim Host permissions stay in System
 Settings until you remove them.
 

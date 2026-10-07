@@ -166,6 +166,7 @@ final class AddMachineModelTests: XCTestCase {
     XCTAssertEqual(harness.mode, "off")
     await model.openSummary()
     XCTAssertEqual(model.mode, .off)
+    XCTAssertEqual(model.testOutcome, .notRun)
     await model.finish()
     XCTAssertEqual(harness.mode, "off")
     XCTAssertEqual(harness.builds, ["mini:7447"])
@@ -382,6 +383,7 @@ final class AddMachineModelTests: XCTestCase {
     await checkUntilApproved(model)
     await model.openSummary()
     XCTAssertEqual(model.mode, .auto)
+    XCTAssertEqual(model.testOutcome, .passed)
     XCTAssertEqual(harness.mode, "off")
     await model.finish()
     XCTAssertEqual(harness.mode, "auto")
@@ -467,6 +469,22 @@ final class AddMachineModelTests: XCTestCase {
         if !alreadyListed { XCTAssertTrue(model.summary.contains { $0.contains("mini:7447") }) }
       }
     }
+  }
+
+  @MainActor func testHostedOnlySetupReportsBuildTestNotRunAfterSkip() async {
+    let harness = Harness()
+    let sample = SampleBuildModel(
+      dependencies: .init(
+        sample: WizardSample(applicationSupport: URL(fileURLWithPath: "/fixture")),
+        run: { _, _ in WizardCommandOutput(exit: 0, stdout: Data(), stderr: "") }))
+    sample.fixture([.prepared, .skip])
+    let model = harness.make(sample: sample)
+    await model.refreshPeers()
+    model.selectedId = "nMini"
+    await model.pick()
+    XCTAssertEqual(model.testOutcome, .skipped)
+    model.setCapability(.build, enabled: false)
+    XCTAssertEqual(model.testOutcome, .notRun)
   }
 
   @MainActor func testAndroidFailuresNeverBlockTheIosTest() async {

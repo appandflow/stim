@@ -117,7 +117,7 @@ struct AddMachineSteps: View {
 
   private var summary: some View {
     VStack(alignment: .leading, spacing: Space.lg) {
-      Text("\(name) is ready").font(.stim(.title))
+      Text(model.testOutcome == .passed ? "\(name) is ready" : "\(name) is set up").font(.stim(.title))
       ForEach(SetupCapability.allCases.filter { model.wizard.capabilities.contains($0) }, id: \.self) { capability in
         let status = capability == .build ? model.wizard.build : model.wizard.host
         Label(
@@ -125,6 +125,9 @@ struct AddMachineSteps: View {
           systemImage: "checkmark.circle.fill"
         )
         .foregroundStyle(Palette.success)
+      }
+      if let text = model.testOutcome.summaryText {
+        Text(text).foregroundStyle(Palette.secondary)
       }
       Text("When to offload").font(.stim(.headline))
       HStack(spacing: Space.lg) {
