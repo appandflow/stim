@@ -6,7 +6,6 @@ const KIND_SELECTORS: Record<string, ArchiveKind> = {
   'archived-agent': 'agentActions',
 };
 
-/** `archived`, `archived:<id>`, `archived-<kind>` and `archived-<kind>:<id>`; `id` is null when the selector names no archive. */
 export function parseArchiveSelector(scope: string): { kind: ArchiveKind | null; id: string | null } | null {
   const trimmed = scope.trim();
   const colon = trimmed.indexOf(':');
