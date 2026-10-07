@@ -381,6 +381,12 @@ ON THE SOURCE CHECKOUT
   (including nested monorepo app dirs) dropped, and the global workspace
   directory deleted. The tree itself is never touched, which is also why the
   dirty-tree and unpushed guards do not apply on that path.
+  Run from the checkout root it reclaims every registered project under the
+  checkout. Run from a subfolder (for example apps/mobile) it reclaims only
+  the nearest registered project at or above that folder and the projects nested
+  under it, leaves the other
+  projects' devices, ports and records alone, and refuses with exit 1 when no
+  project is registered at or above it.
   It ends with:
     Reclaimed the environment; the working tree stays (it is the source checkout).
   A registered project directory that is not a git repo at all gets the same

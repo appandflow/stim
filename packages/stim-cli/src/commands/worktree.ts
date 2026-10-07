@@ -630,6 +630,16 @@ function hasRegisteredProjectUnder(rootPath: string): boolean {
   return Object.keys(cfg?.projects ?? {}).some((key) => isPathPrefix(rootPath, key));
 }
 
+// The registered project at or above `path`, nearest first, never above `root`.
+function projectAtOrAbove(root: string, path: string): string | null {
+  const here = nativeCanonicalPath(path);
+  const keys = Object.keys(loadConfig()?.projects ?? {}).filter(
+    (key) =>
+      isPathPrefix(nativeCanonicalPath(root), nativeCanonicalPath(key)) && isPathPrefix(nativeCanonicalPath(key), here),
+  );
+  return keys.toSorted((a, b) => b.length - a.length)[0] ?? null;
+}
+
 async function reclaimEnvironment(root: string, why: string): Promise<void> {
   await withManagedRemoteWorktreeRemovalLock(root, () =>
     withReclaimLocks(root, async (lockedKeys) => {
@@ -895,8 +905,21 @@ async function runRemove(target: string | undefined, opts: RemoveOptions, onRemo
     return;
   }
   if (entry.path === source.path) {
-    if (entry.path !== path) {
-      console.error(chalk.dim(`${path} is inside the source checkout ${entry.path}; reclaiming its environment.`));
+    if (nativeCanonicalPath(entry.path) !== nativeCanonicalPath(path)) {
+      const project = projectAtOrAbove(entry.path, path);
+      if (!project) {
+        console.error(chalk.red(`Refusing to reclaim from ${path}: no Stim project is registered at or above it.`));
+        console.error(
+          chalk.dim(`  Run it from the project folder, or from ${entry.path} to reclaim every project under it.`),
+        );
+        process.exitCode = 1;
+        return;
+      }
+      console.error(
+        chalk.dim(`${path} is inside the source checkout ${entry.path}; reclaiming only the project ${project}.`),
+      );
+      await reclaimEnvironment(project, 'it is the source checkout');
+      return;
     }
     await reclaimEnvironment(entry.path, 'it is the source checkout');
     return;
@@ -1049,7 +1072,7 @@ export function registerRemove(worktree: Command): void {
   worktree
     .command('remove [target]')
     .description(
-      'Remove a worktree, its unused Stim-created branch, build artifacts, owned devices, and Metro port. Defaults to the current workspace. On the source checkout it reclaims the environment only and leaves the tree in place.',
+      'Remove a worktree, its unused Stim-created branch, build artifacts, owned devices, and Metro port. Defaults to the current workspace. On the source checkout it reclaims the environment only and leaves the tree in place; from a subfolder it reclaims only the project at or above that folder, with the projects nested under it.',
     )
     .option('--force', 'remove even when the worktree holds uncommitted or unpushed work or initialized submodules')
     .action(async (target: string | undefined, opts: { force?: boolean }) => {
