@@ -12,7 +12,7 @@ public enum StatusFilter: String, CaseIterable, Sendable {
     }
   }
 
-  public static let all: Set<StatusFilter> = [.live, .idle, .notSetUp]
+  public static let all = Set(allCases)
   public static let defaultSelection: Set<StatusFilter> = [.live, .idle]
 
   public static func encode(_ statuses: Set<StatusFilter>) -> String {
@@ -26,14 +26,9 @@ public enum StatusFilter: String, CaseIterable, Sendable {
 
   public static func summary(_ statuses: Set<StatusFilter>) -> String {
     if statuses == all { return "All" }
-    if statuses == all.union([.archived]) { return "All + Archived" }
     if statuses.isEmpty { return "None" }
     if statuses.count <= 2 { return allCases.filter { statuses.contains($0) }.map(\.title).joined(separator: ", ") }
     return "\(statuses.count) selected"
-  }
-
-  public static func selectingAll(_ statuses: Set<StatusFilter>) -> Set<StatusFilter> {
-    statuses.contains(.archived) ? all.union([.archived]) : all
   }
 }
 
