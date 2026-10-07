@@ -45,7 +45,8 @@ hosting Mac; controls that need a local simulator, and replay, are hidden.
 The tile reports connecting, unavailable or stopped sessions. Android hardware
 buttons also use the relay; rotation and posture are unavailable.
 Placement is set by config or agents: use
-`stim settings set ios.remote auto --scope workspace` (or `android.remote`),
+`stim settings set ios.remote auto --scope machine` (or `android.remote`; a
+workspace, repo or committed value overrides the machine default),
 or per run `stim ios --remote auto` / `stim ios --remote <machine>`.
 Desktop passes no `--remote` flag for new iOS and Android runs, so the project's
 settings apply. Recorded hosted sessions stay fixed until `stim stop`.

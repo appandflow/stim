@@ -152,7 +152,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
       pattern: TAILNET_MACHINE_PATTERN,
       patternHelp: 'eas, proxy, auto, or a tailnet machine name',
     },
-    scopes: PROJECT,
+    scopes: EVERY,
     description:
       'Default iOS remote target: eas, proxy, or an approved Mac in remote.machines; auto places on an approved Mac when this Mac is full or busy',
   },
@@ -227,7 +227,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
       pattern: TAILNET_MACHINE_PATTERN,
       patternHelp: 'eas, proxy, auto, or a tailnet machine name',
     },
-    scopes: PROJECT,
+    scopes: EVERY,
     description:
       'Default Android remote target: eas, proxy, or an approved Mac in remote.machines; auto places on an approved Mac when this Mac is full or busy',
   },

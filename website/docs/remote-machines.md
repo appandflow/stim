@@ -168,7 +168,8 @@ Read `android.host.agent` from `stim status --json`, open the installed package
 with its remote config, and verify the first screen with agent-device."
 
 Desktop uses placement set by config or agents, for example
-`stim settings set android.remote auto --scope workspace` (or `ios.remote`),
+`stim settings set android.remote auto --scope machine` (or `ios.remote`; a
+workspace, repo or committed value overrides the machine default),
 or per run `stim android --remote auto` / `stim android --remote <machine>`.
 New runs pass no `--remote` flag; recorded hosted sessions keep their machine
 until `stim stop`. When a device is not on this Mac, Desktop shows
