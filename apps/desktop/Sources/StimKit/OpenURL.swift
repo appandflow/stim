@@ -70,7 +70,8 @@ extension StatusPayload {
 }
 
 /// A `stim-desktop://workspace?path=<path>` link, which `stim worktree warm`, `start`, `ios`, `android` and `web`
-/// print. `platform` and `slot` name the device the run targeted; `slot` is nil for the default slot.
+/// print. `platform` and `slot` name the device the run targeted; `slot` is nil for the default slot. `archive` names
+/// one archived run of `path`, opened only when no live workspace matches.
 public struct WorkspaceOpenRequest: Equatable, Sendable {
   public var path: String
   public var platform: String?
