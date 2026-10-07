@@ -17,6 +17,7 @@ struct RootView: View {
   @ObservedObject private var store: StatusStore
   private let metrics: MetricsStore
   private let gc: GcReportStore
+  @ObservedObject private var tips: TipCoordinator
   private let buildMachines: BuildMachinesModel
   @ObservedObject private var actions: ActionCenter
   @ObservedObject private var operations: OperationLog
@@ -61,8 +62,9 @@ struct RootView: View {
   init(
     cli: Task<StimCLI, Never>, store: StatusStore, actions: ActionCenter, autopilot: AutopilotRunner,
     onboarding: Onboarding, gc: GcReportStore, buildMachines: BuildMachinesModel, metrics: MetricsStore,
-    storage: StorageStore, planChecks: BuildPlanChecks, statsReader: StatsReader
+    storage: StorageStore, planChecks: BuildPlanChecks, statsReader: StatsReader, tips: TipCoordinator
   ) {
+    self.tips = tips
     self.buildMachines = buildMachines
     self.cli = cli
     self.onboarding = onboarding
@@ -80,7 +82,8 @@ struct RootView: View {
   var body: some View {
     NavigationSplitView(columnVisibility: $columnVisibility) {
       Sidebar(
-        store: store, autopilot: autopilot, onboarding: onboarding, actions: actions, selection: $selection, openLogs: showLogs
+        store: store, autopilot: autopilot, onboarding: onboarding, actions: actions, selection: $selection, openLogs: showLogs,
+        tips: tips
       )
       .frame(minWidth: 220, idealWidth: 272, maxWidth: .infinity)
       .navigationSplitViewColumnWidth(min: 220, ideal: 272, max: 360)
@@ -195,6 +198,7 @@ struct RootView: View {
     }
     .onDisappear { notices.removeAll() }
     .onChange(of: onboarding.stimUpdate, initial: true) { _, latest in showStimUpdate(latest) }
+    .onChange(of: onboarding.showsGuide || tutorial.isOpen, initial: true) { _, suppressed in tips.suppressed = suppressed }
     .onChange(of: openRequests.target, initial: true) { _, target in show(target, in: store.payload) }
     .onReceive(openRequests.$addMachine) { request in
       guard request != nil else { return }
@@ -625,7 +629,8 @@ struct RootView: View {
     case .notifications:
       InboxView(inbox: NotificationInbox.shared, openLogs: openErrors)
     case .machine:
-      MachineView(buildMachines: buildMachines, status: store, metrics: metrics, gc: gc, storage: storage, autopilot: autopilot)
+      MachineView(
+        buildMachines: buildMachines, status: store, metrics: metrics, gc: gc, storage: storage, autopilot: autopilot, tips: tips)
     default:
       WallView(store: store, metrics: metrics, project: projectFilter, selection: $selection, openLogs: openErrors)
     }

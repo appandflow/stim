@@ -50,6 +50,9 @@ public enum AppPreferences {
     public static let syncsClipboard = "viewer.syncsClipboard"
     public static let viewerOfferDismissed = "onboarding.viewerOfferDismissed"
 
+    public static let tipsEnabled = "tips.enabled"
+    public static let usageRecord = "tips.usageRecord"
+
     public static let discoveryLaunches = "discovery.launches"
     public static let discoveryLastShown = "discovery.lastShown"
     public static let discoverySeenPeers = "discovery.seenPeers"
@@ -84,6 +87,7 @@ public enum AppPreferences {
       Key.notifiesDiskPressure: true,
       Key.notifiesWorktreeRemoval: true,
       Key.showsInspector: true,
+      Key.tipsEnabled: true,
       Key.viewerShowsActions: true,
       Key.syncsClipboard: true,
     ].merging(NotificationSettings.defaults) { current, _ in current }

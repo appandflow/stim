@@ -14,6 +14,7 @@ struct AppPreferencesView: View {
   @AppStorage(AppPreferences.Key.editorBundleID) private var editor = ""
   @AppStorage(AppPreferences.Key.diffViewer) private var diffViewer = DiffViewer.builtIn
   @AppStorage(AppPreferences.Key.terminalBundleID) private var terminal = ""
+  @AppStorage(AppPreferences.Key.tipsEnabled) private var showsTips = true
   @AppStorage(AppPreferences.Key.showsMenuBarExtra) private var showsMenuBarExtra = false
   @AppStorage(AppPreferences.Key.stimExecutable) private var stimExecutable = ""
   @AppStorage(AppPreferences.Key.remoteSessionMinutes) private var remoteMinutes = 30
@@ -197,6 +198,7 @@ struct AppPreferencesView: View {
         LabeledContent("Setup guide") {
           Button("Open Setup Guide\u{2026}") { OpenRequests.shared.showSetupGuide() }.buttonStyle(.stim())
         }
+        Toggle("Show tips", isOn: $showsTips)
         Toggle("Show in the menu bar", isOn: $showsMenuBarExtra)
         Toggle("Launch at login", isOn: $launchesAtLogin)
           .onChange(of: launchesAtLogin) { _, enabled in setLaunchAtLogin(enabled) }
