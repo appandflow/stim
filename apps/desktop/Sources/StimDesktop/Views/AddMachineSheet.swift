@@ -50,7 +50,7 @@ struct AddMachineSheet: View {
         footer.padding(Space.xl)
       }
     }
-    .frame(width: 740, height: 680)
+    .frame(width: 740, height: 640)
     .font(.stim(.body)).foregroundStyle(Palette.text).tint(Palette.brand)
     .background(Palette.background)
     .task { await model.start() }
