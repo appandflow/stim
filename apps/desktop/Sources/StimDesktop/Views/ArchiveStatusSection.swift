@@ -6,7 +6,6 @@ import SwiftUI
 /// archive through `stim gc --cache archived-<kind>:<id>` and `archived:<id>`.
 struct ArchiveStatusSection: View {
   var page: ArchivedPage
-  var deleteArchive: () -> Void = {}
   @EnvironmentObject private var actions: ActionCenter
   @State private var confirming: ArchivedPage.Retention?
   @State private var clearing: Set<String> = []
@@ -16,19 +15,22 @@ struct ArchiveStatusSection: View {
 
   var body: some View {
     VStack(alignment: .leading, spacing: Space.md) {
-      HStack(alignment: .firstTextBaseline) {
-        SectionLabel(title: "Retained")
-        Spacer(minLength: Space.sm)
-        Text(page.sizeLabel).font(.stim(.callout, weight: .semibold)).monospacedDigit()
-      }
+      SectionLabel(title: "Status")
       Card(radius: Radius.control, border: nil, clipsContent: false) {
         VStack(alignment: .leading, spacing: Space.lg) {
-          usageBar
-          ForEach(page.retention) { part in
-            if part.id != page.retention.first?.id { Divider().overlay(Palette.border) }
-            row(part)
+          VStack(alignment: .leading, spacing: Space.xs) {
+            Text(page.statusLine).font(.stim(.callout, weight: .semibold))
+            if let used = page.lastUsedLabel { Text(used).font(.stim(.footnote)).foregroundStyle(Palette.secondary) }
           }
-        }.font(.stim(.footnote)).padding(Space.lg)
+          Divider().overlay(Palette.border)
+          HStack(alignment: .firstTextBaseline) {
+            Text("Retained").font(.stim(.footnote, weight: .semibold)).foregroundStyle(Palette.secondary)
+            Spacer(minLength: Space.sm)
+            Text(page.sizeLabel).font(.stim(.callout, weight: .semibold)).monospacedDigit()
+          }
+          usageBar
+          ForEach(page.retention) { part in row(part) }
+        }.font(.stim(.footnote)).padding(Space.lg).frame(maxWidth: .infinity, alignment: .leading)
       }
     }
     .confirmationDialog(
@@ -83,11 +85,7 @@ struct ArchiveStatusSection: View {
       HStack(spacing: Space.sm) {
         expiry(part).padding(.leading, Space.sm + 8)
         Spacer(minLength: Space.sm)
-        if part.kind == nil {
-          Button("Delete archive", action: deleteArchive)
-            .buttonStyle(.stim(.destructive)).fixedSize().disabled(busy)
-            .help("Delete \(page.record.title) permanently")
-        } else if part.clearable {
+        if part.clearable {
           Button(clearing.contains(part.id) ? "Clearing" : "Clear") { confirming = part }
             .buttonStyle(.stim()).fixedSize().disabled(busy || clearing.contains(part.id))
             .help("Delete this workspace's archived \(part.kind!.noun); its record stays")

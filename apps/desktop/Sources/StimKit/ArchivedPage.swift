@@ -30,6 +30,7 @@ public struct ArchivedPage: Sendable {
   public var removedAt: Date?
   public var statusLine: String
   public var lastUsedLabel: String?
+  public var removedLabel: String
   public var sizeLabel: String
   public var merged: Bool
   public var logsExpired: Bool
@@ -81,6 +82,7 @@ public struct ArchivedPage: Sendable {
       endedAgents: archive.agents, titleOverride: archive.title)
     statusLine = "\(archive.removedLabel(now: now)) by \(archive.removedByLabel)"
     lastUsedLabel = archive.lastUsedLabel(now: now)
+    removedLabel = archive.removedLabel(now: now)
     sizeLabel = archive.sizeLabel
     logsExpired = retention[0].expired
     recordingsExpired = retention[1].expired

@@ -40,7 +40,6 @@ struct BuildSection: View {
   var body: some View {
     VStack(alignment: .leading, spacing: Space.md) {
       if onlyPlatform == nil { SectionLabel(title: "Build") }
-      if let totals { Text(totals).font(.stim(.footnote)).foregroundStyle(Palette.secondary) }
       if let macos = env.macos, onlyPlatform == nil || onlyPlatform == "macos" {
         HStack {
           Text("macOS \(macos.product)").font(.stim(.callout, weight: .semibold))
@@ -66,7 +65,10 @@ struct BuildSection: View {
           Text(error).font(.stim(.footnote)).foregroundStyle(Palette.error).textSelection(.enabled)
         }
       }
-      if readOnly && platforms.isEmpty { InlineEmpty("No build recorded") }
+      if readOnly && platforms.isEmpty {
+        InlineEmpty("No build recorded")
+        if let totals { Text(totals).font(.stim(.footnote)).foregroundStyle(Palette.secondary) }
+      }
       ForEach(platforms, id: \.self) { platform in
         card(platform)
       }
@@ -128,6 +130,10 @@ struct BuildSection: View {
               }
             }
           }
+        }
+        if let totals, platform == platforms.first {
+          Divider().overlay(Palette.border)
+          Text(totals).font(.stim(.footnote)).foregroundStyle(Palette.secondary)
         }
         let history = env.builds?.builds(for: platform) ?? []
         if !history.isEmpty {
