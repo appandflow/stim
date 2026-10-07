@@ -365,7 +365,9 @@ On the worker, inspect `stim-server devices` and approve the printed build
 request with `stim-server devices grant <build-id> --build`, and the separate
 hosting request with `stim-server devices grant <host-id> --device-host`.
 Use the server package's npx prefix above if it is not installed globally.
-Requests lapse after 15 minutes. Run `stim doctor` on the main Mac to check
+Requests lapse after 15 minutes. While a request is pending, `stim doctor --json`
+reports its `expiresAt`; after it lapses doctor reports `lapsed`, and
+`stim doctor --fix` asks again. Run `stim doctor` on the main Mac to check
 approval and compatibility before running the app.
 
 ## Permissions

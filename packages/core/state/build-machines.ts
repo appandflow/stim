@@ -13,6 +13,8 @@ export interface BuildMachineCredential {
   deviceToken: string;
   state: 'pending' | 'approved';
   requestedAt: string;
+  /** When the pending request lapses, as the build machine reported it. Absent in credentials written before it was stored. */
+  expiresAt?: string;
   ticketHash?: string;
 }
 
@@ -30,6 +32,7 @@ function parseCredential(value: unknown): BuildMachineCredential | null {
     deviceToken: deviceToken as string,
     state,
     requestedAt: requestedAt as string,
+    ...(typeof value.expiresAt === 'string' && value.expiresAt ? { expiresAt: value.expiresAt } : {}),
     ...(typeof value.ticketHash === 'string' ? { ticketHash: value.ticketHash } : {}),
   };
 }

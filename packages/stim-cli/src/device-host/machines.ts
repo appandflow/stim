@@ -18,6 +18,7 @@ import { readAccessTicket, readHostPermissions } from '../offload/access-ticket.
 import {
   endpoint,
   findPeer,
+  lapsedRequest,
   parseMachine,
   realIo,
   type TailnetMachineIo,
@@ -36,12 +37,15 @@ interface MachineReport {
     | 'pending'
     | 'approved'
     | 'revoked'
+    | 'lapsed'
     | 'unreachable'
     | 'credentials-unavailable'
     | 'busy';
   dnsName?: string;
   deviceId?: string;
   requestedAt?: string;
+  /** While pending: when the request lapses. */
+  expiresAt?: string;
   host?: NonNullable<HelloResult['host']>;
 }
 
@@ -118,6 +122,7 @@ async function request(
     deviceToken: reply.result.deviceToken,
     state: 'pending',
     requestedAt: new Date().toISOString(),
+    expiresAt: reply.result.approval.expiresAt,
     ...(ticket ? { ticketHash: ticket.ticketHash } : {}),
   };
   return {
@@ -127,6 +132,7 @@ async function request(
       state: 'pending',
       deviceId: credential.deviceId,
       requestedAt: credential.requestedAt,
+      expiresAt: credential.expiresAt,
     },
     finding: note(
       `Asked ${machine} for hosting access`,
@@ -292,7 +298,11 @@ export async function inspectDeviceHostMachines(
           reply.result.capabilities.includes('device-host')
         ) {
           if (credential.state !== 'approved') {
-            credentials = credentials.map((each) => (each.machine === machine ? { ...each, state: 'approved' } : each));
+            credentials = credentials.map((each) => {
+              if (each.machine !== machine) return each;
+              const { expiresAt: _expiresAt, ...rest } = each;
+              return { ...rest, state: 'approved' as const };
+            });
             store(credentials);
           }
           const host = readHostPermissions(reply.result.host);
@@ -325,22 +335,31 @@ export async function inspectDeviceHostMachines(
         const ticket = fix && pending && credential.state !== 'approved' ? readAccessTicket() : undefined;
         ask = fix && (revoked || (!!ticket && credential.ticketHash !== ticket.ticketHash));
         if (pending && !ask) {
-          inspected.machines.push({ ...known, state: 'pending' });
+          inspected.machines.push({
+            ...known,
+            state: 'pending',
+            ...(credential.expiresAt ? { expiresAt: credential.expiresAt } : {}),
+          });
           inspected.findings.push(
             note(
               `Hosting machine ${machine} has not approved this Mac yet`,
-              `Requested at ${credential.requestedAt}.`,
+              `Requested at ${credential.requestedAt}${credential.expiresAt ? `; the request lapses at ${credential.expiresAt}` : ''}.`,
               approval(machine, credential.deviceId),
             ),
           );
           continue;
         }
         if (!ask) {
-          inspected.machines.push({ ...known, state: revoked ? 'revoked' : 'unreachable' });
+          const lapsed = revoked && lapsedRequest(credential);
+          inspected.machines.push({ ...known, state: lapsed ? 'lapsed' : revoked ? 'revoked' : 'unreachable' });
           inspected.findings.push(
             note(
-              `Hosting machine ${machine} ${revoked ? 'no longer accepts this Mac' : 'did not confirm hosting access'}`,
-              'The saved token and pinned node are preserved.',
+              lapsed
+                ? `Hosting request to ${machine} lapsed`
+                : `Hosting machine ${machine} ${revoked ? 'no longer accepts this Mac' : 'did not confirm hosting access'}`,
+              lapsed
+                ? `${machine} did not approve this Mac before the request lapsed at ${credential.expiresAt}. The saved token and pinned node are preserved.`
+                : 'The saved token and pinned node are preserved.',
               revoked
                 ? 'Run `stim doctor --fix` to ask again.'
                 : `Check stim-server and its tailnet serve route on ${machine}, then run doctor again.`,

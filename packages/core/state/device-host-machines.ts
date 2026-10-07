@@ -10,6 +10,8 @@ export interface DeviceHostMachineCredential {
   deviceToken: string;
   state: 'pending' | 'approved';
   requestedAt: string;
+  /** When the pending request lapses, as the hosting machine reported it. Absent in credentials written before it was stored. */
+  expiresAt?: string;
   ticketHash?: string;
 }
 
@@ -37,9 +39,10 @@ export function readDeviceHostMachines(): DeviceHostMachineCredential[] {
     ) {
       throw new Error('Invalid device-host machine credential store');
     }
-    const { ticketHash, ...credential } = entry;
+    const { ticketHash, expiresAt, ...credential } = entry;
     machines.push({
       ...credential,
+      ...(typeof expiresAt === 'string' && expiresAt ? { expiresAt } : {}),
       ...(typeof ticketHash === 'string' ? { ticketHash } : {}),
     } as unknown as DeviceHostMachineCredential);
   }

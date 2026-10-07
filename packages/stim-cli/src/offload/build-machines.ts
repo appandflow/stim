@@ -14,7 +14,15 @@ import { withDirLock } from '../dir-lock.ts';
 import { getConfigDir, loadConfig } from '../workspace/config.ts';
 import { readAccessTicket, readHostPermissions } from './access-ticket.ts';
 
-import { endpoint, findPeer, parseMachine, realIo, type TailnetPeer, type TailnetMachineIo } from './tailnet.ts';
+import {
+  endpoint,
+  findPeer,
+  lapsedRequest,
+  parseMachine,
+  realIo,
+  type TailnetPeer,
+  type TailnetMachineIo,
+} from './tailnet.ts';
 export { findPeer, parseMachine, pinnedEndpoint, type Endpoint, type HelloReply } from './tailnet.ts';
 export type BuildMachineIo = TailnetMachineIo;
 
@@ -66,10 +74,13 @@ interface BuildMachineReport {
     | 'pending'
     | 'approved'
     | 'revoked'
+    | 'lapsed'
     | 'unreachable';
   dnsName?: string;
   deviceId?: string;
   requestedAt?: string;
+  /** While pending: when the request lapses. */
+  expiresAt?: string;
   host?: NonNullable<HelloResult['host']>;
   /** For an approved machine: whether it would take this project's build now, and every reason it would not. */
   offloadable?: boolean;
@@ -193,6 +204,7 @@ async function requestAccess(
     deviceToken: reply.result.deviceToken,
     state: 'pending',
     requestedAt: new Date().toISOString(),
+    expiresAt: reply.result.approval.expiresAt,
     ...(ticket ? { ticketHash: ticket.ticketHash } : {}),
   };
   updateCredentials((credentials) => [...credentials.filter((each) => each.machine !== entry), credential]);
@@ -203,6 +215,7 @@ async function requestAccess(
       dnsName: peer.dnsName,
       deviceId: credential.deviceId,
       requestedAt: credential.requestedAt,
+      expiresAt: credential.expiresAt,
     },
     finding: note(
       `Asked ${entry} for build access`,
@@ -265,7 +278,11 @@ async function inspectMachine(
     const host = permissions ? { host: permissions } : {};
     if (credential.state !== 'approved') {
       updateCredentials((credentials) =>
-        credentials.map((each) => (each.machine === entry ? { ...each, state: 'approved' } : each)),
+        credentials.map((each) => {
+          if (each.machine !== entry) return each;
+          const { expiresAt: _expiresAt, ...rest } = each;
+          return { ...rest, state: 'approved' as const };
+        }),
       );
     }
     if (!check) return { report: { ...paired, state: 'approved', ...host }, finding: null };
@@ -290,21 +307,31 @@ async function inspectMachine(
       return requestAccess(entry, peer, parsed.port, deviceName, io);
     }
     return {
-      report: { ...paired, state: 'pending' },
+      report: { ...paired, state: 'pending', ...(credential.expiresAt ? { expiresAt: credential.expiresAt } : {}) },
       finding: note(
         `Build machine ${entry} has not approved this Mac yet`,
-        `Requested at ${credential.requestedAt}.`,
+        `Requested at ${credential.requestedAt}${credential.expiresAt ? `; the request lapses at ${credential.expiresAt}` : ''}.`,
         approval(entry, credential.deviceId),
       ),
     };
   }
   if ('error' in reply && reply.error.code === 'unauthorized') {
     if (fix) return requestAccess(entry, peer, parsed.port, deviceName, io);
+    if (lapsedRequest(credential)) {
+      return {
+        report: { ...paired, state: 'lapsed' },
+        finding: note(
+          `Build request to ${entry} lapsed`,
+          `${entry} did not approve this Mac before the request lapsed at ${credential.expiresAt}.`,
+          'Run `stim doctor --fix` to ask again.',
+        ),
+      };
+    }
     return {
       report: { ...paired, state: 'revoked' },
       finding: note(
         `Build machine ${entry} no longer accepts this Mac`,
-        `${reply.error.message} It was revoked, or the request lapsed before approval.`,
+        `${reply.error.message} It was revoked or denied.`,
         'Run `stim doctor --fix` to ask again.',
       ),
     };

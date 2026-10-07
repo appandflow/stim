@@ -515,9 +515,9 @@ leased until <time>" for each one.`,
                   null when off; plan lists what the next start, ios or
                   android would reclaim, in the \`reclaimed\` shape without
                   freedMb, and is empty while under budget
-  deviceHosts     one { machine, state, dnsName?, deviceId?, requestedAt?, host? }
-                  per hosting.machines entry. state is "approved", "pending",
-                  "not-asked", "revoked", "node-changed", "not-on-tailnet",
+  deviceHosts     one { machine, state, dnsName?, deviceId?, requestedAt?, expiresAt?,
+                  host? } per hosting.machines entry. state is "approved",
+                  "pending", "not-asked", "revoked", "lapsed", "node-changed", "not-on-tailnet",
                   "tailscale-off", "unreachable", "invalid",
                   "credentials-unavailable" or "busy". Tokens stay private.
                   Only --fix asks for access or forgets removed names.
@@ -525,13 +525,17 @@ leased until <time>" for each one.`,
                   or change ios/android placement; see \`guide settings\`.
                   host is { name, screenRecording, accessibility }, present
                   only for approved machines whose worker reports it.
+                  expiresAt is when a pending request lapses; "lapsed" is
+                  a pending request whose expiry passed. --fix asks again.
   buildMachines   one { machine, state, dnsName?, deviceId?, requestedAt?,
-                  offloadable?, reasons?, problems?, capacity?, host? } per
+                  expiresAt?, offloadable?, reasons?, problems?, capacity?, host? } per
                   offload.machines entry; state is "approved", "pending", "not-asked",
-                  "revoked" (revoked, or the request lapsed), "node-changed",
+                  "revoked" (revoked or denied), "lapsed" (the request lapsed
+                  before approval), "node-changed",
                   "not-on-tailnet", "tailscale-off", "unreachable" or
                   "invalid". host has the same shape and presence rule as in
-                  deviceHosts. An approved machine also carries offloadable,
+                  deviceHosts, as do expiresAt (a pending request's lapse
+                  time) and "lapsed" (--fix asks again). An approved machine also carries offloadable,
                   true when it would take this app's builds now (iOS
                   simulator unless --platform android, Android emulator when
                   --platform android or the app has android/ or uses Expo,

@@ -53,9 +53,16 @@ const pending: HelloReply = {
     capabilities: [],
     device: { id: 'ab12', name: 'laptop' },
     deviceToken: 'secret',
-    approval: { state: 'pending', expiresAt: '2026-09-28T12:15:00.000Z' },
+    approval: { state: 'pending', expiresAt: '2099-09-28T12:15:00.000Z' },
   },
 };
+
+const lapsedRequest: HelloReply = {
+  result: {
+    ...(pending as { result: object }).result,
+    approval: { state: 'pending', expiresAt: '2020-01-01T00:15:00.000Z' },
+  },
+} as HelloReply;
 
 describe('findPeer', () => {
   it('matches a MagicDNS name or its first label, and only one peer', () => {
@@ -205,6 +212,57 @@ describe('inspectBuildMachines', () => {
     expect(calls.map((call) => call.auth)).toEqual([{ deviceToken: 'secret' }]);
     const off = await inspectBuildMachines({ fix: false }, { status: () => null, hello: io.hello }, ['mini']);
     expect(off.machines).toEqual([{ machine: 'mini', state: 'tailscale-off' }]);
+  });
+
+  it('stores the expiry of a pending request and reports it while pending', async () => {
+    const asked = await inspectBuildMachines({ fix: true }, fakeIo('nMini', [pending]).io, ['mini']);
+    expect(asked.machines).toEqual([
+      expect.objectContaining({ state: 'pending', expiresAt: '2099-09-28T12:15:00.000Z' }),
+    ]);
+    expect(readBuildMachines()).toEqual([expect.objectContaining({ expiresAt: '2099-09-28T12:15:00.000Z' })]);
+    const waiting = fakeIo('nMini', [{ error: { code: 'approval-pending', message: 'wait' } }]).io;
+    const again = await inspectBuildMachines({ fix: false }, waiting, ['mini']);
+    expect(again.machines).toEqual([
+      expect.objectContaining({ state: 'pending', expiresAt: '2099-09-28T12:15:00.000Z' }),
+    ]);
+  });
+
+  it('reports a request the machine forgot after its expiry as lapsed, and --fix asks again', async () => {
+    await inspectBuildMachines({ fix: true }, fakeIo('nMini', [lapsedRequest]).io, ['mini']);
+    const unknown: HelloReply = { error: { code: 'unauthorized', message: 'Unknown device.' } };
+    const { machines, findings } = await inspectBuildMachines({ fix: false }, fakeIo('nMini', [unknown]).io, ['mini']);
+    expect(machines).toEqual([expect.objectContaining({ state: 'lapsed', deviceId: 'ab12' })]);
+    expect(findings[0]!.detail).toContain('lapsed');
+    expect(findings[0]!.fix).toContain('stim doctor --fix');
+    const renewed: HelloReply = {
+      result: {
+        ...(pending as { result: object }).result,
+        device: { id: 'cd34', name: 'laptop' },
+        deviceToken: 'fresh',
+      },
+    } as HelloReply;
+    const asked = await inspectBuildMachines({ fix: true }, fakeIo('nMini', [unknown, renewed]).io, ['mini']);
+    expect(asked.machines).toEqual([expect.objectContaining({ state: 'pending', deviceId: 'cd34' })]);
+    expect(readBuildMachines()).toEqual([expect.objectContaining({ deviceToken: 'fresh', state: 'pending' })]);
+  });
+
+  it('keeps revoked for an approved machine, and for a credential stored without an expiry', async () => {
+    await inspectBuildMachines({ fix: true }, fakeIo('nMini', [lapsedRequest]).io, ['mini']);
+    const approved: HelloReply = { result: { capabilities: ['build'], device: { id: 'ab12', name: 'laptop' } } };
+    await inspectBuildMachines({ fix: false }, fakeIo('nMini', [approved]).io, ['mini']);
+    const unknown: HelloReply = { error: { code: 'unauthorized', message: 'Unknown device.' } };
+    const revoked = await inspectBuildMachines({ fix: false }, fakeIo('nMini', [unknown]).io, ['mini']);
+    expect(revoked.machines).toEqual([expect.objectContaining({ state: 'revoked' })]);
+
+    const file = buildMachinesFile();
+    const stored = JSON.parse(readFileSync(file, 'utf8')) as { machines: Record<string, unknown>[] };
+    for (const each of stored.machines) {
+      delete each.expiresAt;
+      each.state = 'pending';
+    }
+    writeFileSync(file, JSON.stringify(stored));
+    const legacy = await inspectBuildMachines({ fix: false }, fakeIo('nMini', [unknown]).io, ['mini']);
+    expect(legacy.machines).toEqual([expect.objectContaining({ state: 'revoked' })]);
   });
 
   it('forgets the pairing of a machine no longer named, with --fix only', async () => {
