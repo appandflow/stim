@@ -13,7 +13,16 @@ policy support (0.21.20 or later). Set `STIM_AGENT_DEVICE_SOURCE` to its source
 root, with its workspace dependencies installed. The hosted iOS policy probe
 uses the real upstream parser, digest and inventory filter; it starts only a
 local fixture process and does not drive a simulator. Missing source fails this
-stage and never affects unit discovery.
+stage and never affects unit discovery. The hosted Android daemon probe requires
+agent-device 0.21.22 or later installed at the host's fixed binary location
+(or `STIM_AGENT_DEVICE_BIN`) and `STIM_AGENT_DEVICE_ANDROID_SERIAL` naming a
+booted emulator created and owned exclusively by this validation. It starts a
+private real daemon, verifies its policy digest, backend, filtered inventory and
+refusals for foreign serials, unsafe commands, shutdown and batch steps. It stops
+the daemon and its fixed helpers only on that serial. It does not create or
+delete the emulator; retain the validation fixture record and clean it through
+centralized Stim teardown. Missing binary, serial, adb or emulator fails the
+explicit stage and is unavailable validation, never a compatibility pass.
 It builds generated scratch projects, signs temporary apps ad hoc, decodes
 fixture provisioning profiles, reads signing identities, and queries devices and
 processes through `devicectl`. It launches the installed Chrome headless with a

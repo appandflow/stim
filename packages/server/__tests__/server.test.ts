@@ -876,6 +876,7 @@ describe('pairing', () => {
           'ios-hosted',
           'android-hosted',
           'hosted-ios-agent',
+          'hosted-android-agent',
           'duo-frames',
           'workspace-diff',
           'hosted-congestion',

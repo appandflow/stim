@@ -40,13 +40,14 @@ For ios --remote <machine>, read guide lifecycle hosted-ios.
 For android --remote <machine>, read guide lifecycle hosted-android. Native
 logcat records arrive through stim logs, including --errors and --json;
 Desktop and the phone view/control it through the local stim-server relay.
-Android agent driving is not available in this phase. Stop before switching
+Stop before switching
 between a local simulator and a hosting Mac. Hosted Debug requires the local
 Metro supervisor; restart a missing or older one with stim stop; stim start.
 It never falls back here; stop reconciles the recorded host before changing placement.
-For hosted iOS, use agent-device <command> --remote-config <file> from ios.host.agent
-in stim status --json. Open the installed app first; never use the host UDID locally.
-See guide lifecycle hosted-ios for the agent policy and setup.
+For hosted iOS or Android, use agent-device <command> --remote-config <file>
+from ios.host.agent or android.host.agent in stim status --json. Open the
+installed app first; never use the host UDID or serial locally. See guide
+lifecycle hosted-ios or hosted-android for the agent policy and setup.
 
 When driving a device yourself with agent-device, set AGENT_DEVICE_STATE_DIR
 from agentDevice.stateDir in stim ios|android|macos --json or status --json.

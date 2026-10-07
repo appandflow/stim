@@ -22,14 +22,14 @@ export interface HostedMacosDevice extends HostedMacosChoice {
 
 /**
  * The agent-device lease owner scope a client names on every request. `deviceKey` is `<bundleId>@<pid>`
- * for a macOS app, or `ios:mobile:<udid>` with `backend: ios-instance` for a hosted simulator.
+ * for a macOS app, or `ios:mobile:<udid>` with `backend: ios-instance` for a hosted simulator, or `android:mobile:<serial>` with `backend: android-instance` for a hosted emulator.
  */
 export interface HostedAgentLease {
   tenant: string;
   runId: string;
   clientId: string;
   deviceKey: string;
-  backend?: 'ios-instance';
+  backend?: 'ios-instance' | 'android-instance';
 }
 
 /**
@@ -108,12 +108,14 @@ const LEASE_DEVICE_KEY = /^[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)+@[1-9][0-9]{0,9}$/
 function parseHostedAgentLease(value: unknown): HostedAgentLease | null {
   if (
     !isJsonObject(value) ||
-    Object.keys(value).length !== (value.backend === 'ios-instance' ? 5 : 4) ||
+    Object.keys(value).length !== (value.backend === 'ios-instance' || value.backend === 'android-instance' ? 5 : 4) ||
     ![value.tenant, value.runId, value.clientId].every((name) => typeof name === 'string' && LEASE_NAME.test(name)) ||
     typeof value.deviceKey !== 'string' ||
     !(value.backend === 'ios-instance'
       ? /^ios:mobile:[a-fA-F0-9-]{36}$/.test(value.deviceKey)
-      : value.backend === undefined && LEASE_DEVICE_KEY.test(value.deviceKey))
+      : value.backend === 'android-instance'
+        ? /^android:mobile:emulator-[0-9]+$/.test(value.deviceKey)
+        : value.backend === undefined && LEASE_DEVICE_KEY.test(value.deviceKey))
   )
     return null;
   return value as unknown as HostedAgentLease;

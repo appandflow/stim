@@ -5,14 +5,29 @@ import { pullHostedNativeLogs } from '../device-host/hosted-logs.ts';
 import { syncHostedLogs, followHostedLogs } from '../device-host/hosted-logs-sync.ts';
 import { workspaceLogsDir } from '../workspace/paths.ts';
 import { runStop } from '../commands/stop.ts';
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, realpathSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  statSync,
+  mkdtempSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  realpathSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { deviceHostMachinesFile, type HostedAndroidPlacement } from '@stim-cli/core/state';
+import { getExecutor, setExecutor, resetExecutor } from '../exec.ts';
 import { BuildConnection } from '../offload/client.ts';
 import { getConfigPath, getProject, upsertProject } from '../workspace/config.ts';
 import { writeWorkspaceState } from '../workspace/workspace-state.ts';
-import { prepareHostedAndroid, placeHostedAndroid, stopHostedAndroid } from '../device-host/hosted-android.ts';
+import {
+  androidAgentRemoteConfig,
+  prepareHostedAndroid,
+  placeHostedAndroid,
+  stopHostedAndroid,
+} from '../device-host/hosted-android.ts';
 import { readHostedAndroid, writeHostedAndroid } from '../device-host/ios-state.ts';
 import { applyHostedAndroidProbe } from '../device-host/hosted-android-status.ts';
 import { workspaceInUse } from '../workspace/in-use.ts';
@@ -49,6 +64,9 @@ let manifest: Buffer;
 let blobs: Map<string, Buffer>;
 let retained: Map<string, Buffer>;
 let dataFeature: boolean;
+let agentFeature: boolean;
+let agentGrant: unknown;
+let agentNotice: string | undefined;
 let handoffFailure: boolean;
 let logRecords: Record<string, unknown>[];
 const sha = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex');
@@ -85,6 +103,9 @@ beforeEach(() => {
   blobs = new Map();
   retained = new Map();
   dataFeature = true;
+  agentFeature = true;
+  agentGrant = undefined;
+  agentNotice = undefined;
   handoffFailure = false;
   logRecords = [];
   writeFileSync(
@@ -93,7 +114,8 @@ beforeEach(() => {
   );
   const connection = Object.create(BuildConnection.prototype) as BuildConnection;
   connection.close = () => {};
-  connection.supports = (feature) => feature !== 'hosted-android-data' || dataFeature;
+  connection.supports = (feature) =>
+    feature === 'hosted-android-agent' ? agentFeature : feature !== 'hosted-android-data' || dataFeature;
   connection.request = async (method, raw) => {
     const params = raw as Record<string, unknown>;
     methods.push({ method, params });
@@ -155,12 +177,14 @@ beforeEach(() => {
       for (const [digest, bytes] of retained) blobs.set(digest, bytes);
       return { result: { files: retained.size, bytes: 11 } };
     }
-    if (method === 'device-host.app.launch') return { result: { state: 'installed', launched: true } };
+    if (method === 'device-host.app.launch')
+      return { result: { state: 'installed', launched: true, agent: agentGrant, notice: agentNotice } };
     return { result: {} };
   };
   vi.spyOn(BuildConnection, 'open').mockResolvedValue(connection);
 });
 afterEach(() => {
+  resetExecutor();
   vi.restoreAllMocks();
   delete process.env.STIM_HOME;
   rmSync(home, { recursive: true, force: true });
@@ -427,4 +451,112 @@ test('older Android hosts get an update note and no log queries during sync or f
   } finally {
     stop();
   }
+});
+
+const grant = () => ({
+  driver: 'agent-device',
+  path: `/device-host/agent/${session}/`,
+  token: 's'.repeat(43),
+  scope: session,
+  lease: {
+    tenant: `stim.${session}`,
+    runId: session,
+    clientId: 'agent',
+    backend: 'android-instance',
+    deviceKey: `android:mobile:${device.serial}`,
+  },
+});
+async function deliverAgent(slot = 'default', note: (line: string) => void = () => {}) {
+  const target = await prepareHostedAndroid('mini', {});
+  return placeHostedAndroid(target, {
+    root,
+    slot,
+    bundle: join(root, 'App.apk'),
+    bundleId: 'dev.fixture',
+    selectors: {},
+    release: true,
+    reserved: (value) => writeHostedAndroid(root, slot, value),
+    note,
+  });
+}
+
+test('Android grants write private slot configs, appear in status and close only the selected connection', async () => {
+  agentGrant = grant();
+  const first = await deliverAgent();
+  const second = await deliverAgent('tablet');
+  for (const [slot, run] of [
+    ['default', first],
+    ['tablet', second],
+  ] as const) {
+    const file = androidAgentRemoteConfig(root, slot);
+    writeHostedAndroid(root, slot, run.placement);
+    expect(statSync(file).mode & 0o777).toBe(process.platform === 'win32' ? 0o666 : 0o600);
+    expect(JSON.parse(readFileSync(file, 'utf8'))).toEqual({
+      daemonBaseUrl: `https://mini.tail.ts.net:7443/device-host/agent/${session}/`,
+      daemonAuthToken: 's'.repeat(43),
+      tenant: `stim.${session}`,
+      sessionIsolation: 'tenant',
+      runId: session,
+      clientId: 'agent',
+      leaseBackend: 'android-instance',
+      leaseProvider: 'proxy',
+      deviceKey: `android:mobile:${device.serial}`,
+      platform: 'android',
+    });
+    expect(run.placement.agent).toEqual({
+      driver: 'agent-device',
+      remoteConfig: file,
+      command: `agent-device <command> --remote-config ${file}`,
+    });
+    expect(applyHostedAndroidProbe(run.placement, { state: 'ready' }).android.host?.agent).toEqual(run.placement.agent);
+    expect(JSON.stringify(applyHostedAndroidProbe(run.placement, { state: 'ready' }))).not.toContain('s'.repeat(43));
+  }
+  const config = androidAgentRemoteConfig(root, 'tablet');
+  const calls: string[][] = [];
+  setExecutor({
+    ...getExecutor(),
+    findExecutable: () => '/fake/agent-device',
+    runFile: (_file, args = []) => {
+      calls.push(args);
+      return JSON.stringify({
+        success: true,
+        data: { connected: true, remoteConfig: config, session: 'agent-tablet' },
+      });
+    },
+  });
+  await stopHostedAndroid(root, 'tablet');
+  expect(calls).toEqual([
+    ['connection', 'status', '--json'],
+    ['close', '--remote-config', config, '--session', 'agent-tablet', '--json'],
+    ['disconnect', '--session', 'agent-tablet', '--json'],
+  ]);
+  expect(existsSync(config)).toBe(false);
+  expect(existsSync(androidAgentRemoteConfig(root, 'default'))).toBe(true);
+});
+
+test.each(['older-host', 'unavailable'])(
+  'Android %s reports no driver and removes obsolete credentials',
+  async (reason) => {
+    agentGrant = reason === 'older-host' ? grant() : { driver: 'none' };
+    agentFeature = reason !== 'older-host';
+    agentNotice = reason === 'unavailable' ? 'Agent control requires agent-device 0.21.22 or later.' : undefined;
+    const file = androidAgentRemoteConfig(root, 'default');
+    mkdirSync(join(file, '..'), { recursive: true });
+    writeFileSync(file, '{}');
+    const notes: string[] = [];
+    const run = await deliverAgent('default', (line) => notes.push(line));
+    expect(run.placement.agent.driver).toBe('none');
+    expect(existsSync(file)).toBe(false);
+    expect(notes.includes('Agent control requires agent-device 0.21.22 or later.')).toBe(reason === 'unavailable');
+  },
+);
+
+test('an unreachable Android stop retains the slot credential for retry', async () => {
+  agentGrant = grant();
+  const run = await deliverAgent();
+  writeHostedAndroid(root, 'default', run.placement);
+  setExecutor({ ...getExecutor(), findExecutable: () => null });
+  failure = 'closed';
+  await expect(stopHostedAndroid(root)).rejects.toThrow('placement is kept');
+  expect(existsSync(androidAgentRemoteConfig(root, 'default'))).toBe(true);
 });

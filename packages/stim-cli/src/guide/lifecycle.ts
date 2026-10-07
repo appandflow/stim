@@ -307,8 +307,50 @@ stop and worktree remove wait for device-host.stop, delete the host's owned
 emulator, close the gateway and clear placement. stop --json reports
 outcomes.device["android:host:<slot>"]. Forbidden or unknown-session also clears
 placement; an unreachable host keeps it and fails cleanup. A host restart stops
-sessions. Rerun the same machine to replace a stopped session. Agent driving is
-not available yet. JavaScript logs arrive through local Metro.
+sessions. Rerun the same machine to replace a stopped session. JavaScript logs
+arrive through local Metro.
+
+AGENT CONTROL
+
+Set hosting.agentDriver to agent-device on the hosting Mac. Both Macs need
+agent-device 0.21.22 or later. The host advertises hosted-android-agent and
+starts one loopback daemon per installed Android session. Its policy allows
+only the exact ledger-owned emulator serial and denies device shutdown.
+The host verifies the policy digest and android-instance backend before granting
+control. An older host, missing binary or unsupported policy reports driver: none;
+the host's notice explains unavailable control.
+
+android.host.agent in stim status --json provides driver, remoteConfig and
+command, never its token. Each slot has a separate 0600 file under the workspace
+state directory at hosted-android/<slot>/agent-device-remote.json. Use that file:
+
+  agent-device open <packageId> --remote-config <file>
+  agent-device snapshot --remote-config <file>
+  agent-device click <ref> --remote-config <file>
+  agent-device screenshot --remote-config <file>
+
+The command shape is agent-device <command> --remote-config <file>. Open leases
+the emulator automatically with android-instance, the proxy provider and this
+session's tenant. devices is permitted for the client's open flow; inventory
+contains only this emulator. Never use its serial with a local agent-device.
+Allowed commands are devices, open, close, snapshot, diff, wait, find, get, is,
+click, fill, press, type, focus, scroll, screenshot, longpress, swipe, back, home,
+orientation, appstate, alert and batch. Stim installs; install, reinstall,
+uninstall, boot, shutdown, close --shutdown, record, logs, uploads and device-wide
+actions are refused. Other serials in commands, flags, inputs, nested batches or
+lease requests are refused. Ambient client paths and owner fields are stripped;
+the host pins platform, serial, tenant, runId, clientId, deviceKey and backend.
+Host paths and launch inputs are refused. Screenshots use only remote artifacts.
+
+Stop closes the matching agent-device connection and removes the slot file only
+once the host confirms stop or revocation. Reinstall, stop, revocation and server
+close stop the daemon before native work or device deletion. An unresolved
+proxy, daemon or helper retains the child-aware daemon claim and refuses
+replacement or deletion, including after a server restart. Agent-device uses
+one-shot Android snapshots without helper adb forwards; teardown stops its
+snapshot and IME helper processes only on the pinned serial. Helper APKs remain
+on the owned emulator until Stim deletes it. A daemon exit rotates only that
+session's grant; rerun stim android to refresh its config.
 
 Stim Desktop and the phone app view and control the emulator through this
 Mac's local stim-server relay, with an "on <machine>" label. Turn on Serve to

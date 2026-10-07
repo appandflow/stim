@@ -153,7 +153,7 @@ beforeEach(() => {
     env: { STIM_AGENT_DEVICE_BIN: bin },
     stateDir: join(home, 'agent'),
     claimRoot: join(home, 'claims'),
-    ios: { session: SESSION, udid: UDID },
+    device: { session: SESSION, udid: UDID },
   });
 });
 

@@ -8,11 +8,15 @@ export function agentAccess(
   credential: DeviceHostMachineCredential,
   grant: unknown,
   note: (line: string) => void,
-  platform: 'macos' | 'ios' = 'macos',
+  platform: 'macos' | 'ios' | 'android' = 'macos',
 ): HostedAgentAccess {
   const parsed = grant === undefined ? null : parseHostedAgentGrant(grant);
   if (grant !== undefined && !parsed) note(`${credential.machine} offered agent control this Stim does not support.`);
-  if (!parsed || parsed.driver === 'none' || (parsed.lease.backend === 'ios-instance') !== (platform === 'ios')) {
+  if (
+    !parsed ||
+    parsed.driver === 'none' ||
+    parsed.lease.backend !== (platform === 'macos' ? undefined : `${platform}-instance`)
+  ) {
     rmSync(file, { force: true });
     return { driver: 'none', setting: 'hosting.agentDriver' };
   }
@@ -24,7 +28,7 @@ export function agentAccess(
     sessionIsolation: 'tenant',
     runId: parsed.lease.runId,
     ...(platform === 'macos' ? { leaseId: parsed.scope } : {}),
-    leaseBackend: platform === 'ios' ? 'ios-instance' : 'macos-app',
+    leaseBackend: platform === 'macos' ? 'macos-app' : `${platform}-instance`,
     leaseProvider: 'proxy',
     clientId: parsed.lease.clientId,
     deviceKey: parsed.lease.deviceKey,

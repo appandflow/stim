@@ -2,12 +2,17 @@ import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { HostedAgentGrant } from '@stim-cli/core/state';
 
-/** One installed hosted app and its process or owned simulator. */
+export type HostedAgentDevice = { session: string } & (
+  | { udid: string; serial?: never; avdName?: never }
+  | { serial: string; avdName: string; udid?: never }
+);
+
+/** One installed hosted app and its process or owned device. */
 export type HostedAgentApp = {
   client: string;
   session: string;
   bundleId: string;
-} & ({ pid: number; udid?: never } | { udid: string; pid?: never });
+} & ({ pid: number; udid?: never; serial?: never; avdName?: never } | (HostedAgentDevice & { pid?: never }));
 
 /**
  * The host side of one driving tool. `HostedAgentHost` calls it; a driver never decides which client or
@@ -55,7 +60,7 @@ interface Entry {
 export interface HostedAgentHostOptions {
   /** The driver the host's `hosting.agentDriver` names right now, or null for none. Read when no driver runs. */
   resolve: () => HostedAgentDriver | null;
-  resolveIos?: (app: { session: string; udid: string }, stopping?: boolean) => HostedAgentDriver | null;
+  resolveDevice?: (app: HostedAgentDevice, stopping?: boolean) => HostedAgentDriver | null;
   /** The tailnet node a client's approved device-host credential is pinned to, or null once it is not approved. */
   nodeOf: (client: string) => string | null;
   strictStop?: boolean;
@@ -68,7 +73,7 @@ const digest = (token: string): Buffer => createHash('sha256').update(token).dig
 const none = (notice?: string): AgentAccess => ({ grant: { driver: 'none' }, ...(notice ? { notice } : {}) });
 
 /**
- * Reference-counts a driver on live hosted macOS apps and owns a separate driver lifetime per iOS session. It starts the driver with the first app that gets a
+ * Reference-counts a driver on live hosted macOS apps and owns a separate driver lifetime per native device session. It starts the driver with the first app that gets a
  * grant and stops it after the last one, on revocation and on close. Grants live only here, in memory:
  * a driver restart drops the leases they name, so a restart issues new grants that the client reads
  * again through `app.attach`.
@@ -77,7 +82,7 @@ export class HostedAgentHost {
   private readonly options: HostedAgentHostOptions;
   private readonly entries = new Map<string, Entry>();
   private active: HostedAgentDriver | null = null;
-  private readonly ios = new Map<string, HostedAgentHost>();
+  private readonly devices = new Map<string, HostedAgentHost>();
   private chain: Promise<unknown> = Promise.resolve();
   private closed = false;
 
@@ -97,7 +102,7 @@ export class HostedAgentHost {
 
   /** What `app.launch` and `app.attach` hand a client for this session; undefined before the app runs. */
   access(session: string): AgentAccess | undefined {
-    const child = this.ios.get(session);
+    const child = this.devices.get(session);
     if (child) return child.access(session);
     const entry = this.entries.get(session);
     return entry ? { grant: entry.grant, ...(entry.notice ? { notice: entry.notice } : {}) } : undefined;
@@ -106,17 +111,17 @@ export class HostedAgentHost {
   /** The session's app is installed and running. Issues its grant, starting the driver when it is the first. */
   appRunning(app: HostedAgentApp): Promise<AgentAccess> {
     return this.serialize(async () => {
-      if (app.udid !== undefined && this.options.resolveIos) {
+      if ((app.udid !== undefined || app.serial !== undefined) && this.options.resolveDevice) {
         if (this.closed) return none();
-        let child = this.ios.get(app.session);
+        let child = this.devices.get(app.session);
         if (!child) {
           child = new HostedAgentHost({
             ...this.options,
-            resolveIos: undefined,
+            resolveDevice: undefined,
             strictStop: true,
-            resolve: () => this.options.resolveIos!(app),
+            resolve: () => this.options.resolveDevice!(app),
           });
-          this.ios.set(app.session, child);
+          this.devices.set(app.session, child);
         }
         return child.appRunning(app);
       }
@@ -126,7 +131,9 @@ export class HostedAgentHost {
         existing.grant.driver !== 'none' &&
         existing.app.pid === app.pid &&
         existing.app.bundleId === app.bundleId &&
-        existing.app.udid === app.udid
+        existing.app.udid === app.udid &&
+        existing.app.serial === app.serial &&
+        existing.app.avdName === app.avdName
       )
         return this.access(app.session)!;
       if (existing) await this.drop(app.session, false);
@@ -172,20 +179,23 @@ export class HostedAgentHost {
     return 'Agent control failed to start on the hosting Mac. Check its stim-server log.';
   }
 
-  appStopped(session: string, udid?: string): Promise<void> {
+  appStopped(session: string, device?: string | { serial: string; avdName: string }): Promise<void> {
     return this.serialize(async () => {
-      let child = this.ios.get(session);
-      if (!child && udid && this.options.resolveIos) {
-        const driver = this.options.resolveIos({ session, udid }, true);
+      let child = this.devices.get(session);
+      if (!child && device && this.options.resolveDevice) {
+        const driver = this.options.resolveDevice(
+          { session, ...(typeof device === 'string' ? { udid: device } : device) },
+          true,
+        );
         if (driver) {
-          child = new HostedAgentHost({ ...this.options, resolveIos: undefined, strictStop: true });
+          child = new HostedAgentHost({ ...this.options, resolveDevice: undefined, strictStop: true });
           child.active = driver;
-          this.ios.set(session, child);
+          this.devices.set(session, child);
         }
       }
       if (child) {
         await child.close();
-        this.ios.delete(session);
+        this.devices.delete(session);
       } else await this.drop(session);
     });
   }
@@ -255,7 +265,7 @@ export class HostedAgentHost {
   }
 
   authorize(session: string, token: string | null, node: string | null): 'ok' | 'unknown' | 'forbidden' {
-    const child = this.ios.get(session);
+    const child = this.devices.get(session);
     if (child) return child.authorize(session, token, node);
     const entry = this.entries.get(session);
     if (!entry || entry.grant.driver === 'none') return 'unknown';
@@ -272,7 +282,7 @@ export class HostedAgentHost {
     request: IncomingMessage,
     response: ServerResponse,
   ): 'ok' | 'unknown' | 'forbidden' {
-    const child = this.ios.get(session);
+    const child = this.devices.get(session);
     if (child) return child.forward(session, token, node, request, response);
     const verdict = this.authorize(session, token, node);
     if (verdict === 'ok' && this.active) this.active.forward(session, request, response);
@@ -288,11 +298,11 @@ export class HostedAgentHost {
   close(): Promise<void> {
     this.closed = true;
     return this.serialize(async () => {
-      const children = [...this.ios.entries()];
+      const children = [...this.devices.entries()];
       const results = await Promise.allSettled(children.map(([, child]) => child.close()));
       const failures: unknown[] = [];
       for (const [index, result] of results.entries()) {
-        if (result.status === 'fulfilled') this.ios.delete(children[index]![0]);
+        if (result.status === 'fulfilled') this.devices.delete(children[index]![0]);
         else failures.push(result.reason);
       }
       const sessions = [...this.entries.keys()];

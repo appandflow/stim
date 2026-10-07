@@ -35,6 +35,7 @@ export type Capability = (typeof CAPABILITIES)[number];
  * `stim macos --remote` placed on another Mac.
  * `ios-hosted` and `android-hosted` relay hosted native frames and control by workspace slot through the client's server.
  * `hosted-ios-agent` adds session-scoped iOS agent-device grants to installed app launch/attach results.
+ * `hosted-android-agent` adds serial-pinned Android agent-device grants to installed app and session attach results.
  * `macos-windows` is the `macos-windows` event on a macOS `frames.subscribe`, naming the window capture follows
  * and the app's other windows.
  * `hosted-congestion` is `device-host.frames.congested`, which lowers the bitrate of a hosted video subscription
@@ -59,6 +60,7 @@ export const FEATURES = [
   'ios-hosted',
   'android-hosted',
   'hosted-ios-agent',
+  'hosted-android-agent',
   'duo-frames',
   'workspace-diff',
   'hosted-congestion',

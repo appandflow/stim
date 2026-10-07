@@ -649,13 +649,13 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
             claimRoot: join(serverDir(), 'agent-device.claims'),
           })
         : null,
-    resolveIos: (app, stopping) =>
+    resolveDevice: (app, stopping) =>
       stopping || loadConfig()?.hosting?.agentDriver === 'agent-device'
         ? new AgentDeviceDriver({
             env: options.env,
             stateDir: join(deviceHostArea(app.session), 'agent-device'),
             claimRoot: join(deviceHostArea(app.session), 'agent-device.claims'),
-            ios: { session: app.session, udid: app.udid },
+            device: app,
           })
         : null,
     nodeOf: (client) => {

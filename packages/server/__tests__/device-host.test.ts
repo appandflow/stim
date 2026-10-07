@@ -166,7 +166,7 @@ const agents = {
     agentIssued.set(app.session, access);
     return Promise.resolve(access);
   },
-  appStopped: (session: string, _udid?: string) => {
+  appStopped: (session: string, _device?: string | { serial: string; avdName: string }) => {
     agentCalls.push(['stopped', session]);
     return Promise.resolve();
   },
@@ -1043,8 +1043,8 @@ test.each(['ios', 'android', 'macos'])(
       expect(answer.result.launched).toBe(true);
       expect(acceptsDelivery(answer.result)).toBe(true);
       expect(answer.result.arguments).toEqual(params.arguments);
-      expect(answer.result.agent).toEqual(platform === 'macos' || platform === 'ios' ? { driver: 'none' } : undefined);
-      expect('agent' in answer.result).toBe(platform === 'macos' || platform === 'ios');
+      expect(answer.result.agent).toEqual({ driver: 'none' });
+      expect('agent' in answer.result).toBe(true);
     }
     const receipt = join(deviceHostArea(first.id), 'apps', params.attempt, 'receipt.json');
     const received = JSON.parse(readFileSync(receipt, 'utf8'));
@@ -1052,11 +1052,9 @@ test.each(['ios', 'android', 'macos'])(
     expect(received.arguments).toEqual(params.arguments);
     expect(readFileSync(join(deviceHostArea(first.id), 'home', 'installed'), 'utf8')).toBe('app-first\n');
     expect(host.attach('client', { session: first.id })).toHaveProperty('result.appAttempt', params.attempt);
-    if (platform === 'macos' || platform === 'ios') {
-      host.stop('client', { session: first.id });
-      await state(first.id, 'stopped');
-      rmSync(join(deviceHostArea(first.id), 'blobs'), { recursive: true });
-    }
+    host.stop('client', { session: first.id });
+    await state(first.id, 'stopped');
+    rmSync(join(deviceHostArea(first.id), 'blobs'), { recursive: true });
     const attached = host.appAttach('client', params);
     expect(attached).toHaveProperty('result.state', 'installed');
     expect(attached).not.toHaveProperty('result.agent');
@@ -1130,57 +1128,81 @@ describe('hosted agent control', () => {
     );
   });
 
-  test.each(['android'])('never starts agent control for %s apps', async (platform) => {
-    const { params } = await installApp(platform);
-    expect(host.appAttach('client', params)).not.toHaveProperty('result.agent');
-    expect(agentCalls.filter(([kind]) => kind === 'running')).toEqual([]);
-  });
+  test.each(['ios', 'android'].flatMap((platform) => ['stop', 'revoke', 'close'].map((how) => [platform, how])))(
+    'ends %s agent control when the session ends by %s',
+    async (platform, how) => {
+      const iosGrant = {
+        ...grant,
+        lease: {
+          ...grant.lease,
+          backend: platform === 'ios' ? ('ios-instance' as const) : ('android-instance' as const),
+          deviceKey:
+            platform === 'ios' ? 'ios:mobile:12345678-1234-1234-1234-123456789abc' : 'android:mobile:emulator-5554',
+        },
+      };
+      const { id, params } = await installApp(platform, { grant: iosGrant });
+      expect(agentCalls).toContainEqual([
+        'running',
+        expect.objectContaining({
+          session: id,
+          ...(platform === 'ios'
+            ? { udid: '12345678-1234-1234-1234-123456789abc' }
+            : { serial: 'emulator-5554', avdName: `stim-hosted-${id}` }),
+          bundleId: 'dev.stim.fixture',
+        }),
+        'installing',
+      ]);
+      expect(host.appAttach('client', params)).toHaveProperty('result.agent', iosGrant);
+      expect(readFileSync(join(deviceHostArea(id), 'apps', params.attempt, 'receipt.json'), 'utf8')).not.toContain(
+        iosGrant.token,
+      );
+      const attached = host.attach('client', { session: id });
+      expect(attached).not.toHaveProperty('result.agent');
+      expect(attached).toHaveProperty('result.id', id);
+      const retry = reserve({ platform });
+      expect(retry.id).toBe(id);
+      expect(retry).not.toHaveProperty('agent');
+      const stopping = vi.spyOn(agents, 'appStopped').mockImplementation(async (session, device) => {
+        expect(device).toEqual(
+          platform === 'ios'
+            ? '12345678-1234-1234-1234-123456789abc'
+            : { serial: 'emulator-5554', avdName: `stim-hosted-${id}` },
+        );
+        expect(existsSync(join(deviceHostArea(session), 'home', 'stopped'))).toBe(false);
+        agentCalls.push(['stopped', session]);
+        agentIssued.delete(session);
+      });
+      agentCalls.length = 0;
+      if (how === 'stop') host.stop('client', { session: id });
+      else if (how === 'revoke') {
+        allowed.delete('client');
+        host.revoke();
+      } else await host.close();
+      await state(id, 'stopped');
+      expect(agentCalls).toContainEqual(['stopped', id]);
+      stopping.mockRestore();
+    },
+  );
 
-  test.each(['stop', 'revoke', 'close'])('ends iOS agent control when the session ends by %s', async (how) => {
-    const iosGrant = {
-      ...grant,
-      lease: {
-        ...grant.lease,
-        backend: 'ios-instance' as const,
-        deviceKey: 'ios:mobile:12345678-1234-1234-1234-123456789abc',
-      },
-    };
-    const { id, params } = await installApp('ios', { grant: iosGrant });
-    expect(agentCalls).toContainEqual([
-      'running',
-      expect.objectContaining({ session: id, udid: expect.any(String), bundleId: 'dev.stim.fixture' }),
-      'installing',
-    ]);
-    expect(host.appAttach('client', params)).toHaveProperty('result.agent', iosGrant);
-    expect(readFileSync(join(deviceHostArea(id), 'apps', params.attempt, 'receipt.json'), 'utf8')).not.toContain(
-      iosGrant.token,
-    );
-    agentCalls.length = 0;
-    if (how === 'stop') host.stop('client', { session: id });
-    else if (how === 'revoke') {
-      allowed.delete('client');
-      host.revoke();
-    } else await host.close();
-    await state(id, 'stopped');
-    expect(agentCalls).toContainEqual(['stopped', id]);
-  });
-
-  test.each(['live', 'gone'])(
-    'reconciles a kept %s-child iOS agent claim with no in-memory driver before native stop',
-    async (status) => {
-      const first = reserve();
+  test.each(['ios', 'android'].flatMap((platform) => ['live', 'gone'].map((status) => [platform, status])))(
+    'reconciles a kept %s %s-child agent claim with no in-memory driver before native stop',
+    async (platform, status) => {
+      const first = reserve({ platform });
+      const sdk = join(home, 'sdk');
+      mkdirSync(join(sdk, 'platform-tools'), { recursive: true });
+      writeFileSync(join(sdk, 'platform-tools', 'adb'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
       await state(first.id, 'ready');
       const root = join(deviceHostArea(first.id), 'agent-device.claims');
       const child = keepAgentClaim(root);
       const claim = readClaimSet(root).live[0]!;
       const fresh = new HostedAgentHost({
         resolve: () => null,
-        resolveIos: (app) =>
+        resolveDevice: (app) =>
           new AgentDeviceDriver({
-            env: {},
+            env: { ANDROID_HOME: sdk },
             stateDir: join(deviceHostArea(app.session), 'agent-device'),
             claimRoot: join(deviceHostArea(app.session), 'agent-device.claims'),
-            ios: app,
+            device: app,
           }),
         nodeOf: () => 'node',
       });
@@ -1190,7 +1212,7 @@ describe('hosted agent control', () => {
       });
       const stop = vi
         .spyOn(agents, 'appStopped')
-        .mockImplementation((session, udid) => fresh.appStopped(session, udid));
+        .mockImplementation((session, device) => fresh.appStopped(session, device));
       try {
         if (status === 'gone') {
           process.kill(child.pid as number, 'SIGKILL');
@@ -1204,11 +1226,11 @@ describe('hosted agent control', () => {
         expect(stopped.notice).toEqual(status === 'live' ? keptClaim : undefined);
         expect(stopped.notice).toEqual(status === 'live' ? remedy : undefined);
         expect(existsSync(join(deviceHostArea(first.id), 'home', 'stopped'))).toBe(status === 'gone');
-        expect(readHostedDeviceLedger(join(deviceHostArea(first.id), 'home'))!.ios).toHaveLength(
-          status === 'live' ? 1 : 0,
-        );
+        expect(
+          readHostedDeviceLedger(join(deviceHostArea(first.id), 'home'))![platform as 'ios' | 'android'],
+        ).toHaveLength(status === 'live' ? 1 : 0);
         expect(readClaimSet(root).live.map((holder) => holder.child)).toEqual(status === 'live' ? [child] : []);
-        expect(sweep).toHaveBeenCalledTimes(status === 'live' ? 0 : 1);
+        expect(sweep).toHaveBeenCalledTimes(platform === 'ios' && status === 'gone' ? 1 : 0);
         if (status === 'live') {
           process.kill(child.pid as number, 'SIGKILL');
           await processIdentity.waitForProcessExit(child, 2000);
@@ -1216,8 +1238,10 @@ describe('hosted agent control', () => {
           host.stop('client', { session: first.id });
         }
         await state(first.id, 'stopped', 20_000);
-        expect(sweep).toHaveBeenCalledOnce();
-        expect(readHostedDeviceLedger(join(deviceHostArea(first.id), 'home'))!.ios).toEqual([]);
+        expect(sweep).toHaveBeenCalledTimes(platform === 'ios' ? 1 : 0);
+        expect(readHostedDeviceLedger(join(deviceHostArea(first.id), 'home'))![platform as 'ios' | 'android']).toEqual(
+          [],
+        );
         expect(readClaimSet(root).live).toEqual([]);
       } finally {
         if (processIdentity.inspectProcessIdentity(child) === 'same') {
@@ -1233,37 +1257,42 @@ describe('hosted agent control', () => {
     30_000,
   );
 
-  test.each(['stop', 'reinstall'])('retains the iOS device when the agent cannot stop before %s', async (action) => {
-    const { id } = await installApp('ios');
-    const stop = vi.spyOn(agents, 'appStopped').mockRejectedValue(new Error('daemon unresolved'));
-    const access = vi.spyOn(agents, 'access').mockReturnValue(undefined);
-    try {
-      if (action === 'stop') {
-        host.stop('client', { session: id });
-      } else {
-        const app = appOffer(id, 'app-second', 'ios');
-        host.appOffer('client', app.params);
-        await uploadManifest(app);
-        await host.appChunk('client', {
-          session: id,
-          attempt: app.params.attempt,
-          sha256: app.sha256,
-          offset: 0,
-          data: app.content.toString('base64'),
-        });
-        host.appLaunch('client', app.params);
+  test.each(['ios', 'android'].flatMap((platform) => ['stop', 'reinstall'].map((action) => [platform, action])))(
+    'retains the %s device when the agent cannot stop before %s',
+    async (platform, action) => {
+      const { id } = await installApp(platform);
+      const stop = vi.spyOn(agents, 'appStopped').mockRejectedValue(new Error('daemon unresolved'));
+      const access = vi.spyOn(agents, 'access').mockReturnValue(undefined);
+      try {
+        if (action === 'stop') {
+          host.stop('client', { session: id });
+        } else {
+          const app = appOffer(id, 'app-second', platform);
+          host.appOffer('client', app.params);
+          await uploadManifest(app);
+          await host.appChunk('client', {
+            session: id,
+            attempt: app.params.attempt,
+            sha256: app.sha256,
+            offset: 0,
+            data: app.content.toString('base64'),
+          });
+          host.appLaunch('client', app.params);
+        }
+        await state(id, 'unknown');
+        expect(readFileSync(join(deviceHostArea(id), 'home', 'installed'), 'utf8')).toBe('app-first\n');
+        expect(readHostedDeviceLedger(join(deviceHostArea(id), 'home'))![platform as 'ios' | 'android']).toHaveLength(
+          1,
+        );
+        expect(readClaimSet(join(deviceHostRoot(), `${id}.claims`)).live).toHaveLength(1);
+      } finally {
+        stop.mockRestore();
+        access.mockRestore();
       }
-      await state(id, 'unknown');
-      expect(readFileSync(join(deviceHostArea(id), 'home', 'installed'), 'utf8')).toBe('app-first\n');
-      expect(readHostedDeviceLedger(join(deviceHostArea(id), 'home'))!.ios).toHaveLength(1);
-      expect(readClaimSet(join(deviceHostRoot(), `${id}.claims`)).live).toHaveLength(1);
-    } finally {
-      stop.mockRestore();
-      access.mockRestore();
-    }
-    host.stop('client', { session: id });
-    await state(id, 'stopped');
-  });
+      host.stop('client', { session: id });
+      await state(id, 'stopped');
+    },
+  );
 
   test.each(['stop', 'revoke', 'close'])('ends agent control when the session ends by %s', async (how) => {
     const { id } = await installApp('macos', { grant });

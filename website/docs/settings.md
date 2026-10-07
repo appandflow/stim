@@ -365,12 +365,12 @@ or forgets names removed from the setting. A concurrent approval inspection
 reports `busy` instead of rotating a pending token.
 
 On a hosting Mac, `hosting.agentDriver` names the tool it starts so a client's
-coding agent can drive the macOS apps and iOS simulators it hosts for that client. The default,
+coding agent can drive the macOS apps, iOS simulators and Android emulators it hosts for that client. The default,
 `none`, starts nothing. For macOS, `agent-device` starts its shared daemon only when it
 can lease a single app (its `macos-app` lease backend);
 otherwise agent control reports `none` with a notice, and no client is handed
 the Mac's desktop. `STIM_AGENT_DEVICE_BIN` in `stim-server`'s environment names
-an agent-device binary to use instead of `~/.local/bin/agent-device`. Hosted iOS uses one daemon per session, pinned to its simulator UDID by the daemon policy. Both Macs need agent-device 0.21.20 or later. `doctor` counts installed hosted iOS and macOS apps with no driver. See [hosted iOS](./owned-devices.md#run-ios-on-another-mac).
+an agent-device binary to use instead of `~/.local/bin/agent-device`. Hosted iOS uses one daemon per session, pinned to its simulator UDID by the daemon policy. Both Macs need agent-device 0.21.20 or later. Hosted Android uses one daemon per session pinned to the emulator serial, with agent-device 0.21.22 or later on both Macs. `doctor` counts installed hosted iOS, Android and macOS apps with no driver. See [hosted iOS](./owned-devices.md#run-ios-on-another-mac) and [hosted Android](./remote-machines.md).
 
 For a setup walkthrough covering build and hosting approvals, see [Remote machines](./remote-machines.md).
 
