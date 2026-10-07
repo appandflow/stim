@@ -118,11 +118,12 @@ public struct StimCLI: Sendable {
 
   /// Both build and device-host access states. Extra environment applies only to this doctor process.
   public func machineAccess(
-    cwd: String, ask: Bool, extraEnvironment: [String: String] = [:], timeout: TimeInterval = 30
+    cwd: String, ask: Bool, extraEnvironment: [String: String] = [:], timeout: TimeInterval? = nil
   ) async throws -> DoctorReport {
     let args = ["doctor", "--json", "--platform", "ios"] + (ask ? ["--fix"] : [])
     return try JSONDecoder().decode(
-      DoctorReport.self, from: await run(args, cwd: cwd, extraEnvironment: extraEnvironment, timeout: timeout))
+      DoctorReport.self, from: await run(args, cwd: cwd, extraEnvironment: extraEnvironment, timeout: timeout ?? (ask ? 120 : 30))
+    )
   }
 
   /// `stim settings --json` in `cwd`: every setting with its origin and layers.
