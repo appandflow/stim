@@ -1656,9 +1656,8 @@ The panel follows workspace creation, the first iOS build, a cached rebuild,
 live view and control, app logs, agent actions and replay, Fast Refresh, optional
 phone and remote Mac steps, then stop/removal and Archived. Both optional
 steps keep Skip available.
-Pair a phone opens Settings > Phones > Pair. When
-the server is off, Turn on Serve to phones opens the Phones tab, where you enable
-it yourself. A pairing that exists when the step starts shows Done already,
+Pair a phone opens the Pair a Phone wizard, which
+turns on serving itself when the server is off. A pairing that exists when the step starts shows Done already,
 followed by "Open Stim on your phone: the tour workspace is there".
 
 Add remote Mac opens the existing wizard using the tour workspace as its

@@ -92,6 +92,18 @@ final class PhonePairingTests: XCTestCase {
     XCTAssertFalse(funneled.canContinue)
   }
 
+  func testASuccessfulSetupWaitsForTheServerToReportTheRouteBeforeShowingAProblem() {
+    let missing = PhoneServer.running(tailscale: true, route: "missing", servesOtherHome: false)
+    var wizard = wizard(to: .tailscale)
+    _ = wizard.apply(.next, now: now)
+    XCTAssertEqual(wizard.apply(.server(missing), now: now), [.setUpRoute])
+    _ = wizard.apply(.routeFinished(error: nil), now: now)
+    _ = wizard.apply(.server(missing), now: now.addingTimeInterval(2))
+    XCTAssertEqual(wizard.routeCheck, .working)
+    _ = wizard.apply(.server(missing), now: now.addingTimeInterval(PhonePairing.routeReportGrace + 1))
+    XCTAssertEqual(wizard.routeCheck, .problem)
+  }
+
   func testRouteIsNotSetUpOutsideTheServingStepOrOffTheTailnet() {
     let missing = PhoneServer.running(tailscale: true, route: "missing", servesOtherHome: false)
     var early = PhonePairing(servesPhones: true, server: missing, phones: [], now: now)
@@ -140,6 +152,8 @@ final class PhonePairingTests: XCTestCase {
     XCTAssertTrue(wizard.codeExpired(now: clock))
     XCTAssertEqual(wizard.apply(.newCode, now: clock), [.requestCode(control: true)])
     XCTAssertFalse(wizard.codeExpired(now: clock))
+    _ = wizard.apply(.codeFailed("server stopped"), now: clock)
+    XCTAssertEqual(wizard.apply(.tick, now: clock.addingTimeInterval(1)), [])
   }
 
   func testOnlyAPhonePairedAfterOpeningFinishes() {

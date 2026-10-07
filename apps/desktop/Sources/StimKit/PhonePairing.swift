@@ -88,6 +88,8 @@ public struct PhonePairing: Sendable {
 
   /// How many times an expired code is replaced without asking, about 20 minutes of a code on screen.
   public static let automaticRenewals = 3
+  /// How long a route that setup reported done may still read as missing before the server's status catches up.
+  public static let routeReportGrace: TimeInterval = 10
 
   public private(set) var step: Step = .app
   public private(set) var tailscale: MacTailscale = .checking
@@ -104,6 +106,8 @@ public struct PhonePairing: Sendable {
   private var serving: Bool
   private let wasServing: Bool
   private var routeAttempted = false
+  private var routeSetUpAt: Date?
+  private var lastNow: Date
   private let openedAt: Date
   private let knownPhones: Set<String>
 
@@ -112,6 +116,7 @@ public struct PhonePairing: Sendable {
     wasServing = servesPhones
     self.server = server
     openedAt = now
+    lastNow = now
     knownPhones = Set(phones.filter(\.isPhone).map(\.id))
   }
 
@@ -140,6 +145,7 @@ public struct PhonePairing: Sendable {
     case nil: return .working
     default:
       if settingUpRoute { return .working }
+      if routeError == nil, let routeSetUpAt, lastNow.timeIntervalSince(routeSetUpAt) < Self.routeReportGrace { return .working }
       return routeAttempted ? .problem : .working
     }
   }
@@ -169,6 +175,7 @@ public struct PhonePairing: Sendable {
 
   public mutating func apply(_ event: Event, now: Date) -> [Effect] {
     guard !cancelled else { return [] }
+    lastNow = now
     var effects: [Effect] = []
     switch event {
     case .next:
@@ -192,10 +199,12 @@ public struct PhonePairing: Sendable {
     case .routeFinished(let error):
       settingUpRoute = false
       routeError = error
+      routeSetUpAt = error == nil ? now : nil
     case .retry:
       guard step == .serve else { return [] }
       routeAttempted = false
       routeError = nil
+      routeSetUpAt = nil
       if case .failed = server { effects.append(.startServing) }
     case .access(let control):
       guard control != self.control else { return [] }
@@ -226,7 +235,9 @@ public struct PhonePairing: Sendable {
       if serving, !wasServing, paired == nil { return [.stopServing] }
       return []
     case .tick:
-      if step == .pair, !requestingCode, let codeExpiresAt, now >= codeExpiresAt, renewals < Self.automaticRenewals {
+      if step == .pair, !requestingCode, codeError == nil, let codeExpiresAt, now >= codeExpiresAt,
+        renewals < Self.automaticRenewals
+      {
         renewals += 1
         requestingCode = true
         effects.append(.requestCode(control: control))
@@ -238,6 +249,7 @@ public struct PhonePairing: Sendable {
 
   private mutating func enterServe() -> [Effect] {
     routeAttempted = false
+    routeSetUpAt = nil
     routeError = nil
     guard !serving || server == .off else { return [] }
     serving = true

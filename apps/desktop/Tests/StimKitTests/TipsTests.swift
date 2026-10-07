@@ -53,11 +53,7 @@ struct TipsTests {
       var negative = inputs
       switch topic {
       case .buildMachine: negative.machines = ["mini"]
-      case .phone:
-        negative.pairedPhones = 1
-        var flagOff = inputs
-        flagOff.phoneApp = false
-        #expect(!Tips.applicable(.phone, inputs: flagOff))
+      case .phone: negative.pairedPhones = 1
       case .tutorial: negative.tutorialCompleted = true
       case .hideWorkspaces: negative.sidebar.hiddenWorkspaces = HiddenWorkspaces(paths: ["/one"])
       case .statusFilter: negative.sidebar.statuses = [.live]

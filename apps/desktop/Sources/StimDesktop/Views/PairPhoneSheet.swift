@@ -47,7 +47,7 @@ struct PairPhoneSheet: View {
     .font(.stim(.body)).foregroundStyle(Palette.text).tint(Palette.brand)
     .background(Palette.background)
     .task { await model.start() }
-    .onDisappear { model.stop() }
+    .onDisappear { model.cancel() }
     .onQuitRequested {
       model.cancel()
       dismiss()
@@ -163,7 +163,8 @@ struct PairPhoneSheet: View {
       checkRow(wizard.routeCheck) {
         switch wizard.routeCheck {
         case .ok: Text("Private tailnet route is ready")
-        case .working: Text("Setting up a private tailnet route")
+        case .working:
+          Text(model.route == nil ? "Waiting for the Stim server to report its route" : "Setting up a private tailnet route")
         case .waiting: Text("Set up a private tailnet route")
         case .problem:
           if let route = model.route, route.state == "funneled" {
