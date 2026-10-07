@@ -214,6 +214,7 @@ struct CommandText: View {
 struct CopyableCommand: View {
   var command: String
   @State private var copied = false
+  @State private var copyCount = 0
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
   var body: some View {
@@ -226,17 +227,18 @@ struct CopyableCommand: View {
       Button {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(command, forType: .string)
+        copyCount += 1
         setCopied(true)
         AccessibilityNotification.Announcement("Copied").post()
       } label: {
         Image(systemName: copied ? "checkmark" : "doc.on.doc")
           .iconFont(IconSize.small, weight: .medium)
-          .contentTransition(.symbolEffect(.replace))
+          .contentTransition(reduceMotion ? .identity : .symbolEffect(.replace))
       }
       .buttonStyle(.icon(tint: copied ? Palette.success : Palette.secondary))
       .help("Copy the command")
-      .accessibilityLabel(copied ? "Copied" : "Copy \(command)")
-      .task(id: copied) {
+      .accessibilityLabel("Copy \(command)")
+      .task(id: copyCount) {
         guard copied else { return }
         try? await Task.sleep(for: .seconds(2))
         setCopied(false)
