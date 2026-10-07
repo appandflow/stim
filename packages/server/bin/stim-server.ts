@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 import { readFileSync, realpathSync, statSync } from 'node:fs';
+import { readHostedSessions } from '@stim-cli/core/state';
+import { formatHostedSessions, readHostedSessionRows } from '../src/hosted-sessions.ts';
 import { hostname } from 'node:os';
 import { resolve } from 'node:path';
 import { parseArgs } from 'node:util';
@@ -73,7 +75,7 @@ const USAGE = `Usage:
                                     print a single-use pairing payload for the QR code;
                                     --control lets the paired device run actions
   stim-server devices [list] [--json]
-                                    list paired devices, approved clients and access requests
+                                    list paired devices, approved clients, access requests and hosted sessions
   stim-server devices grant <id> --control|--read|--build|--device-host
                                     let a paired device run actions, or only read;
                                     --build approves a Mac's request to build here;
@@ -431,7 +433,9 @@ async function main(): Promise<void> {
     return;
   }
   if (command === 'devices' && (sub === undefined || sub === 'list') && arg === undefined) {
-    const devices = [...readDevices(), ...readBuildClients(), ...readDeviceHostClients()];
+    const clients = readDeviceHostClients();
+    const devices = [...readDevices(), ...readBuildClients(), ...clients];
+    const hostedSessions = readHostedSessionRows(readHostedSessions(), clients);
     if (values.json) {
       const listed = devices.map(
         ({ id, name, identity, pairedAt, lastSeenAt, capabilities, pendingUntil, requestedCapability }) => ({
@@ -445,10 +449,11 @@ async function main(): Promise<void> {
           ...(requestedCapability ? { requestedCapability } : {}),
         }),
       );
-      return void console.log(JSON.stringify({ devices: listed }));
+      return void console.log(JSON.stringify({ devices: listed, hostedSessions }));
     }
     if (!devices.length) console.log('No paired devices.');
     for (const device of devices) console.log(describe(device));
+    for (const line of formatHostedSessions(hostedSessions)) console.log(line);
     return;
   }
   if (command === 'devices' && sub === 'revoke' && arg !== undefined && rest.length === 0) {

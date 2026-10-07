@@ -57,7 +57,8 @@ import {
   type HostedMacosDevice,
   type MacosAppState,
 } from '@stim-cli/core/state';
-import { writeJson } from './registry.ts';
+import { readDeviceHostClients, writeJson } from './registry.ts';
+import { readHostedSessionRows } from './hosted-sessions.ts';
 import { takeHostedInputClaim } from './hosted-input.ts';
 import { adbPath } from './frame-helper.ts';
 import type { Methods, ProtocolError } from './protocol.ts';
@@ -480,6 +481,32 @@ export class DeviceHost {
       return record
         ? { result: this.observed(record) }
         : refused('unknown-session', 'This client has no such hosted session.');
+    } catch (error) {
+      return refused('action-failed', (error as Error).message);
+    }
+  }
+
+  sessions(): AppAnswer<Methods['device-host.sessions']['result']> {
+    try {
+      return {
+        result: {
+          sessions: readHostedSessionRows(
+            readHostedSessions().map((record) => ({ ...record, state: this.observed(record).state })),
+            readDeviceHostClients(),
+          ),
+        },
+      };
+    } catch (error) {
+      return refused('action-failed', (error as Error).message);
+    }
+  }
+
+  stopForPerson(session: string): AppAnswer<Methods['device-host.sessions.stop']['result']> {
+    try {
+      const record = readHostedSessions().find((each) => each.id === session);
+      if (!record) return refused('unknown-session', 'No such hosted session.');
+      this.beginStop(record);
+      return { result: { id: record.id, state: record.state === 'stopped' ? 'stopped' : 'stopping' } };
     } catch (error) {
       return refused('action-failed', (error as Error).message);
     }

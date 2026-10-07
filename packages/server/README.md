@@ -16,7 +16,7 @@ The design is in
 stim-server [--port <n>]          # serve paired clients, port 7787 by default
 stim-server pair [--port <n>] [--control]
                                   # print a single-use pairing payload
-stim-server devices [list]        # list paired devices, approved clients and access requests
+stim-server devices [list]        # list pairings, approvals, requests and hosted sessions
 stim-server devices grant <id> --control|--read|--build|--device-host
                                   # let a paired device run actions, or only read;
                                   # --build approves builds; --device-host approves device hosting
@@ -363,6 +363,31 @@ from phone pairings and build clients. A hosting token grants no `read`,
 `control` or `build` access, including access to unrelated workspaces. Existing
 read, control and build tokens cannot gain hosting through `devices grant`.
 Loopback requests and `pair --device-host` are refused.
+
+### Hosted here
+
+`stim-server devices` adds a **Hosted here** block after pairings and approvals,
+with the client name, platform, device label, installed app bundle id (or `-`),
+state and start time. `--json` adds `hostedSessions` next to `devices`, including
+an empty array when there are none. Rows are newest first; plain stopped
+sessions are omitted, while parked and unresolved sessions stay visible.
+A parked row uses its parking time. A removed client's name falls back to its id.
+The command reads the host journal directly and needs no server connection.
+
+`device-host.sessions` takes no params (or `{}`) and returns `{ sessions }`.
+Each row has `id`, `client: { id, name }`, `platform`, nullable `device` and `app`,
+`state`, `parked`, `since` (ISO time), and `workspace`.
+`device-host.sessions.stop` takes `{ "session": "<id>" }` and returns
+`{ "id": "<id>", "state": "stopping" | "stopped" }`. It stops any client's
+session through the existing stop path, closing Metro, view, agent and logs
+before owned-device teardown. Repeating a stopped session returns `stopped`;
+an absent id gets `unknown-session`.
+Both requests require an authenticated loopback Desktop connection with local
+identity and control access. Local read-only connections, paired phones and
+remote hosting clients get `forbidden`. A session whose active owner is not
+attached to this server reads as `unknown`; stop reconciles it through the same
+ownership checks. The approved-client `device-host.stop` remains limited to
+that client's own sessions.
 
 ### Hosted availability offers
 

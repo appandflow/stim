@@ -296,6 +296,9 @@ outside it moves to its own issue and pull request.
   reply. Unknown creation, journal, owner or shutdown state refuses replacement;
   never identify a device by name or guess an empty inventory. Stop and
   revocation touch only that client's recorded owned device.
+  The host's person lists and stops sessions through loopback
+  `device-host.sessions` and `device-host.sessions.stop` on a local Desktop
+  control connection; person-side stop uses the existing stop path.
   A session's Metro endpoint listens only on worker loopback and reaches only the
   authenticated client's peer address. The client gateway listens only on its own
   tailnet address, pins the worker peer, requires a fresh secret and forwards only

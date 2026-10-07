@@ -393,6 +393,39 @@ export function protocolJsonSchema(): JsonSchema {
         additionalProperties: false,
         properties: { port: { type: ['integer', 'null'], minimum: 1, maximum: 65535 } },
       },
+      HostedSessionRow: {
+        type: 'object',
+        required: ['id', 'client', 'platform', 'device', 'app', 'state', 'parked', 'since', 'workspace'],
+        additionalProperties: false,
+        properties: {
+          id: { type: 'string' },
+          client: {
+            type: 'object',
+            required: ['id', 'name'],
+            additionalProperties: false,
+            properties: { id: { type: 'string' }, name: { type: 'string' } },
+          },
+          platform: { enum: ['ios', 'android', 'macos'] },
+          device: { type: ['string', 'null'] },
+          app: { type: ['string', 'null'] },
+          state: { enum: ['preparing', 'ready', 'stopping', 'stopped', 'unknown'] },
+          parked: { type: 'boolean' },
+          since: { type: 'string' },
+          workspace: { type: 'string' },
+        },
+      },
+      HostedSessionsResult: {
+        type: 'object',
+        required: ['sessions'],
+        additionalProperties: false,
+        properties: { sessions: { type: 'array', items: { $ref: '#/$defs/HostedSessionRow' } } },
+      },
+      HostedSessionStopResult: {
+        type: 'object',
+        required: ['id', 'state'],
+        additionalProperties: false,
+        properties: { id: { type: 'string' }, state: { enum: ['stopping', 'stopped'] } },
+      },
       HostedDeviceSession: {
         type: 'object',
         required: ['id', 'client', 'workspace', 'slot', 'platform', 'attempt', 'state', 'device', 'createdAt'],
@@ -1487,6 +1520,8 @@ export function protocolJsonSchema(): JsonSchema {
           request('build.artifact', buildJob),
           request('build.attach', buildJob),
           request('server.update.status'),
+          request('device-host.sessions'),
+          request('device-host.sessions.stop', session({})),
           request('machines.update.start', {
             type: 'object',
             required: ['machine'],
@@ -1558,6 +1593,8 @@ export function protocolJsonSchema(): JsonSchema {
                 anyOf: [
                   { $ref: '#/$defs/HostedDeviceOffer' },
                   { $ref: '#/$defs/HostedDeviceSession' },
+                  { $ref: '#/$defs/HostedSessionsResult' },
+                  { $ref: '#/$defs/HostedSessionStopResult' },
                   { $ref: '#/$defs/HostedAppDelivery' },
                   { $ref: '#/$defs/HostedMetroResult' },
                   { $ref: '#/$defs/HostedAppOfferResult' },
