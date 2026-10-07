@@ -616,7 +616,12 @@ releases the setup claim and exits 1; a typed N also exits 1. Hosting grants
 include no read, control or build capability.
 $STIM_HOME/device-host-machines.json stores a private token and pinned tailnet
 node. Doctor never prints the token; it reports each machine under deviceHosts
-in JSON. Stim sends tokens only to the pinned node's own tailnet address,
+in JSON. Desktop's Run on menu uses approved deviceHosts for iOS and Android:
+This Mac, Auto (--remote auto), or a named Mac (--remote <machine>). It remembers
+the choice per workspace and platform in its own preferences, falls back to This
+Mac when approval is removed, and keeps recorded hosted sessions fixed until
+stim stop. Tiles show the machine and Auto reason, including local placement.
+Stim sends tokens only to the pinned node's own tailnet address,
 with its MagicDNS name for TLS and Host routing. A changed node refuses
 access, and uncertain replies or unreadable credentials preserve the pin.
 Invalid hosting settings report an error and preserve every saved credential.

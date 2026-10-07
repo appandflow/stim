@@ -95,7 +95,7 @@ struct PhonesView: View {
         Text("Device hosting approvals")
       } footer: {
         Text(
-          "Allow approves another Mac for hosted simulator and emulator sessions. Hosted iOS simulators and Android emulators run on an approved Mac via stim ios|android --remote <machine>. Automatic placement is not available yet. Approval does not grant build access or read/control access to unrelated workspaces or devices. Requests lapse after 15 minutes."
+          "Allow approves another Mac for hosted simulator and emulator sessions. Hosted iOS simulators and Android emulators run on an approved Mac via stim ios|android --remote <machine>. Use stim ios|android --remote auto to run here while this Mac has room, otherwise on an approved hosting Mac. Approval does not grant build access or read/control access to unrelated workspaces or devices. Requests lapse after 15 minutes."
         )
         .foregroundStyle(Palette.tertiary)
         .multilineTextAlignment(.leading)

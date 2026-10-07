@@ -341,6 +341,8 @@ public struct HostedIos: Decodable, Hashable, Sendable {
 
   public var machine: String
   public var session: String
+  public var selected: String?
+  public var reason: String?
   public var device: Device?
 }
 
@@ -353,10 +355,19 @@ public struct HostedAndroid: Decodable, Hashable, Sendable {
 
   public var machine: String
   public var session: String
+  public var selected: String?
+  public var reason: String?
   public var device: Device?
 }
 
+public struct DevicePlacement: Decodable, Hashable, Sendable {
+  public var decision: String
+  public var reason: String
+  public var machine: String?
+}
+
 public struct IosDevice: Decodable, Hashable, Sendable {
+  public var devicePlacement: DevicePlacement?
   public var host: HostedIos?
   public var name: String
   public var udid: String
@@ -372,7 +383,7 @@ public struct IosDevice: Decodable, Hashable, Sendable {
   public var model: String?
   public var leaseExpiresAt: String?
 
-  enum CodingKeys: String, CodingKey { case name, udid, owned, state, activity, app, appPresence, disk, host }
+  enum CodingKeys: String, CodingKey { case name, udid, owned, state, activity, app, appPresence, disk, host, devicePlacement }
 
   public init(name: String, udid: String, owned: Bool, state: String, activity: DeviceActivity? = nil) {
     self.name = name
@@ -385,6 +396,7 @@ public struct IosDevice: Decodable, Hashable, Sendable {
   public init(from decoder: Decoder) throws {
     let c = try decoder.container(keyedBy: CodingKeys.self)
     host = try c.decodeIfPresent(HostedIos.self, forKey: .host)
+    devicePlacement = try c.decodeIfPresent(DevicePlacement.self, forKey: .devicePlacement)
     udid = try c.decode(String.self, forKey: .udid)
     name = try c.decodeIfPresent(String.self, forKey: .name) ?? "Missing simulator"
     owned = try c.decode(Bool.self, forKey: .owned)
@@ -404,6 +416,7 @@ public struct AppProcess: Decodable, Hashable, Sendable {
 }
 
 public struct AndroidDevice: Decodable, Hashable, Sendable {
+  public var devicePlacement: DevicePlacement?
   public var host: HostedAndroid?
   public var name: String
   public var owned: Bool

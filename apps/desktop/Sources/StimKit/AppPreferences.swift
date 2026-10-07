@@ -24,6 +24,10 @@ public enum AppPreferences {
     public static let diffViewer = "diffViewer"
     public static let showsMenuBarExtra = "showsMenuBarExtra"
     public static let stimExecutable = "stimExecutable"
+    public static func runDestination(workspace: String, platform: String) -> String {
+      "runDestination.\(workspace).\(platform)"
+    }
+
     public static let remoteSessionMinutes = "remoteSessionMinutes"
     public static let autopilotIdleShutdown = "autopilot.idleShutdown"
     public static let autopilotIdleMinutes = "autopilot.idleMinutes"
@@ -55,6 +59,14 @@ public enum AppPreferences {
     public static func notifies(_ kind: StatusEvent.Kind) -> String { "notify.\(kind.rawValue)" }
     public static func sectionCollapsed(_ id: String) -> String { "section.\(id).collapsed" }
     public static func sectionShowsAll(_ id: String) -> String { "section.\(id).showsAll" }
+  }
+
+  public static func runDestination(
+    workspace: String, platform: String, approvedMachines: [String], defaults: UserDefaults = .standard
+  ) -> RunDestination {
+    RunDestination(
+      saved: defaults.string(forKey: Key.runDestination(workspace: workspace, platform: platform)) ?? "",
+      approvedMachines: approvedMachines)
   }
 
   public static let frameRates: [Double] = [60, 30, 15, 5]

@@ -11,6 +11,7 @@ final class BuildMachinesModel {
     }
 
     var statuses: [BuildMachineStatus]
+    var hosts: [BuildMachineStatus] = []
     var problem: Problem?
   }
 
@@ -22,6 +23,7 @@ final class BuildMachinesModel {
   private(set) var runs = 0
   private(set) var stats = Fetched<MachineStats>()
   private(set) var updates: [String: MachineUpdatePhase] = [:]
+  private var hostingRefreshes: Set<String> = []
   private var checks: [String: Check] = [:]
 
   let settings: MachineSettingsStore
@@ -157,6 +159,17 @@ final class BuildMachinesModel {
 
   func check(in checkout: String?) -> Check? { checkout.flatMap { checks[$0] } }
 
+  func approvedHostingMachines(in checkout: String) -> [String] {
+    (checks[checkout]?.hosts ?? []).filter { $0.state == .approved }.map(\.machine)
+  }
+
+  func refreshHostingMachines(checkout: String) async {
+    guard hostingRefreshes.insert(checkout).inserted else { return }
+    defer { hostingRefreshes.remove(checkout) }
+    await settings.refresh()
+    await refreshStatuses(checkout: checkout, ask: false)
+  }
+
   var settingsFailure: String? {
     if let error = settings.error { return error }
     guard let payload = settings.payload, payload.entry("offload.machines") == nil else { return nil }
@@ -202,20 +215,21 @@ final class BuildMachinesModel {
     guard let checkout else { return }
     let run = (latestRun[checkout] ?? 0) + 1
     latestRun[checkout] = run
-    guard ask || !(entries ?? []).isEmpty else {
+    guard ask || !(entries ?? []).isEmpty || !(settings.payload?.entry("hosting.machines")?.value.strings ?? []).isEmpty else {
       checks[checkout] = Check(statuses: [], problem: nil)
       return
     }
     runs += 1
     defer { runs -= 1 }
     let cli = await cli.value
-    let result = await Result.awaiting { try await cli.buildMachines(cwd: checkout, ask: ask) }
+    let result = await Result.awaiting { try await cli.machineAccess(cwd: checkout, ask: ask) }
     guard run == latestRun[checkout], !Task.isCancelled else { return }
     switch result {
-    case .success(let reported?):
-      checks[checkout] = Check(statuses: reported, problem: nil)
-      updateAutomatically(reported, checkout: checkout)
-    case .success(nil): checks[checkout] = Check(statuses: [], problem: .unsupported)
+    case .success(let report):
+      checks[checkout] = Check(
+        statuses: report.buildMachines ?? [], hosts: report.deviceHosts ?? [],
+        problem: report.buildMachines == nil ? .unsupported : nil)
+      updateAutomatically(report.buildMachines ?? [], checkout: checkout)
     case .failure(let error):
       checks[checkout] = Check(statuses: check(in: checkout)?.statuses ?? [], problem: .failed(error.localizedDescription))
     }

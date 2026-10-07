@@ -10,6 +10,27 @@ import Testing
     return payload.environments[0]
   }()
 
+  @Test func decodesHostedSelectionAndPlacementReasonsWithoutLosingLocalDecisions() throws {
+    let url = try #require(Bundle.module.url(forResource: "status-placement", withExtension: "json", subdirectory: "Fixtures"))
+    let payload = try JSONDecoder().decode(StatusPayload.self, from: Data(contentsOf: url))
+    let hosted = payload.environments[0]
+    #expect(hosted.ios?.host?.selected == "auto")
+    #expect(hosted.ios?.host?.reason == "load 3.1/core here")
+    #expect(hosted.ios?.devicePlacement?.decision == "hosted")
+    #expect(hosted.ios?.devicePlacement?.machine == "janics-mac-mini")
+    #expect(hosted.android?.host?.selected == "janics-mac-mini")
+    #expect(hosted.android?.host?.reason == "selected janics-mac-mini")
+    #expect(hosted.android?.devicePlacement?.reason == "selected janics-mac-mini")
+    #expect(hosted.devices[0].placementReason == "auto: load 3.1/core here")
+    #expect(hosted.devices[1].placementReason == nil)
+    let local = payload.environments[1]
+    #expect(local.ios?.devicePlacement?.decision == "local")
+    #expect(local.android?.devicePlacement?.decision == "waited-locally")
+    #expect(local.devices.map(\.placementReason) == ["auto: room here", "auto: waited for room here"])
+    #expect(workspace.ios?.host?.selected == nil)
+    #expect(workspace.ios?.devicePlacement == nil)
+  }
+
   @Test func listsDefaultDevicesBeforeSlotsAndRemoteSessionsLast() {
     #expect(workspace.devices.map(\.slot) == ["default", "default", "ipad", "default"])
     #expect(workspace.devices.map(\.isRunning) == [false, true, true, true])
@@ -471,6 +492,31 @@ import Testing
     #expect(
       SidebarOptions.decode(hiddenProjects: SidebarOptions.encode(hiddenProjects: options.hiddenProjects))
         == options.hiddenProjects)
+  }
+
+  @Test func remembersRunDestinationsPerWorkspaceAndPlatformAndFallsBackAfterApprovalIsRemoved() throws {
+    let name = "stim.tests.\(UUID().uuidString)"
+    let defaults = try #require(UserDefaults(suiteName: name))
+    defer { defaults.removePersistentDomain(forName: name) }
+    let key = AppPreferences.Key.runDestination(workspace: "/w", platform: "ios")
+    defaults.set("mini", forKey: key)
+    #expect(
+      AppPreferences.runDestination(workspace: "/w", platform: "ios", approvedMachines: ["mini"], defaults: defaults)
+        == .machine("mini"))
+    #expect(
+      AppPreferences.runDestination(workspace: "/w", platform: "ios", approvedMachines: ["other"], defaults: defaults) == .thisMac
+    )
+    #expect(
+      AppPreferences.runDestination(workspace: "/w", platform: "android", approvedMachines: ["mini"], defaults: defaults)
+        == .thisMac)
+    #expect(
+      AppPreferences.runDestination(workspace: "/other", platform: "ios", approvedMachines: ["mini"], defaults: defaults)
+        == .thisMac)
+    defaults.set("auto", forKey: key)
+    #expect(AppPreferences.runDestination(workspace: "/w", platform: "ios", approvedMachines: [], defaults: defaults) == .auto)
+    defaults.set("", forKey: key)
+    #expect(
+      AppPreferences.runDestination(workspace: "/w", platform: "ios", approvedMachines: ["mini"], defaults: defaults) == .thisMac)
   }
 
   @Test func migratesTheIdleWorkspacesSwitchToTheStatusOption() throws {

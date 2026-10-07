@@ -53,6 +53,38 @@ import Testing
     try JSONDecoder().decode(Workspace.self, from: Data(#"{"path":"/w","live":true,"warnings":[]\#(fields)}"#.utf8))
   }
 
+  @Test func runDestinationChangesOnlyRemoteArgumentsAndPreservesPlatformAndSlot() throws {
+    let env = try workspace("")
+    for platform in ["ios", "android"] {
+      #expect(env.runCommand(platform: platform, destination: .thisMac) == StimCommand([platform], cwd: "/w"))
+      #expect(env.runCommand(platform: platform, destination: .auto).arguments == [platform, "--remote", "auto"])
+      #expect(
+        env.runCommand(platform: platform, destination: .machine("mini:7443")).arguments == [platform, "--remote", "mini:7443"])
+    }
+    let devices: [DeviceRef] = [
+      .ios(slot: "tablet", IosDevice(name: "iPad", udid: "I", owned: true, state: "Shutdown")),
+      .android(slot: "fold", AndroidDevice(name: "fold", owned: true, physical: false, state: "not-detected")),
+    ]
+    for device in devices {
+      let base = [device.platform, "--slot", device.slot]
+      #expect(runCommand(for: device, cwd: "/w", destination: .thisMac)?.arguments == base)
+      #expect(runCommand(for: device, cwd: "/w", destination: .auto)?.arguments == base + ["--remote", "auto"])
+      #expect(runCommand(for: device, cwd: "/w", destination: .machine("mini"))?.arguments == base + ["--remote", "mini"])
+    }
+    #expect(env.runCommand(platform: "macos", destination: .auto).arguments == ["macos"])
+    #expect(env.runCommand(platform: "web", destination: .machine("mini")).arguments == ["web"])
+  }
+
+  @Test func workspaceRerunsKeepTheDefaultHostedMachineRegardlessOfTheRememberedChoice() throws {
+    let env = try workspace(
+      #","ios":{"name":"iPhone","udid":"","owned":false,"state":"ready","host":{"machine":"mini","session":"ios-session"}},"android":{"name":"pixel","owned":false,"physical":false,"state":"stopped","host":{"machine":"other-mini","session":"android-session"}}"#
+    )
+    for destination in [RunDestination.thisMac, .auto, .machine("different")] {
+      #expect(env.runCommand(platform: "ios", destination: destination).arguments == ["ios", "--remote", "mini"])
+      #expect(env.runCommand(platform: "android", destination: destination).arguments == ["android", "--remote", "other-mini"])
+    }
+  }
+
   @Test func runOffersDetectedPlatformsAndRecordedUseWithOlderCLIFallback() throws {
     #expect(try workspace("").runPlatforms == ["ios", "android"])
     let android = try workspace(#","android":{"name":"stim-w","owned":true,"physical":false,"state":"not-detected"}"#)

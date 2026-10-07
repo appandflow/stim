@@ -29,6 +29,10 @@ struct SidebarWorktreeRow: View {
             }
             AppBadges(apps: summary.apps)
             RowDetailLine(context: context(summary), git: summary.git)
+            ForEach(page.apps.flatMap(\.orderedDevices).filter { $0.hostedMachine != nil || $0.placementReason != nil }) {
+              device in
+              DevicePlacementLabel(device: device)
+            }
           }
         }
         .accessibilityElement(children: .ignore)

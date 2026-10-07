@@ -44,8 +44,12 @@ control them through this Mac's stim-server relay. Touch and text reach the
 hosting Mac; controls that need a local simulator, and replay, are hidden.
 The tile reports connecting, unavailable or stopped sessions. Android hardware
 buttons also use the relay; rotation and posture are unavailable.
-`stim ios|android --remote auto` selects local or hosted devices and reports
-the placement reason. See [iOS on an approved Mac](./owned-devices#run-ios-on-another-mac).
+**Run on** beside iOS and Android run actions chooses **This Mac**, **Auto**, or
+an approved hosting Mac. Desktop remembers the choice per workspace and platform;
+a machine that is no longer approved falls back to This Mac. Auto uses
+`--remote auto`; a named Mac uses `--remote <machine>`. Recorded hosted sessions
+stay fixed until `stim stop`. Tiles and sidebar rows show where the device ran
+and the Auto reason, including runs that stayed or waited locally. See [iOS on an approved Mac](./owned-devices#run-ios-on-another-mac).
 
 Desktop uses the non-empty launch `STIM_HOME`, then the login shell's value, then
 `~/.stim`; **Settings > App > Stim CLI** shows the home, and private-home copies

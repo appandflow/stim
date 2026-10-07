@@ -64,7 +64,7 @@ public func shellQuote(_ s: String) -> String {
 /// The `stim ios` or `stim android` command that builds if needed, installs and launches the app on one
 /// Stim-owned simulator or emulator, naming its slot unless it is the default one, or `stim web` for the
 /// workspace's Chrome. Nil for a physical device or one Stim does not own, which that command does not target.
-public func runCommand(for device: DeviceRef, cwd: String) -> StimCommand? {
+public func runCommand(for device: DeviceRef, cwd: String, destination: RunDestination = .thisMac) -> StimCommand? {
   switch device {
   case .ios(_, let sim) where sim.owned || sim.host != nil: break
   case .android(_, let avd) where (avd.owned || avd.host != nil) && !avd.physical: break
@@ -72,6 +72,6 @@ public func runCommand(for device: DeviceRef, cwd: String) -> StimCommand? {
   default: return nil
   }
   let slot = device.slot == DeviceRef.defaultSlot ? [] : ["--slot", device.slot]
-  let remote = device.hostedMachine.map { ["--remote", $0] } ?? []
+  let remote = (device.hostedMachine.map { RunDestination.machine($0) } ?? destination).arguments
   return StimCommand([device.platform] + slot + remote, cwd: cwd)
 }

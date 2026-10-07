@@ -178,6 +178,7 @@ struct RootView: View {
     .foregroundStyle(Palette.text)
     .environmentObject(actions)
     .environmentObject(planChecks)
+    .environment(\.runMachines, buildMachines)
     .environment(\.workspaceTitle, workspaceTitles)
     .sheet(item: $actions.presented) { run in
       ActivitySheet(run: run).environmentObject(actions)

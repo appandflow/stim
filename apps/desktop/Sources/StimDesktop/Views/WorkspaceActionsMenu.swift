@@ -14,6 +14,7 @@ struct WorkspaceActionsMenu: View {
   var building: Bool = false
   var reloadAllowed: Bool = true
   var onShowLastOutput: (() -> Void)?
+  var workspace: Workspace? = nil
   var onRun: ((String) -> Void)?
   var onReload: (() -> Void)?
   var onStartDevServer: (() -> Void)?
@@ -63,6 +64,7 @@ struct WorkspaceActionsMenu: View {
       }
     case .run(let platform):
       if let onRun {
+        RunOnPicker(workspace: path, platform: platform, fixedMachine: workspace?.hostedMachine(platform: platform))
         Button("Run on \(platformName(platform))", systemImage: "play.fill") { onRun(platform) }
           .disabled(busy || building)
       }

@@ -26,6 +26,9 @@ struct DeviceViewerToolbar: View {
         Label("on \(machineName(machine))", systemImage: "desktopcomputer")
           .font(.stim(.caption)).foregroundStyle(Palette.tertiary)
       }
+      if let reason = device.placementReason {
+        Text(reason).font(.stim(.caption)).foregroundStyle(Palette.tertiary).lineLimit(1).help(reason)
+      }
       ViewThatFits(in: .horizontal) {
         status(usage: true)
         status(usage: false)
@@ -164,14 +167,10 @@ struct DeviceViewerToolbar: View {
 
   @ViewBuilder private var commands: some View {
     let busy = actions.active(for: env.path) != nil
-    if device.appStopped, let run = runCommand(for: device, cwd: env.path) {
-      Button("Run", systemImage: "play.fill") {
-        actions.run("Run on \(platformName(device.platform))", steps: [run], present: false)
-      }
-      .nativeControlStyle(.primary)
-      .fixedSize()
-      .disabled(busy || env.runningBuild(for: device) != nil)
-      .help((["stim"] + run.arguments).joined(separator: " "))
+    if device.appStopped {
+      DeviceRunButton(
+        device: device, workspace: env.path, title: "Run", native: true,
+        disabled: busy || env.runningBuild(for: device) != nil)
     }
     takeOverButton
     if case .remote = device {
