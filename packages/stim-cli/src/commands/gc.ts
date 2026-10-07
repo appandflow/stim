@@ -767,7 +767,7 @@ async function runGcCore(opts: RunGcOptions, deps: GcDependencies): Promise<GcPa
       report.recordings.some((entry) => entry.willDelete && !entry.withWorkspace) ||
       Boolean(report.worktreeSweep?.worktrees.some((entry) => !entry.skipped)) ||
       report.parkedSims.length > 0 ||
-      report.parkedAvds.length + report.parkedHostedDevices.length > 0 ||
+      report.parkedAvds.length + report.parkedHostedDevices.filter((device) => device.listed !== false).length > 0 ||
       orphanedDevices.length > 0 ||
       staleDevices.length > 0 ||
       staleDeviceRecords.length > 0 ||

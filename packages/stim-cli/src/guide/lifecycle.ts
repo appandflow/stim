@@ -537,7 +537,10 @@ retires missing, renamed, running or unowned candidates; failed retirement keeps
 the record. Revocation retires that client's parked devices.
 On the hosting Mac, unscoped \`stim gc\` lists parked hosted devices and
 \`stim gc --delete\` deletes them through their session homes under a session
-claim. Held claims and unverified ownership keep the device. Reconciliation
+claim. Held claims and unverified ownership keep the device. Android deletion
+requires visibility from this shell's Android environment; otherwise run gc with
+the server's ANDROID_AVD_HOME/HOME. Records no longer listed in their session
+ledger are already removed and skipped. Reconciliation
 clears its parked marker after the session ledger becomes empty.
 
 stim logs and stim logs --errors pull native device records from bounded host

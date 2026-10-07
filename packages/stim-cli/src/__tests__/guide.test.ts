@@ -998,7 +998,7 @@ test('facts document the hosted GC JSON fields and result kind', () => {
   const body = renderSection('facts', 'gc');
   assert(body);
   const hosted = body.slice(body.indexOf('    parkedHostedDevices'), body.indexOf('    orphanedDevices'));
-  for (const field of ['session', 'client', 'platform', 'id', 'name', 'parkedAt', 'bytes', 'listed'])
+  for (const field of ['session', 'client', 'platform', 'id', 'name', 'parkedAt', 'listed'])
     expect(hosted).toMatch(new RegExp(`\\b${field}\\b`));
   expect(body).toContain('parkedHostedDevice');
 });

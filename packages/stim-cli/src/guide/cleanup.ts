@@ -192,7 +192,10 @@ On a hosting Mac, unscoped gc lists parked hosted iOS/Android devices by session
 client id, device label, parked time and private-home ledger ownership.
 gc --delete takes each session claim and deletes through the packaged stop worker
 in that session's home; held claims, changed sessions and unverified ownership
-keep the device. An unreadable journal keeps every hosted device. --older-than
+keep the device. Android deletion also requires the AVD to be visible from this
+shell; otherwise run gc with the server's ANDROID_AVD_HOME/HOME. Devices no longer
+listed in their session ledger are already removed and skipped. An unreadable
+journal keeps every hosted device. --older-than
 filters by parked time; --cache scopes omit hosted sessions. The CLI never writes
 the server journal: stim-server reconciliation clears the parked marker after
 successful deletion leaves the session ledger empty.

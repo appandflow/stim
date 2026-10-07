@@ -136,9 +136,14 @@ function formatParkedHostedDeviceReport(devices: readonly ParkedHostedDeviceRepo
   if (!devices.length) return [];
   const lines = [`Parked hosted devices (${devices.length}):`];
   for (const device of devices) {
-    const ledger = device.listed === true ? '' : ' - ledger ownership unavailable; kept';
+    const ledger =
+      device.listed === true
+        ? ''
+        : device.listed === false
+          ? ' - already removed; stim-server clears the marker'
+          : ' - ledger ownership unavailable; kept';
     lines.push(
-      `  ${device.platform} ${device.name ?? 'unknown device'} client ${device.client} session ${device.session} ${parkedAge(device.parkedAt, now)}${device.bytes === null ? '' : ` ${formatBytes(device.bytes)}`}${ledger}`,
+      `  ${device.platform} ${device.name ?? 'unknown device'} client ${device.client} session ${device.session} ${parkedAge(device.parkedAt, now)}${ledger}`,
     );
   }
   lines.push(PARKED_DELETE_NOTE);

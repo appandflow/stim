@@ -105,7 +105,10 @@ their session, client id, device label, parked time and session-home ledger
 ownership. `stim gc --delete` deletes them through the packaged stop worker in
 each session home while holding its claim. Held claims, changed sessions and
 unverified ownership keep the device; an unreadable journal keeps all hosted
-devices. `--older-than` filters by parked time; cache scopes omit hosted sessions.
+devices. Android deletion also requires visibility from this shell's Android
+environment; otherwise run gc with the server's `ANDROID_AVD_HOME`/`HOME`.
+Records no longer listed in their session ledger are already removed and skipped.
+`--older-than` filters by parked time; cache scopes omit hosted sessions.
 The CLI leaves the journal unchanged, and the server clears the parked marker
 when it reconciles the empty ledger.
 

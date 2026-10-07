@@ -24,6 +24,7 @@ import {
 } from '../../ownership-claim.ts';
 import { captureProcessIdentity, inspectProcessIdentity, type ProcessRecord } from '../../process-identity.ts';
 import { getExecutor } from '../../exec.ts';
+import { listAvds } from '../../devices/android.ts';
 import { describeError } from './eas-sessions.ts';
 import { recordGcResult } from './results.ts';
 
@@ -34,7 +35,6 @@ export interface ParkedHostedDeviceReport {
   id: string | null;
   name: string | null;
   parkedAt: string;
-  bytes: number | null;
   listed: boolean | null;
 }
 
@@ -74,7 +74,6 @@ export function collectParkedHostedDevices({
       id,
       name: record.device && 'name' in record.device ? record.device.name : id,
       parkedAt: record.parked.at,
-      bytes: null,
       listed,
     });
   }
@@ -109,12 +108,15 @@ async function stopHostedDevice(record: HostedDeviceSession, claim: ClaimHandle)
   let killTimer: NodeJS.Timeout | undefined;
   let groupTimer: NodeJS.Timeout | undefined;
   let finished = false;
+  let cancelling = false;
+  let finishTimer: NodeJS.Timeout | undefined;
   return await new Promise<{ settled: boolean; value: unknown; notice?: string }>((resolve) => {
     const finish = () => {
       if (finished) return;
       finished = true;
       clearTimeout(timer);
       clearTimeout(killTimer);
+      clearTimeout(finishTimer);
       clearTimeout(groupTimer);
       const settled = closed && (!child.pid || !processGroupAlive(child.pid));
       if (settled) clearClaimChild(claim);
@@ -132,15 +134,20 @@ async function stopHostedDevice(record: HostedDeviceSession, claim: ClaimHandle)
       }
       resolve({ settled, value, notice });
     };
-    const cancel = () => {
-      if (finished) return;
-      notice ??= 'Hosted worker exceeded its deadline.';
+    const signal = (name: NodeJS.Signals) => {
       if (child.pid && identity && ['same', 'gone'].includes(inspectProcessIdentity(identity))) {
         try {
-          process.kill(-child.pid, 'SIGKILL');
+          process.kill(-child.pid, name);
         } catch {}
-      } else if (!identity) child.kill('SIGKILL');
-      killTimer ??= setTimeout(finish, 5000);
+      } else if (!identity) child.kill(name);
+    };
+    const cancel = () => {
+      if (finished || cancelling) return;
+      cancelling = true;
+      notice ??= 'Hosted worker exceeded its deadline.';
+      signal('SIGTERM');
+      killTimer = setTimeout(() => signal('SIGKILL'), 5000);
+      finishTimer = setTimeout(finish, 10_000);
     };
     const finishGroup = () => {
       if (finished) return;
@@ -199,9 +206,13 @@ async function stopHostedDevice(record: HostedDeviceSession, claim: ClaimHandle)
   });
 }
 
-export async function deleteParkedHostedDevices(devices: readonly ParkedHostedDeviceReport[]): Promise<number> {
+export async function deleteParkedHostedDevices(
+  devices: readonly ParkedHostedDeviceReport[],
+  { listAvds: list = listAvds }: { listAvds?: typeof listAvds } = {},
+): Promise<number> {
   let failures = 0;
   for (const device of devices) {
+    if (device.listed === false) continue;
     const label = `${device.platform} ${device.name ?? device.session} (hosted session ${device.session})`;
     const kept = (detail: string) => {
       console.log(`Kept ${label}: ${detail}`);
@@ -249,6 +260,10 @@ export async function deleteParkedHostedDevices(devices: readonly ParkedHostedDe
         kept(describeError(error));
         continue;
       }
+      if (device.platform === 'android' && !list().includes(device.id!)) {
+        kept("AVD not visible from this shell's Android environment; run gc with the server's ANDROID_AVD_HOME/HOME");
+        continue;
+      }
       settled = false;
       const outcome = await stopHostedDevice(current, claim);
       settled = outcome.settled;
@@ -266,7 +281,7 @@ export async function deleteParkedHostedDevices(devices: readonly ParkedHostedDe
             (typeof result?.notice === 'string' ? result.notice : 'Hosted deletion could not be verified.'),
         );
       console.log(`Deleted ${label}`);
-      recordGcResult('parkedHostedDevice', 'done', label, { id: device.id, bytes: device.bytes });
+      recordGcResult('parkedHostedDevice', 'done', label, { id: device.id });
     } catch (error) {
       const detail = describeError(error);
       console.error(`Failed to delete ${label}: ${detail}`);

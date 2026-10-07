@@ -837,13 +837,13 @@ RULES
                               bytes, listed }  app is the package name;
                               likewise
     parkedHostedDevices     { session, client, platform, id, name, parkedAt,
-                              bytes, listed }  parked iOS/Android sessions
+                              listed }  parked iOS/Android sessions
                               on this host; client is its registry id, id is
                               the UDID or AVD name, name is the device label.
-                              bytes is null when not cheaply known; listed
-                              means its private home ledger lists the device,
-                              or null when unreadable. --older-than filters
-                              by parkedAt; --cache scopes leave this empty
+                              listed means its private home ledger lists the
+                              device; false means already removed and is not
+                              actionable; null means unreadable. --older-than
+                              filters by parkedAt; --cache scopes leave this empty
     orphanedDevices         { kind, id, name, bytes, directory }
     unverifiedDevices       { kind, id, name, command }  stim-* devices this
                               Stim home has no record of creating; never

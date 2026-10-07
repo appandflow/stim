@@ -4399,7 +4399,6 @@ describe('parked hosted device GC', () => {
           id: udid,
           name: 'stim-hosted',
           parkedAt,
-          bytes: null,
           listed: true,
         },
         {
@@ -4409,7 +4408,6 @@ describe('parked hosted device GC', () => {
           id: 'stim-hosted-android',
           name: 'stim-hosted-android',
           parkedAt,
-          bytes: null,
           listed: false,
         },
       ],
@@ -4451,11 +4449,71 @@ describe('parked hosted device GC', () => {
     expect(readFileSync(join(deviceHostRoot(), 'sessions.json'), 'utf8')).toBe(journalBefore);
   });
 
+  test('a timed-out worker gets one SIGTERM and its surviving group gets SIGKILL only after five seconds', async () => {
+    journal([session()]);
+    const home = join(deviceHostArea(sessionId), 'home');
+    const script = join(home, 'timeout-worker.mjs');
+    writeFileSync(
+      script,
+      `
+      import { spawn } from 'node:child_process';
+      import { existsSync, writeFileSync } from 'node:fs';
+      import { join } from 'node:path';
+      for await (const chunk of process.stdin) {}
+      spawn(process.execPath, ['--input-type=module', '-e',
+        "import {writeFileSync} from 'node:fs'; process.on('SIGTERM',()=>{}); writeFileSync(process.env.STIM_HOME+'/descendant-ready','ready'); setInterval(()=>{},1000);"
+      ], { stdio: 'ignore' });
+      while (!existsSync(join(process.env.STIM_HOME, 'descendant-ready'))) await new Promise(resolve => setTimeout(resolve, 10));
+      writeFileSync(join(process.env.STIM_HOME, 'worker-ready'), 'ready');
+      setInterval(()=>{},1000);
+    `,
+    );
+    let child: ReturnType<typeof spawn> | undefined;
+    setExecutor({
+      ...getExecutor(),
+      spawn(file, _args, options) {
+        child = spawn(file, [script], options);
+        return child;
+      },
+    });
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+    const started = Date.now();
+    const kill = vi.spyOn(process, 'kill');
+    const deletion = deleteParkedHostedDevices(collectParkedHostedDevices().devices);
+    const signals = () =>
+      kill.mock.calls.filter(([pid, signal]) => pid === -child!.pid! && signal !== 0).map(([, signal]) => signal);
+    try {
+      await vi.waitFor(() => expect(existsSync(join(home, 'worker-ready'))).toBe(true));
+      await vi.advanceTimersByTimeAsync(90_000 - (Date.now() - started));
+      expect(signals()).toEqual(['SIGTERM']);
+      await vi.waitFor(() => expect(child?.signalCode).toBe('SIGTERM'));
+      await vi.advanceTimersByTimeAsync(94_999 - (Date.now() - started));
+      expect(signals()).toEqual(['SIGTERM']);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(signals()).toEqual(['SIGTERM', 'SIGKILL']);
+      await vi.waitFor(() => expect(readClaimSet(join(deviceHostRoot(), `${sessionId}.claims`)).live).toEqual([]));
+      expect(await deletion).toBe(1);
+      expect(takeGcResults()).toMatchObject([{ status: 'failed', detail: expect.stringContaining('deadline') }]);
+    } finally {
+      if (child?.pid) {
+        try {
+          process.kill(-child.pid, 'SIGKILL');
+        } catch {}
+      }
+      vi.useRealTimers();
+      kill.mockRestore();
+    }
+  });
+
   test('Android stop preserves the recorded console port and selectors', async () => {
     const android = androidSession();
     journal([android]);
     const requests = worker({ state: 'stopped', device: android.device });
-    expect(await deleteParkedHostedDevices(collectParkedHostedDevices().devices)).toBe(0);
+    expect(
+      await deleteParkedHostedDevices(collectParkedHostedDevices().devices, {
+        listAvds: () => ['stim-hosted-android'],
+      }),
+    ).toBe(0);
     expect(requests).toEqual([
       {
         home: join(deviceHostArea(android.id), 'home'),
@@ -4470,6 +4528,40 @@ describe('parked hosted device GC', () => {
       },
     ]);
     expect(takeGcResults()).toMatchObject([{ status: 'done', id: 'stim-hosted-android' }]);
+  });
+
+  test('an Android AVD absent from the caller environment keeps its session ledger without starting a worker', async () => {
+    const android = androidSession();
+    journal([android]);
+    expect(
+      await deleteParkedHostedDevices(collectParkedHostedDevices().devices, { listAvds: () => ['another-avd'] }),
+    ).toBe(0);
+    expect(takeGcResults()).toMatchObject([
+      {
+        status: 'kept',
+        id: 'stim-hosted-android',
+        detail: "AVD not visible from this shell's Android environment; run gc with the server's ANDROID_AVD_HOME/HOME",
+      },
+    ]);
+    expect(readHostedDeviceLedger(join(deviceHostArea(android.id), 'home'))?.android).toEqual(['stim-hosted-android']);
+  });
+
+  test('an already removed device is reported without actionable work or a delete attempt', async () => {
+    journal([session()]);
+    writeFileSync(
+      join(deviceHostArea(sessionId), 'home', 'created-devices.json'),
+      JSON.stringify({ version: 1, ios: [], android: [], web: [] }),
+    );
+    const before = readFileSync(join(deviceHostRoot(), 'sessions.json'), 'utf8');
+    const { stdout, stderr } = await captureJson(() => cli(['--delete', '--json']));
+    const payload = JSON.parse(stdout[0]!);
+    expect(payload.actionable).toBe(false);
+    expect(payload.sections.parkedHostedDevices[0]).toHaveProperty('listed', false);
+    expect(payload.results).toEqual([]);
+    expect(stderr).toContain('already removed; stim-server clears the marker');
+    expect(readFileSync(join(deviceHostRoot(), 'sessions.json'), 'utf8')).toBe(before);
+    expect(await deleteParkedHostedDevices(collectParkedHostedDevices().devices)).toBe(0);
+    expect(takeGcResults()).toEqual([]);
   });
 
   test('an unreadable ledger is listed as unknown and keeps the device on delete', async () => {
@@ -4571,7 +4663,6 @@ describe('parked hosted device GC', () => {
         id: udid,
         name: 'stim-hosted',
         parkedAt,
-        bytes: null,
         listed: true,
       },
     ]);
