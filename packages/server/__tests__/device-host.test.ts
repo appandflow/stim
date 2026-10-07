@@ -2868,41 +2868,58 @@ test('Android native followers coalesce under a child-aware claim and retain col
   );
 });
 
-test('Android handoff refuses a mixed bundle manifest before spending a build token', async () => {
-  await host.close();
-  const builtBundle = vi.fn<() => string>(() => 'not available');
-  host = new DeviceHost({
-    worker: join(home, 'worker.mjs'),
-    env: process.env,
-    agents: noAgents,
-    allowed: (client) => allowed.has(client),
-    builtBundle,
-  });
-  const session = await reserve({ platform: 'android' });
-  await state(session.id, 'ready');
-  const app = appOffer(session.id, 'app', 'android');
-  const manifest = Buffer.from(
-    JSON.stringify([
-      { path: 'App.apk', kind: 'file', size: app.content.length, sha256: app.sha256 },
-      { path: 'Info.plist', kind: 'file', size: app.content.length, sha256: app.sha256 },
-    ]),
-  );
-  const params = {
-    ...app.params,
-    manifest: { size: manifest.length, sha256: createHash('sha256').update(manifest).digest('hex') },
-  };
-  host.appOffer('client', params);
-  await host.appChunk('client', {
-    ...params,
-    sha256: params.manifest.sha256,
-    offset: 0,
-    data: manifest.toString('base64'),
-  });
-  expect(
-    await host.appHandoff('client', { ...params, build: { handoff: 'a'.repeat(64), sha256: 'b'.repeat(64) } }),
-  ).toHaveProperty('error.message', expect.stringContaining('single file entry named App.apk'));
-  expect(builtBundle).not.toHaveBeenCalled();
-});
+test.each(['extra-file', 'link', 'wrong-path'])(
+  'Android handoff refuses a %s manifest before spending a build token',
+  async (scenario) => {
+    await host.close();
+    const builtBundle = vi.fn<() => string>(() => 'not available');
+    host = new DeviceHost({
+      worker: join(home, 'worker.mjs'),
+      env: process.env,
+      agents: noAgents,
+      allowed: (client) => allowed.has(client),
+      builtBundle,
+    });
+    const session = await reserve({ platform: 'android' });
+    await state(session.id, 'ready');
+    const app = appOffer(session.id, 'app', 'android');
+    const manifest = Buffer.from(
+      JSON.stringify([
+        {
+          path: scenario === 'wrong-path' ? 'Other.apk' : 'App.apk',
+          kind: scenario === 'link' ? 'link' : 'file',
+          size: app.content.length,
+          sha256: app.sha256,
+        },
+        ...(scenario === 'extra-file'
+          ? [{ path: 'Info.plist', kind: 'file', size: app.content.length, sha256: app.sha256 }]
+          : []),
+      ]),
+    );
+    const params = {
+      ...app.params,
+      manifest: { size: manifest.length, sha256: createHash('sha256').update(manifest).digest('hex') },
+    };
+    host.appOffer('client', params);
+    const uploaded = await host.appChunk('client', {
+      ...params,
+      sha256: params.manifest.sha256,
+      offset: 0,
+      data: manifest.toString('base64'),
+    });
+    expect(uploaded).toHaveProperty(
+      scenario === 'extra-file' ? 'result.offset' : 'error.message',
+      scenario === 'extra-file' ? manifest.length : 'The hosted app manifest is missing or malformed.',
+    );
+    expect(
+      await host.appHandoff('client', { ...params, build: { handoff: 'a'.repeat(64), sha256: 'b'.repeat(64) } }),
+    ).toHaveProperty(
+      'error.message',
+      expect.stringContaining(scenario === 'extra-file' ? 'single file entry named App.apk' : 'Send the app manifest'),
+    );
+    expect(builtBundle).not.toHaveBeenCalled();
+  },
+);
 
 function hostedModes(id: string): string[] {
   const path = join(deviceHostArea(id), 'home', 'modes');

@@ -144,5 +144,3 @@ export async function pullHostedNativeLogs(
     );
   await pullHostedMacosLogs(root, placement, host, { platform, slot }, final ? 1024 : MAX_PAGES, final);
 }
-
-export { pullHostedNativeLogs as pullHostedIosLogs };
