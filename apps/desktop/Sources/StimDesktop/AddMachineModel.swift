@@ -32,7 +32,7 @@ final class AddMachineModel {
     wizard.capabilities.contains(.build) ? sample?.test.outcome ?? .notRun : .notRun
   }
   var machines: BuildMachinesModel?
-  /// Where hosted simulators run for the workspace; nil keeps a current value the wizard does not offer, like `eas`.
+  /// Where hosted simulators run for this Mac; nil keeps a current value the wizard does not offer, like `eas`.
   var simulators: SimulatorPlacement? = .auto
   private(set) var simulatorsCurrent: [String: String?] = [:]
   private(set) var finished = false

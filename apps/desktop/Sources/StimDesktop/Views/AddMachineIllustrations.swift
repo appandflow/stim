@@ -1,7 +1,7 @@
 import StimKit
 import SwiftUI
 
-/// The artwork at the top of each Add build machine step, in the first-run guide's style. Every motion stops under
+/// The artwork at the top of each Add a remote Mac step, in the first-run guide's style. Every motion stops under
 /// Reduce Motion.
 struct AddMachineIllustration: View {
   enum Scene: Equatable {

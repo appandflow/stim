@@ -213,7 +213,7 @@ public enum WizardMode: String, CaseIterable, Sendable {
   }
 }
 
-/// Where this project's simulators and emulators run once a Mac hosts them: `ios.remote` and `android.remote`.
+/// Where this Mac starts simulators and emulators once a remote Mac hosts them: `ios.remote` and `android.remote`.
 public enum SimulatorPlacement: String, CaseIterable, Sendable {
   case thisMac, auto, always
 

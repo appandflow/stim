@@ -310,7 +310,7 @@ private struct BuildMachineRow: View {
   }
 }
 
-/// Removing a build machine: what changes on this Mac, and the optional cleanup to run on the build Mac itself.
+/// Removing a remote Mac: what changes on this Mac, and the optional cleanup to run on that Mac itself.
 private struct RemoveMachineSheet: View {
   var entry: String
   var message: String
