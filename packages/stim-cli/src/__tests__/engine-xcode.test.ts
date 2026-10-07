@@ -1232,7 +1232,11 @@ describe('buildIos with a mocked executor', () => {
     expect(args).toContain('COMPILATION_CACHE_ENABLE_CACHING=YES');
     expect(args).toContain('SWIFT_ENABLE_COMPILE_CACHE=NO');
     expect(args).toContain('SWIFT_ENABLE_PREFIX_MAPPING=NO');
-    expect(args).toContain(`CLANG_OTHER_PREFIX_MAPPINGS=${tmp}=/^src ${workspaceDerivedData(tmp)}=/^derived-data`);
+    expect(args).toContain(
+      process.platform === 'win32'
+        ? `CLANG_OTHER_PREFIX_MAPPINGS=${JSON.stringify(`${tmp}=/^src`)} ${JSON.stringify(`${workspaceDerivedData(tmp)}=/^derived-data`)}`
+        : `CLANG_OTHER_PREFIX_MAPPINGS=${tmp}=/^src ${workspaceDerivedData(tmp)}=/^derived-data`,
+    );
     expect(readManifest().caches).toContainEqual(
       expect.objectContaining({
         dir: join(stateHome, 'compilation-cache'),
@@ -1314,7 +1318,11 @@ describe('buildIos with a mocked executor', () => {
     const args = spawnCalls[0]?.args ?? [];
     expect(args).toContain('SWIFT_ENABLE_COMPILE_CACHE=YES');
     expect(args).toContain('SWIFT_ENABLE_PREFIX_MAPPING=YES');
-    expect(args).toContain(`SWIFT_OTHER_PREFIX_MAPPINGS=${tmp}=/^src ${workspaceDerivedData(tmp)}=/^derived-data`);
+    expect(args).toContain(
+      process.platform === 'win32'
+        ? `SWIFT_OTHER_PREFIX_MAPPINGS=${JSON.stringify(`${tmp}=/^src`)} ${JSON.stringify(`${workspaceDerivedData(tmp)}=/^derived-data`)}`
+        : `SWIFT_OTHER_PREFIX_MAPPINGS=${tmp}=/^src ${workspaceDerivedData(tmp)}=/^derived-data`,
+    );
   });
 
   test('a build that carries no settings says nothing at all', async () => {
