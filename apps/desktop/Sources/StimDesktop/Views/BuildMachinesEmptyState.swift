@@ -37,18 +37,25 @@ struct BuildMachineArt: View {
 struct BuildMachinesEmptyState: View {
   var add: () -> Void
   var addDisabled = false
+  var needsTailscale = false
 
   var body: some View {
     VStack(spacing: Space.lg) {
       BuildMachineArt()
       Text("No build machines").font(.stim(.headline))
-      Text("A build machine is another Mac on your tailnet that compiles your apps and hosts simulators for this Mac.")
-        .foregroundStyle(Palette.secondary)
-        .multilineTextAlignment(.center)
-        .frame(maxWidth: 380)
-      Button("Add Build Machine\u{2026}", action: add)
-        .buttonStyle(.stim(.primary, .regular))
-        .disabled(addDisabled)
+      Text(
+        needsTailscale
+          ? "Build machines need Tailscale on both Macs, signed in to the same tailnet. No other Mac is on this tailnet yet. It shows up here once both are connected."
+          : "A build machine is another Mac on your tailnet that compiles your apps and hosts simulators for this Mac."
+      )
+      .foregroundStyle(Palette.secondary)
+      .multilineTextAlignment(.center)
+      .frame(maxWidth: 380)
+      if !needsTailscale {
+        Button("Add Build Machine\u{2026}", action: add)
+          .buttonStyle(.stim(.primary, .regular))
+          .disabled(addDisabled)
+      }
     }
     .padding(Space.huge)
     .frame(maxWidth: .infinity, maxHeight: .infinity)

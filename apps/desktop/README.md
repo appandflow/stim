@@ -1364,6 +1364,43 @@ to set `iosSimulatorApp` and `androidEmulatorApp` to `stim-desktop` with
 `stim settings set … --scope machine`. It skips a key that is already set or
 that the installed `stim` does not list. **Not now** hides the offer for good.
 
+### Suggestions and tips
+
+Desktop suggestions offer build machines, hosted simulators, cache review, or phone
+pairing when recent activity makes them useful. The X snoozes a suggestion for
+7 days; **Don't suggest again** dismisses that kind permanently. Suggestions
+wait for completed setup and the second launch, never appear during a running
+build, and appear at most once per day.
+
+The **Tip** card at the bottom of the sidebar appears after setup is complete and
+Desktop has been used on at least **3 calendar days**, with either **3 distinct
+workspaces seen running** or **5 builds observed**. It stays hidden while a build
+runs, the setup guide or tutorial is open, the main window is closed, or any
+notice is showing. Only builds that start after Desktop first sees status count.
+Usage is stored locally in Desktop preferences: the latest 30 active days and,
+until the thresholds are met, the workspace paths and build IDs counted.
+
+Tips cover build machines, phone pairing, the tutorial, hiding workspaces when
+there are more than 10 workspace rows and none are hidden, status filters, replay, and hosted
+simulators. Only applicable tips appear. One tip stays for the calendar day;
+the next day picks the least recently shown applicable tip, with unseen tips
+first. **Next tip** cycles through the remaining choices. The X hides the card
+until tomorrow. Turn off **Settings > App > Show tips** to disable tips; the Machine page card stays.
+
+Tips and suggestions share state for build machines, phone pairing, and
+hosted simulators. A shown, permanently dismissed, or currently snoozed
+suggestion suppresses the matching tip. Once that tip has been shown, the
+matching suggestions (new Mac, slow cold builds, build slot waits, away
+builds, device limit) no longer appear. Disk-pressure suggestions are
+unaffected. Suggestions keep their own once-per-day limit.
+
+**File > Add Build Machine…** (**Cmd+Shift+B**) always opens the existing build
+machine wizard. After the same usage threshold, **Machines > This Mac** shows a
+card when no build machine is configured. With another Mac on the tailnet it
+offers **Add Build Machine…**; otherwise it explains how to connect both Macs
+with Tailscale. The existing **Link machine** button is also available. Build
+machines are not a step in the first-run setup guide.
+
 ### Setup guide
 
 The first launch opens a setup guide over the main window, unless everything it
