@@ -26,6 +26,10 @@ final class AddMachineModel {
   private(set) var androidFindings: [DoctorReport.Finding] = []
   private(set) var checksAndroid = false
   let sample: SampleBuildModel?
+  var preparingSample: Bool { sample?.preparing == true }
+  var testOutcome: BuildTest.Outcome {
+    wizard.capabilities.contains(.build) ? sample?.test.outcome ?? .notRun : .notRun
+  }
   var machines: BuildMachinesModel?
   private(set) var summary: [String] = []
   private(set) var finished = false
@@ -133,6 +137,7 @@ final class AddMachineModel {
     return text
   }
   var command: String? {
+    if checkout == nil, sample != nil, commandKnown == nil { return nil }
     guard let version, let selfNode, let ticket = wizard.ticket ?? draftTicket else { return nil }
     return setupCommand(
       version: version, client: selfNode.id, ticket: ticket,
@@ -232,6 +237,8 @@ final class AddMachineModel {
         let report = try await dependencies.doctor(checkout, false, [:])
         await send(.doctorReported(build: match(report.buildMachines), host: match(report.deviceHosts)))
       } catch { self.error = error.localizedDescription }
+    } else {
+      sample?.prepare()
     }
   }
 
@@ -242,15 +249,24 @@ final class AddMachineModel {
   }
 
   func next() async {
-    guard version != nil, selfNode != nil else { return }
+    guard version != nil, selfNode != nil, !busy else { return }
+    busy = true
+    defer { busy = false }
     do {
+      sample?.prepare()
+      if checkout == nil, let sample {
+        await sample.waitForPreparation()
+        guard sample.sampleReady else { return }
+        let report = try await dependencies.doctor(sample.folder, false, [:])
+        await send(.doctorReported(build: match(report.buildMachines), host: match(report.deviceHosts)))
+        wizard.hasWorkspace = true
+      }
       let payload = try await dependencies.readSettings()
       wizard.settings = SetupWizard.Settings(
         builds: payload.entry("offload.machines")?.value.strings ?? [],
         hosts: payload.entry("hosting.machines")?.value.strings ?? [],
         mode: payload.entry("offload.mode")?.value.string, modeOrigin: payload.entry("offload.mode")?.origin)
       commandKnown = known
-      sample?.prepare()
       let current = dependencies.now()
       if let draft = draftTicket, current < draft.expiresAt {
         await send(.next(draft))
@@ -351,7 +367,9 @@ final class AddMachineModel {
   private func match(_ statuses: [BuildMachineStatus]?) -> BuildMachineStatus? {
     guard let mac = wizard.mac else { return nil }
     let entry = SetupPortProbe.entry(machine: mac.machine, port: wizard.port ?? 7443)
-    return statuses?.first { $0.machine == entry && ($0.dnsName == nil || $0.dnsName == mac.dnsName) }
+    let sameMac = { (status: BuildMachineStatus) in status.dnsName == nil || status.dnsName == mac.dnsName }
+    return statuses?.first { $0.machine == entry && sameMac($0) }
+      ?? statuses?.first { ($0.machine == mac.machine || $0.machine.hasPrefix(mac.machine + ":")) && sameMac($0) }
   }
 
   private func runDoctor(ask: Bool, ticket: String? = nil) async throws {
@@ -561,7 +579,7 @@ final class AddMachineModel {
         checksAndroid = true
         androidStatus = status
       default:
-        page = [.summaryAuto, .summaryNever, .summaryUndo].contains(fixture) ? .summary : .test
+        page = [.summaryAuto, .summaryNever, .summaryUndo, .summarySkippedAfterFailure].contains(fixture) ? .summary : .test
         var events: [BuildTest.Event] = [
           .prepared, .start, .offload(.success), .timings(times), .localStart, .localFinished(passed: true, ms: 250000),
         ]
@@ -585,6 +603,11 @@ final class AddMachineModel {
               """.utf8))
           events = [.prepared, .start, .offload(.refused(refusal))]
         case .testSkipped, .summaryNever: events = [.skip]
+        case .summarySkippedAfterFailure:
+          events = [
+            .prepared, .start,
+            .fail(code: "STIM_OFFLOAD_REFUSED", message: "mini refused this build: no iOS runtime there", remedy: nil), .skip,
+          ]
         default: break
         }
         sample?.fixture(
@@ -595,7 +618,7 @@ final class AddMachineModel {
               .init(text: "offer accepted; syncing checkout", kind: .output),
               .init(text: "built on mini in 2:52: offer 0:01, sync 0:03, build 2:41, fetch 0:04", kind: .ok),
             ] : [])
-        mode = fixture == .summaryNever ? .off : .auto
+        mode = fixture == .summaryNever || fixture == .summarySkippedAfterFailure ? .off : .auto
         summary = summaryLines(addedEntries: ["offload.machines": "mini", "hosting.machines": "mini"], mode: mode)
       }
     }

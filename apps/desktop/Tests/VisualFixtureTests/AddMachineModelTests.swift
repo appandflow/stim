@@ -166,6 +166,7 @@ final class AddMachineModelTests: XCTestCase {
     XCTAssertEqual(harness.mode, "off")
     await model.openSummary()
     XCTAssertEqual(model.mode, .off)
+    XCTAssertEqual(model.testOutcome, .notRun)
     await model.finish()
     XCTAssertEqual(harness.mode, "off")
     XCTAssertEqual(harness.builds, ["mini:7447"])
@@ -197,6 +198,8 @@ final class AddMachineModelTests: XCTestCase {
     blocked.selectedId = "nMini"
     await blocked.pick()
     await blocked.next()
+    XCTAssertTrue(blocked.command?.contains("--build") == true)
+    XCTAssertTrue(blocked.command?.contains("--device-host") == true)
     await blocked.checkAgain()
     XCTAssertEqual(blocked.wizard.failure(now: harness.now), .noWorkspace)
     XCTAssertTrue(harness.writes.isEmpty)
@@ -266,6 +269,97 @@ final class AddMachineModelTests: XCTestCase {
     XCTAssertNil(harness.mode)
   }
 
+  @MainActor func testSampleLearnsExistingApprovalsBeforeIssuingSetupCommand() async throws {
+    let harness = Harness()
+    harness.builds = ["mini"]
+    harness.hosts = ["mini"]
+    harness.grantReady = true
+    let location = WizardSample(applicationSupport: URL(fileURLWithPath: "/fixture"))
+    let sample = SampleBuildModel(
+      dependencies: .init(
+        sample: location,
+        run: { _, _ in WizardCommandOutput(exit: 0, stdout: Data(), stderr: "") },
+        exists: { $0 == location.marker }))
+    let model = harness.make(workspace: false, sample: sample)
+    await model.start()
+    defer { model.stop() }
+    model.selectedId = "nMini"
+    await model.pick()
+    XCTAssertTrue(sample.preparing || sample.sampleReady, "Picking a Mac must start preparing the sample without waiting")
+    XCTAssertNil(model.command, "The sample path must learn approvals before exposing a setup command")
+    await model.next()
+    let command = try XCTUnwrap(model.command)
+    XCTAssertFalse(command.contains("--build"), "Setup must not request an existing build approval")
+    XCTAssertFalse(command.contains("--device-host"), "Setup must not request an existing device-host approval")
+    XCTAssertEqual(model.wizard.phase, .approved, "Existing approvals must skip waiting for a new grant")
+    XCTAssertEqual(model.page, .tools)
+    XCTAssertEqual(harness.doctorPaths, [location.folder.path])
+    XCTAssertTrue(harness.asks.allSatisfy { !$0.0 && $0.1.isEmpty })
+    XCTAssertTrue(model.wizard.revokeIds.isEmpty)
+  }
+
+  @MainActor func testExistingApprovalOnANonDefaultPortIsLearnedBeforeTheSetupCommand() async throws {
+    let harness = Harness()
+    harness.builds = ["mini:7444"]
+    harness.hosts = ["mini:7444"]
+    harness.grantReady = true
+    let location = WizardSample(applicationSupport: URL(fileURLWithPath: "/fixture"))
+    let sample = SampleBuildModel(
+      dependencies: .init(
+        sample: location,
+        run: { _, _ in WizardCommandOutput(exit: 0, stdout: Data(), stderr: "") },
+        exists: { $0 == location.marker }))
+    let model = harness.make(workspace: false, sample: sample)
+    await model.start()
+    defer { model.stop() }
+    model.selectedId = "nMini"
+    await model.pick()
+    await model.next()
+    let command = try XCTUnwrap(model.command)
+    XCTAssertFalse(command.contains("--build"))
+    XCTAssertFalse(command.contains("--device-host"))
+    XCTAssertEqual(model.wizard.phase, .approved)
+  }
+
+  @MainActor func testSamplePreparationKeepsNextBusyAndFailureDoesNotIssueACommand() async {
+    let harness = Harness()
+    harness.builds = ["mini"]
+    harness.hosts = ["mini"]
+    harness.grantReady = true
+    let location = WizardSample(applicationSupport: URL(fileURLWithPath: "/fixture"))
+    var preparation: CheckedContinuation<WizardCommandOutput, Never>?
+    var markerExists = false
+    let sample = SampleBuildModel(
+      dependencies: .init(
+        sample: location,
+        run: { _, _ in await withCheckedContinuation { preparation = $0 } },
+        exists: { $0 == location.marker && markerExists }, create: { _ in }))
+    let model = harness.make(workspace: false, sample: sample)
+    await model.start()
+    defer { model.stop() }
+    model.selectedId = "nMini"
+    await model.pick()
+    let next = Task { await model.next() }
+    await waitUntil { preparation != nil }
+    XCTAssertTrue(model.busy, "Next must remain busy while sample preparation is pending")
+    preparation?.resume(returning: WizardCommandOutput(exit: 1, stdout: Data(), stderr: "Sample unavailable"))
+    await next.value
+    await waitUntil { !sample.preparing }
+    XCTAssertFalse(model.busy)
+    XCTAssertEqual(model.wizard.failure(now: harness.now), .noWorkspace)
+    XCTAssertNil(model.command, "Failed sample preparation must not expose an unchecked setup command")
+    XCTAssertTrue(harness.asks.isEmpty)
+    XCTAssertTrue(harness.writes.isEmpty)
+    guard case .failed(_, let message, _) = sample.test.state else { return XCTFail("Sample failure must remain retryable") }
+    XCTAssertTrue(message.contains("Sample unavailable"))
+    markerExists = true
+    sample.prepare()
+    await model.next()
+    XCTAssertEqual(model.wizard.phase, .approved)
+    XCTAssertFalse(model.command?.contains("--build") == true)
+    XCTAssertFalse(model.command?.contains("--device-host") == true)
+  }
+
   @MainActor func testPassedTestDefaultsToAutoButOnlyDoneWritesIt() async {
     let harness = Harness()
     let sample = SampleBuildModel(
@@ -289,6 +383,7 @@ final class AddMachineModelTests: XCTestCase {
     await checkUntilApproved(model)
     await model.openSummary()
     XCTAssertEqual(model.mode, .auto)
+    XCTAssertEqual(model.testOutcome, .passed)
     XCTAssertEqual(harness.mode, "off")
     await model.finish()
     XCTAssertEqual(harness.mode, "auto")
@@ -374,6 +469,22 @@ final class AddMachineModelTests: XCTestCase {
         if !alreadyListed { XCTAssertTrue(model.summary.contains { $0.contains("mini:7447") }) }
       }
     }
+  }
+
+  @MainActor func testHostedOnlySetupReportsBuildTestNotRunAfterSkip() async {
+    let harness = Harness()
+    let sample = SampleBuildModel(
+      dependencies: .init(
+        sample: WizardSample(applicationSupport: URL(fileURLWithPath: "/fixture")),
+        run: { _, _ in WizardCommandOutput(exit: 0, stdout: Data(), stderr: "") }))
+    sample.fixture([.prepared, .skip])
+    let model = harness.make(sample: sample)
+    await model.refreshPeers()
+    model.selectedId = "nMini"
+    await model.pick()
+    XCTAssertEqual(model.testOutcome, .skipped)
+    model.setCapability(.build, enabled: false)
+    XCTAssertEqual(model.testOutcome, .notRun)
   }
 
   @MainActor func testAndroidFailuresNeverBlockTheIosTest() async {

@@ -77,7 +77,7 @@ struct AddMachineSteps: View {
           }
         }
         if !sample.lines.isEmpty {
-          TerminalCard(lines: sample.lines, mode: .live, width: 650, animates: !model.isFixture, height: 208, maxVisibleLines: 10)
+          TerminalCard(lines: sample.lines, mode: .live, width: nil, animates: !model.isFixture, height: 208, maxVisibleLines: 10)
         }
         if let error = sample.cleanupError { Text("Could not stop the sample: \(error)").foregroundStyle(Palette.error) }
         HStack {
@@ -117,7 +117,7 @@ struct AddMachineSteps: View {
 
   private var summary: some View {
     VStack(alignment: .leading, spacing: Space.lg) {
-      Text("\(name) is ready").font(.stim(.title))
+      Text(model.testOutcome == .passed ? "\(name) is ready" : "\(name) is set up").font(.stim(.title))
       ForEach(SetupCapability.allCases.filter { model.wizard.capabilities.contains($0) }, id: \.self) { capability in
         let status = capability == .build ? model.wizard.build : model.wizard.host
         Label(
@@ -125,6 +125,9 @@ struct AddMachineSteps: View {
           systemImage: "checkmark.circle.fill"
         )
         .foregroundStyle(Palette.success)
+      }
+      if let text = model.testOutcome.summaryText {
+        Text(text).foregroundStyle(Palette.secondary)
       }
       Text("When to offload").font(.stim(.headline))
       HStack(spacing: Space.lg) {

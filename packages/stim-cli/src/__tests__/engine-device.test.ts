@@ -7,12 +7,17 @@ import assert from 'node:assert';
 import { claimAndroidConsolePort, AvdRecoveryError } from '../engine/device-android.ts';
 import { clearIosAdoptionPending } from '../engine/device-ios.ts';
 import {
+  checkDeviceCapacity,
   deviceCapacityRefusal,
   deviceTypeMismatch,
   unknownAndroidSystemImageRefusal,
   unknownIosDeviceTypeRefusal,
   unknownIosRuntimeRefusal,
+  countLiveOwnedDevices,
+  withDeviceBootAdmission,
+  DeviceAdmissionRefusal,
 } from '../engine/device-capacity.ts';
+import { ClaimRefusedError } from '../ownership-claim.ts';
 import { ensureBooted, ensureOwnedDevice } from '../engine/device.ts';
 import {
   allConsolePortsAndSerials,
@@ -26,6 +31,7 @@ import { resetExecutor, setExecutor } from '../exec.ts';
 import { recordCreatedDevice } from '../devices/created-devices.ts';
 import { parkSim, readParked } from '../devices/sim-pool.ts';
 import { workspaceId } from '../workspace/paths.ts';
+import { decodeStats, statsFile } from '@stim-cli/core/state';
 import { ownedSimName } from '../devices/ios.ts';
 import { makeAdbDevices, makeChildProcess, makeConfig, makeExitingChild, makeIosSim } from './_factories.ts';
 import { androidBuildOptions } from '../commands/android/support.ts';
@@ -540,6 +546,38 @@ describe('ensureBooted: android', () => {
       timeoutMs: 5000,
     });
     expect(result).toEqual({ ok: true, serial: 'emulator-5556' });
+  });
+
+  test('an emulator boot refused at admission keeps STIM_AT_CAPACITY and never launches', async () => {
+    const other = mkdtempSync(join(tmpdir(), 'stim-test-other-'));
+    process.env.STIM_MAX_DEVICES = '1';
+    try {
+      upsertProject(other, {});
+      setDevice(other, 'android', { avdName: 'stim-other', consolePort: 5560, owned: true });
+      setExecutor({
+        runFileQuiet: () => null,
+        run: (cmd) => {
+          if (cmd === 'emulator -list-avds') return 'stim-app\nstim-other';
+          if (cmd === 'adb devices') return 'List of devices attached\nemulator-5560\tdevice';
+          return '';
+        },
+        runQuiet: () => '',
+        runFile: () => '{"devices":{}}',
+        spawn: () => {
+          throw new Error('must not launch an emulator past the cap');
+        },
+      });
+      const result = await ensureBooted({
+        platform: 'android',
+        projectPath: tmpHome,
+        device: { avdName: 'stim-app', consolePort: 5556, owned: true },
+        timeoutMs: 5000,
+      });
+      expect(result).toMatchObject({ failed: true, code: 'STIM_AT_CAPACITY' });
+    } finally {
+      delete process.env.STIM_MAX_DEVICES;
+      rmSync(other, { recursive: true, force: true });
+    }
   });
 
   test('allocates a fresh console port when the recorded one is taken by a foreign emulator', async () => {
@@ -2494,33 +2532,61 @@ describe('deviceCapacityRefusal', () => {
     expect(refusal.remedy).toMatch(/stim stop|maxDevices/);
   });
 
-  test('a workspace whose OWN sim is already booted is never refused', () => {
-    const sims = [booted('u1', 'stim-a'), booted('u2', 'stim-b')];
+  test('a workspace whose OWN sim is already booted or booting is never refused', () => {
     const project = { platforms: { ios: { deviceUdid: 'u1', owned: true } } };
-    expect(
-      deviceCapacityRefusal({
-        platform: 'ios',
-        project,
-        max: 2,
-        sims,
-        adb: makeAdbDevices({ emulators: [] }),
-        config: makeConfig(),
-      }),
-    ).toBe(null);
+    for (const state of ['Booted', 'Booting']) {
+      const sims = [makeIosSim({ udid: 'u1', name: 'stim-a', state }), booted('u2', 'stim-b')];
+      expect(
+        deviceCapacityRefusal({
+          platform: 'ios',
+          project,
+          max: 2,
+          sims,
+          adb: makeAdbDevices({ emulators: [] }),
+          config: makeConfig(),
+        }),
+      ).toBe(null);
+    }
   });
 
-  test('only BOOTED Stim sims count toward the cap', () => {
+  test('booted and booting Stim sims count toward the cap; shut-down and foreign sims do not', () => {
+    const args = {
+      platform: 'ios',
+      project: { platforms: {} },
+      adb: makeAdbDevices({ emulators: [] }),
+      config: makeConfig(),
+    };
     const sims = [booted('u1', 'stim-a'), shutdown('u2', 'stim-b'), booted('u3', 'someone-else')];
+    expect(deviceCapacityRefusal({ ...args, max: 2, sims })).toBe(null);
+    const withBooting = [...sims, makeIosSim({ udid: 'u4', name: 'stim-c', state: 'Booting' })];
+    expect(deviceCapacityRefusal({ ...args, max: 2, sims: withBooting })?.code).toBe('STIM_AT_CAPACITY');
+  });
+
+  test('an owned emulator adb still lists as offline counts toward the cap', () => {
+    const config = makeConfig({
+      projects: { '/w/x': { platforms: { android: { avdName: 'stim-x', consolePort: 5556, owned: true } } } },
+    });
+    const adb = makeAdbDevices({
+      unhealthy: [{ serial: 'emulator-5556', kind: 'emulator', consolePort: 5556, status: 'offline' }],
+    });
     expect(
-      deviceCapacityRefusal({
-        platform: 'ios',
-        project: { platforms: {} },
-        max: 2,
-        sims,
-        adb: makeAdbDevices({ emulators: [] }),
-        config: makeConfig(),
-      }),
-    ).toBe(null);
+      deviceCapacityRefusal({ platform: 'ios', project: { platforms: {} }, max: 1, sims: [], adb, config })?.code,
+    ).toBe('STIM_AT_CAPACITY');
+  });
+
+  test('a device another run is booting counts once, before and after it shows up booted', () => {
+    const args = {
+      platform: 'ios',
+      project: { platforms: {} },
+      max: 2,
+      adb: makeAdbDevices({ emulators: [] }),
+      config: makeConfig(),
+      booting: [{ platform: 'ios', key: 'u2' }],
+    };
+    expect(deviceCapacityRefusal({ ...args, sims: [booted('u1', 'stim-a')] })?.code).toBe('STIM_AT_CAPACITY');
+    expect(deviceCapacityRefusal({ ...args, max: 3, sims: [booted('u1', 'stim-a'), booted('u2', 'stim-b')] })).toBe(
+      null,
+    );
   });
 
   test('a running owned Android emulator counts via the registry', () => {
@@ -2538,6 +2604,216 @@ describe('deviceCapacityRefusal', () => {
     });
     assert(refusal);
     expect(refusal.code).toBe('STIM_AT_CAPACITY');
+  });
+});
+
+describe('checkDeviceCapacity', () => {
+  const failures = {
+    'times out': () => {
+      throw Object.assign(new Error('Command timed out after 30000ms: xcrun simctl list devices --json'), {
+        code: 'ETIMEDOUT',
+      });
+    },
+    'fails in CoreSimulator': () => {
+      throw Object.assign(new Error('Command failed: xcrun simctl list devices --json'), {
+        status: 1,
+        stderr: 'CoreSimulatorService connection became invalid.',
+      });
+    },
+  };
+
+  test.each(Object.entries(failures))(
+    'a listing that %s lets the early check pass and stops the boot admission',
+    async (_, sims) => {
+      const sources = { sims, adb: makeAdbDevices(), config: makeConfig(), booting: [] };
+      expect(checkDeviceCapacity({ platform: 'ios', project: { platforms: {} }, max: 4, ...sources })).toBe(null);
+      await expect(
+        withDeviceBootAdmission({ platform: 'ios', key: 'u1' }, async () => 'booted', { max: 4, sources }),
+      ).rejects.toMatchObject({ code: 'STIM_NO_DEVICE' });
+    },
+  );
+
+  test('a machine without the simulator toolchain counts no sims and is admitted', async () => {
+    const sources = {
+      sims: () => {
+        throw Object.assign(new Error('Command failed: xcrun simctl list devices --json'), {
+          status: 72,
+          stderr: 'xcrun: error: unable to find utility "simctl", not a developer tool or in PATH',
+        });
+      },
+      adb: makeAdbDevices(),
+      config: makeConfig(),
+      booting: [],
+    };
+    expect(checkDeviceCapacity({ platform: 'android', project: { platforms: {} }, max: 1, ...sources })).toBe(null);
+    await expect(
+      withDeviceBootAdmission({ platform: 'android', key: 'stim-a' }, async () => 'booted', { max: 1, sources }),
+    ).resolves.toBe('booted');
+  });
+
+  test('a broken adb does not block an iOS boot when no owned emulator is recorded', async () => {
+    const sources = {
+      sims: [],
+      adb: () => {
+        throw Object.assign(new Error('Command failed: adb devices'), {
+          status: 1,
+          stderr: 'adb: failed to start daemon',
+        });
+      },
+      config: makeConfig(),
+      booting: [],
+    };
+    await expect(
+      withDeviceBootAdmission({ platform: 'ios', key: 'u1' }, async () => 'booted', { max: 1, sources }),
+    ).resolves.toBe('booted');
+    const withEmulator = {
+      ...sources,
+      config: makeConfig({
+        projects: { '/w/x': { platforms: { android: { avdName: 'stim-x', consolePort: 5556, owned: true } } } },
+      }),
+    };
+    await expect(
+      withDeviceBootAdmission({ platform: 'ios', key: 'u1' }, async () => 'booted', { max: 1, sources: withEmulator }),
+    ).rejects.toMatchObject({ code: 'STIM_NO_DEVICE' });
+  });
+
+  test('a Mac without Xcode set up counts no sims, so an Android boot is admitted', async () => {
+    const sources = {
+      sims: () => {
+        throw Object.assign(new Error('Command failed: xcrun simctl list devices --json'), {
+          status: 1,
+          stderr: 'xcrun: error: invalid active developer path (/Library/Developer/CommandLineTools)',
+        });
+      },
+      adb: makeAdbDevices(),
+      config: makeConfig(),
+      booting: [],
+    };
+    await expect(
+      withDeviceBootAdmission({ platform: 'android', key: 'stim-a' }, async () => 'booted', { max: 1, sources }),
+    ).resolves.toBe('booted');
+  });
+});
+
+describe('a boot refused at admission', () => {
+  const failedBoot = (refusal: Error) => {
+    const done = Promise.reject(refusal);
+    done.catch(() => {});
+    return { deviceUdid: 'u1', owned: true, booting: { udid: 'u1', done } };
+  };
+
+  test('keeps its code and remedy through ensureBooted', async () => {
+    const atCapacity = new DeviceAdmissionRefusal({
+      code: 'STIM_AT_CAPACITY',
+      message: '4 Stim device(s) are already booted',
+      remedy: 'stop an environment (stim stop)',
+    });
+    await expect(ensureBooted({ platform: 'ios', device: failedBoot(atCapacity) })).resolves.toMatchObject({
+      failed: true,
+      code: 'STIM_AT_CAPACITY',
+      remedy: 'stop an environment (stim stop)',
+    });
+  });
+
+  test('reports a claim it cannot take with the claim code and the command that removes it', async () => {
+    const refused = new ClaimRefusedError({
+      root: join(tmpHome, 'device-boots'),
+      claimPath: join(tmpHome, 'device-boots', 'shared', 'x.claim'),
+      label: 'device boot',
+      reason: 'its process identity token does not decode',
+    });
+    const result = await ensureBooted({ platform: 'ios', device: failedBoot(refused) });
+    expect(result).toMatchObject({ failed: true, code: 'STIM_CLAIM_REFUSED' });
+    expect(result.remedy).toContain('rm -f');
+  });
+});
+
+describe('withDeviceBootAdmission', () => {
+  const sources = { sims: [], adb: makeAdbDevices(), config: makeConfig() };
+
+  describe('with a booting claim Stim cannot verify', () => {
+    const listings = sources;
+    beforeEach(() => {
+      const shared = join(tmpHome, 'device-boots', 'shared');
+      mkdirSync(shared, { recursive: true });
+      writeFileSync(join(shared, 'stray'), 'x');
+    });
+
+    test('the count is unknown, not zero', () => {
+      expect(countLiveOwnedDevices(listings)).toMatchObject({ unknown: expect.stringContaining('device boot claim') });
+    });
+
+    test('the boot is refused with the claim code and the command that removes it', async () => {
+      await expect(
+        withDeviceBootAdmission({ platform: 'ios', key: 'u1' }, async () => 'booted', { max: 2, sources: listings }),
+      ).rejects.toMatchObject({ code: 'STIM_CLAIM_REFUSED', removeCommand: expect.stringContaining('rm ') });
+    });
+  });
+
+  test('a boot in flight keeps its place, so a racing run for the last slot is refused', async () => {
+    let finishBoot!: () => void;
+    let admitted!: () => void;
+    const inFlight = new Promise<void>((resolve) => (admitted = resolve));
+    const first = withDeviceBootAdmission(
+      { platform: 'ios', key: 'u1' },
+      () =>
+        new Promise<string>((resolve) => {
+          admitted();
+          finishBoot = () => resolve('booted');
+        }),
+      { max: 1, sources },
+    );
+    await inFlight;
+    const second = withDeviceBootAdmission({ platform: 'ios', key: 'u2' }, async () => 'booted', { max: 1, sources });
+    await expect(second).rejects.toMatchObject({ code: 'STIM_AT_CAPACITY' });
+    const { record } = decodeStats(readFileSync(statsFile(), 'utf-8'));
+    expect(record?.capacityRefusals).toEqual([
+      expect.objectContaining({ kind: 'device', platform: 'ios', max: 1, workspace: workspaceId(process.cwd()) }),
+    ]);
+    finishBoot();
+    await expect(first).resolves.toBe('booted');
+    await expect(
+      withDeviceBootAdmission({ platform: 'ios', key: 'u2' }, async () => 'booted', { max: 1, sources }),
+    ).resolves.toBe('booted');
+  });
+
+  test("an emulator on this workspace's old console port does not let its boot pass a full cap", async () => {
+    const emulator = (avdName: string, consolePort: number) => ({
+      platforms: { android: { avdName, consolePort, owned: true } },
+    });
+    const full = {
+      ...sources,
+      config: makeConfig({
+        projects: {
+          '/w/a': emulator('stim-a', 5554),
+          '/w/b': emulator('stim-b', 5556),
+          '/w/c': emulator('stim-c', 5558),
+        },
+      }),
+      adb: makeAdbDevices({
+        emulators: [5554, 5556, 5558].map((consolePort) => ({ serial: `emulator-${consolePort}`, consolePort })),
+      }),
+    };
+    await expect(
+      withDeviceBootAdmission({ platform: 'android', key: 'stim-a' }, async () => 'booted', { max: 2, sources: full }),
+    ).rejects.toMatchObject({ code: 'STIM_AT_CAPACITY' });
+  });
+
+  test('a device that is already booting is admitted even when other devices fill the cap', async () => {
+    const full = {
+      ...sources,
+      sims: [
+        makeIosSim({ udid: 'u1', name: 'stim-a', state: 'Booting' }),
+        makeIosSim({ udid: 'u3', name: 'stim-c', state: 'Booted' }),
+        makeIosSim({ udid: 'u4', name: 'stim-d', state: 'Booted' }),
+      ],
+    };
+    await expect(
+      withDeviceBootAdmission({ platform: 'ios', key: 'u1' }, async () => 'booted', { max: 2, sources: full }),
+    ).resolves.toBe('booted');
+    await expect(
+      withDeviceBootAdmission({ platform: 'ios', key: 'u2' }, async () => 'booted', { max: 2, sources: full }),
+    ).rejects.toMatchObject({ code: 'STIM_AT_CAPACITY' });
   });
 });
 

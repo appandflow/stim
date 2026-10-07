@@ -89,7 +89,7 @@ import {
   type androidDataFreeBytes,
 } from '../devices/android.ts';
 import type { teardownOwnedAvd } from '../devices/teardown.ts';
-import { checkDeviceCapacity } from '../engine/device-capacity.ts';
+import { DeviceAdmissionRefusal, checkDeviceCapacity } from '../engine/device-capacity.ts';
 import { budgetGate, type ReclaimedStep } from '../budget.ts';
 import { didSetUpDevice, ensureBooted, ensureOwnedDevice, type OwnedDeviceRecord } from '../engine/device.ts';
 import { AvdRecoveryError, AvdBootError } from '../engine/device-android.ts';
@@ -600,6 +600,9 @@ function avdSetupFailure(
 ): { code: string; message: string; remedy: string; extra?: FailExtra } {
   const refusal = claimFailure(error, 'stim android');
   if (refusal) return refusal;
+  if (error instanceof DeviceAdmissionRefusal) {
+    return { code: error.code, message: error.message, remedy: error.remedy };
+  }
   const diag = noDeviceDiagnostic({
     reason: `Could not ensure an owned Android emulator: ${(error as Error)?.message || error}`,
     logFile,

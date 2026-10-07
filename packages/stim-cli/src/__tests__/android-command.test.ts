@@ -11,6 +11,7 @@ import { captureProcessToken } from '../process-identity.ts';
 import { ClaimRefusedError, ClaimUnavailableError, claimRemoveCommand } from '../ownership-claim.ts';
 import { AvdBootError, AvdRecoveryError } from '../engine/device-android.ts';
 import { ensureRemoteBootOwned } from '../engine/device-remote.ts';
+import { DeviceAdmissionRefusal } from '../engine/device-capacity.ts';
 import { once } from 'node:events';
 import { type ChildProcess, spawn } from 'node:child_process';
 import {
@@ -859,6 +860,30 @@ describe('explicit remote backend behavior', () => {
     });
     expect((await h.run()).ok).toBe(true);
     expect(remoteCalls).toEqual(['ensureDevice', 'ensureDeviceBooted', 'install', 'launch']);
+  });
+
+  test('an emulator refused at device admission ends as STIM_AT_CAPACITY with its remedy', async () => {
+    const atCapacity = {
+      code: 'STIM_AT_CAPACITY',
+      message: '4 Stim device(s) are already booted and concurrency.maxDevices is 4.',
+      remedy: 'stop an environment (stim stop) or raise concurrency.maxDevices',
+    };
+    const atBoot = await harness({
+      ensureDeviceBooted: async () => ({
+        failed: true,
+        code: atCapacity.code,
+        reason: atCapacity.message,
+        remedy: atCapacity.remedy,
+      }),
+    }).run();
+    expect(atBoot.error).toMatchObject({ code: 'STIM_AT_CAPACITY', remedy: atCapacity.remedy });
+
+    const atSetup = await harness({
+      ensureDevice: async () => {
+        throw new DeviceAdmissionRefusal(atCapacity);
+      },
+    }).run();
+    expect(atSetup.error).toMatchObject({ code: 'STIM_AT_CAPACITY', remedy: atCapacity.remedy });
   });
 
   test('a remote ENOSPC boot failure keeps the remote-device remedy', async () => {

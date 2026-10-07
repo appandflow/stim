@@ -324,7 +324,7 @@ ${ANDROID_AVD_CONFIG_HELP.map((line) => `                          ${line}`).joi
                         minutes an owned simulator or emulator stays idle
                         (\`gc --idle\` conditions; an open stim-server viewer
                         counts as activity) before its workspace's supervisor
-                        shuts it down, never deletes it. Default 0, never.
+                        shuts it down, never deletes it. Default 30; 0 never.
                         Machine or project layers. Read when the supervisor
                         starts; see \`guide lifecycle budget\`.
   macos.product         the explicit Swift Package executable product built in

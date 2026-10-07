@@ -979,22 +979,34 @@ CPU, checkout, disk, access) blocks Next.
 From step 2, Desktop prepares a pinned Expo blank SDK 58 app in
 `~/Library/Application Support/Stim Desktop/Onboarding/sample-sdk58/`, outside
 user projects and Stim's state directory. It also uses this checkout for setup
-requests when no workspace is listed. The test requires a build on the selected
+requests when no workspace is listed. In that case preparation starts when a Mac
+is picked, and Next waits for the sample and checks existing approvals before
+generating the setup command. Already-approved capabilities skip new approval
+requests. Failed preparation shows **Retry sample** without a setup command.
+The test requires a build on the selected
 Mac and a verified launch, then forces a local build to prove the fallback path.
 Both runs bypass the build cache. Live output shows both runs; phase timings
 describe the offloaded run, and the local run shows its total time. The optional
 hosted-simulator check is not part of this wizard. Desktop
 stops the sample workspace when the test ends or the sheet closes; its folder
 stays for **Run again**. **Delete sample app** in Build Machines stops it and
-removes only that folder after confirmation.
+removes its Stim workspace and sample folder after confirmation, and
+releases its owned simulator (parked for reuse within the parked-simulator limit,
+deleted otherwise).
+If cleanup fails, the folder stays for a retry and Desktop shows the failure.
 
 Cancel removes entries added by the wizard, restores `offload.mode` only if the
 wizard changed it, and runs doctor to forget the pairing. It shows revoke
-commands to run on the build Mac. Done keeps the entries and writes the selected
+commands for grants created during this run, preserving pre-existing approvals.
+When the pre-state is unknown, only grants recorded in the setup journal appear.
+Done keeps the entries and writes the selected
 Auto / Always / Never mode only when it differs. If the wizard turned offloading
 off, Auto is the default after both builds pass; skipping or failing keeps Never
 selected unless you choose otherwise. Existing machine settings keep their
 current effective mode. The summary lists approvals, settings and undo commands.
+The Test build mark and summary show whether the test passed, was skipped, failed,
+or did not run. Skipping after a failed run keeps that outcome visible. Only a
+passed test labels the machine ready; otherwise it is set up.
 Uninstalling the server service is optional; Stim Host permissions stay in System
 Settings until you remove them.
 

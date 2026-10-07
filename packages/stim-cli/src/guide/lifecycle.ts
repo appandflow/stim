@@ -1396,12 +1396,25 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
                             lock does, and a dead builder frees its slot within
                             a poll (process identity, like the lock).
 
-    concurrency.maxDevices  how many Stim-owned devices are BOOTED at once. Checked
-                            at device time, before a sim is created or booted.
-                            At the cap, a NEW device is REFUSED with
-                            STIM_AT_CAPACITY (interactive-shaped: it does not
-                            queue). A workspace whose own device is already
-                            booted is never refused.
+    concurrency.maxDevices  how many Stim-owned devices are BOOTED at once,
+                            counting sims that are booting, emulators adb lists
+                            in any state, and devices other runs are booting.
+                            Checked at device time, before a sim is created or
+                            booted, and again when the boot starts: that second
+                            check and the boot's place in the count are taken
+                            under one lock in $STIM_HOME, so concurrent runs
+                            cannot pass the cap together. At the cap, a NEW
+                            device is REFUSED with STIM_AT_CAPACITY
+                            (interactive-shaped: it does not queue). A
+                            workspace whose own device is already booted or
+                            booting is never refused. A listing that fails for
+                            any reason but a tool that is missing or not set up
+                            (no Xcode, license not accepted) leaves the count
+                            unknown: the first check lets the run go on, and
+                            the second stops it with STIM_NO_DEVICE instead of
+                            counting zero, on either platform: a hung simctl
+                            stops an Android boot too. While other runs are
+                            counting, the second check prints a waiting line.
                             See \`guide errors STIM_AT_CAPACITY\`.
 
   \`stim doctor\` prints one note echoing the caps and the current live count,
@@ -1453,8 +1466,8 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
     4. trim shared cache entries nothing has used for 14 days
        (\`gc --delete --older-than 14\` for the caches)
 
-  IDLE SHUTDOWN (OFF BY DEFAULT): with devices.idleShutdownMinutes set, a
-  workspace's supervisor shuts down that workspace's owned simulators and
+  IDLE SHUTDOWN (30 MINUTES BY DEFAULT): with devices.idleShutdownMinutes above
+  0, a workspace's supervisor shuts down that workspace's owned simulators and
   emulators once they have been idle that long, without waiting for a run
   to go over budget. Idle is step 1 with that many minutes in place of 10:
   booted, no driver, no Stim or agent-device lock, no build in progress, and
@@ -1471,8 +1484,9 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
   long, because no supervisor is left to check afterwards. Nothing checks
   without a supervisor: release runs, and after \`stim stop\`. The setting
   is read when the supervisor starts. Stim Desktop's simulator view is not a
-  stim-server client and does not count as a viewer. Turn it on with
-  \`stim settings set devices.idleShutdownMinutes 30 --scope machine\`.
+  stim-server client and does not count as a viewer. Change it with
+  \`stim settings set devices.idleShutdownMinutes <minutes> --scope machine\`;
+  0 turns it off, and an explicit 0 stays 0.
 
   Steps 3 and 4 run only for disk. Memory and workspace limits never refuse;
   a run still over them prints one \`budget\` warning and continues. The

@@ -8,6 +8,8 @@ final class SampleBuildModelTests: XCTestCase {
   @MainActor private final class Harness {
     let sample = WizardSample(applicationSupport: URL(fileURLWithPath: "/fixture"))
     var commands: [StimCommand] = []
+    var events: [String] = []
+    var failedCommand: [String]?
     var files: Set<URL> = []
     var markedAfter: [String] = []
     var now = Date(timeIntervalSince1970: 100)
@@ -24,6 +26,10 @@ final class SampleBuildModelTests: XCTestCase {
           sample: sample,
           run: { command, onLine in
             self.commands.append(command)
+            self.events.append("\(command.program) \(command.arguments.joined(separator: " "))")
+            if let failedCommand = self.failedCommand, command.arguments == failedCommand {
+              return WizardCommandOutput(exit: 9, stdout: Data(), stderr: "  Resources still in use\n")
+            }
             var stdout = ""
             if command.program == "npm", self.failInstall {
               return WizardCommandOutput(exit: 1, stdout: Data(), stderr: "Registry unavailable")
@@ -61,7 +67,11 @@ final class SampleBuildModelTests: XCTestCase {
           move: { from, to in
             self.files.remove(from)
             self.files.insert(to)
-          }, remove: { self.files.remove($0) },
+          },
+          remove: {
+            self.events.append("remove \($0.path)")
+            self.files.remove($0)
+          },
           mark: {
             self.markedAfter = self.commands.map(\.program)
             self.files.insert($0)
@@ -106,6 +116,88 @@ final class SampleBuildModelTests: XCTestCase {
     XCTAssertTrue(model.sampleReady)
     XCTAssertTrue(harness.commands.contains { $0.arguments == ["stop"] })
   }
+  @MainActor func testSampleRemovalReclaimsWorkspaceBeforeDeletingFolder() async throws {
+    let harness = Harness()
+    harness.files.insert(harness.sample.folder)
+    harness.files.insert(harness.sample.folder.appendingPathComponent(".git"))
+    let model = harness.make()
+    try await model.removeSample()
+    XCTAssertEqual(
+      harness.events,
+      ["stim stop", "stim worktree remove \(model.folder)", "remove \(model.folder)"])
+    XCTAssertEqual(
+      harness.commands,
+      [
+        StimCommand(["stop"], cwd: model.folder),
+        StimCommand(["worktree", "remove", model.folder], cwd: harness.sample.onboarding.path),
+      ])
+    XCTAssertFalse(harness.files.contains(harness.sample.folder))
+  }
+
+  @MainActor func testSampleWithoutGitRepositoryIsInitializedSoWorkspaceRemovalReclaimsIt() async throws {
+    let harness = Harness()
+    harness.files.insert(harness.sample.folder)
+    let model = harness.make()
+    try await model.removeSample()
+    XCTAssertEqual(
+      harness.events, ["stim stop", "git init", "stim worktree remove \(model.folder)", "remove \(model.folder)"])
+  }
+
+  @MainActor func testWorkspaceRemovalFailurePreservesSampleForRetryAndExposesStderr() async {
+    for preparing in [false, true] {
+      let harness = Harness()
+      harness.files.insert(harness.sample.folder)
+      harness.files.insert(harness.sample.folder.appendingPathComponent(".git"))
+      harness.failedCommand = ["worktree", "remove", harness.sample.folder.path]
+      let model = harness.make()
+      let message: String
+      if preparing {
+        model.prepare()
+        await settle(model)
+        guard case .failed(_, let failure, _) = model.test.state else { return XCTFail("Cleanup failure was hidden") }
+        message = failure
+        XCTAssertFalse(model.sampleReady)
+      } else {
+        do {
+          try await model.removeSample()
+          return XCTFail("Cleanup failure was hidden")
+        } catch { message = error.localizedDescription }
+      }
+      XCTAssertEqual(harness.events, ["stim stop", "stim worktree remove \(model.folder)"])
+      XCTAssertTrue(harness.files.contains(harness.sample.folder))
+      XCTAssertTrue(message.contains("stim worktree remove \(model.folder)"))
+      XCTAssertTrue(message.hasSuffix("Resources still in use"))
+      XCTAssertFalse(message.contains("  Resources"))
+    }
+  }
+
+  @MainActor func testStopFailurePreventsWorkspaceAndFolderRemovalAndExposesStderr() async {
+    for preparing in [false, true] {
+      let harness = Harness()
+      harness.files.insert(harness.sample.folder)
+      harness.failedCommand = ["stop"]
+      let model = harness.make()
+      let message: String
+      if preparing {
+        model.prepare()
+        await settle(model)
+        guard case .failed(_, let failure, _) = model.test.state else { return XCTFail("Stop failure was hidden") }
+        message = failure
+        XCTAssertFalse(model.sampleReady)
+      } else {
+        do {
+          try await model.removeSample()
+          return XCTFail("Stop failure was hidden")
+        } catch { message = error.localizedDescription }
+      }
+      XCTAssertEqual(harness.events, ["stim stop"])
+      XCTAssertTrue(harness.files.contains(harness.sample.folder))
+      XCTAssertTrue(message.contains("stim stop"))
+      XCTAssertTrue(message.hasSuffix("Resources still in use"))
+      XCTAssertFalse(message.contains("  Resources"))
+    }
+  }
+
   @MainActor func testBothBuildsPassAndCleanupRunsButSilentFallbackDoesNotPass() async {
     for fallback in [false, true] {
       let harness = Harness()
@@ -137,6 +229,8 @@ final class SampleBuildModelTests: XCTestCase {
     await settle(model)
     XCTAssertEqual(model.test.state, .failed(code: "STIM_OFFLOAD_REFUSED", message: "Worker refused", remedy: "Exact fix"))
     XCTAssertEqual(refused.commands.last?.arguments, ["stop"])
+    await model.skip()
+    XCTAssertEqual(model.test.outcome, .skippedAfterFailure("Worker refused"))
     let harness = Harness()
     harness.files.insert(harness.sample.marker)
     harness.waitForCancel = true
@@ -151,6 +245,7 @@ final class SampleBuildModelTests: XCTestCase {
     await running.skip()
     XCTAssertTrue(harness.cancelled)
     XCTAssertEqual(running.test.state, .skipped)
+    XCTAssertEqual(running.test.outcome, .skipped)
     XCTAssertFalse(running.running)
     XCTAssertEqual(harness.commands.last?.arguments, ["stop"])
   }

@@ -915,10 +915,12 @@ test('settingOriginScope names the machine layer, and a project layer over it', 
   expect(settingOriginScope(settingsLayers({ repoRoot: tmpHome }), 'ios.runtime')).toBe('committed');
 });
 
-test('devices.idleShutdownMinutes is off by default, set per machine, and a project layer overrides it', () => {
-  expect(deviceIdleShutdownMinutesSetting(resolveSettings({}))).toBe(0);
-  saveConfig({ version: 2, projects: {}, repos: {}, devices: { idleShutdownMinutes: 30 } } as Config);
+test('devices.idleShutdownMinutes defaults to 30, an explicit 0 keeps it off, and a project layer overrides the machine', () => {
   expect(deviceIdleShutdownMinutesSetting(resolveSettings({}))).toBe(30);
+  saveConfig({ version: 2, projects: {}, repos: {}, devices: { idleShutdownMinutes: 0 } } as Config);
+  expect(deviceIdleShutdownMinutesSetting(resolveSettings({}))).toBe(0);
+  saveConfig({ version: 2, projects: {}, repos: {}, devices: { idleShutdownMinutes: 45 } } as Config);
+  expect(deviceIdleShutdownMinutesSetting(resolveSettings({}))).toBe(45);
   writeFileSync(join(tmpHome, '.stim.json'), JSON.stringify({ devices: { idleShutdownMinutes: 0 } }));
   expect(deviceIdleShutdownMinutesSetting(resolveSettings({ repoRoot: tmpHome }))).toBe(0);
 });

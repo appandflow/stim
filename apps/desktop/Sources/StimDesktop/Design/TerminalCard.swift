@@ -9,7 +9,7 @@ struct TerminalCard: View {
 
   var lines: [TerminalLine]
   var mode: Mode
-  var width: CGFloat = 236
+  var width: CGFloat? = 236
   var animates = true
   var height: CGFloat?
   var maxVisibleLines: Int?
@@ -63,6 +63,7 @@ struct TerminalCard: View {
     }
     .padding(Space.lg)
     .frame(width: width, height: cardHeight, alignment: .topLeading)
+    .frame(maxWidth: width == nil ? .infinity : nil, alignment: .leading)
     .background(RoundedRectangle(cornerRadius: Radius.card).fill(Media.screen))
     .overlay(RoundedRectangle(cornerRadius: Radius.card).strokeBorder(Palette.accent.opacity(0.4)))
     .shadow(color: Palette.brand.opacity(0.3), radius: 16, y: 8)

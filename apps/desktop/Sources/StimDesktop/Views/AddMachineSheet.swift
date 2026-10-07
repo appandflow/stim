@@ -26,19 +26,25 @@ struct AddMachineSheet: View {
         Text("Add a build machine").font(.stim(.headline)).padding(.bottom, Space.xl)
         ForEach(Array(["Pick a Mac", "What it does", "Set it up", "Tools", "Test build", "Done"].enumerated()), id: \.offset) {
           index, title in
+          let outcome: BuildTest.Outcome? = index == 4 && index < step ? model.testOutcome : nil
           HStack(spacing: Space.md) {
-            Image(systemName: index < step ? "checkmark.circle.fill" : index == step ? "circle.inset.filled" : "circle")
+            Image(
+              systemName: outcome?.symbol
+                ?? (index < step ? "checkmark.circle.fill" : index == step ? "circle.inset.filled" : "circle")
+            )
             Text(title).font(.stim(.callout, weight: index == step ? .semibold : .regular))
           }
-          .foregroundStyle(index == step ? Palette.accent : index > step ? Palette.tertiary : Palette.secondary)
+          .foregroundStyle(
+            outcome.map(testColor) ?? (index == step ? Palette.accent : index > step ? Palette.tertiary : Palette.secondary)
+          )
           .frame(height: 30)
           .accessibilityLabel(
-            title
-              + (index < step ? ", done" : index == step ? ", current step" : ", waiting"))
+            outcome?.accessibilityLabel
+              ?? (title + (index < step ? ", done" : index == step ? ", current step" : ", waiting")))
         }
         Spacer()
       }
-      .padding(Space.xl).frame(width: 205).background(Palette.sidebar)
+      .padding(Space.xl).frame(width: 170).background(Palette.sidebar)
       Divider()
       VStack(spacing: 0) {
         if model.isFixture {
@@ -50,7 +56,7 @@ struct AddMachineSheet: View {
         footer.padding(Space.xl)
       }
     }
-    .frame(width: 920, height: 740)
+    .frame(width: 740, height: 640)
     .font(.stim(.body)).foregroundStyle(Palette.text).tint(Palette.brand)
     .background(Palette.background)
     .task { await model.start() }
@@ -151,18 +157,24 @@ struct AddMachineSheet: View {
       TerminalCard(
         lines: previewLines(capabilities: wizard.capabilities, known: model.known, version: model.version),
         mode: .scripted(loop: false),
-        width: 650, animates: !model.isFixture, height: 208, maxVisibleLines: 10
+        width: nil, animates: !model.isFixture, height: 208, maxVisibleLines: 10
       )
       .id(TerminalLine.spokenSummary(previewLines(capabilities: wizard.capabilities, known: model.known, version: model.version)))
       if allApproved {
         Text("Every chosen capability is already approved. Next checks the tools and tests a sample build.")
           .foregroundStyle(Palette.success)
       } else {
-        commandBox
+        if model.command != nil { commandBox }
         Text(
           "Needs Node 22.12+ there. Run it in Terminal while signed in at that Mac: macOS shows permission prompts on its screen."
         )
         .font(.stim(.footnote)).foregroundStyle(Palette.secondary)
+      }
+      if model.preparingSample {
+        Label("Preparing the sample app to check existing approvals", systemImage: "hourglass").foregroundStyle(Palette.secondary)
+      }
+      if wizard.failure(now: model.now) == .noWorkspace {
+        failureContent(.noWorkspace)
       }
     }
   }
@@ -184,7 +196,7 @@ struct AddMachineSheet: View {
       Text(wizard.phase == .cancelled ? "Setup cancelled" : "Setting up \(name)").font(.stim(.title))
       if let journal = wizard.journal {
         TerminalCard(
-          lines: journalLines(journal), mode: .live, width: 650, animates: !model.isFixture,
+          lines: journalLines(journal), mode: .live, width: nil, animates: !model.isFixture,
           height: 272, maxVisibleLines: 14)
       }
       Text(statusText).foregroundStyle(wizard.phase == .approved ? Palette.success : Palette.secondary)
@@ -338,7 +350,7 @@ struct AddMachineSheet: View {
             model.stop()
             dismiss()
           }
-        }.disabled(model.busy || model.cancelling)
+        }.disabled((model.busy && !model.preparingSample) || model.cancelling)
         if step == 3 {
           Button("Next") { model.openTest() }.disabled(model.busy || model.toolsBlock)
         } else if step == 4 {
@@ -355,7 +367,7 @@ struct AddMachineSheet: View {
           Button("Next") { Task { await model.pick() } }.disabled(
             model.reachability != .ready || model.selfNode == nil || model.busy)
         } else if step == 1 {
-          Button("Next") { Task { await model.next() } }.disabled(model.command == nil || model.busy)
+          Button("Next") { Task { await model.next() } }.disabled(model.version == nil || model.selfNode == nil || model.busy)
         } else if wizard.phase == .approved {
           Button("Next") { Task { await model.openTools() } }.disabled(model.busy)
         } else if wizard.failure(now: model.now) == .expired || isGrantedOther {
@@ -381,5 +393,13 @@ struct AddMachineSheet: View {
   private func checkLine(_ text: String, ready: Bool) -> some View {
     Label(text, systemImage: ready ? "checkmark.circle.fill" : "xmark.circle.fill")
       .foregroundStyle(ready ? Palette.success : Palette.warning)
+  }
+
+  private func testColor(_ outcome: BuildTest.Outcome) -> Color {
+    switch outcome {
+    case .passed: return Palette.secondary
+    case .failed: return Palette.error
+    case .skipped, .skippedAfterFailure, .notRun: return Palette.tertiary
+    }
   }
 }

@@ -60,6 +60,39 @@ public struct BuildTimings: Decodable, Equatable, Sendable {
 }
 
 public struct BuildTest: Equatable, Sendable {
+  public enum Outcome: Equatable, Sendable {
+    case passed, skipped, notRun
+    case skippedAfterFailure(String)
+    case failed(String)
+
+    public var symbol: String {
+      switch self {
+      case .passed: return "checkmark.circle.fill"
+      case .failed: return "exclamationmark.triangle.fill"
+      case .skipped, .skippedAfterFailure, .notRun: return "minus.circle.fill"
+      }
+    }
+
+    public var accessibilityLabel: String {
+      switch self {
+      case .passed: return "Test build, done"
+      case .skipped: return "Test build, skipped"
+      case .skippedAfterFailure: return "Test build, skipped after a failed run"
+      case .failed: return "Test build, failed"
+      case .notRun: return "Test build, not run"
+      }
+    }
+
+    public var summaryText: String? {
+      switch self {
+      case .passed: return nil
+      case .skipped: return "Test build skipped."
+      case .skippedAfterFailure: return "Test build skipped after a failed run."
+      case .failed(let message): return "Test build failed: \(message)"
+      case .notRun: return "Test build not run."
+      }
+    }
+  }
   public enum State: Equatable, Sendable {
     case preparingSample, ready
     case offloading(String)
@@ -79,21 +112,40 @@ public struct BuildTest: Equatable, Sendable {
     case fail(code: String, message: String, remedy: String?)
     case skip
   }
-  public private(set) var state: State = .preparingSample
+  public private(set) var state: State = .preparingSample {
+    didSet {
+      if case .failed(_, let message, _) = state { lastFailure = message }
+    }
+  }
   public private(set) var timings: BuildTimings?
   public private(set) var localMs: Double?
+  private var lastFailure: String?
   private var offloadPassed = false
   public var passed: Bool { state == .done }
+  public var outcome: Outcome {
+    switch state {
+    case .done: return .passed
+    case .skipped: return lastFailure.map(Outcome.skippedAfterFailure) ?? .skipped
+    case .failed(_, let message, _): return .failed(message)
+    default: return .notRun
+    }
+  }
   public init() {}
   public mutating func apply(_ event: Event) {
     switch event {
     case .prepare:
+      lastFailure = nil
       state = .preparingSample
       timings = nil
       localMs = nil
-    case .prepared: if state == .preparingSample { state = .ready }
+    case .prepared:
+      if state == .preparingSample {
+        lastFailure = nil
+        state = .ready
+      }
     case .start:
       guard state == .ready || state == .done || isFailed || state == .skipped else { return }
+      lastFailure = nil
       timings = nil
       localMs = nil
       offloadPassed = false
