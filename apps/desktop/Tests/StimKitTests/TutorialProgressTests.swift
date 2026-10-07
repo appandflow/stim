@@ -193,17 +193,57 @@ private func log(
   #expect(progress.update(input).currentStep == "phone")
 }
 
-@Test func tutorialRefreshErrorWinsOverChangedColorAndSurvivesRelaunch() throws {
+@Test func tutorialRefreshChangedColorRecoversFromErrorAfterRelaunchWithOnlyNewLogs() throws {
   var env = try environment()
   env.errorsSinceMarker = 2
   var progress = TutorialProgress()
   let initial = progress.update(
-    TutorialInput(environment: env, now: afterRebuild, record: saved(at: "refresh", since: afterRebuild)))
+    TutorialInput(
+      environment: env, logRecords: [try log("title color=#1f2937", at: afterBuild)],
+      now: afterRebuild, record: saved(at: "refresh", since: afterRebuild)))
   env.errorsSinceMarker = 3
+  let failed = progress.update(TutorialInput(environment: env, now: afterRebuild))
+  #expect(state("refresh", in: failed).state == .failed("The edit introduced an error"))
   var relaunched = TutorialProgress()
-  let logs = try [log("title color=#1f2937", at: afterBuild), log("title color=#7c3aed", at: afterRebuild)]
-  let result = relaunched.update(TutorialInput(environment: env, logRecords: logs, now: afterRebuild, record: initial.record))
-  #expect(state("refresh", in: result).state == .failed("The edit introduced an error"))
+  let persisted = try JSONDecoder().decode(TutorialRecord.self, from: JSONEncoder().encode(initial.record))
+  let result = relaunched.update(
+    TutorialInput(
+      environment: env, logRecords: [try log("title color=#7c3aed", at: afterRebuild)],
+      now: afterRebuild, record: persisted))
+  #expect(state("refresh", in: result).state == .done)
+  #expect(result.currentStep == "phone")
+}
+
+@Test func tutorialRefreshRetakesErrorBaselineForRemainingTourAgentActions() throws {
+  var env = try environment()
+  env.errorsSinceMarker = 1
+  var progress = TutorialProgress()
+  var input = TutorialInput(
+    environment: env,
+    logRecords: try [
+      log("title color=#1f2937", at: afterBuild),
+      log("open", at: afterRebuild, source: "agent", event: "agent_action", device: "tutorial-simulator"),
+    ], now: afterRebuild, record: saved(at: "agent", since: afterRebuild))
+  #expect(progress.update(input).currentStep == "refresh")
+  for (offset, errors) in [(1.0, 2), (2.0, 3)] {
+    env.errorsSinceMarker = errors
+    input.environment = env
+    input.now = afterRebuild.addingTimeInterval(offset)
+    input.logRecords.append(try log("press", at: input.now, source: "agent", event: "agent_action", device: "tutorial-simulator"))
+    let result = progress.update(input)
+    #expect(state("refresh", in: result).state == .current)
+    #expect(result.record.refreshErrors == errors)
+  }
+  env.errorsSinceMarker = 4
+  input.environment = env
+  let failed = progress.update(input)
+  #expect(state("refresh", in: failed).state == .failed("The edit introduced an error"))
+  var relaunched = TutorialProgress()
+  input.record = try JSONDecoder().decode(TutorialRecord.self, from: JSONEncoder().encode(failed.record))
+  #expect(state("refresh", in: relaunched.update(input)).state == .failed("The edit introduced an error"))
+  input.logRecords.append(try log("title color=#7c3aed", at: afterRebuild.addingTimeInterval(60)))
+  input.now = afterRebuild.addingTimeInterval(60)
+  #expect(progress.update(input).currentStep == "phone")
 }
 
 @Test func tutorialAgentRequiresFreshActionOnTourDeviceAndReplayEvidence() throws {
@@ -234,19 +274,27 @@ private func log(
   #expect(!state("agent", in: progress.update(input)).ticks.contains { $0.id == "screen-recording" })
 }
 
-@Test func tutorialFinishRequiresStopBeforeDisappearanceAndArchive() throws {
+@Test func tutorialFinishCompletesWithArchiveWithoutIntermediateStopSnapshot() throws {
   var progress = TutorialProgress()
-  let active = try environment("05-stopped")
-  _ = progress.update(TutorialInput(environment: active, now: afterRebuild, record: saved(at: "finish")))
+  _ = progress.update(TutorialInput(environment: try environment(), now: afterRebuild, record: saved(at: "finish")))
   let archives = try fixture("06-archived").archived!.map(\.projectRoot)
-  var input = TutorialInput(environment: nil, archivedProjectRoots: archives, now: afterRebuild)
-  #expect(progress.update(input).currentStep == "finish")
-  var stopped = active
-  stopped.live = false
-  input.environment = stopped
-  #expect(progress.update(input).currentStep == "finish")
-  input.environment = nil
-  #expect(progress.update(input).isComplete)
+  let result = progress.update(TutorialInput(environment: nil, archivedProjectRoots: archives, now: afterRebuild))
+  #expect(result.isComplete)
+  #expect(state("finish", in: result).ticks.first { $0.id == "stopped" }?.done == false)
+  #expect(state("finish", in: result).ticks.first { $0.id == "archived" }?.done == true)
+}
+
+@Test func tutorialFinishStopTickAloneDoesNotComplete() throws {
+  var progress = TutorialProgress()
+  let archives = try fixture("06-archived").archived!.map(\.projectRoot)
+  var env = try environment("05-stopped")
+  env.live = false
+  let result = progress.update(
+    TutorialInput(
+      environment: env, archivedProjectRoots: archives,
+      now: afterRebuild, record: saved(at: "finish")))
+  #expect(result.currentStep == "finish")
+  #expect(state("finish", in: result).ticks.first { $0.id == "stopped" }?.done == true)
 }
 
 @Test func tutorialArchiveDisabledCompletesOnDisappearanceAndMissingArchiveOffersRestart() throws {
@@ -288,18 +336,46 @@ private func log(
   #expect(state("machine", in: result).state == .skipped)
 }
 
-@Test func tutorialRestartWaitsForNewerTourPhaseBeforeClearingProgress() throws {
+@Test(arguments: ["live", "idle"])
+func tutorialRestartWaitsForTrackedTourToDisappearAndReturnWithoutPhaseSince(phase: String) throws {
   var progress = TutorialProgress()
   var env = try environment("01-started")
-  _ = progress.update(TutorialInput(environment: env, now: afterRebuild, record: saved(at: "refresh")))
+  env.phase = phase
+  _ = progress.update(TutorialInput(environment: env, now: afterRebuild, record: saved(at: "finish")))
   progress.requestRestart(now: afterRebuild)
-  env.phaseSince = tourStart
-  #expect(progress.update(TutorialInput(environment: env, now: afterRebuild)).currentStep == "refresh")
-  env.phaseSince = afterRebuild.addingTimeInterval(10)
-  let result = progress.update(TutorialInput(environment: env, now: afterRebuild.addingTimeInterval(10)))
+  #expect(progress.update(TutorialInput(environment: env, now: afterRebuild)).currentStep == "finish")
+  var other = env
+  other.path = "/Users/example/other-tour"
+  let absent = progress.update(TutorialInput(environment: other, now: afterRebuild.addingTimeInterval(1)))
+  #expect(absent.currentStep == "finish")
+  var relaunched = TutorialProgress()
+  let persisted = try JSONDecoder().decode(TutorialRecord.self, from: JSONEncoder().encode(absent.record))
+  let result = relaunched.update(TutorialInput(environment: env, now: afterRebuild.addingTimeInterval(10), record: persisted))
   #expect(result.currentStep == "sidebar")
   #expect(result.record.done == ["begin"])
-  #expect(result.record.startedAt == env.phaseSince)
+  #expect(result.record.startedAt == afterRebuild.addingTimeInterval(10))
+}
+
+@Test func tutorialRestartRelaunchUsesOldestBuildEvenWithoutSeeingDisappearance() throws {
+  var progress = TutorialProgress()
+  let env = try environment("02-after-ios1")
+  _ = progress.update(TutorialInput(environment: env, now: afterRebuild, record: saved(at: "finish")))
+  progress.requestRestart(now: afterRebuild)
+  let persisted = try JSONDecoder().decode(TutorialRecord.self, from: JSONEncoder().encode(progress.record!))
+  var relaunched = TutorialProgress()
+  var rebuilt = try environment()
+  rebuilt.builds[0].build.startedAt = "2026-10-07T05:07:00.000Z"
+  #expect(
+    relaunched.update(TutorialInput(environment: rebuilt, now: afterRebuild.addingTimeInterval(120), record: persisted))
+      .currentStep == "finish")
+  rebuilt.builds = Array(rebuilt.builds.prefix(1))
+  rebuilt.lastBuild = rebuilt.builds[0].build
+  rebuilt.lastBuild?.finishedAt = "2026-10-07T05:07:30.000Z"
+  rebuilt.builds[0].build = rebuilt.lastBuild!
+  let result = relaunched.update(TutorialInput(environment: rebuilt, now: afterRebuild.addingTimeInterval(120)))
+  #expect(result.currentStep == "rebuild")
+  #expect(result.record.startedAt == parseTimestamp("2026-10-07T05:07:00.000Z"))
+  #expect(!result.record.done.contains("refresh"))
 }
 
 @Test func tutorialOptionalStepsAcceptExistingPairingAndOnlyFreshOffload() throws {
@@ -348,4 +424,72 @@ private func log(
   let result = relaunched.update(TutorialInput(environment: env, now: afterRebuild, record: completed.record))
   #expect(state("machine", in: result).state == .done)
   #expect(state("machine", in: result).ticks.first { $0.id == "offloaded" }?.done == false)
+}
+
+@Test func tutorialPanelOpenedMidFirstBuildUsesBuildStart() throws {
+  var env = try environment("01-started")
+  env.build = try JSONDecoder().decode(
+    Build.self,
+    from: Data(
+      """
+      {"platform":"ios","slot":"default","state":"running","phase":"compile",
+      "startedAt":"2026-10-07T04:57:09.000Z","phaseStartedAt":"2026-10-07T04:57:09.000Z","basis":0}
+      """.utf8))
+  var progress = TutorialProgress()
+  let opened = progress.update(TutorialInput(environment: env, now: tourStart.addingTimeInterval(120)))
+  #expect(opened.record.startedAt == env.build?.startedDate)
+  #expect(opened.currentStep == "build")
+  let result = progress.update(TutorialInput(environment: try environment("02-after-ios1"), now: afterBuild))
+  #expect(result.currentStep == "rebuild")
+}
+
+@Test func tutorialSelectUsesNewestBuildAndDeterministicPathForLiveTours() throws {
+  var first = try fixture("02-after-ios1").environments[0]
+  var second = try fixture("03-after-rebuild").environments[0]
+  second.path = "/Users/example/newer-tour"
+  #expect(TutorialEnvironment.select([first, second], trackedPath: nil)?.path == second.path)
+  #expect(TutorialEnvironment.select([second, first], trackedPath: nil)?.path == second.path)
+  first.builds = nil
+  first.lastBuilds = nil
+  second.builds = nil
+  second.lastBuilds = nil
+  let selected = TutorialEnvironment.select([first, second], trackedPath: nil)?.path
+  #expect(selected == TutorialEnvironment.select([second, first], trackedPath: nil)?.path)
+}
+
+@Test(arguments: ["build", "logs", "refresh"])
+func tutorialArchiveDisabledRelaunchDoesNotCompleteBeforeFinish(step: String) {
+  var progress = TutorialProgress()
+  let result = progress.update(
+    TutorialInput(environment: nil, archiveEnabled: false, now: afterRebuild, record: saved(at: step)))
+  #expect(result.currentStep == step)
+  #expect(!result.isComplete)
+}
+
+@Test func tutorialDuplicatedDeviceAndMetroErrorRecordsDoNotProveAgentReplay() throws {
+  let action = afterRebuild.addingTimeInterval(1)
+  let logs = try [
+    log("open", at: afterRebuild, source: "agent", event: "agent_action", device: "tutorial-simulator"),
+    log("error-button", at: action, level: "error"),
+    log("error-button", at: action.addingTimeInterval(0.1), source: "metro", level: "error"),
+    log("close", at: action.addingTimeInterval(1), source: "agent", event: "agent_action", device: "tutorial-simulator"),
+  ]
+  var progress = TutorialProgress()
+  let result = progress.update(
+    TutorialInput(
+      environment: try environment(), logRecords: logs, now: afterRebuild.addingTimeInterval(3),
+      record: saved(at: "agent", since: afterRebuild)))
+  #expect(state("agent", in: result).ticks.first { $0.id == "agent-replay" }?.done == false)
+}
+
+@MainActor @Test func tutorialViewerEventHistoryRetainsOnlyLatest64Events() {
+  let viewer = TutorialViewerEvents()
+  viewer.opened("old-tour")
+  for _ in 0..<64 { viewer.input("new-tour") }
+  #expect(viewer.events == Array(repeating: .input("new-tour"), count: 64))
+  viewer.opened("latest-tour")
+  #expect(viewer.events.last == .opened("latest-tour"))
+  #expect(viewer.events.count == 64)
+  viewer.reset()
+  #expect(viewer.events.isEmpty)
 }

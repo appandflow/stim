@@ -7,7 +7,9 @@ public final class TutorialViewerEvents: ObservableObject {
 
   public init() {}
 
-  public func opened(_ udid: String) { events.append(.opened(udid)) }
-  public func input(_ udid: String) { events.append(.input(udid)) }
+  public func opened(_ udid: String) { append(.opened(udid)) }
+  public func input(_ udid: String) { append(.input(udid)) }
+
+  private func append(_ event: TutorialViewerEvent) { events = Array((events + [event]).suffix(64)) }
   public func reset() { events.removeAll() }
 }
