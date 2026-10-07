@@ -18,8 +18,8 @@ export type TimelinePiece =
 /**
  * The scrubber's track, one scale for every recorded span and unrecorded gap: a millisecond takes the same width
  * anywhere, except in a gap longer than `LONG_GAP_MS`, which takes `LONG_GAP_MS` and is `collapsed`. The track's
- * length is rounded up to a whole `WINDOW_STEP_MS`, with the spare room before the oldest footage, so its right edge
- * is the newest footage. `from` and `to` are a piece's place on the track, 0 to 1.
+ * length, while footage grows, is rounded up to a whole `WINDOW_STEP_MS`, with the spare room before the oldest
+ * footage, so its right edge is the newest footage; with `fit` it is exactly the footage. `from` and `to` are a piece's place on the track, 0 to 1.
  */
 export interface Timeline {
   start: number;

@@ -321,7 +321,7 @@ struct ReplayBar: View {
 
   private func captionView(_ caption: Caption) -> some View {
     HStack(spacing: Space.sm) {
-      Text(caption.time).foregroundStyle(Palette.text).monospacedDigit()
+      Text(caption.time).foregroundStyle(caption.ago == nil ? Palette.secondary : Palette.text).monospacedDigit()
       if let ago = caption.ago { Text(ago).foregroundStyle(Palette.tertiary) }
       if caption.end { Pill(tone: .neutral, size: .small) { Text("End") } }
     }

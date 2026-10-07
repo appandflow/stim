@@ -2,8 +2,8 @@ import Foundation
 
 /// The scrubber's track, one scale for every recorded span and unrecorded gap, as the phone's `buildTimeline` lays it
 /// out: a millisecond takes the same width anywhere, except in a gap longer than `longGapMs`, which takes `longGapMs`
-/// and is `collapsed`. The track's `length` is rounded up to a whole `windowStepMs`, with the spare room before the
-/// oldest footage, so its right edge is the newest footage. `from` and `to` are a piece's place on the track, 0 to 1.
+/// and is `collapsed`. While footage grows, the track's `length` is rounded up to a whole `windowStepMs`, with the spare
+/// room before the oldest footage, so its right edge is the newest footage; with `fit` it is exactly the footage. `from` and `to` are a piece's place on the track, 0 to 1.
 /// Every time is a Mac capture time from `replay.range`.
 public struct ReplayTimeline: Equatable, Sendable {
   public struct Piece: Equatable, Sendable {
