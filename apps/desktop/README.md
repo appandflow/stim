@@ -980,6 +980,13 @@ host simulator or emulator sessions here. **Review...** opens the request;
 sessions run with `stim ios|android --remote <machine>` or `--remote auto`;
 an approval does not start a device.
 
+**Hosted here**, directly below those approvals, lists the simulators, emulators
+and apps approved Macs run on this Mac, with the client, device, app, state and
+session age. **Stop** asks for confirmation, then ends that session and deletes
+or parks its device. Parked sessions remain listed without a Stop button. The
+list refreshes every five seconds and stays hidden when the local server does
+not support it.
+
 When Tailscale is not running, start it on this Mac. Pairing then works only on
 this Mac, such as in an iOS Simulator, until the private connection is ready.
 

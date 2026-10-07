@@ -445,6 +445,13 @@ chosen.
 
 See [Phone app](./phone-app.md) for installation, pairing, notifications and access.
 
+On the hosting Mac, **Stim > Settings > Phones > Hosted here**, below **Device
+hosting approvals**, lists the simulators, emulators and apps approved Macs run
+here, with their client, device, app, state and session age. **Stop** asks for
+confirmation, then ends the session and deletes or parks its device on this Mac.
+Parked sessions remain listed without a Stop button. The list refreshes every
+five seconds and stays hidden when an older local server does not support it.
+
 The phone validates server replies and live events before displaying them.
 Malformed known data triggers a reconnect with a connection error; message
 contents are not logged. Older compatible payloads and extra fields remain

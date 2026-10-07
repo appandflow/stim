@@ -621,6 +621,12 @@ unless every chosen capability already has a matching approval. Desktop reuse
 requires an existing tailnet route. Ctrl-C or SIGTERM completes the journal,
 releases the setup claim and exits 1; a typed N also exits 1. Hosting grants
 include no read, control or build capability.
+On the hosting Mac, Stim Desktop > Settings > Phones > Hosted here lists the
+simulators, emulators and apps approved Macs run there, below Device hosting
+approvals. Stop asks for confirmation, ends the session and deletes or parks
+its device on that Mac. Parked sessions remain listed without Stop. The list
+refreshes every five seconds and stays hidden when the local server does not
+support it.
 $STIM_HOME/device-host-machines.json stores a private token and pinned tailnet
 node. Doctor never prints the token; it reports each machine under deviceHosts
 in JSON. Desktop uses placement set by config or agents, such as
