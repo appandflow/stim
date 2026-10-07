@@ -50,6 +50,15 @@ iOS simulator, use the machine name as the remote target:
 
 The host's own owned devices count toward `concurrency.maxDevices`.
 
+On the host, `stim-server devices` shows **Hosted here** rows with the client,
+platform, device, installed app, state and time; `--json` includes
+`hostedSessions`. Parked and unresolved sessions remain visible, while plain
+stopped sessions are omitted. The person on that Mac can list and stop any
+client's session through loopback `device-host.sessions` and
+`device-host.sessions.stop` (`{ session }`). Both require an authenticated local
+Desktop control connection. Stop uses the existing cleanup path; remote
+clients keep their own-session-only `device-host.stop` access.
+
 The host boots its owned simulator headless. Debug keeps Metro on this Mac
 and connects it through a private tailnet bridge; no `stim start --remote` is
 needed. `--device-type`, `--runtime` and `--slot` select the hosted simulator.

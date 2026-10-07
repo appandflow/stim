@@ -5,6 +5,8 @@ import type {
   HostedDeviceOfferRequest,
   HostedDeviceOffer,
   HostedDeviceSession,
+  HostedDevicePhase,
+  HostedDevicePlatform,
   HostedAppOffer,
   HostedAppDelivery,
   HostedAppLaunch,
@@ -147,6 +149,8 @@ export const METHODS = [
   'server.update.chunk',
   'machines.update.start',
   'machines.update.status',
+  'device-host.sessions',
+  'device-host.sessions.stop',
 ] as const;
 
 /**
@@ -1196,7 +1200,21 @@ export interface MachineUpdateStatus {
   upload: { sent: number; total: number; error: string | null } | null;
 }
 
+export interface HostedSessionRow {
+  id: string;
+  client: { id: string; name: string };
+  platform: HostedDevicePlatform;
+  device: string | null;
+  app: string | null;
+  state: HostedDevicePhase;
+  parked: boolean;
+  since: string;
+  workspace: string;
+}
+
 export interface Methods {
+  'device-host.sessions': { params?: Record<string, never>; result: { sessions: HostedSessionRow[] } };
+  'device-host.sessions.stop': { params: { session: string }; result: { id: string; state: 'stopping' | 'stopped' } };
   'machines.update.start': { params: { machine: string }; result: ServerUpdateProgress };
   'machines.update.status': { params: { machine: string }; result: MachineUpdateStatus };
   'server.update.status': { params?: Record<string, never>; result: ServerUpdateStatus };

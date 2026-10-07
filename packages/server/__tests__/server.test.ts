@@ -1185,6 +1185,117 @@ describe('hosted device sessions', () => {
       await expect(fetch(`http://127.0.0.1:${metroPort}/status`)).rejects.toThrow('fetch failed');
     },
   );
+
+  test.skipIf(!fakeTailscale)(
+    "only local Desktop control can list and stop another client's hosted sessions",
+    async () => {
+      const port = await start();
+      writeFileSync(
+        join(root, 'device-host-worker.mjs'),
+        `
+      import { writeFileSync } from 'node:fs';
+      import { join } from 'node:path';
+      const chunks=[]; for await (const chunk of process.stdin) chunks.push(chunk);
+      const input=JSON.parse(Buffer.concat(chunks));
+      const device={udid:'12345678-1234-1234-1234-123456789abc',name:'stim-hosted',deviceTypeId:'iphone',runtimeId:'ios',deviceType:'iPhone',runtime:'27.1',architecture:'arm64'};
+      writeFileSync(join(process.env.STIM_HOME,'hosted-device.json'),JSON.stringify(device));
+      writeFileSync(join(process.env.STIM_HOME,'created-devices.json'),JSON.stringify({version:1,ios:input.mode==='prepare'?[device.udid]:[],android:[],web:[]}));
+      process.stdout.write(JSON.stringify({state:input.mode==='prepare'?'ready':'stopped',device}));
+    `,
+      );
+      const pending = requestDeviceHostAccess('Client', {
+        kind: 'tailnet',
+        nodeId: 'nPhoneA',
+        nodeName: 'phone',
+        user: 'u',
+      });
+      if (!pending.ok) throw new Error(pending.reason);
+      grantDevice(pending.device.id, ['device-host']);
+      const approved = await connect(port, '100.64.0.2');
+      await approved.request('hello', { protocol: 1, client: CLIENT, auth: { deviceToken: pending.deviceToken } });
+      const params = { workspace: '/client/app', slot: 'default', platform: 'ios', attempt: 'person-stop' };
+      const reserved = await approved.request('device-host.reserve', params);
+      if (!('result' in reserved)) throw new Error(JSON.stringify(reserved));
+      const id = (reserved.result as { id: string }).id;
+      await vi.waitFor(() => expect(readHostedSessions()[0]?.state).toBe('ready'));
+      const local = await authed(port, true);
+      expect(await local.request('device-host.sessions')).toMatchObject({
+        result: {
+          sessions: [
+            {
+              id,
+              client: { id: pending.device.id, name: 'Client' },
+              platform: 'ios',
+              device: 'iPhone (27.1)',
+              app: null,
+              state: 'ready',
+              parked: false,
+              workspace: '/client/app',
+            },
+          ],
+        },
+      });
+      expect(await local.request('device-host.sessions', {})).toHaveProperty('result.sessions.0.id', id);
+      expect(await local.request('device-host.sessions', { session: id })).toHaveProperty('error.code', 'bad-request');
+      expect(await local.request('device-host.sessions.stop', {})).toHaveProperty('error.code', 'bad-request');
+      expect(await local.request('device-host.sessions.stop', { session: id, extra: true })).toHaveProperty(
+        'error.code',
+        'bad-request',
+      );
+      expect(await local.request('device-host.sessions.stop', { session: 'missing' })).toHaveProperty(
+        'error.code',
+        'unknown-session',
+      );
+      const reader = await authed(port);
+      const { token } = await pair(port, '100.64.0.2', true);
+      const phone = await connect(port, '100.64.0.2');
+      await phone.request('hello', { protocol: 1, client: CLIENT, auth: { deviceToken: token } });
+      for (const client of [approved, reader, phone]) {
+        for (const [method, requestParams] of [
+          ['device-host.sessions', undefined],
+          ['device-host.sessions.stop', { session: id }],
+        ] as const) {
+          expect(await client.request(method, requestParams)).toMatchObject({
+            error: { code: 'forbidden', message: expect.stringContaining('local Desktop control') },
+          });
+        }
+      }
+      expect(readHostedSessions()[0]?.state).toBe('ready');
+      const other = requestDeviceHostAccess('Other client', {
+        kind: 'tailnet',
+        nodeId: 'nPhoneB',
+        nodeName: 'other',
+        user: 'u',
+      });
+      if (!other.ok) throw new Error(other.reason);
+      grantDevice(other.device.id, ['device-host']);
+      const foreign = await connect(port, '100.64.0.3');
+      await foreign.request('hello', { protocol: 1, client: CLIENT, auth: { deviceToken: other.deviceToken } });
+      expect(await foreign.request('device-host.stop', { session: id })).toHaveProperty(
+        'error.code',
+        'unknown-session',
+      );
+      expect(await local.request('device-host.sessions.stop', { session: id })).toMatchObject({
+        result: { id, state: 'stopping' },
+      });
+      await vi.waitFor(() => expect(readHostedSessions()[0]?.state).toBe('stopped'));
+      expect(await local.request('device-host.sessions.stop', { session: id })).toMatchObject({
+        result: { id, state: 'stopped' },
+      });
+      expect(await local.request('device-host.sessions')).toHaveProperty('result.sessions', []);
+      const again = await approved.request('device-host.reserve', { ...params, attempt: 'client-stop' });
+      if (!('result' in again)) throw new Error(JSON.stringify(again));
+      const againId = (again.result as { id: string }).id;
+      await vi.waitFor(() => expect(readHostedSessions().find((record) => record.id === againId)?.state).toBe('ready'));
+      expect(await approved.request('device-host.stop', { session: againId })).toHaveProperty(
+        'result.state',
+        'stopping',
+      );
+      await vi.waitFor(() =>
+        expect(readHostedSessions().find((record) => record.id === againId)?.state).toBe('stopped'),
+      );
+    },
+  );
 });
 
 test('build.start rejects escaping or oversized macOS resources before probing the toolchain', async () => {

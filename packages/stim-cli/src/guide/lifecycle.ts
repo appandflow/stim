@@ -454,6 +454,22 @@ independent and selects a compatible build worker for a Debug cache miss.
 
 The host's own owned devices count toward concurrency.maxDevices.
 
+The host's person sees Hosted here rows in stim-server devices; --json adds
+hostedSessions beside devices. Rows show client, platform, device, installed
+app, state and since, newest first. Plain stopped sessions are omitted;
+parked and unknown sessions stay visible, with parked rows using the parking
+time. An unowned active session reads unknown on this server.
+Loopback device-host.sessions takes no params or {} and returns { sessions };
+rows carry id, client { id, name }, platform, device and app (nullable), state,
+parked, since (ISO), and workspace. device-host.sessions.stop takes { session }
+and returns { id, state: stopping | stopped }, stopping any client's session
+through the existing stop path. Both require an authenticated local Desktop
+control connection; read-only local connections, phones and tailnet clients
+get forbidden. An absent session id gets unknown-session; stopped is
+idempotent. The approved-client device-host.stop still stops only its own
+sessions.
+
+
 Stim builds or fetches before reserving, records the session immediately, then
 uploads the app on every run. Debug keeps Metro here; its supervisor owns a
 private gateway bound to this Mac's Tailscale address, pinned to the host peer

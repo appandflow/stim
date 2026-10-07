@@ -398,6 +398,8 @@ export type PhoneMethods = Omit<
   | (typeof Wire.SERVER_UPDATE_METHODS)[number]
   | 'machines.update.start'
   | 'machines.update.status'
+  | 'device-host.sessions'
+  | 'device-host.sessions.stop'
   | 'route.setup'
   | 'hello'
   | 'logs.query'
