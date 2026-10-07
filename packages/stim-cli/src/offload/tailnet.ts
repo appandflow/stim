@@ -26,7 +26,7 @@ export function isLapsed(credential: PendingCredential): boolean {
   return credential.state === 'pending' && !!credential.expiresAt && Date.parse(credential.expiresAt) <= Date.now();
 }
 
-export function approvedCredential<T extends { expiresAt?: string }>(
+export function markApproved<T extends { expiresAt?: string }>(
   credential: T,
 ): Omit<T, 'expiresAt'> & { state: 'approved' } {
   const { expiresAt: _expiresAt, ...rest } = credential;
@@ -35,6 +35,10 @@ export function approvedCredential<T extends { expiresAt?: string }>(
 
 export function pendingReport(credential: PendingCredential): { state: 'pending'; expiresAt?: string } {
   return { state: 'pending', ...(credential.expiresAt ? { expiresAt: credential.expiresAt } : {}) };
+}
+
+export function lapsedLine(machine: string, credential: PendingCredential): string {
+  return `${machine} did not approve this Mac before the request lapsed at ${credential.expiresAt}.`;
 }
 
 export function requestedLine(credential: PendingCredential): string {

@@ -17,8 +17,9 @@ import { readAccessTicket, readHostPermissions } from './access-ticket.ts';
 import {
   endpoint,
   findPeer,
-  approvedCredential,
+  markApproved,
   isLapsed,
+  lapsedLine,
   pendingReport,
   requestedLine,
   parseMachine,
@@ -280,7 +281,7 @@ async function inspectMachine(
     const host = permissions ? { host: permissions } : {};
     if (credential.state !== 'approved') {
       updateCredentials((credentials) =>
-        credentials.map((each) => (each.machine === entry ? approvedCredential(each) : each)),
+        credentials.map((each) => (each.machine === entry ? markApproved(each) : each)),
       );
     }
     if (!check) return { report: { ...paired, state: 'approved', ...host }, finding: null };
@@ -320,7 +321,7 @@ async function inspectMachine(
         report: { ...paired, state: 'lapsed' },
         finding: note(
           `Build request to ${entry} lapsed`,
-          `${entry} did not approve this Mac before the request lapsed at ${credential.expiresAt}.`,
+          lapsedLine(entry, credential),
           'Run `stim doctor --fix` to ask again.',
         ),
       };

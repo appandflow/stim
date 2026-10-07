@@ -18,8 +18,9 @@ import { readAccessTicket, readHostPermissions } from '../offload/access-ticket.
 import {
   endpoint,
   findPeer,
-  approvedCredential,
+  markApproved,
   isLapsed,
+  lapsedLine,
   pendingReport,
   requestedLine,
   parseMachine,
@@ -300,7 +301,7 @@ export async function inspectDeviceHostMachines(
           reply.result.capabilities.includes('device-host')
         ) {
           if (credential.state !== 'approved') {
-            credentials = credentials.map((each) => (each.machine === machine ? approvedCredential(each) : each));
+            credentials = credentials.map((each) => (each.machine === machine ? markApproved(each) : each));
             store(credentials);
           }
           const host = readHostPermissions(reply.result.host);
@@ -352,7 +353,7 @@ export async function inspectDeviceHostMachines(
                 ? `Hosting request to ${machine} lapsed`
                 : `Hosting machine ${machine} ${revoked ? 'no longer accepts this Mac' : 'did not confirm hosting access'}`,
               lapsed
-                ? `${machine} did not approve this Mac before the request lapsed at ${credential.expiresAt}. The saved token and pinned node are preserved.`
+                ? `${lapsedLine(machine, credential)} The saved token and pinned node are preserved.`
                 : 'The saved token and pinned node are preserved.',
               revoked
                 ? 'Run `stim doctor --fix` to ask again.'
