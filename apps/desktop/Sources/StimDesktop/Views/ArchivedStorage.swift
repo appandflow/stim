@@ -7,13 +7,14 @@ struct ArchivedRow: View {
   var subtitle: String? = nil
 
   var showsGit = true
+  var isHidden = false
 
   var body: some View {
     let page = ArchivedPage(archive: archive, now: now)
     WorkspaceRowContent(
       env: page.workspace, now: now,
       place: [archive.names.inCheckout.map { ($0 as NSString).lastPathComponent }, subtitle].compactMap { $0 },
-      showsGit: showsGit, openLogs: { _ in }, archive: page)
+      showsGit: showsGit, openLogs: { _ in }, archive: page, isHidden: isHidden)
   }
 }
 

@@ -325,4 +325,36 @@ struct DiscoveryTests {
     store.lastShown = now
     #expect(DiscoveryStore(defaults: defaults).lastShown == now)
   }
+
+  @Test func useAutoAppliesToTheRefusedPlatformAndBothWhenUnknown() {
+    #expect(Discovery.runOnAutoPlatforms("ios") == ["ios"])
+    #expect(Discovery.runOnAutoPlatforms("android") == ["android"])
+    #expect(Discovery.runOnAutoPlatforms(nil) == ["ios", "android"])
+    #expect(Discovery.runOnAutoPlatforms("macos") == ["ios", "android"])
+  }
+
+  @Test func migrationShowsTheDeviceLimitPromptOnceMoreAndKeepsSnoozeAndNever() throws {
+    func migrated(_ state: DiscoveryState) throws -> DiscoveryState? {
+      let suite = "DiscoveryTests.\(UUID())"
+      let defaults = try #require(UserDefaults(suiteName: suite))
+      defer { defaults.removePersistentDomain(forName: suite) }
+      let store = DiscoveryStore(defaults: defaults)
+      store.set(state, for: .capHit)
+      store.migrate()
+      return store.state(.capHit)
+    }
+    let suite = "DiscoveryTests.\(UUID())"
+    let defaults = try #require(UserDefaults(suiteName: suite))
+    defer { defaults.removePersistentDomain(forName: suite) }
+    let store = DiscoveryStore(defaults: defaults)
+    store.set(.shown, for: .capHit)
+    store.migrate()
+    #expect(store.state(.capHit) == nil)
+    store.set(.shown, for: .capHit)
+    DiscoveryStore(defaults: defaults).migrate()
+    #expect(store.state(.capHit) == .shown)
+    let snoozed = Discovery.snooze(now: now)
+    #expect(try migrated(.never) == .never)
+    #expect(try migrated(snoozed) == snoozed)
+  }
 }

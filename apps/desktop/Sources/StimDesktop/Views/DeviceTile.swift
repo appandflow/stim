@@ -43,7 +43,7 @@ struct DeviceTile: View {
   @Environment(\.colorScheme) private var colorScheme
   @State private var pixelSizes: [UInt32: CGSize] = [:]
   @State private var frameSizes: [UInt32: CGSize] = [:]
-  @State private var showsDeviceFrame = false
+  @State private var frameRevision = 0
   @State private var screenIDs: [UInt32] = [1]
   @State private var lit: [UInt32: Bool] = [:]
   @State private var folding = false
@@ -52,6 +52,9 @@ struct DeviceTile: View {
   @State private var hingeEditing = false
   @State private var showsHingeAngle = false
   @State private var showsSimulatorOptions = false
+  @State private var windowState = ClipboardSync.WindowState.hidden
+  @State private var clipboardSync = ClipboardSync()
+  @AppStorage(AppPreferences.Key.syncsClipboard) private var syncsClipboard = true
   @State private var hingeAngle = 180.0
   @State private var postureTarget: DuoPosture?
   @State private var rotateFailed = false
@@ -85,7 +88,6 @@ struct DeviceTile: View {
     .onDisappear { isOnscreen = false }
     .onChange(of: device.id) { _, _ in
       frameSizes = [:]
-      showsDeviceFrame = false
     }
   }
 
@@ -116,8 +118,8 @@ struct DeviceTile: View {
         }
         if interactive, Self.hasButtons(device) {
           buttonBar
-        } else if canShowFrame {
-          controlGroup { frameButton }
+        } else if frameOption != nil {
+          controlGroup { optionsButton }
             .onGeometryChange(for: CGFloat.self, of: { $0.size.height }, action: { controlsHeight = $0 })
         }
       }
@@ -157,11 +159,19 @@ struct DeviceTile: View {
     .onChange(of: clipboardTarget) { _, _ in
       clipboardRequest = nil
       clipboardError = nil
+      clipboardSync = ClipboardSync()
+    }
+    .onChange(of: syncsClipboard) { _, _ in clipboardSync = ClipboardSync() }
+    .background(WindowStateReader { windowState = $0 })
+    .task(id: clipboardSyncID) {
+      guard let id = clipboardSyncID else { return }
+      await syncClipboard(id)
     }
     .task(id: clipboardRequest) {
       guard let request = clipboardRequest, request.target == clipboardTarget else { return }
       defer { if clipboardRequest == request { clipboardRequest = nil } }
-      if let text = request.text {
+      do {
+        let text = request.text
         let pasted: Bool
         switch device {
         case .ios: pasted = await simulatorButtons.paste(text)
@@ -170,20 +180,6 @@ struct DeviceTile: View {
         }
         guard !Task.isCancelled, request.target == clipboardTarget else { return }
         if !pasted { clipboardError = "Could not paste into the device. Check that it is connected and a text field is focused." }
-      } else {
-        let text: String?
-        switch device {
-        case .ios: text = await simulatorButtons.clipboard()
-        case .android: text = await emulatorButtons.clipboard()
-        default: return
-        }
-        guard !Task.isCancelled, request.target == clipboardTarget else { return }
-        guard let text else {
-          clipboardError = "Could not read the device clipboard. Check that the device is connected."
-          return
-        }
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(text, forType: .string)
       }
     }
     .alert("Clipboard transfer", isPresented: Binding(get: { clipboardError != nil }, set: { if !$0 { clipboardError = nil } })) {
@@ -310,13 +306,7 @@ struct DeviceTile: View {
             .help("This remote session is billed while it runs.")
         }
       }
-      if let machine = device.hostedMachine {
-        Label("on \(machineName(machine))", systemImage: "desktopcomputer")
-          .font(.stim(.caption)).foregroundStyle(Palette.tertiary)
-      }
-      if let reason = device.placementReason {
-        Text(reason).font(.stim(.caption)).foregroundStyle(Palette.tertiary).help(reason)
-      }
+      DevicePlacementView(device: device)
       if let project { Text(project).font(.stim(.footnote)).foregroundStyle(Palette.secondary) }
       FlowLayout(spacing: Space.sm) {
         TimelineView(.periodic(from: .now, by: 30)) { context in
@@ -359,14 +349,60 @@ struct DeviceTile: View {
   private var canShowFrame: Bool { viewer && !replaying && frameSizes[1] != nil }
   private var framed: Bool { canShowFrame && showsDeviceFrame }
 
-  private var frameButton: some View {
-    Button(showsDeviceFrame ? "Hide device frame" : "Show device frame", systemImage: "iphone.gen3") {
-      showsDeviceFrame.toggle()
+  private var showsDeviceFrame: Bool {
+    _ = frameRevision
+    return DeviceFramePreference.isOn(device.frameType)
+  }
+
+  private var frameOption: DeviceFrameOption? {
+    guard viewer, !replaying, device.isRunning else { return nil }
+    switch device {
+    case .ios(_, let sim) where !sim.physical && device.localSimulatorUDID != nil: break
+    case .android(_, let avd) where avd.owned && !avd.physical && device.localEmulatorSerial != nil: break
+    default: return nil
     }
-    .labelStyle(.iconOnly)
-    .buttonStyle(DeviceControlButtonStyle(active: showsDeviceFrame))
-    .help(showsDeviceFrame ? "Hide device frame" : "Show installed device frame")
-    .accessibilityAddTraits(showsDeviceFrame ? .isSelected : [])
+    return DeviceFrameOption(
+      isOn: Binding(
+        get: { showsDeviceFrame },
+        set: {
+          DeviceFramePreference.set($0, device.frameType)
+          frameRevision += 1
+        }),
+      unavailableReason: frameSizes[1] != nil ? nil : frameUnavailableReason)
+  }
+
+  private var frameUnavailableReason: String {
+    if device.formFactor == .dual {
+      if let reason = DuoModelAsset.unavailableReason { return reason }
+      if observedHingeAngle == nil {
+        return "The hinge angle of this simulator cannot be read, so the Duo frame cannot be posed."
+      }
+    }
+    return "No installed device frame matches this device."
+  }
+
+  private var optionsButton: some View {
+    Button("Simulator options", systemImage: "slider.horizontal.3") { showsSimulatorOptions = true }
+      .labelStyle(.iconOnly)
+      .buttonStyle(DeviceControlButtonStyle())
+      .help("Display, appearance, accessibility and clipboard settings")
+      .popover(isPresented: $showsSimulatorOptions) {
+        if let udid = simulatorOptionsUDID {
+          SimulatorOptionsView(
+            udid: udid, canControl: simulatorOptionsUDID == udid, clipboard: clipboardOptions(dismiss: $showsSimulatorOptions),
+            frame: frameOption
+          )
+          .id(udid)
+        } else {
+          EmulatorOptionsView(
+            title: optionsTitle, clipboard: clipboardOptions(dismiss: $showsSimulatorOptions), frame: frameOption)
+        }
+      }
+  }
+
+  private var optionsTitle: String {
+    if case .android = device { return "Emulator options" }
+    return "Simulator options"
   }
 
   private var buttonBar: some View {
@@ -389,28 +425,6 @@ struct DeviceTile: View {
         rotateButton(clockwise: false)
         rotateButton(clockwise: true)
       }
-      if canShowFrame { controlGroup { frameButton } }
-      if let target = clipboardTarget {
-        controlGroup {
-          Button("Paste into device", systemImage: "doc.on.clipboard") {
-            guard let text = NSPasteboard.general.string(forType: .string), !text.isEmpty else {
-              clipboardError = "The Mac clipboard has no text to paste."
-              return
-            }
-            clipboardRequest = ClipboardRequest(target: target, text: text)
-          }
-          .labelStyle(.iconOnly)
-          .buttonStyle(DeviceControlButtonStyle())
-          .help("Paste Mac clipboard text into the focused device field")
-          Button("Copy device clipboard", systemImage: "doc.on.doc") {
-            clipboardRequest = ClipboardRequest(target: target, text: nil)
-          }
-          .labelStyle(.iconOnly)
-          .buttonStyle(DeviceControlButtonStyle())
-          .help("Copy device clipboard text to this Mac")
-        }
-        .disabled(clipboardRequest != nil)
-      }
       if device.formFactor == .dual, screenIDs.count > 1, case .ios(_, let sim) = device, device.localSimulatorUDID != nil {
         if hingeAvailable {
           controlGroup {
@@ -424,18 +438,7 @@ struct DeviceTile: View {
       if let emulatorPosture, case .android = device, let serial = device.localEmulatorSerial {
         controlGroup { postureMenu(serial: serial, current: emulatorPosture) }
       }
-      if let udid = simulatorOptionsUDID {
-        controlGroup {
-          Button("Simulator options", systemImage: "slider.horizontal.3") { showsSimulatorOptions = true }
-            .labelStyle(.iconOnly)
-            .buttonStyle(DeviceControlButtonStyle())
-            .help("Appearance and accessibility settings for this simulator")
-            .popover(isPresented: $showsSimulatorOptions) {
-              SimulatorOptionsView(udid: udid, canControl: simulatorOptionsUDID == udid)
-                .id(udid)
-            }
-        }
-      }
+      if simulatorOptionsUDID != nil || frameOption != nil { controlGroup { optionsButton } }
     }
     .frame(width: maxWidth)
     .onGeometryChange(for: CGFloat.self, of: { $0.size.height }, action: { controlsHeight = $0 })
@@ -644,6 +647,112 @@ struct DeviceTile: View {
     return device.localSimulatorUDID
   }
 
+  private func clipboardOptions(dismiss: Binding<Bool>) -> ClipboardOptionsView? {
+    guard let target = clipboardTarget else { return nil }
+    return ClipboardOptionsView(
+      paste: {
+        dismiss.wrappedValue = false
+        guard let text = NSPasteboard.general.string(forType: .string), !text.isEmpty else {
+          clipboardError = "The Mac clipboard has no text to paste."
+          return
+        }
+        clipboardRequest = ClipboardRequest(target: target, text: text)
+      },
+      copy: {
+        let copied = await copyDeviceClipboard(target: target)
+        if !copied { dismiss.wrappedValue = false }
+        return copied
+      })
+  }
+
+  private func copyDeviceClipboard(target: String) async -> Bool {
+    let text: String?
+    switch device {
+    case .ios: text = await simulatorButtons.clipboard()
+    case .android: text = await emulatorButtons.clipboard()
+    default: return false
+    }
+    guard target == clipboardTarget else { return false }
+    guard let text else {
+      clipboardError = "Could not read the device clipboard. Check that the device is connected."
+      return false
+    }
+    NSPasteboard.general.clearContents()
+    NSPasteboard.general.setString(text, forType: .string)
+    return true
+  }
+
+  private var clipboardSyncID: ClipboardSyncID? {
+    guard let target = clipboardTarget else { return nil }
+    switch ClipboardSync.activity(enabled: syncsClipboard, hasTarget: true, window: windowState) {
+    case .sync: return ClipboardSyncID(target: target, flush: false)
+    case .flush: return ClipboardSyncID(target: target, flush: true)
+    case .none: return nil
+    }
+  }
+
+  private func copyToDevice(_ text: String) async -> Bool {
+    switch device {
+    case .ios: return await simulatorButtons.setClipboard(text)
+    case .android: return await emulatorButtons.setClipboard(text)
+    default: return false
+    }
+  }
+
+  private func readDeviceClipboard() async -> String? {
+    switch device {
+    case .ios: return await simulatorButtons.clipboard()
+    case .android: return await emulatorButtons.clipboard()
+    default: return nil
+    }
+  }
+
+  private var macChangedSinceLastLook: Bool {
+    clipboardSync.macChangeCount.map { $0 != NSPasteboard.general.changeCount } ?? false
+  }
+
+  private func pullFromDevice(_ id: ClipboardSyncID) async {
+    let text = await readDeviceClipboard()
+    guard !Task.isCancelled, id.target == clipboardTarget, !macChangedSinceLastLook,
+      let text = clipboardSync.textForMac(deviceText: text)
+    else { return }
+    NSPasteboard.general.clearContents()
+    NSPasteboard.general.setString(text, forType: .string)
+    NSPasteboard.general.setData(Data(), forType: NSPasteboard.PasteboardType(ClipboardSync.transientType))
+    clipboardSync.didCopyToMac(text, changeCount: NSPasteboard.general.changeCount)
+  }
+
+  /// While the window is key: the Mac pasteboard is checked every second and the device's every other second. A window
+  /// that just stopped being key gets one last read of the device, so text copied there reaches the Mac.
+  private func syncClipboard(_ id: ClipboardSyncID) async {
+    if id.flush {
+      await pullFromDevice(id)
+      return
+    }
+    var tick = 0
+    var becameKey = true
+    while !Task.isCancelled, id.target == clipboardTarget {
+      let board = NSPasteboard.general
+      var pushed = false
+      if becameKey || board.changeCount != clipboardSync.macChangeCount {
+        let types = (board.types ?? []).map(\.rawValue)
+        let snapshot = PasteboardSnapshot(
+          changeCount: board.changeCount, types: types,
+          text: types.contains(NSPasteboard.PasteboardType.string.rawValue) ? board.string(forType: .string) : nil)
+        if let text = clipboardSync.textForDevice(snapshot, becameKey: becameKey) {
+          if await copyToDevice(text), id.target == clipboardTarget {
+            clipboardSync.didCopyToDevice(text)
+            pushed = true
+          }
+        }
+      }
+      if !pushed, becameKey || tick % 2 == 0 { await pullFromDevice(id) }
+      becameKey = false
+      tick += 1
+      try? await Task.sleep(for: .seconds(1))
+    }
+  }
+
   private var clipboardTarget: String? {
     guard viewer, interactive, !replaying, device.isRunning else { return nil }
     switch device {
@@ -764,7 +873,7 @@ struct DeviceTile: View {
       return height + screenPadding * 2
     }
     let availableHeight =
-      screenHeight - (viewer && (interactive && Self.hasButtons(device) || canShowFrame) ? controlsHeight + Space.lg : 0)
+      screenHeight - (viewer && (interactive && Self.hasButtons(device) || frameOption != nil) ? controlsHeight + Space.lg : 0)
     let screenHeight = min(availableHeight, maxCardHeight.map { max(0, $0 - headerHeight - 1) } ?? availableHeight)
     guard let maxWidth else { return screenHeight }
     if replaying, let size = replaySize, size.width > 0, size.height > 0 {
@@ -1120,7 +1229,12 @@ extension ActivityBadge {
   }
 }
 
+private struct ClipboardSyncID: Hashable {
+  var target: String
+  var flush: Bool
+}
+
 private struct ClipboardRequest: Equatable {
   var target: String
-  var text: String?
+  var text: String
 }

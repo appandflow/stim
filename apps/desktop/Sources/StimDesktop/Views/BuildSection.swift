@@ -11,6 +11,7 @@ struct BuildSection: View {
   var openLogs: (LogQuery) -> Void
   var openBuild: (BuildSheetSelection) -> Void
   var readOnly = false
+  var totals: String? = nil
   var onlyPlatform: String? = nil
   var projectSubtitle: String? = nil
   #if DEBUG
@@ -64,7 +65,10 @@ struct BuildSection: View {
           Text(error).font(.stim(.footnote)).foregroundStyle(Palette.error).textSelection(.enabled)
         }
       }
-      if readOnly && platforms.isEmpty { InlineEmpty("No build recorded") }
+      if readOnly && platforms.isEmpty {
+        InlineEmpty("No build recorded")
+        if let totals { Text(totals).font(.stim(.footnote)).foregroundStyle(Palette.secondary) }
+      }
       ForEach(platforms, id: \.self) { platform in
         card(platform)
       }
@@ -100,11 +104,6 @@ struct BuildSection: View {
             .help("Open build details")
           if building == nil && !readOnly { runButton(platform) }
         }
-        if building == nil {
-          RunOnPicker(
-            workspace: env.path, platform: platform, fixedMachine: env.hostedMachine(platform: platform),
-            localDeviceBooted: env.hasBootedLocalDevice(platform: platform))
-        }
         if let projectSubtitle { Text(projectSubtitle).font(.stim(.footnote)).foregroundStyle(Palette.secondary) }
         if let host = building?.remote(at: Date())?.host {
           Label("on \(host)", systemImage: "desktopcomputer").foregroundStyle(Palette.secondary).lineLimit(1)
@@ -131,6 +130,10 @@ struct BuildSection: View {
               }
             }
           }
+        }
+        if let totals, platform == platforms.first {
+          Divider().overlay(Palette.border)
+          Text(totals).font(.stim(.footnote)).foregroundStyle(Palette.secondary)
         }
         let history = env.builds?.builds(for: platform) ?? []
         if !history.isEmpty {
@@ -170,7 +173,7 @@ struct BuildSection: View {
     .fixedSize()
     .disabled(running != nil || actions.active(for: env.path) != nil)
     .help(
-      "stim \(platform) with the selected Run on destination: the default slot and configuration; builds if needed, installs and launches"
+      "stim \(platform): the default slot and configuration; builds if needed, installs and launches"
     )
   }
 

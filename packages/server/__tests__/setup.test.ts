@@ -48,6 +48,16 @@ function record(overrides: Partial<PairedDevice> = {}): PairedDevice {
   };
 }
 
+const health =
+  (host: { screenRecording: boolean; accessibility: boolean }): SetupDeps['health'] =>
+  async () => ({
+    version: '1.16.0',
+    stim: '1.16.0',
+    stimHome: home,
+    stimBuild: 'digest',
+    host: { name: 'Stim Host', ...host },
+  });
+
 function fixture(overrides: Partial<SetupDeps> = {}) {
   let time = now;
   let installClaim = false;
@@ -106,7 +116,13 @@ function fixture(overrides: Partial<SetupDeps> = {}) {
       }
     },
     installed: async () => installed,
-    health: async () => ({ version, stim: '1.16.0', stimHome: home, stimBuild: 'digest' }),
+    health: async () => ({
+      version,
+      stim: '1.16.0',
+      stimHome: home,
+      stimBuild: 'digest',
+      host: { name: 'Stim Host', screenRecording: true, accessibility: true },
+    }),
     build: () => ({ version, stimBuild: 'digest' }),
     install: async (_versions, source) => {
       expect(readSetupJournal(options.ticketHash)?.steps.find((s) => s.id === 'server')?.state).toBe('running');
@@ -155,7 +171,6 @@ function fixture(overrides: Partial<SetupDeps> = {}) {
       return 'granted';
     },
     panes: async () => ({ screen: 'Screen & System Audio Recording', control: 'Device Control and Data Access' }),
-    permissions: async () => ({ screenRecording: true, accessibility: true }),
     requestPermissions: async () => {
       actions.push('permissions');
     },
@@ -249,7 +264,7 @@ test('build and device-host use distinct grants and a rerun never grants either 
   ]);
   expect(await runSetup([...args, '--device-host'], '1.16.0', f.deps)).toBe(0);
   expect(f.grants).toHaveLength(2);
-  expect(f.stdout.some((line) => line.includes('Already approved'))).toBe(true);
+  expect(f.stdout.some((line) => line.includes('already approved'))).toBe(true);
 });
 
 test.each([false, true])(
@@ -362,7 +377,7 @@ test('no request before expiry finishes with 2 and never asks for permissions or
 });
 
 test('a timed-out permission opens its settings pane, reports the lost feature, and keeps a partial-success journal', async () => {
-  const f = fixture({ permissions: async () => ({ screenRecording: false, accessibility: true }) });
+  const f = fixture({ health: health({ screenRecording: false, accessibility: true }) });
   f.records.push(record({ id: 'host-id', requestedCapability: 'device-host' }));
   expect(await runSetup([...args, '--device-host', '--yes'], '1.16.0', f.deps)).toBe(3);
   expect(f.actions.filter((a) => a === 'Privacy_ScreenCapture')).toHaveLength(1);
@@ -471,10 +486,22 @@ test('approval cannot outlive the ticket while a terminal question is open', asy
   expect(f.grants).toEqual([]);
 });
 
+test('grants the running service already holds are reported without a request or wait', async () => {
+  const f = fixture({ tty: true });
+  f.records.push(record({ id: 'host-id', requestedCapability: 'device-host' }));
+  expect(await runSetup([...args, '--device-host', '--yes'], '1.16.0', f.deps)).toBe(0);
+  expect(f.actions).not.toContain('permissions');
+  const steps = readSetupJournal(options.ticketHash)?.steps ?? [];
+  expect(steps.find((s) => s.id === 'permissions.screenRecording')).toMatchObject({
+    state: 'ok',
+    detail: 'Already granted.',
+  });
+});
+
 test('terminal permission skip names the unavailable feature without changing TCC or failing the grant', async () => {
   const f = fixture({
     tty: true,
-    permissions: async () => ({ screenRecording: true, accessibility: false }),
+    health: health({ screenRecording: true, accessibility: false }),
     permissionWait: async () => true,
   });
   f.records.push(record({ id: 'host-id', requestedCapability: 'device-host' }));
@@ -748,4 +775,55 @@ test('an interrupt during route recording rolls back the unrecorded route and jo
   expect(f.grants).toEqual([]);
   const release = setupClaim();
   release();
+});
+
+test('default output is one line per step with a ready headline and one undo line; --verbose keeps the full detail', async () => {
+  const quiet = fixture();
+  expect(await runSetup([...args, '--yes'], '1.16.0', quiet.deps)).toBe(0);
+  const text = quiet.stdout.join('\n');
+  expect(text).not.toContain('[running]');
+  expect(text).not.toContain('Summary:');
+  expect(text).toContain('[ok] approved Client Mac for builds');
+  expect(text).toContain('[ok] worker is ready to build for Client Mac');
+  expect(text).toContain(
+    'To undo: stim-server devices revoke build-id; stim-server service uninstall --label dev.stim.server',
+  );
+
+  const loud = fixture();
+  expect(await runSetup([...args, '--yes', '--verbose'], '1.16.0', loud.deps)).toBe(0);
+  const detail = loud.stdout.join('\n');
+  expect(detail).toContain('[running] stim-server');
+  expect(detail).toContain('Undo: stim-server devices revoke build-id');
+});
+
+test('a skipped permission names its feature and its fix in the closing summary', async () => {
+  const f = fixture({
+    tty: true,
+    health: health({ screenRecording: false, accessibility: true }),
+    permissionWait: async () => true,
+  });
+  f.records.push(record({ id: 'host-id', requestedCapability: 'device-host' }));
+  expect(await runSetup([...args, '--device-host', '--yes'], '1.16.0', f.deps)).toBe(3);
+  const text = f.stdout.join('\n');
+  expect(text).toContain('Screen recording permission skipped: viewing hosted simulators will not work');
+  expect(text).toContain(
+    'Fix (Screen & System Audio Recording): System Settings > Privacy & Security > Screen & System Audio Recording',
+  );
+  expect(text).toContain('set up, with gaps');
+});
+
+test('a color terminal shows a refusal once, on stdout, and clears its running line before the question', async () => {
+  const raw: string[] = [];
+  const f = fixture({
+    tty: true,
+    display: { tty: true, color: true, raw: (t) => void raw.push(t) },
+    confirm: async () => {
+      expect(raw.at(-1)).toBe('\r\u001b[2K');
+      return false;
+    },
+  });
+  f.records[0] = record({ pendingUntil: new Date(now + 60_000).toISOString() });
+  expect(await runSetup(args.slice(), '1.16.0', f.deps)).toBe(1);
+  expect(f.stderr.join('\n')).not.toContain('approval refused');
+  expect(f.stdout.join('\n')).toContain('build refused');
 });

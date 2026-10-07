@@ -202,12 +202,9 @@ private struct InboxRow: View {
           .help("The autopilot keeps this worktree. Review it, then run stim worktree remove yourself.")
       }
       if let command {
-        Button("Copy command") {
-          NSPasteboard.general.clearContents()
-          NSPasteboard.general.setString(command.shellLine, forType: .string)
-        }
-        .accessibilityLabel("Copy command, \(title)")
-        .help(command.displayLine())
+        CopyButton(
+          command.shellLine, variant: .secondary, title: "Copy command", help: command.displayLine(),
+          accessibilityLabel: "Copy command, \(title)")
         if command.isRunnable && command.isFix {
           Button("Fix\u{2026}") { fix(title, command) }
             .accessibilityLabel("Fix, \(title)")

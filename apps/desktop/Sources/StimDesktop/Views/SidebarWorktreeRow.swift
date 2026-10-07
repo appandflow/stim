@@ -8,6 +8,7 @@ struct SidebarWorktreeRow: View {
   var selection: SidebarItem?
   var openLogs: (String) -> Void
   var archives: [ArchivedWorkspace] = []
+  let prefs = SidebarPreferences()
   #if DEBUG
     @Environment(\.fixtureDate) private var fixtureDate
   #else
@@ -24,7 +25,12 @@ struct SidebarWorktreeRow: View {
           .contextMenu { menu }
       }
     } else {
-      row
+      let isHidden = prefs.hiddenWorkspaces.contains(.archivedGroup(archives))
+      row.contextMenu {
+        Button(isHidden ? "Unhide" : "Hide", systemImage: isHidden ? "eye" : "eye.slash") {
+          prefs.setHidden(!isHidden, archives: archives.map(\.id))
+        }
+      }
     }
   }
 
@@ -58,6 +64,9 @@ struct SidebarWorktreeRow: View {
             Text(summary.title).foregroundStyle(summary.active ? Palette.text : Palette.secondary)
               .lineLimit(1).truncationMode(.middle).layoutPriority(1)
             Spacer(minLength: 0)
+            if prefs.hiddenWorkspaces.contains(archives.isEmpty ? .worktreeGroup(page) : .archivedGroup(archives)) {
+              HiddenIndicator()
+            }
             if summary.status.text != "Running" {
               Text(summary.status.text).font(.stim(.caption, weight: .semibold)).foregroundStyle(Color(summary.status.tone))
                 .lineLimit(1).fixedSize()
@@ -77,9 +86,9 @@ struct SidebarWorktreeRow: View {
             ArchiveRowFacts(page: adapted, showsGit: showsGit)
           } else {
             RowDetailLine(context: context(summary), git: summary.git)
-            ForEach(page.apps.flatMap(\.orderedDevices).filter { $0.hostedMachine != nil || $0.placementReason != nil }) {
+            ForEach(page.apps.flatMap(\.orderedDevices).filter { $0.placement != nil }) {
               device in
-              DevicePlacementLabel(device: device)
+              DevicePlacementView(device: device)
             }
           }
         }

@@ -134,6 +134,7 @@ import Testing
     let machines = try #require(report.buildMachines)
     #expect(machines.map(\.state) == [.pending, .nodeChanged, .unknown])
     #expect(machines[0].detail.contains("stim-server devices grant ab12 --build"))
+    #expect(machines.map(\.approvalCommand) == ["stim-server devices grant ab12 --build", nil, nil])
     #expect(
       try JSONDecoder().decode(DoctorReport.self, from: Data(#"{"project":"/p","findings":[]}"#.utf8))
         .buildMachines == nil)
@@ -157,6 +158,85 @@ import Testing
       from: Data(#"{"machine":"mini","state":"approved","offloadable":false,"reasons":["CPU x86_64 there, arm64 here"]}"#.utf8))
     #expect(older.readiness.line == "CPU x86_64 there, arm64 here")
     #expect(BuildMachineStatus(machine: "mini", state: .pending).readiness.line == "Waiting for approval")
+  }
+
+  @Test func showsOneListPillPerMachine() throws {
+    func status(_ json: String) throws -> BuildMachineStatus {
+      try JSONDecoder().decode(BuildMachineStatus.self, from: Data(json.utf8))
+    }
+    let cases: [(String, String, Tone)] = [
+      (#"{"machine":"m","state":"approved","offloadable":true}"#, "Approved", .success),
+      (#"{"machine":"m","state":"approved"}"#, "Approved", .success),
+      (#"{"machine":"m","state":"pending","deviceId":"d1"}"#, "Waiting for approval", .warning),
+      (#"{"machine":"m","state":"unreachable"}"#, "Unreachable", .warning),
+      (
+        #"{"machine":"m","state":"approved","offloadable":false,"problems":[{"code":"unreachable","reason":"r"}]}"#,
+        "Unreachable", .warning
+      ),
+      (
+        #"{"machine":"m","state":"approved","offloadable":false,"problems":[{"code":"stim-build","reason":"r"}]}"#,
+        "Not offloading", .warning
+      ),
+      (
+        #"{"machine":"m","state":"approved","offloadable":false,"problems":[{"code":"disk","reason":"r"}]}"#,
+        "Not offloading", .warning
+      ),
+      (
+        #"{"machine":"m","state":"approved","offloadable":false,"problems":[{"code":"busy","reason":"r"}],"capacity":{"loadPerCore":8.2}}"#,
+        "Busy (load 8.2/core)", .warning
+      ),
+      (#"{"machine":"m","state":"revoked"}"#, "Revoked", .error),
+    ]
+    for (json, title, tone) in cases {
+      let listed = try status(json).listStatus
+      #expect(listed == MachineListStatus(title: title, tone: tone), "\(json)")
+    }
+  }
+
+  @Test func describesAMachineRowFromDoctorsReport() throws {
+    func status(_ json: String) throws -> BuildMachineStatus {
+      try JSONDecoder().decode(BuildMachineStatus.self, from: Data(json.utf8))
+    }
+    let mini = try status(
+      #"""
+      {"machine":"mini","state":"approved","offloadable":false,"reasons":["CocoaPods 1.17.0 there, 1.16.2 here"],
+       "problems":[{"code":"cocoapods","reason":"CocoaPods 1.17.0 there, 1.16.2 here"}],
+       "capacity":{"running":0,"max":1,"diskFreeBytes":825196154880,"cpus":10,"loadPerCore":0.6,"builds":0,"maxBuilds":2}}
+      """#)
+    #expect(mini.rowDetail == "0/2 builds \u{00B7} 825 GB free")
+    #expect(
+      mini.problemLines == [
+        .init(reason: "CocoaPods 1.17.0 there, 1.16.2 here", fix: .command("gem install cocoapods -v 1.16.2"))
+      ])
+
+    let missingPods = try status(
+      #"{"machine":"m","state":"approved","offloadable":false,"problems":[{"code":"cocoapods","reason":"CocoaPods null there, 1.16.2 here"}]}"#
+    )
+    #expect(missingPods.problemLines.first?.fix == .command("brew install cocoapods"))
+    let build = try status(
+      #"{"machine":"m","state":"approved","offloadable":false,"problems":[{"code":"stim-build","reason":"Stim build a there, b here"},{"code":"other","reason":"odd"}]}"#
+    )
+    #expect(build.problemLines.map(\.fix) == [.advice("Update the build machine."), nil])
+    #expect(build.rowDetail.isEmpty)
+
+    let ready = try status(
+      #"{"machine":"m","state":"approved","offloadable":true,"capacity":{"running":1,"max":2,"builds":3,"maxBuilds":0}}"#)
+    #expect(ready.rowDetail == "3 builds")
+    #expect(ready.problemLines.isEmpty)
+    let older = try status(#"{"machine":"m","state":"approved","offloadable":true,"capacity":{"running":1,"max":2}}"#)
+    #expect(older.rowDetail == "1/2 offloaded builds")
+    #expect(try status(#"{"machine":"m","state":"approved"}"#).rowDetail == "Builds can run on this Mac.")
+    #expect(try status(#"{"machine":"m","state":"pending","deviceId":"d"}"#).rowDetail.isEmpty)
+  }
+
+  @Test func listsBuildsAndSimulatorsForAMachineWithApprovedHosting() {
+    let hosts = [
+      BuildMachineStatus(machine: "mini", state: .approved), BuildMachineStatus(machine: "studio", state: .pending),
+    ]
+    #expect(buildMachineCapabilities("mini", hosts: hosts) == ["Builds", "Simulators"])
+    #expect(buildMachineCapabilities("Mini:7443", hosts: hosts) == ["Builds", "Simulators"])
+    #expect(buildMachineCapabilities("studio", hosts: hosts) == ["Builds"])
+    #expect(buildMachineCapabilities("mini", hosts: nil) == ["Builds"])
   }
 
   @Test func editsTheSettingAndUnsetsItWhenEmpty() {

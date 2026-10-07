@@ -106,11 +106,6 @@ public enum Tailnet {
     else { return nil }
     return health
   }
-
-  /// Whether `stim-server` answers `GET /health` on the Mac's `tailscale serve` route at `port`.
-  public static func servesStim(dnsName: String, port: Int = servePort) async -> Bool {
-    await health(dnsName: dnsName, port: port) != nil
-  }
 }
 
 /// Where this Mac stands with one `offload.machines` entry, as `stim doctor --json` reports it.
@@ -168,8 +163,27 @@ public struct BuildMachineStatus: Decodable, Hashable, Identifiable, Sendable {
     /// Offloaded builds it runs now, and how many it takes at once.
     public var running: Int?
     public var max: Int?
+    /// Native builds it runs now, its own and offloaded, and how many it takes at once (0 when unlimited).
+    public var builds: Int?
+    public var maxBuilds: Int?
     public var diskFreeBytes: Double?
     public var maxLoadPerCore: Double?
+
+    /// The builds it runs and the free disk it reported, such as "0/2 builds \u{00B7} 825 GB free".
+    public var summary: String {
+      var parts: [String] = []
+      if let builds {
+        if let maxBuilds, maxBuilds > 0 {
+          parts.append("\(builds)/\(maxBuilds) builds")
+        } else {
+          parts.append("\(builds) \(builds == 1 ? "build" : "builds")")
+        }
+      } else if let running, let max {
+        parts.append("\(running)/\(max) offloaded builds")
+      }
+      if let diskFreeBytes { parts.append("\(Format.freeSpace(diskFreeBytes)) free") }
+      return parts.joined(separator: " \u{00B7} ")
+    }
 
     /// The load, cores, offloaded builds and free disk it reported, separated by middle dots.
     public var line: String {
@@ -238,14 +252,84 @@ public struct BuildMachineStatus: Decodable, Hashable, Identifiable, Sendable {
     return MachineReadiness(title: reasons?.first ?? "Cannot take builds", remedy: nil, tone: .error, reasons: all)
   }
 
+  /// The one pill a row of the build machine list shows: Approved, Waiting for approval, Unreachable or Not
+  /// offloading for the states that matter most, else the readiness title (Busy, Revoked, Not asked, ...).
+  public var listStatus: MachineListStatus {
+    let ready = readiness
+    switch state {
+    case .approved:
+      guard offloadable == false else { return MachineListStatus(title: "Approved", tone: .success) }
+      let code = problems?.first?.code
+      if code == "unreachable" { return MachineListStatus(title: "Unreachable", tone: .warning) }
+      if code == "busy" { return MachineListStatus(title: ready.title, tone: ready.tone) }
+      return MachineListStatus(title: "Not offloading", tone: .warning)
+    case .pending: return MachineListStatus(title: "Waiting for approval", tone: .warning)
+    default: return MachineListStatus(title: state.title, tone: state.readinessTone)
+    }
+  }
+
+  /// A reason an approved machine takes no builds now, with what fixes it when that is known.
+  public struct ProblemLine: Equatable, Sendable {
+    public enum Fix: Equatable, Sendable {
+      /// A command to run on the build machine.
+      case command(String)
+      case advice(String)
+    }
+
+    public var reason: String
+    public var fix: Fix?
+  }
+
+  /// Each reason of an approved machine that is not offloadable, in doctor's order; empty otherwise.
+  public var problemLines: [ProblemLine] {
+    guard state == .approved, offloadable == false else { return [] }
+    return (problems ?? []).map { problem in
+      if problem.code == "cocoapods", let command = Self.cocoapodsFix(problem.reason) {
+        return ProblemLine(reason: problem.reason, fix: .command(command))
+      }
+      let advice = MachineReadiness.problems[problem.code]?.1
+      return ProblemLine(reason: problem.reason, fix: advice.map { .advice($0.prefix(1).uppercased() + $0.dropFirst() + ".") })
+    }
+  }
+
+  /// The command that gives the build machine this Mac's CocoaPods, from "CocoaPods 1.17.0 there, 1.16.2 here".
+  static func cocoapodsFix(_ reason: String) -> String? {
+    let words = reason.split(separator: " ").map(String.init)
+    guard words.count == 5, words[0] == "CocoaPods", words[2] == "there,", words[4] == "here" else { return nil }
+    let here = words[3]
+    guard !here.isEmpty, here.allSatisfy({ $0.isNumber || $0 == "." }) else { return nil }
+    return words[1] == "null" ? "brew install cocoapods" : "gem install cocoapods -v \(here)"
+  }
+
+  /// The line under the machine's name: for an approved machine the builds it runs and its free disk, else `detail`.
+  /// Empty when the listed problems already say why builds stay on this Mac.
+  public var rowDetail: String {
+    guard state == .approved else { return state == .pending ? "" : detail }
+    if let summary = capacity?.summary, !summary.isEmpty { return summary }
+    return problemLines.isEmpty ? detail : ""
+  }
+
+  /// For a request waiting for approval: the command a person runs on that Mac to approve this one, when doctor
+  /// reported the request's id.
+  public var approvalCommand: String? {
+    guard state == .pending, let deviceId else { return nil }
+    return "stim-server devices grant \(deviceId) --build"
+  }
+
+  /// When a request waiting for approval lapses, as stim-server sets it.
+  public static let requestLapse = "The request lapses after 15 minutes."
+
+  /// Who approves a request waiting for approval, and where; `detail` and the settings row continue it.
+  public var approvalPrompt: String { "Someone on \(machine) approves it in Stim Desktop" }
+
   public var detail: String {
     switch state {
     case .approved:
       if offloadable != false { return "Builds can run on this Mac." }
       return readiness.remedy.map { $0.prefix(1).uppercased() + $0.dropFirst() + "." } ?? "Builds stay on this Mac for now."
     case .pending:
-      let grant = deviceId.map { " or runs stim-server devices grant \($0) --build there" } ?? ""
-      return "Someone on \(machine) allows it in Stim Desktop\(grant). The request lapses after 15 minutes."
+      let grant = approvalCommand.map { " or runs \($0) there" } ?? ""
+      return "\(approvalPrompt)\(grant). \(Self.requestLapse)"
     case .notAsked: return "This Mac has not asked it yet."
     case .revoked: return "It revoked this Mac, denied the request, or the request lapsed."
     case .nodeChanged:
@@ -258,6 +342,20 @@ public struct BuildMachineStatus: Decodable, Hashable, Identifiable, Sendable {
     case .unknown: return "Update Stim Desktop to show this state."
     }
   }
+}
+
+/// The pill text and tone of a build machine in the list.
+public struct MachineListStatus: Equatable, Sendable {
+  public var title: String
+  public var tone: Tone
+}
+
+/// What a listed build machine does for this Mac: it always builds, and hosts simulators when its device-host access
+/// is approved. `hosts` is the doctor report's `deviceHosts`, nil when unknown.
+public func buildMachineCapabilities(_ machine: String, hosts: [BuildMachineStatus]?) -> [String] {
+  let name = OffloadMachines.name(machine)
+  let simulators = hosts?.contains { $0.state == .approved && OffloadMachines.name($0.machine) == name } == true
+  return simulators ? ["Builds", "Simulators"] : ["Builds"]
 }
 
 /// A build machine's readiness for builds, as `BuildMachineStatus.readiness` reads it from `stim doctor`.

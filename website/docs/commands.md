@@ -1048,7 +1048,9 @@ artifact is ready to reuse, including a shared-build hit or a recheck after
 prebuild or pods. A later recheck can replace the first lookup's outcome.
 Before resolution it follows the project's most recent run and `outcomeKnown`
 is `false`. `cacheLookupOutcome` is `hit` or `miss` after an actual lookup resolves;
-it is absent before resolution and on runs that skip lookup, such as `--eas-profile`.
+it is absent before resolution and on runs that skip lookup, such as `--eas-profile`
+or `--no-build-cache`. Fingerprinting for a fresh build remains in `prepare` when
+cache reads are disabled.
 `completedPhaseMs` holds milliseconds spent in each phase the run already left,
 summing repeated visits. It excludes the current visit; the current phase appears
 only if visited earlier. It is absent before any phase completes and on older Stim versions.
@@ -1398,7 +1400,7 @@ worktree locked with `git worktree lock` is refused until you unlock it.
 ## `gc`
 
 ```text
-stim gc [--delete] [--older-than <days>] [--cache <name|all|workspaces|recordings|parked|archived|archived:<id>|archived-logs|archived-recordings|archived-agent|watchman|gradle-daemons>] [--worktrees] [--idle <duration>] [--json]
+stim gc [--delete] [--older-than <days>] [--cache <name|all|workspaces|recordings|parked|archived|archived:<id>|archived-logs|archived-recordings|archived-agent|archived-logs:<id>|archived-recordings:<id>|archived-agent:<id>|watchman|gradle-daemons>] [--worktrees] [--idle <duration>] [--json]
 ```
 
 Reports stale workspace entries, orphaned workspace directories, clean linked
@@ -1528,6 +1530,21 @@ there.
 - `--json` prints the report as one object on stdout and every other line on
   stderr. Agents use it to show you what `gc --delete` would remove before they
   ask to run it.
+
+On a hosting Mac, unscoped `stim gc` also lists parked hosted iOS and Android
+devices; `stim gc --delete` deletes each through its session home's stop worker
+under a session claim. Held claims and unverified ownership keep the device,
+and an unreadable journal keeps all hosted devices. Android deletion also
+requires the AVD to be visible from this shell's Android environment; otherwise
+run gc with the server's `ANDROID_AVD_HOME`/`HOME`. Records no longer listed in
+their session ledger are already removed, skipped and excluded from `actionable`.
+`--older-than` filters by
+parked time; cache scopes omit hosted sessions. JSON adds
+`sections.parkedHostedDevices` entries with `session`, `client` (id), `platform`,
+`id` (UDID or AVD name), `name`, `parkedAt`, and
+`listed` (session-home ledger ownership, null when unreadable). Deletion results
+use `kind: "parkedHostedDevice"`. The server clears the parked marker when it
+reconciles the emptied ledger.
 
 `--json` prints one line. Each key under `sections` is one section of the text
 report, in the same order, and is always present. `stim gc --worktrees --json`
@@ -1754,8 +1771,9 @@ Archives are excluded from normal gc, `--cache all`, and unscoped `--older-than`
 `--delete` to remove them. `--cache archived:<id>` selects one archive; an
 unknown id refuses with `STIM_BAD_ARG` and lists known ids. `archived-logs`,
 `archived-recordings`, and `archived-agent` select only that kind and preserve
-the record. `--older-than` filters by removal age for whole and per-kind
-selection; an explicit id ignores it. Archive selection reports abandoned
+the record. Add `:<id>` (for example `archived-logs:<id>`) to clear one kind of
+one archive; an unknown id refuses the same way. `--older-than` filters by
+removal age for whole and per-kind selection; an explicit id ignores it. Archive selection reports abandoned
 staging and keeps live or unresolved claims, naming the claim removal command.
 
 <StimTabs code="stim gc --cache archived" />
@@ -1778,6 +1796,8 @@ every requested capability already has a matching approval. A typed N, Ctrl-C
 or SIGTERM exits 1; an interrupt completes the journal and releases the setup
 claim. Setup never enables Funnel,
 and never changes macOS permission settings. An SSH-driven run is not offered.
+Setup prints one line per step; `--verbose` adds install, service and route
+details and the long summary. `--json` is unchanged.
 
 <Tabs groupId="stim-invocation" defaultValue="global">
 <TabItem value="global" label="Global">

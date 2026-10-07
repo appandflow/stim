@@ -57,6 +57,63 @@ struct WorkspaceHeaderLine: View {
   }
 }
 
+/// The top of an archived workspace page, laid out like the live page's: an Archived state, when it was removed, the
+/// git chip and the actions menu.
+struct ArchivedHeaderLine: View {
+  var cli: Task<StimCLI, Never>
+  var page: ArchivedPage
+  var delete: () -> Void
+  @EnvironmentObject private var actions: ActionCenter
+  let prefs = SidebarPreferences()
+
+  var body: some View {
+    let folder = page.record.worktreeRoot
+    let isHidden = prefs.hiddenWorkspaces.archives.contains(page.record.id)
+    HStack(spacing: Space.md) {
+      HStack(spacing: Space.sm) {
+        StatusDot(color: Palette.tertiary)
+        Text("Archived").font(.stim(.callout, weight: .semibold)).fixedSize()
+        Text(page.removedLabel).font(.stim(.callout)).foregroundStyle(Palette.secondary).lineLimit(1)
+          .truncationMode(.tail)
+          .help(page.removedAt.map { $0.formatted(.dateTime.month(.abbreviated).day().hour().minute()) } ?? "")
+      }
+      .accessibilityElement(children: .ignore)
+      .accessibilityLabel("Archived, \(page.statusLine)")
+      .layoutPriority(-1)
+      if let chip = GitChip(page.workspace.worktree) {
+        Rectangle().fill(Palette.border).frame(width: 1, height: 14)
+        GitChipButton(
+          cli: cli, chip: chip, worktree: page.workspace.worktree!, workspace: page.record.projectRoot, readOnly: true
+        )
+        .layoutPriority(1)
+      }
+      Spacer(minLength: Space.md)
+      Menu {
+        if FileManager.default.fileExists(atPath: folder) {
+          Button("Reveal folder", systemImage: "folder") {
+            NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: folder)])
+          }
+          Divider()
+        }
+        Button(isHidden ? "Unhide" : "Hide", systemImage: isHidden ? "eye" : "eye.slash") {
+          prefs.setHidden(!isHidden, archives: [page.record.id])
+        }
+        Divider()
+        Button("Delete archive\u{2026}", systemImage: "trash", role: .destructive, action: delete)
+          .disabled(actions.active(for: ActionCenter.machineKey) != nil)
+      } label: {
+        Image(systemName: "ellipsis")
+      }
+      .menuStyle(.button)
+      .menuIndicator(.hidden)
+      .buttonStyle(.borderless)
+      .fixedSize()
+      .help("Archive actions")
+      .accessibilityLabel("Archive actions")
+    }
+  }
+}
+
 /// The running build's phase, a short bar and elapsed over the estimate, on the header line.
 struct BuildInlineProgress: View {
   var build: Build
@@ -169,6 +226,7 @@ struct GitChipButton: View {
   var chip: GitChip
   var worktree: WorktreeInfo
   var workspace: String
+  var readOnly = false
   @State private var shown = false
   @State private var reviewing = false
   @State private var openError: String?
@@ -201,7 +259,8 @@ struct GitChipButton: View {
     .help("\(chip.label). Click for the branch and pull request.")
     .accessibilityLabel(chip.label)
     .popover(isPresented: $shown, arrowEdge: .bottom) {
-      GitPopover(worktree: worktree, reviewChanges: reviewChanges).presentationBackground(Palette.surface)
+      GitPopover(worktree: worktree, reviewChanges: reviewChanges, readOnly: readOnly)
+        .presentationBackground(Palette.surface)
     }
     .sheet(isPresented: $reviewing) { WorkspaceDiffView(cli: cli, workspace: workspace) }
     .alert("Could not open changes", isPresented: Binding(get: { openError != nil }, set: { if !$0 { openError = nil } })) {
@@ -253,7 +312,7 @@ struct GitPopover: View {
       if let pull = worktree.pullRequest {
         Rectangle().fill(Palette.border).frame(height: 1)
         HStack(spacing: Space.sm) {
-          Text("PR #\(pull.number)").font(.stim(.callout, weight: .semibold))
+          Text("PR #" + String(pull.number)).font(.stim(.callout, weight: .semibold))
             .foregroundStyle(Color(GitChip.tone(ofPullRequest: pull.state)))
           if !pull.state.isEmpty { Pill(pull.state.capitalized, size: .small) }
         }

@@ -10,6 +10,7 @@ struct MachineView: View {
   var gc: GcReportStore
   @ObservedObject var storage: StorageStore
   @ObservedObject var autopilot: AutopilotRunner
+  @ObservedObject var tips: TipCoordinator
   @EnvironmentObject private var actions: ActionCenter
   @Environment(\.openSettings) private var openSettings
   @AppStorage("settingsTab") private var settingsTab = "app"
@@ -50,6 +51,16 @@ struct MachineView: View {
           }
           .buttonStyle(.stim())
         }
+        if let variant = Tips.emptyState(
+          gate: tips.established, machines: buildMachines.entries, settingsError: buildMachines.settings.error,
+          selectedMachine: machine, macs: buildMachines.macs)
+        {
+          BuildMachinesEmptyState(
+            add: {
+              OpenRequests.shared.addMachine = AddMachineRequest(
+                machineID: Tips.firstMac(buildMachines.macs)?.id, hostedSimulators: false)
+            }, needsTailscale: variant == .tailscale)
+        }
         if let failure = buildMachines.settingsFailure {
           Text(failure).font(.stim(.footnote)).foregroundStyle(Palette.secondary).textSelection(.enabled)
         }
@@ -81,6 +92,7 @@ struct MachineView: View {
     }
     .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { width = $0 }
     .task(id: checkout) {
+      await buildMachines.refreshTailnet()
       while !Task.isCancelled {
         await buildMachines.refresh(checkout: checkout)
         try? await Task.sleep(for: .seconds(60))
@@ -757,14 +769,7 @@ struct MachineView: View {
       size(runtime.size, reason: runtime.size == .notMeasured ? "simctl does not report its size" : nil)
       Group {
         if let command = runtime.command {
-          Button {
-            NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString(command, forType: .string)
-          } label: {
-            Label("Copy", systemImage: "doc.on.doc")
-          }
-          .buttonStyle(.stim(runtime.unused ? .primary : .secondary))
-          .help("Copies: \(command)")
+          CopyButton(command, variant: runtime.unused ? .primary : .secondary, help: "Copies: \(command)")
         } else {
           Text("\u{2014}").foregroundStyle(Palette.tertiary).help("simctl reports no delete command for it")
         }

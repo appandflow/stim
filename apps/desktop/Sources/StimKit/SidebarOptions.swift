@@ -1,9 +1,40 @@
 import Foundation
 
 public enum StatusFilter: String, CaseIterable, Sendable {
-  case all, live, idle, archived
+  case live, idle, notSetUp, archived, hidden
 
-  public var title: String { rawValue.capitalized }
+  public var title: String {
+    switch self {
+    case .live: "Live"
+    case .idle: "Idle"
+    case .notSetUp: "Not set up"
+    case .archived: "Archived"
+    case .hidden: "Hidden"
+    }
+  }
+
+  public static let all: Set<StatusFilter> = [.live, .idle, .notSetUp, .archived]
+  public static let defaultSelection: Set<StatusFilter> = [.live, .idle]
+
+  public static func encode(_ statuses: Set<StatusFilter>) -> String {
+    (try? String(decoding: JSONEncoder().encode(allCases.filter { statuses.contains($0) }.map(\.rawValue)), as: UTF8.self)) ?? ""
+  }
+
+  public static func decode(_ raw: String) -> Set<StatusFilter> {
+    guard let values = try? JSONDecoder().decode([String].self, from: Data(raw.utf8)) else { return defaultSelection }
+    return Set(values.compactMap(StatusFilter.init(rawValue:)))
+  }
+
+  public static func summary(_ statuses: Set<StatusFilter>) -> String {
+    if statuses.contains(.hidden) {
+      let rest = statuses.subtracting([.hidden])
+      return rest.isEmpty ? "Hidden" : "\(summary(rest)) + Hidden"
+    }
+    if statuses == all { return "All" }
+    if statuses.isEmpty { return "None" }
+    if statuses.count <= 2 { return allCases.filter { statuses.contains($0) }.map(\.title).joined(separator: ", ") }
+    return "\(statuses.count) selected"
+  }
 }
 
 public enum SidebarGrouping: String, CaseIterable, Sendable {
@@ -26,11 +57,11 @@ public enum SidebarSort: String, CaseIterable, Sendable {
 
 /// The sidebar's view options. `hiddenProjects` holds project roots, so a project seen for the first time shows.
 public struct SidebarOptions: Equatable, Sendable {
-  public var status = StatusFilter.all
+  public var statuses: Set<StatusFilter> = StatusFilter.defaultSelection
   public var hiddenProjects: Set<String> = []
+  public var hiddenWorkspaces = HiddenWorkspaces()
   public var grouping = SidebarGrouping.project
   public var sort = SidebarSort.name
-  public var showsNoEnvironment = true
   public var showsGitStatus = true
   public var showsEmptyProjects = false
 
@@ -40,6 +71,7 @@ public struct SidebarOptions: Equatable, Sendable {
   public func differsFromDefaults(projects: [Project]) -> Bool {
     var shown = self
     shown.hiddenProjects.formIntersection(projects.map(\.root))
+    shown.hiddenWorkspaces = HiddenWorkspaces()
     return shown != SidebarOptions()
   }
 
@@ -83,6 +115,20 @@ public enum SidebarEntry: Hashable, Identifiable, Sendable {
     default: nil
     }
   }
+
+  public var status: StatusFilter {
+    switch self {
+    case .archived, .archivedGroup: .archived
+    case .worktree: .notSetUp
+    default: active ? .live : .idle
+    }
+  }
+
+  public func status(hidden: HiddenWorkspaces) -> StatusFilter {
+    hidden.contains(self) ? .hidden : status
+  }
+
+  var isArchive: Bool { status == .archived }
 
   var active: Bool {
     switch self {
@@ -134,10 +180,16 @@ extension Workspace {
   }
 }
 
-/// A project in the sidebar tree and its visible rows. `summary` counts every worktree, including hidden ones.
+/// A project and its visible rows. `summary` counts every current worktree, including filtered ones;
+/// for a project with only archived history, it counts the archive rows.
 public struct ProjectTree: Hashable, Sendable {
   public var summary: ProjectSummary
   public var entries: [SidebarEntry]
+
+  /// Whether every visible row is an archive, which opens the project by default.
+  public var showsOnlyArchives: Bool { !entries.isEmpty && entries.allSatisfy { $0.status == .archived } }
+  /// Whether the project has no current worktree and appears only for its archives.
+  public var isArchiveOnly = false
 }
 
 /// The sidebar grouped by project. A project left with no rows is omitted unless `showsEmptyProjects` is set.
@@ -149,28 +201,29 @@ public func sidebarTrees(
     if let archiveProject = $0.archiveProject { return archiveProject }
     return project($0.path)
   }
-  if options.status == .archived {
-    return grouped.map { key, entries in
-      ProjectTree(summary: ProjectSummary(project: key, live: 0, total: entries.count), entries: entries)
-    }.sorted {
-      ($0.summary.project.name.lowercased(), $0.summary.project.root) < (
-        $1.summary.project.name.lowercased(), $1.summary.project.root
-      )
-    }
-  }
-  let trees = projectSummaries(environments: environments, unprovisioned: unprovisioned, project: project)
+  let summaries = projectSummaries(environments: environments, unprovisioned: unprovisioned, project: project)
     .filter { !options.hiddenProjects.contains($0.project.root) }
-    .map { ProjectTree(summary: $0, entries: sorted(grouped[$0.project] ?? [], by: options.sort, project: project)) }
-    .filter { options.showsEmptyProjects || !$0.entries.isEmpty }
+  let known = Set(summaries.map(\.project))
+  let trees =
+    (summaries.map { ProjectTree(summary: $0, entries: orderedEntries(grouped[$0.project] ?? [], options, project)) }
+    + grouped.filter { !known.contains($0.key) }.map { key, entries in
+      ProjectTree(
+        summary: ProjectSummary(project: key, live: 0, total: entries.count), entries: orderedEntries(entries, options, project),
+        isArchiveOnly: true)
+    }).filter { options.showsEmptyProjects || !$0.entries.isEmpty }
   func key(_ tree: ProjectTree) -> (activity: Date?, memory: Int) {
-    (tree.entries.compactMap(\.lastActivityAt).max(), tree.entries.reduce(0) { $0 + $1.memoryMb })
+    let current = tree.entries.filter { $0.status != .archived }
+    let entries = current.isEmpty ? tree.entries : current
+    return (entries.compactMap(\.lastActivityAt).max(), entries.reduce(0) { $0 + $1.memoryMb })
   }
   return trees.map { ($0, key($0)) }.sorted { a, b in
     let (x, y) = (a.1, b.1)
     switch options.sort {
     case .lastActivity where x.activity != y.activity: return newer(x.activity, y.activity)
     case .memory where x.memory != y.memory: return x.memory > y.memory
-    default: return a.0.summary.project.name.lowercased() < b.0.summary.project.name.lowercased()
+    default:
+      return (a.0.summary.project.name.lowercased(), a.0.summary.project.root)
+        < (b.0.summary.project.name.lowercased(), b.0.summary.project.root)
     }
   }.map(\.0)
 }
@@ -181,42 +234,55 @@ public func sidebarList(
   options: SidebarOptions, archived: [ArchivedWorkspace] = []
 ) -> [SidebarEntry] {
   let entries = visibleEntries(environments, unprovisioned, project, options, archived)
-  return options.status == .archived ? entries : sorted(entries, by: options.sort, project: project)
+  return orderedEntries(entries, options, project)
 }
 
 private func visibleEntries(
   _ environments: [Workspace], _ unprovisioned: [UnprovisionedWorktree], _ project: (String) -> Project,
   _ options: SidebarOptions, _ archived: [ArchivedWorkspace]
 ) -> [SidebarEntry] {
-  if options.status == .archived {
-    let archives = ArchivedWorkspace.newestFirst(archived)
-      .filter { !options.hiddenProjects.contains($0.sidebarProject.root) }
-    var groups: [[ArchivedWorkspace]] = []
-    for archive in archives {
-      if let index = groups.firstIndex(where: {
-        $0[0].sidebarProject == archive.sidebarProject && $0[0].worktreeRoot == archive.worktreeRoot
-          && !$0.contains(where: { $0.projectRoot == archive.projectRoot })
-      }) {
-        groups[index].append(archive)
-      } else {
-        groups.append([archive])
-      }
+  let archives = ArchivedWorkspace.newestFirst(archived)
+    .filter { !options.hiddenProjects.contains($0.sidebarProject.root) }
+  var groups: [[ArchivedWorkspace]] = []
+  for archive in archives {
+    if let index = groups.firstIndex(where: {
+      $0[0].sidebarProject == archive.sidebarProject && $0[0].worktreeRoot == archive.worktreeRoot
+        && options.hiddenWorkspaces.archives.contains($0[0].id) == options.hiddenWorkspaces.archives.contains(archive.id)
+        && !$0.contains(where: { $0.projectRoot == archive.projectRoot })
+    }) {
+      groups[index].append(archive)
+    } else {
+      groups.append([archive])
     }
-    return groups.map { $0.count > 1 ? .archivedGroup($0) : .archived($0[0]) }
   }
-  let worktrees = options.showsNoEnvironment ? unprovisioned.map(SidebarEntry.worktree) : []
+  let archiveEntries = groups.map { $0.count > 1 ? SidebarEntry.archivedGroup($0) : .archived($0[0]) }
   let apps = WorktreePage.groups(environments: environments).map { page in
     page.isUnified ? SidebarEntry.worktreeGroup(page) : .workspace(page.apps[0])
   }
-  return (apps + worktrees).filter { entry in
-    guard !options.hiddenProjects.contains(project(entry.path).root) else { return false }
-    switch options.status {
-    case .all: return true
-    case .live: return entry.active
-    case .idle: return !entry.active
-    case .archived: return false
-    }
+  let current = (apps + unprovisioned.map(SidebarEntry.worktree)).filter {
+    !options.hiddenProjects.contains(project($0.path).root)
   }
+  return (current + archiveEntries).filter { options.statuses.contains($0.status(hidden: options.hiddenWorkspaces)) }
+}
+
+public func sidebarStatusCounts(
+  environments: [Workspace], unprovisioned: [UnprovisionedWorktree], project: (String) -> Project,
+  options: SidebarOptions, archived: [ArchivedWorkspace] = []
+) -> [StatusFilter: Int] {
+  var options = options
+  options.statuses = Set(StatusFilter.allCases)
+  var counts = Dictionary(uniqueKeysWithValues: StatusFilter.allCases.map { ($0, 0) })
+  for entry in visibleEntries(environments, unprovisioned, project, options, archived) {
+    counts[entry.status(hidden: options.hiddenWorkspaces), default: 0] += 1
+  }
+  return counts
+}
+
+private func orderedEntries(
+  _ entries: [SidebarEntry], _ options: SidebarOptions, _ project: (String) -> Project
+) -> [SidebarEntry] {
+  sorted(entries.filter { !$0.isArchive }, by: options.sort, project: project)
+    + entries.filter(\.isArchive)
 }
 
 private func sorted(

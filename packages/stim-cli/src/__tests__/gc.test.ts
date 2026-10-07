@@ -16,6 +16,16 @@ import { spawn } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { METRO_NAMED_CACHE_LAYOUT } from '@stim-cli/core';
+import {
+  deviceHostArea,
+  deviceHostRoot,
+  hostedDeviceId,
+  readHostedDeviceLedger,
+  type HostedDeviceSession,
+  type HostedIosDevice,
+} from '@stim-cli/core/state';
+import { collectParkedHostedDevices, deleteParkedHostedDevices } from '../commands/gc/hosted-devices.ts';
+import { takeGcResults } from '../commands/gc/results.ts';
 import { Command } from 'commander';
 import { getExecutor, setExecutor, resetExecutor } from '../exec.ts';
 import { readCreatedDevices, recordCreatedDevice } from '../devices/created-devices.ts';
@@ -3620,6 +3630,7 @@ describe('gc --json', () => {
       'linkedWorktrees',
       'parkedSimulators',
       'parkedEmulators',
+      'parkedHostedDevices',
       'orphanedDevices',
       'unverifiedDevices',
       'staleDevices',
@@ -4237,4 +4248,432 @@ test('unscoped gc reports SwiftPM after agent-device without making it actionabl
   expect(text.indexOf('SwiftPM cache (')).toBeGreaterThan(text.indexOf('agent-device ('));
   expect(text).toContain('shared by every SwiftPM build on this machine');
   expect(readFileSync(join(dir, 'keep'), 'utf8')).toBe('shared');
+});
+
+describe('parked hosted device GC', () => {
+  const sessionId = '11111111-1111-1111-1111-111111111111';
+  const udid = 'AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA';
+  const parkedAt = '2026-01-01T00:00:00.000Z';
+
+  function session(overrides: Partial<HostedDeviceSession> = {}): HostedDeviceSession {
+    return {
+      id: sessionId,
+      client: 'client-1',
+      workspace: '/client/project',
+      slot: 'default',
+      attempt: 'attempt-1',
+      platform: 'ios',
+      state: 'stopped',
+      createdAt: parkedAt,
+      parked: { at: parkedAt },
+      deviceType: 'iPhone 17',
+      runtime: '26.5',
+      device: {
+        udid,
+        name: 'stim-hosted',
+        deviceType: 'iPhone 17',
+        runtime: '26.5',
+        deviceTypeId: 'com.apple.CoreSimulator.SimDeviceType.iPhone-17',
+        runtimeId: 'com.apple.CoreSimulator.SimRuntime.iOS-26-5',
+        architecture: 'arm64',
+      },
+      ...overrides,
+    };
+  }
+
+  function androidSession(): HostedDeviceSession {
+    return session({
+      id: '22222222-2222-2222-2222-222222222222',
+      platform: 'android',
+      deviceType: undefined,
+      runtime: undefined,
+      consolePort: 5554,
+      systemImage: 'system-images;android-36;google_apis;arm64-v8a',
+      deviceProfile: 'pixel_7',
+      device: {
+        avdName: 'stim-hosted-android',
+        serial: 'emulator-5554',
+        consolePort: 5554,
+        systemImage: 'system-images;android-36;google_apis;arm64-v8a',
+        deviceProfile: 'pixel_7',
+        architecture: 'arm64-v8a',
+      },
+    });
+  }
+
+  function journal(records: HostedDeviceSession[]) {
+    mkdirSync(deviceHostRoot(), { recursive: true });
+    writeFileSync(join(deviceHostRoot(), 'sessions.json'), JSON.stringify({ version: 1, sessions: records }));
+    for (const record of records) {
+      const home = join(deviceHostArea(record.id), 'home');
+      mkdirSync(home, { recursive: true });
+      writeFileSync(join(home, 'hosted-device.json'), JSON.stringify(record.device));
+      writeFileSync(
+        join(home, 'created-devices.json'),
+        JSON.stringify({
+          version: 1,
+          ios: record.platform === 'ios' && record.device ? [hostedDeviceId(record.device)] : [],
+          android: record.platform === 'android' && record.device ? [hostedDeviceId(record.device)] : [],
+          web: [],
+        }),
+      );
+    }
+  }
+
+  function worker(result: unknown, beforeSpawn?: () => void) {
+    const requests: { input: unknown; home: string }[] = [];
+    const script = join(mkdtempSync(join(tmpHome, 'gc-worker-')), 'worker.mjs');
+    writeFileSync(
+      script,
+      `
+      import { readFileSync, writeFileSync } from 'node:fs';
+      import { join } from 'node:path';
+      const chunks = [];
+      for await (const chunk of process.stdin) chunks.push(chunk);
+      const input = JSON.parse(Buffer.concat(chunks).toString());
+      if (input.mode !== 'stop' || !input.session || !['ios', 'android'].includes(input.platform)) process.exit(2);
+      writeFileSync(join(process.env.STIM_HOME, 'request.json'), JSON.stringify(input));
+      const ledger = JSON.parse(readFileSync(join(process.env.STIM_HOME, 'created-devices.json')));
+      if (ledger[input.platform].length !== 1) process.exit(3);
+      process.stdout.write(${JSON.stringify(JSON.stringify(result))});
+    `,
+    );
+    setExecutor({
+      ...getExecutor(),
+      spawn(file, args, options) {
+        expect(file).toBe(process.execPath);
+        expect(args).toHaveLength(1);
+        expect(args?.[0]).toMatch(/[/\\]device-host-worker\.mjs$/);
+        beforeSpawn?.();
+        const child = spawn(file, [script], options);
+        child.once('close', () => {
+          requests.push({
+            input: JSON.parse(readFileSync(join(options!.cwd as string, 'request.json'), 'utf8')),
+            home: options!.env!.STIM_HOME!,
+          });
+        });
+        return child;
+      },
+    });
+    return requests;
+  }
+
+  beforeEach(() => {
+    takeGcResults();
+    installExecutor();
+  });
+
+  afterEach(() => {
+    takeGcResults();
+  });
+
+  test('an absent journal adds no hosted devices or notices', () => {
+    expect(collectParkedHostedDevices()).toEqual({ devices: [], notices: [] });
+  });
+
+  test('collection lists only parked native sessions and reports session-home ledger ownership', () => {
+    const android = androidSession();
+    journal([
+      session(),
+      android,
+      session({ id: '33333333-3333-3333-3333-333333333333', parked: undefined }),
+      session({ id: '44444444-4444-4444-4444-444444444444', parked: undefined, state: 'ready' }),
+      session({
+        id: '55555555-5555-5555-5555-555555555555',
+        parked: undefined,
+        platform: 'macos',
+        device: null,
+        deviceType: undefined,
+        runtime: undefined,
+        appSlot: 1,
+      }),
+    ]);
+    const home = join(deviceHostArea(android.id), 'home');
+    writeFileSync(join(home, 'created-devices.json'), JSON.stringify({ version: 1, ios: [], android: [], web: [] }));
+    expect(collectParkedHostedDevices()).toEqual({
+      devices: [
+        {
+          session: sessionId,
+          client: 'client-1',
+          platform: 'ios',
+          id: udid,
+          name: 'stim-hosted',
+          parkedAt,
+          listed: true,
+        },
+        {
+          session: android.id,
+          client: 'client-1',
+          platform: 'android',
+          id: 'stim-hosted-android',
+          name: 'stim-hosted-android',
+          parkedAt,
+          listed: false,
+        },
+      ],
+      notices: [],
+    });
+    expect(collectParkedHostedDevices({ olderThanDays: 2, now: Date.parse(parkedAt) + DAY_MS }).devices).toEqual([]);
+    expect(collectParkedHostedDevices({ olderThanDays: 1, now: Date.parse(parkedAt) + DAY_MS }).devices).toHaveLength(
+      2,
+    );
+  });
+
+  test('a malformed journal is reported without running any deletion', async () => {
+    journal([session()]);
+    writeFileSync(join(deviceHostRoot(), 'sessions.json'), '{');
+    const collected = collectParkedHostedDevices();
+    expect(collected.devices).toEqual([]);
+    expect(collected.notices[0]).toContain('journal unreadable');
+    expect(await deleteParkedHostedDevices(collected.devices)).toBe(0);
+    expect(readHostedDeviceLedger(join(deviceHostArea(sessionId), 'home'))?.ios).toEqual([udid]);
+    expect(takeGcResults()).toEqual([]);
+  });
+
+  test('delete holds the session claim and sends stop to the private home, then records a verified result', async () => {
+    journal([session()]);
+    const requests = worker({ state: 'stopped', device: session().device }, () => {
+      const claims = readClaimSet(join(deviceHostRoot(), `${sessionId}.claims`));
+      expect(claims.live[0]?.childDeclared).toBe(true);
+    });
+    const journalBefore = readFileSync(join(deviceHostRoot(), 'sessions.json'), 'utf8');
+    expect(await deleteParkedHostedDevices(collectParkedHostedDevices().devices)).toBe(0);
+    expect(requests).toEqual([
+      {
+        home: join(deviceHostArea(sessionId), 'home'),
+        input: { mode: 'stop', platform: 'ios', session: sessionId, deviceType: 'iPhone 17', runtime: '26.5' },
+      },
+    ]);
+    expect(takeGcResults()).toMatchObject([{ kind: 'parkedHostedDevice', status: 'done', id: udid }]);
+    expect(readClaimSet(join(deviceHostRoot(), `${sessionId}.claims`)).live).toEqual([]);
+    expect(readFileSync(join(deviceHostRoot(), 'sessions.json'), 'utf8')).toBe(journalBefore);
+  });
+
+  // The worker's process group is signaled, which Node does not support on Windows (nodejs.org/api/process.html#processkillpid-signal).
+  test.skipIf(process.platform === 'win32')(
+    'a timed-out worker gets one SIGTERM and its surviving group gets SIGKILL only after five seconds',
+    async () => {
+      journal([session()]);
+      const home = join(deviceHostArea(sessionId), 'home');
+      const script = join(home, 'timeout-worker.mjs');
+      writeFileSync(
+        script,
+        `
+      import { spawn } from 'node:child_process';
+      import { existsSync, writeFileSync } from 'node:fs';
+      import { join } from 'node:path';
+      for await (const chunk of process.stdin) {}
+      spawn(process.execPath, ['--input-type=module', '-e',
+        "import {writeFileSync} from 'node:fs'; process.on('SIGTERM',()=>{}); writeFileSync(process.env.STIM_HOME+'/descendant-ready','ready'); setInterval(()=>{},1000);"
+      ], { stdio: 'ignore' });
+      while (!existsSync(join(process.env.STIM_HOME, 'descendant-ready'))) await new Promise(resolve => setTimeout(resolve, 10));
+      writeFileSync(join(process.env.STIM_HOME, 'worker-ready'), 'ready');
+      setInterval(()=>{},1000);
+    `,
+      );
+      let child: ReturnType<typeof spawn> | undefined;
+      setExecutor({
+        ...getExecutor(),
+        spawn(file, _args, options) {
+          child = spawn(file, [script], options);
+          return child;
+        },
+      });
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+      const started = Date.now();
+      const kill = vi.spyOn(process, 'kill');
+      const deletion = deleteParkedHostedDevices(collectParkedHostedDevices().devices);
+      const signals = () =>
+        kill.mock.calls.filter(([pid, signal]) => pid === -child!.pid! && signal !== 0).map(([, signal]) => signal);
+      try {
+        await vi.waitFor(() => expect(existsSync(join(home, 'worker-ready'))).toBe(true));
+        await vi.advanceTimersByTimeAsync(90_000 - (Date.now() - started));
+        expect(signals()).toEqual(['SIGTERM']);
+        await vi.waitFor(() => expect(child?.signalCode).toBe('SIGTERM'));
+        await vi.advanceTimersByTimeAsync(94_999 - (Date.now() - started));
+        expect(signals()).toEqual(['SIGTERM']);
+        await vi.advanceTimersByTimeAsync(1);
+        expect(signals()).toEqual(['SIGTERM', 'SIGKILL']);
+        await vi.waitFor(() => expect(readClaimSet(join(deviceHostRoot(), `${sessionId}.claims`)).live).toEqual([]));
+        expect(await deletion).toBe(1);
+        expect(takeGcResults()).toMatchObject([{ status: 'failed', detail: expect.stringContaining('deadline') }]);
+      } finally {
+        if (child?.pid) {
+          try {
+            process.kill(-child.pid, 'SIGKILL');
+          } catch {}
+        }
+        vi.useRealTimers();
+        kill.mockRestore();
+      }
+    },
+  );
+
+  test('Android stop preserves the recorded console port and selectors', async () => {
+    const android = androidSession();
+    journal([android]);
+    const requests = worker({ state: 'stopped', device: android.device });
+    expect(
+      await deleteParkedHostedDevices(collectParkedHostedDevices().devices, {
+        listAvds: () => ['stim-hosted-android'],
+      }),
+    ).toBe(0);
+    expect(requests).toEqual([
+      {
+        home: join(deviceHostArea(android.id), 'home'),
+        input: {
+          mode: 'stop',
+          platform: 'android',
+          session: android.id,
+          consolePort: 5554,
+          systemImage: 'system-images;android-36;google_apis;arm64-v8a',
+          deviceProfile: 'pixel_7',
+        },
+      },
+    ]);
+    expect(takeGcResults()).toMatchObject([{ status: 'done', id: 'stim-hosted-android' }]);
+  });
+
+  test('an Android AVD absent from the caller environment keeps its session ledger without starting a worker', async () => {
+    const android = androidSession();
+    journal([android]);
+    expect(
+      await deleteParkedHostedDevices(collectParkedHostedDevices().devices, { listAvds: () => ['another-avd'] }),
+    ).toBe(0);
+    expect(takeGcResults()).toMatchObject([
+      {
+        status: 'kept',
+        id: 'stim-hosted-android',
+        detail: "AVD not visible from this shell's Android environment; run gc with the server's ANDROID_AVD_HOME/HOME",
+      },
+    ]);
+    expect(readHostedDeviceLedger(join(deviceHostArea(android.id), 'home'))?.android).toEqual(['stim-hosted-android']);
+  });
+
+  test('an already removed device is reported without actionable work or a delete attempt', async () => {
+    journal([session()]);
+    writeFileSync(
+      join(deviceHostArea(sessionId), 'home', 'created-devices.json'),
+      JSON.stringify({ version: 1, ios: [], android: [], web: [] }),
+    );
+    const before = readFileSync(join(deviceHostRoot(), 'sessions.json'), 'utf8');
+    const { stdout, stderr } = await captureJson(() => cli(['--delete', '--json']));
+    const payload = JSON.parse(stdout[0]!);
+    expect(payload.actionable).toBe(false);
+    expect(payload.sections.parkedHostedDevices[0]).toHaveProperty('listed', false);
+    expect(payload.results).toEqual([]);
+    expect(stderr).toContain('already removed; stim-server clears the marker');
+    expect(readFileSync(join(deviceHostRoot(), 'sessions.json'), 'utf8')).toBe(before);
+    expect(await deleteParkedHostedDevices(collectParkedHostedDevices().devices)).toBe(0);
+    expect(takeGcResults()).toEqual([]);
+  });
+
+  test('an unreadable ledger is listed as unknown and keeps the device on delete', async () => {
+    journal([session()]);
+    writeFileSync(join(deviceHostArea(sessionId), 'home', 'created-devices.json'), '{');
+    const collected = collectParkedHostedDevices();
+    expect(collected.devices[0]?.listed).toBeNull();
+    expect(collected.notices[0]).toContain('ledger unreadable');
+    expect(await deleteParkedHostedDevices(collected.devices)).toBe(0);
+    expect(takeGcResults()).toMatchObject([{ status: 'kept' }]);
+  });
+
+  test('JSON delete reports the worker outcome and keeps the server journal unchanged', async () => {
+    journal([session()]);
+    const before = readFileSync(join(deviceHostRoot(), 'sessions.json'), 'utf8');
+    const requests = worker({ state: 'stopped', device: session().device });
+    const { stdout } = await captureJson(() => cli(['--delete', '--json']));
+    expect(stdout).toHaveLength(1);
+    const payload = JSON.parse(stdout[0]!);
+    expect(payload.mode).toBe('delete');
+    expect(payload.failures).toBe(0);
+    expect(payload.results).toMatchObject([{ kind: 'parkedHostedDevice', status: 'done', id: udid }]);
+    expect(requests).toHaveLength(1);
+    expect(readFileSync(join(deviceHostRoot(), 'sessions.json'), 'utf8')).toBe(before);
+  });
+
+  test('a held session claim keeps its device without launching the worker', async () => {
+    journal([session()]);
+    const claim = tryAcquireClaim({
+      root: join(deviceHostRoot(), `${sessionId}.claims`),
+      mode: 'exclusive',
+      label: 'hosted device session',
+    }).acquired;
+    expect(claim).toBeDefined();
+    try {
+      expect(await deleteParkedHostedDevices(collectParkedHostedDevices().devices)).toBe(0);
+      expect(takeGcResults()).toMatchObject([{ status: 'kept', detail: expect.stringContaining('claim') }]);
+    } finally {
+      releaseClaim(claim);
+    }
+  });
+
+  test('a ledger changed after collection keeps the device', async () => {
+    journal([session()]);
+    const collected = collectParkedHostedDevices().devices;
+    writeFileSync(
+      join(deviceHostArea(sessionId), 'home', 'created-devices.json'),
+      JSON.stringify({ version: 1, ios: [], android: [], web: [] }),
+    );
+    expect(await deleteParkedHostedDevices(collected)).toBe(0);
+    expect(takeGcResults()).toMatchObject([{ status: 'kept', detail: expect.stringContaining('ledger') }]);
+  });
+
+  test('adoption after collection keeps the device', async () => {
+    journal([session()]);
+    const collected = collectParkedHostedDevices().devices;
+    journal([session({ state: 'ready', parked: undefined })]);
+    expect(await deleteParkedHostedDevices(collected)).toBe(0);
+    expect(takeGcResults()).toMatchObject([{ status: 'kept', detail: expect.stringContaining('no longer') }]);
+  });
+
+  test.each([
+    { state: 'unknown', device: session().device, notice: 'teardown failed' },
+    { state: 'stopped', device: { ...session().device, udid: 'BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB' } },
+    { state: 'stopped', device: null },
+  ])('an unverified worker result fails that device and continues with the next session (%j)', async (badResult) => {
+    const second = session({
+      id: '22222222-2222-2222-2222-222222222222',
+      device: { ...(session().device as HostedIosDevice), udid: 'CCCCCCCC-CCCC-CCCC-CCCC-CCCCCCCCCCCC' },
+    });
+    journal([session(), second]);
+    let runs = 0;
+    const firstRequests = worker(badResult, () => {
+      runs += 1;
+      if (runs === 1) worker({ state: 'stopped', device: second.device });
+    });
+    expect(await deleteParkedHostedDevices(collectParkedHostedDevices().devices)).toBe(1);
+    expect(firstRequests).toHaveLength(1);
+    expect(runs).toBe(1);
+    expect(takeGcResults()).toMatchObject([
+      { status: 'failed', id: udid },
+      { status: 'done', id: 'CCCCCCCC-CCCC-CCCC-CCCC-CCCCCCCCCCCC' },
+    ]);
+  });
+
+  test('JSON dry run includes the hosted section and leaves the journal and ledger intact', async () => {
+    journal([session()]);
+    const before = readFileSync(join(deviceHostRoot(), 'sessions.json'), 'utf8');
+    const { stdout, stderr } = await captureJson(() => cli(['--json']));
+    expect(stdout).toHaveLength(1);
+    const payload = JSON.parse(stdout[0]!);
+    expect(payload.actionable).toBe(true);
+    expect(payload.results).toEqual([]);
+    expect(payload.sections.parkedHostedDevices).toEqual([
+      {
+        session: sessionId,
+        client: 'client-1',
+        platform: 'ios',
+        id: udid,
+        name: 'stim-hosted',
+        parkedAt,
+        listed: true,
+      },
+    ]);
+    expect(stderr).toContain('Parked hosted devices (1)');
+    expect(readFileSync(join(deviceHostRoot(), 'sessions.json'), 'utf8')).toBe(before);
+    expect(readHostedDeviceLedger(join(deviceHostArea(sessionId), 'home'))?.ios).toEqual([udid]);
+    const scoped = await collectGcReport({ cache: 'parked' });
+    expect(scoped.parkedHostedDevices).toEqual([]);
+  });
 });

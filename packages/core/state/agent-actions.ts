@@ -2,17 +2,21 @@ import { closeSync, fstatSync, openSync, readdirSync, readFileSync, readSync, st
 import { join } from 'node:path';
 import type { NdjsonRecord } from './ndjson.ts';
 
-export interface AgentTarget {
+interface DeviceTarget {
   platform: 'ios' | 'android';
   id: string;
   slot: string;
   name?: string;
 }
 
+export type AgentTarget =
+  | DeviceTarget
+  | { platform: 'macos'; id: string; slot: string; bundleId: string; launchedAt: number };
+
 interface AgentEvent {
   ts: number;
   session: string;
-  kind: 'action.recorded' | 'request.finished';
+  kind: 'action.recorded' | 'request.finished' | 'request.started';
   command: string;
   summary: string;
   failed: boolean;
@@ -58,20 +62,21 @@ function parseAgentEvents(lines: readonly string[]): ParsedAgentEvents {
     const { kind, command, summary } = entry;
     const requestId = typeof entry.requestId === 'string' ? entry.requestId : null;
     if (kind === 'request.started' && requestId && Number.isFinite(ts)) started.push([requestId, ts]);
-    if (kind !== 'action.recorded' && kind !== 'request.finished') continue;
+    const scopeChange = kind === 'request.started' && (command === 'open' || command === 'close');
+    if (kind !== 'action.recorded' && kind !== 'request.finished' && !scopeChange) continue;
     const failed = kind === 'request.finished' && entry.status === 'error';
     if (kind === 'request.finished' && !failed) {
       if (requestId) finished.push(requestId);
       continue;
     }
     if (!Number.isFinite(ts) || typeof entry.session !== 'string' || typeof command !== 'string') continue;
-    if (typeof summary !== 'string') continue;
+    if (typeof summary !== 'string' && !scopeChange) continue;
     events.push({
       ts,
       session: entry.session,
-      kind,
+      kind: kind as AgentEvent['kind'],
       command,
-      summary,
+      summary: typeof summary === 'string' ? summary : '',
       failed,
       details: object(entry.details),
       requestId,
@@ -130,6 +135,8 @@ function spanDevice(spans: readonly RunnerSpan[], ts: number): string | null {
   return device;
 }
 
+type Platform = AgentTarget['platform'];
+
 function platformOf(event: AgentEvent): 'ios' | 'android' | undefined {
   const platform = event.details?.platform;
   return platform === 'ios' || platform === 'android' ? platform : undefined;
@@ -138,7 +145,7 @@ function platformOf(event: AgentEvent): 'ios' | 'android' | undefined {
 function agentRecord(
   event: AgentEvent,
   deviceId: string | null,
-  target: { platform?: 'ios' | 'android'; slot: string },
+  target: { platform?: Platform; slot: string },
   startedAt?: number,
 ): NdjsonRecord {
   return {
@@ -160,7 +167,7 @@ function agentRecord(
 function formatUnknownRecord(
   session: string,
   unknown: NonNullable<ParsedAgentEvents['unknownVersion']>,
-  target: { platform?: 'ios' | 'android'; slot: string },
+  target: { platform?: Platform; slot: string },
   now: number,
 ): NdjsonRecord {
   return {
@@ -175,16 +182,21 @@ function formatUnknownRecord(
   };
 }
 
-function readCompleteLines(path: string, start: number): { text: string; next: number; size: number } | null {
+function readCompleteLines(
+  path: string,
+  start: number,
+): { text: string; next: number; size: number; identity: string } | null {
   let fd: number | undefined;
   try {
     fd = openSync(path, 'r');
-    const size = fstatSync(fd).size;
-    if (size <= start) return { text: '', next: start, size };
+    const stat = fstatSync(fd);
+    const size = stat.size;
+    const identity = `${stat.dev}:${stat.ino}`;
+    if (size <= start) return { text: '', next: start, size, identity };
     const buffer = Buffer.alloc(size - start);
     const read = readSync(fd, buffer, 0, buffer.length, start);
     const end = buffer.subarray(0, read).lastIndexOf(0x0a);
-    return { text: end < 0 ? '' : buffer.toString('utf8', 0, end + 1), next: start + end + 1, size };
+    return { text: end < 0 ? '' : buffer.toString('utf8', 0, end + 1), next: start + end + 1, size, identity };
   } catch {
     return null;
   } finally {
@@ -194,17 +206,35 @@ function readCompleteLines(path: string, start: number): { text: string; next: n
 
 interface SessionCursor {
   offset: number;
+  identity?: string;
   closes: number[];
   runner: { size: number; spans: RunnerSpan[] } | null;
   session: string | null;
   unknownReported: boolean;
   platform?: 'ios' | 'android';
   started: Map<string, number>;
+  macos: boolean;
+  bundleId: string | null;
+  closing: string | null;
+}
+
+function trackMacosOpen(cursor: SessionCursor, event: AgentEvent, unknownVersion: boolean): void {
+  const flags = object(event.details?.flags);
+  if (!event.failed) cursor.macos = event.details?.platform === 'macos' || flags?.platform === 'macos';
+  cursor.bundleId =
+    cursor.macos &&
+    !event.failed &&
+    !unknownVersion &&
+    flags?.surface === 'app' &&
+    typeof event.details?.appBundleId === 'string'
+      ? event.details.appBundleId
+      : null;
 }
 
 export interface AgentActionReaderOptions {
   sessionsDirs: readonly string[] | (() => readonly string[]);
-  targets?: AgentTarget[];
+  /** Re-resolved on every read, so a follower picks up a native launch that starts or restarts later. */
+  targets?: AgentTarget[] | (() => AgentTarget[]);
   sinceTs?: number;
   now?: () => number;
   claimedDevice?: (session: string, sessionsDir: string) => string | null;
@@ -217,16 +247,20 @@ export interface AgentActionReaderOptions {
  */
 export function createAgentActionReader({
   sessionsDirs,
-  targets,
+  targets: resolveTargets,
   sinceTs = -Infinity,
   now = Date.now,
   claimedDevice = () => null,
 }: AgentActionReaderOptions): () => NdjsonRecord[] {
   const cursors = new Map<string, SessionCursor>();
-  const byId = new Map(targets?.map((target) => [target.id, target]));
 
   return () => {
+    const targets = typeof resolveTargets === 'function' ? resolveTargets() : resolveTargets;
     if (targets && !targets.length) return [];
+    const byId = new Map(targets?.map((target) => [target.id, target]));
+    const macosByBundle = new Map(
+      targets?.flatMap((target) => (target.platform === 'macos' ? [[target.bundleId, target] as const] : [])),
+    );
     const sessionDirs = (typeof sessionsDirs === 'function' ? sessionsDirs() : sessionsDirs).flatMap((sessionsDir) => {
       try {
         return readdirSync(sessionsDir).map((name) => ({ name, sessionsDir, dir: join(sessionsDir, name) }));
@@ -246,7 +280,17 @@ export function createAgentActionReader({
         } catch {
           continue;
         }
-        cursor = { offset: 0, closes: [], runner: null, session: null, unknownReported: false, started: new Map() };
+        cursor = {
+          offset: 0,
+          closes: [],
+          runner: null,
+          session: null,
+          unknownReported: false,
+          started: new Map(),
+          macos: false,
+          bundleId: null,
+          closing: null,
+        };
         cursors.set(dir, cursor);
         try {
           lines.push(...readFileSync(`${eventsPath}.1`, 'utf8').split('\n'));
@@ -255,8 +299,12 @@ export function createAgentActionReader({
       // agent-device rotates events.ndjson to events.ndjson.1 at AGENT_DEVICE_EVENT_LOG_MAX_BYTES (5 MiB by
       // default). A rotation between two reads restarts at the new file; the unread tail of .1 is skipped.
       let chunk = readCompleteLines(eventsPath, cursor.offset);
-      if (chunk && chunk.size < cursor.offset) chunk = readCompleteLines(eventsPath, 0);
+      if (chunk && (chunk.size < cursor.offset || (cursor.identity && chunk.identity !== cursor.identity))) {
+        cursor.bundleId = null;
+        chunk = readCompleteLines(eventsPath, 0);
+      }
       if (!chunk) continue;
+      cursor.identity = chunk.identity;
       cursor.offset = chunk.next;
       lines.push(...chunk.text.split('\n'));
       const parsed = parseAgentEvents(lines);
@@ -287,7 +335,8 @@ export function createAgentActionReader({
         } catch {}
         cursor.runner = { size: runnerSize, spans: parseRunnerSpans(text) };
       }
-      for (const event of parsed.events) if (event.command === 'close' && !event.failed) cursor.closes.push(event.ts);
+      for (const event of parsed.events)
+        if (event.command === 'close' && event.kind === 'action.recorded') cursor.closes.push(event.ts);
       // agent-device starts an iOS runner lazily, on the first command that needs it, so the runner log dates a
       // device change late. A session that closes and reopens on another simulator changes device at the close.
       const spans = sessionSpans(cursor.runner.spans, cursor.closes);
@@ -303,13 +352,44 @@ export function createAgentActionReader({
 
       if (parsed.unknownVersion && !cursor.unknownReported) {
         const deviceId = spans.at(-1)?.deviceId ?? (session && claimedDevice(session, sessionsDir));
-        const target = targets ? (deviceId ? byId.get(deviceId) : undefined) : retainedTarget();
+        const target = !targets
+          ? retainedTarget()
+          : cursor.macos
+            ? cursor.bundleId
+              ? macosByBundle.get(cursor.bundleId)
+              : undefined
+            : deviceId
+              ? byId.get(deviceId)
+              : undefined;
         if (target) {
           cursor.unknownReported = true;
           out.push(formatUnknownRecord(session ?? name, parsed.unknownVersion, target, now()));
         }
       }
+      if (parsed.unknownVersion) cursor.bundleId = null;
       for (const event of parsed.events) {
+        if (event.kind === 'request.started') {
+          cursor.closing = event.command === 'close' ? cursor.bundleId : null;
+          cursor.bundleId = null;
+          continue;
+        }
+        if (targets && event.command === 'open') trackMacosOpen(cursor, event, Boolean(parsed.unknownVersion));
+        if (targets && cursor.macos) {
+          // agent-device's screenshot event omits its per-command surface override.
+          if (event.command === 'screenshot') continue;
+          const bundleId = cursor.bundleId ?? (event.command === 'close' ? cursor.closing : null);
+          cursor.closing = null;
+          const target = bundleId ? macosByBundle.get(bundleId) : undefined;
+          const startedAt = event.requestId ? matched.get(event.requestId) : undefined;
+          if (
+            target?.platform === 'macos' &&
+            event.ts >= Math.max(sinceTs, target.launchedAt) &&
+            (startedAt ?? event.ts) >= target.launchedAt
+          )
+            out.push(agentRecord(event, target.id, target, startedAt));
+          if (event.command === 'close') cursor.bundleId = null;
+          continue;
+        }
         if (event.ts < sinceTs) continue;
         if (!targets) cursor.platform = platformOf(event) ?? cursor.platform;
         const deviceId = !targets && cursor.platform === 'android' ? null : deviceAt(event.ts);

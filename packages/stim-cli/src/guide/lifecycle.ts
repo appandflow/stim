@@ -380,7 +380,10 @@ retrying a busy host for at most one minute.
 stim logs, including --errors and --json, pulls native logcat records as src: device.
 The host rechecks the exact ledger-owned serial and AVD name, resolves the app's
 pid on each collection and also drains its last observed pid after a crash or
-restart. If no pid was ever observed, native logs cannot be attributed to the app.
+restart. A successful drain retires the exited pid. A failed pid lookup preserves
+the checkpoint without querying logcat, so the next collection can retry.
+If no pid was ever observed,
+native logs cannot be attributed to the app.
 PID-based logcat cannot distinguish historical reuse of an exited pid.
 Queries use bounded logcat -d -v epoch -T <epoch> --pid <pid> output, a ten-second
 budget, a persisted checkpoint and five-second overlap to deduplicate records.
@@ -534,8 +537,14 @@ so the first run after adoption uploads only changed files. Devices are never re
 The oldest parked devices beyond the host's platform limit are deleted through
 owned-device teardown, also after a limit decrease. Adoption-time reconciliation
 retires missing, renamed, running or unowned candidates; failed retirement keeps
-the record. Revocation retires that client's parked devices. If GC removes a
-ledger-owned device, reconciliation clears its parked marker without a worker.
+the record. Revocation retires that client's parked devices.
+On the hosting Mac, unscoped \`stim gc\` lists parked hosted devices and
+\`stim gc --delete\` deletes them through their session homes under a session
+claim. Held claims and unverified ownership keep the device. Android deletion
+requires visibility from this shell's Android environment; otherwise run gc with
+the server's ANDROID_AVD_HOME/HOME. Records no longer listed in their session
+ledger are already removed and skipped. Reconciliation
+clears its parked marker after the session ledger becomes empty.
 
 stim logs and stim logs --errors pull native device records from bounded host
 queries. Concurrent followers share a collection, throttled per session, without

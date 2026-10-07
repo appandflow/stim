@@ -135,7 +135,8 @@ Duo fold detection requires a build made with the iOS 27.1 SDK and an iOS
   worktree share a heading and keep their app labels. Rows show removal time,
   size, the PR number (or Merged), and an indicator for expired content or
   content expiring within 24 hours. Missing branch or repository facts fall back
-  to the worktree folder. Live, Idle and All show only current workspaces.
+  to the worktree folder. Live and Idle show only current workspaces; All
+  shows them followed by the archived ones.
   An archive opens the same workspace page as a read-only variant: Status shows
   removal, last activity, retention dates, size by content and activity totals;
   Build opens the same build history sheet with cache results, durations,
@@ -511,10 +512,12 @@ of footage (see `packages/server/README.md`, Recording).
   replay, a line under the buttons shows the time of the frame shown. The
   scrubber is linear in time: a second of footage or of a short stop takes the
   same width anywhere on it. A stop longer than a minute takes a minute's width
-  and is dashed. The track's length is rounded up
+  and is dashed. While the device is
+  recorded, the track's length is rounded up
   to a whole minute, with the spare room before the oldest footage, so it grows
   at most once a minute; it shrinks only when the footage is two minutes
-  shorter, so pruning at the 15 minute cap does not rescale it. While the Mac
+  shorter, so pruning at the 15 minute cap does not rescale it. Otherwise the track
+  fits the footage exactly and fills the width. While the Mac
   records the device, the track's right edge is the Mac's time now and the
   footage slides left as time passes; a finger on the track holds it still.
 - **Markers.** Agent actions sit on the scrubber in the accent color, errors

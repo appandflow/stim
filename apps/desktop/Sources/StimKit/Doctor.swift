@@ -71,9 +71,15 @@ public struct DoctorCheckout: Hashable, Sendable {
   public var repository: String
 }
 
-/// One workspace per app to run `stim doctor` in: the app's folder in the project's own checkout when status lists
-/// it, else the first worktree workspace of that folder. Only listed workspaces qualify, because doctor records its
-/// run in the Stim project registry and would add an unlisted checkout to `stim status`.
+/// Whether `path` is a scratch folder, such as an agent's temporary worktree, that is gone or stale soon.
+public func isScratchPath(_ path: String) -> Bool {
+  ["/tmp", "/private/tmp", "/var/folders", "/private/var/folders"].contains { path == $0 || path.hasPrefix($0 + "/") }
+}
+
+/// One workspace per app to run `stim doctor` in, the most recently active app first: the app's folder in the
+/// project's own checkout when status lists it, else the first worktree workspace of that folder. Only listed
+/// workspaces qualify, because doctor records its run in the Stim project registry and would add an unlisted
+/// checkout to `stim status`. A workspace in a scratch folder never qualifies.
 public func doctorCheckouts(_ environments: [Workspace], project: (String) -> Project) -> [DoctorCheckout] {
   doctorCheckoutsBySource(environments, project: project).map(\.checkout)
 }
@@ -98,17 +104,24 @@ private func doctorSource(of env: Workspace, project: (String) -> Project) -> St
 private func doctorCheckoutsBySource(
   _ environments: [Workspace], project: (String) -> Project
 ) -> [(source: String, checkout: DoctorCheckout)] {
-  let listed = Set(environments.map(\.path))
+  let usable = environments.filter { !isScratchPath($0.path) }
+  let listed = Set(usable.map(\.path))
   var order: [String] = []
   var chosen: [String: DoctorCheckout] = [:]
-  for env in environments {
+  var activity: [String: Date] = [:]
+  for env in usable {
     let source = doctorSource(of: env, project: project)
     if chosen[source] == nil { order.append(source) }
     if chosen[source] == nil || (env.path == source && listed.contains(source)) {
       chosen[source] = DoctorCheckout(path: env.path, repository: project(env.path).root)
     }
+    if let at = env.lastActivityAt, at > activity[source] ?? .distantPast { activity[source] = at }
   }
-  return order.compactMap { source in chosen[source].map { (source, $0) } }
+  let ranked = order.enumerated().sorted { a, b in
+    let (x, y) = (activity[a.element], activity[b.element])
+    return x == y ? a.offset < b.offset : (x ?? .distantPast) > (y ?? .distantPast)
+  }
+  return ranked.compactMap { _, source in chosen[source].map { (source, $0) } }
 }
 
 /// When Stim Desktop last ran `stim doctor` in a checkout.

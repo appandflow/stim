@@ -964,7 +964,16 @@ test('the guide names the workspace agent-device state contract without setting 
 
 test('archive cleanup guidance names each code-supported cache selector', () => {
   const section = renderSection('cleanup', 'archive');
-  for (const selector of ['archived', 'archived:example', 'archived-logs', 'archived-recordings', 'archived-agent']) {
+  for (const selector of [
+    'archived',
+    'archived:example',
+    'archived-logs',
+    'archived-recordings',
+    'archived-agent',
+    'archived-logs:example',
+    'archived-recordings:example',
+    'archived-agent:example',
+  ]) {
     expect(includesArchives(selector)).toBe(true);
     expect(section).toContain(selector.replace('example', '<id>'));
   }
@@ -993,4 +1002,13 @@ test.each(['ios', 'android'])('hosted %s data paths name their feature flag in t
     renderSection('errors', 'STIM_HOSTING_REFUSED'),
   ])
     expect(body).toContain(feature);
+});
+
+test('facts document the hosted GC JSON fields and result kind', () => {
+  const body = renderSection('facts', 'gc');
+  assert(body);
+  const hosted = body.slice(body.indexOf('    parkedHostedDevices'), body.indexOf('    orphanedDevices'));
+  for (const field of ['session', 'client', 'platform', 'id', 'name', 'parkedAt', 'listed'])
+    expect(hosted).toMatch(new RegExp(`\\b${field}\\b`));
+  expect(body).toContain('parkedHostedDevice');
 });

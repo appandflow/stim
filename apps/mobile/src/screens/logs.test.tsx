@@ -53,6 +53,10 @@ jest.mock('react-native-safe-area-context', () => ({
 }));
 jest.mock('@/components/connection-banner', () => ({ ConnectionBanner: () => null }));
 jest.mock('@/components/header-title', () => ({ HeaderTitle: () => null }));
+jest.mock('@/components/copy-button', () => ({
+  CopyPill: () => null,
+  useCopy: () => ({ copied: false, copy: () => {} }),
+}));
 jest.mock('@/components/icon', () => ({ Icon: () => null }));
 jest.mock('@/components/platform-logo', () => ({ PlatformLogo: () => null }));
 jest.mock('@/components/pill', () => ({ StatusDot: () => null }));

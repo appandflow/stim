@@ -514,7 +514,6 @@ struct CommandBlock: View {
   var showsOutput = true
   var showsDirectory = true
   var start: (() -> Void)?
-  @State private var copied = false
 
   init(
     command: StimCommand, run: ActionRun?, busy: Bool, isDefault: Bool, caption: String?,
@@ -545,21 +544,9 @@ struct CommandBlock: View {
             .font(.stim(.callout, mono: true))
             .textSelection(.enabled)
             .frame(maxWidth: .infinity, alignment: .leading)
-          Button {
-            NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString(text, forType: .string)
-            copied = true
-          } label: {
-            Image(systemName: copied ? "checkmark" : "doc.on.doc")
-          }
-          .buttonStyle(.stim(.plain))
-          .help("Copy the command")
-          .accessibilityLabel(copied ? "Copied" : commandText != nil ? "Copy commands" : "Copy \(text)")
-          .task(id: copied) {
-            guard copied else { return }
-            try? await Task.sleep(for: .seconds(2))
-            copied = false
-          }
+          CopyButton(
+            text, variant: .plain, showsTitle: false, help: "Copy the command",
+            accessibilityLabel: commandText != nil ? "Copy commands" : "Copy \(text)")
           if start != nil { runButton }
         }
         .padding(.leading, Space.lg)

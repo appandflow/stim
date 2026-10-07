@@ -96,6 +96,7 @@ import { collectIdleDevices, parseIdleDuration, shutDownIdleDevices, type IdleDe
 import { workspaceDir } from '../workspace/paths.ts';
 import { workspaceLastUsed } from '../workspace/workspace-state.ts';
 import { collectInventory, type GcInventory } from './gc/inventory.ts';
+import { collectParkedHostedDevices, deleteParkedHostedDevices } from './gc/hosted-devices.ts';
 import {
   collectMemoryReport,
   GRADLE_DAEMONS_KIND,
@@ -256,6 +257,7 @@ export async function collectGcReport(
       easSessionSweep: { projectScope: null, orphaned: [], notices: [], deletionSafe: true },
       parkedSims: includesParkedDevices(scope) ? collectParkedSims(deps, { olderThanDays: olderThan, now }) : [],
       parkedAvds: includesParkedDevices(scope) ? collectParkedAvds(deps, { olderThanDays: olderThan, now }) : [],
+      parkedHostedDevices: [],
       caches,
       workspaceOutputs: withWorkspaces
         ? collectWorkspaceOutputs({
@@ -303,7 +305,8 @@ export async function collectGcReport(
   const statusCaches = collectStaleStatusCaches(mountedVolumes);
   skipped.push(...statusCaches.skipped);
 
-  const deviceSweepNotices: string[] = [];
+  const hosted = collectParkedHostedDevices({ olderThanDays: olderThan, now });
+  const deviceSweepNotices: string[] = [...hosted.notices];
   let orphanedDevices: OrphanedDevice[] = [];
   let unverifiedDevices: UnverifiedDevice[] = [];
   let staleDevices: StaleProjectDevice[] = [];
@@ -441,6 +444,7 @@ export async function collectGcReport(
     orphanedWorkspaces: workspaceDirs.orphaned,
     parkedSims,
     parkedAvds,
+    parkedHostedDevices: hosted.devices,
     orphanedDevices,
     unverifiedDevices,
     staleDevices,
@@ -763,7 +767,7 @@ async function runGcCore(opts: RunGcOptions, deps: GcDependencies): Promise<GcPa
       report.recordings.some((entry) => entry.willDelete && !entry.withWorkspace) ||
       Boolean(report.worktreeSweep?.worktrees.some((entry) => !entry.skipped)) ||
       report.parkedSims.length > 0 ||
-      report.parkedAvds.length > 0 ||
+      report.parkedAvds.length + report.parkedHostedDevices.filter((device) => device.listed !== false).length > 0 ||
       orphanedDevices.length > 0 ||
       staleDevices.length > 0 ||
       staleDeviceRecords.length > 0 ||
@@ -816,6 +820,7 @@ async function runGcCore(opts: RunGcOptions, deps: GcDependencies): Promise<GcPa
   deleteFailures += await trimWorkspaceLogs(report.workspaceLogs);
   deleteFailures += deleteRecordings(report.recordings, { whole: all, olderThan, now: Date.now() });
   deleteFailures += reclaimParkedDevices(report, deps);
+  deleteFailures += await deleteParkedHostedDevices(report.parkedHostedDevices);
   deleteFailures += await reclaimMemory(cache, report.memory);
 
   removeInvalidProjectEntries(invalidProjects);
@@ -949,7 +954,7 @@ export default function gcCommand(program: Command): void {
     )
     .option(
       '--cache <name>',
-      'act on the shared caches whose name or directory contains <name>, every cache, the workspace build outputs and the device recordings with --cache all, only the workspace build outputs with --cache workspaces, only the device recordings with --cache recordings, only the parked simulators and emulators with --cache parked, the watchman daemon and its stale roots with --cache watchman, or the Gradle and Kotlin compile daemons with --cache gradle-daemons; archived, archived:<id>, archived-logs, archived-recordings and archived-agent select archived history explicitly; --cache all excludes archives. all, workspaces, recordings, parked, archived, archived:<id>, archived-logs, archived-recordings, archived-agent, watchman and gradle-daemons are reserved names that never select a single cache, and --cache all never includes watchman or gradle-daemons. With --delete they are emptied whole (a parked device is erased and stays parked, watchman loses its stale roots and shuts down only when no client uses it, and only daemons proven idle stop), which is the only way to clear an index-backed cache; add --older-than <days> to trim them by age instead. Archive ids ignore --older-than; archived and per-kind archive selectors filter by removal age. Only those caches are reported; other devices and project entries are not inspected. Caches outside the config dir are refused while STIM_HOME is set.',
+      'act on the shared caches whose name or directory contains <name>, every cache, the workspace build outputs and the device recordings with --cache all, only the workspace build outputs with --cache workspaces, only the device recordings with --cache recordings, only the parked simulators and emulators with --cache parked, the watchman daemon and its stale roots with --cache watchman, or the Gradle and Kotlin compile daemons with --cache gradle-daemons; archived, archived:<id>, archived-logs, archived-recordings and archived-agent select archived history explicitly, and the three kind selectors also take :<id> (archived-logs:<id>) to clear one kind of one archive; --cache all excludes archives. all, workspaces, recordings, parked, archived, archived:<id>, archived-logs, archived-recordings, archived-agent, their :<id> forms, watchman and gradle-daemons are reserved names that never select a single cache, and --cache all never includes watchman or gradle-daemons. With --delete they are emptied whole (a parked device is erased and stays parked, watchman loses its stale roots and shuts down only when no client uses it, and only daemons proven idle stop), which is the only way to clear an index-backed cache; add --older-than <days> to trim them by age instead. Archive ids, including the :<id> of a kind selector, ignore --older-than; archived and per-kind archive selectors without an id filter by removal age. Only those caches are reported; other devices and project entries are not inspected. Caches outside the config dir are refused while STIM_HOME is set.',
       (v: string) => {
         if (!v.trim()) throw new InvalidArgumentError('must name a cache, e.g. --cache "compilation cache"');
         return v;

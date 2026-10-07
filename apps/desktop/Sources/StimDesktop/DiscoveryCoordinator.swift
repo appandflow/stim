@@ -47,6 +47,7 @@ final class DiscoveryCoordinator: ObservableObject {
 
   func start(actions: ActionCenter) {
     guard subscription == nil else { return }
+    persistence.migrate()
     if !Self.countedLaunch {
       persistence.launched()
       Self.countedLaunch = true
@@ -165,9 +166,10 @@ final class DiscoveryCoordinator: ObservableObject {
     let prompt = Discovery.capHit(
       source: source, mac: macs.first, hosts: hosts,
       isRemote: { [weak self] id, platform in
-        guard let path = self?.workspacePath(id) else { return false }
-        return (platform.map { [$0] } ?? ["ios", "android"]).allSatisfy {
-          AppPreferences.runDestination(workspace: path, platform: $0, approvedMachines: hosts) != .thisMac
+        guard let env = self?.workspacePath(id).flatMap({ path in self?.latest?.environments.first { $0.path == path } })
+        else { return false }
+        return Discovery.runOnAutoPlatforms(platform).allSatisfy { platform in
+          env.devices.contains { $0.platform == platform && $0.hostedMachine != nil }
         }
       })
     if let prompt { remember(prompt, rememberedAt: source.at) } else { pending[.capHit] = nil }
@@ -215,6 +217,8 @@ final class DiscoveryCoordinator: ObservableObject {
     {
       candidates.append(prompt)
     }
+    let tipsShown = TipStore(defaults: .standard).state.lastShown
+    candidates.removeAll { Tips.suppressesDiscovery($0.type, lastShown: tipsShown) }
     guard !delivering, allowed(now: now),
       let prompt = Discovery.select(candidates, states: persistence.states, now: now, bannersAvailable: MainWindow.isOpen)
     else { return }
@@ -258,8 +262,24 @@ final class DiscoveryCoordinator: ObservableObject {
   private func perform(_ action: DiscoveryAction) {
     guard case .runOnAuto(let id, let platform) = action else { return Self.open(action) }
     guard let path = workspacePath(id) else { return }
-    for platform in platform.map({ [$0] }) ?? ["ios", "android"] {
-      UserDefaults.standard.set("auto", forKey: AppPreferences.Key.runDestination(workspace: path, platform: platform))
+    Task {
+      for key in Discovery.runOnAutoPlatforms(platform).map({ "\($0).remote" }) {
+        let result = await machines.settings.write(key, value: "auto", scope: .workspace, cwd: path)
+        if let problem = Self.problem(result) {
+          NoticeCenter.shared.show(
+            Notice(
+              icon: "exclamationmark.triangle", tone: .caution, title: "Could not set \(key) to auto", detail: problem,
+              actionTitle: "OK", perform: {}))
+        }
+      }
+    }
+  }
+
+  private static func problem(_ result: Result<SettingsWriteResult, any Error>) -> String? {
+    switch result {
+    case .success(.written): return nil
+    case .success(.refused(let refusal)): return [refusal.message, refusal.remedy].compactMap { $0 }.joined(separator: " ")
+    case .failure(let error): return error.localizedDescription
     }
   }
 

@@ -39,11 +39,6 @@ public func countLabel(_ count: Int, _ noun: String, plural: String? = nil) -> S
   "\(count.formatted()) \(count == 1 ? noun : plural ?? noun + "s")"
 }
 
-/// The commands that create an environment for a worktree Stim has not registered.
-public func environmentCommands(worktree: String) -> [StimCommand] {
-  [["start"], ["ios"], ["android"]].map { StimCommand($0, cwd: worktree) }
-}
-
 /// The `stim stop` command that stops one device. A remote session has no per-slot
 /// teardown, so it runs plain `stop`, which ends the whole workspace including the session.
 public func stopCommand(for device: DeviceRef, cwd: String) -> StimCommand {
@@ -64,7 +59,7 @@ public func shellQuote(_ s: String) -> String {
 /// The `stim ios` or `stim android` command that builds if needed, installs and launches the app on one
 /// Stim-owned simulator or emulator, naming its slot unless it is the default one, or `stim web` for the
 /// workspace's Chrome. Nil for a physical device or one Stim does not own, which that command does not target.
-public func runCommand(for device: DeviceRef, cwd: String, destination: RunDestination = .thisMac) -> StimCommand? {
+public func runCommand(for device: DeviceRef, cwd: String) -> StimCommand? {
   switch device {
   case .ios(_, let sim) where sim.owned || sim.host != nil: break
   case .android(_, let avd) where (avd.owned || avd.host != nil) && !avd.physical: break
@@ -72,6 +67,6 @@ public func runCommand(for device: DeviceRef, cwd: String, destination: RunDesti
   default: return nil
   }
   let slot = device.slot == DeviceRef.defaultSlot ? [] : ["--slot", device.slot]
-  let remote = (device.hostedMachine.map { RunDestination.machine($0) } ?? destination).arguments
+  let remote = device.hostedMachine.map { ["--remote", $0] } ?? []
   return StimCommand([device.platform] + slot + remote, cwd: cwd)
 }

@@ -40,8 +40,12 @@ vi.mock('@stim-cli/core/process-identity', async (original) => {
             ? 'same'
             : 'gone'
         : actual.inspectProcessIdentity(record),
-    waitForProcessExit: async (record: { pid: number }) =>
-      record.pid === 777778 ? fixture.proxyStopped : fixture.daemonStopped,
+    waitForProcessExit: (record: Parameters<typeof actual.waitForProcessExit>[0], timeoutMs: number) =>
+      record.pid === 777778
+        ? Promise.resolve(fixture.proxyStopped)
+        : record.pid === 777777
+          ? Promise.resolve(fixture.daemonStopped)
+          : actual.waitForProcessExit(record, timeoutMs),
   };
 });
 
@@ -218,22 +222,26 @@ test.each(['policy', 'backend'] as const)('grants nothing without the required %
   expect(readClaimSet(join(home, 'claims')).live).toHaveLength(0);
 });
 
-test('a kept live daemon claim blocks restart and stop, then a gone child can be reconciled', async () => {
-  const root = join(home, 'claims');
-  const child = keepAgentClaim(root);
-  const claim = readClaimSet(root).live[0]!;
-  try {
-    await expect(driver.start()).rejects.toThrow('held by another process');
-    await expect(driver.stop()).rejects.toThrow(claim.path);
-    await expect(driver.stop()).rejects.toThrow(claimRemoveCommand(claim.path));
-    expect(readClaimSet(root).live[0]!.child).toEqual(child);
-    expect(fixture.events).toEqual([]);
-  } finally {
-    await killKeptChild(child);
-  }
-  await driver.stop();
-  expect(readClaimSet(root).live).toEqual([]);
-});
+// The kept child is a detached process whose group the test signals, which Node does not support on Windows (nodejs.org/api/process.html#processkillpid-signal).
+test.skipIf(process.platform === 'win32')(
+  'a kept live daemon claim blocks restart and stop, then a gone child can be reconciled',
+  async () => {
+    const root = join(home, 'claims');
+    const child = keepAgentClaim(root);
+    const claim = readClaimSet(root).live[0]!;
+    try {
+      await expect(driver.start()).rejects.toThrow('held by another process');
+      await expect(driver.stop()).rejects.toThrow(claim.path);
+      await expect(driver.stop()).rejects.toThrow(claimRemoveCommand(claim.path));
+      expect(readClaimSet(root).live[0]!.child).toEqual(child);
+      expect(fixture.events).toEqual([]);
+    } finally {
+      await killKeptChild(child);
+    }
+    await driver.stop();
+    expect(readClaimSet(root).live).toEqual([]);
+  },
+);
 
 test('stops the daemon and only the pinned Android helpers before releasing the claim', async () => {
   await start();

@@ -1,6 +1,5 @@
 import { plural, t } from '@lingui/core/macro';
 import { Trans } from '@lingui/react/macro';
-import * as Clipboard from 'expo-clipboard';
 import { Image } from 'expo-image';
 import { Stack, useIsFocused, useRouter } from 'expo-router';
 import { useCallback, useMemo, useState } from 'react';
@@ -9,6 +8,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { Button } from '@/components/button';
+import { CopyPill, useCopy } from '@/components/copy-button';
 import { Card } from '@/components/card';
 import { DeviceGridTile } from '@/components/device-grid-tile';
 import { EmptyState } from '@/components/empty-state';
@@ -334,6 +334,20 @@ function RepoHeader({ section }: { section: HomeSection }) {
   );
 }
 
+function PromptCard({ prompt }: { prompt: string }) {
+  const { copied, copy } = useCopy();
+  return (
+    <Card
+      onPress={() => void copy(prompt)}
+      accessibilityLabel={copied ? t`Copied` : t`Copy prompt: ${prompt}`}
+      style={styles.prompt}
+    >
+      <Text style={styles.promptText}>{prompt}</Text>
+      <CopyPill copied={copied} />
+    </Card>
+  );
+}
+
 function HomeEmpty({
   view,
   items,
@@ -348,7 +362,6 @@ function HomeEmpty({
   const { theme } = useUnistyles();
   const { macs, connections } = useMacs();
   const [prompts] = useState(() => pickPrompts(AGENT_PROMPTS, 3));
-  const [copied, setCopied] = useState<string | null>(null);
   const loading =
     macs === null ||
     (items === 0 &&
@@ -379,17 +392,7 @@ function HomeEmpty({
         </Text>
         <View style={styles.prompts}>
           {prompts.map((prompt) => (
-            <Card
-              key={prompt}
-              onPress={() => void Clipboard.setStringAsync(prompt).then(() => setCopied(prompt))}
-              accessibilityLabel={t`Copy prompt: ${prompt}`}
-              style={styles.prompt}
-            >
-              <Text style={styles.promptText}>{prompt}</Text>
-              <Text variant="footnote" weight="semibold" tone="brand">
-                {copied === prompt ? t`Copied` : t`Copy`}
-              </Text>
-            </Card>
+            <PromptCard key={prompt} prompt={prompt} />
           ))}
         </View>
       </View>

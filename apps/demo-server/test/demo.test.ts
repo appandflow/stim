@@ -8,6 +8,8 @@ const TOKEN = 'review-token-for-tests';
 const fixtures = loadFixtures();
 const SEARCH = '/Users/demo/Developer/habitat-app/.worktrees/search-screen';
 const SORTING = '/Users/demo/Developer/notes-app/.worktrees/note-sorting';
+const SDK = '/Users/demo/Developer/habitat-app/.worktrees/update-expo-sdk';
+const TABLET = '/Users/demo/Developer/habitat-app/.worktrees/tablet-layout';
 
 interface Message {
   id?: number;
@@ -16,6 +18,7 @@ interface Message {
   event?: string;
   subscription?: string;
   data?: string;
+  records?: { workspace?: string }[];
 }
 
 function phone(machine: DemoMachine, device: Device | null = null) {
@@ -106,6 +109,61 @@ describe('pairing', () => {
 });
 
 describe('the phone protocol', () => {
+  it("returns each workspace's errors in agreement with its status count", async () => {
+    const client = phone(new DemoMachine(fixtures, 'Demo Mac', TOKEN), { id: 'abcd1234', name: 'Phone' });
+    const environments = fixtures.status.environments as { path: string; logs?: { errorsSinceMarker: number } }[];
+    for (const env of environments) {
+      const reply = await client.request('logs.query', { workspace: env.path, errors: true });
+      expect(reply.result?.records).toHaveLength(env.logs?.errorsSinceMarker ?? 0);
+    }
+    expect(
+      (
+        await client.request('logs.query', {
+          workspace: SEARCH,
+          errors: true,
+          sources: ['client'],
+          grep: 'results.map',
+          slot: 'default',
+          tail: 1,
+        })
+      ).result?.records,
+    ).toMatchObject([{ src: 'client', msg: "TypeError: undefined is not an object (evaluating 'results.map')" }]);
+    expect(
+      (await client.request('logs.query', { workspace: SDK, errors: true, grep: 'results.map' })).result?.records,
+    ).toEqual([]);
+  });
+
+  it('keeps initial and periodic log events within their workspace, including empty workspaces', async () => {
+    vi.useFakeTimers();
+    const client = phone(new DemoMachine(fixtures, 'Demo Mac', TOKEN), { id: 'abcd1234', name: 'Phone' });
+    try {
+      const targets: [string, number][] = [
+        [SEARCH, 2],
+        [SDK, 1],
+        [TABLET, 0],
+      ];
+      for (const [workspace, count] of targets) {
+        const subscription = (await client.request('logs.subscribe', { workspace, errors: count > 0 })).result
+          ?.subscription;
+        await vi.advanceTimersByTimeAsync(0);
+        const initial = client.events('logs').filter((event) => event.subscription === subscription);
+        expect(initial).toHaveLength(1);
+        expect(initial[0]?.records).toHaveLength(count);
+        await vi.advanceTimersByTimeAsync(60_000);
+        const events = client.events('logs').filter((event) => event.subscription === subscription);
+        expect(events.length > 1).toBe(count > 0);
+        for (const event of events) {
+          expect(event.records?.every((record) => record.workspace === workspace)).toBe(true);
+          expect(isRpcEvent(event)).toBe(true);
+        }
+        await client.request('unsubscribe', { subscription });
+      }
+    } finally {
+      client.connection.close();
+      vi.useRealTimers();
+    }
+  });
+
   it('serves every read method in shapes the phone accepts', async () => {
     const client = pair(new DemoMachine(fixtures, 'Demo Mac', TOKEN));
     await client.hello;

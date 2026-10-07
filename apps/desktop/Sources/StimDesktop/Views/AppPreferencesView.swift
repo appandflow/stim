@@ -6,7 +6,7 @@ import SwiftUI
 struct AppPreferencesView: View {
   let stimHome: String
   @AppStorage(AppPreferences.Key.appearance) private var appearance = Appearance.auto
-  @AppStorage(AppPreferences.Key.sidebarStatus) private var status = StatusFilter.all
+  @AppStorage(AppPreferences.Key.sidebarStatuses) private var statuses = StatusFilter.encode(StatusFilter.defaultSelection)
   @AppStorage(AppPreferences.Key.defaultView) private var defaultView = DefaultView.overview
   @AppStorage(AppPreferences.Key.tileSize) private var tileSize = TileSize.medium
   @AppStorage(AppPreferences.Key.maxFramesPerSecond) private var framesPerSecond = 60.0
@@ -14,6 +14,7 @@ struct AppPreferencesView: View {
   @AppStorage(AppPreferences.Key.editorBundleID) private var editor = ""
   @AppStorage(AppPreferences.Key.diffViewer) private var diffViewer = DiffViewer.builtIn
   @AppStorage(AppPreferences.Key.terminalBundleID) private var terminal = ""
+  @AppStorage(AppPreferences.Key.tipsEnabled) private var showsTips = true
   @AppStorage(AppPreferences.Key.showsMenuBarExtra) private var showsMenuBarExtra = false
   @AppStorage(AppPreferences.Key.stimExecutable) private var stimExecutable = ""
   @AppStorage(AppPreferences.Key.remoteSessionMinutes) private var remoteMinutes = 30
@@ -60,8 +61,22 @@ struct AppPreferencesView: View {
       .id("top")
 
       Section("Workspace list") {
-        Picker("Status", selection: $status) {
-          ForEach(StatusFilter.allCases, id: \.self) { Text($0.title).tag($0) }
+        LabeledContent("Status") {
+          Menu(StatusFilter.summary(StatusFilter.decode(statuses))) {
+            Button("All") { statuses = StatusFilter.encode(StatusFilter.all) }
+            Divider()
+            ForEach(StatusFilter.allCases, id: \.self) { status in
+              Toggle(
+                status.title,
+                isOn: Binding(
+                  get: { StatusFilter.decode(statuses).contains(status) },
+                  set: { selected in
+                    var updated = StatusFilter.decode(statuses)
+                    if selected { updated.insert(status) } else { updated.remove(status) }
+                    statuses = StatusFilter.encode(updated)
+                  }))
+            }
+          }
         }
         Picker("Open to", selection: $defaultView) {
           ForEach(DefaultView.allCases, id: \.self) { Text($0.title).tag($0) }
@@ -183,6 +198,7 @@ struct AppPreferencesView: View {
         LabeledContent("Setup guide") {
           Button("Open Setup Guide\u{2026}") { OpenRequests.shared.showSetupGuide() }.buttonStyle(.stim())
         }
+        Toggle("Show tips", isOn: $showsTips)
         Toggle("Show in the menu bar", isOn: $showsMenuBarExtra)
         Toggle("Launch at login", isOn: $launchesAtLogin)
           .onChange(of: launchesAtLogin) { _, enabled in setLaunchAtLogin(enabled) }

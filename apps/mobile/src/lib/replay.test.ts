@@ -21,7 +21,7 @@ const HOUR = 60 * MINUTE;
 const vectors = fixture as unknown as {
   timelines: {
     name: string;
-    input: { spans: { start: number; end: number }[]; liveEnd?: number; previousLength?: number };
+    input: { spans: { start: number; end: number }[]; liveEnd?: number; previousLength?: number; fit?: boolean };
     timeline: Pick<Timeline, 'start' | 'end' | 'length' | 'pieces'>;
     positions: [number, number][];
     times: [number, number][];
@@ -30,7 +30,12 @@ const vectors = fixture as unknown as {
 
 describe('the replay timeline vectors Stim Desktop replays too', () => {
   it.each(vectors.timelines.map((c) => [c.name, c] as const))('%s', (_, vector) => {
-    const timeline = buildTimeline(vector.input.spans, vector.input.liveEnd, vector.input.previousLength)!;
+    const timeline = buildTimeline(
+      vector.input.spans,
+      vector.input.liveEnd,
+      vector.input.previousLength,
+      vector.input.fit,
+    )!;
     expect(timeline).toEqual({ ...vector.timeline, spans: vector.input.spans });
     expect(vector.positions.map(([at]) => [at, positionOf(timeline, at)])).toEqual(vector.positions);
     expect(vector.times.map(([position]) => [position, timeAt(timeline, position)])).toEqual(vector.times);

@@ -407,6 +407,7 @@ caches, then wipe its user data through centralized teardown. Delete parked
 devices only by eviction, adoption-time reconciliation of a listed unavailable
 simulator, or `gc --delete`; erase them only with `gc --cache parked
 --delete`. Every route uses centralized teardown and ownership revalidation.
+`gc --delete` deletes parked hosted devices through their owning session home.
 
 `stim web` launches the installed Chrome only with a profile Stim created under
 `$STIM_HOME/workspaces/<id>/web/`, listed under `web` in the created-devices

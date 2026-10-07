@@ -1,13 +1,44 @@
 import SimulatorFrames
 import SwiftUI
 
+struct DeviceFrameOption {
+  let isOn: Binding<Bool>
+  private let reason: () -> String?
+  var unavailableReason: String? { reason() }
+
+  init(isOn: Binding<Bool>, unavailableReason: @autoclosure @escaping () -> String?) {
+    self.isOn = isOn
+    reason = unavailableReason
+  }
+}
+
+struct DeviceFrameToggle: View {
+  let frame: DeviceFrameOption
+
+  var body: some View {
+    Toggle("Show device frame", isOn: frame.unavailableReason == nil ? frame.isOn : .constant(false))
+      .disabled(frame.unavailableReason != nil)
+      .help(frame.unavailableReason ?? "Draw the installed hardware frame around the screen")
+    if let reason = frame.unavailableReason {
+      Text(reason)
+        .font(.stim(.caption))
+        .foregroundStyle(Palette.secondary)
+        .fixedSize(horizontal: false, vertical: true)
+    }
+  }
+}
+
 struct SimulatorOptionsView: View {
   let udid: String
   let canControl: Bool
+  var clipboard: ClipboardOptionsView? = nil
+  var frame: DeviceFrameOption?
   @State private var appearance: SimulatorAppearance?
   @State private var busy = false
   @State private var error: String?
   @State private var operation: Task<Void, Never>?
+  @State private var loaded = false
+  @State private var polling = SimulatorOptionsPolling()
 
   #if DEBUG
     @State private var fixture: PlaygroundSimulator?
@@ -15,16 +46,21 @@ struct SimulatorOptionsView: View {
     init(fixture: PlaygroundSimulator) {
       udid = "playground"
       canControl = true
+      clipboard = ClipboardOptionsView(paste: {}, copy: { true })
+      frame = fixture.frame
       _fixture = State(initialValue: fixture)
       _appearance = State(initialValue: fixture.appearance)
       _busy = State(initialValue: fixture.loading)
+      _loaded = State(initialValue: !fixture.loading)
       _error = State(initialValue: fixture.error)
     }
   #endif
 
-  init(udid: String, canControl: Bool) {
+  init(udid: String, canControl: Bool, clipboard: ClipboardOptionsView? = nil, frame: DeviceFrameOption? = nil) {
     self.udid = udid
     self.canControl = canControl
+    self.clipboard = clipboard
+    self.frame = frame
   }
 
   var body: some View {
@@ -32,11 +68,11 @@ struct SimulatorOptionsView: View {
       HStack {
         Text("Simulator options").font(.stim(.headline))
         Spacer()
-        if busy { ProgressView().controlSize(.small) }
-        Button("Refresh", systemImage: "arrow.clockwise") { load() }
-          .labelStyle(.iconOnly)
-          .nativeIconStyle()
-          .disabled(busy || !canControl)
+        if busy || (!loaded && canControl) { ProgressView().controlSize(.small) }
+      }
+      if let frame {
+        DeviceFrameToggle(frame: frame)
+        Divider()
       }
       if let appearance {
         mode(appearance)
@@ -51,7 +87,7 @@ struct SimulatorOptionsView: View {
           "Reduce transparency", value: appearance.reduceTransparency?.enabled, change: SimulatorOptions.Change.reduceTransparency
         )
         toggle("Show button borders", value: appearance.showBorders?.enabled, change: SimulatorOptions.Change.showBorders)
-      } else if !busy {
+      } else if !busy && (loaded || !canControl) {
         Text("Appearance settings are unavailable.").foregroundStyle(Palette.secondary)
       }
       if let error {
@@ -59,6 +95,10 @@ struct SimulatorOptionsView: View {
           .font(.stim(.caption))
           .foregroundStyle(Palette.warning)
           .fixedSize(horizontal: false, vertical: true)
+      }
+      if let clipboard {
+        Divider()
+        clipboard
       }
       #if DEBUG
         if fixture == nil {
@@ -74,7 +114,10 @@ struct SimulatorOptionsView: View {
     .controlSize(.small)
     .frame(width: 300)
     .padding(Space.lg)
-    .onAppear { load() }
+    .task(id: canControl) {
+      guard canControl else { return }
+      await SimulatorOptionsPolling.run { await poll() }
+    }
     .onDisappear { operation?.cancel() }
     .onChange(of: canControl) { _, allowed in
       if !allowed { operation?.cancel() }
@@ -127,10 +170,28 @@ struct SimulatorOptionsView: View {
     }
   }
 
-  private func load() { run(nil) }
   private func apply(_ change: SimulatorOptions.Change) { run(change) }
 
-  private func run(_ change: SimulatorOptions.Change?) {
+  private func poll() async {
+    #if DEBUG
+      if fixture != nil { return }
+    #endif
+    guard canControl, polling.canStartRead else { return }
+    let token = polling.token
+    do {
+      let read = try await SimulatorOptions.read(udid: udid)
+      guard polling.accepts(token) else { return }
+      if appearance == nil { error = nil }
+      appearance = read
+    } catch is CancellationError {
+    } catch {
+      guard !Task.isCancelled, polling.accepts(token), appearance == nil else { return }
+      self.error = error.localizedDescription
+    }
+    if polling.accepts(token) { loaded = true }
+  }
+
+  private func run(_ change: SimulatorOptions.Change) {
     #if DEBUG
       if var fixture {
         fixture.apply(change)
@@ -142,17 +203,17 @@ struct SimulatorOptionsView: View {
     guard canControl, !busy else { return }
     busy = true
     error = nil
+    polling.beginChange()
     operation = Task {
-      defer { busy = false }
+      defer {
+        polling.endChange()
+        busy = false
+      }
       do {
-        let updated: SimulatorAppearance
-        if let change {
-          updated = try await SimulatorOptions.apply(change, udid: udid)
-        } else {
-          updated = try await SimulatorOptions.read(udid: udid)
-        }
+        let updated = try await SimulatorOptions.apply(change, udid: udid)
         try Task.checkCancellation()
         appearance = updated
+        loaded = true
       } catch is CancellationError {
       } catch {
         self.error = error.localizedDescription

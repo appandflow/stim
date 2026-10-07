@@ -121,9 +121,11 @@ struct WorkspaceActionsButton: View {
   @EnvironmentObject private var actions: ActionCenter
   @State private var removal: WorktreeRemoval?
   @State private var confirmingStop = false
+  let prefs = SidebarPreferences()
 
   var body: some View {
     let busy = actions.active(for: env.path) != nil
+    let isHidden = prefs.hiddenWorkspaces.paths.contains(env.path)
     Menu {
       WorkspaceActionsMenu(
         kind: .workspace(
@@ -135,7 +137,6 @@ struct WorkspaceActionsButton: View {
         building: env.build?.isRunning == true,
         reloadAllowed: env.canReload,
         onShowLastOutput: actions.latest(for: env.path).map { last in { actions.presented = last } },
-        workspace: env,
         onRun: { platform in actions.runApp(env, platform: platform) },
         onReload: { actions.run("Reload \(env.names.title)", steps: [StimCommand(["reload"], cwd: env.path)], present: false) },
         onStartDevServer: {
@@ -149,7 +150,9 @@ struct WorkspaceActionsButton: View {
           }
         },
         onShowLogs: openLogs,
-        onRemoveWorktree: { resolveRemovalBranch(at: env.path) { removal = WorktreeRemoval(branch: $0) } })
+        onRemoveWorktree: { resolveRemovalBranch(at: env.path) { removal = WorktreeRemoval(branch: $0) } },
+        hidden: isHidden, canHide: !busy && !env.isActive && actions.active(for: env.worktreeActionKey) == nil,
+        onToggleHidden: { prefs.setHidden(!isHidden, path: env.path) })
     } label: {
       Image(systemName: "ellipsis")
     }
@@ -267,9 +270,11 @@ struct WorktreeActionsMenuContent: View {
   @Binding var stopping: Workspace?
   @Binding var removal: WorktreeRemoval?
   @EnvironmentObject private var actions: ActionCenter
+  let prefs = SidebarPreferences()
 
   var body: some View {
     let firstApp = page.apps[0]
+    let isHidden = prefs.hiddenWorkspaces.paths.contains(page.id)
     let removalAllowed = worktreeRemovalAllowed(git: firstApp.worktree?.git)
     Group {
       ForEach(Array(zip(page.apps, page.appLabels)), id: \.0.path) { app, label in
@@ -280,6 +285,15 @@ struct WorktreeActionsMenuContent: View {
         .disabled(
           !page.apps.contains(where: \.isActive) || actions.active(for: page.actionKey) != nil
             || page.apps.contains { actions.active(for: $0.path) != nil })
+      Button(isHidden ? "Unhide" : "Hide", systemImage: isHidden ? "eye" : "eye.slash") {
+        prefs.setHidden(!isHidden, path: page.id)
+      }
+      .disabled(
+        !isHidden
+          && (page.apps.contains(where: \.isActive) || actions.active(for: page.actionKey) != nil
+            || page.apps.contains { actions.active(for: $0.path) != nil })
+      )
+      .help(!isHidden && page.apps.contains(where: \.isActive) ? "A workspace in use cannot be hidden." : "")
       Button("Remove worktree\u{2026}", systemImage: "trash", role: .destructive) {
         resolveRemovalBranch(at: firstApp.path) { removal = WorktreeRemoval(branch: $0) }
       }
@@ -299,7 +313,6 @@ struct WorktreeActionsMenuContent: View {
       removalAllowed: worktreeRemovalAllowed(git: app.worktree?.git), building: app.build?.isRunning == true,
       reloadAllowed: app.canReload,
       onShowLastOutput: actions.latest(for: app.path).map { last in { actions.presented = last } },
-      workspace: app,
       onRun: { actions.runApp(app, platform: $0) },
       onReload: { actions.run("Reload \(app.names.title)", steps: [StimCommand(["reload"], cwd: app.path)], present: false) },
       onStartDevServer: {

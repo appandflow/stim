@@ -9,6 +9,8 @@ struct Sidebar: View {
   let actions: ActionCenter
   @Binding var selection: SidebarItem?
   var openLogs: (String) -> Void
+  @ObservedObject var tips: TipCoordinator
+  @State private var showsViewOptions = false
   @AppStorage(AppPreferences.Key.expandedProjects) private var expandedProjects = Data()
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
   let prefs = SidebarPreferences()
@@ -24,14 +26,14 @@ struct Sidebar: View {
           let trees = store.sidebarTrees(options)
           ForEach(trees, id: \.summary.project) { tree in
             let folders = Set(store.environments(in: tree.summary.project).map { $0.names.inCheckout ?? "" })
-            DisclosureGroup(isExpanded: isExpanded(tree.summary)) {
+            DisclosureGroup(isExpanded: isExpanded(tree)) {
               ForEach(tree.entries) { entry in
                 EntryRow(
                   entry: entry, subtitle: nil, showsFolder: folders.count > 1, showsGit: options.showsGitStatus,
                   selection: rowSelection.wrappedValue, openLogs: openLogs)
               }
             } label: {
-              if options.status == .archived {
+              if tree.isArchiveOnly {
                 Label(store.title(of: tree.summary.project), systemImage: "archivebox")
               } else {
                 ProjectRow(store: store, summary: tree.summary, selected: selection == .project(tree.summary.project))
@@ -66,8 +68,51 @@ struct Sidebar: View {
       .background(Theme.sidebarBackground)
     }
     .safeAreaInset(edge: .bottom, spacing: 0) {
-      SidebarFooter(store: store, autopilot: autopilot, onboarding: onboarding, actions: actions, selection: $selection)
+      VStack(spacing: 0) {
+        if let topic = tips.topic {
+          TipCard(
+            topic: topic, hasNext: tips.hasNext,
+            perform: {
+              if topic == .hideWorkspaces || topic == .statusFilter { showsViewOptions = true }
+              tips.perform()
+            }, next: tips.next, close: tips.close
+          )
+          .padding(Space.md)
+        }
+        HiddenWorkspacesFooter(
+          count: store.sidebarStatusCounts(options)[.hidden] ?? 0, showing: options.statuses.contains(.hidden)
+        ) {
+          var updated = options.statuses
+          if updated.contains(.hidden) {
+            updated.remove(.hidden)
+            if updated.isEmpty { updated = StatusFilter.defaultSelection }
+          } else {
+            updated.insert(.hidden)
+          }
+          prefs.statuses = StatusFilter.encode(updated)
+        }
+        SidebarFooter(store: store, autopilot: autopilot, onboarding: onboarding, actions: actions, selection: $selection)
+      }
+      .background(Palette.sidebar)
     }
+    .onAppear { forgetStaleHidden() }
+    .onChange(of: staleHidden) { forgetStaleHidden() }
+  }
+
+  private func reconciledHidden() -> HiddenWorkspaces? {
+    guard let payload = store.payload else { return nil }
+    let current = prefs.hiddenWorkspaces
+    guard !current.isEmpty else { return nil }
+    let reconciled = current.reconciled(
+      environments: payload.environments, unprovisioned: payload.unprovisionedWorktrees, archived: payload.archived,
+      isBusy: { actions.active(for: $0) != nil })
+    return reconciled == current ? nil : reconciled
+  }
+
+  private var staleHidden: HiddenWorkspaces? { reconciledHidden() }
+
+  private func forgetStaleHidden() {
+    if let reconciled = reconciledHidden() { prefs.hiddenWorkspacesRaw = HiddenWorkspaces.encode(reconciled) }
   }
 
   private func listSelection(pages: [WorktreePage]) -> Binding<SidebarItem?> {
@@ -116,7 +161,7 @@ struct Sidebar: View {
         projects: Array(Set(store.projectList.map(\.project) + (store.payload?.archived ?? []).map(\.sidebarProject))).sorted {
           $0.name.lowercased() < $1.name.lowercased()
         },
-        title: store.title(of:))
+        counts: store.sidebarStatusCounts(prefs.options), title: store.title(of:), isPresented: $showsViewOptions)
     }
     .padding(.horizontal, Space.xl)
     .padding(.vertical, Space.md)
@@ -125,9 +170,14 @@ struct Sidebar: View {
   @ViewBuilder
   private func emptyText(_ options: SidebarOptions) -> some View {
     HStack(spacing: Space.xs) {
-      if options.status != .all {
-        InlineEmpty("No \(options.status.rawValue) workspaces \u{00B7}")
-        Button("Show all") { prefs.status = .all }.buttonStyle(.hoverRow(outset: Space.xs)).foregroundStyle(Palette.primary)
+      if options.statuses.isEmpty {
+        InlineEmpty("No status selected \u{00B7}")
+        Button("Show all") { prefs.statuses = StatusFilter.encode(StatusFilter.all) }
+          .buttonStyle(.hoverRow(outset: Space.xs)).foregroundStyle(Palette.primary)
+      } else if options.statuses.count == 1, let status = options.statuses.first {
+        InlineEmpty("No \(status.title.lowercased()) workspaces \u{00B7}")
+        Button("Show all") { prefs.statuses = StatusFilter.encode(StatusFilter.all) }
+          .buttonStyle(.hoverRow(outset: Space.xs)).foregroundStyle(Palette.primary)
       } else if options.differsFromDefaults(projects: store.projectList.map(\.project)) {
         InlineEmpty("Nothing matches \u{00B7}")
         Button("Reset") { prefs.reset() }.buttonStyle(.hoverRow(outset: Space.xs)).foregroundStyle(Palette.primary)
@@ -138,11 +188,11 @@ struct Sidebar: View {
     .font(.stim(.callout))
   }
 
-  private func isExpanded(_ summary: ProjectSummary) -> Binding<Bool> {
-    let root = summary.project.root
+  private func isExpanded(_ tree: ProjectTree) -> Binding<Bool> {
+    let root = tree.summary.project.root
     let choices = (try? JSONDecoder().decode([String: Bool].self, from: expandedProjects)) ?? [:]
     return Binding(
-      get: { choices[root] ?? (prefs.status == .archived || summary.hasActive) },
+      get: { choices[root] ?? (tree.showsOnlyArchives || tree.summary.hasActive) },
       set: { expanded in
         var updated = choices
         updated[root] = expanded
@@ -229,6 +279,7 @@ struct ProjectRow: View {
 }
 
 struct EntryRow: View {
+  let prefs = SidebarPreferences()
   var entry: SidebarEntry
   var subtitle: String?
   var showsFolder: Bool
@@ -245,9 +296,17 @@ struct EntryRow: View {
     switch entry {
     case .archived(let archive):
       TimelineView(.everyMinute) { context in
-        ArchivedRow(archive: archive, now: fixtureDate ?? context.date, subtitle: subtitle, showsGit: showsGit)
+        ArchivedRow(
+          archive: archive, now: fixtureDate ?? context.date, subtitle: subtitle, showsGit: showsGit,
+          isHidden: prefs.hiddenWorkspaces.archives.contains(archive.id))
       }
       .sidebarTag(.archived(archive.id), selection: selection)
+      .contextMenu {
+        let isHidden = prefs.hiddenWorkspaces.archives.contains(archive.id)
+        Button(isHidden ? "Unhide" : "Hide", systemImage: isHidden ? "eye" : "eye.slash") {
+          prefs.setHidden(!isHidden, archives: [archive.id])
+        }
+      }
     case .archivedGroup(let archives):
       let apps = archives.map { ArchivedPage(archive: $0, now: Date()).workspace }
       let page = WorktreePage.groups(environments: apps)[0]
@@ -286,10 +345,12 @@ struct WorkspaceRow: View {
   @EnvironmentObject private var actions: ActionCenter
   @State private var confirmingStop = false
   @State private var removal: WorktreeRemoval?
+  let prefs = SidebarPreferences()
 
   var body: some View {
+    let isHidden = prefs.hiddenWorkspaces.paths.contains(env.path)
     TimelineView(.everyMinute) { _ in
-      WorkspaceRowContent(env: env, now: Date(), place: place, showsGit: showsGit, openLogs: openLogs)
+      WorkspaceRowContent(env: env, now: Date(), place: place, showsGit: showsGit, openLogs: openLogs, isHidden: isHidden)
     }
     .tutorialAnchor(.sidebarRow, workspace: env.path)
     .sidebarTag(.environment(env.path), selection: selection)
@@ -304,7 +365,6 @@ struct WorkspaceRow: View {
         building: env.build?.isRunning == true,
         reloadAllowed: env.canReload,
         onShowLastOutput: actions.latest(for: env.path).map { last in { actions.presented = last } },
-        workspace: env,
         onRun: { platform in actions.runApp(env, platform: platform) },
         onReload: { actions.run("Reload \(env.names.title)", steps: [StimCommand(["reload"], cwd: env.path)], present: false) },
         onStartDevServer: {
@@ -318,7 +378,10 @@ struct WorkspaceRow: View {
           }
         },
         onShowLogs: { openLogs(env.path) },
-        onRemoveWorktree: { resolveRemovalBranch(at: env.path) { removal = WorktreeRemoval(branch: $0) } })
+        onRemoveWorktree: { resolveRemovalBranch(at: env.path) { removal = WorktreeRemoval(branch: $0) } },
+        hidden: isHidden,
+        canHide: !env.isActive && actions.active(for: env.path) == nil && actions.active(for: env.worktreeActionKey) == nil,
+        onToggleHidden: { prefs.setHidden(!isHidden, path: env.path) })
     }
     .confirmationDialog("Stop this workspace?", isPresented: $confirmingStop, titleVisibility: .visible) {
       Button("Run stim stop", role: .destructive) {
@@ -349,6 +412,7 @@ struct WorkspaceRowContent: View {
   var showsGit: Bool
   var openLogs: (String) -> Void
   var archive: ArchivedPage? = nil
+  var isHidden = false
 
   var body: some View {
     let status = archive?.rowStatus ?? env.rowStatus(now: now)
@@ -362,6 +426,7 @@ struct WorkspaceRowContent: View {
           Text(env.names.title).foregroundStyle(live ? Palette.text : Palette.secondary)
             .lineLimit(1).truncationMode(.middle).layoutPriority(1)
           Spacer(minLength: 0)
+          if isHidden { HiddenIndicator() }
           Text(status.text).font(.stim(.caption, weight: .medium)).foregroundStyle(Color(status.tone))
             .lineLimit(1).fixedSize()
         }
@@ -379,8 +444,8 @@ struct WorkspaceRowContent: View {
           RowDetailLine(context: context(env.rowDevices(now: now)), git: showsGit ? GitChip(env.worktree) : nil)
         }
         if archive == nil {
-          ForEach(env.orderedDevices.filter { $0.hostedMachine != nil || $0.placementReason != nil }) { device in
-            DevicePlacementLabel(device: device)
+          ForEach(env.orderedDevices.filter { $0.placement != nil }) { device in
+            DevicePlacementView(device: device)
           }
         }
       }
@@ -423,9 +488,11 @@ struct NoEnvironmentRow: View {
   var selection: SidebarItem?
   @EnvironmentObject private var actions: ActionCenter
   @State private var removal: WorktreeRemoval?
+  let prefs = SidebarPreferences()
 
   var body: some View {
     let names = worktree.names
+    let isHidden = prefs.hiddenWorkspaces.paths.contains(worktree.path)
     let git = showsGit ? GitChip(worktree.info) : nil
     HStack(alignment: .top, spacing: Space.md) {
       StatusDot(color: Palette.tertiary, filled: false)
@@ -434,14 +501,15 @@ struct NoEnvironmentRow: View {
         HStack(alignment: .firstTextBaseline, spacing: Space.sm) {
           Text(names.title).foregroundStyle(Palette.secondary).lineLimit(1).truncationMode(.middle).layoutPriority(1)
           Spacer(minLength: 0)
-          Text("No environment").font(.stim(.caption, weight: .medium)).foregroundStyle(Palette.tertiary).fixedSize()
+          if isHidden { HiddenIndicator() }
+          Text("Not set up").font(.stim(.caption, weight: .medium)).foregroundStyle(Palette.tertiary).fixedSize()
         }
         RowDetailLine(
           context: RowDetailLine.joined(place.map { Text($0).foregroundStyle(Palette.tertiary) }), git: git)
       }
     }
     .accessibilityElement(children: .ignore)
-    .accessibilityLabel(([names.title, "No environment", git?.label].compactMap { $0 } + place).joined(separator: ", "))
+    .accessibilityLabel(([names.title, "Not set up", git?.label].compactMap { $0 } + place).joined(separator: ", "))
     .sidebarTag(.worktree(worktree.path), selection: selection)
     .contextMenu {
       WorkspaceActionsMenu(
@@ -452,7 +520,9 @@ struct NoEnvironmentRow: View {
         onWarmWorktree: {
           actions.run("Warm \(names.title)", StimCommand(["worktree", "warm"], cwd: worktree.path))
         },
-        onRemoveWorktree: { resolveRemovalBranch(at: worktree.path) { removal = WorktreeRemoval(branch: $0) } })
+        onRemoveWorktree: { resolveRemovalBranch(at: worktree.path) { removal = WorktreeRemoval(branch: $0) } },
+        hidden: isHidden, canHide: actions.active(for: worktree.path) == nil,
+        onToggleHidden: { prefs.setHidden(!isHidden, path: worktree.path) })
     }
     .confirmationDialog(
       "Remove this worktree?",
@@ -701,5 +771,35 @@ struct StimWordmark: View {
   private struct Wiggle {
     var angle = 0.0
     var scale = 1.0
+  }
+}
+
+struct HiddenIndicator: View {
+  var body: some View {
+    Image(systemName: "eye.slash").iconFont(IconSize.small).foregroundStyle(Palette.tertiary)
+      .help("Hidden").accessibilityLabel("Hidden")
+  }
+}
+
+struct HiddenWorkspacesFooter: View {
+  var count: Int
+  var showing: Bool
+  var toggle: () -> Void
+
+  var body: some View {
+    if count > 0 {
+      HStack(spacing: Space.xs) {
+        Text(showing ? "\(count) hidden shown" : "\(count) hidden").foregroundStyle(Palette.tertiary)
+        Text("\u{00B7}").foregroundStyle(Palette.tertiary).accessibilityHidden(true)
+        Button(showing ? "Hide again" : "Show", action: toggle)
+          .buttonStyle(.hoverRow(outset: Space.xs)).foregroundStyle(Palette.primary)
+          .accessibilityLabel(showing ? "Hide hidden workspaces again" : "Show \(count) hidden workspaces")
+        Spacer(minLength: 0)
+      }
+      .font(.stim(.caption))
+      .padding(.horizontal, Space.xl)
+      .padding(.vertical, Space.sm)
+      .background(Palette.sidebar)
+    }
   }
 }

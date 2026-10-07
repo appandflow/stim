@@ -144,6 +144,7 @@ struct StimDesktopApp: App {
   private let store: StatusStore
   private let notifier: Notifier
   private let oversight: OversightNotifier
+  private let tips: TipCoordinator
   private let discovery: DiscoveryCoordinator
   private let actions: ActionCenter
   private let autopilot: AutopilotRunner
@@ -207,13 +208,14 @@ struct StimDesktopApp: App {
     self.machineSettings = machineSettings
     let buildMachines = BuildMachinesModel(cli: cli, settings: machineSettings, statsReader: statsReader)
     self.buildMachines = buildMachines
-    actions.approvedHostingMachines = { buildMachines.approvedHostingMachines(in: $0) }
     let autopilot = AutopilotRunner(
       status: store, actions: actions, gc: gc, disks: disks, settings: machineSettings, cli: cli)
     self.autopilot = autopilot
     let discovery = DiscoveryCoordinator(
       status: store, machines: buildMachines, stats: statsReader, autopilot: autopilot, gc: gc, environment: environment)
     self.discovery = discovery
+    let tips = TipCoordinator(status: store, machines: buildMachines)
+    self.tips = tips
     oversight.keptWorktrees = { [autopilot] in autopilot.finishedPullRequests }
     let onboarding = Onboarding(environment: environment, cli: cli, actions: actions)
     self.onboarding = onboarding
@@ -221,6 +223,7 @@ struct StimDesktopApp: App {
       store.start()
       oversight.start()
       discovery.start(actions: actions)
+      tips.start()
       metrics.start()
       autopilot.start()
       onboarding.check()
@@ -231,7 +234,8 @@ struct StimDesktopApp: App {
     Window("Stim", id: "main") {
       RootView(
         cli: cli, store: store, actions: actions, autopilot: autopilot, onboarding: onboarding, gc: gc,
-        buildMachines: buildMachines, metrics: metrics, storage: storage, planChecks: planChecks, statsReader: statsReader
+        buildMachines: buildMachines, metrics: metrics, storage: storage, planChecks: planChecks, statsReader: statsReader,
+        tips: tips
       )
       .frame(minWidth: 700, minHeight: 720)
       .onAppear { notifier.start() }
@@ -240,6 +244,13 @@ struct StimDesktopApp: App {
     .handlesExternalEvents(matching: [])
     .commands {
       UpdateCommands()
+      CommandGroup(replacing: .newItem) {
+        Button("Add Build Machine\u{2026}") {
+          MainWindow.show()
+          OpenRequests.shared.addMachine = AddMachineRequest(machineID: nil, hostedSimulators: false)
+        }
+        .keyboardShortcut("b", modifiers: [.command, .shift])
+      }
       CommandGroup(replacing: .help) {
         Button("Setup Guide\u{2026}") { OpenRequests.shared.showSetupGuide() }
         Button("Stim Tutorial\u{2026}") { OpenRequests.shared.showTutorial() }

@@ -100,6 +100,18 @@ revocation retires that client's parked devices. All deletion rechecks ownership
 and uses centralized teardown. If GC removes a ledger-owned device, the next
 reconciliation clears its parked marker.
 
+On the hosting Mac, `stim gc` lists parked hosted iOS and Android devices with
+their session, client id, device label, parked time and session-home ledger
+ownership. `stim gc --delete` deletes them through the packaged stop worker in
+each session home while holding its claim. Held claims, changed sessions and
+unverified ownership keep the device; an unreadable journal keeps all hosted
+devices. Android deletion also requires visibility from this shell's Android
+environment; otherwise run gc with the server's `ANDROID_AVD_HOME`/`HOME`.
+Records no longer listed in their session ledger are already removed and skipped.
+`--older-than` filters by parked time; cache scopes omit hosted sessions.
+The CLI leaves the journal unchanged, and the server clears the parked marker
+when it reconciles the empty ledger.
+
 A clean `stim-server` close parks eligible devices, which persist across restart
 and can be adopted by the next reserve. The server never re-attaches to a booted
 device after restart. A running session left by a crashed server stays `unknown`
@@ -152,11 +164,13 @@ Copy this prompt to try it: "Run this app with `stim android --remote <machine>`
 Read `android.host.agent` from `stim status --json`, open the installed package
 with its remote config, and verify the first screen with agent-device."
 
-Desktop's **Run on** menu offers **This Mac**, **Auto**, and approved hosting
-Macs for iOS and Android. It remembers the choice per workspace and platform,
-falls back to This Mac if approval is removed, and keeps a recorded hosted
-session fixed until `stim stop`. Device tiles show the machine and Auto's reason,
-including when the run stays or waits locally.
+Desktop uses placement set by config or agents, for example
+`stim settings set android.remote auto --scope workspace` (or `ios.remote`),
+or per run `stim android --remote auto` / `stim android --remote <machine>`.
+New runs pass no `--remote` flag; recorded hosted sessions keep their machine
+until `stim stop`. When a device is not on this Mac, Desktop shows
+**on &lt;machine&gt;** on its tile, workspace page, viewer toolbar and sidebar row,
+with the placement reason as hover text. Local devices show no placement label.
 
 Stim Desktop and the phone app show an **on &lt;machine&gt;** label and view/control
 hosted Android through the client Mac's local stim-server relay. Turn on
@@ -177,7 +191,9 @@ node. Any handoff failure falls back to upload.
 `stim logs --errors` and `stim logs --json` pull app-filtered native logcat records
 as `src: device`; JavaScript logs still arrive through local Metro. The host verifies
 the exact ledger-owned serial, resolves the app's PID on each query and drains its
-last observed PID after a crash or restart. A crash before any PID was observed,
+last observed PID after a crash or restart. A successful drain retires the exited
+PID. A failed PID lookup preserves the checkpoint without querying logcat, so the
+next collection can retry. A crash before any PID was observed,
 evicted logcat entries and entries persisted beyond the five-second overlap may
 be unavailable. Collection has a bounded output and time budget; an oversized
 query retries the recent tail and records any dropped interval. Stop copies logs
@@ -217,8 +233,11 @@ full toolchain and placement rules.
 
 ## Use the Desktop wizard
 
-Open **Stim > Settings > Build Machines > Add...** on your main Mac. The
-wizard has six steps:
+Open **Stim > Settings > Build Machines** on your main Mac. It lists your
+build machines, each with a status (**Approved**, **Waiting for approval**,
+**Unreachable** or **Not offloading**, with the reason and a fix under it), what it does and a **...** menu with
+**Details** and **Remove**. Choose **Add Build Machine...** to start the wizard,
+which finds the Macs on your tailnet itself. The wizard has six steps:
 
 1. **Pick a Mac.** Select an online macOS peer from your tailnet. Start
    Tailscale on either Mac if it is missing or stopped.

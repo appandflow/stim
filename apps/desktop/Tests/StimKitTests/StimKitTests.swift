@@ -10,7 +10,7 @@ import Testing
     return payload.environments[0]
   }()
 
-  @Test func decodesHostedSelectionAndPlacementReasonsWithoutLosingLocalDecisions() throws {
+  @Test func placementLabelsDescribeOnlyHostedDevices() throws {
     let url = try #require(Bundle.module.url(forResource: "status-placement", withExtension: "json", subdirectory: "Fixtures"))
     let payload = try JSONDecoder().decode(StatusPayload.self, from: Data(contentsOf: url))
     let hosted = payload.environments[0]
@@ -21,14 +21,30 @@ import Testing
     #expect(hosted.android?.host?.selected == "janics-mac-mini")
     #expect(hosted.android?.host?.reason == "selected janics-mac-mini")
     #expect(hosted.android?.devicePlacement?.reason == "selected janics-mac-mini")
-    #expect(hosted.devices[0].placementReason == "auto: load 3.1/core here")
-    #expect(hosted.devices[1].placementReason == nil)
+    #expect(hosted.devices[0].placement == DevicePlacementLabel(machine: "janics-mac-mini", reason: "auto: load 3.1/core here"))
+    #expect(hosted.devices[1].placement == DevicePlacementLabel(machine: "janics-mac-mini", reason: "selected janics-mac-mini"))
     let local = payload.environments[1]
     #expect(local.ios?.devicePlacement?.decision == "local")
     #expect(local.android?.devicePlacement?.decision == "waited-locally")
-    #expect(local.devices.map(\.placementReason) == ["auto: room here", "auto: waited for room here"])
+    #expect(local.devices.allSatisfy { $0.placement == nil })
+    #expect(workspace.devices.allSatisfy { $0.placement == nil })
     #expect(workspace.ios?.host?.selected == nil)
     #expect(workspace.ios?.devicePlacement == nil)
+  }
+
+  @Test func hostedPlacementUsesDisplayNameAndFallsBackToTheRecordedDecisionReason() throws {
+    let url = try #require(Bundle.module.url(forResource: "status-placement", withExtension: "json", subdirectory: "Fixtures"))
+    var hosted = try JSONDecoder().decode(StatusPayload.self, from: Data(contentsOf: url)).environments[0]
+    hosted.ios?.host?.machine = "mini:7443"
+    hosted.ios?.host?.reason = nil
+    #expect(
+      hosted.devices[0].placement == DevicePlacementLabel(machine: "mini", reason: "auto: load 3.1/core here"))
+    hosted.ios?.devicePlacement = nil
+    #expect(hosted.devices[0].placement == DevicePlacementLabel(machine: "mini", reason: nil))
+    hosted.android?.host?.machine = "android-host:7787"
+    hosted.android?.host?.reason = nil
+    #expect(
+      hosted.devices[1].placement == DevicePlacementLabel(machine: "android-host", reason: "selected janics-mac-mini"))
   }
 
   @Test func listsDefaultDevicesBeforeSlotsAndRemoteSessionsLast() {
@@ -293,6 +309,7 @@ import Testing
     ]
     func tree(_ change: (inout SidebarOptions) -> Void = { _ in }) -> [String] {
       var options = SidebarOptions()
+      options.statuses = StatusFilter.all
       change(&options)
       return sidebarTrees(
         environments: envs, unprovisioned: worktrees, project: Project.init(fallbackFor:), options: options
@@ -303,6 +320,7 @@ import Testing
     }
     func list(_ change: (inout SidebarOptions) -> Void) -> [String] {
       var options = SidebarOptions()
+      options.statuses = StatusFilter.all
       change(&options)
       return sidebarList(
         environments: envs, unprovisioned: worktrees, project: Project.init(fallbackFor:), options: options
@@ -318,20 +336,22 @@ import Testing
         "app 1/3: /r/app/.worktrees/idle,/r/app/.worktrees/live,/r/app/.worktrees/b",
         "new 0/1: /r/new/.worktrees/c", "zed 0/1: /r/zed",
       ])
-    #expect(tree { $0.status = .live } == ["app 1/3: /r/app/.worktrees/live"])
+    #expect(tree { $0.statuses = [.live] } == ["app 1/3: /r/app/.worktrees/live"])
     #expect(
-      tree { $0.status = .idle } == [
-        "app 1/3: /r/app/.worktrees/b,/r/app/.worktrees/idle", "new 0/1: /r/new/.worktrees/c", "zed 0/1: /r/zed",
+      tree { $0.statuses = [.idle] } == [
+        "app 1/3: /r/app/.worktrees/idle", "zed 0/1: /r/zed",
       ])
+    #expect(tree { $0.statuses = [.notSetUp] } == ["app 1/3: /r/app/.worktrees/b", "new 0/1: /r/new/.worktrees/c"])
+    #expect(tree { $0.statuses = [] }.isEmpty)
     #expect(
       tree {
-        $0.status = .live
+        $0.statuses = [.live]
         $0.showsEmptyProjects = true
         $0.hiddenProjects = ["/r/zed"]
       } == ["app 1/3: /r/app/.worktrees/live", "new 0/1: "])
     #expect(
       tree {
-        $0.showsNoEnvironment = false
+        $0.statuses = StatusFilter.defaultSelection
         $0.sort = .name
       } == ["app 1/3: /r/app/.worktrees/idle,/r/app/.worktrees/live", "zed 0/1: /r/zed"])
     #expect(
@@ -382,16 +402,16 @@ import Testing
       options.sort = sort
       #expect(sidebarList(environments: envs, unprovisioned: [], project: project, options: options).first?.path == envs[1].path)
     }
-    options.status = .live
+    options.statuses = [.live]
     #expect(
       sidebarList(environments: envs, unprovisioned: [], project: project, options: options).map(\.path) == [
         envs[1].path, envs[2].path,
       ])
-    options.status = .idle
+    options.statuses = [.idle]
     #expect(
       Set(sidebarList(environments: envs, unprovisioned: [], project: project, options: options).map(\.path))
         == Set(envs[3...].map(\.path)))
-    options.status = .all
+    options.statuses = StatusFilter.all
     options.hiddenProjects = ["/r/app"]
     #expect(
       sidebarList(environments: envs, unprovisioned: [], project: project, options: options)
@@ -400,14 +420,14 @@ import Testing
     var changed = envs
     changed[1].phase = nil
     options.hiddenProjects = []
-    options.status = .live
+    options.statuses = [.live]
     #expect(
       sidebarList(environments: changed, unprovisioned: [], project: project, options: options).map(\.path) == [
         envs[1].path, envs[2].path,
       ])
     changed[0].live = false
     #expect(sidebarList(environments: changed, unprovisioned: [], project: project, options: options) == [.workspace(envs[2])])
-    options.status = .idle
+    options.statuses = [.idle]
     #expect(sidebarList(environments: changed, unprovisioned: [], project: project, options: options).first?.path == envs[1].path)
   }
 
@@ -452,7 +472,7 @@ import Testing
       """#
     let envs = try JSONDecoder().decode([Workspace].self, from: Data(json.utf8))
     var options = SidebarOptions()
-    options.status = .live
+    options.statuses = [.live]
     options.sort = .lastActivity
     #expect(
       sidebarList(environments: envs, unprovisioned: [], project: Project.init(fallbackFor:), options: options)
@@ -475,7 +495,7 @@ import Testing
       """#
     let envs = try JSONDecoder().decode([Workspace].self, from: Data(json.utf8))
     var options = SidebarOptions()
-    options.status = .live
+    options.statuses = [.live]
     #expect(
       sidebarList(environments: envs, unprovisioned: [], project: Project.init(fallbackFor:), options: options)
         .map(\.path) == ["/r/app/.worktrees/eas"])
@@ -494,49 +514,85 @@ import Testing
         == options.hiddenProjects)
   }
 
-  @Test func remembersRunDestinationsPerWorkspaceAndPlatformAndFallsBackAfterApprovalIsRemoved() throws {
+  @Test func removesLegacyRunDestinationsWithoutWritingOtherPreferences() throws {
     let name = "stim.tests.\(UUID().uuidString)"
     let defaults = try #require(UserDefaults(suiteName: name))
     defer { defaults.removePersistentDomain(forName: name) }
-    let key = AppPreferences.Key.runDestination(workspace: "/w", platform: "ios")
-    defaults.set("mini", forKey: key)
-    let unknown = AppPreferences.runDestination(workspace: "/w", platform: "ios", approvedMachines: nil, defaults: defaults)
-    #expect(unknown == .machine("mini"))
-    #expect(unknown.arguments == ["--remote", "mini"])
-    #expect(AppPreferences.runDestination(workspace: "/w", platform: "ios", approvedMachines: [], defaults: defaults) == .thisMac)
-    #expect(
-      AppPreferences.runDestination(workspace: "/w", platform: "ios", approvedMachines: ["mini"], defaults: defaults)
-        == .machine("mini"))
-    #expect(
-      AppPreferences.runDestination(workspace: "/w", platform: "ios", approvedMachines: ["other"], defaults: defaults) == .thisMac
-    )
-    #expect(
-      AppPreferences.runDestination(workspace: "/w", platform: "android", approvedMachines: ["mini"], defaults: defaults)
-        == .thisMac)
-    #expect(
-      AppPreferences.runDestination(workspace: "/other", platform: "ios", approvedMachines: ["mini"], defaults: defaults)
-        == .thisMac)
-    defaults.set("auto", forKey: key)
-    #expect(AppPreferences.runDestination(workspace: "/w", platform: "ios", approvedMachines: [], defaults: defaults) == .auto)
-    defaults.set("", forKey: key)
-    #expect(
-      AppPreferences.runDestination(workspace: "/w", platform: "ios", approvedMachines: nil, defaults: defaults) == .thisMac)
-    #expect(
-      AppPreferences.runDestination(workspace: "/w", platform: "ios", approvedMachines: ["mini"], defaults: defaults) == .thisMac)
+    defaults.set("auto", forKey: "runDestination./w.ios")
+    defaults.set("mini", forKey: "runDestination./w.android")
+    defaults.set("other", forKey: "runDestination./other.ios")
+    defaults.set("keep", forKey: "runDestination")
+    defaults.set("keep too", forKey: "runDestinationOther")
+    defaults.set("dark", forKey: AppPreferences.Key.appearance)
+    let expected: NSDictionary = [
+      "runDestination": "keep", "runDestinationOther": "keep too", AppPreferences.Key.appearance: "dark",
+    ]
+
+    AppPreferences.migrate(defaults)
+    #expect((defaults.persistentDomain(forName: name)! as NSDictionary) == expected)
+    AppPreferences.migrate(defaults)
+    #expect((defaults.persistentDomain(forName: name)! as NSDictionary) == expected)
   }
 
-  @Test func migratesTheIdleWorkspacesSwitchToTheStatusOption() throws {
-    let name = "stim.tests.\(UUID().uuidString)"
-    let defaults = try #require(UserDefaults(suiteName: name))
-    defer { defaults.removePersistentDomain(forName: name) }
-    defaults.set(false, forKey: AppPreferences.Key.showsIdleWorkspaces)
-    AppPreferences.migrate(defaults)
-    #expect(defaults.string(forKey: AppPreferences.Key.sidebarStatus) == "live")
-    #expect(defaults.object(forKey: AppPreferences.Key.showsIdleWorkspaces) == nil)
-    defaults.set("idle", forKey: AppPreferences.Key.sidebarStatus)
-    defaults.set(true, forKey: AppPreferences.Key.showsIdleWorkspaces)
-    AppPreferences.migrate(defaults)
-    #expect(defaults.string(forKey: AppPreferences.Key.sidebarStatus) == "idle")
+  @Test func migratesSavedSidebarChoicesWithoutAddingUnsavedCheckboxDefaults() throws {
+    let cases: [(saved: [String: Any], expected: Set<StatusFilter>?)] = [
+      ([:], nil),
+      (
+        [AppPreferences.Key.sidebarStatus: "all", AppPreferences.Key.hidesUnprovisionedWorktrees: false],
+        [.live, .idle, .notSetUp]
+      ),
+      ([AppPreferences.Key.sidebarStatus: "live"], [.live]),
+      ([AppPreferences.Key.sidebarStatus: "idle"], [.idle]),
+      ([AppPreferences.Key.sidebarStatus: "idle", AppPreferences.Key.hidesUnprovisionedWorktrees: false], [.idle, .notSetUp]),
+      ([AppPreferences.Key.sidebarStatus: "live", AppPreferences.Key.hidesUnprovisionedWorktrees: false], [.live]),
+      ([AppPreferences.Key.sidebarStatus: "archived", AppPreferences.Key.hidesUnprovisionedWorktrees: false], [.archived]),
+      ([AppPreferences.Key.sidebarStatus: "unknown"], [.live, .idle]),
+      ([AppPreferences.Key.sidebarStatus: "archived", AppPreferences.Key.hidesUnprovisionedWorktrees: true], [.archived]),
+      ([AppPreferences.Key.hidesUnprovisionedWorktrees: false], [.live, .idle, .notSetUp]),
+      ([AppPreferences.Key.hidesUnprovisionedWorktrees: true], [.live, .idle]),
+      (
+        [
+          AppPreferences.Key.sidebarStatuses: "[]", AppPreferences.Key.sidebarStatus: "all",
+          AppPreferences.Key.hidesUnprovisionedWorktrees: false,
+        ], []
+      ),
+      ([AppPreferences.Key.showsIdleWorkspaces: false], [.live]),
+    ]
+    for (saved, expected) in cases {
+      let name = "stim.tests.\(UUID().uuidString)"
+      let defaults = try #require(UserDefaults(suiteName: name))
+      defer { defaults.removePersistentDomain(forName: name) }
+      for (key, value) in saved { defaults.set(value, forKey: key) }
+      AppPreferences.migrate(defaults)
+      let raw = defaults.string(forKey: AppPreferences.Key.sidebarStatuses)
+      #expect(raw.map(StatusFilter.decode) == expected)
+      if let existing = saved[AppPreferences.Key.sidebarStatuses] as? String { #expect(raw == existing) }
+      #expect(defaults.object(forKey: AppPreferences.Key.sidebarStatus) == nil)
+      #expect(defaults.object(forKey: AppPreferences.Key.hidesUnprovisionedWorktrees) == nil)
+      #expect(defaults.object(forKey: AppPreferences.Key.showsIdleWorkspaces) == nil)
+      AppPreferences.migrate(defaults)
+      #expect(defaults.string(forKey: AppPreferences.Key.sidebarStatuses) == raw)
+    }
+  }
+
+  @Test func statusSelectionsRoundTripAndRejectUnreadableStorage() {
+    let statuses: Set<StatusFilter> = [.archived, .live, .notSetUp]
+    #expect(StatusFilter.encode(statuses) == #"["live","notSetUp","archived"]"#)
+    #expect(StatusFilter.decode(StatusFilter.encode(statuses)) == statuses)
+    #expect(StatusFilter.decode(#"["idle","future"]"#) == [.idle])
+    #expect(StatusFilter.decode("unreadable") == [.live, .idle])
+    #expect(StatusFilter.decode("{}") == [.live, .idle])
+    #expect(StatusFilter.decode("[]").isEmpty)
+  }
+
+  @Test func statusSummaryNamesEveryStatusAsAll() {
+    #expect(StatusFilter.all == [.live, .idle, .notSetUp, .archived])
+    #expect(StatusFilter.summary(StatusFilter.all) == "All")
+    #expect(StatusFilter.summary([.live, .idle, .notSetUp]) == "3 selected")
+    #expect(StatusFilter.summary([]) == "None")
+    #expect(StatusFilter.summary([.notSetUp]) == "Not set up")
+    #expect(StatusFilter.summary([.idle, .live]) == "Live, Idle")
+    #expect(StatusFilter.summary([.idle, .notSetUp, .archived]) == "3 selected")
   }
 
   private func git(_ args: [String]) throws {
@@ -554,12 +610,36 @@ import Testing
     try JSONDecoder().decode(Workspace.self, from: Data(json.utf8))
   }
 
-  @Test func quotesPathsForTheShell() {
+  @Test func setupMapsAppsFromMainAndLinkedCheckoutsWithoutMixingRepositories() throws {
+    let worktree = UnprovisionedWorktree(path: "/r/.claude/worktrees/x", branch: "x")
+    let environments = try JSONDecoder().decode(
+      [Workspace].self,
+      from: Data(
+        #"""
+        [
+          {"path":"/r/apps/mobile","live":false,"warnings":[],"platforms":["android"]},
+          {"path":"/r/.worktrees/other/apps/mobile","live":false,"warnings":[],"platforms":["ios"],"worktree":{"path":"/r/.worktrees/other"}},
+          {"path":"/r/apps/desktop","live":false,"warnings":[],"platforms":["macos"]},
+          {"path":"/r","live":false,"warnings":[],"platforms":["web"]},
+          {"path":"/other/apps/mobile","live":false,"warnings":[],"platforms":["web"]},
+          {"path":"/r/outside","live":false,"warnings":[],"worktree":{"path":"/r/elsewhere"}}
+        ]
+        """#.utf8))
+    let project: (String) -> Project = { Project(root: $0.hasPrefix("/other/") ? "/other" : "/r") }
+    let main = notSetUpApps(for: worktree, environments: [environments[0]], project: project)
+    #expect(main == [NotSetUpApp(path: worktree.path + "/apps/mobile", label: "apps/mobile", platforms: ["android"])])
+    let linked = notSetUpApps(for: worktree, environments: [environments[1]], project: project)
+    #expect(linked == [NotSetUpApp(path: worktree.path + "/apps/mobile", label: "apps/mobile", platforms: ["ios"])])
+    let apps = notSetUpApps(for: worktree, environments: environments, project: project)
     #expect(
-      environmentCommands(worktree: "/Users/dev/it's here").map(\.shellLine) == [
-        "cd '/Users/dev/it'\\''s here' && stim start",
-        "cd '/Users/dev/it'\\''s here' && stim ios",
-        "cd '/Users/dev/it'\\''s here' && stim android",
+      apps == [
+        NotSetUpApp(path: worktree.path, label: nil, platforms: ["web"]),
+        NotSetUpApp(path: worktree.path + "/apps/desktop", label: "apps/desktop", platforms: ["macos"]),
+        NotSetUpApp(path: worktree.path + "/apps/mobile", label: "apps/mobile", platforms: ["ios", "android"]),
+      ])
+    #expect(
+      notSetUpApps(for: worktree, environments: [environments[4]], project: project) == [
+        NotSetUpApp(path: worktree.path, label: nil, platforms: ["ios", "android"])
       ])
   }
 

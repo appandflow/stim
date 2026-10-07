@@ -66,7 +66,10 @@ const input = JSON.parse(Buffer.concat(chunks));
 if(input.mode === 'count') {
   writeFileSync(join(process.env.STIM_HOME,'count-entered'),String(process.pid));
   if(process.env.LOCAL_COUNT === 'hang') { process.on('SIGTERM',()=>{}); await new Promise(()=>setInterval(()=>{},1000)); }
-  else process.stdout.write(process.env.LOCAL_COUNT ?? '0');
+  else {
+    if(process.env.COUNT_GATE) while(!existsSync(process.env.COUNT_GATE)) await new Promise(resolve=>setTimeout(resolve,20));
+    process.stdout.write(process.env.LOCAL_COUNT ?? '0');
+  }
   if(process.env.LOCAL_COUNT !== 'hang') process.exit(0);
 } else if(input.mode === 'offer') {
   const request=input;
@@ -844,7 +847,9 @@ test.each(['stop', 'revoke'])('releases a preflight refusal when %s precedes its
   expect(declined.notice).toBe('inventory unavailable');
   expect(existsSync(join(area, 'stopped'))).toBe(false);
   expect(readClaimSet(join(deviceHostRoot(), `${first.id}.claims`)).live).toEqual([]);
-  expect(await host.reserve('other', { ...request, attempt: 'next' })).toHaveProperty('result.state', 'preparing');
+  const next = await host.reserve('other', { ...request, attempt: 'next' });
+  expect(next).toHaveProperty('result.state', 'preparing');
+  await state((next as { result: { id: string } }).result.id, 'ready');
 });
 
 test.skipIf(process.platform === 'win32')(
@@ -1214,7 +1219,9 @@ describe('hosted agent control', () => {
     },
   );
 
-  test.each(['ios', 'android'].flatMap((platform) => ['live', 'gone'].map((status) => [platform, status])))(
+  // The android fixture's fake adb is a POSIX shell script, which Windows cannot execute.
+  const keptClaimPlatforms = process.platform === 'win32' ? ['ios'] : ['ios', 'android'];
+  test.each(keptClaimPlatforms.flatMap((platform) => ['live', 'gone'].map((status) => [platform, status])))(
     'reconciles a kept %s %s-child agent claim with no in-memory driver before native stop',
     async (platform, status) => {
       const first = await reserve({ platform });
@@ -1415,40 +1422,44 @@ test.each(['stop', 'revoke'])(
   },
 );
 
-test('hosted Android viewing refuses changed ledger, serial, AVD or ABI instead of selecting another emulator', async () => {
-  await host.close();
-  const { env, probe } = androidViewEnvironment();
-  host = new DeviceHost({
-    worker: join(home, 'worker.mjs'),
-    env,
-    agents: noAgents,
-    allowed: (client) => allowed.has(client),
-  });
-  const session = await reserve({ platform: 'android', attempt: 'android-view' });
-  const ready = await state(session.id, 'ready');
-  const device = ready.device!;
-  writeFileSync(probe, JSON.stringify(device));
-  const target = host.viewTarget('client', session.id);
-  expect(target).toMatchObject({ platform: 'android', session: { device } });
-  expect(() => host.viewTarget('other', session.id)).toThrow('Only a ready session');
-  const privateHome = join(deviceHostArea(session.id), 'home');
-  const record = join(privateHome, 'hosted-device.json');
-  for (const change of [{ serial: 'emulator-5556', consolePort: 5556 }, { avdName: 'stim-foreign-avd' }]) {
-    writeFileSync(record, JSON.stringify({ ...device, ...change }));
-    expect(() => host.viewTarget('client', session.id)).toThrow('identity changed');
-  }
-  writeFileSync(record, JSON.stringify(device));
-  for (const change of [{ avdName: 'stim-foreign-avd' }, { architecture: 'x86_64' }]) {
-    writeFileSync(probe, JSON.stringify({ ...device, ...change }));
-    expect(() => host.viewTarget('client', session.id, true)).toThrow('identity or running ABI changed');
-  }
-  writeFileSync(probe, JSON.stringify(device));
-  writeFileSync(
-    join(privateHome, 'created-devices.json'),
-    JSON.stringify({ version: 1, ios: [], android: [], web: [] }),
-  );
-  expect(() => host.viewTarget('client', session.id)).toThrow('ledger');
-});
+// The fixture's fake adb is a Node-shebang file, which Windows cannot execute.
+test.skipIf(process.platform === 'win32')(
+  'hosted Android viewing refuses changed ledger, serial, AVD or ABI instead of selecting another emulator',
+  async () => {
+    await host.close();
+    const { env, probe } = androidViewEnvironment();
+    host = new DeviceHost({
+      worker: join(home, 'worker.mjs'),
+      env,
+      agents: noAgents,
+      allowed: (client) => allowed.has(client),
+    });
+    const session = await reserve({ platform: 'android', attempt: 'android-view' });
+    const ready = await state(session.id, 'ready');
+    const device = ready.device!;
+    writeFileSync(probe, JSON.stringify(device));
+    const target = host.viewTarget('client', session.id);
+    expect(target).toMatchObject({ platform: 'android', session: { device } });
+    expect(() => host.viewTarget('other', session.id)).toThrow('Only a ready session');
+    const privateHome = join(deviceHostArea(session.id), 'home');
+    const record = join(privateHome, 'hosted-device.json');
+    for (const change of [{ serial: 'emulator-5556', consolePort: 5556 }, { avdName: 'stim-foreign-avd' }]) {
+      writeFileSync(record, JSON.stringify({ ...device, ...change }));
+      expect(() => host.viewTarget('client', session.id)).toThrow('identity changed');
+    }
+    writeFileSync(record, JSON.stringify(device));
+    for (const change of [{ avdName: 'stim-foreign-avd' }, { architecture: 'x86_64' }]) {
+      writeFileSync(probe, JSON.stringify({ ...device, ...change }));
+      expect(() => host.viewTarget('client', session.id, true)).toThrow('identity or running ABI changed');
+    }
+    writeFileSync(probe, JSON.stringify(device));
+    writeFileSync(
+      join(privateHome, 'created-devices.json'),
+      JSON.stringify({ version: 1, ios: [], android: [], web: [] }),
+    );
+    expect(() => host.viewTarget('client', session.id)).toThrow('ledger');
+  },
+);
 
 test('Android reservations keep distinct ports and platform slots and reconnect without recreation', async () => {
   const validator = new Ajv2020({ strict: false, validateFormats: false });
@@ -1587,27 +1598,30 @@ test('uncapped reservations proceed without a local inventory probe', async () =
   expect(existsSync(join(home, 'count-entered'))).toBe(false);
 });
 
-test.each(['revoke', 'close', 'deadline'])('binding capacity probes fail closed and settle on %s', async (ending) => {
-  await host.close();
-  hostEnv.LOCAL_COUNT = 'hang';
-  host = new DeviceHost({
-    worker: join(home, 'worker.mjs'),
-    env: hostEnv,
-    agents: noAgents,
-    allowed: (client) => allowed.has(client),
-    limits: { offerMs: ending === 'deadline' ? 1000 : 5000, killGraceMs: 100 },
+// The worker's process group is signaled, which Node does not support on Windows (nodejs.org/api/process.html#processkillpid-signal).
+describe.skipIf(process.platform === 'win32')('binding capacity probes', () => {
+  test.each(['revoke', 'close', 'deadline'])('binding capacity probes fail closed and settle on %s', async (ending) => {
+    await host.close();
+    hostEnv.LOCAL_COUNT = 'hang';
+    host = new DeviceHost({
+      worker: join(home, 'worker.mjs'),
+      env: hostEnv,
+      agents: noAgents,
+      allowed: (client) => allowed.has(client),
+      limits: { offerMs: ending === 'deadline' ? 1000 : 5000, killGraceMs: 100 },
+    });
+    const pending = host.reserve('client', request);
+    await vi.waitFor(() => expect(existsSync(join(home, 'count-entered'))).toBe(true));
+    const pid = Number(readFileSync(join(home, 'count-entered'), 'utf8'));
+    if (ending === 'close') await host.close();
+    else if (ending === 'revoke') {
+      allowed.delete('client');
+      host.revoke();
+    }
+    expect(await pending).toHaveProperty('error.code', ending === 'deadline' ? 'device-busy' : 'forbidden');
+    expect(readHostedSessions()).toEqual([]);
+    await groupGone(pid);
   });
-  const pending = host.reserve('client', request);
-  await vi.waitFor(() => expect(existsSync(join(home, 'count-entered'))).toBe(true));
-  const pid = Number(readFileSync(join(home, 'count-entered'), 'utf8'));
-  if (ending === 'close') await host.close();
-  else if (ending === 'revoke') {
-    allowed.delete('client');
-    host.revoke();
-  }
-  expect(await pending).toHaveProperty('error.code', ending === 'deadline' ? 'device-busy' : 'forbidden');
-  expect(readHostedSessions()).toEqual([]);
-  await groupGone(pid);
 });
 
 test('offer capacity counts unresolved sessions and preserves SDK failures as declined choices', async () => {
@@ -2745,33 +2759,41 @@ test('Android Metro validates the client port and restores the installed mapping
   expect(await host.metroOpen('client', params, '127.0.0.1')).toHaveProperty('error');
 });
 
-test('Android Metro restore is serialized with install and stop under its session claim', async () => {
-  const first = await reserve({ platform: 'android', attempt: 'android-serialized', deviceProfile: 'delayed-reverse' });
-  await state(first.id, 'ready');
-  const params = { session: first.id, gatewayPort: 12345, secret: 'a'.repeat(64), clientMetroPort: 8082 };
-  expect(await host.metroOpen('client', params, '127.0.0.1')).toHaveProperty('result.port');
-  const app = appOffer(first.id, 'android-dev', 'android');
-  app.params.mode = 'development';
-  host.appOffer('client', app.params);
-  await uploadManifest(app);
-  await host.appChunk('client', {
-    session: first.id,
-    attempt: app.params.attempt,
-    sha256: app.sha256,
-    offset: 0,
-    data: app.content.toString('base64'),
-  });
-  host.appLaunch('client', app.params);
-  await vi.waitFor(() => expect(host.appAttach('client', app.params)).toHaveProperty('result.state', 'installed'));
-  const restoring = host.metroOpen('client', params, '127.0.0.1');
-  await vi.waitFor(() => expect(existsSync(join(deviceHostArea(first.id), 'home', 'reversed'))).toBe(true));
-  expect(host.appOffer('client', appOffer(first.id, 'next', 'android').params)).toHaveProperty('error');
-  expect(await host.metroOpen('client', params, '127.0.0.1')).toHaveProperty('error');
-  expect(readClaimSet(join(deviceHostRoot(), `${first.id}.claims`)).live[0]?.child).toBeDefined();
-  host.stop('client', { session: first.id });
-  expect(await restoring).toHaveProperty('error');
-  await state(first.id, 'stopped');
-});
+// The worker's process group is signaled, which Node does not support on Windows (nodejs.org/api/process.html#processkillpid-signal).
+test.skipIf(process.platform === 'win32')(
+  'Android Metro restore is serialized with install and stop under its session claim',
+  async () => {
+    const first = await reserve({
+      platform: 'android',
+      attempt: 'android-serialized',
+      deviceProfile: 'delayed-reverse',
+    });
+    await state(first.id, 'ready');
+    const params = { session: first.id, gatewayPort: 12345, secret: 'a'.repeat(64), clientMetroPort: 8082 };
+    expect(await host.metroOpen('client', params, '127.0.0.1')).toHaveProperty('result.port');
+    const app = appOffer(first.id, 'android-dev', 'android');
+    app.params.mode = 'development';
+    host.appOffer('client', app.params);
+    await uploadManifest(app);
+    await host.appChunk('client', {
+      session: first.id,
+      attempt: app.params.attempt,
+      sha256: app.sha256,
+      offset: 0,
+      data: app.content.toString('base64'),
+    });
+    host.appLaunch('client', app.params);
+    await vi.waitFor(() => expect(host.appAttach('client', app.params)).toHaveProperty('result.state', 'installed'));
+    const restoring = host.metroOpen('client', params, '127.0.0.1');
+    await vi.waitFor(() => expect(existsSync(join(deviceHostArea(first.id), 'home', 'reversed'))).toBe(true));
+    expect(host.appOffer('client', appOffer(first.id, 'next', 'android').params)).toHaveProperty('error');
+    expect(await host.metroOpen('client', params, '127.0.0.1')).toHaveProperty('error');
+    expect(readClaimSet(join(deviceHostRoot(), `${first.id}.claims`)).live[0]?.child).toBeDefined();
+    host.stop('client', { session: first.id });
+    expect(await restoring).toHaveProperty('error');
+    await state(first.id, 'stopped');
+  },
+);
 
 test('Android Metro refuses missing or invalid ports, unapproved clients and non-ready owners before native work', async () => {
   const first = await reserve({ platform: 'android', attempt: 'android-metro-validation' });
@@ -2865,41 +2887,58 @@ test('Android native followers coalesce under a child-aware claim and retain col
   );
 });
 
-test('Android handoff refuses a mixed bundle manifest before spending a build token', async () => {
-  await host.close();
-  const builtBundle = vi.fn<() => string>(() => 'not available');
-  host = new DeviceHost({
-    worker: join(home, 'worker.mjs'),
-    env: process.env,
-    agents: noAgents,
-    allowed: (client) => allowed.has(client),
-    builtBundle,
-  });
-  const session = await reserve({ platform: 'android' });
-  await state(session.id, 'ready');
-  const app = appOffer(session.id, 'app', 'android');
-  const manifest = Buffer.from(
-    JSON.stringify([
-      { path: 'App.apk', kind: 'file', size: app.content.length, sha256: app.sha256 },
-      { path: 'Info.plist', kind: 'file', size: app.content.length, sha256: app.sha256 },
-    ]),
-  );
-  const params = {
-    ...app.params,
-    manifest: { size: manifest.length, sha256: createHash('sha256').update(manifest).digest('hex') },
-  };
-  host.appOffer('client', params);
-  await host.appChunk('client', {
-    ...params,
-    sha256: params.manifest.sha256,
-    offset: 0,
-    data: manifest.toString('base64'),
-  });
-  expect(
-    await host.appHandoff('client', { ...params, build: { handoff: 'a'.repeat(64), sha256: 'b'.repeat(64) } }),
-  ).toHaveProperty('error.message', expect.stringContaining('single file entry named App.apk'));
-  expect(builtBundle).not.toHaveBeenCalled();
-});
+test.each(['extra-file', 'link', 'wrong-path'])(
+  'Android handoff refuses a %s manifest before spending a build token',
+  async (scenario) => {
+    await host.close();
+    const builtBundle = vi.fn<() => string>(() => 'not available');
+    host = new DeviceHost({
+      worker: join(home, 'worker.mjs'),
+      env: process.env,
+      agents: noAgents,
+      allowed: (client) => allowed.has(client),
+      builtBundle,
+    });
+    const session = await reserve({ platform: 'android' });
+    await state(session.id, 'ready');
+    const app = appOffer(session.id, 'app', 'android');
+    const manifest = Buffer.from(
+      JSON.stringify([
+        {
+          path: scenario === 'wrong-path' ? 'Other.apk' : 'App.apk',
+          kind: scenario === 'link' ? 'link' : 'file',
+          size: app.content.length,
+          sha256: app.sha256,
+        },
+        ...(scenario === 'extra-file'
+          ? [{ path: 'Info.plist', kind: 'file', size: app.content.length, sha256: app.sha256 }]
+          : []),
+      ]),
+    );
+    const params = {
+      ...app.params,
+      manifest: { size: manifest.length, sha256: createHash('sha256').update(manifest).digest('hex') },
+    };
+    host.appOffer('client', params);
+    const uploaded = await host.appChunk('client', {
+      ...params,
+      sha256: params.manifest.sha256,
+      offset: 0,
+      data: manifest.toString('base64'),
+    });
+    expect(uploaded).toHaveProperty(
+      scenario === 'extra-file' ? 'result.offset' : 'error.message',
+      scenario === 'extra-file' ? manifest.length : 'The hosted app manifest is missing or malformed.',
+    );
+    expect(
+      await host.appHandoff('client', { ...params, build: { handoff: 'a'.repeat(64), sha256: 'b'.repeat(64) } }),
+    ).toHaveProperty(
+      'error.message',
+      expect.stringContaining(scenario === 'extra-file' ? 'single file entry named App.apk' : 'Send the app manifest'),
+    );
+    expect(builtBundle).not.toHaveBeenCalled();
+  },
+);
 
 function hostedModes(id: string): string[] {
   const path = join(deviceHostArea(id), 'home', 'modes');
@@ -2985,6 +3024,50 @@ test.each(['ios', 'android'] as const)(
   },
 );
 
+test.each(['removed', 'claimed'] as const)(
+  'reserve creates a fresh device when GC has %s the inspected adoption candidate',
+  async (race) => {
+    parkingLimits();
+    const parked = seedHosted({ parked: { at: '2026-10-01T00:00:00.000Z' } });
+    hostEnv.COUNT_GATE = join(home, 'release-count');
+    const pending = host.reserve('client', { ...request, attempt: 'new' });
+    let claim;
+    try {
+      await vi.waitFor(() => expect(existsSync(join(home, 'count-entered'))).toBe(true), { timeout: 5000 });
+      if (race === 'removed')
+        writeFileSync(
+          join(deviceHostArea(parked.id), 'home', 'created-devices.json'),
+          JSON.stringify({ version: 1, ios: [], android: [], web: [] }),
+        );
+      else {
+        claim = tryAcquireClaim({
+          root: join(deviceHostRoot(), `${parked.id}.claims`),
+          mode: 'exclusive',
+          label: 'hosted device session',
+        }).acquired;
+        if (!claim) throw new Error('Could not take the GC claim.');
+      }
+      writeFileSync(hostEnv.COUNT_GATE, 'continue');
+      const answer = await pending;
+      expect(answer).toHaveProperty('result.state', 'preparing');
+      if ('error' in answer) throw new Error(answer.error.message);
+      const created = answer.result;
+      expect(created.id).not.toBe(parked.id);
+      await state(created.id, 'ready');
+      expect(hostedModes(parked.id)).toEqual(['inspect']);
+      expect(hostedModes(created.id)).toEqual(['prepare']);
+      expect(readClaimSet(join(deviceHostRoot(), `${parked.id}.claims`)).live.map((each) => each.claimId)).toEqual(
+        race === 'removed' ? [] : [claim!.claimId],
+      );
+    } finally {
+      writeFileSync(hostEnv.COUNT_GATE, 'continue');
+      await pending;
+      if (claim) releaseClaim(claim);
+    }
+  },
+  10_000,
+);
+
 test('Android adoption reserves a new free console port and keeps the AVD session identity', async () => {
   parkingLimits();
   hostEnv.STIM_MAX_DEVICES = '0';
@@ -3051,14 +3134,24 @@ test('parking evicts only the oldest excess devices across clients and keeps pla
   const oldest = seedHosted({ client: 'other', parked: { at: '2026-10-01T00:00:00.000Z' } });
   const recent = seedHosted({ parked: { at: '2026-10-02T00:00:00.000Z' } });
   const android = seedHosted({ platform: 'android', parked: { at: '2026-10-01T00:00:00.000Z' } });
+  const ghost = seedHosted({ client: 'other', parked: { at: '2026-10-03T00:00:00.000Z' } }, 'empty');
+  const androidGhost = seedHosted(
+    { client: 'other', platform: 'android', parked: { at: '2026-10-03T00:00:00.000Z' } },
+    'empty',
+  );
   const first = await reserve({ attempt: 'new', deviceType: 'iPad' });
   await state(first.id, 'ready');
   host.stop('client', { session: first.id });
   await state(first.id, 'stopped');
-  await vi.waitFor(() =>
-    expect(readHostedSessions().find((record) => record.id === oldest.id)?.parked).toBeUndefined(),
+  await vi.waitFor(
+    () => expect(readHostedSessions().find((record) => record.id === oldest.id)?.parked).toBeUndefined(),
+    { timeout: 5000 },
   );
   expectRetired(oldest.id);
+  for (const record of [ghost, androidGhost]) {
+    expect(readHostedSessions().find((each) => each.id === record.id)?.parked).toBeUndefined();
+    expect(hostedModes(record.id)).toEqual([]);
+  }
   expect(hostedModes(recent.id)).not.toContain('stop');
   expect(hostedModes(android.id)).toEqual([]);
   expect(
@@ -3066,7 +3159,7 @@ test('parking evicts only the oldest excess devices across clients and keeps pla
       .filter((record) => record.platform === 'ios' && record.parked)
       .map((record) => record.id),
   ).toEqual([recent.id, first.id]);
-});
+}, 10_000);
 
 test('reconciliation preserves parked records, clears markers for GC-deleted devices and evicts after a limit decrease', async () => {
   parkingLimits();

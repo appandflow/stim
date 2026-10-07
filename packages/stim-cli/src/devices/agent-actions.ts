@@ -5,6 +5,7 @@ import {
   agentDeviceStateDirs,
   createAgentActionReader as createSessionActionReader,
   type AgentTarget,
+  type MacosAppRecord,
   type NdjsonRecord,
   type ProjectRecord,
 } from '@stim-cli/core/state';
@@ -14,8 +15,19 @@ import { agentDeviceLiveness, readAgentDeviceRecords } from './activity.ts';
 
 export type { AgentTarget } from '@stim-cli/core/state';
 
-export function workspaceAgentTargets(project: ProjectRecord | null | undefined): AgentTarget[] {
+export function workspaceAgentTargets(
+  project: ProjectRecord | null | undefined,
+  macos?: MacosAppRecord | null,
+): AgentTarget[] {
   const targets: AgentTarget[] = [];
+  if (macos?.app && macos.bundleId)
+    targets.push({
+      platform: 'macos',
+      id: macos.launchId,
+      slot: 'default',
+      bundleId: macos.bundleId,
+      launchedAt: macos.app.startedAtMicros / 1000,
+    });
   let slots: ReturnType<typeof projectDeviceSlots>;
   try {
     slots = projectDeviceSlots(project);
@@ -40,7 +52,7 @@ function canonicalDir(path: string): string {
 }
 
 export interface AgentActionReaderOptions {
-  targets: AgentTarget[];
+  targets: AgentTarget[] | (() => AgentTarget[]);
   sinceTs?: number;
   home?: string;
   now?: () => number;
@@ -54,7 +66,6 @@ export function createAgentActionReader({
   now,
   startOf = inspectProcessStart,
 }: AgentActionReaderOptions): () => NdjsonRecord[] {
-  const byId = new Map(targets.map((target) => [target.id, target]));
   let claimed: Map<string, string> | undefined;
   const read = createSessionActionReader({
     sessionsDirs: () => agentDeviceStateDirs(home).map((root) => join(root, 'sessions')),
@@ -62,12 +73,15 @@ export function createAgentActionReader({
     sinceTs,
     now,
     claimedDevice: (session, sessionsDir) => {
+      const byId = claimed
+        ? new Map<string, AgentTarget>()
+        : new Map((typeof targets === 'function' ? targets() : targets).map((target) => [target.id, target]));
       claimed ??= new Map(
         readAgentDeviceRecords(home)
           .filter((record) => record.kind === 'claim' && record.session && record.deviceId)
           .filter((record) => {
             const target = byId.get(record.deviceId!);
-            return target?.name === undefined || target.name === record.deviceName;
+            return target?.platform !== 'macos' && (target?.name === undefined || target.name === record.deviceName);
           })
           .filter((record) => agentDeviceLiveness(record, startOf) === 'live')
           .map((record) => [

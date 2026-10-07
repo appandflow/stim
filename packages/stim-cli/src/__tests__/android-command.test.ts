@@ -15,6 +15,7 @@ import { AvdBootError, AvdRecoveryError } from '../engine/device-android.ts';
 import { ensureRemoteBootOwned } from '../engine/device-remote.ts';
 import { DeviceAdmissionRefusal, withDeviceBootAdmission } from '../engine/device-capacity.ts';
 import { requestNativeRunCancel, withNativeBuildRun } from '../engine/native-run.ts';
+import { ACTIVE_BUILD_KEY, buildReport, parseActiveBuild, startBuildProgress } from '../engine/build-progress.ts';
 import type { ensureOwnedDevice } from '../engine/device.ts';
 import { once } from 'node:events';
 import { type ChildProcess, spawn } from 'node:child_process';
@@ -2747,19 +2748,41 @@ describe('the remote cache', () => {
 
 describe('--no-build-cache', () => {
   test('looks nothing up: not the local cache, not the provider', async () => {
-    const h = harness({
-      useBuildCache: false,
-      resolveCached: never('the local cache'),
-      loadProvider: async () => ({ provider: { plugin: {}, options: {} }, name: 'eas' }),
-      resolveRemoteBuild: never('the provider'),
-    });
-    const result = await h.run();
-    expect(result.ok).toBe(true);
-    expect(h.calls.build.length).toBe(1);
-    assert(result.facts);
-    expect(result.facts.cacheHit).toBe(false);
-    expect(result.facts.cacheSkipped).toBe(true);
-    expect(labelled(h.stderr, 'fingerprint')[0]).toMatch(/miss \(--no-build-cache\)/);
+    let activeReport: ReturnType<typeof buildReport> | undefined;
+    await withNativeBuildRun(
+      root,
+      { command: 'android', platform: 'android', slot: 'default' },
+      async (claim) => {
+        const progress = startBuildProgress({ root, platform: 'android', slot: 'default', claim });
+        try {
+          const h = harness({
+            progress,
+            useBuildCache: false,
+            storeCached: (_platform: string, _key: string, path: string) => {
+              const active = parseActiveBuild(readWorkspaceState(root)?.[ACTIVE_BUILD_KEY]);
+              assert(active);
+              activeReport = buildReport(active, { state: 'running', history: undefined });
+              return path;
+            },
+            resolveCached: never('the local cache'),
+            loadProvider: async () => ({ provider: { plugin: {}, options: {} }, name: 'eas' }),
+            resolveRemoteBuild: never('the provider'),
+          });
+          const result = await h.run();
+          expect(result.ok).toBe(true);
+          expect(h.calls.build.length).toBe(1);
+          assert(result.facts);
+          expect(result.facts.cacheHit).toBe(false);
+          expect(result.facts.cacheSkipped).toBe(true);
+          expect(labelled(h.stderr, 'fingerprint')[0]).toMatch(/miss \(--no-build-cache\)/);
+        } finally {
+          progress.clear();
+        }
+      },
+      { write: () => {} },
+    );
+    expect(activeReport).toMatchObject({ outcome: 'cold', outcomeKnown: true });
+    expect(activeReport).not.toHaveProperty('cacheLookupOutcome');
   });
 
   test('still STORES -- over the entry it was told not to trust -- and still uploads', async () => {

@@ -93,6 +93,33 @@ carries buildMachine (selected) and builtOn (here or the machine, absent until
 a build runs), and errorCode on a typed failure. It carries offloadedTo only for a remote build, and offloadFallback when an offload
 attempt falls back here. Placement and failure reasons are in build logs.
 
+AGENT ACTIONS
+
+Launch through stim macos first. Use its isolated bundleId from the JSON
+launch record or status --json:
+
+  agent-device open <bundleId> --platform macos --surface app --foreground
+  agent-device click <ref> --settle
+  stim logs --source agent
+
+Stim reads agent-device's recorded app-scoped actions and failures into the
+native workspace's agent feed in Desktop and the phone viewer. Text stays
+redacted by agent-device. Matching uses the workspace-specific bundle ID and
+the current launch's start time; open/close attempts, app switches and event
+log rotation clear the binding. Open must explicitly include --surface app:
+agent-device can otherwise inherit a previous desktop or menubar surface.
+An unrecorded open needs a new recorded app open before actions appear.
+Native screenshot events are omitted because their surface override is not
+recorded. Generic computer-use tools and phone Control are not agent-device
+actions. Manually duplicated bundles sharing the isolated identifier are
+unsupported; leave app launch and stop to Stim. No native replay is added.
+The feed requires agent-device to record the explicit surface in its open
+event. agent-device 0.21.23 is the minimum; older versions such as 0.21.12 omit
+it, so native actions remain unavailable with them. Stim does not infer the
+surface from the bundle ID. Actions are attributed only while the launch is
+recorded as running: after the app exits or is relaunched, earlier launches'
+actions are no longer returned, and a failed open is not shown.
+
 OWNERSHIP AND LOCAL VIEWING
 
 The supervisor owns a process-identity claim with the app as its child. Stop

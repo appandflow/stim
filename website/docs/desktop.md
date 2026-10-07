@@ -44,16 +44,14 @@ control them through this Mac's stim-server relay. Touch and text reach the
 hosting Mac; controls that need a local simulator, and replay, are hidden.
 The tile reports connecting, unavailable or stopped sessions. Android hardware
 buttons also use the relay; rotation and posture are unavailable.
-**Run on** beside iOS and Android run actions chooses **This Mac**, **Auto**, or
-an approved hosting Mac. Desktop remembers the choice per workspace and platform;
-a machine that doctor reports is no longer approved falls back to This Mac.
-**This Mac** uses the project's default, passing no `--remote` flag. A project
-with `ios.remote` or `android.remote` set still runs at that destination.
-Auto uses `--remote auto`; a named Mac uses `--remote <machine>`. Named machines
-are disabled while the slot has a booted local owned device; run `stim stop`
-first to change machines. Recorded hosted sessions
-stay fixed until `stim stop`. Tiles and sidebar rows show where the device ran
-and the Auto reason, including runs that stayed or waited locally. See [iOS on an approved Mac](./owned-devices#run-ios-on-another-mac).
+Placement is set by config or agents: use
+`stim settings set ios.remote auto --scope workspace` (or `android.remote`),
+or per run `stim ios --remote auto` / `stim ios --remote <machine>`.
+Desktop passes no `--remote` flag for new iOS and Android runs, so the project's
+settings apply. Recorded hosted sessions stay fixed until `stim stop`.
+When a device is not on this Mac, its tile, workspace page, viewer toolbar and
+sidebar row show **on &lt;machine&gt;**, with the placement reason as hover text.
+Local devices show no placement label. See [iOS on an approved Mac](./owned-devices#run-ios-on-another-mac).
 
 Desktop uses the non-empty launch `STIM_HOME`, then the login shell's value, then
 `~/.stim`; **Settings > App > Stim CLI** shows the home, and private-home copies
@@ -137,6 +135,14 @@ show refusals for removals started from its own workspace actions.
 - **Every workspace at a glance.** Each workspace shows its stage (warming,
   building, running, failed), its devices side by side, and its branch and pull
   request status.
+- **Hide a workspace.** **Hide** in a sidebar row's context menu or the page's
+  "..." menu moves a worktree, a multi-app worktree, a Not set up worktree or an
+  archive out of the list. Turn on **Hidden** in the sidebar's Status filter, or
+  use the "3 hidden - Show" line at the foot of the sidebar, to see them again;
+  **Hide again** turns it off. Hidden is not part of All. A hidden workspace
+  that becomes active (its dev server runs, a build starts, a device boots or
+  connects, or a run starts) shows again. The list lives in this Desktop's own
+  preferences on this Mac and is not shared with the phone app.
 - **Watch and take over a device.** Open a device to see its screen large,
   take it over with your mouse and keyboard, and read what the agent did
   and when. Hardware, rotation and posture controls sit in groups below the
@@ -157,7 +163,7 @@ show refusals for removals started from its own workspace actions.
   **Refresh** reads changes made elsewhere. Unsupported options say
   **Unavailable**. Requires Xcode's simulator appearance API; audio, location,
   VoiceOver, color filters and Liquid Glass options are not included.
-  Its **Development** section also offers **Slow animations** and **Shake**
+  Without Control the popover shows only **Show device frame**. Its **Development** section also offers **Slow animations** and **Shake**
   where CoreSimulator supports them. Slow animations changes guest UIKit
   animation speed and reads the setting back; Shake sends a shake event to the
   foreground app. Android animation settings are unchanged.
@@ -202,7 +208,7 @@ show refusals for removals started from its own workspace actions.
   installs this Mac's npm release there, or this checkout's own build when the
   machine allows it with `server.acceptClientBuilds`. The update goes over the
   tailnet, with no ssh, and the old server comes back if the new one does not
-  start. **Settings > Build Machines** can update them automatically.
+  start. **Settings > Build Machines** can keep them on this Mac's Stim version automatically.
   A removed selection returns to **This Mac**; remote selections have no local
   cleanup actions. Select checklist items to enable **Free space**;
   cleanup previews or confirms the selection before deleting anything.
@@ -288,9 +294,10 @@ viewer, with Control already on when the device allows it. Physical iOS devices
 and remote previews stay view-only; Android phones require a valid lease and a
 control-capable pairing. **Release control** or Escape returns to viewing.
 
-In a live local simulator or emulator viewer, **Show device frame** adds matching
-installed hardware artwork. **Hide device frame** returns to the default frameless
-view. Frames rotate with the display, preserve its aspect ratio and input
+A live local simulator or emulator viewer draws matching installed hardware artwork
+by default. Turn it off with **Show device frame** in the options popover (the
+sliders button); Desktop remembers the choice per device type. When no frame can be
+drawn the checkbox is disabled and says why. Frames rotate with the display, preserve its aspect ratio and input
 coordinates, and do not require Control. Apple frames use installed DeviceKit
 chrome. Android frames use the AVD's configured skin or matching hardware profile
 artwork in `/Applications/Android Studio.app`, with matching screen dimensions.
@@ -298,7 +305,8 @@ Missing artwork and unsupported skin layouts stay frameless; Android foldables,
 physical and remote devices, web pages and replay do too. For a local iPhone Duo,
 an installed Xcode with DeviceKit's V68 model and a valid observed hinge angle
 enables genuine hardware that follows the hinge and rotation, with input mapped
-to the posed active screen. Without that model, the viewer stays frameless.
+to the posed active screen. Xcode 27.0 lacks the model; Desktop uses the selected Xcode's copy, then another
+installed Xcode's. Without it, the viewer stays frameless and the popover says so.
 Desktop snapshots the departing panel before its own posture controls change the
 hinge; external handoffs can leave that panel blank or retain an older snapshot.
 Stim does not bundle the artwork.
@@ -342,16 +350,23 @@ Releasing Option, ending the gesture, changing orientation or releasing Control
 lifts both contacts. Option and the gesture's Shift modifier stay on the Mac.
 These gestures are not available for physical devices, remote previews or web pages.
 
-With **Control** on an owned local simulator or emulator, **Paste into device**
-copies Mac clipboard text and pastes it into the focused guest field. An iOS
-simulator shows its own "Allow Paste" prompt for the text (seen on iOS 27.1, and
-again for each new text); click **Allow Paste** in the viewer to insert it. Owned local iOS simulators and Android emulators also offer
-**Copy device clipboard**, which copies guest text back to this Mac, including empty text.
-Unicode and line breaks are preserved. Transfers happen only when pressed; there
-is no automatic clipboard synchronization. An empty or non-text Mac clipboard
-leaves the guest unchanged. Disconnects and unavailable native clipboard APIs
-report a failure. Physical devices, remote sessions and replay do not offer
-clipboard actions.
+With **Control** on an owned local simulator or emulator, the Mac and the device
+share their clipboard text automatically. Switching to the viewer window, or
+a new Mac clipboard item while the window is focused, sets the device clipboard; text copied on
+the device reaches the Mac within about two seconds while the window is focused,
+and once more as the window loses focus while it stays visible. Nothing syncs while
+the window is hidden, minimized or covered. Mac items marked concealed or transient
+(as password managers do), items carrying files or images, empty text and text over
+256 KB are never sent to the device; text read from the device cannot be classified,
+so it reaches the Mac marked transient, which clipboard-history apps skip. The
+device's apps, and agents driving it, can read text sent to it. Opening a viewer never replaces the Mac clipboard with the device's.
+Turn it off with **Sync clipboard** in the options popover (the sliders button),
+which also has **Paste Mac clipboard** and **Copy device clipboard** for one-off
+transfers. Syncing only sets the device clipboard; to insert text, paste in the
+guest. An iOS simulator shows its own "Allow Paste" prompt for text that came from
+another source; click **Allow Paste** in the viewer. Unicode and line breaks are
+preserved. Physical devices, hosted and remote sessions and replay never sync, so
+no clipboard text crosses the network or reaches another Mac.
 
 Overview opens first and groups active worktrees into rounded project cards, with up to
 three cards per row and one device preview per card. Titles, metrics and small previews are
@@ -448,6 +463,13 @@ chosen.
 
 See [Phone app](./phone-app.md) for installation, pairing, notifications and access.
 
+On the hosting Mac, **Stim > Settings > Phones > Hosted here**, below **Device
+hosting approvals**, lists the simulators, emulators and apps approved Macs run
+here, with their client, device, app, state and session age. **Stop** asks for
+confirmation, then ends the session and deletes or parks its device on this Mac.
+Parked sessions remain listed without a Stop button. The list refreshes every
+five seconds and stays hidden when an older local server does not support it.
+
 The phone validates server replies and live events before displaying them.
 Malformed known data triggers a reconnect with a connection error; message
 contents are not logged. Older compatible payloads and extra fields remain
@@ -464,7 +486,12 @@ belonging to that path at once. Settings and other details are in the
 
 ## Add a build machine
 
-**Settings > Build Machines > Add…** guides you through all six steps: pick a
+**Settings > Build Machines** lists your build machines with a status
+(**Approved**, **Waiting for approval**, **Unreachable** or **Not offloading**),
+a line with its running builds and free disk, any problem that keeps builds on
+this Mac with its fix, what each does (**Builds**, **Simulators**) and a **...** menu with **Details**
+and **Remove**. It updates itself; there is no Refresh button. With none, it
+offers **Add Build Machine…**, which guides you through all six steps: pick a
 Mac on your tailnet, choose Builds and/or Hosted simulators, run setup there,
 compare tools, test a sample build, and review settings and undo commands. Run
 the generated setup command in Terminal while signed in at the build Mac and
@@ -506,4 +533,33 @@ changing system preferences. Release builds exclude it. See the [desktop develop
 
 ## Suggestions
 
-Desktop suggests build machines, hosted simulators, cache review, or phone pairing when recent builds, tailnet peers, disk pressure, or device limits make them useful. Each kind shows once unless you dismiss it with the X to snooze it for 7 days, after which it may show again. Choose **Don't suggest again** to dismiss that kind permanently. Device-limit suggestions use refusals from Desktop commands and recent `stats --json` capacity events, including agent terminal runs, within 6 hours of the refusal. Three device waits of at least one minute each within the same 6-hour window also trigger a suggestion. When a Mac is already approved for hosted simulators, the device-limit suggestion offers **Use Auto**, which sets the workspace's Run on choice in Desktop (agents in a terminal pass `--remote auto`), instead of the setup wizard, and a tailnet Mac already in `hosting.machines` is not announced as new. Suggestions never appear during a build or install, before setup is complete, or on the first launch, and appear at most once per day. Nothing is set up until you open and follow the wizard.
+Desktop suggests build machines, hosted simulators, cache review, or phone pairing when recent builds, tailnet peers, disk pressure, or device limits make them useful. Each kind shows once unless you dismiss it with the X to snooze it for 7 days, after which it may show again. Choose **Don't suggest again** to dismiss that kind permanently. Device-limit suggestions use refusals from Desktop commands and recent `stats --json` capacity events, including agent terminal runs, within 6 hours of the refusal. Three device waits of at least one minute each within the same 6-hour window also trigger a suggestion. When a Mac is already approved for hosted simulators, the device-limit suggestion offers **Use Auto** instead of the setup wizard. It runs `stim settings set ios.remote auto --scope workspace` (and `android.remote`, for the refused platform, or both when it is not known), so runs place on the hosting Mac when this Mac is full, from Desktop and from agents in a terminal. While it is set, `--plan` and `--device` runs in that workspace refuse; undo it with `stim settings unset ios.remote --scope workspace` (and `android.remote`). A tailnet Mac already in `hosting.machines` is not announced as new. Suggestions never appear during a build or install, before setup is complete, or on the first launch, and appear at most once per day. Nothing is set up until you open and follow the wizard.
+
+The **Tip** card at the bottom of the sidebar appears after setup is complete and
+Desktop has been used on at least **3 calendar days**, with either **3 distinct
+workspaces seen running** or **5 builds observed**. It stays hidden while a build
+runs, the setup guide or tutorial is open, the main window is closed, or any
+notice is showing. Only builds that start after Desktop first sees status count.
+Usage is stored locally in Desktop preferences: the latest 30 active days and,
+until the thresholds are met, the workspace paths and build IDs counted.
+
+Tips cover build machines, phone pairing, the tutorial, hiding workspaces when
+there are more than 10 workspace rows and none are hidden, status filters, replay, and hosted
+simulators. Only applicable tips appear. One tip stays for the calendar day;
+the next day picks the least recently shown applicable tip, with unseen tips
+first. **Next tip** cycles through the remaining choices. The X hides the card
+until tomorrow. Turn off **Settings > App > Show tips** to disable tips; the Machine page card stays.
+
+Tips and suggestions share state for build machines, phone pairing, and
+hosted simulators. A shown, permanently dismissed, or currently snoozed
+suggestion suppresses the matching tip. Once that tip has been shown, the
+matching suggestions (new Mac, slow cold builds, build slot waits, away
+builds, device limit) no longer appear. Disk-pressure suggestions are
+unaffected. Suggestions keep their own once-per-day limit.
+
+**File > Add Build Machine…** (**Cmd+Shift+B**) always opens the existing build
+machine wizard. After the same usage threshold, **Machines > This Mac** shows a
+card when no build machine is configured. With another Mac on the tailnet it
+offers **Add Build Machine…**; otherwise it explains how to connect both Macs
+with Tailscale. The existing **Link machine** button is also available. Build
+machines are not a step in the first-run setup guide.

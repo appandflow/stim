@@ -2,9 +2,9 @@ import StimKit
 import StimStores
 import SwiftUI
 
-/// This Mac's side of build offload: the `offload.machines` it builds on, with each one's state from `stim doctor`,
-/// and the other Macs on the tailnet that run stim-server. It changes the setting with `stim settings` and asks for
-/// access with `stim doctor --fix`; approving happens on the other Mac.
+/// This Mac's build machines: the `offload.machines` it builds on, each with its state from `stim doctor`. Adding
+/// one opens the wizard, which does the tailnet discovery and the setup. Stim Desktop changes the setting with
+/// `stim settings` and asks for access with `stim doctor --fix`; approving happens on the other Mac.
 struct BuildMachinesView: View {
   var model: BuildMachinesModel
   @ObservedObject var store: StatusStore
@@ -12,6 +12,7 @@ struct BuildMachinesView: View {
 
   @State private var confirmsDeleteSample = false
   @State private var removing: String?
+  @State private var detailed: String?
   @State private var adding: AddMachineModel?
   @AppStorage(AppPreferences.Key.updatesBuildMachines) private var updatesAutomatically = false
 
@@ -20,72 +21,18 @@ struct BuildMachinesView: View {
   }
 
   var body: some View {
-    Form {
-      Section {
-        if let failure {
-          Text(failure).foregroundStyle(Palette.error).textSelection(.enabled)
-        }
-        if let entries = model.entries {
-          if entries.isEmpty {
-            Text("This Mac builds only on itself.").foregroundStyle(Palette.secondary)
-          }
-          ForEach(entries, id: \.self) { entry in
-            MachineRow(
-              entry: entry, status: statuses?.first { $0.machine == entry }, checking: statuses == nil,
-              working: model.working == entry, canAsk: checkout != nil, update: model.updates[entry]
-            ) {
-              Task { await model.ask(entry, checkout: checkout) }
-            } remove: {
-              removing = entry
-            } startUpdate: {
-              Task { await model.update(entry, checkout: checkout) }
-            }
-          }
-          if !entries.isEmpty {
-            Toggle("Install this Mac's build on build machines automatically", isOn: $updatesAutomatically)
-              .help(
-                "When a build machine runs another Stim build than this Mac, Desktop installs this Mac's build there the next time it checks the machine."
-              )
-          }
-        } else {
-          ProgressView().frame(maxWidth: .infinity)
-        }
-      } header: {
-        HStack {
-          Text("This Mac builds on")
-          Spacer()
-          Button("Add\u{2026}") { adding = model.addMachine(checkout: checkout) }
-            .disabled(model.isBusy || model.probing || model.updates.values.contains { !$0.isDone })
-          Button("Refresh") { Task { await model.load(checkout: checkout) } }
-            .disabled(model.isBusy || model.probing)
-        }
-      } footer: {
-        Text(footer)
-          .foregroundStyle(Palette.tertiary)
-          .multilineTextAlignment(.leading)
-          .frame(maxWidth: .infinity, alignment: .leading)
-      }
-
-      if model.sampleExists {
-        Section {
-          Button("Delete sample app", role: .destructive) { confirmsDeleteSample = true }
-        }
-      }
-      Section {
-        discovered
-      } header: {
-        Text("Macs on your tailnet")
-      } footer: {
-        Text(
-          "Macs that answer as stim-server on their tailscale serve route, port \(String(Tailnet.servePort)). On a Mac that should build for others, turn on Serve to phones in Stim Desktop's Phones tab and add the route it shows."
-        )
-        .foregroundStyle(Palette.tertiary)
-        .multilineTextAlignment(.leading)
-        .frame(maxWidth: .infinity, alignment: .leading)
-      }
-    }
-    .formStyle(.grouped)
-    .scrollContentBackground(.hidden)
+    BuildMachinesContent(
+      entries: model.entries, statuses: statuses, hosts: model.check(in: checkout)?.hosts, updates: model.updates,
+      working: model.working, refreshing: model.isBusy, failure: failure, tailscaleRunning: model.tailscaleRunning,
+      canAsk: checkout != nil,
+      addDisabled: model.isBusy || model.updates.values.contains { !$0.isDone }, sampleExists: model.sampleExists,
+      updatesAutomatically: $updatesAutomatically,
+      add: { adding = model.addMachine(checkout: checkout) },
+      ask: { entry in Task { await model.ask(entry, checkout: checkout) } },
+      update: { entry in Task { await model.update(entry, checkout: checkout) } },
+      showDetails: { entry in detailed = entry }, remove: { entry in removing = entry },
+      deleteSample: { confirmsDeleteSample = true }
+    )
     .background(Palette.background)
     .onReceive(OpenRequests.shared.$addMachine) { request in
       guard let request else { return }
@@ -98,10 +45,12 @@ struct BuildMachinesView: View {
       }
     }
     .task { await model.load(checkout: checkout) }
-    .task(id: waiting) {
-      while waiting, !Task.isCancelled {
-        try? await Task.sleep(for: .seconds(15))
-        if !model.isBusy, !Task.isCancelled { await model.refreshStatuses(checkout: checkout, ask: false) }
+    .task(id: PollKey(waiting: waiting, checkout: checkout)) {
+      while !Task.isCancelled {
+        try? await Task.sleep(for: .seconds(waiting ? 15 : 60))
+        guard !model.isBusy, !Task.isCancelled, !(model.entries ?? []).isEmpty else { continue }
+        await model.checkTailscale()
+        await model.refreshStatuses(checkout: checkout, ask: false)
       }
     }
     .sheet(
@@ -118,6 +67,16 @@ struct BuildMachinesView: View {
       }
     ) {
       if let adding { AddMachineSheet(model: adding) }
+    }
+    .sheet(
+      isPresented: .init(get: { detailed != nil }, set: { if !$0 { detailed = nil } })
+    ) {
+      if let entry = detailed {
+        BuildMachineDetails(
+          entry: entry, status: statuses?.first { $0.machine == entry },
+          capabilities: buildMachineCapabilities(entry, hosts: model.check(in: checkout)?.hosts)
+        ) { detailed = nil }
+      }
     }
     .onQuitRequested {
       adding?.stop()
@@ -142,10 +101,9 @@ struct BuildMachinesView: View {
 
   private func removalMessage(_ entry: String) -> String {
     guard statuses?.first(where: { $0.machine == entry })?.state == .nodeChanged else {
-      return "Removes it from offload.machines. The next stim doctor --fix forgets its pairing."
+      return "Builds on this Mac stop going to it."
     }
-    return
-      "Removes it from offload.machines and runs stim doctor --fix, which forgets the old node and asks again any listed Mac that has not approved this one."
+    return "Builds stop going to it, and this Mac forgets the old node and asks again any listed Mac that has not approved it."
   }
 
   private var statuses: [BuildMachineStatus]? {
@@ -155,119 +113,225 @@ struct BuildMachinesView: View {
 
   private var failure: String? {
     if let failure = model.writeFailure ?? model.settingsFailure { return failure }
-    guard let checkout, let problem = model.check(in: checkout)?.problem else { return nil }
+    guard checkout != nil, let problem = model.check(in: checkout)?.problem else { return nil }
     switch problem {
     case .unsupported: return "This stim does not report build machines; update it."
-    case .failed(let message): return "stim doctor failed in \(abbreviatingHome(checkout)): \(message)"
+    case .failed(let message): return "stim doctor failed: \(message)"
     }
   }
 
   private var waiting: Bool { statuses?.contains { $0.state == .pending } == true }
+}
 
-  private var footer: String {
-    let base =
-      "offload.machines on this Mac. Use for builds adds a Mac and asks it for access with stim doctor --fix, which also asks again any listed Mac that has not approved this one. A person on that Mac allows it."
-    guard let checkout else {
-      return base + " Stim runs doctor in a workspace, and none is listed yet: start one with Stim first."
+private struct PollKey: Hashable {
+  var waiting: Bool
+  var checkout: String?
+}
+
+/// The Build Machines tab for the state it is given: a progress view, the empty state, or the list.
+struct BuildMachinesContent: View {
+  var entries: [String]?
+  var statuses: [BuildMachineStatus]?
+  var hosts: [BuildMachineStatus]?
+  var updates: [String: MachineUpdatePhase]
+  var working: String?
+  var refreshing: Bool
+  var failure: String?
+  var tailscaleRunning: Bool?
+  var canAsk: Bool
+  var addDisabled: Bool
+  var sampleExists: Bool
+  @Binding var updatesAutomatically: Bool
+  var add: () -> Void
+  var ask: (String) -> Void
+  var update: (String) -> Void
+  var showDetails: (String) -> Void
+  var remove: (String) -> Void
+  var deleteSample: () -> Void
+
+  var body: some View {
+    if let entries {
+      if entries.isEmpty {
+        VStack(spacing: 0) {
+          notices.padding([.horizontal, .top], Space.xl)
+          BuildMachinesEmptyState(add: add, addDisabled: addDisabled)
+          if sampleExists { deleteSampleButton.padding(.bottom, Space.xl) }
+        }
+      } else {
+        list(entries)
+      }
+    } else {
+      ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
     }
-    return base + " Doctor runs in \(abbreviatingHome(checkout))."
   }
 
-  @ViewBuilder private var discovered: some View {
-    let listed = model.entries ?? []
-    if let macs = model.macs {
-      let candidates = macs.filter { mac in model.stimMacs.contains(mac.id) && !listed.contains { OffloadMachines.names($0, mac) }
+  @ViewBuilder private var notices: some View {
+    VStack(alignment: .leading, spacing: Space.md) {
+      if let failure {
+        Text(failure).foregroundStyle(Palette.error).textSelection(.enabled)
       }
-      if candidates.isEmpty {
-        HStack(spacing: Space.md) {
-          if model.probing { ProgressView().controlSize(.small) }
-          Text(
-            model.probing
-              ? "Looking for stim-server on \(macs.count) \(macs.count == 1 ? "Mac" : "Macs")\u{2026}"
-              : macs.isEmpty ? "No other Mac on your tailnet is online." : "No other Mac on your tailnet runs stim-server."
-          )
-          .foregroundStyle(Palette.secondary)
-        }
+      if tailscaleRunning == false {
+        Label("Tailscale is not running, so Stim cannot reach other Macs.", systemImage: "exclamationmark.triangle.fill")
+          .foregroundStyle(Palette.warning)
       }
-      ForEach(candidates) { mac in
-        HStack(spacing: Space.lg) {
-          Image(systemName: "desktopcomputer").font(.system(size: 18)).foregroundStyle(Palette.accent)
-          VStack(alignment: .leading, spacing: Space.xxs) {
-            Text(verbatim: mac.hostName).font(.stim(.body, weight: .semibold)).lineLimit(1)
-            Text(verbatim: mac.dnsName).font(.stim(.caption, mono: true)).foregroundStyle(Palette.secondary)
-              .lineLimit(1).truncationMode(.middle)
-          }
-          Spacer()
-          if model.working == mac.machine { ProgressView().controlSize(.small) }
-          Button("Use for Builds") { Task { await model.use(mac, checkout: checkout) } }
-            .disabled(model.working != nil || checkout == nil)
-        }
-        .padding(.vertical, Space.xxs)
-      }
-    } else if model.probing {
-      ProgressView().frame(maxWidth: .infinity)
-    } else {
-      Text("Tailscale is not running, so Stim cannot find other Macs.").foregroundStyle(Palette.secondary)
     }
+    .frame(maxWidth: .infinity, alignment: .leading)
+  }
+
+  private func list(_ entries: [String]) -> some View {
+    Form {
+      if failure != nil || tailscaleRunning == false { Section { notices } }
+      Section {
+        ForEach(entries, id: \.self) { entry in
+          let status = statuses?.first { $0.machine == entry }
+          BuildMachineRow(
+            entry: entry, status: status, checking: canAsk && (statuses == nil || (status == nil && refreshing)),
+            refreshing: canAsk && refreshing && status != nil && working != entry,
+            capabilities: buildMachineCapabilities(entry, hosts: hosts), working: working == entry,
+            canAsk: canAsk, update: updates[entry], ask: { ask(entry) }, startUpdate: { update(entry) },
+            showDetails: { showDetails(entry) }, remove: { remove(entry) })
+        }
+      } header: {
+        HStack {
+          Text("Build machines")
+          Spacer()
+          Button("Add Build Machine\u{2026}", action: add).buttonStyle(.stim(.primary)).disabled(addDisabled)
+        }
+      } footer: {
+        if !canAsk {
+          Text("Start a workspace with Stim to check these machines.").foregroundStyle(Palette.tertiary)
+        }
+      }
+      Section {
+        VStack(alignment: .leading, spacing: Space.xxs) {
+          Toggle("Keep build machines on this Mac's Stim version", isOn: $updatesAutomatically)
+          Text("When this Mac's Stim changes, update stim-server on approved build machines so builds can keep offloading.")
+            .font(.stim(.footnote)).foregroundStyle(Palette.secondary)
+        }
+      }
+      if sampleExists { Section { deleteSampleButton } }
+    }
+    .formStyle(.grouped)
+    .scrollContentBackground(.hidden)
+  }
+
+  private var deleteSampleButton: some View {
+    Button("Delete sample app", role: .destructive, action: deleteSample)
   }
 }
 
-private struct MachineRow: View {
+private struct BuildMachineRow: View {
   var entry: String
   var status: BuildMachineStatus?
   var checking: Bool
+  var refreshing: Bool
+  var capabilities: [String]
   var working: Bool
   var canAsk: Bool
   var update: MachineUpdatePhase?
   var ask: () -> Void
-  var remove: () -> Void
   var startUpdate: () -> Void
+  var showDetails: () -> Void
+  var remove: () -> Void
 
   var body: some View {
     HStack(alignment: .top, spacing: Space.lg) {
       Image(systemName: "desktopcomputer").font(.system(size: 18)).foregroundStyle(Palette.accent)
-      VStack(alignment: .leading, spacing: Space.xxs) {
+      VStack(alignment: .leading, spacing: Space.xs) {
         HStack(spacing: Space.sm) {
           Text(verbatim: entry).font(.stim(.body, weight: .semibold)).lineLimit(1)
           if let status {
-            if status.state == .approved, status.offloadable != nil {
-              let ready = status.readiness
-              Pill(ready.title, tone: ready.tone, size: .small).help(ready.reasons ?? "")
-            } else {
-              Pill(status.state.title, tone: tone(status.state), size: .small)
-            }
+            let listed = status.listStatus
+            Pill(listed.title, tone: listed.tone, size: .small).help(status.readiness.reasons ?? status.detail)
+            if refreshing { ProgressView().controlSize(.mini).help("Checking again") }
           } else if checking {
             Pill("Checking\u{2026}", size: .small)
           }
         }
         if let status {
-          Text(verbatim: status.detail).font(.stim(.footnote)).foregroundStyle(Palette.secondary)
-            .fixedSize(horizontal: false, vertical: true)
-          if let dnsName = status.dnsName {
-            Text(verbatim: dnsName).font(.stim(.caption, mono: true)).foregroundStyle(Palette.tertiary)
-              .lineLimit(1).truncationMode(.middle)
+          if !status.rowDetail.isEmpty {
+            Text(verbatim: status.rowDetail).font(.stim(.footnote)).foregroundStyle(Palette.secondary)
+              .fixedSize(horizontal: false, vertical: true)
           }
-          MachineUpdateLine(phase: update, needed: needsStimUpdate(status), update: startUpdate)
+          ForEach(Array(status.problemLines.enumerated()), id: \.offset) { _, line in
+            VStack(alignment: .leading, spacing: Space.xxs) {
+              Text(verbatim: line.reason).font(.stim(.footnote)).foregroundStyle(Palette.warning).textSelection(.enabled)
+              switch line.fix {
+              case .command(let command)?: CopyableCommand(command: command)
+              case .advice(let advice)?:
+                Text(verbatim: advice).font(.stim(.footnote)).foregroundStyle(Palette.secondary)
+              case nil: EmptyView()
+              }
+            }
+          }
         }
+        HStack(spacing: Space.xs) {
+          ForEach(capabilities, id: \.self) { name in Pill(tone: .neutral, size: .small, outlined: true) { Text(verbatim: name) }
+          }
+        }
+        if let command = status?.approvalCommand, let status {
+          Text(verbatim: "\(status.approvalPrompt), or runs this there:")
+            .font(.stim(.footnote)).foregroundStyle(Palette.secondary).fixedSize(horizontal: false, vertical: true)
+          CopyableCommand(command: command)
+          Text(BuildMachineStatus.requestLapse).font(.stim(.footnote)).foregroundStyle(Palette.secondary)
+        }
+        MachineUpdateLine(phase: update, needed: status.map(needsStimUpdate) ?? false, update: startUpdate)
       }
       Spacer()
       if working { ProgressView().controlSize(.small) }
       if let status, status.state.canAsk(requested: status.deviceId != nil) {
         Button(status.state == .notAsked ? "Ask" : "Ask Again", action: ask).disabled(working || !canAsk)
       }
-      Button("Remove", role: .destructive, action: remove)
-        .disabled(working || (status?.state == .nodeChanged && !canAsk))
+      Menu {
+        Button("Details\u{2026}", action: showDetails)
+        Button("Remove", role: .destructive, action: remove)
+          .disabled(working || (status?.state == .nodeChanged && !canAsk))
+      } label: {
+        Image(systemName: "ellipsis.circle")
+      }
+      .menuStyle(.borderlessButton)
+      .menuIndicator(.hidden)
+      .fixedSize()
+      .accessibilityLabel("More actions for \(entry)")
     }
     .padding(.vertical, Space.xxs)
   }
+}
 
-  private func tone(_ state: BuildMachineStatus.State) -> Tone {
-    switch state {
-    case .approved: return .success
-    case .pending: return .warning
-    case .notAsked, .unknown: return .neutral
-    case .revoked, .nodeChanged, .invalid: return .error
-    case .notOnTailnet, .tailscaleOff, .unreachable: return .warning
+private struct BuildMachineDetails: View {
+  var entry: String
+  var status: BuildMachineStatus?
+  var capabilities: [String]
+  var done: () -> Void
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: Space.lg) {
+      MachineHeading(icon: "desktopcomputer", title: entry, subtitle: status?.dnsName) {
+        if let status {
+          let listed = status.listStatus
+          Pill(listed.title, tone: listed.tone, size: .small)
+        }
+      }
+      if let status {
+        Text(verbatim: status.detail).foregroundStyle(Palette.secondary).textSelection(.enabled)
+        if let reasons = status.readiness.reasons {
+          Text(verbatim: reasons).font(.stim(.footnote)).foregroundStyle(Palette.secondary).textSelection(.enabled)
+        }
+        if let capacity = status.capacity?.line, !capacity.isEmpty {
+          Text(verbatim: capacity).font(.stim(.footnote)).foregroundStyle(Palette.tertiary)
+        }
+      } else {
+        Text("Checking\u{2026}").foregroundStyle(Palette.secondary)
+      }
+      HStack(spacing: Space.xs) {
+        ForEach(capabilities, id: \.self) { name in Pill(tone: .neutral, size: .small, outlined: true) { Text(verbatim: name) } }
+      }
+      HStack {
+        Spacer()
+        Button("Done", action: done).buttonStyle(.stim(.primary)).keyboardShortcut(.defaultAction)
+      }
     }
+    .padding(Space.xxl)
+    .frame(width: 440)
   }
 }

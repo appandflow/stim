@@ -1,6 +1,5 @@
 import { plural, t } from '@lingui/core/macro';
 import { Trans } from '@lingui/react/macro';
-import * as Clipboard from 'expo-clipboard';
 import { Stack } from 'expo-router';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Share, TextInput, View, type NativeScrollEvent, type NativeSyntheticEvent } from 'react-native';
@@ -9,6 +8,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { ConnectionBanner } from '@/components/connection-banner';
 import { Button } from '@/components/button';
+import { CopyPill, useCopy } from '@/components/copy-button';
 import { HeaderTitle } from '@/components/header-title';
 import { FlatList, ScrollView } from '@/components/lists';
 import { StatusDot } from '@/components/pill';
@@ -41,7 +41,6 @@ import {
   type Severity,
 } from '@/lib/logs';
 import { archivedPage } from '@/lib/archived-page';
-import { hapticFeedback } from '@/lib/haptics';
 import { workspaceTitleAt } from '@/lib/workspace-names';
 import type { Theme } from '@/design/theme';
 import type { EnvironmentState, LogRecord } from '@/protocol/types';
@@ -381,7 +380,7 @@ const LogRow = memo(function LogRow({
   );
   const hidden = preview?.hidden ?? 0;
   const hiddenFrames = preview?.hiddenFramework ? t`+${hidden} framework frames` : t`+${hidden} more frames`;
-  const [copied, setCopied] = useState(false);
+  const { copied, copy } = useCopy();
   const records = plural(entry.related.length + 1, { one: '# record', other: '# records' });
   return (
     <View style={styles.logRow}>
@@ -457,18 +456,11 @@ const LogRow = memo(function LogRow({
       {expanded ? (
         <View style={styles.actions}>
           <Touch
-            onPress={() =>
-              void Clipboard.setStringAsync(copyText(view)).then(() => {
-                hapticFeedback('success');
-                setCopied(true);
-              })
-            }
-            accessibilityLabel={t`Copy message and location`}
+            onPress={() => void copy(copyText(view))}
+            accessibilityLabel={copied ? t`Copied` : t`Copy message and location`}
             style={styles.action}
           >
-            <Text weight="semibold" tone="brand">
-              {copied ? t`Copied` : t`Copy`}
-            </Text>
+            <CopyPill copied={copied} filled={false} showsIcon={false} />
           </Touch>
           <Touch
             onPress={() => void Share.share({ message: shareText(view, entry, workspace) }).catch(() => {})}
