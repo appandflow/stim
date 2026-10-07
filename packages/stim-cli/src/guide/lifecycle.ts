@@ -420,6 +420,8 @@ refuses. The host boots headless and ignores this Mac's iosSimulatorApp setting.
 the offered simulator architecture, not this Mac's. --build-machine remains
 independent and selects a compatible build worker for a Debug cache miss.
 
+The host's own owned devices count toward concurrency.maxDevices.
+
 Stim builds or fetches before reserving, records the session immediately, then
 uploads the app on every run. Debug keeps Metro here; its supervisor owns a
 private gateway bound to this Mac's Tailscale address, pinned to the host peer

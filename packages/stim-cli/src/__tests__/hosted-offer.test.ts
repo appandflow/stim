@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { inspectHostedDevice } from '../device-host/offer.ts';
 import type { SystemImage } from '../devices/android.ts';
+import { makeIosSim } from './_factories.ts';
 
 const native = vi.hoisted(() => ({
   runFile: vi.fn<(file: string, args?: string[], options?: unknown) => string>(),
@@ -11,11 +12,12 @@ const native = vi.hoisted(() => ({
   images: vi.fn<() => SystemImage[]>(),
   create: vi.fn<() => void>(),
   boot: vi.fn<() => void>(),
+  sims: vi.fn<typeof import('../devices/ios.ts').listAllIosSims>(),
 }));
 vi.mock('../exec.ts', () => ({ getExecutor: () => ({ runFile: native.runFile }) }));
 vi.mock('../host-memory.ts', () => ({ readHostMemoryPressure: () => native.pressure() }));
 vi.mock('../devices/ios.ts', () => ({
-  listAllIosSims: () => [],
+  listAllIosSims: () => native.sims(),
   resolveIosCreation: (selectors: unknown) => native.ios(selectors),
   createOwnedIosSim: native.create,
   bootIosSim: native.boot,
@@ -35,6 +37,7 @@ beforeEach(() => {
   home = mkdtempSync(join(tmpdir(), 'stim-host-offer-'));
   process.env.STIM_HOME = home;
   native.pressure.mockReturnValue('normal');
+  native.sims.mockReturnValue([]);
   native.runFile.mockReturnValue('27.0');
   native.ios.mockImplementation((selectors) => {
     if ((selectors as { runtime?: string }).runtime === 'missing') throw new Error('Runtime not installed.');
@@ -97,3 +100,20 @@ test.each([null, 'warning', 'critical'])(
     expect(native.images).not.toHaveBeenCalled();
   },
 );
+
+test('native offers report local live devices while excluding recorded hosted devices', () => {
+  native.sims.mockReturnValue([
+    makeIosSim({ udid: 'hosted', name: 'stim-hosted', state: 'Booted' }),
+    makeIosSim({ udid: 'local', name: 'stim-local', state: 'Booted' }),
+  ]);
+  expect(inspectHostedDevice({ platform: 'ios' }, { exclude: [{ platform: 'ios', key: 'hosted' }] })).toMatchObject({
+    resources: { localDevices: 1 },
+    declined: null,
+  });
+  native.sims.mockImplementation(() => {
+    throw new Error('simulator inventory unavailable');
+  });
+  expect(inspectHostedDevice({ platform: 'ios' }, { exclude: [] })).toMatchObject({
+    resources: { localDevices: { unknown: expect.stringContaining('simulator inventory unavailable') } },
+  });
+});

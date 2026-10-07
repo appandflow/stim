@@ -6,6 +6,7 @@ import { workspaceId } from '@stim-cli/core';
 import {
   withDeviceBootAdmission,
   deviceSlotWaitingLine,
+  countLiveOwnedDevices,
   type DeviceSlotWaitPolicy,
 } from '../engine/device-capacity.ts';
 import { reclaimIdleDevice } from '../devices/queue-reclaim.ts';
@@ -32,6 +33,43 @@ afterEach(() => {
 const empty = { sims: [], adb: makeAdbDevices(), config: makeConfig() };
 const occupied = [makeIosSim({ udid: 'holder', name: 'stim-holder', state: 'Booted' })];
 const tick = () => new Promise<void>((resolve) => setImmediate(resolve));
+
+test('local device counts exclude hosted simulator identities without excluding other booted devices', () => {
+  const inventory = {
+    ...empty,
+    sims: [...occupied, makeIosSim({ udid: 'hosted', name: 'stim-hosted', state: 'Booted' })],
+    booting: [{ platform: 'ios', key: 'hosted' }],
+  };
+  expect(countLiveOwnedDevices(inventory)).toBe(2);
+  expect(countLiveOwnedDevices(inventory, { exclude: [{ platform: 'ios', key: 'hosted' }] })).toBe(1);
+});
+
+test.each([{ key: 'stim-hosted' }, { consolePort: 5554 }])(
+  'local device counts exclude hosted emulators by identity or reserved port: %j',
+  (exclude) => {
+    const inventory = {
+      ...empty,
+      config: makeConfig({
+        projects: {
+          '/host': {
+            platforms: { android: { owned: true, avdName: 'stim-hosted', consolePort: 5554 } },
+          },
+          '/local': {
+            platforms: { android: { owned: true, avdName: 'stim-local', consolePort: 5556 } },
+          },
+        },
+      }),
+      adb: makeAdbDevices({
+        emulators: [
+          { serial: 'emulator-5554', consolePort: 5554 },
+          { serial: 'emulator-5556', consolePort: 5556 },
+        ],
+      }),
+      booting: [],
+    };
+    expect(countLiveOwnedDevices(inventory, { exclude: [{ platform: 'android', ...exclude }] })).toBe(1);
+  },
+);
 
 function deferred<T>() {
   let resolve!: (value: T) => void;

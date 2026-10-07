@@ -5,6 +5,7 @@ import { runHostedDevice } from './worker.ts';
 import { runHostedAndroidDevice } from './android.ts';
 import { runHostedMacosApp } from './macos.ts';
 import { inspectHostedDevice } from './offer.ts';
+import { countLiveOwnedDevices, type DeviceCountExclusion } from '../engine/device-capacity.ts';
 
 async function main(): Promise<void> {
   const chunks: Buffer[] = [];
@@ -15,12 +16,34 @@ async function main(): Promise<void> {
     chunks.push(chunk as Buffer);
   }
   const input: unknown = JSON.parse(Buffer.concat(chunks).toString('utf8'));
-  if (!isJsonObject(input) || !['prepare', 'stop', 'install', 'offer', 'logs', 'reverse'].includes(String(input.mode)))
+  if (
+    !isJsonObject(input) ||
+    !['prepare', 'stop', 'install', 'offer', 'count', 'logs', 'reverse'].includes(String(input.mode))
+  )
     throw new Error('Invalid hosted worker request.');
+  let exclude: DeviceCountExclusion[] | undefined;
+  if (input.exclude !== undefined) {
+    if (
+      !Array.isArray(input.exclude) ||
+      input.exclude.some(
+        (device) =>
+          !isJsonObject(device) ||
+          (device.platform !== 'ios' && device.platform !== 'android') ||
+          (device.key !== undefined && typeof device.key !== 'string') ||
+          (device.consolePort !== undefined && !Number.isInteger(device.consolePort)),
+      )
+    )
+      throw new Error('Invalid hosted device exclusions.');
+    exclude = input.exclude as DeviceCountExclusion[];
+  }
+  if (input.mode === 'count') {
+    process.stdout.write(`${JSON.stringify(countLiveOwnedDevices({}, { exclude }))}\n`);
+    return;
+  }
   if (input.mode === 'offer') {
     const request = parseHostedOfferRequest(input);
     if (!request) throw new Error('Invalid hosted offer selectors.');
-    process.stdout.write(`${JSON.stringify(inspectHostedDevice(request))}\n`);
+    process.stdout.write(`${JSON.stringify(inspectHostedDevice(request, exclude ? { exclude } : undefined))}\n`);
     return;
   }
   if (process.platform !== 'darwin') {
