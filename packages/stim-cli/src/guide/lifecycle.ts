@@ -1511,7 +1511,23 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
                             one that started first, then the remaining wait.
                             Positive deviceSlotWaitMs is recorded beside
                             slotWaitMs in compiling run placements; every
-                            wait also records a capacityWaits event in stats.
+                            wait also records a capacityWaits event in stats,
+                            with reclaimed when one or more devices were
+                            shut down for it.
+                            While at the cap, only the queue head reclaims:
+                            it shuts down the longest-idle eligible owned
+                            device in another workspace of this Stim home,
+                            one per poll, then rechecks queue and capacity.
+                            devices.reclaimIdleMinutes defaults to 10; 0 off.
+                            This changes the default behavior for everyone
+                            with a cap set. The waiter's effective setting
+                            applies. Idle checks are the same as supervisor
+                            idle shutdown below: no driver, lock, build,
+                            viewer or recent activity. Physical, hosted,
+                            remote, parked and other homes' devices, and
+                            the waiting workspace itself, are excluded.
+                            Shutdown never deletes. Reclaim failures are
+                            logged and skipped without failing the run.
                             A listing failure leaves the count unknown and
                             admission refuses with STIM_NO_DEVICE. Unresolved
                             wait or boot claims refuse with the claim code
@@ -1582,12 +1598,30 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
   status\` shows "shut down after 30m idle" on the device until the next
   \`ios\` or \`android\` run boots it again. When metro.idleStopMinutes is
   shorter, the dev server's idle stop first shuts down the devices idle that
-  long, because no supervisor is left to check afterwards. Nothing checks
-  without a supervisor: release runs, and after \`stim stop\`. The setting
-  is read when the supervisor starts. Stim Desktop's simulator view is not a
+  long, because no supervisor is left to check afterwards. The supervisor
+  path does not check without a supervisor: release runs, and after
+  \`stim stop\`. The setting is read when the supervisor starts. Stim Desktop's simulator view is not a
   stim-server client and does not count as a viewer. Change it with
   \`stim settings set devices.idleShutdownMinutes <minutes> --scope machine\`;
   0 turns it off, and an explicit 0 stays 0.
+
+  QUEUE RECLAIM (10 MINUTES BY DEFAULT): a run waiting at concurrency.maxDevices
+  uses devices.reclaimIdleMinutes from its own effective workspace settings.
+  Only the FIFO head shuts down the longest-idle eligible device across this
+  Stim home's other workspaces, exactly one per poll, rechecking capacity
+  before another. This is on by default for everyone with a cap set; 0 disables
+  it. The supervisor's own idle shutdown still defaults to 30 minutes.
+  Reclaim uses the same idle check: no driver, Stim or agent-device lock,
+  build, device lock or viewer, and no Stim command, app or device log,
+  Metro bundle or agent action within that interval. It rechecks under the
+  target workspace's native-run lock and re-resolves ownership in centralized
+  teardown. It shuts down, never deletes, and excludes the waiting workspace,
+  physical, hosted, remote, parked and other homes' devices. Failed locks or
+  teardown are logged and skipped. Progress on stderr names the reclaimed
+  device and workspace; the target's status and device_idle_shutdown log
+  record "reclaimed for a waiting run", and the wait's stats carry reclaimed.
+  This path does not need the target's supervisor to be running.
+  \`stim settings set devices.reclaimIdleMinutes 0 --scope machine\` turns it off.
 
   Steps 3 and 4 run only for disk. Memory and workspace limits never refuse;
   a run still over them prints one \`budget\` warning and continues. The

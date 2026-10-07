@@ -30,6 +30,9 @@ import {
   type ClaimHolder,
 } from '../ownership-claim.ts';
 import { withWorkspaceProcessLock, workspaceProcessLockError } from './workspace-process-lock.ts';
+import { projectDeviceReclaimIdleMinutes } from '../workspace/settings.ts';
+import { canonicalPath } from '../commands/gc/paths.ts';
+import { reclaimIdleDevice } from '../devices/queue-reclaim.ts';
 import type { BuildWaitingFor, SettingScope } from '@stim-cli/core/state';
 
 type SimRecord = ReturnType<typeof listAllIosSims>[number];
@@ -493,6 +496,8 @@ export async function withDeviceBootAdmission<T>(
   let visibleWait = false;
   let lastInventory = { count: 0, holders: [] as string[] };
   let lastListed = -Infinity;
+  let reclaimed = 0;
+  const skippedReclaims = new Set<string>();
   try {
     try {
       for (;;) {
@@ -527,7 +532,7 @@ export async function withDeviceBootAdmission<T>(
                 ticket = takeWaitTicket(device, waiters);
                 started = now();
               }
-              return { count, holders, queue };
+              return { count, holders, queue, reclaim: turn && count >= max };
             };
             if (ticket && !turn && now() - lastListed < INVENTORY_REFRESH_MS) {
               const booting = sources.booting ?? readBootingDevices;
@@ -573,6 +578,14 @@ export async function withDeviceBootAdmission<T>(
             }),
           );
         }
+        if (result.reclaim) {
+          try {
+            const minutes = projectDeviceReclaimIdleMinutes(canonicalPath(root));
+            if (minutes > 0) reclaimed += await reclaimIdleDevice(root, minutes * 60_000, out, now, skippedReclaims);
+          } catch (error) {
+            out(phaseLine('device', `could not reclaim an idle device: ${(error as Error)?.message || error}`));
+          }
+        }
         await sleep(Math.min(2000, Math.max(0, waitMs - elapsedMs)));
       }
     } catch (error) {
@@ -585,7 +598,10 @@ export async function withDeviceBootAdmission<T>(
       if (visibleWait) waitingFor(null);
       if (started !== undefined) {
         const ms = Math.max(0, Math.round(now() - started));
-        recordCapacityWait({ platform: device.platform as 'ios' | 'android', ms, max, workspace }, now());
+        recordCapacityWait(
+          { platform: device.platform as 'ios' | 'android', ms, max, workspace, ...(reclaimed ? { reclaimed } : {}) },
+          now(),
+        );
         onWait(ms);
       }
     }

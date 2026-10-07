@@ -73,6 +73,7 @@ export interface StatsCapacityRefusal {
 export interface StatsCapacityWait {
   at: string;
   kind: 'device-wait';
+  reclaimed?: number;
   platform: StatsPlatform;
   ms: number;
   max: number;
@@ -349,7 +350,16 @@ function normalizeCapacityWait(value: unknown): StatsCapacityWait[] {
   if (!isObject(value) || value.kind !== 'device-wait') return [];
   const refusal = normalizeCapacityRefusal({ ...value, kind: 'device' })[0];
   if (!refusal || typeof value.ms !== 'number' || !Number.isFinite(value.ms) || value.ms < 0) return [];
-  return [{ ...refusal, kind: 'device-wait', ms: Math.round(value.ms) }];
+  return [
+    {
+      ...refusal,
+      kind: 'device-wait',
+      ms: Math.round(value.ms),
+      ...(typeof value.reclaimed === 'number' && Number.isInteger(value.reclaimed) && value.reclaimed > 0
+        ? { reclaimed: value.reclaimed }
+        : {}),
+    },
+  ];
 }
 
 function normalizeMachineTotals(totals: Record<string, unknown>): BuildMachineTotals {

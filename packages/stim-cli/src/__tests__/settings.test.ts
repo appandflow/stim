@@ -33,6 +33,7 @@ import {
   metroIdleStopMinutesSetting,
   metroPortSetting,
   deviceIdleShutdownMinutesSetting,
+  deviceReclaimIdleMinutesSetting,
   unknownSettingKeys,
 } from '../workspace/settings.ts';
 import { resolveOptimizations, resolveMetroSharedCache } from '../optimizations.ts';
@@ -437,6 +438,7 @@ const SHAPE_CASES: Record<string, { valid: unknown; invalid: unknown; expected: 
     expected: 'one of: auto, off, expo, cloudflared, ngrok, tailscale',
   },
   'metro.idleStopMinutes': { valid: 30, invalid: '30', expected: 'a whole number, 0 or more' },
+  'devices.reclaimIdleMinutes': { valid: 10, invalid: 1.5, expected: 'a whole number, 0 or more' },
   'devices.idleShutdownMinutes': { valid: 30, invalid: 1.5, expected: 'a whole number, 0 or more' },
   'metro.ngrokUrl': { valid: 'https://a.ngrok.app', invalid: {}, expected: 'a string' },
   'metro.publicUrl': { valid: 'https://metro.example', invalid: false, expected: 'a string' },
@@ -932,6 +934,16 @@ test('devices.idleShutdownMinutes defaults to 30, an explicit 0 keeps it off, an
   expect(deviceIdleShutdownMinutesSetting(resolveSettings({}))).toBe(45);
   writeFileSync(join(tmpHome, '.stim.json'), JSON.stringify({ devices: { idleShutdownMinutes: 0 } }));
   expect(deviceIdleShutdownMinutesSetting(resolveSettings({ repoRoot: tmpHome }))).toBe(0);
+});
+
+test('devices.reclaimIdleMinutes defaults to 10, an explicit 0 keeps it off, and a project layer overrides the machine', () => {
+  expect(deviceReclaimIdleMinutesSetting(resolveSettings({}))).toBe(10);
+  saveConfig({ version: 2, projects: {}, repos: {}, devices: { reclaimIdleMinutes: 0 } } as Config);
+  expect(deviceReclaimIdleMinutesSetting(resolveSettings({}))).toBe(0);
+  saveConfig({ version: 2, projects: {}, repos: {}, devices: { reclaimIdleMinutes: 45 } } as Config);
+  expect(deviceReclaimIdleMinutesSetting(resolveSettings({}))).toBe(45);
+  writeFileSync(join(tmpHome, '.stim.json'), JSON.stringify({ devices: { reclaimIdleMinutes: 0 } }));
+  expect(deviceReclaimIdleMinutesSetting(resolveSettings({ repoRoot: tmpHome }))).toBe(0);
 });
 
 test('a repository can enable Metro optimizations over a machine opt-out', () => {

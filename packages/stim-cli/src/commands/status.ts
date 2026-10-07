@@ -927,7 +927,9 @@ function lastBuildText(report: LastBuildReport): string {
 
 function idleShutdownSuffix(record: DeviceIdleShutdownRecord | undefined): string {
   return record
-    ? chalk.dim(` -- shut down after ${record.idleMinutes}m idle at ${record.at} (devices.idleShutdownMinutes)`)
+    ? chalk.dim(
+        ` -- shut down after ${record.idleMinutes}m idle at ${record.at} (${record.reason === 'reclaimed for a waiting run' ? 'reclaimed for a waiting run; devices.reclaimIdleMinutes' : 'devices.idleShutdownMinutes'})`,
+      )
     : '';
 }
 

@@ -215,3 +215,22 @@ describe('shutDownIdleDevices', () => {
     expect(teardownOwnedIosSim).not.toHaveBeenCalled();
   });
 });
+
+test('idle shutdown records preserve a reclaim reason and accept legacy records without one', () => {
+  const old = { at: at(0), idleMinutes: 30 };
+  expect(
+    readDeviceIdleShutdowns({
+      deviceIdleShutdowns: {
+        ios: old,
+        android: { ...old, reason: 'reclaimed for a waiting run' },
+        'ios:fold': { ...old, reason: 'idle' },
+        'ios:unknown': { ...old, reason: 'future-reason' },
+      },
+    }),
+  ).toEqual({
+    ios: old,
+    android: { ...old, reason: 'reclaimed for a waiting run' },
+    'ios:fold': { ...old, reason: 'idle' },
+    'ios:unknown': old,
+  });
+});

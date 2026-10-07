@@ -47,10 +47,11 @@ export function readIdleStop(state: WorkspaceState | null | undefined): IdleStop
 
 export const DEVICE_IDLE_SHUTDOWN_KEY = 'deviceIdleShutdowns';
 
-/** An owned simulator or emulator the supervisor shut down after `devices.idleShutdownMinutes` with no use. */
+/** An owned simulator or emulator shut down after being idle. */
 export interface DeviceIdleShutdownRecord {
   at: string;
   idleMinutes: number;
+  reason?: 'idle' | 'reclaimed for a waiting run';
 }
 
 /** The recorded idle shutdowns by device slot key (`ios`, `android`, `ios:<slot>`). */
@@ -63,7 +64,13 @@ export function readDeviceIdleShutdowns(
   for (const [key, value] of Object.entries(records as Record<string, unknown>)) {
     const record = value as Partial<DeviceIdleShutdownRecord> | null;
     if (typeof record?.at === 'string' && typeof record.idleMinutes === 'number') {
-      found[key] = { at: record.at, idleMinutes: record.idleMinutes };
+      found[key] = {
+        at: record.at,
+        idleMinutes: record.idleMinutes,
+        ...(record.reason === 'idle' || record.reason === 'reclaimed for a waiting run'
+          ? { reason: record.reason }
+          : {}),
+      };
     }
   }
   return found;

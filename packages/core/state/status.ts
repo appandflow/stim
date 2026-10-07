@@ -565,7 +565,7 @@ export interface SimulatorState {
   appPresence?: AppPresence;
   /** The simulator's data folder, for an owned simulator once measured. */
   disk?: DiskMeasure;
-  /** Present while the device is not booted after the supervisor shut it down for `devices.idleShutdownMinutes`. */
+  /** Present while the device is not booted after idle shutdown or queue reclaim. */
   idleShutdown?: DeviceIdleShutdownRecord;
 }
 
@@ -582,7 +582,7 @@ export interface AndroidDeviceState {
   appPresence?: AppPresence;
   /** The AVD's folder, for an owned emulator once measured. */
   disk?: DiskMeasure;
-  /** Present while the emulator is not running after the supervisor shut it down for `devices.idleShutdownMinutes`. */
+  /** Present while the emulator is not running after idle shutdown or queue reclaim. */
   idleShutdown?: DeviceIdleShutdownRecord;
 }
 

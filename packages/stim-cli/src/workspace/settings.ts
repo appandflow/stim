@@ -672,6 +672,14 @@ export function deviceIdleShutdownMinutesSetting(settings: SettingsObject): numb
   return minutesSetting(settings, 'devices', 'idleShutdownMinutes');
 }
 
+export function deviceReclaimIdleMinutesSetting(settings: SettingsObject): number {
+  return minutesSetting(settings, 'devices', 'reclaimIdleMinutes');
+}
+
+export function projectDeviceReclaimIdleMinutes(root: string): number {
+  return deviceReclaimIdleMinutesSetting(settingsForProject(root));
+}
+
 export function tunnelModeSetting(settings: SettingsObject): TunnelMode | null {
   const block = settings.metro;
   if (typeof block !== 'object' || block === null) return null;

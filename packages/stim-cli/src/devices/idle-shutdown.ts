@@ -1,4 +1,9 @@
-import { DEVICE_IDLE_SHUTDOWN_KEY, readDeviceIdleShutdowns, type DeviceActivity } from '@stim-cli/core/state';
+import {
+  DEVICE_IDLE_SHUTDOWN_KEY,
+  readDeviceIdleShutdowns,
+  type DeviceActivity,
+  type DeviceIdleShutdownRecord,
+} from '@stim-cli/core/state';
 import { formatLongDuration } from '../command-output.ts';
 import { collectOwnedDeviceActivity, workspaceBuildInProgress, type OwnedDeviceActivity } from '../commands/gc/idle.ts';
 import { canonicalPath } from '../commands/gc/paths.ts';
@@ -49,23 +54,23 @@ function listSims(): IosSimRecord[] {
   }
 }
 
-/** The workspace's booted owned simulators and emulators that have been idle for `idleMs` or more. */
-export function dueIdleDevices(root: string, idleMs: number, now: number = Date.now()): DueDevice[] {
+/** Booted owned devices idle for `idleMs`, in one workspace or all registered workspaces when root is absent. */
+export function dueIdleDevices(root: string | undefined, idleMs: number, now: number = Date.now()): DueDevice[] {
   const config = loadConfig();
-  const self = canonicalPath(root);
-  const entry = Object.entries(config?.projects ?? {}).find(([path]) => canonicalPath(path) === self);
-  if (!config || !entry) return [];
-  const buildInProgress = workspaceBuildInProgress(entry[0]);
-  return collectOwnedDeviceActivity({ ...config, projects: { [entry[0]]: entry[1] } }, listSims(), now).flatMap(
-    (device) => {
-      const idleForMs = idleShutdownDueMs(device.activity, {
-        idleMs,
-        now,
-        buildInProgress,
-      });
-      return idleForMs === null ? [] : [{ device, idleForMs }];
-    },
+  if (!config) return [];
+  const self = root === undefined ? undefined : canonicalPath(root);
+  const projects = Object.fromEntries(
+    Object.entries(config.projects).filter(([path]) => self === undefined || canonicalPath(path) === self),
   );
+  const builds = new Map(Object.keys(projects).map((path) => [path, workspaceBuildInProgress(path)]));
+  return collectOwnedDeviceActivity({ ...config, projects }, listSims(), now).flatMap((device) => {
+    const idleForMs = idleShutdownDueMs(device.activity, {
+      idleMs,
+      now,
+      buildInProgress: builds.get(device.project) ?? true,
+    });
+    return idleForMs === null ? [] : [{ device, idleForMs }];
+  });
 }
 
 export interface IdleShutdownEvent {
@@ -84,9 +89,18 @@ export function shutDownIdleDevices(
   idleMs: number,
   log: (event: IdleShutdownEvent) => void,
   now: number = Date.now(),
+  { only, reason }: { only?: OwnedDeviceActivity; reason?: DeviceIdleShutdownRecord['reason'] } = {},
 ): number {
   let shutDown = 0;
   for (const { device, idleForMs } of dueIdleDevices(root, idleMs, now)) {
+    if (
+      only &&
+      (device.kind !== only.kind ||
+        device.id !== only.id ||
+        device.project !== only.project ||
+        device.slot !== only.slot)
+    )
+      continue;
     const what = `${device.kind === 'ios' ? 'simulator' : 'emulator'} ${device.name}`;
     const outcome =
       device.kind === 'ios'
@@ -106,6 +120,7 @@ export function shutDownIdleDevices(
             [deviceSlotKey(device.kind, device.slot)]: {
               at: new Date(now).toISOString(),
               idleMinutes,
+              ...(reason ? { reason } : {}),
             },
           },
         }));
@@ -119,7 +134,7 @@ export function shutDownIdleDevices(
       log({
         level: 'info',
         event: 'device_idle_shutdown',
-        msg: `shut down ${what}, idle ${formatLongDuration(idleForMs)}`,
+        msg: `shut down ${what}, idle ${formatLongDuration(idleForMs)}${reason === 'reclaimed for a waiting run' ? ', reclaimed for a waiting run' : ''}`,
       });
     } else if (outcome.status !== 'missing') {
       log({

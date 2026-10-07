@@ -248,6 +248,12 @@ shut down the phone or uninstall the app.
 
 Owned-device caps wait in FIFO order across the Stim home for 600s by default.
 Use --wait <seconds> to change the bound or --no-wait to refuse at once.
+At the cap, the queue head shuts down one longest-idle eligible owned device
+from another workspace, then rechecks capacity. devices.reclaimIdleMinutes
+is 10 by default; 0 off. This changes the default for everyone with a cap set.
+It never deletes devices or touches this workspace, physical, hosted, remote,
+parked or other homes' devices. Drivers, locks, builds, viewers and recent
+activity prevent reclaim. The supervisor's own idle shutdown default is 30m.
 Read the holder names in progress and build.waitingFor in status; do not start
 replacement runs while one is queued. See \`stim guide lifecycle concurrency\`.
 

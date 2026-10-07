@@ -301,7 +301,14 @@ build can compile on a paired build machine instead: see `offload.mode` in
 - `--wait <seconds>` bounds the wait for a physical-device lease (default 60;
   `0` refuses immediately if busy). Without `--device`, it bounds the FIFO
   owned-device slot wait across the Stim home (default 600 seconds). Remote
-  targets do not join this local slot queue.
+  targets do not join this local slot queue. At the cap, only the queue head
+  reclaims the longest-idle eligible owned device in another workspace, one
+  per poll, then rechecks capacity. `devices.reclaimIdleMinutes` defaults to
+  10; `0` disables it. This changes the default for everyone with a cap set.
+  The same idle checks as supervisor shutdown (default 30 minutes) exclude
+  drivers, locks, builds, viewers and recent activity. Reclaim shuts down,
+  never deletes, and excludes this workspace, physical, hosted, remote,
+  parked and other homes' devices. Failed reclaim is logged and skipped.
 - `--no-wait` bypasses leasing, including when another workspace holds the
   device. Installing the same app terminates that workspace's running app.
   Without `--device`, it refuses a full device cap or existing slot queue
@@ -438,7 +445,14 @@ on a paired build machine instead: see `offload.mode` in
 - `--wait <seconds>` bounds the physical-device lease wait (default 60;
   `0` refuses immediately if busy). Without `--device`, it bounds the FIFO
   owned-device slot wait across the Stim home (default 600 seconds). Remote
-  targets do not join this local slot queue.
+  targets do not join this local slot queue. At the cap, only the queue head
+  reclaims the longest-idle eligible owned device in another workspace, one
+  per poll, then rechecks capacity. `devices.reclaimIdleMinutes` defaults to
+  10; `0` disables it. This changes the default for everyone with a cap set.
+  The same idle checks as supervisor shutdown (default 30 minutes) exclude
+  drivers, locks, builds, viewers and recent activity. Reclaim shuts down,
+  never deletes, and excludes this workspace, physical, hosted, remote,
+  parked and other homes' devices. Failed reclaim is logged and skipped.
 - `--no-wait` bypasses leasing, including another workspace's lease. Installing
   the same app terminates that workspace's running app. Without `--device`, it
   refuses a full device cap or existing slot queue immediately. It cannot be
@@ -1284,9 +1298,11 @@ without changing the build phase. Overlapping waits show the one that started
 first, then the remaining wait.
 
 The optional top-level JSON `capacityWaits` lists each owned-device slot wait:
-`{ at, kind: "device-wait", platform, ms, max, workspace }`. `ms` is whole
+`{ at, kind: "device-wait", platform, ms, max, workspace, reclaimed? }`. `ms` is whole
 elapsed milliseconds, including waits that time out or fail. The list keeps
 the last 50 events from 7 days, newest first, and is omitted when empty.
+`reclaimed` is the whole count of devices shut down for that waiting run,
+omitted when zero. Plain stats reports waits with positive reclaim counts.
 Recording is best effort.
 
 The optional top-level JSON `capacityRefusals` lists the last 50 device

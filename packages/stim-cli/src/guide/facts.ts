@@ -1167,12 +1167,14 @@ RULES
   Plain \`stim status\` appends it to each device line: "driven by
   agent-device for 12m", "active", "idle 3h", or "activity unknown (...)".
 
-  An owned device that is not booted after its supervisor shut it down for
-  devices.idleShutdownMinutes carries idleShutdown, and plain \`status\`
+  An owned device that is not booted after supervisor idle shutdown or queue
+  reclaim carries idleShutdown, and plain \`status\`
   appends "shut down after 30m idle at <at>" to its line; the next \`ios\` or
   \`android\` run for that slot clears it (\`guide lifecycle budget\`):
 
-  idleShutdown  { at, idleMinutes }
+  idleShutdown  { at, idleMinutes, reason?: "idle" | "reclaimed for a waiting run" }
+  Absent reason or "idle" means supervisor idle shutdown; reclaim adds
+  "reclaimed for a waiting run" to plain status.
   \`gc --idle <duration>\` shuts down owned devices idle that long
   (\`guide cleanup gc\`).
 
@@ -1664,10 +1666,12 @@ CAPACITY REFUSALS
   Recording is best effort and does not change the refusal. Plain stats
   output is unchanged.
   capacityWaits?: [{ at, kind: "device-wait", platform: "ios" | "android",
-                    ms, max, workspace }]
+                    ms, max, workspace, reclaimed? }]
   Each owned-device slot wait records its whole elapsed milliseconds,
   including waits that time out or fail. It has the same 50-event, 7-day
   retention, newest-first order, workspace id and best-effort recording.
+  reclaimed is the whole count of devices shut down for the waiting run,
+  omitted when zero. Plain stats reports waits with a positive reclaim count.
   It is omitted when empty.
 
 AGENT-DEVICE DISK USAGE
