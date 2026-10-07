@@ -387,6 +387,26 @@ export interface ActivityReaderOptions {
   viewers?: () => ViewedDevice[];
 }
 
+function workspaceDeviceRecency(root: string): ActivityEvidence['recency'] {
+  const recency: ActivityEvidence['recency'] = [];
+  const usedAt = Date.parse(String(readWorkspaceState(root)?.lastUsedAt ?? ''));
+  if (Number.isFinite(usedAt)) recency.push({ basis: 'workspace-use', at: usedAt });
+  for (const file of ['client.ndjson', 'device.ndjson']) {
+    try {
+      recency.push({ basis: 'device-log', at: statSync(join(workspaceLogsDir(root), file)).mtimeMs });
+    } catch {}
+  }
+  return recency;
+}
+
+/** The newest workspace use or change to its in-app or native device logs. */
+export function workspaceDeviceLastUseAt(root: string): number {
+  const times = workspaceDeviceRecency(root)
+    .map(({ at }) => at)
+    .filter(Number.isFinite);
+  return times.length ? Math.max(...times) : NaN;
+}
+
 export function createActivityReader({
   now = Date.now(),
   home = homedir(),

@@ -45,12 +45,14 @@ export function readIdleStop(state: WorkspaceState | null | undefined): IdleStop
   return { reason: 'idle', at: record.at, idleMinutes: record.idleMinutes };
 }
 
+export const DEVICE_RECLAIM_REASON = 'reclaimed for a waiting run';
 export const DEVICE_IDLE_SHUTDOWN_KEY = 'deviceIdleShutdowns';
 
-/** An owned simulator or emulator the supervisor shut down after `devices.idleShutdownMinutes` with no use. */
+/** An owned simulator or emulator shut down after being idle. */
 export interface DeviceIdleShutdownRecord {
   at: string;
   idleMinutes: number;
+  reason?: string;
 }
 
 /** The recorded idle shutdowns by device slot key (`ios`, `android`, `ios:<slot>`). */
@@ -63,7 +65,11 @@ export function readDeviceIdleShutdowns(
   for (const [key, value] of Object.entries(records as Record<string, unknown>)) {
     const record = value as Partial<DeviceIdleShutdownRecord> | null;
     if (typeof record?.at === 'string' && typeof record.idleMinutes === 'number') {
-      found[key] = { at: record.at, idleMinutes: record.idleMinutes };
+      found[key] = {
+        at: record.at,
+        idleMinutes: record.idleMinutes,
+        ...(typeof record.reason === 'string' ? { reason: record.reason } : {}),
+      };
     }
   }
   return found;

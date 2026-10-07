@@ -748,7 +748,13 @@ so a Debug run on one is wired to a LAN origin instead of localhost.`,
   found the cap full or another run queued. The message gives the current
   count and, on timeout, how long it waited. iOS waits beside its build,
   so a rerun can reuse the artifact. A workspace's own booted or booting
-  device bypasses the queue.
+  device bypasses the queue. At the cap, the FIFO head shuts down the
+  longest-idle eligible owned device from another workspace, one per attempt,
+  at most once every 15 seconds, then rechecks capacity.
+  devices.reclaimIdleMinutes defaults to 10; 0 off. The same idle checks as supervisor shutdown (default 30 minutes) protect drivers,
+  locks, builds, viewers and recent activity. Reclaim excludes this workspace,
+  physical, hosted, remote, parked and other homes' devices and never deletes.
+  A failed reclaim is logged and skipped; the run keeps waiting.
   Stop an environment (\`stim stop\`), pass a longer \`--wait <seconds>\`,
   or raise concurrency.maxDevices. Waiting prints holder names and elapsed
   time; status JSON exposes build.waitingFor independently of phase.

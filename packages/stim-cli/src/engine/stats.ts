@@ -254,7 +254,17 @@ export function recordCapacityWait(event: Omit<StatsCapacityWait, 'at' | 'kind'>
       const capacityWaits = trimCapacityWaits(
         [
           ...(loaded.record.capacityWaits ?? []),
-          { ...event, ms: wholeMs(event.ms), at: new Date(now).toISOString(), kind: 'device-wait' },
+          {
+            platform: event.platform,
+            max: event.max,
+            workspace: event.workspace,
+            ms: wholeMs(event.ms),
+            ...(event.reclaimed && Number.isInteger(event.reclaimed) && event.reclaimed > 0
+              ? { reclaimed: event.reclaimed }
+              : {}),
+            at: new Date(now).toISOString(),
+            kind: 'device-wait',
+          },
         ],
         now,
       );

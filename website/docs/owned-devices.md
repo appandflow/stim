@@ -331,7 +331,7 @@ stim settings set devices.idleShutdownMinutes 60 --scope machine
 
 A device counts as idle when it is booted, no tool drives it, no `stim device
 lock` or agent-device session holds it, no build runs in the workspace, and it
-has shown no activity (app logs, bundle requests, Stim commands, agent actions)
+has shown no activity (app logs, device logs, bundle requests, Stim commands, agent actions)
 for that long. A phone app viewing the device through `stim-server` keeps it
 up. Stim Desktop's own simulator view does not.
 
@@ -342,9 +342,40 @@ Physical devices are never touched. `stim status` shows
 
 The supervisor checks once a minute and reads the setting when it starts, so
 restart the dev server with `stim stop` and `stim start` after changing it.
-Nothing checks after `stim stop` or for release runs, which have no
-supervisor. When `metro.idleStopMinutes` is shorter, the dev server's idle stop
-shuts down the devices idle that long first.
+The supervisor path does not check after `stim stop` or for release runs,
+which have no supervisor. When `metro.idleStopMinutes` is shorter, the dev
+server's idle stop shuts down the devices idle that long first.
+
+Queue reclaim is a separate, faster path. With `concurrency.maxDevices` set,
+the waiting run uses its own effective `devices.reclaimIdleMinutes`, default 10, to shut down the
+longest-idle eligible owned device across this Stim home's other workspaces.
+Only the FIFO head reclaims, one device at a time, at most once every 15
+seconds, then checks the queue and capacity before another. `0` disables
+reclaim; the supervisor's own idle shutdown defaults to 30 minutes.
+
+The same idle check applies: no driver, Stim or agent-device lock, build,
+device lock or viewer, and no Stim command, app log, device log, Metro bundle
+or agent action within the interval. Reclaim rechecks idleness under the
+target workspace's native-run lock and re-resolves ownership through
+centralized teardown. It shuts down, never deletes, and excludes the waiting
+workspace, physical, hosted, remote, parked and other homes' devices. Lock or
+teardown failures are reported once per device and skipped for the rest of
+the wait. It
+can reclaim the device of any workspace of this Stim home that is idle for
+`devices.reclaimIdleMinutes`, even when the target has no supervisor and even
+when its own `devices.idleShutdownMinutes` is `0`. Stim Desktop's simulator
+view and manual input in Simulator.app do not count as activity.
+
+The waiting run prints the reclaimed device, workspace and idle minutes on
+stderr. The reclaimed workspace's status and `device_idle_shutdown` log say
+`reclaimed for a waiting run`; wait stats include a positive `reclaimed` count.
+
+Opt out machine-wide with the command below; the waiter's effective setting
+decides.
+
+```bash
+stim settings set devices.reclaimIdleMinutes 0 --scope machine
+```
 
 Agent prompt:
 

@@ -1291,3 +1291,28 @@ test('status emits one archive payload and links earlier runs to a live environm
     delete process.env.STIM_ARCHIVE_ENABLED;
   }
 });
+
+test.each([undefined, 'idle' as const, 'reclaimed for a waiting run' as const])(
+  'status displays idle shutdown reason %s and includes it in JSON',
+  async (reason) => {
+    const root = join(tmpHome, 'idle-project');
+    mkdirSync(root);
+    saveConfig(
+      makeConfig({
+        projects: { [root]: { label: 'idle-project', platforms: { ios: { deviceUdid: 'UDID-ABC', owned: true } } } },
+      }),
+    );
+    const record = { at: '2026-10-07T12:00:00.000Z', idleMinutes: 14, ...(reason ? { reason } : {}) };
+    writeWorkspaceState(root, { deviceIdleShutdowns: { ios: record } });
+    const lines = await runStatus();
+    const line = lines.find((entry) => entry.includes('shut down after 14m idle'));
+    expect(line).toBeDefined();
+    expect(line).toContain(
+      reason === 'reclaimed for a waiting run' ? 'reclaimed for a waiting run' : 'devices.idleShutdownMinutes',
+    );
+    const payload = await runStatusJson();
+    expect(
+      payload.environments.find((workspace: { path: string }) => workspace.path === root)?.ios?.idleShutdown,
+    ).toEqual(record);
+  },
+);

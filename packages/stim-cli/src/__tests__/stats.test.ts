@@ -1137,13 +1137,19 @@ describe('capacity waits', () => {
     );
   });
 
+  test.each([0, -1, 1.5, '2', null])('invalid or zero reclaim counts are omitted: %j', (reclaimed) => {
+    expect(
+      decodeStats(JSON.stringify({ ...emptyStats(), capacityWaits: [{ ...event, reclaimed }] })).record?.capacityWaits,
+    ).toEqual([event]);
+  });
+
   test('recorded waits survive a normal run and the JSON report bounds, sorts and expires them', async () => {
     const capacityWaits = [
       { ...event, at: new Date(T0 - CAPACITY_REFUSAL_MAX_AGE_MS - 1).toISOString() },
       ...Array.from({ length: 55 }, (_, i) => ({ ...event, workspace: `w${i}`, at: new Date(T0 + i).toISOString() })),
     ];
     writeFileSync(statsFile(), JSON.stringify({ ...emptyStats(), capacityWaits }));
-    recordCapacityWait({ platform: 'android', max: 3, workspace: 'new', ms: 20.6 }, T0 + 55);
+    recordCapacityWait({ platform: 'android', max: 3, workspace: 'new', ms: 20.6, reclaimed: 2 }, T0 + 55);
     const stored = readStats().record!;
     expect(stored.capacityWaits).toHaveLength(CAPACITY_REFUSAL_LIMIT);
     expect(stored.capacityWaits?.[0]?.workspace).toBe('w6');
@@ -1151,9 +1157,12 @@ describe('capacity waits', () => {
     expect(updateStats(stored, run(), T0 + 55).capacityWaits).toEqual(stored.capacityWaits);
     const clock = vi.spyOn(Date, 'now').mockReturnValue(T0 + 55);
     const { out } = await inDir(root, () => runStats(['--json']));
+    const plain = await inDir(root, () => runStats([]));
     clock.mockRestore();
+    expect(plain.out.join('\n')).toContain('device queue reclaim\n');
+    expect(plain.out.join('\n')).toContain('reclaimed 2');
     const json = JSON.parse(out[0]!);
-    expect(json.capacityWaits[0]).toMatchObject({ kind: 'device-wait', ms: 21, workspace: 'new' });
+    expect(json.capacityWaits[0]).toMatchObject({ kind: 'device-wait', ms: 21, workspace: 'new', reclaimed: 2 });
     expect(json.capacityWaits).toHaveLength(CAPACITY_REFUSAL_LIMIT);
     expect(readStatsReport(null, T0 + 55 + CAPACITY_REFUSAL_MAX_AGE_MS + 1).report).not.toHaveProperty('capacityWaits');
   });

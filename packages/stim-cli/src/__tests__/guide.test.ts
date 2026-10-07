@@ -777,6 +777,7 @@ test('the stats facts document every placement decision and the placement retent
   expect(body).toContain(`the last ${PLACEMENT_LIMIT} from the last ${PLACEMENT_MAX_AGE_MS / 86_400_000} days`);
   expect(body).toContain('capacityRefusals?:');
   expect(body).toContain('capacityWaits?:');
+  expect(body).toContain('reclaimed?');
   expect(body).toContain('deviceSlotWaitMs?');
   expect(body).toContain(
     `the last ${CAPACITY_REFUSAL_LIMIT} from the last ${CAPACITY_REFUSAL_MAX_AGE_MS / 86_400_000} days`,

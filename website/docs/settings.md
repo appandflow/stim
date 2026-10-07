@@ -65,7 +65,7 @@ Stim reads the first value found in this order:
 4. Machine defaults in `~/.stim/config.json` (`--scope machine`), for the
    top-level `optimizations` settings, `ios.deviceType`, `ios.runtime`,
    `android.systemImage`, `android.deviceProfile` and
-   `devices.idleShutdownMinutes` only.
+   `devices.idleShutdownMinutes` and `devices.reclaimIdleMinutes` only.
 5. The Stim default.
 
 An environment variable that overrides a setting wins over every layer.
@@ -121,6 +121,7 @@ Explicit machine project/repository overrides keep their existing precedence.
 | `metro.warmupUrl.android`     | Bundle URL `stim android` prefetches to warm Metro                                                         |
 | `metro.idleStopMinutes`       | Minutes of no use before the dev server stops; `0` never, default 60                                       |
 | `devices.idleShutdownMinutes` | Minutes idle before an owned device shuts down; `0` never, default 30                                      |
+| `devices.reclaimIdleMinutes`  | Minutes idle before a waiting run reclaims an owned device slot; `0` disables, default 10                  |
 | `web.url`                     | Page `stim web` opens; `{port:<label>}` is a named or the Metro port                                       |
 | `web.ignoreCertificateErrors` | Accept self-signed dev certificates in the owned Chrome profile                                            |
 | `web.viewport`                | Owned Chrome viewport: `desktop` (default) or `phone`                                                      |
@@ -272,6 +273,29 @@ and path. `stim stop` cancels a queued run and releases its ticket without
 booting its device. Status adds `build.waitingFor`, and
 stats records `capacityWaits` and positive placement `deviceSlotWaitMs`.
 `0` or an unset cap means unlimited devices.
+
+With a cap set, queue reclaim uses the waiting workspace's effective setting:
+`devices.reclaimIdleMinutes` defaults to 10. The queue head shuts down the
+longest-idle eligible owned device in another workspace of this Stim home,
+one at a time, at most once every 15 seconds, rechecking capacity before
+another. `0` disables it. The same idle checks as
+[supervisor idle shutdown](./owned-devices.md#idle-shutdown) protect drivers,
+locks, builds, viewers and recent activity. Reclaim never deletes and excludes
+the waiting workspace, physical, hosted, remote, parked and other homes'
+devices. Failed locks or shutdowns are reported once per device and skipped
+for the rest of the wait. The supervisor's own
+idle shutdown defaults to 30 minutes. Positive `reclaimed` counts
+are included in wait stats.
+
+Any workspace of this Stim home with a device idle for
+`devices.reclaimIdleMinutes` is eligible, even with no supervisor and even
+when its own `devices.idleShutdownMinutes` is `0`. Stim Desktop's simulator
+view and manual input in Simulator.app do not count as activity. Opt out
+machine-wide with the command below; the waiter's effective setting decides.
+
+```bash
+stim settings set devices.reclaimIdleMinutes 0 --scope machine
+```
 
 `iosSimulatorApp` chooses the macOS app that displays an owned iOS simulator after
 Stim boots it. It defaults to `"stim-desktop"` while Stim Desktop is installed

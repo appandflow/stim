@@ -46,8 +46,8 @@ Resolution order, first match wins:
   3. committed       .stim.json beside the app's package.json or Package.swift
   4. machine         ~/.stim/config.json, top-level optimizations,
                      ios.deviceType, ios.runtime, android.systemImage,
-                     android.deviceProfile and devices.idleShutdownMinutes
-                     and archive.enabled
+                     android.deviceProfile, devices.idleShutdownMinutes,
+                     devices.reclaimIdleMinutes and archive.enabled
   5. Stim default
 An environment override, where a setting has one, wins over every layer.
 
@@ -329,6 +329,14 @@ ${ANDROID_AVD_CONFIG_HELP.map((line) => `                          ${line}`).joi
                         shuts it down, never deletes it. Default 30; 0 never.
                         Machine or project layers. Read when the supervisor
                         starts; see \`guide lifecycle budget\`.
+  devices.reclaimIdleMinutes
+                        minutes idle before the head of the device slot queue
+                        shuts down the longest-idle eligible owned device in
+                        another workspace of this Stim home. Default 10; 0 off.
+                        Machine or project layers, resolved for the waiting
+                        workspace on each poll. Same idle checks as supervisor
+                        shutdown, one device per poll, never deleted. See
+                        \`guide lifecycle concurrency\`.
   macos.product         the explicit Swift Package executable product built in
                         Debug by stim macos
   macos.infoPlist       development Info.plist relative to Package.swift,

@@ -275,6 +275,14 @@ export const SETTINGS: readonly SettingDefinition[] = [
       'Minutes an owned simulator or emulator stays idle before the workspace supervisor shuts it down; 0 never',
   },
   {
+    key: 'devices.reclaimIdleMinutes',
+    type: { kind: 'number', integer: true, minimum: 0 },
+    scopes: EVERY,
+    default: 10,
+    description:
+      'Minutes an owned simulator or emulator stays idle before a waiting run reclaims its device slot; 0 never',
+  },
+  {
     key: 'macos.product',
     type: { kind: 'string', pattern: '^[A-Za-z0-9_-]+$', patternHelp: 'a Swift Package executable product name' },
     scopes: PROJECT,
