@@ -218,7 +218,7 @@ struct CopyableCommand: View {
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
   var body: some View {
-    HStack(spacing: Space.xs) {
+    HStack(alignment: .firstTextBaseline, spacing: Space.xs) {
       Text(verbatim: command)
         .font(.stim(.caption, mono: true))
         .foregroundStyle(Palette.secondary)
