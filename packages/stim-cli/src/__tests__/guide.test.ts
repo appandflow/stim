@@ -964,7 +964,16 @@ test('the guide names the workspace agent-device state contract without setting 
 
 test('archive cleanup guidance names each code-supported cache selector', () => {
   const section = renderSection('cleanup', 'archive');
-  for (const selector of ['archived', 'archived:example', 'archived-logs', 'archived-recordings', 'archived-agent']) {
+  for (const selector of [
+    'archived',
+    'archived:example',
+    'archived-logs',
+    'archived-recordings',
+    'archived-agent',
+    'archived-logs:example',
+    'archived-recordings:example',
+    'archived-agent:example',
+  ]) {
     expect(includesArchives(selector)).toBe(true);
     expect(section).toContain(selector.replace('example', '<id>'));
   }

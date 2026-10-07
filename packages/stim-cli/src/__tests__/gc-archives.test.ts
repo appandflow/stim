@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { archiveDir, readArchives } from '@stim-cli/core/state';
 import { collectGcReport, runGc } from '../commands/gc.ts';
+import { parseArchiveSelector } from '../commands/gc/archive-selector.ts';
 import { selectCaches } from '../commands/gc/caches.ts';
 import { resetExecutor, setExecutor } from '../exec.ts';
 import { saveConfig } from '../workspace/config.ts';
@@ -135,6 +136,51 @@ test.each([
   expect(readArchives()).toHaveLength(2);
 });
 
+test.each([
+  ['archived-logs', 'logs'],
+  ['archived-recordings', 'recordings'],
+  ['archived-agent', 'agentActions'],
+] as const)(
+  '%s:<id> clears only that kind of that archive, ignores older-than and keeps the record',
+  async (cache, kind) => {
+    fixture('one');
+    fixture('two');
+    const before = readArchives().find((entry) => entry.id === 'two')!;
+    const payload = await gc({ cache: `${cache.toUpperCase()}:ONE`, olderThan: 99, delete: true });
+    expect(payload.sections.archived).toEqual([
+      expect.objectContaining({ id: 'one', kinds: [kind], bytes: 5, willDelete: true }),
+    ]);
+    const one = readArchives().find((entry) => entry.id === 'one')!;
+    const two = readArchives().find((entry) => entry.id === 'two')!;
+    for (const key of ['logs', 'recordings', 'agentActions'] as const) {
+      expect(one.bytes[key]).toBe(key === kind ? 0 : 5);
+    }
+    expect(one.bytes.record).toBeGreaterThan(0);
+    expect(two).toEqual(before);
+    expect(readFileSync(join(archiveDir('two'), 'logs', 'metro.ndjson'), 'utf8')).toBe('bytes');
+  },
+);
+
+test.each(['archived-logs:missing', 'archived-agent:'])(
+  'unknown or empty kind archive id %s refuses and deletes nothing',
+  async (cache) => {
+    fixture('one');
+    const before = readArchives();
+    const payload = await gc({ cache, delete: true });
+    expect(payload).toMatchObject({ code: 'STIM_BAD_ARG', remedy: 'Known archive ids: one' });
+    expect(readArchives()).toEqual(before);
+  },
+);
+
+test('archive selector parsing accepts only the documented forms', () => {
+  expect(parseArchiveSelector(' Archived-Logs:Abc ')).toEqual({ kind: 'logs', id: 'Abc' });
+  expect(parseArchiveSelector('archived')).toEqual({ kind: null, id: null });
+  expect(parseArchiveSelector('archived:x:y')).toEqual({ kind: null, id: 'x:y' });
+  for (const name of ['archived-record:x', 'archivedlogs', 'logs:x', 'recordings', 'all']) {
+    expect(parseArchiveSelector(name)).toBeNull();
+  }
+});
+
 test('archived older-than selects removal time rather than file modification time', async () => {
   fixture('old', Date.now() - 2 * 86_400_000);
   fixture('new');
@@ -161,7 +207,14 @@ test('archive gc reaps dead staging but reports live and unresolved claims with 
 });
 
 test('archive selectors cannot accidentally select a shared cache with an archive name', () => {
-  for (const name of ['archived', 'archived:one', 'archived-logs', 'archived-recordings', 'archived-agent']) {
+  for (const name of [
+    'archived',
+    'archived:one',
+    'archived-logs',
+    'archived-recordings',
+    'archived-agent',
+    'archived-logs:one',
+  ]) {
     expect(
       selectCaches([{ name, dir: join(home, name), source: 'registered', prune: 'entries', note: '' }], name),
     ).toEqual([]);
