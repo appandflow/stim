@@ -237,6 +237,16 @@ describe('service update checks', () => {
       'without registry signatures: ws@8.0.0',
     );
     expect(signatureProblem('npm ERR! audit signatures failed')).toContain('did not print a JSON report');
+    const failure = signatureProblem(
+      JSON.stringify({
+        error: { code: 'ETARGET', summary: 'No matching version found for stim@99.0.0.', detail: 'Pick a version.' },
+      }),
+    );
+    expect(failure).toContain('No matching version found for stim@99.0.0.');
+    expect(failure).toContain('Pick a version.');
+    expect(signatureProblem('', 'npm error first\nnpm error found no installed dependencies to audit')).toContain(
+      'npm error found no installed dependencies to audit',
+    );
   });
 });
 
