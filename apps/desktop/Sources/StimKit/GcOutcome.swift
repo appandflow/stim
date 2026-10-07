@@ -76,7 +76,7 @@ public struct GcOutcome: Hashable, Sendable {
 
   private static func names(_ items: [Item], _ name: (String) -> String) -> String {
     var seen = Set<String>()
-    let names = items.map { name($0.label) }.filter { seen.insert($0).inserted }
+    let names = items.filter { seen.insert($0.label).inserted }.map { name($0.label) }
     let shown = names.prefix(namesShown).joined(separator: ", ")
     return names.count > namesShown ? "\(shown), +\(names.count - namesShown) more" : shown
   }

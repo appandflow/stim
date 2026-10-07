@@ -105,7 +105,8 @@ final class AutopilotRunner: ObservableObject {
       guard trigger == .pressure else { return }
       let archived = run.gcOutcome.flatMap { try? $0.get().archivedWorktrees.isEmpty } == false
       Notifier.postPressure(
-        id: "pressure-ran-\(archived ? "archived-" : "")\(run.id)", title: "Free disk is under the Stim budget",
+        id: "\(archived ? Notifier.archivedPressurePrefix : Notifier.ranPressurePrefix)\(run.id)",
+        title: "Free disk is under the Stim budget",
         body: summary
           ?? "Stim Desktop ran stim gc --delete. \(run.exitStatus == 0 ? "It finished" : "It exited with an error"); see the autopilot log.",
         offersPlan: false)
