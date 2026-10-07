@@ -34,6 +34,7 @@ import {
   deviceTypeMismatch,
   runtimeMismatch,
   withDeviceBootAdmission,
+  type DeviceSlotWaitPolicy,
 } from './device-capacity.ts';
 import type { BootResult, DeviceFlags, DeviceSettings, Notify, OwnedDeviceRecord } from './device.ts';
 
@@ -49,18 +50,19 @@ function startIosBoot(
   configure: () => Promise<unknown>,
   label: string,
   out: Notify,
-  simulatorApp?: IosSimulatorApp,
+  simulatorApp: IosSimulatorApp | undefined,
+  root: string,
+  deviceSlotWait?: DeviceSlotWaitPolicy,
 ): IosBoot {
   const done = withDeviceBootAdmission(
     { platform: 'ios', key: udid },
     async () => {
+      out(chalk.dim(phaseLine('device', `booting ${label} (${udid})`)));
       await bootIosSim(udid, { label, out, simulatorApp });
       await configure();
     },
-    { out },
+    { ...deviceSlotWait, root, out },
   );
-  // Node ends the process on an unhandled rejection, and `ensureBooted` -- the
-  // real handler -- does not run when an earlier step of the run refuses first.
   done.catch(() => {});
   return { udid, done };
 }
@@ -155,8 +157,19 @@ export async function ensureOwnedIosDevice({
           runtime: model.runtime,
         };
         if (sim.state !== 'Booted') {
-          out(chalk.dim(phaseLine('device', `booting ${name} (${sim.udid})`)));
-          return { ...updated, booting: startIosBoot(sim.udid, configure, name, out, flags.simulatorApp), ...facts };
+          return {
+            ...updated,
+            booting: startIosBoot(
+              sim.udid,
+              configure,
+              name,
+              out,
+              flags.simulatorApp,
+              projectPath,
+              flags.deviceSlotWait,
+            ),
+            ...facts,
+          };
         }
         return { ...(await configure()), ...facts, booted: sim.udid };
       }
@@ -198,7 +211,6 @@ export async function ensureOwnedIosDevice({
       ? await withIosDeviceNameLock(() => takeParkedIosSim({ projectPath, slot, label, choice, out }))
       : null;
   if (adopted) {
-    out(chalk.dim(phaseLine('device', `booting ${adopted.deviceName} (${adopted.deviceUdid})`)));
     const booting = startIosBoot(
       adopted.deviceUdid,
       async () => {
@@ -215,6 +227,8 @@ export async function ensureOwnedIosDevice({
       adopted.deviceName,
       out,
       flags.simulatorApp,
+      projectPath,
+      flags.deviceSlotWait,
     );
     return { ...adopted, booting, deviceType: choice.deviceType, runtime: choice.runtime };
   }
@@ -240,6 +254,8 @@ export async function ensureOwnedIosDevice({
     created.name,
     out,
     flags.simulatorApp,
+    projectPath,
+    flags.deviceSlotWait,
   );
   return {
     ...newRecord,
@@ -429,12 +445,16 @@ async function configureOwnedIosSim({
 
 export async function ensureIosBooted({
   device,
+  projectPath,
+  deviceSlotWait,
   simulatorApp,
   timeoutMs,
   pollMs,
   out,
 }: {
   device?: OwnedDeviceRecord | null;
+  projectPath: string;
+  deviceSlotWait?: DeviceSlotWaitPolicy;
   simulatorApp?: IosSimulatorApp;
   timeoutMs: number;
   pollMs: number;
@@ -494,13 +514,15 @@ export async function ensureIosBooted({
     return result;
   }
 
-  out(chalk.dim(phaseLine('device', `booting ${sim.name} (${udid})`)));
   const bootDeadline = Date.now() + timeoutMs;
   try {
     await withDeviceBootAdmission(
       { platform: 'ios', key: udid },
-      () => bootIosSim(udid, { timeoutMs, label: sim.name, out, simulatorApp }),
-      { out },
+      () => {
+        out(chalk.dim(phaseLine('device', `booting ${sim.name} (${udid})`)));
+        return bootIosSim(udid, { timeoutMs, label: sim.name, out, simulatorApp });
+      },
+      { ...deviceSlotWait, root: projectPath, out },
     );
   } catch (e) {
     return bootFailure(udid, e);

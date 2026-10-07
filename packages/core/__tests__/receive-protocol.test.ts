@@ -318,3 +318,12 @@ test('archives accept future enum strings while older status remains valid', () 
     }),
   ).toBe(false);
 });
+
+test('slot waits are additive for older phone status and accept future kinds while checking their shape', () => {
+  const path = 'payload.environments.0.build.waitingFor';
+  const waitingFor = { kind: 'device-slot', inUse: 2, max: 2, since: '2026-10-01T00:00:00.000Z' };
+  expect(isRpcEvent(statusFixture)).toBe(true);
+  expect(isRpcEvent(replaceReceivedField(statusFixture, path, waitingFor))).toBe(true);
+  expect(isRpcEvent(replaceReceivedField(statusFixture, path, { ...waitingFor, kind: 'future-slot' }))).toBe(true);
+  expect(isRpcEvent(replaceReceivedField(statusFixture, path, { ...waitingFor, inUse: '2' }))).toBe(false);
+});

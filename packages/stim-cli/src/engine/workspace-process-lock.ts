@@ -1,4 +1,5 @@
 import { join } from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
 import {
   releaseClaim,
   tryAcquireClaim,
@@ -15,6 +16,7 @@ export interface WorkspaceProcessLockOptions {
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
   waitMs?: number;
+  signal?: AbortSignal;
   ownerPurpose?: string;
   details?: ClaimDetails;
   /** Called on every poll while another claim holds the lock; a throw ends the wait with that error. */
@@ -23,8 +25,6 @@ export interface WorkspaceProcessLockOptions {
   external?: boolean;
   declareSpawns?: boolean;
 }
-
-const defaultSleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
 export function workspaceProcessLockError(err: unknown): 'refused' | 'timeout' | null {
   const code = (err as Error & { code?: string })?.code;
@@ -43,7 +43,8 @@ export async function withWorkspaceProcessLock<T>(
   fn: (claim: ClaimHandle) => Promise<T>,
   {
     now = Date.now,
-    sleep = defaultSleep,
+    signal,
+    sleep = (ms) => delay(ms, undefined, { signal }),
     waitMs = DEFAULT_WAIT_MS,
     ownerPurpose,
     details = {},
@@ -57,6 +58,7 @@ export async function withWorkspaceProcessLock<T>(
   const deadline = now() + waitMs;
 
   for (;;) {
+    signal?.throwIfAborted();
     const attempt = tryAcquireClaim({
       root: path,
       mode: 'exclusive',

@@ -6,11 +6,13 @@ import {
   statsFile,
   STATS_VERSION,
   trimCapacityRefusals,
+  trimCapacityWaits,
   trimSamples,
   wholePhases,
 } from '@stim-cli/core/state';
 import type {
   StatsCapacityRefusal,
+  StatsCapacityWait,
   StatsPlacement as BuildPlacement,
   BuildMachineTotals,
   RunOutcomeKind,
@@ -48,6 +50,7 @@ interface RunPlacement {
   reason: string;
   machine?: string;
   slotWaitMs?: number;
+  deviceSlotWaitMs?: number;
   /** The offloaded build's total time; a build here takes the run's compile time instead. */
   buildMs?: number;
 }
@@ -86,6 +89,8 @@ export interface RunRecorder {
   setBuildMs(ms: number): void;
   setPodsMs(ms: number): void;
   setPlacement(placement: RunPlacement): void;
+  addDeviceSlotWaitMs(ms: number): void;
+  deviceSlotWaitMs(): number | undefined;
   record(outcome: RunOutcome): void;
 }
 
@@ -153,6 +158,7 @@ export function updateStats(record: StatsRecord, run: StatsRun, now: number): St
   }
 
   const capacityRefusals = trimCapacityRefusals(record.capacityRefusals ?? [], now);
+  const capacityWaits = trimCapacityWaits(record.capacityWaits ?? [], now);
   return {
     version: STATS_VERSION,
     machine,
@@ -160,6 +166,7 @@ export function updateStats(record: StatsRecord, run: StatsRun, now: number): St
     ...(Object.keys(history).length ? { history } : {}),
     ...(placements?.length ? { placements } : {}),
     ...(capacityRefusals.length ? { capacityRefusals } : {}),
+    ...(capacityWaits.length ? { capacityWaits } : {}),
     ...(buildMachines && Object.keys(buildMachines).length ? { buildMachines } : {}),
   };
 }
@@ -169,6 +176,7 @@ function buildPlacement(run: StatsRun, before: StatsBucket | null, at: string): 
   const buildMs = wholeMs(placement.decision === 'offloaded' ? placement.buildMs : run.coldBuildMs);
   const localEstimateMs = wholeMs(before?.lastColdBuildMs);
   const slotWaitMs = wholeMs(placement.slotWaitMs);
+  const deviceSlotWaitMs = wholeMs(placement.deviceSlotWaitMs);
   return {
     at,
     project: run.projectKey,
@@ -178,6 +186,7 @@ function buildPlacement(run: StatsRun, before: StatsBucket | null, at: string): 
     ...(placement.machine ? { machine: placement.machine } : {}),
     ...(buildMs > 0 ? { buildMs } : {}),
     ...(slotWaitMs > 0 ? { slotWaitMs } : {}),
+    ...(deviceSlotWaitMs > 0 ? { deviceSlotWaitMs } : {}),
     ...(localEstimateMs > 0 ? { localEstimateMs } : {}),
     ...(run.failed ? { failed: true as const } : {}),
   };
@@ -225,10 +234,31 @@ export function recordCapacityRefusal(event: Omit<StatsCapacityRefusal, 'at' | '
       const loaded = loadForUpdate(path, now, false);
       if (!loaded.record || loaded.newerVersion !== null) return;
       const capacityRefusals = trimCapacityRefusals(
-        [...(loaded.record.capacityRefusals ?? []), { ...event, at: new Date(now).toISOString(), kind: 'device' }],
+        [
+          ...(loaded.record.capacityRefusals ?? []),
+          { ...event, at: new Date(now).toISOString(), kind: 'device' as const },
+        ],
         now,
       );
       writeStats(path, { ...loaded.record, capacityRefusals });
+    });
+  } catch {}
+}
+
+export function recordCapacityWait(event: Omit<StatsCapacityWait, 'at' | 'kind'>, now: number): void {
+  try {
+    withConfigLock(() => {
+      const path = statsFile();
+      const loaded = loadForUpdate(path, now, false);
+      if (!loaded.record || loaded.newerVersion !== null) return;
+      const capacityWaits = trimCapacityWaits(
+        [
+          ...(loaded.record.capacityWaits ?? []),
+          { ...event, ms: wholeMs(event.ms), at: new Date(now).toISOString(), kind: 'device-wait' },
+        ],
+        now,
+      );
+      writeStats(path, { ...loaded.record, capacityWaits });
     });
   } catch {}
 }
@@ -253,6 +283,7 @@ export function createRunRecorder({
   let coldBuildMs = 0;
   let podsMs = 0;
   let placement: RunPlacement | null = null;
+  let deviceSlotWaitMs = 0;
   let recorded = false;
   return {
     setProject(key: string): void {
@@ -266,6 +297,12 @@ export function createRunRecorder({
     },
     setPodsMs(ms: number): void {
       podsMs = wholeMs(ms);
+    },
+    addDeviceSlotWaitMs(ms: number): void {
+      deviceSlotWaitMs += wholeMs(ms);
+    },
+    deviceSlotWaitMs(): number | undefined {
+      return deviceSlotWaitMs || undefined;
     },
     setPlacement(next: RunPlacement): void {
       placement = next;
@@ -288,7 +325,9 @@ export function createRunRecorder({
             ...(podsMs > 0 ? { podsMs } : {}),
             ...(Object.keys(ran).length ? { phases: ran } : {}),
             ...(failed || deviceSetup?.() === undefined ? {} : { deviceSetup: deviceSetup()! }),
-            ...(placement ? { placement } : {}),
+            ...(placement
+              ? { placement: { ...placement, ...(deviceSlotWaitMs > 0 ? { deviceSlotWaitMs } : {}) } }
+              : {}),
           },
           now(),
         );

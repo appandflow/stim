@@ -24,6 +24,7 @@ import {
   CAPACITY_REFUSAL_LIMIT,
   CAPACITY_REFUSAL_MAX_AGE_MS,
   recordCapacityRefusal,
+  recordCapacityWait,
   createRunRecorder,
   emptyStats,
   offloadSummary,
@@ -329,7 +330,7 @@ describe('build placements', () => {
   });
 
   test.each([
-    { slotWaitMs: 12.6, expected: { slotWaitMs: 13 } },
+    { slotWaitMs: 12.6, expected: { slotWaitMs: 13, deviceSlotWaitMs: 13 } },
     { slotWaitMs: 0, expected: {} },
   ])('a compiling run persists whole positive slot wait milliseconds ($slotWaitMs)', ({ slotWaitMs, expected }) => {
     const recorder = createRunRecorder({
@@ -342,6 +343,7 @@ describe('build placements', () => {
     recorder.setCacheKey('ios-abc');
     recorder.setBuildMs(250_000);
     recorder.setPlacement({ ...here, slotWaitMs });
+    recorder.addDeviceSlotWaitMs(slotWaitMs);
     recorder.record({ failed: false, durationMs: 300_000 });
 
     const stored = JSON.parse(readFileSync(statsFile(), 'utf-8')).placements[0];
@@ -365,7 +367,15 @@ describe('build placements', () => {
         JSON.stringify({
           ...emptyStats(),
           placements: [
-            { ...here, at: new Date(T0).toISOString(), project: root, platform: 'ios', buildMs: 250_000, slotWaitMs },
+            {
+              ...here,
+              at: new Date(T0).toISOString(),
+              project: root,
+              platform: 'ios',
+              buildMs: 250_000,
+              slotWaitMs,
+              deviceSlotWaitMs: slotWaitMs,
+            },
           ],
         }),
       );
@@ -373,6 +383,7 @@ describe('build placements', () => {
       const placement = readStats().record?.placements?.[0];
       expect(placement?.buildMs).toBe(250_000);
       expect(placement).not.toHaveProperty('slotWaitMs');
+      expect(placement).not.toHaveProperty('deviceSlotWaitMs');
     },
   );
 
@@ -1089,4 +1100,70 @@ describe('capacity refusals', () => {
       err.mockRestore();
     }
   });
+});
+
+describe('capacity waits', () => {
+  const event = {
+    at: new Date(T0).toISOString(),
+    kind: 'device-wait' as const,
+    platform: 'ios' as const,
+    ms: 1200,
+    max: 2,
+    workspace: 'fixture',
+  };
+
+  test('normalization drops malformed wait events and rounds valid durations', () => {
+    const malformed = [
+      null,
+      {},
+      { ...event, ms: -1 },
+      { ...event, ms: '1200' },
+      { ...event, ms: null },
+      { ...event, kind: 'device' },
+      { ...event, platform: 'web' },
+      { ...event, max: 0 },
+      { ...event, workspace: '' },
+      { ...event, at: 'invalid' },
+    ];
+    const record = decodeStats(
+      JSON.stringify({ ...emptyStats(), capacityWaits: [...malformed, { ...event, ms: 12.6 }] }),
+    ).record;
+    expect(record?.capacityWaits).toEqual([{ ...event, ms: 13 }]);
+    expect(decodeStats(JSON.stringify({ ...emptyStats(), capacityWaits: malformed })).record).not.toHaveProperty(
+      'capacityWaits',
+    );
+    expect(decodeStats(JSON.stringify({ ...emptyStats(), capacityWaits: {} })).record).not.toHaveProperty(
+      'capacityWaits',
+    );
+  });
+
+  test('recorded waits survive a normal run and the JSON report bounds, sorts and expires them', async () => {
+    const capacityWaits = [
+      { ...event, at: new Date(T0 - CAPACITY_REFUSAL_MAX_AGE_MS - 1).toISOString() },
+      ...Array.from({ length: 55 }, (_, i) => ({ ...event, workspace: `w${i}`, at: new Date(T0 + i).toISOString() })),
+    ];
+    writeFileSync(statsFile(), JSON.stringify({ ...emptyStats(), capacityWaits }));
+    recordCapacityWait({ platform: 'android', max: 3, workspace: 'new', ms: 20.6 }, T0 + 55);
+    const stored = readStats().record!;
+    expect(stored.capacityWaits).toHaveLength(CAPACITY_REFUSAL_LIMIT);
+    expect(stored.capacityWaits?.[0]?.workspace).toBe('w6');
+    expect(stored.capacityWaits?.at(-1)).toMatchObject({ workspace: 'new', ms: 21 });
+    expect(updateStats(stored, run(), T0 + 55).capacityWaits).toEqual(stored.capacityWaits);
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(T0 + 55);
+    const { out } = await inDir(root, () => runStats(['--json']));
+    clock.mockRestore();
+    const json = JSON.parse(out[0]!);
+    expect(json.capacityWaits[0]).toMatchObject({ kind: 'device-wait', ms: 21, workspace: 'new' });
+    expect(json.capacityWaits).toHaveLength(CAPACITY_REFUSAL_LIMIT);
+    expect(readStatsReport(null, T0 + 55 + CAPACITY_REFUSAL_MAX_AGE_MS + 1).report).not.toHaveProperty('capacityWaits');
+  });
+
+  test.each(['{ broken', JSON.stringify({ version: 2, machine: {}, projects: {} })])(
+    'wait recording leaves unreadable or newer stats untouched: %s',
+    (text) => {
+      writeFileSync(statsFile(), text);
+      expect(() => recordCapacityWait({ platform: 'ios', max: 2, workspace: 'fixture', ms: 10 }, T0)).not.toThrow();
+      expect(readFileSync(statsFile(), 'utf8')).toBe(text);
+    },
+  );
 });

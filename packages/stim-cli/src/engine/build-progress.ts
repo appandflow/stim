@@ -19,6 +19,7 @@ import {
   type BuildPhase,
   type BuildPlacement,
   type BuildReport,
+  type BuildWaitingFor,
   type BuildResult,
   type PlannedPhase,
   type WorkspaceState,
@@ -48,6 +49,7 @@ export interface ActiveBuildRecord {
   placement?: Exclude<BuildPlacement, 'local'>;
   /** The workspace whose identical build this run waits on, while its phase is `wait`. */
   waitingOn?: { path: string };
+  waitingFor?: BuildWaitingFor;
   /** Whether the run created, adopted or cold-booted its device, once `ensureOwnedDevice`/`ensureDevice` returned. */
   deviceSetup?: boolean;
   /** The run's cache outcome, once it entered a phase that settles it. */
@@ -87,6 +89,7 @@ export interface BuildProgress {
   place(remote: { host: string; phase: string } | null): void;
   /** Records the workspace root whose build of the same artifact the run waits on; null when it is not known. */
   waitingOn(root: string | null): void;
+  waitingFor(info: BuildWaitingFor | null, kind?: BuildWaitingFor['kind']): void;
   /** Reads one record the run writes to its build log, for the native tool's progress. */
   output(record: unknown): void;
   durations(): Record<string, number>;
@@ -102,6 +105,7 @@ export const NO_BUILD_PROGRESS: BuildProgress = {
   deviceSetupKnown: () => undefined,
   place: () => {},
   waitingOn: () => {},
+  waitingFor: () => {},
   output: () => {},
   durations: () => ({}),
   clear: () => {},
@@ -216,6 +220,7 @@ export function startBuildProgress({
     record.outcome = outcome;
     if (projectKey) record.estimate = estimateBuild(projectHistory(projectKey), platform, outcome, record.deviceSetup);
   };
+  const waits = new Map<BuildWaitingFor['kind'], BuildWaitingFor>();
   return {
     step(phase) {
       if (phase === record.phase) return;
@@ -277,6 +282,15 @@ export function startBuildProgress({
         startedAt: current?.host === remote.host ? current.startedAt : at,
         phaseStartedAt: at,
       };
+      write();
+    },
+    waitingFor(info, kind) {
+      if (info) waits.set(info.kind, info);
+      else if (kind) waits.delete(kind);
+      else waits.clear();
+      const first = [...waits.values()].toSorted((a, b) => Date.parse(a.since) - Date.parse(b.since))[0];
+      if (first) record.waitingFor = first;
+      else delete record.waitingFor;
       write();
     },
     waitingOn(holder) {
@@ -425,6 +439,7 @@ export function parseActiveBuild(value: unknown): ActiveBuildRecord | null {
   const missReason = parseMissReason(record.missReason);
   const placement = parsePlacement(record.placement);
   const waitingOn = parseWaitingOn(record.waitingOn);
+  const waitingFor = parseWaitingFor(record.waitingFor);
   const estimate = parseEstimate(record.estimate);
   return {
     platform: record.platform,
@@ -437,6 +452,7 @@ export function parseActiveBuild(value: unknown): ActiveBuildRecord | null {
     ...(missReason && record.missProvisional === true ? { missProvisional: true as const } : {}),
     ...(placement ? { placement } : {}),
     ...(waitingOn ? { waitingOn } : {}),
+    ...(waitingFor ? { waitingFor } : {}),
     ...(typeof record.deviceSetup === 'boolean' ? { deviceSetup: record.deviceSetup } : {}),
     ...(record.outcome === 'hit' || record.outcome === 'cold' ? { outcome: record.outcome } : {}),
     ...(estimate ? { estimate } : {}),
@@ -459,6 +475,15 @@ function parsePlacement(value: unknown): ActiveBuildRecord['placement'] | null {
     startedAt: startedAt as string,
     phaseStartedAt: phaseStartedAt as string,
   };
+}
+
+function parseWaitingFor(value: unknown): BuildWaitingFor | null {
+  if (!value || typeof value !== 'object') return null;
+  const { kind, inUse, max, since } = value as BuildWaitingFor;
+  if (kind !== 'build-slot' && kind !== 'device-slot') return null;
+  if (!Number.isInteger(inUse) || inUse < 0 || !Number.isInteger(max) || max <= 0) return null;
+  if (typeof since !== 'string' || !Number.isFinite(Date.parse(since))) return null;
+  return { kind, inUse, max, since };
 }
 
 function parseWaitingOn(value: unknown): ActiveBuildRecord['waitingOn'] | null {
@@ -583,6 +608,7 @@ export function buildReport(
     ...(record.missReason && record.missProvisional ? { missProvisional: true as const } : {}),
     placement: record.placement ?? 'local',
     ...(record.waitingOn ? { waitingOn: record.waitingOn } : {}),
+    ...(record.waitingFor ? { waitingFor: record.waitingFor } : {}),
   };
 }
 

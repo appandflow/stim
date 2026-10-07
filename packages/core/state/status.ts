@@ -31,6 +31,13 @@ export type ActiveBuildState = 'running' | 'stale' | 'unknown';
  */
 export type BuildPlacement = 'local' | { host: string; phase: string; startedAt: string; phaseStartedAt: string };
 
+export interface BuildWaitingFor {
+  kind: 'build-slot' | 'device-slot';
+  inUse: number;
+  max: number;
+  since: string;
+}
+
 export interface BuildReport {
   platform: StatsPlatform;
   slot: string;
@@ -65,6 +72,7 @@ export interface BuildReport {
   placement: BuildPlacement;
   /** While `phase` is `wait`: the workspace whose build of the same artifact this run waits on, when it is known. */
   waitingOn?: { path: string };
+  waitingFor?: BuildWaitingFor;
 }
 
 /** One phase a running build is expected to go through, and its median duration in comparable runs. */

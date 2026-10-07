@@ -35,7 +35,12 @@ import { androidAvdConfigSetting, androidDataPartitionSizeGbSetting } from '../w
 import { teardownOwnedAvd, teardownParkedAvd } from '../devices/teardown.ts';
 import { AvdBootError, AvdRecoveryError, prepareOwnedAvd } from './android-avd-setup.ts';
 import { claimFailure } from '../ownership-claim.ts';
-import { DeviceAdmissionRefusal, countLiveOwnedDevices, withDeviceBootAdmission } from './device-capacity.ts';
+import {
+  DeviceAdmissionRefusal,
+  countLiveOwnedDevices,
+  withDeviceBootAdmission,
+  type DeviceSlotWaitPolicy,
+} from './device-capacity.ts';
 import type {
   BootResult,
   DeviceFlags,
@@ -183,6 +188,7 @@ export async function ensureOwnedAndroidDevice({
         );
         return {
           ...(await bootOwnedAvdOnFreshPort({
+            deviceSlotWait: flags.deviceSlotWait,
             avdName: record.avdName,
             metadata: record,
             projectPath,
@@ -282,6 +288,7 @@ export async function ensureOwnedAndroidDevice({
       }
       return {
         ...(await bootOwnedAvdOnFreshPort({
+          deviceSlotWait: flags.deviceSlotWait,
           avdName: parked.name,
           projectPath,
           slot,
@@ -317,6 +324,7 @@ export async function ensureOwnedAndroidDevice({
   }
   return {
     ...(await bootOwnedAvdOnFreshPort({
+      deviceSlotWait: flags.deviceSlotWait,
       avdName: created.avdName,
       metadata: created.created ? { poolConfiguration: configuration, bootPending: true } : undefined,
       projectPath,
@@ -392,6 +400,7 @@ function liveAndroidConsolePorts(): number[] {
 
 async function bootOwnedAvdOnFreshPort({
   avdName,
+  deviceSlotWait,
   metadata,
   projectPath,
   slot,
@@ -401,6 +410,7 @@ async function bootOwnedAvdOnFreshPort({
   alive = pidExists,
 }: {
   avdName: string;
+  deviceSlotWait?: DeviceSlotWaitPolicy;
   metadata?: OwnedDeviceRecord;
   projectPath: string;
   slot?: string;
@@ -439,7 +449,7 @@ async function bootOwnedAvdOnFreshPort({
         throw error;
       }
     },
-    { out },
+    { ...deviceSlotWait, root: projectPath, out },
   );
 }
 
@@ -525,6 +535,7 @@ async function waitForAndroidBoot({
 
 export async function ensureAndroidBooted({
   device,
+  deviceSlotWait,
   projectPath,
   slot,
   timeoutMs,
@@ -533,6 +544,7 @@ export async function ensureAndroidBooted({
   alive = pidExists,
 }: {
   device?: OwnedDeviceRecord | null;
+  deviceSlotWait?: DeviceSlotWaitPolicy;
   projectPath?: string;
   slot?: string;
   timeoutMs: number;
@@ -598,7 +610,11 @@ export async function ensureAndroidBooted({
     return booted(result);
   };
   try {
-    return await withDeviceBootAdmission({ platform: 'android', key: avdName }, boot, { out });
+    return await withDeviceBootAdmission({ platform: 'android', key: avdName }, boot, {
+      ...deviceSlotWait,
+      root: projectPath,
+      out,
+    });
   } catch (error) {
     const refusal = error instanceof DeviceAdmissionRefusal ? error : claimFailure(error, 'stim android');
     if (!refusal) throw error;

@@ -376,3 +376,25 @@ describe('a profile the emulator gates on foldable image support', () => {
     expect(plan({}, { owned: { ...owned, systemImage: image(34).pkg } }).ok).toBe(true);
   });
 });
+
+test.each([
+  { wait: undefined, expected: 600_000 },
+  { wait: '30', expected: 30_000 },
+  { wait: false, expected: 0 },
+  { wait: '0', expected: 0 },
+])('owned-device slot wait policy accepts %j without changing physical lease defaults', ({ wait, expected }) => {
+  const owned = resolveAndroidRunPlan(inputs({ wait }), inspection([]));
+  expect(owned.ok).toBe(true);
+  assert(owned.ok);
+  expect(owned.plan.deviceSlotWaitMs).toBe(expected);
+  const physical = resolveAndroidRunPlan(inputs({ device: true, wait }), inspection([]));
+  expect(physical.ok).toBe(true);
+  assert(physical.ok);
+  expect(physical.plan.target).toMatchObject({
+    kind: 'physical',
+    lease: {
+      waitSeconds: wait === undefined || wait === false ? 60 : Number(wait),
+      noWait: wait === false,
+    },
+  });
+});

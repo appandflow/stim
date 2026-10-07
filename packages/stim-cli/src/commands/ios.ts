@@ -3,9 +3,9 @@ import { workspaceId } from '@stim-cli/core';
 import { acquireIosArtifact, type PreparedIosArtifact } from './ios/artifact.ts';
 import { isEasBuildFailure } from '../engine/eas-build.ts';
 import { deviceSlotFileKey, parseDeviceSlotOption, validateDeviceSlot } from '../devices/device-slots.ts';
-import { cancelledFailure, runCancellation, withNativeBuildRun } from '../engine/native-run.ts';
+import { cancelledFailure, runCancellation, runCancellationSignal, withNativeBuildRun } from '../engine/native-run.ts';
 import { NO_BUILD_PROGRESS, startBuildProgress, tapBuildLog, type BuildProgress } from '../engine/build-progress.ts';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import {
   resolveOptimizations,
   artifactCachePolicy,
@@ -78,6 +78,7 @@ import {
   resolveRuntime,
   resolveSimulatorAppFlag,
   resolveIosWait,
+  createIosDeviceWaitRun,
   deviceModelRefusal,
   isReleaseConfiguration,
   ownedSimFailure,
@@ -193,11 +194,11 @@ export function registerIos(program: Command, deps: Partial<IosDeps> = {}): void
     )
     .option(
       '--wait <seconds>',
-      'How long to wait for another workspace to release the phone it leases, before refusing with STIM_DEVICE_BUSY (default 60, 0 refuses at once). Only with --device.',
+      'How long to wait for another workspace to release the phone it leases, before refusing with STIM_DEVICE_BUSY (default 60, 0 refuses at once). Without --device, wait for an owned-device slot (default 600 seconds; --no-wait refuses immediately).',
     )
     .option(
       '--no-wait',
-      "Install on a phone another workspace leases instead of waiting: this run takes no lease and, when both workspaces build the same app id, the install terminates the holder's running app. Only with --device.",
+      "Install on a phone another workspace leases instead of waiting: this run takes no lease and, when both workspaces build the same app id, the install terminates the holder's running app. Without --device, refuse a full device cap or existing slot queue immediately.",
     )
     .action(async (opts: IosCommandOptions) => {
       if (opts.plan) {
@@ -386,7 +387,8 @@ async function runIos(
     phases: () => progress.durations(),
     deviceSetup: () => progress.deviceSetupKnown(),
   });
-  const recordRun = stats.record;
+  const deviceWaitRun = createIosDeviceWaitRun(stats, progress, runCancellationSignal());
+  const recordRun = deviceWaitRun.record;
 
   let compilationCache: CompilationCacheActivity = COMPILATION_CACHE_NOT_RUN;
   let reclaimed: ReclaimedStep[] = [];
@@ -527,7 +529,12 @@ async function runIos(
 
   const wait = resolveIosWait(opts, physical);
   if ('failure' in wait) return fail(wait.failure);
-  const { waitSeconds, noWait } = wait;
+  const { waitSeconds, noWait, deviceSlotWaitMs, checkCapacity } = wait;
+  const deviceSlotWait = {
+    waitMs: deviceSlotWaitMs,
+    displayName: basename(root),
+    ...deviceWaitRun.policy,
+  };
 
   const isExpo = d.detectIsExpo(root);
   const schemeRefusal = explicitSchemeRefusal(root, buildScheme, isExpo, d);
@@ -632,7 +639,7 @@ async function runIos(
       physicalDevice = { udid: resolved.udid, name: resolved.name ?? resolved.udid };
       wireless = resolved.wireless === true;
     }
-    if (!physical && !hostedTarget) {
+    if (checkCapacity && !hostedTarget) {
       const capacity = d.checkDeviceCapacity({
         platform: PLATFORM,
         project: proj,
@@ -671,13 +678,14 @@ async function runIos(
           projectPath: root,
           settingsRoot: root,
           settings,
-          flags: { deviceType, runtime, runtimeFlag: resolveRuntime(opts.runtime, null), simulatorApp },
+          flags: { deviceSlotWait, deviceType, runtime, runtimeFlag: resolveRuntime(opts.runtime, null), simulatorApp },
           note,
           out: note,
         });
       } catch (e) {
         return fail(ownedSimFailure(e));
       }
+      deviceWaitRun.booting(device.booting);
       progress.deviceSetup(didSetUpDevice(device, Boolean(remoteDevice)));
       const prepareMs = prepare();
       if (device.created || prepareMs >= SLOW_STEP_MS) {
@@ -808,7 +816,16 @@ async function runIos(
       const boot = (): Promise<IosBootLike> =>
         physicalDevice
           ? Promise.resolve({ ok: true, udid: physicalDevice.udid })
-          : Promise.resolve(d.ensureBooted({ platform: PLATFORM, device, simulatorApp, out: note })).catch((e) => ({
+          : Promise.resolve(
+              d.ensureBooted({
+                platform: PLATFORM,
+                device,
+                projectPath: root,
+                deviceSlotWait,
+                simulatorApp,
+                out: note,
+              }),
+            ).catch((e) => ({
               ok: false,
               reason: String((e as Error)?.message || e),
             }));
@@ -835,6 +852,7 @@ async function runIos(
           bootDuration = bootTimer();
           return result;
         });
+        deviceWaitRun.booting({ done: bootPromise });
         return bootPromise.then((result) => result?.udid ?? '');
       };
       // A remote device boots after the build: agent-device's daemon exits five
@@ -884,6 +902,7 @@ async function runIos(
               hit: progress.hit,
               place: progress.place,
               waitingOn: progress.waitingOn,
+              waitingFor: progress.waitingFor,
             },
           },
           d,
@@ -1012,6 +1031,7 @@ async function runIos(
       artifact?.release();
     }
   } finally {
+    await deviceWaitRun.finish();
     hostedTarget?.host.connection.close();
   }
 }

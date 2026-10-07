@@ -1,3 +1,4 @@
+import { withDeviceBootAdmission } from '../engine/device-capacity.ts';
 import { workspaceId } from '@stim-cli/core';
 import { approvableSchemes } from '../engine/app-schemes.ts';
 import * as offloadClient from '../offload/client.ts';
@@ -63,11 +64,11 @@ import {
   shortUdid,
   writeLastBuild,
 } from '../commands/ios.ts';
-import { asProcessExit, makeChildProcess, makeError, makeExecutor } from './_factories.ts';
+import { asProcessExit, makeChildProcess, makeError, makeExecutor, makeIosSim } from './_factories.ts';
 import { ensureBooted } from '../engine/device.ts';
 import { ensureRemoteBootOwned } from '../engine/device-remote.ts';
 import { IosDeviceMismatchError } from '../engine/device-ios.ts';
-import { deviceModelRefusal } from '../commands/ios/support.ts';
+import { deviceModelRefusal, resolveIosWait } from '../commands/ios/support.ts';
 import { resetExecutor, setExecutor } from '../exec.ts';
 import { recordCreatedDevice } from '../devices/created-devices.ts';
 import { COMPILATION_CACHE_UNAVAILABLE, type BuildIosResult } from '../engine/xcode.ts';
@@ -3255,7 +3256,7 @@ describe('concurrency limits', () => {
     const capacity: { args?: CheckDeviceCapacityArgs } = {};
     const recordCapacityRefusal = vi.fn<typeof recordRefusal>();
     const { logs, errs, exitCode, calls } = await run(
-      { json },
+      { json, wait: false },
       {
         recordCapacityRefusal,
         getConcurrencyLimits: () => ({ maxBuilds: 0, maxDevices: 2 }),
@@ -3299,7 +3300,7 @@ describe('concurrency limits', () => {
     reserve();
     const recordCapacityRefusal = vi.fn<typeof recordRefusal>();
     const { logs, exitCode } = await run(
-      { json: true },
+      { json: true, wait: false },
       {
         recordCapacityRefusal,
         checkDeviceCapacity: () => ({
@@ -3499,13 +3500,7 @@ describe('--remote', () => {
     reserve();
     const { calls, exitCode } = await run({ remote: 'eas' }, remote.deps);
     expect(exitCode).toBeFalsy();
-    expect(remote.hits).toEqual([
-      'checkDeviceCapacity',
-      'ensureOwnedDevice',
-      'ensureBooted',
-      'installIosApp',
-      'launchIosApp',
-    ]);
+    expect(remote.hits).toEqual(['ensureOwnedDevice', 'ensureBooted', 'installIosApp', 'launchIosApp']);
     expect(remote.backends).toEqual(['eas']);
     expect(calls.order.includes('ensureOwnedDevice')).toBeFalsy();
     expect(calls.order.includes('installIosApp')).toBeFalsy();
@@ -6421,15 +6416,8 @@ describe('ios --device: the lease on the phone', () => {
     expect(listLeaseFiles()).toEqual([]);
   });
 
-  test('--wait without --device, an unusable value, and both flags at once are all STIM_BAD_ARG', async () => {
+  test('an unusable wait value and both flags at once are STIM_BAD_ARG', async () => {
     reserve();
-    const noDevice = await run({ wait: '30' });
-    expect(noDevice.exitCode).toBe(1);
-    expect(noDevice.errs.join('\n')).toMatch(/--wait and --no-wait only apply to a `--device` run/);
-
-    const bypassNoDevice = await run({ wait: false });
-    expect(bypassNoDevice.errs.join('\n')).toMatch(/only apply to a `--device` run/);
-
     const bad = await run({ device: true, wait: 'soon' }, connected());
     expect(bad.exitCode).toBe(1);
     expect(bad.errs.join('\n')).toMatch(/Invalid --wait value/);
@@ -6809,6 +6797,60 @@ describe('run statistics', () => {
     }
 
     expect(runs[0]?.run.placement).toEqual({ decision: 'here', reason: 'offload.mode is off' });
+  });
+
+  test('a failed iOS build cancels its parallel queued device and records the wait before returning', async () => {
+    reserve();
+    const runs: StatsRun[] = [];
+    const recordStats = vi.fn<typeof recordRunStats>((statsRun) => {
+      runs.push(statsRun);
+      return { recorded: true, note: null };
+    });
+    let clock = Date.now();
+    const { exitCode } = await run(
+      {},
+      {
+        recordStats,
+        ensureOwnedDevice: async ({ flags }) => {
+          let queued!: () => void;
+          const waiting = new Promise<void>((resolve) => {
+            queued = resolve;
+          });
+          const policy = flags!.deviceSlotWait!;
+          const done = withDeviceBootAdmission(
+            { platform: 'ios', key: UDID },
+            async () => {
+              throw new Error('a failed build must not boot its queued device');
+            },
+            {
+              ...policy,
+              root,
+              max: 1,
+              now: () => clock,
+              sources: { config: null, sims: [makeIosSim({ udid: 'other', name: 'stim-other', state: 'Booted' })] },
+              waitingFor: (info) => {
+                policy.waitingFor!(info);
+                if (info) queued();
+              },
+            },
+          );
+          done.catch(() => {});
+          await waiting;
+          return { deviceUdid: UDID, owned: true, booting: { udid: UDID, done } };
+        },
+        ensureBooted: async ({ device }) => {
+          await device!.booting!.done;
+          return { ok: true, udid: UDID };
+        },
+        buildIos: async () => {
+          clock += 3000;
+          return makeIosBuildFailure({ code: 'STIM_BUILD_FAILED' });
+        },
+      },
+    );
+    expect(exitCode).toBe(1);
+    expect(readClaimSet(join(tmpHome, 'device-waits')).live).toEqual([]);
+    expect(runs[0]?.placement?.deviceSlotWaitMs).toBe(3000);
   });
 
   test('a compiling run without build machines records its local placement and slot wait', async () => {
@@ -8222,4 +8264,55 @@ describe('strict build machine selection', () => {
     expect(compile).not.toHaveBeenCalled();
     expect(slot).not.toHaveBeenCalled();
   });
+});
+
+test.each([
+  { wait: undefined, expected: 600_000 },
+  { wait: '30', expected: 30_000 },
+  { wait: false, expected: 0 },
+  { wait: '0', expected: 0 },
+])('owned iOS slot wait accepts %j and preserves physical lease defaults', ({ wait, expected }) => {
+  expect(resolveIosWait({ wait }, false)).toMatchObject({ deviceSlotWaitMs: expected });
+  expect(resolveIosWait({ wait }, true)).toMatchObject({
+    waitSeconds: wait === undefined || wait === false ? 60 : Number(wait),
+    noWait: wait === false,
+  });
+});
+
+test('stop cancels an iOS cache hit waiting on boot, releases its ticket, and never installs', async () => {
+  reserve();
+  setExecutor(makeExecutor());
+  const boot = vi.fn<() => Promise<void>>(async () => {});
+  try {
+    const result = await run(
+      { json: true },
+      {
+        resolveBuild: () => join(root, 'cached', 'Fixture.app'),
+        ensureBooted: async ({ deviceSlotWait }) => {
+          await withDeviceBootAdmission({ platform: 'ios', key: UDID }, boot, {
+            ...deviceSlotWait,
+            root,
+            max: 1,
+            sources: { config: null, sims: [makeIosSim({ udid: 'other', name: 'stim-other', state: 'Booted' })] },
+            waitingFor: (info) => {
+              deviceSlotWait!.waitingFor!(info);
+              if (!info) return;
+              const [claim] = readClaimSet(join(workspaceDir(root), 'native-run.lock')).live;
+              assert(claim);
+              requestNativeRunCancel(root, claim.claimId);
+              process.emit('SIGINT');
+            },
+          });
+          return { ok: true, udid: UDID };
+        },
+      },
+    );
+    expect(parseFirst(result.logs)).toMatchObject({ code: 'STIM_CANCELLED' });
+    expect(result.exitCode).toBe(130);
+    expect(boot).not.toHaveBeenCalled();
+    expect(result.calls.order).not.toContain('installIosApp');
+    expect(readClaimSet(join(tmpHome, 'device-waits')).live).toEqual([]);
+  } finally {
+    resetExecutor();
+  }
 });

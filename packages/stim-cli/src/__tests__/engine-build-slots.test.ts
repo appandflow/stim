@@ -1,3 +1,4 @@
+import type { BuildWaitingFor } from '@stim-cli/core/state';
 import assert from 'node:assert';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { execFile } from 'node:child_process';
@@ -110,8 +111,10 @@ describe('acquireBuildSlot', () => {
     assert(held);
     let clock = 0;
     const lines: string[] = [];
+    const waitingFor = vi.fn<(info: BuildWaitingFor | null) => void>();
     const acquired = await acquireBuildSlot({
       max: 1,
+      waitingFor,
       now: () => clock,
       out: (line) => lines.push(line),
       sleep: async () => {
@@ -124,6 +127,13 @@ describe('acquireBuildSlot', () => {
     expect(lines.every((line) => line.endsWith(' -- stim guide lifecycle concurrency'))).toBe(true);
     expect(lines[0]).toContain('30s elapsed');
     expect(lines[1]).toContain('1m00s elapsed');
+    expect(waitingFor.mock.calls[0]?.[0]).toEqual({
+      kind: 'build-slot',
+      inUse: 1,
+      max: 1,
+      since: new Date(0).toISOString(),
+    });
+    expect(waitingFor).toHaveBeenLastCalledWith(null);
     releaseBuildSlot(acquired);
   });
 
@@ -138,6 +148,27 @@ describe('acquireBuildSlot', () => {
     });
     expect(got.slotWaitMs).toBe(0);
     releaseBuildSlot(got);
+  });
+
+  test('an error while waiting clears the visible build-slot wait', async () => {
+    const held = tryAcquireBuildSlot({ max: 1 });
+    assert(held);
+    const waitingFor = vi.fn<(info: BuildWaitingFor | null) => void>();
+    try {
+      await expect(
+        acquireBuildSlot({
+          max: 1,
+          waitingFor,
+          sleep: async () => {
+            throw new Error('interrupted');
+          },
+        }),
+      ).rejects.toThrow('interrupted');
+      expect(waitingFor.mock.calls[0]?.[0]).toMatchObject({ kind: 'build-slot', inUse: 1, max: 1 });
+      expect(waitingFor).toHaveBeenLastCalledWith(null);
+    } finally {
+      releaseBuildSlot(held);
+    }
   });
 
   test('unlimited (max 0) acquires immediately without a slot on disk', async () => {

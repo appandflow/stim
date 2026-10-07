@@ -1477,22 +1477,31 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
     concurrency.maxDevices  how many Stim-owned devices are BOOTED at once,
                             counting sims that are booting, emulators adb lists
                             in any state, and devices other runs are booting.
-                            Checked at device time, before a sim is created or
-                            booted, and again when the boot starts: that second
-                            check and the boot's place in the count are taken
-                            under one lock in $STIM_HOME, so concurrent runs
-                            cannot pass the cap together. At the cap, a NEW
-                            device is REFUSED with STIM_AT_CAPACITY
-                            (interactive-shaped: it does not queue). A
-                            workspace whose own device is already booted or
-                            booting is never refused. A listing that fails for
-                            any reason but a tool that is missing or not set up
-                            (no Xcode, license not accepted) leaves the count
-                            unknown: the first check lets the run go on, and
-                            the second stops it with STIM_NO_DEVICE instead of
-                            counting zero, on either platform: a hung simctl
-                            stops an Android boot too. While other runs are
-                            counting, the second check prints a waiting line.
+                            Admission and the boot claim are taken under one
+                            lock in $STIM_HOME. At the cap, a new owned device
+                            waits in FIFO order across this Stim home, for
+                            600 seconds by default. \`--wait <seconds>\` changes
+                            the bound; \`--no-wait\` or \`--wait 0\` refuses at
+                            once with STIM_AT_CAPACITY and cannot jump queued
+                            runs. A workspace's own booted or booting device
+                            bypasses the queue. iOS waits beside its build.
+                            Waiting prints the count, holder workspace names
+                            and elapsed time at once and about every 10s, then
+                            the queue position, head workspace name and
+                            $STIM_HOME/device-waits path. Timeout names the
+                            same head and path. Stop cancels a queued run and
+                            releases its ticket without booting its device.
+                            Status JSON adds build.waitingFor independently
+                            of phase: { kind: "device-slot" | "build-slot",
+                            inUse, max, since }. Overlapping waits show the
+                            one that started first, then the remaining wait.
+                            Positive deviceSlotWaitMs is recorded beside
+                            slotWaitMs in compiling run placements; every
+                            wait also records a capacityWaits event in stats.
+                            A listing failure leaves the count unknown and
+                            admission refuses with STIM_NO_DEVICE. Unresolved
+                            wait or boot claims refuse with the claim code
+                            and the command to remove that exact claim.
                             See \`guide errors STIM_AT_CAPACITY\`.
 
   \`stim doctor\` prints one note echoing the caps and the current live count,
@@ -1587,6 +1596,11 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
   start           --json --wait <seconds> --remote --reset-cache
   ios             --build-machine <auto|local|name> --slot <name> --json --plan --no-metro-check --no-build-cache --scheme <name> --configuration <name> --device-type <name> --runtime <version> --simulator-app <xcode|siniulator|stim-desktop> --device [udid] --wait <seconds> --no-wait --remote <eas|proxy|auto|machine>
   android         --build-machine <auto|local|name> --slot <name> --json --plan --no-metro-check --no-build-cache --variant <name> --system-image <id> --device-profile <id> --device [serial] --wait <seconds> --no-wait --remote <proxy|eas>
+  ios/android --wait bounds owned-device slot waits (default 600s), or physical
+  leases with --device (default 60s). Remote targets do not join this local
+  slot queue. --no-wait refuses a full/queued owned
+  slot at once; its existing physical lease bypass is unchanged.
+
   reload          [ios|android] --json
   device          lock <ios|android> [id] --slot <name> --for <duration> --wait <seconds> --json;
                   unlock [ios|android] --slot <name> --json
@@ -2034,8 +2048,9 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
   holder's running app, a different one means the launch only backgrounds it,
   and when Stim cannot read the holder's app id it says so rather than
   guessing. A free device is leased as usual under \`--no-wait\`. The two flags
-  together are STIM_BAD_ARG, and so is either one without \`--device\`, because
-  an owned simulator or emulator has no contention.
+  together are STIM_BAD_ARG. Without \`--device\`, they instead bound the
+  FIFO owned-device slot wait (default 600s); \`--no-wait\` refuses at once
+  when the cap is full or another run is queued. See \`guide lifecycle concurrency\`.
 
   A successful \`--device\` run reports \`lease: { kind, expiresAt }\` in its
   \`--json\`; a run that proceeded without one, or lost one after the install,

@@ -128,6 +128,12 @@ export function clearNativeRunCancel(root: string, claimId: string): void {
 }
 
 let cancelled: string | null = null;
+let cancellationSignal: AbortSignal | undefined;
+
+/** The active native run aborts this signal when it is cancelled. */
+export function runCancellationSignal(): AbortSignal | undefined {
+  return cancellationSignal;
+}
 
 /** Why this process's native run was cancelled, or null while it was not. */
 export function runCancellation(): string | null {
@@ -152,11 +158,13 @@ function cancelOnInterrupt({
   claim,
   write,
   exit,
+  controller,
 }: {
   root: string;
   claim: ClaimHandle;
   write: (line: string) => void;
   exit: (code: number) => void;
+  controller: AbortController;
 }): () => void {
   let signals = 0;
   const onInterrupt = () => {
@@ -167,6 +175,7 @@ function cancelOnInterrupt({
     }
     const request = cancelRequestFor(root, claim.claimId);
     cancelled = request ? `cancelled by \`stim stop\` (pid ${request.pid})` : 'cancelled by an interrupt';
+    controller.abort();
     refuseDeclaredSpawns(`the run was ${cancelled}`);
     const signalled = signalDeclaredSpawns('SIGINT');
     write(
@@ -204,11 +213,15 @@ export function withNativeBuildRun<T>(
     workspaceDir(root),
     NATIVE_RUN_LOCK,
     async (claim) => {
-      const dispose = cancelOnInterrupt({ root, claim, write, exit });
+      cancelled = null;
+      const controller = new AbortController();
+      cancellationSignal = controller.signal;
+      const dispose = cancelOnInterrupt({ root, claim, write, exit, controller });
       try {
         return await fn(claim);
       } finally {
         dispose();
+        cancellationSignal = undefined;
       }
     },
     {
