@@ -155,7 +155,7 @@ show refusals for removals started from its own workspace actions.
   **Refresh** reads changes made elsewhere. Unsupported options say
   **Unavailable**. Requires Xcode's simulator appearance API; audio, location,
   VoiceOver, color filters and Liquid Glass options are not included.
-  Its **Development** section also offers **Slow animations** and **Shake**
+  Without Control the popover shows only **Show device frame**. Its **Development** section also offers **Slow animations** and **Shake**
   where CoreSimulator supports them. Slow animations changes guest UIKit
   animation speed and reads the setting back; Shake sends a shake event to the
   foreground app. Android animation settings are unchanged.
@@ -283,9 +283,10 @@ viewer, with Control already on when the device allows it. Physical iOS devices
 and remote previews stay view-only; Android phones require a valid lease and a
 control-capable pairing. **Release control** or Escape returns to viewing.
 
-In a live local simulator or emulator viewer, **Show device frame** adds matching
-installed hardware artwork. **Hide device frame** returns to the default frameless
-view. Frames rotate with the display, preserve its aspect ratio and input
+A live local simulator or emulator viewer draws matching installed hardware artwork
+by default. Turn it off with **Show device frame** in the options popover (the
+sliders button); Desktop remembers the choice per device type. When no frame can be
+drawn the checkbox is disabled and says why. Frames rotate with the display, preserve its aspect ratio and input
 coordinates, and do not require Control. Apple frames use installed DeviceKit
 chrome. Android frames use the AVD's configured skin or matching hardware profile
 artwork in `/Applications/Android Studio.app`, with matching screen dimensions.
@@ -293,7 +294,8 @@ Missing artwork and unsupported skin layouts stay frameless; Android foldables,
 physical and remote devices, web pages and replay do too. For a local iPhone Duo,
 an installed Xcode with DeviceKit's V68 model and a valid observed hinge angle
 enables genuine hardware that follows the hinge and rotation, with input mapped
-to the posed active screen. Without that model, the viewer stays frameless.
+to the posed active screen. Xcode 27.0 lacks the model; Desktop uses the selected Xcode's copy, then another
+installed Xcode's. Without it, the viewer stays frameless and the popover says so.
 Desktop snapshots the departing panel before its own posture controls change the
 hinge; external handoffs can leave that panel blank or retain an older snapshot.
 Stim does not bundle the artwork.

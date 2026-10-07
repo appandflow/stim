@@ -24,16 +24,8 @@ final class DuoModelView: SCNView {
   private var quarterTurns = 0
   var activeID: UInt32
 
-  static var assetURL: URL {
-    URL(fileURLWithPath: CoreSimulator.developerDir)
-      .deletingLastPathComponent()
-      .appendingPathComponent(
-        "SharedFrameworks/DeviceKit.framework/Versions/A/PlugIns/CoreDevicePopDeviceKitExtension.devicekitplugin/Contents/Resources/V68.usdz"
-      )
-  }
-
   static func load(innerID: UInt32, coverID: UInt32, nativeTurns: [UInt32: Int], assetURL: URL? = nil) -> DuoModelView? {
-    guard let source = SCNSceneSource(url: assetURL ?? Self.assetURL, options: nil),
+    guard let url = assetURL ?? DuoModelAsset.current, let source = SCNSceneSource(url: url, options: nil),
       let scene = source.scene(options: [.animationImportPolicy: SCNSceneSource.AnimationImportPolicy.play]),
       let inner = scene.rootNode.childNode(withName: "mQHVkATpIwJRVQx", recursively: true),
       let cover = scene.rootNode.childNode(withName: "zaWsadDZpWAUDAX", recursively: true),

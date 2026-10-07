@@ -22,14 +22,19 @@ struct ClipboardOptionsView: View {
   }
 }
 
-/// The options popover of an Android emulator, which has only the clipboard section.
+/// The options popover of an Android emulator, or of a simulator without Control: the clipboard section when there is
+/// one and the device frame choice.
 struct EmulatorOptionsView: View {
-  var clipboard: ClipboardOptionsView
+  var title = "Emulator options"
+  var clipboard: ClipboardOptionsView?
+  var frame: DeviceFrameOption?
 
   var body: some View {
     VStack(alignment: .leading, spacing: Space.md) {
-      Text("Emulator options").font(.stim(.headline))
-      clipboard
+      Text(title).font(.stim(.headline))
+      if let frame { DeviceFrameToggle(frame: frame) }
+      if frame != nil, clipboard != nil { Divider() }
+      if let clipboard { clipboard }
     }
     .font(.stim(.callout))
     .controlSize(.small)
