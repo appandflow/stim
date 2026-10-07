@@ -441,7 +441,9 @@ supported. Binary video uses its existing stream format.
 
 Stim prints `Open in Stim Desktop: stim-desktop://workspace?path=...` when it
 starts work, and coding agents share the same link, so you can jump straight to
-a workspace. Settings and other details are in the
+a workspace. When no live workspace matches the exact path within 10 seconds, the
+link opens its newest archive; an optional `&archive=<id>` opens a specific archive
+belonging to that path at once. Settings and other details are in the
 [app's README](https://github.com/appandflow/stim/blob/main/apps/desktop/README.md).
 
 ## Add a build machine

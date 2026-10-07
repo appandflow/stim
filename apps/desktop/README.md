@@ -1199,10 +1199,15 @@ released. Agent and build notifications keep appearing as cards at the top right
 
 ## Workspace links
 
-`stim-desktop://workspace?path=<workspace>[&platform=<ios|android|web>][&slot=<name>]`,
+`stim-desktop://workspace?path=<workspace>[&platform=<ios|android|web>][&slot=<name>][&archive=<id>]`,
 which `stim worktree warm`, `start`, `ios`, `android` and `web` print, shows a
-card for that workspace with **Open**; the app navigates only when Open is
-clicked. A malformed link, or a path `stim status` does not list within 10
+card for a live workspace with **Open**; the app navigates to it only when Open is
+clicked. The optional `archive` ID opens that archive at once if it belongs to that
+path and no live workspace matches; an ID that does not belong to that path does not
+fall back to the newest archive. A link without `archive` waits up to 10 seconds
+for the live workspace, which a re-created worktree can bring back, and then opens
+the path's newest archive. A malformed
+link, or a path with no matching live workspace or archive within 10
 seconds, shows **Workspace not found**; if the workspace appears within the
 next minute, its card replaces that one. Another link to the same workspace
 replaces its card. With the main window closed, the link reopens it.

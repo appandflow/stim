@@ -3,6 +3,7 @@ import { lstatSync, readdirSync, realpathSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { archiveRoot } from './paths.ts';
 import { isJsonObject, readJsonObject } from './json-file.ts';
+import type { WorkspaceState } from './workspace-state.ts';
 import type { EndedAgentSession, LastBuildReport } from './status.ts';
 
 export interface ArchivedBytes {
@@ -62,6 +63,7 @@ export function readArchive(id: string): ArchivedWorkspace | null {
   if (!id || id.startsWith('.') || basename(id) !== id || id.includes('\0')) return null;
   try {
     if (!lstatSync(join(archiveRoot(), id)).isDirectory()) return null;
+    if (!lstatSync(join(archiveRoot(), id, 'archive.json')).isFile()) return null;
   } catch {
     return null;
   }
@@ -87,6 +89,18 @@ export function readArchive(id: string): ArchivedWorkspace | null {
   )
     return null;
   return record as unknown as ArchivedWorkspace;
+}
+
+export function readArchiveState(id: string): WorkspaceState | null {
+  if (!id || id.startsWith('.') || basename(id) !== id || id.includes('\0')) return null;
+  const file = join(archiveRoot(), id, 'state.json');
+  try {
+    if (!lstatSync(join(archiveRoot(), id)).isDirectory()) return null;
+    if (!lstatSync(file).isFile()) return null;
+  } catch {
+    return null;
+  }
+  return readJsonObject(file);
 }
 
 export function archivedUsage(archives: readonly ArchivedWorkspace[]): ArchivedUsage {

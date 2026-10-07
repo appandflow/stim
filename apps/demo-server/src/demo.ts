@@ -414,6 +414,8 @@ export class DemoConnection {
         };
       case 'replay.range':
         return { result: { enabled: machine.recordingEnabled, recording: false, spans: [], markers: [] } };
+      case 'archive.detail':
+        return { error: ['unknown-workspace', `Archive ${String(params.archive)} is not a Stim archive on this Mac.`] };
       case 'frames.seek':
       case 'frames.live':
         return {

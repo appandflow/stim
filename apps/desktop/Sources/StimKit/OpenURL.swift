@@ -70,16 +70,19 @@ extension StatusPayload {
 }
 
 /// A `stim-desktop://workspace?path=<path>` link, which `stim worktree warm`, `start`, `ios`, `android` and `web`
-/// print. `platform` and `slot` name the device the run targeted; `slot` is nil for the default slot.
+/// print. `platform` and `slot` name the device the run targeted; `slot` is nil for the default slot. `archive` names
+/// one archived run of `path`, opened only when no live workspace matches.
 public struct WorkspaceOpenRequest: Equatable, Sendable {
   public var path: String
   public var platform: String?
   public var slot: String?
+  public var archive: String?
 
-  public init(path: String, platform: String? = nil, slot: String? = nil) {
+  public init(path: String, platform: String? = nil, slot: String? = nil, archive: String? = nil) {
     self.path = path
     self.platform = platform
     self.slot = slot
+    self.archive = archive
   }
 }
 
@@ -99,10 +102,21 @@ public func workspaceLink(fromOpenURL url: URL) -> WorkspaceLink? {
   guard let path = value("path"), path.hasPrefix("/") else { return .malformed }
   let platform = value("platform")
   if let platform, !["ios", "android", "web"].contains(platform) { return .malformed }
-  return .workspace(WorkspaceOpenRequest(path: path, platform: platform, slot: value("slot")))
+  return .workspace(WorkspaceOpenRequest(path: path, platform: platform, slot: value("slot"), archive: value("archive")))
 }
 
 extension StatusPayload {
+  /// The archive a link opens. An explicit `archive=` id opens at once; without one the newest archive of the path
+  /// is used only once `waited` says the live workspace had its chance to appear in status.
+  public func archive(for request: WorkspaceOpenRequest, waited: Bool) -> ArchivedWorkspace? {
+    guard !environments.contains(where: { $0.path == request.path }) else { return nil }
+    if let id = request.archive {
+      return archived?.first { $0.id == id && $0.projectRoot == request.path }
+    }
+    guard waited else { return nil }
+    return ArchivedWorkspace.newest(removedFrom: request.path, in: archived ?? [])
+  }
+
   /// The workspace a link names, and the device of its platform and slot when it has one, a running one first.
   public func target(of request: WorkspaceOpenRequest) -> (workspace: Workspace, device: DeviceRef?)? {
     guard let env = environments.first(where: { $0.path == request.path }) else { return nil }

@@ -35,6 +35,7 @@ import {
   readHostedSessions,
   parseHostedOfferRequest,
   parseHostedNativeOffer,
+  parseHostedLocalDeviceCount,
   hostedAppAttempt,
   hostedMacosLogsDir,
   hostedNativeLogsDir,
@@ -125,6 +126,14 @@ const refused = (code: ProtocolError['code'], message: string): { error: Protoco
   error: { code, message },
 });
 
+function hostedDeviceExclusions(records: HostedDeviceSession[]) {
+  return records.flatMap((record) =>
+    record.platform === 'ios' && record.state !== 'stopped' && record.device
+      ? [{ platform: 'ios' as const, key: hostedDeviceId(record.device) }]
+      : [],
+  );
+}
+
 /** Owns hosted reservations, not build jobs or viewer connections. Native work runs in the packaged CLI child. */
 export class DeviceHost {
   private readonly owned = new Map<string, OwnedSession>();
@@ -206,35 +215,27 @@ export class DeviceHost {
     const request = parseHostedOfferRequest(params);
     if (!request) return refused('bad-request', 'offer needs a platform and valid optional selectors.');
     try {
-      readHostedSessions();
-      const probe = this.runWorker({
-        cwd: dirname(this.options.worker),
-        env: this.options.env,
-        input: { mode: 'offer', ...request },
-        timeoutMs: this.limits.offerMs,
-        maxOutputBytes: 32_768,
+      const max = getConcurrencyLimits({ env: this.options.env }).maxDevices;
+      const recordsBefore = readHostedSessions();
+      const result = await this.probe(client, {
+        mode: 'offer',
+        ...request,
+        ...(max > 0 ? { exclude: hostedDeviceExclusions(recordsBefore) } : {}),
       });
-      this.probes.set(probe, client);
-      let result: Awaited<WorkerRun['done']>;
-      try {
-        result = await probe.done;
-      } finally {
-        this.probes.delete(probe);
-      }
       if (this.closed || !this.options.allowed(client))
         return refused('forbidden', 'Current device-host approval is required.');
       if (!result.settled || result.notice) throw new Error(result.notice ?? 'Hosted offer worker did not settle.');
       const native = parseHostedNativeOffer(result.value);
       if (!native || native.platform !== request.platform) throw new Error('Invalid native hosted offer.');
       const records = readHostedSessions();
-      const running = records.filter((record) => record.state !== 'stopped').length;
-      const max = getConcurrencyLimits({ env: this.options.env }).maxDevices;
+      const hosted = records.filter((record) => record.state !== 'stopped').length;
+      const local =
+        max > 0 ? (native.resources.localDevices ?? { unknown: 'Host local device count is unavailable.' }) : undefined;
+      const running = hosted + (typeof local === 'number' ? local : 0);
       let declined =
         this.draining ??
         native.declined ??
         (native.resources.memoryPressure !== 'normal' ? 'Host memory pressure is unknown or elevated.' : null);
-      if (max > 0 && running >= max)
-        declined = 'All configured hosted device reservations are occupied, including unresolved sessions.';
       if (request.platform === 'android' || request.platform === 'macos') {
         try {
           if (request.platform === 'android') reserveAndroidPort(records);
@@ -243,11 +244,19 @@ export class DeviceHost {
           declined = (error as Error).message;
         }
       }
+      if (local && typeof local !== 'number') declined = local.unknown;
+      else if (max > 0 && running >= max)
+        declined = `${hosted} hosted + ${local} local of ${max} device reservations are occupied, including unresolved sessions.`;
       return {
         result: {
           ...native,
           declined,
-          capacity: { running, max, available: max > 0 ? Math.max(0, max - running) : null },
+          capacity: {
+            running,
+            max,
+            available: local && typeof local !== 'number' ? 0 : max > 0 ? Math.max(0, max - running) : null,
+            ...(local !== undefined ? { local } : {}),
+          },
         },
       };
     } catch (error) {
@@ -255,7 +264,23 @@ export class DeviceHost {
     }
   }
 
-  reserve(client: string, params: unknown): Answer {
+  private async probe(client: string, input: object): Promise<Awaited<WorkerRun['done']>> {
+    const probe = this.runWorker({
+      cwd: dirname(this.options.worker),
+      env: this.options.env,
+      input,
+      timeoutMs: this.limits.offerMs,
+      maxOutputBytes: 32_768,
+    });
+    this.probes.set(probe, client);
+    try {
+      return await probe.done;
+    } finally {
+      this.probes.delete(probe);
+    }
+  }
+
+  async reserve(client: string, params: unknown): Promise<Answer> {
     if (this.closed || !this.options.allowed(client))
       return refused('forbidden', 'Current device-host approval is required.');
     const request = parseHostedRequest(params);
@@ -266,6 +291,18 @@ export class DeviceHost {
       );
     let start: HostedDeviceSession | null = null;
     try {
+      const max = getConcurrencyLimits({ env: this.options.env }).maxDevices;
+      const recordsBefore = readHostedSessions();
+      let local: number | { unknown: string } = 0;
+      if (max > 0 && !recordsBefore.some((record) => record.client === client && record.attempt === request.attempt)) {
+        const probe = await this.probe(client, { mode: 'count', exclude: hostedDeviceExclusions(recordsBefore) });
+        if (this.closed || !this.options.allowed(client))
+          return refused('forbidden', 'Current device-host approval is required.');
+        local =
+          probe.settled && !probe.notice
+            ? (parseHostedLocalDeviceCount(probe.value) ?? { unknown: 'Host local device count is unavailable.' })
+            : { unknown: probe.notice ?? 'Host local device count worker did not settle.' };
+      }
       const result = this.transaction((records) => {
         const retry = records.find((record) => record.client === client && record.attempt === request.attempt);
         if (retry) {
@@ -283,9 +320,12 @@ export class DeviceHost {
         if (occupied)
           throw new Error(`This workspace slot already has session ${occupied.id}; attach or stop it first.`);
         if (this.draining) throw new Error(`This Mac takes no new hosted sessions: ${this.draining}.`);
-        const max = getConcurrencyLimits({ env: this.options.env }).maxDevices;
-        if (max > 0 && records.filter((record) => record.state !== 'stopped').length >= max)
-          throw new Error('All configured hosted device reservations are occupied, including unresolved sessions.');
+        if (typeof local !== 'number') throw new Error(local.unknown);
+        const hosted = records.filter((record) => record.state !== 'stopped').length;
+        if (max > 0 && hosted + local >= max)
+          throw new Error(
+            `${hosted} hosted + ${local} local of ${max} device reservations are occupied, including unresolved sessions.`,
+          );
         const record: HostedDeviceSession = {
           ...request,
           id: randomUUID(),

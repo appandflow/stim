@@ -1,6 +1,6 @@
 import { t } from '@lingui/core/macro';
 import * as Clipboard from 'expo-clipboard';
-import { Stack, useNavigation, useRouter } from 'expo-router';
+import { Redirect, Stack, useNavigation, useRouter } from 'expo-router';
 import { type RefObject, useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
@@ -52,6 +52,7 @@ import {
   worktreeUsage,
 } from '@/lib/worktree-page';
 import { workspaceAgentSessions } from '@/lib/agents';
+import { ARCHIVE_GRACE_MS, workspaceArchiveDecision } from '@/lib/archived';
 import type { ConnectionState } from '@/lib/connection';
 import { tildeHome } from '@/lib/paths';
 import { planKey } from '@/lib/plan-checks';
@@ -107,6 +108,21 @@ export function WorkspaceDetail({ path, scrollsToApp = true }: { path: string; s
   const now = useNow(30_000);
   const status = useMachineStatus(macId);
   const machine = status?.machine;
+  const [openedWithStatus] = useState(status);
+  const [wasListed, setWasListed] = useState(false);
+  if (env && !wasListed) setWasListed(true);
+  const [graceElapsed, setGraceElapsed] = useState(false);
+  useEffect(() => {
+    const timer = setTimeout(() => setGraceElapsed(true), ARCHIVE_GRACE_MS);
+    return () => clearTimeout(timer);
+  }, []);
+  const archiveDecision = workspaceArchiveDecision({
+    path,
+    archives: status?.archived ?? [],
+    wasListed,
+    refreshed: status !== openedWithStatus,
+    graceElapsed,
+  });
   const platforms: Platform[] = env
     ? supportedPlatforms(env).filter((platform): platform is Platform => platform === 'ios' || platform === 'android')
     : [];
@@ -402,7 +418,7 @@ export function WorkspaceDetail({ path, scrollsToApp = true }: { path: string; s
     </>
   );
 
-  if (!hasStatus) {
+  if (!hasStatus || (!env && archiveDecision.kind === 'wait')) {
     return (
       <>
         <ScrollView
@@ -419,6 +435,13 @@ export function WorkspaceDetail({ path, scrollsToApp = true }: { path: string; s
     );
   }
   if (!env) {
+    if (archiveDecision.kind === 'open') {
+      return (
+        <Redirect
+          href={{ pathname: '/mac/[id]/archived', params: { id: macId, archive: archiveDecision.archive.id } }}
+        />
+      );
+    }
     const displayPath = tildeHome(path, home);
     return (
       <>

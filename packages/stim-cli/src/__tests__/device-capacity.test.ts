@@ -7,6 +7,7 @@ import {
   peekDeviceSlots,
   withDeviceBootAdmission,
   deviceSlotWaitingLine,
+  countLiveOwnedDevices,
   type DeviceSlotWaitPolicy,
 } from '../engine/device-capacity.ts';
 import { reclaimIdleDevice } from '../devices/queue-reclaim.ts';
@@ -33,6 +34,16 @@ afterEach(() => {
 const empty = { sims: [], adb: makeAdbDevices(), config: makeConfig() };
 const occupied = [makeIosSim({ udid: 'holder', name: 'stim-holder', state: 'Booted' })];
 const tick = () => new Promise<void>((resolve) => setImmediate(resolve));
+
+test('local device counts exclude hosted simulator identities without excluding other booted devices', () => {
+  const inventory = {
+    ...empty,
+    sims: [...occupied, makeIosSim({ udid: 'hosted', name: 'stim-hosted', state: 'Booted' })],
+    booting: [{ platform: 'ios', key: 'hosted' }],
+  };
+  expect(countLiveOwnedDevices(inventory)).toBe(2);
+  expect(countLiveOwnedDevices(inventory, { exclude: [{ platform: 'ios', key: 'hosted' }] })).toBe(1);
+});
 
 function deferred<T>() {
   let resolve!: (value: T) => void;

@@ -85,12 +85,12 @@ export function listSegments(dir: string, closedOnly = false): RecordedSegment[]
 }
 
 /** Every device slot recorded under a workspace's recordings directory. */
-export function listRecordedDevices(recordingsDir: string): RecordedDevice[] {
+export function listRecordedDevices(recordingsDir: string, closedOnly = false): RecordedDevice[] {
   return listDir(recordingsDir).flatMap((name) => {
     const match = DEVICE.exec(name);
     if (!match) return [];
     const dir = join(recordingsDir, name);
-    return [{ platform: match[1] as RecordingPlatform, slot: match[2]!, dir, segments: listSegments(dir) }];
+    return [{ platform: match[1] as RecordingPlatform, slot: match[2]!, dir, segments: listSegments(dir, closedOnly) }];
   });
 }
 

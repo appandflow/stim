@@ -468,6 +468,21 @@ server.on('connection', (socket) => {
         },
       };
     },
+    'archive.detail'(params) {
+      const detail = shiftTimestamps(fixtures.archiveDetails[params.archive], shiftMs);
+      return {
+        result: {
+          ...detail,
+          recordings: detail.recordings.map((device) => ({
+            ...device,
+            spans:
+              device.platform === 'ios' && device.slot === 'default'
+                ? replayRange(recording).spans
+                : device.spans.map((span) => ({ start: span.start + shiftMs, end: span.end + shiftMs })),
+          })),
+        },
+      };
+    },
     'replay.range'(params) {
       if (hostedTarget(params)) return { result: { enabled: false, recording: false, spans: [], markers: [] } };
       const archived = params.archive
@@ -584,6 +599,13 @@ server.on('connection', (socket) => {
     if (method !== 'hello' && !authed) return fail(id, 'unauthorized', 'Send hello first.');
     let outcome;
     try {
+      if (method === 'archive.detail') {
+        if (legacyArchives) return fail(id, 'unknown-method', `Unknown method ${method}.`);
+        if (typeof params.archive !== 'string' || !params.archive || params.workspace !== undefined)
+          return fail(id, 'bad-request', 'Send an archive id.');
+        if (!fixtures.status.archived.some((archive) => archive.id === params.archive))
+          return fail(id, 'unknown-workspace', `Archive ${params.archive} is not a Stim archive on this Mac.`);
+      }
       if (['logs.query', 'logs.subscribe', 'replay.range', 'replay.keyframe', 'frames.subscribe'].includes(method)) {
         if (legacyArchives && !params.workspace) return fail(id, 'bad-request', 'workspace is required.');
         if (Boolean(params.workspace) === Boolean(params.archive))

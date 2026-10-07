@@ -1,10 +1,32 @@
-import { archivedDeviceRoute, archivedView, archiveError, removedByWords } from './archived';
+import {
+  archivedDeviceRoute,
+  archivedView,
+  archiveError,
+  newestArchive,
+  removedByWords,
+  workspaceArchiveDecision,
+} from './archived';
 import { RequestError } from './connection';
 import { receiveStatus } from '../../mock-server/receive-fixtures';
 import captured from '../../mock-server/fixtures/status.json';
 import type { StatusPayload } from '@/protocol/types';
 
 const archive = receiveStatus(captured.payload as StatusPayload).archived![0];
+
+test('selects the newest removed run for the exact workspace path', () => {
+  const newer = { ...archive, id: 'newer', removedAt: '2026-09-28T12:00:00Z' };
+  const other = { ...newer, id: 'other', projectRoot: '/other', removedAt: '2026-09-29T12:00:00Z' };
+  for (const archives of [
+    [archive, other, newer],
+    [newer, other, archive],
+  ]) {
+    expect(newestArchive('/app', archives)?.id).toBe('newer');
+    for (const path of ['/missing', '/ap', '/app/', '/./app']) {
+      expect(newestArchive(path, archives)).toBeNull();
+    }
+  }
+  expect(newestArchive('/app', [])).toBeNull();
+});
 
 test('names the PR state, removal reason and size without exposing command names', () => {
   const view = archivedView(
@@ -55,18 +77,11 @@ const deviceTarget = {
   archives: [archive],
 };
 
-test('opens the newest archive for the exact workspace path at the notification time', () => {
-  const newer = { ...archive, id: 'newer', removedAt: '2026-09-28T12:00:00Z' };
-  const other = { ...newer, id: 'other', projectRoot: '/other', removedAt: '2026-09-29T12:00:00Z' };
-  for (const archives of [
-    [newer, other, archive],
-    [archive, other, newer],
-  ]) {
-    expect(archivedDeviceRoute({ ...deviceTarget, archives })).toEqual({
-      pathname: '/mac/[id]/archived-replay',
-      params: { id: 'mac', archive: 'newer', platform: 'ios', at: '1234' },
-    });
-  }
+test('opens archived device replay at the notification time when provided', () => {
+  expect(archivedDeviceRoute(deviceTarget)).toEqual({
+    pathname: '/mac/[id]/archived-replay',
+    params: { id: 'mac', archive: archive.id, platform: 'ios', at: '1234' },
+  });
   expect(archivedDeviceRoute({ ...deviceTarget, at: undefined })).toEqual({
     pathname: '/mac/[id]/archived-replay',
     params: { id: 'mac', archive: archive.id, platform: 'ios' },
@@ -98,3 +113,20 @@ test.each([{ workspaceListed: true }, { hasStatus: false }, { path: '/missing' }
     expect(archivedDeviceRoute({ ...deviceTarget, ...overrides })).toBeNull();
   },
 );
+
+const waiting = { path: '/app', archives: [archive], wasListed: false, refreshed: false, graceElapsed: false };
+
+test('a workspace screen waits for the live workspace before opening an archive of the same path', () => {
+  expect(workspaceArchiveDecision(waiting)).toEqual({ kind: 'wait' });
+});
+
+test.each([{ refreshed: true }, { graceElapsed: true }, { wasListed: true }])(
+  'opens the newest archive once status refreshed, the grace passed or the live workspace is gone: %s',
+  (overrides) => {
+    expect(workspaceArchiveDecision({ ...waiting, ...overrides })).toEqual({ kind: 'open', archive });
+  },
+);
+
+test('has nothing to wait for without an archive of the path', () => {
+  expect(workspaceArchiveDecision({ ...waiting, path: '/missing' })).toEqual({ kind: 'none' });
+});

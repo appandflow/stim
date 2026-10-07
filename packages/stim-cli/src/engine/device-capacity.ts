@@ -68,6 +68,11 @@ export interface InventorySources {
   booting?: Listing<BootingDevice[]>;
 }
 
+export interface DeviceCountExclusion {
+  platform: string;
+  key?: string;
+}
+
 const LIVE_SIM_STATES = new Set(['Booted', 'Booting']);
 const ADMISSION_LOCK = 'device-admission';
 const ADMISSION_LOCK_WAIT_MS = 5 * 60_000;
@@ -157,10 +162,15 @@ function liveOwnedDeviceKeys({
   adbEmulators = [],
   config = null,
   booting = [],
-}: Partial<Omit<DeviceInventory, 'adb'>> & { adbEmulators?: EmulatorPort[] }): Set<string> {
+  exclude = [],
+}: Partial<Omit<DeviceInventory, 'adb'>> & {
+  adbEmulators?: EmulatorPort[];
+  exclude?: DeviceCountExclusion[];
+}): Set<string> {
   const keys = new Set<string>();
   for (const sim of sims) {
     if (!sim?.name?.startsWith('stim-')) continue;
+    if (exclude.some((device) => device.platform === 'ios' && device.key === sim.udid)) continue;
     if (LIVE_SIM_STATES.has(sim.state)) keys.add(deviceKey('ios', sim.udid));
   }
   const livePorts = new Set(adbEmulators.map((e) => e.consolePort));
@@ -177,12 +187,15 @@ function liveOwnedDeviceKeys({
       }
     }
   }
-  for (const device of booting) keys.add(deviceKey(device.platform, device.key));
+  for (const device of booting) {
+    if (!exclude.some((excluded) => excluded.platform === device.platform && excluded.key === device.key))
+      keys.add(deviceKey(device.platform, device.key));
+  }
   return keys;
 }
 
-function inventoryKeys(inventory: DeviceInventory): Set<string> {
-  return liveOwnedDeviceKeys({ ...inventory, adbEmulators: liveEmulatorPorts(inventory.adb) });
+function inventoryKeys(inventory: DeviceInventory, exclude: DeviceCountExclusion[] = []): Set<string> {
+  return liveOwnedDeviceKeys({ ...inventory, adbEmulators: liveEmulatorPorts(inventory.adb), exclude });
 }
 
 function atCapacityRefusal(count: number, max: number): CapacityRefusal {
@@ -238,12 +251,15 @@ function readInventory({
 
 /**
  * Owned simulators that are booted or booting, owned emulators adb lists in any state, and devices another
- * run is booting under `concurrency.maxDevices`, each counted once; when a listing fails, why the count is unknown.
+ * run is booting under `concurrency.maxDevices`, each counted once unless excluded; when a listing fails, why the count is unknown.
  */
-export function countLiveOwnedDevices(sources: InventorySources = {}): number | { unknown: string } {
+export function countLiveOwnedDevices(
+  sources: InventorySources = {},
+  { exclude = [] }: { exclude?: DeviceCountExclusion[] } = {},
+): number | { unknown: string } {
   try {
     const inventory = readInventory(sources);
-    return 'code' in inventory ? { unknown: inventory.message } : inventoryKeys(inventory).size;
+    return 'code' in inventory ? { unknown: inventory.message } : inventoryKeys(inventory, exclude).size;
   } catch (error) {
     if (isClaimRefusal(error)) return { unknown: error.message };
     throw error;

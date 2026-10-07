@@ -278,6 +278,17 @@ export function protocolJsonSchema(): JsonSchema {
         additionalProperties: false,
         properties: { files: { type: 'integer', minimum: 0 }, bytes: { type: 'integer', minimum: 0 } },
       },
+      HostedLocalDeviceCount: {
+        anyOf: [
+          { type: 'integer', minimum: 0 },
+          {
+            type: 'object',
+            required: ['unknown'],
+            additionalProperties: false,
+            properties: { unknown: { type: 'string', minLength: 1, maxLength: 4000 } },
+          },
+        ],
+      },
       HostedDeviceOffer: {
         type: 'object',
         required: ['platform', 'choice', 'resources', 'declined', 'capacity'],
@@ -296,6 +307,7 @@ export function protocolJsonSchema(): JsonSchema {
               memoryFreeBytes: { type: 'number', minimum: 0 },
               memoryPressure: { enum: ['normal', 'warning', 'critical', null] },
               workerDiskFreeBytes: { type: ['number', 'null'], minimum: 0 },
+              localDevices: { $ref: '#/$defs/HostedLocalDeviceCount' },
             },
           },
           capacity: {
@@ -306,6 +318,7 @@ export function protocolJsonSchema(): JsonSchema {
               running: { type: 'integer', minimum: 0 },
               max: { type: 'integer', minimum: 0 },
               available: { type: ['integer', 'null'], minimum: 0 },
+              local: { $ref: '#/$defs/HostedLocalDeviceCount' },
             },
           },
         },
@@ -1227,6 +1240,14 @@ export function protocolJsonSchema(): JsonSchema {
               archive: { type: 'string', minLength: 1, pattern: '^(?!.*\\.\\.)[^/\\\\\\u0000]+$' },
               platform: { enum: [...RELOAD_PLATFORMS] },
               slot: { type: 'string', minLength: 1 },
+            },
+          }),
+          request('archive.detail', {
+            type: 'object',
+            required: ['archive'],
+            additionalProperties: false,
+            properties: {
+              archive: { type: 'string', minLength: 1, pattern: '^(?!.*\\.\\.)[^/\\\\\\u0000]+$' },
             },
           }),
           request('replay.keyframe', {

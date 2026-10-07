@@ -59,6 +59,7 @@ export type HostedNativeOffer = {
     memoryPressure: 'normal' | 'warning' | 'critical' | null;
     /** Available bytes on the Stim home volume, not necessarily the Android AVD volume. */
     workerDiskFreeBytes: number | null;
+    localDevices?: number | { unknown: string };
   };
   declined: string | null;
 } & (
@@ -68,7 +69,7 @@ export type HostedNativeOffer = {
 );
 
 export type HostedDeviceOffer = HostedNativeOffer & {
-  capacity: { running: number; max: number; available: number | null };
+  capacity: { running: number; max: number; available: number | null; local?: number | { unknown: string } };
 };
 
 export interface HostedDeviceRequest extends HostedDeviceOfferRequest {
@@ -206,9 +207,18 @@ export function parseHostedOfferRequest(value: unknown): HostedDeviceOfferReques
   };
 }
 
+export function parseHostedLocalDeviceCount(value: unknown): number | { unknown: string } | null {
+  if (typeof value === 'number' && Number.isSafeInteger(value) && value >= 0) return value;
+  if (isJsonObject(value) && typeof value.unknown === 'string' && value.unknown)
+    return { unknown: value.unknown.slice(0, 4000) };
+  return null;
+}
+
 export function parseHostedNativeOffer(value: unknown): HostedNativeOffer | null {
   if (!isJsonObject(value) || !isJsonObject(value.resources)) return null;
   const { resources } = value;
+  const local = parseHostedLocalDeviceCount(resources.localDevices);
+  if (resources.localDevices !== undefined && local === null) return null;
   if (
     (value.platform !== 'ios' && value.platform !== 'android' && value.platform !== 'macos') ||
     (value.declined !== null &&
@@ -272,6 +282,7 @@ export function parseHostedNativeOffer(value: unknown): HostedNativeOffer | null
       memoryFreeBytes: resources.memoryFreeBytes,
       memoryPressure: resources.memoryPressure,
       workerDiskFreeBytes: resources.workerDiskFreeBytes,
+      ...(local !== null ? { localDevices: local } : {}),
     },
   } as HostedNativeOffer;
 }

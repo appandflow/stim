@@ -3,11 +3,15 @@ import { availableParallelism, freemem, loadavg } from 'node:os';
 import { configDir } from '@stim-cli/core';
 import type { HostedDeviceOfferRequest, HostedNativeOffer } from '@stim-cli/core/state';
 import { readHostMemoryPressure } from '../host-memory.ts';
+import { countLiveOwnedDevices, type DeviceCountExclusion } from '../engine/device-capacity.ts';
 import { selectHostedIosDevice } from './worker.ts';
 import { selectHostedAndroidDevice } from './android.ts';
 import { selectHostedMacos } from './macos.ts';
 
-export function inspectHostedDevice(request: HostedDeviceOfferRequest): HostedNativeOffer {
+export function inspectHostedDevice(
+  request: HostedDeviceOfferRequest,
+  options?: { exclude?: DeviceCountExclusion[] },
+): HostedNativeOffer {
   const cpus = availableParallelism();
   let workerDiskFreeBytes: number | null = null;
   try {
@@ -20,6 +24,7 @@ export function inspectHostedDevice(request: HostedDeviceOfferRequest): HostedNa
     memoryFreeBytes: freemem(),
     memoryPressure: readHostMemoryPressure(),
     workerDiskFreeBytes,
+    ...(options ? { localDevices: countLiveOwnedDevices({}, options) } : {}),
   };
   try {
     if (process.platform !== 'darwin') throw new Error('Hosted device sessions require a Mac.');

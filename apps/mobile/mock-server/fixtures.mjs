@@ -33,5 +33,6 @@ export function loadFixtures({ slotWaits = false } = {}) {
     plans,
     machineDetails,
     frames,
+    archiveDetails: JSON.parse(readFileSync(fixture('archive-details.json'), 'utf8')),
   };
 }

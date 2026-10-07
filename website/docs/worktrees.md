@@ -360,14 +360,21 @@ An archive has no checkout, devices, ports, or processes. Recreating the path
 starts fresh; `status --json` links the earlier archive through `replacedBy`.
 
 Paired clients with `read` can use an archive's `archived[].id` as `archive`
-in `logs.query`, `logs.subscribe`, `replay.range`, `replay.keyframe`, and
+in `archive.detail`, `logs.query`, `logs.subscribe`, `replay.range`, `replay.keyframe`, and
 `frames.subscribe` with `at` and `video: ["h264"]`. Omit `workspace`: exactly
-one selector is required, and older servers refuse archive requests with
-`bad-request`. Archived logs use the same filters as live logs; subscriptions
+one selector is required. Older servers refuse `archive.detail` with
+`unknown-method` and archive selectors on existing reads with `bad-request`.
+Archived logs use the same filters as live logs; subscriptions
 send retained records and then `logs-ended`. Replay uses closed segments and
 markers from archived logs, reports recording disabled, and supports seeking.
 Archives are served on the Mac that retains them, cannot be physical or go
 live, and do not need the original checkout or a replacement at its path.
+
+`archive.detail` takes `{ archive: id }` and returns `{ builds, recordings }`.
+`builds` has the same iOS and Android history shape as a live environment;
+`recordings` lists every retained device slot as `{ platform, slot, spans }`,
+using the replay ranges and omitting empty devices. Missing state or recordings
+returns `{}` or `[]` respectively. `status --json` keeps archive build summaries.
 
 Archives are enabled by default. Set `archive.enabled` to `false` at machine,
 workspace, repo, or committed scope to disable them. With `STIM_HOME`, they
