@@ -233,8 +233,11 @@ full toolchain and placement rules.
 
 ## Use the Desktop wizard
 
-Open **Stim > Settings > Build Machines > Add...** on your main Mac. The
-wizard has six steps:
+Open **Stim > Settings > Build Machines** on your main Mac. It lists your
+build machines, each with a status (**Approved**, **Waiting for approval**,
+**Unreachable** or **Build mismatch**), what it does and a **...** menu with
+**Details** and **Remove**. Choose **Add Build Machine...** to start the wizard,
+which finds the Macs on your tailnet itself. The wizard has six steps:
 
 1. **Pick a Mac.** Select an online macOS peer from your tailnet. Start
    Tailscale on either Mac if it is missing or stopped.

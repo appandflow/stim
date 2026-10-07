@@ -205,7 +205,7 @@ struct SetupIllustration: View {
   }
 }
 
-private struct BrandHalo: View {
+struct BrandHalo: View {
   var size: CGFloat = 150
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
   @State private var turning = false
@@ -235,7 +235,7 @@ private struct BrandHalo: View {
   }
 }
 
-private struct BrandBadge: View {
+struct BrandBadge: View {
   var systemImage: String
   var size: CGFloat = 76
 

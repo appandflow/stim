@@ -470,7 +470,11 @@ belonging to that path at once. Settings and other details are in the
 
 ## Add a build machine
 
-**Settings > Build Machines > Add…** guides you through all six steps: pick a
+**Settings > Build Machines** lists your build machines with a status
+(**Approved**, **Waiting for approval**, **Unreachable** or **Build mismatch**),
+what each does (**Builds**, **Simulators**) and a **...** menu with **Details**
+and **Remove**. It updates itself; there is no Refresh button. With none, it
+offers **Add Build Machine…**, which guides you through all six steps: pick a
 Mac on your tailnet, choose Builds and/or Hosted simulators, run setup there,
 compare tools, test a sample build, and review settings and undo commands. Run
 the generated setup command in Terminal while signed in at the build Mac and

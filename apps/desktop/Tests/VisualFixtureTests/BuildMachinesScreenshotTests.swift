@@ -1,0 +1,71 @@
+#if DEBUG
+  import AppKit
+  import StimKit
+  import SwiftUI
+  import XCTest
+
+  @testable import StimDesktop
+
+  final class BuildMachinesScreenshotTests: XCTestCase {
+    private func statuses() throws -> [BuildMachineStatus] {
+      try JSONDecoder().decode(
+        [BuildMachineStatus].self,
+        from: Data(
+          #"""
+          [{"machine":"mini","state":"approved","offloadable":true,"dnsName":"mini.tail1234.ts.net"},
+           {"machine":"studio","state":"pending","deviceId":"a1b2c3d4","dnsName":"studio.tail1234.ts.net"}]
+          """#.utf8))
+    }
+
+    @MainActor private func content(
+      entries: [String], statuses: [BuildMachineStatus]?, tailscale: Bool
+    ) -> some View {
+      BuildMachinesContent(
+        entries: entries, statuses: statuses, hosts: [BuildMachineStatus(machine: "mini", state: .approved)], updates: [:],
+        working: nil, failure: nil, tailscaleRunning: tailscale, canAsk: true, addDisabled: false, sampleExists: false,
+        updatesAutomatically: .constant(false), add: {}, ask: { _ in }, update: { _ in }, showDetails: { _ in },
+        remove: { _ in }, deleteSample: {}
+      )
+      .font(.stim(.body))
+      .foregroundStyle(Palette.text)
+      .background(Palette.background)
+      .frame(width: 780, height: 560)
+    }
+
+    @MainActor func testBuildMachinesScreenshots() throws {
+      guard let directory = ProcessInfo.processInfo.environment["STIM_BUILD_MACHINES_SHOTS"] else {
+        throw XCTSkip("Set STIM_BUILD_MACHINES_SHOTS to render build machine fixtures.")
+      }
+      _ = NSApplication.shared
+      BrandAssets.registerFonts()
+      try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
+      let fixtures: [(String, AnyView)] = [
+        ("empty", AnyView(content(entries: [], statuses: [], tailscale: true))),
+        (
+          "list", AnyView(content(entries: ["mini", "studio"], statuses: try statuses(), tailscale: true))
+        ),
+        ("tailscale-off", AnyView(content(entries: ["mini", "studio"], statuses: try statuses(), tailscale: false))),
+        ("empty-tailscale-off", AnyView(content(entries: [], statuses: [], tailscale: false))),
+      ]
+      for (name, view) in fixtures {
+        for dark in [false, true] {
+          let host = NSHostingView(
+            rootView: view.environment(\.colorScheme, dark ? .dark : .light)
+              .environment(\.locale, Locale(identifier: "en_US")))
+          host.frame = NSRect(x: 0, y: 0, width: 780, height: 560)
+          host.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+          let window = NSWindow(
+            contentRect: host.frame, styleMask: [.titled], backing: .buffered, defer: false)
+          window.appearance = host.appearance
+          window.contentView = host
+          host.layoutSubtreeIfNeeded()
+          RunLoop.current.run(until: Date().addingTimeInterval(0.3))
+          let rep = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds), "\(name) did not render")
+          host.cacheDisplay(in: host.bounds, to: rep)
+          let png = try XCTUnwrap(rep.representation(using: .png, properties: [:]))
+          try png.write(to: URL(fileURLWithPath: directory).appendingPathComponent("\(name)-\(dark ? "dark" : "light").png"))
+        }
+      }
+    }
+  }
+#endif
