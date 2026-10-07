@@ -186,7 +186,7 @@ struct BuildMachinesContent: View {
           let status = statuses?.first { $0.machine == entry }
           BuildMachineRow(
             entry: entry, status: status, checking: canAsk && (statuses == nil || (status == nil && refreshing)),
-            refreshing: canAsk && refreshing && status != nil,
+            refreshing: canAsk && refreshing && status != nil && working != entry,
             capabilities: buildMachineCapabilities(entry, hosts: hosts), working: working == entry,
             canAsk: canAsk, update: updates[entry], ask: { ask(entry) }, startUpdate: { update(entry) },
             showDetails: { showDetails(entry) }, remove: { remove(entry) })
