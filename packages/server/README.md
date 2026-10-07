@@ -153,7 +153,7 @@ line per approved capability, a `Fix` line for each skipped permission or missin
 tool, and one `To undo` line. `--verbose` prints every step with its detail, the
 install, service and route notes, and the long summary with the undo commands, as
 earlier releases did. Plain progress goes to stdout; errors use
-`stim-server: <message>` on stderr (terminal runs show the refusal on stdout only).
+`stim-server: <message>` on stderr (when stdout is a terminal, the refusal appears on stdout only).
 `--json` sends the long (verbose) progress to stderr, without the banner, and prints one final payload with `ok`,
 `label`, `port`, `route` (state, DNS name, HTTPS port), `server` (version and
 Stim build), `managed`, separate `granted` request ids and client identities,

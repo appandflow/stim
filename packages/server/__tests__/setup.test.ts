@@ -811,3 +811,19 @@ test('a skipped permission names its feature and its fix in the closing summary'
   );
   expect(text).toContain('set up, with gaps');
 });
+
+test('a color terminal shows a refusal once, on stdout, and clears its running line before the question', async () => {
+  const raw: string[] = [];
+  const f = fixture({
+    tty: true,
+    display: { tty: true, color: true, raw: (t) => void raw.push(t) },
+    confirm: async () => {
+      expect(raw.at(-1)).toBe('\r\u001b[2K');
+      return false;
+    },
+  });
+  f.records[0] = record({ pendingUntil: new Date(now + 60_000).toISOString() });
+  expect(await runSetup(args.slice(), '1.16.0', f.deps)).toBe(1);
+  expect(f.stderr.join('\n')).not.toContain('approval refused');
+  expect(f.stdout.join('\n')).toContain('build refused');
+});

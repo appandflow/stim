@@ -94,7 +94,7 @@ export class SetupPrinter {
         this.clear();
         this.display.raw(`${this.mark('running')} ${step.running}`);
         this.transient = true;
-      } else if (WAITING.has(step.id)) {
+      } else if (WAITING.has(step.id) || this.display.tty) {
         this.line(`${this.mark('running')} ${step.running}`);
       }
       return;

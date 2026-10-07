@@ -53,7 +53,7 @@ test('a terminal without color prints no escape codes and no in-place line', () 
   p.step({ id: 'host', state: 'running', title: 'Stim Host', running: 'Installing Stim Host' });
   p.step({ id: 'host', state: 'failed', title: 'Stim Host', text: 'Stim Host failed' });
   expect(raw).toEqual([]);
-  expect(out).toEqual(['[failed] Stim Host failed']);
+  expect(out).toEqual(['[..] Installing Stim Host', '[failed] Stim Host failed']);
 });
 
 test('verbose keeps the full step lines, including running ones and fixes', () => {

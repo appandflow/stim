@@ -888,7 +888,7 @@ export async function runSetup(args: string[], version: string, deps: SetupDeps)
           if (!yes) {
             declined.add(capability);
             printer.clear();
-            deps.stderr(`stim-server: ${capability} approval refused.`);
+            if (!(concise && display.tty)) deps.stderr(`stim-server: ${capability} approval refused.`);
             step(`approve.${capability}`, 'failed', `${capability} refused`, 'No approval given.');
             continue;
           }
@@ -963,6 +963,7 @@ export async function runSetup(args: string[], version: string, deps: SetupDeps)
       );
     } catch (writeError) {
       const detail = `Could not write the setup journal: ${(writeError as Error).message}`;
+      printer.clear();
       deps.stderr(`stim-server: ${detail}`);
       output.warnings.push(detail);
     }
@@ -986,6 +987,7 @@ export async function runSetup(args: string[], version: string, deps: SetupDeps)
         const message = `Could not finish the setup journal: ${(error as Error).message}`;
         journal.steps.push({ id: 'journal', state: 'failed', title: 'Setup journal', detail: message });
         journal.exit = setupExitCode(journal);
+        printer.clear();
         deps.stderr(`stim-server: ${message}`);
         output.warnings.push(message);
       }
