@@ -34,6 +34,9 @@ if (args[0] === 'proxy' && process.env.FAKE_PROXY === 'daemon-only') {
   appendFileSync(process.env.FAKE_PIDS, daemon.pid + '\\n');
   writeFileSync(join(stateDir, 'daemon.json'), JSON.stringify({ pid: daemon.pid }));
   setInterval(() => {}, 1000);
+} else if (args[0] === 'proxy' && process.env.FAKE_PROXY === 'fail') {
+  console.error('Error (COMMAND_FAILED): Failed to start daemon');
+  process.exit(1);
 } else if (args[0] === 'proxy' && process.env.FAKE_PROXY === 'silent') {
   setInterval(() => {}, 1000);
 } else if (args[0] === 'proxy') {
@@ -662,6 +665,15 @@ describe.skipIf(process.platform === 'win32')('agent-device driver', () => {
     expect(inspectProcessIdentity(record)).toBe('gone');
     expect(readClaimSet(join(root, 'agent-device.claims')).live).toHaveLength(0);
   }, 15_000);
+
+  test('reports the proxy error when the proxy exits before it is ready', async () => {
+    install(root);
+    const driver = driverIn(root, {}, { FAKE_PROXY: 'fail' });
+    await expect(driver.start()).rejects.toThrow(
+      /exited with 1 before it was ready\. Error \(COMMAND_FAILED\): Failed to start daemon/,
+    );
+    await driver.stop();
+  });
 
   test('never signals a pid it read from a stale daemon record', async () => {
     install(root);

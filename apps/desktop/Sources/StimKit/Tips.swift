@@ -145,7 +145,7 @@ public enum Tips {
 
   /// A discovery prompt is skipped once the tip for its topic has been shown, so one nudge never comes from both.
   public static func suppressesDiscovery(_ type: DiscoveryType, lastShown: [TipTopic: Date]) -> Bool {
-    lastShown.contains { topic, _ in topic.nudgeTopic?.discoveryTypes.contains(type) == true }
+    type != .capHit && lastShown.contains { topic, _ in topic.nudgeTopic?.discoveryTypes.contains(type) == true }
   }
 
   public static func applicable(_ topic: TipTopic, inputs: TipInputs) -> Bool {
