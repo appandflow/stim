@@ -576,7 +576,7 @@ export interface AndroidDeviceState {
   idleShutdown?: DeviceIdleShutdownRecord;
 }
 
-/** The tutorial format version the installed `stim guide tutorial` writes into the tutorial app. */
+/** The tutorial format version the installed Stim writes into the tutorial app. */
 export const TUTORIAL_VERSION = 1;
 
 export interface EnvironmentState {
