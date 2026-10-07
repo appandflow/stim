@@ -259,7 +259,7 @@ public struct TutorialProgress: Sendable {
         version < TutorialSteps.supportedVersions.min()!
         ? "Restart the tutorial with the current Stim CLI" : "Update Stim Desktop to follow this tutorial"
     } else {
-      while record!.step != "done", record?.restartAfter == nil {
+      while record!.step != "done" {
         let id = record!.step
         let since = record!.stepSince ?? record!.startedAt
         let checkpoint = checkpoint(id, since: since, environment: tracked, logs: logs, input: input)

@@ -336,6 +336,25 @@ private func log(
   #expect(state("machine", in: result).state == .skipped)
 }
 
+@Test(arguments: [false, true])
+func tutorialPendingRestartStillAcceptsViewerOpenAndInput(relaunch: Bool) throws {
+  let env = try environment("04-live-clean")
+  var progress = TutorialProgress()
+  _ = progress.update(TutorialInput(environment: env, now: afterRebuild, record: saved(at: "device")))
+  progress.requestRestart(now: afterRebuild)
+  var input = TutorialInput(environment: env, now: afterRebuild.addingTimeInterval(1))
+  if relaunch {
+    input.record = try JSONDecoder().decode(TutorialRecord.self, from: JSONEncoder().encode(progress.record!))
+    progress = TutorialProgress()
+  }
+  input.viewerEvents = [.opened("tutorial-simulator")]
+  #expect(progress.update(input).currentStep == "device")
+  input.viewerEvents = [.input("tutorial-simulator")]
+  let result = progress.update(input)
+  #expect(result.currentStep == "logs")
+  #expect(state("device", in: result).state == .done)
+}
+
 @Test(arguments: ["live", "idle"])
 func tutorialRestartWaitsForTrackedTourToDisappearAndReturnWithoutPhaseSince(phase: String) throws {
   var progress = TutorialProgress()
