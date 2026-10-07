@@ -11,6 +11,7 @@ It is not published and is not part of Stim. `apps/mobile/mock-server` is the de
 - The pairing token is the Worker secret `DEMO_TOKEN`. It never expires and can pair any number of phones. A paired phone gets a device token signed with `DEMO_TOKEN` (HMAC-SHA256), so it reconnects after restarts and deploys without storage. Changing `DEMO_TOKEN` unpairs every phone. Without `DEMO_TOKEN`, every pairing is refused.
 - The pairing grants `read` and `control`. Control acknowledges every input; on the habitat-app and notes-app iOS simulators, each tap switches between two pre-rendered screens on every phone watching that device. Reload and stop answer after 0.8 seconds and change nothing.
 - Fixtures and frames are bundled into the Worker as modules (`rules` in `wrangler.jsonc`), not served as static assets, so nothing is readable without pairing.
+- Each log fixture names its workspace. Queries and subscriptions serve only that workspace's records; keep its error records consistent with `logs.errorsSinceMarker` in the status fixture.
 
 ## Develop
 
