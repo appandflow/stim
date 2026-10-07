@@ -97,6 +97,21 @@ function deviceClaims(device: Device): SessionClaim[] {
     }));
 }
 
+// agent-device writes its failure as a JSON envelope on stdout and exits non-zero, so the thrown
+// `Command failed` text carries none of its reason.
+function explainFailure(error: unknown): Error {
+  const stdout = (error as { stdout?: unknown } | null)?.stdout;
+  let failure: { message?: unknown; details?: { reason?: unknown } } | undefined;
+  try {
+    failure = typeof stdout === 'string' ? JSON.parse(stdout)?.error : undefined;
+  } catch {
+    failure = undefined;
+  }
+  if (typeof failure?.message !== 'string' || !failure.message) return error as Error;
+  const reason = typeof failure.details?.reason === 'string' ? ` (${failure.details.reason})` : '';
+  return new Error(`agent-device refused: ${failure.message}${reason}`);
+}
+
 function report(message: string): void {
   process.stderr.write(`${phaseLine('device', message)}\n`);
 }
@@ -126,14 +141,18 @@ export function closeOwnedDeviceSessions(
       const run = (args: string[]) => {
         const remaining = deadline - Date.now();
         if (remaining <= 0) throw new Error('agent-device cleanup timed out');
-        return exec.runFile(
-          'agent-device',
-          [...args, ...(dir ? ['--state-dir', dir] : []), '--json', '--daemon-transport', 'socket'],
-          {
-            timeoutMs: Math.min(5000, remaining),
-            killSignal: 'SIGKILL',
-          },
-        );
+        try {
+          return exec.runFile(
+            'agent-device',
+            [...args, ...(dir ? ['--state-dir', dir] : []), '--json', '--daemon-transport', 'socket'],
+            {
+              timeoutMs: Math.min(5000, remaining),
+              killSignal: 'SIGKILL',
+            },
+          );
+        } catch (error) {
+          throw explainFailure(error);
+        }
       };
       const list = () => parseAgentDeviceSessions(run(['session', 'list', '--session', 'stim-teardown-inventory']));
       try {
