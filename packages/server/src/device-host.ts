@@ -344,9 +344,32 @@ export class DeviceHost {
               !this.owned.has(record.id) &&
               !this.revoked.has(record.id),
           );
+        let adoption: OwnedSession | undefined;
         if (adopted) {
+          try {
+            adoption = this.acquire(adopted);
+          } catch {}
+          if (adoption) {
+            const owned = adoption;
+            try {
+              const ledger = readHostedDeviceLedger(join(deviceHostArea(adopted.id), 'home'));
+              if (
+                !ledger ||
+                !adopted.device ||
+                !ledger[request.platform === 'android' ? 'android' : 'ios'].includes(hostedDeviceId(adopted.device))
+              ) {
+                this.release(adopted.id, owned);
+                adoption = undefined;
+              }
+            } catch (error) {
+              this.release(adopted.id, owned);
+              throw error;
+            }
+          }
+        }
+        if (adopted && adoption) {
           const consolePort = request.platform === 'android' ? reserveAndroidPort(records) : undefined;
-          const owned = this.acquire(adopted);
+          const owned = adoption;
           owned.adopting = true;
           for (const key of [
             'deviceType',
@@ -1440,9 +1463,17 @@ export class DeviceHost {
   private async evictParked(): Promise<void> {
     for (const platform of ['ios', 'android'] as const) {
       const max = this.parkedMax(platform);
-      const records = readHostedSessions()
-        .filter((record) => record.platform === platform && record.state === 'stopped' && record.parked)
-        .toSorted((a, b) => a.parked!.at.localeCompare(b.parked!.at));
+      const records: HostedDeviceSession[] = [];
+      for (const record of readHostedSessions()) {
+        if (record.platform !== platform || record.state !== 'stopped' || !record.parked) continue;
+        const ledger = readHostedDeviceLedger(join(deviceHostArea(record.id), 'home'));
+        if (ledger && ledger[platform].length === 0) {
+          this.change(record.id, (current) => {
+            if (current.state === 'stopped' && current.parked?.at === record.parked?.at) delete current.parked;
+          });
+        } else records.push(record);
+      }
+      records.sort((a, b) => a.parked!.at.localeCompare(b.parked!.at));
       for (const record of records.slice(0, Math.max(0, records.length - max))) await this.retire(record);
     }
   }

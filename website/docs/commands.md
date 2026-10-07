@@ -1529,6 +1529,21 @@ there.
   stderr. Agents use it to show you what `gc --delete` would remove before they
   ask to run it.
 
+On a hosting Mac, unscoped `stim gc` also lists parked hosted iOS and Android
+devices; `stim gc --delete` deletes each through its session home's stop worker
+under a session claim. Held claims and unverified ownership keep the device,
+and an unreadable journal keeps all hosted devices. Android deletion also
+requires the AVD to be visible from this shell's Android environment; otherwise
+run gc with the server's `ANDROID_AVD_HOME`/`HOME`. Records no longer listed in
+their session ledger are already removed, skipped and excluded from `actionable`.
+`--older-than` filters by
+parked time; cache scopes omit hosted sessions. JSON adds
+`sections.parkedHostedDevices` entries with `session`, `client` (id), `platform`,
+`id` (UDID or AVD name), `name`, `parkedAt`, and
+`listed` (session-home ledger ownership, null when unreadable). Deletion results
+use `kind: "parkedHostedDevice"`. The server clears the parked marker when it
+reconciles the emptied ledger.
+
 `--json` prints one line. Each key under `sections` is one section of the text
 report, in the same order, and is always present. `stim gc --worktrees --json`
 prints, for example:
