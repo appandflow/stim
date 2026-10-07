@@ -261,7 +261,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
     key: 'devices.idleShutdownMinutes',
     type: { kind: 'number', integer: true, minimum: 0 },
     scopes: EVERY,
-    default: 0,
+    default: 30,
     description:
       'Minutes an owned simulator or emulator stays idle before the workspace supervisor shuts it down; 0 never',
   },

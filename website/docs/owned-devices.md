@@ -322,11 +322,11 @@ Stop an unneeded device with `stim stop` only in a workspace you own, then rerun
 
 A stalled agent can leave its simulator or emulator booted for hours. Set
 `devices.idleShutdownMinutes` to have the workspace's dev server supervisor
-shut its owned devices down after that many idle minutes. It is off by default
-(`0`) and can be set for the machine or for one project:
+shut its owned devices down after that many idle minutes. It is on by default
+at 30 minutes. Set it for the machine or for one project; `0` turns it off:
 
 ```bash
-stim settings set devices.idleShutdownMinutes 30 --scope machine
+stim settings set devices.idleShutdownMinutes 60 --scope machine
 ```
 
 A device counts as idle when it is booted, no tool drives it, no `stim device
@@ -349,8 +349,8 @@ shuts down the devices idle that long first.
 Agent prompt:
 
 ```text
-Turn on Stim's idle device shutdown for this project at 30 minutes with
-`stim settings set devices.idleShutdownMinutes 30 --scope workspace`, restart
+Change Stim's idle device shutdown for this project to 60 minutes with
+`stim settings set devices.idleShutdownMinutes 60 --scope workspace`, restart
 the dev server with `stim stop` and `stim start`, and confirm with
 `stim settings get devices.idleShutdownMinutes`.
 ```

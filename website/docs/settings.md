@@ -120,7 +120,7 @@ Explicit machine project/repository overrides keep their existing precedence.
 | `metro.warmupUrl.ios`         | Bundle URL `stim ios` prefetches to warm Metro                                                             |
 | `metro.warmupUrl.android`     | Bundle URL `stim android` prefetches to warm Metro                                                         |
 | `metro.idleStopMinutes`       | Minutes of no use before the dev server stops; `0` never, default 60                                       |
-| `devices.idleShutdownMinutes` | Minutes idle before an owned device shuts down; `0` never, default 0                                       |
+| `devices.idleShutdownMinutes` | Minutes idle before an owned device shuts down; `0` never, default 30                                      |
 | `web.url`                     | Page `stim web` opens; `{port:<label>}` is a named or the Metro port                                       |
 | `web.ignoreCertificateErrors` | Accept self-signed dev certificates in the owned Chrome profile                                            |
 | `web.viewport`                | Owned Chrome viewport: `desktop` (default) or `phone`                                                      |
@@ -592,7 +592,7 @@ stim settings set budget.minFreeDiskGb 40
 
 Without waiting for a budget, `devices.idleShutdownMinutes` shuts down a
 workspace's owned simulators and emulators once they have been idle that long.
-It is off by default; see
+It is on by default at 30 minutes; see
 [idle shutdown](./owned-devices.md#idle-shutdown).
 
 Try it with an agent:
