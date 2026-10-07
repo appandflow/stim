@@ -7,7 +7,7 @@ import type { GitChip } from '@/lib/workspace-view';
 import type { ArchiveDetailResult, EnvironmentState } from '@/protocol/types';
 
 export function archivedPage(archive: ArchivedWorkspace, detail: ArchiveDetailResult | null | undefined, now: number) {
-  const checkout = workspaceCheckout(archive.projectRoot);
+  const checkout = workspaceCheckout(archive.projectRoot, archive.worktree.repository);
   const merged = archive.worktree.merged === true || archive.worktree.pullRequest?.state === 'merged';
   const env: EnvironmentState = {
     path: archive.projectRoot,
@@ -20,18 +20,19 @@ export function archivedPage(archive: ArchivedWorkspace, detail: ArchiveDetailRe
       ...(archive.worktree.repository ? { repository: archive.worktree.repository } : {}),
     },
     builds: detail?.builds ?? {},
-    lastBuilds: detail
-      ? Object.fromEntries(
-          Object.entries(detail.builds).flatMap(([platform, builds]) => (builds?.[0] ? [[platform, builds[0]]] : [])),
-        )
-      : archive.builds.last
-        ? { [archive.builds.last.platform]: archive.builds.last }
-        : {},
+    lastBuilds: {
+      ...(archive.builds.last ? { [archive.builds.last.platform]: archive.builds.last } : {}),
+      ...Object.fromEntries(
+        Object.entries(detail?.builds ?? {}).flatMap(([platform, builds]) =>
+          builds?.[0] ? [[platform, builds[0]]] : [],
+        ),
+      ),
+    },
     endedAgents: archive.agents,
     logs: { dir: '', errorsSinceMarker: archive.builds.lastErrorCount },
   };
   const expired = (kind: keyof ArchivedWorkspace['expires']) =>
-    archive.bytes[kind] === 0 || (archive.expires[kind] !== null && Date.parse(archive.expires[kind]) <= now);
+    archive.expires[kind] !== null && Date.parse(archive.expires[kind]) <= now;
   const retention = (['logs', 'recordings', 'agentActions', 'record'] as const).map((kind) => ({
     kind,
     bytes: archive.bytes[kind],

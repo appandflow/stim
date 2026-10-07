@@ -37,22 +37,32 @@ test('adapts retained archive facts for shared cards without live state or resou
   expect(page.bytes).toEqual({ logs: 128000, recordings: 12000000, agentActions: 4000, record: 2048, total: 12134048 });
 });
 
-test.each(['logs', 'recordings'] as const)(
-  'expires %s on zero retained bytes or an elapsed deadline, including equality',
+test.each(['logs', 'recordings', 'agentActions', 'record'] as const)(
+  'expires %s only at a non-null elapsed deadline, including equality',
   (kind) => {
-    const flag = kind === 'logs' ? 'logsExpired' : 'recordingsExpired';
-    expect(archivedPage({ ...archive, bytes: { ...archive.bytes, [kind]: 0 } }, detail, now)[flag]).toBe(true);
+    const expired = (page: ReturnType<typeof archivedPage>) =>
+      page.retention.find((part) => part.kind === kind)!.expired;
     expect(
-      archivedPage({ ...archive, expires: { ...archive.expires, [kind]: new Date(now).toISOString() } }, detail, now)[
-        flag
-      ],
+      expired(
+        archivedPage(
+          { ...archive, bytes: { ...archive.bytes, [kind]: 0 }, expires: { ...archive.expires, [kind]: null } },
+          detail,
+          now,
+        ),
+      ),
+    ).toBe(false);
+    expect(expired(archivedPage({ ...archive, bytes: { ...archive.bytes, [kind]: 0 } }, detail, now))).toBe(false);
+    expect(
+      expired(
+        archivedPage({ ...archive, expires: { ...archive.expires, [kind]: new Date(now).toISOString() } }, detail, now),
+      ),
     ).toBe(true);
     const soon = archivedPage(
       { ...archive, expires: { ...archive.expires, [kind]: new Date(now + 3600000).toISOString() } },
       detail,
       now,
     );
-    expect(soon[flag]).toBe(false);
+    expect(expired(soon)).toBe(false);
     expect(soon.retention.find((part) => part.kind === kind)?.soon).toBe(true);
     expect(
       archivedPage(
@@ -101,18 +111,18 @@ test.each(['open', 'draft', 'closed', 'future-state'])(
   },
 );
 
-test('falls back to the containing checkout folder when gc lost the branch and repository', () => {
+test('uses the project folder without guessing a checkout from an apps directory', () => {
   const page = archivedPage(
     {
       ...archive,
       project: 'mobile',
-      projectRoot: '/deleted/checkout/apps/mobile',
+      projectRoot: '/Users/x/apps/myapp',
       worktree: { repository: null, branch: null, head: null, subject: null, merged: null, pullRequest: null },
     },
     null,
     now,
   );
-  expect(page).toMatchObject({ title: 'checkout', project: 'checkout', inCheckout: 'apps/mobile', git: null });
+  expect(page).toMatchObject({ title: 'myapp', project: 'myapp', inCheckout: null, git: null });
 });
 
 test('keeps the last-build summary and total when an older server has no archive detail', () => {
@@ -172,4 +182,40 @@ test('groups archived apps like live apps by repository and checkout while keepi
       { inCheckout: 'apps/mobile', project: 'stim' },
     ],
   });
+});
+
+test('uses a known repository for a nested app without a marked worktree', () => {
+  const page = archivedPage(
+    {
+      ...archive,
+      projectRoot: '/Users/x/apps/myapp',
+      worktree: { ...archive.worktree, repository: '/Users/x/apps', branch: null },
+    },
+    null,
+    now,
+  );
+  expect(page).toMatchObject({ title: 'apps', project: 'apps', inCheckout: 'myapp' });
+});
+
+test.each([{}, { ios: [] }, { android: detail.builds.android }])(
+  'keeps the saved last build when detail lacks its platform history: %s',
+  (builds) => {
+    const page = archivedPage(archive, { ...detail, builds }, now);
+    expect(page.env.lastBuilds?.ios).toEqual(archive.builds.last);
+    expect(page.env.lastBuilds?.android).toEqual(builds.android?.[0]);
+  },
+);
+
+test('separates removal events for a recreated checkout and keeps their own branch titles', () => {
+  const newer = {
+    ...archive,
+    id: 'newer',
+    removedAt: new Date(Date.parse(archive.removedAt) + 1000).toISOString(),
+    worktree: { ...archive.worktree, branch: 'new-branch' },
+  };
+  const entries = mergeArchives([
+    { id: 'mac', name: 'Mac', status: { ...captured.payload, archived: [archive, newer] } as StatusPayload },
+  ]);
+  const sections = homeSections(entries);
+  expect(sections[0].data.map((group) => group.title)).toEqual(['new-branch', archive.worktree.branch]);
 });

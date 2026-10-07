@@ -77,8 +77,8 @@ function markedCheckout(path: string): string | null {
   return null;
 }
 
-export function workspaceCheckout(path: string): string {
-  return markedCheckout(path) ?? (path.includes('/apps/') ? path.slice(0, path.lastIndexOf('/apps/')) : path);
+export function workspaceCheckout(path: string, repository?: string | null): string {
+  return markedCheckout(path) ?? (repository && path.startsWith(`${repository}/`) ? repository : path);
 }
 
 /** Where the workspace sits inside its checkout, such as `apps/tlon-mobile`; null at the checkout root. */

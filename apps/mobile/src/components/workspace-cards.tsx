@@ -277,7 +277,7 @@ export function LogsCard({
     >
       {archive ? (
         <Text variant={VALUE} tone="tertiary">
-          {archive.logsExpired ? t`Expired` : t`Saved logs`}
+          {archive.logsExpired ? t`Expired` : archive.bytes.logs ? t`Saved logs` : t`No logs yet`}
         </Text>
       ) : null}
       {errors === null && !metro && !archive ? (

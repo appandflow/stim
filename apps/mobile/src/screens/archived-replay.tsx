@@ -36,14 +36,14 @@ export function ArchivedReplay({
   const entry = useStatus()?.archived?.find((entry) => entry.id === archive);
   const now = useNow(30_000);
   const expired = entry ? archivedPage(entry, null, now).recordingsExpired : false;
-  const range = useReplayRangeState({ archive, platform, slot }, focused && foreground && !expired);
+  const range = useReplayRangeState({ archive, platform, slot }, focused && foreground);
   const title = t`Archived replay`;
   return (
     <SafeAreaView edges={['bottom', 'left', 'right']} style={styles.replay}>
       <Stack.Screen options={{ title }} />
-      {expired ? <Text tone="tertiary">{t`Expired`}</Text> : null}
-      {!expired && range.error ? <Text tone="secondary">{archiveError(range.error, 'replay')}</Text> : null}
-      {expired ? null : range.data?.spans.length ? (
+      {expired && range.data?.spans.length ? <Text tone="tertiary">{t`Expired`}</Text> : null}
+      {range.error ? <Text tone="secondary">{archiveError(range.error, 'replay')}</Text> : null}
+      {range.data?.spans.length ? (
         <RecordedDevice archive={archive} slot={slot} platform={platform} range={range.data} openAt={openAt} />
       ) : !range.error ? (
         <Text tone="secondary">{range.data ? t`No recording available.` : t`Loading...`}</Text>

@@ -66,7 +66,9 @@ function ArchiveResources({ archive: id }: { archive: string }) {
               key={part.kind}
               title={labels[part.kind]}
               value={formatSize(part.bytes)}
-              subtitle={part.expired ? t`Expired` : until ? t`Kept until ${until}` : t`Retained`}
+              subtitle={
+                part.expired ? t`Expired` : until ? t`Kept until ${until}` : part.bytes ? t`Retained` : undefined
+              }
             />
           );
         })}

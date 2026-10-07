@@ -220,3 +220,36 @@ it('renders archives in the shared row with app labels, removal facts and monoto
   await fireEvent.press(screen.getByText('feat/archived-workspaces'));
   expect(open).toHaveBeenCalledWith(items[0], false);
 });
+
+it('does not label never-kept archive logs or recordings as expired content', async () => {
+  const archive = fixture.payload.archived[0];
+  const items = mergeArchives([
+    {
+      id: 'mac',
+      name: 'Mac',
+      status: {
+        ...fixture.payload,
+        archived: [
+          {
+            ...archive,
+            bytes: { ...archive.bytes, logs: 0, recordings: 0 },
+            expires: { ...archive.expires, logs: null, recordings: null },
+          },
+        ],
+      } as StatusPayload,
+    },
+  ]);
+  const workspace = homeSections(items)[0].data[0];
+  if (!('apps' in workspace)) throw new Error('Expected archived checkout');
+  const screen = await render(
+    <WorkspaceGroupRow
+      workspace={workspace}
+      now={Date.parse(archive.removedAt) + 86400000}
+      folder
+      showsMachine
+      onOpen={() => {}}
+    />,
+  );
+  expect(screen.queryByText('Expired content')).toBeNull();
+  expect(screen.queryByText('Expires soon')).toBeNull();
+});
