@@ -1,5 +1,6 @@
 import type {
   BuildPlanPayload,
+  BuildHistoryEntry,
   HostedDeviceRequest,
   HostedDeviceOfferRequest,
   HostedDeviceOffer,
@@ -86,6 +87,7 @@ export const METHODS = [
   'frames.seek',
   'frames.live',
   'replay.range',
+  'archive.detail',
   'replay.keyframe',
   'recording.set',
   'build.plan',
@@ -470,6 +472,17 @@ export interface ReplayRange {
   recording: boolean;
   spans: ReplaySpan[];
   markers: ReplayMarker[];
+}
+
+/** An archived[].id from status; the original workspace is not required. */
+export interface ArchiveDetailParams {
+  archive: string;
+}
+
+/** Live-shaped build history and closed recording spans for every retained archive device slot. */
+export interface ArchiveDetailResult {
+  builds: Partial<Record<'ios' | 'android', BuildHistoryEntry[]>>;
+  recordings: { platform: 'ios' | 'android' | 'web'; slot: string; spans: ReplaySpan[] }[];
 }
 
 /** A device slot, as {@link ReplayTarget} names it, and a time in epoch milliseconds on the Mac's clock. */
@@ -1247,6 +1260,7 @@ export interface Methods {
   'frames.seek': { params: FramesSeekParams; result: FramesSeekResult };
   'frames.live': { params: FramesLiveParams; result: Record<string, never> };
   'replay.range': { params: ReplayTarget; result: ReplayRange };
+  'archive.detail': { params: ArchiveDetailParams; result: ArchiveDetailResult };
   'replay.keyframe': { params: ReplayKeyframeParams; result: ReplayKeyframe };
   'recording.set': { params: RecordingSetParams; result: RecordingSetResult };
   'build.plan': { params: BuildPlanParams; result: BuildPlanResult };

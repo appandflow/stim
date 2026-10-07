@@ -382,6 +382,26 @@ export const resultEnumCases: [Method, unknown, string, unknown][] = [
   ]),
   ['frames.subscribe', { subscription: 's', video: 'h264' }, 'video', 'future-kind'],
   [
+    'archive.detail',
+    {
+      builds: {
+        ios: [
+          {
+            ...last,
+            result: 'succeeded',
+            slot: 'default',
+            configuration: 'Debug',
+            cacheKey: 'abc',
+            phases: { compile: 1000 },
+          },
+        ],
+      },
+      recordings: [{ platform: 'ios', slot: 'default', spans: [{ start: 1, end: 2 }] }],
+    },
+    'recordings.0.platform',
+    'future-kind',
+  ],
+  [
     'replay.range',
     {
       enabled: true,

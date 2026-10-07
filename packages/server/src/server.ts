@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, watch, type FSWatcher } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, watch, type FSWatcher } from 'node:fs';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { isIP, type AddressInfo, type Socket } from 'node:net';
 import { dirname, join } from 'node:path';
@@ -10,11 +10,14 @@ import {
   archiveDir,
   deviceHostArea,
   readArchive,
+  readArchiveState,
+  readBuildHistory,
   readSetupJournal,
   isJournalExpired,
   queryJsonLogs,
   isJsonObject,
   listSegments,
+  listRecordedDevices,
   loadConfig,
   readMacosRecord,
   readWorkspaceState,
@@ -87,6 +90,7 @@ import {
   REPLAY_RATES,
   SERVER_UPDATE_METHODS,
   type BuildPlanResult,
+  type ArchiveDetailResult,
   type DeviceFrameArtwork,
   type MacosWindow,
   type FramesSeekParams,
@@ -521,6 +525,14 @@ function pruneSetup(): void {
     pruneSetupJournals();
   } catch (error) {
     console.error(`stim-server: could not prune setup journals: ${(error as Error).message}`);
+  }
+}
+
+function isLink(path: string): boolean {
+  try {
+    return lstatSync(path).isSymbolicLink();
+  } catch {
+    return true;
   }
 }
 
@@ -1794,6 +1806,27 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       });
     }
 
+    function archiveDetail(id: RequestId, params: unknown): void {
+      const target = isJsonObject(params) ? params : {};
+      if (target.archive === undefined) return error(id, 'bad-request', 'archive.detail needs params.archive.');
+      const targetError = readTargetError(target);
+      if (targetError) return error(id, 'bad-request', targetError);
+      const archive = target.archive as string;
+      const dir = readDir(id, { archive });
+      if (!dir) return;
+      const result: ArchiveDetailResult = {
+        builds: readBuildHistory(readArchiveState(archive)),
+        recordings: listRecordedDevices(join(dir, 'recordings'), true)
+          .filter((recorded) => !isLink(recorded.dir))
+          .flatMap((recorded) => {
+            const spans = recordedSpans(recorded.segments.filter((segment) => !isLink(segment.file)));
+            return spans.length ? [{ platform: recorded.platform, slot: recorded.slot, spans }] : [];
+          })
+          .toSorted((a, b) => a.platform.localeCompare(b.platform) || a.slot.localeCompare(b.slot)),
+      };
+      send(socket, { id, result });
+    }
+
     function replayRange(id: RequestId, params: unknown): void {
       const target = isJsonObject(params) ? params : {};
       const { platform, slot } = target;
@@ -2277,19 +2310,16 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       if (desktop) return desktop;
       if (isJsonObject(message.params) && typeof message.params.archive === 'string') {
         const params = message.params;
-        const read =
-          message.method === 'logs.subscribe'
-            ? () => subscribeLogs(id, params)
-            : message.method === 'logs.query'
-              ? () => queryLogs(id, params)
-              : message.method === 'frames.subscribe'
-                ? () => subscribeFrames(id, params)
-                : message.method === 'replay.range'
-                  ? () => replayRange(id, params)
-                  : message.method === 'replay.keyframe'
-                    ? () => replayKeyframe(id, params)
-                    : null;
-        if (read) return archiveRead(id, read);
+        const reads: Partial<Record<string, (id: RequestId, params: unknown) => void | Promise<void>>> = {
+          'logs.subscribe': subscribeLogs,
+          'logs.query': queryLogs,
+          'frames.subscribe': subscribeFrames,
+          'replay.range': replayRange,
+          'archive.detail': archiveDetail,
+          'replay.keyframe': replayKeyframe,
+        };
+        const read = reads[message.method];
+        if (read) return archiveRead(id, () => read(id, params));
       }
       if (message.method === 'status.subscribe') return subscribeStatus(id);
       if (message.method === 'logs.subscribe') return subscribeLogs(id, message.params);
@@ -2327,6 +2357,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         return send(socket, { id, result: { at: shown } });
       }
       if (message.method === 'replay.range') return replayRange(id, message.params);
+      if (message.method === 'archive.detail') return archiveDetail(id, message.params);
       if (message.method === 'replay.keyframe') {
         void replayKeyframe(id, message.params);
         return;

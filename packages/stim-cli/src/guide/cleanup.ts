@@ -140,9 +140,15 @@ to stats.json.corrupt-<unix ms> and starts a new one.`,
   Archives have no checkout, devices, ports or running processes. A recreated
   path starts fresh; status links its earlier archives with replacedBy.
   Paired clients with read can select archived[].id with archive instead of
-  workspace for server log queries and replay. Archived log subscriptions send
-  retained records, then logs-ended. Archived frame subscriptions need at and
-  cannot be physical or go live. Replay ranges report recording disabled.
+  workspace for server log queries and replay.
+  archive.detail takes { archive: id } and returns { builds, recordings }:
+  live-shaped iOS/Android build history and { platform, slot, spans } for every
+  retained recording slot with spans. Missing state gives builds {}; no footage
+  gives recordings []. status keeps archive build summaries.
+  Older servers refuse archive.detail with unknown-method.
+  Archived log subscriptions send retained records, then logs-ended.
+  Archived frame subscriptions need at and cannot be physical or go live.
+  Replay ranges report recording disabled.
   Reads stay on this Mac.
   An updated server is required; older servers refuse with bad-request when
   workspace is omitted. There is no CLI archive log flag.

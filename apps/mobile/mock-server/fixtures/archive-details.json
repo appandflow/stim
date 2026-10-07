@@ -1,0 +1,135 @@
+{
+  "stim--archive-1": {
+    "builds": {
+      "ios": [
+        {
+          "platform": "ios",
+          "status": "ok",
+          "cacheHit": "local",
+          "cacheSkipped": false,
+          "durationMs": 42000,
+          "fingerprint": "mock-native",
+          "startedAt": "2026-09-25T02:22:27.012Z",
+          "finishedAt": "2026-09-25T02:23:09.012Z",
+          "result": "succeeded",
+          "slot": "default",
+          "configuration": "Debug",
+          "cacheKey": "mock-native",
+          "phases": {
+            "prepare": 2000,
+            "cache-lookup": 1000,
+            "install": 29000,
+            "launch": 10000
+          }
+        },
+        {
+          "platform": "ios",
+          "status": "failed",
+          "cacheHit": false,
+          "cacheSkipped": false,
+          "durationMs": 90000,
+          "fingerprint": "mock-native",
+          "startedAt": "2026-09-25T02:17:00.000Z",
+          "finishedAt": "2026-09-25T02:18:30.000Z",
+          "result": "failed",
+          "slot": "default",
+          "configuration": "Debug",
+          "cacheKey": "mock-native",
+          "phases": {
+            "prepare": 2000,
+            "cache-lookup": 1000,
+            "compile": 87000
+          },
+          "errorCode": "STIM_BUILD_FAILED",
+          "diagnostics": [
+            {
+              "file": "ios/App/AppDelegate.swift",
+              "line": 24,
+              "column": 5,
+              "message": "Cannot find 'AppDelegateFactory' in scope"
+            }
+          ]
+        }
+      ],
+      "android": [
+        {
+          "platform": "android",
+          "status": "ok",
+          "cacheHit": false,
+          "cacheSkipped": false,
+          "durationMs": 150000,
+          "fingerprint": "mock-native",
+          "startedAt": "2026-09-25T02:19:00.000Z",
+          "finishedAt": "2026-09-25T02:21:30.000Z",
+          "result": "succeeded",
+          "slot": "tablet",
+          "configuration": "debug",
+          "cacheKey": "mock-native",
+          "phases": {
+            "prepare": 1000,
+            "cache-lookup": 1000,
+            "compile": 120000,
+            "install": 20000,
+            "launch": 8000
+          }
+        }
+      ]
+    },
+    "recordings": [
+      {
+        "platform": "ios",
+        "slot": "default",
+        "spans": [
+          {
+            "start": 1790302000000,
+            "end": 1790302060000
+          }
+        ]
+      },
+      {
+        "platform": "android",
+        "slot": "tablet",
+        "spans": [
+          {
+            "start": 1790302000000,
+            "end": 1790302030000
+          },
+          {
+            "start": 1790302050000,
+            "end": 1790302060000
+          }
+        ]
+      }
+    ]
+  },
+  "tlon-apps--archive-2": {
+    "builds": {
+      "ios": [
+        {
+          "platform": "ios",
+          "status": "ok",
+          "cacheHit": false,
+          "cacheSkipped": false,
+          "durationMs": 35000,
+          "fingerprint": "mock-native",
+          "startedAt": "2026-09-24T14:22:34.012Z",
+          "finishedAt": "2026-09-24T14:23:09.012Z",
+          "result": "succeeded",
+          "slot": "default",
+          "configuration": "Debug",
+          "cacheKey": "mock-native",
+          "phases": {
+            "compile": 30000,
+            "install": 4000,
+            "launch": 1000
+          }
+        }
+      ]
+    },
+    "recordings": []
+  },
+  "stim--archive-3": {
+    "builds": {},
+    "recordings": []
+  }
+}

@@ -22,6 +22,9 @@ status adds archived (newest first, bounded by archive.maxCount) and
 archivedUsage { count, bytes, byKind: { logs, recordings, agentActions, record } }.
 Each archive carries id, projectRoot, project, workspace, worktree facts,
 removedAt, removedBy, lastUsedAt, builds, agents, bytes, expires and version.
+Archive builds is a summary { count, last, lastErrorCount }. With read access,
+server archive.detail { archive: id } returns live-shaped builds and recordings
+{ platform, slot, spans } for each retained recording slot with footage.
 replacedBy is the live environment path when its canonical root matches.
 Older producers may omit both fields.
 Plain status prints Archived: <count> workspace(s), <size> when count is positive;
