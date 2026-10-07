@@ -388,7 +388,10 @@ no listed workspace. The test verifies an offloaded build and launch, then
 forces a local build without the build cache to prove this Mac can still build.
 Live output, phase timings and a speed comparison show the results. The sample
 workspace stops when the test ends or the sheet closes. **Run again** reuses the
-folder; **Delete sample app** in Build Machines stops and removes it after confirmation.
+folder; **Delete sample app** in Build Machines stops it and removes its Stim workspace and sample folder after confirmation, and
+releases its owned simulator (parked for reuse within the parked-simulator limit,
+deleted otherwise). If cleanup fails,
+the folder stays for a retry and Desktop shows the failure.
 
 Done keeps the approved entries and selects Auto / Always / Never. When the
 wizard turned offloading off, a passed test defaults to Auto; a failed or skipped

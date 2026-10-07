@@ -986,7 +986,10 @@ describe the offloaded run, and the local run shows its total time. The optional
 hosted-simulator check is not part of this wizard. Desktop
 stops the sample workspace when the test ends or the sheet closes; its folder
 stays for **Run again**. **Delete sample app** in Build Machines stops it and
-removes only that folder after confirmation.
+removes its Stim workspace and sample folder after confirmation, and
+releases its owned simulator (parked for reuse within the parked-simulator limit,
+deleted otherwise).
+If cleanup fails, the folder stays for a retry and Desktop shows the failure.
 
 Cancel removes entries added by the wizard, restores `offload.mode` only if the
 wizard changed it, and runs doctor to forget the pairing. It shows revoke
