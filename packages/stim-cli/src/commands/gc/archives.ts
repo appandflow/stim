@@ -2,14 +2,17 @@ import chalk from 'chalk';
 import { readArchives, type ArchivedWorkspace } from '@stim-cli/core/state';
 import { deleteSelectedArchives, sweepArchiveStaging, type ArchiveStaging } from '../../archive.ts';
 import { formatBytes } from '../../fs-util.ts';
+import { parseArchiveSelector } from './archive-selector.ts';
 import { recordGcResult } from './results.ts';
+
+import type { ArchiveKind } from './archive-selector.ts';
 
 export interface ArchiveSelection {
   records: { id: string; kinds: string[]; bytes: number; expires: ArchivedWorkspace['expires']; willDelete: boolean }[];
   staging: ArchiveStaging[];
   unknownId: string | null;
   knownIds: string[];
-  kind: 'logs' | 'recordings' | 'agentActions' | null;
+  kind: ArchiveKind | null;
 }
 
 function stagingOrNone(): ArchiveStaging[] {
@@ -21,17 +24,8 @@ function stagingOrNone(): ArchiveStaging[] {
 }
 
 export function collectArchives(scope: string, olderThan: number | null, now: number): ArchiveSelection {
-  const wanted = scope.trim().toLowerCase();
   const records = readArchives();
-  const id = wanted.startsWith('archived:') ? scope.trim().slice('archived:'.length) : null;
-  const kind =
-    wanted === 'archived-logs'
-      ? 'logs'
-      : wanted === 'archived-recordings'
-        ? 'recordings'
-        : wanted === 'archived-agent'
-          ? 'agentActions'
-          : null;
+  const { kind, id } = parseArchiveSelector(scope) ?? { kind: null, id: null };
   const match = id !== null ? records.find((record) => record.id.toLowerCase() === id.toLowerCase()) : null;
   return {
     records: records
