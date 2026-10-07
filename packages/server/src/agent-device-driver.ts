@@ -36,8 +36,10 @@ import {
   agentRoute,
   newAgentToken,
   type HostedAgentApp,
+  type HostedAgentDevice,
   type HostedAgentDriver,
 } from './agent-driver.ts';
+import { adbPath } from './frame-helper.ts';
 import { listProcesses } from './processes.ts';
 
 const UNSCOPED =
@@ -80,7 +82,7 @@ const POLICY = {
   },
 };
 
-const IOS_COMMANDS = [
+const DEVICE_COMMANDS = [
   ...POLICY.commands.allow,
   'devices',
   'diff',
@@ -93,22 +95,30 @@ const IOS_COMMANDS = [
   'alert',
 ];
 
-function iosPolicy(udid: string) {
+function deviceScope(device: HostedAgentDevice) {
+  const platform = device.udid === undefined ? 'android' : 'ios';
+  const id = device.udid ?? device.serial!;
+  return { platform, id, selector: platform === 'ios' ? 'udid' : 'serial', backend: `${platform}-instance` as const };
+}
+
+function devicePolicy(device: HostedAgentDevice) {
+  const { selector, id } = deviceScope(device);
   return {
     version: 1,
-    devices: { allow: [{ udid }] },
-    commands: { allow: IOS_COMMANDS },
+    devices: { allow: [{ [selector]: id }] },
+    commands: { allow: DEVICE_COMMANDS },
     capabilities: { deny: ['device-shutdown'] },
   };
 }
 
 // agent-device ADR 0029 stores the digest of normalized policy fields in daemon.json.
-function iosPolicyDigest(udid: string): string {
+function devicePolicyDigest(device: HostedAgentDevice): string {
+  const { id } = deviceScope(device);
   return createHash('sha256')
     .update(
       JSON.stringify({
-        devices: [udid],
-        commands: { mode: 'allow', names: IOS_COMMANDS.toSorted() },
+        devices: [id],
+        commands: { mode: 'allow', names: DEVICE_COMMANDS.toSorted() },
         capabilities: ['device-shutdown'],
       }),
     )
@@ -160,7 +170,7 @@ export interface AgentDeviceDriverOptions {
   stateDir: string;
   /** Ownership claim root held for as long as the daemon runs. */
   claimRoot: string;
-  ios?: { session: string; udid: string };
+  device?: HostedAgentDevice;
   startTimeoutMs?: number;
   stopTimeoutMs?: number;
   watchMs?: number;
@@ -208,14 +218,14 @@ const LISTENING = /Proxy listening at (http:\/\/127\.0\.0\.1:\d+)/;
 
 export class AgentDeviceDriver implements HostedAgentDriver {
   readonly name = 'agent-device';
-  private readonly options: Required<Omit<AgentDeviceDriverOptions, 'env' | 'ios'>> &
-    Pick<AgentDeviceDriverOptions, 'env' | 'ios'>;
+  private readonly options: Required<Omit<AgentDeviceDriverOptions, 'env' | 'device'>> &
+    Pick<AgentDeviceDriverOptions, 'env' | 'device'>;
   private running: Running | null = null;
   private claim: ClaimHandle | null = null;
   private starting: Promise<void> | null = null;
   private stopping = false;
   private daemonRecord: ProcessRecord | null = null;
-  private iosProxy: { child: ChildProcess; record: ProcessRecord | null } | null = null;
+  private deviceProxy: { child: ChildProcess; record: ProcessRecord | null } | null = null;
   private listener: (() => void) | null = null;
   private readonly leases = new Map<string, Lease>();
   private readonly released = new Set<string>();
@@ -253,6 +263,24 @@ export class AgentDeviceDriver implements HostedAgentDriver {
       }
     }
     const invocation = resolveAgentDevice(this.options.env);
+    if (this.options.device?.serial) {
+      const version = await new Promise<string>((resolve) => {
+        execFile(
+          invocation.command,
+          [...invocation.args, '--version'],
+          { env: this.options.env, timeout: this.options.startTimeoutMs },
+          (error, stdout) => resolve(error ? '' : stdout.trim()),
+        );
+      });
+      const match = /^(\d+)\.(\d+)\.(\d+)$/.exec(version);
+      if (
+        !match ||
+        !(Number(match[1]) > 0 || Number(match[2]) > 21 || (Number(match[2]) === 21 && Number(match[3]) >= 22))
+      )
+        throw new AgentDriverUnavailable(
+          'Agent control requires agent-device 0.21.22 or later with serial daemon policy on the hosting Mac.',
+        );
+    }
     mkdirSync(this.options.stateDir, { recursive: true, mode: 0o700 });
     chmodSync(this.options.stateDir, 0o700);
     const attempt = tryAcquireClaim({ root: this.options.claimRoot, mode: 'exclusive', label: 'agent-device daemon' });
@@ -264,7 +292,7 @@ export class AgentDeviceDriver implements HostedAgentDriver {
     this.stopping = false;
     rmSync(join(this.options.stateDir, 'daemon.json'), { force: true });
     const policy = join(this.options.stateDir, 'policy.json');
-    writeFileSync(policy, `${JSON.stringify(this.options.ios ? iosPolicy(this.options.ios.udid) : POLICY)}\n`, {
+    writeFileSync(policy, `${JSON.stringify(this.options.device ? devicePolicy(this.options.device) : POLICY)}\n`, {
       mode: 0o600,
     });
     markClaimChildPending(claim);
@@ -282,25 +310,28 @@ export class AgentDeviceDriver implements HostedAgentDriver {
             AGENT_DEVICE_DAEMON_POLICY: policy,
             AGENT_DEVICE_MACOS_APP_BACKEND: 'native',
             AGENT_DEVICE_NO_UPDATE_NOTIFIER: '1',
-            ...(this.options.ios ? { AGENT_DEVICE_CLAIMS_DIR: join(this.options.stateDir, 'device-claims') } : {}),
+            ...(this.options.device?.serial ? { AGENT_DEVICE_ANDROID_SNAPSHOT_HELPER_SESSION: '0' } : {}),
+            ...(this.options.device ? { AGENT_DEVICE_CLAIMS_DIR: join(this.options.stateDir, 'device-claims') } : {}),
           },
-          ...(this.options.ios ? { cwd: '/' } : {}),
+          ...(this.options.device ? { cwd: '/' } : {}),
           detached: true,
           stdio: ['ignore', 'pipe', 'pipe'],
         },
       );
-      if (this.options.ios)
-        this.iosProxy = { child: proxy, record: proxy.pid === undefined ? null : this.captured(proxy.pid) };
+      if (this.options.device)
+        this.deviceProxy = { child: proxy, record: proxy.pid === undefined ? null : this.captured(proxy.pid) };
       const url = await this.listening(proxy);
       const { record: daemon, admin } = this.readDaemon();
       this.daemonRecord = daemon;
       const proxyIdentity = proxy.pid === undefined ? null : captureProcessIdentity(proxy.pid);
       if (!proxyIdentity?.ok) throw new Error('The agent-device proxy identity could not be captured.');
       setClaimChild(claim, daemon);
-      if (!(await leasesBackend(url, this.options.ios ? 'ios-instance' : 'macos-app')))
+      if (!(await leasesBackend(url, this.options.device ? deviceScope(this.options.device).backend : 'macos-app')))
         throw new AgentDriverUnavailable(
-          this.options.ios
-            ? 'Agent control requires agent-device 0.21.20 or later with the ios-instance backend and daemon policy on the hosting Mac.'
+          this.options.device
+            ? this.options.device.serial === undefined
+              ? 'Agent control requires agent-device 0.21.20 or later with the ios-instance backend and daemon policy on the hosting Mac.'
+              : 'Agent control requires agent-device 0.21.22 or later with the android-instance backend and serial daemon policy on the hosting Mac.'
             : UNSCOPED,
         );
       const watch = setInterval(() => this.watchDaemon(), this.options.watchMs);
@@ -376,10 +407,12 @@ export class AgentDeviceDriver implements HostedAgentDriver {
       this.daemonRecord = record;
       throw new Error('The agent-device daemon record has no HTTP listener.');
     }
-    if (this.options.ios && value.policyDigest !== iosPolicyDigest(this.options.ios.udid)) {
+    if (this.options.device && value.policyDigest !== devicePolicyDigest(this.options.device)) {
       this.daemonRecord = record;
       throw new AgentDriverUnavailable(
-        'Agent control requires agent-device 0.21.20 or later enforcing this hosted simulator policy.',
+        this.options.device.serial === undefined
+          ? 'Agent control requires agent-device 0.21.20 or later enforcing this hosted simulator policy.'
+          : 'Agent control requires agent-device 0.21.22 or later enforcing this hosted emulator serial policy.',
       );
     }
     return { record, admin: { port: value.httpPort, token: value.token } };
@@ -408,7 +441,7 @@ export class AgentDeviceDriver implements HostedAgentDriver {
     const running = this.running;
     this.running = null;
     if (running) clearInterval(running.watch);
-    if (!this.claim && this.options.ios) {
+    if (!this.claim && this.options.device) {
       let attempt;
       try {
         attempt = tryAcquireClaim({
@@ -437,21 +470,23 @@ export class AgentDeviceDriver implements HostedAgentDriver {
   }
 
   private async teardown(proxy?: ChildProcess, running?: Running): Promise<void> {
-    proxy ??= this.iosProxy?.child;
+    proxy ??= this.deviceProxy?.child;
     if (proxy?.pid !== undefined) {
-      const record = running?.proxyRecord ?? (this.options.ios ? this.iosProxy?.record : this.captured(proxy.pid));
+      const record =
+        running?.proxyRecord ?? (this.options.device ? this.deviceProxy?.record : this.captured(proxy.pid));
       const stopped = record
         ? await this.signalAndWait(record, true)
         : proxy.exitCode != null || proxy.signalCode != null;
-      if (this.options.ios && !stopped)
+      if (this.options.device && !stopped)
         throw new Error(
           `The agent-device proxy is unresolved; its claim ${this.claim?.path} was kept. Once it is gone, clear it with: ${claimRemoveCommand(this.claim!.path)}`,
         );
     }
     await this.stopDaemon();
     await this.stopIosRunners();
+    await this.stopAndroidHelpers();
     this.daemonRecord = null;
-    this.iosProxy = null;
+    this.deviceProxy = null;
     if (!this.claim) return;
     clearClaimChild(this.claim);
     if (!releaseClaim(this.claim)) throw new Error(`The agent-device claim could not be released: ${this.claim.path}`);
@@ -464,7 +499,7 @@ export class AgentDeviceDriver implements HostedAgentDriver {
   }
 
   private async stopDaemon(): Promise<void> {
-    if (!this.options.ios || this.iosProxy) {
+    if (!this.options.device || this.deviceProxy) {
       try {
         const invocation = resolveAgentDevice(this.options.env);
         await new Promise<void>((resolve) => {
@@ -477,7 +512,7 @@ export class AgentDeviceDriver implements HostedAgentDriver {
         });
       } catch {}
     }
-    if (this.iosProxy?.child.pid !== undefined && !this.daemonRecord)
+    if (this.deviceProxy?.child.pid !== undefined && !this.daemonRecord)
       throw new Error(
         `The agent-device daemon identity is unresolved; its claim ${this.claim?.path} was kept. Once it is gone, clear it with: ${claimRemoveCommand(this.claim!.path)}`,
       );
@@ -499,9 +534,34 @@ export class AgentDeviceDriver implements HostedAgentDriver {
     return false;
   }
 
+  private async stopAndroidHelpers(): Promise<void> {
+    const serial = this.options.device?.serial;
+    if (!serial || !this.daemonRecord) return;
+    const adb = (args: string[]): Promise<string> =>
+      new Promise((resolve, reject) => {
+        execFile(
+          adbPath(this.options.env),
+          ['-s', serial, 'shell', ...args],
+          { env: this.options.env, timeout: this.options.stopTimeoutMs },
+          (error, stdout) => {
+            if (error && !(args[0] === 'pidof' && error.code === 1 && !stdout.trim())) reject(error);
+            else resolve(stdout);
+          },
+        );
+      });
+    // agent-device 0.21.22 uses one-shot snapshots when SESSION=0, so it creates no helper adb forwards.
+    for (const helper of ['com.callstack.agentdevice.snapshothelper', 'com.callstack.agentdevice.imehelper']) {
+      await adb(['am', 'force-stop', helper]);
+      if ((await adb(['pidof', helper])).trim())
+        throw new Error(
+          `The agent-device Android helper ${helper} did not stop; its daemon claim ${this.claim?.path} was kept.`,
+        );
+    }
+  }
+
   private async stopIosRunners(): Promise<void> {
-    if (!this.options.ios) return;
-    const udid = this.options.ios.udid.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    if (!this.options.device?.udid) return;
+    const udid = this.options.device.udid.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const destination = new RegExp(`(?:^|\\s)-destination\\s+platform=iOS Simulator,id=${udid}(?=\\s|$)`, 'i');
     const runners = (ps: string) =>
       ps.split('\n').flatMap((line) => {
@@ -535,21 +595,25 @@ export class AgentDeviceDriver implements HostedAgentDriver {
   }
 
   /**
-   * Grants one simulator's automatic ios-instance lease or allocates and renews a macos-app lease over
+   * Grants one device's automatic instance lease or allocates and renews a macos-app lease over
    * agent-device's host-only admin route. Forwarded requests are pinned to the grant's scope.
    */
   async issue(app: HostedAgentApp): Promise<HostedAgentGrant> {
     const running = this.running;
     if (!running) throw new Error('The agent-device daemon is not running.');
-    if (this.options.ios) {
-      if (app.session !== this.options.ios.session || app.udid !== this.options.ios.udid)
+    if (this.options.device) {
+      if (
+        app.session !== this.options.device.session ||
+        app.udid !== this.options.device.udid ||
+        app.serial !== this.options.device.serial
+      )
         throw new Error('The agent-device daemon belongs to another hosted simulator.');
       const scope: HostedAgentLease = {
         tenant: `stim.${app.session}`,
         runId: app.session,
         clientId: 'agent',
-        deviceKey: `ios:mobile:${app.udid}`,
-        backend: 'ios-instance',
+        deviceKey: `${deviceScope(this.options.device).platform}:mobile:${deviceScope(this.options.device).id}`,
+        backend: deviceScope(this.options.device).backend,
       };
       this.leases.set(app.session, { id: app.session, scope, renewing: Promise.resolve() });
       return {
@@ -593,7 +657,7 @@ export class AgentDeviceDriver implements HostedAgentDriver {
     clearInterval(lease.renew);
     try {
       await lease.renewing;
-      if (this.running && !this.options.ios) await adminRequest(this.running.admin, 'DELETE', lease.id);
+      if (this.running && !this.options.device) await adminRequest(this.running.admin, 'DELETE', lease.id);
     } finally {
       this.removeSessionDirectories(session);
     }
@@ -663,7 +727,7 @@ export class AgentDeviceDriver implements HostedAgentDriver {
             data: {
               code: 'UNAUTHORIZED',
               message: pinned.message,
-              hint: `The hosted agent connection allows only ${(this.options.ios ? IOS_COMMANDS : POLICY.commands.allow).join(', ')} on the one ${this.options.ios ? 'hosted iOS simulator' : 'leased macOS app'}; retrying will not help.`,
+              hint: `The hosted agent connection allows only ${(this.options.device ? DEVICE_COMMANDS : POLICY.commands.allow).join(', ')} on the one ${this.options.device ? (this.options.device.udid ? 'hosted iOS simulator' : 'hosted Android emulator') : 'leased macOS app'}; retrying will not help.`,
               retriable: false,
               details: { reason: 'STIM_AGENT_REQUEST_REFUSED', rule: pinned.rule, ...pinned.details },
             },
@@ -739,7 +803,7 @@ function pinLease(body: Buffer | null, lease: Lease): Buffer | Refusal {
         'Refused request: expected a JSON object with a string method and object params within the body size limit.',
       details: {},
     };
-  if (lease.scope.backend === 'ios-instance') return pinIosRequest(rpc, id, lease);
+  if (lease.scope.backend) return pinDeviceRequest(rpc, id, lease);
   const { tenant, runId, clientId, deviceKey } = lease.scope;
   const owner = { runId, leaseId: lease.id, clientId, deviceKey, leaseProvider: 'proxy' };
   if (COMMAND_METHODS.has(rpc.method)) {
@@ -784,10 +848,10 @@ function pinLease(body: Buffer | null, lease: Lease): Buffer | Refusal {
   return Buffer.from(JSON.stringify(rpc));
 }
 
-const IOS_LEASE_METHODS = new Set([...LEASE_METHODS, 'agent_device.lease.allocate', 'agent-device.lease.allocate']);
+const DEVICE_LEASE_METHODS = new Set([...LEASE_METHODS, 'agent_device.lease.allocate', 'agent-device.lease.allocate']);
 
 // agent-device's buildRequestFlags sends client-local state and routing alongside command options.
-const IOS_CLIENT_AMBIENT_INPUTS = [
+const DEVICE_CLIENT_AMBIENT_INPUTS = [
   'cwd',
   'stateDir',
   'config',
@@ -835,29 +899,54 @@ const HOST_INPUTS = [
   'keyframes',
 ];
 
-function pinIosRequest(rpc: Record<string, unknown>, id: Refusal['id'], lease: Lease): Buffer | Refusal {
+function pinDeviceRequest(rpc: Record<string, unknown>, id: Refusal['id'], lease: Lease): Buffer | Refusal {
   const params = rpc.params as Record<string, unknown>;
   const { tenant, runId, clientId, deviceKey } = lease.scope;
   const owner = { tenantId: tenant, runId, clientId, deviceKey, leaseProvider: 'proxy' };
+  const platform = lease.scope.backend === 'ios-instance' ? 'ios' : 'android';
+  const device = {
+    platform,
+    selector: platform === 'ios' ? 'udid' : 'serial',
+    id: deviceKey.slice(`${platform}:mobile:`.length),
+  };
+  if (
+    platform === 'android' &&
+    [params, params.flags, params.input].some(
+      (fields) => isJsonObject(fields) && fields.serial !== undefined && fields.serial !== device.id,
+    )
+  )
+    return {
+      id,
+      rule: 'device',
+      message: 'Another emulator is refused; this connection targets one hosted emulator.',
+      details: {},
+    };
   if (COMMAND_METHODS.has(rpc.method as string)) {
-    const refusal = inspectIosCommand(params, id, deviceKey.slice('ios:mobile:'.length));
+    const refusal = inspectDeviceCommand(params, id, device);
     if (refusal) return refusal;
     rpc.params = {
-      ...pinIosCommand(params, deviceKey.slice('ios:mobile:'.length)),
+      ...pinDeviceCommand(params, device),
       meta: {
         ...pickClientMeta(params.meta),
         ...owner,
         ...(isJsonObject(params.meta) && typeof params.meta.leaseId === 'string'
           ? { leaseId: params.meta.leaseId }
           : {}),
-        leaseBackend: 'ios-instance',
+        leaseBackend: lease.scope.backend,
         sessionIsolation: 'tenant',
       },
     };
-  } else if (IOS_LEASE_METHODS.has(rpc.method as string)) {
+  } else if (DEVICE_LEASE_METHODS.has(rpc.method as string)) {
+    if (
+      platform === 'android' &&
+      typeof params.deviceKey === 'string' &&
+      params.deviceKey.startsWith('android:mobile:') &&
+      params.deviceKey !== deviceKey
+    )
+      return { id, rule: 'device', message: 'Another emulator lease is refused.', details: {} };
     rpc.params = {
       ...owner,
-      backend: 'ios-instance',
+      backend: lease.scope.backend,
       ...(typeof params.leaseId === 'string' ? { leaseId: params.leaseId } : {}),
       ...(typeof params.session === 'string' ? { session: params.session } : {}),
       ...(typeof params.ttlMs === 'number' ? { ttlMs: params.ttlMs } : {}),
@@ -871,17 +960,27 @@ function remoteScreenshot(value: unknown): boolean {
   return typeof value === 'string' && /^\/tmp\/agent-device-screenshot-\d+-[a-z0-9]+\.png$/.test(value);
 }
 
-function inspectIosCommand(params: Record<string, unknown>, id: Refusal['id'], udid: string): Refusal | null {
+function inspectDeviceCommand(
+  params: Record<string, unknown>,
+  id: Refusal['id'],
+  device: { platform: string; selector: string; id: string },
+): Refusal | null {
   const refuse = (rule: Refusal['rule'], message: string): Refusal => ({ id, rule, message, details: {} });
-  if (typeof params.command !== 'string' || !IOS_COMMANDS.includes(params.command))
+  if (typeof params.command !== 'string' || !DEVICE_COMMANDS.includes(params.command))
     return refuse(
       'command',
       'Refused command: this connection allows only hosted simulator inspection and interaction.',
     );
+  if (device.platform === 'android' && params.serial !== undefined && params.serial !== device.id)
+    return refuse('device', 'Another emulator is refused; this connection targets one hosted emulator.');
   const screenshot = params.command === 'screenshot';
   for (const fields of [params.flags, params.input]) {
     if (!isJsonObject(fields)) continue;
-    if (typeof fields.udid === 'string' && fields.udid.trim() !== udid)
+    if (
+      device.platform === 'android'
+        ? fields.serial !== undefined && fields.serial !== device.id
+        : typeof fields.udid === 'string' && fields.udid.trim() !== device.id
+    )
       return refuse('device', 'Another simulator is refused; this connection targets one hosted simulator.');
     if (
       HOST_INPUTS.some(
@@ -913,24 +1012,27 @@ function inspectIosCommand(params: Record<string, unknown>, id: Refusal['id'], u
     if (!Array.isArray(fields.batchSteps)) return refuse('request', 'Invalid batch steps.');
     for (const step of fields.batchSteps) {
       if (!isJsonObject(step)) return refuse('request', 'Invalid batch step.');
-      const failure = inspectIosCommand(step, id, udid);
+      const failure = inspectDeviceCommand(step, id, device);
       if (failure) return failure;
     }
   }
   return null;
 }
 
-function pinIosCommand(params: Record<string, unknown>, udid: string): Record<string, unknown> {
+function pinDeviceCommand(
+  params: Record<string, unknown>,
+  device: { platform: string; selector: string; id: string },
+): Record<string, unknown> {
   const { runtime: _runtime, meta: _meta, flags, input, ...rest } = params;
   const fields = (value: unknown): Record<string, unknown> => {
     const source = withoutDeviceSelectors(value);
-    for (const key of IOS_CLIENT_AMBIENT_INPUTS) delete source[key];
+    for (const key of DEVICE_CLIENT_AMBIENT_INPUTS) delete source[key];
     return {
       ...source,
-      platform: 'ios',
-      udid,
+      platform: device.platform,
+      [device.selector]: device.id,
       ...(Array.isArray(source.batchSteps)
-        ? { batchSteps: source.batchSteps.map((step) => pinIosCommand(step, udid)) }
+        ? { batchSteps: source.batchSteps.map((step) => pinDeviceCommand(step, device)) }
         : {}),
     };
   };

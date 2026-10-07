@@ -7,6 +7,9 @@ export default defineConfig({
     ...config.test,
     include: ['packages/*/src/**/*.compat.test.ts', 'packages/*/__tests__/**/*.compat.test.ts'],
     exclude: [],
-    provide: { agentDeviceSource: process.env.STIM_AGENT_DEVICE_SOURCE ?? '' },
+    provide: {
+      agentDeviceSource: process.env.STIM_AGENT_DEVICE_SOURCE ?? '',
+      agentDeviceAndroidSerial: process.env.STIM_AGENT_DEVICE_ANDROID_SERIAL ?? '',
+    },
   },
 });

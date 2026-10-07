@@ -624,7 +624,28 @@ Release launch reports `true` only after observing a live package process.
 Development launch remains `unverified` until the client Metro bridge provides
 bundle evidence. Replaying an installed app attempt does
 not install or launch again. Owner loss, stop, revocation and uncertain outcomes
-retain the same reconciliation rules as iOS. Android agent driving remains under [#2266](https://github.com/appandflow/stim/issues/2266).
+retain the same reconciliation rules as iOS.
+
+With `hosting.agentDriver: agent-device`, each installed Android session gets
+its own daemon and child-aware claim under `device-host/sessions/<session>/agent-device.claims`.
+Both Macs need agent-device 0.21.22 or later. The host verifies the serial policy
+digest and `android-instance` backend and advertises `hosted-android-agent`.
+`device-host.app.attach` and session attach carry a session grant with
+`android:mobile:<serial>` and the same token and client-node checks as iOS.
+The client writes a 0600 remote config under `hosted-android/<slot>/` and reports
+it as `android.host.agent`. Use `agent-device <command> --remote-config <file>`.
+Missing or unsupported agent-device reports `driver: none` with its reason.
+
+The policy pins the ledger-owned serial and filters `devices` to that emulator.
+Inspection and interaction commands match iOS. Installs, reinstall, uninstall,
+boot/shutdown, `close --shutdown`, record, logs, uploads, other serials (including
+nested batches and leases), and host paths are refused. Ambient fields are
+stripped and replaced with host-owned platform, serial and lease scope.
+Stim installs apps. Android snapshots use one-shot helpers without adb forwards;
+after daemon exit the host stops and verifies only the two fixed agent-device
+helper packages on that serial. Their APKs leave with emulator deletion.
+Reinstall, stop, revocation and close await agent teardown before native work;
+unresolved agent claims refuse replacement and deletion after restart too.
 
 ### Hosted macOS app sessions
 
@@ -673,12 +694,12 @@ service despite the isolated home. Stop removes the app home and delivered bytes
 from every app attempt, keeping logs and receipts so `app.attach` can still report
 the recorded state.
 
-Once a macOS app is `installed`, `device-host.app.launch` and
+Once a hosted app is `installed`, `device-host.app.launch` and
 `device-host.app.attach` return the agent grant the host's driver issued for that
 session, or `agent: { driver: 'none' }` while no driver runs or it cannot scope
 the app; the driver's reason, if any, is the result's `notice`. The field is
 built for the response and never stored in the receipt or journal; it is absent
-before installation, after stop and for iOS and Android sessions. The worker
+before installation and after stop. The worker
 reports the app's pid, `DeviceHost` registers the running app with the agent
 driver before the receipt reads `installed`, and ends that registration when the
 session stops, is revoked or the server closes.
@@ -880,7 +901,7 @@ Hosted posture commands hold a separate child-aware input claim. A surviving
 command or unresolved child identity blocks replacement ownership, install and
 stop even after the server and capture helper exit; the refusal names the claim
 and its manual cleanup command. An unknown or lost owner requires explicit stop
-before replacement. Automatic placement and Android agent driving remain in
+before replacement. Automatic placement remains in
 [#2266](https://github.com/appandflow/stim/issues/2266).
 
 ## Run as a service

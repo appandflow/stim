@@ -74,7 +74,19 @@ describe('reading the journal', () => {
     expect(inspectHostedAgentDriver()?.title).toBe('2 hosted apps run with no agent driver');
     journal(
       session(1),
-      session(2),
+      session(2, {
+        platform: 'android',
+        appSlot: undefined,
+        consolePort: 5554,
+        device: {
+          avdName: 'stim-fixture',
+          serial: 'emulator-5554',
+          consolePort: 5554,
+          systemImage: 'system-images;android-30;google_apis;arm64-v8a',
+          deviceProfile: 'pixel_6',
+          architecture: 'arm64-v8a',
+        },
+      }),
       session(3, {
         platform: 'ios',
         appSlot: undefined,

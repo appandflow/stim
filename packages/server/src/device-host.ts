@@ -101,7 +101,7 @@ export interface DeviceHostOptions {
   worker: string;
   env: NodeJS.ProcessEnv;
   allowed: (client: string) => boolean;
-  /** Issues and revokes session-scoped agent control for installed hosted macOS and iOS apps. */
+  /** Issues and revokes session-scoped agent control for installed hosted apps. */
   agents: Pick<HostedAgentHost, 'appRunning' | 'appStopped' | 'access'>;
   /** Takes the native app a build on this Mac retained under `handoff`, when `client` may have it, or says why not. */
   builtBundle?: (client: string, handoff: string, sha256: string) => { bundle: string; release: () => void } | string;
@@ -316,6 +316,19 @@ export class DeviceHost {
         notice:
           'The previous session owner is not attached to this server. Explicit stop must reconcile the retained device before another reservation.',
       };
+    if (
+      record.platform === 'android' &&
+      record.state === 'ready' &&
+      record.appAttempt &&
+      readHostedAppMetadata(record.id, record.appAttempt).state === 'installed'
+    ) {
+      const access = this.options.agents.access(record.id);
+      return {
+        ...record,
+        agent: access?.grant ?? { driver: 'none' },
+        ...(access?.notice ? { notice: access.notice } : {}),
+      };
+    }
     return { ...record };
   }
 
@@ -738,11 +751,7 @@ export class DeviceHost {
       const record = this.appSession(client, params);
       const app = readHostedAppMetadata(record.id, (params as { attempt: string }).attempt);
       const result: HostedAppLaunch = appDelivery(app);
-      if (
-        (record.platform === 'macos' || record.platform === 'ios') &&
-        app.state === 'installed' &&
-        record.state === 'ready'
-      ) {
+      if (app.state === 'installed' && record.state === 'ready') {
         const access = this.options.agents.access(record.id);
         result.agent = access?.grant ?? { driver: 'none' };
         if (access?.notice) result.notice = access.notice;
@@ -898,11 +907,15 @@ export class DeviceHost {
 
   private async install(record: HostedDeviceSession, owned: OwnedSession, attempt: string): Promise<void> {
     try {
-      if (record.platform === 'ios' || this.options.agents.access(record.id))
+      if (record.platform !== 'macos' || this.options.agents.access(record.id))
         await this.stopAgent(
           record.id,
-          record.platform === 'ios',
-          record.platform === 'ios' ? (record.device as HostedIosDevice | null)?.udid : undefined,
+          record.platform !== 'macos',
+          record.platform === 'ios'
+            ? (record.device as HostedIosDevice | null)?.udid
+            : record.platform === 'android' && record.device
+              ? { serial: (record.device as HostedAndroidDevice).serial }
+              : undefined,
         );
       await this.closeView(owned);
       await this.settleLogs(owned);
@@ -924,11 +937,7 @@ export class DeviceHost {
         hostedDeviceId(parseHostedPlatformDevice(value.device, record.platform)!) === hostedDeviceId(record.device) &&
         (value.launched === true || value.launched === 'unverified');
       if (installed) owned.installedAttempt = attempt;
-      if (
-        installed &&
-        (record.platform === 'ios' ||
-          (record.platform === 'macos' && Number.isSafeInteger(value.pid) && (value.pid as number) > 0))
-      )
+      if (installed && (record.platform !== 'macos' || (Number.isSafeInteger(value.pid) && (value.pid as number) > 0)))
         await this.startAgent(record, attempt, value.pid as number);
       const app = changeHostedApp(record.id, attempt, (current) => {
         current.state = installed ? 'installed' : 'unknown';
@@ -970,18 +979,23 @@ export class DeviceHost {
               bundleId: readHostedAppMetadata(record.id, attempt).bundleId,
               udid: (record.device as HostedIosDevice).udid,
             }
-          : {
-              bundleId: hostedMacosBundleId(readHostedAppMetadata(record.id, attempt).bundleId, record.appSlot!),
-              pid,
-            }),
+          : record.platform === 'android'
+            ? {
+                bundleId: readHostedAppMetadata(record.id, attempt).bundleId,
+                serial: (record.device as HostedAndroidDevice).serial,
+              }
+            : {
+                bundleId: hostedMacosBundleId(readHostedAppMetadata(record.id, attempt).bundleId, record.appSlot!),
+                pid,
+              }),
       });
     } catch (error) {
       process.stderr.write(`Hosted agent control did not start: ${(error as Error).message}\n`);
     }
   }
 
-  private stopAgent(session: string, strict = false, udid?: string): Promise<void> {
-    return this.options.agents.appStopped(session, udid).catch((error: unknown) => {
+  private stopAgent(session: string, strict = false, device?: string | { serial: string }): Promise<void> {
+    return this.options.agents.appStopped(session, device).catch((error: unknown) => {
       if (strict) throw error;
       process.stderr.write(`Hosted agent control did not stop: ${(error as Error).message}\n`);
     });
@@ -1033,8 +1047,12 @@ export class DeviceHost {
     if (owned.stopping) return;
     const agentStop = this.stopAgent(
       record.id,
-      record.platform === 'ios',
-      record.platform === 'ios' ? (record.device as HostedIosDevice | null)?.udid : undefined,
+      record.platform !== 'macos',
+      record.platform === 'ios'
+        ? (record.device as HostedIosDevice | null)?.udid
+        : record.platform === 'android' && record.device
+          ? { serial: (record.device as HostedAndroidDevice).serial }
+          : undefined,
     );
     void this.closeMetro(owned).catch((error: unknown) => this.failed(record.id, error));
     void this.closeView(owned).catch((error: unknown) => this.failed(record.id, error));
@@ -1049,7 +1067,7 @@ export class DeviceHost {
   }
 
   private async finishStop(record: HostedDeviceSession, owned: OwnedSession, agentStop: Promise<void>): Promise<void> {
-    if (record.platform === 'ios') await agentStop;
+    if (record.platform !== 'macos') await agentStop;
     const home = join(deviceHostArea(record.id), 'home');
     owned.run?.cancel();
     await this.closeMetro(owned);

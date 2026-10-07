@@ -2,6 +2,7 @@ import type { HostedAndroidChoice, HostedAndroidPlacement, HostedDeviceSelectors
 import { prepareHostedNative, placeHostedNative, stopHostedNative, type HostedNativeTarget } from './hosted-native.ts';
 import { connectHost, call } from './hosted-client.ts';
 import { requestHostedMetro } from './metro-gateway.ts';
+export { androidAgentRemoteConfig } from './hosted-native.ts';
 export interface HostedAndroidTarget extends HostedNativeTarget {
   choice: HostedAndroidChoice;
 }

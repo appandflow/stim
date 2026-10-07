@@ -133,7 +133,17 @@ export function protocolJsonSchema(): JsonSchema {
                     oneOf: [
                       {
                         required: ['backend'],
-                        properties: { deviceKey: { pattern: '^ios:mobile:[a-fA-F0-9-]{36}$' } },
+                        properties: {
+                          backend: { const: 'ios-instance' },
+                          deviceKey: { pattern: '^ios:mobile:[a-fA-F0-9-]{36}$' },
+                        },
+                      },
+                      {
+                        required: ['backend'],
+                        properties: {
+                          backend: { const: 'android-instance' },
+                          deviceKey: { pattern: '^android:mobile:emulator-[0-9]+$' },
+                        },
                       },
                       {
                         not: { required: ['backend'] },
@@ -146,7 +156,7 @@ export function protocolJsonSchema(): JsonSchema {
                       tenant: { type: 'string', pattern: '^[A-Za-z0-9._-]{1,128}$' },
                       runId: { type: 'string', pattern: '^[A-Za-z0-9._-]{1,128}$' },
                       clientId: { type: 'string', pattern: '^[A-Za-z0-9._-]{1,128}$' },
-                      backend: { const: 'ios-instance' },
+                      backend: { enum: ['ios-instance', 'android-instance'] },
                       deviceKey: { type: 'string' },
                     },
                   },
@@ -433,6 +443,7 @@ export function protocolJsonSchema(): JsonSchema {
           createdAt: { type: 'string' },
           notice: { type: 'string' },
           appAttempt: { type: 'string' },
+          agent: { $ref: '#/$defs/HostedAppDelivery/properties/agent' },
           metroPort: { type: 'integer', minimum: 1, maximum: 65535 },
         },
         oneOf: [

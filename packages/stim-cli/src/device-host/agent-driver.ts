@@ -9,15 +9,15 @@ export function hostedAgentDriverFinding(driver: unknown, apps: number): Finding
     level: 'note',
     title: `${apps === 1 ? 'A hosted app runs' : `${apps} hosted apps run`} with no agent driver`,
     detail:
-      "The client's coding agent cannot drive these apps because `hosting.agentDriver` is none, so stim-server starts no driver. agent-device confines macOS control to one macos-app lease and iOS control to one simulator through its daemon policy.",
-    fix: 'stim settings set hosting.agentDriver agent-device, with agent-device 0.21.20 or later',
+      "The client's coding agent cannot drive these apps because `hosting.agentDriver` is none, so stim-server starts no driver. agent-device confines macOS control to one macos-app lease and iOS or Android control to one device through its daemon policy.",
+    fix: 'stim settings set hosting.agentDriver agent-device, with agent-device 0.21.22 or later',
   };
 }
 
 function runningHostedApps(): number {
   try {
     return readHostedSessions().filter((session) => {
-      if (!['macos', 'ios'].includes(session.platform) || session.state !== 'ready' || !session.appAttempt)
+      if (!['macos', 'ios', 'android'].includes(session.platform) || session.state !== 'ready' || !session.appAttempt)
         return false;
       try {
         return readHostedAppMetadata(session.id, session.appAttempt).state === 'installed';
@@ -30,7 +30,7 @@ function runningHostedApps(): number {
   }
 }
 
-/** Notes installed hosted macOS and iOS apps on this Mac while `hosting.agentDriver` starts no driver. */
+/** Notes installed hosted apps on this Mac while `hosting.agentDriver` starts no driver. */
 export function inspectHostedAgentDriver(): Finding | null {
   const hosting = loadConfig()?.hosting;
   return hostedAgentDriverFinding(isJsonObject(hosting) ? hosting.agentDriver : undefined, runningHostedApps());

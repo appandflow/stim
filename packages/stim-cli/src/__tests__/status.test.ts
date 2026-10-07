@@ -1247,7 +1247,11 @@ test.each(['default', 'tablet'])(
         deviceProfile: 'pixel_7',
         architecture: 'x86_64',
       },
-      agent: { driver: 'none', setting: 'hosting.agentDriver' },
+      agent: {
+        driver: 'agent-device',
+        remoteConfig: '/tmp/hosted-android.json',
+        command: 'agent-device <command> --remote-config /tmp/hosted-android.json',
+      },
     });
     const payload = await runStatusJson();
     const environment = payload.environments[0];
@@ -1258,11 +1262,17 @@ test.each(['default', 'tablet'])(
     expect(android).toMatchObject({
       serial: null,
       state: 'ready',
-      host: { machine: 'mini', state: 'ready', device: { name: 'pixel_7 (API 30)', api: 30 } },
+      host: {
+        machine: 'mini',
+        state: 'ready',
+        device: { name: 'pixel_7 (API 30)', api: 30 },
+        agent: { driver: 'agent-device', remoteConfig: '/tmp/hosted-android.json' },
+      },
     });
     expect(environment.slots ?? []).not.toEqual(expect.arrayContaining([expect.objectContaining({ slot: 'default' })]));
     const plain = (await runStatus()).join('\n');
     expect(plain).toContain('pixel_7 (API 30) on mini');
+    expect(plain).toContain('agent: agent-device <command> --remote-config /tmp/hosted-android.json');
     for (const output of [JSON.stringify(payload), plain]) {
       expect(output).not.toContain('stim-private-host');
       expect(output).not.toContain('emulator-5554');

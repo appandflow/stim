@@ -248,6 +248,7 @@ function androidStatusLines(record: EnvironmentState['android'], slotLabel: stri
       );
     }
   }
+  if (record?.host?.agent.driver === 'agent-device') out.push(chalk.dim(`    agent: ${record.host.agent.command}`));
   return out;
 }
 

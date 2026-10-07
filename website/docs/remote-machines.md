@@ -85,7 +85,30 @@ here through a private tailnet bridge; `metro.publicUrl`, `metro.tunnel` and
 reverse, including after an adb server restart. Release variants skip Metro.
 Status reports `android.host` per slot with a profile and API name, keeping the
 host serial and AVD name private. Unreachable cleanup retains the placement;
-retry stop when the host answers. Agent driving is not available yet.
+retry stop when the host answers.
+
+Set `hosting.agentDriver` to `agent-device` on the hosting Mac and install
+agent-device 0.21.22 or later on both Macs. `android.host.agent` in
+`stim status --json` reports a private remote-config file per slot:
+
+```sh
+agent-device open <packageId> --remote-config <file>
+agent-device snapshot --remote-config <file>
+agent-device click <ref> --remote-config <file>
+```
+
+Use the returned config, keeping the host serial on the host. One daemon per
+session pins the exact owned emulator serial; its inventory lists only that
+emulator. It allows inspection and interaction with installed apps and refuses
+install, reinstall, uninstall, boot, shutdown, `close --shutdown`, record, logs,
+other devices and host paths. Stim installs the app. An unavailable or older
+driver reports `none` with the host's reason. Stop closes the matching agent
+connection and stops the daemon and its helpers before deleting the emulator.
+An unresolved daemon claim blocks replacement and deletion.
+
+Copy this prompt to try it: "Run this app with `stim android --remote <machine>`.
+Read `android.host.agent` from `stim status --json`, open the installed package
+with its remote config, and verify the first screen with agent-device."
 
 Stim Desktop and the phone app show an **on &lt;machine&gt;** label and view/control
 hosted Android through the client Mac's local stim-server relay. Turn on

@@ -131,7 +131,7 @@ test('upstream accepts the hosted policy, agrees on its digest and filters inven
     },
     stateDir,
     claimRoot: join(home, 'claims'),
-    ios: { session: SESSION, udid: UDID },
+    device: { session: SESSION, udid: UDID },
   });
   try {
     await driver.start();

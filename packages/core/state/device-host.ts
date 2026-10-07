@@ -6,6 +6,7 @@ import {
   hostedMacosAppSlot,
   parseHostedMacosChoice,
   parseHostedMacosDevice,
+  type HostedAgentGrant,
   type HostedMacosChoice,
   type HostedMacosDevice,
 } from './hosted-macos.ts';
@@ -88,6 +89,7 @@ export interface HostedDeviceSession extends HostedDeviceRequest {
   createdAt: string;
   notice?: string;
   appAttempt?: string;
+  agent?: HostedAgentGrant;
   metroPort?: number;
   clientMetroPort?: number;
 }

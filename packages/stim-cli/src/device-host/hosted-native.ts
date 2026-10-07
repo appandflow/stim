@@ -57,6 +57,9 @@ export interface HostedNativeTarget {
   session: HostedSession | null;
 }
 
+export const androidAgentRemoteConfig = (root: string, slot: string): string =>
+  join(workspaceDir(root), 'hosted-android', slot, 'agent-device-remote.json');
+
 export const iosAgentRemoteConfig = (root: string, slot: string): string =>
   join(workspaceDir(root), 'hosted-ios', slot, 'agent-device-remote.json');
 
@@ -302,16 +305,15 @@ export async function placeHostedNative(
     if (typeof delivery.notice === 'string') note(delivery.notice);
     placement = {
       ...placement,
-      agent:
-        platform === 'ios'
-          ? agentAccess(
-              iosAgentRemoteConfig(root, slot),
-              host.credential,
-              host.connection.supports('hosted-ios-agent') ? delivery.agent : undefined,
-              note,
-              'ios',
-            )
-          : placement.agent,
+      agent: agentAccess(
+        platform === 'ios' ? iosAgentRemoteConfig(root, slot) : androidAgentRemoteConfig(root, slot),
+        host.credential,
+        host.connection.supports(platform === 'ios' ? 'hosted-ios-agent' : 'hosted-android-agent')
+          ? delivery.agent
+          : undefined,
+        note,
+        platform,
+      ),
     };
     return { placement, launched: release && delivery.launched === true ? true : 'unverified' };
   } catch (error) {
@@ -380,7 +382,9 @@ export async function stopHostedNative(
     }
     try {
       await closeHostedMetro(root, placement.session);
-      if (platform === 'ios') rmSync(iosAgentRemoteConfig(root, name), { force: true });
+      rmSync(platform === 'ios' ? iosAgentRemoteConfig(root, name) : androidAgentRemoteConfig(root, name), {
+        force: true,
+      });
       writeHostedNative(root, name, null, platform);
     } catch (error) {
       failures.push(`${placement.machine}: ${(error as Error).message}. The placement is kept; rerun stim stop.`);
