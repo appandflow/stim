@@ -286,7 +286,7 @@ struct RootView: View {
   private func updateTutorial(_ payload: StatusPayload?, events: [TutorialViewerEvent]? = nil) {
     guard let payload else { return }
     tutorial.update(
-      workspaces: payload.environments, archivedRoots: (payload.archived ?? []).map(\.projectRoot),
+      workspaces: payload.environments, archived: payload.archived ?? [],
       sheetOpen: onboarding.showsGuide || nativePermissions.showsSetup || actions.presented != nil
         || NSApp.windows.contains { $0.attachedSheet != nil },
       viewerEvents: events ?? TutorialViewerEvents.shared.events,

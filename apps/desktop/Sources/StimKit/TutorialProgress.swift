@@ -66,6 +66,7 @@ public struct TutorialRecord: Codable, Equatable, Sendable {
   public var restartAfter: Date?
   public var restartDisappeared: Bool?
   public var firstTitle: String?
+  public var runPromptCopiedAt: Date?
   fileprivate var refreshActionAt: Date?
 
   public init(
@@ -79,6 +80,17 @@ public struct TutorialRecord: Codable, Equatable, Sendable {
     self.done = done
     self.skipped = skipped
     self.manual = manual
+  }
+
+  public func archivedProjectRoots(in archives: [ArchivedWorkspace]) -> [String] {
+    guard let tourPath else { return [] }
+    return archives.filter {
+      $0.projectRoot == tourPath && parseTimestamp($0.removedAt).map { $0 > startedAt } == true
+    }.map(\.projectRoot)
+  }
+
+  public func beginWaitTimedOut(now: Date) -> Bool {
+    runPromptCopiedAt.map { now.timeIntervalSince($0) >= 180 } == true
   }
 }
 
@@ -194,6 +206,11 @@ public struct TutorialProgress: Sendable {
   }
 
   public mutating func setManual(_ manual: Bool) { record?.manual = manual }
+
+  public mutating func copiedRunPrompt(now: Date) {
+    guard record?.step == "begin", record?.runPromptCopiedAt == nil else { return }
+    record?.runPromptCopiedAt = now
+  }
 
   /// The first call must carry a real status snapshot; it consumes launch-time resume detection.
   public mutating func update(_ input: TutorialInput) -> TutorialSnapshot {
@@ -337,7 +354,7 @@ public struct TutorialProgress: Sendable {
       let appeared = environment?.builds.isEmpty == false || environment?.build != nil ? record?.startedAt : now
       return Checkpoint(
         completed: environment == nil ? nil : appeared,
-        detail: now.timeIntervalSince(since) >= 180 && environment == nil
+        detail: record?.beginWaitTimedOut(now: now) == true && environment == nil
           ? "No tutorial workspace yet. Ask your agent what failed" : "Waiting for the tutorial workspace")
     case "sidebar":
       let visible = ["warming", "ready", "live"].contains(environment?.phase ?? "")

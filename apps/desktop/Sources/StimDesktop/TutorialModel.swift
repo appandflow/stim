@@ -14,11 +14,11 @@ final class TutorialModel: ObservableObject {
   private let records: TutorialRecordStore
   private let defaults: UserDefaults
   private var workspaces: [Workspace] = []
-  private var archived: [String] = []
+  private var archived: [ArchivedWorkspace] = []
+  private var statusLoaded = false
   private var launchPending = true
   private var openPending = false
   private var logs: [LogRecord] = []
-  private var copiedAt: Date?
   private var now = Date()
   private var viewerEvents: [TutorialViewerEvent] = []
   private var viewerEventOffset = 0
@@ -61,7 +61,7 @@ final class TutorialModel: ObservableObject {
       return "Update Stim Desktop to follow this tutorial"
     }
     if snapshot?.currentStep == "begin" {
-      return copiedAt.map { now.timeIntervalSince($0) >= 180 } == true
+      return snapshot?.record.beginWaitTimedOut(now: now) == true
         ? "No tutorial workspace yet. Ask your agent what failed" : "Waiting for the tutorial workspace..."
     }
     if workspace == nil, tourPath != nil, snapshot?.isComplete == false {
@@ -90,7 +90,7 @@ final class TutorialModel: ObservableObject {
   }
 
   func update(
-    workspaces: [Workspace], archivedRoots: [String], sheetOpen: Bool, now: Date = Date(),
+    workspaces: [Workspace], archived: [ArchivedWorkspace], sheetOpen: Bool, now: Date = Date(),
     viewerEvents: [TutorialViewerEvent] = [], pairedPhoneCount: Int? = nil, removalRefused: Bool = false
   ) {
     self.now = now
@@ -99,8 +99,10 @@ final class TutorialModel: ObservableObject {
     self.pairedPhoneCount = pairedPhoneCount
     self.removalRefused = removalRefused
     self.workspaces = workspaces
-    archived = archivedRoots
+    self.archived = archived
+    statusLoaded = true
     let saved = progress.record ?? records.record
+    let archivedRoots = saved?.archivedProjectRoots(in: archived) ?? []
     let candidate = TutorialEnvironment.select(workspaces, trackedPath: saved?.tourPath)
     let tracked = saved?.tourPath
     workspace =
@@ -147,7 +149,6 @@ final class TutorialModel: ObservableObject {
         now: now, record: records.record))
     if restarting, oldStart != snapshot?.record.startedAt {
       restarting = false
-      copiedAt = nil
       logs = []
     }
     if records.record != snapshot?.record { records.record = snapshot?.record }
@@ -162,15 +163,12 @@ final class TutorialModel: ObservableObject {
       snapshot = nil
       workspace = nil
       logs = []
-      copiedAt = nil
       viewerEventOffset = viewerEvents.count
       restarting = false
-      snapshot = progress.update(TutorialInput(environment: nil, now: Date()))
-      records.record = snapshot?.record
     }
     isOpen = true
     launchPending = false
-    if !beginning { refresh() }
+    refresh()
     syncFollowers()
     checkCLI()
   }
@@ -194,8 +192,9 @@ final class TutorialModel: ObservableObject {
     refresh()
   }
   func copiedPrompt(now: Date = Date()) {
-    if copiedAt == nil { copiedAt = now }
-    objectWillChange.send()
+    guard !restarting else { return }
+    progress.copiedRunPrompt(now: now)
+    refresh(now: now)
   }
 
   func restart(now: Date = Date()) {
@@ -204,7 +203,6 @@ final class TutorialModel: ObservableObject {
     TutorialViewerEvents.shared.reset()
     progress.requestRestart(now: now)
     restarting = true
-    copiedAt = nil
     isOpen = true
   }
 
@@ -214,9 +212,10 @@ final class TutorialModel: ObservableObject {
       stateDir: workspace?.agentDevice?.stateDir, machine: defaults.string(forKey: Self.machineKey))
   }
 
-  private func refresh() {
+  private func refresh(now: Date = Date()) {
+    guard statusLoaded else { return }
     update(
-      workspaces: workspaces, archivedRoots: archived, sheetOpen: false,
+      workspaces: workspaces, archived: archived, sheetOpen: false, now: now,
       viewerEvents: viewerEvents, pairedPhoneCount: pairedPhoneCount, removalRefused: removalRefused)
   }
 

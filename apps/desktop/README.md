@@ -1441,7 +1441,11 @@ Cmd-Opt-I returns to the inspector. A new tutorial path opens it once, after ope
 sheets close. UserDefaults stores progress, skipped steps and manual mode.
 Unfinished tours resume at launch when status lists the tracked path; archived
 ones show Done. Closing preserves progress. Restart shows the agent prompt and
-resets progress only when a newer tutorial workspace appears.
+resets progress when the tracked tour disappears and returns, or its oldest build
+started after Restart. A newer phase timestamp alone does not reset progress.
+The three-minute workspace warning starts at the first Copy of the run prompt
+and survives relaunch. Only archives removed after this run started can complete
+the tutorial.
 
 The panel follows workspace creation, the first iOS build, a cached rebuild,
 live view and control, app logs, agent actions and replay, Fast Refresh, optional
@@ -1451,8 +1455,9 @@ after two minutes. Manual mode copies the generated commands, including app-file
 heredocs, with the tracked paths substituted. Expand First iOS build after the
 base app is created to copy the worktree and build commands. Desktop never runs them.
 
-All tutorial Stim reads go through the CLI: status supplies live and archived
-paths, `stim logs --json --follow --grep '\[stim:tutorial\]'` supplies app signals,
+All tutorial Stim reads go through the CLI: the panel waits for the first loaded
+status snapshot, which supplies live workspaces and archive removal times.
+`stim logs --json --follow --grep '\[stim:tutorial\]'` supplies app signals,
 and `stim logs --json --follow --source agent` supplies the same records as the
 agent feed. Both followers run only while the panel is open on a live tutorial
 workspace. The panel reads `stim settings --json` for `archive.enabled`; when
@@ -1461,7 +1466,7 @@ disappearance grace period only when a stop was observed. Viewer events and
 paired-phone counts come from the existing Desktop controllers. No tutorial
 reader touches `$STIM_HOME` directly.
 
-To render every step, a failure and manual mode in light and dark at 2x:
+To render every step, a waiting timeout, a failure and manual mode in light and dark at 2x:
 
 ```sh
 STIM_TUTORIAL_SHOTS=/tmp/stim-tutorial-shots swift test --filter TutorialScreenshotTests

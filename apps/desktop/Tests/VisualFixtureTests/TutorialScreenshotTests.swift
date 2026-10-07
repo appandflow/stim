@@ -14,7 +14,7 @@
       _ = NSApplication.shared
       BrandAssets.registerFonts()
       try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
-      for name in TutorialSteps.all.map(\.id) + ["done", "failure", "manual"] {
+      for name in TutorialSteps.all.map(\.id) + ["done", "failure", "manual", "begin-timeout"] {
         for dark in [false, true] {
           let renderer = ImageRenderer(
             content: TutorialFixtureView(name: name)
@@ -49,11 +49,15 @@
     }
 
     private func fixture() -> TutorialSnapshot {
-      let id = name == "failure" ? "build" : name == "manual" ? "agent" : name
+      let id = name == "failure" ? "build" : name == "manual" ? "agent" : name == "begin-timeout" ? "begin" : name
       let now = Date(timeIntervalSince1970: 1_791_374_400)
       var engine = TutorialProgress()
       let done = name == "done" ? TutorialSteps.all.map(\.id) : TutorialSteps.all.prefix { $0.id != id }.map(\.id)
-      let record = TutorialRecord(version: 1, startedAt: now, step: id, done: done, manual: name == "manual")
+      var record = TutorialRecord(version: 1, startedAt: now, step: id, done: done, manual: name == "manual")
+      if name == "begin-timeout" {
+        record.startedAt = now.addingTimeInterval(-300)
+        record.runPromptCopiedAt = now.addingTimeInterval(-180)
+      }
       let deviceWorkspace = try! JSONDecoder().decode(
         Workspace.self,
         from: Data(
