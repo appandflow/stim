@@ -28,7 +28,8 @@ public enum PhysicalScreen: Equatable, Sendable {
         return
       }
       switch link {
-      case .off: self = .message("Turn on Serve to phones on the Phones page to see this simulator's screen.")
+      case .off:
+        self = .message(PhoneApp.Copy.serverOffForViewing("simulator's screen", phoneApp: FeatureFlags.isEnabled(.phoneApp)))
       case .connecting: self = .message("Connecting to stim-server")
       case .unavailable(let reason): self = .message(reason)
       case .open(let features, let capabilities):
@@ -59,7 +60,7 @@ public enum PhysicalScreen: Equatable, Sendable {
     }
     switch link {
     case .off:
-      self = .message("Turn on Serve to phones on the Phones page to see this device's screen.")
+      self = .message(PhoneApp.Copy.serverOffForViewing("device's screen", phoneApp: FeatureFlags.isEnabled(.phoneApp)))
     case .connecting:
       self = .message("Connecting to stim-server")
     case .unavailable(let reason):
@@ -83,7 +84,7 @@ public enum PhysicalScreen: Equatable, Sendable {
   public init(hostedMacosOn link: ServerLink) {
     switch link {
     case .off:
-      self = .message("Turn on Serve to phones on the Phones page to see this app's window.")
+      self = .message(PhoneApp.Copy.serverOffForViewing("app's window", phoneApp: FeatureFlags.isEnabled(.phoneApp)))
     case .connecting:
       self = .message("Connecting to stim-server")
     case .unavailable(let reason):

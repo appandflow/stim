@@ -132,6 +132,15 @@ show refusals for removals started from its own workspace actions.
 
 ## What it does
 
+:::note[Phone app feature flag]
+Stim Desktop hides everything about the phone app unless the **Phone app**
+feature flag is on: the Phones page, **Serve to phones**, pairing, the phone
+steps of the setup guide and tutorial, and phone suggestions. Turn it on in
+**Settings > Advanced > Feature flags**. A Mac that already serves phones or has
+a paired phone starts with it on. Turning the flag off does not stop a running
+`stim-server` or revoke pairings.
+:::
+
 - **Every workspace at a glance.** Each workspace shows its stage (warming,
   building, running, failed), its devices side by side, and its branch and pull
   request status.

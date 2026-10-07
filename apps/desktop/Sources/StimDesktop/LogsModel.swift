@@ -116,7 +116,7 @@ final class LogsModel: ObservableObject {
     phase = .loading
     onChange?(.reset)
     guard let server else {
-      phase = .ended("Connect to stim-server on the Phones page to view archived logs.")
+      phase = .ended(PhoneApp.Copy.archivedLogsOffline(phoneApp: FeatureFlags.isEnabled(.phoneApp)))
       return
     }
     do {

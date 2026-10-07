@@ -289,7 +289,7 @@ private struct MacosWindowMenu: View {
     guard !Task.isCancelled else { return }
     guard app.state == "running", matches(app), let pid = app.app?.pid else { return }
     guard pid != getpid() else {
-      error = "This is the viewer app. View its window from another Stim Desktop instance or your phone."
+      error = PhoneApp.Copy.viewerAppError(phoneApp: FeatureFlags.isEnabled(.phoneApp))
       return
     }
     NativeViewerPermissions.shared.viewerOpened()

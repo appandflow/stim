@@ -16,13 +16,18 @@ public enum SetupStep: String, CaseIterable, Sendable {
     }
   }
 
-  public var next: SetupStep? {
-    let all = Self.allCases
+  /// The screens the guide shows: without the phone app there is no phone step.
+  public static func sequence(phoneApp: Bool) -> [SetupStep] {
+    allCases.filter { $0 != .phone || phoneApp }
+  }
+
+  public func next(phoneApp: Bool) -> SetupStep? {
+    let all = Self.sequence(phoneApp: phoneApp)
     return all.firstIndex(of: self).flatMap { $0 + 1 < all.count ? all[$0 + 1] : nil }
   }
 
-  public var previous: SetupStep? {
-    let all = Self.allCases
+  public func previous(phoneApp: Bool) -> SetupStep? {
+    let all = Self.sequence(phoneApp: phoneApp)
     return all.firstIndex(of: self).flatMap { $0 > 0 ? all[$0 - 1] : nil }
   }
 }

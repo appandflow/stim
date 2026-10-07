@@ -26,10 +26,8 @@ struct NativeViewerPermissionsView: View {
         )
         .foregroundStyle(Palette.secondary)
       } else {
-        Text(
-          "Allow this Stim app in the system dialog. After granting access, reconnect the phone viewer to verify the server's capture access; if macOS asks for a relaunch, follow its instructions."
-        )
-        .foregroundStyle(Palette.secondary)
+        Text(PhoneApp.Copy.screenPermissionRequest(phoneApp: FeatureFlags.isEnabled(.phoneApp)))
+          .foregroundStyle(Palette.secondary)
       }
       HStack {
         Button("Not now") { permissions.showsSetup = false }.buttonStyle(.stim(.plain))

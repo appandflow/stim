@@ -107,7 +107,7 @@ struct WorkspaceDiffView: View {
       }
       return "Connecting to stim-server"
     case .unavailable(let reason): return reason
-    case .off: return "Turn on Serve to phones on the Phones page to use the built-in diff viewer."
+    case .off: return PhoneApp.Copy.diffViewerOff(phoneApp: FeatureFlags.isEnabled(.phoneApp))
     case .connecting: return "Connecting to stim-server"
     }
   }

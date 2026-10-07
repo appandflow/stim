@@ -555,3 +555,22 @@ func tutorialArchiveDisabledRelaunchDoesNotCompleteBeforeFinish(step: String) {
   #expect(viewer.events.last?.event == .opened("latest-tour"))
   #expect(viewer.events.count == 64)
 }
+
+@Test func tutorialSkipsThePhoneStepWithoutThePhoneApp() throws {
+  var progress = TutorialProgress()
+  let result = progress.update(
+    TutorialInput(
+      environment: try environment(), phoneApp: false, now: afterRebuild, record: saved(at: "phone", since: afterRebuild)))
+  #expect(result.currentStep == "machine")
+  #expect(result.steps.map(\.id) == stepIDs.filter { $0 != "phone" })
+  #expect(!result.record.skipped.contains("phone"))
+}
+
+@Test func tutorialShowsThePhoneStepWithThePhoneApp() throws {
+  var progress = TutorialProgress()
+  let result = progress.update(
+    TutorialInput(
+      environment: try environment(), phoneApp: true, now: afterRebuild, record: saved(at: "phone", since: afterRebuild)))
+  #expect(result.currentStep == "phone")
+  #expect(result.steps.map(\.id) == stepIDs)
+}
