@@ -466,7 +466,7 @@ chosen.
 
 See [Phone app](./phone-app.md) for installation, pairing, notifications and access.
 
-On the hosting Mac, **Stim > Settings > Build Machines > Running here**, below
+On the hosting Mac, **Stim > Settings > Remote Macs > Running here**, below
 **Macs using this Mac**, lists the simulators, emulators and apps approved Macs run
 here, with their client, device, app, state and session age. **Stop** asks for
 confirmation, then ends the session and deletes or parks its device on this Mac.

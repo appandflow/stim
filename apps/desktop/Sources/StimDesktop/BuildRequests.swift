@@ -73,7 +73,7 @@ enum BuildRequestPrompt {
       let alert = NSAlert()
       alert.messageText = "This machine request is no longer pending"
       alert.informativeText =
-        "It was allowed or denied, or it lapsed after 15 minutes. Settings > Build Machines lists the Macs using this Mac."
+        "It was allowed or denied, or it lapsed after 15 minutes. Settings > Remote Macs lists the Macs using this Mac."
       alert.runModal()
       return
     }
@@ -91,7 +91,7 @@ enum BuildRequestPrompt {
       Tailnet node: \(device.node)
       Request: \(device.id).\(lapses)
 
-      Allow only a Mac you expect. \(permission) Revoke it any time in Settings > Build Machines.
+      Allow only a Mac you expect. \(permission) Revoke it any time in Settings > Remote Macs.
       """
     let allow = alert.addButton(withTitle: "Allow")
     allow.keyEquivalent = ""
