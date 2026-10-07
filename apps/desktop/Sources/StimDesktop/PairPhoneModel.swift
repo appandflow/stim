@@ -41,14 +41,15 @@ final class PairPhoneModel {
   @ObservationIgnored private var stopped = false
   @ObservationIgnored private var codeRequest = UUID()
 
-  init(servesPhones: Bool, dependencies: Dependencies, wizard: PhonePairing? = nil) {
+  init(servesPhones: Bool, dependencies: Dependencies, wizard: PhonePairing? = nil, fixing: Bool = false) {
     self.dependencies = dependencies
     let snapshot = dependencies.snapshot()
     now = dependencies.now()
     self.wizard =
       wizard
       ?? PhonePairing(
-        servesPhones: servesPhones, server: snapshot.server, phones: dependencies.devices(), now: dependencies.now())
+        servesPhones: servesPhones, server: snapshot.server, phones: dependencies.devices(), now: dependencies.now(),
+        fixing: fixing)
     route = snapshot.route
     dnsName = snapshot.dnsName
     serverPort = snapshot.port
@@ -56,7 +57,7 @@ final class PairPhoneModel {
     connectionError = snapshot.connectionError
   }
 
-  convenience init(stimHome: String) {
+  convenience init(stimHome: String, fixing: Bool = false) {
     let server = ServerController.shared
     self.init(
       servesPhones: UserDefaults.standard.bool(forKey: AppPreferences.Key.servesPhones),
@@ -95,7 +96,8 @@ final class PairPhoneModel {
           UserDefaults.standard.set(false, forKey: AppPreferences.Key.servesPhones)
           server.stop()
         },
-        setUpRoute: { await server.setUpConnection() }, pair: { try await server.pairPhone(control: $0) }))
+        setUpRoute: { await server.setUpConnection() }, pair: { try await server.pairPhone(control: $0) }),
+      fixing: fixing)
   }
 
   func start() async {

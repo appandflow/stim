@@ -129,7 +129,7 @@ A read-only phone can see workspace status, builds, logs, device screens and
 replay. With workspace diff support, it can also read changed and untracked
 text files in registered workspaces, including non-ignored `.env` files.
 
-To allow input, turn on **Allow control** for the phone in Desktop's
+To allow input, choose **Allow Control** from the phone's menu in Desktop's
 **Settings > Phones**, or run `stim-server devices grant <id> --control` on
 the Mac. Use `--read` to take control away while retaining viewing access.
 The server's npx prefix is shown above. The phone's **Allow control** action
@@ -162,7 +162,7 @@ servers that support it.
 
 ## Revoke access
 
-In Desktop's **Settings > Phones**, choose **Revoke** for the phone, or run
+In Desktop's **Settings > Phones**, choose **Revoke...** from the phone's menu, or run
 `stim-server devices revoke <id>` on the Mac. Revocation closes its active
 connections; the server checks registrations on changes and once a second.
 The phone must pair again to reconnect.
