@@ -179,6 +179,9 @@ final class NotificationResponder: NSObject, UNUserNotificationCenterDelegate, @
           }
         } else if action == Notifier.doItAction {
           self.runPlan?()
+        } else if id.hasPrefix("pressure-ran-archived-") {
+          UserDefaults.standard.set(StatusFilter.archived.rawValue, forKey: AppPreferences.Key.sidebarStatus)
+          MainWindow.show()
         } else if id.hasPrefix("pressure") {
           OpenRequests.shared.showsMachine = true
         } else if id.hasPrefix(Notifier.oversightPrefix) {
