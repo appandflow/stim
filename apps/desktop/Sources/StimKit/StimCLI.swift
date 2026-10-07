@@ -10,6 +10,7 @@ public struct StimCLI: Sendable {
     case toolNotFound(String)
     /// The exit status and the last lines the process wrote to stderr, empty when it wrote none.
     case exited(Int32, stderr: String = "")
+    /// The command line that ran past its limit and was stopped, and the limit in seconds.
     case timedOut(command: String, seconds: Int)
 
     public var errorDescription: String? {
@@ -118,6 +119,7 @@ public struct StimCLI: Sendable {
   public static let askTimeout: TimeInterval = 120
 
   /// Both build and device-host access states. Extra environment applies only to this doctor process.
+  /// A run with `ask` stops after `askTimeout` and throws `Failure.timedOut`; a plain check has no limit.
   public func machineAccess(cwd: String, ask: Bool, extraEnvironment: [String: String] = [:]) async throws -> DoctorReport {
     let args = ["doctor", "--json", "--platform", "ios"] + (ask ? ["--fix"] : [])
     return try JSONDecoder().decode(
