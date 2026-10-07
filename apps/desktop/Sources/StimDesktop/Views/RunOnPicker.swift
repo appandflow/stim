@@ -17,19 +17,21 @@ struct RunOnPicker: View {
   var workspace: String
   var platform: String
   var fixedMachine: String?
+  var localDeviceBooted: Bool
   @Environment(\.runMachines) private var machines
   @AppStorage private var saved: String
 
-  init(workspace: String, platform: String, fixedMachine: String? = nil) {
+  init(workspace: String, platform: String, fixedMachine: String? = nil, localDeviceBooted: Bool = false) {
     self.workspace = workspace
     self.platform = platform
     self.fixedMachine = fixedMachine
+    self.localDeviceBooted = localDeviceBooted
     _saved = AppStorage(wrappedValue: "", AppPreferences.Key.runDestination(workspace: workspace, platform: platform))
   }
 
   var body: some View {
     if ["ios", "android"].contains(platform) {
-      let approved = machines?.approvedHostingMachines(in: workspace) ?? []
+      let approved = machines?.approvedHostingMachines(in: workspace)
       let destination =
         fixedMachine.map { RunDestination.machine($0) }
         ?? RunDestination(saved: saved, approvedMachines: approved)
@@ -40,8 +42,13 @@ struct RunOnPicker: View {
           Picker("Run on", selection: Binding(get: { destination.saved }, set: { saved = $0 })) {
             Text("This Mac").tag("")
             Text("Auto").tag("auto")
-            ForEach(approved, id: \.self) { machine in Text(machineName(machine)).tag(machine) }
+            ForEach(approved ?? (saved.isEmpty || saved == "auto" ? [] : [saved]), id: \.self) { machine in
+              Text(machineName(machine)).tag(machine)
+                .disabled(localDeviceBooted)
+                .help(localDeviceBooted ? "Run stim stop first to change machines." : "")
+            }
           }
+          .onAppear { refreshMachines() }
         }
       } label: {
         Text("Run on: \(destination.title)")
@@ -53,16 +60,16 @@ struct RunOnPicker: View {
       .disabled(fixedMachine != nil)
       .help(
         fixedMachine != nil
-          ? "Run stim stop first to change machines." : "Auto uses this Mac while it has room, otherwise an approved hosting Mac."
+          ? "Run stim stop first to change machines."
+          : "This Mac uses the project's default (no --remote); ios.remote or android.remote still applies. Auto uses this Mac while it has room, otherwise an approved hosting Mac."
       )
-      .task(id: workspace) {
-        guard fixedMachine == nil, let machines else { return }
-        while !Task.isCancelled {
-          await machines.refreshHostingMachines(checkout: workspace)
-          try? await Task.sleep(for: .seconds(30))
-        }
-      }
+      .onAppear { refreshMachines() }
+      .simultaneousGesture(TapGesture().onEnded { refreshMachines() })
     }
+  }
+  private func refreshMachines() {
+    guard fixedMachine == nil, let machines else { return }
+    Task { await machines.refreshHostingMachines(checkout: workspace) }
   }
 }
 
@@ -88,18 +95,23 @@ struct DeviceRunButton: View {
   }
 
   var body: some View {
-    let destination = RunDestination(saved: saved, approvedMachines: machines?.approvedHostingMachines(in: workspace) ?? [])
+    let destination = RunDestination(saved: saved, approvedMachines: machines?.approvedHostingMachines(in: workspace))
     if let command = runCommand(for: device, cwd: workspace, destination: destination) {
-      RunOnPicker(workspace: workspace, platform: device.platform, fixedMachine: device.hostedMachine)
-      button(command)
+      RunOnPicker(
+        workspace: workspace, platform: device.platform, fixedMachine: device.hostedMachine,
+        localDeviceBooted: device.isBootedLocalOwnedDevice)
+      button()
         .fixedSize()
         .disabled(disabled || actions.active(for: workspace) != nil)
         .help(command.displayLine())
     }
   }
 
-  @ViewBuilder private func button(_ command: StimCommand) -> some View {
+  @ViewBuilder private func button() -> some View {
     let button = Button(title, systemImage: "play.fill") {
+      let destination = AppPreferences.runDestination(
+        workspace: workspace, platform: device.platform, approvedMachines: machines?.approvedHostingMachines(in: workspace))
+      guard let command = runCommand(for: device, cwd: workspace, destination: destination) else { return }
       actions.run(
         native ? "Run on \(platformName(device.platform))" : device.platform == "web" ? "Open web" : "Run \(device.slot)",
         steps: [command], present: present)

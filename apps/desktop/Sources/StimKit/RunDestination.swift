@@ -5,10 +5,10 @@ public enum RunDestination: Hashable, Sendable {
   case auto
   case machine(String)
 
-  public init(saved: String, approvedMachines: [String]) {
+  public init(saved: String, approvedMachines: [String]?) {
     if saved == "auto" {
       self = .auto
-    } else if approvedMachines.contains(saved) {
+    } else if !saved.isEmpty && (approvedMachines?.contains(saved) ?? true) {
       self = .machine(saved)
     } else {
       self = .thisMac
@@ -39,6 +39,10 @@ public enum RunDestination: Hashable, Sendable {
 extension Workspace {
   public func hostedMachine(platform: String, slot: String = DeviceRef.defaultSlot) -> String? {
     devices.first { $0.platform == platform && $0.slot == slot }?.hostedMachine
+  }
+
+  public func hasBootedLocalDevice(platform: String, slot: String = DeviceRef.defaultSlot) -> Bool {
+    devices.contains { $0.platform == platform && $0.slot == slot && $0.isBootedLocalOwnedDevice }
   }
 
   public func runCommand(platform: String, destination: RunDestination = .thisMac) -> StimCommand {

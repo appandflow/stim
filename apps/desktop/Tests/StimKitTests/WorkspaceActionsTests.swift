@@ -85,6 +85,27 @@ import Testing
     }
   }
 
+  @Test func namedMachinesAreBlockedOnlyByThePlatformsBootedLocalOwnedSlot() throws {
+    let env = try workspace(
+      #","ios":{"name":"iPhone","udid":"I","owned":true,"state":"Booted"},"slots":[{"slot":"fold","android":{"name":"fold","owned":true,"physical":false,"state":"detected"}}]"#
+    )
+    #expect(env.hasBootedLocalDevice(platform: "ios"))
+    #expect(!env.hasBootedLocalDevice(platform: "ios", slot: "tablet"))
+    #expect(!env.hasBootedLocalDevice(platform: "android"))
+    #expect(env.hasBootedLocalDevice(platform: "android", slot: "fold"))
+    for platform in ["ios", "android"] {
+      for fields in [
+        #""owned":false,"physical":false,"state":"\#(platform == "ios" ? "Booted" : "detected")""#,
+        #""owned":true,"physical":false,"state":"Shutdown""#,
+        #""owned":true,"physical":true,"state":"connected""#,
+        #""owned":true,"physical":false,"state":"ready","host":{"machine":"mini","session":"s"}"#,
+      ] {
+        let other = try workspace(",\"\(platform)\":{\"name\":\"device\",\"udid\":\"I\",\(fields)}")
+        #expect(!other.hasBootedLocalDevice(platform: platform))
+      }
+    }
+  }
+
   @Test func runOffersDetectedPlatformsAndRecordedUseWithOlderCLIFallback() throws {
     #expect(try workspace("").runPlatforms == ["ios", "android"])
     let android = try workspace(#","android":{"name":"stim-w","owned":true,"physical":false,"state":"not-detected"}"#)

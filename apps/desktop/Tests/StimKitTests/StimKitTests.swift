@@ -500,6 +500,10 @@ import Testing
     defer { defaults.removePersistentDomain(forName: name) }
     let key = AppPreferences.Key.runDestination(workspace: "/w", platform: "ios")
     defaults.set("mini", forKey: key)
+    let unknown = AppPreferences.runDestination(workspace: "/w", platform: "ios", approvedMachines: nil, defaults: defaults)
+    #expect(unknown == .machine("mini"))
+    #expect(unknown.arguments == ["--remote", "mini"])
+    #expect(AppPreferences.runDestination(workspace: "/w", platform: "ios", approvedMachines: [], defaults: defaults) == .thisMac)
     #expect(
       AppPreferences.runDestination(workspace: "/w", platform: "ios", approvedMachines: ["mini"], defaults: defaults)
         == .machine("mini"))
@@ -515,6 +519,8 @@ import Testing
     defaults.set("auto", forKey: key)
     #expect(AppPreferences.runDestination(workspace: "/w", platform: "ios", approvedMachines: [], defaults: defaults) == .auto)
     defaults.set("", forKey: key)
+    #expect(
+      AppPreferences.runDestination(workspace: "/w", platform: "ios", approvedMachines: nil, defaults: defaults) == .thisMac)
     #expect(
       AppPreferences.runDestination(workspace: "/w", platform: "ios", approvedMachines: ["mini"], defaults: defaults) == .thisMac)
   }

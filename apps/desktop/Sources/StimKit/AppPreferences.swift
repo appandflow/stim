@@ -62,7 +62,7 @@ public enum AppPreferences {
   }
 
   public static func runDestination(
-    workspace: String, platform: String, approvedMachines: [String], defaults: UserDefaults = .standard
+    workspace: String, platform: String, approvedMachines: [String]?, defaults: UserDefaults = .standard
   ) -> RunDestination {
     RunDestination(
       saved: defaults.string(forKey: Key.runDestination(workspace: workspace, platform: platform)) ?? "",

@@ -35,6 +35,15 @@ public enum DeviceRef: Hashable, Identifiable, Sendable {
     }
   }
 
+  public var isBootedLocalOwnedDevice: Bool {
+    guard isRunning, hostedMachine == nil, !isPhysical else { return false }
+    switch self {
+    case .ios(_, let device): return device.owned
+    case .android(_, let device): return device.owned
+    case .remote, .web: return false
+    }
+  }
+
   public var placementReason: String? {
     switch self {
     case .ios(_, let d):

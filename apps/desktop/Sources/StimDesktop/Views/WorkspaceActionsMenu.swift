@@ -64,7 +64,9 @@ struct WorkspaceActionsMenu: View {
       }
     case .run(let platform):
       if let onRun {
-        RunOnPicker(workspace: path, platform: platform, fixedMachine: workspace?.hostedMachine(platform: platform))
+        RunOnPicker(
+          workspace: path, platform: platform, fixedMachine: workspace?.hostedMachine(platform: platform),
+          localDeviceBooted: workspace?.hasBootedLocalDevice(platform: platform) ?? false)
         Button("Run on \(platformName(platform))", systemImage: "play.fill") { onRun(platform) }
           .disabled(busy || building)
       }

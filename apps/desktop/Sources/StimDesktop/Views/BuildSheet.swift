@@ -181,7 +181,9 @@ struct BuildSheet: View {
       }
       Spacer(minLength: Space.sm)
       if !isMacos {
-        RunOnPicker(workspace: app.path, platform: platform, fixedMachine: app.hostedMachine(platform: platform))
+        RunOnPicker(
+          workspace: app.path, platform: platform, fixedMachine: app.hostedMachine(platform: platform),
+          localDeviceBooted: app.hasBootedLocalDevice(platform: platform))
         Button {
           actions.runApp(app, platform: platform)
         } label: {

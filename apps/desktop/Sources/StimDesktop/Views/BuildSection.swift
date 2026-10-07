@@ -93,7 +93,9 @@ struct BuildSection: View {
           if building == nil { runButton(platform) }
         }
         if building == nil {
-          RunOnPicker(workspace: env.path, platform: platform, fixedMachine: env.hostedMachine(platform: platform))
+          RunOnPicker(
+            workspace: env.path, platform: platform, fixedMachine: env.hostedMachine(platform: platform),
+            localDeviceBooted: env.hasBootedLocalDevice(platform: platform))
         }
         if let projectSubtitle { Text(projectSubtitle).font(.stim(.footnote)).foregroundStyle(Palette.secondary) }
         if let host = building?.remote(at: Date())?.host {

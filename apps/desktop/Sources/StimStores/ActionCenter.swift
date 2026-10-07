@@ -124,7 +124,7 @@ public final class ActionCenter: ObservableObject {
     didSet { if let presented { operations.markSeen(presented) } }
   }
   public let operations = OperationLog()
-  public var approvedHostingMachines: (String) -> [String] = { _ in [] }
+  public var approvedHostingMachines: (String) -> [String]? = { _ in nil }
   public var onFinish: ((ActionRun) -> Void)?
   private let cli: Task<StimCLI, Never>
 
