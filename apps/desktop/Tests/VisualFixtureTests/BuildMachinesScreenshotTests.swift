@@ -12,7 +12,10 @@
         [BuildMachineStatus].self,
         from: Data(
           #"""
-          [{"machine":"mini","state":"approved","offloadable":true,"dnsName":"mini.tail1234.ts.net"},
+          [{"machine":"mini","state":"approved","offloadable":false,"dnsName":"mini.tail1234.ts.net",
+            "reasons":["CocoaPods 1.17.0 there, 1.16.2 here"],
+            "problems":[{"code":"cocoapods","reason":"CocoaPods 1.17.0 there, 1.16.2 here"}],
+            "capacity":{"running":0,"max":1,"diskFreeBytes":825196154880,"cpus":10,"loadPerCore":0.6,"builds":0,"maxBuilds":2}},
            {"machine":"studio","state":"pending","deviceId":"a1b2c3d4","dnsName":"studio.tail1234.ts.net"}]
           """#.utf8))
     }
@@ -22,7 +25,8 @@
     ) -> some View {
       BuildMachinesContent(
         entries: entries, statuses: statuses, hosts: [BuildMachineStatus(machine: "mini", state: .approved)], updates: [:],
-        working: nil, failure: nil, tailscaleRunning: tailscale, canAsk: true, addDisabled: false, sampleExists: false,
+        working: nil, refreshing: false, failure: nil, tailscaleRunning: tailscale, canAsk: true, addDisabled: false,
+        sampleExists: false,
         updatesAutomatically: .constant(false), add: {}, ask: { _ in }, update: { _ in }, showDetails: { _ in },
         remove: { _ in }, deleteSample: {}
       )

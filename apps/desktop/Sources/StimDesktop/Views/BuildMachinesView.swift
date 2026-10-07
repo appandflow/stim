@@ -23,7 +23,8 @@ struct BuildMachinesView: View {
   var body: some View {
     BuildMachinesContent(
       entries: model.entries, statuses: statuses, hosts: model.check(in: checkout)?.hosts, updates: model.updates,
-      working: model.working, failure: failure, tailscaleRunning: model.tailscaleRunning, canAsk: checkout != nil,
+      working: model.working, refreshing: model.isBusy, failure: failure, tailscaleRunning: model.tailscaleRunning,
+      canAsk: checkout != nil,
       addDisabled: model.isBusy || model.updates.values.contains { !$0.isDone }, sampleExists: model.sampleExists,
       updatesAutomatically: $updatesAutomatically,
       add: { adding = model.addMachine(checkout: checkout) },
@@ -134,6 +135,7 @@ struct BuildMachinesContent: View {
   var hosts: [BuildMachineStatus]?
   var updates: [String: MachineUpdatePhase]
   var working: String?
+  var refreshing: Bool
   var failure: String?
   var tailscaleRunning: Bool?
   var canAsk: Bool
@@ -183,7 +185,8 @@ struct BuildMachinesContent: View {
         ForEach(entries, id: \.self) { entry in
           let status = statuses?.first { $0.machine == entry }
           BuildMachineRow(
-            entry: entry, status: status, checking: statuses == nil && canAsk,
+            entry: entry, status: status, checking: canAsk && (statuses == nil || (status == nil && refreshing)),
+            refreshing: canAsk && refreshing && status != nil && working != entry,
             capabilities: buildMachineCapabilities(entry, hosts: hosts), working: working == entry,
             canAsk: canAsk, update: updates[entry], ask: { ask(entry) }, startUpdate: { update(entry) },
             showDetails: { showDetails(entry) }, remove: { remove(entry) })
@@ -200,10 +203,11 @@ struct BuildMachinesContent: View {
         }
       }
       Section {
-        Toggle("Install this Mac's build on build machines automatically", isOn: $updatesAutomatically)
-          .help(
-            "When a build machine runs another Stim build than this Mac, Desktop installs this Mac's build there the next time it checks the machine."
-          )
+        VStack(alignment: .leading, spacing: Space.xxs) {
+          Toggle("Keep build machines on this Mac's Stim version", isOn: $updatesAutomatically)
+          Text("When this Mac's Stim changes, update stim-server on approved build machines so builds can keep offloading.")
+            .font(.stim(.footnote)).foregroundStyle(Palette.secondary)
+        }
       }
       if sampleExists { Section { deleteSampleButton } }
     }
@@ -220,6 +224,7 @@ private struct BuildMachineRow: View {
   var entry: String
   var status: BuildMachineStatus?
   var checking: Bool
+  var refreshing: Bool
   var capabilities: [String]
   var working: Bool
   var canAsk: Bool
@@ -238,8 +243,26 @@ private struct BuildMachineRow: View {
           if let status {
             let listed = status.listStatus
             Pill(listed.title, tone: listed.tone, size: .small).help(status.readiness.reasons ?? status.detail)
+            if refreshing { ProgressView().controlSize(.mini).help("Checking again") }
           } else if checking {
             Pill("Checking\u{2026}", size: .small)
+          }
+        }
+        if let status {
+          if !status.rowDetail.isEmpty {
+            Text(verbatim: status.rowDetail).font(.stim(.footnote)).foregroundStyle(Palette.secondary)
+              .fixedSize(horizontal: false, vertical: true)
+          }
+          ForEach(Array(status.problemLines.enumerated()), id: \.offset) { _, line in
+            VStack(alignment: .leading, spacing: Space.xxs) {
+              Text(verbatim: line.reason).font(.stim(.footnote)).foregroundStyle(Palette.warning).textSelection(.enabled)
+              switch line.fix {
+              case .command(let command)?: CopyableCommand(command: command)
+              case .advice(let advice)?:
+                Text(verbatim: advice).font(.stim(.footnote)).foregroundStyle(Palette.secondary)
+              case nil: EmptyView()
+              }
+            }
           }
         }
         HStack(spacing: Space.xs) {

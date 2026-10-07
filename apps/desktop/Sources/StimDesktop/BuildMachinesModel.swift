@@ -275,7 +275,6 @@ final class BuildMachinesModel {
     case .success(.written):
       writeFailure = nil
       let others = checks.keys.filter { $0 != checkout }
-      checks = checks.filter { others.contains($0.key) }
       await refreshStatuses(checkout: checkout, ask: ask)
       for other in others { await refreshStatuses(checkout: other, ask: false) }
     case .success(.refused(let refusal)):
