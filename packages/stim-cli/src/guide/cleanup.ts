@@ -13,7 +13,7 @@ versions cannot reliably manage their assignments.
 
 ARCHIVE
 
-Linked-worktree removal and gc dead-project pruning keep history under
+Worktree removal and gc dead-project pruning keep history under
 $STIM_HOME/archive by default. See stim guide cleanup archive.
 
 MAINTENANCE
@@ -133,7 +133,8 @@ to stats.json.corrupt-<unix ms> and starts a new one.`,
     archive: {
       summary: 'retained workspace history and explicit archive cleanup',
       body: () => `ARCHIVE
-  Linked-worktree removal and gc pruning a registered root that is gone keep
+  Worktree removal, including the environment reclaim of a source checkout, and
+  gc pruning a registered root that is gone keep
   state, ended agents, the error index, logs, closed recording segments and
   workspace-local agent-device sessions under $STIM_HOME/archive.
   Build outputs and open recording segments are deleted with the workspace.
@@ -384,6 +385,8 @@ ON THE SOURCE CHECKOUT
     Reclaimed the environment; the working tree stays (it is the source checkout).
   A registered project directory that is not a git repo at all gets the same
   environment reclaim -- there is nothing else remove could mean there.
+  Either reclaim archives each workspace it removes, as removal of a linked
+  worktree does.
 
 The delete paths and \`stop\` do not check simulator occupancy. An explicit
 \`stim stop\` shuts down this workspace's Stim-owned simulator, including a
