@@ -127,6 +127,14 @@ locally with the same supervisor and ownership checks. The build record carries
 `offloadedTo` for a remote build or `offloadFallback` for a fallback, and build
 logs show placement and its reason.
 
+While a macOS build runs, `stim status --json` reports it as `environments[].build` with
+`platform: "macos"`, the same phases and progress as iOS and Android builds: `prepare`,
+`compile`, `install` and `launch`. During `compile`, `detail` carries SwiftPM's
+`[done / total]` counts with `unit: "steps"`, and fetching and planning packages show as the
+`configure` step. A macOS build has no cache lookup, so `outcome` and `plannedPhases` are `null`;
+finished runs and the time each phase took are in `environments[].builds.macos`. Stim Desktop shows them in the
+workspace's build card.
+
 Stim Desktop offers **Build and run**, **Open app** (for an app on this Mac) and **Stop** on the
 workspace's app card, with a live preview that updates itself while the app runs. The preview follows the app's front standard window, its
 main window with any attached sheet, as the app opens, switches, closes or resizes

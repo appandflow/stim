@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, mkdtempSync, realpathSync, renameSync, rmSync } 
 import { join, relative, resolve } from 'node:path';
 import { machineCapacity, type MacosBuild } from '@stim-cli/core/state';
 import { acquireBuildSlot, releaseBuildSlot } from '../engine/build-slots.ts';
+import { NO_BUILD_PROGRESS, type BuildProgress } from '../engine/build-progress.ts';
 import { spawnDeclared } from '../engine/spawn-claims.ts';
 import { getExecutor } from '../exec.ts';
 import type { NdjsonWriter } from '../ndjson.ts';
@@ -66,6 +67,7 @@ export async function buildMacosBundle({
   buildMachine,
   resources,
   assetCatalog,
+  progress = NO_BUILD_PROGRESS,
 }: {
   root: string;
   product: string;
@@ -79,6 +81,7 @@ export async function buildMacosBundle({
   buildMachine: string;
   resources?: unknown;
   assetCatalog?: unknown;
+  progress?: BuildProgress;
 }): Promise<{
   bundleId: string;
   offloadedTo: string | null;
@@ -159,11 +162,15 @@ export async function buildMacosBundle({
           onPhase: (phase, line) => note(remotePhaseText(phase, line, choice!.machine)),
           onEnter: (phase) => {
             if (record && ['compile', 'build', 'prebuild', 'pods'].includes(phase)) record.builtOn = choice!.machine;
+            progress.place({ host: choice!.machine, phase });
+            progress.step(phase === 'fetch' ? 'install' : 'compile');
           },
           onRecord: (entry) => writer.write({ ...entry, offloadedTo: choice!.machine }),
           note: write,
         });
+        progress.place(null);
         if (!outcome.ok) throw new Error(`${outcome.machine}: ${outcome.reason}`);
+        progress.step('install');
         const executable = join(outcome.artifactPath, 'Contents', 'MacOS', product);
         const plist = JSON.parse(
           getExecutor().runFile('plutil', [
@@ -198,6 +205,7 @@ export async function buildMacosBundle({
     try {
       slot = await acquireBuildSlot({ max: getConcurrencyLimits().maxBuilds, root, logFile: writer.file, out: note });
       if (record) record.builtOn = 'here';
+      progress.step('compile');
       await tool(
         root,
         ['build', '-c', 'debug', '--product', product, '--scratch-path', scratch, '--jobs', '2'],
@@ -211,6 +219,7 @@ export async function buildMacosBundle({
         () => {},
         true,
       );
+      progress.step('install');
       const staged = join(staging, `${product}.app`);
       stageBundle(root, product, infoPlist, bin, staged, bundleId, extras);
       promote(staged);

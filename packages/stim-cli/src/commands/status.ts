@@ -1034,7 +1034,7 @@ function workspaceBuilds(
   return {
     build: workspaceBuild(path, saved, history),
     ...(lastBuilds.ios || lastBuilds.android ? { lastBuilds } : {}),
-    ...(builds.ios || builds.android ? { builds } : {}),
+    ...(builds.ios || builds.android || builds.macos ? { builds } : {}),
   };
 }
 

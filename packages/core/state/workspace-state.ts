@@ -15,6 +15,7 @@ import {
   type BuildPhase,
   type BuildResult,
   type LastBuildReport,
+  type BuildPlatform,
   type StatsPlatform,
   type WarmStep,
 } from './status.ts';
@@ -280,7 +281,7 @@ export function readDevicePlacement(
   return devicePlacement(isJsonObject(device) ? device.devicePlacement : undefined);
 }
 
-function lastBuildReport(platform: StatsPlatform, value: unknown): LastBuildReport | null {
+function lastBuildReport(platform: BuildPlatform, value: unknown): LastBuildReport | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const record = value as Record<string, unknown>;
   if (record.platform !== platform || (record.status !== 'ok' && record.status !== 'failed')) return null;
@@ -337,7 +338,7 @@ function historyPhases(value: unknown): Partial<Record<BuildPhase, number>> {
   return phases;
 }
 
-function historyEntry(platform: StatsPlatform, value: unknown): BuildHistoryEntry | null {
+function historyEntry(platform: BuildPlatform, value: unknown): BuildHistoryEntry | null {
   const report = lastBuildReport(platform, value);
   if (!report) return null;
   const record = value as Record<string, unknown>;
@@ -359,10 +360,10 @@ function historyEntry(platform: StatsPlatform, value: unknown): BuildHistoryEntr
 /** Each platform's recorded runs, newest first, at most `BUILD_HISTORY_LIMIT` each. */
 export function readBuildHistory(
   state: WorkspaceState | null | undefined,
-): Partial<Record<StatsPlatform, BuildHistoryEntry[]>> {
+): Partial<Record<BuildPlatform, BuildHistoryEntry[]>> {
   const history = state?.[BUILD_HISTORY_KEY] as Record<string, unknown> | undefined;
-  const builds: Partial<Record<StatsPlatform, BuildHistoryEntry[]>> = {};
-  for (const platform of ['ios', 'android'] as const) {
+  const builds: Partial<Record<BuildPlatform, BuildHistoryEntry[]>> = {};
+  for (const platform of ['ios', 'android', 'macos'] as const) {
     const list = history?.[platform];
     if (!Array.isArray(list)) continue;
     const entries = list

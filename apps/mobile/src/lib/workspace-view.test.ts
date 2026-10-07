@@ -476,6 +476,7 @@ describe('phaseSteps', () => {
     expect(phaseSteps(build({ detail: { ...detail, done: 0 } }), history, NOW)[3]!.fraction).toBe(0.5);
     expect(currentPhaseLabel(build({ detail }))).toEqual({ phase: 'Compiling', counts: '45 of 180 targets' });
     expect(currentPhaseLabel(build({ detail: { ...detail, unit: 'tasks', total: null } })).counts).toBe('45 tasks');
+    expect(currentPhaseLabel(build({ detail: { ...detail, unit: 'steps' } })).counts).toBe('45 of 180 steps');
     expect(currentPhaseLabel(build({ phase: 'install', detail: { ...detail, step: 'sign' } }))).toEqual({
       phase: 'Install',
       counts: null,

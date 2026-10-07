@@ -4,7 +4,7 @@ import {
   type MachineOwner,
   type MachineOwnerKind,
   type MachineUsageState,
-  type StatsPlatform,
+  type BuildPlatform,
 } from '@stim-cli/core/state';
 import type { HostProcess } from './devices/activity.ts';
 
@@ -12,7 +12,7 @@ import type { HostProcess } from './devices/activity.ts';
 export interface WorkspaceProcessRoots {
   path: string;
   supervisorPid: number | null;
-  build: { platform: StatsPlatform; pid: number } | null;
+  build: { platform: BuildPlatform; pid: number } | null;
   browserPids: number[];
   macosPids?: number[];
 }

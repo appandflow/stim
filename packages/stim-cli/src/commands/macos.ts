@@ -4,8 +4,15 @@ import { join } from 'node:path';
 import type { Command } from 'commander';
 import { phaseLine } from '../command-output.ts';
 import { LOG_ROTATE_BYTES } from '@stim-cli/core';
-import { readMacosRecord, validHostedAppArguments, type MacosAppRecord } from '@stim-cli/core/state';
+import { readMacosRecord, validHostedAppArguments, type MacosAppRecord, type MacosBuild } from '@stim-cli/core/state';
 import { connectHost, placeHostedMacos } from '../device-host/hosted-macos.ts';
+import {
+  NO_BUILD_PROGRESS,
+  recordFinishedBuild,
+  startBuildProgress,
+  tapBuildLog,
+  type BuildProgress,
+} from '../engine/build-progress.ts';
 import { withNativeBuildRun } from '../engine/native-run.ts';
 import { spawnDeclared } from '../engine/spawn-claims.ts';
 import { withWorkspaceProcessLock } from '../engine/workspace-process-lock.ts';
@@ -74,7 +81,8 @@ export async function runMacos(
   return withNativeBuildRun(
     root,
     { command: 'macos', platform: 'macos' },
-    async () => {
+    async (claim) => {
+      const progress = startBuildProgress({ root, platform: 'macos', slot: 'default', claim, note });
       return withWorkspaceProcessLock(
         workspaceDir(root),
         'macos-launch',
@@ -105,7 +113,16 @@ export async function runMacos(
             build: { state: 'running', startedAt: new Date().toISOString(), buildMachine },
             ...(previous?.host ? { host: previous.host, hostLaunched: previous.hostLaunched ?? false } : {}),
           };
-          const handoff = await buildBundle(root, macos.infoPlist!, record, remote !== undefined, note, macos);
+          const handoff = await buildBundle(
+            root,
+            macos.infoPlist!,
+            record,
+            remote !== undefined,
+            note,
+            macos,
+            progress,
+          );
+          progress.step('launch');
           if (!remote) return launchHere(root, record);
           const connection = await connectHost(remote);
           const write = (patch: Partial<MacosAppRecord>) =>
@@ -142,7 +159,7 @@ export async function runMacos(
           }
         },
         { external: true, declareSpawns: true, ownerPurpose: 'build and launch macOS app' },
-      );
+      ).finally(() => progress.clear());
     },
     { write: note },
   );
@@ -155,11 +172,12 @@ async function buildBundle(
   hosted: boolean,
   note: (line: string) => void,
   extras: { resources?: unknown; assetCatalog?: unknown },
+  progress: BuildProgress = NO_BUILD_PROGRESS,
 ): Promise<BuildHandoff | null> {
   const started = Date.parse(record.build.startedAt);
   const scratch = join(macosDir(root), 'build');
   writeWorkspaceState(root, { macos: record });
-  const writer = createNdjsonWriter(macosLogFile(root), { maxBytes: LOG_ROTATE_BYTES });
+  const writer = tapBuildLog(createNdjsonWriter(macosLogFile(root), { maxBytes: LOG_ROTATE_BYTES }), progress);
   try {
     const { bundleId: base } = validateInfoPlist(root, record.product, infoPlist);
     const bundleId = hosted ? base : `${base}.stim.${createHash('sha256').update(root).digest('hex').slice(0, 12)}`;
@@ -172,6 +190,7 @@ async function buildBundle(
       scratch,
       writer,
       note,
+      progress,
       record: record.build,
       buildMachine: record.build.buildMachine!,
       resources: extras.resources,
@@ -187,30 +206,46 @@ async function buildBundle(
       durationMs: Date.now() - started,
     };
     writeWorkspaceState(root, { macos: record });
+    recordMacosBuild(root, record.build);
     return built.handoff;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     writer.write({ src: 'build', platform: 'macos', level: 'error', msg: message });
-    writeWorkspaceState(root, {
-      macos: {
-        ...record,
-        supervisor: undefined,
-        build: {
-          ...record.build,
-          state: 'failed',
-          finishedAt: new Date().toISOString(),
-          durationMs: Date.now() - started,
-          error: message,
-          ...('code' in Object(error) && typeof (error as { code?: unknown }).code === 'string'
-            ? { errorCode: (error as { code: string }).code }
-            : {}),
-        },
-      },
-    });
+    const build: MacosBuild = {
+      ...record.build,
+      state: 'failed',
+      finishedAt: new Date().toISOString(),
+      durationMs: Date.now() - started,
+      error: message,
+      ...('code' in Object(error) && typeof (error as { code?: unknown }).code === 'string'
+        ? { errorCode: (error as { code: string }).code }
+        : {}),
+    };
+    writeWorkspaceState(root, { macos: { ...record, supervisor: undefined, build } });
+    recordMacosBuild(root, build);
     throw error;
   } finally {
     writer.close();
   }
+}
+
+function recordMacosBuild(root: string, build: MacosBuild): void {
+  recordFinishedBuild(root, {
+    platform: 'macos',
+    status: build.state === 'ok' ? 'ok' : 'failed',
+    configuration: 'Debug',
+    fingerprint: null,
+    cacheKey: null,
+    cacheHit: false,
+    cacheSkipped: false,
+    durationMs: build.durationMs,
+    startedAt: build.startedAt,
+    errorCode: build.errorCode,
+    buildMachine: build.buildMachine,
+    builtOn: build.builtOn,
+    offloadedTo: build.offloadedTo,
+    offloadFallback: build.offloadFallback,
+  });
 }
 
 async function launchHere(root: string, record: MacosAppRecord): Promise<MacosAppRecord> {

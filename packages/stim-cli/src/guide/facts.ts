@@ -1264,8 +1264,8 @@ RULES
              finished request, status "ok" or "failed", durationMs from the
              request to the end of the response
 
-  Each entry of environments also carries build: null, or the ios or android
-  run that holds this workspace's native-run.lock:
+  Each entry of environments also carries build: null, or the ios, android or
+  macos run that holds this workspace's native-run.lock:
 
   build   { platform, slot, state, phase, startedAt, phaseStartedAt,
             outcome, outcomeKnown, cacheLookupOutcome?, expectedMs, expectedPhaseMs,
@@ -1290,6 +1290,11 @@ RULES
                    finishes during the build adds no device time. An
                    --eas-profile run has no cache lookup, so its outcome
                    stays the project's most recent one until install.
+                   A stim macos run enters only prepare, compile (SwiftPM,
+                   with detail), install (staging the bundle, or fetching
+                   it from a build machine) and launch. It has no cache
+                   lookup: outcome is null, plannedPhases is null, and
+                   builds.macos holds its finished runs and their phases.
   startedAt        when the run started; phaseStartedAt when its phase did
   outcome          "cold" after the local/provider lookups resolve a miss;
                    "hit" after a cached artifact is ready to reuse, including
@@ -1339,13 +1344,17 @@ RULES
                    reads: { step, unit, done, total, line, updatedAt }
     step           the tool's step: configure, compile, link, resources,
                    script, dex, package or sign; null before one is known
-    unit           "targets" for xcodebuild, "tasks" for Gradle
+    unit           "targets" for xcodebuild, "tasks" for Gradle, "steps" for
+                   SwiftPM (stim macos)
     done           xcodebuild: targets it finished (a target counts once
                    xcodebuild touches or signs its product, so an
                    incremental build can end below total); Gradle: tasks
-                   it reported so far
+                   it reported so far; SwiftPM: the done of its latest
+                   [done / total] line
     total          xcodebuild: targets in its dependency graph; Gradle: null,
-                   since its plain output gives no total
+                   since its plain output gives no total; SwiftPM: the
+                   total of its latest [done / total] line, which can grow
+                   as SwiftPM plans more of the build
     line           the latest compile, link or task line, paths shortened
                    to file names, at most 160 characters
     updatedAt      when the build last wrote it; the run writes it at most
@@ -1439,7 +1448,7 @@ RULES
   last 10 runs, newest first. Its newest entry that is not "interrupted" is
   the run lastBuilds reports, once a run has recorded builds.
 
-  builds         { ios?, android? }, each a list of lastBuilds entries
+  builds         { ios?, android?, macos? }, each a list of lastBuilds entries
                  with { result, slot, configuration, cacheKey, phases }
   result         "succeeded", "failed", "cancelled" (Stim stopped the run
                  after an interrupt or \`stim stop\`) or "interrupted": its
