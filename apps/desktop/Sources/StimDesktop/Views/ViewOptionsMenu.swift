@@ -57,6 +57,7 @@ struct ViewOptionsButton: View {
   var counts: [StatusFilter: Int]
   var title: (Project) -> String
   @State private var isPresented = false
+  @State private var isHovering = false
   let prefs = SidebarPreferences()
 
   var body: some View {
@@ -66,14 +67,20 @@ struct ViewOptionsButton: View {
     } label: {
       Image(systemName: "slider.horizontal.3")
         .iconFont(IconSize.regular, weight: .medium)
-        .frame(width: 28, height: 24)
+        .frame(width: 28, height: 28)
         .overlay(alignment: .topTrailing) {
           if differs {
             Circle().fill(Palette.primary).frame(width: 6, height: 6).offset(x: -2, y: 2)
           }
         }
     }
-    .nativeIconStyle(tint: differs ? Palette.primary : Palette.secondary, active: isPresented)
+    .buttonStyle(.plain)
+    .foregroundStyle(differs ? Palette.primary : Palette.secondary)
+    .background {
+      Circle().fill(isHovering ? Color.gray.opacity(0.15) : Color.clear)
+    }
+    .contentShape(Circle())
+    .onHover { isHovering = $0 }
     .tutorialAnchor(.archivedFilter)
     .accessibilityLabel("View options")
     .help(differs ? "View options (filtered)" : "View options")
