@@ -9,6 +9,8 @@ import {
   type HostedIosDevice,
   type HostedAndroidDevice,
 } from '@stim-cli/core/state';
+import { peekBudget } from '../budget.ts';
+import { namedBuildMachine, resolveBuildMachine } from '../offload/selection.ts';
 import { readHostMemoryPressure } from '../host-memory.ts';
 import { peekDeviceSlots } from '../engine/device-capacity.ts';
 import { getProject, loadConfig } from '../workspace/config.ts';
@@ -96,7 +98,6 @@ export async function automaticDevicePlacement(
     slot,
     platform,
     selectors,
-    budgetRefusal,
     buildMachine,
     noWait,
   }: {
@@ -104,7 +105,6 @@ export async function automaticDevicePlacement(
     slot: string;
     platform: 'ios' | 'android';
     selectors: HostedDeviceSelectors;
-    budgetRefusal: string | null;
     buildMachine?: string;
     noWait: boolean;
   },
@@ -117,6 +117,7 @@ export async function automaticDevicePlacement(
     capacity = machineCapacity,
     memory = readHostMemoryPressure,
     probe = probeHost,
+    budget = peekBudget,
   }: {
     machines?: typeof configuredMachines;
     read?: typeof readHostedNative;
@@ -126,35 +127,47 @@ export async function automaticDevicePlacement(
     capacity?: typeof machineCapacity;
     memory?: typeof readHostMemoryPressure;
     probe?: typeof probeHost;
+    budget?: typeof peekBudget;
   } = {},
-): Promise<{ target: HostedNativeTarget | null; placement: DevicePlacement; skipped: PlacementSkip[] }> {
+): Promise<{ target: HostedNativeTarget | null; placement: DevicePlacement; skipped: PlacementSkip[]; sticky?: true }> {
   const recorded: HostedNativePlacement<HostedIosDevice | HostedAndroidDevice> | undefined = read(root, platform, slot)[
     slot
   ];
   if (recorded) {
     const target = await resume(recorded.machine, selectors, recorded, platform, true);
-    if (target) return hosted(target, decideDevicePlacement({ sticky: { machine: recorded.machine } }).reason);
+    if (target)
+      return {
+        target,
+        placement: {
+          decision: 'hosted',
+          machine: recorded.machine,
+          reason: recorded.reason ?? decideDevicePlacement({ sticky: { machine: recorded.machine } }).reason,
+        },
+        skipped: [],
+        sticky: true,
+      };
     write(root, slot, null, platform);
   }
   const devices = peek();
-  if (devices.localLive) return local(decideDevicePlacement({ sticky: { local: true } }).reason);
+  if (devices.localLive) return { ...local(decideDevicePlacement({ sticky: { local: true } }).reason), sticky: true };
   const entries = machines();
   if (entries === null)
     throw Object.assign(new Error('hosting.machines is invalid. Run stim guide settings and correct it.'), {
       code: 'STIM_HOSTING_REFUSED',
     });
-  const preference = buildMachine ?? loadConfig()?.offload?.machine;
-  buildMachine =
-    typeof preference === 'string' && !['auto', 'local'].includes(preference.trim().toLowerCase())
-      ? preference.trim()
-      : undefined;
+  const preference = resolveBuildMachine(
+    buildMachine,
+    process.env.STIM_OFFLOAD_MACHINE,
+    loadConfig()?.offload?.machine,
+  );
+  buildMachine = namedBuildMachine(preference) ? preference : undefined;
   const load = capacity();
   const here: PlacementHere = {
     loadPerCore: load.loadPerCore,
     maxLoadPerCore: load.maxLoadPerCore,
     memoryPressure: memory(),
     devices,
-    budgetRefusal,
+    budgetRefusal: await budget(root),
   };
   const early = decideDevicePlacement({
     platform,

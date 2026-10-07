@@ -7611,6 +7611,70 @@ describe('iOS placement on a hosting Mac', () => {
     agent: { driver: 'none', setting: 'hosting.agentDriver' },
   };
 
+  test.each([{ deviceType: 'iPhone 1' }, { runtime: '99.0' }, { simulatorApp: 'unknown' }])(
+    'auto validates %j before probing or reclaiming',
+    async (flags) => {
+      const automatic = vi.fn<typeof automaticDevicePlacement>();
+      const budget = vi.fn<() => Promise<{ reclaimed: []; refusal: null }>>(async () => ({
+        reclaimed: [],
+        refusal: null,
+      }));
+      const result = await run(
+        { remote: 'auto', json: true, ...flags },
+        { automaticDevicePlacement: automatic, budgetGate: budget },
+      );
+      expect(parseFirst(result.logs).code).toBe('STIM_BAD_ARG');
+      expect(automatic).not.toHaveBeenCalled();
+      expect(budget).not.toHaveBeenCalled();
+    },
+  );
+
+  test('an auto budget refusal keeps the build baseline and creates no failed history', async () => {
+    const baseline = lastBuildRecord({
+      startedAt: '2026-10-06T12:00:00Z',
+      fingerprint: 'previous',
+      cacheKey: 'previous-key',
+      status: 'ok',
+    });
+    writeWorkspaceState(root, { lastIosBuild: baseline });
+    const result = await run(
+      { remote: 'auto', json: true },
+      {
+        automaticDevicePlacement: (args) =>
+          automaticDevicePlacement(args, {
+            machines: () => [],
+            peek: () => ({ count: 0, max: 3, queued: 0, localLive: false }),
+            capacity: () => ({ cpus: 4, loadPerCore: 1, maxLoadPerCore: 2, builds: 0, maxBuilds: 0 }),
+            memory: () => 'normal',
+            budget: async () => 'disk shortfall',
+          }),
+        budgetGate: async () => ({
+          reclaimed: [],
+          refusal: { code: 'STIM_LOW_DISK', message: 'disk shortfall', remedy: 'Free disk space.' },
+        }),
+      },
+    );
+    expect(parseFirst(result.logs).code).toBe('STIM_LOW_DISK');
+    expect(readWorkspaceState(root)?.lastIosBuild).toEqual(baseline);
+    expect(readWorkspaceState(root)?.buildHistory).toBeUndefined();
+    expect(readWorkspaceState(root)?.ios).toMatchObject({ devicePlacement: { decision: 'local' } });
+  });
+
+  test('auto preserves the remedy on a placement refusal', async () => {
+    const result = await run(
+      { remote: 'auto', json: true },
+      {
+        automaticDevicePlacement: async () => {
+          throw Object.assign(new Error('unreadable hosted record'), {
+            code: 'STIM_HOSTING_REFUSED',
+            remedy: 'Restore the record then run stim stop.',
+          });
+        },
+      },
+    );
+    expect(parseFirst(result.logs).remedy).toBe('Restore the record then run stim stop.');
+  });
+
   test.each([false, true])(
     'auto no-wait uses a host when admitted and the local capacity refusal otherwise: %s',
     async (admits) => {
@@ -7634,8 +7698,19 @@ describe('iOS placement on a hosting Mac', () => {
         choice: hostedDevice,
         session: null,
       };
+      const baseline = lastBuildRecord({
+        fingerprint: 'previous',
+        cacheKey: 'previous-key',
+        status: 'ok',
+        startedAt: '2026-10-06T12:00:00Z',
+      });
+      writeWorkspaceState(root, { lastIosBuild: baseline });
+      const budgetGate = vi.fn<() => Promise<{ reclaimed: []; refusal: null }>>(async () => ({
+        reclaimed: [],
+        refusal: null,
+      }));
       const { logs, stderr, exitCode, calls } = await run(
-        { remote: 'auto', wait: false, json: true },
+        { remote: 'auto', wait: false, json: true, simulatorApp: 'xcode' },
         {
           automaticDevicePlacement: (args) =>
             automaticDevicePlacement(args, {
@@ -7660,7 +7735,7 @@ describe('iOS placement on a hosting Mac', () => {
                     }
                   : { probe: { machine, failure: 'declined: occupied' } },
             }),
-          budgetGate: async () => ({ reclaimed: [], refusal: null }),
+          budgetGate,
           checkDeviceCapacity: () => ({ code: 'STIM_AT_CAPACITY', message: '3/3 devices in use', remedy: 'stim stop' }),
           placeHostedIos: async (_target, args) => {
             const hosted = { ...placement, selected: 'auto', reason: target.selection!.reason };
@@ -7677,6 +7752,15 @@ describe('iOS placement on a hosting Mac', () => {
           ? { devicePlacement: { decision: 'hosted', machine: 'mini' }, host: { selected: 'auto' } }
           : { code: 'STIM_AT_CAPACITY' },
       );
+      expect(budgetGate).toHaveBeenCalledTimes(admits ? 0 : 1);
+      const builtRecord = expect.objectContaining({ status: 'ok' });
+      const history = expect.any(Object);
+      expect(readWorkspaceState(root)?.lastIosBuild).toEqual(admits ? builtRecord : baseline);
+      expect(readWorkspaceState(root)?.buildHistory).toEqual(admits ? history : undefined);
+      expect(readWorkspaceState(root)?.ios).toMatchObject({
+        devicePlacement: { decision: admits ? 'hosted' : 'local' },
+      });
+      expect(stderr.includes('iosSimulatorApp is ignored')).toBe(admits);
       expect(calls.order).not.toContain('ensureOwnedDevice');
     },
   );
@@ -7694,7 +7778,9 @@ describe('iOS placement on a hosting Mac', () => {
               machines: () => [],
               peek: () => ({ count: 1, max: 3, queued: 0, localLive: true }),
             }),
-          budgetGate: async () => ({ reclaimed: [], refusal: null }),
+          budgetGate: async () => {
+            throw new Error('sticky local must not reclaim');
+          },
         },
       );
       expect(exitCode).toBe(null);
@@ -7847,6 +7933,7 @@ describe('iOS placement on a hosting Mac', () => {
 
   test.each([
     { device: true, remote: 'mini' },
+    { device: true, remote: 'auto' },
     { remote: 'mini', simulatorApp: 'xcode' },
   ])('refuses unsupported target flags before host access or local creation: %j', async (opts) => {
     const connect = vi.fn<() => never>(() => {

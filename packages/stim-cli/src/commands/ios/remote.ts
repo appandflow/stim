@@ -1,3 +1,4 @@
+import { resolveSimulatorAppFlag } from './support.ts';
 import { devicePlacementLine } from '../../device-host/auto-placement.ts';
 import { deviceSlotPlatforms } from '../../devices/device-slots.ts';
 import chalk from 'chalk';
@@ -113,6 +114,7 @@ export function selectIosTarget({
 
 export async function selectIosPlacement(
   args: Parameters<typeof selectIosTarget>[0] & {
+    validateSelectors: () => FailArgs | null;
     deviceType: string | null;
     runtime: string | null;
     noWait: boolean;
@@ -130,15 +132,17 @@ export async function selectIosPlacement(
 > {
   const selection = selectIosTarget(args);
   if ('failure' in selection || selection.machine !== 'auto') return selection;
-  const { root, slot, d, opts, deviceType, runtime, noWait, note, phase, release, metroCheck } = args;
-  const budget = await d.budgetGate({ root, note });
+  const { root, slot, d, opts, deviceType, runtime, noWait, phase, release, metroCheck } = args;
+  const viewer = resolveSimulatorAppFlag(opts.simulatorApp, args.physical, null);
+  if ('refusal' in viewer) return { failure: viewer.refusal };
+  const refusal = args.validateSelectors();
+  if (refusal) return { failure: refusal };
   try {
     const placed = await d.automaticDevicePlacement({
       root,
       slot,
       platform: 'ios',
       selectors: hostedIosSelectors(deviceType, runtime),
-      budgetRefusal: budget.refusal?.message ?? null,
       buildMachine: opts.buildMachine,
       noWait,
     });
@@ -156,7 +160,7 @@ export async function selectIosPlacement(
       machine: placed.target?.host.machine ?? null,
       recorded: undefined,
       auto: { target: placed.target as HostedIosTarget | null },
-      budget,
+      budget: placed.target || placed.sticky ? { reclaimed: [], refusal: null } : undefined,
       devicePlacement: placed.placement,
     };
   } catch (error) {
@@ -164,6 +168,9 @@ export async function selectIosPlacement(
       failure: {
         code: (error as Error & { code?: string }).code ?? 'STIM_HOSTING_REFUSED',
         message: (error as Error).message,
+        ...(error instanceof Error && 'remedy' in error && typeof error.remedy === 'string'
+          ? { remedy: error.remedy }
+          : {}),
       },
     };
   }
@@ -224,8 +231,13 @@ export async function iosPlacementBudget(
   return hosted ? { reclaimed: [], refusal: null } : d.budgetGate({ root, note });
 }
 
-export function hostedIosMetroNote(hosted: boolean, settings: SettingsObject, note: (line: string) => void): void {
-  if (hosted && settings.iosSimulatorApp !== undefined)
+export function hostedIosMetroNote(
+  hosted: boolean,
+  settings: SettingsObject,
+  note: (line: string) => void,
+  simulatorApp?: string,
+): void {
+  if (hosted && (settings.iosSimulatorApp !== undefined || simulatorApp !== undefined))
     note(chalk.dim(phaseLine('device', 'iosSimulatorApp is ignored on a hosting Mac; the simulator boots headless.')));
   if (hosted && (publicUrlSetting(settings) || tunnelModeSetting(settings)))
     note(

@@ -412,7 +412,7 @@ and phone control. Set ios.remote to the machine name for a workspace default;
 no flag or setting runs here. eas and proxy keep their remote backend meanings.
 --remote auto (or ios.remote = auto / android.remote = auto) stays here when
 there is a free concurrency.maxDevices slot (0 means unlimited), no device
-waiter ahead, normal host memory pressure, no committed-memory budget refusal,
+waiter ahead, normal host memory pressure, no budget shortfall,
 and 5-minute load per core below offload.maxLoadPerCore. Without hosting.machines,
 auto is local. An unknown local device count also stays local; boot admission
 still decides. The default without a flag or setting stays local.
@@ -422,8 +422,8 @@ Otherwise Stim asks every approved hosting.machines host in parallel, with a
 A compatible choice, no declined reason, normal memory pressure and available
 capacity are required. With a free local slot, a host must report a lower load;
 with a full cap or a queue ahead, an admitted host with unknown load is allowed.
-Hosts rank by this run's explicit --build-machine or named offload.machine,
-then lowest load, most free memory and hosting.machines order. Automatic build
+Hosts rank by the build preference (flag > STIM_OFFLOAD_MACHINE > offload.machine)
+when it names a machine, then lowest load, most free memory and hosting.machines order. Automatic build
 offload resolves later, after the device architecture is known.
 
 When no host admits, auto runs here and may wait in the existing FIFO device
@@ -434,9 +434,11 @@ A stopped recorded session places again; unreachable or unknown sessions refuse.
 
 A reserve refusal after a successful offer can race with another run. It fails
 with STIM_HOSTING_REFUSED naming the host and asking to retry. Stim does not
-re-place after the build has targeted that host's architecture, and never falls
-back once a hosted session exists. A named machine remains strict. --device
+try the next host or local placement after the build has targeted that host's
+architecture, and never falls back once a hosted session exists. A named machine remains strict. --device
 cannot combine with auto. eas/proxy and macOS placement are unchanged.
+--simulator-app is honoured locally with auto and ignored with a note on a host.
+Placement measures budgets without reclaiming; only a new local run reclaims.
 Android --remote <machine> uses an owned emulator on that Mac; see hosted-android.
 
 A named Mac is strict: STIM_HOSTING_REFUSED names its reason; nothing boots

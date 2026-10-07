@@ -451,8 +451,8 @@ or `android.remote` to `auto`. Without a flag or setting, runs stay on this Mac.
 With no `hosting.machines`, auto is local.
 
 Auto stays local when the device cap has room (0 means unlimited), no run is
-queued ahead, host memory pressure is normal, the committed-memory budget
-allows the run, and five-minute load per core is below `offload.maxLoadPerCore`.
+queued ahead, host memory pressure is normal, the budget has no
+shortfall, and five-minute load per core is below `offload.maxLoadPerCore`.
 An unknown device count stays local for the binding boot admission to decide.
 A recorded hosted session is reused regardless of load; a live local owned
 slot stays here. A stopped hosted session places again, while an unreachable
@@ -463,8 +463,9 @@ three seconds per probe and the run's device selectors. It skips declined
 hosts, incompatible choices, elevated or unknown memory pressure and zero
 available capacity. If this Mac has a free slot, the host must report a lower
 load. When the cap is full or a queue is ahead, unknown host load is allowed.
-It ranks hosts by an explicit `--build-machine` or named `offload.machine`
-first, then lowest load, most free memory and configuration order. Automatic
+It resolves the build preference from `--build-machine`, then `STIM_OFFLOAD_MACHINE`,
+then `offload.machine`. A named preference ranks first, followed by lowest load,
+most free memory and configuration order. Automatic
 build offload resolves later, using the device's offered architecture.
 
 If none admits, the run stays local and may wait in the FIFO device slot queue.
@@ -476,8 +477,10 @@ hosts; JSON mode sends it to stderr. Run facts and each status slot include
 
 A reservation can be refused after a successful offer because another run
 wins the capacity race. That run fails with `STIM_HOSTING_REFUSED`, names the
-host and asks to retry. Stim does not re-place because the build already
-targets the host's architecture. There is no fallback once a session exists.
+host and asks to retry. Stim does not try the next host or local placement
+because the build already targets the host's architecture. There is no fallback once a session exists.
+`--simulator-app` with auto is honoured locally and ignored with a note on a host.
+Placement measures budgets without reclaiming; only a new local run reclaims.
 Named machines stay strict, physical `--device` cannot combine with auto,
 and eas/proxy and native macOS placement keep their existing behavior.
 

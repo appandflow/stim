@@ -569,7 +569,6 @@ const autoPlacement = (localLive = false) =>
       slot: 'default',
       platform: 'android',
       selectors: {},
-      budgetRefusal: null,
       noWait: true,
     },
     {

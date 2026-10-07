@@ -1,3 +1,4 @@
+import { writeDevicePlacement } from '../device-host/ios-state.ts';
 import type { DevicePlacement } from '@stim-cli/core/state';
 import { hostedMetroSettings } from '../device-host/metro-gateway.ts';
 import { workspaceId } from '@stim-cli/core';
@@ -418,7 +419,7 @@ async function runIos(
     for (const line of lines) note(chalk.dim(phaseLine('', line)));
     if (remedy) note(chalk.dim(phaseLine('remedy', remedy)));
     if (logPath) note(chalk.dim(phaseLine('log', logPath)));
-    if (build || devicePlacement)
+    if (build)
       writeLastBuild(
         root,
         lastBuildRecord({
@@ -558,14 +559,33 @@ async function runIos(
     d,
     deviceType,
     runtime,
+    validateSelectors: () =>
+      deviceModelRefusal({
+        slot,
+        deviceTypeFlag: opts.deviceType,
+        runtimeFlag: opts.runtime,
+        deviceType,
+        runtime,
+        physical,
+        remoteBackend: null,
+        deviceTypeOrigin: d.settingOriginScope(d.settingsLayers(settingsContext), 'ios.deviceType'),
+        runtimeOrigin: d.settingOriginScope(d.settingsLayers(settingsContext), 'ios.runtime'),
+        listRuntimes: d.listIosRuntimes,
+      }),
     noWait: deviceSlotWaitMs === 0,
     note,
     phase,
   });
   if ('failure' in remoteSelection) return fail(remoteSelection.failure);
   devicePlacement = remoteSelection.devicePlacement;
+  writeDevicePlacement(root, slot, PLATFORM, devicePlacement);
   const { machine: hostedMachine, backend: remoteBackend } = remoteSelection;
-  const viewer = resolveSimulatorAppFlag(opts.simulatorApp, physical, hostedMachine ?? remoteBackend);
+  const viewer = resolveSimulatorAppFlag(
+    opts.simulatorApp,
+    physical,
+    hostedMachine ?? remoteBackend,
+    Boolean(remoteSelection.auto),
+  );
   if ('refusal' in viewer) return fail(viewer.refusal);
   const { simulatorApp } = viewer;
   const settingsLayersForOrigin = d.settingsLayers(settingsContext);
@@ -754,7 +774,7 @@ async function runIos(
           note(chalk.yellow(`No Metro port is reserved for this workspace; wiring the app to ${DEFAULT_METRO_PORT}.`));
         metroPort = pin.port ?? metroPort ?? DEFAULT_METRO_PORT;
       }
-      hostedIosMetroNote(Boolean(hostedTarget), settings, note);
+      hostedIosMetroNote(Boolean(hostedTarget), settings, note, opts.simulatorApp);
       if (physical && metroPort !== null && !(await resolveLanOrigin())) return false;
       if (remoteDevice && metroPort !== null) {
         const reachable = await d.ensureMetroReachable({

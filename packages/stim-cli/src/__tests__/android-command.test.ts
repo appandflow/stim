@@ -7079,6 +7079,17 @@ describe('named Android hosting placement', () => {
         choice: hostDevice,
         session: null,
       };
+      const baseline = lastBuildRecord({
+        fingerprint: 'previous',
+        cacheKey: 'previous-key',
+        status: 'ok',
+        startedAt: '2026-10-06T12:00:00Z',
+      });
+      writeWorkspaceState(root, { lastAndroidBuild: baseline });
+      const checkBudget = vi.fn<() => Promise<{ reclaimed: []; refusal: null }>>(async () => ({
+        reclaimed: [],
+        refusal: null,
+      }));
       const h = harness({
         remoteDevice: 'auto',
         json: true,
@@ -7106,7 +7117,7 @@ describe('named Android hosting placement', () => {
                   }
                 : { probe: { machine, failure: 'declined: occupied' } },
           }),
-        checkBudget: async () => ({ reclaimed: [], refusal: null }),
+        checkBudget,
         checkCapacity: () => ({ code: 'STIM_AT_CAPACITY', message: '3/3 devices in use', remedy: 'stim stop' }),
         placeHostedAndroid: async (_target: unknown, args: { reserved: (value: typeof placement) => void }) => {
           const hosted = { ...placement, selected: 'auto', reason: target.selection!.reason };
@@ -7121,26 +7132,90 @@ describe('named Android hosting placement', () => {
           ? { devicePlacement: { decision: 'hosted', machine: 'mini' }, host: { selected: 'auto' } }
           : { code: 'STIM_AT_CAPACITY' },
       );
+      expect(checkBudget).toHaveBeenCalledTimes(admits ? 0 : 1);
+      const builtRecord = expect.objectContaining({ status: 'success' });
+      const history = expect.any(Object);
+      expect(readWorkspaceState(root)?.lastAndroidBuild).toEqual(admits ? builtRecord : baseline);
+      expect(readWorkspaceState(root)?.buildHistory).toEqual(admits ? history : undefined);
+      expect(readWorkspaceState(root)?.android).toMatchObject({
+        devicePlacement: { decision: admits ? 'hosted' : 'local' },
+      });
       expect(h.calls.ensureDevice).toEqual([]);
     },
   );
 
-  test('auto with no hosts validates local selectors before Metro or native creation', async () => {
+  test.each([{ systemImage: '   ' }, { deviceProfile: 'unknown-profile' }])(
+    'auto validates %j before probing or reclaiming',
+    async (flags) => {
+      const automatic = vi.fn<typeof automaticDevicePlacement>();
+      const budget = vi.fn<() => Promise<{ reclaimed: []; refusal: null }>>(async () => ({
+        reclaimed: [],
+        refusal: null,
+      }));
+      const h = harness({
+        remoteDevice: 'auto',
+        json: true,
+        ...flags,
+        listDeviceProfiles: () => ['pixel_7'],
+        automaticDevicePlacement: automatic,
+        checkBudget: budget,
+      });
+      expect((await h.run()).error?.code).toBe('STIM_BAD_ARG');
+      expect(automatic).not.toHaveBeenCalled();
+      expect(budget).not.toHaveBeenCalled();
+      expect(h.calls.ensureDevice).toEqual([]);
+    },
+  );
+
+  test('--device with auto refuses before placement', async () => {
+    const automatic = vi.fn<typeof automaticDevicePlacement>();
+    const h = harness({ remoteDevice: 'auto', device: true, json: true, automaticDevicePlacement: automatic });
+    expect((await h.run()).error?.code).toBe('STIM_BAD_ARG');
+    expect(automatic).not.toHaveBeenCalled();
+  });
+
+  test('an auto budget refusal keeps the build baseline and creates no failed history', async () => {
+    const baseline = lastBuildRecord({
+      startedAt: '2026-10-06T12:00:00Z',
+      fingerprint: 'previous',
+      cacheKey: 'previous-key',
+      status: 'success',
+    });
+    writeWorkspaceState(root, { lastAndroidBuild: baseline });
     const h = harness({
       remoteDevice: 'auto',
       json: true,
-      systemImage: '   ',
       automaticDevicePlacement: (args: Parameters<typeof automaticDevicePlacement>[0]) =>
         automaticDevicePlacement(args, {
           machines: () => [],
-          peek: () => ({ count: 0, max: 0, queued: 0, localLive: false }),
+          peek: () => ({ count: 0, max: 3, queued: 0, localLive: false }),
+          capacity: () => ({ cpus: 4, loadPerCore: 1, maxLoadPerCore: 2, builds: 0, maxBuilds: 0 }),
           memory: () => 'normal',
+          budget: async () => 'disk shortfall',
         }),
-      checkBudget: async () => ({ reclaimed: [], refusal: null }),
+      checkBudget: async () => ({
+        reclaimed: [],
+        refusal: { code: 'STIM_LOW_DISK', message: 'disk shortfall', remedy: 'Free disk space.' },
+      }),
     });
-    expect((await h.run()).error?.code).toBe('STIM_BAD_ARG');
-    expect(h.calls.ensureDevice).toEqual([]);
-    expect(h.calls.metro).toEqual([]);
+    expect((await h.run()).error?.code).toBe('STIM_LOW_DISK');
+    expect(readWorkspaceState(root)?.lastAndroidBuild).toEqual(baseline);
+    expect(readWorkspaceState(root)?.buildHistory).toBeUndefined();
+    expect(readWorkspaceState(root)?.android).toMatchObject({ devicePlacement: { decision: 'local' } });
+  });
+
+  test('auto preserves the remedy on a placement refusal', async () => {
+    const h = harness({
+      remoteDevice: 'auto',
+      json: true,
+      automaticDevicePlacement: async () => {
+        throw Object.assign(new Error('unreadable hosted record'), {
+          code: 'STIM_HOSTING_REFUSED',
+          remedy: 'Restore the record then run stim stop.',
+        });
+      },
+    });
+    expect((await h.run()).error?.remedy).toBe('Restore the record then run stim stop.');
   });
 
   test('android.remote auto keeps a live local slot and records the local decision', async () => {
@@ -7152,7 +7227,9 @@ describe('named Android hosting placement', () => {
           machines: () => [],
           peek: () => ({ count: 1, max: 3, queued: 0, localLive: true }),
         }),
-      checkBudget: async () => ({ reclaimed: [], refusal: null }),
+      checkBudget: async () => {
+        throw new Error('sticky local must not reclaim');
+      },
     });
     const result = await h.run();
     expect(result.ok).toBe(true);

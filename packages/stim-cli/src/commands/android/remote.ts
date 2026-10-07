@@ -140,20 +140,18 @@ export async function selectAndroidPlacement({
       budget: connected.target ? { reclaimed: [], refusal: null } : await checkBudget({ root: args.root, note }),
     };
   }
-  const budget = await checkBudget({ root: args.root, note });
+  const refusal = localSelectors(selected);
+  if (refusal) return { failure: refusal };
   try {
     const placed = await automatic({
       root: args.root,
       slot: args.slot,
       platform: 'android',
       selectors,
-      budgetRefusal: budget.refusal?.message ?? null,
       buildMachine,
       noWait,
     });
     phase('placement:', devicePlacementLine(placed.placement, placed.skipped));
-    const refusal = placed.target ? null : localSelectors(selected);
-    if (refusal) return { failure: refusal };
     if (placed.target && !args.release && !args.metroCheck)
       return {
         failure: {
@@ -168,7 +166,10 @@ export async function selectAndroidPlacement({
         : { kind: 'emulator', systemImage: selected.systemImage, deviceProfile: selected.deviceProfile },
       hostedTarget: placed.target as HostedAndroidTarget | null,
       selectors,
-      budget: { ...budget, refusal: placed.target ? null : budget.refusal },
+      budget:
+        placed.target || placed.sticky
+          ? { reclaimed: [], refusal: null }
+          : await checkBudget({ root: args.root, note }),
       devicePlacement: placed.placement,
     };
   } catch (error) {
@@ -176,6 +177,9 @@ export async function selectAndroidPlacement({
       failure: {
         code: (error as Error & { code?: string }).code ?? 'STIM_HOSTING_REFUSED',
         message: (error as Error).message,
+        ...(error instanceof Error && 'remedy' in error && typeof error.remedy === 'string'
+          ? { remedy: error.remedy }
+          : {}),
       },
     };
   }

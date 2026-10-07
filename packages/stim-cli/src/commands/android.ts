@@ -1,7 +1,7 @@
 import { automaticDevicePlacement } from '../device-host/auto-placement.ts';
 import { selectAndroidPlacement } from './android/remote.ts';
 import { prepareHostedAndroid, placeHostedAndroid } from '../device-host/hosted-android.ts';
-import { readHostedAndroid, writeHostedAndroid } from '../device-host/ios-state.ts';
+import { readHostedAndroid, writeHostedAndroid, writeDevicePlacement } from '../device-host/ios-state.ts';
 import { hostedMetroSettings } from '../device-host/metro-gateway.ts';
 import { finishHostedAndroidRun } from './android/hosted.ts';
 import { workspaceId } from '@stim-cli/core';
@@ -789,7 +789,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
   ): RunAndroidResult => {
     const cancellation = cancelledFailure(PLATFORM, { code, message });
     if (cancellation) ({ code, message, remedy, lines } = cancellation);
-    if (lastBuildStatus || record.devicePlacement) {
+    if (lastBuildStatus) {
       persistLastBuild({
         recordBuild,
         root,
@@ -916,6 +916,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
   if ('failure' in hosting) return fail(hosting.failure.code, hosting.failure.message, hosting.failure.remedy);
   const { target, hostedTarget, budget, selectors } = hosting;
   record.devicePlacement = hosting.devicePlacement;
+  writeDevicePlacement(root, slot, PLATFORM, record.devicePlacement);
   const physical = target.kind === 'physical';
   const remoteBackend = target.kind === 'remote' ? target.backend : null;
   if (hostedTarget) {

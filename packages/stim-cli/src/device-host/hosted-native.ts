@@ -55,7 +55,7 @@ export interface HostedNativeTarget {
   host: HostConnection;
   choice: HostedIosChoice | HostedAndroidChoice;
   session: HostedSession | null;
-  selection?: { selected: string; reason: string };
+  selection?: { selected: string; reason?: string };
 }
 
 export const androidAgentRemoteConfig = (root: string, slot: string): string =>
@@ -117,7 +117,15 @@ export async function prepareHostedNative(
               ? `This session uses ${device.deviceType} (iOS ${device.runtime.replace(/^iOS /, '')}); run stim stop first to change it.`
               : `This session uses ${device.deviceProfile} (${device.systemImage}); run stim stop first to change it.`,
           );
-        return { host, choice: device, session };
+        return {
+          host,
+          choice: device,
+          session,
+          selection: {
+            selected: recorded.selected,
+            ...(recorded.reason !== undefined ? { reason: recorded.reason } : {}),
+          },
+        };
       }
     }
     if (resumeOnly) return null;
@@ -160,7 +168,7 @@ async function reserveHostedNative(
   try {
     return hostedSession(host, await call(host, 'device-host.reserve', params), platform);
   } catch (error) {
-    if (!target.selection) throw error;
+    if (target.selection?.selected !== 'auto') throw error;
     throw Object.assign(
       new Error(
         `${error instanceof Error ? error.message : String(error)} Retry stim ${platform} --remote auto; the build already targets ${host.machine}'s architecture.`,

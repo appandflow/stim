@@ -1036,13 +1036,16 @@ const autoPlacement = (localLive = false) =>
       slot: 'default',
       platform: 'ios',
       selectors: {},
-      budgetRefusal: null,
       noWait: true,
     },
     {
       peek: () => ({ count: 3, max: 3, queued: 1, localLive }),
       capacity: () => ({ cpus: 4, loadPerCore: 5, builds: 0, maxBuilds: 0, maxLoadPerCore: 2 }),
       memory: () => 'normal',
+      budget: async () => {
+        if (localLive || readHostedIos(root).default) throw new Error('sticky outcomes must not measure the budget');
+        return null;
+      },
     },
   );
 
@@ -1105,6 +1108,13 @@ test('auto stores its selection and reason after delivery, and a reserve race fa
   const run = await placeHostedIos(selected.target! as Awaited<ReturnType<typeof prepareHostedIos>>, options);
   writeHostedIos(root, 'default', run.placement);
   expect(readHostedIos(root).default).toMatchObject({ selected: 'auto', reason: selected.placement.reason });
+  const resumed = await autoPlacement();
+  const resumedRun = await placeHostedIos(resumed.target! as Awaited<ReturnType<typeof prepareHostedIos>>, options);
+  expect(resumedRun.placement).toMatchObject({ selected: 'auto', reason: selected.placement.reason });
+  writeHostedIos(root, 'default', { ...resumedRun.placement, selected: 'mini', reason: 'named selection' });
+  const named = await autoPlacement();
+  const namedRun = await placeHostedIos(named.target! as Awaited<ReturnType<typeof prepareHostedIos>>, options);
+  expect(namedRun.placement).toMatchObject({ selected: 'mini', reason: 'named selection' });
   writeHostedIos(root, 'default', null);
   methods = [];
   const racing = await autoPlacement();
@@ -1122,51 +1132,59 @@ test('auto stores its selection and reason after delivery, and a reserve race fa
   expect(readHostedIos(root)).toEqual({});
 });
 
-test('auto probes every approved host concurrently and closes every probe, preferring the named build machine', async () => {
-  writeFileSync(
-    getConfigPath(),
-    JSON.stringify({ hosting: { machines: ['mini', 'other'] }, offload: { machine: 'other' } }),
-  );
-  writeFileSync(
-    deviceHostMachinesFile(),
-    JSON.stringify({
-      version: 1,
-      machines: [credential, { ...credential, machine: 'other', deviceToken: 'other-token', nodeId: 'nOther' }],
-    }),
-  );
-  const started: string[] = [];
-  const closes: ReturnType<typeof vi.fn<() => void>>[] = [];
-  let finish!: () => void;
-  const gate = new Promise<void>((resolve) => {
-    finish = resolve;
-  });
-  open.mockImplementation(async (_target: Parameters<typeof BuildConnection.open>[0], token: string) => {
-    const machine = token === 'other-token' ? 'other' : 'mini';
-    const connection = Object.create(BuildConnection.prototype) as BuildConnection;
-    connection.close = vi.fn<() => void>();
-    closes.push(connection.close as ReturnType<typeof vi.fn<() => void>>);
-    connection.request = async () => {
-      started.push(machine);
-      await gate;
-      return {
-        result: {
-          platform: 'ios',
-          choice: device,
-          declined: null,
-          capacity: { available: 1 },
-          resources: { memoryPressure: 'normal', loadPerCore: machine === 'mini' ? 0.1 : 4, memoryFreeBytes: 100 },
-        },
+test.each([undefined, 'mini', 'local'])(
+  'auto ranks build preferences with STIM_OFFLOAD_MACHINE=%s',
+  async (preference) => {
+    vi.stubEnv('STIM_OFFLOAD_MACHINE', preference);
+    writeFileSync(
+      getConfigPath(),
+      JSON.stringify({ hosting: { machines: ['mini', 'other'] }, offload: { machine: 'other' } }),
+    );
+    writeFileSync(
+      deviceHostMachinesFile(),
+      JSON.stringify({
+        version: 1,
+        machines: [credential, { ...credential, machine: 'other', deviceToken: 'other-token', nodeId: 'nOther' }],
+      }),
+    );
+    const started: string[] = [];
+    const closes: ReturnType<typeof vi.fn<() => void>>[] = [];
+    let finish!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    open.mockImplementation(async (_target: Parameters<typeof BuildConnection.open>[0], token: string) => {
+      const machine = token === 'other-token' ? 'other' : 'mini';
+      const connection = Object.create(BuildConnection.prototype) as BuildConnection;
+      connection.close = vi.fn<() => void>();
+      closes.push(connection.close as ReturnType<typeof vi.fn<() => void>>);
+      connection.request = async () => {
+        started.push(machine);
+        await gate;
+        return {
+          result: {
+            platform: 'ios',
+            choice: device,
+            declined: null,
+            capacity: { available: 1 },
+            resources: { memoryPressure: 'normal', loadPerCore: machine === 'mini' ? 0.1 : 4, memoryFreeBytes: 100 },
+          },
+        };
       };
-    };
-    return connection;
-  });
-  const pending = autoPlacement();
-  try {
-    await vi.waitFor(() => expect(started).toEqual(['mini', 'other']));
-  } finally {
-    finish();
-  }
-  const selected = await pending;
-  expect(selected.placement).toMatchObject({ decision: 'hosted', machine: 'other' });
-  expect(closes.map((close) => close.mock.calls.length)).toEqual([1, 1]);
-});
+      return connection;
+    });
+    const pending = autoPlacement();
+    try {
+      await vi.waitFor(() => expect(started).toEqual(['mini', 'other']));
+    } finally {
+      finish();
+    }
+    const selected = await pending;
+    expect(selected.placement).toMatchObject({
+      decision: 'hosted',
+      machine: preference === undefined ? 'other' : 'mini',
+    });
+    vi.unstubAllEnvs();
+    expect(closes.map((close) => close.mock.calls.length)).toEqual([1, 1]);
+  },
+);
