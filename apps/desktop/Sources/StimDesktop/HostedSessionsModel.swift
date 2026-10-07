@@ -25,8 +25,10 @@ final class HostedSessionsModel {
     do {
       let result = try await request("device-host.sessions", [:])
       rows = try JSONDecoder().decode(HostedSessionsPayload.self, from: JSONEncoder().encode(result)).sessions
-    } catch {
+    } catch let error as ServerError where error.code == "unknown-method" {
       rows = nil
+    } catch {
+      return
     }
     guard run == latestRefresh, !Task.isCancelled else { return }
     sessions = rows

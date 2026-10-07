@@ -16,7 +16,7 @@ final class HostedSessionsModelTests: XCTestCase {
         """.utf8))
   }
 
-  @MainActor func testListFailuresHidePreviouslyVisibleSessionsWithoutAToast() async throws {
+  @MainActor func testOnlyAnUnsupportedServerHidesTheSectionAndOtherFailuresKeepTheRows() async throws {
     for code in ["forbidden", "bad-request", "unknown-method", "not-connected"] {
       let toasts = ToastCenter(voiceOver: false)
       var failure: String?
@@ -30,7 +30,11 @@ final class HostedSessionsModelTests: XCTestCase {
       XCTAssertEqual(model.sessions?.first?.id, "session-a")
       failure = code
       await model.refresh()
-      XCTAssertNil(model.sessions)
+      if code == "unknown-method" {
+        XCTAssertNil(model.sessions)
+      } else {
+        XCTAssertEqual(model.sessions?.first?.id, "session-a")
+      }
       XCTAssertTrue(toasts.toasts.isEmpty)
     }
   }
