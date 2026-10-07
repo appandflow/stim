@@ -562,7 +562,9 @@ stim-server service rollback                   # back to the previous server
 
 `--release` installs that exact version from the public npm registry, and
 the update stops unless npm verifies each package's integrity and registry
-signature. `--from` installs the `.tgz` packages in the directory. Either way
+signature. `--from` installs the `.tgz` packages in the directory, checks the
+registry signature of every dependency they bring from npm, and does not look up
+Stim's own packages on the registry, so an unpublished version installs. Either way
 the new server is installed beside the running one and must start before the
 switch. The update waits up to 30 minutes for offloaded builds and hosted
 sessions to finish, restarts the job, and switches back to the previous server
