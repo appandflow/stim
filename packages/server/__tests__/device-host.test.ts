@@ -847,7 +847,9 @@ test.each(['stop', 'revoke'])('releases a preflight refusal when %s precedes its
   expect(declined.notice).toBe('inventory unavailable');
   expect(existsSync(join(area, 'stopped'))).toBe(false);
   expect(readClaimSet(join(deviceHostRoot(), `${first.id}.claims`)).live).toEqual([]);
-  expect(await host.reserve('other', { ...request, attempt: 'next' })).toHaveProperty('result.state', 'preparing');
+  const next = await host.reserve('other', { ...request, attempt: 'next' });
+  expect(next).toHaveProperty('result.state', 'preparing');
+  await state((next as { result: { id: string } }).result.id, 'ready');
 });
 
 test.skipIf(process.platform === 'win32')(
