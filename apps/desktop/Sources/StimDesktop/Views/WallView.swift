@@ -9,8 +9,11 @@ struct WallView: View {
   var overview = false
   @Binding var selection: SidebarItem?
   var openLogs: (String) -> Void
+  var openDevice: (String, String) -> Void
   @AppStorage(AppPreferences.Key.tileSize) private var tileSize = TileSize.medium
   @State private var pressedCard: SidebarItem?
+  @State private var hoveredCard: String?
+  @Environment(\.colorScheme) private var colorScheme
 
   var body: some View {
     let live = store.environments(in: project).filter {
@@ -40,12 +43,12 @@ struct WallView: View {
           ForEach(live) { env in
             let devices = env.devices.filter { $0.isRunning || env.runningBuild(for: $0) != nil }
             Card(
-              fill: devices.isEmpty ? Palette.surface : .clear,
+              fill: hoveredCard == env.path ? .white : (devices.isEmpty ? Palette.surface : .clear),
               border: Palette.border, clipsContent: false
             ) {
               VStack(alignment: .leading, spacing: Space.lg) {
                 Button {
-                  openCard(.environment(env.path))
+                  openCard(.project(store.project(of: env)))
                 } label: {
                   WorkspaceHeader(
                     env: env, project: store.project(of: env), usage: metrics.usage[env.path], compact: devices.isEmpty,
@@ -67,13 +70,15 @@ struct WallView: View {
                     LazyHStack(alignment: .top, spacing: Space.xl) {
                       ForEach(devices) { device in
                         Button {
-                          openCard(.environment(env.path))
+                          openDevice(env.path, device.id)
                         } label: {
                           DeviceTile(
                             device: device, screenHeight: tileSize.screenHeight, workspace: env.path,
-                            build: env.runningBuild(for: device), pausesWhenOffscreen: true)
+                            build: env.runningBuild(for: device), pausesWhenOffscreen: true, highlightsHeaderOnHover: true
+                          )
+                          .environment(\.colorScheme, colorScheme)
                         }
-                        .buttonStyle(CardPressStyle())
+                        .buttonStyle(CardPressStyle(highlightsDevice: true))
                       }
                     }
                   }
@@ -81,6 +86,14 @@ struct WallView: View {
               }
               .padding(Space.xl)
               .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .contentShape(Rectangle())
+            .onHover { inside in
+              hoveredCard = inside ? env.path : nil
+            }
+            .environment(\.colorScheme, hoveredCard == env.path ? .light : colorScheme)
+            .onTapGesture {
+              openCard(.project(store.project(of: env)))
             }
             .hoverHighlight(radius: Radius.card)
             .modifier(CardPressAppearance(pressed: pressedCard == .environment(env.path)))
@@ -194,13 +207,14 @@ struct WallView: View {
 
 private struct CardPressAppearance: ViewModifier {
   var pressed: Bool
+  var tint: Color = Palette.accent
   @State private var hovering = false
 
   func body(content: Content) -> some View {
     content
       .overlay {
         RoundedRectangle(cornerRadius: Radius.card)
-          .fill(Palette.accent.opacity(pressed ? 0.06 : 0))
+          .fill(tint.opacity(pressed ? 0.06 : 0))
           .overlay {
             RoundedRectangle(cornerRadius: Radius.card)
               .stroke(.black.opacity(pressed ? 0.08 : 0), lineWidth: 4)
@@ -210,7 +224,7 @@ private struct CardPressAppearance: ViewModifier {
           }
           .overlay {
             RoundedRectangle(cornerRadius: Radius.card)
-              .strokeBorder(Palette.accent.opacity(pressed ? 0.35 : hovering ? 0.22 : 0), lineWidth: 1)
+              .strokeBorder(tint.opacity(pressed ? 0.35 : hovering ? 0.22 : 0), lineWidth: 1)
           }
           .allowsHitTesting(false)
       }
@@ -229,20 +243,29 @@ private struct CardPressedKey: PreferenceKey {
 }
 
 private struct CardPressStyle: ButtonStyle {
+  var highlightsDevice = false
+
+  @ViewBuilder
   func makeBody(configuration: Configuration) -> some View {
-    CardPressBody(configuration: configuration)
+    if highlightsDevice {
+      CardPressBody(configuration: configuration, reportsPress: false)
+        .modifier(CardPressAppearance(pressed: configuration.isPressed, tint: Color(white: 0.22)))
+    } else {
+      CardPressBody(configuration: configuration)
+    }
   }
 }
 
 private struct CardPressBody: View {
   var configuration: ButtonStyleConfiguration
+  var reportsPress = true
   @State private var cursorPushed = false
   @Environment(\.isEnabled) private var isEnabled
 
   var body: some View {
     configuration.label
       .contentShape(Rectangle())
-      .preference(key: CardPressedKey.self, value: configuration.isPressed)
+      .preference(key: CardPressedKey.self, value: reportsPress && configuration.isPressed)
       .onHover { inside in
         updateCursor(inside && isEnabled)
       }

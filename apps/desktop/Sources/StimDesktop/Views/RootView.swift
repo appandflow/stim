@@ -425,19 +425,19 @@ struct RootView: View {
     Button {
       selection = .notifications
     } label: {
-      HStack(spacing: Space.xs) {
-        NotificationBell(selected: selection == .notifications)
-
-        let unread = inbox.inbox.unreadCount
-        if unread > 0 {
-          Pill(unread > 99 ? "99+" : "\(unread)", tone: .brand, size: .small)
-        }
-      }
-      .fixedSize()
-      .padding(Space.sm)
-      .padding(.vertical, Space.xs)
+      NotificationBell(selected: selection == .notifications)
+        .frame(width: 32, height: 32)
+        .contentShape(Circle())
     }
     .buttonStyle(.hoverRow(radius: Radius.round, selected: selection == .notifications))
+    .overlay(alignment: .topTrailing) {
+      let unread = inbox.inbox.unreadCount
+      if unread > 0 {
+        Pill(unread > 99 ? "99+" : "\(unread)", tone: .brand, size: .small)
+          .offset(x: 4, y: -4)
+          .allowsHitTesting(false)
+      }
+    }
     .accessibilityLabel("Notifications")
     .accessibilityValue("\(inbox.inbox.unreadCount) unread")
     .help("Open notifications")
@@ -659,7 +659,11 @@ struct RootView: View {
     default:
       WallView(
         store: store, metrics: metrics, project: projectFilter, overview: selection == .overview,
-        selection: $selection, openLogs: openErrors)
+        selection: $selection, openLogs: openErrors,
+        openDevice: { path, deviceID in
+          focusedDeviceID = deviceID
+          selection = .environment(path)
+        })
     }
   }
 }
@@ -717,16 +721,18 @@ private struct NotificationBell: View {
           .rotationEffect(.degrees(value.angle), anchor: .top)
       } keyframes: { _ in
         KeyframeTrack(\.angle) {
-          CubicKeyframe(-18, duration: 0.12)
-          CubicKeyframe(14, duration: 0.12)
-          CubicKeyframe(-10, duration: 0.12)
-          CubicKeyframe(6, duration: 0.12)
+          CubicKeyframe(-28, duration: 0.14)
+          CubicKeyframe(24, duration: 0.14)
+          CubicKeyframe(-20, duration: 0.14)
+          CubicKeyframe(16, duration: 0.14)
+          CubicKeyframe(-10, duration: 0.14)
+          CubicKeyframe(6, duration: 0.14)
           CubicKeyframe(0, duration: 0.16)
         }
         KeyframeTrack(\.highlight) {
           MoveKeyframe(1)
-          LinearKeyframe(1, duration: 0.64)
-          MoveKeyframe(0)
+          LinearKeyframe(1, duration: 0.99)
+          LinearKeyframe(0, duration: 0.01)
         }
       }
       .onReceive(NotificationInbox.shared.arrivals) {

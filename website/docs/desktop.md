@@ -356,7 +356,7 @@ clipboard actions.
 Overview opens first and groups active worktrees into rounded project cards, with up to
 three cards per row and one device preview per card. Titles, metrics and small previews are
 centered. Click anywhere on a project card to open its full project page. **Show more (N)** counts additional running devices and active worktrees without a running device. **Active worktrees** shows only running
-workspaces, with bordered cards and full-size previews.
+workspaces, with bordered cards and full-size previews. Click a card's header or empty area to open its project; click a device to open its workspace's running view focused on that device.
 
 The Active worktrees and project wall creates rows and device tiles as you scroll.
 Offscreen previews pause and reconnect when you return to them.

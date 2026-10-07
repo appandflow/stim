@@ -66,7 +66,7 @@ The bell at the top right opens **Notifications** and shows the unread count.
 the sidebar; only the list below them scrolls. Overview is the default launch page. It groups active worktrees into rounded project cards,
 with up to three cards per row and one device preview per card. The project title, metrics and
 small previews are centered. Click anywhere on a project card to open its full project page. Show more (N) counts additional running devices and active worktrees without a running device. Active worktrees shows only running workspaces in a vertical list
-with bordered cards and full-size previews. The sidebar lists projects as a
+with bordered cards and full-size previews. Click a card's header or empty area to open its project; click a device to open its workspace's running view focused on that device. The sidebar lists projects as a
 tree. Each project expands to its workspaces,
 and selecting the project row shows all of its workspaces and devices. Projects
 with a live, warming or ready workspace start expanded, and the app remembers each project you
