@@ -175,6 +175,11 @@ final class BuildMachinesModel {
     await refreshStatuses(checkout: checkout, ask: false)
   }
 
+  func refreshHostingMachinesWaiting(checkout: String) async {
+    if let pending = statusRefreshes[checkout] { return await pending.value }
+    await refreshHostingMachines(checkout: checkout)
+  }
+
   var settingsFailure: String? {
     if let error = settings.error { return error }
     guard let payload = settings.payload, payload.entry("offload.machines") == nil else { return nil }

@@ -150,16 +150,18 @@ final class DiscoveryCoordinator: ObservableObject {
     if settingsLoaded && hostingEntries.isEmpty {
       hosts = []
     } else if let path = source.workspaceID.flatMap(workspacePath) {
-      await machines.refreshStatuses(checkout: path, ask: false)
+      await machines.refreshHostingMachinesWaiting(checkout: path)
       hosts = machines.approvedHostingMachines(in: path)
     }
+    if let old = capHit, old.source.at > source.at || (hosts == nil && old.hosts != nil) { return }
     capHit = (source, hosts)
     refreshCapHitPrompt()
   }
 
   private func refreshCapHitPrompt() {
     guard let (source, fetched) = capHit else { return }
-    let hosts = settingsLoaded && hostingEntries.isEmpty ? [] : fetched
+    let current = source.workspaceID.flatMap(workspacePath).flatMap { machines.approvedHostingMachines(in: $0) }
+    let hosts = settingsLoaded && hostingEntries.isEmpty ? [] : current ?? fetched
     let prompt = Discovery.capHit(
       source: source, mac: macs.first, hosts: hosts,
       isRemote: { [weak self] id, platform in
