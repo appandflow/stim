@@ -178,8 +178,9 @@ public enum Discovery {
 
   /// `hosts` are the hosting Macs approved for device-host (nil when that is not known, which shows nothing). With
   /// one approved the prompt offers to use it instead of setting up; setup is offered only when none is approved.
+  /// `isRemote` says whether the workspace's devices for the platform already run on another Mac.
   public static func capHit(
-    source: CapHitSource, mac: TailnetMac?, hosts: [String]?
+    source: CapHitSource, mac: TailnetMac?, hosts: [String]?, isRemote: (String, String?) -> Bool = { _, _ in false }
   ) -> DiscoveryPrompt? {
     guard let hosts else { return nil }
     if hosts.isEmpty {
@@ -187,7 +188,7 @@ public enum Discovery {
         .capHit, title: "Device limit reached. Run simulators on \(mac?.machine ?? "another Mac")?", mac: mac,
         hostedSimulators: true)
     }
-    guard let workspaceID = source.workspaceID else { return nil }
+    guard let workspaceID = source.workspaceID, !isRemote(workspaceID, source.platform) else { return nil }
     return DiscoveryPrompt(
       type: .capHit,
       title: "Device limit reached. Run on \(hosts.count == 1 ? machineName(hosts[0]) : "a hosting Mac")?",
