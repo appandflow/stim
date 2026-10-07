@@ -1,6 +1,5 @@
 import {
   archivedDeviceRoute,
-  archivedView,
   archiveError,
   newestArchive,
   removedByWords,
@@ -28,33 +27,11 @@ test('selects the newest removed run for the exact workspace path', () => {
   expect(newestArchive('/app', [])).toBeNull();
 });
 
-test('names the PR state, removal reason and size without exposing command names', () => {
-  const view = archivedView(
-    { ...archive, bytes: { ...archive.bytes, total: 12e6 } },
-    Date.parse(archive.removedAt) + 120_000,
-  );
-  expect(view).toEqual({
-    title: 'feature',
-    pr: '#42 Merged',
-    removed: 'Removed 2m ago',
-    removedBy: 'Removed 2m ago by worktree removal',
-    size: '12 MB',
-  });
+test('names the removal source including unknown future sources', () => {
+  expect(removedByWords('worktree-remove')).toBe('worktree removal');
   expect(removedByWords('gc')).toBe('cleanup');
   expect(removedByWords('maintenance')).toBe('automatic maintenance');
   expect(removedByWords('future-remover')).toBe('future-remover');
-  expect(
-    archivedView({ ...archive, worktree: { ...archive.worktree, branch: null, pullRequest: null } }, Date.now()),
-  ).toMatchObject({ title: 'app', pr: null });
-  expect(
-    archivedView(
-      {
-        ...archive,
-        worktree: { ...archive.worktree, pullRequest: { ...archive.worktree.pullRequest!, state: 'open' } },
-      },
-      Date.now(),
-    ).pr,
-  ).toBe('#42 Open');
 });
 
 test('turns an older-server refusal into the relevant update hint and preserves other errors', () => {

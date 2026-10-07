@@ -16,6 +16,9 @@ import { Text } from '@/components/text';
 import { Touch } from '@/components/touch';
 import { withAlpha } from '@/design/color';
 import type { Theme } from '@/design/theme';
+import { useArchiveDetail } from '@/hooks/archive-detail';
+import { archiveError } from '@/lib/archived';
+import { archivedPage } from '@/lib/archived-page';
 import { useBuildPlan } from '@/hooks/build-plans';
 import { useMacConnection, useStatus } from '@/hooks/machines';
 import { useNow } from '@/hooks/use-now';
@@ -83,7 +86,55 @@ const SWITCH_INSET = 3;
 const PILL_SPRING: Transition = { type: 'spring', damping: 33, stiffness: 260, mass: 1 };
 const LABEL_FADE: Transition = { type: 'timing', duration: 180, easing: 'easeInOut' };
 
-export function BuildDetails({ path, platform }: { path: string; platform: Platform | 'macos' }) {
+export function BuildDetails(
+  props:
+    | { path: string; platform: Platform | 'macos'; archive?: never }
+    | { archive: string; platform: Platform | 'macos'; path?: string },
+) {
+  return props.archive !== undefined ? (
+    <ArchivedBuildDetails archive={props.archive} platform={props.platform} />
+  ) : (
+    <LiveBuildDetails {...props} />
+  );
+}
+
+function ArchivedBuildDetails({ archive: id, platform: initial }: { archive: string; platform: Platform | 'macos' }) {
+  const archive = useStatus()?.archived?.find((entry) => entry.id === id);
+  const detail = useArchiveDetail(id);
+  const now = useNow(30_000);
+  const [platform, setPlatform] = useState<Platform>(initial === 'android' ? 'android' : 'ios');
+  const page = archive ? archivedPage(archive, detail.data, now) : null;
+  const platforms = Object.keys(page?.env.lastBuilds ?? {}).filter(
+    (p): p is Platform => p === 'ios' || p === 'android',
+  );
+  const selected = platforms.includes(platform) ? platform : (platforms[0] ?? platform);
+  return (
+    <SheetScreen title={t`Build`} subtitle={page?.title}>
+      {platforms.length > 1 ? (
+        <PlatformSwitch
+          value={platform}
+          onChange={(value) => setPlatform(value as Platform)}
+          building={null}
+          entries={platforms.map((p) => ({ key: p, platform: p, project: null, building: false }))}
+        />
+      ) : null}
+      {page ? (
+        <FinishedBuilds
+          last={page.env.lastBuilds?.[selected]}
+          history={page.env.builds?.[selected] ?? []}
+          now={now}
+          root={page.env.path}
+          platform={selected}
+        />
+      ) : (
+        <Note>{t`This archive is no longer available.`}</Note>
+      )}
+      {!detail.data && detail.error ? <Note>{archiveError(detail.error, 'detail')}</Note> : null}
+    </SheetScreen>
+  );
+}
+
+function LiveBuildDetails({ path, platform }: { path: string; platform: Platform | 'macos' }) {
   const status = useStatus();
   const apps = worktreeApps(path, status?.environments ?? []);
   if (apps.length < 2) return <NativeBuildDetails path={path} platform={platform === 'android' ? 'android' : 'ios'} />;
@@ -211,10 +262,7 @@ function NativeBuildDetails({
   const target = running && env ? devicesOf(env).find((d) => d.platform === platform && d.slot === running.slot) : null;
   const started = running ? Date.parse(running.startedAt) : NaN;
   const remote = running ? remoteBuild(running, now) : null;
-  const lastRun = history.find(
-    (entry) =>
-      entry.startedAt === last?.startedAt && entry.result === 'succeeded' && Object.keys(entry.phases).length > 0,
-  );
+
   const remoteHost = remote?.host ?? '';
   const startedAge = formatDuration(Math.max(0, now - started));
   const planned = plan?.kind === 'done' ? plan.plan : null;
@@ -249,24 +297,7 @@ function NativeBuildDetails({
 
       {running ? <RunningBuild build={running} path={path} history={history} now={now} /> : null}
 
-      {running ? null : (
-        <Section title={t`Last build`}>
-          {last ? (
-            <LastBuildDetails last={last} now={now} root={path} />
-          ) : (
-            <Note>
-              <Trans>No {name} build recorded.</Trans>
-            </Note>
-          )}
-          {lastRun ? <PhaseList steps={finishedSteps(lastRun)} cacheLabel={finishedCacheLookupLabel(lastRun)} /> : null}
-        </Section>
-      )}
-
-      {history.length ? (
-        <Section title={t`Recent builds`}>
-          <History entries={history} now={now} root={path} />
-        </Section>
-      ) : null}
+      {running ? null : <FinishedBuilds last={last} history={history} now={now} root={path} platform={platform} />}
 
       <Section
         title={t`Next build`}
@@ -596,7 +627,7 @@ function PhaseList({
   );
 }
 
-export function LastBuildDetails({ last, now, root }: { last: LastBuild; now: number; root: string }) {
+function LastBuildDetails({ last, now, root }: { last: LastBuild; now: number; root: string }) {
   const failed = last.status === 'failed';
   const startedAt = formatDateTime(last.startedAt, DATE_TIME);
   const finishedAt = last.finishedAt
@@ -642,6 +673,45 @@ function resultColor(result: BuildHistoryEntry['result'], theme: Theme): string 
   if (result === 'succeeded') return theme.colors.success;
   if (result === 'failed') return theme.colors.error;
   return result === 'cancelled' || result === 'interrupted' ? theme.colors.warning : theme.colors.tertiary;
+}
+
+function FinishedBuilds({
+  last,
+  history,
+  now,
+  root,
+  platform,
+}: {
+  last: LastBuild | undefined;
+  history: BuildHistoryEntry[];
+  now: number;
+  root: string;
+  platform: Platform;
+}) {
+  const name = platformName(platform);
+  const lastRun = history.find(
+    (entry) =>
+      entry.startedAt === last?.startedAt && entry.result === 'succeeded' && Object.keys(entry.phases).length > 0,
+  );
+  return (
+    <>
+      <Section title={t`Last build`}>
+        {last ? (
+          <LastBuildDetails last={last} now={now} root={root} />
+        ) : (
+          <Note>
+            <Trans>No {name} build recorded.</Trans>
+          </Note>
+        )}
+        {lastRun ? <PhaseList steps={finishedSteps(lastRun)} cacheLabel={finishedCacheLookupLabel(lastRun)} /> : null}
+      </Section>
+      {history.length ? (
+        <Section title={t`Recent builds`}>
+          <History entries={history} now={now} root={root} />
+        </Section>
+      ) : null}
+    </>
+  );
 }
 
 function History({ entries, now, root }: { entries: BuildHistoryEntry[]; now: number; root: string }) {

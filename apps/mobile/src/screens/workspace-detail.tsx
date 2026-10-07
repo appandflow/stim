@@ -1,5 +1,6 @@
 import { t } from '@lingui/core/macro';
 import * as Clipboard from 'expo-clipboard';
+import * as Linking from 'expo-linking';
 import { Redirect, Stack, useNavigation, useRouter } from 'expo-router';
 import { type RefObject, useCallback, useEffect, useRef, useState } from 'react';
 import {
@@ -17,6 +18,7 @@ import { ConnectionBanner } from '@/components/connection-banner';
 import { DeviceTile, WarmingPlaceholder } from '@/components/device-tile';
 import { EmptyState } from '@/components/empty-state';
 import { HeaderTitle } from '@/components/header-title';
+import { ListRow, ListSection } from '@/components/list';
 import { SectionHeader } from '@/components/list';
 import { ScrollView } from '@/components/lists';
 import { explainReadOnly, readOnlyReason } from '@/components/read-only';
@@ -33,6 +35,9 @@ import {
   type BuildCardLine,
 } from '@/components/workspace-cards';
 import { withAlpha } from '@/design/color';
+import { useArchiveDetail } from '@/hooks/archive-detail';
+import { archiveError } from '@/lib/archived';
+import { archivedPage } from '@/lib/archived-page';
 import { useWorkspaceBuildPlans } from '@/hooks/build-plans';
 import { useHasStatus, useMacConnection, useMachineStatus, useWorkspace } from '@/hooks/machines';
 import { useAnnounce } from '@/hooks/screen-reader';
@@ -89,7 +94,145 @@ function reloadMessage(platform: DevicePlatform | undefined, done: boolean): str
 const ELLIPSIS_ICON = require('@/assets/icons/ellipsis.png');
 
 /** `scrollsToApp` scrolls a multi-app worktree to the devices of the app at `path`. */
-export function WorkspaceDetail({ path, scrollsToApp = true }: { path: string; scrollsToApp?: boolean }) {
+export function WorkspaceDetail(
+  props: { path: string; archive?: never; scrollsToApp?: boolean } | { archive: string; path?: never },
+) {
+  return props.archive !== undefined ? <ArchivedDetail archive={props.archive} /> : <LiveWorkspaceDetail {...props} />;
+}
+
+function ArchivedDetail({ archive: id }: { archive: string }) {
+  const { theme } = useUnistyles();
+  const router = useRouter();
+  const { mac, state, home } = useMacConnection();
+  const status = useMachineStatus(mac?.id ?? '');
+  const archive = status?.archived?.find((entry) => entry.id === id);
+  const detail = useArchiveDetail(id);
+  const now = useNow(30_000);
+  const [bannerHeight, setBannerHeight] = useState(0);
+  if (!archive)
+    return (
+      <ScrollView contentInsetAdjustmentBehavior="automatic" contentContainerStyle={styles.container}>
+        <Stack.Screen options={{ title: t`Archived workspace` }} />
+        <ConnectionBanner state={state} />
+        <Text tone="secondary">{t`This archive is no longer available.`}</Text>
+      </ScrollView>
+    );
+  const page = archivedPage(archive, detail.data, now);
+  const { env } = page;
+  const lines = Object.keys(env.lastBuilds ?? {})
+    .filter((platform): platform is Platform => platform === 'ios' || platform === 'android')
+    .map((platform) => buildLine(platform, env.lastBuilds?.[platform], undefined));
+  const open = (
+    pathname: '/mac/[id]/resources' | '/mac/[id]/build' | '/mac/[id]/work' | '/mac/[id]/logs',
+    platform?: Platform,
+  ) =>
+    router.push({
+      pathname,
+      params: { id: mac?.id ?? '', archive: id, path: env.path, ...(platform ? { platform } : {}) },
+    });
+  const pr = archive.worktree.pullRequest;
+  return (
+    <>
+      <ScrollView
+        style={{ backgroundColor: theme.colors.background }}
+        contentInsetAdjustmentBehavior="automatic"
+        contentContainerStyle={[styles.container, { paddingTop: theme.space.md + bannerHeight }]}
+      >
+        <Stack.Screen
+          options={{
+            scrollEdgeEffects: { top: 'soft' },
+            headerTitle: () => (
+              <HeaderTitle
+                title={page.title}
+                subtitle={[page.project, page.inCheckout, mac?.name].filter(Boolean).join(' \u00B7 ')}
+              />
+            ),
+          }}
+        />
+        <Stack.Toolbar placement="right">
+          <Stack.Toolbar.Menu
+            icon={OS.OS === 'ios' ? 'ellipsis' : ELLIPSIS_ICON}
+            tintColor={theme.colors.text}
+            accessibilityLabel={t`More`}
+          >
+            <Stack.Toolbar.MenuAction
+              icon="doc.on.doc"
+              subtitle={tildeHome(env.worktree?.path ?? env.path, home)}
+              onPress={() => void Clipboard.setStringAsync(env.worktree?.path ?? env.path)}
+            >{t`Copy path`}</Stack.Toolbar.MenuAction>
+            {pr ? (
+              <Stack.Toolbar.MenuAction
+                icon="arrow.up.right"
+                onPress={() => void Linking.openURL(pr.url)}
+              >{t`Open in GitHub`}</Stack.Toolbar.MenuAction>
+            ) : null}
+          </Stack.Toolbar.Menu>
+        </Stack.Toolbar>
+        <CardGrid>
+          <StatusCard archive={page} onPress={() => open('/mac/[id]/resources')} />
+          <BuildCard lines={lines} onPress={() => open('/mac/[id]/build', lines[0]?.platform)} />
+          <LogsCard
+            errors={page.totals.errors}
+            metro={null}
+            bundle={null}
+            archive={page}
+            onPress={() => open('/mac/[id]/logs')}
+          />
+          <WorkCard sessions={workspaceAgentSessions(env)} git={page.git} onPress={() => open('/mac/[id]/work')} />
+        </CardGrid>
+        {archive.replacedBy ? (
+          <ListSection>
+            <ListRow
+              title={t`Replaced by`}
+              subtitle={archive.replacedBy}
+              accessory="chevron"
+              onPress={() =>
+                router.push({
+                  pathname: '/mac/[id]/workspace',
+                  params: { id: mac?.id ?? '', path: archive.replacedBy! },
+                })
+              }
+            />
+          </ListSection>
+        ) : null}
+        <SectionHeader title={t`Recordings`} />
+        {page.recordingsExpired ? (
+          <Text variant="footnote" tone="tertiary">{t`Expired`}</Text>
+        ) : page.recordings.length ? (
+          <ListSection>
+            {page.recordings
+              .filter((recording) => recording.spans.length)
+              .map((recording) => (
+                <ListRow
+                  key={`${recording.platform}:${recording.slot}`}
+                  title={platformName(recording.platform)}
+                  subtitle={recording.slot}
+                  accessory="chevron"
+                  onPress={() =>
+                    router.push({
+                      pathname: '/mac/[id]/archived-replay',
+                      params: { id: mac?.id ?? '', archive: id, platform: recording.platform, slot: recording.slot },
+                    })
+                  }
+                />
+              ))}
+          </ListSection>
+        ) : (
+          <Text variant="footnote" tone="secondary">
+            {detail.data
+              ? t`No recording available.`
+              : detail.error
+                ? archiveError(detail.error, 'detail')
+                : t`Loading...`}
+          </Text>
+        )}
+      </ScrollView>
+      <PinnedBanner state={state} onHeight={setBannerHeight} />
+    </>
+  );
+}
+
+function LiveWorkspaceDetail({ path, scrollsToApp = true }: { path: string; scrollsToApp?: boolean }) {
   const { theme } = useUnistyles();
   const router = useRouter();
   const { mac, state, home, connection } = useMacConnection();

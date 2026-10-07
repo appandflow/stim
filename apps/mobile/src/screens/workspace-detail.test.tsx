@@ -6,6 +6,8 @@ import { fireEvent, render, within } from '@testing-library/react-native';
 
 import '@/design/unistyles';
 
+import mockCaptured from '../../mock-server/fixtures/status.json';
+import mockArchiveDetails from '../../mock-server/fixtures/archive-details.json';
 import type { EnvironmentState } from '@/protocol/types';
 
 import { WorkspaceDetail } from './workspace-detail';
@@ -13,6 +15,8 @@ import { WorkspaceDetail } from './workspace-detail';
 let mockEnvironments: EnvironmentState[] = [];
 const mockPush = jest.fn();
 const mockTouch = jest.fn();
+const mockLiveAction = jest.fn(() => ({ available: null, pending: null }));
+const mockLivePlans = jest.fn(() => () => undefined);
 jest.mock('expo-router', () => {
   const { View, Text } = jest.requireActual('react-native');
   const Toolbar = Object.assign(View, { Menu: View, MenuAction: Text });
@@ -25,7 +29,7 @@ jest.mock('expo-router', () => {
 jest.mock('@/hooks/machines', () => ({
   useMacConnection: () => ({ mac: { id: 'mac', name: 'Mac' }, state: { kind: 'open', features: [] }, home: null }),
   useHasStatus: () => true,
-  useMachineStatus: () => ({ environments: mockEnvironments }),
+  useMachineStatus: () => ({ environments: mockEnvironments, archived: mockCaptured.payload.archived }),
   useWorkspace: (_id: string, path: string) => ({
     env: mockEnvironments.find((env) => env.path === path),
     title: 'feat/unified',
@@ -33,8 +37,11 @@ jest.mock('@/hooks/machines', () => ({
     inCheckout: 'apps/mobile',
   }),
 }));
-jest.mock('@/hooks/build-plans', () => ({ useWorkspaceBuildPlans: () => () => undefined }));
-jest.mock('@/hooks/workspace-actions', () => ({ useAction: () => ({ available: null, pending: null }) }));
+jest.mock('@/hooks/archive-detail', () => ({
+  useArchiveDetail: () => ({ data: mockArchiveDetails['stim--archive-1'], error: null }),
+}));
+jest.mock('@/hooks/build-plans', () => ({ useWorkspaceBuildPlans: () => mockLivePlans() }));
+jest.mock('@/hooks/workspace-actions', () => ({ useAction: () => mockLiveAction() }));
 jest.mock('@/hooks/recents', () => ({ useRecents: () => ({ touch: mockTouch }) }));
 jest.mock('@/hooks/screen-reader', () => ({ useAnnounce: () => {} }));
 jest.mock('@/hooks/use-now', () => ({ useNow: () => Date.parse('2026-10-05T12:00:00Z') }));
@@ -158,4 +165,37 @@ it('names projects on shared-platform build rows and device tiles', async () => 
       .map((node) => node.props.children),
   ).toEqual(['apps/a', 'apps/b', 'apps/a', 'apps/b']);
   expect(screen.getAllByTestId('project-subtitle')).toHaveLength(8);
+});
+
+it('opens archived logs, full build history and slot replay without mounting live actions or planning', async () => {
+  mockLiveAction.mockClear();
+  mockLivePlans.mockClear();
+  mockTouch.mockClear();
+  const archive = mockCaptured.payload.archived[0];
+  const screen = await render(
+    <I18nProvider i18n={i18n}>
+      <WorkspaceDetail archive={archive.id} />
+    </I18nProvider>,
+  );
+  expect(mockLiveAction).not.toHaveBeenCalled();
+  expect(mockLivePlans).not.toHaveBeenCalled();
+  expect(mockTouch).not.toHaveBeenCalled();
+  for (const text of ['Stop', 'Reload', 'Allow control...', 'Devices']) expect(screen.queryByText(text)).toBeNull();
+  await fireEvent.press(screen.getByLabelText(/^Build:/));
+  expect(mockPush).toHaveBeenLastCalledWith({
+    pathname: '/mac/[id]/build',
+    params: { id: 'mac', archive: archive.id, path: archive.projectRoot, platform: 'ios' },
+  });
+  await fireEvent.press(screen.getByLabelText(/^Logs,/));
+  expect(mockPush).toHaveBeenLastCalledWith({
+    pathname: '/mac/[id]/logs',
+    params: { id: 'mac', archive: archive.id, path: archive.projectRoot },
+  });
+  await fireEvent.press(screen.getByText('tablet'));
+  expect(mockPush).toHaveBeenLastCalledWith({
+    pathname: '/mac/[id]/archived-replay',
+    params: { id: 'mac', archive: archive.id, platform: 'android', slot: 'tablet' },
+  });
+  expect(screen.getByText('#2600 Merged')).toBeTruthy();
+  expect(screen.queryByText('Draft')).toBeNull();
 });

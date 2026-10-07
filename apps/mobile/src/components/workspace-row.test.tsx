@@ -14,6 +14,7 @@ import { AgentIcon } from './agent-icon';
 import { PlatformGlyph } from './platform-glyph';
 import { MacStatus } from '@/screens/mac-status';
 
+import { mergeArchives } from '@/lib/home';
 import type { HomeItem, HomeWorktree } from '@/lib/home';
 import { homeSections } from '@/lib/home-list';
 
@@ -198,4 +199,24 @@ test('renders a future machine owner with a generic icon and omits an unknown me
   expect(screen.getByText('Future service')).toBeTruthy();
   expect(screen.getAllByLabelText('gearshape').length).toBeGreaterThan(0);
   expect(screen.queryByText(/Each process counts in one row/)).toBeNull();
+});
+
+it('renders archives in the shared row with app labels, removal facts and monotonic PR state', async () => {
+  const now = Date.parse('2026-09-25T04:23:09.012Z');
+  const archive = fixture.payload.archived[0];
+  const items = mergeArchives([
+    { id: 'mac', name: 'Mac', status: { ...fixture.payload, archived: [archive] } as StatusPayload },
+  ]);
+  const workspace = homeSections(items)[0].data[0];
+  if (!('apps' in workspace)) throw new Error('Expected archived checkout');
+  const open = jest.fn();
+  const screen = await render(<WorkspaceGroupRow workspace={workspace} now={now} folder showsMachine onOpen={open} />);
+  expect(screen.getByText('feat/archived-workspaces')).toBeTruthy();
+  expect(screen.getByText('apps/mobile')).toBeTruthy();
+  expect(screen.getByText('Removed 2h ago \u00B7 12 MB')).toBeTruthy();
+  expect(screen.getByText('#2600 Merged')).toBeTruthy();
+  expect(screen.queryByText('Draft')).toBeNull();
+  expect(screen.queryByText('Idle')).toBeNull();
+  await fireEvent.press(screen.getByText('feat/archived-workspaces'));
+  expect(open).toHaveBeenCalledWith(items[0], false);
 });

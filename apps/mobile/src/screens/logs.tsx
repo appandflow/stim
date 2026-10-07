@@ -40,7 +40,7 @@ import {
   type LogFilterState,
   type Severity,
 } from '@/lib/logs';
-import { archivedView } from '@/lib/archived';
+import { archivedPage } from '@/lib/archived-page';
 import { hapticFeedback } from '@/lib/haptics';
 import { workspaceTitleAt } from '@/lib/workspace-names';
 import type { Theme } from '@/design/theme';
@@ -173,7 +173,7 @@ export function Logs({
           headerTitle: () => (
             <HeaderTitle
               title={t`Logs`}
-              subtitle={archived ? archivedView(archived, Date.now()).title : workspaceTitleAt(path, status)}
+              subtitle={archived ? archivedPage(archived, null, Date.now()).title : workspaceTitleAt(path, status)}
             />
           ),
         }}

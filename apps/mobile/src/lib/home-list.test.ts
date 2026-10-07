@@ -286,6 +286,8 @@ it.each(['recent', 'name'] as const)(
       ['tlon-apps', 0, 0],
     ]);
     expect(sections[0].data.map((entry) => entry.title)).toEqual(['feat/archived-workspaces', 'feat/phone-list']);
-    expect(sections[0].data.every((entry) => 'archive' in entry)).toBe(true);
+    expect(sections[0].data.every((entry) => 'apps' in entry && entry.apps.every((app) => 'archive' in app))).toBe(
+      true,
+    );
   },
 );

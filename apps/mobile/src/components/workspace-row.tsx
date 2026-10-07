@@ -16,7 +16,8 @@ import { useMachinePresence } from '@/hooks/machines';
 import { useNow } from '@/hooks/use-now';
 import { workspaceAgentSessions } from '@/lib/agents';
 import { buildKey, buildTiming, outcomeLabel } from '@/lib/format';
-import type { HomeItem, HomeWorktree } from '@/lib/home';
+import { archivedPage } from '@/lib/archived-page';
+import type { HomeArchive, HomeItem, HomeWorktree } from '@/lib/home';
 import {
   offlineRowStatus,
   rowDevices,
@@ -40,10 +41,11 @@ export const WorkspaceGroupRow = memo(function WorkspaceGroupRow({
   now: number;
   folder: boolean;
   showsMachine: boolean;
-  onOpen: (item: HomeItem, errors: boolean, checkout?: boolean) => void;
+  onOpen: (item: HomeItem | HomeArchive, errors: boolean, checkout?: boolean) => void;
 }) {
   const first = workspace.apps[0];
   const branch = workspace.title;
+  const archive = 'archive' in first ? archivedPage(first.archive, null, props.now) : null;
   const { online, cached } = useMachinePresence(first.macId);
   if (workspace.apps.length === 1) return <WorkspaceRow item={first} {...props} />;
   return (
@@ -51,7 +53,11 @@ export const WorkspaceGroupRow = memo(function WorkspaceGroupRow({
       <Touch
         feedback="row"
         accessibilityRole="button"
-        accessibilityLabel={[branch, props.showsMachine ? first.macName : null, gitChip(first.env.worktree)?.label]
+        accessibilityLabel={[
+          branch,
+          props.showsMachine ? first.macName : null,
+          (archive?.git ?? gitChip(first.env.worktree))?.label,
+        ]
           .filter(Boolean)
           .join(', ')}
         accessibilityHint={t`Opens every app in this checkout`}
@@ -66,7 +72,7 @@ export const WorkspaceGroupRow = memo(function WorkspaceGroupRow({
             {first.macName}
           </Text>
         ) : null}
-        <GitLine facts={first.env.worktree} />
+        <GitLine facts={first.env.worktree} archive={archive} />
       </Touch>
       <View style={styles.apps}>
         {workspace.apps.map((item) => (
@@ -85,14 +91,14 @@ const WorkspaceRow = memo(function WorkspaceRow({
   onOpen,
   app = false,
 }: {
-  item: HomeItem;
+  item: HomeItem | HomeArchive;
   app?: boolean;
   now: number;
   /** Whether to name the folder in the checkout, when the repo's workspaces sit in different ones. */
   folder: boolean;
   /** Whether to name the machine, when more than one is paired. */
   showsMachine: boolean;
-  onOpen: (item: HomeItem, errors: boolean) => void;
+  onOpen: (item: HomeItem | HomeArchive, errors: boolean) => void;
 }) {
   const { theme } = useUnistyles();
   const large = useLargeText();
@@ -101,6 +107,13 @@ const WorkspaceRow = memo(function WorkspaceRow({
   const offline = !online || cached;
   const at = offline ? (lastSeenAt ?? now) : now;
   const { env } = item;
+  const archive = 'archive' in item ? archivedPage(item.archive, null, now) : null;
+  const expiry = archive?.retention.filter((part) => part.kind === 'logs' || part.kind === 'recordings');
+  const expiryLabel = expiry?.some((part) => part.expired)
+    ? t`Expired content`
+    : expiry?.some((part) => part.soon)
+      ? t`Expires soon`
+      : null;
   const status = rowStatus(env, now, offline ? { lastSeenAt } : null);
   const problems = rowProblems(env, at);
   const devices = rowDevices(env, at);
@@ -158,17 +171,23 @@ const WorkspaceRow = memo(function WorkspaceRow({
     <Touch
       feedback="row"
       onPress={() => onOpen(item, false)}
-      accessibilityLabel={rowLabel({
-        item: { ...item, title },
-        now: at,
-        status,
-        problems,
-        sessions,
-        folder: !app && folder,
-        showsMachine,
-      })}
+      accessibilityLabel={
+        archive
+          ? [title, archive.prLabel, archive.removed, archive.size, expiryLabel, showsMachine ? item.macName : null]
+              .filter(Boolean)
+              .join(', ')
+          : rowLabel({
+              item: { ...item, title },
+              now: at,
+              status,
+              problems,
+              sessions,
+              folder: !app && folder,
+              showsMachine,
+            })
+      }
       accessibilityHint={t`Opens the workspace`}
-      accessibilityActions={errors > 0 ? [{ name: 'errors', label: t`Show errors` }] : undefined}
+      accessibilityActions={!archive && errors > 0 ? [{ name: 'errors', label: t`Show errors` }] : undefined}
       onAccessibilityAction={(event) => {
         if (event.nativeEvent.actionName === 'errors') onOpen(item, true);
       }}
@@ -190,11 +209,23 @@ const WorkspaceRow = memo(function WorkspaceRow({
             {title}
           </Text>
           <Text variant="callout" weight="medium" tone={offline ? 'tertiary' : status.tone} numberOfLines={1}>
-            {status.text}
+            {archive ? t`Archived` : status.text}
           </Text>
         </View>
-        {sessions.length ? <AgentSessionLine sessions={sessions} variant="callout" tone="secondary" /> : null}
-        {problems.length ? (
+        {archive ? (
+          <Text variant="footnote" tone="secondary">
+            {[archive.removed, archive.size].join(' \u00B7 ')}
+          </Text>
+        ) : null}
+        {expiryLabel ? (
+          <Text variant="caption2" tone="warning">
+            {expiryLabel}
+          </Text>
+        ) : null}
+        {!archive && sessions.length ? (
+          <AgentSessionLine sessions={sessions} variant="callout" tone="secondary" />
+        ) : null}
+        {!archive && problems.length ? (
           <View style={styles.pills}>
             {problems.map((problem) => (
               <Pill
@@ -215,7 +246,9 @@ const WorkspaceRow = memo(function WorkspaceRow({
           </Text>
         ) : null}
         {context.length ? <Line parts={context} /> : null}
-        {!app ? <GitLine facts={item.env.worktree} folder={folder ? item.inCheckout : null} /> : null}
+        {!app ? (
+          <GitLine facts={item.env.worktree} archive={archive} folder={archive || folder ? item.inCheckout : null} />
+        ) : null}
       </View>
     </Touch>
   );
@@ -284,10 +317,18 @@ export const WorktreeRow = memo(function WorktreeRow({
   );
 });
 
-function GitLine({ facts, folder }: { facts: WorktreeFacts | null | undefined; folder?: string | null }) {
+function GitLine({
+  facts,
+  folder,
+  archive,
+}: {
+  facts: WorktreeFacts | null | undefined;
+  folder?: string | null;
+  archive?: ReturnType<typeof archivedPage> | null;
+}) {
   const large = useLargeText();
   const lines = large ? 3 : 1;
-  const git = gitChip(facts);
+  const git = archive ? archive.git : gitChip(facts);
   const gitParts: ReactNode[] = [];
   if (folder) {
     gitParts.push(
@@ -310,7 +351,7 @@ function GitLine({ facts, folder }: { facts: WorktreeFacts | null | undefined; f
       </Text>,
     );
   }
-  for (const part of git?.parts ?? []) {
+  for (const part of archive ? [] : (git?.parts ?? [])) {
     gitParts.push(
       <Text
         key={part.text}

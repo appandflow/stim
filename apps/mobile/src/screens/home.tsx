@@ -26,8 +26,6 @@ import { useInbox } from '@/hooks/inbox';
 import { useArchiveItems, useMacs, usePairedMacs, useWorkspaceItems, useWorktreeItems } from '@/hooks/machines';
 import { useNow } from '@/hooks/use-now';
 import { useWelcome } from '@/hooks/welcome';
-import { archivedView } from '@/lib/archived';
-import { ListRow } from '@/components/list';
 import { AGENT_PROMPTS, pickPrompts } from '@/lib/agent-prompts';
 import {
   filtersActive,
@@ -36,7 +34,6 @@ import {
   projectNames,
   runningDevices,
   type DeviceTileItem,
-  type HomeArchive,
   type HomeItem,
 } from '@/lib/home';
 import { checkoutProjects, homeSections, type HomeSection } from '@/lib/home-list';
@@ -265,9 +262,7 @@ export function Home() {
         ListHeaderComponent={listHeader}
         renderSectionHeader={({ section }) => <RepoHeader section={section} />}
         renderItem={({ item }) =>
-          'archive' in item ? (
-            <ArchiveRow item={item} now={now} showsMachine={showsMachine} />
-          ) : 'facts' in item ? (
+          'facts' in item ? (
             <WorktreeRow item={item} now={now} showsMachine={showsMachine} />
           ) : (
             <WorkspaceGroupRow
@@ -275,7 +270,14 @@ export function Home() {
               now={now}
               folder={folders.has(item.apps[0].project)}
               showsMachine={showsMachine}
-              onOpen={openWorkspace}
+              onOpen={(app, errors, checkout) =>
+                'archive' in app
+                  ? router.push({
+                      pathname: '/mac/[id]/archived',
+                      params: { id: app.macId, archive: app.archive.id },
+                    })
+                  : openWorkspace(app, errors, checkout)
+              }
             />
           )
         }
@@ -307,21 +309,6 @@ export function Home() {
         }
       />
     </SafeAreaView>
-  );
-}
-
-function ArchiveRow({ item, now, showsMachine }: { item: HomeArchive; now: number; showsMachine: boolean }) {
-  const router = useRouter();
-  const view = archivedView(item.archive, now);
-  return (
-    <ListRow
-      title={view.title}
-      subtitle={[view.pr, view.removed, view.size, showsMachine ? item.macName : null].filter(Boolean).join(' \u00B7 ')}
-      accessory="chevron"
-      onPress={() =>
-        router.push({ pathname: '/mac/[id]/archived', params: { id: item.macId, archive: item.archive.id } })
-      }
-    />
   );
 }
 

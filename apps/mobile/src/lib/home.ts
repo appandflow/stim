@@ -1,5 +1,6 @@
 import { t } from '@lingui/core/macro';
 
+import { archivedPage } from '@/lib/archived-page';
 import type { ArchivedWorkspace } from '@/lib/archived';
 import type { Tone } from '@/design/tone';
 import { pathInCheckout, projectOf, repositoryRoots, workspaceTitle } from '@/lib/workspace-names';
@@ -65,7 +66,7 @@ export interface HomeWorktree {
   facts: WorktreeFacts;
 }
 
-export interface HomeArchive {
+export interface HomeArchive extends HomeItem {
   key: string;
   macId: string;
   macName: string;
@@ -76,14 +77,19 @@ export interface HomeArchive {
 
 export function mergeArchives(macs: MacSnapshot[]): HomeArchive[] {
   return macs.flatMap((mac) =>
-    (mac.status?.archived ?? []).map((archive) => ({
-      key: `${mac.id}\narchive\n${archive.id}`,
-      macId: mac.id,
-      macName: mac.name,
-      project: archive.project,
-      title: archive.worktree.branch || archive.project,
-      archive,
-    })),
+    (mac.status?.archived ?? []).map((archive) => {
+      const page = archivedPage(archive, null, Date.now());
+      return {
+        key: `${mac.id}\narchive\n${archive.id}`,
+        macId: mac.id,
+        macName: mac.name,
+        project: page.project,
+        title: page.title,
+        inCheckout: page.inCheckout,
+        env: page.env,
+        archive,
+      };
+    }),
   );
 }
 
@@ -91,7 +97,8 @@ export type HomeEntry = HomeItem | HomeWorktree | HomeArchive;
 
 /** The home row an entry belongs to: apps of one linked checkout share a row, so they share a key. */
 export function workspaceKey(item: HomeEntry): string {
-  if ('facts' in item || 'archive' in item) return item.key;
+  if ('facts' in item) return item.key;
+  if ('archive' in item) return `${item.macId}\narchive-checkout\n${item.env.worktree?.path}`;
   const checkout = item.env.worktree?.path;
   return `${item.macId}\n${checkout ? `checkout\n${checkout}` : `app\n${item.env.path}`}`;
 }

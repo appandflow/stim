@@ -18,6 +18,7 @@ import type { Theme } from '@/design/theme';
 import { useBuildOutput } from '@/hooks/workspace-logs';
 import { useNow } from '@/hooks/use-now';
 import { formatDuration } from '@/intl/format';
+import type { ArchivedPage } from '@/lib/archived-page';
 import { agentLabel } from '@/lib/agents';
 import { buildKey, buildTiming, macosBuildLabel, recheckNote } from '@/lib/format';
 import {
@@ -109,7 +110,34 @@ export function MacosBuildCard({ app, onPress }: { app: MacosAppState; onPress: 
   );
 }
 
-export function StatusCard({ stage, usage, onPress }: { stage: WorkspaceStage; usage: Usage; onPress: () => void }) {
+export function StatusCard({
+  stage,
+  usage,
+  archive,
+  onPress,
+}: {
+  stage?: WorkspaceStage;
+  usage?: Usage;
+  archive?: ArchivedPage;
+  onPress: () => void;
+}) {
+  if (archive)
+    return (
+      <SmallCard
+        title={t`Status`}
+        onPress={onPress}
+        accessibilityLabel={[archive.removedLabel, archive.size].join(', ')}
+        accessibilityHint={t`Shows removal and retention details`}
+      >
+        <Text variant={VALUE} weight="semibold">
+          {archive.removedLabel}
+        </Text>
+        <Text variant={VALUE} tone="secondary">
+          {archive.size}
+        </Text>
+      </SmallCard>
+    );
+  if (!stage || !usage) return null;
   const parts = usageParts(usage);
   const note = stage.kind === 'building' ? null : stage.subtitle;
   return (
@@ -150,7 +178,7 @@ export type BuildCardLine = Omit<BuildLine, 'platform'> & {
 };
 
 export function BuildCard({ lines, onPress }: { lines: BuildCardLine[]; onPress: () => void }) {
-  const spoken = lines.map((line) => line.spoken).join(', ');
+  const spoken = lines.length ? lines.map((line) => line.spoken).join(', ') : t`No build`;
   return (
     <SmallCard
       title={t`Build`}
@@ -159,6 +187,7 @@ export function BuildCard({ lines, onPress }: { lines: BuildCardLine[]; onPress:
       accessibilityLabel={t`Build: ${spoken}`}
       accessibilityHint={t`Shows the builds`}
     >
+      {lines.length ? null : <Text variant={VALUE} tone="tertiary">{t`No build`}</Text>}
       {lines.map((line) => {
         const row = (
           <View key={line.key ?? line.platform} style={styles.stat}>
@@ -219,11 +248,13 @@ export function LogsCard({
   errors,
   metro,
   bundle,
+  archive,
   onPress,
 }: {
   errors: number | null;
   metro: MetroHealth | null;
   bundle: BundleLine | null;
+  archive?: ArchivedPage;
   onPress: () => void;
 }) {
   const { theme } = useUnistyles();
@@ -235,6 +266,7 @@ export function LogsCard({
       onPress={onPress}
       accessibilityLabel={[
         t`Logs`,
+        archive?.logsExpired ? t`Expired` : null,
         errors === null ? null : plural(errors, { one: '# error', other: '# errors' }),
         metroState ? t`Metro ${metroState}` : null,
         bundle?.text,
@@ -243,7 +275,12 @@ export function LogsCard({
         .join(', ')}
       accessibilityHint={t`Opens the logs`}
     >
-      {errors === null && !metro ? (
+      {archive ? (
+        <Text variant={VALUE} tone="tertiary">
+          {archive.logsExpired ? t`Expired` : t`Saved logs`}
+        </Text>
+      ) : null}
+      {errors === null && !metro && !archive ? (
         <Text variant={VALUE} tone="tertiary">
           <Trans>No logs yet</Trans>
         </Text>

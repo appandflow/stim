@@ -38,11 +38,21 @@ export function replayRange(recording) {
   return {
     enabled: true,
     recording: true,
-    spans: starts(recording).map((start) => ({ start, end: start + recording.length })),
-    markers: starts(recording).flatMap((start) =>
-      recording.markers.map((marker) => ({ ...marker, at: start + marker.at })),
+    spans: recording.spans ?? starts(recording).map((start) => ({ start, end: start + recording.length })),
+    markers: (recording.spans ?? starts(recording).map((start) => ({ start, end: start + recording.length }))).flatMap(
+      (span) =>
+        recording.markers.map((marker) => ({
+          ...marker,
+          at: span.start + (marker.at * (span.end - span.start)) / recording.length,
+        })),
     ),
   };
+}
+
+function spanUnits(recording, span) {
+  if (!recording.spans) return recording.units;
+  const scale = (span.end - span.start) / recording.length;
+  return recording.units.map((unit) => ({ ...unit, at: unit.at * scale }));
 }
 
 function packet(subscription, sequence, unit, capturedAt) {
@@ -110,10 +120,13 @@ export class VideoFeed {
   /** Returns the capture time of the frame shown. */
   seek(at, rate) {
     this.stop();
-    const [older, current] = starts(this.recording);
-    const start = at <= older + this.recording.length ? older : current;
-    const { units } = this.recording;
-    const target = Math.min(this.recording.length, Math.max(0, at - start));
+    const spans = replayRange(this.recording).spans;
+    const found = spans.findIndex((span) => span.end >= at);
+    const spanIndex = found < 0 ? spans.length - 1 : found;
+    const span = spans[spanIndex];
+    const start = span.start;
+    const units = spanUnits(this.recording, span);
+    const target = Math.min(span.end - start, Math.max(0, at - start));
     let first = 0;
     for (let i = 0; i < units.length && units[i].at <= target; i++) if (units[i].flags & 1) first = i;
     let next = first;
@@ -123,22 +136,24 @@ export class VideoFeed {
     }
     const shown = start + units[next - 1].at;
     if (rate > 0) {
-      const play = (copy, index, wallStart, from) => {
+      const play = (spanIndex, index, wallStart, from) => {
+        const current = spans[spanIndex];
+        const units = spanUnits(this.recording, current);
         if (index >= units.length) {
-          if (copy === older) return play(current, 0, Date.now(), units[0].at);
-          const at = copy + units.at(-1).at;
+          if (spanIndex + 1 < spans.length) return play(spanIndex + 1, 0, Date.now(), 0);
+          const at = current.start + units.at(-1).at;
           queueMicrotask(() => this.send({ event: 'replay-ended', subscription: this.subscription, at }));
           return;
         }
         this.timer = setTimeout(
           () => {
-            this.emit(units[index], copy + units[index].at);
-            play(copy, index + 1, wallStart, from);
+            this.emit(units[index], current.start + units[index].at);
+            play(spanIndex, index + 1, wallStart, from);
           },
           Math.max(0, wallStart + (units[index].at - from) / rate - Date.now()),
         );
       };
-      play(start, next, Date.now(), units[next - 1].at);
+      play(spanIndex, next, Date.now(), units[next - 1].at);
     }
     return shown;
   }
@@ -148,7 +163,7 @@ export function replayKeyframe(recording, at) {
   const spans = replayRange(recording).spans;
   const span = spans.find((span) => span.end >= at) ?? spans.at(-1);
   const target = Math.max(0, at - span.start);
-  const keyframes = recording.units.filter((unit) => unit.flags & 1);
+  const keyframes = spanUnits(recording, span).filter((unit) => unit.flags & 1);
   const unit = keyframes.findLast((unit) => unit.at <= target) ?? keyframes[0];
   const next = keyframes.find((candidate) => candidate.at > unit.at);
   return {
