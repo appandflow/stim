@@ -27,6 +27,16 @@ const TOKENS_FILE = join(tmpdir(), 'stim-mobile-mock-server-tokens.json');
 const fixtures = loadFixtures({ slotWaits: values['slot-waits'] });
 const legacyArchives = process.env.STIM_MOCK_LEGACY_ARCHIVES === '1';
 const recording = loadRecording();
+const recordingFor = (params) => {
+  if (!params.archive) return recording;
+  const device = fixtures.archiveDetails[params.archive]?.recordings.find(
+    (device) => device.platform === params.platform && device.slot === (params.slot ?? 'default'),
+  );
+  return {
+    ...recording,
+    spans: (device?.spans ?? []).map((span) => ({ start: span.start + shiftMs, end: span.end + shiftMs })),
+  };
+};
 let recordingEnabled = true;
 const hash = (token) => createHash('sha256').update(token).digest('hex');
 
@@ -379,14 +389,11 @@ server.on('connection', (socket) => {
       )
         return { error: ['bad-request', 'Hosted frames do not support physical targets, duoFrame or replay.'] };
       if (params.archive && params.at === undefined) return { error: ['bad-request', 'An archive requires at.'] };
-      if (
-        params.archive &&
-        !fixtures.status.archived.find((archive) => archive.id === params.archive)?.bytes.recordings
-      )
+      if (params.archive && !recordingFor(params).spans.length)
         return { error: ['no-recording', 'No archived recording remains.'] };
-      if (params.platform === 'ios' && params.video?.includes('h264')) {
+      if ((params.platform === 'ios' || params.archive) && params.video?.includes('h264')) {
         const subscription = `s${nextSubscription++}`;
-        const feed = new VideoFeed(recording, subscription, socket, send);
+        const feed = new VideoFeed(recordingFor(params), subscription, socket, send);
         feed.archived = Boolean(params.archive);
         feeds.set(subscription, feed);
         if (params.at === undefined) setImmediate(() => feed.live());
@@ -475,38 +482,32 @@ server.on('connection', (socket) => {
           ...detail,
           recordings: detail.recordings.map((device) => ({
             ...device,
-            spans:
-              device.platform === 'ios' && device.slot === 'default'
-                ? replayRange(recording).spans
-                : device.spans.map((span) => ({ start: span.start + shiftMs, end: span.end + shiftMs })),
+            spans: device.spans.map((span) => ({ start: span.start + shiftMs, end: span.end + shiftMs })),
           })),
         },
       };
     },
     'replay.range'(params) {
       if (hostedTarget(params)) return { result: { enabled: false, recording: false, spans: [], markers: [] } };
-      const archived = params.archive
-        ? fixtures.status.archived.find((archive) => archive.id === params.archive)
-        : null;
+      if (params.archive) {
+        const source = recordingFor(params);
+        return { result: { ...replayRange(source), recording: false } };
+      }
       if (
         params.platform !== 'ios' ||
-        (params.archive
-          ? !archived?.bytes.recordings
-          : !recordingEnabled || params.workspace === '/Users/dev/Developer/react-native-hinges/example')
+        !recordingEnabled ||
+        params.workspace === '/Users/dev/Developer/react-native-hinges/example'
       ) {
         return { result: { enabled: recordingEnabled, recording: false, spans: [], markers: [] } };
       }
       const running =
         fixtures.status.environments.find((env) => env.path === params.workspace)?.ios?.state === 'Booted';
-      return { result: { ...replayRange(recording), recording: !params.archive && running } };
+      return { result: { ...replayRange(recording), recording: running } };
     },
     'replay.keyframe'(params) {
-      const archived = params.archive
-        ? fixtures.status.archived.find((archive) => archive.id === params.archive)
-        : null;
-      if (params.platform !== 'ios' || (params.archive && !archived?.bytes.recordings))
+      if (params.archive ? !recordingFor(params).spans.length : params.platform !== 'ios')
         return { error: ['no-recording', 'No recording remains.'] };
-      return { result: replayKeyframe(recording, params.at) };
+      return { result: replayKeyframe(recordingFor(params), params.at) };
     },
     'frames.seek'(params) {
       const feed = feeds.get(params.subscription);

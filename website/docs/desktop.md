@@ -88,7 +88,7 @@ The panel follows a small iOS app in its own worktree. It shows:
 - **Fast Refresh:** change the title to purple and watch the app update; new errors point to Logs.
 - **Watch on your phone:** **Pair a phone** opens Settings > Phones > Pair. If the server is off, **Turn on Serve to phones** opens Phones so you can enable it. An existing pairing shows **Done already**, then "Open Stim on your phone: the tour workspace is there". **Skip** stays available.
 - **Build on another Mac:** **Add build machine** opens the wizard for the tour workspace. With no machine configured, **Skip** is the primary action. Approval completes the step and reveals the prompt below; name the approved machine to your agent. An iOS build offloaded after this step started ticks **Build ran on another Mac**.
-- **Finish and archive:** revert the tutorial edit, stop, then remove only its worktree. **Open Archived** opens the archived run.
+- **Finish and archive:** revert the tutorial edit, stop, then remove only its worktree. **Open Archived** opens the same workspace page as a read-only archive, with retained build history, logs and recordings. Archived sidebar rows keep the live repository/worktree grouping and app labels. The page also shows removal and last activity, retention dates and sizes, build totals, final branch head, PR number and title (only Merged is treated as a final state), and ended agent sessions.
 
 <PromptBox title="Try an approved build machine">
 {`Continue the Stim tutorial: machine`}

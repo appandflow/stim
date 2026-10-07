@@ -6,6 +6,7 @@ import SwiftUI
 /// desktop app link opens there on click.
 struct AgentSessionsSection: View {
   var agents: [AgentSession]
+  var showsDuration = false
 
   var body: some View {
     VStack(alignment: .leading, spacing: Space.md) {
@@ -26,6 +27,10 @@ struct AgentSessionsSection: View {
         } else {
           Text(agent.label).lineLimit(1).truncationMode(.middle)
             .foregroundStyle(Palette.secondary)
+        }
+        if showsDuration, let duration = agent.duration {
+          Text("Ended \u{00B7} \(Format.duration(duration))")
+            .font(.stim(.footnote)).foregroundStyle(Palette.tertiary)
         }
       }
     }

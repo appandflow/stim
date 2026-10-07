@@ -30,14 +30,14 @@ import type { AgentSession, EnvironmentState, Platform } from '@/protocol/types'
 export interface HomeWorkspace {
   key: string;
   title: string;
-  apps: HomeItem[];
+  apps: (HomeItem | HomeArchive)[];
 }
 
 export interface HomeSection {
   project: string;
   live: number;
   idle: number;
-  data: (HomeWorkspace | HomeWorktree | HomeArchive)[];
+  data: (HomeWorkspace | HomeWorktree)[];
 }
 
 /**
@@ -46,12 +46,12 @@ export interface HomeSection {
  * apps, with no activity last and name order breaking ties. Archives stay ordered by removal time.
  */
 export function homeSections(items: HomeEntry[], sort: HomeFilters['sort'] = 'recent'): HomeSection[] {
-  const checkouts = new Map<string, HomeWorkspace | HomeWorktree | HomeArchive>();
+  const checkouts = new Map<string, HomeWorkspace | HomeWorktree>();
   for (const item of [...items].sort(
     (a, b) =>
       a.project.localeCompare(b.project) || a.title.localeCompare(b.title) || a.macName.localeCompare(b.macName),
   )) {
-    if ('facts' in item || 'archive' in item) {
+    if ('facts' in item) {
       checkouts.set(item.key, item);
       continue;
     }
@@ -62,7 +62,7 @@ export function homeSections(items: HomeEntry[], sort: HomeFilters['sort'] = 're
   }
   const groups = new Map<
     string,
-    { live: HomeWorkspace[]; idle: (HomeWorkspace | HomeWorktree)[]; archived: HomeArchive[] }
+    { live: HomeWorkspace[]; idle: (HomeWorkspace | HomeWorktree)[]; archived: HomeWorkspace[] }
   >();
   const activity = new Map<string, number>();
   const projectActivity = new Map<string, number>();
@@ -77,7 +77,7 @@ export function homeSections(items: HomeEntry[], sort: HomeFilters['sort'] = 're
     projectActivity.set(project, Math.max(projectActivity.get(project) ?? -Infinity, latest));
     const group = groups.get(project) ?? { live: [], idle: [], archived: [] };
     groups.set(project, group);
-    if ('archive' in workspace) group.archived.push(workspace);
+    if ('apps' in workspace && 'archive' in workspace.apps[0]) group.archived.push(workspace);
     else if ('apps' in workspace && workspace.apps.some((app) => isShownLive(app.env))) group.live.push(workspace);
     else group.idle.push(workspace);
   }
@@ -97,7 +97,11 @@ export function homeSections(items: HomeEntry[], sort: HomeFilters['sort'] = 're
       data: [
         ...live,
         ...idle,
-        ...archived.sort((a, b) => Date.parse(b.archive.removedAt) - Date.parse(a.archive.removedAt)),
+        ...archived.sort(
+          (a, b) =>
+            Math.max(...b.apps.map((app) => Date.parse((app as HomeArchive).archive.removedAt))) -
+            Math.max(...a.apps.map((app) => Date.parse((app as HomeArchive).archive.removedAt))),
+        ),
       ],
     }))
     .sort(

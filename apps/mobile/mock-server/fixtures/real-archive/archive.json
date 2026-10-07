@@ -1,0 +1,71 @@
+{
+  "id": "sample-sdk58--913d6b35194a2bf4--1791349360029",
+  "projectRoot": "/Users/me/Library/Application Support/Stim Desktop/Onboarding/sample-sdk58",
+  "project": "sample-sdk58",
+  "workspace": "sample-sdk58--913d6b35194a2bf4",
+  "worktree": {
+    "repository": null,
+    "branch": null,
+    "head": null,
+    "subject": null,
+    "merged": null,
+    "pullRequest": null
+  },
+  "removedAt": "2026-10-07T05:02:40.029Z",
+  "removedBy": "gc",
+  "lastUsedAt": "2026-10-07T04:23:36.304Z",
+  "builds": {
+    "count": 5,
+    "last": {
+      "platform": "ios",
+      "status": "failed",
+      "cacheHit": false,
+      "cacheSkipped": true,
+      "durationMs": 13140,
+      "fingerprint": "8d37f98243b48e985bc92659a5b035b0e06e5445",
+      "startedAt": "2026-10-07T04:23:36.311Z",
+      "finishedAt": "2026-10-07T04:23:49.451Z",
+      "errorCode": "STIM_BUILD_FAILED",
+      "missReason": {
+        "kind": "cache-skipped",
+        "summary": "cache reuse turned off by --no-build-cache",
+        "changes": [],
+        "changeCount": 0,
+        "baseline": null,
+        "rekeyedBy": []
+      },
+      "buildMachine": "local",
+      "builtOn": "here",
+      "diagnostics": [
+        {
+          "file": null,
+          "line": null,
+          "column": null,
+          "message": "invalid argument '/Users/me/Library/Application' to -fdepscan-prefix-map= (in target 'ReactCodegen' from project 'Pods')"
+        },
+        {
+          "file": null,
+          "line": null,
+          "column": null,
+          "message": "invalid argument 'Support/Stim' to -fdepscan-prefix-map= (in target 'ReactCodegen' from project 'Pods')"
+        },
+        {
+          "file": null,
+          "line": null,
+          "column": null,
+          "message": "invalid argument 'Desktop/Onboarding/sample-sdk58=/^src' to -fdepscan-prefix-map= (in target 'ReactCodegen' from project 'Pods')"
+        }
+      ]
+    },
+    "lastErrorCount": 3
+  },
+  "agents": [],
+  "bytes": { "logs": 1556756, "recordings": 200271, "agentActions": 0, "record": 15496, "total": 1772523 },
+  "expires": {
+    "logs": "2026-10-08T05:02:40.029Z",
+    "recordings": "2026-10-08T05:02:40.029Z",
+    "agentActions": null,
+    "record": "2026-10-12T05:02:40.029Z"
+  },
+  "version": 1
+}

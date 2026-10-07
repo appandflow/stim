@@ -45,7 +45,7 @@ struct Sidebar: View {
           let entries = store.sidebarList(options)
           ForEach(entries) { entry in
             let project =
-              if case .archived(let archive) = entry { archive.sidebarProject } else { store.project(ofPath: entry.path) }
+              if let project = entry.archiveProject { project } else { store.project(ofPath: entry.path) }
             EntryRow(
               entry: entry, subtitle: store.title(of: project), showsFolder: true,
               showsGit: options.showsGitStatus, selection: rowSelection.wrappedValue, openLogs: openLogs)
@@ -244,14 +244,33 @@ struct EntryRow: View {
   var showsGit: Bool
   var selection: SidebarItem?
   var openLogs: (String) -> Void
+  #if DEBUG
+    @Environment(\.fixtureDate) private var fixtureDate
+  #else
+    private var fixtureDate: Date? { nil }
+  #endif
 
   var body: some View {
     switch entry {
     case .archived(let archive):
       TimelineView(.everyMinute) { context in
-        ArchivedRow(archive: archive, now: context.date, subtitle: subtitle)
+        ArchivedRow(archive: archive, now: fixtureDate ?? context.date, subtitle: subtitle, showsGit: showsGit)
       }
       .sidebarTag(.archived(archive.id), selection: selection)
+    case .archivedGroup(let archives):
+      let apps = archives.map { ArchivedPage(archive: $0, now: Date()).workspace }
+      let page = WorktreePage.groups(environments: apps)[0]
+      DisclosureGroup {
+        ForEach(archives) { archive in
+          TimelineView(.everyMinute) { context in
+            ArchivedRow(archive: archive, now: fixtureDate ?? context.date, showsGit: showsGit)
+          }.sidebarTag(.archived(archive.id), selection: selection)
+        }
+      } label: {
+        SidebarWorktreeRow(
+          page: page, subtitle: subtitle, showsGit: showsGit, selection: selection,
+          openLogs: openLogs, archives: archives)
+      }
     case .workspace(let env):
       WorkspaceRow(
         env: env, place: place(env.names), showsGit: showsGit, selection: selection, openLogs: openLogs)
@@ -332,15 +351,16 @@ struct WorkspaceRow: View {
   }
 }
 
-private struct WorkspaceRowContent: View {
+struct WorkspaceRowContent: View {
   var env: Workspace
   var now: Date
   var place: [String]
   var showsGit: Bool
   var openLogs: (String) -> Void
+  var archive: ArchivedPage? = nil
 
   var body: some View {
-    let status = env.rowStatus(now: now)
+    let status = archive?.rowStatus ?? env.rowStatus(now: now)
     let sessions = AgentSession.associated(agents: env.agents, endedAgents: env.endedAgents)
     let live = env.isActive
     HStack(alignment: .top, spacing: Space.md) {
@@ -354,22 +374,36 @@ private struct WorkspaceRowContent: View {
           Text(status.text).font(.stim(.caption, weight: .medium)).foregroundStyle(Color(status.tone))
             .lineLimit(1).fixedSize()
         }
-        if let session = sessions.first {
-          SessionLine(session: session, others: sessions.count - 1)
+        if let archive {
+          RowDetailLine(
+            context: RowDetailLine.joined(
+              (place + [archive.record.removedLabel(now: now), archive.sizeLabel]).map {
+                Text($0).foregroundStyle(Palette.tertiary)
+              }), git: nil)
+          ArchiveRowFacts(page: archive, showsGit: showsGit)
+        } else {
+          if let session = sessions.first {
+            SessionLine(session: session, others: sessions.count - 1)
+          }
+          RowDetailLine(context: context(env.rowDevices(now: now)), git: showsGit ? GitChip(env.worktree) : nil)
         }
-        RowDetailLine(
-          context: context(env.rowDevices(now: now)), git: showsGit ? GitChip(env.worktree) : nil)
-        ForEach(env.orderedDevices.filter { $0.hostedMachine != nil || $0.placementReason != nil }) { device in
-          DevicePlacementLabel(device: device)
+        if archive == nil {
+          ForEach(env.orderedDevices.filter { $0.hostedMachine != nil || $0.placementReason != nil }) { device in
+            DevicePlacementLabel(device: device)
+          }
         }
       }
     }
     .accessibilityElement(children: .ignore)
     .accessibilityLabel(
-      env.rowLabel(now: now, folder: place.isEmpty ? nil : place.joined(separator: ", "), showsGit: showsGit)
+      archive.map {
+        [env.names.title, $0.statusLine, $0.sizeLabel, $0.pullRequestLabel, $0.expiryLabel]
+          .compactMap { $0 }.joined(separator: ", ")
+      }
+        ?? env.rowLabel(now: now, folder: place.isEmpty ? nil : place.joined(separator: ", "), showsGit: showsGit)
     )
     .accessibilityActions {
-      if (env.logs?.errorsSinceMarker ?? 0) > 0 {
+      if archive == nil && (env.logs?.errorsSinceMarker ?? 0) > 0 {
         Button("Show errors") { openLogs(env.path) }
       }
     }

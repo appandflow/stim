@@ -59,7 +59,8 @@
     let inbox: NotificationInbox
     let settings: SettingsModel
     let environment: Workspace
-    let archive: ArchivedWorkspace
+    var archive: ArchivedWorkspace
+    var archiveDetail: ArchiveDetail
     let checks: BuildPlanChecks
 
     static func make(_ scenario: PlaygroundScenario, now: Date = Date()) throws -> Self {
@@ -187,6 +188,14 @@
         "platform": "ios", "fingerprint": "fixture-fingerprint", "cacheHit": "local", "cacheSkipped": false,
         "basis": 3, "outcome": "hit", "expectedMs": 8400,
       ])
+      var archive = try archived(now: now, expired: scenario == .error, last: env["lastBuilds"] as? [String: Any], miss: miss)
+      if scenario == .empty {
+        archive.bytes.logs = 0
+        archive.bytes.recordings = 0
+        archive.bytes.total = archive.bytes.record
+        archive.expires.logs = nil
+        archive.expires.recordings = nil
+      }
       return Self(
         inbox: NotificationInbox(fixtures: Inbox(entries: entries)),
         settings: SettingsModel(
@@ -194,7 +203,8 @@
           error: scenario == .error ? "The settings response could not be read. Check the selected workspace and retry." : nil
         ),
         environment: try decode(env),
-        archive: try archived(now: now, last: env["lastBuilds"] as? [String: Any], miss: miss),
+        archive: archive,
+        archiveDetail: try archivedDetail(now: now, phases: phases),
         checks: BuildPlanChecks { _, _ in
           if scenario == .error { throw PlaygroundFailure.plan }
           return .plan(plan)
@@ -202,7 +212,22 @@
       )
     }
 
-    private static func archived(now: Date, last: [String: Any]?, miss: [String: Any]) throws -> ArchivedWorkspace {
+    static func realArchive(now: Date) throws -> Self {
+      var fixtures = try make(.ready, now: now)
+      let directory = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        .appendingPathComponent("Tests/VisualFixtureTests/Fixtures/real-archive")
+      fixtures.archive = try JSONDecoder().decode(
+        ArchivedWorkspace.self,
+        from: Data(contentsOf: directory.appendingPathComponent("archive.json")))
+      fixtures.archiveDetail = try JSONDecoder().decode(
+        ArchiveDetail.self,
+        from: Data(contentsOf: directory.appendingPathComponent("detail.json")))
+      return fixtures
+    }
+
+    private static func archived(now: Date, expired: Bool, last: [String: Any]?, miss: [String: Any]) throws -> ArchivedWorkspace
+    {
       var build = last?["ios"] as? [String: Any]
       build?["cacheHit"] = false
       build?["missReason"] = miss
@@ -218,16 +243,43 @@
         ],
         "removedAt": stamp.string(from: now.addingTimeInterval(-172800)), "removedBy": "worktree-remove",
         "lastUsedAt": stamp.string(from: now.addingTimeInterval(-173000)),
-        "builds": ["count": 4, "last": build.map { $0 as Any } ?? NSNull(), "lastErrorCount": 0],
+        "builds": ["count": build == nil ? 0 : 2, "last": build.map { $0 as Any } ?? NSNull(), "lastErrorCount": 0],
         "agents": [
           [
             "tool": "codex", "sessionId": "ended-fixture", "cwd": workspace, "title": "Add search",
+            "startedAt": stamp.string(from: now.addingTimeInterval(-176600)),
             "endedAt": stamp.string(from: now.addingTimeInterval(-173000)),
           ]
         ],
-        "bytes": ["logs": 1048576, "recordings": 2097152, "agentActions": 1024, "record": 1024, "total": 3147776],
-        "expires": ["logs": NSNull(), "recordings": NSNull(), "agentActions": NSNull(), "record": NSNull()],
+        "bytes": ["logs": 1048576, "recordings": 2097152, "agentActions": 0, "record": 1024, "total": 3146752],
+        "expires": [
+          "logs": now.addingTimeInterval(-1).ISO8601Format(),
+          "recordings": now.addingTimeInterval(expired ? -1 : 86400).ISO8601Format(),
+          "agentActions": NSNull(),
+          "record": now.addingTimeInterval(432000).ISO8601Format(),
+        ],
         "version": 1, "replacedBy": workspace,
+      ])
+    }
+
+    private static func archivedDetail(now: Date, phases: [String: Double]) throws -> ArchiveDetail {
+      let start = now.addingTimeInterval(-173000)
+      func build(_ platform: String, failed: Bool) -> [String: Any] {
+        [
+          "platform": platform, "status": failed ? "failed" : "ok", "cacheHit": false,
+          "startedAt": start.ISO8601Format(), "finishedAt": start.addingTimeInterval(120).ISO8601Format(),
+          "durationMs": 120000, "result": failed ? "failed" : "succeeded", "slot": "default",
+          "configuration": "Debug", "phases": failed ? phases.filter { !["install", "launch"].contains($0.key) } : phases,
+          "errorCode": failed ? "STIM_IOS_BUILD_FAILED" : NSNull(),
+        ]
+      }
+      let ms = start.timeIntervalSince1970 * 1000
+      return try decode([
+        "builds": ["ios": [build("ios", failed: true)], "android": [build("android", failed: false)]],
+        "recordings": [
+          ["platform": "ios", "slot": "default", "spans": [["start": ms, "end": ms + 60000]]],
+          ["platform": "android", "slot": "fold", "spans": [["start": ms, "end": ms + 120000]]],
+        ],
       ])
     }
 

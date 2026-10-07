@@ -34,6 +34,7 @@ struct RootView: View {
   @State private var projectFilter: Project?
   @State private var focusedDeviceID: String?
   @State private var logQuery = LogQuery()
+  @State private var archivedLogQuery = LogQuery()
   @AppStorage(AppPreferences.Key.showsLogs) private var showsLogs = false
   @AppStorage(AppPreferences.Key.showsInspector) private var showsInspector = true
   @State private var showsInspectorOverlay = false
@@ -266,6 +267,7 @@ struct RootView: View {
     }
     .onChange(of: selection) { old, item in
       if case .archived = item {
+        archivedLogQuery = LogQuery()
         if case .archived = old {} else { previousSelection = old }
       }
       restoredProject = true
@@ -336,6 +338,7 @@ struct RootView: View {
 
   private var showsWorkspace: Bool {
     if case .environment = selection { return true }
+    if case .archived = selection { return true }
     return false
   }
 
@@ -601,8 +604,12 @@ struct RootView: View {
       }
     case .archived(let id):
       if let archive = store.payload?.archived?.first(where: { $0.id == id }) {
-        ArchivedDetail(archive: archive, environments: store.payload?.environments ?? [], selection: $selection)
-          .id(id)
+        WorkspaceDetail.archived(
+          archive, cli: cli, statsReader: statsReader, environments: store.payload?.environments ?? [],
+          inspector: inspector, inspectorWidth: $inspectorWidth, logQuery: $archivedLogQuery,
+          openReplacement: { selection = .environment($0) }
+        )
+        .id(id)
       }
     case .worktree(let path):
       if let worktree = store.payload?.unprovisionedWorktrees?.first(where: { $0.path == path }) {

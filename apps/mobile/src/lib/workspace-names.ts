@@ -61,6 +61,7 @@ export function projectOf(env: Pick<EnvironmentState, 'path' | 'worktree'>, root
     roots
       .filter((r) => env.path === r || env.path.startsWith(`${r}/`))
       .reduce<string | null>((best, r) => (best === null || r.length < best.length ? r : best), null) ??
+    env.worktree?.path ??
     env.path;
   return { key: root, name: basename(root) };
 }
@@ -74,6 +75,10 @@ function markedCheckout(path: string): string | null {
     }
   }
   return null;
+}
+
+export function workspaceCheckout(path: string, repository?: string | null): string {
+  return markedCheckout(path) ?? (repository && path.startsWith(`${repository}/`) ? repository : path);
 }
 
 /** Where the workspace sits inside its checkout, such as `apps/tlon-mobile`; null at the checkout root. */

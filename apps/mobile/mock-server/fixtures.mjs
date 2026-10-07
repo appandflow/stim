@@ -1,5 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 
+import { shiftTimestamps } from './payloads.mjs';
+
 const fixture = (name) => new URL(`./fixtures/${name}`, import.meta.url);
 
 export function loadFixtures({ slotWaits = false } = {}) {
@@ -12,6 +14,14 @@ export function loadFixtures({ slotWaits = false } = {}) {
       changes[env.path] ? { ...env, build: { ...env.build, ...changes[env.path] } } : env,
     );
   }
+  const realArchive = JSON.parse(readFileSync(fixture('real-archive/archive.json'), 'utf8'));
+  const realShift = Date.parse(status.capturedAt) - 2 * 60 * 60 * 1000 - Date.parse(realArchive.removedAt);
+  status.payload.archived.push(shiftTimestamps(realArchive, realShift));
+  const archiveDetails = JSON.parse(readFileSync(fixture('archive-details.json'), 'utf8'));
+  const realDetail = shiftTimestamps(JSON.parse(readFileSync(fixture('real-archive/detail.json'), 'utf8')), realShift);
+  for (const recording of realDetail.recordings)
+    recording.spans = recording.spans.map((span) => ({ start: span.start + realShift, end: span.end + realShift }));
+  archiveDetails[realArchive.id] = realDetail;
   const logs = readFileSync(fixture('logs.ndjson'), 'utf8')
     .split('\n')
     .filter(Boolean)
@@ -33,6 +43,6 @@ export function loadFixtures({ slotWaits = false } = {}) {
     plans,
     machineDetails,
     frames,
-    archiveDetails: JSON.parse(readFileSync(fixture('archive-details.json'), 'utf8')),
+    archiveDetails,
   };
 }

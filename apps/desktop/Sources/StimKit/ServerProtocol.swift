@@ -89,6 +89,26 @@ public struct ReplayTarget: Hashable, Sendable {
   }
 }
 
+public struct ArchiveDetailRequest: Sendable {
+  public var archive: String
+
+  public init(archive: String) { self.archive = archive }
+
+  public var params: [String: JSONValue] { ["archive": .string(archive)] }
+}
+
+public struct ArchiveDetail: Decodable, Sendable {
+  public struct Recording: Decodable, Equatable, Sendable, Identifiable {
+    public var platform: String
+    public var slot: String
+    public var spans: [ReplaySpan]
+    public var id: String { "\(platform)|\(slot)" }
+  }
+
+  public var builds: BuildHistory
+  public var recordings: [Recording]
+}
+
 /// A time range with recorded footage, in epoch milliseconds on the Mac's clock.
 public struct ReplaySpan: Decodable, Equatable, Sendable {
   public var start: Double

@@ -102,6 +102,7 @@ public struct Workspace: Decodable, Identifiable, Hashable, Sendable {
   public var disk: WorkspaceDisk?
   /// The project Stim Desktop resolved for the workspace; not part of the payload.
   public var project: Project?
+  public var titleOverride: String?
 
   enum CodingKeys: String, CodingKey {
     case path, platforms, live, phase, phaseSince, warmStep, memoryMb, memorySource, warnings, issues, ios, android, web, metro
@@ -174,7 +175,9 @@ public struct Workspace: Decodable, Identifiable, Hashable, Sendable {
   }
 
   public var names: PathNames {
-    PathNames(path: path, branch: worktree?.branch, worktree: worktree?.path, project: project)
+    var names = PathNames(path: path, branch: worktree?.branch, worktree: worktree?.path, project: project)
+    if let titleOverride { names.title = titleOverride }
+    return names
   }
 }
 
@@ -230,6 +233,7 @@ public struct GitChipFacts: Decodable, Hashable, Sendable {
 public struct WorktreeInfo: Decodable, Hashable, Sendable {
   public var path: String
   public var branch: String?
+  public var merged: Bool?
   public var repository: String?
   public var git: WorktreeGit?
   /// What the git chip shows, as `stim` decided it; absent from an older `stim` and without `git`.

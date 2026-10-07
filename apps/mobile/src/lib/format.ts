@@ -229,7 +229,10 @@ export function historyDetail(entry: BuildHistoryEntry, now: number): string {
             : null;
   const at = Date.parse(entry.finishedAt ?? entry.startedAt);
   const age = formatDuration(Math.max(0, now - at));
-  return [cache, Number.isNaN(at) ? null : t`${age} ago`, slot === 'default' ? null : t`slot ${slot}`]
+  const machine = entry.offloadedTo ?? (entry.builtOn && entry.builtOn !== 'here' ? entry.builtOn : null);
+  const host = machine ? machineName(machine) : null;
+  const where = host ? t`on ${host}` : entry.builtOn === 'here' ? t`on this Mac` : null;
+  return [cache, where, Number.isNaN(at) ? null : t`${age} ago`, slot === 'default' ? null : t`slot ${slot}`]
     .filter(Boolean)
     .join(' \u00B7 ');
 }

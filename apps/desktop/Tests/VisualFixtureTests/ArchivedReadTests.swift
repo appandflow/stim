@@ -142,6 +142,80 @@ import XCTest
     XCTAssertTrue(errors.isEmpty)
   }
 
+  func testArchiveDetailRetriesBusyReadsAndDecodesHistoryWithoutTargetingReusedWorkspace() async throws {
+    let (client, socket) = try await connection()
+    defer { client.stop() }
+    let read = Task { try await client.archiveDetail(ArchiveDetailRequest(archive: "ended")) }
+    let request = try await socket.take("archive.detail")
+    XCTAssertEqual(request["params"], .object(["archive": .string("ended")]))
+    socket.refuse(request, code: "limit-exceeded", message: "Busy")
+    let retry = try await socket.take("archive.detail")
+    XCTAssertEqual(retry["params"], request["params"])
+    let result = try JSONDecoder().decode(
+      JSONValue.self,
+      from: Data(
+        #"""
+        {"builds":{"ios":[{"platform":"ios","status":"failed","cacheHit":false,
+        "startedAt":"2026-10-04T10:00:00Z","result":"failed","slot":"default",
+        "phases":{"compile":42000}}]},"recordings":[
+        {"platform":"android","slot":"fold","spans":[{"start":1000,"end":2000}]}]}
+        """#.utf8))
+    socket.answer(retry, result)
+    let detail = try await read.value
+    XCTAssertEqual(detail.builds.ios?.first?.phases, ["compile": 42000])
+    XCTAssertEqual(detail.recordings.first?.slot, "fold")
+    XCTAssertTrue(socket.requests.isEmpty)
+  }
+
+  func testUnavailableArchiveDetailKeepsTheSummaryForAnOlderServer() async throws {
+    let (client, socket) = try await connection()
+    defer { client.stop() }
+    let archive = try PlaygroundFixtures.make(.ready).archive
+    let read = Task { try await client.archiveDetail(ArchiveDetailRequest(archive: archive.id)) }
+    socket.refuse(try await socket.take("archive.detail"), code: "unknown-method", message: "Unknown request")
+    var detail: ArchiveDetail?
+    do {
+      detail = try await read.value
+      XCTFail("An older server must refuse archive.detail")
+    } catch {
+      XCTAssertEqual((error as? ServerError)?.code, "unknown-method")
+    }
+    let page = ArchivedPage(archive: archive, detail: detail, now: Date())
+    XCTAssertEqual(page.workspace.lastBuilds?.ios, archive.builds.last)
+    XCTAssertTrue(socket.requests.isEmpty)
+  }
+
+  func testReplayUsesEveryRetainedSlotAndNeverProbesUnlistedPlatforms() async throws {
+    let (client, socket) = try await connection()
+    defer { client.stop() }
+    let detail = try JSONDecoder().decode(
+      ArchiveDetail.self,
+      from: Data(
+        #"""
+        {"builds":{},"recordings":[
+        {"platform":"ios","slot":"default","spans":[{"start":1000,"end":2000}]},
+        {"platform":"ios","slot":"tablet","spans":[{"start":3000,"end":4000}]}]}
+        """#.utf8))
+    let model = ArchivedReplayModel(archive: "ended", recordings: detail.recordings)
+    defer { model.stop() }
+    let read = Task { await model.connect(client) }
+    for slot in ["default", "tablet"] {
+      let request = try await socket.take("replay.range")
+      XCTAssertEqual(
+        request["params"],
+        .object([
+          "archive": .string("ended"), "platform": .string("ios"), "slot": .string(slot),
+        ]))
+      socket.answer(
+        request,
+        .object([
+          "enabled": .bool(true), "recording": .bool(false), "spans": .array([]), "markers": .array([]),
+        ]))
+    }
+    await read.value
+    XCTAssertTrue(socket.requests.isEmpty)
+  }
+
   func testReplayPlatformsAreProbedOneAtATimeEvenWhenOneIsRefused() async throws {
     let (client, socket) = try await connection()
     defer { client.stop() }

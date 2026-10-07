@@ -63,13 +63,6 @@ msgstr ": {summary}"
 msgid "{0, plural, one {# action} other {# actions}}"
 msgstr "{0, plural, one {# action} other {# actions}}"
 
-#. placeholder {0}: archive.builds.count
-#. placeholder {0}: archive?.builds.count ?? 0
-#: src/screens/archived-workspace.tsx
-#: src/screens/archived-workspace.tsx
-msgid "{0, plural, one {# build} other {# builds}}"
-msgstr "{0, plural, one {# build} other {# builds}}"
-
 #. placeholder {0}: total.fallbacks
 #: src/screens/mac-status.tsx
 msgid "{0, plural, one {# fallback} other {# fallbacks}}"
@@ -682,6 +675,10 @@ msgstr "{whole} MB"
 msgid "{worktrees} · {location}"
 msgstr "{worktrees} · {location}"
 
+#: src/lib/archived-page.ts
+msgid "#{number} Merged"
+msgstr "#{number} Merged"
+
 #: src/screens/logs.tsx
 msgid "+{hidden} framework frames"
 msgstr "+{hidden} framework frames"
@@ -726,6 +723,10 @@ msgstr "60% of memory"
 msgid "A Mac keeps the last 15 minutes of device screens. Turning this off deletes them."
 msgstr "A Mac keeps the last 15 minutes of device screens. Turning this off deletes them."
 
+#: src/lib/archived-page.ts
+msgid "a newer workspace"
+msgstr "a newer workspace"
+
 #: src/lib/settings-options.ts
 msgid "A read-only machine can't be controlled from this phone. Tap it to see how to allow control."
 msgstr "A read-only machine can't be controlled from this phone. Tap it to see how to allow control."
@@ -753,6 +754,10 @@ msgstr "About Stim"
 msgid "active"
 msgstr "active"
 
+#: src/screens/workspace-resources.tsx
+msgid "Activity totals"
+msgstr "Activity totals"
+
 #: src/lib/format.ts
 msgid "activity unknown"
 msgstr "activity unknown"
@@ -769,6 +774,8 @@ msgid "Agent"
 msgstr "Agent"
 
 #: src/lib/machine-report.ts
+#: src/screens/workspace-resources.tsx
+#: src/screens/workspace-resources.tsx
 msgid "Agent actions"
 msgstr "Agent actions"
 
@@ -787,10 +794,6 @@ msgstr "Agent looks stuck"
 #: src/lib/settings-options.ts
 msgid "Agent repeats the same failure"
 msgstr "Agent repeats the same failure"
-
-#: src/screens/archived-workspace.tsx
-msgid "Agents"
-msgstr "Agents"
 
 #: src/screens/workspace-work.tsx
 msgid "Ahead"
@@ -938,18 +941,18 @@ msgstr "Approved"
 msgid "Apps"
 msgstr "Apps"
 
+#: src/components/workspace-row.tsx
 #: src/screens/filters.tsx
 msgid "Archived"
 msgstr "Archived"
 
 #: src/app/_layout.tsx
-#: src/screens/archived-workspace.tsx
+#: src/screens/archived-replay.tsx
 msgid "Archived replay"
 msgstr "Archived replay"
 
 #: src/app/_layout.tsx
-#: src/screens/archived-workspace.tsx
-#: src/screens/archived-workspace.tsx
+#: src/screens/workspace-detail.tsx
 msgid "Archived workspace"
 msgstr "Archived workspace"
 
@@ -1000,6 +1003,7 @@ msgid "Both signed in to the same tailnet"
 msgstr "Both signed in to the same tailnet"
 
 #: src/lib/workspace-view.ts
+#: src/screens/workspace-work.tsx
 msgid "Branch"
 msgstr "Branch"
 
@@ -1011,8 +1015,7 @@ msgstr "Budgets"
 #: src/components/workspace-cards.tsx
 #: src/lib/logs.ts
 #: src/lib/workspace-view.ts
-#: src/screens/archived-workspace.tsx
-#: src/screens/archived-workspace.tsx
+#: src/screens/build-details.tsx
 #: src/screens/build-details.tsx
 #: src/screens/build-details.tsx
 msgid "Build"
@@ -1078,6 +1081,10 @@ msgstr "Building {platform}, slot {slot}"
 #: src/screens/filters.tsx
 msgid "Building now"
 msgstr "Building now"
+
+#: src/screens/workspace-resources.tsx
+msgid "Builds"
+msgstr "Builds"
 
 #: src/screens/mac-status.tsx
 msgid "Builds for other Macs"
@@ -1180,6 +1187,10 @@ msgstr "cache hit (remote)"
 #: src/lib/format.ts
 msgid "Cache hit (remote){took}"
 msgstr "Cache hit (remote){took}"
+
+#: src/screens/workspace-resources.tsx
+msgid "Cache hits"
+msgstr "Cache hits"
 
 #: src/lib/workspace-view.ts
 msgid "Cache lookup"
@@ -1499,6 +1510,7 @@ msgid "Copy message and location"
 msgstr "Copy message and location"
 
 #: src/screens/workspace-detail.tsx
+#: src/screens/workspace-detail.tsx
 msgid "Copy path"
 msgstr "Copy path"
 
@@ -1729,6 +1741,15 @@ msgstr "Empty new file."
 msgid "Emulator"
 msgstr "Emulator"
 
+#: src/screens/workspace-resources.tsx
+#: src/screens/workspace-work.tsx
+msgid "Ended session"
+msgstr "Ended session"
+
+#: src/screens/workspace-work.tsx
+msgid "Ended session, {duration} duration"
+msgstr "Ended session, {duration} duration"
+
 #: src/screens/pair.tsx
 msgid "Endpoint"
 msgstr "Endpoint"
@@ -1775,9 +1796,22 @@ msgstr "expanded"
 msgid "Expands the section"
 msgstr "Expands the section"
 
+#: src/components/workspace-cards.tsx
+#: src/components/workspace-cards.tsx
+#: src/screens/archived-replay.tsx
 #: src/screens/mac-status.tsx
+#: src/screens/workspace-detail.tsx
+#: src/screens/workspace-resources.tsx
 msgid "Expired"
 msgstr "Expired"
+
+#: src/components/workspace-row.tsx
+msgid "Expired content"
+msgstr "Expired content"
+
+#: src/components/workspace-row.tsx
+msgid "Expires soon"
+msgstr "Expires soon"
 
 #: src/screens/mac-status.tsx
 msgid "failed"
@@ -1815,6 +1849,10 @@ msgstr "Filters"
 #: src/screens/filters.tsx
 msgid "Filters are saved on this phone."
 msgstr "Filters are saved on this phone."
+
+#: src/screens/workspace-work.tsx
+msgid "Final commit"
+msgstr "Final commit"
 
 #: src/components/viewer-keyboard.tsx
 msgid "Find"
@@ -1889,6 +1927,7 @@ msgstr "From Pair a phone in Stim Desktop"
 msgid "Get Tailscale"
 msgstr "Get Tailscale"
 
+#: src/screens/workspace-work.tsx
 #: src/screens/workspace-work.tsx
 msgid "Git"
 msgstr "Git"
@@ -2098,6 +2137,10 @@ msgstr "Jump to latest"
 msgid "just now"
 msgstr "just now"
 
+#: src/screens/workspace-resources.tsx
+msgid "Kept until {until}"
+msgstr "Kept until {until}"
+
 #: src/screens/device-view.tsx
 msgid "Keyboard"
 msgstr "Keyboard"
@@ -2110,6 +2153,10 @@ msgstr "Kotlin"
 msgid "landscape"
 msgstr "landscape"
 
+#: src/screens/workspace-resources.tsx
+msgid "Last activity"
+msgstr "Last activity"
+
 #: src/screens/build-details.tsx
 #: src/screens/build-details.tsx
 msgid "Last build"
@@ -2118,6 +2165,10 @@ msgstr "Last build"
 #: src/screens/logs.tsx
 msgid "last bundle {seconds}s"
 msgstr "last bundle {seconds}s"
+
+#: src/screens/workspace-resources.tsx
+msgid "Last error count"
+msgstr "Last error count"
 
 #: src/lib/home-list.ts
 msgid "Last seen {seen} ago"
@@ -2224,7 +2275,8 @@ msgid "Loading changes..."
 msgstr "Loading changes..."
 
 #: src/components/replay-bar.tsx
-#: src/screens/archived-workspace.tsx
+#: src/screens/archived-replay.tsx
+#: src/screens/workspace-detail.tsx
 msgid "Loading..."
 msgstr "Loading..."
 
@@ -2240,9 +2292,9 @@ msgstr "Lock"
 #: src/components/workspace-cards.tsx
 #: src/components/workspace-cards.tsx
 #: src/lib/machine-report.ts
-#: src/screens/archived-workspace.tsx
 #: src/screens/logs.tsx
 #: src/screens/workspace-detail.tsx
+#: src/screens/workspace-resources.tsx
 msgid "Logs"
 msgstr "Logs"
 
@@ -2341,7 +2393,9 @@ msgstr "Menu"
 msgid "Menu, {unread} unread notifications"
 msgstr "Menu, {unread} unread notifications"
 
+#: src/lib/archived-page.ts
 #: src/lib/format.ts
+#: src/screens/workspace-work.tsx
 msgid "Merged"
 msgstr "Merged"
 
@@ -2392,6 +2446,7 @@ msgstr "Modifiers apply to one letter or digit at a time. Use the extra keys for
 #: src/components/viewer-toolbar.tsx
 #: src/screens/settings.ios.tsx
 #: src/screens/settings.tsx
+#: src/screens/workspace-detail.tsx
 #: src/screens/workspace-detail.tsx
 msgid "More"
 msgstr "More"
@@ -2524,9 +2579,9 @@ msgstr "No app installed"
 msgid "No archived workspaces. Removed workspaces appear here when the server keeps an archive."
 msgstr "No archived workspaces. Removed workspaces appear here when the server keeps an archive."
 
+#: src/components/workspace-cards.tsx
+#: src/components/workspace-cards.tsx
 #: src/lib/workspace-view.ts
-#: src/screens/archived-workspace.tsx
-#: src/screens/archived-workspace.tsx
 msgid "No build"
 msgstr "No build"
 
@@ -2584,6 +2639,7 @@ msgid "No live workspaces"
 msgstr "No live workspaces"
 
 #: src/components/workspace-cards.tsx
+#: src/components/workspace-cards.tsx
 msgid "No logs yet"
 msgstr "No logs yet"
 
@@ -2607,7 +2663,8 @@ msgstr "No matching projects"
 msgid "No notifications"
 msgstr "No notifications"
 
-#: src/screens/archived-workspace.tsx
+#: src/screens/archived-replay.tsx
+#: src/screens/workspace-detail.tsx
 msgid "No recording available."
 msgstr "No recording available."
 
@@ -2819,6 +2876,7 @@ msgstr "OK"
 
 #: src/components/device-grid-tile.tsx
 #: src/components/host-label.tsx
+#: src/lib/format.ts
 msgid "on {host}"
 msgstr "on {host}"
 
@@ -2839,6 +2897,14 @@ msgstr "on {remoteHost}"
 msgid "On {where}, open Stim Desktop, Settings → Phones, and turn on Allow control for this phone. Or run `{command}`{lookup}. Then reconnect."
 msgstr "On {where}, open Stim Desktop, Settings → Phones, and turn on Allow control for this phone. Or run `{command}`{lookup}. Then reconnect."
 
+#: src/screens/workspace-resources.tsx
+msgid "On a build machine"
+msgstr "On a build machine"
+
+#: src/lib/format.ts
+msgid "on this Mac"
+msgstr "on this Mac"
+
 #: src/lib/home.ts
 msgid "only below the hard floor"
 msgstr "only below the hard floor"
@@ -2847,6 +2913,7 @@ msgstr "only below the hard floor"
 msgid "Open"
 msgstr "Open"
 
+#: src/screens/workspace-detail.tsx
 #: src/screens/workspace-work.tsx
 msgid "Open in GitHub"
 msgstr "Open in GitHub"
@@ -3156,6 +3223,10 @@ msgstr "Reconnecting to {name}…"
 msgid "Reconnecting."
 msgstr "Reconnecting."
 
+#: src/screens/workspace-resources.tsx
+msgid "Record"
+msgstr "Record"
+
 #: src/lib/machine-report.ts
 msgid "Record of a deleted folder"
 msgstr "Record of a deleted folder"
@@ -3195,6 +3266,8 @@ msgstr "Recording was off for this workspace."
 
 #: src/lib/machine-report.ts
 #: src/screens/mac-status.tsx
+#: src/screens/workspace-detail.tsx
+#: src/screens/workspace-resources.tsx
 msgid "Recordings"
 msgstr "Recordings"
 
@@ -3240,11 +3313,19 @@ msgstr "Reloading the {name} app"
 msgid "Reloading the web page"
 msgstr "Reloading the web page"
 
-#: src/lib/archived.ts
+#: src/screens/workspace-resources.tsx
+msgid "Removal"
+msgstr "Removal"
+
+#: src/screens/workspace-resources.tsx
+msgid "Removed"
+msgstr "Removed"
+
+#: src/lib/archived-page.ts
 msgid "Removed {age} ago"
 msgstr "Removed {age} ago"
 
-#: src/lib/archived.ts
+#: src/lib/archived-page.ts
 msgid "Removed {age} ago by {by}"
 msgstr "Removed {age} ago by {by}"
 
@@ -3260,11 +3341,10 @@ msgstr "Rename {name}"
 msgid "Rename machine"
 msgstr "Rename machine"
 
-#: src/screens/archived-workspace.tsx
+#: src/screens/workspace-detail.tsx
 msgid "Replaced by"
 msgstr "Replaced by"
 
-#: src/screens/archived-workspace.tsx
 #: src/screens/device-view.tsx
 #: src/screens/settings.ios.tsx
 #: src/screens/settings.tsx
@@ -3298,6 +3378,14 @@ msgstr "Restart"
 #: src/hooks/app-update.ts
 msgid "Restart to update?"
 msgstr "Restart to update?"
+
+#: src/screens/workspace-resources.tsx
+msgid "Retained"
+msgstr "Retained"
+
+#: src/screens/workspace-resources.tsx
+msgid "Retention and size"
+msgstr "Retention and size"
 
 #: src/screens/pair.tsx
 #: src/screens/workspace-diff.tsx
@@ -3380,9 +3468,9 @@ msgstr "Same {name} build error {count}x at {file}:{line}"
 msgid "Save"
 msgstr "Save"
 
-#: src/screens/archived-workspace.tsx
-msgid "Saved logs from this workspace"
-msgstr "Saved logs from this workspace"
+#: src/components/workspace-cards.tsx
+msgid "Saved logs"
+msgstr "Saved logs"
 
 #: src/screens/pair.tsx
 msgid "Scan a QR code instead"
@@ -3515,6 +3603,10 @@ msgstr "Showing up to 200 files within the preview size limit. More changes are 
 msgid "Shows every agent action on this device"
 msgstr "Shows every agent action on this device"
 
+#: src/components/workspace-cards.tsx
+msgid "Shows removal and retention details"
+msgstr "Shows removal and retention details"
+
 #: src/components/device-tile.tsx
 msgid "Shows the agent actions on this device"
 msgstr "Shows the agent actions on this device"
@@ -3609,11 +3701,15 @@ msgid "Starting control..."
 msgstr "Starting control..."
 
 #: src/screens/workspace-work.tsx
+#: src/screens/workspace-work.tsx
 msgid "State"
 msgstr "State"
 
 #: src/components/workspace-cards.tsx
 #: src/components/workspace-cards.tsx
+#: src/components/workspace-cards.tsx
+#: src/screens/workspace-resources.tsx
+#: src/screens/workspace-resources.tsx
 #: src/screens/workspace-resources.tsx
 #: src/screens/workspace-resources.tsx
 msgid "Status"
@@ -3888,7 +3984,9 @@ msgstr "The server did not issue a device token."
 msgid "the upstream"
 msgstr "the upstream"
 
-#: src/screens/archived-workspace.tsx
+#: src/screens/build-details.tsx
+#: src/screens/workspace-detail.tsx
+#: src/screens/workspace-resources.tsx
 msgid "This archive is no longer available."
 msgstr "This archive is no longer available."
 
@@ -3961,6 +4059,10 @@ msgstr "Today"
 #: src/screens/mac-status.tsx
 msgid "Today: {here} here, {offloaded} on a build machine, {fellBack} here after trying one."
 msgstr "Today: {here} here, {offloaded} on a build machine, {fellBack} here after trying one."
+
+#: src/screens/workspace-resources.tsx
+msgid "Total"
+msgstr "Total"
 
 #: src/app/_layout.tsx
 #: src/components/route-error-boundary.tsx
@@ -4130,6 +4232,10 @@ msgstr "Update stim-server to view archived logs"
 #: src/lib/archived.ts
 msgid "Update stim-server to view archived replay"
 msgstr "Update stim-server to view archived replay"
+
+#: src/lib/archived.ts
+msgid "Update stim-server to view full archived history and recordings"
+msgstr "Update stim-server to view full archived history and recordings"
 
 #: src/lib/build-machines.ts
 msgid "update the build machine"

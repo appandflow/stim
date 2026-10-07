@@ -1,14 +1,17 @@
 import { t } from '@lingui/core/macro';
 import { Trans } from '@lingui/react/macro';
+import { useRouter } from 'expo-router';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
-import { ListSection } from '@/components/list';
+import { ListRow, ListSection } from '@/components/list';
 import { SheetScreen } from '@/components/sheet-screen';
 import { Text } from '@/components/text';
+import { useArchiveDetail } from '@/hooks/archive-detail';
+import { archivedPage } from '@/lib/archived-page';
 import { useMacConnection, useMachineUsage, useStatus, useStatusHistory } from '@/hooks/machines';
 import { useNow } from '@/hooks/use-now';
-import { formatBytes, formatMemoryMb, formatSize } from '@/intl/format';
+import { formatBytes, formatDateTime, formatDuration, formatMemoryMb, formatSize } from '@/intl/format';
 import {
   diskParts,
   diskPartsLabel,
@@ -31,7 +34,77 @@ function workspaceVolumeFree(usage: MachineUsage | null): number | null {
   return pool.length ? Math.min(...pool.map((volume) => volume.freeBytes)) : null;
 }
 
-export function WorkspaceResources({ path }: { path: string }) {
+export function WorkspaceResources(props: { path: string; archive?: string }) {
+  return props.archive ? <ArchiveResources archive={props.archive} /> : <LiveWorkspaceResources path={props.path} />;
+}
+
+function ArchiveResources({ archive: id }: { archive: string }) {
+  const archive = useStatus()?.archived?.find((entry) => entry.id === id);
+  const detail = useArchiveDetail(id);
+  const now = useNow(30_000);
+  const router = useRouter();
+  const { mac } = useMacConnection();
+  if (!archive)
+    return (
+      <SheetScreen title={t`Status`}>
+        <Text>{t`This archive is no longer available.`}</Text>
+      </SheetScreen>
+    );
+  const page = archivedPage(archive, detail.data, now);
+  const labels = { logs: t`Logs`, recordings: t`Recordings`, agentActions: t`Agent actions`, record: t`Record` };
+  return (
+    <SheetScreen title={t`Status`} subtitle={page.removedLabel}>
+      <ListSection title={t`Removal`}>
+        <ListRow title={t`Removed`} value={formatDateTime(archive.removedAt)} />
+        {archive.lastUsedAt ? <ListRow title={t`Last activity`} value={formatDateTime(archive.lastUsedAt)} /> : null}
+      </ListSection>
+      <ListSection title={t`Retention and size`}>
+        {page.retention.map((part) => {
+          const until = part.until ? formatDateTime(part.until) : null;
+          return (
+            <ListRow
+              key={part.kind}
+              title={labels[part.kind]}
+              value={formatSize(part.bytes)}
+              subtitle={
+                part.expired ? t`Expired` : until ? t`Kept until ${until}` : part.bytes ? t`Retained` : undefined
+              }
+            />
+          );
+        })}
+        <ListRow title={t`Total`} value={page.size} />
+      </ListSection>
+      <ListSection title={t`Activity totals`}>
+        <ListRow title={t`Builds`} value={String(page.totals.builds)} />
+        {page.totals.cacheHits === null ? null : (
+          <ListRow title={t`Cache hits`} value={String(page.totals.cacheHits)} />
+        )}
+        {page.totals.offloaded === null ? null : (
+          <ListRow title={t`On a build machine`} value={String(page.totals.offloaded)} />
+        )}
+        <ListRow title={t`Last error count`} value={String(page.totals.errors)} />
+        {page.sessions.map(({ agent, durationMs }) => (
+          <ListRow
+            key={agent.sessionId}
+            title={agent.title ?? agent.tool}
+            value={durationMs === null ? undefined : formatDuration(durationMs)}
+            subtitle={t`Ended session`}
+          />
+        ))}
+        <ListRow
+          title={t`Agent actions`}
+          value={formatSize(archive.bytes.agentActions)}
+          accessory="chevron"
+          onPress={() =>
+            router.push({ pathname: '/mac/[id]/logs', params: { id: mac?.id ?? '', archive: id, source: 'agent' } })
+          }
+        />
+      </ListSection>
+    </SheetScreen>
+  );
+}
+
+function LiveWorkspaceResources({ path }: { path: string }) {
   const status = useStatus();
   const { mac } = useMacConnection();
   const machineUsage = useMachineUsage(mac?.id);
