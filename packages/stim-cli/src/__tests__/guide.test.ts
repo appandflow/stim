@@ -280,6 +280,7 @@ test('the errors topic documents every code the engine can emit under a command'
     'engine/device-remote.ts',
     'engine/warm-claim.ts',
     'workspace/worktree-refresh.ts',
+    'workspace/service-guard.ts',
   ]
     .map((f) => readFileSync(new URL(`../${f}`, import.meta.url), 'utf-8'))
     .join('\n');
@@ -992,4 +993,13 @@ test.each(['ios', 'android'])('hosted %s data paths name their feature flag in t
     renderSection('errors', 'STIM_HOSTING_REFUSED'),
   ])
     expect(body).toContain(feature);
+});
+
+test('facts document the hosted GC JSON fields and result kind', () => {
+  const body = renderSection('facts', 'gc');
+  assert(body);
+  const hosted = body.slice(body.indexOf('    parkedHostedDevices'), body.indexOf('    orphanedDevices'));
+  for (const field of ['session', 'client', 'platform', 'id', 'name', 'parkedAt', 'listed'])
+    expect(hosted).toMatch(new RegExp(`\\b${field}\\b`));
+  expect(body).toContain('parkedHostedDevice');
 });

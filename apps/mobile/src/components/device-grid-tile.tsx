@@ -59,7 +59,7 @@ export const DeviceGridTile = memo(function DeviceGridTile({ tile, wide, visible
     if (frame) onAspect(tile.key, aspect);
   }, [frame, aspect, tile.key, onAspect]);
   const { name, detail } = deviceTileName(device);
-  const state = deviceTileState(device, item.env, now);
+  const state = deviceTileState(device, item.env, now, Boolean(frame));
   const context = [item.project !== item.title ? item.project : null, showsMachine ? item.macName : null]
     .filter(Boolean)
     .join(' \u00B7 ');

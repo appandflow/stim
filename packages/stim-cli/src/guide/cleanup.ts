@@ -187,7 +187,20 @@ to stats.json.corrupt-<unix ms> and starts a new one.`,
     gc: {
       summary:
         'what gc and worktree remove delete, keep and refuse: orphans, stale records, locks, leases, EAS sessions',
-      body: () => `AGENT-DEVICE (REPORT ONLY)
+      body: () => `PARKED HOSTED DEVICES
+On a hosting Mac, unscoped gc lists parked hosted iOS/Android devices by session,
+client id, device label, parked time and private-home ledger ownership.
+gc --delete takes each session claim and deletes through the packaged stop worker
+in that session's home; held claims, changed sessions and unverified ownership
+keep the device. Android deletion also requires the AVD to be visible from this
+shell; otherwise run gc with the server's ANDROID_AVD_HOME/HOME. Devices no longer
+listed in their session ledger are already removed and skipped. An unreadable
+journal keeps every hosted device. --older-than
+filters by parked time; --cache scopes omit hosted sessions. The CLI never writes
+the server journal: stim-server reconciliation clears the parked marker after
+successful deletion leaves the session ledger empty.
+
+AGENT-DEVICE (REPORT ONLY)
 Unscoped gc reports agent-device runner builds by platform and entry, last use,
 agent-device and Xcode versions, sessions, logs, other state, workspace state
 and hosted driver state. Stim never selects this state as a cache.
@@ -232,7 +245,9 @@ IN USE
   that names no workspace blocks nothing, because every build also holds its
   own workspace's native-run.lock; gc lists it with the command that removes
   it. \`worktree remove\` re-checks uncommitted and unpushed work under its
-  removal locks, just before it reclaims anything. A project root whose
+  removal locks, just before it reclaims anything. It refuses, even with
+  --force, a worktree that an installed stim-server service runs from
+  (STIM_WORKTREE_SERVICE; see guide errors). A project root whose
   existence cannot be read (a permission error) is never treated as deleted.
 
 SWEEPING FINISHED WORKTREES
@@ -381,6 +396,12 @@ ON THE SOURCE CHECKOUT
   (including nested monorepo app dirs) dropped, and the global workspace
   directory deleted. The tree itself is never touched, which is also why the
   dirty-tree and unpushed guards do not apply on that path.
+  Run from the checkout root it reclaims every registered project under the
+  checkout. Run from a subfolder (for example apps/mobile) it reclaims only
+  the nearest registered project at or above that folder and the projects nested
+  under it, leaves the other
+  projects' devices, ports and records alone, and refuses with exit 1 when no
+  project is registered at or above it.
   It ends with:
     Reclaimed the environment; the working tree stays (it is the source checkout).
   A registered project directory that is not a git repo at all gets the same

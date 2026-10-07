@@ -18,6 +18,7 @@ import { recordWorkspaceUse } from '../workspace/workspace-state.ts';
 import { forgetStatusMeasures } from '../status-measures.ts';
 import { reclaimProject, type ReclaimResult } from '../devices/reclaim.ts';
 import { claimFailure } from '../ownership-claim.ts';
+import { SERVICE_IN_USE, serviceRunningFrom } from '../workspace/service-guard.ts';
 import { parkedMaxSetting, POOL_SETTING_REMEDY } from '../devices/sim-pool.ts';
 import { workspaceLinkLine, workspaceLinks } from '../devices/stim-desktop.ts';
 import type { ParkedDevice } from '../devices/teardown.ts';
@@ -630,6 +631,16 @@ function hasRegisteredProjectUnder(rootPath: string): boolean {
   return Object.keys(cfg?.projects ?? {}).some((key) => isPathPrefix(rootPath, key));
 }
 
+// The registered project at or above `path`, nearest first, never above `root`.
+function projectAtOrAbove(root: string, path: string): string | null {
+  const here = nativeCanonicalPath(path);
+  const keys = Object.keys(loadConfig()?.projects ?? {}).filter(
+    (key) =>
+      isPathPrefix(nativeCanonicalPath(root), nativeCanonicalPath(key)) && isPathPrefix(nativeCanonicalPath(key), here),
+  );
+  return keys.toSorted((a, b) => b.length - a.length)[0] ?? null;
+}
+
 async function reclaimEnvironment(root: string, why: string): Promise<void> {
   await withManagedRemoteWorktreeRemovalLock(root, () =>
     withReclaimLocks(root, async (lockedKeys) => {
@@ -895,8 +906,21 @@ async function runRemove(target: string | undefined, opts: RemoveOptions, onRemo
     return;
   }
   if (entry.path === source.path) {
-    if (entry.path !== path) {
-      console.error(chalk.dim(`${path} is inside the source checkout ${entry.path}; reclaiming its environment.`));
+    if (nativeCanonicalPath(entry.path) !== nativeCanonicalPath(path)) {
+      const project = projectAtOrAbove(entry.path, path);
+      if (!project) {
+        console.error(chalk.red(`Refusing to reclaim from ${path}: no Stim project is registered at or above it.`));
+        console.error(
+          chalk.dim(`  Run it from the project folder, or from ${entry.path} to reclaim every project under it.`),
+        );
+        process.exitCode = 1;
+        return;
+      }
+      console.error(
+        chalk.dim(`${path} is inside the source checkout ${entry.path}; reclaiming only the project ${project}.`),
+      );
+      await reclaimEnvironment(project, 'it is the source checkout');
+      return;
     }
     await reclaimEnvironment(entry.path, 'it is the source checkout');
     return;
@@ -908,6 +932,24 @@ async function runRemove(target: string | undefined, opts: RemoveOptions, onRemo
   if (entry.locked) {
     console.error(chalk.red(`Refusing to remove ${path}: git has it locked.`));
     console.error(chalk.dim(`Unlock it, then retry: git -C ${source.path} worktree unlock ${path}`));
+    process.exitCode = 1;
+    return;
+  }
+
+  const service = serviceRunningFrom(path, nativeCanonicalPath);
+  if (service) {
+    console.error(
+      chalk.red(
+        service.argument
+          ? `Refusing to remove ${path}: it runs the stim-server service ${service.label} (${service.argument}). ${SERVICE_IN_USE.code}`
+          : `Refusing to remove ${path}: could not read ${service.plist} to check whether the stim-server service ${service.label} runs from it. ${SERVICE_IN_USE.code}`,
+      ),
+    );
+    console.error(
+      chalk.dim(
+        `Reinstall the service from another build with \`stim-server service install --label ${service.label}\`, or remove it with \`stim-server service uninstall --label ${service.label}\`, then retry.`,
+      ),
+    );
     process.exitCode = 1;
     return;
   }
@@ -1049,7 +1091,7 @@ export function registerRemove(worktree: Command): void {
   worktree
     .command('remove [target]')
     .description(
-      'Remove a worktree, its unused Stim-created branch, build artifacts, owned devices, and Metro port. Defaults to the current workspace. On the source checkout it reclaims the environment only and leaves the tree in place.',
+      'Remove a worktree, its unused Stim-created branch, build artifacts, owned devices, and Metro port. Defaults to the current workspace. On the source checkout it reclaims the environment only and leaves the tree in place; from a subfolder it reclaims only the project at or above that folder, with the projects nested under it.',
     )
     .option('--force', 'remove even when the worktree holds uncommitted or unpushed work or initialized submodules')
     .action(async (target: string | undefined, opts: { force?: boolean }) => {

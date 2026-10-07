@@ -329,7 +329,7 @@ stim logs --errors --json`}
 
 The merged timeline includes Metro, client, device, and build records, and the
 actions [agent-device](https://github.com/callstack/agent-device) takes on
-the workspace's owned simulators and emulators. Logs live
+the workspace's owned simulators, emulators and native Mac app. Logs live
 in the global workspace directory under `$STIM_HOME/workspaces`, not in the
 project checkout. The Metro, client, and device files are capped at about 8 MiB each.
 Stim keeps one previous generation of each file, and queries read both. The oldest
@@ -359,6 +359,13 @@ while agent-device holds its claim on the emulator, so its actions drop out of
 later queries once agent-device releases the claim. Records from a newer
 agent-device format that Stim does not recognize are replaced by one `warn`
 record saying the session's actions are not shown.
+
+Native Mac sessions match the workspace's isolated bundle ID and current app
+launch, using a recorded open with explicit `--surface app`. App switches and
+unrecorded lifecycle attempts clear the match, as do event-log rotation and
+unknown formats. Native screenshot events are omitted because their surface
+override is absent from the event metadata. See [native Mac agent actions](./macos.md#agent-actions)
+for the app-scoped command and limits.
 
 For agent-device you run yourself, use the `agentDevice.stateDir` reported by
 `ios`, `android`, `macos`, or each `status --json` environment. Read it once

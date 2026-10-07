@@ -317,12 +317,6 @@ struct DeviceTile: View {
             activityChip(badge)
           }
         }
-        if device.appStopped {
-          if presence != AppPresence.none {
-            Pill(tone: .warning) { Text("App not running") }
-              .help("stim status sees no \(device.app?.id ?? "app") process on this device.")
-          }
-        }
         if case .web(let browser) = device, browser.pageFailed {
           Pill(tone: .warning) { Text("Page failed to load") }
             .help(browser.page?.error ?? "The page's latest load failed.")

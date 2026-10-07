@@ -45,7 +45,7 @@ struct DeviceViewer: View {
     let size = Self.size(in: windowSize)
     Group {
       if let device {
-        AgentFeed(cli: cli, workspace: env.path, device: device) { agentActions in
+        AgentFeed(cli: cli, workspace: env.path, slot: device.slot, deviceID: device.activityKey) { agentActions in
           if let target = replayTarget(device) {
             ReplayHost(target: target) { replay in
               ReplayingContent(replay: replay) { replaying in

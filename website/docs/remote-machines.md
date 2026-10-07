@@ -100,6 +100,18 @@ revocation retires that client's parked devices. All deletion rechecks ownership
 and uses centralized teardown. If GC removes a ledger-owned device, the next
 reconciliation clears its parked marker.
 
+On the hosting Mac, `stim gc` lists parked hosted iOS and Android devices with
+their session, client id, device label, parked time and session-home ledger
+ownership. `stim gc --delete` deletes them through the packaged stop worker in
+each session home while holding its claim. Held claims, changed sessions and
+unverified ownership keep the device; an unreadable journal keeps all hosted
+devices. Android deletion also requires visibility from this shell's Android
+environment; otherwise run gc with the server's `ANDROID_AVD_HOME`/`HOME`.
+Records no longer listed in their session ledger are already removed and skipped.
+`--older-than` filters by parked time; cache scopes omit hosted sessions.
+The CLI leaves the journal unchanged, and the server clears the parked marker
+when it reconciles the empty ledger.
+
 A clean `stim-server` close parks eligible devices, which persist across restart
 and can be adopted by the next reserve. The server never re-attaches to a booted
 device after restart. A running session left by a crashed server stays `unknown`

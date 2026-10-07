@@ -640,6 +640,15 @@ stack. Command-C or **Copy** copies the selected records, or every loaded
 record when none is selected. **Reveal log folder** opens the workspace's log
 directory from `stim status`.
 
+Native workspace details show the same agent actions panel below the app preview.
+Use `agent-device open <isolated-bundleId> --platform macos --surface app --foreground`
+with the bundle ID from Stim status. The feed matches the current launch and
+recorded app-surface opens; unrecorded lifecycle attempts, app switches and event
+log rotation clear attribution. Native screenshots, phone Control and generic
+computer-use tools are outside this feed. Native apps have no replay.
+agent-device must record the explicit surface in its open event; version
+0.21.12 omits it, so its native actions remain unavailable.
+
 The viewer's agent actions are the agent-device actions on that simulator or
 emulator: taps, typing, app opens, screenshots, and failed commands in red. On
 the Web device they are the clicks, typing and scrolls an attached tool such as

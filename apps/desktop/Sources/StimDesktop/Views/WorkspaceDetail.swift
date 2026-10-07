@@ -423,7 +423,10 @@ struct WorkspaceDetail: View {
     GeometryReader { geo in
       ScrollView {
         if let macos = workspace.macos {
-          MacosAppCard(app: macos, workspace: workspace.path).padding(Space.xxl)
+          VStack(spacing: Space.lg) {
+            MacosAppCard(app: macos, workspace: workspace.path)
+            nativeActions(macos, workspace: workspace.path)
+          }.padding(Space.xxl)
         }
         if devices.isEmpty && workspace.macos == nil {
           emptyCanvas.frame(maxWidth: .infinity).padding(Space.xxxl)
@@ -457,6 +460,7 @@ struct WorkspaceDetail: View {
                 Text(subtitle).font(.stim(.footnote)).foregroundStyle(Palette.secondary)
               }
               MacosAppCard(app: app.macos!, workspace: app.path)
+              nativeActions(app.macos!, workspace: app.path)
             }
             .padding(Space.xxl)
             .id("macos|\(app.path)")
@@ -561,6 +565,15 @@ struct WorkspaceDetail: View {
       .frame(width: tile.showsStoppedBar ? min(DeviceTile.stoppedMaximumWidth, cardWidth) : cardWidth)
   }
 
+  private func nativeActions(_ macos: MacosApp, workspace path: String) -> some View {
+    AgentFeed(cli: cli, workspace: path, slot: "default", deviceID: macos.launchId) { agentActions in
+      NativeAgentActions(actions: agentActions) { at in
+        logWorkspacePath = path
+        revealAgentActions(slot: "default", at: at)
+      }
+    }
+  }
+
   /// Shows the agent source of `slot` in the logs drawer, scrolled to `at` when given.
   private func revealAgentActions(slot: String, at: Double?) {
     logQuery = LogQuery()
@@ -571,6 +584,21 @@ struct WorkspaceDetail: View {
     logQuery.search = ""
     showsLogs = true
     logMoment = at.map { LogMoment(at: $0) }
+  }
+}
+
+private struct NativeAgentActions: View {
+  var actions: [AgentAction]
+  var openLogs: (Double?) -> Void
+  @FocusState private var focused: Bool
+
+  var body: some View {
+    AgentActionsPanel(
+      actions: actions, replay: nil, canReplay: false, focused: $focused,
+      seek: { _ in }, openLogs: { openLogs($0?.record.ts) }
+    )
+    .frame(height: 280)
+    .background(RoundedRectangle(cornerRadius: Radius.card).fill(Palette.surface))
   }
 }
 
