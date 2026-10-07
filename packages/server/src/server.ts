@@ -528,6 +528,14 @@ function pruneSetup(): void {
   }
 }
 
+function isLink(path: string): boolean {
+  try {
+    return lstatSync(path).isSymbolicLink();
+  } catch {
+    return true;
+  }
+}
+
 export async function startServer(options: ServerOptions): Promise<RunningServer> {
   let hostProbe: Promise<HelloResult['host']> | undefined;
   let hostExpires = 0;
@@ -1796,14 +1804,6 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
           return record ? [record] : [];
         });
       });
-    }
-
-    function isLink(path: string): boolean {
-      try {
-        return lstatSync(path).isSymbolicLink();
-      } catch {
-        return true;
-      }
     }
 
     function archiveDetail(id: RequestId, params: unknown): void {
