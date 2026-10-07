@@ -8,15 +8,12 @@ struct SimulatorDevelopmentOptionsView: View {
   @State private var busy = false
   @State private var error: String?
   @State private var operation: Task<Void, Never>?
+  @State private var polling = SimulatorOptionsPolling()
 
   var body: some View {
     VStack(alignment: .leading, spacing: Space.md) {
       HStack {
         Text("Development").font(.stim(.headline))
-        Spacer()
-        Button("Refresh development settings", systemImage: "arrow.clockwise") { run(.read) }
-          .labelStyle(.iconOnly)
-          .disabled(busy || !canControl)
       }
       if let slow = settings?.slowAnimations {
         Toggle("Slow animations", isOn: Binding(get: { slow }, set: { run(.slow($0)) }))
@@ -35,7 +32,10 @@ struct SimulatorDevelopmentOptionsView: View {
           .fixedSize(horizontal: false, vertical: true)
       }
     }
-    .onAppear { run(.read) }
+    .task(id: canControl) {
+      guard canControl else { return }
+      await SimulatorOptionsPolling.run { await poll() }
+    }
     .onDisappear { operation?.cancel() }
     .onChange(of: canControl) { _, allowed in
       if !allowed { operation?.cancel() }
@@ -43,22 +43,39 @@ struct SimulatorDevelopmentOptionsView: View {
   }
 
   private enum Action: Sendable {
-    case read
     case slow(Bool)
     case shake
+  }
+
+  private func poll() async {
+    guard canControl, polling.canStartRead else { return }
+    let token = polling.token
+    do {
+      let read = try await SimulatorDevelopmentOptions.readBounded(udid: udid)
+      guard polling.accepts(token) else { return }
+      settings = read
+      error = nil
+    } catch is CancellationError {
+    } catch {
+      guard polling.accepts(token), settings == nil else { return }
+      self.error = error.localizedDescription
+    }
   }
 
   private func run(_ action: Action) {
     guard canControl, !busy else { return }
     busy = true
     error = nil
+    polling.beginChange()
     operation = Task {
-      defer { busy = false }
+      defer {
+        polling.endChange()
+        busy = false
+      }
       do {
         try Task.checkCancellation()
         let updated: SimulatorDevelopmentOptions.Settings
         switch action {
-        case .read: updated = try await SimulatorDevelopmentOptions.readBounded(udid: udid)
         case .slow(let enabled): updated = try await SimulatorDevelopmentOptions.setSlowAnimationsBounded(enabled, udid: udid)
         case .shake: updated = try await SimulatorDevelopmentOptions.shakeBounded(udid: udid)
         }

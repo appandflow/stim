@@ -21,7 +21,7 @@
 
     init(scenario: PlaygroundScenario) {
       loading = scenario == .loading
-      error = scenario == .error ? "Xcode did not report the simulator's appearance settings. Refresh to try again." : nil
+      error = scenario == .error ? "Xcode did not report the simulator's appearance settings." : nil
       values =
         scenario == .empty || loading || error != nil
         ? [:]

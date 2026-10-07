@@ -8,6 +8,8 @@ struct SimulatorOptionsView: View {
   @State private var busy = false
   @State private var error: String?
   @State private var operation: Task<Void, Never>?
+  @State private var loaded = false
+  @State private var polling = SimulatorOptionsPolling()
 
   #if DEBUG
     @State private var fixture: PlaygroundSimulator?
@@ -18,6 +20,7 @@ struct SimulatorOptionsView: View {
       _fixture = State(initialValue: fixture)
       _appearance = State(initialValue: fixture.appearance)
       _busy = State(initialValue: fixture.loading)
+      _loaded = State(initialValue: !fixture.loading)
       _error = State(initialValue: fixture.error)
     }
   #endif
@@ -32,11 +35,7 @@ struct SimulatorOptionsView: View {
       HStack {
         Text("Simulator options").font(.stim(.headline))
         Spacer()
-        if busy { ProgressView().controlSize(.small) }
-        Button("Refresh", systemImage: "arrow.clockwise") { load() }
-          .labelStyle(.iconOnly)
-          .nativeIconStyle()
-          .disabled(busy || !canControl)
+        if busy || !loaded { ProgressView().controlSize(.small) }
       }
       if let appearance {
         mode(appearance)
@@ -51,7 +50,7 @@ struct SimulatorOptionsView: View {
           "Reduce transparency", value: appearance.reduceTransparency?.enabled, change: SimulatorOptions.Change.reduceTransparency
         )
         toggle("Show button borders", value: appearance.showBorders?.enabled, change: SimulatorOptions.Change.showBorders)
-      } else if !busy {
+      } else if !busy && loaded {
         Text("Appearance settings are unavailable.").foregroundStyle(Palette.secondary)
       }
       if let error {
@@ -74,7 +73,10 @@ struct SimulatorOptionsView: View {
     .controlSize(.small)
     .frame(width: 300)
     .padding(Space.lg)
-    .onAppear { load() }
+    .task(id: canControl) {
+      guard canControl else { return }
+      await SimulatorOptionsPolling.run { await poll() }
+    }
     .onDisappear { operation?.cancel() }
     .onChange(of: canControl) { _, allowed in
       if !allowed { operation?.cancel() }
@@ -127,10 +129,28 @@ struct SimulatorOptionsView: View {
     }
   }
 
-  private func load() { run(nil) }
   private func apply(_ change: SimulatorOptions.Change) { run(change) }
 
-  private func run(_ change: SimulatorOptions.Change?) {
+  private func poll() async {
+    #if DEBUG
+      if fixture != nil { return }
+    #endif
+    guard canControl, polling.canStartRead else { return }
+    let token = polling.token
+    do {
+      let read = try await SimulatorOptions.read(udid: udid)
+      guard polling.accepts(token) else { return }
+      appearance = read
+      error = nil
+    } catch is CancellationError {
+    } catch {
+      guard polling.accepts(token), appearance == nil else { return }
+      self.error = error.localizedDescription
+    }
+    if polling.accepts(token) { loaded = true }
+  }
+
+  private func run(_ change: SimulatorOptions.Change) {
     #if DEBUG
       if var fixture {
         fixture.apply(change)
@@ -142,17 +162,17 @@ struct SimulatorOptionsView: View {
     guard canControl, !busy else { return }
     busy = true
     error = nil
+    polling.beginChange()
     operation = Task {
-      defer { busy = false }
+      defer {
+        polling.endChange()
+        busy = false
+      }
       do {
-        let updated: SimulatorAppearance
-        if let change {
-          updated = try await SimulatorOptions.apply(change, udid: udid)
-        } else {
-          updated = try await SimulatorOptions.read(udid: udid)
-        }
+        let updated = try await SimulatorOptions.apply(change, udid: udid)
         try Task.checkCancellation()
         appearance = updated
+        loaded = true
       } catch is CancellationError {
       } catch {
         self.error = error.localizedDescription
