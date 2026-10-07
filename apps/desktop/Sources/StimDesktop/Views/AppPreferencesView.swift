@@ -62,7 +62,7 @@ struct AppPreferencesView: View {
       Section("Workspace list") {
         LabeledContent("Status") {
           Menu(StatusFilter.summary(StatusFilter.decode(statuses))) {
-            Button("All") { statuses = StatusFilter.encode(StatusFilter.selectingAll(StatusFilter.decode(statuses))) }
+            Button("All") { statuses = StatusFilter.encode(StatusFilter.all) }
             Divider()
             ForEach(StatusFilter.allCases, id: \.self) { status in
               Toggle(

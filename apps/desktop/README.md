@@ -72,8 +72,8 @@ checkout. The second line is where it sits inside its checkout, such as
 `apps/mobile`. The view options button next to the logo opens a menu:
 
 - **Status**: select any combination of Live, Idle, Not set up and Archived. The
-  default is Live + Idle. All selects every state except Archived and leaves the
-  Archived choice unchanged. Each state shows its sidebar row count, counting a
+  default is Live + Idle. All selects all four states, Archived included, and
+  shows as checked only when all four are on. Each state shows its sidebar row count, counting a
   multi-app worktree once and excluding hidden projects. When mixed with current
   rows, archives follow those rows within each project, newest removal first.
   Archived uses the same repository and worktree grouping, with app labels, PR

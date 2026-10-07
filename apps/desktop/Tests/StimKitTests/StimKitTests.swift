@@ -585,15 +585,14 @@ import Testing
     #expect(StatusFilter.decode("[]").isEmpty)
   }
 
-  @Test func statusSummaryAndAllShortcutPreserveTheArchiveChoice() {
+  @Test func statusSummaryNamesEveryStatusAsAll() {
+    #expect(StatusFilter.all == [.live, .idle, .notSetUp, .archived])
     #expect(StatusFilter.summary(StatusFilter.all) == "All")
-    #expect(StatusFilter.summary(Set(StatusFilter.allCases)) == "All + Archived")
+    #expect(StatusFilter.summary([.live, .idle, .notSetUp]) == "3 selected")
     #expect(StatusFilter.summary([]) == "None")
     #expect(StatusFilter.summary([.notSetUp]) == "Not set up")
     #expect(StatusFilter.summary([.idle, .live]) == "Live, Idle")
     #expect(StatusFilter.summary([.idle, .notSetUp, .archived]) == "3 selected")
-    #expect(StatusFilter.selectingAll([.archived]) == [.live, .idle, .notSetUp, .archived])
-    #expect(StatusFilter.selectingAll([]) == [.live, .idle, .notSetUp])
   }
 
   private func git(_ args: [String]) throws {

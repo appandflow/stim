@@ -137,7 +137,7 @@ struct Sidebar: View {
           .buttonStyle(.hoverRow(outset: Space.xs)).foregroundStyle(Palette.primary)
       } else if options.statuses.count == 1, let status = options.statuses.first {
         InlineEmpty("No \(status.title.lowercased()) workspaces \u{00B7}")
-        Button("Show all") { prefs.statuses = StatusFilter.encode(StatusFilter.selectingAll(options.statuses)) }
+        Button("Show all") { prefs.statuses = StatusFilter.encode(StatusFilter.all) }
           .buttonStyle(.hoverRow(outset: Space.xs)).foregroundStyle(Palette.primary)
       } else if options.differsFromDefaults(projects: store.projectList.map(\.project)) {
         InlineEmpty("Nothing matches \u{00B7}")

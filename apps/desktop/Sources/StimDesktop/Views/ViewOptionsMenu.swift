@@ -116,8 +116,8 @@ private struct ViewOptionsMenu: View {
 
   private func statusItems(_ statuses: Set<StatusFilter>) -> [MenuItem] {
     var items = [
-      MenuItem(id: "all", title: "All", accessory: .check(StatusFilter.all.isSubset(of: statuses)), keepsOpen: true) {
-        prefs.statuses = StatusFilter.encode(StatusFilter.selectingAll(statuses))
+      MenuItem(id: "all", title: "All", accessory: .check(statuses == StatusFilter.all), keepsOpen: true) {
+        prefs.statuses = StatusFilter.encode(StatusFilter.all)
       }
     ]
     for (index, status) in StatusFilter.allCases.enumerated() {

@@ -52,7 +52,7 @@ import Testing
     #expect(old.archivedUsage == nil)
   }
 
-  @Test func liveFiltersExcludeArchivesAndArchivedGroupsOnlyHistoryNewestFirst() throws {
+  @Test func statusFiltersShowArchivesOnlyWhenArchivedIsOnAndGroupOnlyHistoryNewestFirst() throws {
     let payload = try payload()
     var older = try #require(payload.archived?.first)
     var newer = older
@@ -65,14 +65,17 @@ import Testing
     let archives = [older, other, newer]
     let project: (String) -> Project = { _ in Project(root: "/work/live") }
     var options = SidebarOptions()
-    for filter in [StatusFilter.all, [.live], [.idle]] {
+    let expected: [(Set<StatusFilter>, [String])] = [
+      (StatusFilter.all, ["/work/idle/app", "/work/new/app", "archive:newer", "archive:other-project", "archive:older"]),
+      ([.live, .idle, .notSetUp], ["/work/idle/app", "/work/new/app"]),
+      ([.live], ["/work/new/app"]),
+      ([.idle], ["/work/idle/app"]),
+    ]
+    for (filter, ids) in expected {
       options.statuses = filter
       let rows = sidebarList(
         environments: payload.environments, unprovisioned: [], project: project, options: options, archived: archives)
-      #expect(
-        rows.map(\.id)
-          == (filter == StatusFilter.all
-            ? ["/work/idle/app", "/work/new/app"] : filter == [.live] ? ["/work/new/app"] : ["/work/idle/app"]))
+      #expect(rows.map(\.id) == ids)
     }
     options.statuses = [.archived]
     let trees = sidebarTrees(
