@@ -228,6 +228,10 @@ final class ServerController: ObservableObject {
     let current = generation
     Task {
       defer { watching = false }
+      if let exiting {
+        await Task.detached { Self.waitForExit(exiting) }.value
+        self.exiting = nil
+      }
       guard let probe = await StimServerCLI.health(port: port) else { return }
       let resolved = StimHome.path(environment: await environment?.value ?? ProcessInfo.processInfo.environment)
       guard current == generation, case .off = state else { return }
