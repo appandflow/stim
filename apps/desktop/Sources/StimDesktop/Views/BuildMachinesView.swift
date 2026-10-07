@@ -221,6 +221,13 @@ struct BuildMachinesContent<ThisMac: View>: View {
       } else {
         list(entries)
       }
+    } else if showsThisMac {
+      Form {
+        Section { ProgressView().frame(maxWidth: .infinity) }
+        thisMac
+      }
+      .formStyle(.grouped)
+      .scrollContentBackground(.hidden)
     } else {
       ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
     }

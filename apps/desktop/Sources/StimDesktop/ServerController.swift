@@ -91,11 +91,6 @@ final class ServerController: ObservableObject {
     return (1...65535).contains(port) ? port : StimServerCLI.defaultPort
   }
 
-  /// Build clients, and Macs waiting for approval to build here, newest first.
-  var buildClients: [PairedDevice] { devices.filter(\.isBuildClient) }
-
-  var deviceHostClients: [PairedDevice] { devices.filter(\.isDeviceHostClient) }
-
   var phones: [PairedDevice] { devices.filter(\.isPhone) }
 
   var isRunning: Bool {

@@ -130,7 +130,7 @@ struct PhonesView: View {
       case .servingOff: return "Serving is off, so paired phones can't connect."
       case .tailscaleOff: return "Tailscale is off on this Mac, so phones can't connect."
       case .funneled: return "Tailscale Funnel makes the Stim server public, so phones are refused."
-      case .noRoute: return "Phones can't reach this Mac yet: its private tailnet route is missing."
+      case .noRoute: return "Phones can't reach this Mac yet: its private tailnet route is not set up."
       }
     }
   }

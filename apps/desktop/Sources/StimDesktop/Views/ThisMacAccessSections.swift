@@ -1,8 +1,6 @@
 import StimKit
 import SwiftUI
 
-/// The host side of this Mac: other Macs approved, or asking, to build or run devices here, and the sessions they
-/// run here now. Shown on the Build Machines tab only while there is something to list.
 struct ThisMacAccessSections: View {
   var clients: [PairedDevice]
   var sessions: [HostedSession]
