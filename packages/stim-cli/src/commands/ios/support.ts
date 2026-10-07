@@ -317,14 +317,18 @@ interface IosDeviceWaitRun {
   finish(): Promise<void>;
 }
 
-export function createIosDeviceWaitRun(stats: RunRecorder, progress: BuildProgress): IosDeviceWaitRun {
+export function createIosDeviceWaitRun(
+  stats: RunRecorder,
+  progress: BuildProgress,
+  signal?: AbortSignal,
+): IosDeviceWaitRun {
   const controller = new AbortController();
   let waiting = false;
   let boot: Promise<unknown> | undefined;
   let outcome: Parameters<RunRecorder['record']>[0] | undefined;
   return {
     policy: {
-      signal: controller.signal,
+      signal: signal ? AbortSignal.any([controller.signal, signal]) : controller.signal,
       waitingFor(info) {
         waiting = info !== null;
         progress.waitingFor(info, 'device-slot');

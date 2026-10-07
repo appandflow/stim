@@ -1486,7 +1486,11 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
                             runs. A workspace's own booted or booting device
                             bypasses the queue. iOS waits beside its build.
                             Waiting prints the count, holder workspace names
-                            and elapsed time at once and about every 10s.
+                            and elapsed time at once and about every 10s, then
+                            the queue position, head workspace name and
+                            $STIM_HOME/device-waits path. Timeout names the
+                            same head and path. Stop cancels a queued run and
+                            releases its ticket without booting its device.
                             Status JSON adds build.waitingFor independently
                             of phase: { kind: "device-slot" | "build-slot",
                             inUse, max, since }. Overlapping waits show the

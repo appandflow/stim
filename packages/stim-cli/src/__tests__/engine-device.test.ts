@@ -131,7 +131,14 @@ describe('ensureBooted: ios', () => {
           return makeExitingChild();
         },
       });
-      expect(await ensureBooted({ platform: 'ios', device: { deviceUdid: 'U1', owned: true }, simulatorApp })).toEqual({
+      expect(
+        await ensureBooted({
+          projectPath: tmpHome,
+          platform: 'ios',
+          device: { deviceUdid: 'U1', owned: true },
+          simulatorApp,
+        }),
+      ).toEqual({
         ok: true,
         udid: 'U1',
       });
@@ -158,6 +165,7 @@ describe('ensureBooted: ios', () => {
       runFileQuiet: () => null,
     });
     const result = await ensureBooted({
+      projectPath: tmpHome,
       platform: 'ios',
       device: {
         deviceUdid: 'U1',
@@ -201,6 +209,7 @@ describe('ensureBooted: ios', () => {
       },
     });
     const result = await ensureBooted({
+      projectPath: tmpHome,
       platform: 'ios',
       simulatorApp: 'siniulator',
       device: { deviceUdid: 'U1', owned: true },
@@ -239,6 +248,7 @@ describe('ensureBooted: ios', () => {
     });
 
     const result = await ensureBooted({
+      projectPath: tmpHome,
       platform: 'ios',
       device: { deviceUdid: 'U1', owned: true },
       timeoutMs: 1200,
@@ -267,7 +277,11 @@ describe('ensureBooted: ios', () => {
       spawn: () => makeExitingChild(1, 'CoreLocationMigrator failed'),
     });
 
-    const result = await ensureBooted({ platform: 'ios', device: { deviceUdid: 'U1', owned: true } });
+    const result = await ensureBooted({
+      projectPath: tmpHome,
+      platform: 'ios',
+      device: { deviceUdid: 'U1', owned: true },
+    });
 
     expect(result.ok).toBeUndefined();
     expect(result.reason).toMatch(/Could not boot simulator U1/);
@@ -288,7 +302,7 @@ describe('ensureBooted: ios', () => {
         throw new Error('must not boot a foreign sim');
       },
     });
-    const result = await ensureBooted({ platform: 'ios', device: { deviceUdid: 'U1' } });
+    const result = await ensureBooted({ projectPath: tmpHome, platform: 'ios', device: { deviceUdid: 'U1' } });
     expect(result.ok).toBe(undefined);
     expect(result.reason).toMatch(/not Stim-owned/);
   });
@@ -305,7 +319,7 @@ describe('ensureBooted: ios', () => {
       },
       spawn: () => null,
     });
-    const result = await ensureBooted({ platform: 'ios', device: { deviceUdid: 'GONE' } });
+    const result = await ensureBooted({ projectPath: tmpHome, platform: 'ios', device: { deviceUdid: 'GONE' } });
     expect(result.reason).toMatch(/no longer exists/);
     expect(result.reason).toMatch(/stim ios/);
   });
@@ -325,7 +339,13 @@ describe('ensureBooted: ios', () => {
       },
       spawn: () => makeExitingChild(),
     });
-    const result = await ensureBooted({ platform: 'ios', device: { deviceUdid: 'U1' }, timeoutMs: 60, pollMs: 5 });
+    const result = await ensureBooted({
+      projectPath: tmpHome,
+      platform: 'ios',
+      device: { deviceUdid: 'U1' },
+      timeoutMs: 60,
+      pollMs: 5,
+    });
     expect(result.reason).toMatch(/did not reach the Booted state/);
   });
 
@@ -341,7 +361,9 @@ describe('ensureBooted: ios', () => {
       },
       spawn: () => null,
     });
-    expect((await ensureBooted({ platform: 'ios', device: {} })).reason).toMatch(/No iOS simulator is recorded/);
+    expect((await ensureBooted({ projectPath: tmpHome, platform: 'ios', device: {} })).reason).toMatch(
+      /No iOS simulator is recorded/,
+    );
   });
 
   test('joins the boot this run started instead of listing simulators again', async () => {
@@ -371,6 +393,7 @@ describe('ensureBooted: ios', () => {
       }, 5),
     );
     const result = await ensureBooted({
+      projectPath: tmpHome,
       platform: 'ios',
       device: { deviceUdid: 'U1', owned: true, booting: { udid: 'U1', done } },
     });
@@ -393,6 +416,7 @@ describe('ensureBooted: ios', () => {
     });
     const done = Promise.reject(new Error('CoreLocationMigrator failed'));
     const result = await ensureBooted({
+      projectPath: tmpHome,
       platform: 'ios',
       device: { deviceUdid: 'U1', owned: true, booting: { udid: 'U1', done } },
     });
@@ -417,7 +441,11 @@ describe('ensureBooted: ios', () => {
       },
       spawn: () => null,
     });
-    const result = await ensureBooted({ platform: 'ios', device: { deviceUdid: 'U1', owned: true } });
+    const result = await ensureBooted({
+      projectPath: tmpHome,
+      platform: 'ios',
+      device: { deviceUdid: 'U1', owned: true },
+    });
     expect(result).toEqual({ ok: true, udid: 'U1' });
     expect(commands.filter((c) => c.includes('list devices')).length).toBe(1);
   });
@@ -439,6 +467,7 @@ describe('ensureBooted: ios', () => {
       spawn: () => null,
     });
     const result = await ensureBooted({
+      projectPath: tmpHome,
       platform: 'ios',
       device: { deviceUdid: 'U1', owned: true, booting: { udid: 'U2', done: Promise.resolve() } },
     });
@@ -923,7 +952,9 @@ describe('ensureBooted: android', () => {
 });
 
 test('ensureBooted reports an unknown platform rather than throwing', async () => {
-  expect((await ensureBooted({ platform: 'web', device: {} })).reason).toMatch(/Unknown platform/);
+  expect((await ensureBooted({ projectPath: tmpHome, platform: 'web', device: {} })).reason).toMatch(
+    /Unknown platform/,
+  );
 });
 
 const TYPES = [
@@ -1454,7 +1485,9 @@ describe('ensureOwnedDevice: ios', () => {
           label: 'app',
           settings: {},
         });
-        expect(await ensureBooted({ platform: 'ios', device, timeoutMs: 5000, pollMs: 5 })).toEqual({
+        expect(
+          await ensureBooted({ projectPath: tmpHome, platform: 'ios', device, timeoutMs: 5000, pollMs: 5 }),
+        ).toEqual({
           ok: true,
           udid: 'U1',
         });
@@ -1503,10 +1536,12 @@ describe('ensureOwnedDevice: ios', () => {
         settings: {},
       });
       state = 'Shutdown';
-      expect(await ensureBooted({ platform: 'ios', device, timeoutMs: 5000, pollMs: 5 })).toEqual({
-        ok: true,
-        udid: 'U1',
-      });
+      expect(await ensureBooted({ projectPath: tmpHome, platform: 'ios', device, timeoutMs: 5000, pollMs: 5 })).toEqual(
+        {
+          ok: true,
+          udid: 'U1',
+        },
+      );
       expect(run).toContain('xcrun simctl boot U1');
     } finally {
       rmSync(root, { recursive: true, force: true });
@@ -1736,10 +1771,12 @@ describe('ensureOwnedDevice: ios', () => {
         settings: {},
         flags: { simulatorApp: 'siniulator' },
       });
-      expect(await ensureBooted({ platform: 'ios', device, simulatorApp: 'siniulator' })).toEqual({
-        ok: true,
-        udid: device.deviceUdid,
-      });
+      expect(await ensureBooted({ projectPath: tmpHome, platform: 'ios', device, simulatorApp: 'siniulator' })).toEqual(
+        {
+          ok: true,
+          udid: device.deviceUdid,
+        },
+      );
       expect(opened).toEqual([['open', '-a', 'Siniulator', `siniulator://open?udid=${device.deviceUdid}`]]);
     } finally {
       rmSync(root, { recursive: true, force: true });
@@ -2734,7 +2771,9 @@ describe('a boot refused at admission', () => {
       message: '4 Stim device(s) are already booted',
       remedy: 'stop an environment (stim stop)',
     });
-    await expect(ensureBooted({ platform: 'ios', device: failedBoot(atCapacity) })).resolves.toMatchObject({
+    await expect(
+      ensureBooted({ projectPath: tmpHome, platform: 'ios', device: failedBoot(atCapacity) }),
+    ).resolves.toMatchObject({
       failed: true,
       code: 'STIM_AT_CAPACITY',
       remedy: 'stop an environment (stim stop)',
@@ -2748,7 +2787,7 @@ describe('a boot refused at admission', () => {
       label: 'device boot',
       reason: 'its process identity token does not decode',
     });
-    const result = await ensureBooted({ platform: 'ios', device: failedBoot(refused) });
+    const result = await ensureBooted({ projectPath: tmpHome, platform: 'ios', device: failedBoot(refused) });
     expect(result).toMatchObject({ failed: true, code: 'STIM_CLAIM_REFUSED' });
     expect(result.remedy).toContain('rm -f');
   });

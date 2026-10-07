@@ -341,13 +341,15 @@ export function deviceSlotWaitingLine({
   max,
   holders,
   elapsedMs,
+  queue,
 }: {
+  queue?: string;
   count: number;
   max: number;
   holders: string[];
   elapsedMs: number;
 }): string {
-  return `${'device'.padEnd(11)} waiting for a device slot (${count}/${max} in use${holders.length ? `: ${holders.join(', ')}` : ''}), ${formatElapsed(elapsedMs)} elapsed -- stim guide lifecycle concurrency`;
+  return `${'device'.padEnd(11)} waiting for a device slot (${count}/${max} in use${holders.length ? `: ${holders.join(', ')}` : ''}), ${formatElapsed(elapsedMs)} elapsed -- stim guide lifecycle concurrency${queue ? `; ${queue}` : ''}`;
 }
 
 function deviceHolders(inventory: DeviceInventory, keys: Set<string>): string[] {
@@ -382,7 +384,12 @@ function liveWaiters(): ClaimHolder[] {
       label: 'device wait',
     });
   }
-  return survey.shared.toSorted((a, b) => a.startedAt.localeCompare(b.startedAt) || a.claimId.localeCompare(b.claimId));
+  return survey.shared.toSorted(
+    (a, b) =>
+      (Number(a.details.sequence) || 0) - (Number(b.details.sequence) || 0) ||
+      a.startedAt.localeCompare(b.startedAt) ||
+      a.claimId.localeCompare(b.claimId),
+  );
 }
 
 function takeWaitTicket(device: BootingDevice, waiters: ClaimHolder[]): ClaimHandle {
@@ -421,6 +428,7 @@ async function admissionTransaction<T>(
   action: () => Promise<T>,
   lockWaitMs: number,
   out: (line: string) => void,
+  signal?: AbortSignal,
 ): Promise<T> {
   const started = Date.now();
   let lastLine: number | null = null;
@@ -435,6 +443,7 @@ async function admissionTransaction<T>(
       external: true,
       waitMs: lockWaitMs,
       onHeld,
+      signal,
     });
   } catch (error) {
     if (workspaceProcessLockError(error) !== 'timeout') throw error;
@@ -472,6 +481,7 @@ export async function withDeviceBootAdmission<T>(
     out?: (line: string) => void;
   },
 ): Promise<T> {
+  signal?.throwIfAborted();
   if (!max || max <= 0) return boot();
   const workspace = workspaceId(root);
   device = { ...device, workspace, displayName };
@@ -480,52 +490,79 @@ export async function withDeviceBootAdmission<T>(
   let started: number | undefined;
   let lastLine = -Infinity;
   let visibleWait = false;
+  let lastInventory = { count: 0, holders: [] as string[] };
   try {
     try {
       for (;;) {
         const result = await admissionTransaction(
           async () => {
             signal?.throwIfAborted();
+            const waiters = liveWaiters();
+            const first = waiters[0];
+            const turn = !first || first.claimId === ticket?.claimId;
+            const admit = () => {
+              const admitted = takeBootMarker(device);
+              if (releaseClaim(ticket)) ticket = undefined;
+              return { marker: admitted };
+            };
+            const wait = ({ count, holders }: typeof lastInventory) => {
+              const ticketId = ticket?.claimId;
+              const position = ticketId
+                ? waiters.findIndex((holder) => holder.claimId === ticketId) + 1
+                : waiters.length + 1;
+              const headName = first?.details.displayName ?? displayName;
+              const queue = `queue position ${position}${position > 1 ? ' behind' : ', head'} ${headName}; queue: ${join(getConfigDir(), 'device-waits')}`;
+              if (noWait || waitMs === 0) throw new DeviceAdmissionRefusal(atCapacityRefusal(count, max));
+              if (started !== undefined && now() - started >= waitMs) {
+                throw new DeviceAdmissionRefusal({
+                  code: 'STIM_AT_CAPACITY',
+                  message: `Waited ${formatElapsed(now() - started)} for a device slot; ${count}/${max} Stim devices are in use; ${queue}.`,
+                  remedy:
+                    'Stop an environment (stim stop), retry with a longer --wait <seconds>, or raise concurrency.maxDevices.',
+                });
+              }
+              if (!ticket) {
+                ticket = takeWaitTicket(device, waiters);
+                started = now();
+              }
+              return { count, holders, queue };
+            };
+            if (ticket && !turn) return wait(lastInventory);
             const inventory = readInventory(sources);
             if ('code' in inventory) throw new DeviceAdmissionRefusal(inventory);
             const keys = inventoryKeys(inventory);
             const own = deviceKey(device.platform, device.key);
             const ownBooting = inventory.booting.some((entry) => deviceKey(entry.platform, entry.key) === own);
-            if ((device.platform === 'ios' && keys.has(own)) || ownBooting) return { marker: takeBootMarker(device) };
+            if ((device.platform === 'ios' && keys.has(own)) || ownBooting) return admit();
             keys.delete(own);
-            const waiters = liveWaiters();
-            const first = waiters[0];
-            const turn = !first || first.claimId === ticket?.claimId;
-            if (keys.size < max && turn) return { marker: takeBootMarker(device) };
-            if (noWait || waitMs === 0) throw new DeviceAdmissionRefusal(atCapacityRefusal(keys.size, max));
-            if (started !== undefined && now() - started >= waitMs) {
-              throw new DeviceAdmissionRefusal({
-                code: 'STIM_AT_CAPACITY',
-                message: `Waited ${formatElapsed(now() - started)} for a device slot; ${keys.size}/${max} Stim devices are in use.`,
-                remedy:
-                  'Stop an environment (stim stop), retry with a longer --wait <seconds>, or raise concurrency.maxDevices.',
-              });
-            }
-            if (!ticket) {
-              ticket = takeWaitTicket(device, waiters);
-              started = now();
-            }
-            return { count: keys.size, holders: deviceHolders(inventory, keys) };
+            if (keys.size < max && turn) return admit();
+            lastInventory = { count: keys.size, holders: deviceHolders(inventory, keys) };
+            return wait(lastInventory);
           },
           lockWaitMs,
           out,
+          signal,
         );
-        marker = result.marker;
-        signal?.throwIfAborted();
-        if (marker) {
+        if ('marker' in result) {
+          marker = result.marker;
+          signal?.throwIfAborted();
           break;
         }
+        signal?.throwIfAborted();
         const elapsedMs = now() - started!;
         visibleWait = true;
-        waitingFor({ kind: 'device-slot', inUse: result.count!, max, since: new Date(started!).toISOString() });
+        waitingFor({ kind: 'device-slot', inUse: result.count, max, since: new Date(started!).toISOString() });
         if (now() - lastLine >= 10_000) {
           lastLine = now();
-          out(deviceSlotWaitingLine({ count: result.count!, max, holders: result.holders!, elapsedMs }));
+          out(
+            deviceSlotWaitingLine({
+              count: result.count,
+              max,
+              holders: result.holders,
+              elapsedMs,
+              queue: result.queue,
+            }),
+          );
         }
         await sleep(Math.min(2000, Math.max(0, waitMs - elapsedMs)));
       }

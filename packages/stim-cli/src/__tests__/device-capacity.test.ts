@@ -1,4 +1,4 @@
-import { mkdtempSync, realpathSync, rmSync, mkdirSync, writeFileSync, existsSync } from 'node:fs';
+import { mkdtempSync, realpathSync, rmSync, mkdirSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { readStatsReport } from '@stim-cli/core/state';
@@ -32,69 +32,82 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
-function takeTicket() {
-  const got = tryAcquireClaim({ root: join(root, 'device-waits'), mode: 'shared', label: 'device wait' });
+function takeTicket(details: Record<string, unknown> = {}) {
+  const got = tryAcquireClaim({ root: join(root, 'device-waits'), mode: 'shared', label: 'device wait', details });
   if (!got.acquired) throw new Error('ticket not acquired');
   return got.acquired;
 }
 
-test('three device waiters keep FIFO across platforms even when later tickets poll first', async () => {
-  let full = true;
-  const admitted: number[] = [];
-  const sleepers: (() => void)[][] = [[], [], []];
-  const boots = [deferred<void>(), deferred<void>(), deferred<void>()];
-  const waiting = [deferred<void>(), deferred<void>(), deferred<void>()];
-  const runs: Promise<void>[] = [];
-  for (let i = 0; i < 3; i++) {
-    runs.push(
-      withDeviceBootAdmission(
-        { platform: i === 1 ? 'android' : 'ios', key: `device-${i}` },
-        async () => {
-          admitted.push(i);
-          await boots[i]!.promise;
-        },
-        {
-          root,
-          max: 1,
-          sources: { ...empty, sims: () => (full ? occupied : []) },
-          sleep: () =>
-            new Promise<void>((resolve) => {
-              sleepers[i]!.push(resolve);
-              waiting[i]!.resolve();
-            }),
-        },
-      ),
-    );
-    await waiting[i]!.promise;
-    await new Promise((resolve) => setTimeout(resolve, 3));
-  }
-  const poll = async (i: number) => {
-    sleepers[i]!.shift()!();
-    await tick();
-  };
-  expect(readClaimSet(join(root, 'device-waits')).live).toHaveLength(3);
-  full = false;
-  await poll(2);
-  await poll(1);
-  expect(admitted).toEqual([]);
-  await poll(0);
-  expect(admitted).toEqual([0]);
-  expect(readClaimSet(join(root, 'device-boots')).live).toHaveLength(1);
-  boots[0]!.resolve();
-  await runs[0];
-  await poll(2);
-  expect(admitted).toEqual([0]);
-  await poll(1);
-  expect(admitted).toEqual([0, 1]);
-  boots[1]!.resolve();
-  await runs[1];
-  await poll(2);
-  boots[2]!.resolve();
-  await Promise.all(runs);
-  expect(admitted).toEqual([0, 1, 2]);
-  expect(readClaimSet(join(root, 'device-waits')).live).toEqual([]);
-  expect(readStats().record?.capacityWaits).toHaveLength(3);
-});
+test.each(['equal timestamps', 'backward clock'])(
+  'three device waiters keep FIFO across platforms when later tickets poll first: %s',
+  async (clock) => {
+    let full = true;
+    const admitted: number[] = [];
+    const sleepers: (() => void)[][] = [[], [], []];
+    const boots = [deferred<void>(), deferred<void>(), deferred<void>()];
+    const waiting = [deferred<void>(), deferred<void>(), deferred<void>()];
+    const runs: Promise<void>[] = [];
+    const listDevices = vi.fn<() => typeof occupied>(() => (full ? occupied : []));
+    for (let i = 0; i < 3; i++) {
+      runs.push(
+        withDeviceBootAdmission(
+          { platform: i === 1 ? 'android' : 'ios', key: `device-${i}` },
+          async () => {
+            admitted.push(i);
+            await boots[i]!.promise;
+          },
+          {
+            root,
+            max: 1,
+            sources: { ...empty, sims: listDevices },
+            sleep: () =>
+              new Promise<void>((resolve) => {
+                sleepers[i]!.push(resolve);
+                waiting[i]!.resolve();
+              }),
+          },
+        ),
+      );
+      await waiting[i]!.promise;
+      const holder = readClaimSet(join(root, 'device-waits')).live.find(
+        (entry) => entry.details.key === `device-${i}`,
+      )!;
+      const payload = JSON.parse(readFileSync(holder.path, 'utf8'));
+      payload.startedAt =
+        clock === 'backward clock' && i === 2 ? '2026-01-01T00:00:00.000Z' : '2026-10-01T00:00:00.000Z';
+      writeFileSync(holder.path, JSON.stringify(payload));
+    }
+    const poll = async (i: number) => {
+      sleepers[i]!.shift()!();
+      await tick();
+    };
+    expect(readClaimSet(join(root, 'device-waits')).live).toHaveLength(3);
+    full = false;
+    const listings = listDevices.mock.calls.length;
+    await poll(2);
+    await poll(1);
+    expect(listDevices).toHaveBeenCalledTimes(listings);
+    expect(admitted).toEqual([]);
+    await poll(0);
+    expect(admitted).toEqual([0]);
+    expect(listDevices).toHaveBeenCalledTimes(listings + 1);
+    expect(readClaimSet(join(root, 'device-boots')).live).toHaveLength(1);
+    boots[0]!.resolve();
+    await runs[0];
+    await poll(2);
+    expect(admitted).toEqual([0]);
+    await poll(1);
+    expect(admitted).toEqual([0, 1]);
+    boots[1]!.resolve();
+    await runs[1];
+    await poll(2);
+    boots[2]!.resolve();
+    await Promise.all(runs);
+    expect(admitted).toEqual([0, 1, 2]);
+    expect(readClaimSet(join(root, 'device-waits')).live).toEqual([]);
+    expect(readStats().record?.capacityWaits).toHaveLength(3);
+  },
+);
 
 test('a dead waiter is reaped by process identity and cannot block an available slot', async () => {
   const path = plantClaim(join(root, 'device-waits'), 'shared', goneClaimOwner(), {
@@ -284,7 +297,8 @@ test('waiting progress names workspaces for live devices and boot claims', async
   ).rejects.toMatchObject({ code: 'STIM_AT_CAPACITY' });
   const expected =
     'device      waiting for a device slot (2/2 in use: tree-one, tree-two), 0s elapsed -- stim guide lifecycle concurrency';
-  expect(lines[0]).toBe(expected);
+  expect(lines[0]).toContain(expected);
+  expect(lines[0]).toContain(join(root, 'device-waits'));
   expect(deviceSlotWaitingLine({ count: 2, max: 2, holders: ['tree-one', 'tree-two'], elapsedMs: 0 })).toBe(expected);
 });
 
@@ -326,4 +340,69 @@ test('an error reporting an admitted wait still releases the boot reservation', 
   ).rejects.toThrow('report failed');
   expect(readClaimSet(join(root, 'device-waits')).live).toEqual([]);
   expect(readClaimSet(join(root, 'device-boots')).live).toEqual([]);
+});
+
+test('a queued run names the stuck head and times out without listing devices on its later polls', async () => {
+  const head = takeTicket({ sequence: 1, displayName: 'stuck-workspace' });
+  let now = Date.now();
+  const lines: string[] = [];
+  const listDevices = vi.fn<() => typeof occupied>(() => occupied);
+  try {
+    await expect(
+      withDeviceBootAdmission(
+        { platform: 'android', key: 'new' },
+        async () => {
+          throw new Error('the follower must not boot');
+        },
+        {
+          root,
+          max: 1,
+          waitMs: 12_000,
+          sources: { ...empty, sims: listDevices },
+          now: () => now,
+          sleep: async (ms) => {
+            now += ms;
+          },
+          out: (line) => lines.push(line),
+        },
+      ),
+    ).rejects.toMatchObject({
+      code: 'STIM_AT_CAPACITY',
+      message: expect.stringContaining(`queue position 2 behind stuck-workspace; queue: ${join(root, 'device-waits')}`),
+    });
+    expect(lines[1]).toContain('1/1 in use: stim-holder');
+    expect(lines[1]).toContain('queue position 2 behind stuck-workspace');
+    expect(lines[1]).toContain(join(root, 'device-waits'));
+    expect(listDevices).toHaveBeenCalledTimes(1);
+    expect(readClaimSet(join(root, 'device-waits')).live.map((holder) => holder.claimId)).toEqual([head.claimId]);
+  } finally {
+    releaseClaim(head);
+  }
+});
+
+test('cancelling while the admission lock is held exits without waiting for the holder or booting', async () => {
+  const held = tryAcquireClaim({ root: join(root, 'device-admission.lock'), mode: 'exclusive' });
+  if (!held.acquired) throw new Error('admission lock not acquired');
+  const controller = new AbortController();
+  const listDevices = vi.fn<() => typeof occupied>(() => []);
+  const boot = vi.fn<() => Promise<void>>(async () => {});
+  try {
+    const run = withDeviceBootAdmission({ platform: 'ios', key: 'new' }, boot, {
+      root,
+      max: 1,
+      lockWaitMs: 300_000,
+      signal: controller.signal,
+      sources: { ...empty, sims: listDevices },
+    });
+    const result = run.catch((error) => error);
+    await tick();
+    controller.abort();
+    expect(await result).toMatchObject({ name: 'AbortError' });
+    expect(boot).not.toHaveBeenCalled();
+    expect(listDevices).not.toHaveBeenCalled();
+    expect(readClaimSet(join(root, 'device-waits')).live).toEqual([]);
+    expect(readClaimSet(join(root, 'device-boots')).live).toEqual([]);
+  } finally {
+    releaseClaim(held.acquired);
+  }
 });

@@ -177,7 +177,7 @@ export async function ensureBooted({
   projectPath,
   slot,
   deviceSlotWait,
-}: Partial<
+}: { projectPath: string } & Partial<
   {
     platform: string;
     device: OwnedDeviceRecord | null;
@@ -189,7 +189,7 @@ export async function ensureBooted({
     projectPath: string;
     slot: string;
   } & EmulatorLogging
-> = {}): Promise<BootResult> {
+>): Promise<BootResult> {
   if (platform === 'ios')
     return ensureIosBooted({
       device,

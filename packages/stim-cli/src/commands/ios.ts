@@ -3,7 +3,7 @@ import { workspaceId } from '@stim-cli/core';
 import { acquireIosArtifact, type PreparedIosArtifact } from './ios/artifact.ts';
 import { isEasBuildFailure } from '../engine/eas-build.ts';
 import { deviceSlotFileKey, parseDeviceSlotOption, validateDeviceSlot } from '../devices/device-slots.ts';
-import { cancelledFailure, runCancellation, withNativeBuildRun } from '../engine/native-run.ts';
+import { cancelledFailure, runCancellation, runCancellationSignal, withNativeBuildRun } from '../engine/native-run.ts';
 import { NO_BUILD_PROGRESS, startBuildProgress, tapBuildLog, type BuildProgress } from '../engine/build-progress.ts';
 import { basename, join } from 'node:path';
 import {
@@ -387,7 +387,7 @@ async function runIos(
     phases: () => progress.durations(),
     deviceSetup: () => progress.deviceSetupKnown(),
   });
-  const deviceWaitRun = createIosDeviceWaitRun(stats, progress);
+  const deviceWaitRun = createIosDeviceWaitRun(stats, progress, runCancellationSignal());
   const recordRun = deviceWaitRun.record;
 
   let compilationCache: CompilationCacheActivity = COMPILATION_CACHE_NOT_RUN;

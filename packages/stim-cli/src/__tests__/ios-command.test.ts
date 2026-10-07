@@ -6838,7 +6838,7 @@ describe('run statistics', () => {
           await waiting;
           return { deviceUdid: UDID, owned: true, booting: { udid: UDID, done } };
         },
-        ensureBooted: async ({ device } = {}) => {
+        ensureBooted: async ({ device }) => {
           await device!.booting!.done;
           return { ok: true, udid: UDID };
         },
@@ -8277,4 +8277,42 @@ test.each([
     waitSeconds: wait === undefined || wait === false ? 60 : Number(wait),
     noWait: wait === false,
   });
+});
+
+test('stop cancels an iOS cache hit waiting on boot, releases its ticket, and never installs', async () => {
+  reserve();
+  setExecutor(makeExecutor());
+  const boot = vi.fn<() => Promise<void>>(async () => {});
+  try {
+    const result = await run(
+      { json: true },
+      {
+        resolveBuild: () => join(root, 'cached', 'Fixture.app'),
+        ensureBooted: async ({ deviceSlotWait }) => {
+          await withDeviceBootAdmission({ platform: 'ios', key: UDID }, boot, {
+            ...deviceSlotWait,
+            root,
+            max: 1,
+            sources: { config: null, sims: [makeIosSim({ udid: 'other', name: 'stim-other', state: 'Booted' })] },
+            waitingFor: (info) => {
+              deviceSlotWait!.waitingFor!(info);
+              if (!info) return;
+              const [claim] = readClaimSet(join(workspaceDir(root), 'native-run.lock')).live;
+              assert(claim);
+              requestNativeRunCancel(root, claim.claimId);
+              process.emit('SIGINT');
+            },
+          });
+          return { ok: true, udid: UDID };
+        },
+      },
+    );
+    expect(parseFirst(result.logs)).toMatchObject({ code: 'STIM_CANCELLED' });
+    expect(result.exitCode).toBe(130);
+    expect(boot).not.toHaveBeenCalled();
+    expect(result.calls.order).not.toContain('installIosApp');
+    expect(readClaimSet(join(tmpHome, 'device-waits')).live).toEqual([]);
+  } finally {
+    resetExecutor();
+  }
 });

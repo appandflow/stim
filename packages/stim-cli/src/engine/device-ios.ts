@@ -57,6 +57,7 @@ function startIosBoot(
   const done = withDeviceBootAdmission(
     { platform: 'ios', key: udid },
     async () => {
+      out(chalk.dim(phaseLine('device', `booting ${label} (${udid})`)));
       await bootIosSim(udid, { label, out, simulatorApp });
       await configure();
     },
@@ -156,7 +157,6 @@ export async function ensureOwnedIosDevice({
           runtime: model.runtime,
         };
         if (sim.state !== 'Booted') {
-          out(chalk.dim(phaseLine('device', `booting ${name} (${sim.udid})`)));
           return {
             ...updated,
             booting: startIosBoot(
@@ -211,7 +211,6 @@ export async function ensureOwnedIosDevice({
       ? await withIosDeviceNameLock(() => takeParkedIosSim({ projectPath, slot, label, choice, out }))
       : null;
   if (adopted) {
-    out(chalk.dim(phaseLine('device', `booting ${adopted.deviceName} (${adopted.deviceUdid})`)));
     const booting = startIosBoot(
       adopted.deviceUdid,
       async () => {
@@ -446,7 +445,7 @@ async function configureOwnedIosSim({
 
 export async function ensureIosBooted({
   device,
-  projectPath = getConfigDir(),
+  projectPath,
   deviceSlotWait,
   simulatorApp,
   timeoutMs,
@@ -454,7 +453,7 @@ export async function ensureIosBooted({
   out,
 }: {
   device?: OwnedDeviceRecord | null;
-  projectPath?: string;
+  projectPath: string;
   deviceSlotWait?: DeviceSlotWaitPolicy;
   simulatorApp?: IosSimulatorApp;
   timeoutMs: number;
@@ -515,12 +514,14 @@ export async function ensureIosBooted({
     return result;
   }
 
-  out(chalk.dim(phaseLine('device', `booting ${sim.name} (${udid})`)));
   const bootDeadline = Date.now() + timeoutMs;
   try {
     await withDeviceBootAdmission(
       { platform: 'ios', key: udid },
-      () => bootIosSim(udid, { timeoutMs, label: sim.name, out, simulatorApp }),
+      () => {
+        out(chalk.dim(phaseLine('device', `booting ${sim.name} (${udid})`)));
+        return bootIosSim(udid, { timeoutMs, label: sim.name, out, simulatorApp });
+      },
       { ...deviceSlotWait, root: projectPath, out },
     );
   } catch (e) {

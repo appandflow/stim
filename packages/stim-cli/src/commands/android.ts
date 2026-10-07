@@ -8,7 +8,7 @@ import { parseMachine } from '@stim-cli/core/state';
 import { isEasBuildFailure, resolveEasDevelopmentBuild } from '../engine/eas-build.ts';
 import { configuredAndroidEmulatorApp } from '../devices/android-emulator-viewer.ts';
 import { deviceSlotFileKey, parseDeviceSlotOption, validateDeviceSlot } from '../devices/device-slots.ts';
-import { cancelledFailure, runCancellation, withNativeBuildRun } from '../engine/native-run.ts';
+import { cancelledFailure, runCancellation, runCancellationSignal, withNativeBuildRun } from '../engine/native-run.ts';
 import {
   NO_BUILD_PROGRESS,
   startBuildProgress,
@@ -866,6 +866,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
   if (!planned.ok) return fail(planned.code, planned.message, planned.remedy, { lines: planned.lines });
   const { plan } = planned;
   const deviceSlotWait = {
+    signal: runCancellationSignal(),
     waitMs: plan.deviceSlotWaitMs,
     displayName: basename(root),
     waitingFor: (info: Parameters<typeof progress.waitingFor>[0]) => progress.waitingFor(info, 'device-slot'),

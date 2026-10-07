@@ -8,10 +8,12 @@ import { resetExecutor, setExecutor } from '../exec.ts';
 import { recordCreatedDevice } from '../devices/created-devices.ts';
 import assert from 'node:assert';
 import { captureProcessToken } from '../process-identity.ts';
-import { ClaimRefusedError, ClaimUnavailableError, claimRemoveCommand } from '../ownership-claim.ts';
+import { ClaimRefusedError, ClaimUnavailableError, claimRemoveCommand, readClaimSet } from '../ownership-claim.ts';
 import { AvdBootError, AvdRecoveryError } from '../engine/device-android.ts';
 import { ensureRemoteBootOwned } from '../engine/device-remote.ts';
-import { DeviceAdmissionRefusal } from '../engine/device-capacity.ts';
+import { DeviceAdmissionRefusal, withDeviceBootAdmission } from '../engine/device-capacity.ts';
+import { requestNativeRunCancel, withNativeBuildRun } from '../engine/native-run.ts';
+import type { ensureOwnedDevice } from '../engine/device.ts';
 import { once } from 'node:events';
 import { type ChildProcess, spawn } from 'node:child_process';
 import {
@@ -39,7 +41,13 @@ import {
 } from '../workspace/config.ts';
 import { buildMachinesFile, readLastBuilds } from '@stim-cli/core/state';
 import { parseNdjsonText } from '../ndjson.ts';
-import { workspaceAgentDeviceDir, emulatorLogFile, workspaceLogsDir, workspaceStateFile } from '../workspace/paths.ts';
+import {
+  workspaceDir,
+  workspaceAgentDeviceDir,
+  emulatorLogFile,
+  workspaceLogsDir,
+  workspaceStateFile,
+} from '../workspace/paths.ts';
 import { readWorkspaceState, writeWorkspaceState } from '../workspace/workspace-state.ts';
 import {
   NO_DEVICE,
@@ -7157,4 +7165,38 @@ describe('named Android hosting placement', () => {
     expect(h.calls.build[0]?.abi).toBe('arm64-v8a');
     expect(result.facts?.cacheKey).toContain('arm64-v8a');
   });
+});
+
+test('stop cancels Android device preparation waiting for a slot before any build or boot', async () => {
+  const boot = vi.fn<() => Promise<void>>(async () => {});
+  const h = harness({
+    json: true,
+    ensureDevice: async ({ flags }: Parameters<typeof ensureOwnedDevice>[0]) => {
+      const policy = flags!.deviceSlotWait!;
+      await withDeviceBootAdmission({ platform: 'android', key: 'stim-new' }, boot, {
+        ...policy,
+        root,
+        max: 1,
+        sources: { config: null, sims: [], booting: [{ platform: 'android', key: 'stim-other' }] },
+        waitingFor: (info) => {
+          policy.waitingFor!(info);
+          if (!info) return;
+          const [claim] = readClaimSet(join(workspaceDir(root), 'native-run.lock')).live;
+          assert(claim);
+          requestNativeRunCancel(root, claim.claimId);
+          process.emit('SIGINT');
+        },
+      });
+      return { avdName: 'stim-new', owned: true, created: true };
+    },
+  });
+  const result = await withNativeBuildRun(root, { command: 'android', platform: 'android' }, () => h.run(), {
+    write: () => {},
+  });
+  expect(result.error?.code).toBe('STIM_CANCELLED');
+  expect(JSON.parse(h.stdout[0]!)).toMatchObject({ code: 'STIM_CANCELLED' });
+  expect(boot).not.toHaveBeenCalled();
+  expect(h.calls.build).toEqual([]);
+  expect(h.calls.install).toEqual([]);
+  expect(readClaimSet(join(home, 'device-waits')).live).toEqual([]);
 });

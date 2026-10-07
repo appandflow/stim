@@ -6,7 +6,7 @@ import type { ChildProcess } from 'node:child_process';
 import { runStop, stopWorkspaceNow } from '../commands/stop.ts';
 import { decideStopAction, nativeRunWaitNotice, type NativeRunHolder } from '../engine/native-run.ts';
 import { getExecutor } from '../exec.ts';
-import type { ClaimHolder } from '../ownership-claim.ts';
+import { readClaimSet, type ClaimHolder } from '../ownership-claim.ts';
 import { upsertProject } from '../workspace/config.ts';
 import { writeWorkspaceState } from '../workspace/workspace-state.ts';
 
@@ -143,17 +143,30 @@ describe('stop against a real native-run holder', { timeout: 30_000 }, () => {
     const nativeRun = new URL('../engine/native-run.ts', import.meta.url).href;
     const spawnClaims = new URL('../engine/spawn-claims.ts', import.meta.url).href;
     const exec = new URL('../exec.ts', import.meta.url).href;
+    const admission = new URL('../engine/device-capacity.ts', import.meta.url).href;
     writeFileSync(
       script,
       [
-        `const { runCancellation, withNativeBuildRun } = await import(${JSON.stringify(nativeRun)});`,
+        `const { cancelledFailure, runCancellation, runCancellationSignal, withNativeBuildRun } = await import(${JSON.stringify(nativeRun)});`,
         `const { spawnDeclared } = await import(${JSON.stringify(spawnClaims)});`,
         `const { getExecutor } = await import(${JSON.stringify(exec)});`,
+        `const { withDeviceBootAdmission } = await import(${JSON.stringify(admission)});`,
         'const { once } = await import("node:events");',
         'const [root, command, slot, tool] = process.argv.slice(2);',
         'if (tool === "stubborn") process.on("SIGINT", () => {});',
         'const result = await withNativeBuildRun(root, { command, platform: command, slot }, async () => {',
         '  console.log("holding");',
+        '  if (tool === "queue") {',
+        '    try {',
+        '      await withDeviceBootAdmission({ platform: command, key: "new" }, async () => console.log("booted"), {',
+        '        root, max: 1, signal: runCancellationSignal(),',
+        '        sources: { config: null, sims: [], booting: [{ platform: "ios", key: "other" }] },',
+        '        waitingFor: (info) => { if (info) console.log("queued"); },',
+        '      });',
+        '    } catch (error) {',
+        '      return cancelledFailure(command, { code: error.name });',
+        '    }',
+        '  }',
         '  if (tool === "tool") {',
         '    const child = spawnDeclared(() => getExecutor().spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" }));',
         '    await once(child, "exit");',
@@ -173,7 +186,7 @@ describe('stop against a real native-run holder', { timeout: 30_000 }, () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  async function startHolder(command: string, slot: string, tool: 'tool' | 'sleep' | 'stubborn') {
+  async function startHolder(command: string, slot: string, tool: 'tool' | 'sleep' | 'stubborn' | 'queue') {
     const child = getExecutor().spawn(process.execPath, [script, root, command, slot, tool], {
       stdio: ['ignore', 'pipe', 'pipe'],
       env: process.env,
@@ -184,7 +197,7 @@ describe('stop against a real native-run holder', { timeout: 30_000 }, () => {
     let err = '';
     child.stdout?.on('data', (chunk) => (out += chunk));
     child.stderr?.on('data', (chunk) => (err += chunk));
-    while (!out.includes('holding')) {
+    while (!out.includes(tool === 'queue' ? 'queued' : 'holding')) {
       if (child.exitCode !== null) throw new Error(`holder exited early: ${err}`);
       await new Promise((resolve) => setTimeout(resolve, 20));
     }
@@ -196,6 +209,23 @@ describe('stop against a real native-run holder', { timeout: 30_000 }, () => {
     outcomes: { device: { ios: null, android: null } } as unknown as Awaited<ReturnType<typeof runStop>>['outcomes'],
     summary: 'stopped',
   });
+
+  test.each(['ios', 'android'])(
+    'stop cancels a queued %s run, releases its ticket and exits without booting',
+    { skip: process.platform === 'win32' },
+    async (platform) => {
+      const holder = await startHolder(platform, 'default', 'queue');
+      expect(readClaimSet(join(process.env.STIM_HOME!, 'device-waits')).live).toHaveLength(1);
+      const result = await stopWorkspaceNow({ root, interruptWaitMs: 2000, endRemote: () => null, stop: stopped });
+      expect(result).toMatchObject({ ok: true });
+      const [code] = await holder.exited;
+      expect(code).toBe(0);
+      const { out } = holder.output();
+      expect(out).not.toContain('booted');
+      expect(JSON.parse(out.trim().split('\n').at(-1)!)).toMatchObject({ result: { code: 'STIM_CANCELLED' } });
+      expect(readClaimSet(join(process.env.STIM_HOME!, 'device-waits')).live).toEqual([]);
+    },
+  );
 
   test.skipIf(process.platform === 'win32')(
     'stop names the build, interrupts it, and the build cancels its tool and reports stop as the cause',
