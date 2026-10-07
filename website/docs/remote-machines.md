@@ -241,30 +241,52 @@ Open **Stim > Settings > Remote Macs** on your main Mac. It lists your
 remote Macs, each with a status (**Approved**, **Waiting for approval**,
 **Unreachable** or **Not offloading**, with the reason and a fix under it), what it does and a **...** menu with
 **Details** and **Remove**. Choose **Add Remote Mac...** to start the wizard,
-which finds the Macs on your tailnet itself. The wizard has six steps:
+which finds the Macs on your tailnet itself. **Remove** takes the Mac out of `remote.machines` and shows the optional
+commands to run on that Mac: `stim-server devices revoke <id>` for each
+request and `stim-server service uninstall`.
 
-1. **Pick a Mac.** Select an online macOS peer from your tailnet. Start
-   Tailscale on either Mac if it is missing or stopped.
-2. **What it does.** Choose **Builds**, **Hosted simulators**, or both.
-   The preview shows what setup will do. Desktop starts preparing its sample
-   project at this step.
+The wizard has five steps. It refreshes in the background every few seconds,
+so there is no Check again button:
+
+1. **Pick a Mac.** The wizard first checks that Tailscale runs on this Mac. If
+   the Tailscale app is off, turn it on from its menu bar item. With only the
+   CLI installed, run `tailscale up`. Without Tailscale, the step links to the
+   download. Then select an online macOS peer from your tailnet.
+2. **What it does.** Choose **Builds**, **Hosted simulators**, or both. The
+   preview shows what setup will do. With neither chosen, **Next** stays
+   disabled.
 3. **Set it up.** Copy the generated command and run it in Terminal while
-   signed in at the worker Mac. Answer y/N for each new capability grant
-   there; No is the default. Desktop mirrors setup progress live and checks
-   the selected approvals. Already approved capabilities are omitted from
-   the command. Once all are approved, continue to Tools. There is no SSH
-   option.
-4. **Tools.** Compare the worker's tools with this Mac. Copy the fixes and
-   run them on the indicated Mac. **Install This Mac's Build** addresses a
-   Stim build mismatch. **Check Android** adds Android checks.
-5. **Test build.** Build and launch the sample through the selected worker,
-   then force a local build. Review live output, phase timings and the speed
-   comparison, or choose **Skip test**.
-6. **Done.** Review the added settings and undo commands. Choose **Auto**,
-   **Always** or **Never**, which set `remote.buildMode` to `auto`, `force` or
-   `off`. Existing effective modes are retained by default. If the wizard
-   temporarily disabled offloading, a passed test selects Auto; a failed or
-   skipped test keeps Never unless you choose otherwise.
+   signed in at the worker Mac. It needs Node 22.12 or later there. Answer y/N
+   for each new capability grant there; No is the default. Desktop mirrors
+   setup progress live and checks the selected approvals. Already approved
+   capabilities are omitted from the command. When setup finishes, the step
+   shows the approved capabilities, any skipped permission with its fix, and
+   the setup log behind **Show setup log**. There is no SSH option.
+4. **Tools.** Compare the worker's tools with this Mac, including the Android
+   tools when **Builds** is chosen. Only a problem that stops the chosen
+   capability blocks **Next**: a Stim build mismatch or no Xcode for Builds, and
+   no iOS simulator runtime for Hosted simulators. **Install This Mac's Build**
+   fixes a Stim build mismatch. The other problems are warnings that name what
+   they cost:
+   - A different Xcode or runtime version.
+   - Missing Android tools: Android builds stay on this Mac.
+   - A different global CocoaPods. Projects whose `Gemfile.lock` pins
+     CocoaPods run that version through Bundler on both Macs. Other projects
+     build on this Mac until the global versions match. Pin it with
+     `bundle add cocoapods --version <version>` and `bundle install`, or run
+     `gem install cocoapods -v <version>` on the worker.
+5. **Done.** Copy the **Try it** agent prompt, or run
+   `stim ios --remote-build <machine>` yourself.
+   - **Builds** sets `remote.buildMode`: **Auto**, **Always** or **Never**
+     (`auto`, `force` or `off`). It is Auto when this wizard added the first
+     remote Mac. Otherwise it keeps your mode.
+   - When Hosted simulators was chosen, **Simulators** sets `ios.remote` and
+     `android.remote` at machine scope. **This Mac** unsets them, **Auto** sets
+     `auto` (run there when this Mac is full) and **Always** names the Mac's
+     `remote.machines` entry. A current value the
+     wizard does not offer, such as `eas`, is kept unless you choose another.
+   - **Run a test build with a sample app** builds a sample through the worker
+     and then locally.
 
 Desktop adds entries when it finds the setup journal and sends approval
 requests with that command's ticket. When adding the first remote Mac
@@ -414,8 +436,8 @@ Desktop creates a pinned Expo blank SDK 58 sample under
 `~/Library/Application Support/Stim Desktop/Onboarding/sample-sdk58`.
 Preparation downloads the template and installs its dependencies, so it needs
 network access. Desktop uses the sample for setup requests when no workspace
-is listed. It tests iOS builds, including when **Check Android** is selected;
-a hosting-only setup can skip the build test.
+is listed. It is optional: start it with **Run a test build with a sample app**
+on the wizard's last step. It tests iOS builds.
 
 The first run uses `stim ios --remote-build <name> --no-build-cache --json`.
 It must report the selected `offloadedTo` and a launch state of `true` or

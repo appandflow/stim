@@ -89,19 +89,27 @@ struct BuildMachinesView: View {
         "Stops the sample workspace and removes its Stim workspace and Stim Desktop's SDK 58 sample folder, and releases its owned simulator: Stim parks it for reuse within the parked-simulator limit and deletes it otherwise. The next wizard creates the sample again."
       )
     }
-    .confirmationDialog(
-      "Stop building on \(removing ?? "")?", isPresented: .init(get: { removing != nil }, set: { if !$0 { removing = nil } }),
-      presenting: removing
-    ) { entry in
-      Button("Remove", role: .destructive) { Task { await model.remove(entry, checkout: checkout) } }
-    } message: { entry in
-      Text(removalMessage(entry))
+    .sheet(isPresented: .init(get: { removing != nil }, set: { if !$0 { removing = nil } })) {
+      if let entry = removing {
+        RemoveMachineSheet(
+          entry: entry, message: removalMessage(entry),
+          requests: [statuses?.first { $0.machine == entry }?.deviceId, hostRequest(entry)].compactMap { $0 },
+          cancel: { removing = nil },
+          remove: {
+            removing = nil
+            Task { await model.remove(entry, checkout: checkout) }
+          })
+      }
     }
+  }
+
+  private func hostRequest(_ entry: String) -> String? {
+    model.check(in: checkout)?.hosts?.first { OffloadMachines.name($0.machine) == OffloadMachines.name(entry) }?.deviceId
   }
 
   private func removalMessage(_ entry: String) -> String {
     guard statuses?.first(where: { $0.machine == entry })?.state == .nodeChanged else {
-      return "Builds on this Mac stop going to it."
+      return "Removes it from remote.machines. Builds and hosted simulators stop going to it."
     }
     return "Builds stop going to it, and this Mac forgets the old node and asks again any listed Mac that has not approved it."
   }
@@ -299,6 +307,42 @@ private struct BuildMachineRow: View {
       .accessibilityLabel("More actions for \(entry)")
     }
     .padding(.vertical, Space.xxs)
+  }
+}
+
+/// Removing a build machine: what changes on this Mac, and the optional cleanup to run on the build Mac itself.
+private struct RemoveMachineSheet: View {
+  var entry: String
+  var message: String
+  var requests: [String]
+  var cancel: () -> Void
+  var remove: () -> Void
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: Space.lg) {
+      Text("Stop using \(entry)?").font(.stim(.headline))
+      Text(message).foregroundStyle(Palette.secondary).fixedSize(horizontal: false, vertical: true)
+      VStack(alignment: .leading, spacing: Space.sm) {
+        Text("Optional, on \(entry):").font(.stim(.footnote, weight: .semibold))
+        if !requests.isEmpty {
+          Text("Revoke this Mac's access").font(.stim(.footnote)).foregroundStyle(Palette.secondary)
+          ForEach(requests, id: \.self) { CopyableCommand(command: "stim-server devices revoke \($0)") }
+        }
+        Text("Stop stim-server there if nothing else uses it").font(.stim(.footnote)).foregroundStyle(Palette.secondary)
+        CopyableCommand(command: "stim-server service uninstall")
+      }
+      Text(
+        "If ios.remote or android.remote names \(entry), simulators stop starting until you change it, for example with stim settings unset ios.remote."
+      )
+      .font(.stim(.footnote)).foregroundStyle(Palette.secondary).fixedSize(horizontal: false, vertical: true)
+      HStack {
+        Spacer()
+        Button("Cancel", action: cancel).buttonStyle(.stim(.secondary)).keyboardShortcut(.cancelAction)
+        Button("Remove", action: remove).buttonStyle(.stim(.destructive))
+      }
+    }
+    .padding(Space.xxl)
+    .frame(width: 460)
   }
 }
 

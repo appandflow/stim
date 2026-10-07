@@ -33,12 +33,6 @@ public enum PhoneApp {
 
   /// Words that name phones only while the app is on.
   public enum Copy {
-    public static func addMachineDetail(phoneApp: Bool) -> String {
-      phoneApp
-        ? "iOS simulators run there; you view and control them from here and your phone."
-        : "iOS simulators run there; you view and control them from here."
-    }
-
     public static func screenPermissionUse(phoneApp: Bool) -> String {
       phoneApp ? "Shows the app's window in Desktop and on your paired phone." : "Shows the app's window in Desktop."
     }
