@@ -1129,6 +1129,10 @@ approved this one. **Remove** takes a Mac out of the setting with `stim settings
 set offload.machines <list> --scope machine` after a confirmation, unsetting it
 when the list is empty; removing a **Different Mac** also runs `--fix`, which
 forgets the old node so the Mac can be asked again.
+While a `--fix` run goes, the row shows "Asking <machine>…" or "Removing
+<machine>…" beside the spinner. The run stops after 2 minutes, and the tab
+shows an error naming the command that timed out; the periodic checks without
+`--fix` have no limit.
 
 A build machine that runs another Stim build than this Mac (doctor's
 `stim-build` reason) offers **Install This Mac's Build**, here and on its
