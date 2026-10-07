@@ -8,6 +8,7 @@ struct OnboardingBanner: View {
   @ObservedObject var onboarding: Onboarding
   @EnvironmentObject private var actions: ActionCenter
   @AppStorage(AppPreferences.Key.servesPhones) private var servesPhones = false
+  @ObservedObject private var flags = FeatureFlagStore.shared
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
   @State private var showsCommand = false
 
@@ -108,13 +109,11 @@ struct OnboardingBanner: View {
     guard let server = report.server else { return AnyView(EmptyView()) }
     let missing = server == .missing
     return AnyView(
-      popupCard(kind: .server, icon: "iphone.gen3.radiowaves.left.and.right", tone: .warning) {
-        Text(missing ? "Install stim-server to serve phones" : "Update stim-server to serve phones")
+      popupCard(kind: .server, icon: PhoneApp.serverPage(phoneApp: flags.phoneApp).systemImage, tone: .warning) {
+        Text(PhoneApp.Copy.serverPopupTitle(missing: missing, phoneApp: flags.phoneApp))
           .font(.stim(.headline))
-        Text(
-          "stim-server shares Stim's status with paired phones, and Stim Desktop needs \(StimServerCLI.minimumVersion.description) or later."
-        )
-        .foregroundStyle(Palette.secondary)
+        Text(PhoneApp.Copy.serverPopupDetail(minimum: StimServerCLI.minimumVersion.description, phoneApp: flags.phoneApp))
+          .foregroundStyle(Palette.secondary)
         disclosure { Text(detail(server, name: "stim-server", path: report.serverPath, manager: .npm)) }
       } buttons: {
         runButton(

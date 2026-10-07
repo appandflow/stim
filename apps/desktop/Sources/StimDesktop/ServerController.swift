@@ -311,6 +311,7 @@ final class ServerController: ObservableObject {
         }
         .sorted { $0.pairedAt > $1.pairedAt }
         devicesError = nil
+        FeatureFlags.seed(servesPhones: false, pairedPhones: self.devices.filter(\.isPhone).count)
       case .failure(let error):
         devicesError = error.localizedDescription
       }

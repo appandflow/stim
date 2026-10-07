@@ -113,6 +113,19 @@ behind the upstream, and **merged** when `gc` would call the branch merged. A
 clean branch level with its upstream shows nothing. Hovering the row indicator
 spells it out.
 
+## Feature flags
+
+Feature flags are local to this Mac and live in `UserDefaults`; nothing reads them from a server. **Settings >
+Advanced > Feature flags** lists them with **Reset to Defaults**. Code asks `FeatureFlags.isEnabled(.phoneApp)`
+(StimKit), or `FeatureFlagStore.shared` from a view. A launch argument such as `-featureFlag.phoneApp YES` sets a
+flag for one run.
+
+**Phone app** is off by default. Off, Desktop hides the Phones page (the page stays as **Server**, without **Serve to
+phones** and pairing), the phone steps of the setup guide and tutorial, the `phone.away` suggestion and mentions of
+phones in copy. It never stops a running stim-server or revokes a pairing. A Mac that already serves phones or has a
+paired phone gets the flag on at first launch with flags. The phone app is documented in
+`website/docs/phone-app.md`.
+
 ## Hiding a workspace
 
 **Hide** and **Unhide** are in the sidebar row's context menu and in the page's "..." menu for a worktree

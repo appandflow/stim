@@ -11,6 +11,11 @@ public struct TutorialStep: Sendable {
 public enum TutorialSteps {
   public static let supportedVersions: Set<Int> = [1]
   public static let restartPrompt = "Restart the Stim tutorial."
+  /// The steps a tutorial shows: without the phone app there is no phone step.
+  public static func steps(phoneApp: Bool) -> [TutorialStep] {
+    all.filter { $0.id != "phone" || phoneApp }
+  }
+
   public static let all: [TutorialStep] = [
     TutorialStep(
       id: "begin", title: "Create the tutorial", who: "agent", optional: false,

@@ -7,6 +7,7 @@ struct SettingsView: View {
   @ObservedObject var store: StatusStore
   @StateObject private var model: SettingsModel
   @ObservedObject private var openRequests = OpenRequests.shared
+  @ObservedObject private var flags = FeatureFlagStore.shared
   @State private var workspace: String?
   @AppStorage("settingsTab") private var tab = "app"
   @AppStorage("settingsWorkspace") private var lastWorkspace = ""
@@ -26,7 +27,7 @@ struct SettingsView: View {
         .tabItem { Label("App", systemImage: "macwindow") }
         .tag("app")
       PhonesView(server: ServerController.shared, settings: machine, stimHome: store.stimHome)
-        .tabItem { Label("Phones", systemImage: "iphone.gen3.radiowaves.left.and.right") }
+        .tabItem { Label(serverPage.title, systemImage: serverPage.systemImage) }
         .tag("phones")
       BuildMachinesView(model: buildMachines, store: store, workspace: workspace)
         .tabItem { Label("Build Machines", systemImage: "hammer") }
@@ -35,6 +36,9 @@ struct SettingsView: View {
       scopeTab(.repo, title: "Repository", icon: "folder")
       scopeTab(.workspace, title: "Workspace", icon: "square.stack.3d.up")
       scopeTab(.committed, title: ".stim.json", icon: "doc.text")
+      AdvancedSettingsView()
+        .tabItem { Label("Advanced", systemImage: "gearshape.2") }
+        .tag("advanced")
     }
     .frame(width: 780, height: 640)
     .font(.stim(.body))
@@ -55,6 +59,8 @@ struct SettingsView: View {
       model.load(directory: path)
     }
   }
+
+  private var serverPage: PhoneApp.ServerPage { PhoneApp.serverPage(phoneApp: flags.phoneApp) }
 
   private func scopeTab(_ scope: SettingScope, title: String, icon: String) -> some View {
     ScopeSettingsView(

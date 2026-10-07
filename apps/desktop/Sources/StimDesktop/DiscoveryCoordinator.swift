@@ -203,6 +203,9 @@ final class DiscoveryCoordinator: ObservableObject {
       if prompt.type == .away { return ServerController.shared.pairedPhoneCount == 0 }
       return true
     }
+    .filter { prompt in
+      PhoneApp.allows(prompt.type, phoneApp: FeatureFlags.isEnabled(.phoneApp))
+    }
     if let placements {
       if let entries = machines.entries, machines.settings.error == nil,
         let prompt = Discovery.slowCold(placements: placements, machines: entries, macs: macs, now: now)

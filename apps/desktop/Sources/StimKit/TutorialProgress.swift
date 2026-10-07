@@ -122,6 +122,8 @@ public struct TutorialInput: Sendable {
   public var logRecords: [LogRecord]
   public var viewerEvents: [TutorialViewerEvent]
   public var pairedPhoneCount: Int?
+  /// Without the phone app the phone step is skipped.
+  public var phoneApp: Bool
   public var machineApproved: Bool
   public var approvedMachine: String?
   public var replayOff: Bool
@@ -131,14 +133,16 @@ public struct TutorialInput: Sendable {
 
   public init(
     environment: TutorialEnvironment?, archivedProjectRoots: [String] = [], logRecords: [LogRecord] = [],
-    viewerEvents: [TutorialViewerEvent] = [], pairedPhoneCount: Int? = nil, machineApproved: Bool = false,
-    approvedMachine: String? = nil, replayOff: Bool = false, archiveEnabled: Bool = true, now: Date, record: TutorialRecord? = nil
+    viewerEvents: [TutorialViewerEvent] = [], pairedPhoneCount: Int? = nil, phoneApp: Bool = true,
+    machineApproved: Bool = false, approvedMachine: String? = nil, replayOff: Bool = false, archiveEnabled: Bool = true,
+    now: Date, record: TutorialRecord? = nil
   ) {
     self.environment = environment
     self.archivedProjectRoots = archivedProjectRoots
     self.logRecords = logRecords
     self.viewerEvents = viewerEvents
     self.pairedPhoneCount = pairedPhoneCount
+    self.phoneApp = phoneApp
     self.machineApproved = machineApproved
     self.approvedMachine = approvedMachine
     self.replayOff = replayOff
@@ -282,6 +286,11 @@ public struct TutorialProgress: Sendable {
     } else {
       while record!.step != "done" {
         let id = record!.step
+        if id == "phone", !input.phoneApp {
+          record?.skipped.append(id)
+          advance(max(input.now, record!.stepSince ?? record!.startedAt))
+          continue
+        }
         if id == "phone", record?.phonePairedAtStart == nil {
           record?.phonePairedAtStart = (input.pairedPhoneCount ?? 0) > 0
         }
@@ -303,7 +312,7 @@ public struct TutorialProgress: Sendable {
       record?.approvedMachine = machine
     }
     let current = record!.step == "done" ? nil : record!.step
-    let steps = TutorialSteps.all.map { step in
+    let steps = TutorialSteps.steps(phoneApp: input.phoneApp).map { step in
       let state: TutorialStepState =
         record!.skipped.contains(step.id)
         ? .skipped

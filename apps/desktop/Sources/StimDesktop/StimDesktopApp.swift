@@ -163,6 +163,8 @@ struct StimDesktopApp: App {
     BrandAssets.registerFonts()
     UserDefaults.standard.register(defaults: AppPreferences.defaults)
     AppPreferences.migrate(.standard)
+    FeatureFlags.seed(
+      servesPhones: UserDefaults.standard.bool(forKey: AppPreferences.Key.servesPhones), pairedPhones: nil)
     CoreSimulator.developerDir = CoreSimulator.selectedDeveloperDir()
     let override = UserDefaults.standard.string(forKey: AppPreferences.Key.stimExecutable)
     let environment = Task.detached {
