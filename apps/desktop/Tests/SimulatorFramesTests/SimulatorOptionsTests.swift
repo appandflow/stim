@@ -50,3 +50,39 @@ import Testing
     #expect(appearance.size?.isAccessibilitySize == true)
   }
 }
+
+@Suite struct SimulatorOptionsPollingTests {
+  @Test func readsOnOpenThenRepeatsAndStopsWhenCancelled() async throws {
+    let counter = Counter()
+    let task = Task { await SimulatorOptionsPolling.run(interval: .milliseconds(20)) { await counter.increment() } }
+    while await counter.value < 3 { try await Task.sleep(for: .milliseconds(5)) }
+    task.cancel()
+    await task.value
+    let stopped = await counter.value
+    try await Task.sleep(for: .milliseconds(80))
+    #expect(await counter.value == stopped)
+  }
+
+  @Test func dropsAReadThatStartedBeforeAChange() {
+    var polling = SimulatorOptionsPolling()
+    let token = polling.token
+    polling.beginChange()
+    polling.endChange()
+    #expect(!polling.accepts(token))
+    #expect(polling.accepts(polling.token))
+  }
+
+  @Test func refusesReadsWhileAChangeIsInFlight() {
+    var polling = SimulatorOptionsPolling()
+    polling.beginChange()
+    #expect(!polling.canStartRead)
+    #expect(!polling.accepts(polling.token))
+    polling.endChange()
+    #expect(polling.canStartRead)
+  }
+}
+
+private actor Counter {
+  private(set) var value = 0
+  func increment() { value += 1 }
+}
