@@ -210,7 +210,10 @@ final class SetupWizardTests: XCTestCase {
   func testCancelRestoresOnlyWizardChangesForgetsPairingAndRetainsAllRevokeIds() {
     var wizard = wizard()
     XCTAssertEqual(wizard.apply(.cancel, now: now), [])
-    wizard = self.wizard()
+    wizard = SetupWizard()
+    _ = wizard.apply(.macChosen(mac), now: now)
+    _ = wizard.apply(.doctorReported(build: nil, host: nil), now: now)
+    _ = wizard.apply(.next(ticket), now: now)
     _ = wizard.apply(
       .journalAnswered(port: 7443, journal: journal(grants: [.init(capability: .build, id: "journal-id")])), now: now)
     _ = wizard.apply(.entriesWritten, now: now)
@@ -227,6 +230,20 @@ final class SetupWizardTests: XCTestCase {
     _ = wizard.apply(.next(ticket), now: now)
     _ = wizard.apply(.doctorReported(build: status(.approved, id: "old-build"), host: status(.pending, id: "new-host")), now: now)
     XCTAssertEqual(wizard.revokeIds, ["new-host"])
+  }
+
+  func testUnknownPreStateOnlyListsJournalGrantsForUndo() {
+    var wizard = wizard(workspace: false)
+    _ = wizard.apply(
+      .doctorReported(build: status(.approved, id: "old-build"), host: status(.approved, id: "old-host")), now: now)
+    XCTAssertTrue(wizard.revokeIds.isEmpty, "Undo must not revoke pre-existing approvals when their pre-state was unknown")
+    _ = wizard.apply(
+      .journalAnswered(
+        port: 7443,
+        journal: journal(grants: [.init(capability: .build, id: "new-build"), .init(capability: .deviceHost, id: "new-host")])),
+      now: now)
+    _ = wizard.apply(.cancel, now: now)
+    XCTAssertEqual(wizard.revokeIds, ["new-build", "new-host"], "Undo must retain only the grants created by this run")
   }
 
   func testDoctorPermissionsReplaceCompletedJournalChecksAfterSettingsChangesOnTheWorker() {

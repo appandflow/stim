@@ -94,6 +94,10 @@ final class SampleBuildModel {
     }
   }
 
+  func waitForPreparation() async {
+    await preparation?.value
+  }
+
   func run(entry: String) {
     guard sampleReady, !running, cleanup == nil else { return }
     running = true
