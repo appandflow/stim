@@ -1,10 +1,25 @@
-import { archivedDeviceRoute, archivedView, archiveError, removedByWords } from './archived';
+import { archivedDeviceRoute, archivedView, archiveError, newestArchive, removedByWords } from './archived';
 import { RequestError } from './connection';
 import { receiveStatus } from '../../mock-server/receive-fixtures';
 import captured from '../../mock-server/fixtures/status.json';
 import type { StatusPayload } from '@/protocol/types';
 
 const archive = receiveStatus(captured.payload as StatusPayload).archived![0];
+
+test('selects the newest removed run for the exact workspace path', () => {
+  const newer = { ...archive, id: 'newer', removedAt: '2026-09-28T12:00:00Z' };
+  const other = { ...newer, id: 'other', projectRoot: '/other', removedAt: '2026-09-29T12:00:00Z' };
+  for (const archives of [
+    [archive, other, newer],
+    [newer, other, archive],
+  ]) {
+    expect(newestArchive('/app', archives)?.id).toBe('newer');
+    for (const path of ['/missing', '/ap', '/app/', '/./app']) {
+      expect(newestArchive(path, archives)).toBeNull();
+    }
+  }
+  expect(newestArchive('/app', [])).toBeNull();
+});
 
 test('names the PR state, removal reason and size without exposing command names', () => {
   const view = archivedView(
@@ -55,18 +70,11 @@ const deviceTarget = {
   archives: [archive],
 };
 
-test('opens the newest archive for the exact workspace path at the notification time', () => {
-  const newer = { ...archive, id: 'newer', removedAt: '2026-09-28T12:00:00Z' };
-  const other = { ...newer, id: 'other', projectRoot: '/other', removedAt: '2026-09-29T12:00:00Z' };
-  for (const archives of [
-    [newer, other, archive],
-    [archive, other, newer],
-  ]) {
-    expect(archivedDeviceRoute({ ...deviceTarget, archives })).toEqual({
-      pathname: '/mac/[id]/archived-replay',
-      params: { id: 'mac', archive: 'newer', platform: 'ios', at: '1234' },
-    });
-  }
+test('opens archived device replay at the notification time when provided', () => {
+  expect(archivedDeviceRoute(deviceTarget)).toEqual({
+    pathname: '/mac/[id]/archived-replay',
+    params: { id: 'mac', archive: archive.id, platform: 'ios', at: '1234' },
+  });
   expect(archivedDeviceRoute({ ...deviceTarget, at: undefined })).toEqual({
     pathname: '/mac/[id]/archived-replay',
     params: { id: 'mac', archive: archive.id, platform: 'ios' },

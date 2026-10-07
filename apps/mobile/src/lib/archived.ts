@@ -43,6 +43,15 @@ export function archiveError(error: Error, kind: 'logs' | 'replay'): string {
   return error.message;
 }
 
+export function newestArchive(path: string, archives: readonly ArchivedWorkspace[]): ArchivedWorkspace | null {
+  return archives
+    .filter((entry) => entry.projectRoot === path)
+    .reduce<ArchivedWorkspace | null>(
+      (newest, entry) => (!newest || Date.parse(entry.removedAt) > Date.parse(newest.removedAt) ? entry : newest),
+      null,
+    );
+}
+
 export function archivedDeviceRoute({
   macId,
   path,
@@ -71,12 +80,7 @@ export function archivedDeviceRoute({
     }
   | null {
   if (!hasStatus || workspaceListed) return null;
-  const archive = archives
-    .filter((entry) => entry.projectRoot === path)
-    .reduce<ArchivedWorkspace | null>(
-      (newest, entry) => (!newest || Date.parse(entry.removedAt) > Date.parse(newest.removedAt) ? entry : newest),
-      null,
-    );
+  const archive = newestArchive(path, archives);
   if (!archive) return null;
   const params = { id: macId, archive: archive.id };
   if (
