@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 public enum DiscoveryType: String, CaseIterable, Sendable {
@@ -37,6 +38,7 @@ public enum DiscoveryState: Equatable, Sendable {
 
 public enum DiscoveryAction: Hashable, Sendable {
   case addMachine(mac: TailnetMac?, hostedSimulators: Bool)
+  case runOnAuto(workspaceID: String, platform: String?)
   case reviewCaches, pairPhone
 }
 
@@ -114,11 +116,13 @@ public enum Discovery {
     public var prompt: DiscoveryPrompt?
   }
 
-  public static func newMac(macs: [TailnetMac], seen: Set<String>?, machines: [String], now: Date) -> NewMacResult {
+  public static func newMac(
+    macs: [TailnetMac], seen: Set<String>?, machines: [String], hosting: [String], now: Date
+  ) -> NewMacResult {
     let updated = (seen ?? []).union(macs.map(\.id))
     guard let seen,
       let mac = macs.sorted(by: { $0.dnsName < $1.dnsName }).first(where: { mac in
-        !seen.contains(mac.id) && !machines.contains { OffloadMachines.names($0, mac) }
+        !seen.contains(mac.id) && !(machines + hosting).contains { OffloadMachines.names($0, mac) }
       })
     else { return NewMacResult(seen: updated, prompt: nil) }
     return NewMacResult(seen: updated, prompt: banner(.newMac, title: "\(mac.hostName) joined your tailnet", mac: mac))
@@ -140,28 +144,61 @@ public enum Discovery {
     return banner(.lowWithCaches, title: "Native caches use \(gb) GB. Build on another Mac?", mac: mac)
   }
 
-  public static func capHit(lines: [String], exitStatus: Int32, mac: TailnetMac?) -> DiscoveryPrompt? {
-    guard exitStatus != 0, lines.contains(where: { $0.contains("STIM_AT_CAPACITY") }) else { return nil }
-    return banner(
-      .capHit, title: "Device limit reached. Run simulators on \(mac?.machine ?? "another Mac")?",
-      mac: mac, hostedSimulators: true)
+  public static func refusedForCapacity(lines: [String], exitStatus: Int32) -> Bool {
+    exitStatus != 0 && lines.contains { $0.contains("STIM_AT_CAPACITY") }
   }
 
-  public static func capHit(
-    events: [CapacityRefusal], waits: [CapacityWait] = [], now: Date, mac: TailnetMac?
-  ) -> (prompt: DiscoveryPrompt, rememberedAt: Date)? {
-    func freshDates(_ timestamps: [String]) -> [Date] {
-      timestamps.compactMap(parseTimestamp).filter {
-        now.timeIntervalSince($0) >= 0 && fresh(.capHit, rememberedAt: $0, now: now)
+  /// The workspace and platform a device-limit event happened in, and when.
+  public struct CapHitSource: Equatable, Sendable {
+    public var at: Date
+    public var workspaceID: String?
+    public var platform: String?
+
+    public init(at: Date, workspaceID: String?, platform: String?) {
+      self.at = at
+      self.workspaceID = workspaceID
+      self.platform = platform
+    }
+  }
+
+  public static func capHitSource(events: [CapacityRefusal], waits: [CapacityWait] = [], now: Date) -> CapHitSource? {
+    func fresh(_ at: String) -> Date? {
+      parseTimestamp(at).flatMap {
+        now.timeIntervalSince($0) >= 0 && Discovery.fresh(.capHit, rememberedAt: $0, now: now) ? $0 : nil
       }
     }
-    let refusals = freshDates(events.filter { $0.kind == "device" }.map(\.at))
-    let longWaits = freshDates(waits.filter { $0.kind == "device-wait" && ($0.ms ?? 0) >= 60_000 }.map(\.at))
-    guard let at = (refusals + (longWaits.count >= 3 ? longWaits : [])).max() else { return nil }
-    let prompt = banner(
-      .capHit, title: "Device limit reached. Run simulators on \(mac?.machine ?? "another Mac")?",
-      mac: mac, hostedSimulators: true)
-    return (prompt, at)
+    let refusals = events.filter { $0.kind == "device" }.compactMap { event in
+      fresh(event.at).map { CapHitSource(at: $0, workspaceID: event.workspace, platform: event.platform) }
+    }
+    let longWaits = waits.filter { $0.kind == "device-wait" && ($0.ms ?? 0) >= 60_000 }.compactMap { wait in
+      fresh(wait.at).map { CapHitSource(at: $0, workspaceID: wait.workspace, platform: wait.platform) }
+    }
+    return (refusals + (longWaits.count >= 3 ? longWaits : [])).max { $0.at < $1.at }
+  }
+
+  /// `hosts` are the hosting Macs approved for device-host (nil when that is not known, which shows nothing). With
+  /// one approved the prompt offers to use it instead of setting up; setup is offered only when none is approved.
+  /// `isRemote` says whether the workspace's Run on already leaves this Mac.
+  public static func capHit(
+    source: CapHitSource, mac: TailnetMac?, hosts: [String]?, isRemote: (String, String?) -> Bool = { _, _ in false }
+  ) -> DiscoveryPrompt? {
+    guard let hosts else { return nil }
+    if hosts.isEmpty {
+      return banner(
+        .capHit, title: "Device limit reached. Run simulators on \(mac?.machine ?? "another Mac")?", mac: mac,
+        hostedSimulators: true)
+    }
+    guard let workspaceID = source.workspaceID, !isRemote(workspaceID, source.platform) else { return nil }
+    return DiscoveryPrompt(
+      type: .capHit,
+      title: "Device limit reached. Run on \(hosts.count == 1 ? machineName(hosts[0]) : "a hosting Mac")?",
+      detail: "Sets Run on to Auto in Desktop.", actionTitle: "Use Auto",
+      action: .runOnAuto(workspaceID: workspaceID, platform: source.platform), surface: .banner)
+  }
+
+  public static func workspaceID(path: String) -> String {
+    SHA256.hash(data: Data(URL(fileURLWithPath: path).standardizedFileURL.path.utf8)).prefix(8)
+      .map { String(format: "%02x", $0) }.joined()
   }
 
   public static func away(pairedPhones: Int, durationMs: Double, idleSeconds: TimeInterval) -> DiscoveryPrompt? {

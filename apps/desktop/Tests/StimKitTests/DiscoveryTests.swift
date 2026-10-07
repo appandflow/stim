@@ -50,26 +50,26 @@ struct DiscoveryTests {
   }
 
   @Test func newMacRecordsTheFirstBaselineWithoutSuggestingIt() {
-    let first = Discovery.newMac(macs: [mini], seen: nil, machines: [], now: now)
+    let first = Discovery.newMac(macs: [mini], seen: nil, machines: [], hosting: [], now: now)
     #expect(first.prompt == nil)
     #expect(first.seen == [mini.id])
-    let later = Discovery.newMac(macs: [mini, studio], seen: first.seen, machines: [], now: now)
+    let later = Discovery.newMac(macs: [mini, studio], seen: first.seen, machines: [], hosting: [], now: now)
     #expect(later.prompt?.action == .addMachine(mac: studio, hostedSimulators: false))
     #expect(later.seen == [mini.id, studio.id])
   }
 
   @Test func newMacSuppressesSeenAndConfiguredPeersWithoutLosingTheirIDs() {
-    #expect(Discovery.newMac(macs: [mini], seen: [mini.id], machines: [], now: now).prompt == nil)
+    #expect(Discovery.newMac(macs: [mini], seen: [mini.id], machines: [], hosting: [], now: now).prompt == nil)
     for entry in ["MINI:7444", "mini.tail.test:7443"] {
-      let result = Discovery.newMac(macs: [mini], seen: ["old"], machines: [entry], now: now)
+      let result = Discovery.newMac(macs: [mini], seen: ["old"], machines: [entry], hosting: [], now: now)
       #expect(result.prompt == nil)
       #expect(result.seen == ["old", mini.id])
     }
-    #expect(Discovery.newMac(macs: [], seen: ["old"], machines: [], now: now).seen == ["old"])
+    #expect(Discovery.newMac(macs: [], seen: ["old"], machines: [], hosting: [], now: now).seen == ["old"])
   }
 
   @Test func newMacPicksTheFirstUnseenDNSNameInsteadOfInputOrder() {
-    let result = Discovery.newMac(macs: [studio, mini], seen: [], machines: [], now: now)
+    let result = Discovery.newMac(macs: [studio, mini], seen: [], machines: [], hosting: [], now: now)
     #expect(result.prompt?.action == .addMachine(mac: mini, hostedSimulators: false))
   }
 
@@ -105,15 +105,10 @@ struct DiscoveryTests {
         == "Native caches use 48 GB. Build on another Mac?")
   }
 
-  @Test func capacitySuggestionRequiresAFailedCapacityRefusalAndChoosesHostingOnly() {
-    #expect(Discovery.capHit(lines: ["STIM_AT_CAPACITY"], exitStatus: 0, mac: mini) == nil)
-    #expect(Discovery.capHit(lines: ["STIM_LOW_DISK"], exitStatus: 1, mac: mini) == nil)
-    #expect(
-      Discovery.capHit(lines: ["progress", "error: STIM_AT_CAPACITY: limit"], exitStatus: 1, mac: mini)?.action
-        == .addMachine(mac: mini, hostedSimulators: true))
-    #expect(
-      Discovery.capHit(lines: ["STIM_AT_CAPACITY"], exitStatus: 1, mac: nil)?.title
-        == "Device limit reached. Run simulators on another Mac?")
+  @Test func capacityRefusalNeedsAFailedRunWithTheCapacityCode() {
+    #expect(!Discovery.refusedForCapacity(lines: ["STIM_AT_CAPACITY"], exitStatus: 0))
+    #expect(!Discovery.refusedForCapacity(lines: ["STIM_LOW_DISK"], exitStatus: 1))
+    #expect(Discovery.refusedForCapacity(lines: ["progress", "error: STIM_AT_CAPACITY: limit"], exitStatus: 1))
   }
 
   func refusal(age: TimeInterval = 0, kind: String = "device", at: String? = nil) -> CapacityRefusal {
@@ -122,30 +117,55 @@ struct DiscoveryTests {
       kind: kind, platform: "ios", max: 2, workspace: "fixture")
   }
 
-  @Test func capacityEventsRequireADeviceRefusalWithinSixHours() throws {
-    func evaluate(_ event: CapacityRefusal) -> DiscoveryPrompt? {
-      Discovery.capHit(events: [event], now: now, mac: mini)?.prompt
-    }
-    #expect(evaluate(refusal(age: 5 * 3600 + 59 * 60))?.action == .addMachine(mac: mini, hostedSimulators: true))
-    #expect(evaluate(refusal(age: 6 * 3600)) != nil)
-    #expect(evaluate(refusal(age: 6 * 3600 + 60)) == nil)
-    #expect(evaluate(refusal(age: -1)) == nil)
-    #expect(evaluate(refusal(at: "bad-date")) == nil)
-    #expect(evaluate(refusal(kind: "build")) == nil)
-    #expect(Discovery.capHit(events: [], now: now, mac: mini) == nil)
-    let event = try #require(Discovery.capHit(events: [refusal()], now: now, mac: nil))
-    #expect(event.prompt == Discovery.capHit(lines: ["STIM_AT_CAPACITY"], exitStatus: 1, mac: nil))
+  func source(_ events: [CapacityRefusal], waits: [CapacityWait] = []) -> Discovery.CapHitSource? {
+    Discovery.capHitSource(events: events, waits: waits, now: now)
+  }
+
+  @Test func capacitySuggestsSettingUpOnlyWhenNoMacIsApprovedForHosting() throws {
+    let event = try #require(source([refusal()]))
+    let setup = Discovery.capHit(source: event, mac: mini, hosts: [])
+    #expect(setup?.action == .addMachine(mac: mini, hostedSimulators: true))
+    #expect(setup?.title == "Device limit reached. Run simulators on mini?")
+    #expect(
+      Discovery.capHit(source: event, mac: nil, hosts: [])?.title == "Device limit reached. Run simulators on another Mac?")
+  }
+
+  @Test func capacityOffersUsingAnApprovedHostingMacInsteadOfSetup() throws {
+    let event = try #require(source([refusal()]))
+    let one = Discovery.capHit(source: event, mac: mini, hosts: ["janics-mac-mini:7787"])
+    #expect(one?.title == "Device limit reached. Run on janics-mac-mini?")
+    #expect(one?.action == .runOnAuto(workspaceID: "fixture", platform: "ios"))
+    #expect(Discovery.capHit(source: event, mac: nil, hosts: ["a", "b"])?.title == "Device limit reached. Run on a hosting Mac?")
+  }
+
+  @Test func capacityShowsNothingWhenApprovalIsUnknownOrTheWorkspaceAlreadyRunsRemotely() throws {
+    let event = try #require(source([refusal()]))
+    #expect(Discovery.capHit(source: event, mac: mini, hosts: nil) == nil)
+    #expect(
+      Discovery.capHit(
+        source: event, mac: mini, hosts: ["mini"], isRemote: { id, platform in id == "fixture" && platform == "ios" }) == nil)
+    let anonymous = Discovery.CapHitSource(at: now, workspaceID: nil, platform: "ios")
+    #expect(Discovery.capHit(source: anonymous, mac: mini, hosts: ["mini"]) == nil)
+    #expect(Discovery.capHit(source: anonymous, mac: mini, hosts: [])?.action == .addMachine(mac: mini, hostedSimulators: true))
+  }
+
+  @Test func capacityEventsRequireADeviceRefusalWithinSixHours() {
+    #expect(source([refusal(age: 5 * 3600 + 59 * 60)]) != nil)
+    #expect(source([refusal(age: 6 * 3600)]) != nil)
+    #expect(source([refusal(age: 6 * 3600 + 60)]) == nil)
+    #expect(source([refusal(age: -1)]) == nil)
+    #expect(source([refusal(at: "bad-date")]) == nil)
+    #expect(source([refusal(kind: "build")]) == nil)
+    #expect(source([]) == nil)
   }
 
   @Test func newestCapacityEventKeepsItsOwnTimeSoPollingCannotRenewItsLifetime() throws {
     let newest = now.addingTimeInterval(-(5 * 3600 + 59 * 60))
     let event = try #require(
-      Discovery.capHit(
-        events: [refusal(age: 6 * 3600), refusal(age: -1), refusal(age: 5 * 3600 + 59 * 60), refusal(at: "invalid")],
-        now: now, mac: mini))
-    #expect(event.rememberedAt == newest)
-    #expect(Discovery.fresh(event.prompt.type, rememberedAt: event.rememberedAt, now: now))
-    #expect(!Discovery.fresh(event.prompt.type, rememberedAt: event.rememberedAt, now: now.addingTimeInterval(120)))
+      source([refusal(age: 6 * 3600), refusal(age: -1), refusal(age: 5 * 3600 + 59 * 60), refusal(at: "invalid")]))
+    #expect(event.at == newest)
+    #expect(Discovery.fresh(.capHit, rememberedAt: event.at, now: now))
+    #expect(!Discovery.fresh(.capHit, rememberedAt: event.at, now: now.addingTimeInterval(120)))
   }
 
   @Test func capacityWaitsRequireThreeMinuteLongDeviceWaitsWithinSixHours() throws {
@@ -154,19 +174,26 @@ struct DiscoveryTests {
         at: ISO8601DateFormatter().string(from: now.addingTimeInterval(-age)), kind: kind,
         platform: "ios", max: 1, workspace: "fixture", ms: ms)
     }
-    #expect(Discovery.capHit(events: [], waits: [wait(), wait()], now: now, mac: mini) == nil)
+    #expect(source([], waits: [wait(), wait()]) == nil)
     let waits = [wait(age: 6 * 3600), wait(age: 120), wait(age: 60)]
-    let event = try #require(Discovery.capHit(events: [], waits: waits, now: now, mac: mini))
-    #expect(event.prompt.action == .addMachine(mac: mini, hostedSimulators: true))
-    #expect(event.rememberedAt == now.addingTimeInterval(-60))
-    #expect(Discovery.capHit(events: [], waits: Array(repeating: wait(ms: 59_999), count: 3), now: now, mac: mini) == nil)
-    #expect(Discovery.capHit(events: [], waits: Array(repeating: wait(age: 6 * 3600 + 1), count: 3), now: now, mac: mini) == nil)
+    #expect(try #require(source([], waits: waits)).at == now.addingTimeInterval(-60))
+    #expect(source([], waits: Array(repeating: wait(ms: 59_999), count: 3)) == nil)
+    #expect(source([], waits: Array(repeating: wait(age: 6 * 3600 + 1), count: 3)) == nil)
     for ignored in [wait(age: -1), wait(ms: nil), wait(kind: "build-wait")] {
-      #expect(Discovery.capHit(events: [], waits: [wait(), wait(), ignored], now: now, mac: mini) == nil)
+      #expect(source([], waits: [wait(), wait(), ignored]) == nil)
     }
-    let refusalEvent = try #require(Discovery.capHit(events: [refusal()], waits: waits, now: now, mac: mini))
-    #expect(refusalEvent.rememberedAt == now)
-    #expect(Discovery.capHit(events: [refusal()], waits: [], now: now, mac: mini) != nil)
+    #expect(try #require(source([refusal()], waits: waits)).at == now)
+    #expect(source([refusal()], waits: []) != nil)
+  }
+
+  @Test func newMacSkipsMacsAlreadyUsedForHosting() {
+    let result = Discovery.newMac(macs: [mini, studio], seen: [mini.id], machines: [], hosting: ["studio.tail.test"], now: now)
+    #expect(result.prompt == nil)
+    #expect(Discovery.newMac(macs: [mini, studio], seen: [mini.id], machines: [], hosting: ["other"], now: now).prompt != nil)
+  }
+
+  @Test func workspaceIDMatchesTheCLIsSha256Prefix() {
+    #expect(Discovery.workspaceID(path: "/tmp/a") == "d9b741ea3d4d24a6")
   }
 
   @Test func awayRequiresALongRunAnIdleUserAndNoPairedPhone() {
@@ -269,7 +296,7 @@ struct DiscoveryTests {
     let defaults = try #require(UserDefaults(suiteName: suite))
     defer { defaults.removePersistentDomain(forName: suite) }
     let store = DiscoveryStore(defaults: defaults)
-    let prompt = try #require(Discovery.capHit(lines: ["STIM_AT_CAPACITY"], exitStatus: 1, mac: nil))
+    let prompt = try #require(Discovery.capHit(source: .init(at: now, workspaceID: "w", platform: "ios"), mac: nil, hosts: []))
     store.shown(prompt, now: now)
     let nextLaunch = DiscoveryStore(defaults: defaults)
     #expect(nextLaunch.state(.capHit) == .shown)
