@@ -53,11 +53,11 @@ struct SimulatorDevelopmentOptionsView: View {
     do {
       let read = try await SimulatorDevelopmentOptions.readBounded(udid: udid)
       guard polling.accepts(token) else { return }
+      if settings == nil { error = nil }
       settings = read
-      error = nil
     } catch is CancellationError {
     } catch {
-      guard polling.accepts(token), settings == nil else { return }
+      guard !Task.isCancelled, polling.accepts(token), settings == nil else { return }
       self.error = error.localizedDescription
     }
   }

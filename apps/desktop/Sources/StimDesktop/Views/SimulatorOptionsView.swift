@@ -35,7 +35,7 @@ struct SimulatorOptionsView: View {
       HStack {
         Text("Simulator options").font(.stim(.headline))
         Spacer()
-        if busy || !loaded { ProgressView().controlSize(.small) }
+        if busy || (!loaded && canControl) { ProgressView().controlSize(.small) }
       }
       if let appearance {
         mode(appearance)
@@ -50,7 +50,7 @@ struct SimulatorOptionsView: View {
           "Reduce transparency", value: appearance.reduceTransparency?.enabled, change: SimulatorOptions.Change.reduceTransparency
         )
         toggle("Show button borders", value: appearance.showBorders?.enabled, change: SimulatorOptions.Change.showBorders)
-      } else if !busy && loaded {
+      } else if !busy && (loaded || !canControl) {
         Text("Appearance settings are unavailable.").foregroundStyle(Palette.secondary)
       }
       if let error {
@@ -140,11 +140,11 @@ struct SimulatorOptionsView: View {
     do {
       let read = try await SimulatorOptions.read(udid: udid)
       guard polling.accepts(token) else { return }
+      if appearance == nil { error = nil }
       appearance = read
-      error = nil
     } catch is CancellationError {
     } catch {
-      guard polling.accepts(token), appearance == nil else { return }
+      guard !Task.isCancelled, polling.accepts(token), appearance == nil else { return }
       self.error = error.localizedDescription
     }
     if polling.accepts(token) { loaded = true }

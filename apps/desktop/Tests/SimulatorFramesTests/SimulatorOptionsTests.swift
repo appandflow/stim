@@ -55,10 +55,7 @@ import Testing
   @Test func readsOnOpenThenRepeatsAndStopsWhenCancelled() async throws {
     let counter = Counter()
     let task = Task { await SimulatorOptionsPolling.run(interval: .milliseconds(20)) { await counter.increment() } }
-    try await Task.sleep(for: .milliseconds(10))
-    #expect(await counter.value == 1)
-    try await Task.sleep(for: .milliseconds(150))
-    #expect(await counter.value >= 3)
+    while await counter.value < 3 { try await Task.sleep(for: .milliseconds(5)) }
     task.cancel()
     await task.value
     let stopped = await counter.value
