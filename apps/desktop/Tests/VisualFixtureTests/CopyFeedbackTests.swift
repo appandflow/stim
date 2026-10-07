@@ -44,7 +44,7 @@ import XCTest
 
   func testRevertsToCopyAfterTheDelay() async {
     let clock = Clock()
-    let feedback = CopyFeedback(sleep: clock.sleep)
+    let feedback = CopyFeedback(sleep: { try await clock.sleep($0) })
     XCTAssertFalse(feedback.copied)
     feedback.didCopy()
     await settle()
@@ -57,7 +57,7 @@ import XCTest
 
   func testRepeatCopyRestartsTheWaitWithoutStackingReverts() async {
     let clock = Clock()
-    let feedback = CopyFeedback(sleep: clock.sleep)
+    let feedback = CopyFeedback(sleep: { try await clock.sleep($0) })
     feedback.didCopy()
     await settle()
     feedback.didCopy()
