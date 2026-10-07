@@ -197,13 +197,15 @@ async function parkedSimulator() {
   return runHostedDevice('park', {});
 }
 
-test('park shuts down without deleting, renaming or moving ledger ownership and frees session blobs', async () => {
+test('park shuts down without deleting, renaming or moving ledger ownership and keeps the session blob store but removes app copies', async () => {
   mkdirSync(join(area, 'blobs'));
+  mkdirSync(join(area, 'apps', 'first', 'App.app'), { recursive: true });
   expect(await parkedSimulator()).toMatchObject({ state: 'parked', device: { udid, name: 'stim-hosted' } });
   expect(native.teardown).toHaveBeenCalledExactlyOnceWith(udid);
   expect(JSON.parse(readFileSync(join(home, 'created-devices.json'), 'utf8')).ios).toEqual([udid]);
   expect(simulatorState).toBe('Shutdown');
-  expect(existsSync(join(area, 'blobs'))).toBe(false);
+  expect(existsSync(join(area, 'blobs'))).toBe(true);
+  expect(existsSync(join(area, 'apps', 'first', 'App.app'))).toBe(false);
   expect(existsSync(join(home, 'config.json'))).toBe(false);
 });
 
@@ -245,7 +247,7 @@ test('adoption removes every third-party app before ready and clears hosted deli
   expect([...apps]).toEqual([]);
   expect(native.privacy).toHaveBeenCalledOnce();
   expect(native.keychain).toHaveBeenCalledOnce();
-  expect(existsSync(join(area, 'blobs'))).toBe(false);
+  expect(existsSync(join(area, 'blobs'))).toBe(true);
   expect(JSON.parse(readFileSync(join(home, 'hosted-device.json'), 'utf8')).udid).toBe(udid);
 });
 

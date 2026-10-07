@@ -91,7 +91,8 @@ compatible device: the resolved model, runtime and architecture match for iOS;
 the system image, device profile and architecture match for Android. Adoption
 clears app data by uninstalling every third-party app, and resets iOS privacy and
 keychain. Another client never adopts it. Parking and adoption remove session
-app copies and blobs, so the first run after adoption uploads them again.
+app copies but keep the content-addressed upload store, so the first run after
+adoption uploads only changed files.
 
 The oldest parked devices beyond the host's platform limit are deleted, also
 after a limit decrease. Adoption-time reconciliation retires unusable devices;

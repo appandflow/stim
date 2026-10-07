@@ -529,8 +529,8 @@ A new reserve adopts the oldest compatible parked device of the same client.
 iOS matches resolved device type, runtime and architecture; Android matches
 system image, device profile and architecture. Adoption clears app data by
 removing every third-party app; iOS also resets privacy and keychain. Parking and
-adoption remove session app copies and blobs, so the first run after adoption
-uploads them again. Devices are never reused across clients.
+adoption remove session app copies but keep the content-addressed upload store,
+so the first run after adoption uploads only changed files. Devices are never reused across clients.
 The oldest parked devices beyond the host's platform limit are deleted through
 owned-device teardown, also after a limit decrease. Adoption-time reconciliation
 retires missing, renamed, running or unowned candidates; failed retirement keeps
