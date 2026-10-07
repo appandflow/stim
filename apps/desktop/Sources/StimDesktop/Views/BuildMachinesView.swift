@@ -242,7 +242,7 @@ private struct MachineRow: View {
         }
         if let status {
           if let command = status.approvalCommand {
-            detailText("Someone on \(status.machine) approves it in Stim Desktop, or runs this there:")
+            detailText("\(status.approvalPrompt), or runs this there:")
             CopyableCommand(command: command).padding(.vertical, Space.xxs)
             detailText(BuildMachineStatus.requestLapse)
           } else {
