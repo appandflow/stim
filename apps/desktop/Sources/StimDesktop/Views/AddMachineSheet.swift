@@ -317,15 +317,13 @@ struct AddMachineSheet: View {
         if let ticket = wizard.ticket ?? model.draftTicket {
           Text("expires \(expiryTime(ticket.expiresAt))").font(.stim(.caption))
         }
-        Button("Copy") {
-          if let command = model.command {
-            NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString(command, forType: .string)
-          }
-        }.disabled(model.command == nil)
       }
-      Text(model.command ?? "Resolving this Mac's stim-server version and tailnet node. Check again.")
-        .font(.stim(.caption, mono: true)).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+      if let command = model.command {
+        CopyableCommand(command: command)
+      } else {
+        Text("Resolving this Mac's stim-server version and tailnet node. Check again.")
+          .font(.stim(.caption, mono: true)).fixedSize(horizontal: false, vertical: true)
+      }
     }
     .padding(Space.md).background(Palette.surface, in: RoundedRectangle(cornerRadius: Radius.control))
   }
