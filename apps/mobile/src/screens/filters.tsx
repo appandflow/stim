@@ -69,9 +69,9 @@ export function Filters() {
     if (canSearch && searchShown) searchInput.current?.focus();
   }, [canSearch, searchShown]);
   const activity: { value: ActivityFilter; label: string }[] = [
+    { value: 'all', label: t`All` },
     { value: 'live', label: t`Live` },
     { value: 'idle', label: t`Idle` },
-    { value: 'all', label: t`All` },
     { value: 'archived', label: t`Archived` },
   ];
   const sorts: { value: HomeFilters['sort']; label: string }[] = [
