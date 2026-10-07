@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// The artwork for "no build machines": a Mac badge with the two things a build machine does for this Mac.
+/// The artwork for "no remote Macs": a Mac badge with the two things a remote Mac does for this Mac.
 struct BuildMachineArt: View {
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
   @State private var floating = false
@@ -33,7 +33,7 @@ struct BuildMachineArt: View {
   }
 }
 
-/// What the Build Machines tab and the Machine page show while `offload.machines` is empty.
+/// What the Remote Macs tab and the Machine page show while `remote.machines` is empty.
 struct BuildMachinesEmptyState: View {
   var add: () -> Void
   var addDisabled = false
@@ -42,17 +42,17 @@ struct BuildMachinesEmptyState: View {
   var body: some View {
     VStack(spacing: Space.lg) {
       BuildMachineArt()
-      Text("No build machines").font(.stim(.headline))
+      Text("No remote Macs").font(.stim(.headline))
       Text(
         needsTailscale
-          ? "Build machines need Tailscale on both Macs, signed in to the same tailnet. No other Mac is on this tailnet yet. It shows up here once both are connected."
-          : "A build machine is another Mac on your tailnet that compiles your apps and hosts simulators for this Mac."
+          ? "Remote Macs need Tailscale on both Macs, signed in to the same tailnet. No other Mac is on this tailnet yet. It shows up here once both are connected."
+          : "A remote Mac is another Mac on your tailnet that compiles your apps and hosts simulators for this Mac."
       )
       .foregroundStyle(Palette.secondary)
       .multilineTextAlignment(.center)
       .frame(maxWidth: 380)
       if !needsTailscale {
-        Button("Add Build Machine\u{2026}", action: add)
+        Button("Add Remote Mac\u{2026}", action: add)
           .buttonStyle(.stim(.primary, .regular))
           .disabled(addDisabled)
       }

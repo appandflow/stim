@@ -21,7 +21,7 @@ public struct ArchivedPage: Sendable {
   public var buildTotalsLine: String {
     var parts = [countLabel(record.builds.count, "build")]
     if let cacheHits { parts.append(countLabel(cacheHits, "cache hit")) }
-    if let offloadedBuilds { parts.append("\(offloadedBuilds) on a build machine") }
+    if let offloadedBuilds { parts.append("\(offloadedBuilds) on a remote Mac") }
     parts.append("\(countLabel(record.builds.lastErrorCount, "error")) at removal")
     return parts.joined(separator: " \u{00B7} ")
   }

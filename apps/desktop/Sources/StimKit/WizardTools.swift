@@ -33,7 +33,7 @@ public func toolsReport(
 ) -> [WizardTool] {
   func fix(code: String, reason: String, step: SetupJournal.Step? = nil) -> String {
     let finding = status.flatMap { status in
-      findings.first { $0.code == "build-machine-\(code)" && $0.title.hasPrefix("Build machine \(status.machine) ") }
+      findings.first { $0.code == "build-machine-\(code)" && $0.title.hasPrefix("Remote Mac \(status.machine) ") }
     }
     return step?.fix ?? finding?.fix
       ?? (isLocal(code, reason) ? "Check this problem on this Mac." : "Check this problem on the build Mac.")

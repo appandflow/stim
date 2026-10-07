@@ -22,7 +22,7 @@ struct AddMachineSheet: View {
   var body: some View {
     HStack(spacing: 0) {
       VStack(alignment: .leading, spacing: Space.sm) {
-        Text("Add a build machine").font(.stim(.headline)).padding(.bottom, Space.xl)
+        Text("Add a remote Mac").font(.stim(.headline)).padding(.bottom, Space.xl)
         ForEach(Array(["Pick a Mac", "What it does", "Set it up", "Tools", "Test build", "Done"].enumerated()), id: \.offset) {
           index, title in
           let outcome: BuildTest.Outcome? = index == 4 && index < step ? model.testOutcome : nil
@@ -69,7 +69,7 @@ struct AddMachineSheet: View {
       Button("Keep setting up", role: .cancel) {}
     } message: {
       Text(
-        "Removes entries added to offload.machines and hosting.machines, restores offload.mode only if this wizard changed it, and runs stim doctor --json --platform ios --fix to forget the pairing. That also asks other listed machines with no credential. Grants on the build Mac must be revoked there with the commands shown next."
+        "Removes the entry added to remote.machines, restores remote.buildMode only if this wizard changed it, and runs stim doctor --json --platform ios --fix to forget the pairing. That also asks other listed machines with no credential. Grants on the build Mac must be revoked there with the commands shown next."
       )
     }
     .interactiveDismissDisabled(wizard.phase != .pick && wizard.phase != .choose)

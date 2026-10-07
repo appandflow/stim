@@ -12,7 +12,10 @@ final class AddMachineModelTests: XCTestCase {
     var doctorPaths: [String] = []
     var steps: [String] = []
     var builds: [String] = []
-    var hosts: [String] = []
+    var hosts: [String] {
+      get { builds }
+      set { builds = newValue }
+    }
     var mode: String?
     var modeOrigin: String? = "default"
     var grantReady = false
@@ -34,9 +37,8 @@ final class AddMachineModelTests: XCTestCase {
       let object: [String: Any] = [
         "files": [:], "unknown": [],
         "settings": [
-          ["key": "offload.machines", "value": builds, "layers": [:]],
-          ["key": "hosting.machines", "value": hosts, "layers": [:]],
-          ["key": "offload.mode", "value": mode ?? "auto", "origin": modeOrigin ?? "default", "layers": [:]],
+          ["key": "remote.machines", "value": builds, "layers": [:]],
+          ["key": "remote.buildMode", "value": mode ?? "auto", "origin": modeOrigin ?? "default", "layers": [:]],
         ],
       ]
       return try JSONDecoder().decode(SettingsPayload.self, from: JSONSerialization.data(withJSONObject: object))
@@ -53,7 +55,7 @@ final class AddMachineModelTests: XCTestCase {
       return try JSONDecoder().decode(
         DoctorReport.self,
         from: JSONSerialization.data(withJSONObject: [
-          "project": "/fixture", "findings": [], "buildMachines": statuses(builds, id: "b"),
+          "project": "/fixture", "findings": [], "remoteMachines": statuses(builds, id: "b"),
           "deviceHosts": statuses(hosts, id: "h"),
         ]))
     }
@@ -78,15 +80,13 @@ final class AddMachineModelTests: XCTestCase {
             return try self.report()
           }, readSettings: { try self.payload() },
           writeSetting: { key, value in
-            if key == "hosting.machines", self.shouldFailHostWrite { throw Failure.refused }
+            if key == "remote.machines", self.shouldFailHostWrite { throw Failure.refused }
             self.writes.append((key, value))
             self.steps.append(key)
             switch key {
-            case "offload.mode": self.mode = value
-            case "offload.machines":
+            case "remote.buildMode": self.mode = value
+            case "remote.machines":
               self.builds = try value.map { try JSONDecoder().decode([String].self, from: Data($0.utf8)) } ?? []
-            case "hosting.machines":
-              self.hosts = try value.map { try JSONDecoder().decode([String].self, from: Data($0.utf8)) } ?? []
             default: break
             }
           }, version: { "1.16.0" },
@@ -139,8 +139,7 @@ final class AddMachineModelTests: XCTestCase {
     XCTAssertEqual(harness.hosts, ["mini:7447"])
     XCTAssertEqual(harness.mode, "off")
     let askIndex = try XCTUnwrap(harness.steps.firstIndex(of: "ask"))
-    XCTAssertLessThan(try XCTUnwrap(harness.steps.firstIndex(of: "offload.machines")), askIndex)
-    XCTAssertLessThan(try XCTUnwrap(harness.steps.firstIndex(of: "hosting.machines")), askIndex)
+    XCTAssertLessThan(try XCTUnwrap(harness.steps.firstIndex(of: "remote.machines")), askIndex)
     XCTAssertEqual(harness.asks.first(where: { $0.0 })?.1.keys.sorted(), ["STIM_ACCESS_TICKET"])
     XCTAssertEqual(harness.asks.last?.1, [:])
     await model.send(.cancel)
@@ -221,7 +220,7 @@ final class AddMachineModelTests: XCTestCase {
     XCTAssertTrue(harness.writes.isEmpty)
   }
 
-  @MainActor func testCancelAfterPartialWriteRestoresWhatWasWrittenAndPreservesOtherMachines() async {
+  @MainActor func testFailedEntryWriteLeavesOtherMachinesUntouched() async {
     let harness = Harness()
     harness.builds = ["existing"]
     harness.mode = "auto"
@@ -235,11 +234,11 @@ final class AddMachineModelTests: XCTestCase {
     await model.next()
     await model.checkAgain()
     XCTAssertNotNil(model.error)
-    XCTAssertEqual(harness.builds, ["existing", "mini:7447"])
+    XCTAssertEqual(harness.builds, ["existing"])
     await model.send(.cancel)
     XCTAssertEqual(harness.builds, ["existing"])
     XCTAssertEqual(harness.mode, "auto")
-    XCTAssertFalse(harness.writes.contains { $0.0 == "offload.mode" })
+    XCTAssertFalse(harness.writes.contains { $0.0 == "remote.buildMode" })
   }
   @MainActor func testReadySampleSuppliesCheckoutWhenNoWorkspaceIsListed() async {
     let harness = Harness()
@@ -443,12 +442,11 @@ final class AddMachineModelTests: XCTestCase {
     }
   }
 
-  @MainActor func testSummaryNamesOnlyEntriesAddedForChosenCapabilities() async {
+  @MainActor func testSummaryNamesOnlyTheEntryAddedForChosenCapabilities() async {
     for alreadyListed in [false, true] {
       for buildsChosen in [false, true] {
         let harness = Harness()
-        harness.builds = alreadyListed ? ["mini"] : ["other-build"]
-        harness.hosts = alreadyListed ? ["mini"] : ["other-host"]
+        harness.builds = alreadyListed ? ["mini"] : ["other"]
         harness.grantReady = alreadyListed
         let model = harness.make()
         await model.start()
@@ -463,9 +461,8 @@ final class AddMachineModelTests: XCTestCase {
           await checkUntilApproved(model)
         }
         await model.openSummary()
-        XCTAssertEqual(model.summary.contains { $0.contains("offload.machines") }, !alreadyListed && buildsChosen)
-        XCTAssertEqual(model.summary.contains { $0.contains("hosting.machines") }, !alreadyListed)
-        XCTAssertFalse(model.summary.contains { $0.contains("other-build") || $0.contains("other-host") })
+        XCTAssertEqual(model.summary.contains { $0.contains("remote.machines") }, !alreadyListed)
+        XCTAssertFalse(model.summary.contains { $0.contains("other") })
         if !alreadyListed { XCTAssertTrue(model.summary.contains { $0.contains("mini:7447") }) }
       }
     }

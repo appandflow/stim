@@ -15,7 +15,7 @@ final class BuildMachinesModelTests: XCTestCase {
     var machines: String?
 
     nonisolated static func payload(_ machines: String) -> SettingsPayload {
-      let entry = "{ \"key\": \"offload.machines\", \"value\": \(machines), \"origin\": \"machine\", \"layers\": {} }"
+      let entry = "{ \"key\": \"remote.machines\", \"value\": \(machines), \"origin\": \"machine\", \"layers\": {} }"
       return try! JSONDecoder().decode(
         SettingsPayload.self, from: Data("{ \"files\": {}, \"unknown\": [], \"settings\": [\(entry)] }".utf8))
     }
@@ -30,7 +30,7 @@ final class BuildMachinesModelTests: XCTestCase {
         write: { _, value, _, _ in
           guard let value else { throw StimCLI.Failure.exited(1, stderr: "Unexpected settings write") }
           await MainActor.run { self.machines = value }
-          return .written(Harness.payload(value).entry("offload.machines")!)
+          return .written(Harness.payload(value).entry("remote.machines")!)
         })
       return BuildMachinesModel(
         cli: cli, settings: settings, statsReader: StatsReader(cli: cli, server: { nil }),
@@ -39,7 +39,7 @@ final class BuildMachinesModelTests: XCTestCase {
           self.calls.append((checkout, ask))
           if self.block { await withCheckedContinuation { self.waiting = $0 } }
           if self.fails { throw StimCLI.Failure.exited(1, stderr: "Doctor failed") }
-          var object: [String: Any] = ["project": checkout, "findings": [], "buildMachines": []]
+          var object: [String: Any] = ["project": checkout, "findings": [], "remoteMachines": []]
           if let hosts = self.hosts { object["deviceHosts"] = hosts.map { ["machine": $0, "state": "approved"] } }
           return try JSONDecoder().decode(DoctorReport.self, from: JSONSerialization.data(withJSONObject: object))
         })

@@ -148,12 +148,12 @@ struct AddMachineSteps: View {
           .stim(.footnote)
         ).foregroundStyle(Palette.warning)
       }
-      ForEach(model.summary.filter { !$0.hasPrefix("offload.mode") }, id: \.self) {
+      ForEach(model.summary.filter { !$0.hasPrefix("remote.buildMode") }, id: \.self) {
         Text($0).font(.stim(.caption, mono: true)).textSelection(.enabled)
       }
-      Text("offload.mode = \(model.mode.rawValue)").font(.stim(.caption, mono: true))
+      Text("remote.buildMode = \(model.mode.rawValue)").font(.stim(.caption, mono: true))
       Text("Undo").font(.stim(.headline))
-      Text("On this Mac: Settings > Build machines > Remove")
+      Text("On this Mac: Settings > Remote Macs > Remove")
       Text("On \(name):").font(.stim(.footnote, weight: .semibold))
       ForEach(model.wizard.revokeIds.sorted(), id: \.self) { CopyableCommand(command: "stim-server devices revoke \($0)") }
       CopyableCommand(command: "stim-server service uninstall")

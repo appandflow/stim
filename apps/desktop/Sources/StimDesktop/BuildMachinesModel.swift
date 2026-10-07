@@ -153,7 +153,7 @@ final class BuildMachinesModel {
   }
 
   var entries: [String]? {
-    settings.payload.map { $0.entry("offload.machines")?.value.strings ?? [] }
+    settings.payload.map { $0.entry("remote.machines")?.value.strings ?? [] }
   }
 
   func addMachine(checkout: String?) -> AddMachineModel {
@@ -183,8 +183,8 @@ final class BuildMachinesModel {
 
   var settingsFailure: String? {
     if let error = settings.error { return error }
-    guard let payload = settings.payload, payload.entry("offload.machines") == nil else { return nil }
-    return "This stim has no offload.machines setting; update it."
+    guard let payload = settings.payload, payload.entry("remote.machines") == nil else { return nil }
+    return "This stim has no remote.machines setting; update it."
   }
 
   func refresh(checkout: String?) async {
@@ -250,9 +250,9 @@ final class BuildMachinesModel {
     switch result {
     case .success(let report):
       checks[checkout] = Check(
-        statuses: report.buildMachines ?? [], hosts: report.deviceHosts,
-        problem: report.buildMachines == nil ? .unsupported : nil)
-      updateAutomatically(report.buildMachines ?? [], checkout: checkout)
+        statuses: report.remoteMachines ?? [], hosts: report.deviceHosts,
+        problem: report.remoteMachines == nil ? .unsupported : nil)
+      updateAutomatically(report.remoteMachines ?? [], checkout: checkout)
     case .failure(let error):
       checks[checkout] = Check(
         statuses: check(in: checkout)?.statuses ?? [], hosts: check(in: checkout)?.hosts,
@@ -273,7 +273,7 @@ final class BuildMachinesModel {
 
   private func write(_ entry: String, value: String?, ask: Bool, checkout: String?) async {
     working = entry
-    let result = await settings.write("offload.machines", value: value, scope: .machine, cwd: NSHomeDirectory())
+    let result = await settings.write("remote.machines", value: value, scope: .machine, cwd: NSHomeDirectory())
     switch result {
     case .success(.written):
       writeFailure = nil

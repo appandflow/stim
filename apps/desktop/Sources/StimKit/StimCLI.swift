@@ -109,11 +109,11 @@ public struct StimCLI: Sendable {
     try JSONDecoder().decode(DoctorReport.self, from: await run(["doctor", "--json"], cwd: cwd))
   }
 
-  /// The `offload.machines` states from `stim doctor --json --platform ios` in `cwd`. With `ask`, `--fix` also asks
+  /// The `remote.machines` states from `stim doctor --json --platform ios` in `cwd`. With `ask`, `--fix` also asks
   /// each named machine this Mac has no pairing with for build access, and again one that revoked it; the iOS
   /// platform keeps `--fix` from cleaning Android build state in that checkout.
   public func buildMachines(cwd: String, ask: Bool) async throws -> [BuildMachineStatus]? {
-    try await machineAccess(cwd: cwd, ask: ask).buildMachines
+    try await machineAccess(cwd: cwd, ask: ask).remoteMachines
   }
 
   /// Both build and device-host access states. Extra environment applies only to this doctor process.
