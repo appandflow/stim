@@ -44,7 +44,7 @@ struct CopyButton: View {
   var help: String?
   var accessibilityLabel: String?
   var onCopy: (() -> Void)?
-  var text: () -> String?
+  var copy: () async -> Bool
 
   @StateObject private var feedback = CopyFeedback()
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -60,7 +60,12 @@ struct CopyButton: View {
     accessibilityLabel: String? = nil,
     onCopy: (() -> Void)? = nil
   ) {
-    self.text = text
+    self.copy = {
+      guard let value = text() else { return false }
+      NSPasteboard.general.clearContents()
+      NSPasteboard.general.setString(value, forType: .string)
+      return true
+    }
     self.variant = variant
     self.size = size
     self.title = title
@@ -71,15 +76,30 @@ struct CopyButton: View {
     self.onCopy = onCopy
   }
 
+  /// A button whose copy is an async operation. It shows "Copied" only when `copy` returns true.
+  init(
+    variant: ButtonVariant = .secondary,
+    size: ButtonSize = .small,
+    title: String = "Copy",
+    help: String? = nil,
+    copy: @escaping () async -> Bool
+  ) {
+    self.copy = copy
+    self.variant = variant
+    self.size = size
+    self.title = title
+    self.help = help
+  }
+
   var body: some View {
     let copied = feedback.copied
     Button {
-      guard let value = text() else { return }
-      NSPasteboard.general.clearContents()
-      NSPasteboard.general.setString(value, forType: .string)
-      feedback.didCopy()
-      AccessibilityNotification.Announcement(copiedTitle).post()
-      onCopy?()
+      Task {
+        guard await copy() else { return }
+        feedback.didCopy()
+        AccessibilityNotification.Announcement(copiedTitle).post()
+        onCopy?()
+      }
     } label: {
       HStack(spacing: Space.xs) {
         Image(systemName: copied ? "checkmark" : "doc.on.doc")
