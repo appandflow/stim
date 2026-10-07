@@ -969,8 +969,9 @@ serves `~/.stim` again.
 
 Desktop also watches a stim-server that already answers on the port with a
 matching Stim home when **Serve to phones** is off, such as the LaunchAgent
-that `stim-server setup` or `stim-server service install` creates, through the
-same adoption path and as not started by the app. The app probes the port on
+that `stim-server setup` or `stim-server service install` creates, and adopts
+it as not started by the app, as it does a running server when **Serve to
+phones** is on. The app probes the port on
 its regular poller while the server state is off, so build and device-host
 requests from other Macs reach the Allow / Deny dialog. Turning **Serve to
 phones** off stops a server the app started and never stops watching one it did

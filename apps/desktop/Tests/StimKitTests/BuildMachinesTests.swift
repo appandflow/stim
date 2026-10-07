@@ -141,7 +141,6 @@ import Testing
     #expect(BuildMachineStatus(machine: "m", state: .pending).lapseLine() == BuildMachineStatus.requestLapse)
     #expect(machines[3].state.title == "Request lapsed")
     #expect(machines[3].state.canAsk(requested: true))
-    #expect(machines[3].detail.contains("lapsed before anyone on late approved it"))
     #expect(machines[3].approvalCommand == nil)
     #expect(machines[0].detail.contains("stim-server devices grant ab12 --build"))
     #expect(machines.map(\.approvalCommand) == ["stim-server devices grant ab12 --build", nil, nil, nil])

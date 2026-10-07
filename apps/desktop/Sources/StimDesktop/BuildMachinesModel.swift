@@ -19,7 +19,6 @@ final class BuildMachinesModel {
   private(set) var tailscaleRunning: Bool?
   private(set) var macs: [TailnetMac]?
   private(set) var working: String?
-  /// What the running action on `working` is doing, such as "Asking Bounce MBP\u{2026}".
   private(set) var progress: String?
   private(set) var writeFailure: String?
   private(set) var runs = 0
