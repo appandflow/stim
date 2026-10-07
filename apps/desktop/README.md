@@ -601,7 +601,12 @@ the sidebar marks Machine. **Do it** in a notification runs only while disk
 is still under the budget, and otherwise opens Machine; the app removes its
 delivered pressure notifications once free disk is back above the budget. With
 autopilot reclaiming, the app posts a
-notification after each run. Without it, the app posts the plan once per
+notification after each run that says what the run did, built from the `gc`
+JSON result, such as "Freed 3.8 GB. Archived 2 removed worktrees: fix-login,
+add-dark-mode. Deleted 1 device." It names worktrees by branch or folder, lists
+at most three and ends with "+N more". The autopilot log entry has the same
+text, and a notification that archived worktrees opens the Archived filter
+when clicked. Without it, the app posts the plan once per
 episode with a **Do it** button. The **Free disk falls under the Stim budget**
 notification is on by default and needs the bundled app.
 
