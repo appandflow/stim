@@ -50,9 +50,11 @@ public struct ServerHealth: Decodable, Equatable, Sendable {
   /// The `tailscale serve` route read on this request, present while Tailscale runs.
   public var route: ServeRoute?
   public var nativeViewerOpened: Bool?
+  /// True when the server serves this Mac only, so phones and other Macs cannot connect through it.
+  public var loopbackOnly: Bool?
 
   enum CodingKeys: String, CodingKey {
-    case server, name, version, stim, stimHome, tailscale, route, nativeViewerOpened
+    case server, name, version, stim, stimHome, tailscale, route, nativeViewerOpened, loopbackOnly
     case protocolVersion = "protocol"
   }
 

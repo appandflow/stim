@@ -53,7 +53,7 @@ import {
 const USAGE = `Usage:
   stim-server [--port <n>] [--loopback-only] [--env KEY=VALUE]... [--path-prepend <dir>]...
                                     serve paired clients (default port ${DEFAULT_PORT});
-                                    --loopback-only listens on 127.0.0.1 and never on a Tailscale address;
+                                    --loopback-only serves this Mac only (127.0.0.1, no remote peers);
                                     --env and --path-prepend apply after the login shell's environment
   stim-server setup --client <node-id> --ticket <t> --expires <iso>
                     [--build] [--device-host] [--port <n>] [--label <name>]

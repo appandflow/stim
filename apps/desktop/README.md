@@ -972,7 +972,7 @@ and the sidebar footer shows a warning icon that says to update it. A failure of
 other kind, such as a port held by another program or a server for another Stim home,
 shows the same icon with the reason in its tooltip; click it to retry now. Desktop also retries a failed start every 30 seconds or more, except for an outdated server. No dialog
 interrupts. `--loopback-only` removes the server's own Tailscale listeners and makes it refuse any
-request that a `tailscale serve` route forwards to the port, so paired phones and other
+request that a `tailscale serve --https` route forwards to the port, so paired phones and other
 Macs cannot reach it; Desktop never removes or edits the route. Turning the Phone app flag off, or **Serve to phones** off, restarts the
 server Desktop started in loopback-only mode, which disconnects paired phones until
 they are served again. `stim-server` is found on the login shell's `PATH`, or at the path you

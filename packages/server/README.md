@@ -29,9 +29,11 @@ stim-server service install|status|update|rollback|uninstall
                                   # run stim-server as a macOS LaunchAgent, see below
 ```
 
-`--loopback-only` makes the server listen on `127.0.0.1` only. Without it, the
-server also listens on this Mac's Tailscale addresses while Tailscale runs (see
-[Tailscale](#tailscale)). Stim Desktop starts its own server with the flag
+`--loopback-only` makes the server listen on `127.0.0.1` only and refuse any request
+that names a remote peer (`X-Forwarded-For`, as `tailscale serve --https` adds), so
+phones and other Macs cannot connect; `/health` then reports `loopbackOnly: true`.
+Without it, the server also listens on this Mac's Tailscale addresses while Tailscale
+runs (see [Tailscale](#tailscale)). Stim Desktop starts its own server with the flag
 unless it serves phones.
 
 `--env KEY=VALUE` and `--path-prepend <dir>` (each repeatable) apply to the

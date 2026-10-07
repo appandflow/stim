@@ -142,7 +142,7 @@ Desktop's own `stim-server` then listens on loopback only.
 :::
 
 Desktop runs its own `stim-server` whenever it is open, on loopback only (it refuses
-anything a `tailscale serve` route forwards to it), with no switch. Replay, the diff viewer, archived logs, hosted views and recordings use it. If
+anything a `tailscale serve --https` route forwards to it), with no switch. Replay, the diff viewer, archived logs, hosted views and recordings use it. If
 a stim-server already serves the same Stim home, for example the `stim-server
 service` LaunchAgent on a Mac that hosts for others, Desktop uses that one and never
 stops or reconfigures it. When the server cannot start, a warning icon in the

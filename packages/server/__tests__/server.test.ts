@@ -2257,7 +2257,9 @@ setTimeout(() => console.log(fs.readFileSync(${JSON.stringify(grants)}, 'utf8'))
 
   it('serves only this Mac when loopback only, refusing peers a tailscale serve route forwards', async () => {
     const port = await start({ loopbackOnly: true });
-    expect((await fetch(`http://127.0.0.1:${port}/health`)).status).toBe(200);
+    const local = await fetch(`http://127.0.0.1:${port}/health`);
+    expect(local.status).toBe(200);
+    expect(await local.json()).toMatchObject({ loopbackOnly: true });
     const forwarded = await fetch(`http://127.0.0.1:${port}/health`, { headers: { 'x-forwarded-for': '100.64.0.2' } });
     expect(forwarded.status).toBe(403);
     await expect(connect(port, '100.64.0.2')).rejects.toThrow('HTTP 403');

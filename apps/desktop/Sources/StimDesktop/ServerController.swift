@@ -291,6 +291,13 @@ final class ServerController: ObservableObject {
     guard isRunning, case .ready(let before) = await StimServerCLI.health(port: port) else {
       throw ServerError(code: "not-connected", message: "Could not verify the phone connection. Try again.")
     }
+    if before.loopbackOnly == true {
+      throw ServerError(
+        code: "not-connected",
+        message:
+          "The stim-server on this port serves this Mac only, so a phone could not connect. Stop it, or quit the Stim Desktop that started it, and try again."
+      )
+    }
     if before.tailscale.isRunning && before.route?.state != "routed" {
       throw ServerError(
         code: "not-connected",
@@ -456,7 +463,7 @@ final class ServerController: ObservableObject {
     guard generation == self.generation else { return }
     process = nil
     let detail = output.filter { !$0.isEmpty }.joined(separator: "\n")
-    retriesFailure = !detail.contains("--loopback-only")
+    retriesFailure = !detail.contains("Unknown option '--loopback-only'")
     if !retriesFailure {
       state = .failed(
         "This stim-server is too old to run on loopback only. Update it with npm install --global @stim-cli/server.")

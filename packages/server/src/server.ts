@@ -269,6 +269,8 @@ interface ServerHealth {
   tailscale: { state: TailscaleState['state']; dnsName?: string | null; backendState?: string; reason?: string };
   route?: ServeRoute;
   nativeViewerOpened: boolean;
+  /** Present and true when the server serves this Mac only, so a paired phone or Mac cannot connect. */
+  loopbackOnly?: true;
 }
 
 function healthTailscale(tailscale: TailscaleState): ServerHealth['tailscale'] {
@@ -2549,6 +2551,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       tailscale: healthTailscale(tailscale),
       route,
       nativeViewerOpened,
+      ...(options.loopbackOnly ? { loopbackOnly: true as const } : {}),
     };
     response
       .writeHead(startup.state === 'ready' ? 200 : 503, { 'content-type': 'application/json' })
