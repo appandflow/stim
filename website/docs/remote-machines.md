@@ -164,11 +164,13 @@ Copy this prompt to try it: "Run this app with `stim android --remote <machine>`
 Read `android.host.agent` from `stim status --json`, open the installed package
 with its remote config, and verify the first screen with agent-device."
 
-Desktop's **Run on** menu offers **This Mac**, **Auto**, and approved hosting
-Macs for iOS and Android. It remembers the choice per workspace and platform,
-falls back to This Mac if approval is removed, and keeps a recorded hosted
-session fixed until `stim stop`. Device tiles show the machine and Auto's reason,
-including when the run stays or waits locally.
+Desktop uses placement set by config or agents, for example
+`stim settings set android.remote auto --scope workspace` (or `ios.remote`),
+or per run `stim android --remote auto` / `stim android --remote <machine>`.
+New runs pass no `--remote` flag; recorded hosted sessions keep their machine
+until `stim stop`. When a device is not on this Mac, Desktop shows
+**on &lt;machine&gt;** on its tile, workspace page, viewer toolbar and sidebar row,
+with the placement reason as hover text. Local devices show no placement label.
 
 Stim Desktop and the phone app show an **on &lt;machine&gt;** label and view/control
 hosted Android through the client Mac's local stim-server relay. Turn on

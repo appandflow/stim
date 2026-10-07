@@ -135,15 +135,13 @@ struct DiscoveryTests {
     let one = Discovery.capHit(source: event, mac: mini, hosts: ["janics-mac-mini:7787"])
     #expect(one?.title == "Device limit reached. Run on janics-mac-mini?")
     #expect(one?.action == .runOnAuto(workspaceID: "fixture", platform: "ios"))
+    #expect(one?.detail == "Applies to agent runs too.")
     #expect(Discovery.capHit(source: event, mac: nil, hosts: ["a", "b"])?.title == "Device limit reached. Run on a hosting Mac?")
   }
 
-  @Test func capacityShowsNothingWhenApprovalIsUnknownOrTheWorkspaceAlreadyRunsRemotely() throws {
+  @Test func capacityShowsNothingWhenApprovalIsUnknown() throws {
     let event = try #require(source([refusal()]))
     #expect(Discovery.capHit(source: event, mac: mini, hosts: nil) == nil)
-    #expect(
-      Discovery.capHit(
-        source: event, mac: mini, hosts: ["mini"], isRemote: { id, platform in id == "fixture" && platform == "ios" }) == nil)
     let anonymous = Discovery.CapHitSource(at: now, workspaceID: nil, platform: "ios")
     #expect(Discovery.capHit(source: anonymous, mac: mini, hosts: ["mini"]) == nil)
     #expect(Discovery.capHit(source: anonymous, mac: mini, hosts: [])?.action == .addMachine(mac: mini, hostedSimulators: true))

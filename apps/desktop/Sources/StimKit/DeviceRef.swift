@@ -35,25 +35,21 @@ public enum DeviceRef: Hashable, Identifiable, Sendable {
     }
   }
 
-  public var isBootedLocalOwnedDevice: Bool {
-    guard isRunning, hostedMachine == nil, !isPhysical else { return false }
+  public var placement: DevicePlacementLabel? {
+    guard let machine = hostedMachine else { return nil }
+    let reason: String?
+    let selected: String?
     switch self {
-    case .ios(_, let device): return device.owned
-    case .android(_, let device): return device.owned
-    case .remote, .web: return false
-    }
-  }
-
-  public var placementReason: String? {
-    switch self {
-    case .ios(_, let d):
-      if let host = d.host { return host.selected == "auto" ? host.reason.map { "auto: " + $0 } : nil }
-      return d.devicePlacement.map { "auto: " + $0.reason }
-    case .android(_, let d):
-      if let host = d.host { return host.selected == "auto" ? host.reason.map { "auto: " + $0 } : nil }
-      return d.devicePlacement.map { "auto: " + $0.reason }
+    case .ios(_, let device):
+      reason = device.host?.reason ?? device.devicePlacement?.reason
+      selected = device.host?.selected
+    case .android(_, let device):
+      reason = device.host?.reason ?? device.devicePlacement?.reason
+      selected = device.host?.selected
     case .remote, .web: return nil
     }
+    return DevicePlacementLabel(
+      machine: machineName(machine), reason: reason.map { selected == "auto" ? "auto: " + $0 : $0 })
   }
 
   public var localEmulatorSerial: String? {
@@ -308,4 +304,9 @@ public enum FormFactor: Sendable {
   case tablet
   case dual
   case desktop
+}
+
+public struct DevicePlacementLabel: Hashable, Sendable {
+  public var machine: String
+  public var reason: String?
 }

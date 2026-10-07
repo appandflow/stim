@@ -163,14 +163,7 @@ final class DiscoveryCoordinator: ObservableObject {
     guard let (source, fetched) = capHit else { return }
     let current = source.workspaceID.flatMap(workspacePath).flatMap { machines.approvedHostingMachines(in: $0) }
     let hosts = settingsLoaded && hostingEntries.isEmpty ? [] : current ?? fetched
-    let prompt = Discovery.capHit(
-      source: source, mac: macs.first, hosts: hosts,
-      isRemote: { [weak self] id, platform in
-        guard let path = self?.workspacePath(id) else { return false }
-        return (platform.map { [$0] } ?? ["ios", "android"]).allSatisfy {
-          AppPreferences.runDestination(workspace: path, platform: $0, approvedMachines: hosts) != .thisMac
-        }
-      })
+    let prompt = Discovery.capHit(source: source, mac: macs.first, hosts: hosts)
     if let prompt { remember(prompt, rememberedAt: source.at) } else { pending[.capHit] = nil }
   }
 
