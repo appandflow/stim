@@ -28,6 +28,7 @@ struct WorkspaceDetail: View {
   @EnvironmentObject private var checks: BuildPlanChecks
   @ObservedObject private var server = ServerSession.shared
   @Environment(\.windowSize) private var windowSize
+  @Environment(\.tutorialHint) private var tutorialHint
   @State private var logsResizeStart: CGFloat?
   @AppStorage(AppPreferences.Key.logsDrawerHeight) private var logsHeight = Double(WorkspaceDetail.defaultLogsHeight)
   @AppStorage(AppPreferences.Key.showsLogs) private var showsLogs = false
@@ -86,6 +87,7 @@ struct WorkspaceDetail: View {
         }, close: { viewing = nil }
       )
       .environmentObject(actions)
+      .environment(\.tutorialHint, tutorialHint)
     }
     .sheet(item: $buildSheet) { selection in
       Group {
@@ -103,6 +105,7 @@ struct WorkspaceDetail: View {
       }
       .environmentObject(actions)
       .environmentObject(checks)
+      .environment(\.tutorialHint, tutorialHint)
     }
     .onQuitRequested {
       viewing = nil
@@ -141,19 +144,29 @@ struct WorkspaceDetail: View {
 
   private func content(devices: [DeviceRef], focused: DeviceRef?) -> some View {
     VStack(spacing: 0) {
-      WorkspaceHeaderLine(
-        cli: cli, env: env, page: page.isUnified ? page : nil,
-        openAppLogs: { app in
-          logWorkspacePath = app.path
-          logQuery.errorsOnly = false
-          showsLogs = true
-        },
-        openLogs: {
-          logQuery.errorsOnly = false
-          showsLogs = true
-        },
-        openBuild: { buildSheet = $0 }
-      )
+      HStack(spacing: Space.md) {
+        WorkspaceHeaderLine(
+          cli: cli, env: env, page: page.isUnified ? page : nil,
+          openAppLogs: { app in
+            logWorkspacePath = app.path
+            logQuery.errorsOnly = false
+            showsLogs = true
+          },
+          openLogs: {
+            logQuery.errorsOnly = false
+            showsLogs = true
+          },
+          openBuild: { buildSheet = $0 }
+        )
+        if !showsLogs, tutorialHint?.path == env.path,
+          ["logs", "refresh"].contains(tutorialHint?.step ?? "")
+        {
+          LogsToggleButton(isShown: false, errors: env.logs?.errorsSinceMarker ?? 0) {
+            showsLogs = true
+          }
+          .tutorialAnchor(.logsTab, workspace: env.path)
+        }
+      }
       .padding(.horizontal, Space.xxl)
       .padding(.vertical, Space.md)
       let earlier = ArchivedWorkspace.newestFirst(
@@ -180,6 +193,7 @@ struct WorkspaceDetail: View {
             cli: cli, env: page.isUnified ? logsApp : env, query: $logQuery, moment: $logMoment,
             page: page.isUnified ? page : nil, selectedApp: $logWorkspacePath
           )
+          .tutorialAnchor(.logsTab, workspace: env.path)
           .frame(height: Self.clampedLogsHeight(logsHeight, contentHeight: contentHeight))
         }
       }
@@ -399,6 +413,7 @@ struct WorkspaceDetail: View {
     )
     return
       tile
+      .tutorialAnchor(.deviceTile, workspace: env.path)
       .allowsHitTesting(tile.showsStoppedBar)
       .background {
         Button {

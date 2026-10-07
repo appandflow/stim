@@ -267,6 +267,7 @@ struct ReplayBar: View {
     .buttonStyle(.stim())
     .fixedSize()
     .help(isLive ? "Pause on the current frame" : playing ? "Pause" : "Play the recording")
+    .tutorialAnchor(.replay)
     .accessibilityLabel(showsPause ? "Pause" : "Play")
   }
 

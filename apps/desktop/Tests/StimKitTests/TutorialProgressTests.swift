@@ -43,6 +43,35 @@ private func log(
   return try JSONDecoder().decode(LogRecord.self, from: JSONSerialization.data(withJSONObject: fields))
 }
 
+@Test func tutorialArchiveDecisionRequiresExactTourPathAndRemovalAfterRunStart() throws {
+  let record = TutorialRecord(version: 1, tourPath: tourPath, startedAt: afterRebuild)
+  var entry = try #require(fixture("06-archived").archived?.first)
+  entry.removedAt = "2026-10-07T05:06:00.000Z"
+  #expect(record.archivedProjectRoots(in: [entry]).isEmpty)
+  entry.removedAt = "2026-10-07T05:05:00.000Z"
+  #expect(record.archivedProjectRoots(in: [entry]).isEmpty)
+  entry.removedAt = "2026-10-07T05:07:00.000Z"
+  #expect(record.archivedProjectRoots(in: [entry]) == [tourPath])
+  entry.projectRoot = tourPath + "-other"
+  entry.replacedBy = tourPath
+  #expect(record.archivedProjectRoots(in: [entry]).isEmpty)
+}
+
+@Test func tutorialBeginCheckpointDoesNotOfferRestartBeforeRunPromptCopy() throws {
+  let legacy = try JSONDecoder().decode(
+    TutorialRecord.self,
+    from: Data(
+      #"{"version":1,"startedAt":0,"step":"begin","done":[],"skipped":[],"manual":false}"#.utf8))
+  var progress = TutorialProgress()
+  let waiting = progress.update(TutorialInput(environment: nil, now: afterBuild, record: legacy))
+  #expect(!state("begin", in: waiting).detail.hasPrefix("No tutorial workspace"))
+  progress.copiedRunPrompt(now: afterBuild)
+  let beforeTimeout = progress.update(TutorialInput(environment: nil, now: afterBuild.addingTimeInterval(179)))
+  #expect(!state("begin", in: beforeTimeout).detail.hasPrefix("No tutorial workspace"))
+  let timedOut = progress.update(TutorialInput(environment: nil, now: afterBuild.addingTimeInterval(180)))
+  #expect(state("begin", in: timedOut).detail.hasPrefix("No tutorial workspace"))
+}
+
 @Test func tutorialFirstRunWaitsForBuildAndReportsColdPhases() throws {
   var progress = TutorialProgress()
   let started = try environment("01-started")
@@ -505,9 +534,9 @@ func tutorialArchiveDisabledRelaunchDoesNotCompleteBeforeFinish(step: String) {
   let viewer = TutorialViewerEvents()
   viewer.opened("old-tour")
   for _ in 0..<64 { viewer.input("new-tour") }
-  #expect(viewer.events == Array(repeating: .input("new-tour"), count: 64))
+  #expect(viewer.events.map(\.event) == Array(repeating: .input("new-tour"), count: 64))
   viewer.opened("latest-tour")
-  #expect(viewer.events.last == .opened("latest-tour"))
+  #expect(viewer.events.last?.event == .opened("latest-tour"))
   #expect(viewer.events.count == 64)
   viewer.reset()
   #expect(viewer.events.isEmpty)

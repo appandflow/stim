@@ -281,6 +281,7 @@ struct WorkspaceRow: View {
     TimelineView(.everyMinute) { _ in
       WorkspaceRowContent(env: env, now: Date(), place: place, showsGit: showsGit, openLogs: openLogs)
     }
+    .tutorialAnchor(.sidebarRow, workspace: env.path)
     .sidebarTag(.environment(env.path), selection: selection)
     .contextMenu {
       WorkspaceActionsMenu(

@@ -20,6 +20,7 @@ struct Inspector: View {
       VStack(alignment: .leading, spacing: Space.xxxl) {
         if env.runPlatforms.contains(where: { $0 == "ios" || $0 == "android" }) || env.macos != nil {
           BuildSection(cli: cli, env: env, openLogs: openLogs, openBuild: openBuild)
+            .tutorialAnchor(.buildSection, workspace: env.path)
             .id(env.path)
         }
 

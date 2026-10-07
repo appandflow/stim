@@ -9,6 +9,8 @@ struct AddMachineRequest {
   var hostedSimulators: Bool
 }
 
+enum TutorialEntry { case resume, begin }
+
 @MainActor
 final class OpenRequests: ObservableObject {
   static let shared = OpenRequests()
@@ -21,9 +23,15 @@ final class OpenRequests: ObservableObject {
   @Published var showsMachine = false
   @Published var pairsPhone = false
   @Published var addMachine: AddMachineRequest?
+  @Published var tutorialRequest: TutorialEntry?
   @Published var showsSetupGuide = false
   @Published var target: OversightTarget?
   var openMainWindow: (() -> Void)?
+
+  func showTutorial(_ entry: TutorialEntry = .resume) {
+    MainWindow.show()
+    tutorialRequest = entry
+  }
 
   /// Brings the main window forward, opening one when none is left, and shows the setup guide over it.
   func showSetupGuide() {
@@ -232,6 +240,7 @@ struct StimDesktopApp: App {
       UpdateCommands()
       CommandGroup(replacing: .help) {
         Button("Setup Guide\u{2026}") { OpenRequests.shared.showSetupGuide() }
+        Button("Stim Tutorial\u{2026}") { OpenRequests.shared.showTutorial() }
       }
       SidebarCommands()
       InspectorCommands()
