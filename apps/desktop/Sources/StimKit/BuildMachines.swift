@@ -198,7 +198,6 @@ public struct BuildMachineStatus: Decodable, Hashable, Identifiable, Sendable {
   public var dnsName: String?
   public var deviceId: String?
   public var requestedAt: String?
-  /// For a request waiting for approval: when it lapses, as an ISO 8601 timestamp.
   public var expiresAt: String?
   /// For an approved machine: whether it would take builds now, and each reason it would not.
   public var offloadable: Bool?
@@ -217,7 +216,7 @@ public struct BuildMachineStatus: Decodable, Hashable, Identifiable, Sendable {
 
   /// Whether it takes builds now: "Ready", or the first reason `stim doctor` gave with its remedy, such as
   /// "Stim build differs" and "update the build machine", or "Busy (load 8.2/core)"; its pairing state when it is not
-  /// approved. `blockers` lists every reason with its remedy. `detail` says the first remedy as a sentence.
+  /// approved. `reasons` lists every reason, one per line. `detail` says the same remedy as a sentence.
   public var readiness: MachineReadiness {
     let all = reasons.flatMap { $0.isEmpty ? nil : $0.joined(separator: "\n") }
     guard state == .approved, let offloadable else {
@@ -236,8 +235,6 @@ public struct BuildMachineStatus: Decodable, Hashable, Identifiable, Sendable {
     return MachineReadiness(title: reasons?.first ?? "Cannot take builds", remedy: nil, tone: .error, reasons: all)
   }
 
-  /// Every reason an approved machine does not take builds, each with its remedy from the per-code table; empty when
-  /// it is ready or not approved.
   public var blockers: [MachineBlocker] {
     guard state == .approved, offloadable == false else { return [] }
     let found = problems ?? []
@@ -285,8 +282,6 @@ public struct BuildMachineStatus: Decodable, Hashable, Identifiable, Sendable {
   /// When a request waiting for approval lapses, as stim-server sets it.
   public static let requestLapse = "The request lapses after 15 minutes."
 
-  /// When a pending request lapses, as a local time such as "Waiting for approval until 21:05."; the generic
-  /// `requestLapse` when doctor gave no usable `expiresAt`.
   public func lapseLine(timeZone: TimeZone = .current, locale: Locale = .current) -> String {
     guard let expiresAt, let date = Self.parseTimestamp(expiresAt) else { return Self.requestLapse }
     let formatter = DateFormatter()
@@ -329,13 +324,10 @@ public struct BuildMachineStatus: Decodable, Hashable, Identifiable, Sendable {
   }
 }
 
-/// One reason a build machine does not take builds, with what to do about it.
 public struct MachineBlocker: Equatable, Sendable {
   public var title: String
-  /// What doctor said, such as "Stim build 6bbe9103 there, e7749c90 here".
   public var reason: String?
   public var remedy: String?
-  /// A command that does the remedy, when there is one.
   public var command: String?
 
   public init(title: String, reason: String?, remedy: String? = nil, command: String? = nil) {
@@ -345,7 +337,6 @@ public struct MachineBlocker: Equatable, Sendable {
     self.command = command
   }
 
-  /// `Stim build differs \u{2014} update the build machine`, or the title alone.
   public var line: String { remedy.map { "\(title) \u{2014} \($0)" } ?? title }
 }
 

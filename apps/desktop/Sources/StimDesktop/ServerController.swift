@@ -213,7 +213,6 @@ final class ServerController: ObservableObject {
     state = .off
   }
 
-  /// Turning Serve to phones off stops a server Desktop owns and keeps watching one it does not.
   func stopServing() {
     switch state {
     case .running(_, owned: false), .notReady(_, owned: false): return
@@ -223,7 +222,6 @@ final class ServerController: ObservableObject {
     watch()
   }
 
-  /// Watches a stim-server already answering on the port, with this Desktop's Stim home, as not owned.
   private func watch() {
     guard case .off = state, !watching, !UserDefaults.standard.bool(forKey: AppPreferences.Key.servesPhones) else { return }
     watching = true
