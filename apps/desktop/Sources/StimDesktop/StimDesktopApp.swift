@@ -243,6 +243,11 @@ struct StimDesktopApp: App {
       CommandGroup(replacing: .help) {
         Button("Setup Guide\u{2026}") { OpenRequests.shared.showSetupGuide() }
         Button("Stim Tutorial\u{2026}") { OpenRequests.shared.showTutorial() }
+        #if DEBUG
+          Button("Replay notification animation") {
+            NotificationInbox.shared.arrivals.send()
+          }
+        #endif
       }
       SidebarCommands()
       InspectorCommands()
@@ -314,14 +319,17 @@ struct NavigationCommands: Commands {
   var body: some Commands {
     CommandGroup(after: .sidebar) {
       Divider()
-      Button("All devices") { navigation?.go(.wall) }
+      Button("Overview") { navigation?.go(.overview) }
         .keyboardShortcut("1", modifiers: .command)
         .disabled(navigation == nil)
-      Button("Notifications") { navigation?.go(.notifications) }
+      Button("Active worktrees") { navigation?.go(.wall) }
         .keyboardShortcut("2", modifiers: .command)
         .disabled(navigation == nil)
-      Button("Machine") { navigation?.go(.machine) }
+      Button("Notifications") { navigation?.go(.notifications) }
         .keyboardShortcut("3", modifiers: .command)
+        .disabled(navigation == nil)
+      Button("Machines") { navigation?.go(.machine) }
+        .keyboardShortcut("4", modifiers: .command)
         .disabled(navigation == nil)
     }
   }

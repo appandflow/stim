@@ -190,7 +190,7 @@ show refusals for removals started from its own workspace actions.
   Stim never deletes the SwiftPM cache.
 - **Machines.** Select **This Mac** for local disk, memory and cleanup, or a
   configured build machine for its readiness, capacity and build history.
-  Click the toolbar's CPU, memory or disk figure for details; **Open Machines**
+  Click the toolbar's CPU, memory or disk figure for details. While open, hover another resource figure to switch details; click outside to close. **Open Machines**
   in each popover opens the Machines page. CPU covers live workspace processes,
   while memory covers the whole Mac.
   **Link machine** opens the existing **Build Machines** settings flow, whose
@@ -260,7 +260,10 @@ show refusals for removals started from its own workspace actions.
   you** category lists only what agents cannot handle, such as a doctor
   finding, a signing failure or an expired device lease, with **Run**, **Copy
   command**, **Fix**, **Open logs** or **Show in Finder** on its row in
-  **Notifications**. It is Silent by default. The inbox starts with 50 matching
+  **Notifications**. It is Silent by default. New inbox entries briefly wiggle the
+  top-right bell and update its count without opening a large card. Reduce Motion
+  disables the wiggle. Background macOS alerts still follow notification settings.
+  The inbox starts with 50 matching
   notifications; **Show older notifications** loads another 50. Changing a filter
   returns to the first batch. **Mark all read** and **Clear** apply to all matching
   notifications, including rows that have not been loaded.
@@ -350,10 +353,15 @@ leaves the guest unchanged. Disconnects and unavailable native clipboard APIs
 report a failure. Physical devices, remote sessions and replay do not offer
 clipboard actions.
 
-The All devices and project wall creates rows and device tiles as you scroll.
+Overview opens first and groups active worktrees into rounded project cards, with up to
+three cards per row and one device preview per card. Titles, metrics and small previews are
+centered. Click anywhere on a project card to open its full project page. **Show more (N)** counts additional running devices and active worktrees without a running device. **Active worktrees** shows only running
+workspaces, with bordered cards and full-size previews.
+
+The Active worktrees and project wall creates rows and device tiles as you scroll.
 Offscreen previews pause and reconnect when you return to them.
 
-On the All devices and project wall, active workspaces without running or building
+On the Active worktrees and project wall, active workspaces without running or building
 devices use compact cards labelled **No running devices**, with Metro status,
 warnings and error links. CPU and RAM stay on the workspace page.
 
@@ -392,8 +400,8 @@ uses **Launching app** and **Verifying launch** labels.
 
 Closing the window leaves Stim Desktop running, so notifications and the phone
 server keep working. Click the Dock icon to reopen the window, or press
-Command-Q to quit. Command-1, Command-2 and Command-3 open All devices,
-Notifications and Machine.
+Command-Q to quit. Command-1 through Command-4 open Overview, Active worktrees, Notifications and Machines.
+The bell at the top right opens Notifications and shows the unread count; it stays visible when there are no unread notifications.
 
 Stim Desktop checks the npm registry once a day for a newer `stim`. When the
 `stim` it runs was installed by npm, pnpm or bun and is older, the sidebar

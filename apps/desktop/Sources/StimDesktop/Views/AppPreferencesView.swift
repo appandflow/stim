@@ -7,7 +7,7 @@ struct AppPreferencesView: View {
   let stimHome: String
   @AppStorage(AppPreferences.Key.appearance) private var appearance = Appearance.auto
   @AppStorage(AppPreferences.Key.sidebarStatus) private var status = StatusFilter.all
-  @AppStorage(AppPreferences.Key.defaultView) private var defaultView = DefaultView.allDevices
+  @AppStorage(AppPreferences.Key.defaultView) private var defaultView = DefaultView.overview
   @AppStorage(AppPreferences.Key.tileSize) private var tileSize = TileSize.medium
   @AppStorage(AppPreferences.Key.maxFramesPerSecond) private var framesPerSecond = 60.0
   @AppStorage(AppPreferences.Key.pausesHiddenFrames) private var pausesHidden = true

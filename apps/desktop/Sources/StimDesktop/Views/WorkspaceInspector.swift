@@ -164,7 +164,7 @@ struct ResourcesSection: View {
       SectionLabel(title: "Resources")
       HStack(alignment: .top, spacing: Space.md) {
         chart(
-          "cpu", "CPU", usage.cpuPercent.map(formatPercent) ?? "\u{2014}",
+          "speedometer", "CPU", usage.cpuPercent.map(formatPercent) ?? "\u{2014}",
           values: cpuHistory, minimumPeak: 100)
         chart(
           "memorychip", "Memory", usage.memoryMb.map(Format.memoryMb) ?? "\u{2014}",

@@ -4,6 +4,7 @@ import StimStores
 import SwiftUI
 
 enum SidebarItem: Hashable {
+  case overview
   case wall
   case project(Project)
   case environment(String)
@@ -20,16 +21,17 @@ struct RootView: View {
   private let buildMachines: BuildMachinesModel
   @ObservedObject private var actions: ActionCenter
   @ObservedObject private var operations: OperationLog
+  @ObservedObject private var inbox = NotificationInbox.shared
   private let autopilot: AutopilotRunner
   private let onboarding: Onboarding
   private let storage: StorageStore
   private let planChecks: BuildPlanChecks
   private let statsReader: StatsReader
   @StateObject private var tutorial = TutorialModel()
-  @State private var selection: SidebarItem? = .wall
-  @State private var previousSelection: SidebarItem? = .wall
+  @State private var selection: SidebarItem? = .overview
+  @State private var previousSelection: SidebarItem? = .overview
   @State private var restoredProject = false
-  @AppStorage(AppPreferences.Key.defaultView) private var defaultView = DefaultView.allDevices
+  @AppStorage(AppPreferences.Key.defaultView) private var defaultView = DefaultView.overview
   @AppStorage(AppPreferences.Key.lastProjectPath) private var lastProjectPath = ""
   @State private var projectFilter: Project?
   @State private var focusedDeviceID: String?
@@ -134,15 +136,8 @@ struct RootView: View {
         let summary = MachineSummary(store: store, metrics: metrics, gc: gc, width: summaryWidth) {
           selection = .machine
         }
-        if summary.hasContent {
-          ToolbarItem(id: summaryItemID, placement: .navigation) {
-            summary
-              .frame(width: showsWorkspace && inspector == .overlay ? max(0, summaryWidth) : nil, alignment: .leading)
-              .clipped()
-          }
-        }
+        ToolbarItem(placement: .primaryAction) { Spacer() }
         if showsWorkspace {
-          ToolbarItem(placement: .primaryAction) { Spacer() }
           ToolbarItem(placement: .primaryAction) {
             LogsToggleButton(isShown: showsLogs, errors: selectedPage?.errors ?? 0) {
               if !showsLogs, let page = selectedPage, page.isUnified, let app = page.soleErrorApp {
@@ -155,9 +150,21 @@ struct RootView: View {
             InspectorToggleButton(isShown: inspector != .hidden, action: toggleInspector)
           }
         }
+        if summary.hasContent {
+          ToolbarItem(id: summaryItemID, placement: .primaryAction) {
+            summary
+          }
+        }
+        if #available(macOS 26.0, *) {
+          ToolbarSpacer(.fixed, placement: .primaryAction)
+        }
+        ToolbarItem(id: "notifications", placement: .primaryAction) {
+          notificationButton
+        }
       }
     }
     .tutorialHighlights()
+
     .environment(\.tutorialHint, tutorialHint)
     .focusedSceneValue(
       \.inspectorToggle,
@@ -263,7 +270,7 @@ struct RootView: View {
       guard let payload, case .archived(let id) = selection,
         !(payload.archived ?? []).contains(where: { $0.id == id })
       else { return }
-      selection = previousSelection ?? .wall
+      selection = previousSelection ?? .overview
     }
     .onChange(of: selection) { old, item in
       if case .archived = item {
@@ -272,7 +279,7 @@ struct RootView: View {
       }
       restoredProject = true
       switch item {
-      case .wall:
+      case .overview, .wall:
         projectFilter = nil
         openRequests.selectedWorkspace = nil
       case .project(let project):
@@ -414,9 +421,31 @@ struct RootView: View {
     }
   }
 
+  private var notificationButton: some View {
+    Button {
+      selection = .notifications
+    } label: {
+      HStack(spacing: Space.xs) {
+        NotificationBell(selected: selection == .notifications)
+
+        let unread = inbox.inbox.unreadCount
+        if unread > 0 {
+          Pill(unread > 99 ? "99+" : "\(unread)", tone: .brand, size: .small)
+        }
+      }
+      .fixedSize()
+      .padding(Space.sm)
+      .padding(.vertical, Space.xs)
+    }
+    .buttonStyle(.hoverRow(radius: Radius.round, selected: selection == .notifications))
+    .accessibilityLabel("Notifications")
+    .accessibilityValue("\(inbox.inbox.unreadCount) unread")
+    .help("Open notifications")
+  }
+
   /// macOS moves the traffic lights and the sidebar toggle into the detail's toolbar when the sidebar is hidden.
   private var summaryWidth: CGFloat {
-    detailWidth - (columnVisibility == .detailOnly ? 200 : 80) - (showsWorkspace ? 88 : 0)
+    detailWidth - (columnVisibility == .detailOnly ? 200 : 80) - (showsWorkspace ? 88 : 0) - 80
       - (tutorial.isOpen ? WorkspaceDetail.inspectorWidth + 1 : 0)
       - (showsWorkspace && inspector == .column
         ? WorkspaceDetail.clampedInspectorWidth(inspectorWidth, detailWidth: detailWidth) + 1
@@ -430,7 +459,13 @@ struct RootView: View {
   }
 
   private func restoreLastProject() {
-    guard !restoredProject, defaultView == .lastProject, !lastProjectPath.isEmpty, selection == .wall else { return }
+    guard !restoredProject, selection == .overview else { return }
+    if defaultView == .allDevices {
+      restoredProject = true
+      selection = .wall
+      return
+    }
+    guard defaultView == .lastProject, !lastProjectPath.isEmpty else { return }
     guard let entry = store.projectList.first(where: { $0.project.root == lastProjectPath }) else { return }
     restoredProject = true
     selection = .project(entry.project)
@@ -444,7 +479,7 @@ struct RootView: View {
     let deviceID = owner.device.id
     let page: LaunchPage
     switch selection {
-    case .wall: page = .allDevices
+    case .overview, .wall: page = .allDevices
     case .environment(let current): page = .workspace(current)
     default: page = .other
     }
@@ -622,7 +657,9 @@ struct RootView: View {
     case .machine:
       MachineView(buildMachines: buildMachines, status: store, metrics: metrics, gc: gc, storage: storage, autopilot: autopilot)
     default:
-      WallView(store: store, metrics: metrics, project: projectFilter, selection: $selection, openLogs: openErrors)
+      WallView(
+        store: store, metrics: metrics, project: projectFilter, overview: selection == .overview,
+        selection: $selection, openLogs: openErrors)
     }
   }
 }
@@ -661,15 +698,64 @@ private struct PendingWorkspaceLink {
   var waited = false
 }
 
+private struct NotificationBell: View {
+  var selected: Bool
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
+  @State private var wiggles = 0
+
+  private struct Wiggle {
+    var angle = 0.0
+    var highlight = 0.0
+  }
+
+  var body: some View {
+    Image(systemName: "bell")
+      .font(.stim(.callout))
+      .keyframeAnimator(initialValue: Wiggle(), trigger: wiggles) { content, value in
+        content
+          .foregroundStyle(value.highlight > 0 ? Palette.primary : (selected ? Palette.primary : Palette.text))
+          .rotationEffect(.degrees(value.angle), anchor: .top)
+      } keyframes: { _ in
+        KeyframeTrack(\.angle) {
+          CubicKeyframe(-18, duration: 0.12)
+          CubicKeyframe(14, duration: 0.12)
+          CubicKeyframe(-10, duration: 0.12)
+          CubicKeyframe(6, duration: 0.12)
+          CubicKeyframe(0, duration: 0.16)
+        }
+        KeyframeTrack(\.highlight) {
+          MoveKeyframe(1)
+          LinearKeyframe(1, duration: 0.64)
+          MoveKeyframe(0)
+        }
+      }
+      .onReceive(NotificationInbox.shared.arrivals) {
+        if !reduceMotion {
+          wiggles += 1
+        }
+      }
+  }
+}
+
 struct MachineSummary: View {
   @ObservedObject var store: StatusStore
   var metrics: MetricsStore
   var gc: GcReportStore
   var width: CGFloat
   var openMachine: () -> Void
-  @State private var showsCPU = false
-  @State private var showsMemoryDetails = false
-  @State private var showsDisk = false
+  private enum Resource: Hashable {
+    case cpu, memory, disk
+  }
+
+  @State private var expandedResource: Resource?
+  @State private var resourceFrames: [Resource: CGRect] = [:]
+
+  private var resourceDetailsPresented: Binding<Bool> {
+    Binding(
+      get: { expandedResource != nil },
+      set: { if !$0 { expandedResource = nil } }
+    )
+  }
 
   /// macOS 26 draws a glass capsule around a toolbar item even when it draws nothing, so the item is declared only when `row` has content.
   var hasContent: Bool {
@@ -687,6 +773,22 @@ struct MachineSummary: View {
       }
     }
     .font(.stim(.callout))
+    .coordinateSpace(name: "machine-summary")
+    .popover(
+      isPresented: resourceDetailsPresented,
+      attachmentAnchor: .rect(
+        .rect(expandedResource.flatMap { resourceFrames[$0] } ?? .zero)),
+      arrowEdge: .bottom
+    ) {
+      switch expandedResource {
+      case .cpu: cpuPopover
+      case .memory: memoryPopover
+      case .disk:
+        DiskPopover(metrics: metrics, gc: gc, openMachine: openMachine)
+          .presentationBackground(Palette.surface)
+      case nil: EmptyView()
+      }
+    }
   }
 
   private func row(showsMemory: Bool, showsBar: Bool, showsReclaimable: Bool) -> some View {
@@ -698,31 +800,40 @@ struct MachineSummary: View {
           .help(abbreviatingHome(error))
       }
       if let cap = store.payload?.capacity {
-        HStack(spacing: Space.sm) {
-          StatusDot(color: Palette.success)
-          Text("\(cap.liveCount) live")
-        }
-        .help("\(countLabel(cap.liveCount, "live workspace")) on this Mac")
         if let cpu = metrics.totalCpuFraction {
           Button {
-            showsCPU.toggle()
+            expandedResource = .cpu
           } label: {
-            statItem(icon: "cpu", value: formatPercent(cpu * 100), tone: UsageThresholds.cpu(fraction: cpu))
+            statItem(icon: "speedometer", label: "CPU", value: formatPercent(cpu * 100), tone: UsageThresholds.cpu(fraction: cpu))
               .padding(Space.sm)
           }
           .buttonStyle(.hoverRow(radius: Radius.round))
           .accessibilityLabel("CPU details")
           .accessibilityValue(formatPercent(cpu * 100))
           .help("CPU of every live workspace's processes, simulators and emulators, as a percent of this Mac's cores")
-          .popover(isPresented: $showsCPU, arrowEdge: .bottom) { cpuPopover }
+          .onGeometryChange(for: CGRect.self) {
+            $0.frame(in: .named("machine-summary"))
+          } action: {
+            resourceFrames[.cpu] = $0
+          }
+          .onHover { hovering in
+            if hovering, expandedResource != nil {
+              var transaction = Transaction()
+              transaction.disablesAnimations = true
+              withTransaction(transaction) {
+                expandedResource = .cpu
+              }
+            }
+          }
         }
         if showsMemory, let memory = metrics.memory {
           Button {
-            showsMemoryDetails.toggle()
+            expandedResource = .memory
           } label: {
             HStack(spacing: Space.sm) {
               statItem(
-                icon: "memorychip", value: Format.memoryPair(usedBytes: memory.usedBytes, totalBytes: memory.totalBytes),
+                icon: "memorychip", label: "RAM",
+                value: Format.memoryPair(usedBytes: memory.usedBytes, totalBytes: memory.totalBytes),
                 tone: UsageThresholds.memory(memory.pressure))
               if showsBar {
                 ProgressView(value: min(1, Double(memory.usedBytes) / Double(max(1, memory.totalBytes))))
@@ -735,7 +846,20 @@ struct MachineSummary: View {
           .buttonStyle(.hoverRow(radius: Radius.round))
           .accessibilityLabel("Memory details")
           .accessibilityValue(Format.memoryPair(usedBytes: memory.usedBytes, totalBytes: memory.totalBytes))
-          .popover(isPresented: $showsMemoryDetails, arrowEdge: .bottom) { memoryPopover }
+          .onGeometryChange(for: CGRect.self) {
+            $0.frame(in: .named("machine-summary"))
+          } action: {
+            resourceFrames[.memory] = $0
+          }
+          .onHover { hovering in
+            if hovering, expandedResource != nil {
+              var transaction = Transaction()
+              transaction.disablesAnimations = true
+              withTransaction(transaction) {
+                expandedResource = .memory
+              }
+            }
+          }
           .help(
             "Memory used on this Mac, as Activity Monitor counts it. Stim's share: live workspaces \(store.payload?.machine?.memorySource == .footprint ? "use" : "commit") \(Format.gigabytes(mb: cap.committedMb)) of \(Format.gigabytes(mb: cap.totalMemoryMb))."
           )
@@ -743,14 +867,14 @@ struct MachineSummary: View {
       }
       if let lowest = metrics.volumes.min(by: { $0.freeBytes < $1.freeBytes }) {
         Button {
-          showsDisk.toggle()
+          expandedResource = .disk
         } label: {
           HStack(spacing: Space.sm) {
             statItem(
-              icon: "internaldrive", value: "\(Format.fileSize(lowest.freeBytes)) free",
+              icon: "internaldrive", label: "Disk", value: "\(Format.fileSize(lowest.freeBytes)) free",
               tone: UsageThresholds.disk(freeBytes: lowest.freeBytes))
             if showsReclaimable, let reclaimable = gc.report?.reclaimable, reclaimable.bytes > 0 {
-              Text("\u{00B7} \(Format.fileSize(reclaimable.bytes)) reclaimable").foregroundStyle(Palette.primary)
+              Text("\u{00B7} \(Format.fileSize(reclaimable.bytes)) reclaimable").foregroundStyle(Palette.secondary)
             }
           }
           .padding(Space.sm)
@@ -759,8 +883,19 @@ struct MachineSummary: View {
         .accessibilityLabel("Disk details")
         .accessibilityValue("\(Format.fileSize(lowest.freeBytes)) free")
         .help("Free space on the fullest volume holding the repositories, Stim home or simulators, without purgeable space")
-        .popover(isPresented: $showsDisk, arrowEdge: .bottom) {
-          DiskPopover(metrics: metrics, gc: gc, openMachine: openMachine).presentationBackground(Palette.surface)
+        .onGeometryChange(for: CGRect.self) {
+          $0.frame(in: .named("machine-summary"))
+        } action: {
+          resourceFrames[.disk] = $0
+        }
+        .onHover { hovering in
+          if hovering, expandedResource != nil {
+            var transaction = Transaction()
+            transaction.disablesAnimations = true
+            withTransaction(transaction) {
+              expandedResource = .disk
+            }
+          }
         }
       }
       if !store.watching, let at = store.updatedAt {
@@ -773,10 +908,12 @@ struct MachineSummary: View {
       }
     }
     .padding(.horizontal, Space.lg)
+    .padding(.vertical, Space.xs)
+    .background(Palette.surface, in: Capsule())
   }
 
   private var cpuPopover: some View {
-    MachineResourcePopover(title: "CPU", icon: "cpu", openMachine: openMachine) {
+    MachineResourcePopover(title: "CPU", icon: "speedometer", openMachine: openMachine) {
       if let cpu = metrics.totalCpuFraction {
         Text(formatPercent(cpu * 100)).font(.stim(.title)).monospacedDigit()
         ProgressView(value: min(1, cpu)).tint(Color(UsageThresholds.cpu(fraction: cpu)))
@@ -806,12 +943,25 @@ struct MachineSummary: View {
     }
   }
 
-  private func statItem(icon: String, value: String, tone: Tone) -> some View {
-    HStack(spacing: Space.xs) {
+  private func statItem(icon: String, label: String, value: String, tone: Tone) -> some View {
+    HStack(spacing: Space.sm) {
+      Rectangle()
+        .fill(Palette.secondary.opacity(0.3))
+        .frame(width: 1, height: 16)
+
       Image(systemName: icon)
-      Text(value).font(.stim(.caption, mono: true)).fixedSize()
+        .foregroundStyle(Palette.secondary)
+
+      Text(label)
+        .font(.stim(.caption))
+        .foregroundStyle(Palette.secondary)
+
+      Text(value)
+        .font(.stim(.caption, mono: true))
+        .fontWeight(.semibold)
+        .foregroundStyle(Color(tone))
     }
-    .foregroundStyle(Color(tone))
+    .fixedSize()
   }
 }
 

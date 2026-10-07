@@ -4,6 +4,10 @@ import StimKit
 import SwiftUI
 
 enum Theme {
+  static let sidebarBackground = Color(
+    light: 0xE8EAF0FF, dark: 0x0E0C13FF,
+    lightHighContrast: 0xDFE2EAFF, darkHighContrast: 0x0E0C13FF)
+
   /// Applies an appearance preference to every window.
   @MainActor static func apply(_ appearance: Appearance) {
     switch appearance {

@@ -1,3 +1,4 @@
+import Combine
 import Foundation
 import StimKit
 
@@ -6,6 +7,7 @@ final class NotificationInbox: ObservableObject {
   static let shared = NotificationInbox()
 
   @Published private(set) var inbox: Inbox
+  let arrivals = PassthroughSubject<Void, Never>()
 
   private let file: URL?
   #if DEBUG
@@ -32,7 +34,10 @@ final class NotificationInbox: ObservableObject {
     }
   }
 
-  func add(_ entry: InboxEntry) { update { $0.add(entry, now: Date()) } }
+  func add(_ entry: InboxEntry) {
+    update { $0.add(entry, now: Date()) }
+    arrivals.send()
+  }
   func markRead(_ id: String) { update { $0.markRead(id) } }
   func markAllRead(_ filter: InboxFilter) { update { $0.markAllRead(filter) } }
   func clear(_ filter: InboxFilter) { update { $0.clear(filter) } }

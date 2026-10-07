@@ -7,7 +7,6 @@ struct Sidebar: View {
   @ObservedObject var autopilot: AutopilotRunner
   @ObservedObject var onboarding: Onboarding
   let actions: ActionCenter
-  @ObservedObject private var inbox = NotificationInbox.shared
   @Binding var selection: SidebarItem?
   var openLogs: (String) -> Void
   @AppStorage(AppPreferences.Key.expandedProjects) private var expandedProjects = Data()
@@ -53,17 +52,18 @@ struct Sidebar: View {
           if entries.isEmpty { emptyText(options) }
         }
       } header: {
-        Text(options.grouping == .project ? "Projects" : "Workspaces").background(PlainSelectionHighlight())
+        SectionLabel(title: options.grouping == .project ? "Projects" : "Workspaces")
+          .background(PlainSelectionHighlight())
       }
     }
     .scrollContentBackground(.hidden)
-    .background(Palette.sidebar)
+    .background(Theme.sidebarBackground)
     .safeAreaInset(edge: .top, spacing: 0) {
       VStack(spacing: 0) {
         brand
         pinned
       }
-      .background(Palette.sidebar)
+      .background(Theme.sidebarBackground)
     }
     .safeAreaInset(edge: .bottom, spacing: 0) {
       SidebarFooter(store: store, autopilot: autopilot, onboarding: onboarding, actions: actions, selection: $selection)
@@ -88,17 +88,11 @@ struct Sidebar: View {
 
   private var pinned: some View {
     VStack(spacing: Space.xxs) {
-      PinnedRow(item: .wall, selection: $selection) {
-        SidebarLabel(title: "All devices", icon: "square.grid.2x2", selected: selection == .wall)
+      PinnedRow(item: .overview, selection: $selection) {
+        SidebarLabel(title: "Overview", icon: "square.grid.2x2", selected: selection == .overview)
       }
-      PinnedRow(item: .notifications, selection: $selection) {
-        SidebarLabel(title: "Notifications", icon: "bell", selected: selection == .notifications)
-        Spacer()
-        let unread = inbox.inbox.unreadCount
-        if unread > 0 {
-          Pill(unread > 99 ? "99+" : "\(unread)", tone: .brand, size: .small)
-            .help("\(unread) unread notification\(unread == 1 ? "" : "s")")
-        }
+      PinnedRow(item: .wall, selection: $selection) {
+        SidebarLabel(title: "Active worktrees", icon: "rectangle.stack", selected: selection == .wall)
       }
       PinnedRow(item: .machine, selection: $selection) {
         SidebarLabel(title: "Machines", icon: "internaldrive", selected: selection == .machine)
@@ -205,13 +199,10 @@ struct ProjectRow: View {
         .accessibilityHidden(true)
       Text(store.title(of: summary.project)).lineLimit(1).truncationMode(.middle)
       Spacer()
-      if summary.live > 0 {
-        Text("\(summary.live) live").font(.stim(.caption)).foregroundStyle(Palette.success).fixedSize()
-          .help("\(countLabel(summary.live, "live workspace")) of \(summary.total)")
-      } else if summary.settingUp > 0 {
+      if summary.live == 0, summary.settingUp > 0 {
         Text("\(summary.settingUp) new").font(.stim(.caption)).foregroundStyle(Palette.accent).fixedSize()
           .help("\(countLabel(summary.settingUp, "workspace")) warming or warmed, none live yet")
-      } else {
+      } else if summary.live == 0 {
         Text("\(summary.total)").font(.stim(.caption)).foregroundStyle(Palette.tertiary).fixedSize()
           .help("\(countLabel(summary.total, "workspace")), none live")
       }
@@ -560,7 +551,7 @@ struct SidebarFooter: View {
     }
     .padding(.horizontal, Space.md)
     .frame(height: 44)
-    .background(Palette.sidebar)
+    .background(Theme.sidebarBackground)
     .overlay(alignment: .top) { Rectangle().fill(Palette.border).frame(height: 1) }
   }
 

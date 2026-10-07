@@ -58,10 +58,15 @@ in the workspace directory:
 
 Click the toolbar's CPU, memory or disk figure for its details. Each popover
 includes **Open Machines** to open the Machines page.
+While details are open, hover another resource figure to switch the contents. Click outside to close.
 CPU covers live workspace processes; memory covers the whole Mac.
 
-**All devices**, **Notifications** and **Machines** stay pinned at the top of
-the sidebar; only the list below them scrolls. The sidebar lists projects as a
+The bell at the top right opens **Notifications** and shows the unread count.
+**Overview**, **Active worktrees** and **Machines** stay pinned at the top of
+the sidebar; only the list below them scrolls. Overview is the default launch page. It groups active worktrees into rounded project cards,
+with up to three cards per row and one device preview per card. The project title, metrics and
+small previews are centered. Click anywhere on a project card to open its full project page. Show more (N) counts additional running devices and active worktrees without a running device. Active worktrees shows only running workspaces in a vertical list
+with bordered cards and full-size previews. The sidebar lists projects as a
 tree. Each project expands to its workspaces,
 and selecting the project row shows all of its workspaces and devices. Projects
 with a live, warming or ready workspace start expanded, and the app remembers each project you
@@ -94,7 +99,7 @@ submenu.
 
 When a workspace that is not warming has no device, a small purple device
 illustration and a launch hint appear. Its animation stops under Reduce Motion.
-When **All devices** or a project has nothing running, the page shows three example prompts for a coding agent, picked at
+When **Overview**, **Active worktrees** or a project has nothing running, the page shows three example prompts for a coding agent, picked at
 random from the phone app's list each time the page appears, with a **Copy**
 button that reads **Copied** once the prompt is on the clipboard.
 
@@ -308,7 +313,7 @@ the list, and the app remembers it; a sheet too narrow for the list and a
 
 Escape releases a device that is taken over, and otherwise closes the viewer;
 closing it releases the device too. While the viewer is open, the device's
-tile stops streaming and says "Open in the viewer". Tiles on the All devices
+tile stops streaming and says "Open in the viewer". Tiles on the Active worktrees
 wall are previews too; clicking one opens its workspace. The wall creates workspace
 rows and device tiles as you scroll, and pauses previews after they leave the
 scrolling area. Returning to a tile reconnects its preview. Active workspaces without
@@ -1128,19 +1133,16 @@ stim-server's leases. The phone app and stim-server do read them, and do not cou
 
 Each category has a level, with the phone's names: **Alert**, **Silent** or
 **Off**. Every category is Silent by default, except **A Mac asks to build
-here**, which is Alert because a request lapses after 15 minutes. An Alert
-appears as a card in the main window's top right corner while that window is in
-front, newest on top, with its call to action (**Open workspace**, **Show
-device**, **Show page**, **Show build**, **Show machine**) and a dismiss button; clicking the
-card opens its target. Work started and finished cards leave after 6 seconds,
-unless the pointer is over them; stuck, repeated failure, machine and needs-you cards stay
-until dismissed. Otherwise an Alert is a macOS notification with sound, and
+here**, which is Alert because a request lapses after 15 minutes. New inbox entries
+briefly wiggle the top-right bell and update its unread count without opening a card.
+Reduce Motion disables the wiggle. When the main window is not in front,
+an Alert is a macOS notification with sound, and
 clicking it brings Stim Desktop up on the target. macOS asks for permission the
 first time one is posted. Silent and Off never interrupt.
 
-Every notification also lands in **Notifications**, pinned in the sidebar with
+Every notification also lands in **Notifications**, opened from the top-right bell with
 the unread count: newest first, grouped by day, each row with its category icon,
-title, body, time and the same call to action. Clicking a row, a card's action
+title, body, time and the same call to action. Clicking a row
 or a macOS notification opens the target and marks the row read. An Off category
 is listed as **Muted**, and an Alert held by quiet hours as **Quiet hours**, as
 in the phone app's inbox. The page filters by category and by workspace (or the
@@ -1193,8 +1195,7 @@ running: the Dock icon stays, the status watch, notifications, autopilot and
 `stim-server` keep working, and clicking the Dock icon or choosing **Open Stim**
 in the menu bar extra reopens the window. There is one main window; Command-N
 does not open another. **Quit Stim** (Command-Q) is the only way to stop the app,
-and it stops `stim-server` and the log followers. Command-1, Command-2 and
-Command-3 in the View menu open All devices, Notifications and Machine.
+and it stops `stim-server` and the log followers. Command-1 through Command-4 in the View menu open Overview, Active worktrees, Notifications and Machines.
 
 ## Notice cards
 

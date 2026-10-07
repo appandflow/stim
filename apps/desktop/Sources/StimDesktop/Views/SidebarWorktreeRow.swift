@@ -58,8 +58,10 @@ struct SidebarWorktreeRow: View {
             Text(summary.title).foregroundStyle(summary.active ? Palette.text : Palette.secondary)
               .lineLimit(1).truncationMode(.middle).layoutPriority(1)
             Spacer(minLength: 0)
-            Text(summary.status.text).font(.stim(.caption, weight: .medium)).foregroundStyle(Color(summary.status.tone))
-              .lineLimit(1).fixedSize()
+            if summary.status.text != "Running" {
+              Text(summary.status.text).font(.stim(.caption, weight: .semibold)).foregroundStyle(Color(summary.status.tone))
+                .lineLimit(1).fixedSize()
+            }
           }
           if archives.isEmpty, let session = summary.agents.first {
             SessionLine(session: session, others: summary.agents.count - 1)

@@ -132,11 +132,12 @@ public enum DiffViewer: String, CaseIterable, Sendable {
 }
 
 public enum DefaultView: String, CaseIterable, Sendable {
-  case allDevices, lastProject
+  case overview, allDevices, lastProject
 
   public var title: String {
     switch self {
-    case .allDevices: return "All devices"
+    case .overview: return "Overview"
+    case .allDevices: return "Active worktrees"
     case .lastProject: return "Last project"
     }
   }
