@@ -245,7 +245,7 @@ public struct BuildMachineStatus: Decodable, Hashable, Identifiable, Sendable {
       return readiness.remedy.map { $0.prefix(1).uppercased() + $0.dropFirst() + "." } ?? "Builds stay on this Mac for now."
     case .pending:
       let grant = deviceId.map { " or runs stim-server devices grant \($0) --build there" } ?? ""
-      return "Someone on \(machine) allows it in Stim Desktop\(grant). The request lapses after 15 minutes."
+      return "Someone on \(machine) approves it in Stim Desktop\(grant). The request lapses after 15 minutes."
     case .notAsked: return "This Mac has not asked it yet."
     case .revoked: return "It revoked this Mac, denied the request, or the request lapsed."
     case .nodeChanged:

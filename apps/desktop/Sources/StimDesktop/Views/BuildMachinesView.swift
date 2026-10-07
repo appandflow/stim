@@ -166,7 +166,7 @@ struct BuildMachinesView: View {
 
   private var footer: String {
     let base =
-      "offload.machines on this Mac. Use for builds adds a Mac and asks it for access with stim doctor --fix, which also asks again any listed Mac that has not approved this one. A person on that Mac allows it."
+      "offload.machines on this Mac. Use for builds adds a Mac and asks it for access with stim doctor --fix, which also asks again any listed Mac that has not approved this one. A person on that Mac approves it."
     guard let checkout else {
       return base + " Stim runs doctor in a workspace, and none is listed yet: start one with Stim first."
     }
