@@ -259,11 +259,8 @@ final class DiscoveryCoordinator: ObservableObject {
   private func perform(_ action: DiscoveryAction) {
     guard case .runOnAuto(let id, let platform) = action else { return Self.open(action) }
     guard let path = workspacePath(id) else { return }
-    for platform in Discovery.runOnAutoPlatforms(platform) {
-      UserDefaults.standard.set("auto", forKey: AppPreferences.Key.runDestination(workspace: path, platform: platform))
-    }
     Task {
-      for key in Discovery.runOnAutoSettings(platform: platform) {
+      for key in Discovery.runOnAutoPlatforms(platform).map({ "\($0).remote" }) {
         let result = await machines.settings.write(key, value: "auto", scope: .workspace, cwd: path)
         if let problem = Self.problem(result) {
           NoticeCenter.shared.show(

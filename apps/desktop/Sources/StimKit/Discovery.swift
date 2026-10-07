@@ -192,20 +192,16 @@ public enum Discovery {
     return DiscoveryPrompt(
       type: .capHit,
       title: "Device limit reached. Run on \(hosts.count == 1 ? machineName(hosts[0]) : "a hosting Mac")?",
-      detail: "Applies to agent runs too.",
+      detail: runOnAutoPlatforms(source.platform).count == 1
+        ? "Project setting: \(runOnAutoPlatforms(source.platform)[0]).remote = auto"
+        : "Project settings: remote = auto",
       actionTitle: "Use Auto",
       action: .runOnAuto(workspaceID: workspaceID, platform: source.platform), surface: .banner)
   }
 
-  /// The platforms Use Auto applies to: the refused one, or both when the event does not name a supported one.
   public static func runOnAutoPlatforms(_ platform: String?) -> [String] {
     let supported = ["ios", "android"]
     return platform.flatMap { supported.contains($0) ? [$0] : nil } ?? supported
-  }
-
-  /// The project settings Use Auto writes, which `stim ios|android` read and the Run on picker does not.
-  public static func runOnAutoSettings(platform: String?) -> [String] {
-    runOnAutoPlatforms(platform).map { "\($0).remote" }
   }
 
   public static func workspaceID(path: String) -> String {
@@ -273,8 +269,6 @@ public struct DiscoveryStore {
 
   public var setupCompleted: Bool { defaults.bool(forKey: SetupGuideProgress.completedKey) }
 
-  /// Reset once the `shown` state of the device-limit prompt, which used to offer only the setup wizard, so the
-  /// prompt with the Use Auto action shows again. A snooze or Don't suggest again is kept.
   public func migrate() {
     let version = defaults.integer(forKey: AppPreferences.Key.discoveryMigrations)
     guard version < 1 else { return }
