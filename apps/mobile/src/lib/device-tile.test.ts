@@ -84,6 +84,7 @@ describe('deviceTileState', () => {
       text: 'App not running',
       tone: 'warning',
     });
+    expect(deviceTileState(device({ app: { id: 'a', state: 'stopped' } }), env, NOW, true).text).toBe('Running');
     expect(deviceTileState(device({ platform: 'web', page: { url: 'u', error: 'x' } }), env, NOW).tone).toBe('warning');
   });
 

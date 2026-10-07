@@ -104,10 +104,6 @@ struct DeviceViewerToolbar: View {
           activityPill(badge)
         }
       }
-      if device.appStopped, env.appPresence(device) != AppPresence.none {
-        Pill(tone: .warning) { Text("App not running") }
-          .help("stim status sees no \(device.app?.id ?? "app") process on this device.")
-      }
       if case .web(let browser) = device, browser.pageFailed {
         Pill(tone: .warning) { Text("Page failed to load") }
           .help(browser.page?.error ?? "The page's latest load failed.")
