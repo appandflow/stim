@@ -1,3 +1,4 @@
+import { automaticDevicePlacement } from '../device-host/auto-placement.ts';
 import { createHash } from 'node:crypto';
 import { Command } from 'commander';
 import logsCommand from '../commands/logs.ts';
@@ -559,4 +560,61 @@ test('an unreachable Android stop retains the slot credential for retry', async 
   failure = 'closed';
   await expect(stopHostedAndroid(root)).rejects.toThrow('placement is kept');
   expect(existsSync(androidAgentRemoteConfig(root, 'default'))).toBe(true);
+});
+
+const autoPlacement = (localLive = false) =>
+  automaticDevicePlacement(
+    {
+      root,
+      slot: 'default',
+      platform: 'android',
+      selectors: {},
+      noWait: true,
+    },
+    {
+      peek: () => ({ count: 3, max: 3, queued: 1, localLive }),
+      capacity: () => ({ cpus: 4, loadPerCore: 5, builds: 0, maxBuilds: 0, maxLoadPerCore: 2 }),
+      memory: () => 'normal',
+    },
+  );
+
+test('auto uses an admitted offer with no-wait and closes its probe before reservation', async () => {
+  const result = await autoPlacement();
+  expect(result.placement).toMatchObject({ decision: 'hosted', machine: 'mini' });
+  expect(result.target?.selection).toMatchObject({ selected: 'auto' });
+  expect(methods.map((each) => each.method)).toContain('device-host.offer');
+  expect(methods.map((each) => each.method)).not.toContain('device-host.reserve');
+});
+
+test('auto reports a declined offer and falls to the local path without reserving', async () => {
+  declined = 'All configured hosted device reservations are occupied';
+  const result = await autoPlacement();
+  expect(result).toMatchObject({
+    target: null,
+    placement: { decision: 'local' },
+    skipped: [{ machine: 'mini', reason: 'declined: ' + declined }],
+  });
+  expect(methods.map((each) => each.method)).not.toContain('device-host.reserve');
+});
+
+test('a recorded session wins regardless of the current load and unknown sessions refuse', async () => {
+  writeHostedAndroid(root, 'default', placement);
+  const result = await autoPlacement();
+  expect(result.placement).toMatchObject({ decision: 'hosted', machine: 'mini', reason: 'recorded session on mini' });
+  expect(methods.map((each) => each.method)).not.toContain('device-host.offer');
+  state = 'unknown';
+  await expect(autoPlacement()).rejects.toMatchObject({ code: 'STIM_HOSTING_REFUSED' });
+  expect(readHostedAndroid(root).default?.session).toBe(session);
+});
+
+test('a stopped recorded session places again and a live local device remains local', async () => {
+  writeHostedAndroid(root, 'default', placement);
+  state = 'stopped';
+  const result = await autoPlacement(true);
+  expect(result).toMatchObject({
+    target: null,
+    placement: { decision: 'local', reason: "this workspace's device runs here" },
+  });
+  expect(readHostedAndroid(root)).toEqual({});
+  expect(methods.map((each) => each.method)).not.toContain('device-host.offer');
 });

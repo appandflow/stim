@@ -1,6 +1,7 @@
 import { stopHostedAndroid } from '../device-host/hosted-android.ts';
 import { stopHostedIos } from '../device-host/hosted-ios.ts';
 import {
+  isJsonObject,
   hostedIosRecords,
   hostedAndroidRecords,
   hostedNativeRecords,
@@ -52,6 +53,7 @@ import {
   readWorkspaceState,
   withWorkspaceStateLock,
   writeWorkspaceState,
+  updateWorkspaceState,
 } from '../workspace/workspace-state.ts';
 import { verifyCollectorOwnership } from '../collector/ownership.ts';
 import { teardownOwnedBrowser, teardownOwnedIosSim, teardownOwnedAvd } from '../devices/teardown.ts';
@@ -608,6 +610,25 @@ async function stopWorkspace({
     ok = false;
   });
   Object.assign(outcomes.device, hosted.devices);
+  updateWorkspaceState(root, (workspace) => {
+    const slots = isJsonObject(workspace.deviceSlots) ? workspace.deviceSlots : {};
+    for (const name of ['default', ...Object.keys(slots)]) {
+      if (hostedSlot !== undefined && name !== hostedSlot) continue;
+      const records = name === 'default' ? workspace : slots[name];
+      if (!isJsonObject(records)) continue;
+      for (const platform of ['ios', 'android'] as const) {
+        const hostOutcome = outcomes.device[`${platform}:host:${name}`];
+        if (hostOutcome?.status === 'failed' || (stillHolding && hostOutcome?.status !== 'shut-down')) continue;
+        if (
+          outcomes.device[name === 'default' || hostedSlot !== undefined ? platform : `${platform}:${name}`]?.status ===
+          'failed'
+        )
+          continue;
+        if (isJsonObject(records[platform])) delete records[platform].devicePlacement;
+      }
+    }
+    return workspace;
+  });
   const remote = remoteDevice === undefined ? readRemoteSession(root) : remoteDevice;
   const sessionId = typeof remote?.sessionId === 'string' ? remote.sessionId : null;
   if (sessionId) {

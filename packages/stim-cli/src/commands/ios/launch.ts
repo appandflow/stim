@@ -425,6 +425,7 @@ function installsOverWifi(d: IosDeps, udid: string, selectedWireless: boolean, n
 }
 
 interface FinishIosRunArgs {
+  devicePlacement?: ReportIosResultArgs['devicePlacement'];
   artifact: PreparedIosArtifact;
   d: IosDeps;
   root: string;
@@ -578,6 +579,7 @@ function launchFailureRemedy(
 }
 
 export async function finishIosRun({
+  devicePlacement,
   artifact,
   d,
   root,
@@ -952,6 +954,7 @@ export async function finishIosRun({
 
   const uploadsAbandoned = await artifact.completeUploads();
   const facts = reportIosResult({
+    devicePlacement,
     root,
     slot,
     json,

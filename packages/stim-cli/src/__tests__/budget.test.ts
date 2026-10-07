@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import {
   enforceBudget,
   inspectBudget,
+  peekBudget,
   resolveBudget,
   type Budget,
   type BudgetDeps,
@@ -194,4 +195,14 @@ describe('reclaiming in a scratch STIM_HOME with a floor above the free disk', (
     expect(existsSync(join(workspaceDir(other), 'derived-data'))).toBe(false);
     expect(existsSync(join(workspaceDir(current), 'derived-data'))).toBe(true);
   });
+});
+
+test('placement budget peek reports shortfalls without running reclaim steps', async () => {
+  process.env.STIM_BUDGET_MAX_COMMITTED_MEMORY_GB = '1';
+  const { deps, steps } = fakeDeps([], [2 * GB]);
+  expect(await peekBudget(apps, deps)).toContain('memory committed');
+  expect(steps).toEqual([]);
+  process.env.STIM_BUDGET_MAX_COMMITTED_MEMORY_GB = '3';
+  expect(await peekBudget(apps, deps)).toBeNull();
+  expect(steps).toEqual([]);
 });

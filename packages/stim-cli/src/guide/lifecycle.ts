@@ -271,8 +271,9 @@ If Stim is not installed globally, replace stim with npx stim.
 
 A person on the host approves device-host access, separately from build, read
 and control. The setup in hosted-ios also serves Android. android.remote sets
-a workspace default. eas and proxy remain backends; auto refuses STIM_BAD_ARG
-until automatic placement ships. No flag or setting runs on this Mac.
+a workspace default. eas and proxy remain backends. --remote auto or
+android.remote = auto places automatically; see hosted-ios for the shared
+policy. No flag or setting runs on this Mac.
 
 A named Mac is strict: refusal, unreachable, declined or failed preparation
 returns STIM_HOSTING_REFUSED without fallback. --device, a different recorded
@@ -409,7 +410,35 @@ If Stim is not installed globally, replace stim with npx stim.
 The same setup serves macos --remote. Approval is separate from build, read
 and phone control. Set ios.remote to the machine name for a workspace default;
 no flag or setting runs here. eas and proxy keep their remote backend meanings.
-auto is accepted but refuses with STIM_BAD_ARG until automatic placement ships.
+--remote auto (or ios.remote = auto / android.remote = auto) stays here when
+there is a free concurrency.maxDevices slot (0 means unlimited), no device
+waiter ahead, normal host memory pressure, no budget shortfall,
+and 5-minute load per core below offload.maxLoadPerCore. Without hosting.machines,
+auto is local. An unknown local device count also stays local; boot admission
+still decides. The default without a flag or setting stays local.
+
+Otherwise Stim asks every approved hosting.machines host in parallel, with a
+3-second probe timeout and this run's model/runtime or image/profile selectors.
+A compatible choice, no declined reason, normal memory pressure and available
+capacity are required. With a free local slot, a host must report a lower load;
+with a full cap or a queue ahead, an admitted host with unknown load is allowed.
+Hosts rank by the build preference (flag > STIM_OFFLOAD_MACHINE > offload.machine)
+when it names a machine, then lowest load, most free memory and hosting.machines order. Automatic build
+offload resolves later, after the device architecture is known.
+
+When no host admits, auto runs here and may wait in the existing FIFO device
+slot queue; --no-wait and --wait 0 refuse with STIM_AT_CAPACITY. The placement
+line explains the decision and the skipped hosts. JSON progress goes to stderr.
+A recorded hosted session wins over load; a live local owned slot stays here.
+A stopped recorded session places again; unreachable or unknown sessions refuse.
+
+A reserve refusal after a successful offer can race with another run. It fails
+with STIM_HOSTING_REFUSED naming the host and asking to retry. Stim does not
+try the next host or local placement after the build has targeted that host's
+architecture, and never falls back once a hosted session exists. A named machine remains strict. --device
+cannot combine with auto. eas/proxy and macOS placement are unchanged.
+--simulator-app is honoured locally with auto and ignored with a note on a host.
+Placement measures budgets without reclaiming; only a new local run reclaims.
 Android --remote <machine> uses an owned emulator on that Mac; see hosted-android.
 
 A named Mac is strict: STIM_HOSTING_REFUSED names its reason; nothing boots

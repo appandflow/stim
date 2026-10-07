@@ -72,6 +72,15 @@ test('agent access survives placement reads and status without a token or local 
   expect(JSON.stringify(hostedIosStatus(parsed))).not.toContain(placement.device.udid);
 });
 
+test('automatic placement selection and reason survive public status and old records remain readable', () => {
+  const automatic = { ...placement, selected: 'auto', reason: 'load 3.1/core here' };
+  const parsed = parseHostedIosPlacement(automatic)!;
+  expect(parsed).toEqual(automatic);
+  expect(hostedIosStatus(parsed)).toMatchObject({ selected: 'auto', reason: automatic.reason });
+  const { selected, ...old } = placement;
+  expect(parseHostedIosPlacement(old)?.selected).toBe(selected);
+});
+
 test.each([undefined, 0, 2, { unknown: 'simulator inventory unavailable' }])(
   'native offer parsing preserves optional local capacity across a JSON round trip: %j',
   (localDevices) => {

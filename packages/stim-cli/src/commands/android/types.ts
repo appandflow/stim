@@ -66,6 +66,7 @@ export interface FailExtra {
 }
 
 export interface AndroidRecord {
+  devicePlacement?: import('@stim-cli/core/state').DevicePlacement;
   buildMachine?: string;
   builtOn?: string;
   configuration?: string | null;

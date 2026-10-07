@@ -1376,8 +1376,18 @@ test('stop --json prints exactly one line of JSON on stdout', async () => {
 });
 
 test('stop visits all device slots and reports a named-slot failure without skipping siblings', async () => {
+  const placement = { decision: 'hosted', machine: 'mini', reason: 'busy' };
+  writeFileSync(
+    workspaceStateFile(tmpRoot),
+    JSON.stringify({
+      ios: { devicePlacement: placement },
+      android: { devicePlacement: placement },
+      deviceSlots: { phone: { ios: { devicePlacement: placement } }, tablet: { ios: { devicePlacement: placement } } },
+    }),
+  );
   const visited: string[] = [];
   const { opts } = seams({
+    root: tmpRoot,
     project: {
       platforms: { ios: { deviceUdid: 'DEFAULT', owned: true } },
       deviceSlots: {
@@ -1397,6 +1407,12 @@ test('stop visits all device slots and reports a named-slot failure without skip
   expect(result.outcomes.device['ios:phone']?.status).toBe('failed');
   expect(result.outcomes.device['ios:tablet']?.status).toBe('shut-down');
   expect(result.outcomes.device['ios:external']?.status).toBe('skipped');
+  expect(readWorkspaceState(tmpRoot)?.ios).not.toHaveProperty('devicePlacement');
+  expect(readWorkspaceState(tmpRoot)?.android).not.toHaveProperty('devicePlacement');
+  expect(readWorkspaceState(tmpRoot)?.deviceSlots).toEqual({
+    phone: { ios: { devicePlacement: placement } },
+    tablet: { ios: {} },
+  });
 });
 
 test.each([
@@ -1414,6 +1430,15 @@ test.each([
         collectors: { [stoppedCollectorKey]: stopped, 'ios:tablet': tablet },
         supervisor: { pid: 333, processToken: 'metro' },
         launches: { [stoppedCollectorKey]: launch, 'ios:tablet': launch },
+        ios: { devicePlacement: { decision: 'hosted', machine: 'mini', reason: 'busy' } },
+        android: { devicePlacement: { decision: 'local', reason: 'room' } },
+        deviceSlots: {
+          phone: {
+            ios: { devicePlacement: { decision: 'local', reason: 'room' } },
+            android: { devicePlacement: { decision: 'hosted', machine: 'mini', reason: 'busy' } },
+          },
+          tablet: { ios: { devicePlacement: { decision: 'local', reason: 'room' } } },
+        },
       }),
     );
     takeLease({ root: tmpRoot, platform: 'ios', slot, id: 'STOPPED-HW', kind: 'declared', durationMs: 60000 });
@@ -1439,6 +1464,15 @@ test.each([
     expect(calls.freed).toEqual([]);
     expect(readCollectorState(tmpRoot)).toEqual({ 'ios:tablet': tablet });
     expect(readWorkspaceState(tmpRoot)?.launches).toEqual({ 'ios:tablet': launch });
+    const state = readWorkspaceState(tmpRoot)!;
+    const records = slot === 'default' ? state : (state.deviceSlots as Record<string, Record<string, unknown>>).phone!;
+    expect(records.ios).not.toHaveProperty('devicePlacement');
+    expect(records.android).not.toHaveProperty('devicePlacement');
+    expect(state.deviceSlots).toMatchObject({ tablet: { ios: { devicePlacement: { decision: 'local' } } } });
+    expect(state.ios).toEqual(
+      slot === 'phone' ? { devicePlacement: { decision: 'hosted', machine: 'mini', reason: 'busy' } } : {},
+    );
+
     expect(readSupervisorState(tmpRoot)?.pid).toBe(333);
     expect(listLeaseFiles().map((entry) => entry.id)).toEqual(['TABLET-HW']);
     expect(result.outcomes.port).toMatchObject({ status: 'kept', port: 8083 });

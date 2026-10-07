@@ -10,6 +10,7 @@ export interface HostedNativePlacement<D> {
   appAttempt: string;
   device: D | null;
   selected: string;
+  reason?: string;
   agent: HostedAgentAccess;
 }
 
@@ -42,7 +43,8 @@ export function parseHostedNativePlacement(
     session: value.session,
     appAttempt:
       typeof value.appAttempt === 'string' && /^[a-zA-Z0-9_-]{1,128}$/.test(value.appAttempt) ? value.appAttempt : '',
-    selected: value.machine,
+    selected: typeof value.selected === 'string' && parseMachine(value.selected) ? value.selected : value.machine,
+    ...(typeof value.reason === 'string' ? { reason: value.reason } : {}),
     device: parseHostedPlatformDevice(value.device, platform) as HostedIosDevice | HostedAndroidDevice | null,
     agent: parseHostedAgentAccess(value.agent) ?? { driver: 'none', setting: 'hosting.agentDriver' },
   };

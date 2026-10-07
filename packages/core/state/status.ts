@@ -115,7 +115,14 @@ export interface BuildDetail {
 export type BuildCacheHit = 'local' | 'remote' | false;
 
 /** A platform's most recent `ios` or `android` run in one workspace. */
+export interface DevicePlacement {
+  decision: 'local' | 'hosted' | 'waited-locally';
+  reason: string;
+  machine?: string;
+}
+
 export interface LastBuildReport {
+  devicePlacement?: DevicePlacement;
   platform: StatsPlatform;
   status: 'ok' | 'failed';
   cacheHit: BuildCacheHit;
@@ -555,6 +562,7 @@ export interface MetroBundleState {
 }
 
 export interface SimulatorState {
+  devicePlacement?: DevicePlacement;
   host?: HostedIosStatus;
   name: string | null;
   udid: string;
@@ -570,6 +578,7 @@ export interface SimulatorState {
 }
 
 export interface AndroidDeviceState {
+  devicePlacement?: DevicePlacement;
   host?: HostedAndroidStatus;
   name: string | undefined;
   owned: boolean;

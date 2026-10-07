@@ -59,3 +59,12 @@ test('public host facts exclude the host serial and AVD name and private transpo
     agent: placement.agent,
   });
 });
+
+test('automatic placement selection and reason survive public status and old records remain readable', () => {
+  const automatic = { ...placement, selected: 'auto', reason: 'load 3.1/core here' };
+  const parsed = parseHostedAndroidPlacement(automatic)!;
+  expect(parsed).toEqual(automatic);
+  expect(hostedAndroidStatus(parsed)).toMatchObject({ selected: 'auto', reason: automatic.reason });
+  const { selected, ...old } = placement;
+  expect(parseHostedAndroidPlacement(old)?.selected).toBe(selected);
+});

@@ -36,14 +36,17 @@ Use stop --slot <name> for one slot, or plain stop for the whole workspace.
 
 HOSTED IOS AND ANDROID
 
-For ios --remote <machine>, read guide lifecycle hosted-ios.
-For android --remote <machine>, read guide lifecycle hosted-android. Native
+For ios --remote <machine|auto>, read guide lifecycle hosted-ios.
+For android --remote <machine|auto>, read guide lifecycle hosted-android. Native
 logcat records arrive through stim logs, including --errors and --json;
 Desktop and the phone view/control it through the local stim-server relay.
 Stop before switching
 between a local simulator and a hosting Mac. Hosted Debug requires the local
 Metro supervisor; restart a missing or older one with stim stop; stim start.
-It never falls back here; stop reconciles the recorded host before changing placement.
+A named Mac never falls back here; auto can use the local device queue when no
+host admits. Auto keeps a live local slot or recorded hosted session. Follow the
+placement reason and the reported device. Stop reconciles a recorded host
+before changing named placement.
 For hosted iOS or Android, use agent-device <command> --remote-config <file>
 from ios.host.agent or android.host.agent in stim status --json. Open the
 installed app first; never use the host UDID or serial locally. See guide

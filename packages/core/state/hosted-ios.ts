@@ -11,7 +11,7 @@ import type { WorkspaceState } from './workspace-state.ts';
 export interface HostedIosPlacement extends HostedNativePlacement<HostedIosDevice> {}
 
 /** Public hosting facts; the host's UDID and private Metro gateway are excluded. */
-export type HostedIosStatus = Pick<HostedIosPlacement, 'machine' | 'session' | 'selected' | 'agent'> & {
+export type HostedIosStatus = Pick<HostedIosPlacement, 'machine' | 'session' | 'selected' | 'reason' | 'agent'> & {
   device: { name: string; runtime: string } | null;
   /** The latest session probe in status, independent of a conflicting local simulator's state. */
   state?: string;
@@ -26,6 +26,7 @@ export function hostedIosStatus(placement: HostedIosPlacement): HostedIosStatus 
     machine: placement.machine,
     session: placement.session,
     selected: placement.selected,
+    ...(placement.reason ? { reason: placement.reason } : {}),
     agent: placement.agent,
     device: placement.device ? { name: placement.device.deviceType, runtime: placement.device.runtime } : null,
   };

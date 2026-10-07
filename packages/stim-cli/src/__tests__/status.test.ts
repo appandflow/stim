@@ -1178,7 +1178,8 @@ test.each(['default', 'tablet'].flatMap((slot) => ['Shutdown', 'Booted', 'unknow
     vi.spyOn(hostedClient, 'probeHostedSession').mockResolvedValue({ state: 'ready' });
     writeHostedIos(root, slot, {
       machine: 'mini',
-      selected: 'mini',
+      selected: 'auto',
+      reason: 'load 3.1/core here',
       session: '12345678-1234-1234-1234-123456789abc',
       appAttempt: 'attempt',
       device: {
@@ -1220,15 +1221,16 @@ test.each(['default', 'tablet'].flatMap((slot) => ['Shutdown', 'Booted', 'unknow
       state !== 'Shutdown',
     );
     const plain = (await runStatus()).join('\n');
-    expect(plain).toContain('iOS 27.0');
+    expect(plain).toContain('iOS 27.0) on mini (auto: load 3.1/core here)');
+    expect(ios.host).toMatchObject({ selected: 'auto', reason: 'load 3.1/core here' });
     expect(plain).toContain('agent: agent-device <command> --remote-config /tmp/hosted-ios.json');
     expect(plain.includes(state === 'unknown' ? 'UDID-ABC' : 'stim-projA')).toBe(state !== 'Shutdown');
   },
 );
 
-test.each(['default', 'tablet'])(
-  'status renders a hosted Android emulator in slot %s without host identities',
-  async (slot) => {
+test.each(['default', 'tablet'].flatMap((slot) => ['mini', 'auto'].map((selected) => ({ slot, selected }))))(
+  'status renders a hosted Android emulator in slot $slot selected $selected without host identities',
+  async ({ slot, selected }) => {
     const root = join(tmpHome, 'app');
     mkdirSync(root);
     writeFileSync(join(root, 'package.json'), '{}');
@@ -1236,7 +1238,8 @@ test.each(['default', 'tablet'])(
     vi.spyOn(hostedClient, 'probeHostedSession').mockResolvedValue({ state: 'ready' });
     writeHostedAndroid(root, slot, {
       machine: 'mini',
-      selected: 'mini',
+      selected,
+      ...(selected === 'auto' ? { reason: 'load 3.1/core here' } : {}),
       session: '12345678-1234-1234-1234-123456789abc',
       appAttempt: 'app',
       device: {
@@ -1271,7 +1274,9 @@ test.each(['default', 'tablet'])(
     });
     expect(environment.slots ?? []).not.toEqual(expect.arrayContaining([expect.objectContaining({ slot: 'default' })]));
     const plain = (await runStatus()).join('\n');
-    expect(plain).toContain('pixel_7 (API 30) on mini');
+    expect(plain).toContain(`pixel_7 (API 30) on mini${selected === 'auto' ? ' (auto: load 3.1/core here)' : ''}`);
+    expect(android.host.selected).toBe(selected);
+    expect(android.host.reason).toBe(selected === 'auto' ? 'load 3.1/core here' : undefined);
     expect(plain).toContain('agent: agent-device <command> --remote-config /tmp/hosted-android.json');
     for (const output of [JSON.stringify(payload), plain]) {
       expect(output).not.toContain('stim-private-host');

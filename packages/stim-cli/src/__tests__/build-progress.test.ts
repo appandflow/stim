@@ -15,7 +15,13 @@ import {
   startBuildProgress,
   type ActiveBuildRecord,
 } from '../engine/build-progress.ts';
-import { BUILD_HISTORY_LIMIT, readBuildDetail, readBuildHistory, readLastBuilds } from '@stim-cli/core/state';
+import {
+  BUILD_HISTORY_LIMIT,
+  readDevicePlacement,
+  readBuildDetail,
+  readBuildHistory,
+  readLastBuilds,
+} from '@stim-cli/core/state';
 import {
   emptyStats,
   HISTORY_LIMIT,
@@ -720,3 +726,33 @@ describe('estimates', () => {
     });
   });
 });
+
+test.each(['default', 'tablet'])(
+  'run placement facts stay on slot %s and survive history, while a later run clears stale placement',
+  (slot) => {
+    const claim = takeClaim();
+    const progress = startBuildProgress({ root, platform: 'ios', slot, claim });
+    try {
+      const host = { machine: 'mini', session: 'session' };
+      const saved = slot === 'default' ? { ios: { host } } : { deviceSlots: { tablet: { ios: { host } } } };
+      writeWorkspaceState(root, { ...readWorkspaceState(root), ...saved });
+      const placement = { decision: 'hosted', reason: 'load 3.1/core here', machine: 'mini' };
+      recordFinishedBuild(root, finished(new Date(T0).toISOString(), { devicePlacement: placement }));
+      const state = readWorkspaceState(root);
+      expect(readDevicePlacement(state, 'ios', slot)).toEqual(placement);
+      expect(readDevicePlacement(state, 'ios', slot === 'default' ? 'tablet' : 'default')).toBeNull();
+      expect(readLastBuilds(state).ios?.devicePlacement).toEqual(placement);
+      expect(readBuildHistory(state).ios?.[0]).toMatchObject({ slot, devicePlacement: placement });
+      recordFinishedBuild(root, finished(new Date(T0 + 1).toISOString()));
+      expect(readDevicePlacement(readWorkspaceState(root), 'ios', slot)).toBeNull();
+      const device =
+        slot === 'default'
+          ? readWorkspaceState(root)?.ios
+          : (readWorkspaceState(root)?.deviceSlots as Record<string, { ios: unknown }>)?.[slot]?.ios;
+      expect(device).toMatchObject({ host });
+    } finally {
+      progress.clear();
+      releaseClaim(claim);
+    }
+  },
+);

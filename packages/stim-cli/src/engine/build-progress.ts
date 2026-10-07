@@ -11,6 +11,7 @@ import {
   BUILD_HISTORY_LIMIT,
   BUILD_PHASES,
   LAST_BUILD_KEYS,
+  isJsonObject,
   parseMissReason,
   workspaceBuildDetailFile,
   type ActiveBuildState,
@@ -348,6 +349,7 @@ export function completedPhaseDurations(phases: ActiveBuildRecord['phases']): Bu
 }
 
 const HISTORY_FIELDS = [
+  'devicePlacement',
   'platform',
   'status',
   'configuration',
@@ -400,6 +402,19 @@ export function recordFinishedBuild(
       slot: own?.slot ?? 'default',
       phases: own ? phaseDurations(own.phases, now()) : {},
     };
+    const slot = own?.slot ?? 'default';
+    const slots = isJsonObject(state.deviceSlots) ? state.deviceSlots : {};
+    const savedSlot = isJsonObject(slots[slot]) ? slots[slot] : {};
+    const savedDevice = slot === 'default' ? state[platform] : savedSlot[platform];
+    if (record.devicePlacement || isJsonObject(savedDevice)) {
+      const device = isJsonObject(savedDevice) ? { ...savedDevice } : {};
+      if (record.devicePlacement) device.devicePlacement = record.devicePlacement;
+      else delete device.devicePlacement;
+      state =
+        slot === 'default'
+          ? { ...state, [platform]: device }
+          : { ...state, deviceSlots: { ...slots, [slot]: { ...savedSlot, [platform]: device } } };
+    }
     return withHistoryEntry({ ...state, lastBuild: record, [LAST_BUILD_KEYS[platform]]: record }, platform, entry);
   });
 }

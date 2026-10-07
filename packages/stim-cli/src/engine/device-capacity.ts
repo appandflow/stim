@@ -343,6 +343,43 @@ export function checkDeviceCapacity({
   return deviceCapacityRefusal({ platform, project, slot, max, ...inventory });
 }
 
+export function peekDeviceSlots({
+  platform,
+  project,
+  slot = 'default',
+  max = getConcurrencyLimits().maxDevices,
+  sources = {},
+}: {
+  platform: 'ios' | 'android';
+  project: ProjectRecord | null;
+  slot?: string;
+  max?: number;
+  sources?: InventorySources;
+}): { count: number | null; max: number; queued: number; localLive: boolean } {
+  try {
+    const inventory = readInventory(sources);
+    if ('code' in inventory) return { count: null, max, queued: 0, localLive: false };
+    const owned = deviceSlotPlatforms(project, slot)?.[platform]?.owned === true;
+    return {
+      count: inventoryKeys(inventory).size,
+      max,
+      queued: liveWaiters().length,
+      localLive:
+        owned &&
+        workspaceHasLiveDevice({
+          platform,
+          project,
+          slot,
+          sims: inventory.sims,
+          adbEmulators: liveEmulatorPorts(inventory.adb),
+        }),
+    };
+  } catch (error) {
+    if (!isClaimRefusal(error)) throw error;
+    return { count: null, max, queued: 0, localLive: false };
+  }
+}
+
 export interface DeviceSlotWaitPolicy {
   waitMs?: number;
   signal?: AbortSignal;

@@ -88,6 +88,7 @@ export function resolveSimulatorAppFlag(
   flag: string | undefined,
   physical: boolean,
   remoteBackend: string | null,
+  automatic = false,
 ): { simulatorApp?: IosSimulatorApp } | { refusal: FailArgs } {
   if (flag === undefined) return {};
   let simulatorApp: IosSimulatorApp;
@@ -96,7 +97,7 @@ export function resolveSimulatorAppFlag(
   } catch (error) {
     return { refusal: { code: 'STIM_BAD_ARG', message: (error as Error).message } };
   }
-  if (physical || remoteBackend) {
+  if (physical || (remoteBackend && !automatic)) {
     return {
       refusal: {
         code: 'STIM_BAD_ARG',

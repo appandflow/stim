@@ -1,3 +1,5 @@
+import { writeDevicePlacement } from '../device-host/ios-state.ts';
+import type { DevicePlacement } from '@stim-cli/core/state';
 import { hostedMetroSettings } from '../device-host/metro-gateway.ts';
 import { workspaceId } from '@stim-cli/core';
 import { acquireIosArtifact, type PreparedIosArtifact } from './ios/artifact.ts';
@@ -24,7 +26,7 @@ import {
   connectIosTarget,
   hostedIosBuildTarget,
   hostedIosSelectors,
-  selectIosTarget,
+  selectIosPlacement,
 } from './ios/remote.ts';
 import { finishHostedIosRun } from './ios/hosted.ts';
 import type { CompilationCacheActivity, DevServerStart } from '../engine/build-facts.ts';
@@ -186,7 +188,7 @@ export function registerIos(program: Command, deps: Partial<IosDeps> = {}): void
     )
     .option(
       '--remote <target>',
-      'Run on eas, proxy, or an approved Mac in hosting.machines; named Macs never fall back locally. auto is not available yet.',
+      'Run on eas, proxy, or an approved Mac in hosting.machines; named Macs never fall back locally. auto places on an approved Mac when this Mac is full or busy.',
       (value) => {
         if (parseMachine(value)) return value.trim();
         throw new InvalidArgumentError('expected eas, proxy, auto, or a hosting Mac name');
@@ -393,6 +395,7 @@ async function runIos(
   let compilationCache: CompilationCacheActivity = COMPILATION_CACHE_NOT_RUN;
   let reclaimed: ReclaimedStep[] = [];
   let buildMachine = 'auto';
+  let devicePlacement: DevicePlacement | undefined;
   let builtConfiguration: string | null = null;
 
   const fail = ({
@@ -420,6 +423,7 @@ async function runIos(
       writeLastBuild(
         root,
         lastBuildRecord({
+          devicePlacement,
           buildMachine,
           ...build,
           configuration: builtConfiguration,
@@ -437,6 +441,7 @@ async function runIos(
           code,
           message: message ?? null,
           remedy: remedy ?? null,
+          ...(devicePlacement ? { devicePlacement } : {}),
           ...(compilationCache.status === 'not-run' ? {} : { compilationCache }),
           ...(lease === undefined ? {} : { lease }),
           ...(reclaimed.length ? { reclaimed } : {}),
@@ -534,15 +539,53 @@ async function runIos(
     waitMs: deviceSlotWaitMs,
     displayName: basename(root),
     ...deviceWaitRun.policy,
+    onWait: (ms: number) => {
+      deviceWaitRun.policy.onWait?.(ms);
+      if (devicePlacement?.decision === 'local' && ms > 0) devicePlacement.decision = 'waited-locally';
+    },
   };
 
   const isExpo = d.detectIsExpo(root);
   const schemeRefusal = explicitSchemeRefusal(root, buildScheme, isExpo, d);
   if (schemeRefusal) return fail(schemeRefusal);
-  const remoteSelection = selectIosTarget({ root, slot, opts, settings, physical, release, metroCheck, d });
+  const remoteSelection = await selectIosPlacement({
+    root,
+    slot,
+    opts,
+    settings,
+    physical,
+    release,
+    metroCheck,
+    d,
+    deviceType,
+    runtime,
+    validateSelectors: () =>
+      deviceModelRefusal({
+        slot,
+        deviceTypeFlag: opts.deviceType,
+        runtimeFlag: opts.runtime,
+        deviceType,
+        runtime,
+        physical,
+        remoteBackend: null,
+        deviceTypeOrigin: d.settingOriginScope(d.settingsLayers(settingsContext), 'ios.deviceType'),
+        runtimeOrigin: d.settingOriginScope(d.settingsLayers(settingsContext), 'ios.runtime'),
+        listRuntimes: d.listIosRuntimes,
+      }),
+    noWait: deviceSlotWaitMs === 0,
+    note,
+    phase,
+  });
   if ('failure' in remoteSelection) return fail(remoteSelection.failure);
+  devicePlacement = remoteSelection.devicePlacement;
+  writeDevicePlacement(root, slot, PLATFORM, devicePlacement);
   const { machine: hostedMachine, backend: remoteBackend } = remoteSelection;
-  const viewer = resolveSimulatorAppFlag(opts.simulatorApp, physical, hostedMachine ?? remoteBackend);
+  const viewer = resolveSimulatorAppFlag(
+    opts.simulatorApp,
+    physical,
+    hostedMachine ?? remoteBackend,
+    Boolean(remoteSelection.auto),
+  );
   if ('refusal' in viewer) return fail(viewer.refusal);
   const { simulatorApp } = viewer;
   const settingsLayersForOrigin = d.settingsLayers(settingsContext);
@@ -565,7 +608,7 @@ async function runIos(
   if ('failure' in connected) return fail(connected.failure);
   const hostedTarget = connected.target;
   try {
-    const budget = await iosPlacementBudget(d, root, note, Boolean(hostedTarget));
+    const budget = await iosPlacementBudget(d, root, note, Boolean(hostedTarget), remoteSelection.budget);
     reclaimed = budget.reclaimed;
     if (budget.refusal) return fail(budget.refusal);
     const backendConnection = await connectIosBackend(root, remoteBackend, opts.deviceType, d);
@@ -731,7 +774,7 @@ async function runIos(
           note(chalk.yellow(`No Metro port is reserved for this workspace; wiring the app to ${DEFAULT_METRO_PORT}.`));
         metroPort = pin.port ?? metroPort ?? DEFAULT_METRO_PORT;
       }
-      hostedIosMetroNote(Boolean(hostedTarget), settings, note);
+      hostedIosMetroNote(Boolean(hostedTarget), settings, note, opts.simulatorApp);
       if (physical && metroPort !== null && !(await resolveLanOrigin())) return false;
       if (remoteDevice && metroPort !== null) {
         const reachable = await d.ensureMetroReachable({
@@ -932,6 +975,7 @@ async function runIos(
           elapsed,
           startedAt,
           closeWriter: () => writer?.close(),
+          devicePlacement,
           recordRun,
           reclaimed,
           devServer,
@@ -1016,6 +1060,7 @@ async function runIos(
           closeWriter: () => writer?.close?.(),
           lease: leaseHandle,
           releaseLease,
+          devicePlacement,
           recordRun,
           reclaimed,
           devServer,

@@ -598,6 +598,16 @@ export async function enforceBudget(
   return { status: 'ok', reclaimed, budget, measure, short };
 }
 
+export async function peekBudget(root: string, overrides: Partial<BudgetDeps> = {}): Promise<string | null> {
+  const outcome = await enforceBudget(
+    { root, note: () => {}, dryRun: true },
+    { ...overrides, step: async () => ({ targets: [], failures: 0 }) },
+  );
+  if (outcome.status !== 'ok') return outcome.refusal.message;
+  const shortfall = describeShortfall(outcome.budget, outcome.measure, outcome.short);
+  return shortfall.length ? shortfall.join('; ') : null;
+}
+
 export async function budgetGate(
   args: { root: string; note: (line: string) => void },
   overrides: Partial<BudgetDeps> = {},

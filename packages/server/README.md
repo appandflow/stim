@@ -797,7 +797,13 @@ placement still needs to check that contract before selecting hosted Metro.
 Bare React Native uses the worker `RCT_jsLocation`. Bridge readiness and
 manifest requests are not launch proof; development remains `unverified` until
 the workspace observes the app's own bundle delivery.
-This is a protocol API for approved clients; automatic placement remains in [#2266](https://github.com/appandflow/stim/issues/2266).
+Approved clients use `stim ios|android --remote auto` for automatic device placement.
+They stay local while there is a free slot, no queued device run, normal memory
+pressure, no budget refusal and load below `offload.maxLoadPerCore`. Otherwise
+they rank compatible offers from `hosting.machines` and select a host, or wait
+locally if none admits. A reserve refusal after an offer fails with
+`STIM_HOSTING_REFUSED` and asks to retry; it does not re-place the built app.
+Automatic native macOS placement remains separate work.
 
 ### Hosted viewer relay
 

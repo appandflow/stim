@@ -40,6 +40,7 @@ export async function finishHostedIosRun({
   | 'recordRun'
   | 'reclaimed'
   | 'devServer'
+  | 'devicePlacement'
 > & {
   target: HostedIosTarget;
   d: IosDeps;

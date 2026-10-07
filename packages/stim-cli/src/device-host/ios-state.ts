@@ -5,6 +5,7 @@ import {
   HOSTED_METRO_REQUESTS_KEY,
   hostedMetroRequests,
   isJsonObject,
+  type DevicePlacement,
   type HostedIosPlacement,
   type HostedAndroidPlacement,
   type HostedNativePlacement,
@@ -34,6 +35,26 @@ export function readHostedNative(
     }),
   );
   return slot === undefined ? placements : placements[slot] ? { [slot]: placements[slot] } : {};
+}
+
+export function writeDevicePlacement(
+  root: string,
+  slot: string,
+  platform: 'ios' | 'android',
+  placement: DevicePlacement | undefined,
+): void {
+  if (!placement) return;
+  updateWorkspaceState(root, (state) => {
+    const slots = isJsonObject(state.deviceSlots) ? state.deviceSlots : {};
+    const saved = isJsonObject(slots[slot]) ? slots[slot] : {};
+    const current = slot === 'default' ? state[platform] : saved[platform];
+    const record = { ...(isJsonObject(current) ? current : {}), devicePlacement: placement };
+    if (slot === 'default') return { ...state, [platform]: record };
+    return {
+      ...state,
+      deviceSlots: { ...slots, [slot]: { ...saved, [platform]: record } },
+    };
+  });
 }
 
 export function writeHostedNative(

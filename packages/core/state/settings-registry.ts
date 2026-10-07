@@ -154,7 +154,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
     },
     scopes: PROJECT,
     description:
-      'Default iOS remote target: eas, proxy, or an approved Mac in hosting.machines; auto is not available yet',
+      'Default iOS remote target: eas, proxy, or an approved Mac in hosting.machines; auto places on an approved Mac when this Mac is full or busy',
   },
   {
     key: 'ios.simslimProfile',
@@ -229,7 +229,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
     },
     scopes: PROJECT,
     description:
-      'Default Android remote target: eas, proxy, or an approved Mac in hosting.machines; auto is not available yet',
+      'Default Android remote target: eas, proxy, or an approved Mac in hosting.machines; auto places on an approved Mac when this Mac is full or busy',
   },
   {
     key: 'metro.tunnel',
@@ -709,7 +709,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
     scopes: MACHINE,
     default: 2,
     description:
-      'Load per core (5-minute load average divided by the CPU count) at which a Mac counts as saturated: a build machine declines offloaded builds, and auto offload stops preferring this Mac',
+      'Load per core (5-minute load average divided by the CPU count) at which a Mac counts as saturated: a build machine declines offloaded builds, and auto offload stops preferring this Mac; also the busy threshold for automatic iOS and Android device placement',
   },
   {
     key: 'offload.workerRoot',

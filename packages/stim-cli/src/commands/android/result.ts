@@ -121,6 +121,7 @@ export function androidFacts({
 }
 
 export function lastBuildRecord({
+  devicePlacement,
   fingerprint,
   cacheKey,
   cacheHit,
@@ -141,6 +142,7 @@ export function lastBuildRecord({
   offloadedTo = null,
   offloadFallback = null,
 }: {
+  devicePlacement?: import('@stim-cli/core/state').DevicePlacement;
   buildMachine?: string;
   builtOn?: string;
   offloadedTo?: string | null;
@@ -177,6 +179,7 @@ export function lastBuildRecord({
     configuration: configuration ?? null,
   };
   if (errorCode) record.errorCode = errorCode;
+  if (devicePlacement) record.devicePlacement = devicePlacement;
   record.buildMachine = buildMachine;
   if (builtOn) record.builtOn = builtOn;
   if (offloadedTo) record.offloadedTo = offloadedTo;
@@ -314,6 +317,7 @@ export function reportAndroidResult({
   });
   writer.close();
 
+  if (record.devicePlacement) facts.devicePlacement = record.devicePlacement;
   if (json) {
     emit(JSON.stringify({ ...facts, ...(links ? { links } : {}), ...(reclaimed.length ? { reclaimed } : {}) }));
   } else {

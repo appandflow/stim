@@ -1,6 +1,7 @@
-import { connectAndroidHosting } from './android/remote.ts';
+import { automaticDevicePlacement } from '../device-host/auto-placement.ts';
+import { selectAndroidPlacement } from './android/remote.ts';
 import { prepareHostedAndroid, placeHostedAndroid } from '../device-host/hosted-android.ts';
-import { readHostedAndroid, writeHostedAndroid } from '../device-host/ios-state.ts';
+import { readHostedAndroid, writeHostedAndroid, writeDevicePlacement } from '../device-host/ios-state.ts';
 import { hostedMetroSettings } from '../device-host/metro-gateway.ts';
 import { finishHostedAndroidRun } from './android/hosted.ts';
 import { workspaceId } from '@stim-cli/core';
@@ -136,7 +137,7 @@ import type { FailExtra, AndroidRecord, RunAndroidResult, AndroidBootLike } from
 import { acquireAndroidArtifact } from './android/artifact.ts';
 import { persistLastBuild } from './android/result.ts';
 import { finishAndroidRun } from './android/launch.ts';
-import { resolveAndroidRunPlan } from './android/plan.ts';
+import { androidDeviceSelectorRefusal, resolveAndroidRunPlan } from './android/plan.ts';
 import { planAndroid } from './android/next-build.ts';
 
 export { androidFacts, lastBuildRecord } from './android/result.ts';
@@ -237,7 +238,7 @@ export function registerAndroid(program: Command): void {
     )
     .option(
       '--remote <target>',
-      'Run on eas, proxy, or a named approved Mac from hosting.machines; auto is not available yet',
+      'Run on eas, proxy, or a named approved Mac from hosting.machines; auto places on an approved Mac when this Mac is full or busy',
       (value) => {
         if (!parseMachine(value))
           throw new InvalidArgumentError('expected eas, proxy, auto, or a tailnet machine name');
@@ -300,6 +301,7 @@ export function registerAndroid(program: Command): void {
 }
 
 interface RunAndroidOptions {
+  automaticDevicePlacement?: typeof automaticDevicePlacement;
   prepareHostedAndroid?: typeof prepareHostedAndroid;
   placeHostedAndroid?: typeof placeHostedAndroid;
   readHostedAndroid?: typeof readHostedAndroid;
@@ -812,6 +814,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
           code,
           message,
           remedy: remedy ?? null,
+          ...(record.devicePlacement ? { devicePlacement: record.devicePlacement } : {}),
           ...(ccacheActivity.status === 'not-run' ? {} : { ccache: ccacheActivity }),
           ...(lease === undefined ? {} : { lease }),
           ...(reclaimed.length ? { reclaimed } : {}),
@@ -870,34 +873,52 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     waitMs: plan.deviceSlotWaitMs,
     displayName: basename(root),
     waitingFor: (info: Parameters<typeof progress.waitingFor>[0]) => progress.waitingFor(info, 'device-slot'),
-    onWait: (ms: number) => stats.addDeviceSlotWaitMs(ms),
+    onWait: (ms: number) => {
+      stats.addDeviceSlotWaitMs(ms);
+      if (record.devicePlacement?.decision === 'local' && ms > 0) record.devicePlacement.decision = 'waited-locally';
+    },
   };
-  const { build: buildPlan, target, isExpo, cacheProviderConfig } = plan;
+  const { build: buildPlan, isExpo, cacheProviderConfig } = plan;
+
   const { variant, release, cache: cachePolicy } = buildPlan;
   record.configuration = variant ?? 'debug';
   const useBuildCache = cachePolicy.read;
-  const physical = target.kind === 'physical';
-  const remoteBackend = target.kind === 'remote' ? target.backend : null;
-  const selectors =
-    target.kind === 'hosted'
-      ? {
-          ...(target.systemImage ? { systemImage: target.systemImage } : {}),
-          ...(target.deviceProfile ? { deviceProfile: target.deviceProfile } : {}),
-        }
-      : {};
-  const hosting = await connectAndroidHosting({
+  const hosting = await selectAndroidPlacement({
     root,
     slot,
-    machine: target.kind === 'hosted' ? target.machine : null,
+    target: plan.target,
     release,
     metroCheck,
-    selectors,
+    noWait: plan.deviceSlotWaitMs === 0,
+    buildMachine: options.buildMachine,
     read: options.readHostedAndroid,
     resolveSerial: resolveAvdSerial,
     prepare: options.prepareHostedAndroid,
+    automatic: options.automaticDevicePlacement,
+    localSelectors: (target) =>
+      androidDeviceSelectorRefusal(
+        {
+          settingsContext,
+          slot,
+          systemImageFlag,
+          deviceProfileFlag,
+          systemImage: target.systemImage,
+          deviceProfile: target.deviceProfile,
+          physical: false,
+          remoteBackend: null,
+        },
+        { listSystemImages, listDeviceProfiles },
+      ),
+    checkBudget: options.checkBudget,
+    note: out,
+    phase,
   });
   if ('failure' in hosting) return fail(hosting.failure.code, hosting.failure.message, hosting.failure.remedy);
-  const hostedTarget = hosting.target;
+  const { target, hostedTarget, budget, selectors } = hosting;
+  record.devicePlacement = hosting.devicePlacement;
+  writeDevicePlacement(root, slot, PLATFORM, record.devicePlacement);
+  const physical = target.kind === 'physical';
+  const remoteBackend = target.kind === 'remote' ? target.backend : null;
   if (hostedTarget) {
     if (settings.androidEmulatorApp !== undefined)
       phase('device', 'androidEmulatorApp is ignored on a hosting Mac; the emulator boots headless.');
@@ -907,9 +928,6 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
         'metro.publicUrl and metro.tunnel are ignored on a hosting Mac; Metro uses the private tailnet bridge.',
       );
   }
-  const budget = hostedTarget
-    ? { reclaimed: [], refusal: null }
-    : await (options.checkBudget ?? budgetGate)({ root, note: out });
   reclaimed = budget.reclaimed;
   if (budget.refusal) return fail(budget.refusal.code, budget.refusal.message, budget.refusal.remedy);
   const remoteContext = remoteBackend
