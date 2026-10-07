@@ -56,7 +56,7 @@ struct ViewOptionsButton: View {
   var projects: [Project]
   var counts: [StatusFilter: Int]
   var title: (Project) -> String
-  @State private var isPresented = false
+  @Binding var isPresented: Bool
   let prefs = SidebarPreferences()
 
   var body: some View {

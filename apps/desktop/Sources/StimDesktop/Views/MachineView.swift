@@ -10,6 +10,7 @@ struct MachineView: View {
   var gc: GcReportStore
   @ObservedObject var storage: StorageStore
   @ObservedObject var autopilot: AutopilotRunner
+  @ObservedObject var tips: TipCoordinator
   @EnvironmentObject private var actions: ActionCenter
   @Environment(\.openSettings) private var openSettings
   @AppStorage("settingsTab") private var settingsTab = "app"
@@ -50,6 +51,16 @@ struct MachineView: View {
           }
           .buttonStyle(.stim())
         }
+        if let variant = Tips.emptyState(
+          gate: tips.usageGate, machines: buildMachines.entries, settingsError: buildMachines.settings.error,
+          selectedMachine: machine, macs: buildMachines.macs)
+        {
+          BuildMachinesEmptyState(
+            add: {
+              OpenRequests.shared.addMachine = AddMachineRequest(
+                machineID: buildMachines.macs?.first?.id, hostedSimulators: false)
+            }, needsTailscale: variant == .tailscale)
+        }
         if let failure = buildMachines.settingsFailure {
           Text(failure).font(.stim(.footnote)).foregroundStyle(Palette.secondary).textSelection(.enabled)
         }
@@ -81,6 +92,7 @@ struct MachineView: View {
     }
     .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { width = $0 }
     .task(id: checkout) {
+      await buildMachines.refreshTailnet()
       while !Task.isCancelled {
         await buildMachines.refresh(checkout: checkout)
         try? await Task.sleep(for: .seconds(60))

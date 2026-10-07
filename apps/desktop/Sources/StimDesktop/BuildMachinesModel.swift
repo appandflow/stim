@@ -17,6 +17,7 @@ final class BuildMachinesModel {
 
   /// Whether Tailscale is running, once checked.
   private(set) var tailscaleRunning: Bool?
+  private(set) var macs: [TailnetMac]?
   private(set) var working: String?
   private(set) var writeFailure: String?
   private(set) var runs = 0
@@ -199,6 +200,11 @@ final class BuildMachinesModel {
     let result = await Result.awaiting { try await statsReader.machine() }
     guard run == latestStatsRun, !Task.isCancelled else { return }
     stats.record(result)
+  }
+
+  func refreshTailnet() async {
+    let environment = await cli.value.environment
+    macs = await Task.detached { Tailnet.status(environment: environment).flatMap(Tailnet.macs(statusJSON:)) }.value
   }
 
   func load(checkout: String?) async {

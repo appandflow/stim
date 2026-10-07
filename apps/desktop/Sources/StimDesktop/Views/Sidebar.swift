@@ -10,6 +10,8 @@ struct Sidebar: View {
   @ObservedObject private var inbox = NotificationInbox.shared
   @Binding var selection: SidebarItem?
   var openLogs: (String) -> Void
+  @ObservedObject var tips: TipCoordinator
+  @State private var showsViewOptions = false
   @AppStorage(AppPreferences.Key.expandedProjects) private var expandedProjects = Data()
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
   let prefs = SidebarPreferences()
@@ -67,6 +69,16 @@ struct Sidebar: View {
     }
     .safeAreaInset(edge: .bottom, spacing: 0) {
       VStack(spacing: 0) {
+        if let topic = tips.topic, !onboarding.showsGuide {
+          TipCard(
+            topic: topic, hasNext: tips.hasNext,
+            perform: {
+              if topic == .hideWorkspaces || topic == .statusFilter { showsViewOptions = true }
+              tips.perform()
+            }, next: tips.next, close: tips.close
+          )
+          .padding(Space.md)
+        }
         HiddenWorkspacesFooter(
           count: store.sidebarStatusCounts(options)[.hidden] ?? 0, showing: options.statuses.contains(.hidden)
         ) {
@@ -81,6 +93,7 @@ struct Sidebar: View {
         }
         SidebarFooter(store: store, autopilot: autopilot, onboarding: onboarding, actions: actions, selection: $selection)
       }
+      .background(Palette.sidebar)
     }
     .onAppear { forgetStaleHidden() }
     .onChange(of: staleHidden) { forgetStaleHidden() }
@@ -154,7 +167,7 @@ struct Sidebar: View {
         projects: Array(Set(store.projectList.map(\.project) + (store.payload?.archived ?? []).map(\.sidebarProject))).sorted {
           $0.name.lowercased() < $1.name.lowercased()
         },
-        counts: store.sidebarStatusCounts(prefs.options), title: store.title(of:))
+        counts: store.sidebarStatusCounts(prefs.options), title: store.title(of:), isPresented: $showsViewOptions)
     }
     .padding(.horizontal, Space.xl)
     .padding(.vertical, Space.md)

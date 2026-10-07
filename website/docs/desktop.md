@@ -525,3 +525,29 @@ changing system preferences. Release builds exclude it. See the [desktop develop
 ## Suggestions
 
 Desktop suggests build machines, hosted simulators, cache review, or phone pairing when recent builds, tailnet peers, disk pressure, or device limits make them useful. Each kind shows once unless you dismiss it with the X to snooze it for 7 days, after which it may show again. Choose **Don't suggest again** to dismiss that kind permanently. Device-limit suggestions use refusals from Desktop commands and recent `stats --json` capacity events, including agent terminal runs, within 6 hours of the refusal. Three device waits of at least one minute each within the same 6-hour window also trigger a suggestion. When a Mac is already approved for hosted simulators, the device-limit suggestion offers **Use Auto** instead of the setup wizard. It runs `stim settings set ios.remote auto --scope workspace` (and `android.remote`, for the refused platform, or both when it is not known), so runs place on the hosting Mac when this Mac is full, from Desktop and from agents in a terminal. While it is set, `--plan` and `--device` runs in that workspace refuse; undo it with `stim settings unset ios.remote --scope workspace` (and `android.remote`). A tailnet Mac already in `hosting.machines` is not announced as new. Suggestions never appear during a build or install, before setup is complete, or on the first launch, and appear at most once per day. Nothing is set up until you open and follow the wizard.
+
+The **Tip** card at the bottom of the sidebar appears after setup is complete and
+Desktop has been used on at least **3 calendar days**, with either **3 distinct
+workspaces seen running** or **5 builds observed**. It stays hidden while a build
+runs or any notice is showing. Usage is stored locally in Desktop preferences,
+retaining the latest 30 active days, 50 workspace paths, and 200 build IDs.
+
+Tips cover build machines, phone pairing, the tutorial, hiding projects when
+there are more than 10 workspace rows, status filters, replay, and hosted
+simulators. Only applicable tips appear. One tip stays for the calendar day;
+the next day picks the least recently shown applicable tip, with unseen tips
+first. **Next tip** cycles through the remaining choices. The X hides the card
+until tomorrow. Turn off **Settings > App > Show tips** to disable tips; the Machine page card stays.
+
+Tips and suggestions share seen state for build machines, phone pairing, and
+hosted simulators. A shown, permanently dismissed, or currently snoozed
+suggestion suppresses the matching tip. Showing a tip marks that topic's unseen
+suggestions as shown, so they do not repeat it. Suggestions keep their own
+once-per-day limit.
+
+**File > Add Build Machine…** (**Cmd+Shift+B**) always opens the existing build
+machine wizard. After the same usage threshold, **Machines > This Mac** shows a
+card when no build machine is configured. With another Mac on the tailnet it
+offers **Add a build machine**; otherwise it explains how to connect both Macs
+with Tailscale. The existing **Link machine** button is also available. Build
+machines are not a step in the first-run setup guide.
