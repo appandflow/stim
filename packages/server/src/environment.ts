@@ -1,4 +1,4 @@
-import { spawnSync } from 'node:child_process';
+import { spawnSync, type SpawnSyncOptions } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
@@ -17,16 +17,20 @@ function parseEnvironment(output: string): Record<string, string> {
  * The login shell's environment, as Stim Desktop captures it: a process started by launchd lacks the
  * PATH entries and variables such as ANDROID_HOME that the shell profile sets. The shell writes to a
  * file because a background process started by a profile can keep a pipe open after the shell exits.
+ * It runs in its own session: an interactive shell on the caller's terminal takes over the foreground process group,
+ * and the caller is then stopped with SIGTTOU at its next terminal write.
  */
 export function loginShellEnvironment(): Record<string, string> | null {
   const dir = mkdtempSync(join(tmpdir(), 'stim-server-env-'));
   const file = join(dir, 'env');
   try {
-    spawnSync(process.env.SHELL || '/bin/zsh', ['-lic', 'command env -0 > "$1"', 'stim-server', file], {
+    const options: SpawnSyncOptions & { detached: boolean } = {
       stdio: 'ignore',
+      detached: true,
       timeout: 15_000,
       killSignal: 'SIGKILL',
-    });
+    };
+    spawnSync(process.env.SHELL || '/bin/zsh', ['-lic', 'command env -0 > "$1"', 'stim-server', file], options);
     const environment = parseEnvironment(readFileSync(file, 'utf8'));
     return Object.keys(environment).length ? environment : null;
   } catch {
