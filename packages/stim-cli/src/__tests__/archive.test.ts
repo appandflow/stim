@@ -14,7 +14,13 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { readArchives, archiveDir, linkReplacedArchives, type ArchivedWorkspace } from '@stim-cli/core/state';
+import {
+  readArchives,
+  archiveDir,
+  linkReplacedArchives,
+  pullRequestCacheFile,
+  type ArchivedWorkspace,
+} from '@stim-cli/core/state';
 import { archiveWorkspace, enforceArchiveRetention, sweepArchiveStaging } from '../archive.ts';
 import { reclaimProject } from '../devices/reclaim.ts';
 import { ensureWorkspaceStorage, workspaceDir } from '../workspace/paths.ts';
@@ -141,6 +147,60 @@ test('removal keeps history and closed footage while deleting open footage and o
   expect(existsSync(dir)).toBe(false);
   expect(out).not.toHaveBeenCalled();
   expect(err).not.toHaveBeenCalled();
+});
+
+function cachePullRequest(worktree: string, state: 'merged' | 'open') {
+  const file = pullRequestCacheFile(worktree);
+  mkdirSync(join(file, '..'), { recursive: true });
+  writeFileSync(
+    file,
+    JSON.stringify({
+      path: worktree,
+      branch: 'feat/12-gone',
+      head: 'a'.repeat(40),
+      checkedAt: '2026-01-01T00:00:00Z',
+      pullRequest: {
+        number: 12,
+        url: 'https://example.test/pull/12',
+        title: 'Gone',
+        state,
+        checkedAt: '2026-01-01T00:00:00Z',
+      },
+    }),
+  );
+}
+
+test('a workspace whose worktree folder is gone keeps the branch and pull request the cache saw', () => {
+  const worktree = join(home, 'gone-worktree');
+  root = join(worktree, 'apps', 'mobile');
+  live();
+  cachePullRequest(worktree, 'merged');
+  archiveWorkspace(root, 'gc');
+  expect(readArchives()[0]?.worktree).toEqual({
+    repository: null,
+    branch: 'feat/12-gone',
+    head: 'a'.repeat(40),
+    subject: null,
+    merged: true,
+    pullRequest: { number: 12, state: 'merged', title: 'Gone', url: 'https://example.test/pull/12' },
+  });
+});
+
+test("a gone project inside a checkout that still exists does not take that checkout's pull request", () => {
+  const checkout = join(home, 'checkout');
+  mkdirSync(checkout);
+  root = join(checkout, 'apps', 'mobile');
+  live();
+  cachePullRequest(checkout, 'open');
+  archiveWorkspace(root, 'gc');
+  expect(readArchives()[0]?.worktree).toEqual({
+    repository: null,
+    branch: null,
+    head: null,
+    subject: null,
+    merged: null,
+    pullRequest: null,
+  });
 });
 
 test('scoped homes do not archive unless explicitly enabled', () => {
