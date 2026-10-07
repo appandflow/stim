@@ -2224,7 +2224,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         method === 'device-host.offer'
           ? await hostedDevices.offer(session.id, raw)
           : method === 'device-host.reserve'
-            ? hostedDevices.reserve(session.id, raw)
+            ? await hostedDevices.reserve(session.id, raw)
             : method === 'device-host.attach'
               ? hostedDevices.attach(session.id, raw)
               : method === 'device-host.stop'

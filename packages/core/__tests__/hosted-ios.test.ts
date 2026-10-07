@@ -5,6 +5,7 @@ import {
   hostedIosRecords,
   unreadableHostedIos,
 } from '../state/hosted-ios.ts';
+import { parseHostedNativeOffer } from '../state/device-host.ts';
 
 const placement = {
   machine: 'mini',
@@ -70,3 +71,26 @@ test('agent access survives placement reads and status without a token or local 
   expect(hostedIosStatus(parsed).agent).toEqual(agent);
   expect(JSON.stringify(hostedIosStatus(parsed))).not.toContain(placement.device.udid);
 });
+
+test.each([undefined, 0, 2, { unknown: 'simulator inventory unavailable' }])(
+  'native offer parsing preserves optional local capacity across a JSON round trip: %j',
+  (localDevices) => {
+    const offer = {
+      platform: 'ios',
+      choice: null,
+      declined: 'SDK unavailable',
+      resources: {
+        cpus: 4,
+        loadPerCore: 0.5,
+        memoryFreeBytes: 1000,
+        memoryPressure: 'normal',
+        workerDiskFreeBytes: null,
+        ...(localDevices !== undefined ? { localDevices } : {}),
+      },
+    };
+    const wire = JSON.parse(JSON.stringify(offer));
+    expect(parseHostedNativeOffer(wire)).toEqual(offer);
+    for (const invalid of [-1, 1.5, null, { unknown: '' }])
+      expect(parseHostedNativeOffer({ ...wire, resources: { ...wire.resources, localDevices: invalid } })).toBeNull();
+  },
+);

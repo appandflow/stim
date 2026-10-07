@@ -332,6 +332,8 @@ script such as mini-desktop.sh use these instead:
   3 concurrent slots         concurrency.maxDevices on the host; one bundle id
                              slot per session
 
+The host's own owned devices count toward concurrency.maxDevices.
+
 The agent-device rows work once the host's agent field names agent-device.
 
 DESKTOP DOGFOOD

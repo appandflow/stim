@@ -48,6 +48,8 @@ iOS simulator, use the machine name as the remote target:
 
 <StimTabs code={`stim ios --remote janics-mac-mini`} />
 
+The host's own owned devices count toward `concurrency.maxDevices`.
+
 The host boots its owned simulator headless. Debug keeps Metro on this Mac
 and connects it through a private tailnet bridge; no `stim start --remote` is
 needed. `--device-type`, `--runtime` and `--slot` select the hosted simulator.
