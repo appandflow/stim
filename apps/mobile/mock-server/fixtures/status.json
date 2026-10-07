@@ -4393,8 +4393,8 @@
       {
         "version": 1,
         "id": "stim--archive-1",
-        "projectRoot": "/Users/dev/Developer/stim/.worktrees/archived-workspaces",
-        "project": "stim",
+        "projectRoot": "/Users/dev/Developer/stim/.worktrees/archived-workspaces/apps/mobile",
+        "project": "mobile",
         "workspace": "archived-workspaces",
         "worktree": {
           "repository": "/Users/dev/Developer/stim",
@@ -4405,7 +4405,7 @@
           "pullRequest": {
             "number": 2600,
             "title": "Keep removed workspaces",
-            "state": "merged",
+            "state": "draft",
             "url": "https://github.com/appandflow/stim/pull/2600"
           }
         },

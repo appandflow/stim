@@ -1,8 +1,6 @@
 import { t } from '@lingui/core/macro';
 
 import { RequestError } from '@/lib/connection';
-import { pullRequestStateName } from '@/lib/format';
-import { formatSize, formatDuration } from '@/intl/format';
 import type { DevicePlatform, StatusPayload } from '@/protocol/types';
 
 export type ArchivedWorkspace = NonNullable<StatusPayload['archived']>[number];
@@ -21,21 +19,9 @@ export function removedByWords(removedBy: string): string {
   }
 }
 
-export function archivedView(archive: ArchivedWorkspace, now: number) {
-  const age = formatDuration(Math.max(0, now - Date.parse(archive.removedAt)));
-  const by = removedByWords(archive.removedBy);
-  const pr = archive.worktree.pullRequest;
-  return {
-    title: archive.worktree.branch || archive.project,
-    pr: pr ? `#${pr.number} ${pullRequestStateName(pr.state)}` : null,
-    removed: t`Removed ${age} ago`,
-    removedBy: t`Removed ${age} ago by ${by}`,
-    size: formatSize(archive.bytes.total),
-  };
-}
-
-export function archiveError(error: Error, kind: 'logs' | 'replay'): string {
-  if (error instanceof RequestError && error.error.code === 'bad-request') {
+export function archiveError(error: Error, kind: 'logs' | 'replay' | 'detail'): string {
+  if (error instanceof RequestError && (error.error.code === 'bad-request' || error.error.code === 'unknown-method')) {
+    if (kind === 'detail') return t`Update stim-server to view full archived history and recordings`;
     return kind === 'logs'
       ? t`Update stim-server to view archived logs`
       : t`Update stim-server to view archived replay`;

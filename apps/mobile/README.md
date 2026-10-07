@@ -131,14 +131,24 @@ Duo fold detection requires a build made with the iOS 27.1 SDK and an iOS
   destinations is open is saved on the phone and is what home shows next
   launch.
 - **Archived workspaces**: choose **Archived** in Filters to see removed
-  workspaces, grouped by project, with their PR state, removal time and size.
-  Live, Idle and All show only current workspaces. An archive opens a read-only
-  page with its removal reason, replacement link when available, build count
-  and last build, saved logs, ended agent sessions and replay for each default
-  iOS, Android or Web slot that still has footage. Archives have no workspace
+  workspaces, grouped by repository and worktree like the live list. Apps in one
+  worktree share a heading and keep their app labels. Rows show removal time,
+  size, the PR number (or Merged), and an indicator for expired content or
+  content expiring within 24 hours. Missing branch or repository facts fall back
+  to the worktree folder. Live, Idle and All show only current workspaces.
+  An archive opens the same workspace page as a read-only variant: Status shows
+  removal, last activity, retention dates, size by content and activity totals;
+  Build opens the same build history sheet with cache results, durations,
+  failure codes and build machines; Logs opens the saved archive logs; Work
+  shows ended sessions, their durations, the branch, final commit and PR title.
+  Only a merged snapshot supplies a PR state label; other snapshots show only
+  the number and title. Recordings replace live device tiles and open replay for
+  each retained slot. Expired logs and recordings are marked. A replacement
+  link opens the newer workspace when available. Archives have no workspace
   controls and never add to live counts or Needs attention. An older server
-  without archive status shows an empty list; one that refuses archive log or
-  replay requests shows an update hint.
+  without archive status shows an empty list; one that refuses `archive.detail`
+  keeps the last-build summary and build count and shows an update hint for full
+  history and recording discovery. Archive log or replay refusals show an update hint.
 - **Filters**: the filter button filters the list by machine, by project, by live
   or idle, and to workspaces with errors or with remote sessions. The filters
   are saved on the phone; a dot on the button shows that some are on. Live only
@@ -1012,7 +1022,13 @@ category, two of them held back (`suppressed`), and sends a new `notification`
 event every 2 minutes to each connection that listed. Device samples include
 **a4-stopped** with recorded iOS footage, **example** from react-native-hinges
 with no recording, and **archived-workspaces**, whose iOS footage is served
-through the archive target. Tapping the stopped or archived recording opens it
+through the archive target. Archive fixtures include a merged PR snapshot with
+full iOS and Android history and two recordings, no builds, expired logs, and
+`real-archive/archive.json`: the gc'd sample-sdk58 workspace with no branch or
+repository, five iOS builds (13s failed, 30s offloaded, 66s local, 9s failed,
+129s offloaded), and an iOS recording. `real-archive/detail.json` is derived from
+`history.json` with core's history reader; it keeps the live history shape.
+Tapping the stopped or archived recording opens it
 at the notification time, clamped to available footage. A running device stays
 live; a stopped device without footage explains why replay is unavailable.
 

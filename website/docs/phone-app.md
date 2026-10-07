@@ -172,6 +172,26 @@ set up a build machine, or approve access requests. Have your coding agent run
 the app on the Mac, then watch it from the phone. It does not run your project's
 native app on the phone itself.
 
+### Archived workspaces
+
+Choose **Archived** in Filters to see removed workspaces in the same repository
+and worktree groups as live ones. Rows keep their branch or folder title and app
+label, with removal time, size and an expiry indicator. A PR snapshot shows its
+number and title; only a merged outcome shows a state label.
+
+An archive uses the workspace page with read-only Status, Build, Logs and Work
+cards. Status shows removal, last activity, retention dates, size by content and
+activity totals. Build opens the shared history sheet, including durations,
+cache results, failures and build machines. Logs reads saved archive logs. Work
+shows ended sessions, their durations and the branch's final commit. Recordings
+replace devices and open replay at the recorded time, including notification
+links. Expired logs and recordings are marked.
+
+Archives have no Stop, Reload, run, viewer or device control actions. Manage
+archive deletion on the Mac. Older servers without archive detail keep the last
+build summary and count; update stim-server for full history and recording
+discovery.
+
 ## Ask your agent
 
 These prompts are for the coding agent working in your app's checkout.

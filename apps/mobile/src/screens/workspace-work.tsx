@@ -14,6 +14,7 @@ import { Text } from '@/components/text';
 import { toneColor } from '@/design/tone';
 import { useMacConnection, useStatus } from '@/hooks/machines';
 import { useNow } from '@/hooks/use-now';
+import { archivedPage } from '@/lib/archived-page';
 import { formatDuration } from '@/intl/format';
 import { agentWebUrl } from '@/lib/agents';
 import { checksSummary, checksTone } from '@/lib/workspace-view';
@@ -24,37 +25,70 @@ import { pullRequestStateName, pullRequestReviewName } from '@/lib/format';
 const commits = (n: number) => plural(n, { one: '# commit', other: '# commits' });
 const files = (n: number) => plural(n, { one: '# file', other: '# files' });
 
-export function WorkspaceWork({ path }: { path: string }) {
+export function WorkspaceWork({ path, archive: archiveId }: { path: string; archive?: string }) {
   const { theme } = useUnistyles();
   const status = useStatus();
   const router = useRouter();
   const { mac, state } = useMacConnection();
-  const canDiff = state.kind === 'open' && state.features.includes('workspace-diff');
+  const canDiff = !archiveId && state.kind === 'open' && state.features.includes('workspace-diff');
   const openDiff = (group: 'changed' | 'untracked') =>
     router.push({ pathname: '/mac/[id]/diff', params: { id: mac?.id ?? '', path, group } });
   const now = useNow(30_000);
-  const env = status?.environments.find((e) => e.path === path);
+  const archive = status?.archived?.find((entry) => entry.id === archiveId);
+  const page = archive ? archivedPage(archive, null, now) : null;
+  const env = archiveId ? page?.env : status?.environments.find((e) => e.path === path);
   const worktree = env?.worktree;
   const git = worktree?.git;
-  const pr = worktree?.pullRequest;
-  const sessions = worktreeSessions(worktreeApps(path, status?.environments ?? []));
+  const pr = archive?.worktree.pullRequest ?? worktree?.pullRequest;
+  const sessions = page
+    ? page.sessions.map((session) => session.agent)
+    : archiveId
+      ? []
+      : worktreeSessions(worktreeApps(path, status?.environments ?? []));
   const onlyAgentHasLink = sessions.length === 1 && agentWebUrl(sessions[0]!) !== null;
-  const checks = pr ? checksTone(pr.checks) : null;
-  const checkedAt = pr ? Date.parse(pr.checkedAt) : NaN;
+  const livePr = archiveId ? null : worktree?.pullRequest;
+  const checks = livePr ? checksTone(livePr.checks) : null;
+  const checkedAt = livePr ? Date.parse(livePr.checkedAt) : NaN;
   const sinceChecked = formatDuration(Math.max(0, now - checkedAt));
   return (
-    <SheetScreen title={worktree?.branch ?? workspaceTitleAt(path, status)} titleLines={2} subtitle={t`Work`}>
+    <SheetScreen
+      title={page?.title ?? worktree?.branch ?? workspaceTitleAt(path, status)}
+      titleLines={2}
+      subtitle={t`Work`}
+    >
       {sessions.length ? (
         <ListSection
           title={plural(sessions.length, { one: 'Agent session', other: 'Agent sessions' })}
           bare={onlyAgentHasLink}
         >
-          {sessions.map((agent) => (
-            <AgentSessionRow key={`${agent.tool}:${agent.sessionId}`} agent={agent} card={onlyAgentHasLink} />
-          ))}
+          {sessions.map((agent) => {
+            const durationMs = page?.sessions.find((session) => session.agent === agent)?.durationMs;
+            const duration = durationMs == null ? null : formatDuration(durationMs);
+            return (
+              <View key={`${agent.tool}:${agent.sessionId}`}>
+                <AgentSessionRow agent={agent} card={onlyAgentHasLink} />
+                {page ? (
+                  <Text variant="footnote" tone="tertiary" style={styles.session}>
+                    {duration === null ? t`Ended session` : t`Ended session, ${duration} duration`}
+                  </Text>
+                ) : null}
+              </View>
+            );
+          })}
         </ListSection>
       ) : null}
-      {git ? (
+      {archive ? (
+        <ListSection title={t`Git`}>
+          <ListRow title={t`Branch`} value={archive.worktree.branch ?? page?.title} />
+          {archive.worktree.head ? (
+            <ListRow
+              title={t`Final commit`}
+              value={archive.worktree.head.slice(0, 8)}
+              subtitle={archive.worktree.subject ?? undefined}
+            />
+          ) : null}
+        </ListSection>
+      ) : git ? (
         <ListSection title={t`Git`}>
           <ListRow
             title={t`Upstream`}
@@ -91,15 +125,23 @@ export function WorkspaceWork({ path }: { path: string }) {
               {`#${pr.number} ${pr.title}`}
             </Text>
           </View>
-          <ListRow title={t`State`} value={pullRequestStateName(pr.state)} />
-          {pr.checks ? (
+          {archiveId ? (
+            page?.merged ? (
+              <ListRow title={t`State`} value={t`Merged`} />
+            ) : null
+          ) : (
+            <ListRow title={t`State`} value={pullRequestStateName(pr.state)} />
+          )}
+          {livePr?.checks ? (
             <ListRow
               title={t`Checks`}
-              value={checksSummary(pr.checks) ?? undefined}
+              value={checksSummary(livePr.checks) ?? undefined}
               accessory={checks ? <StatusDot color={toneColor(theme, checks)} /> : undefined}
             />
           ) : null}
-          {pr.reviewDecision ? <ListRow title={t`Review`} value={pullRequestReviewName(pr.reviewDecision)} /> : null}
+          {livePr?.reviewDecision ? (
+            <ListRow title={t`Review`} value={pullRequestReviewName(livePr.reviewDecision)} />
+          ) : null}
         </ListSection>
       ) : null}
       {pr ? (
@@ -117,6 +159,7 @@ export function WorkspaceWork({ path }: { path: string }) {
 }
 
 const styles = StyleSheet.create((theme) => ({
+  session: { paddingHorizontal: theme.space.lg, paddingBottom: theme.space.sm },
   pr: { paddingHorizontal: theme.space.lg, paddingVertical: theme.space.sm },
   center: { textAlign: 'center' },
 }));

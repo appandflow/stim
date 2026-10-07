@@ -6,26 +6,43 @@ import { fireEvent, render, within } from '@testing-library/react-native';
 
 import '@/design/unistyles';
 
-import type { EnvironmentState } from '@/protocol/types';
+import mockCaptured from '../../mock-server/fixtures/status.json';
+import mockArchiveDetails from '../../mock-server/fixtures/archive-details.json';
+import type { ArchiveDetailResult, EnvironmentState } from '@/protocol/types';
+import { RequestError } from '@/lib/connection';
+import type { ArchivedWorkspace } from '@/lib/archived';
 
 import { WorkspaceDetail } from './workspace-detail';
 
 let mockEnvironments: EnvironmentState[] = [];
+let mockArchives: ArchivedWorkspace[] = mockCaptured.payload.archived as ArchivedWorkspace[];
 const mockPush = jest.fn();
-const mockTouch = jest.fn();
+let mockDetail: { data: ArchiveDetailResult | null; error: Error | null };
+const mockConnection = { request: jest.fn() };
+beforeEach(() => {
+  mockDetail = { data: mockArchiveDetails['stim--archive-1'] as ArchiveDetailResult, error: null };
+  mockConnection.request.mockReset();
+  mockArchives = mockCaptured.payload.archived as ArchivedWorkspace[];
+});
 jest.mock('expo-router', () => {
   const { View, Text } = jest.requireActual('react-native');
   const Toolbar = Object.assign(View, { Menu: View, MenuAction: Text });
   return {
     Stack: { Screen: () => null, Toolbar },
     useRouter: () => ({ push: mockPush }),
+    useIsFocused: () => true,
     useNavigation: () => ({ addListener: () => () => {}, canGoBack: () => true }),
   };
 });
 jest.mock('@/hooks/machines', () => ({
-  useMacConnection: () => ({ mac: { id: 'mac', name: 'Mac' }, state: { kind: 'open', features: [] }, home: null }),
+  useMacConnection: () => ({
+    mac: { id: 'mac', name: 'Mac' },
+    state: { kind: 'open', features: [] },
+    home: null,
+    connection: mockConnection,
+  }),
   useHasStatus: () => true,
-  useMachineStatus: () => ({ environments: mockEnvironments }),
+  useMachineStatus: () => ({ environments: mockEnvironments, archived: mockArchives }),
   useWorkspace: (_id: string, path: string) => ({
     env: mockEnvironments.find((env) => env.path === path),
     title: 'feat/unified',
@@ -33,9 +50,13 @@ jest.mock('@/hooks/machines', () => ({
     inCheckout: 'apps/mobile',
   }),
 }));
+jest.mock('@/hooks/archive-detail', () => ({
+  useArchiveDetail: () => mockDetail,
+}));
+jest.mock('@/hooks/app-foreground', () => ({ useAppForeground: () => true }));
 jest.mock('@/hooks/build-plans', () => ({ useWorkspaceBuildPlans: () => () => undefined }));
 jest.mock('@/hooks/workspace-actions', () => ({ useAction: () => ({ available: null, pending: null }) }));
-jest.mock('@/hooks/recents', () => ({ useRecents: () => ({ touch: mockTouch }) }));
+jest.mock('@/hooks/recents', () => ({ useRecents: () => ({ touch: () => {} }) }));
 jest.mock('@/hooks/screen-reader', () => ({ useAnnounce: () => {} }));
 jest.mock('@/hooks/use-now', () => ({ useNow: () => Date.parse('2026-10-05T12:00:00Z') }));
 jest.mock('@/hooks/frames', () => ({ useFrame: () => ({ frame: null }) }));
@@ -158,4 +179,57 @@ it('names projects on shared-platform build rows and device tiles', async () => 
       .map((node) => node.props.children),
   ).toEqual(['apps/a', 'apps/b', 'apps/a', 'apps/b']);
   expect(screen.getAllByTestId('project-subtitle')).toHaveLength(8);
+});
+
+const archivedBody = () => (
+  <I18nProvider i18n={i18n}>
+    <WorkspaceDetail archive={mockCaptured.payload.archived[0].id} />
+  </I18nProvider>
+);
+
+it('keeps live-only actions and devices absent from archived workspaces', async () => {
+  const screen = await render(archivedBody());
+  for (const text of ['Stop', 'Reload', 'Allow control...', 'Devices']) expect(screen.queryByText(text)).toBeNull();
+  expect(screen.getByText('#2600 Merged')).toBeTruthy();
+  expect(screen.queryByText('Draft')).toBeNull();
+});
+
+it('shows no recording when every listed slot has empty spans', async () => {
+  mockDetail.data = { builds: {}, recordings: [{ platform: 'ios', slot: 'default', spans: [] }] };
+  const screen = await render(archivedBody());
+  expect(screen.getByText('No recording available.')).toBeTruthy();
+  expect(screen.queryByText('Expired')).toBeNull();
+});
+
+it('keeps expired recordings available while the server still lists spans', async () => {
+  const archive = mockArchives[0];
+  mockArchives = [{ ...archive, expires: { ...archive.expires, recordings: '2026-10-05T11:59:59Z' } }];
+  const screen = await render(archivedBody());
+  expect(screen.getAllByText('Expired').length).toBeGreaterThan(0);
+  expect(screen.getByText('tablet')).toBeTruthy();
+});
+
+it('shows default-slot replay on older servers without archive.detail', async () => {
+  mockDetail = { data: null, error: new RequestError({ code: 'unknown-method', message: 'Unknown method' }) };
+  mockConnection.request.mockImplementation(async (method, target) => {
+    if (
+      method !== 'replay.range' ||
+      target.archive !== mockCaptured.payload.archived[0].id ||
+      target.slot !== 'default'
+    )
+      throw new Error('Unexpected replay target');
+    return { spans: [{ start: 100, end: 200 }], markers: [], enabled: true, recording: false };
+  });
+  const screen = await render(archivedBody());
+  expect(await screen.findByText('iOS')).toBeTruthy();
+  expect(screen.getByText('Android')).toBeTruthy();
+  expect(screen.getByText('Web')).toBeTruthy();
+  expect(screen.queryByText(/Update stim-server/)).toBeNull();
+});
+
+it('shows no recording when older server default-slot probes all return empty spans', async () => {
+  mockDetail = { data: null, error: new RequestError({ code: 'unknown-method', message: 'Unknown method' }) };
+  mockConnection.request.mockResolvedValue({ spans: [], markers: [], enabled: false, recording: false });
+  const screen = await render(archivedBody());
+  expect(await screen.findByText('No recording available.')).toBeTruthy();
 });

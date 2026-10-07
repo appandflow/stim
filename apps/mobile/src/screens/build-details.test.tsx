@@ -6,6 +6,8 @@ import { fireEvent, render } from '@testing-library/react-native';
 
 import '@/design/unistyles';
 
+import mockRealArchive from '../../mock-server/fixtures/real-archive/archive.json';
+import mockRealDetail from '../../mock-server/fixtures/real-archive/detail.json';
 import type { EnvironmentState } from '@/protocol/types';
 
 import { BuildDetails } from './build-details';
@@ -14,9 +16,10 @@ let mockEnvironments: EnvironmentState[] = [];
 const mockPush = jest.fn();
 jest.mock('expo-router', () => ({ useRouter: () => ({ push: mockPush }) }));
 jest.mock('@/hooks/machines', () => ({
-  useStatus: () => ({ environments: mockEnvironments }),
+  useStatus: () => ({ environments: mockEnvironments, archived: [mockRealArchive] }),
   useMacConnection: () => ({ mac: { id: 'mac' }, home: null }),
 }));
+jest.mock('@/hooks/archive-detail', () => ({ useArchiveDetail: () => ({ data: mockRealDetail, error: null }) }));
 jest.mock('@/hooks/build-plans', () => ({ useBuildPlan: () => ({ plan: undefined, checkedAt: null, recheck: null }) }));
 jest.mock('@/hooks/use-now', () => ({ useNow: () => Date.parse('2026-10-05T12:00:00Z') }));
 jest.mock('@/hooks/workspace-logs', () => ({ useBuildOutput: () => [] }));
@@ -98,4 +101,18 @@ it('distinguishes shared platforms and shows the selected app diagnostics', asyn
   expect(screen.getByText('a error')).toBeTruthy();
   expect(screen.queryByText('b error')).toBeNull();
   expect(screen.getByRole('tab', { name: 'iOS, apps/a' }).props.accessibilityState.selected).toBe(true);
+});
+
+it('renders all five real archived runs with durations, failure codes and build locations, without planning', async () => {
+  const screen = await render(
+    <I18nProvider i18n={i18n}>
+      <BuildDetails archive={mockRealArchive.id} platform="ios" />
+    </I18nProvider>,
+  );
+  for (const duration of ['0:13', '0:29', '1:06', '0:09', '2:09']) expect(screen.getByText(duration)).toBeTruthy();
+  expect(screen.getAllByText('Failed (STIM_BUILD_FAILED)')).toHaveLength(2);
+  expect(screen.getAllByText('Built on janics-mac-mini')).toHaveLength(2);
+  expect(screen.getAllByText(/on this Mac/)).toHaveLength(3);
+  expect(screen.queryByText('Next build')).toBeNull();
+  expect(screen.queryByText('Check again')).toBeNull();
 });
