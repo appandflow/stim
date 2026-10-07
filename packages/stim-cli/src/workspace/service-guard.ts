@@ -13,7 +13,6 @@ export interface ServiceUse {
   argument: string | null;
 }
 
-// `stim-server service install` marks the LaunchAgents it writes with a `StimService` dict, so no other agent matches.
 function serviceUseOf(
   plist: unknown,
   file: string,
@@ -42,22 +41,25 @@ export function serviceRunningFrom(
   let names: string[];
   try {
     names = readdirSync(agentsDir).filter((name) => name.endsWith('.plist'));
-  } catch {
-    return null;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === 'ENOENT'
+      ? null
+      : { label: 'unknown', plist: agentsDir, argument: null };
   }
   for (const name of names) {
     const file = join(agentsDir, name);
+    const label = name.replace(/\.plist$/, '');
     try {
       if (!readFileSync(file).includes('StimService')) continue;
     } catch {
-      continue;
+      return { label, plist: file, argument: null };
     }
     try {
       const json = getExecutor().runFile('plutil', ['-convert', 'json', '-o', '-', file], { timeoutMs: 5000 });
       const use = serviceUseOf(JSON.parse(json), file, folder, canonical);
       if (use) return use;
     } catch {
-      return { label: name.replace(/\.plist$/, ''), plist: file, argument: null };
+      return { label, plist: file, argument: null };
     }
   }
   return null;

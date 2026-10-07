@@ -333,6 +333,7 @@ function writeRemoteSession(root: string, sessionId: string): void {
 beforeEach(() => {
   tmpHome = mkdtempSync(join(tmpdir(), 'stim-test-home-'));
   process.env.STIM_HOME = tmpHome;
+  vi.stubEnv('HOME', tmpHome);
   for (const udid of ['U1', 'U3', 'U4', 'U5', 'U6', 'U7', 'U8', 'U9', 'UDID-1']) recordCreatedDevice('ios', udid);
   for (const name of [
     'stim-a',
@@ -359,6 +360,7 @@ afterEach(() => {
   rmSync(mainDir, { recursive: true, force: true });
   rmSync(wtDir, { recursive: true, force: true });
   delete process.env.STIM_HOME;
+  vi.unstubAllEnvs();
   delete process.env.STIM_ARCHIVE_ENABLED;
 });
 
