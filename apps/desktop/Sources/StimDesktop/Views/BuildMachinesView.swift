@@ -127,7 +127,7 @@ struct BuildMachinesView: View {
       Button("Delete sample app", role: .destructive) { Task { await model.deleteSample() } }
     } message: {
       Text(
-        "Stops the sample workspace and removes its Stim workspace, owned simulator and Stim Desktop's SDK 58 sample folder. The next wizard creates it again."
+        "Stops the sample workspace and removes its Stim workspace and Stim Desktop's SDK 58 sample folder, and releases its owned simulator: Stim parks it for reuse within the parked-simulator limit and deletes it otherwise. The next wizard creates the sample again."
       )
     }
     .confirmationDialog(

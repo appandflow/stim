@@ -168,9 +168,10 @@ final class SampleBuildModel {
     let sample = dependencies.sample
     guard sample.permitsRemoval(sample.folder) else { throw CocoaError(.fileWriteNoPermission) }
     var teardown = [StimCommand(["stop"], cwd: folder)]
-    if dependencies.exists(sample.folder.appendingPathComponent(".git")) {
-      teardown.append(StimCommand(["worktree", "remove", folder], cwd: sample.onboarding.path))
+    if !dependencies.exists(sample.folder.appendingPathComponent(".git")) {
+      teardown.append(StimCommand(["init"], cwd: folder, program: "git"))
     }
+    teardown.append(StimCommand(["worktree", "remove", folder], cwd: sample.onboarding.path))
     for command in teardown {
       let output = try await dependencies.run(command, { _ in })
       guard output.exit == 0 else {

@@ -134,12 +134,13 @@ final class SampleBuildModelTests: XCTestCase {
     XCTAssertFalse(harness.files.contains(harness.sample.folder))
   }
 
-  @MainActor func testSampleWithoutGitRepositorySkipsWorkspaceRemovalWhichRefusesIt() async throws {
+  @MainActor func testSampleWithoutGitRepositoryIsInitializedSoWorkspaceRemovalReclaimsIt() async throws {
     let harness = Harness()
     harness.files.insert(harness.sample.folder)
     let model = harness.make()
     try await model.removeSample()
-    XCTAssertEqual(harness.events, ["stim stop", "remove \(model.folder)"])
+    XCTAssertEqual(
+      harness.events, ["stim stop", "git init", "stim worktree remove \(model.folder)", "remove \(model.folder)"])
   }
 
   @MainActor func testWorkspaceRemovalFailurePreservesSampleForRetryAndExposesStderr() async {

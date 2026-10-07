@@ -278,8 +278,9 @@ this Mac can still build and launch. This tests local build readiness; it does
 not deliberately disconnect the worker to trigger automatic fallback.
 
 The sample stops when the test ends or the sheet closes. **Run again** reuses
-the folder. **Delete sample app** in Build Machines stops it and removes its Stim
-workspace, owned simulator and sample folder after confirmation. If cleanup fails,
+the folder. **Delete sample app** in Build Machines stops it and removes its Stim workspace and sample folder after confirmation, and
+releases its owned simulator (parked for reuse within the parked-simulator limit,
+deleted otherwise). If cleanup fails,
 the folder stays for a retry and Desktop shows the failure.
 
 ## Undo
