@@ -116,6 +116,6 @@ struct CopyButton: View {
     .environment(\.stimButtonAccent, copied ? Palette.success : nil)
     .animation(reduceMotion ? nil : .spring(response: 0.35, dampingFraction: 0.8), value: copied)
     .help(help ?? title)
-    .accessibilityLabel(copied ? copiedTitle : (accessibilityLabel ?? title))
+    .accessibilityLabel(copied ? "\(copiedTitle), \(accessibilityLabel ?? title)" : (accessibilityLabel ?? title))
   }
 }

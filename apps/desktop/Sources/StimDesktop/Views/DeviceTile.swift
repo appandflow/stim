@@ -167,7 +167,8 @@ struct DeviceTile: View {
     .task(id: clipboardRequest) {
       guard let request = clipboardRequest, request.target == clipboardTarget else { return }
       defer { if clipboardRequest == request { clipboardRequest = nil } }
-      if let text = request.text {
+      do {
+        let text = request.text
         let pasted: Bool
         switch device {
         case .ios: pasted = await simulatorButtons.paste(text)
@@ -636,7 +637,11 @@ struct DeviceTile: View {
         }
         clipboardRequest = ClipboardRequest(target: target, text: text)
       },
-      copy: { await copyDeviceClipboard(target: target) })
+      copy: {
+        let copied = await copyDeviceClipboard(target: target)
+        if !copied { dismiss.wrappedValue = false }
+        return copied
+      })
   }
 
   private func copyDeviceClipboard(target: String) async -> Bool {
@@ -646,7 +651,7 @@ struct DeviceTile: View {
     case .android: text = await emulatorButtons.clipboard()
     default: return false
     }
-    guard !Task.isCancelled, target == clipboardTarget else { return false }
+    guard target == clipboardTarget else { return false }
     guard let text else {
       clipboardError = "Could not read the device clipboard. Check that the device is connected."
       return false
@@ -1210,5 +1215,5 @@ private struct ClipboardSyncID: Hashable {
 
 private struct ClipboardRequest: Equatable {
   var target: String
-  var text: String?
+  var text: String
 }

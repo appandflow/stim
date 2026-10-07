@@ -1,7 +1,7 @@
 import { t } from '@lingui/core/macro';
 import * as Clipboard from 'expo-clipboard';
-import { useCallback, useEffect, useState } from 'react';
-import { AccessibilityInfo, type StyleProp, type ViewStyle } from 'react-native';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { AccessibilityInfo } from 'react-native';
 import Animated, {
   FadeIn,
   FadeOut,
@@ -23,10 +23,18 @@ import { hapticFeedback } from '@/lib/haptics';
 export function useCopy() {
   const [copied, setCopied] = useState(false);
   const [feedback] = useState(() => createCopyFeedback(setCopied));
-  useEffect(() => feedback.cancel, [feedback]);
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      feedback.cancel();
+    };
+  }, [feedback]);
   const copy = useCallback(
     async (text: string) => {
       await Clipboard.setStringAsync(text);
+      if (!mounted.current) return;
       hapticFeedback('menu');
       AccessibilityInfo.announceForAccessibility(t`Copied`);
       feedback.start();
@@ -36,7 +44,8 @@ export function useCopy() {
   return { copied, copy };
 }
 
-const widthSpring = () => LinearTransition.springify().damping(18).stiffness(220);
+let widthSpring: ReturnType<typeof LinearTransition.springify> | undefined;
+const getWidthSpring = () => (widthSpring ??= LinearTransition.springify().damping(18).stiffness(220));
 
 /**
  * The look of a copy button: the symbol and label swap as `copied` changes, the pill springs to its new width and takes
@@ -48,14 +57,12 @@ export function CopyPill({
   copiedTitle,
   filled = true,
   showsIcon = true,
-  style,
 }: {
   copied: boolean;
   title?: string;
   copiedTitle?: string;
   filled?: boolean;
   showsIcon?: boolean;
-  style?: StyleProp<ViewStyle>;
 }) {
   const { theme } = useUnistyles();
   const reduceMotion = useReducedMotion();
@@ -63,8 +70,8 @@ export function CopyPill({
   const label = copied ? (copiedTitle ?? t`Copied`) : (title ?? t`Copy`);
   return (
     <Animated.View
-      layout={reduceMotion ? undefined : widthSpring()}
-      style={[styles.pill, filled && { backgroundColor: withAlpha(tint, 0.12) }, style]}
+      layout={reduceMotion ? undefined : getWidthSpring()}
+      style={[styles.pill, filled && { backgroundColor: withAlpha(tint, 0.12) }]}
     >
       {showsIcon ? (
         <Animated.View
@@ -96,7 +103,6 @@ export function CopyButton({
   accessibilityLabel,
   filled,
   showsIcon,
-  style,
 }: {
   text: string | (() => string);
   title?: string;
@@ -104,25 +110,18 @@ export function CopyButton({
   accessibilityLabel?: string;
   filled?: boolean;
   showsIcon?: boolean;
-  style?: StyleProp<ViewStyle>;
 }) {
   const { copied, copy } = useCopy();
   const { theme } = useUnistyles();
+  const label = accessibilityLabel ?? title ?? t`Copy`;
   return (
     <Touch
       feedback="opacity"
       onPress={() => void copy(typeof text === 'function' ? text() : text)}
-      accessibilityLabel={copied ? (copiedTitle ?? t`Copied`) : (accessibilityLabel ?? title ?? t`Copy`)}
+      accessibilityLabel={copied ? `${copiedTitle ?? t`Copied`}, ${label}` : label}
       hitSlop={{ top: 8, bottom: 8, left: theme.space.md, right: theme.space.md }}
     >
-      <CopyPill
-        copied={copied}
-        title={title}
-        copiedTitle={copiedTitle}
-        filled={filled}
-        showsIcon={showsIcon}
-        style={style}
-      />
+      <CopyPill copied={copied} title={title} copiedTitle={copiedTitle} filled={filled} showsIcon={showsIcon} />
     </Touch>
   );
 }
