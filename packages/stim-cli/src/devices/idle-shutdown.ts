@@ -1,5 +1,6 @@
 import {
   DEVICE_IDLE_SHUTDOWN_KEY,
+  DEVICE_RECLAIM_REASON,
   readDeviceIdleShutdowns,
   type DeviceActivity,
   type DeviceIdleShutdownRecord,
@@ -9,6 +10,7 @@ import { collectOwnedDeviceActivity, workspaceBuildInProgress, type OwnedDeviceA
 import { canonicalPath } from '../commands/gc/paths.ts';
 import { loadConfig } from '../workspace/config.ts';
 import { readWorkspaceState, updateWorkspaceState } from '../workspace/workspace-state.ts';
+import { workspaceDeviceLastUseAt } from './activity.ts';
 import { deviceSlotKey } from './device-slots.ts';
 import { listAllIosSims, type IosSimRecord } from './ios.ts';
 import { teardownOwnedAvd, teardownOwnedIosSim } from './teardown.ts';
@@ -60,8 +62,13 @@ export function dueIdleDevices(root: string | undefined, idleMs: number, now: nu
   if (!config) return [];
   const self = root === undefined ? undefined : canonicalPath(root);
   const projects = Object.fromEntries(
-    Object.entries(config.projects).filter(([path]) => self === undefined || canonicalPath(path) === self),
+    Object.entries(config.projects).filter(([path]) => {
+      if (self !== undefined && canonicalPath(path) !== self) return false;
+      const usedAt = workspaceDeviceLastUseAt(path);
+      return !Number.isFinite(usedAt) || now - usedAt >= idleMs;
+    }),
   );
+  if (!Object.keys(projects).length) return [];
   const builds = new Map(Object.keys(projects).map((path) => [path, workspaceBuildInProgress(path)]));
   return collectOwnedDeviceActivity({ ...config, projects }, listSims(), now).flatMap((device) => {
     const idleForMs = idleShutdownDueMs(device.activity, {
@@ -134,7 +141,7 @@ export function shutDownIdleDevices(
       log({
         level: 'info',
         event: 'device_idle_shutdown',
-        msg: `shut down ${what}, idle ${formatLongDuration(idleForMs)}${reason === 'reclaimed for a waiting run' ? ', reclaimed for a waiting run' : ''}`,
+        msg: `shut down ${what}, idle ${formatLongDuration(idleForMs)}${reason === DEVICE_RECLAIM_REASON ? ', reclaimed for a waiting run' : ''}`,
       });
     } else if (outcome.status !== 'missing') {
       log({

@@ -497,6 +497,7 @@ export async function withDeviceBootAdmission<T>(
   let lastInventory = { count: 0, holders: [] as string[] };
   let lastListed = -Infinity;
   let reclaimed = 0;
+  let lastReclaim = -Infinity;
   const skippedReclaims = new Set<string>();
   try {
     try {
@@ -578,7 +579,8 @@ export async function withDeviceBootAdmission<T>(
             }),
           );
         }
-        if (result.reclaim) {
+        if (result.reclaim && now() - lastReclaim >= 15_000) {
+          lastReclaim = now();
           try {
             const minutes = projectDeviceReclaimIdleMinutes(canonicalPath(root));
             if (minutes > 0) reclaimed += await reclaimIdleDevice(root, minutes * 60_000, out, now, skippedReclaims);

@@ -1159,6 +1159,7 @@ describe('capacity waits', () => {
     const { out } = await inDir(root, () => runStats(['--json']));
     const plain = await inDir(root, () => runStats([]));
     clock.mockRestore();
+    expect(plain.out.join('\n')).toContain('device queue reclaim\n');
     expect(plain.out.join('\n')).toContain('reclaimed 2');
     const json = JSON.parse(out[0]!);
     expect(json.capacityWaits[0]).toMatchObject({ kind: 'device-wait', ms: 21, workspace: 'new', reclaimed: 2 });

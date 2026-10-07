@@ -41,6 +41,28 @@ test('accepts captured older status while checking Android runtime fields', () =
   expect(isRpcEvent({ event: 'status', subscription: 's', payload })).toBe(false);
 });
 
+test('accepts future device idle shutdown reasons without disconnecting the phone', () => {
+  const payload = receiveStatus(captured);
+  const environment = payload.environments.find((entry) => entry.ios);
+  if (!environment?.ios) throw new Error('fixture needs an iOS device');
+  const idleShutdown = { at: '2026-10-07T12:00:00Z', idleMinutes: 10 };
+  for (const reason of [undefined, 'reclaimed for a waiting run', 'future-reason']) {
+    environment.ios.idleShutdown = { ...idleShutdown, ...(reason ? { reason } : {}) };
+    expect(isRpcEvent({ event: 'status', subscription: 's', payload })).toBe(true);
+  }
+  expect(
+    isRpcEvent({
+      event: 'status',
+      subscription: 's',
+      payload: replaceReceivedField(
+        payload,
+        `environments.${payload.environments.indexOf(environment)}.ios.idleShutdown.reason`,
+        1,
+      ),
+    }),
+  ).toBe(false);
+});
+
 test('accepts future maintenance modes and nonzero outcomes without disconnecting the phone', () => {
   const payload = receiveStatus(captured);
   const maintenance = {

@@ -1,4 +1,13 @@
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync } from 'node:fs';
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  utimesSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { readDeviceIdleShutdowns } from '@stim-cli/core/state';
@@ -141,6 +150,25 @@ test('a live native-run lock is skipped, and a later poll tries the next candida
   }
 });
 
+test.each(['selection', 'locked recheck'])('a recent client log prevents reclaim at %s', async (stage) => {
+  const device = add('client', 40);
+  const log = join(workspaceLogsDir(device.project), 'client.ndjson');
+  const writeClient = () => {
+    mkdirSync(workspaceLogsDir(device.project), { recursive: true });
+    writeFileSync(log, '{}\n');
+    utimesSync(log, NOW / 1000, NOW / 1000);
+  };
+  if (stage === 'selection') writeClient();
+  else
+    vi.mocked(collectOwnedDeviceActivity).mockImplementationOnce(() => {
+      writeClient();
+      return [device];
+    });
+  await expect(reclaim()).resolves.toBe(0);
+  expect(teardownOwnedIosSim).not.toHaveBeenCalled();
+  expect(readDeviceIdleShutdowns(readWorkspaceState(device.project))).toEqual({});
+});
+
 test('activity is rechecked after locking, so a newly opened viewer prevents reclaim', async () => {
   const device = add('viewed', 40);
   vi.mocked(collectOwnedDeviceActivity)
@@ -174,6 +202,17 @@ test('ownership refusal and teardown errors leave no shutdown record and do not 
   expect(readDeviceIdleShutdowns(readWorkspaceState(failed.project))).toEqual({});
   expect(out).toHaveBeenCalledWith(expect.stringContaining('ownership changed'));
   expect(out).toHaveBeenCalledWith(expect.stringContaining('shutdown failed'));
+  await expect(reclaim()).resolves.toBe(0);
+  await expect(reclaim()).resolves.toBe(0);
+  expect(teardownOwnedIosSim).toHaveBeenCalledTimes(2);
+  expect(out).toHaveBeenCalledTimes(2);
+  const targetLog = readFileSync(join(workspaceLogsDir(refused.project), 'metro.ndjson'), 'utf8');
+  expect(
+    targetLog
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line)),
+  ).toMatchObject([{ event: 'device_idle_shutdown_failed' }]);
 });
 
 test('an older Android device in a named slot is shut down and recorded in its target slot', async () => {

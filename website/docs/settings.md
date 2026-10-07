@@ -274,17 +274,24 @@ booting its device. Status adds `build.waitingFor`, and
 stats records `capacityWaits` and positive placement `deviceSlotWaitMs`.
 `0` or an unset cap means unlimited devices.
 
-With a cap set, queue reclaim is now on by default for everyone:
+With a cap set, queue reclaim uses the waiting workspace's effective setting:
 `devices.reclaimIdleMinutes` defaults to 10. The queue head shuts down the
 longest-idle eligible owned device in another workspace of this Stim home,
-one at a time, rechecking capacity before another. It uses the waiting
-workspace's effective setting; `0` disables it. The same idle checks as
+one at a time, at most once every 15 seconds, rechecking capacity before
+another. `0` disables it. The same idle checks as
 [supervisor idle shutdown](./owned-devices.md#idle-shutdown) protect drivers,
 locks, builds, viewers and recent activity. Reclaim never deletes and excludes
 the waiting workspace, physical, hosted, remote, parked and other homes'
-devices. Failed locks or shutdowns are logged and skipped. The supervisor's own
-idle shutdown remains on by default at 30 minutes. Positive `reclaimed` counts
+devices. Failed locks or shutdowns are reported once per device and skipped
+for the rest of the wait. The supervisor's own
+idle shutdown defaults to 30 minutes. Positive `reclaimed` counts
 are included in wait stats.
+
+Any workspace of this Stim home with a device idle for
+`devices.reclaimIdleMinutes` is eligible, even with no supervisor and even
+when its own `devices.idleShutdownMinutes` is `0`. Stim Desktop's simulator
+view and manual input in Simulator.app do not count as activity. Opt out
+machine-wide with the command below; the waiter's effective setting decides.
 
 ```bash
 stim settings set devices.reclaimIdleMinutes 0 --scope machine

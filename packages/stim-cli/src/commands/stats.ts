@@ -54,7 +54,9 @@ export default function statsCommand(program: Command): void {
       const usage = archivedUsage(readArchives());
       lines.push('archive', `  archived workspaces: ${usage.count}, ${formatBytes(usage.bytes)}`);
       if (offload.placements.length || Object.keys(offload.machines).length) lines.push(...placementLines(offload));
-      for (const wait of (report.capacityWaits ?? []).filter((event) => event.reclaimed)) {
+      const reclaimedWaits = (report.capacityWaits ?? []).filter((event) => event.reclaimed);
+      if (reclaimedWaits.length) lines.push('device queue reclaim');
+      for (const wait of reclaimedWaits) {
         lines.push(
           chalk.dim(
             `  ${wait.at} ${wait.platform} device slot wait ${formatLongDuration(wait.ms)}, reclaimed ${wait.reclaimed}`,

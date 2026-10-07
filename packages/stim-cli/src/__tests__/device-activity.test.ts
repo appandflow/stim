@@ -151,12 +151,25 @@ describe('createActivityReader', () => {
     const dir = workspaceLogsDir(workspace);
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, 'device.ndjson'), device.map((r) => JSON.stringify(r)).join('\n') + '\n');
+    const last = Math.max(...device.map((record) => (record as { ts: number }).ts));
+    if (Number.isFinite(last)) utimesSync(join(dir, 'device.ndjson'), last / 1000, last / 1000);
     writeFileSync(join(dir, 'metro.ndjson'), metro.map((r) => JSON.stringify(r)).join('\n') + '\n');
   }
 
   const target: ActivityTarget = { platform: 'ios', id: UDID, slot: 'default', workspace };
   const read = (table: Record<number, string>, t: ActivityTarget = target) =>
     createActivityReader({ now: NOW, home, startOf: starts(table), leaseFiles: () => [] })(t);
+
+  test('in-app log changes count as workspace activity even without native logs or Metro', () => {
+    const dir = workspaceLogsDir(workspace);
+    mkdirSync(dir, { recursive: true });
+    const file = join(dir, 'client.ndjson');
+    writeFileSync(file, '{}\n');
+    utimesSync(file, (NOW - 60_000) / 1000, (NOW - 60_000) / 1000);
+    expect(read({})).toMatchObject({ state: 'active', lastActivityAt: new Date(NOW - 60_000).toISOString() });
+    utimesSync(file, (NOW - 3_600_000) / 1000, (NOW - 3_600_000) / 1000);
+    expect(read({})).toMatchObject({ state: 'idle', lastActivityAt: new Date(NOW - 3_600_000).toISOString() });
+  });
 
   test('a live agent-device lease makes the device driven', () => {
     writeLease(runnerLease());
@@ -218,7 +231,7 @@ describe('createActivityReader', () => {
     });
   });
 
-  test('a stale lease falls through to log recency from this device only', () => {
+  test('a stale lease falls through to recent workspace device log activity', () => {
     writeLease(runnerLease());
     const at = NOW - 2 * 3_600_000;
     writeLogs(
@@ -230,9 +243,12 @@ describe('createActivityReader', () => {
       [{ ts: at - 1000, src: 'metro', event: 'bundle_response_started', platform: 'ios' }],
     );
     expect(read({ 100: OWNER_START })).toEqual({
-      state: 'idle',
-      lastActivityAt: new Date(at).toISOString(),
-      recent: { 'device-log': new Date(at).toISOString(), 'metro-bundle': new Date(at - 1000).toISOString() },
+      state: 'active',
+      lastActivityAt: new Date(NOW - 30_000).toISOString(),
+      recent: {
+        'device-log': new Date(NOW - 30_000).toISOString(),
+        'metro-bundle': new Date(at - 1000).toISOString(),
+      },
       basis: ['device-log', 'metro-bundle'],
     });
   });

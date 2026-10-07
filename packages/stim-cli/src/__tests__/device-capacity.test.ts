@@ -409,7 +409,7 @@ test('a queued run whose own device starts booting is admitted without waiting f
   }
 });
 
-test('the queue head reclaims once per poll, then checks capacity before another reclaim and records the count', async () => {
+test('the queue head reclaims immediately, then checks capacity before another reclaim and records the count', async () => {
   let full = true;
   let clock = Date.now();
   const order: string[] = [];
@@ -469,6 +469,33 @@ test('a waiter behind the head does not reclaim even at the cap', async () => {
   }
 });
 
+test('a waiter reclaims immediately when it becomes queue head at the cap', async () => {
+  const head = takeTicket();
+  let clock = 0;
+  let full = true;
+  const attempts: number[] = [];
+  vi.mocked(reclaimIdleDevice).mockImplementation(async () => {
+    attempts.push(clock);
+    full = false;
+    return 1;
+  });
+  try {
+    await withDeviceBootAdmission({ platform: 'ios', key: 'new' }, async () => {}, {
+      root,
+      max: 1,
+      sources: { ...empty, sims: () => (full ? occupied : []) },
+      now: () => clock,
+      sleep: async (ms) => {
+        clock += ms;
+        if (clock === 4000) releaseClaim(head);
+      },
+    });
+    expect(attempts).toEqual([4000]);
+  } finally {
+    releaseClaim(head);
+  }
+});
+
 test('cancelling while the admission lock is held exits without waiting for the holder or booting', async () => {
   const held = tryAcquireClaim({ root: join(root, 'device-admission.lock'), mode: 'exclusive' });
   if (!held.acquired) throw new Error('admission lock not acquired');
@@ -496,7 +523,7 @@ test('cancelling while the admission lock is held exits without waiting for the 
   }
 });
 
-test('the waiting workspace setting overrides the machine default, and explicit zero disables reclaim', async () => {
+test('explicit zero in the waiting workspace disables reclaim', async () => {
   upsertProject(root, {});
   setProjectSetting(root, 'devices.reclaimIdleMinutes', 0);
   let clock = Date.now();
@@ -516,13 +543,15 @@ test('the waiting workspace setting overrides the machine default, and explicit 
   expect(readStats().record?.capacityWaits?.[0]).not.toHaveProperty('reclaimed');
 });
 
-test('a cap exceeded by two devices reclaims only one on each poll', async () => {
+test('reclaim attempts are at least fifteen seconds apart while capacity is polled', async () => {
   const sims = [...occupied, makeIosSim({ udid: 'second', name: 'stim-second', state: 'Booted' })];
-  const counts: number[] = [];
-  const sleeps: number[] = [];
+  const attempts: number[] = [];
+  let clock = 0;
+  let polls = 0;
   vi.mocked(reclaimIdleDevice).mockImplementation(async () => {
-    sims.pop();
-    return 1;
+    attempts.push(clock);
+    if (attempts.length > 1) sims.pop();
+    return attempts.length > 1 ? 1 : 0;
   });
   await withDeviceBootAdmission({ platform: 'ios', key: 'new' }, async () => {}, {
     root,
@@ -530,15 +559,20 @@ test('a cap exceeded by two devices reclaims only one on each poll', async () =>
     sources: {
       ...empty,
       sims: () => {
-        counts.push(sims.length);
+        polls++;
         return [...sims];
       },
     },
-    sleep: async () => {
-      sleeps.push(vi.mocked(reclaimIdleDevice).mock.calls.length);
+    now: () => clock,
+    sleep: async (ms) => {
+      clock += ms;
     },
   });
-  expect(counts).toEqual([2, 1, 0]);
-  expect(sleeps).toEqual([1, 2]);
+  expect(attempts[0]).toBe(0);
+  expect(attempts).toHaveLength(3);
+  for (let i = 1; i < attempts.length; i++) {
+    expect(attempts[i]! - attempts[i - 1]!).toBeGreaterThanOrEqual(15_000);
+  }
+  expect(polls).toBeGreaterThan(attempts.length);
   expect(readStats().record?.capacityWaits?.[0]?.reclaimed).toBe(2);
 });

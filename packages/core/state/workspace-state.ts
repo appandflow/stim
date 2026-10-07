@@ -45,13 +45,14 @@ export function readIdleStop(state: WorkspaceState | null | undefined): IdleStop
   return { reason: 'idle', at: record.at, idleMinutes: record.idleMinutes };
 }
 
+export const DEVICE_RECLAIM_REASON = 'reclaimed for a waiting run';
 export const DEVICE_IDLE_SHUTDOWN_KEY = 'deviceIdleShutdowns';
 
 /** An owned simulator or emulator shut down after being idle. */
 export interface DeviceIdleShutdownRecord {
   at: string;
   idleMinutes: number;
-  reason?: 'idle' | 'reclaimed for a waiting run';
+  reason?: string;
 }
 
 /** The recorded idle shutdowns by device slot key (`ios`, `android`, `ios:<slot>`). */
@@ -67,9 +68,7 @@ export function readDeviceIdleShutdowns(
       found[key] = {
         at: record.at,
         idleMinutes: record.idleMinutes,
-        ...(record.reason === 'idle' || record.reason === 'reclaimed for a waiting run'
-          ? { reason: record.reason }
-          : {}),
+        ...(typeof record.reason === 'string' ? { reason: record.reason } : {}),
       };
     }
   }

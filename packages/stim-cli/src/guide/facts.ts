@@ -1136,9 +1136,10 @@ RULES
                    lock, argent, xcodebuild, idb, maestro, appium, simctl,
                    uiautomator or instrumentation; pid and since are null when
                    the claim does not record them
-  lastActivityAt   the newest of this device's app log records, this
-                   platform's Metro bundle requests, the workspace's last
-                   Stim run, while agent-device drives it the agent's last
+  lastActivityAt   the newest of this device's app log records, changes to
+                   the workspace's client.ndjson and device.ndjson logs,
+                   this platform's Metro bundle requests, the workspace's
+                   last Stim run, while agent-device drives it the agent's last
                    recorded action, and now while a stim-server client views
                    it, rounded down to the minute; absent when none is
                    recorded

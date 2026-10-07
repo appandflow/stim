@@ -1517,11 +1517,11 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
                             While at the cap, only the queue head reclaims:
                             it shuts down the longest-idle eligible owned
                             device in another workspace of this Stim home,
-                            one per poll, then rechecks queue and capacity.
+                            one per attempt, at most once every 15 seconds,
+                            then rechecks queue and capacity.
                             devices.reclaimIdleMinutes defaults to 10; 0 off.
-                            This changes the default behavior for everyone
-                            with a cap set. The waiter's effective setting
-                            applies. Idle checks are the same as supervisor
+                            The waiter's effective setting applies.
+                            Idle checks are the same as supervisor
                             idle shutdown below: no driver, lock, build,
                             viewer or recent activity. Physical, hosted,
                             remote, parked and other homes' devices, and
@@ -1608,20 +1608,25 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
   QUEUE RECLAIM (10 MINUTES BY DEFAULT): a run waiting at concurrency.maxDevices
   uses devices.reclaimIdleMinutes from its own effective workspace settings.
   Only the FIFO head shuts down the longest-idle eligible device across this
-  Stim home's other workspaces, exactly one per poll, rechecking capacity
-  before another. This is on by default for everyone with a cap set; 0 disables
-  it. The supervisor's own idle shutdown still defaults to 30 minutes.
+  Stim home's other workspaces, one per attempt, at most once every 15 seconds,
+  rechecking capacity before another. 0 disables it. The supervisor's own idle
+  shutdown defaults to 30 minutes.
   Reclaim uses the same idle check: no driver, Stim or agent-device lock,
   build, device lock or viewer, and no Stim command, app or device log,
   Metro bundle or agent action within that interval. It rechecks under the
   target workspace's native-run lock and re-resolves ownership in centralized
   teardown. It shuts down, never deletes, and excludes the waiting workspace,
   physical, hosted, remote, parked and other homes' devices. Failed locks or
-  teardown are logged and skipped. Progress on stderr names the reclaimed
+  teardown are reported once per device and skipped for the rest of the wait.
+  Progress on stderr names the reclaimed
   device and workspace; the target's status and device_idle_shutdown log
   record "reclaimed for a waiting run", and the wait's stats carry reclaimed.
-  This path does not need the target's supervisor to be running.
-  \`stim settings set devices.reclaimIdleMinutes 0 --scope machine\` turns it off.
+  Any workspace of this Stim home with a device idle for
+  devices.reclaimIdleMinutes is eligible, even with no supervisor and even
+  when its own devices.idleShutdownMinutes is 0. Stim Desktop's simulator view
+  and manual input in Simulator.app do not count as activity.
+  \`stim settings set devices.reclaimIdleMinutes 0 --scope machine\` opts out
+  machine-wide; the waiter's effective setting decides.
 
   Steps 3 and 4 run only for disk. Memory and workspace limits never refuse;
   a run still over them prints one \`budget\` warning and continues. The

@@ -1,3 +1,5 @@
+import { LOG_ROTATE_BYTES } from '@stim-cli/core';
+import { DEVICE_RECLAIM_REASON } from '@stim-cli/core/state';
 import { realpathSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { canonicalPath } from '../commands/gc/paths.ts';
@@ -26,14 +28,13 @@ export async function reclaimIdleDevice(
       })
       .toSorted((a, b) => b.idleForMs - a.idleForMs);
     const candidate = candidates.find(({ device }) => !skipped.has(`${device.kind}:${device.id}`));
-    if (!candidate) {
-      skipped.clear();
-      return 0;
-    }
+    if (!candidate) return 0;
     const { device, idleForMs } = candidate;
     const label = loadConfig()?.projects[device.project]?.label || basename(device.project);
     const log = (event: IdleShutdownEvent) => {
-      const writer = createNdjsonWriter(join(workspaceLogsDir(device.project), 'metro.ndjson'));
+      const writer = createNdjsonWriter(join(workspaceLogsDir(device.project), 'metro.ndjson'), {
+        maxBytes: LOG_ROTATE_BYTES,
+      });
       writer.write({ src: 'metro', ...event });
       writer.close();
       if (event.level === 'warn') out(`${'device'.padEnd(11)} ${event.msg}`);
@@ -44,7 +45,7 @@ export async function reclaimIdleDevice(
       () =>
         shutDownIdleDevices(device.project, idleMs, log, now(), {
           only: device,
-          reason: 'reclaimed for a waiting run',
+          reason: DEVICE_RECLAIM_REASON,
         }),
       { purpose: 'device queue reclaim', supervisor: false, managedLocks: false },
     );

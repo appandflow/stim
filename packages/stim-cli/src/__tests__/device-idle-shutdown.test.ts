@@ -1,10 +1,11 @@
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync, utimesSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DEVICE_IDLE_SHUTDOWN_KEY, readDeviceIdleShutdowns, type DeviceActivity } from '@stim-cli/core/state';
 import { clearDeviceIdleShutdown, idleShutdownDueMs, shutDownIdleDevices } from '../devices/idle-shutdown.ts';
 import { teardownOwnedIosSim } from '../devices/teardown.ts';
 import { resetExecutor, setExecutor } from '../exec.ts';
+import { workspaceLogsDir } from '../workspace/paths.ts';
 import { upsertProject } from '../workspace/config.ts';
 
 vi.mock('../devices/teardown.ts', () => ({
@@ -209,6 +210,19 @@ describe('shutDownIdleDevices', () => {
     expect(log).toEqual([]);
   });
 
+  test('recent client activity keeps the device up without probing processes', () => {
+    const mine = setup();
+    const file = join(workspaceLogsDir(mine), 'client.ndjson');
+    mkdirSync(workspaceLogsDir(mine), { recursive: true });
+    writeFileSync(file, '{}\n');
+    utimesSync(file, NOW / 1000, NOW / 1000);
+    const probe = vi.fn<() => string>(() => '');
+    setExecutor({ runFileQuiet: probe } as never);
+    expect(shutDownIdleDevices(mine, 2 * MINUTE, () => {}, NOW)).toBe(0);
+    expect(teardownOwnedIosSim).not.toHaveBeenCalled();
+    expect(probe).not.toHaveBeenCalled();
+  });
+
   test('a device used within the threshold is left alone', () => {
     const mine = setup();
     expect(shutDownIdleDevices(mine, 20 * MINUTE, () => {}, NOW)).toBe(0);
@@ -231,6 +245,6 @@ test('idle shutdown records preserve a reclaim reason and accept legacy records 
     ios: old,
     android: { ...old, reason: 'reclaimed for a waiting run' },
     'ios:fold': { ...old, reason: 'idle' },
-    'ios:unknown': old,
+    'ios:unknown': { ...old, reason: 'future-reason' },
   });
 });
