@@ -53,7 +53,10 @@ ${JSON.parse(TUTORIAL_FILES['app.json']).expo.extra.stimTutorial}; skip creation
 folder or another tutorial version, stop and ask the user for another folder.
 Never overwrite or delete it.
 
-For a new app, from the selected parent folder run:
+For a new app, first check the selected parent folder: create it if absent,
+then run git -C <parent> rev-parse --is-inside-work-tree. If it succeeds, the
+folder is inside another repository: stop and ask the user for another folder.
+Never git add in the user's repo. Then, from the parent folder, run:
 
   npx --yes create-expo-app@${TUTORIAL_PINS.createExpoApp} stim-tutorial --template ${TUTORIAL_PINS.template} --no-install --no-agents-md --yes
 
@@ -63,16 +66,12 @@ verbatim, and append its .gitignore lines. Then run:
   npm install --prefer-offline
   npm pkg set scripts.ios="expo run:ios" scripts.android="expo run:android"
   git init
-  git rev-parse --show-toplevel
-
-Repository safety: verify the reported top level equals the canonical tutorial
-base folder. If it is inside another repository or the top level differs,
-stop and ask the user for another folder. Never git add in the user's repo.
-Check this on reuse too, before adding a worktree. For a new app only, after
-that check run:
-
   git add -A
   git -c user.name=Stim -c user.email=stim@localhost -c commit.gpgsign=false commit -m "Stim tutorial"
+
+On reuse, run git rev-parse --show-toplevel in the base folder before adding
+a worktree; if it does not equal the base folder, the folder is inside another
+repository: stop and ask the user for another folder.
 
 Set the scripts before the commit because Expo prebuild rewrites them to
 expo run:ios and expo run:android; otherwise the dirty worktree blocks removal.
@@ -128,8 +127,8 @@ Run the same build again, never with --no-build-cache:
 
 ${commands('rebuild')}
 
-Read this workspace's environments[].builds.ios[0].cacheHit and missReason
-from stim status --json. Explain a local or remote hit, or the actual miss
+Read this workspace's environments[].lastBuilds.ios.cacheHit from
+stim status --json, and the miss reason printed by stim ios. Explain a local or remote hit, or the actual miss
 reason when cacheHit is false. A repeat run can miss; report the evidence.
 
 PAUSE: end the turn. Point at the Build section and cache badge, or stim stats.
@@ -152,8 +151,8 @@ Run from the tour worktree:
 ${commands('agent').replace('read -r iosUdid', 'iosUdid="<ios.udid>"')}
 
 Use --save-script=tutorial.ad with the equals sign: agent-device treats a
-separate path as a URL and refuses. Dismiss the red box overlay only if present.
-Remove the # agent-device:target-v1 evidence lines before replay: replaying
+separate path as a URL and refuses. The dismiss-overlay step clears a red box that would cover the buttons.
+Remove the target-v1 evidence and dismiss-overlay lines before replay: replaying
 them can fail with REPLAY_DIVERGENCE on the recorded button identity.
 The scripts and screenshot stay in the tour worktree and are git-ignored.
 
@@ -197,7 +196,8 @@ ask for the name or let the user skip this step.
 ${commands('machine')}
 
 This step bypasses the artifact cache so the build can use the named machine.
-Report the actual build placement; offload failures fall back to a local build.
+A named machine refuses without a local fallback. If it refuses, report the
+refusal and offer --build-machine auto or local; do not retry silently.
 
 PAUSE: end the turn. Point at the build's machine in Desktop or its report in
 stim status --json. Give the next prompt: "${TUTORIAL_PROMPTS.finish}".`,
@@ -215,7 +215,8 @@ Stop from the tour path, then remove from the base checkout:
 ${commands('finish')}
 
 Never use --force. On a refusal, report it and stop. Keep the base folder
-and branch. Print these optional cleanup commands for the user; do not run:
+and branch. Print these optional cleanup commands for the user; do not run. Deleting
+the base folder also removes the branch, so they are alternatives:
 
   rm -rf "{base}"
   git -C "{base}" branch -D stim-tutorial/tour
@@ -246,16 +247,16 @@ and redo run from the worktree step. Pause after the build as run instructs.`,
 
 ${paths}
 
-These commands are for a person typing them, one step at a time, in a shell
-with set -e enabled. Stop on any failure and read stderr; do not continue to
-later commands. Follow stim guide tutorial run for folder and repository
+These commands are for a person typing them, one step at a time,
+as scripts: save a block to a file and run it with sh -e, so it stops on the
+first failure. Read stderr and do not continue to later commands. Follow stim guide tutorial run for folder and repository
 safety. Reuse only this version's tutorial app, never overwrite another folder.
 The creation block skips writes on reuse and checks the repository root.
 
-Replace {base} and {tour} with absolute paths. For Agent actions, replace
+Replace {base} and {tour} with absolute paths; {base} must end in stim-tutorial. For Agent actions, replace
 {stateDir} with agentDevice.stateDir from stim ios or stim status --json;
 when read -r iosUdid waits, type this workspace's ios.udid from that status.
-Only dismiss-overlay if a red box is present. For the optional machine step,
+For the optional machine step,
 replace {machine} with a machine you have already approved, or skip it.
 
 Look at the sidebar during warm and Build during the first build (about four
@@ -266,12 +267,6 @@ crash shows a red box; the slow request is a local timer, not network capture.
 At Watch on your phone, optionally open an already paired Stim phone to see
 the tour workspace; phone setup and machine approval stay with you.
 Use stim status, stim logs --errors, and stim stats without Desktop.
-
-Enable failure stopping before starting:
-
-\`\`\`sh
-set -e
-\`\`\`
 
 ${TUTORIAL_STEPS.map((step) => `${step.title}${step.optional ? ' (optional)' : ''}\n\n${step.manual.length ? `\`\`\`sh\n${step.manual.join('\n')}\n\`\`\`` : 'Observe this step in Stim Desktop, or skip it without Desktop.'}`).join('\n\n')}
 

@@ -568,6 +568,14 @@ test('tutorial setup protects existing folders and the user repository', () => {
   expect(run).toMatch(/Never git add in the user's repo/i);
 });
 
+test('the manual tutorial checks for an enclosing repository before creating or initializing the app', () => {
+  const begin = TUTORIAL_STEPS.find((step) => step.id === 'begin')!.manual;
+  const index = (needle: string) => begin.findIndex((line) => line.includes(needle));
+  expect(index('--is-inside-work-tree')).toBeGreaterThanOrEqual(0);
+  expect(index('--is-inside-work-tree')).toBeLessThan(index('create-expo-app'));
+  expect(index('create-expo-app')).toBeLessThan(index('git init'));
+});
+
 test('tutorial finish removes the tour worktree without forcing removal', () => {
   const finish = renderSection('tutorial', 'finish');
   assert(finish);
