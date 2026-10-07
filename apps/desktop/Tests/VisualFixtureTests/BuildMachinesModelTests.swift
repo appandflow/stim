@@ -12,12 +12,26 @@ final class BuildMachinesModelTests: XCTestCase {
     var fails = false
     var waiting: CheckedContinuation<Void, Never>?
     var block = false
+    var machines: String?
+
+    nonisolated static func payload(_ machines: String) -> SettingsPayload {
+      let entry = "{ \"key\": \"offload.machines\", \"value\": \(machines), \"origin\": \"machine\", \"layers\": {} }"
+      return try! JSONDecoder().decode(
+        SettingsPayload.self, from: Data("{ \"files\": {}, \"unknown\": [], \"settings\": [\(entry)] }".utf8))
+    }
 
     func make() -> BuildMachinesModel {
       let cli = Task { StimCLI(environment: [:], override: "/usr/bin/false") }
       let settings = MachineSettingsStore(
-        read: { throw StimCLI.Failure.exited(1, stderr: "Unexpected settings read") },
-        write: { _, _, _, _ in throw StimCLI.Failure.exited(1, stderr: "Unexpected settings write") })
+        read: {
+          guard let machines = await self.machines else { throw StimCLI.Failure.exited(1, stderr: "Unexpected settings read") }
+          return Harness.payload(machines)
+        },
+        write: { _, value, _, _ in
+          guard let value else { throw StimCLI.Failure.exited(1, stderr: "Unexpected settings write") }
+          await MainActor.run { self.machines = value }
+          return .written(Harness.payload(value).entry("offload.machines")!)
+        })
       return BuildMachinesModel(
         cli: cli, settings: settings, statsReader: StatsReader(cli: cli, server: { nil }),
         now: { self.now },
@@ -116,6 +130,24 @@ final class BuildMachinesModelTests: XCTestCase {
     XCTAssertEqual(harness.calls.count, 1)
     harness.now = harness.now.addingTimeInterval(301)
     await model.refreshHostingMachines(checkout: "/w")
+    XCTAssertEqual(harness.calls.count, 2)
+  }
+
+  @MainActor func testEntriesChangedDuringARefreshGetAnotherRefreshWhenItEnds() async {
+    let harness = Harness()
+    harness.machines = "[\"a\", \"b\"]"
+    let model = harness.make()
+    await model.settings.refresh()
+    harness.block = true
+    let first = Task { await model.refreshStatuses(checkout: "/w", ask: false) }
+    await waitUntil { harness.waiting != nil }
+    let removal = Task { await model.remove("b", checkout: "/w") }
+    await waitUntil { model.entries == ["a"] }
+    await Task.yield()
+    harness.block = false
+    harness.waiting?.resume()
+    await first.value
+    await removal.value
     XCTAssertEqual(harness.calls.count, 2)
   }
 }

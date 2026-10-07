@@ -246,6 +246,8 @@ private struct BuildMachineRow: View {
             if refreshing { ProgressView().controlSize(.mini).help("Checking again") }
           } else if checking {
             Pill("Checking\u{2026}", size: .small)
+          } else if canAsk {
+            Pill("Couldn\u{2019}t check", tone: .warning, size: .small)
           }
         }
         if let status {
