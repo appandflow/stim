@@ -117,32 +117,49 @@ private struct NoticeCard: View {
       if let detail = notice.detail {
         Text(detail).foregroundStyle(Palette.secondary).lineLimit(1).truncationMode(.middle)
       }
-      Button(notice.actionTitle) {
-        center.remove(notice.id)
-        notice.perform()
-      }
-      .buttonStyle(.stim(.primary))
-      .padding(.top, Space.xxs)
-      if let secondary = notice.secondaryAction {
-        VStack(alignment: .leading, spacing: Space.xxs) {
-          Button(secondary.title) {
-            center.remove(notice.id)
-            secondary.perform()
-          }
-          .buttonStyle(.plain)
-          if let alternate = notice.alternateAction {
-            Button(alternate.title) {
-              center.remove(notice.id)
-              alternate.perform()
-            }
-            .buttonStyle(.plain)
-          }
-        }
-        .foregroundStyle(Palette.secondary)
-        .font(.stim(.caption))
-      }
+      actions
     }
     .accessibilityElement(children: .contain)
+  }
+
+  private var secondaries: [Notice.Action] { [notice.alternateAction, notice.secondaryAction].compactMap { $0 } }
+
+  private var actions: some View {
+    ViewThatFits(in: .horizontal) {
+      HStack(spacing: Space.xs) {
+        Spacer(minLength: 0)
+        ForEach(secondaries.indices, id: \.self) { secondary(secondaries[$0]) }
+        primary
+      }
+      VStack(alignment: .trailing, spacing: Space.xs) {
+        if secondaries.count > 1 {
+          HStack(spacing: Space.xs) { ForEach(secondaries.indices.dropLast(), id: \.self) { secondary(secondaries[$0]) } }
+        }
+        HStack(spacing: Space.xs) {
+          if let last = secondaries.last { secondary(last) }
+          primary
+        }
+      }
+    }
+    .padding(.top, Space.xxs)
+  }
+
+  private var primary: some View {
+    Button(notice.actionTitle) {
+      center.remove(notice.id)
+      notice.perform()
+    }
+    .buttonStyle(.stim(.primary))
+    .fixedSize()
+  }
+
+  private func secondary(_ action: Notice.Action) -> some View {
+    Button(action.title) {
+      center.remove(notice.id)
+      action.perform()
+    }
+    .buttonStyle(.stim(.plain))
+    .fixedSize()
   }
 
   private var stepper: some View {
