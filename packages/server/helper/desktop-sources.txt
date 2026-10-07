@@ -25,6 +25,7 @@ SimulatorFrames/DuoDeviceProfile.swift
 SimulatorFrames/DuoMesh.swift
 SimulatorFrames/DuoPoseClip.swift
 SimulatorFrames/DuoScreenHitMesh.swift
+SimulatorFrames/DuoModelAsset.swift
 SimulatorFrames/DuoModelView.swift
 SimulatorFrames/SimulatorHingeAngle.swift
 StimKit/ProcessStream.swift
