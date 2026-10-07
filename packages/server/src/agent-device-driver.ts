@@ -370,6 +370,7 @@ export class AgentDeviceDriver implements HostedAgentDriver {
   private listening(proxy: ChildProcess): Promise<URL> {
     return new Promise((resolve, reject) => {
       let output = '';
+      let errors = '';
       const timer = setTimeout(
         () => finish(new Error('The agent-device proxy did not report a listening address.')),
         this.options.startTimeoutMs,
@@ -377,6 +378,8 @@ export class AgentDeviceDriver implements HostedAgentDriver {
       const finish = (result: Error | URL) => {
         clearTimeout(timer);
         proxy.stdout?.off('data', onData);
+        proxy.stderr?.off('data', onError);
+        proxy.stderr?.resume();
         proxy.off('exit', onExit);
         proxy.off('error', finish);
         if (result instanceof Error) reject(result);
@@ -388,9 +391,16 @@ export class AgentDeviceDriver implements HostedAgentDriver {
         if (match) finish(new URL(match[1]!));
       };
       const onExit = (code: number | null) =>
-        finish(new Error(`The agent-device proxy exited with ${String(code)} before it was ready.`));
+        finish(
+          new Error(
+            `The agent-device proxy exited with ${String(code)} before it was ready.${errors.trim() ? ` ${errors.trim()}` : ''}`,
+          ),
+        );
+      const onError = (chunk: Buffer) => {
+        errors = (errors + chunk.toString()).slice(-400);
+      };
       proxy.stdout?.on('data', onData);
-      proxy.stderr?.resume();
+      proxy.stderr?.on('data', onError);
       proxy.once('exit', onExit);
       proxy.once('error', finish);
     });
