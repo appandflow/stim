@@ -18,7 +18,10 @@ import { readAccessTicket, readHostPermissions } from '../offload/access-ticket.
 import {
   endpoint,
   findPeer,
-  lapsedRequest,
+  approvedCredential,
+  isLapsed,
+  pendingReport,
+  requestedLine,
   parseMachine,
   realIo,
   type TailnetMachineIo,
@@ -44,7 +47,6 @@ interface MachineReport {
   dnsName?: string;
   deviceId?: string;
   requestedAt?: string;
-  /** While pending: when the request lapses. */
   expiresAt?: string;
   host?: NonNullable<HelloResult['host']>;
 }
@@ -298,11 +300,7 @@ export async function inspectDeviceHostMachines(
           reply.result.capabilities.includes('device-host')
         ) {
           if (credential.state !== 'approved') {
-            credentials = credentials.map((each) => {
-              if (each.machine !== machine) return each;
-              const { expiresAt: _expiresAt, ...rest } = each;
-              return { ...rest, state: 'approved' as const };
-            });
+            credentials = credentials.map((each) => (each.machine === machine ? approvedCredential(each) : each));
             store(credentials);
           }
           const host = readHostPermissions(reply.result.host);
@@ -335,22 +333,18 @@ export async function inspectDeviceHostMachines(
         const ticket = fix && pending && credential.state !== 'approved' ? readAccessTicket() : undefined;
         ask = fix && (revoked || (!!ticket && credential.ticketHash !== ticket.ticketHash));
         if (pending && !ask) {
-          inspected.machines.push({
-            ...known,
-            state: 'pending',
-            ...(credential.expiresAt ? { expiresAt: credential.expiresAt } : {}),
-          });
+          inspected.machines.push({ ...known, ...pendingReport(credential) });
           inspected.findings.push(
             note(
               `Hosting machine ${machine} has not approved this Mac yet`,
-              `Requested at ${credential.requestedAt}${credential.expiresAt ? `; the request lapses at ${credential.expiresAt}` : ''}.`,
+              requestedLine(credential),
               approval(machine, credential.deviceId),
             ),
           );
           continue;
         }
         if (!ask) {
-          const lapsed = revoked && lapsedRequest(credential);
+          const lapsed = revoked && isLapsed(credential);
           inspected.machines.push({ ...known, state: lapsed ? 'lapsed' : revoked ? 'revoked' : 'unreachable' });
           inspected.findings.push(
             note(

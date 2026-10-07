@@ -57,7 +57,7 @@ const pending: HelloReply = {
   },
 };
 
-const lapsedRequest: HelloReply = {
+const expiredPending: HelloReply = {
   result: {
     ...(pending as { result: object }).result,
     approval: { state: 'pending', expiresAt: '2020-01-01T00:15:00.000Z' },
@@ -228,7 +228,7 @@ describe('inspectBuildMachines', () => {
   });
 
   it('reports a request the machine forgot after its expiry as lapsed, and --fix asks again', async () => {
-    await inspectBuildMachines({ fix: true }, fakeIo('nMini', [lapsedRequest]).io, ['mini']);
+    await inspectBuildMachines({ fix: true }, fakeIo('nMini', [expiredPending]).io, ['mini']);
     const unknown: HelloReply = { error: { code: 'unauthorized', message: 'Unknown device.' } };
     const { machines, findings } = await inspectBuildMachines({ fix: false }, fakeIo('nMini', [unknown]).io, ['mini']);
     expect(machines).toEqual([expect.objectContaining({ state: 'lapsed', deviceId: 'ab12' })]);
@@ -247,7 +247,7 @@ describe('inspectBuildMachines', () => {
   });
 
   it('keeps revoked for an approved machine, and for a credential stored without an expiry', async () => {
-    await inspectBuildMachines({ fix: true }, fakeIo('nMini', [lapsedRequest]).io, ['mini']);
+    await inspectBuildMachines({ fix: true }, fakeIo('nMini', [expiredPending]).io, ['mini']);
     const approved: HelloReply = { result: { capabilities: ['build'], device: { id: 'ab12', name: 'laptop' } } };
     await inspectBuildMachines({ fix: false }, fakeIo('nMini', [approved]).io, ['mini']);
     const unknown: HelloReply = { error: { code: 'unauthorized', message: 'Unknown device.' } };

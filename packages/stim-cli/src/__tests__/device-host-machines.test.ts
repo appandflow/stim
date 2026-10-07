@@ -127,10 +127,10 @@ test('only a definite unauthorized response and fix ask again on the same pinned
 });
 
 test('a pending hosting request stores and reports its expiry; a forgotten one past it is lapsed, and --fix asks again', async () => {
-  const lapsedRequest: HelloReply = {
+  const expiredPending: HelloReply = {
     result: { ...pending.result!, approval: { state: 'pending', expiresAt: '2020-01-01T00:15:00Z' } },
   };
-  const asked = await inspectDeviceHostMachines({ fix: true }, fakeIo([lapsedRequest]).io, ['mini']);
+  const asked = await inspectDeviceHostMachines({ fix: true }, fakeIo([expiredPending]).io, ['mini']);
   expect(asked.machines[0]).toMatchObject({ state: 'pending', expiresAt: '2020-01-01T00:15:00Z' });
   expect(readDeviceHostMachines()[0]).toMatchObject({ expiresAt: '2020-01-01T00:15:00Z' });
   const unknown: HelloReply = { error: { code: 'unauthorized', message: 'Unknown device.' } };

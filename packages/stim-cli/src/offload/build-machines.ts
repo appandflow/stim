@@ -17,7 +17,10 @@ import { readAccessTicket, readHostPermissions } from './access-ticket.ts';
 import {
   endpoint,
   findPeer,
-  lapsedRequest,
+  approvedCredential,
+  isLapsed,
+  pendingReport,
+  requestedLine,
   parseMachine,
   realIo,
   type TailnetPeer,
@@ -79,7 +82,6 @@ interface BuildMachineReport {
   dnsName?: string;
   deviceId?: string;
   requestedAt?: string;
-  /** While pending: when the request lapses. */
   expiresAt?: string;
   host?: NonNullable<HelloResult['host']>;
   /** For an approved machine: whether it would take this project's build now, and every reason it would not. */
@@ -278,11 +280,7 @@ async function inspectMachine(
     const host = permissions ? { host: permissions } : {};
     if (credential.state !== 'approved') {
       updateCredentials((credentials) =>
-        credentials.map((each) => {
-          if (each.machine !== entry) return each;
-          const { expiresAt: _expiresAt, ...rest } = each;
-          return { ...rest, state: 'approved' as const };
-        }),
+        credentials.map((each) => (each.machine === entry ? approvedCredential(each) : each)),
       );
     }
     if (!check) return { report: { ...paired, state: 'approved', ...host }, finding: null };
@@ -307,17 +305,17 @@ async function inspectMachine(
       return requestAccess(entry, peer, parsed.port, deviceName, io);
     }
     return {
-      report: { ...paired, state: 'pending', ...(credential.expiresAt ? { expiresAt: credential.expiresAt } : {}) },
+      report: { ...paired, ...pendingReport(credential) },
       finding: note(
         `Build machine ${entry} has not approved this Mac yet`,
-        `Requested at ${credential.requestedAt}${credential.expiresAt ? `; the request lapses at ${credential.expiresAt}` : ''}.`,
+        requestedLine(credential),
         approval(entry, credential.deviceId),
       ),
     };
   }
   if ('error' in reply && reply.error.code === 'unauthorized') {
     if (fix) return requestAccess(entry, peer, parsed.port, deviceName, io);
-    if (lapsedRequest(credential)) {
+    if (isLapsed(credential)) {
       return {
         report: { ...paired, state: 'lapsed' },
         finding: note(
