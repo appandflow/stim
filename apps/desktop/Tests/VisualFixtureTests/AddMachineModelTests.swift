@@ -297,6 +297,29 @@ final class AddMachineModelTests: XCTestCase {
     XCTAssertTrue(model.wizard.revokeIds.isEmpty)
   }
 
+  @MainActor func testExistingApprovalOnANonDefaultPortIsLearnedBeforeTheSetupCommand() async throws {
+    let harness = Harness()
+    harness.builds = ["mini:7444"]
+    harness.hosts = ["mini:7444"]
+    harness.grantReady = true
+    let location = WizardSample(applicationSupport: URL(fileURLWithPath: "/fixture"))
+    let sample = SampleBuildModel(
+      dependencies: .init(
+        sample: location,
+        run: { _, _ in WizardCommandOutput(exit: 0, stdout: Data(), stderr: "") },
+        exists: { $0 == location.marker }))
+    let model = harness.make(workspace: false, sample: sample)
+    await model.start()
+    defer { model.stop() }
+    model.selectedId = "nMini"
+    await model.pick()
+    await model.next()
+    let command = try XCTUnwrap(model.command)
+    XCTAssertFalse(command.contains("--build"))
+    XCTAssertFalse(command.contains("--device-host"))
+    XCTAssertEqual(model.wizard.phase, .approved)
+  }
+
   @MainActor func testSamplePreparationKeepsNextBusyAndFailureDoesNotIssueACommand() async {
     let harness = Harness()
     harness.builds = ["mini"]

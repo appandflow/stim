@@ -26,6 +26,7 @@ final class AddMachineModel {
   private(set) var androidFindings: [DoctorReport.Finding] = []
   private(set) var checksAndroid = false
   let sample: SampleBuildModel?
+  var preparingSample: Bool { sample?.preparing == true }
   var machines: BuildMachinesModel?
   private(set) var summary: [String] = []
   private(set) var finished = false
@@ -363,7 +364,9 @@ final class AddMachineModel {
   private func match(_ statuses: [BuildMachineStatus]?) -> BuildMachineStatus? {
     guard let mac = wizard.mac else { return nil }
     let entry = SetupPortProbe.entry(machine: mac.machine, port: wizard.port ?? 7443)
-    return statuses?.first { $0.machine == entry && ($0.dnsName == nil || $0.dnsName == mac.dnsName) }
+    let sameMac = { (status: BuildMachineStatus) in status.dnsName == nil || status.dnsName == mac.dnsName }
+    return statuses?.first { $0.machine == entry && sameMac($0) }
+      ?? statuses?.first { ($0.machine == mac.machine || $0.machine.hasPrefix(mac.machine + ":")) && sameMac($0) }
   }
 
   private func runDoctor(ask: Bool, ticket: String? = nil) async throws {

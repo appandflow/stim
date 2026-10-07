@@ -164,6 +164,9 @@ struct AddMachineSheet: View {
         )
         .font(.stim(.footnote)).foregroundStyle(Palette.secondary)
       }
+      if model.preparingSample {
+        Label("Preparing the sample app to check existing approvals", systemImage: "hourglass").foregroundStyle(Palette.secondary)
+      }
       if wizard.failure(now: model.now) == .noWorkspace {
         failureContent(.noWorkspace)
       }
@@ -341,7 +344,7 @@ struct AddMachineSheet: View {
             model.stop()
             dismiss()
           }
-        }.disabled(model.busy || model.cancelling)
+        }.disabled((model.busy && !model.preparingSample) || model.cancelling)
         if step == 3 {
           Button("Next") { model.openTest() }.disabled(model.busy || model.toolsBlock)
         } else if step == 4 {
