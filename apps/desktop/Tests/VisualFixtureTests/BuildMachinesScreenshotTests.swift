@@ -22,7 +22,8 @@
     ) -> some View {
       BuildMachinesContent(
         entries: entries, statuses: statuses, hosts: [BuildMachineStatus(machine: "mini", state: .approved)], updates: [:],
-        working: nil, failure: nil, tailscaleRunning: tailscale, canAsk: true, addDisabled: false, sampleExists: false,
+        working: nil, refreshing: false, failure: nil, tailscaleRunning: tailscale, canAsk: true, addDisabled: false,
+        sampleExists: false,
         updatesAutomatically: .constant(false), add: {}, ask: { _ in }, update: { _ in }, showDetails: { _ in },
         remove: { _ in }, deleteSample: {}
       )

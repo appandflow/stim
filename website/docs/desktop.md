@@ -208,7 +208,7 @@ show refusals for removals started from its own workspace actions.
   installs this Mac's npm release there, or this checkout's own build when the
   machine allows it with `server.acceptClientBuilds`. The update goes over the
   tailnet, with no ssh, and the old server comes back if the new one does not
-  start. **Settings > Build Machines** can update them automatically.
+  start. **Settings > Build Machines** can keep them on this Mac's Stim version automatically.
   A removed selection returns to **This Mac**; remote selections have no local
   cleanup actions. Select checklist items to enable **Free space**;
   cleanup previews or confirms the selection before deleting anything.
@@ -479,8 +479,9 @@ belonging to that path at once. Settings and other details are in the
 ## Add a build machine
 
 **Settings > Build Machines** lists your build machines with a status
-(**Approved**, **Waiting for approval**, **Unreachable** or **Build mismatch**),
-what each does (**Builds**, **Simulators**) and a **...** menu with **Details**
+(**Approved**, **Waiting for approval**, **Unreachable** or **Not offloading**),
+a line with its running builds and free disk, any problem that keeps builds on
+this Mac with its fix, what each does (**Builds**, **Simulators**) and a **...** menu with **Details**
 and **Remove**. It updates itself; there is no Refresh button. With none, it
 offers **Add Build Machine…**, which guides you through all six steps: pick a
 Mac on your tailnet, choose Builds and/or Hosted simulators, run setup there,

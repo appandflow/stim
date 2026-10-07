@@ -1087,18 +1087,30 @@ this Mac (see [Build access](../../packages/server/README.md#build-access)).
 
 On the Mac that wants to build elsewhere, **Stim > Settings > Build Machines**
 is a list of the entries of the `offload.machines` machine setting. Each row
-shows the Mac's name, one status pill, what it does (**Builds**, plus
+shows the Mac's name, one status pill, a detail line, what it does (**Builds**, plus
 **Simulators** when its device-host access is approved), and a **...** menu with
 **Details...** and **Remove**. The pill reads **Approved**, **Waiting for
 approval** (the row keeps the approval command to copy), **Unreachable**,
-**Build mismatch** (doctor's `stim-build`, `arch`, `xcode`, `simulator-sdk`,
-`cocoapods`, `bundler` or `jdk` reason), or the machine's other readiness or
+**Not offloading** (doctor reports the approved machine as not offloadable, for
+any reason but load or an unanswered server), or the machine's other readiness or
 pairing state, such as **Busy**, **Not asked**, **Revoked** (revoked, denied,
 or the request lapsed), **Different Mac** (the name now belongs to another
 tailnet node than the one this Mac asked, so Stim does not connect to it),
 **Not on the tailnet**, **Tailscale is off** or **Not a tailnet name**. The
 states come from the `buildMachines` field of `stim doctor --json --platform
 ios`.
+
+For an approved machine the detail line gives the builds it runs and how many
+it takes (`builds` and `maxBuilds`, such as "0/2 builds"; the offloaded
+`running` and `max` for a stim-server that reports no `builds`) and its free
+disk. Doctor reports no Xcode or Stim version per machine, so the line has
+neither. When the machine is not offloadable, each of doctor's `problems`
+appears under the line in amber, in doctor's order, with its fix: a command to
+copy for CocoaPods (`gem install cocoapods -v <this Mac's version>`, or `brew
+install cocoapods` when there is none), the remedy sentence for the other known
+reasons. While a check runs, the row keeps the last state and shows a small
+spinner next to the pill; **Checking...** appears only for a row with no state
+yet.
 
 **Add Build Machine...** opens the wizard, which owns tailnet discovery and the
 setup; the tab has no separate list of tailnet Macs. With no machines, the tab
@@ -1134,8 +1146,9 @@ follows `machines.update.status` every 2 seconds:
 - the outcome, or the refusal (for example, the setting the machine needs).
 
 If the machine stops answering for 5 minutes, or answers for 4 minutes without an update running or an outcome, the update shows as failed with the reason.
-Then the row checks the machine again. **Install this Mac's build on build
-machines automatically** (off by default) does the same the next time Desktop
+Then the row checks the machine again. **Keep build machines on this Mac's Stim
+version** (off by default; "When this Mac's Stim changes, update stim-server on
+approved build machines so builds can keep offloading.") does the same the next time Desktop
 checks a machine that reports another Stim build. It runs once per machine and
 reason each time Desktop launches. Either way, the machine gets this Mac's build,
 whether it is newer or older than the one it runs.
