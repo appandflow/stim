@@ -14,17 +14,18 @@
       _ = NSApplication.shared
       BrandAssets.registerFonts()
       try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
-      for type in DiscoveryType.allCases {
+      for (type, usesHostingMac) in DiscoveryType.allCases.map({ ($0, false) }) + [(.capHit, true)] {
         for dark in [false, true] {
           let renderer = ImageRenderer(
-            content: DiscoveryFixtureView(type: type)
+            content: DiscoveryFixtureView(type: type, usesHostingMac: usesHostingMac)
               .environment(\.colorScheme, dark ? .dark : .light)
               .environment(\.locale, Locale(identifier: "en_US")))
           renderer.scale = 2
           let image = try XCTUnwrap(renderer.cgImage, "\(type.rawValue) did not render")
           let png = try XCTUnwrap(NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:]))
           try png.write(
-            to: URL(fileURLWithPath: directory).appendingPathComponent("\(type.rawValue)-\(dark ? "dark" : "light").png"))
+            to: URL(fileURLWithPath: directory).appendingPathComponent(
+              "\(type.rawValue)\(usesHostingMac ? "-use" : "")-\(dark ? "dark" : "light").png"))
         }
       }
     }

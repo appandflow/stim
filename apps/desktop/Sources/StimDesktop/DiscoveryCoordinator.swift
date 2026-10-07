@@ -55,8 +55,16 @@ final class DiscoveryCoordinator: ObservableObject {
       onFinish?(run)
       guard let self, let exit = run.exitStatus else { return }
       let lines = run.lines.map(\.text) + String(decoding: run.stdout, as: UTF8.self).components(separatedBy: "\n")
-      remember(Discovery.capHit(lines: lines, exitStatus: exit, mac: macs.first))
-      evaluate()
+      if Discovery.refusedForCapacity(lines: lines, exitStatus: exit) {
+        let source = Discovery.CapHitSource(
+          at: Date(), workspaceID: Discovery.workspaceID(path: run.command.cwd), platform: run.command.arguments.first)
+        Task {
+          await self.rememberCapHit(source)
+          self.evaluate()
+        }
+      } else {
+        evaluate()
+      }
     }
     NotificationResponder.shared.discoveryResponse = { [weak self] type, never in
       if never { self?.persistence.set(.never, for: type) } else { Self.open(.pairPhone) }
@@ -92,7 +100,7 @@ final class DiscoveryCoordinator: ObservableObject {
         await machines.settings.refresh()
         let report = try? await stats.machine()
         placements = report?.offload?.placements
-        rememberCapacityEvents(report)
+        await rememberCapacityEvents(report)
         evaluate()
       }
     } else {
@@ -111,9 +119,10 @@ final class DiscoveryCoordinator: ObservableObject {
       let report = try? await stats.machine()
       polling = false
       if let report { placements = report.offload?.placements }
-      rememberCapacityEvents(report)
+      await rememberCapacityEvents(report)
       if let peers {
-        let result = Discovery.newMac(macs: peers, seen: persistence.seenPeers, machines: machines.entries ?? [], now: Date())
+        let result = Discovery.newMac(
+          macs: peers, seen: persistence.seenPeers, machines: machines.entries ?? [], hosting: hostingEntries, now: Date())
         persistence.seenPeers = result.seen
         if machines.entries != nil, machines.settings.error == nil { remember(result.prompt) }
       }
@@ -121,12 +130,38 @@ final class DiscoveryCoordinator: ObservableObject {
     }
   }
 
-  private func rememberCapacityEvents(_ report: MachineStats?) {
-    if let event = Discovery.capHit(
-      events: report?.capacityRefusals ?? [], waits: report?.capacityWaits ?? [], now: Date(), mac: macs.first)
-    {
-      remember(event.prompt, rememberedAt: event.rememberedAt)
+  private var hostingEntries: [String] {
+    machines.settings.payload?.entry("hosting.machines")?.value.strings ?? []
+  }
+
+  private func rememberCapacityEvents(_ report: MachineStats?) async {
+    guard
+      let source = Discovery.capHitSource(
+        events: report?.capacityRefusals ?? [], waits: report?.capacityWaits ?? [], now: Date())
+    else { return }
+    await rememberCapHit(source)
+  }
+
+  private func rememberCapHit(_ source: Discovery.CapHitSource) async {
+    let path = source.workspaceID.flatMap(workspacePath)
+    var hosts: [String]?
+    if let path {
+      await machines.refreshHostingMachines(checkout: path)
+      hosts = machines.approvedHostingMachines(in: path)
     }
+    let prompt = Discovery.capHit(
+      source: source, mac: macs.first, hosts: hosts,
+      isRemote: { [weak self] id, platform in
+        guard let path = self?.workspacePath(id) else { return false }
+        return (platform.map { [$0] } ?? ["ios", "android"]).allSatisfy {
+          AppPreferences.runDestination(workspace: path, platform: $0, approvedMachines: nil) != .thisMac
+        }
+      })
+    if let prompt { remember(prompt, rememberedAt: source.at) } else { pending[.capHit] = nil }
+  }
+
+  private func workspacePath(_ id: String) -> String? {
+    latest?.environments.first { Discovery.workspaceID(path: $0.path) == id }?.path
   }
 
   private func remember(_ prompt: DiscoveryPrompt?, rememberedAt: Date = Date()) {
@@ -146,8 +181,9 @@ final class DiscoveryCoordinator: ObservableObject {
     var candidates = pending.values.map(\.prompt).filter { prompt in
       if prompt.type == .newMac, case .addMachine(let mac?, _) = prompt.action {
         return macs.contains(where: { $0.id == mac.id }) && machines.settings.error == nil
-          && machines.entries.map { entries in !entries.contains { OffloadMachines.names($0, mac) } } == true
+          && machines.entries.map { entries in !(entries + hostingEntries).contains { OffloadMachines.names($0, mac) } } == true
       }
+      if case .runOnAuto(let id, _) = prompt.action { return workspacePath(id) != nil }
       if prompt.type == .away { return ServerController.shared.pairedPhoneCount == 0 }
       return true
     }
@@ -172,7 +208,7 @@ final class DiscoveryCoordinator: ObservableObject {
       let previous = persistence.state(prompt.type)
       NoticeCenter.shared.show(
         Self.notice(
-          prompt, perform: Self.open,
+          prompt, perform: { [weak self] in self?.perform($0) },
           snooze: { [persistence] in
             persistence.set(Discovery.dismissed(previous: previous, now: Date()), for: prompt.type)
           }, never: { [persistence] in persistence.set(.never, for: prompt.type) }))
@@ -205,10 +241,19 @@ final class DiscoveryCoordinator: ObservableObject {
       alternateAction: prompt.secondaryAction == nil ? nil : Notice.Action(title: "Don't suggest again", perform: never))
   }
 
+  private func perform(_ action: DiscoveryAction) {
+    guard case .runOnAuto(let id, let platform) = action else { return Self.open(action) }
+    guard let path = workspacePath(id) else { return }
+    for platform in platform.map({ [$0] }) ?? ["ios", "android"] {
+      UserDefaults.standard.set("auto", forKey: AppPreferences.Key.runDestination(workspace: path, platform: platform))
+    }
+  }
+
   static func open(_ action: DiscoveryAction) {
     switch action {
     case .addMachine(let mac, let hosted):
       OpenRequests.shared.addMachine = AddMachineRequest(machineID: mac?.id, hostedSimulators: hosted)
+    case .runOnAuto: break
     case .reviewCaches: OpenRequests.shared.showsMachine = true
     case .pairPhone:
       MainWindow.show()
