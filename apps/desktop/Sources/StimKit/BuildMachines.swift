@@ -238,14 +238,24 @@ public struct BuildMachineStatus: Decodable, Hashable, Identifiable, Sendable {
     return MachineReadiness(title: reasons?.first ?? "Cannot take builds", remedy: nil, tone: .error, reasons: all)
   }
 
+  /// For a request waiting for approval: the command a person runs on that Mac to approve this one, when doctor
+  /// reported the request's id.
+  public var approvalCommand: String? {
+    guard state == .pending, let deviceId else { return nil }
+    return "stim-server devices grant \(deviceId) --build"
+  }
+
+  /// When a request waiting for approval lapses, as stim-server sets it.
+  public static let requestLapse = "The request lapses after 15 minutes."
+
   public var detail: String {
     switch state {
     case .approved:
       if offloadable != false { return "Builds can run on this Mac." }
       return readiness.remedy.map { $0.prefix(1).uppercased() + $0.dropFirst() + "." } ?? "Builds stay on this Mac for now."
     case .pending:
-      let grant = deviceId.map { " or runs stim-server devices grant \($0) --build there" } ?? ""
-      return "Someone on \(machine) approves it in Stim Desktop\(grant). The request lapses after 15 minutes."
+      let grant = approvalCommand.map { " or runs \($0) there" } ?? ""
+      return "Someone on \(machine) approves it in Stim Desktop\(grant). \(Self.requestLapse)"
     case .notAsked: return "This Mac has not asked it yet."
     case .revoked: return "It revoked this Mac, denied the request, or the request lapsed."
     case .nodeChanged:

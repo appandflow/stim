@@ -241,8 +241,13 @@ private struct MachineRow: View {
           }
         }
         if let status {
-          Text(verbatim: status.detail).font(.stim(.footnote)).foregroundStyle(Palette.secondary)
-            .fixedSize(horizontal: false, vertical: true)
+          if let command = status.approvalCommand {
+            detailText("Someone on \(status.machine) approves it in Stim Desktop, or runs this there:")
+            CopyableCommand(command: command).padding(.vertical, Space.xxs)
+            detailText(BuildMachineStatus.requestLapse)
+          } else {
+            detailText(status.detail)
+          }
           if let dnsName = status.dnsName {
             Text(verbatim: dnsName).font(.stim(.caption, mono: true)).foregroundStyle(Palette.tertiary)
               .lineLimit(1).truncationMode(.middle)
@@ -259,6 +264,11 @@ private struct MachineRow: View {
         .disabled(working || (status?.state == .nodeChanged && !canAsk))
     }
     .padding(.vertical, Space.xxs)
+  }
+
+  private func detailText(_ text: String) -> some View {
+    Text(verbatim: text).font(.stim(.footnote)).foregroundStyle(Palette.secondary)
+      .fixedSize(horizontal: false, vertical: true)
   }
 
   private func tone(_ state: BuildMachineStatus.State) -> Tone {

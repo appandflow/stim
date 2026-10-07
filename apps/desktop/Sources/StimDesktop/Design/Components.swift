@@ -210,6 +210,50 @@ struct CommandText: View {
   }
 }
 
+/// A command to run elsewhere, selectable, with a button that copies it and shows a checkmark for two seconds.
+struct CopyableCommand: View {
+  var command: String
+  @State private var copied = false
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+  var body: some View {
+    HStack(spacing: Space.xs) {
+      Text(verbatim: command)
+        .font(.stim(.caption, mono: true))
+        .foregroundStyle(Palette.secondary)
+        .textSelection(.enabled)
+        .fixedSize(horizontal: false, vertical: true)
+      Button {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(command, forType: .string)
+        setCopied(true)
+        AccessibilityNotification.Announcement("Copied").post()
+      } label: {
+        Image(systemName: copied ? "checkmark" : "doc.on.doc")
+          .iconFont(IconSize.small, weight: .medium)
+          .contentTransition(.symbolEffect(.replace))
+      }
+      .buttonStyle(.icon(tint: copied ? Palette.success : Palette.secondary))
+      .help("Copy the command")
+      .accessibilityLabel(copied ? "Copied" : "Copy \(command)")
+      .task(id: copied) {
+        guard copied else { return }
+        try? await Task.sleep(for: .seconds(2))
+        setCopied(false)
+      }
+    }
+    .padding(.leading, Space.md)
+    .padding(.trailing, Space.xxs)
+    .padding(.vertical, Space.xxs)
+    .background(RoundedRectangle(cornerRadius: Radius.chip).fill(Palette.background))
+    .overlay(RoundedRectangle(cornerRadius: Radius.chip).strokeBorder(Palette.border))
+  }
+
+  private func setCopied(_ value: Bool) {
+    withAnimation(reduceMotion ? nil : .easeOut(duration: 0.15)) { copied = value }
+  }
+}
+
 struct Sparkline: View {
   var values: [Double]
   var color: Color = Palette.accent
