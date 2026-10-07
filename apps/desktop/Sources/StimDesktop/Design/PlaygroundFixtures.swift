@@ -174,6 +174,9 @@
           "cacheLookupOutcome": "miss", "missReason": miss, "missProvisional": true,
           "placement": ["host": "janics-mac-mini", "phase": "build", "startedAt": date, "phaseStartedAt": date],
           "plannedPhases": phases.map { ["phase": $0.key, "expectedMs": $0.value] as [String: Any] },
+          "waitingFor": [
+            "kind": "device-slot", "inUse": 2, "max": 2, "since": now.addingTimeInterval(-42).ISO8601Format(),
+          ],
           "detail": [
             "step": "compile", "unit": "targets", "done": 45, "total": 180,
             "line": "CompileSwift ios/Example/Components/WorkspaceHeader.swift",
