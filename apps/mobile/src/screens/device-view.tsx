@@ -26,11 +26,11 @@ import { scheduleOnRN } from 'react-native-worklets';
 import { useHinges } from 'react-native-hinges';
 import { useReservedRegions } from 'react-native-reserved-regions';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import * as Clipboard from 'expo-clipboard';
 import { NavigationBar } from 'expo-navigation-bar';
 import { StatusBar } from 'expo-status-bar';
 
 import { Button } from '@/components/button';
+import { CopyButton } from '@/components/copy-button';
 import { AgentFeed } from '@/components/agent-feed';
 import { DeviceFrame } from '@/components/device-frame';
 import { DeviceScreen } from '@/components/device-screen';
@@ -220,7 +220,6 @@ export function DeviceView({
   const artwork = replaying ? null : matchingDeviceFrame(stream.artwork, source);
   const activeArtwork = showsFrame ? artwork : null;
   const readOnly = !viewOnly && control.allowed === false;
-  const [copied, setCopied] = useState(false);
   const deviceId = link.kind === 'open' ? link.deviceId : null;
   const controlling = control.state.kind === 'on';
   const [ownLease, setOwnLease] = useState<string | null>(null);
@@ -435,14 +434,7 @@ export function DeviceView({
           {allowControlSteps(mac?.name, deviceId)}
         </Text>
         <View style={styles.bannerActions}>
-          {deviceId ? (
-            <Button
-              title={copied ? t`Copied` : t`Copy command`}
-              variant="plain"
-              size="small"
-              onPress={() => void Clipboard.setStringAsync(grantCommand(deviceId)).then(() => setCopied(true))}
-            />
-          ) : null}
+          {deviceId ? <CopyButton text={grantCommand(deviceId)} title={t`Copy command`} filled={false} /> : null}
           <Button title={t`Reconnect`} variant="plain" size="small" onPress={() => connection?.reconnect()} />
         </View>
       </View>

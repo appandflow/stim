@@ -1,13 +1,12 @@
 import { plural, t } from '@lingui/core/macro';
 import { Trans } from '@lingui/react/macro';
-import * as Clipboard from 'expo-clipboard';
 import { useIsFocused } from 'expo-router';
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { ActivityIndicator, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { Banner } from '@/components/banner';
-import { Button } from '@/components/button';
+import { CopyButton } from '@/components/copy-button';
 import { Card } from '@/components/card';
 import { Collapsible, DisclosureChevron } from '@/components/collapsible';
 import { CollapsibleSection } from '@/components/collapsible-section';
@@ -978,13 +977,7 @@ function AttentionRows({
               <Text variant="caption" mono style={styles.grow} selectable numberOfLines={2}>
                 {item.remedy}
               </Text>
-              <Button
-                variant="plain"
-                size="small"
-                title={t`Copy`}
-                accessibilityLabel={t`Copy command`}
-                onPress={() => void Clipboard.setStringAsync(item.command ?? '')}
-              />
+              <CopyButton text={item.command} accessibilityLabel={t`Copy command`} filled={false} />
             </View>
           ) : null}
         </View>
