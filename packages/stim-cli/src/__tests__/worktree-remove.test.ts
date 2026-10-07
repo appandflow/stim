@@ -359,9 +359,11 @@ afterEach(() => {
   rmSync(mainDir, { recursive: true, force: true });
   rmSync(wtDir, { recursive: true, force: true });
   delete process.env.STIM_HOME;
+  delete process.env.STIM_ARCHIVE_ENABLED;
 });
 
 test('action: on the source checkout, reclaims the environment with the owned device deleted and the tree untouched', async () => {
+  process.env.STIM_ARCHIVE_ENABLED = 'true';
   upsertProject(mainDir, {
     metroPort: 8081,
     platforms: { ios: { deviceUdid: 'U9', owned: true, deviceName: 'stim-main' } },
@@ -370,7 +372,7 @@ test('action: on the source checkout, reclaims the environment with the owned de
   mkdirSync(join(mainDir, '.stim', 'logs'), { recursive: true });
   writeFileSync(join(mainDir, '.stim', 'state.json'), '{}');
   ensureWorkspaceStorage(mainDir);
-  writeFileSync(join(workspaceDir(mainDir), 'state.json'), '{}');
+  writeFileSync(workspaceStateFile(mainDir), '{"lastUsedAt":"2026-01-01T00:00:00Z"}');
   const exec = makeExecutor({
     worktrees: porcelain([{ path: mainDir, branch: 'main' }]),
     simctlList: simctlJson([{ udid: 'U9', name: 'stim-main', state: 'Shutdown', isAvailable: true }]),
@@ -395,6 +397,7 @@ test('action: on the source checkout, reclaims the environment with the owned de
   expect(readFileSync(join(mainDir, 'keep.txt'), 'utf-8')).toBe('source file');
   expect(![...exec.calls.run, ...exec.calls.runQuiet].some((c) => /worktree remove/.test(c))).toBeTruthy();
   expect(errs.join('\n')).toMatch(/working tree stays \(it is the source checkout\)/);
+  expect(readArchives().find((entry) => entry.projectRoot === mainDir)?.removedBy).toBe('worktree-remove');
 });
 
 test('action: a dirty source checkout still reclaims, without a refusal and without mentioning the dirt', async () => {
@@ -546,6 +549,7 @@ test('action: source-checkout artifact deletion blocks a concurrent replacement 
 });
 
 test('action: a registered project directory that is not a git repo gets the same environment reclaim', async () => {
+  process.env.STIM_ARCHIVE_ENABLED = 'true';
   upsertProject(wtDir, {
     metroPort: 8087,
     platforms: { ios: { deviceUdid: 'U8', owned: true, deviceName: 'stim-plain' } },
@@ -553,6 +557,8 @@ test('action: a registered project directory that is not a git repo gets the sam
   writeFileSync(join(wtDir, 'keep.txt'), 'source file');
   mkdirSync(join(wtDir, '.stim'), { recursive: true });
   writeFileSync(join(wtDir, '.stim', 'state.json'), '{}');
+  ensureWorkspaceStorage(wtDir);
+  writeFileSync(workspaceStateFile(wtDir), '{"lastUsedAt":"2026-01-01T00:00:00Z"}');
   const exec = makeExecutor({
     worktrees: null,
     simctlList: simctlJson([{ udid: 'U8', name: 'stim-plain', state: 'Shutdown', isAvailable: true }]),
@@ -575,6 +581,7 @@ test('action: a registered project directory that is not a git repo gets the sam
   expect(existsSync(join(wtDir, '.stim'))).toBe(true);
   expect(readFileSync(join(wtDir, 'keep.txt'), 'utf-8')).toBe('source file');
   expect(errs.join('\n')).toMatch(/working tree stays \(it is not a git repository\)/);
+  expect(readArchives().find((entry) => entry.projectRoot === wtDir)?.removedBy).toBe('worktree-remove');
 });
 
 test('action: refuses when git cannot answer the status check, leaving config untouched', async () => {

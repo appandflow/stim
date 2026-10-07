@@ -633,7 +633,7 @@ function hasRegisteredProjectUnder(rootPath: string): boolean {
 async function reclaimEnvironment(root: string, why: string): Promise<void> {
   await withManagedRemoteWorktreeRemovalLock(root, () =>
     withReclaimLocks(root, async (lockedKeys) => {
-      const result = await reclaimAll(root, lockedKeys);
+      const result = await reclaimAll(root, lockedKeys, { removedBy: 'worktree-remove' });
       for (const line of poolLines(result)) console.error(line);
       for (const device of result.deletedDevices) {
         console.error(chalk.dim(phaseLine('device', `deleted ${device}`)));
