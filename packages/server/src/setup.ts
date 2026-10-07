@@ -539,7 +539,7 @@ function toolChecks(tools: BuildToolchain, stimBuild: string | null): [string, b
       'Stim build',
       !!stimBuild && stimBuild === tools.stimBuild,
       `${stimBuild ?? 'unknown'} (setup: ${tools.stimBuild ?? 'unknown'})`,
-      "Install This Mac's Build from Stim Desktop > Settings > Build machines",
+      "Install This Mac's Build from Stim Desktop > Settings > Remote Macs",
     ],
   ];
 }

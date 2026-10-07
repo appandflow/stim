@@ -880,7 +880,7 @@ export function protocolJsonSchema(): JsonSchema {
           statsError: { type: 'string' },
           buildMachines: {
             type: ['array', 'null'],
-            description: '`buildMachines` from `stim doctor --json --platform ios`.',
+            description: '`remoteMachines` from `stim doctor --json --platform ios`.',
             items: { type: 'object' },
           },
           buildMachinesError: { type: 'string' },
@@ -888,7 +888,7 @@ export function protocolJsonSchema(): JsonSchema {
           buildMachinesPending: { type: 'boolean' },
           buildClients: {
             type: 'array',
-            description: 'The builds this Mac ran for each client as a build machine, from the audit log.',
+            description: 'The builds this Mac ran for each client, from the audit log.',
             items: {
               type: 'object',
               required: ['id', 'name', 'builds', 'failed', 'buildMs', 'today', 'lastAt'],

@@ -632,7 +632,7 @@ THE ONE CASE GC WILL NOT REAP
   check and the stop fails and must be run again, so gc re-checks the build
   locks and the daemon's status right before each stop. Nothing is stopped while an Android build lock, or a build slot no
   iOS build holds, is live or unresolved. stim-server stops the daemons of
-  offloaded builds (offload.gradleDaemonIdleMinutes, \`guide settings\`), so
+  offloaded builds (server.gradleDaemonIdleMinutes, \`guide settings\`), so
   while it runs gc keeps those. A daemon whose home, distribution or status cannot be read is
   kept. Gradle stops an idle daemon itself after 3 hours and Kotlin after 2
   hours by default.

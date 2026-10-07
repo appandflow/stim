@@ -24,15 +24,15 @@ function part(outcome: CommandOutcome, label: string): { payload: Record<string,
 const iosDoctorRanAt = ([, record]: [string, ProjectRecord]) => Date.parse(record.doctorRuns?.ios?.at ?? '') || 0;
 
 /**
- * Where `machine.details` runs `stim doctor` for the build machines: null when `offload.machines` names none, else
+ * Where `machine.details` runs `stim doctor` for the remote Macs: null when `remote.machines` names none, else
  * the registered workspace that still exists and ran doctor for iOS most recently, or the first one; `cwd` is null
  * when no registered workspace exists. Doctor refuses outside a project, and judges a machine against that app.
  */
 export function doctorWorkspace(
-  config: Pick<StimConfig, 'projects' | 'offload'> | null,
+  config: Pick<StimConfig, 'projects' | 'remote'> | null,
   exists: (path: string) => boolean,
 ): { cwd: string | null } | null {
-  const machines = config?.offload?.machines;
+  const machines = config?.remote?.machines;
   if (!Array.isArray(machines) || machines.length === 0) return null;
   const candidates = Object.entries(config?.projects ?? {}).filter(([path]) => exists(path));
   const newest = candidates.reduce<(typeof candidates)[number] | null>(
@@ -42,7 +42,7 @@ export function doctorWorkspace(
   return { cwd: newest?.[0] ?? null };
 }
 
-/** Where to run doctor, why it cannot run, or null when no build machine is named. */
+/** Where to run doctor, why it cannot run, or null when no remote Mac is named. */
 export type DoctorTarget = { cwd: string | null } | { error: string } | null;
 
 /** The build-machines part of a `machine.details` reply, without the pending flag a stale-cache read adds. */
@@ -54,9 +54,9 @@ async function runDoctor(
 ): Promise<BuildMachinesResult> {
   const { payload, error } = part(await run(DOCTOR, cwd), 'stim doctor');
   if (!payload) return { buildMachines: null, buildMachinesError: error! };
-  const machines = payload.buildMachines;
+  const machines = payload.remoteMachines;
   if (!Array.isArray(machines)) {
-    return { buildMachines: null, buildMachinesError: 'This stim does not report build machines; update it.' };
+    return { buildMachines: null, buildMachinesError: 'This stim does not report remote Macs; update it.' };
   }
   return {
     buildMachines: machines.filter(
@@ -75,7 +75,7 @@ const isObject = (value: unknown): value is Record<string, unknown> =>
  * and the rest of `machine.details` has nothing to do with it. `snapshot` never awaits doctor. It returns the last
  * settled result immediately (with `buildMachinesPending: true` alongside it once that result is `ttlMs` old or
  * older), starting at most one background run to refresh it; while no result has ever settled, it returns
- * `buildMachines: null` with `buildMachinesPending: true`. `offload.machines` naming no machine, or `doctor` being
+ * `buildMachines: null` with `buildMachinesPending: true`. `remote.machines` naming no machine, or `doctor` being
  * an error or an unresolved workspace, answers synchronously and never starts a run.
  */
 export class BuildMachinesCache {
@@ -171,7 +171,7 @@ export async function loadMachineDetails(
 /**
  * The gc/stats part of one `machine.details` result shared by every connection: a request while a load runs joins
  * it, and a finished load answers for `ttlMs` after it settled, so phones cannot make the Mac run `stim gc` back
- * to back. Build machines are cached and refreshed separately by `BuildMachinesCache`, never joined into this
+ * to back. Remote Macs are cached and refreshed separately by `BuildMachinesCache`, never joined into this
  * promise, so a re-poll observes its progress instead of the gc/stats snapshot from whenever this last loaded.
  */
 export class MachineDetailsCache {

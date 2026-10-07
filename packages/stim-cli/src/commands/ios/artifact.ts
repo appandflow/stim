@@ -164,7 +164,7 @@ export interface PreparedIosArtifact {
     providerName: string | null;
     buildMachine: string;
     builtOn?: string;
-    /** The build machine that compiled the app, when the build was offloaded. */
+    /** The remote Mac that compiled the app, when the build was offloaded. */
     offloadedTo: string | null;
     /** Why the app was built here after the run considered offloading it. */
     offloadFallback: string | null;
@@ -282,7 +282,7 @@ export async function acquireIosArtifact(
   let handoff: BuildHandoff | null = null;
   let offloadFallback: string | null = null;
   let fallbackMachine: string | null = null;
-  let hereReason = 'no build machine is paired';
+  let hereReason = 'no remote Mac is paired';
   let slotWaitMs: number | undefined;
   let builtOn: string | undefined;
   const fallBack = (reason: string, line: string = reason) => {

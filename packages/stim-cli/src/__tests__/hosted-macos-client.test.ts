@@ -235,7 +235,7 @@ beforeEach(() => {
   chmodSync(join(bin, 'Fixture'), 0o755);
   writeFileSync(join(bin, 'Fixture.framework', 'Versions', 'A', 'Fixture'), 'framework');
   symlinkSync('Versions/A/Fixture', join(bin, 'Fixture.framework', 'Fixture'));
-  writeFileSync(getConfigPath(), JSON.stringify({ hosting: { machines: ['mini'] } }));
+  writeFileSync(getConfigPath(), JSON.stringify({ remote: { machines: ['mini'] } }));
   credentials();
   tailnet.nodeId = 'nMini';
   spawned = [];
@@ -595,8 +595,8 @@ describe.skipIf(process.platform !== 'darwin')('stim macos --remote (SwiftPM and
   test.each([
     [
       'an unlisted machine',
-      () => writeFileSync(getConfigPath(), JSON.stringify({ hosting: { machines: [] } })),
-      'not in hosting.machines',
+      () => writeFileSync(getConfigPath(), JSON.stringify({ remote: { machines: [] } })),
+      'not in remote.machines',
     ],
     ['an unapproved credential', () => credentials('pending'), 'has not confirmed hosting access'],
     ['a changed tailnet node', () => (tailnet.nodeId = 'nOther'), 'not the pinned nMini'],

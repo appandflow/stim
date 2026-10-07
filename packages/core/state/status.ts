@@ -26,7 +26,7 @@ export type BuildPhase = (typeof BUILD_PHASES)[number];
 export type ActiveBuildState = 'running' | 'stale' | 'unknown';
 
 /**
- * Where a running build compiles: `local`, or the build machine it was offloaded to, with the phase it is in there
+ * Where a running build compiles: `local`, or the remote Mac it was offloaded to, with the phase it is in there
  * (`sync`, `deps`, `prebuild`, `pods`, `build` or `fetch`) and when the offload and that phase started.
  */
 export type BuildPlacement = 'local' | { host: string; phase: string; startedAt: string; phaseStartedAt: string };
@@ -137,7 +137,7 @@ export interface LastBuildReport {
   buildMachine?: string;
   /** Where compilation ran: here or a machine name; absent when no build ran. */
   builtOn?: string;
-  /** The build machine that compiled the app when the build was offloaded. */
+  /** The remote Mac that compiled the app when the build was offloaded. */
   offloadedTo?: string;
   /** Why the run built here after it considered offloading; absent when it offloaded or never considered it. */
   offloadFallback?: string;

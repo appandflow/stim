@@ -50,7 +50,7 @@ test.each([
 test('no configured hosts stays local even when this Mac is busy', () => {
   expect(decide(full, [])).toMatchObject({
     kind: 'local',
-    reason: expect.stringContaining('no hosting machines configured'),
+    reason: expect.stringContaining('no remote Macs configured'),
   });
 });
 
@@ -80,7 +80,7 @@ test.each([
   });
 });
 
-test('ranking prefers the explicit build machine, then load, free memory and configuration order', () => {
+test('ranking prefers the explicit remote Mac, then load, free memory and configuration order', () => {
   const offers = [
     offered('first', 1, 200),
     offered('second', 1, 200),

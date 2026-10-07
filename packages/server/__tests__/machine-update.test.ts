@@ -28,7 +28,7 @@ describe('client build packing', () => {
   });
 
   describe.skipIf(process.platform !== 'darwin')('with tar', () => {
-    it('packs the stim build a build machine must match, with published ranges', async () => {
+    it('packs the stim build a remote Mac must match, with published ranges', async () => {
       const dir = mkdtempSync(join(tmpdir(), 'stim-pack-test-'));
       try {
         const packed = await packWorkspace(workspacePackages(SERVER)!);
@@ -48,7 +48,7 @@ describe('client build packing', () => {
   });
 });
 
-describe('asking a build machine to update', () => {
+describe('asking a remote Mac to update', () => {
   const TOKEN = 'token-that-must-not-leak';
   let home: string;
   let host: WebSocketServer;

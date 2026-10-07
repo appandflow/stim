@@ -43,8 +43,8 @@ test('a string-kind setting is left as text, never JSON-decoded', () => {
   expect(coerceSettingText(STRING_SETTING, 'auto')).toBe('auto');
 });
 
-test('offload.machine validates placement text and rejects empty or non-string settings', () => {
-  const setting = SETTINGS.find((entry) => entry.key === 'offload.machine')!;
+test('remote.build validates placement text and rejects empty or non-string settings', () => {
+  const setting = SETTINGS.find((entry) => entry.key === 'remote.build')!;
   for (const value of ['auto', 'local', 'mini', 'mini.tail.ts.net:8443'])
     expect(settingValueError(setting, value)).toBeNull();
   for (const value of ['', ' ', 'bad name', 'mini:abc', 'mini:0', 'mini:65536', 12, false])

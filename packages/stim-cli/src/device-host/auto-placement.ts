@@ -14,7 +14,7 @@ import { namedBuildMachine, resolveBuildMachine } from '../offload/selection.ts'
 import { readHostMemoryPressure } from '../host-memory.ts';
 import { peekDeviceSlots } from '../engine/device-capacity.ts';
 import { getProject, loadConfig } from '../workspace/config.ts';
-import { configuredMachines } from './machines.ts';
+import { hostingMachines } from './machines.ts';
 import { call, connectHost, type HostConnection } from './hosted-client.ts';
 import { prepareHostedNative, type HostedNativeTarget } from './hosted-native.ts';
 import { readHostedNative, writeHostedNative } from './ios-state.ts';
@@ -109,7 +109,7 @@ export async function automaticDevicePlacement(
     noWait: boolean;
   },
   {
-    machines = configuredMachines,
+    machines = hostingMachines,
     read = readHostedNative,
     write = writeHostedNative,
     resume = prepareHostedNative,
@@ -119,7 +119,7 @@ export async function automaticDevicePlacement(
     probe = probeHost,
     budget = peekBudget,
   }: {
-    machines?: typeof configuredMachines;
+    machines?: typeof hostingMachines;
     read?: typeof readHostedNative;
     write?: typeof writeHostedNative;
     resume?: typeof prepareHostedNative;
@@ -152,14 +152,10 @@ export async function automaticDevicePlacement(
   if (devices.localLive) return { ...local(decideDevicePlacement({ sticky: { local: true } }).reason), sticky: true };
   const entries = machines();
   if (entries === null)
-    throw Object.assign(new Error('hosting.machines is invalid. Run stim guide settings and correct it.'), {
+    throw Object.assign(new Error('remote.machines is invalid. Run stim guide settings and correct it.'), {
       code: 'STIM_HOSTING_REFUSED',
     });
-  const preference = resolveBuildMachine(
-    buildMachine,
-    process.env.STIM_OFFLOAD_MACHINE,
-    loadConfig()?.offload?.machine,
-  );
+  const preference = resolveBuildMachine(buildMachine, process.env.STIM_REMOTE_BUILD, loadConfig()?.remote?.build);
   buildMachine = namedBuildMachine(preference) ? preference : undefined;
   const load = capacity();
   const here: PlacementHere = {

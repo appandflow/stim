@@ -98,7 +98,7 @@ describe('inspectBuildMachines', () => {
     const { io, calls } = fakeIo('nImpostor', []);
     const { findings, machines } = await inspectBuildMachines({ fix: true }, io, ['mini']);
     expect(calls).toEqual([]);
-    expect(findings).toEqual([expect.objectContaining({ title: 'Build machine mini is a different tailnet node' })]);
+    expect(findings).toEqual([expect.objectContaining({ title: 'Remote Mac mini is a different tailnet node' })]);
     expect(machines).toEqual([expect.objectContaining({ machine: 'mini', state: 'node-changed' })]);
     expect(readBuildMachines()[0]!.nodeId).toBe('nMini');
   });
@@ -108,7 +108,7 @@ describe('inspectBuildMachines', () => {
     const approved: HelloReply = { result: { capabilities: ['build'], device: { id: 'ab12', name: 'laptop' } } };
     const { io, calls } = fakeIo('nMini', [{ error: { code: 'approval-pending', message: 'wait' } }, approved]);
     expect(await inspectBuildMachines({ fix: false }, io, ['mini'])).toEqual({
-      findings: [expect.objectContaining({ title: 'Build machine mini has not approved this Mac yet' })],
+      findings: [expect.objectContaining({ title: 'Remote Mac mini has not approved this Mac for builds yet' })],
       machines: [expect.objectContaining({ state: 'pending', deviceId: 'ab12' })],
     });
     expect(await inspectBuildMachines({ fix: false }, io, ['mini'])).toEqual({

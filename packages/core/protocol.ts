@@ -763,10 +763,10 @@ export interface BuildPlanParams {
 
 /** `stim ios|android --plan --json`. It builds, boots and installs nothing, and writes no Stim state. */
 export type BuildPlanResult = BuildPlanPayload;
-/** A client's repository on a build machine: letters, digits, `.`, `_` and `-`, at most 80. */
+/** A client's repository on a remote Mac: letters, digits, `.`, `_` and `-`, at most 80. */
 export const BUILD_REPO_PATTERN = '^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$';
 
-/** Asks a build machine what it can build, how busy it is, and how warm its copy of `repo` is. */
+/** Asks a remote Mac what it can build, how busy it is, and how warm its copy of `repo` is. */
 export interface BuildOfferParams {
   repo: string;
   /** sha256 of the repository's lockfile, compared with the one the machine last installed from. */
@@ -790,7 +790,7 @@ export interface BuildToolchain {
 }
 
 /**
- * How busy the build machine is. `running` counts offloaded builds and `max` is how many it runs at once.
+ * How busy the remote Mac is. `running` counts offloaded builds and `max` is how many it runs at once.
  * `cpus`, `loadPerCore` (5-minute load average per CPU), `builds` (its own Stim native builds plus the offloaded
  * ones), `maxBuilds` (its `concurrency.maxBuilds`, 0 when unlimited) and `maxLoadPerCore` are absent from a
  * stim-server older than them. `declined` is why it would refuse a build now, null when it would take one.
@@ -968,7 +968,7 @@ export interface MachineDetails {
   stats: Record<string, unknown> | null;
   statsError?: string;
   /**
-   * `buildMachines` from `stim doctor --json --platform ios`; empty when `offload.machines` names none. The reply
+   * `remoteMachines` from `stim doctor --json --platform ios`; empty when `remote.machines` names none. The reply
    * never waits for doctor: `buildMachines` and `buildMachinesError` are the last result a background doctor run
    * settled, `buildMachinesAt` is when it settled, and `buildMachinesPending` is true while that result is stale
    * (or absent) and a refresh is running. A client that wants the refreshed result asks `machine.details` again.
@@ -978,7 +978,7 @@ export interface MachineDetails {
   buildMachinesAt?: string;
   buildMachinesPending?: boolean;
   /**
-   * The builds this Mac ran for other Macs as a build machine, one entry per client, from the audit log. `today` is
+   * The builds this Mac ran for other Macs, one entry per client, from the audit log. `today` is
    * this Mac's local calendar day. Absent from a server older than this field.
    */
   buildClients?: BuildClientSummary[];
@@ -995,7 +995,7 @@ export interface BuildClientSummary {
   lastAt: string;
 }
 
-/** One `offload.machines` entry as `stim doctor --json` reports it; `guide facts doctor` defines the fields. */
+/** One `remote.machines` entry as `stim doctor --json` reports it; `guide facts doctor` defines the fields. */
 export interface BuildMachineReport {
   machine: string;
   state: string;

@@ -393,7 +393,7 @@ Stim supports two optional remote backends:
 - `proxy` connects through an Agent Device daemon that already owns a session.
 - `eas` creates and owns an EAS simulator session.
 
-A named `--build-machine` refuses physical and `--remote` cache misses with
+A named `--remote-build` refuses physical and `--remote` cache misses with
 `STIM_OFFLOAD_REFUSED`. Use `auto` or `local` for those builds; an existing
 cache hit with a listed paired name needs no worker. Unlisted or unpaired
 names refuse at setup before checking the cache. See [machine settings](./settings.md#machine-settings).
@@ -648,7 +648,7 @@ The host boots headless; this Mac's viewer setting is ignored.
 
 `--slot`, `--scheme`, `--configuration` and `--eas-profile` work as usual.
 Model and runtime selectors use the host's installed choices. The build targets
-its simulator architecture. `--build-machine` independently selects a compatible
+its simulator architecture. `--remote-build` independently selects a compatible
 Debug build worker. A named host never falls back: `STIM_HOSTING_REFUSED` names
 unreachable, declined or uncertain placement and its reason.
 
@@ -804,7 +804,7 @@ that config. Run stim stop when finished. If the host refuses, report its reason
 ## Paired Mac hosting approval
 
 Device-host approval is separate from build offloading and phone control. On the
-client Mac, set `hosting.machines` to the expected tailnet names, then run
+client Mac, set `remote.machines` to the expected tailnet names, then run
 `stim doctor --fix` in an app directory to request approval. Doctor stores a
 separate private, node-pinned credential and reports its state under
 `deviceHosts` in JSON. iOS and macOS can run on a named approved Mac.

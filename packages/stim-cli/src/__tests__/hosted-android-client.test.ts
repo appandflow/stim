@@ -78,7 +78,7 @@ beforeEach(() => {
   mkdirSync(join(home, 'app'));
   root = realpathSync(join(home, 'app'));
   writeFileSync(join(root, 'App.apk'), 'fixture APK');
-  writeFileSync(getConfigPath(), JSON.stringify({ hosting: { machines: ['mini'] } }));
+  writeFileSync(getConfigPath(), JSON.stringify({ remote: { machines: ['mini'] } }));
   writeFileSync(
     deviceHostMachinesFile(),
     JSON.stringify({

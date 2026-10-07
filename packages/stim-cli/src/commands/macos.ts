@@ -27,7 +27,7 @@ import { recordWorkspaceUse, writeWorkspaceState } from '../workspace/workspace-
 import { gitCommonDir, repoRoot } from '../workspace/worktree.ts';
 
 /**
- * Builds the Debug app and launches it here, or with `remote` on that approved hosting Mac. A named host never falls
+ * Builds the Debug app and launches it here, or with `remote` on that approved remote Mac. A named host never falls
  * back to a local launch.
  */
 export async function runMacos(
@@ -39,15 +39,13 @@ export async function runMacos(
   const backend = remote?.trim().toLowerCase();
   if (backend === 'eas' || backend === 'proxy')
     throw Object.assign(
-      new Error(
-        'stim macos --remote takes a hosting Mac name from hosting.machines; macOS has no eas or proxy backend.',
-      ),
+      new Error('stim macos --remote takes a remote Mac name from remote.machines; macOS has no eas or proxy backend.'),
       { code: 'STIM_BAD_ARG' },
     );
   if (backend === 'auto')
     throw Object.assign(
       new Error(
-        'stim macos --remote auto is not available yet: automatic placement has not shipped. Name a hosting Mac from hosting.machines.',
+        'stim macos --remote auto is not available yet: automatic placement has not shipped. Name a hosting Mac from remote.machines.',
       ),
       { code: 'STIM_BAD_ARG' },
     );
@@ -258,16 +256,16 @@ export default function macosCommand(program: Command): void {
     .command('macos')
     .description('Build and launch an owned Swift Package macOS Debug app.')
     .option(
-      '--build-machine <value>',
+      '--remote-build <value>',
       'Build on auto, local, or one named machine; a name refuses without fallback',
       parseBuildMachineOption,
     )
     .option('--json', 'print one launch payload; build output goes to stderr')
-    .option('--remote <machine>', 'run it on this approved hosting Mac from hosting.machines')
-    .action(async (options: { json?: boolean; remote?: string; buildMachine?: string }) => {
+    .option('--remote <machine>', 'run it on this approved remote Mac from remote.machines')
+    .action(async (options: { json?: boolean; remote?: string; remoteBuild?: string }) => {
       const root = findProjectRoot(process.cwd());
       if (!root) throw new Error('Run stim macos from the Swift Package directory.');
-      const record = await runMacos(root, console.error, options.remote, options.buildMachine).catch((error) => {
+      const record = await runMacos(root, console.error, options.remote, options.remoteBuild).catch((error) => {
         const remedy = (error as { remedy?: unknown }).remedy;
         if (typeof remedy === 'string') console.error(`remedy: ${remedy}`);
         throw error;

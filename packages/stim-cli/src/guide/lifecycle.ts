@@ -261,7 +261,7 @@ WAITING FOR A CHANGE
 
 If Stim is not installed globally, replace stim with npx stim.
 
-  stim settings set hosting.machines '["janics-mac-mini"]'
+  stim settings set remote.machines '["janics-mac-mini"]'
   stim doctor --fix
   stim doctor
   stim android --remote janics-mac-mini --device-profile pixel_7
@@ -283,7 +283,7 @@ Unreadable android.host blocks only its slot; restore its recorded machine and
 session from the host before stopping that slot.
 
 --system-image and --device-profile select installed choices on the host.
-The build targets the offered ABI and --build-machine independently selects a
+The build targets the offered ABI and --remote-build independently selects a
 compatible build worker. Stim builds before reserving, records the session as
 soon as it exists, then delivers one App.apk. The emulator boots headless;
 androidEmulatorApp is ignored with a note.
@@ -403,7 +403,7 @@ and show records already copied here.`,
 
 If Stim is not installed globally, replace stim with npx stim.
 
-  stim settings set hosting.machines '["janics-mac-mini"]'
+  stim settings set remote.machines '["janics-mac-mini"]'
   stim doctor --fix
   # A person there approves: stim-server devices grant <id> --device-host
   # Or runs stim-server setup on the worker with its client node, ticket and expiry.
@@ -419,17 +419,17 @@ no flag or setting runs here. eas and proxy keep their remote backend meanings.
 --remote auto (or ios.remote = auto / android.remote = auto) stays here when
 there is a free concurrency.maxDevices slot (0 means unlimited), no device
 waiter ahead, normal host memory pressure, no budget shortfall,
-and 5-minute load per core below offload.maxLoadPerCore. Without hosting.machines,
+and 5-minute load per core below server.maxLoadPerCore. Without remote.machines,
 auto is local. An unknown local device count also stays local; boot admission
 still decides. The default without a flag or setting stays local.
 
-Otherwise Stim asks every approved hosting.machines host in parallel, with a
+Otherwise Stim asks every approved remote.machines host in parallel, with a
 3-second probe timeout and this run's model/runtime or image/profile selectors.
 A compatible choice, no declined reason, normal memory pressure and available
 capacity are required. With a free local slot, a host must report a lower load;
 with a full cap or a queue ahead, an admitted host with unknown load is allowed.
-Hosts rank by the build preference (flag > STIM_OFFLOAD_MACHINE > offload.machine)
-when it names a machine, then lowest load, most free memory and hosting.machines order. Automatic build
+Hosts rank by the build preference (flag > STIM_REMOTE_BUILD > remote.build)
+when it names a machine, then lowest load, most free memory and remote.machines order. Automatic build
 offload resolves later, after the device architecture is known.
 
 When no host admits, auto runs here and may wait in the existing FIFO device
@@ -452,7 +452,7 @@ here or elsewhere. --device cannot use a hosting Mac, and --simulator-app
 refuses. The host boots headless and ignores this Mac's iosSimulatorApp setting.
 --slot, --device-type and --runtime select the hosted simulator; --scheme,
 --configuration and --eas-profile select the app as usual. The build targets
-the offered simulator architecture, not this Mac's. --build-machine remains
+the offered simulator architecture, not this Mac's. --remote-build remains
 independent and selects a compatible build worker for a Debug cache miss.
 
 The host's own owned devices count toward concurrency.maxDevices.
@@ -1773,8 +1773,8 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
         'every flag per command, Android variants and flavors, the per-run simulator model, runtime and system image',
       body: () => `THE OPTION SURFACE, IN FULL
   start           --json --wait <seconds> --remote --reset-cache
-  ios             --build-machine <auto|local|name> --slot <name> --json --plan --no-metro-check --no-build-cache --scheme <name> --configuration <name> --device-type <name> --runtime <version> --simulator-app <xcode|siniulator|stim-desktop> --device [udid] --wait <seconds> --no-wait --remote <eas|proxy|auto|machine>
-  android         --build-machine <auto|local|name> --slot <name> --json --plan --no-metro-check --no-build-cache --variant <name> --system-image <id> --device-profile <id> --device [serial] --wait <seconds> --no-wait --remote <proxy|eas>
+  ios             --remote-build <auto|local|name> --slot <name> --json --plan --no-metro-check --no-build-cache --scheme <name> --configuration <name> --device-type <name> --runtime <version> --simulator-app <xcode|siniulator|stim-desktop> --device [udid] --wait <seconds> --no-wait --remote <eas|proxy|auto|machine>
+  android         --remote-build <auto|local|name> --slot <name> --json --plan --no-metro-check --no-build-cache --variant <name> --system-image <id> --device-profile <id> --device [serial] --wait <seconds> --no-wait --remote <proxy|eas>
   ios/android --wait bounds owned-device slot waits (default 600s), or physical
   leases with --device (default 60s). Remote targets do not join this local
   slot queue. --no-wait refuses a full/queued owned

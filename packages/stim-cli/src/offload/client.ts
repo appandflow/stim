@@ -50,7 +50,7 @@ const MAX_BUFFERED = 8 * 1024 * 1024;
 const DIGEST_BYTES = 32;
 
 function offloadMode(env: NodeJS.ProcessEnv = process.env): OffloadMode {
-  const raw = env.STIM_OFFLOAD_MODE || loadConfig()?.offload?.mode;
+  const raw = env.STIM_OFFLOAD_MODE || loadConfig()?.remote?.buildMode;
   return OFFLOAD_MODES.includes(raw as OffloadMode) ? (raw as OffloadMode) : 'auto';
 }
 
@@ -88,8 +88,8 @@ export function placementLoad(choice: { offer: BuildOffer }): string {
 }
 
 /**
- * Whether a build may go to a build machine at all, before any machine is asked. `auto` keeps the build here while
- * this Mac has a free `concurrency.maxBuilds` slot and its load per core is under `offload.maxLoadPerCore`.
+ * Whether a build may go to a remote Mac at all, before any machine is asked. `auto` keeps the build here while
+ * this Mac has a free `concurrency.maxBuilds` slot and its load per core is under `server.maxLoadPerCore`.
  * A named selection ignores local capacity and mode, and refuses an unsupported build or missing pairing.
  */
 export function offloadPlacement({
@@ -106,15 +106,15 @@ export function offloadPlacement({
   unsupported: string | null;
 }): { offload: boolean; reason: string } {
   if (namedBuildMachine(selected)) {
-    if (unsupported) throw new OffloadRefusal(selected, `${unsupported}, so a named build machine cannot take it`);
-    if (machines === 0) throw new OffloadRefusal(selected, 'no build machine is paired');
-    return { offload: true, reason: `selected with --build-machine ${selected}` };
+    if (unsupported) throw new OffloadRefusal(selected, `${unsupported}, so a named remote Mac cannot take it`);
+    if (machines === 0) throw new OffloadRefusal(selected, 'no remote Mac is paired');
+    return { offload: true, reason: `selected with --remote-build ${selected}` };
   }
-  if (selected === 'local') return { offload: false, reason: '--build-machine local' };
-  if (mode === 'off') return { offload: false, reason: 'offload.mode is off' };
-  if (machines === 0) return { offload: false, reason: 'no build machine is paired' };
+  if (selected === 'local') return { offload: false, reason: '--remote-build local' };
+  if (mode === 'off') return { offload: false, reason: 'remote.buildMode is off' };
+  if (machines === 0) return { offload: false, reason: 'no remote Mac is paired' };
   if (unsupported) return { offload: false, reason: unsupported };
-  if (mode === 'force') return { offload: true, reason: 'offload.mode is force' };
+  if (mode === 'force') return { offload: true, reason: 'remote.buildMode is force' };
   const busy = saturation(here);
   return busy
     ? { offload: true, reason: `this Mac is busy: ${busy} (${capacityText(here)})` }
@@ -444,7 +444,7 @@ interface RepoIdentity {
   lockfile: string | null;
 }
 
-/** The repository on the build machine: one area per git common dir, shared by all its worktrees. */
+/** The repository on the remote Mac: one area per git common dir, shared by all its worktrees. */
 function repoIdentity(projectRoot: string): RepoIdentity {
   const run = getExecutor().runFile;
   const repoRoot = realpathSync(run('git', ['-C', projectRoot, 'rev-parse', '--show-toplevel']));
@@ -515,7 +515,7 @@ interface OffloadTimings {
   artifactBytes: number;
 }
 
-/** A native build the build machine keeps for a while, which a hosted session on that tailnet node can take. */
+/** A native build the remote Mac keeps for a while, which a hosted session on that tailnet node can take. */
 export interface BuildHandoff {
   nodeId: string;
   token: string;
@@ -631,7 +631,7 @@ export async function chooseBuildMachine({
   asked.forEach((each, at) => {
     if (!order.includes(at) && 'connection' in each) each.connection.close();
   });
-  if (order.length === 0) return reasons.length ? reasons.join('; ') : 'no build machine is paired';
+  if (order.length === 0) return reasons.length ? reasons.join('; ') : 'no remote Mac is paired';
   for (const reason of reasons) note(reason);
   const [first, ...rest] = order.map((at) => {
     const pick = asked[at] as { credential: BuildMachineCredential; connection: BuildConnection; offer: BuildOffer };

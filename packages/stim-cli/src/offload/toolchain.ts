@@ -6,7 +6,7 @@ import { stimBuildDigest } from '@stim-cli/core/state';
 import { androidHome } from '../devices/android.ts';
 import { getExecutor } from '../exec.ts';
 
-/** What must be identical on this Mac and a build machine for an iOS simulator build to come out the same. */
+/** What must be identical on this Mac and a remote Mac for an iOS simulator build to come out the same. */
 export interface IosToolchain {
   /** A digest of Stim's built code, so both sides prove they run the same Stim. */
   stimBuild: string | null;
@@ -16,7 +16,7 @@ export interface IosToolchain {
   cocoapods: string | null;
 }
 
-/** What must be identical on this Mac and a build machine for an Android debug build; Gradle and AGP come from the synced project. */
+/** What must be identical on this Mac and a remote Mac for an Android debug build; Gradle and AGP come from the synced project. */
 export interface AndroidToolchain {
   stimBuild: string | null;
   arch: string;
@@ -31,7 +31,7 @@ export interface AndroidRequirements {
   compileSdk: string | null;
 }
 
-/** A build machine's toolchain, the simulator runtimes it can build for, and its JDK and Android SDK packages. */
+/** A remote Mac's toolchain, the simulator runtimes it can build for, and its JDK and Android SDK packages. */
 export interface WorkerToolchain extends IosToolchain {
   macosSdk: string | null;
   bundler: string | null;
@@ -183,7 +183,7 @@ export function workerToolchain(): WorkerToolchain {
 /** The API level of an SDK `platforms/` directory: `android-37.0` and `android-37` are both 37. */
 const platformLevel = (dir: string): string | undefined => dir.replace(/^android-/, '').split('.')[0];
 
-/** One reason a build machine cannot take this build now, with a stable `code` for doctor's JSON. */
+/** One reason a remote Mac cannot take this build now, with a stable `code` for doctor's JSON. */
 export interface OffloadProblem {
   code:
     | 'unreachable'
@@ -228,7 +228,7 @@ function androidMismatches(
   return out;
 }
 
-/** Why a build machine cannot build like this Mac; empty when it can. */
+/** Why a remote Mac cannot build like this Mac; empty when it can. */
 export function toolchainMismatches(target: BuildTarget, worker: WorkerToolchain): OffloadProblem[] {
   const { local } = target;
   const out: OffloadProblem[] = [];
