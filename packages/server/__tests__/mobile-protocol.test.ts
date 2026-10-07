@@ -1,3 +1,5 @@
+import Ajv2020 from 'ajv/dist/2020.js';
+import { protocolJsonSchema } from '../src/protocol.ts';
 import type * as Mobile from '../../../apps/mobile/src/protocol/types.ts';
 import type * as Server from '../src/protocol.ts';
 
@@ -13,6 +15,8 @@ type PhoneMethod = Exclude<
   | 'route.setup'
   | 'machines.update.start'
   | 'machines.update.status'
+  | 'device-host.sessions'
+  | 'device-host.sessions.stop'
 >;
 
 type SharedMethod = PhoneMethod & keyof Mobile.Methods;
@@ -53,4 +57,32 @@ describe('the shared phone protocol', () => {
     expectTypeOf<WithoutRecords<Server.LogsEvent>>().toExtend<WithoutRecords<Mobile.LogsEvent>>();
     expectTypeOf<Mobile.LogRecord>().toExtend<Server.LogRecord>();
   });
+});
+
+test('the wire schema accepts person-side session queries and stops while refusing ambiguous params and phases', () => {
+  const validator = new Ajv2020({ strict: false, validateFormats: false });
+  validator.addSchema(protocolJsonSchema(), 'protocol');
+  const acceptsRequest = validator.compile({ $ref: 'protocol#/$defs/ClientRequest' });
+  const acceptsResponse = validator.compile({ $ref: 'protocol#/$defs/ServerResponse' });
+  const acceptsStop = validator.compile({ $ref: 'protocol#/$defs/HostedSessionStopResult' });
+  for (const request of [
+    { id: 1, method: 'device-host.sessions' },
+    { id: 1, method: 'device-host.sessions', params: {} },
+    { id: 1, method: 'device-host.sessions.stop', params: { session: 'session-id' } },
+  ])
+    expect(acceptsRequest(request)).toBe(true);
+  for (const request of [
+    { id: 1, method: 'device-host.sessions', params: { session: 'session-id' } },
+    { id: 1, method: 'device-host.sessions.stop' },
+    { id: 1, method: 'device-host.sessions.stop', params: { session: 1 } },
+    { id: 1, method: 'device-host.sessions.stop', params: { session: 'session-id', client: 'other' } },
+  ])
+    expect(acceptsRequest(request)).toBe(false);
+  expect(acceptsResponse({ id: 1, result: { sessions: [] } })).toBe(true);
+  for (const state of ['stopping', 'stopped']) {
+    const result = { id: 'session-id', state };
+    expect(acceptsStop(result)).toBe(true);
+    expect(acceptsResponse({ id: 1, result })).toBe(true);
+  }
+  expect(acceptsStop({ id: 'session-id', state: 'ready' })).toBe(false);
 });

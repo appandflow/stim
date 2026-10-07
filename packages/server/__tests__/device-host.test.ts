@@ -41,6 +41,8 @@ import {
 import * as processIdentity from '@stim-cli/core/process-identity';
 import { takeHostedInputClaim } from '../src/hosted-input.ts';
 import { DeviceHost } from '../src/device-host.ts';
+import { formatHostedSessions } from '../src/hosted-sessions.ts';
+import { grantDevice, requestDeviceHostAccess } from '../src/registry.ts';
 import { AgentDeviceDriver } from '../src/agent-device-driver.ts';
 import * as processes from '../src/processes.ts';
 import { keepAgentClaim } from './fixtures/kept-agent-claim.ts';
@@ -3221,4 +3223,157 @@ test('an eviction snapshot cannot retire a device adopted and parked again while
   expect(readHostedSessions().find((record) => record.id === reused.id)?.parked).toBeDefined();
   expect(readHostedDeviceLedger(join(deviceHostArea(reused.id), 'home'))?.ios).toHaveLength(1);
   expect(hostedModes(reused.id)).not.toContain('stop');
+});
+
+test('sessions lists installed apps and device labels newest first, retaining parked and unresolved sessions', async () => {
+  const session = await reserve();
+  await state(session.id, 'ready');
+  const app = appOffer(session.id);
+  host.appOffer('client', app.params);
+  expect(host.sessions()).toHaveProperty('result.sessions.0.app', null);
+  await uploadManifest(app);
+  await host.appChunk('client', {
+    session: session.id,
+    attempt: app.params.attempt,
+    sha256: app.sha256,
+    offset: 0,
+    data: app.content.toString('base64'),
+  });
+  host.appLaunch('client', { session: session.id, attempt: app.params.attempt });
+  await vi.waitFor(() => expect(readHostedAppMetadata(session.id, app.params.attempt).state).toBe('installed'));
+  const pending = requestDeviceHostAccess('Client Mac', {
+    kind: 'tailnet',
+    nodeId: 'client-node',
+    nodeName: 'client',
+    user: 'person',
+  });
+  if (!pending.ok) throw new Error(pending.reason);
+  grantDevice(pending.device.id, ['device-host']);
+  const android = seedHosted({
+    platform: 'android',
+    client: pending.device.id,
+    state: 'ready',
+    createdAt: '2090-01-02T00:00:00.000Z',
+  });
+  const parked = { parked: { at: '2090-01-03T00:00:00.000Z' } };
+  const macos = seedHosted({ platform: 'ios', state: 'stopped', createdAt: '2000-01-01T00:00:00.000Z', ...parked });
+  seedHosted();
+  const unknown = seedHosted({ state: 'unknown', device: null, createdAt: '2090-01-01T00:00:00.000Z' });
+  const answer = host.sessions();
+  if ('error' in answer) throw new Error(answer.error.message);
+  expect(answer.result.sessions).toEqual([
+    {
+      id: macos.id,
+      client: { id: 'client', name: 'client' },
+      platform: 'ios',
+      device: 'iPhone (27.1)',
+      app: null,
+      state: 'stopped',
+      parked: true,
+      since: parked.parked.at,
+      workspace: request.workspace,
+    },
+    {
+      id: android.id,
+      client: { id: pending.device.id, name: 'Client Mac' },
+      platform: 'android',
+      device: 'pixel_6 (android-30 google_apis arm64-v8a)',
+      app: null,
+      state: 'unknown',
+      parked: false,
+      since: android.createdAt,
+      workspace: request.workspace,
+    },
+    {
+      id: unknown.id,
+      client: { id: 'client', name: 'client' },
+      platform: 'ios',
+      device: null,
+      app: null,
+      state: 'unknown',
+      parked: false,
+      since: unknown.createdAt,
+      workspace: request.workspace,
+    },
+    {
+      id: session.id,
+      client: { id: 'client', name: 'client' },
+      platform: 'ios',
+      device: 'iPhone (27.1)',
+      app: 'dev.stim.fixture',
+      state: 'ready',
+      parked: false,
+      since: session.createdAt,
+      workspace: request.workspace,
+    },
+  ]);
+  const validator = new Ajv2020({ strict: false, validateFormats: false });
+  validator.addSchema(protocolJsonSchema(), 'protocol');
+  const acceptsRows = validator.compile({ $ref: 'protocol#/$defs/HostedSessionsResult' });
+  expect(acceptsRows(answer.result)).toBe(true);
+  expect(acceptsRows({ sessions: [{ ...answer.result.sessions[0], parked: 'yes' }] })).toBe(false);
+  expect(acceptsRows({ sessions: [{ ...answer.result.sessions[0], state: 'running' }] })).toBe(false);
+});
+
+test('the person stops any client through the worker and repeated stopped requests do no more work', async () => {
+  const session = await host.reserve('other', { ...request, attempt: 'other' });
+  if ('error' in session) throw new Error(session.error.message);
+  await state(session.result.id, 'ready');
+  expect(host.stop('client', { session: session.result.id })).toHaveProperty('error.code', 'unknown-session');
+  expect(host.stopForPerson('missing')).toHaveProperty('error.code', 'unknown-session');
+  expect(host.stopForPerson(session.result.id)).toEqual({ result: { id: session.result.id, state: 'stopping' } });
+  await state(session.result.id, 'stopped');
+  const stopped = join(deviceHostArea(session.result.id), 'home', 'stopped');
+  expect(existsSync(stopped)).toBe(true);
+  const worker = readFileSync(stopped, 'utf8');
+  expect(host.stopForPerson(session.result.id)).toEqual({ result: { id: session.result.id, state: 'stopped' } });
+  expect(readFileSync(stopped, 'utf8')).toBe(worker);
+  expect(host.sessions()).toEqual({ result: { sessions: [] } });
+});
+
+test('the person stop reconciles an unowned unknown session and refuses a claim held by another owner', async () => {
+  const record = seedHosted({ state: 'preparing' });
+  const claim = tryAcquireClaim({
+    root: join(deviceHostRoot(), `${record.id}.claims`),
+    mode: 'exclusive',
+    label: 'another host',
+  });
+  if (!claim.acquired) throw new Error('fixture claim unavailable');
+  try {
+    expect(host.stopForPerson(record.id)).toHaveProperty('error.code', 'action-failed');
+    expect(readHostedSessions()[0]?.state).toBe('preparing');
+    expect(existsSync(join(deviceHostArea(record.id), 'home', 'stopped'))).toBe(false);
+  } finally {
+    releaseClaim(claim.acquired);
+  }
+  const records = readHostedSessions();
+  records[0]!.state = 'unknown';
+  writeFileSync(join(deviceHostRoot(), 'sessions.json'), JSON.stringify({ version: 1, sessions: records }));
+  expect(host.stopForPerson(record.id)).toHaveProperty('result.state', 'stopping');
+  await state(record.id, 'stopped');
+  expect(existsSync(join(deviceHostArea(record.id), 'home', 'stopped'))).toBe(true);
+});
+
+test('devices formats hosted rows as single safe lines and omits an empty Hosted here block', () => {
+  expect(formatHostedSessions([])).toEqual([]);
+  const record = seedHosted({ state: 'unknown' });
+  const answer = host.sessions();
+  if ('error' in answer) throw new Error(answer.error.message);
+  const row = answer.result.sessions[0]!;
+  expect(
+    formatHostedSessions([
+      {
+        ...row,
+        client: { id: 'client', name: 'Client\nMac\u001b\u202e' },
+        device: 'iPhone\t(27.1)',
+        app: 'dev.fixture\r.app',
+        since: '2026-10-07T00:00:00.000Z\n',
+      },
+      { ...row, device: null, app: null, since: record.createdAt },
+    ]),
+  ).toEqual([
+    'Hosted here',
+    'ClientMac  ios  iPhone(27.1)  dev.fixture.app  unknown  since 2026-10-07T00:00:00.000Z',
+    `client  ios  -  -  unknown  since ${record.createdAt}`,
+  ]);
 });

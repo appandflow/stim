@@ -2104,7 +2104,15 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       params: unknown,
       session: PairedDevice,
     ): Promise<void> | null {
-      if (method !== 'route.setup' && method !== 'machines.update.start' && method !== 'machines.update.status')
+      if (
+        ![
+          'route.setup',
+          'machines.update.start',
+          'machines.update.status',
+          'device-host.sessions',
+          'device-host.sessions.stop',
+        ].includes(method)
+      )
         return null;
       if (!localControl || session.identity.kind !== 'local' || !session.capabilities.includes('control')) {
         return Promise.resolve(
@@ -2113,11 +2121,35 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
             'forbidden',
             method === 'route.setup'
               ? 'Phone connection setup requires an authenticated local Desktop control connection.'
-              : 'Updating another Mac requires an authenticated local Desktop control connection.',
+              : method.startsWith('device-host.sessions')
+                ? 'Listing or stopping hosted sessions requires an authenticated local Desktop control connection.'
+                : 'Updating another Mac requires an authenticated local Desktop control connection.',
           ),
         );
       }
+      if (method.startsWith('device-host.sessions')) return hostedSessions(id, method, params);
       return method === 'route.setup' ? setupRoute(id, params) : updateMachine(id, method, params);
+    }
+
+    async function hostedSessions(id: RequestId, method: string, params: unknown): Promise<void> {
+      if (
+        method === 'device-host.sessions' &&
+        params !== undefined &&
+        (!isJsonObject(params) || Object.keys(params).length)
+      )
+        return error(id, 'bad-request', 'device-host.sessions takes no parameters.');
+      if (
+        method === 'device-host.sessions.stop' &&
+        (!isJsonObject(params) ||
+          typeof params.session !== 'string' ||
+          Object.keys(params).some((key) => key !== 'session'))
+      )
+        return error(id, 'bad-request', 'device-host.sessions.stop needs params.session.');
+      const answer =
+        method === 'device-host.sessions'
+          ? hostedDevices.sessions()
+          : hostedDevices.stopForPerson((params as { session: string }).session);
+      return send(socket, 'error' in answer ? { id, error: answer.error } : { id, result: answer.result });
     }
 
     async function setupRoute(id: RequestId, params: unknown): Promise<void> {
@@ -2303,11 +2335,11 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       }
       const approvedMachine = machineMethod(id, message.method, message.params, device);
       if (approvedMachine) return approvedMachine;
+      const desktop = desktopMethod(id, message.method, message.params, device);
+      if (desktop) return desktop;
       if (!device.capabilities.includes('read')) {
         return error(id, 'forbidden', `${message.method} needs read access, which this connection does not have.`);
       }
-      const desktop = desktopMethod(id, message.method, message.params, device);
-      if (desktop) return desktop;
       if (isJsonObject(message.params) && typeof message.params.archive === 'string') {
         const params = message.params;
         const reads: Partial<Record<string, (id: RequestId, params: unknown) => void | Promise<void>>> = {
