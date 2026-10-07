@@ -106,11 +106,6 @@ public enum Tailnet {
     else { return nil }
     return health
   }
-
-  /// Whether `stim-server` answers `GET /health` on the Mac's `tailscale serve` route at `port`.
-  public static func servesStim(dnsName: String, port: Int = servePort) async -> Bool {
-    await health(dnsName: dnsName, port: port) != nil
-  }
 }
 
 /// Where this Mac stands with one `offload.machines` entry, as `stim doctor --json` reports it.

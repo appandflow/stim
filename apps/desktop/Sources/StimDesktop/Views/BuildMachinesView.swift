@@ -44,10 +44,10 @@ struct BuildMachinesView: View {
       }
     }
     .task { await model.load(checkout: checkout) }
-    .task(id: waiting) {
+    .task(id: PollKey(waiting: waiting, checkout: checkout)) {
       while !Task.isCancelled {
         try? await Task.sleep(for: .seconds(waiting ? 15 : 60))
-        guard !model.isBusy, !Task.isCancelled else { continue }
+        guard !model.isBusy, !Task.isCancelled, !(model.entries ?? []).isEmpty else { continue }
         await model.checkTailscale()
         await model.refreshStatuses(checkout: checkout, ask: false)
       }
@@ -120,6 +120,11 @@ struct BuildMachinesView: View {
   }
 
   private var waiting: Bool { statuses?.contains { $0.state == .pending } == true }
+}
+
+private struct PollKey: Hashable {
+  var waiting: Bool
+  var checkout: String?
 }
 
 /// The Build Machines tab for the state it is given: a progress view, the empty state, or the list.
