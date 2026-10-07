@@ -76,7 +76,8 @@ public struct BuildTest: Equatable, Sendable {
     public var accessibilityLabel: String {
       switch self {
       case .passed: return "Test build, done"
-      case .skipped, .skippedAfterFailure: return "Test build, skipped"
+      case .skipped: return "Test build, skipped"
+      case .skippedAfterFailure: return "Test build, skipped after a failed run"
       case .failed: return "Test build, failed"
       case .notRun: return "Test build, not run"
       }

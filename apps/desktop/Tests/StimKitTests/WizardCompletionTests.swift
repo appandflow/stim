@@ -204,7 +204,7 @@ final class WizardCompletionTests: XCTestCase {
     XCTAssertFalse(test.passed)
     XCTAssertEqual(test.outcome, .skippedAfterFailure("Worker refused"))
     XCTAssertEqual(test.outcome.symbol, "minus.circle.fill")
-    XCTAssertEqual(test.outcome.accessibilityLabel, "Test build, skipped")
+    XCTAssertEqual(test.outcome.accessibilityLabel, "Test build, skipped after a failed run")
     XCTAssertEqual(test.outcome.summaryText, "Test build skipped after a failed run.")
     test.apply(.prepare)
     test.apply(.prepared)
