@@ -258,6 +258,23 @@ private let booted = #"{"name":"stim-w (iPhone 18 27.0)","udid":"SIM-1","owned":
     #expect(build.waitingOn == WaitingOn(path: "/w/app-a"))
     #expect(try #require(try workspace(#""build":\#(runningBuild())"#).build).waitingOn == nil)
   }
+
+  @Test func readsSlotWaitsDuringCompileAndKeepsOlderPayloadsCompatible() throws {
+    for kind in ["device-slot", "build-slot", "future-slot"] {
+      let waiting = #", "waitingFor":{"kind":"\#(kind)","inUse":3,"max":3,"since":"2026-09-25T12:00:00Z"}"#
+      let build = try #require(try workspace(#""build":\#(runningBuild(waiting))"#).build)
+      #expect(build.phase == "compile")
+      #expect(build.waitingFor == WaitingFor(kind: kind, inUse: 3, max: 3, since: "2026-09-25T12:00:00Z"))
+      let now = try #require(parseTimestamp("2026-09-25T12:00:42Z"))
+      if kind == "future-slot" {
+        #expect(build.waitingFor?.text(at: now) == nil)
+      } else {
+        #expect(build.waitingFor?.text(at: now)?.hasSuffix("0:42") == true)
+        #expect(build.waitingFor?.text(at: now.addingTimeInterval(1))?.hasSuffix("0:43") == true)
+      }
+    }
+    #expect(try #require(try workspace(#""build":\#(runningBuild())"#).build).waitingFor == nil)
+  }
 }
 
 @Suite struct OffloadedBuildTests {

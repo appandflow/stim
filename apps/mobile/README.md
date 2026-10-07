@@ -982,6 +982,12 @@ rows visible while refusing archive requests with `bad-request`, so the update
 hints can be checked. Archived log subscriptions end with `logs-ended`; the
 phone uses one-shot queries instead.
 
+To screenshot slot waits, run `pnpm run mock-server --slot-waits` and pair with
+`ws://127.0.0.1:7787`. Open the iOS build sheet for `a4-building` to see a device
+slot wait during compilation, or `a4-offloading` to see a build slot wait during
+pods. Both wait timers start at 0:42 and count up. The optional state lives in
+`mock-server/fixtures/slot-waits.json`; the default captured fixtures stay unchanged.
+
 To try the home screen with two Macs, run two mock servers on different ports.
 `--workspaces <regex>` keeps only the app workspaces and source-only worktrees whose path matches, and
 `--free-gb <n>` sets the free disk `machine.get` reports:

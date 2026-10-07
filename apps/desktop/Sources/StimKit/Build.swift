@@ -32,6 +32,7 @@ public struct Build: Decodable, Hashable, Sendable {
   /// While `phase` is `wait`: the workspace whose build of the same artifact this run waits for; nil from an older stim
   /// or when the holder is not known.
   public var waitingOn: WaitingOn?
+  public var waitingFor: WaitingFor?
 
   public var isRunning: Bool { state == "running" }
 
@@ -61,6 +62,24 @@ public struct Build: Decodable, Hashable, Sendable {
       : remainingMs < 60_000 ? "under a minute left" : "about \(Int((remainingMs / 60_000).rounded(.up))) min left"
     let fraction = steadyFraction("\(key)|top", min(elapsedMs / expectedMs, 0.99))
     return BuildProgress(elapsedMs: elapsedMs, fraction: fraction, remaining: remaining)
+  }
+}
+
+public struct WaitingFor: Decodable, Hashable, Sendable {
+  public var kind: String
+  public var inUse: Int
+  public var max: Int
+  public var since: String
+
+  public func text(at now: Date) -> String? {
+    let slot: String
+    switch kind {
+    case "build-slot": slot = "build"
+    case "device-slot": slot = "device"
+    default: return nil
+    }
+    let elapsed = parseTimestamp(since).map { Format.clock(ms: now.timeIntervalSince($0) * 1000) } ?? ""
+    return "Waiting for a \(slot) slot (\(inUse)/\(max) in use) \(elapsed)".trimmingCharacters(in: .whitespaces)
   }
 }
 

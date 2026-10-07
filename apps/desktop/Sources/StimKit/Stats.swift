@@ -105,7 +105,17 @@ public struct CapacityRefusal: Decodable, Sendable {
   public var workspace: String?
 }
 
+public struct CapacityWait: Decodable, Sendable {
+  public var at: String
+  public var kind: String
+  public var platform: String?
+  public var max: Int?
+  public var workspace: String?
+  public var ms: Double?
+}
+
 public struct MachineStats: Decodable, Sendable {
   public var offload: BuildPlacements?
   public var capacityRefusals: [CapacityRefusal]?
+  public var capacityWaits: [CapacityWait]?
 }

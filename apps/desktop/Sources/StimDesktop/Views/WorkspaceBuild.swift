@@ -9,6 +9,19 @@ extension TimelineSchedule where Self == PeriodicTimelineSchedule {
   }
 }
 
+struct SlotWaitText: View {
+  var build: Build
+
+  var body: some View {
+    TimelineView(.buildSeconds(build)) { context in
+      if let text = build.waitingFor?.text(at: context.date) {
+        Text(text).font(.stim(.footnote)).foregroundStyle(Palette.secondary)
+          .monospacedDigit().fixedSize(horizontal: false, vertical: true)
+      }
+    }
+  }
+}
+
 struct PhaseBar: View {
   var steps: [PhaseStep]
   var key: String

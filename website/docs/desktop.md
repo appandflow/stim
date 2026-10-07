@@ -87,7 +87,8 @@ performance traces. Every release is listed under
   every line. Copying and record details retain the original output.
 - **Builds.** The inspector card keeps progress and the last and next build
   summaries. **Details** opens a sheet with a platform switch, recent runs,
-  elapsed time and estimate, phase timings, the wait holder, cache lookup and
+  elapsed time and estimate, phase timings, the wait holder, build and device
+  slot waits with capacity counts and elapsed wait time, cache lookup and
   full miss reason with changed sources and baseline, build machine and offload
   fallback reason, compiler diagnostics, retained output, and the next-build
   plan with **Check**. The header's running-build progress opens the current
@@ -415,4 +416,4 @@ changing system preferences. Release builds exclude it. See the [desktop develop
 
 ## Suggestions
 
-Desktop suggests build machines, hosted simulators, cache review, or phone pairing when recent builds, tailnet peers, disk pressure, or device limits make them useful. Each kind shows once unless you dismiss it with the X to snooze it for 7 days, after which it may show again. Choose **Don't suggest again** to dismiss that kind permanently. Device-limit suggestions use refusals from Desktop commands and recent `stats --json` capacity events, including agent terminal runs, within 6 hours of the refusal. Suggestions never appear during a build or install, before setup is complete, or on the first launch, and appear at most once per day. Nothing is set up until you open and follow the wizard.
+Desktop suggests build machines, hosted simulators, cache review, or phone pairing when recent builds, tailnet peers, disk pressure, or device limits make them useful. Each kind shows once unless you dismiss it with the X to snooze it for 7 days, after which it may show again. Choose **Don't suggest again** to dismiss that kind permanently. Device-limit suggestions use refusals from Desktop commands and recent `stats --json` capacity events, including agent terminal runs, within 6 hours of the refusal. Three device waits of at least one minute each within the same 6-hour window also trigger a suggestion. Suggestions never appear during a build or install, before setup is complete, or on the first launch, and appear at most once per day. Nothing is set up until you open and follow the wizard.

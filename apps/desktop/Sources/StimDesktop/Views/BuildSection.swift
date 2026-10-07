@@ -231,6 +231,7 @@ private struct RunningBuildDetail: View {
     if build.phase == "wait", let holder = build.waitingOn {
       WaitingOnButton(path: holder.path, current: env.path)
     }
+    if build.waitingFor != nil { SlotWaitText(build: build) }
     if build.phase == "compile", let line = build.detail?.line {
       Text(line).font(.stim(.footnote)).foregroundStyle(Palette.secondary)
         .fixedSize(horizontal: false, vertical: true)

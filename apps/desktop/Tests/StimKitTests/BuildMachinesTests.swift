@@ -71,7 +71,10 @@ import Testing
             {"at":"2026-09-30T12:00:00.000Z","project":"/r/app","platform":"ios","decision":"teleported","reason":"?"}]},
           "capacityRefusals":[
             {"at":"2026-09-30T12:04:00.000Z","kind":"device","platform":"android","max":3,"workspace":"fixture"},
-            {"at":"2026-09-30T12:03:00.000Z","kind":"unknown","platform":"ios","max":2,"workspace":"older"}]}
+            {"at":"2026-09-30T12:03:00.000Z","kind":"unknown","platform":"ios","max":2,"workspace":"older"}],
+          "capacityWaits":[
+            {"at":"2026-09-30T12:05:00.000Z","kind":"device-wait","platform":"ios","max":1,"workspace":"queued","ms":60000},
+            {"at":"2026-09-30T12:04:00.000Z","kind":"unknown"}]}
         """#.utf8))
     let refusal = try #require(stats.capacityRefusals?.first)
     #expect(refusal.at == "2026-09-30T12:04:00.000Z")
@@ -80,6 +83,16 @@ import Testing
     #expect(refusal.max == 3)
     #expect(refusal.workspace == "fixture")
     #expect(stats.capacityRefusals?.last?.kind == "unknown")
+    let wait = try #require(stats.capacityWaits?.first)
+    #expect(wait.at == "2026-09-30T12:05:00.000Z")
+    #expect(wait.kind == "device-wait")
+    #expect(wait.platform == "ios")
+    #expect(wait.max == 1)
+    #expect(wait.workspace == "queued")
+    #expect(wait.ms == 60_000)
+    let unknownWait = try #require(stats.capacityWaits?.last)
+    #expect(unknownWait.kind == "unknown")
+    #expect(unknownWait.platform == nil && unknownWait.max == nil && unknownWait.workspace == nil && unknownWait.ms == nil)
     let offload = try #require(stats.offload)
     #expect(offload.machines["mini"]?.total.savedMs == -5000)
     #expect(offload.placements(for: "mini").map(\.title) == ["Built here after mini", "Built on mini"])
@@ -97,6 +110,7 @@ import Testing
     let older = try JSONDecoder().decode(MachineStats.self, from: Data(#"{"version":1}"#.utf8))
     #expect(older.offload == nil)
     #expect(older.capacityRefusals == nil)
+    #expect(older.capacityWaits == nil)
   }
 
   @Test func describesOnlyTheCapacityAMachineReported() throws {

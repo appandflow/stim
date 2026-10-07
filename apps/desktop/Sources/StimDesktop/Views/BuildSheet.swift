@@ -312,6 +312,7 @@ private struct BuildRunDetail: View {
           if build.phase == "wait", let holder = build.waitingOn {
             WaitingOnButton(path: holder.path, current: env.path, beforeOpen: dismiss)
           }
+          if build.waitingFor != nil { SlotWaitText(build: build) }
         }
       } else if let entry = run.history, !entry.finishedSteps.isEmpty {
         section("Phases") {

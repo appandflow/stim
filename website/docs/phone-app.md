@@ -158,6 +158,10 @@ the server's authorization, use the Mac-side action above.
 | Read captured logs, build diagnostics and supported text diffs. | Tap, swipe, type and use supported buttons on controllable devices. |
 | View device screens and supported replay.                       | Control a leased Android phone while its lease is valid.            |
 
+The build sheet shows build and device slot waits alongside the current phase,
+with the number of slots in use and a live elapsed wait timer. A device slot
+wait can overlap compilation. Older CLIs omit this information.
+
 A leased iPhone connected over USB is view-only and must be unlocked and trust
 the Mac; over Wi-Fi it has no screen stream. Hosted iOS simulators can be viewed
 and controlled through the main Mac's relay, with **Serve to phones** enabled.

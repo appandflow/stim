@@ -5,6 +5,7 @@ import {
   activityLabel,
   buildProgress,
   buildTiming,
+  slotWait,
   clockTime,
   gitBadges,
   durationBars,
@@ -139,6 +140,20 @@ describe('buildTiming', () => {
 
   it('has no estimate without comparable runs', () => {
     expect(buildTiming(build(null), now)).toEqual({ elapsed: '1:30', estimate: null });
+  });
+
+  it('times slot waits from their own start during any phase and skips absent or future kinds', () => {
+    const run = build(null);
+    for (const kind of ['build-slot', 'device-slot']) {
+      const waiting = { ...run, waitingFor: { kind, inUse: 3, max: 3, since: ago(42_000) } };
+      for (const phase of ['compile', 'wait']) {
+        expect(slotWait({ ...waiting, phase }, now)?.endsWith('0:42')).toBe(true);
+        expect(slotWait({ ...waiting, phase }, now + 1000)?.endsWith('0:43')).toBe(true);
+      }
+      expect(slotWait(waiting, now - 43_000)?.endsWith('0:00')).toBe(true);
+      expect(slotWait({ ...waiting, waitingFor: { ...waiting.waitingFor, kind: 'future-slot' } }, now)).toBeNull();
+    }
+    expect(slotWait(run, now)).toBeNull();
   });
 });
 
