@@ -211,24 +211,28 @@ final class ServerController: ObservableObject {
   }
 
   func setupConnection() {
-    guard isRunning, !settingUpConnection else { return }
+    Task { await setUpConnection() }
+  }
+
+  func setUpConnection() async -> String? {
+    guard isRunning else { return "The Stim server is not running. Try again." }
+    guard !settingUpConnection else { return "Connection setup is already running. Try again." }
     settingUpConnection = true
     connectionError = nil
-    Task {
-      defer { settingUpConnection = false }
-      guard let client = ServerSession.shared.client, client.isOpen else {
-        connectionError = "The local Desktop connection is not ready. Try again."
-        return
-      }
-      do {
-        _ = try await client.request("route.setup", [:])
-        refresh()
-      } catch let error as ServerError where error.code == "unknown-method" {
-        connectionError = "Update stim-server to set up the phone connection from Desktop."
-      } catch {
-        connectionError = error.localizedDescription
-      }
+    defer { settingUpConnection = false }
+    guard let client = ServerSession.shared.client, client.isOpen else {
+      connectionError = "The local Desktop connection is not ready. Try again."
+      return connectionError
     }
+    do {
+      _ = try await client.request("route.setup", [:])
+      refresh()
+    } catch let error as ServerError where error.code == "unknown-method" {
+      connectionError = "Update stim-server to set up the phone connection from Desktop."
+    } catch {
+      connectionError = error.localizedDescription
+    }
+    return connectionError
   }
 
   func pairPhone(control: Bool) async throws -> PairingCode {

@@ -1,6 +1,4 @@
 import AppKit
-import CoreImage
-import CoreImage.CIFilterBuiltins
 import StimKit
 import SwiftUI
 
@@ -12,6 +10,7 @@ struct PhonesView: View {
   @ObservedObject private var flags = FeatureFlagStore.shared
   @AppStorage(AppPreferences.Key.stimServerExecutable) private var executable = ""
   @State private var pairing = false
+  @State private var pairingModel: PairPhoneModel?
   @State private var revoking: PairedDevice?
   @State private var hosted = HostedSessionsModel()
   @State private var stoppingSession: HostedSession?
@@ -59,9 +58,11 @@ struct PhonesView: View {
           HStack {
             Text("Paired phones")
             Spacer()
-            Button("Pair a Phone\u{2026}") { pairing = true }
-              .disabled(pairingUnavailable != nil)
-              .help(pairingUnavailable ?? "Show a code to pair a phone")
+            Button("Pair a Phone\u{2026}") {
+              pairingModel = PairPhoneModel(stimHome: stimHome)
+              pairing = true
+            }
+            .help(pairingUnavailable ?? "Show a code to pair a phone")
           }
         }
       } else if !serverErrors.isEmpty {
@@ -146,13 +147,15 @@ struct PhonesView: View {
       }
     }
     .sheet(isPresented: $pairing, onDismiss: server.reloadDevices) {
-      PairSheet(server: server)
+      if let pairingModel { PairPhoneSheet(model: pairingModel) }
     }
     .onQuitRequested { pairing = false }
     .onReceive(OpenRequests.shared.$pairsPhone) { pairs in
       guard pairs else { return }
       OpenRequests.shared.pairsPhone = false
-      pairing = flags.phoneApp && server.isRunning
+      guard flags.phoneApp else { return }
+      pairingModel = PairPhoneModel(stimHome: stimHome)
+      pairing = true
     }
     .confirmationDialog(
       revokeTitle, isPresented: .init(get: { revoking != nil }, set: { if !$0 { revoking = nil } }),
@@ -511,184 +514,6 @@ private struct ScopeBadge: View {
 
   var body: some View {
     Pill(canControl ? "Can control" : "Read-only", tone: canControl ? .success : .neutral, size: .small)
-  }
-}
-
-struct PairSheet: View {
-  @ObservedObject var server: ServerController
-  @Environment(\.dismiss) private var dismiss
-  @State private var code: PairingCode?
-  @State private var error: String?
-  @State private var paired: PairedDevice?
-  @State private var openedAt = Date()
-  @State private var showsToken = false
-  @State private var allowsControl = true
-
-  var body: some View {
-    VStack(spacing: Space.xl) {
-      Text("Pair a Phone").font(.stim(.title))
-      if let paired {
-        Image(systemName: "checkmark.circle.fill").font(.system(size: 56)).foregroundStyle(Palette.success)
-        HStack(spacing: Space.sm) {
-          Text("Paired \(paired.name)").font(.stim(.headline))
-          ScopeBadge(canControl: paired.canControl)
-        }
-        Text("\(paired.id) \u{00B7} \(paired.node)").font(.stim(.caption, mono: true)).foregroundStyle(Palette.secondary)
-      } else {
-        VStack(alignment: .leading, spacing: Space.xs) {
-          Toggle("Allow this phone to control devices", isOn: $allowsControl)
-            .toggleStyle(.checkbox)
-            .onChange(of: allowsControl) { load() }
-          Text(
-            allowsControl
-              ? "It can drive simulators and emulators and run reload and stop."
-              : "It can only see workspaces, devices and logs. You can allow control later in the Phones tab."
-          )
-          .font(.stim(.footnote))
-          .foregroundStyle(Palette.tertiary)
-          .fixedSize(horizontal: false, vertical: true)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        if let error {
-          Text(abbreviatingHome(error)).foregroundStyle(Palette.error).textSelection(.enabled)
-          Button("Try Again", action: load)
-        } else if let code {
-          codeView(code)
-        } else {
-          ProgressView().frame(width: 260, height: 260)
-        }
-      }
-      HStack {
-        Spacer()
-        Button(paired == nil ? "Cancel" : "Done") { dismiss() }.keyboardShortcut(paired == nil ? .cancelAction : .defaultAction)
-      }
-    }
-    .padding(Space.xxxl)
-    .frame(width: 420)
-    .background(Palette.background)
-    .font(.stim(.body))
-    .foregroundStyle(Palette.text)
-    .onAppear(perform: load)
-    .task {
-      while !Task.isCancelled, paired == nil {
-        try? await Task.sleep(for: .seconds(2))
-        server.reloadDevices()
-        paired = server.devices.first { $0.isPhone && $0.pairedAt >= openedAt }
-      }
-    }
-  }
-
-  private func codeView(_ code: PairingCode) -> some View {
-    TimelineView(.periodic(from: .now, by: 1)) { context in
-      let remaining = Int(code.expiresAt.timeIntervalSince(context.date).rounded(.up))
-      VStack(spacing: Space.lg) {
-        Text("Scan this code with the Stim app on your phone. It pairs one phone.")
-          .foregroundStyle(Palette.secondary)
-          .multilineTextAlignment(.center)
-          .fixedSize(horizontal: false, vertical: true)
-        ZStack {
-          QRCodeImage(text: code.qrText)
-            .frame(width: 260, height: 260)
-            .blur(radius: remaining > 0 ? 0 : 8)
-          if remaining <= 0 {
-            Button("New Code", action: load).controlSize(.large)
-          }
-        }
-        Text(remaining > 0 ? "Expires in \(remaining / 60):\(String(format: "%02d", remaining % 60))" : "This code expired.")
-          .font(.stim(.callout, mono: true))
-          .foregroundStyle(remaining > 30 ? Palette.secondary : Palette.warning)
-        VStack(alignment: .leading, spacing: Space.sm) {
-          detail("Endpoint", code.qr.endpoint)
-          detail("Token", code.qr.pairingToken, secret: true)
-        }
-        if case .running(let health, _) = server.state, let route = health.route, route.state != "routed" {
-          Label(
-            route.state == "missing"
-              ? "No tailscale serve route to stim-server was found, so a phone cannot reach this endpoint yet. See the Phones tab."
-              : route.state == "funneled"
-                ? "Tailscale Funnel now exposes stim-server publicly. Do not use this code; see the Phones tab."
-                : "Could not read tailscale serve status, so this endpoint is assumed. See the Phones tab.",
-            systemImage: "exclamationmark.triangle.fill"
-          )
-          .foregroundStyle(Palette.warning)
-          .font(.stim(.callout))
-          .fixedSize(horizontal: false, vertical: true)
-        }
-        if code.isLocalOnly {
-          Label(
-            "Tailscale is not running, so this endpoint works only on this Mac, for example in an iOS Simulator.",
-            systemImage: "exclamationmark.triangle.fill"
-          )
-          .foregroundStyle(Palette.warning)
-          .font(.stim(.callout))
-          .fixedSize(horizontal: false, vertical: true)
-        }
-      }
-    }
-  }
-
-  private func detail(_ title: String, _ value: String, secret: Bool = false) -> some View {
-    HStack {
-      Text(title).foregroundStyle(Palette.tertiary).frame(width: 64, alignment: .leading)
-      if secret && !showsToken {
-        Text(String(repeating: "\u{2022}", count: 16)).font(.stim(.caption, mono: true)).lineLimit(1)
-      } else {
-        Text(value).font(.stim(.caption, mono: true)).lineLimit(1).truncationMode(.middle).textSelection(.enabled)
-      }
-      Spacer()
-      if secret {
-        Button {
-          showsToken.toggle()
-        } label: {
-          Image(systemName: showsToken ? "eye.slash" : "eye")
-        }
-        .buttonStyle(.borderless)
-        .accessibilityLabel(showsToken ? "Hide token" : "Show token")
-        .help(showsToken ? "Hide token" : "Show token")
-      }
-      CopyButton(value)
-    }
-    .font(.stim(.callout))
-  }
-
-  private func load() {
-    error = nil
-    code = nil
-    showsToken = false
-    let control = allowsControl
-    Task {
-      let result = await Result.awaiting { try await server.pairPhone(control: control) }
-      guard control == allowsControl else { return }
-      switch result {
-      case .success(let value): code = value
-      case .failure(let failure): error = failure.localizedDescription
-      }
-    }
-  }
-}
-
-struct QRCodeImage: View {
-  var text: String
-
-  var body: some View {
-    if let image = Self.render(text) {
-      Image(nsImage: image)
-        .interpolation(.none)
-        .resizable()
-        .scaledToFit()
-        .padding(Space.lg)
-        .background(RoundedRectangle(cornerRadius: Radius.card).fill(.white))
-    }
-  }
-
-  static func render(_ text: String) -> NSImage? {
-    let filter = CIFilter.qrCodeGenerator()
-    filter.message = Data(text.utf8)
-    filter.correctionLevel = "M"
-    guard let output = filter.outputImage?.transformed(by: CGAffineTransform(scaleX: 8, y: 8)),
-      let cgImage = CIContext().createCGImage(output, from: output.extent)
-    else { return nil }
-    return NSImage(cgImage: cgImage, size: output.extent.size)
   }
 }
 
