@@ -367,7 +367,7 @@ WHAT WRITES WHAT
                        session records (~/.agent-device/sessions, or
                        AGENT_DEVICE_STATE_DIR, plus existing workspace
                        agent-device directories) for this workspace's owned
-                       simulators and emulators, read-only. An action is
+                       simulators, emulators and native Mac app, read-only. An action is
                        info (msg is agent-device's summary, e.g. "Tapped
                        (201, 731)"; event agent_action with command, session,
                        deviceId and details, and startedAt when agent-device
@@ -378,7 +378,13 @@ WHAT WRITES WHAT
                        match a simulator through their runner.log, Android
                        sessions only while agent-device's claim on the
                        emulator is live (released claims drop their
-                       actions from later queries). A session in an
+                       actions from later queries). A macOS session opened
+                       with explicit --surface app matches its isolated
+                       bundle ID and current launch (guide macos). App
+                       switches, unrecorded opens and rotated event logs
+                       clear that match; native screenshots are omitted
+                       because their surface is not in the event metadata.
+                       A session in an
                        unrecognized format yields one warn record
                        (agent_format_unknown) instead of its actions.
   build-ios.ndjson     the xcodebuild / gradle transcript at level debug, the

@@ -92,6 +92,154 @@ test('actions older than the workspace timeline are not merged', () => {
   expect(records.map((record) => record.msg)).toEqual(['Closed default']);
 });
 
+describe('native macOS actions', () => {
+  const target: AgentTarget = {
+    platform: 'macos',
+    id: 'owned-launch',
+    slot: 'default',
+    bundleId: 'dev.sample.stim.workspace',
+    launchedAt: Date.parse('2026-09-25T12:15:00Z'),
+  };
+  const event = (seconds: number, command: string, details: object = {}, extra: object = {}) => ({
+    version: 1,
+    ts: new Date(target.launchedAt + seconds * 1000).toISOString(),
+    session: 'native-proof',
+    kind: 'action.recorded',
+    command,
+    summary: command,
+    details,
+    ...extra,
+  });
+  const open = (seconds: number, bundleId = target.bundleId, surface = 'app') =>
+    event(seconds, 'open', { platform: 'macos', appBundleId: bundleId, flags: { surface } });
+  const append = (...events: object[]) => {
+    const dir = join(root, 'sessions', 'native-proof');
+    mkdirSync(dir, { recursive: true });
+    appendFileSync(join(dir, 'events.ndjson'), events.map((e) => JSON.stringify(e)).join('\n') + '\n');
+  };
+
+  test('matches the isolated app identifier, excludes previous launches, and preserves failures and duration', () => {
+    append(
+      open(-5),
+      event(-1, 'press'),
+      event(-1, 'type', {}, { kind: 'request.started', requestId: 'old-request' }),
+      event(1, 'type', {}, { requestId: 'old-request' }),
+      event(2, 'press', {}, { kind: 'request.started', requestId: 'press' }),
+      event(4, 'press', { x: 20, y: 30 }, { requestId: 'press' }),
+      event(5, 'scroll', {}, { kind: 'request.finished', status: 'error' }),
+    );
+    expect(read([target])).toEqual([
+      expect.objectContaining({
+        deviceId: 'owned-launch',
+        platform: 'macos',
+        command: 'press',
+        details: { x: 20, y: 30 },
+        startedAt: target.launchedAt + 2000,
+        ts: target.launchedAt + 4000,
+      }),
+      expect.objectContaining({ event: 'agent_failed', level: 'error', command: 'scroll' }),
+    ]);
+    expect(read([{ ...target, bundleId: 'dev.sample.stim.other-workspace' }])).toEqual([]);
+  });
+
+  test('follows app switches across incremental reads and clears a closed or failed open', () => {
+    append(open(0), event(1, 'press'));
+    const reader = createAgentActionReader({ targets: [target], home });
+    expect(reader().map((r) => r.command)).toEqual(['open', 'press']);
+    append(open(2, 'dev.other'), event(3, 'type'));
+    expect(reader()).toEqual([]);
+    append(open(4), event(5, 'close', {}, { kind: 'request.started' }), event(5, 'close'), event(6, 'press'));
+    expect(reader().map((r) => r.command)).toEqual(['open', 'close']);
+    append(
+      open(7),
+      event(8, 'close', {}, { kind: 'request.started' }),
+      event(8, 'close', {}, { kind: 'request.finished', status: 'error' }),
+      event(9, 'press'),
+    );
+    expect(reader().map((r) => [r.command, r.level])).toEqual([
+      ['open', 'info'],
+      ['close', 'error'],
+    ]);
+  });
+
+  test('a follower started before the launch acquires the target, and a relaunch changes the launch ID', () => {
+    let current: AgentTarget[] = [];
+    const reader = createAgentActionReader({ targets: () => current, home });
+    append(open(0), event(1, 'press'));
+    expect(reader()).toEqual([]);
+    current = [target];
+    expect(reader().map((r) => [r.command, r.deviceId])).toEqual([
+      ['open', 'owned-launch'],
+      ['press', 'owned-launch'],
+    ]);
+    const relaunch = { ...target, id: 'second-launch', launchedAt: target.launchedAt + 10_000 };
+    current = [relaunch];
+    append(event(9, 'press'), event(11, 'press'), open(12), event(13, 'type'));
+    expect(reader().map((r) => [r.command, r.deviceId])).toEqual([
+      ['press', 'second-launch'],
+      ['open', 'second-launch'],
+      ['type', 'second-launch'],
+    ]);
+  });
+
+  test('an unrecorded open or close clears attribution before later actions', () => {
+    append(open(0), event(1, 'press'));
+    const reader = createAgentActionReader({ targets: [target], home });
+    expect(reader()).toHaveLength(2);
+    append(event(2, 'open', {}, { kind: 'request.started' }), event(3, 'press'));
+    expect(reader()).toEqual([]);
+    append(open(4), event(5, 'close', {}, { kind: 'request.started' }), event(6, 'type'));
+    expect(reader().map((r) => r.command)).toEqual(['open']);
+  });
+
+  test('rotation cannot attribute actions after a missed app switch, even when the replacement is larger', () => {
+    append(open(0), event(1, 'press'));
+    const reader = createAgentActionReader({ targets: [target], home });
+    expect(reader()).toHaveLength(2);
+    append(open(2, 'dev.other'));
+    const events = join(root, 'sessions', 'native-proof', 'events.ndjson');
+    renameSync(events, `${events}.1`);
+    append(...Array.from({ length: 20 }, (_, i) => event(i + 3, 'press')));
+    expect(reader()).toEqual([]);
+    append(open(25), event(26, 'type'));
+    expect(reader().map((r) => r.command)).toEqual(['open', 'type']);
+  });
+
+  test('an unknown event version invalidates attribution until a fresh explicit app open', () => {
+    append(open(0));
+    const reader = createAgentActionReader({ targets: [target], home });
+    expect(reader()).toHaveLength(1);
+    append({ ...open(1, 'dev.other'), version: 2 }, event(2, 'press'));
+    expect(reader()).toEqual([expect.objectContaining({ event: 'agent_format_unknown', platform: 'macos' })]);
+    append(event(3, 'press'));
+    expect(reader()).toEqual([]);
+    append(open(4), event(5, 'press'));
+    expect(reader().map((r) => r.command)).toEqual(['open', 'press']);
+  });
+
+  test('screenshots cannot inherit app attribution because their surface override is not recorded', () => {
+    append(open(0), event(1, 'screenshot'), event(2, 'press'));
+    expect(read([target]).map((r) => r.command)).toEqual(['open', 'press']);
+  });
+
+  test.each(['desktop', 'frontmost-app', 'menubar'])(
+    'excludes the %s surface even with a matching app identifier',
+    (surface) => {
+      append(open(0, target.bundleId, surface), event(1, 'press'));
+      expect(read([target])).toEqual([]);
+    },
+  );
+
+  test('an open with an inherited surface cannot restore app attribution', () => {
+    append(
+      open(0, target.bundleId, 'menubar'),
+      event(1, 'open', { platform: 'macos', appBundleId: target.bundleId }),
+      event(2, 'press'),
+    );
+    expect(read([target])).toEqual([]);
+  });
+});
+
 test('an Android session is attributed only while agent-device holds a live claim on the emulator', () => {
   const emulator: AgentTarget = { platform: 'android', id: 'emulator-5560', slot: 'default', name: 'stim-app' };
   expect(read([emulator]).map((record) => [record.level, record.msg])).toEqual([
