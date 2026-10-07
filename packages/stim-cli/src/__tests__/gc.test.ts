@@ -4449,13 +4449,16 @@ describe('parked hosted device GC', () => {
     expect(readFileSync(join(deviceHostRoot(), 'sessions.json'), 'utf8')).toBe(journalBefore);
   });
 
-  test('a timed-out worker gets one SIGTERM and its surviving group gets SIGKILL only after five seconds', async () => {
-    journal([session()]);
-    const home = join(deviceHostArea(sessionId), 'home');
-    const script = join(home, 'timeout-worker.mjs');
-    writeFileSync(
-      script,
-      `
+  // The worker's process group is signaled, which Node does not support on Windows (nodejs.org/api/process.html#processkillpid-signal).
+  test.skipIf(process.platform === 'win32')(
+    'a timed-out worker gets one SIGTERM and its surviving group gets SIGKILL only after five seconds',
+    async () => {
+      journal([session()]);
+      const home = join(deviceHostArea(sessionId), 'home');
+      const script = join(home, 'timeout-worker.mjs');
+      writeFileSync(
+        script,
+        `
       import { spawn } from 'node:child_process';
       import { existsSync, writeFileSync } from 'node:fs';
       import { join } from 'node:path';
@@ -4467,43 +4470,44 @@ describe('parked hosted device GC', () => {
       writeFileSync(join(process.env.STIM_HOME, 'worker-ready'), 'ready');
       setInterval(()=>{},1000);
     `,
-    );
-    let child: ReturnType<typeof spawn> | undefined;
-    setExecutor({
-      ...getExecutor(),
-      spawn(file, _args, options) {
-        child = spawn(file, [script], options);
-        return child;
-      },
-    });
-    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
-    const started = Date.now();
-    const kill = vi.spyOn(process, 'kill');
-    const deletion = deleteParkedHostedDevices(collectParkedHostedDevices().devices);
-    const signals = () =>
-      kill.mock.calls.filter(([pid, signal]) => pid === -child!.pid! && signal !== 0).map(([, signal]) => signal);
-    try {
-      await vi.waitFor(() => expect(existsSync(join(home, 'worker-ready'))).toBe(true));
-      await vi.advanceTimersByTimeAsync(90_000 - (Date.now() - started));
-      expect(signals()).toEqual(['SIGTERM']);
-      await vi.waitFor(() => expect(child?.signalCode).toBe('SIGTERM'));
-      await vi.advanceTimersByTimeAsync(94_999 - (Date.now() - started));
-      expect(signals()).toEqual(['SIGTERM']);
-      await vi.advanceTimersByTimeAsync(1);
-      expect(signals()).toEqual(['SIGTERM', 'SIGKILL']);
-      await vi.waitFor(() => expect(readClaimSet(join(deviceHostRoot(), `${sessionId}.claims`)).live).toEqual([]));
-      expect(await deletion).toBe(1);
-      expect(takeGcResults()).toMatchObject([{ status: 'failed', detail: expect.stringContaining('deadline') }]);
-    } finally {
-      if (child?.pid) {
-        try {
-          process.kill(-child.pid, 'SIGKILL');
-        } catch {}
+      );
+      let child: ReturnType<typeof spawn> | undefined;
+      setExecutor({
+        ...getExecutor(),
+        spawn(file, _args, options) {
+          child = spawn(file, [script], options);
+          return child;
+        },
+      });
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+      const started = Date.now();
+      const kill = vi.spyOn(process, 'kill');
+      const deletion = deleteParkedHostedDevices(collectParkedHostedDevices().devices);
+      const signals = () =>
+        kill.mock.calls.filter(([pid, signal]) => pid === -child!.pid! && signal !== 0).map(([, signal]) => signal);
+      try {
+        await vi.waitFor(() => expect(existsSync(join(home, 'worker-ready'))).toBe(true));
+        await vi.advanceTimersByTimeAsync(90_000 - (Date.now() - started));
+        expect(signals()).toEqual(['SIGTERM']);
+        await vi.waitFor(() => expect(child?.signalCode).toBe('SIGTERM'));
+        await vi.advanceTimersByTimeAsync(94_999 - (Date.now() - started));
+        expect(signals()).toEqual(['SIGTERM']);
+        await vi.advanceTimersByTimeAsync(1);
+        expect(signals()).toEqual(['SIGTERM', 'SIGKILL']);
+        await vi.waitFor(() => expect(readClaimSet(join(deviceHostRoot(), `${sessionId}.claims`)).live).toEqual([]));
+        expect(await deletion).toBe(1);
+        expect(takeGcResults()).toMatchObject([{ status: 'failed', detail: expect.stringContaining('deadline') }]);
+      } finally {
+        if (child?.pid) {
+          try {
+            process.kill(-child.pid, 'SIGKILL');
+          } catch {}
+        }
+        vi.useRealTimers();
+        kill.mockRestore();
       }
-      vi.useRealTimers();
-      kill.mockRestore();
-    }
-  });
+    },
+  );
 
   test('Android stop preserves the recorded console port and selectors', async () => {
     const android = androidSession();

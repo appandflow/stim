@@ -1217,7 +1217,9 @@ describe('hosted agent control', () => {
     },
   );
 
-  test.each(['ios', 'android'].flatMap((platform) => ['live', 'gone'].map((status) => [platform, status])))(
+  // The android fixture's fake adb is a POSIX shell script, which Windows cannot execute.
+  const keptClaimPlatforms = process.platform === 'win32' ? ['ios'] : ['ios', 'android'];
+  test.each(keptClaimPlatforms.flatMap((platform) => ['live', 'gone'].map((status) => [platform, status])))(
     'reconciles a kept %s %s-child agent claim with no in-memory driver before native stop',
     async (platform, status) => {
       const first = await reserve({ platform });
@@ -1418,40 +1420,44 @@ test.each(['stop', 'revoke'])(
   },
 );
 
-test('hosted Android viewing refuses changed ledger, serial, AVD or ABI instead of selecting another emulator', async () => {
-  await host.close();
-  const { env, probe } = androidViewEnvironment();
-  host = new DeviceHost({
-    worker: join(home, 'worker.mjs'),
-    env,
-    agents: noAgents,
-    allowed: (client) => allowed.has(client),
-  });
-  const session = await reserve({ platform: 'android', attempt: 'android-view' });
-  const ready = await state(session.id, 'ready');
-  const device = ready.device!;
-  writeFileSync(probe, JSON.stringify(device));
-  const target = host.viewTarget('client', session.id);
-  expect(target).toMatchObject({ platform: 'android', session: { device } });
-  expect(() => host.viewTarget('other', session.id)).toThrow('Only a ready session');
-  const privateHome = join(deviceHostArea(session.id), 'home');
-  const record = join(privateHome, 'hosted-device.json');
-  for (const change of [{ serial: 'emulator-5556', consolePort: 5556 }, { avdName: 'stim-foreign-avd' }]) {
-    writeFileSync(record, JSON.stringify({ ...device, ...change }));
-    expect(() => host.viewTarget('client', session.id)).toThrow('identity changed');
-  }
-  writeFileSync(record, JSON.stringify(device));
-  for (const change of [{ avdName: 'stim-foreign-avd' }, { architecture: 'x86_64' }]) {
-    writeFileSync(probe, JSON.stringify({ ...device, ...change }));
-    expect(() => host.viewTarget('client', session.id, true)).toThrow('identity or running ABI changed');
-  }
-  writeFileSync(probe, JSON.stringify(device));
-  writeFileSync(
-    join(privateHome, 'created-devices.json'),
-    JSON.stringify({ version: 1, ios: [], android: [], web: [] }),
-  );
-  expect(() => host.viewTarget('client', session.id)).toThrow('ledger');
-});
+// The fixture's fake adb is a POSIX shell script, which Windows cannot execute.
+test.skipIf(process.platform === 'win32')(
+  'hosted Android viewing refuses changed ledger, serial, AVD or ABI instead of selecting another emulator',
+  async () => {
+    await host.close();
+    const { env, probe } = androidViewEnvironment();
+    host = new DeviceHost({
+      worker: join(home, 'worker.mjs'),
+      env,
+      agents: noAgents,
+      allowed: (client) => allowed.has(client),
+    });
+    const session = await reserve({ platform: 'android', attempt: 'android-view' });
+    const ready = await state(session.id, 'ready');
+    const device = ready.device!;
+    writeFileSync(probe, JSON.stringify(device));
+    const target = host.viewTarget('client', session.id);
+    expect(target).toMatchObject({ platform: 'android', session: { device } });
+    expect(() => host.viewTarget('other', session.id)).toThrow('Only a ready session');
+    const privateHome = join(deviceHostArea(session.id), 'home');
+    const record = join(privateHome, 'hosted-device.json');
+    for (const change of [{ serial: 'emulator-5556', consolePort: 5556 }, { avdName: 'stim-foreign-avd' }]) {
+      writeFileSync(record, JSON.stringify({ ...device, ...change }));
+      expect(() => host.viewTarget('client', session.id)).toThrow('identity changed');
+    }
+    writeFileSync(record, JSON.stringify(device));
+    for (const change of [{ avdName: 'stim-foreign-avd' }, { architecture: 'x86_64' }]) {
+      writeFileSync(probe, JSON.stringify({ ...device, ...change }));
+      expect(() => host.viewTarget('client', session.id, true)).toThrow('identity or running ABI changed');
+    }
+    writeFileSync(probe, JSON.stringify(device));
+    writeFileSync(
+      join(privateHome, 'created-devices.json'),
+      JSON.stringify({ version: 1, ios: [], android: [], web: [] }),
+    );
+    expect(() => host.viewTarget('client', session.id)).toThrow('ledger');
+  },
+);
 
 test('Android reservations keep distinct ports and platform slots and reconnect without recreation', async () => {
   const validator = new Ajv2020({ strict: false, validateFormats: false });
@@ -1590,27 +1596,30 @@ test('uncapped reservations proceed without a local inventory probe', async () =
   expect(existsSync(join(home, 'count-entered'))).toBe(false);
 });
 
-test.each(['revoke', 'close', 'deadline'])('binding capacity probes fail closed and settle on %s', async (ending) => {
-  await host.close();
-  hostEnv.LOCAL_COUNT = 'hang';
-  host = new DeviceHost({
-    worker: join(home, 'worker.mjs'),
-    env: hostEnv,
-    agents: noAgents,
-    allowed: (client) => allowed.has(client),
-    limits: { offerMs: ending === 'deadline' ? 1000 : 5000, killGraceMs: 100 },
+// The worker's process group is signaled, which Node does not support on Windows (nodejs.org/api/process.html#processkillpid-signal).
+describe.skipIf(process.platform === 'win32')('binding capacity probes', () => {
+  test.each(['revoke', 'close', 'deadline'])('binding capacity probes fail closed and settle on %s', async (ending) => {
+    await host.close();
+    hostEnv.LOCAL_COUNT = 'hang';
+    host = new DeviceHost({
+      worker: join(home, 'worker.mjs'),
+      env: hostEnv,
+      agents: noAgents,
+      allowed: (client) => allowed.has(client),
+      limits: { offerMs: ending === 'deadline' ? 1000 : 5000, killGraceMs: 100 },
+    });
+    const pending = host.reserve('client', request);
+    await vi.waitFor(() => expect(existsSync(join(home, 'count-entered'))).toBe(true));
+    const pid = Number(readFileSync(join(home, 'count-entered'), 'utf8'));
+    if (ending === 'close') await host.close();
+    else if (ending === 'revoke') {
+      allowed.delete('client');
+      host.revoke();
+    }
+    expect(await pending).toHaveProperty('error.code', ending === 'deadline' ? 'device-busy' : 'forbidden');
+    expect(readHostedSessions()).toEqual([]);
+    await groupGone(pid);
   });
-  const pending = host.reserve('client', request);
-  await vi.waitFor(() => expect(existsSync(join(home, 'count-entered'))).toBe(true));
-  const pid = Number(readFileSync(join(home, 'count-entered'), 'utf8'));
-  if (ending === 'close') await host.close();
-  else if (ending === 'revoke') {
-    allowed.delete('client');
-    host.revoke();
-  }
-  expect(await pending).toHaveProperty('error.code', ending === 'deadline' ? 'device-busy' : 'forbidden');
-  expect(readHostedSessions()).toEqual([]);
-  await groupGone(pid);
 });
 
 test('offer capacity counts unresolved sessions and preserves SDK failures as declined choices', async () => {
@@ -2748,33 +2757,41 @@ test('Android Metro validates the client port and restores the installed mapping
   expect(await host.metroOpen('client', params, '127.0.0.1')).toHaveProperty('error');
 });
 
-test('Android Metro restore is serialized with install and stop under its session claim', async () => {
-  const first = await reserve({ platform: 'android', attempt: 'android-serialized', deviceProfile: 'delayed-reverse' });
-  await state(first.id, 'ready');
-  const params = { session: first.id, gatewayPort: 12345, secret: 'a'.repeat(64), clientMetroPort: 8082 };
-  expect(await host.metroOpen('client', params, '127.0.0.1')).toHaveProperty('result.port');
-  const app = appOffer(first.id, 'android-dev', 'android');
-  app.params.mode = 'development';
-  host.appOffer('client', app.params);
-  await uploadManifest(app);
-  await host.appChunk('client', {
-    session: first.id,
-    attempt: app.params.attempt,
-    sha256: app.sha256,
-    offset: 0,
-    data: app.content.toString('base64'),
-  });
-  host.appLaunch('client', app.params);
-  await vi.waitFor(() => expect(host.appAttach('client', app.params)).toHaveProperty('result.state', 'installed'));
-  const restoring = host.metroOpen('client', params, '127.0.0.1');
-  await vi.waitFor(() => expect(existsSync(join(deviceHostArea(first.id), 'home', 'reversed'))).toBe(true));
-  expect(host.appOffer('client', appOffer(first.id, 'next', 'android').params)).toHaveProperty('error');
-  expect(await host.metroOpen('client', params, '127.0.0.1')).toHaveProperty('error');
-  expect(readClaimSet(join(deviceHostRoot(), `${first.id}.claims`)).live[0]?.child).toBeDefined();
-  host.stop('client', { session: first.id });
-  expect(await restoring).toHaveProperty('error');
-  await state(first.id, 'stopped');
-});
+// The worker's process group is signaled, which Node does not support on Windows (nodejs.org/api/process.html#processkillpid-signal).
+test.skipIf(process.platform === 'win32')(
+  'Android Metro restore is serialized with install and stop under its session claim',
+  async () => {
+    const first = await reserve({
+      platform: 'android',
+      attempt: 'android-serialized',
+      deviceProfile: 'delayed-reverse',
+    });
+    await state(first.id, 'ready');
+    const params = { session: first.id, gatewayPort: 12345, secret: 'a'.repeat(64), clientMetroPort: 8082 };
+    expect(await host.metroOpen('client', params, '127.0.0.1')).toHaveProperty('result.port');
+    const app = appOffer(first.id, 'android-dev', 'android');
+    app.params.mode = 'development';
+    host.appOffer('client', app.params);
+    await uploadManifest(app);
+    await host.appChunk('client', {
+      session: first.id,
+      attempt: app.params.attempt,
+      sha256: app.sha256,
+      offset: 0,
+      data: app.content.toString('base64'),
+    });
+    host.appLaunch('client', app.params);
+    await vi.waitFor(() => expect(host.appAttach('client', app.params)).toHaveProperty('result.state', 'installed'));
+    const restoring = host.metroOpen('client', params, '127.0.0.1');
+    await vi.waitFor(() => expect(existsSync(join(deviceHostArea(first.id), 'home', 'reversed'))).toBe(true));
+    expect(host.appOffer('client', appOffer(first.id, 'next', 'android').params)).toHaveProperty('error');
+    expect(await host.metroOpen('client', params, '127.0.0.1')).toHaveProperty('error');
+    expect(readClaimSet(join(deviceHostRoot(), `${first.id}.claims`)).live[0]?.child).toBeDefined();
+    host.stop('client', { session: first.id });
+    expect(await restoring).toHaveProperty('error');
+    await state(first.id, 'stopped');
+  },
+);
 
 test('Android Metro refuses missing or invalid ports, unapproved clients and non-ready owners before native work', async () => {
   const first = await reserve({ platform: 'android', attempt: 'android-metro-validation' });
