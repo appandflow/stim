@@ -333,6 +333,7 @@ function writeRemoteSession(root: string, sessionId: string): void {
 beforeEach(() => {
   tmpHome = mkdtempSync(join(tmpdir(), 'stim-test-home-'));
   process.env.STIM_HOME = tmpHome;
+  vi.stubEnv('HOME', tmpHome);
   for (const udid of ['U1', 'U3', 'U4', 'U5', 'U6', 'U7', 'U8', 'U9', 'UDID-1']) recordCreatedDevice('ios', udid);
   for (const name of [
     'stim-a',
@@ -359,6 +360,7 @@ afterEach(() => {
   rmSync(mainDir, { recursive: true, force: true });
   rmSync(wtDir, { recursive: true, force: true });
   delete process.env.STIM_HOME;
+  vi.unstubAllEnvs();
   delete process.env.STIM_ARCHIVE_ENABLED;
 });
 
@@ -1604,6 +1606,59 @@ test('against a real repo: a locked worktree is refused before its owned sim is 
     rmSync(base, { recursive: true, force: true });
   }
 }, 30_000);
+
+const launchAgentPlist = (label: string, script: string, marked: boolean) => `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>${label}</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/usr/bin/node</string>
+		<string>${script}</string>
+	</array>${marked ? '\n\t<key>StimService</key>\n\t<dict>\n\t\t<key>Managed</key>\n\t\t<true/>\n\t</dict>' : ''}
+</dict>
+</plist>
+`;
+
+describe.skipIf(process.platform !== 'darwin')('stim-server service guard', () => {
+  test.each([
+    { name: 'a stim-server service script inside the worktree refuses removal, even with --force', marked: true },
+    { name: 'a LaunchAgent that stim-server did not install does not block removal', marked: false },
+  ])(
+    'against a real repo: $name',
+    async ({ marked }) => {
+      const base = canon(mkdtempSync(join(tmpdir(), 'stim-test-remove-service-')));
+      const errs: string[] = [];
+      const originalError = console.error;
+      vi.stubEnv('HOME', base);
+      try {
+        const { wt } = realRepoWithWorktree(base);
+        const agents = join(base, 'Library', 'LaunchAgents');
+        mkdirSync(agents, { recursive: true });
+        writeFileSync(
+          join(agents, 'dev.stim.server.plist'),
+          launchAgentPlist('dev.stim.server', join(wt, 'server.mjs'), marked),
+        );
+
+        console.error = (m) => errs.push(String(m));
+        const run = captureAction(registerRemove);
+        await run(wt, { force: true });
+        console.error = originalError;
+
+        expect(existsSync(wt)).toBe(marked);
+        expect(process.exitCode === 1).toBe(marked);
+        expect(errs.join('\n').includes('STIM_WORKTREE_SERVICE')).toBe(marked);
+      } finally {
+        console.error = originalError;
+        vi.unstubAllEnvs();
+        rmSync(base, { recursive: true, force: true });
+      }
+    },
+    30_000,
+  );
+});
 
 test.each(['submodule add', 'embedded repository'] as const)(
   'against a real repo: a worktree with an initialized submodule (%s) is refused before its owned sim is torn down',

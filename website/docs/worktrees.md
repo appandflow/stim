@@ -255,6 +255,13 @@ It does not remove that checkout. Run from the checkout root, it reclaims every
 registered project under it. Run from a subfolder such as `apps/mobile`, it
 reclaims only the project at or above that folder, with the projects nested under it.
 
+`worktree remove` refuses a worktree that a `stim-server service` runs from,
+even with `--force` (`STIM_WORKTREE_SERVICE`): deleting the folder would delete
+the running server's code. Reinstall the service from another build with
+`stim-server service install`, or remove it with `stim-server service uninstall`,
+then retry. Stim does not detect other processes whose working directory is in
+the worktree.
+
 Windows cannot delete a directory another process holds open. The adb server
 inherits the working directory of the adb client that starts it, and the
 emulator launcher passes its own to qemu and its crash handler, so Stim runs

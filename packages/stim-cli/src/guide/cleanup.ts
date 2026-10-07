@@ -232,7 +232,9 @@ IN USE
   that names no workspace blocks nothing, because every build also holds its
   own workspace's native-run.lock; gc lists it with the command that removes
   it. \`worktree remove\` re-checks uncommitted and unpushed work under its
-  removal locks, just before it reclaims anything. A project root whose
+  removal locks, just before it reclaims anything. It refuses, even with
+  --force, a worktree that an installed stim-server service runs from
+  (STIM_WORKTREE_SERVICE; see guide errors). A project root whose
   existence cannot be read (a permission error) is never treated as deleted.
 
 SWEEPING FINISHED WORKTREES
