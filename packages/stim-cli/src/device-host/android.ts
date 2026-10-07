@@ -177,7 +177,7 @@ export async function runHostedAndroidDevice(
       )
         throw new Error('Hosted Android boot could not be verified for its exact owned AVD.');
       await resetAdoptedAvd(device.avdName, device.serial, '');
-      removeHostedAppData(home);
+      removeHostedAppData(home, { keepBlobs: true });
       return { state: 'ready', device };
     }
     if (mode === 'park') {
@@ -187,7 +187,7 @@ export async function runHostedAndroidDevice(
       assertOwnedAvdStopped(device.avdName);
       if (getAvdNameForSerial(device.serial) === device.avdName)
         throw new Error('The hosted Android emulator is still running.');
-      removeHostedAppData(home);
+      removeHostedAppData(home, { keepBlobs: true });
       return { state: 'parked', device };
     }
     if (ledger === 'listed') {

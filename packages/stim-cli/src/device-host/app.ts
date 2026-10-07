@@ -35,7 +35,7 @@ function inside(root: string, path: string): boolean {
   );
 }
 
-export function removeHostedAppData(home: string): void {
+export function removeHostedAppData(home: string, { keepBlobs = false }: { keepBlobs?: boolean } = {}): void {
   const area = realpathSync(join(home, '..'));
   const assertInside = (path: string) => {
     if (!inside(area, realpathSync(path))) throw new Error('Hosted app data resolves outside its private area.');
@@ -59,7 +59,7 @@ export function removeHostedAppData(home: string): void {
       remove(join(directory, 'blobs'));
     }
   }
-  remove(join(area, 'blobs'));
+  if (!keepBlobs) remove(join(area, 'blobs'));
 }
 
 async function digest(path: string): Promise<string> {

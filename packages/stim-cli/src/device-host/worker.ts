@@ -123,14 +123,14 @@ export async function runHostedDevice(
         writeFileSync(temporary, JSON.stringify(device), { mode: 0o600 });
         renameSync(temporary, join(home, 'hosted-device.json'));
       });
-      removeHostedAppData(home);
+      removeHostedAppData(home, { keepBlobs: true });
       return { state: 'ready', device };
     }
     if (mode === 'park') {
       const outcome = teardownOwnedIosSim(device.udid);
       if (outcome.status !== 'torn-down' || inventory().find((sim) => sim.udid === device!.udid)?.state !== 'Shutdown')
         throw new Error(outcome.reason ?? 'Hosted simulator shutdown could not be verified.');
-      removeHostedAppData(home);
+      removeHostedAppData(home, { keepBlobs: true });
       return { state: 'parked', device };
     }
     if (mode === 'install') {

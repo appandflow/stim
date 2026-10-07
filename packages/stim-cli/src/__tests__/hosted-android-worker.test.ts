@@ -257,7 +257,7 @@ test('park shuts down without deletion or a local pool entry and keeps the priva
   expect(native.avds()).toEqual([avd]);
   expect(JSON.parse(readFileSync(join(home, 'created-devices.json'), 'utf8')).android).toEqual([avd]);
   expect(existsSync(join(home, 'config.json'))).toBe(false);
-  expect(existsSync(join(area, 'blobs'))).toBe(false);
+  expect(existsSync(join(area, 'blobs'))).toBe(true);
 });
 
 test.each([{ deviceProfile: 'pixel_7' }, { systemImage: 'system-images;android-31;google_apis;arm64-v8a' }])(
@@ -308,7 +308,7 @@ test('adoption removes all third-party apps and persists the newly reserved cons
     consolePort: 5556,
     serial: 'emulator-5556',
   });
-  expect(existsSync(join(area, 'blobs'))).toBe(false);
+  expect(existsSync(join(area, 'blobs'))).toBe(true);
 });
 
 test('adoption refuses an occupied new port before boot and keeps partial reset failures unknown', async () => {
