@@ -1,8 +1,16 @@
 import { readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { withConfigLock } from '../workspace/config.ts';
 import type { CacheHitLevel } from './build-facts.ts';
-import { decodeStats, statsFile, STATS_VERSION, trimSamples, wholePhases } from '@stim-cli/core/state';
+import {
+  decodeStats,
+  statsFile,
+  STATS_VERSION,
+  trimCapacityRefusals,
+  trimSamples,
+  wholePhases,
+} from '@stim-cli/core/state';
 import type {
+  StatsCapacityRefusal,
   StatsPlacement as BuildPlacement,
   BuildMachineTotals,
   RunOutcomeKind,
@@ -14,6 +22,8 @@ import type {
   RunHistory,
 } from '@stim-cli/core/state';
 export {
+  CAPACITY_REFUSAL_LIMIT,
+  CAPACITY_REFUSAL_MAX_AGE_MS,
   statsFile,
   statsProjectKey,
   HISTORY_LIMIT,
@@ -142,12 +152,14 @@ export function updateStats(record: StatsRecord, run: StatsRun, now: number): St
     }
   }
 
+  const capacityRefusals = trimCapacityRefusals(record.capacityRefusals ?? [], now);
   return {
     version: STATS_VERSION,
     machine,
     projects,
     ...(Object.keys(history).length ? { history } : {}),
     ...(placements?.length ? { placements } : {}),
+    ...(capacityRefusals.length ? { capacityRefusals } : {}),
     ...(buildMachines && Object.keys(buildMachines).length ? { buildMachines } : {}),
   };
 }
@@ -201,9 +213,24 @@ export function recordRunStats(run: StatsRun, now: number): RecordStatsResult {
           'so this run was not recorded.',
       };
     }
-    writeStats(path, updateStats(loaded.record, run, now));
+    writeStats(path, updateStats(loaded.record!, run, now));
     return { recorded: true, note: loaded.note };
   });
+}
+
+export function recordCapacityRefusal(event: Omit<StatsCapacityRefusal, 'at' | 'kind'>, now: number): void {
+  try {
+    withConfigLock(() => {
+      const path = statsFile();
+      const loaded = loadForUpdate(path, now, false);
+      if (!loaded.record || loaded.newerVersion !== null) return;
+      const capacityRefusals = trimCapacityRefusals(
+        [...(loaded.record.capacityRefusals ?? []), { ...event, at: new Date(now).toISOString(), kind: 'device' }],
+        now,
+      );
+      writeStats(path, { ...loaded.record, capacityRefusals });
+    });
+  } catch {}
 }
 
 export function createRunRecorder({
@@ -276,7 +303,8 @@ export function createRunRecorder({
 function loadForUpdate(
   path: string,
   now: number,
-): { record: StatsRecord; note: string | null; newerVersion: number | null } {
+  recoverCorrupt = true,
+): { record: StatsRecord | null; note: string | null; newerVersion: number | null } {
   let text: string;
   try {
     text = readFileSync(path, 'utf-8');
@@ -285,6 +313,7 @@ function loadForUpdate(
   }
   const parsed = decodeStats(text);
   if (!parsed.record && parsed.newerVersion === null) {
+    if (!recoverCorrupt) return { record: null, note: null, newerVersion: null };
     const aside = `${path}.corrupt-${now}`;
     renameSync(path, aside);
     return {

@@ -1,3 +1,4 @@
+import { workspaceId } from '@stim-cli/core';
 import { approvableSchemes } from '../engine/app-schemes.ts';
 import * as offloadClient from '../offload/client.ts';
 import * as tailnet from '../offload/tailnet.ts';
@@ -77,7 +78,12 @@ import {
   WIRELESS_INSTALL_TIMEOUT_MS,
   WIRELESS_LAUNCH_PROBE_TIMEOUT_MS,
 } from '../engine/ios-device.ts';
-import { recordRunStats, type RecordStatsResult, type StatsRun } from '../engine/stats.ts';
+import {
+  recordRunStats,
+  type recordCapacityRefusal as recordRefusal,
+  type RecordStatsResult,
+  type StatsRun,
+} from '../engine/stats.ts';
 import { buildCacheKey, entryDir } from '../cache/build-cache.ts';
 import { resolveRemote } from '../engine/remote-cache.ts';
 import { listLeaseFiles, takeLease } from '../engine/device-lease.ts';
@@ -3244,12 +3250,14 @@ describe('concurrency limits', () => {
     expect(calls.order.includes('buildIos')).toBeTruthy();
   });
 
-  test('maxDevices at capacity refuses with STIM_AT_CAPACITY, before ensuring a device', async () => {
+  test.each([[false], [true]])('maxDevices at capacity preserves STIM_AT_CAPACITY with json=%s', async (json) => {
     reserve();
     const capacity: { args?: CheckDeviceCapacityArgs } = {};
-    const { errs, exitCode, calls } = await run(
-      {},
+    const recordCapacityRefusal = vi.fn<typeof recordRefusal>();
+    const { logs, errs, exitCode, calls } = await run(
+      { json },
       {
+        recordCapacityRefusal,
         getConcurrencyLimits: () => ({ maxBuilds: 0, maxDevices: 2 }),
         checkDeviceCapacity: (args) => {
           capacity.args = args;
@@ -3262,11 +3270,48 @@ describe('concurrency limits', () => {
       },
     );
     expect(exitCode).toBe(1);
+    expect(logs.map((line) => JSON.parse(line))).toEqual(
+      json
+        ? [
+            {
+              code: 'STIM_AT_CAPACITY',
+              message: 'at capacity',
+              remedy: 'stop an environment (stim stop) or raise concurrency.maxDevices',
+            },
+          ]
+        : [],
+    );
     assert(capacity.args);
     expect(capacity.args.max).toBe(2);
-    expect(errs.join('\n')).toMatch(/STIM_AT_CAPACITY/);
+    expect(recordCapacityRefusal).toHaveBeenCalledTimes(1);
+    expect(recordCapacityRefusal).toHaveBeenCalledWith(
+      { platform: 'ios', max: 2, workspace: workspaceId(root) },
+      expect.any(Number),
+    );
+    expect(errs.join('\n')).toContain('at capacity');
+    expect(errs.join('\n')).toContain('STIM_AT_CAPACITY');
+    expect(errs.join('\n')).not.toContain('stats unavailable');
     expect(errs.join('\n')).toMatch(/stim stop/);
     expect(!calls.order.includes('ensureOwnedDevice')).toBeTruthy();
+  });
+
+  test('a non-capacity device refusal is not recorded', async () => {
+    reserve();
+    const recordCapacityRefusal = vi.fn<typeof recordRefusal>();
+    const { logs, exitCode } = await run(
+      { json: true },
+      {
+        recordCapacityRefusal,
+        checkDeviceCapacity: () => ({
+          code: 'STIM_CLAIM_UNAVAILABLE',
+          message: 'owner unknown',
+          remedy: 'inspect claim',
+        }),
+      },
+    );
+    expect(exitCode).toBe(1);
+    expect(parseFirst(logs)).toMatchObject({ code: 'STIM_CLAIM_UNAVAILABLE', message: 'owner unknown' });
+    expect(recordCapacityRefusal).not.toHaveBeenCalled();
   });
 
   test('a budget refusal stops before any device or build and reports what was reclaimed', async () => {

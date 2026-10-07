@@ -68,8 +68,18 @@ import Testing
             {"at":"2026-09-30T12:03:00.000Z","project":"/r/app","platform":"ios","decision":"fell-back","machine":"mini","reason":"mini: busy"},
             {"at":"2026-09-30T12:02:00.000Z","project":"/r/app","platform":"ios","decision":"offloaded","machine":"mini","reason":"this Mac is busy","buildMs":200000,"localEstimateMs":290000},
             {"at":"2026-09-30T12:01:00.000Z","project":"/r/app","platform":"android","decision":"here","reason":"load 0.6/core here","failed":true},
-            {"at":"2026-09-30T12:00:00.000Z","project":"/r/app","platform":"ios","decision":"teleported","reason":"?"}]}}
+            {"at":"2026-09-30T12:00:00.000Z","project":"/r/app","platform":"ios","decision":"teleported","reason":"?"}]},
+          "capacityRefusals":[
+            {"at":"2026-09-30T12:04:00.000Z","kind":"device","platform":"android","max":3,"workspace":"fixture"},
+            {"at":"2026-09-30T12:03:00.000Z","kind":"unknown","platform":"ios","max":2,"workspace":"older"}]}
         """#.utf8))
+    let refusal = try #require(stats.capacityRefusals?.first)
+    #expect(refusal.at == "2026-09-30T12:04:00.000Z")
+    #expect(refusal.kind == "device")
+    #expect(refusal.platform == "android")
+    #expect(refusal.max == 3)
+    #expect(refusal.workspace == "fixture")
+    #expect(stats.capacityRefusals?.last?.kind == "unknown")
     let offload = try #require(stats.offload)
     #expect(offload.machines["mini"]?.total.savedMs == -5000)
     #expect(offload.placements(for: "mini").map(\.title) == ["Built here after mini", "Built on mini"])
@@ -84,7 +94,9 @@ import Testing
       BuildPlacements.Placement.self,
       from: Data(#"{"at":"x","project":"/p","platform":"ios","decision":"offloaded","machine":"mini:7444","reason":"r"}"#.utf8))
     #expect(ported.title == "Built on mini")
-    #expect(try JSONDecoder().decode(MachineStats.self, from: Data(#"{"version":1}"#.utf8)).offload == nil)
+    let older = try JSONDecoder().decode(MachineStats.self, from: Data(#"{"version":1}"#.utf8))
+    #expect(older.offload == nil)
+    #expect(older.capacityRefusals == nil)
   }
 
   @Test func describesOnlyTheCapacityAMachineReported() throws {

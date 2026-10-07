@@ -147,6 +147,21 @@ public enum Discovery {
       mac: mac, hostedSimulators: true)
   }
 
+  public static func capHit(
+    events: [CapacityRefusal], now: Date, mac: TailnetMac?
+  ) -> (prompt: DiscoveryPrompt, rememberedAt: Date)? {
+    let dates = events.filter { $0.kind == "device" }.compactMap { parseTimestamp($0.at) }
+    guard
+      let at = dates.filter({
+        now.timeIntervalSince($0) >= 0 && fresh(.capHit, rememberedAt: $0, now: now)
+      }).max()
+    else { return nil }
+    let prompt = banner(
+      .capHit, title: "Device limit reached. Run simulators on \(mac?.machine ?? "another Mac")?",
+      mac: mac, hostedSimulators: true)
+    return (prompt, at)
+  }
+
   public static func away(pairedPhones: Int, durationMs: Double, idleSeconds: TimeInterval) -> DiscoveryPrompt? {
     guard pairedPhones == 0, durationMs > 600_000, idleSeconds > 300 else { return nil }
     return DiscoveryPrompt(

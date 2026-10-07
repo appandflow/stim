@@ -1,3 +1,4 @@
+import { workspaceId } from '@stim-cli/core';
 import { parseMachine } from '@stim-cli/core/state';
 import { isEasBuildFailure, resolveEasDevelopmentBuild } from '../engine/eas-build.ts';
 import { configuredAndroidEmulatorApp } from '../devices/android-emulator-viewer.ts';
@@ -59,6 +60,7 @@ import { startDevServer } from './start.ts';
 import {
   readRunEstimates,
   recordRunStats,
+  recordCapacityRefusal,
   createRunRecorder,
   statsProjectKey,
   type RunEstimates,
@@ -384,6 +386,7 @@ interface RunAndroidOptions {
   writeState?: typeof writeWorkspaceState;
   recordBuild?: typeof recordFinishedBuild;
   recordStats?: typeof recordRunStats;
+  recordCapacityRefusal?: typeof recordCapacityRefusal;
   readEstimates?: typeof readRunEstimates;
   now?: () => number;
   out?: (line: string) => void;
@@ -474,6 +477,7 @@ function resolveRunAndroidOptions(
     writeState = writeWorkspaceState,
     recordBuild,
     recordStats = recordRunStats,
+    recordCapacityRefusal: recordRefusal,
     readEstimates = readRunEstimates,
     now = Date.now,
     out = (line) => console.error(line),
@@ -563,6 +567,7 @@ function resolveRunAndroidOptions(
     writeState,
     recordBuild,
     recordStats,
+    recordCapacityRefusal: recordRefusal,
     readEstimates,
     now,
     out,
@@ -696,6 +701,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     writeState,
     recordBuild,
     recordStats,
+    recordCapacityRefusal: recordRefusal = recordCapacityRefusal,
     readEstimates,
     now,
     out,
@@ -1020,7 +1026,12 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
       project,
       max: limits.maxDevices,
     });
-    if (capacity) return fail(capacity.code, capacity.message, capacity.remedy);
+    if (capacity) {
+      if (capacity.code === 'STIM_AT_CAPACITY') {
+        recordRefusal({ platform: PLATFORM, max: limits.maxDevices, workspace: workspaceId(root) }, now());
+      }
+      return fail(capacity.code, capacity.message, capacity.remedy);
+    }
 
     const prepare = stepClock(now);
     try {

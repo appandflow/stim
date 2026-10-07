@@ -97,6 +97,15 @@ public struct BuildPlacements: Decodable, Sendable {
   public var here: [Placement] { placements.filter { $0.decision == .here } }
 }
 
+public struct CapacityRefusal: Decodable, Sendable {
+  public var at: String
+  public var kind: String
+  public var platform: String?
+  public var max: Int?
+  public var workspace: String?
+}
+
 public struct MachineStats: Decodable, Sendable {
   public var offload: BuildPlacements?
+  public var capacityRefusals: [CapacityRefusal]?
 }

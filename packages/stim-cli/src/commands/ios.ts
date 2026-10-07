@@ -1,3 +1,4 @@
+import { workspaceId } from '@stim-cli/core';
 import { acquireIosArtifact, type PreparedIosArtifact } from './ios/artifact.ts';
 import { isEasBuildFailure } from '../engine/eas-build.ts';
 import { deviceSlotFileKey, parseDeviceSlotOption, validateDeviceSlot } from '../devices/device-slots.ts';
@@ -637,7 +638,15 @@ async function runIos(
         project: proj,
         max: limits.maxDevices,
       });
-      if (capacity) return fail(capacity);
+      if (capacity) {
+        if (capacity.code === 'STIM_AT_CAPACITY') {
+          d.recordCapacityRefusal(
+            { platform: PLATFORM, max: limits.maxDevices, workspace: workspaceId(root) },
+            d.now(),
+          );
+        }
+        return fail(capacity);
+      }
     }
 
     let metroPort = proj?.metroPort ?? null;

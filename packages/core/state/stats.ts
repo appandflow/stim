@@ -58,6 +58,27 @@ export interface StatsPlacement {
   failed?: true;
 }
 
+export const CAPACITY_REFUSAL_LIMIT = 50;
+export const CAPACITY_REFUSAL_MAX_AGE_MS: number = 7 * 24 * 60 * 60_000;
+
+export interface StatsCapacityRefusal {
+  at: string;
+  kind: 'device';
+  platform: StatsPlatform;
+  max: number;
+  workspace: string;
+}
+
+export function trimCapacityRefusals(events: StatsCapacityRefusal[], now: number): StatsCapacityRefusal[] {
+  return events
+    .filter((event) => {
+      const age = now - Date.parse(event.at);
+      return age >= 0 && age <= CAPACITY_REFUSAL_MAX_AGE_MS;
+    })
+    .toSorted((a, b) => Date.parse(a.at) - Date.parse(b.at))
+    .slice(-CAPACITY_REFUSAL_LIMIT);
+}
+
 export interface BuildMachineTotals {
   offloaded: number;
   offloadedMs: number;
@@ -74,6 +95,7 @@ export interface StatsRecord {
   projects: Record<string, StatsScope>;
   history?: Record<string, RunHistory>;
   placements?: StatsPlacement[];
+  capacityRefusals?: StatsCapacityRefusal[];
   buildMachines?: Record<string, BuildMachineTotals>;
 }
 
@@ -250,6 +272,9 @@ function normalize(record: StatsRecord): StatsRecord {
     }
   }
   const placements = Array.isArray(record.placements) ? record.placements.flatMap(normalizePlacement) : [];
+  const capacityRefusals = Array.isArray(record.capacityRefusals)
+    ? record.capacityRefusals.flatMap(normalizeCapacityRefusal)
+    : [];
   const buildMachines: Record<string, BuildMachineTotals> = {};
   if (isObject(record.buildMachines)) {
     for (const [name, totals] of Object.entries(record.buildMachines)) {
@@ -262,6 +287,7 @@ function normalize(record: StatsRecord): StatsRecord {
     projects,
     ...(Object.keys(history).length ? { history } : {}),
     ...(placements.length ? { placements } : {}),
+    ...(capacityRefusals.length ? { capacityRefusals } : {}),
     ...(Object.keys(buildMachines).length ? { buildMachines } : {}),
   };
 }
@@ -289,6 +315,16 @@ function normalizePlacement(value: unknown): StatsPlacement[] {
       ...(value.failed === true ? { failed: true as const } : {}),
     },
   ];
+}
+
+function normalizeCapacityRefusal(value: unknown): StatsCapacityRefusal[] {
+  if (!isObject(value)) return [];
+  const { at, kind, platform, max, workspace } = value;
+  if (kind !== 'device' || !PLATFORMS.includes(platform as StatsPlatform)) return [];
+  if (typeof at !== 'string' || !Number.isFinite(Date.parse(at))) return [];
+  if (typeof max !== 'number' || !Number.isInteger(max) || max <= 0) return [];
+  if (typeof workspace !== 'string' || workspace === '') return [];
+  return [{ at: new Date(at).toISOString(), kind, platform: platform as StatsPlatform, max, workspace }];
 }
 
 function normalizeMachineTotals(totals: Record<string, unknown>): BuildMachineTotals {
@@ -421,6 +457,7 @@ export interface StatsReport {
   project: ({ key: string } & StatsReport['machine']) | null;
   machine: { ios: StatsBucket | null; android: StatsBucket | null };
   offload: OffloadSummary;
+  capacityRefusals?: StatsCapacityRefusal[];
   agentDevice: AgentDeviceUsage | null;
   swiftpmCache: SwiftpmCacheUsage | null;
 }
@@ -428,12 +465,14 @@ export interface StatsReport {
 export function readStatsReport(key: string | null, now: number): { report: StatsReport; note: string | null } {
   const { record, note } = readStats();
   const project = key ? record?.projects[key] : null;
+  const capacityRefusals = trimCapacityRefusals(record?.capacityRefusals ?? [], now).toReversed();
   return {
     report: {
       version: STATS_VERSION,
       project: key ? { key, ios: project?.ios ?? null, android: project?.android ?? null } : null,
       machine: { ios: record?.machine.ios ?? null, android: record?.machine.android ?? null },
       offload: offloadSummary(record, now),
+      ...(capacityRefusals.length ? { capacityRefusals } : {}),
       agentDevice: readAgentDeviceUsage(),
       swiftpmCache: readSwiftpmCacheUsage(),
     },

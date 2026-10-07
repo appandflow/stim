@@ -1631,6 +1631,7 @@ RULES
                  "machines": { "<machine>": { "today": <day>,
                                               "total": <totals> } },
                  "placements": [<placement>, ...] },
+    "capacityRefusals": [<capacityRefusal>, ...],
     "agentDevice": <AgentDeviceUsage|null>,
     "swiftpmCache": <SwiftpmCacheUsage|null> }
 
@@ -1642,6 +1643,17 @@ RULES
   compiled one. An offloaded run is a miss but not a cold run, so the cold
   average, time saved and build estimates stay local. Milliseconds are
   integers.
+
+CAPACITY REFUSALS
+  capacityRefusals?: [{ at, kind: "device", platform: "ios" | "android",
+                       max, workspace }]
+  Only device refusals with STIM_AT_CAPACITY are recorded; build caps wait.
+  at is the ISO timestamp, max is concurrency.maxDevices, and workspace is
+  the workspace id used by status and Desktop. The list is newest first:
+  the last 50 from the last 7 days, omitted when empty. Desktop uses events
+  within 6 hours for its device-limit suggestion, including terminal runs.
+  Recording is best effort and does not change the refusal. Plain stats
+  output is unchanged.
 
 AGENT-DEVICE DISK USAGE
   agentDevice: { version: 1, measuredAt, bytes, complete, stateDir,

@@ -116,6 +116,38 @@ struct DiscoveryTests {
         == "Device limit reached. Run simulators on another Mac?")
   }
 
+  func refusal(age: TimeInterval = 0, kind: String = "device", at: String? = nil) -> CapacityRefusal {
+    CapacityRefusal(
+      at: at ?? ISO8601DateFormatter().string(from: now.addingTimeInterval(-age)),
+      kind: kind, platform: "ios", max: 2, workspace: "fixture")
+  }
+
+  @Test func capacityEventsRequireADeviceRefusalWithinSixHours() throws {
+    func evaluate(_ event: CapacityRefusal) -> DiscoveryPrompt? {
+      Discovery.capHit(events: [event], now: now, mac: mini)?.prompt
+    }
+    #expect(evaluate(refusal(age: 5 * 3600 + 59 * 60))?.action == .addMachine(mac: mini, hostedSimulators: true))
+    #expect(evaluate(refusal(age: 6 * 3600)) != nil)
+    #expect(evaluate(refusal(age: 6 * 3600 + 60)) == nil)
+    #expect(evaluate(refusal(age: -1)) == nil)
+    #expect(evaluate(refusal(at: "bad-date")) == nil)
+    #expect(evaluate(refusal(kind: "build")) == nil)
+    #expect(Discovery.capHit(events: [], now: now, mac: mini) == nil)
+    let event = try #require(Discovery.capHit(events: [refusal()], now: now, mac: nil))
+    #expect(event.prompt == Discovery.capHit(lines: ["STIM_AT_CAPACITY"], exitStatus: 1, mac: nil))
+  }
+
+  @Test func newestCapacityEventKeepsItsOwnTimeSoPollingCannotRenewItsLifetime() throws {
+    let newest = now.addingTimeInterval(-(5 * 3600 + 59 * 60))
+    let event = try #require(
+      Discovery.capHit(
+        events: [refusal(age: 6 * 3600), refusal(age: -1), refusal(age: 5 * 3600 + 59 * 60), refusal(at: "invalid")],
+        now: now, mac: mini))
+    #expect(event.rememberedAt == newest)
+    #expect(Discovery.fresh(event.prompt.type, rememberedAt: event.rememberedAt, now: now))
+    #expect(!Discovery.fresh(event.prompt.type, rememberedAt: event.rememberedAt, now: now.addingTimeInterval(120)))
+  }
+
   @Test func awayRequiresALongRunAnIdleUserAndNoPairedPhone() {
     #expect(Discovery.away(pairedPhones: 0, durationMs: 600_000, idleSeconds: 301) == nil)
     #expect(Discovery.away(pairedPhones: 0, durationMs: 600_001, idleSeconds: 300) == nil)
