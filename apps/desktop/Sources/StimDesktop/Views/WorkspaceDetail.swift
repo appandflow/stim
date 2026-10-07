@@ -51,6 +51,7 @@ struct WorkspaceDetail: View {
   @State private var archiveNow = Date()
   @State private var archiveDetail: ArchiveDetail?
   @State private var archiveError: String?
+  @State private var confirmingArchiveDelete = false
   #if DEBUG
     var fixtureDate: Date? = nil
     var fixtureDetail: ArchiveDetail? = nil
@@ -146,6 +147,19 @@ struct WorkspaceDetail: View {
       .environmentObject(checks)
       .environment(\.tutorialHint, tutorialHint)
     }
+    .confirmationDialog(
+      "Delete \(archive?.title ?? "archive") (\(archive?.removedLabel(now: fixtureDate ?? Date()) ?? ""))?",
+      isPresented: $confirmingArchiveDelete, titleVisibility: .visible
+    ) {
+      Button("Delete permanently", role: .destructive) {
+        if let archive {
+          actions.run(
+            "Delete \(archive.title)", steps: [archive.deleteCommand(cwd: NSHomeDirectory())], key: ActionCenter.machineKey)
+        }
+      }
+    } message: {
+      Text("This permanently deletes this archive's logs, recordings, agent actions and record.")
+    }
     .task(id: archive?.id) {
       guard archive != nil, fixtureDate == nil else { return }
       while !Task.isCancelled {
@@ -212,6 +226,9 @@ struct WorkspaceDetail: View {
             Text("\u{00B7} \(used)").font(.stim(.footnote)).foregroundStyle(Palette.secondary)
           }
           Spacer()
+          Button("Delete", role: .destructive) { confirmingArchiveDelete = true }
+            .buttonStyle(.stim(.destructive)).disabled(actions.active(for: ActionCenter.machineKey) != nil)
+            .help("Delete \(archivedPage.record.title) permanently")
         } else {
           WorkspaceHeaderLine(
             cli: cli, env: workspace, page: page.isUnified ? page : nil,
@@ -360,7 +377,8 @@ struct WorkspaceDetail: View {
         machine: machine, usage: usage, history: history,
         reportsBundles: reportsBundles,
         openLogs: openBuildLogs,
-        openBuild: { buildSheet = $0 }, archive: archivedPage
+        openBuild: { buildSheet = $0 }, archive: archivedPage,
+        deleteArchive: { confirmingArchiveDelete = true }
       )
       .frame(maxHeight: .infinity)
     }

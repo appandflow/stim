@@ -200,14 +200,21 @@ import Testing
     #expect(archive.clearCommand(.logs, cwd: "/home").arguments.dropLast() == ["gc", "--delete", "--cache"])
   }
 
-  @Test func onlyRetainedNonEmptyKindsCanBeClearedAndTotalsJoinOnOneLine() throws {
+  @Test func onlyNonEmptyKindsCanBeClearedAndTheRecordNever() throws {
     var archive = try #require(payload().archived?.first)
     archive.bytes.logs = 10
     archive.bytes.recordings = 0
+    archive.bytes.agentActions = 3
+    archive.bytes.record = 7
+    let page = ArchivedPage(archive: archive, now: Date())
+    #expect(page.retention.map(\.clearable) == [true, false, true, false])
+  }
+
+  @Test func buildTotalsJoinOnOneLine() throws {
+    var archive = try #require(payload().archived?.first)
     archive.builds.count = 1
     archive.builds.lastErrorCount = 2
     let page = ArchivedPage(archive: archive, now: Date())
-    #expect(page.retention.map(\.clearable) == [true, false, page.retention[2].bytes > 0, false])
     #expect(page.buildTotalsLine == "1 build \u{00B7} 2 errors at removal")
   }
 

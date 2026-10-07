@@ -6,6 +6,7 @@ import SwiftUI
 /// archive through `stim gc --cache archived-<kind>:<id>` and `archived:<id>`.
 struct ArchiveStatusSection: View {
   var page: ArchivedPage
+  var deleteArchive: () -> Void = {}
   @EnvironmentObject private var actions: ActionCenter
   @State private var confirming: ArchivedPage.Retention?
   @State private var clearing: Set<String> = []
@@ -31,24 +32,15 @@ struct ArchiveStatusSection: View {
       }
     }
     .confirmationDialog(
-      confirming.map { $0.kind == nil ? "Delete this archive?" : "Delete this workspace's archived \($0.kind!.noun)?" } ?? "",
+      confirming.map { "Delete this workspace's archived \($0.kind?.noun ?? "")?" } ?? "",
       isPresented: Binding(get: { confirming != nil }, set: { if !$0 { confirming = nil } }),
       titleVisibility: .visible, presenting: confirming
     ) { part in
       if let kind = part.kind {
         Button("Delete \(kind.noun)", role: .destructive) { clear(kind, part) }
-      } else {
-        Button("Delete archive", role: .destructive) {
-          actions.run(
-            "Delete \(page.record.title)", steps: [page.record.deleteCommand(cwd: NSHomeDirectory())],
-            key: ActionCenter.machineKey)
-        }
       }
-    } message: { part in
-      Text(
-        part.kind == nil
-          ? "This permanently deletes this archive's logs, recordings, agent actions and record."
-          : "Its record stays.")
+    } message: { _ in
+      Text("Its record stays.")
     }
   }
 
@@ -92,7 +84,7 @@ struct ArchiveStatusSection: View {
         expiry(part).padding(.leading, Space.sm + 8)
         Spacer(minLength: Space.sm)
         if part.kind == nil {
-          Button("Delete archive") { confirming = part }
+          Button("Delete archive", action: deleteArchive)
             .buttonStyle(.stim(.destructive)).fixedSize().disabled(busy)
             .help("Delete \(page.record.title) permanently")
         } else if part.clearable {
@@ -124,7 +116,11 @@ struct ArchiveStatusSection: View {
       steps: [page.record.clearCommand(kind, cwd: NSHomeDirectory())], key: ActionCenter.machineKey, present: false
     ) { run in
       clearing.remove(part.id)
-      if run.exitStatus == 0 { cleared.insert(part.id) }
+      if run.exitStatus == 0 {
+        cleared.insert(part.id)
+      } else {
+        actions.presented = run
+      }
     }
     if started == nil { clearing.remove(part.id) }
   }

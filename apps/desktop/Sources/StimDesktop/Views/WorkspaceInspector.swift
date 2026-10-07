@@ -13,12 +13,13 @@ struct Inspector: View {
   var openLogs: (LogQuery) -> Void
   var openBuild: (BuildSheetSelection) -> Void
   var archive: ArchivedPage? = nil
+  var deleteArchive: () -> Void = {}
 
   var body: some View {
     ScrollView {
       VStack(alignment: .leading, spacing: Space.xxxl) {
         if let archive {
-          ArchiveStatusSection(page: archive)
+          ArchiveStatusSection(page: archive, deleteArchive: deleteArchive)
         }
         if archive != nil || env.runPlatforms.contains(where: { $0 == "ios" || $0 == "android" }) || env.macos != nil {
           BuildSection(

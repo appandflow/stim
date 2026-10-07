@@ -108,7 +108,7 @@ spells it out.
 ## Archived workspaces
 
 The Archived sidebar filter opens the same workspace page as live workspaces in a read-only variant.
-The header line shows removal time and reason and last use. Retained shows a proportion bar and per-kind bytes and expiry dates;
+The header line shows removal age, reason and last use; hovering it gives the exact time. Retained shows a proportion bar and per-kind bytes and expiry dates;
 the Build section opens with build totals, known cache hits, builds on a build machine and errors at removal.
 Work keeps the branch, PR number and title, final head and subject, and ended agent sessions
 with their duration and a link to retained actions. Only Merged is shown as a PR state:
@@ -128,8 +128,8 @@ requests that require a workspace instead of an archive; other refusals show the
 message. Connect through the Phones page to read logs and replay.
 
 Each of Logs, Recordings and Agent actions has a **Clear** button that, after a confirmation, deletes that kind of that archive through
-`stim gc --delete --cache archived-logs:<id>` (`archived-recordings:<id>`, `archived-agent:<id>`) and keeps the record; the row then reads Cleared.
-The Record row's **Delete archive** names the archive in a confirmation and permanently removes its
+`stim gc --delete --cache archived-logs:<id>` (`archived-recordings:<id>`, `archived-agent:<id>`) and keeps the record; the row then reads Cleared until the page is left, and None kept after.
+The Record row's **Delete archive** and the header's **Delete** name the archive in a confirmation and permanently removes its
 logs, recordings, agent actions and record through `stim gc --delete --cache archived:<id>`. The page
 returns to the previous selection once status stops reporting the archive. Machines
 shows archive count, total size, per-kind sizes and retention setting names separately;
