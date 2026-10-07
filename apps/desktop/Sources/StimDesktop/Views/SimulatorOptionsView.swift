@@ -4,6 +4,7 @@ import SwiftUI
 struct SimulatorOptionsView: View {
   let udid: String
   let canControl: Bool
+  var clipboard: ClipboardOptionsView? = nil
   @State private var appearance: SimulatorAppearance?
   @State private var busy = false
   @State private var error: String?
@@ -17,6 +18,7 @@ struct SimulatorOptionsView: View {
     init(fixture: PlaygroundSimulator) {
       udid = "playground"
       canControl = true
+      clipboard = ClipboardOptionsView(paste: {}, copy: {})
       _fixture = State(initialValue: fixture)
       _appearance = State(initialValue: fixture.appearance)
       _busy = State(initialValue: fixture.loading)
@@ -25,9 +27,10 @@ struct SimulatorOptionsView: View {
     }
   #endif
 
-  init(udid: String, canControl: Bool) {
+  init(udid: String, canControl: Bool, clipboard: ClipboardOptionsView? = nil) {
     self.udid = udid
     self.canControl = canControl
+    self.clipboard = clipboard
   }
 
   var body: some View {
@@ -58,6 +61,10 @@ struct SimulatorOptionsView: View {
           .font(.stim(.caption))
           .foregroundStyle(Palette.warning)
           .fixedSize(horizontal: false, vertical: true)
+      }
+      if let clipboard {
+        Divider()
+        clipboard
       }
       #if DEBUG
         if fixture == nil {

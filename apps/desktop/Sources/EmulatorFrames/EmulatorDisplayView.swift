@@ -132,7 +132,10 @@ public final class EmulatorButtons {
   /// Copies text to the controlled guest clipboard and pastes it into its focused field.
   public func paste(_ text: String) async -> Bool { await view?.paste(text) ?? false }
 
-  /// Reads the controlled guest clipboard only when explicitly requested.
+  /// Replaces the controlled guest clipboard's text without pasting it.
+  public func setClipboard(_ text: String) async -> Bool { await view?.setClipboard(text) ?? false }
+
+  /// Reads the controlled guest clipboard's text.
   public func clipboard() async -> String? { await view?.clipboard() }
 
   public func press(_ button: EmulatorButton) {
@@ -398,15 +401,22 @@ public final class EmulatorDisplayNSView: NSView {
   }
 
   func paste(_ text: String) async -> Bool {
-    guard interactive, let serial, let input = inputClient(), let endpoint else { return false }
-    let clipboard = EmulatorInput(endpoint: endpoint)
-    defer { clipboard.close() }
-    guard await clipboard.call("setClipboard", InputMessages.clipboard(text), timeout: 5) != nil, !Task.isCancelled,
+    guard interactive, let serial, let input = inputClient(), await setClipboard(text), !Task.isCancelled,
       interactive, self.serial == serial, self.input === input
     else { return false }
     let adb = self.adb ?? AdbInput(serial: serial)
     self.adb = adb
     return await adb.paste()
+  }
+
+  func setClipboard(_ text: String) async -> Bool {
+    guard interactive, let serial, let input = inputClient(), let endpoint else { return false }
+    let clipboard = EmulatorInput(endpoint: endpoint)
+    defer { clipboard.close() }
+    guard await clipboard.call("setClipboard", InputMessages.clipboard(text), timeout: 5) != nil, interactive,
+      self.serial == serial, self.input === input
+    else { return false }
+    return true
   }
 
   func clipboard() async -> String? {

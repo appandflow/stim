@@ -49,6 +49,7 @@ public enum AppPreferences {
     public static let showsLogs = "workspace.showsLogs"
     public static let logsDrawerHeight = "workspace.logsDrawerHeight"
     public static let viewerShowsActions = "viewer.showsActions"
+    public static let syncsClipboard = "viewer.syncsClipboard"
     public static let viewerOfferDismissed = "onboarding.viewerOfferDismissed"
 
     public static let discoveryLaunches = "discovery.launches"
@@ -88,6 +89,7 @@ public enum AppPreferences {
       Key.notifiesWorktreeRemoval: true,
       Key.showsInspector: true,
       Key.viewerShowsActions: true,
+      Key.syncsClipboard: true,
     ].merging(NotificationSettings.defaults) { current, _ in current }
   }
 

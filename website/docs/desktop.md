@@ -339,16 +339,23 @@ Releasing Option, ending the gesture, changing orientation or releasing Control
 lifts both contacts. Option and the gesture's Shift modifier stay on the Mac.
 These gestures are not available for physical devices, remote previews or web pages.
 
-With **Control** on an owned local simulator or emulator, **Paste into device**
-copies Mac clipboard text and pastes it into the focused guest field. An iOS
-simulator shows its own "Allow Paste" prompt for the text (seen on iOS 27.1, and
-again for each new text); click **Allow Paste** in the viewer to insert it. Owned local iOS simulators and Android emulators also offer
-**Copy device clipboard**, which copies guest text back to this Mac, including empty text.
-Unicode and line breaks are preserved. Transfers happen only when pressed; there
-is no automatic clipboard synchronization. An empty or non-text Mac clipboard
-leaves the guest unchanged. Disconnects and unavailable native clipboard APIs
-report a failure. Physical devices, remote sessions and replay do not offer
-clipboard actions.
+With **Control** on an owned local simulator or emulator, the Mac and the device
+share their clipboard text automatically. Switching to the viewer window, or
+a new Mac clipboard item while the window is focused, sets the device clipboard; text copied on
+the device reaches the Mac within about two seconds while the window is focused,
+and once more as the window loses focus while it stays visible. Nothing syncs while
+the window is hidden, minimized or covered. Mac items marked concealed or transient
+(as password managers do), items carrying files or images, empty text and text over
+256 KB are never sent to the device; text read from the device cannot be classified,
+so it reaches the Mac marked transient, which clipboard-history apps skip. The
+device's apps, and agents driving it, can read text sent to it. Opening a viewer never replaces the Mac clipboard with the device's.
+Turn it off with **Sync clipboard** in the options popover (the sliders button),
+which also has **Paste Mac clipboard** and **Copy device clipboard** for one-off
+transfers. Syncing only sets the device clipboard; to insert text, paste in the
+guest. An iOS simulator shows its own "Allow Paste" prompt for text that came from
+another source; click **Allow Paste** in the viewer. Unicode and line breaks are
+preserved. Physical devices, hosted and remote sessions and replay never sync, so
+no clipboard text crosses the network or reaches another Mac.
 
 The All devices and project wall creates rows and device tiles as you scroll.
 Offscreen previews pause and reconnect when you return to them.
