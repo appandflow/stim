@@ -10,8 +10,6 @@ public enum Format {
     fileSizeFormatter.string(fromByteCount: bytes)
   }
 
-  // Foundation documents NSFormatter subclasses as safe to call from several threads once configured
-  // (Date Formatters, Thread Safety); this one is configured here and never mutated again.
   private nonisolated(unsafe) static let fileSizeFormatter: ByteCountFormatter = {
     let formatter = ByteCountFormatter()
     formatter.countStyle = .file
