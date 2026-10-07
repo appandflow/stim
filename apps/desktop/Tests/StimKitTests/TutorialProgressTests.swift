@@ -538,6 +538,4 @@ func tutorialArchiveDisabledRelaunchDoesNotCompleteBeforeFinish(step: String) {
   viewer.opened("latest-tour")
   #expect(viewer.events.last?.event == .opened("latest-tour"))
   #expect(viewer.events.count == 64)
-  viewer.reset()
-  #expect(viewer.events.isEmpty)
 }

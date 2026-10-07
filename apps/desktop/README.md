@@ -1450,7 +1450,7 @@ removed after this run started can complete the tutorial.
 The panel follows workspace creation, the first iOS build, a cached rebuild,
 live view and control, app logs, agent actions and replay, Fast Refresh, optional
 phone and build machine steps, then stop/removal and Archived. Both optional
-steps keep Skip available. Open the live view, then tap Log an error.
+steps keep Skip available.
 Pair a phone opens Settings > Phones > Pair. When
 the server is off, Turn on Serve to phones opens the Phones tab, where you enable
 it yourself. An existing pairing shows Done already, followed by "Open Stim on
