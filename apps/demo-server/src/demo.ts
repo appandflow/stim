@@ -23,6 +23,7 @@ interface StatusPayload {
 
 interface LogRecord {
   ts: number;
+  workspace: string;
 }
 
 export interface Fixtures {
@@ -345,18 +346,27 @@ export class DemoConnection {
         return { result: { subscription } };
       }
       case 'logs.query':
-        return { result: { records: filterRecords(machine.logs, params) } };
+        return {
+          result: {
+            records: filterRecords(
+              machine.logs.filter((record) => record.workspace === params.workspace),
+              params,
+            ),
+          },
+        };
       case 'logs.subscribe': {
+        const logs = machine.logs.filter((record) => record.workspace === params.workspace);
         let cursor = 0;
         const subscription = this.every(LOGS_MS, (sub) => {
-          const record = { ...machine.logs[cursor++ % machine.logs.length], ts: Date.now() };
+          if (!logs.length) return;
+          const record = { ...logs[cursor++ % logs.length], ts: Date.now() };
           const records = filterRecords([record], { ...params, tail: undefined });
           if (records.length > 0) this.send({ event: 'logs', subscription: sub, records });
         });
         setTimeout(
           () =>
             this.timers.has(subscription) &&
-            this.send({ event: 'logs', subscription, records: filterRecords(machine.logs, params) }),
+            this.send({ event: 'logs', subscription, records: filterRecords(logs, params) }),
           0,
         );
         return { result: { subscription } };
