@@ -151,7 +151,7 @@ struct WorkspaceActionsButton: View {
         },
         onShowLogs: openLogs,
         onRemoveWorktree: { resolveRemovalBranch(at: env.path) { removal = WorktreeRemoval(branch: $0) } },
-        hidden: isHidden, canHide: !busy && !env.isActive,
+        hidden: isHidden, canHide: !busy && !env.isActive && actions.active(for: env.worktreeActionKey) == nil,
         onToggleHidden: { prefs.setHidden(!isHidden, path: env.path) })
     } label: {
       Image(systemName: "ellipsis")

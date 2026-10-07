@@ -71,7 +71,12 @@ struct Sidebar: View {
           count: store.sidebarStatusCounts(options)[.hidden] ?? 0, showing: options.statuses.contains(.hidden)
         ) {
           var updated = options.statuses
-          if updated.contains(.hidden) { updated.remove(.hidden) } else { updated.insert(.hidden) }
+          if updated.contains(.hidden) {
+            updated.remove(.hidden)
+            if updated.isEmpty { updated = StatusFilter.defaultSelection }
+          } else {
+            updated.insert(.hidden)
+          }
           prefs.statuses = StatusFilter.encode(updated)
         }
         SidebarFooter(store: store, autopilot: autopilot, onboarding: onboarding, actions: actions, selection: $selection)
@@ -370,7 +375,8 @@ struct WorkspaceRow: View {
         },
         onShowLogs: { openLogs(env.path) },
         onRemoveWorktree: { resolveRemovalBranch(at: env.path) { removal = WorktreeRemoval(branch: $0) } },
-        hidden: isHidden, canHide: !env.isActive && actions.active(for: env.path) == nil,
+        hidden: isHidden,
+        canHide: !env.isActive && actions.active(for: env.path) == nil && actions.active(for: env.worktreeActionKey) == nil,
         onToggleHidden: { prefs.setHidden(!isHidden, path: env.path) })
     }
     .confirmationDialog("Stop this workspace?", isPresented: $confirmingStop, titleVisibility: .visible) {
@@ -764,7 +770,6 @@ struct StimWordmark: View {
   }
 }
 
-/// A small eye-slash on a row that the user hid and the Hidden status is showing.
 struct HiddenIndicator: View {
   var body: some View {
     Image(systemName: "eye.slash").iconFont(IconSize.small).foregroundStyle(Palette.tertiary)
@@ -772,8 +777,6 @@ struct HiddenIndicator: View {
   }
 }
 
-/// The sidebar's quiet footer line for hidden workspaces: how many the current filter hides with a way to show
-/// them, and once they show, a way to hide them again. It is absent when no workspace is hidden.
 struct HiddenWorkspacesFooter: View {
   var count: Int
   var showing: Bool

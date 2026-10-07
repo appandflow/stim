@@ -124,7 +124,6 @@ public enum SidebarEntry: Hashable, Identifiable, Sendable {
     }
   }
 
-  /// The status filter this row falls under: `.hidden` when the user hid it, else its own state.
   public func status(hidden: HiddenWorkspaces) -> StatusFilter {
     hidden.contains(self) ? .hidden : status
   }

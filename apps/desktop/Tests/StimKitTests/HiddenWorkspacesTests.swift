@@ -65,6 +65,29 @@ import Testing
     #expect(!StatusFilter.defaultSelection.contains(.hidden))
   }
 
+  @Test func hidingOneArchiveOfAGroupSplitsItFromTheRest() throws {
+    var records = try archives()
+    records[1].projectRoot = "/r/app/.worktrees/other/apps/two"
+    records[0].projectRoot = "/r/app/.worktrees/other/apps/one"
+    func rows(_ hidden: HiddenWorkspaces, _ statuses: Set<StatusFilter>) -> [String] {
+      var options = SidebarOptions()
+      options.statuses = statuses
+      options.hiddenWorkspaces = hidden
+      return sidebarList(
+        environments: [], unprovisioned: [], project: project, options: options, archived: records
+      ).map(\.id)
+    }
+    #expect(rows(HiddenWorkspaces(), [.archived]).count == 1)
+    #expect(rows(HiddenWorkspaces(archives: ["a1"]), [.archived]) == ["archive:a2"])
+    #expect(rows(HiddenWorkspaces(archives: ["a1"]), [.hidden]) == ["archive:a1"])
+  }
+
+  @Test func theWorktreeActionKeyMatchesItsPage() throws {
+    for env in try environments() {
+      #expect(env.worktreeActionKey == WorktreePage.groups(environments: [env])[0].actionKey)
+    }
+  }
+
   @Test func countsPutHiddenRowsUnderHiddenOnly() throws {
     var options = SidebarOptions()
     options.hiddenWorkspaces = HiddenWorkspaces(paths: ["/r/app/.worktrees/idle", "/r/app/.worktrees/new"], archives: ["a2"])

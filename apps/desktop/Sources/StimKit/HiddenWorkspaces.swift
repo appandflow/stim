@@ -1,7 +1,9 @@
 import Foundation
 
-/// The workspaces the user hid in this Desktop. `paths` holds the sidebar row path Stim reports (already
-/// canonical) of a worktree row, a multi-app worktree group or a Not set up worktree; `archives` holds archive ids.
+extension Workspace {
+  public var worktreeActionKey: String { "worktree:\(worktree?.path ?? path)" }
+}
+
 public struct HiddenWorkspaces: Codable, Equatable, Sendable {
   public var paths: Set<String> = []
   public var archives: Set<String> = []
@@ -51,11 +53,6 @@ public struct HiddenWorkspaces: Codable, Equatable, Sendable {
     var archives: [String]
   }
 
-  /// The set with entries dropped that should no longer be hidden: a workspace that became active (a running
-  /// dev server, a build, a booted or connected device, a setup, or a run `isBusy` reports) is shown again, and
-  /// a workspace that exists nowhere (not live, idle, not set up or archived) is forgotten. A list Stim did not
-  /// report (`unprovisioned` or `archived` nil, as from an older `stim`) cannot prove an entry gone, so its
-  /// entries are kept.
   public func reconciled(
     environments: [Workspace], unprovisioned: [UnprovisionedWorktree]?, archived: [ArchivedWorkspace]?,
     isBusy: (String) -> Bool
