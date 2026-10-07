@@ -88,7 +88,8 @@ export async function ensureOwnedIosDevice({
   const simslimProfile = iosSimSlimProfileSetting(settings, settingsRoot);
   if (record?.deviceUdid) {
     if (record.owned) {
-      const resolved = resolveOwnedIosSim(record.deviceUdid);
+      const listed = listAllIosSims({ includeUnavailable: true });
+      const resolved = resolveOwnedIosSim(record.deviceUdid, listed);
       if (resolved.notOwned) {
         note(
           chalk.yellow(
@@ -114,7 +115,10 @@ export async function ensureOwnedIosDevice({
           model: deviceTypes.find((d) => d.identifier === sim.deviceTypeIdentifier)?.name ?? null,
           runtime: parseRuntimeVersion(sim.runtime),
         };
-        const name = await withIosDeviceNameLock(() => renameToOwnedName(sim, label, model, projectPath));
+        const name =
+          ownedIosName(sim, label, model, projectPath, listed) === sim.name
+            ? sim.name
+            : await withIosDeviceNameLock(() => renameToOwnedName(sim, label, model, projectPath));
         const updated = {
           deviceUdid: sim.udid,
           owned: true,
@@ -144,7 +148,7 @@ export async function ensureOwnedIosDevice({
           out(chalk.dim(phaseLine('device', `booting ${name} (${sim.udid})`)));
           return { ...updated, booting: startIosBoot(sim.udid, configure, name, out, flags.simulatorApp), ...facts };
         }
-        return { ...(await configure()), ...facts };
+        return { ...(await configure()), ...facts, booted: sim.udid };
       }
     } else {
       const sim = listAllIosSims().find((s) => s.udid === record.deviceUdid);
@@ -240,12 +244,14 @@ function withIosDeviceNameLock<T>(fn: () => T): Promise<T> {
   return withWorkspaceProcessLock(getConfigDir(), 'ios-device-names', async () => fn(), { external: true });
 }
 
-function ownedIosNameSuffix(label: string, model: SimModel, projectPath: string, udid?: string): string {
-  const names = new Set(
-    listAllIosSims({ includeUnavailable: true })
-      .filter((sim) => sim.udid !== udid)
-      .map((sim) => sim.name),
-  );
+function ownedIosNameSuffix(
+  label: string,
+  model: SimModel,
+  projectPath: string,
+  udid?: string,
+  listed: SimRecord[] = listAllIosSims({ includeUnavailable: true }),
+): string {
+  const names = new Set(listed.filter((sim) => sim.udid !== udid).map((sim) => sim.name));
   for (const project of Object.values(loadConfig()?.projects ?? {})) {
     for (const { platforms } of projectDeviceSlots(project)) {
       const record = platforms.ios;
@@ -262,8 +268,12 @@ function ownedIosNameSuffix(label: string, model: SimModel, projectPath: string,
   return suffix;
 }
 
+function ownedIosName(sim: SimRecord, label: string, model: SimModel, projectPath: string, listed?: SimRecord[]) {
+  return ownedSimName(label, model, ownedIosNameSuffix(label, model, projectPath, sim.udid, listed));
+}
+
 function renameToOwnedName(sim: SimRecord, label: string, model: SimModel, projectPath: string): string {
-  const wanted = ownedSimName(label, model, ownedIosNameSuffix(label, model, projectPath, sim.udid));
+  const wanted = ownedIosName(sim, label, model, projectPath);
   if (sim.name === wanted) return wanted;
   try {
     renameIosSim(sim.udid, wanted);
@@ -443,6 +453,11 @@ export async function ensureIosBooted({
     }
     return ready();
   }
+  const readiness = device?.booted === udid ? ready() : null;
+  if (readiness?.ok) {
+    if (simulatorApp !== undefined) configuredIosSimulatorViewer(simulatorApp).open(udid);
+    return readiness;
+  }
 
   let resolved;
   try {
@@ -464,7 +479,7 @@ export async function ensureIosBooted({
   }
   const sim = resolved.sim as SimRecord;
   if (sim.state === 'Booted') {
-    const result = ready();
+    const result = readiness ?? ready();
     if (result.ok && simulatorApp !== undefined) configuredIosSimulatorViewer(simulatorApp).open(udid);
     return result;
   }

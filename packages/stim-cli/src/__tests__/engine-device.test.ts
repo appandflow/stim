@@ -1392,6 +1392,88 @@ describe('ensureOwnedDevice: ios', () => {
     }
   });
 
+  test.each(['Booted', 'Shutdown'])(
+    'a reused %s sim is listed once between device setup and the boot check',
+    async (state) => {
+      const root = projectDir();
+      try {
+        setDevice(root, 'ios', { deviceUdid: 'U1', owned: true, deviceName: 'stim-app (iPhone 17 Pro 26.2)' });
+        const { run, exec } = iosExecutor([
+          {
+            udid: 'U1',
+            name: 'stim-app (iPhone 17 Pro 26.2)',
+            state,
+            isAvailable: true,
+            deviceTypeIdentifier: TYPE_17_PRO.identifier,
+          },
+        ]);
+        setExecutor(exec);
+        const device = await ensureOwnedDevice({
+          platform: 'ios',
+          project: getProject(root),
+          projectPath: root,
+          label: 'app',
+          settings: {},
+        });
+        expect(await ensureBooted({ platform: 'ios', device, timeoutMs: 5000, pollMs: 5 })).toEqual({
+          ok: true,
+          udid: 'U1',
+        });
+        expect(run.filter((cmd) => cmd.includes('simctl list devices'))).toHaveLength(1);
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    },
+  );
+
+  test('a reused booted sim shut down after device setup is booted again, not refused', async () => {
+    const root = projectDir();
+    try {
+      setDevice(root, 'ios', { deviceUdid: 'U1', owned: true, deviceName: 'stim-app (iPhone 17 Pro 26.2)' });
+      let state = 'Booted';
+      const { run, exec } = iosExecutor([]);
+      setExecutor({
+        ...exec,
+        run(cmd: string) {
+          if (!/simctl list devices --json/.test(cmd)) return exec.run(cmd);
+          run.push(cmd);
+          return simList([
+            {
+              udid: 'U1',
+              name: 'stim-app (iPhone 17 Pro 26.2)',
+              state,
+              isAvailable: true,
+              deviceTypeIdentifier: TYPE_17_PRO.identifier,
+            },
+          ]);
+        },
+        runFile(file: string, args: string[] = []) {
+          if (args[1] === 'spawn' && state !== 'Booted') throw new Error('Unable to lookup in current state: Shutdown');
+          return exec.runFile.call(this, file, args);
+        },
+        spawn(cmd: string, args: readonly string[] = []) {
+          if (args[1] === 'boot') state = 'Booted';
+          return exec.spawn(cmd, args);
+        },
+      });
+      const device = await ensureOwnedDevice({
+        platform: 'ios',
+        project: getProject(root),
+        projectPath: root,
+        label: 'app',
+        settings: {},
+      });
+      state = 'Shutdown';
+      expect(await ensureBooted({ platform: 'ios', device, timeoutMs: 5000, pollMs: 5 })).toEqual({
+        ok: true,
+        udid: 'U1',
+      });
+      expect(run).toContain('xcrun simctl boot U1');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   test('rejects an invalid SimSlim profile before creating or booting a simulator', async () => {
     const root = projectDir();
     try {

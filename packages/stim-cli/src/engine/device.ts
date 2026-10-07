@@ -40,6 +40,12 @@ export interface OwnedDeviceRecord {
    * persisted.
    */
   booting?: IosBoot;
+  /**
+   * The udid of the owned simulator this call found already booted and configured. `ensureBooted` checks that
+   * it can still spawn a process before listing simulators again, and lists and boots it only when that check
+   * fails. It is never persisted.
+   */
+  booted?: string;
 }
 
 export interface DeviceSettings {
