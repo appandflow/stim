@@ -136,7 +136,7 @@ struct BuildSheet: View {
           if let duration = macos.build.durationMs {
             Text(Format.elapsed(ms: duration)).monospacedDigit().foregroundStyle(Palette.secondary)
           }
-          if running == nil, let line = history("macos").first?.phaseLine {
+          if running?.platform != "macos", let line = history("macos").first?.phaseLine {
             Text(line).foregroundStyle(Palette.secondary)
           }
           if let error = macos.build.error {

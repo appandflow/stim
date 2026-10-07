@@ -62,7 +62,7 @@ struct BuildSection: View {
         if let projectSubtitle { Text(projectSubtitle).font(.stim(.footnote)).foregroundStyle(Palette.secondary) }
         Text("Swift Package Debug: \(macos.build.state)").font(.stim(.footnote)).foregroundStyle(Palette.secondary)
         if let building = running, building.platform == "macos" { RunningBuildDetail(env: env, build: building) }
-        if running == nil, let line = env.builds?.builds(for: "macos").first?.phaseLine {
+        if running?.platform != "macos", let line = env.builds?.builds(for: "macos").first?.phaseLine {
           Text(line).font(.stim(.footnote)).foregroundStyle(Palette.secondary)
         }
         if let error = macos.build.error {
