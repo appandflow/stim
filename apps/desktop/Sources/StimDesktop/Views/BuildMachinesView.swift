@@ -23,7 +23,8 @@ struct BuildMachinesView: View {
   var body: some View {
     BuildMachinesContent(
       entries: model.entries, statuses: statuses, hosts: model.check(in: checkout)?.hosts, updates: model.updates,
-      working: model.working, failure: failure, tailscaleRunning: model.tailscaleRunning, canAsk: checkout != nil,
+      working: model.working, progress: model.progress, failure: failure, tailscaleRunning: model.tailscaleRunning,
+      canAsk: checkout != nil,
       addDisabled: model.isBusy || model.updates.values.contains { !$0.isDone }, sampleExists: model.sampleExists,
       updatesAutomatically: $updatesAutomatically,
       add: { adding = model.addMachine(checkout: checkout) },
@@ -134,6 +135,7 @@ struct BuildMachinesContent: View {
   var hosts: [BuildMachineStatus]?
   var updates: [String: MachineUpdatePhase]
   var working: String?
+  var progress: String?
   var failure: String?
   var tailscaleRunning: Bool?
   var canAsk: Bool
@@ -185,6 +187,7 @@ struct BuildMachinesContent: View {
           BuildMachineRow(
             entry: entry, status: status, checking: statuses == nil && canAsk,
             capabilities: buildMachineCapabilities(entry, hosts: hosts), working: working == entry,
+            progress: working == entry ? progress : nil,
             canAsk: canAsk, update: updates[entry], ask: { ask(entry) }, startUpdate: { update(entry) },
             showDetails: { showDetails(entry) }, remove: { remove(entry) })
         }
@@ -222,6 +225,7 @@ private struct BuildMachineRow: View {
   var checking: Bool
   var capabilities: [String]
   var working: Bool
+  var progress: String?
   var canAsk: Bool
   var update: MachineUpdatePhase?
   var ask: () -> Void
@@ -255,7 +259,10 @@ private struct BuildMachineRow: View {
         MachineUpdateLine(phase: update, needed: status.map(needsStimUpdate) ?? false, update: startUpdate)
       }
       Spacer()
-      if working { ProgressView().controlSize(.small) }
+      if working {
+        if let progress { Text(verbatim: progress).font(.stim(.footnote)).foregroundStyle(Palette.secondary) }
+        ProgressView().controlSize(.small)
+      }
       if let status, status.state.canAsk(requested: status.deviceId != nil) {
         Button(status.state == .notAsked ? "Ask" : "Ask Again", action: ask).disabled(working || !canAsk)
       }
