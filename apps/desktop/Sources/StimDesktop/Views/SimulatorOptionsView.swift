@@ -56,7 +56,7 @@ struct SimulatorOptionsView: View {
         }
       }
       if let frame {
-        Toggle("Show device frame", isOn: frame.isOn)
+        Toggle("Show device frame", isOn: frame.unavailableReason == nil ? frame.isOn : .constant(false))
           .disabled(frame.unavailableReason != nil)
           .help(frame.unavailableReason ?? "Draw the installed hardware frame around the screen")
         if let reason = frame.unavailableReason {
