@@ -55,15 +55,31 @@ public struct ArchivedWorkspace: Decodable, Hashable, Identifiable, Sendable {
   public var version: Int
   public var replacedBy: String?
 
-  public var title: String { worktree.branch ?? project }
+  public var worktreeRoot: String {
+    if let relative = PathNames(path: projectRoot).inCheckout {
+      return String(projectRoot.dropLast(relative.count + 1))
+    }
+    let parent = (projectRoot as NSString).deletingLastPathComponent
+    if (parent as NSString).lastPathComponent == "apps" {
+      return (parent as NSString).deletingLastPathComponent
+    }
+    return projectRoot
+  }
+  public var names: PathNames {
+    PathNames(path: projectRoot, branch: worktree.branch, worktree: worktreeRoot, project: sidebarProject)
+  }
+  public var title: String { names.title }
   public var sidebarProject: Project {
-    worktree.repository.map { Project(root: $0) } ?? Project(fallbackFor: projectRoot)
+    worktree.repository.map { Project(root: $0) } ?? Project(fallbackFor: worktreeRoot)
   }
   public var sizeLabel: String { Format.fileSize(bytes.total) }
   public var removedByLabel: String {
     switch removedBy {
     case "worktree-remove": return "worktree removal"
-    case "gc": return "garbage collection"
+    case "gc": return "gc cleanup"
+    case "desktop-delete": return "Desktop Delete"
+    case "maintenance": return "maintenance"
+    case "replaced": return "a newer workspace"
     default: return removedBy.replacingOccurrences(of: "-", with: " ")
     }
   }

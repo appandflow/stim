@@ -142,6 +142,132 @@ import XCTest
     XCTAssertTrue(errors.isEmpty)
   }
 
+  func testArchiveDetailRetriesBusyReadsAndDecodesHistoryWithoutTargetingReusedWorkspace() async throws {
+    let (client, socket) = try await connection()
+    defer { client.stop() }
+    let read = Task { try await client.archiveDetail(ArchiveDetailRequest(archive: "ended")) }
+    let request = try await socket.take("archive.detail")
+    XCTAssertEqual(request["params"], .object(["archive": .string("ended")]))
+    socket.refuse(request, code: "limit-exceeded", message: "Busy")
+    let retry = try await socket.take("archive.detail")
+    XCTAssertEqual(retry["params"], request["params"])
+    let result = try JSONDecoder().decode(
+      JSONValue.self,
+      from: Data(
+        #"""
+        {"builds":{"ios":[{"platform":"ios","status":"failed","cacheHit":false,
+        "startedAt":"2026-10-04T10:00:00Z","result":"failed","slot":"default",
+        "phases":{"compile":42000}}]},"recordings":[
+        {"platform":"android","slot":"fold","spans":[{"start":1000,"end":2000}]}]}
+        """#.utf8))
+    socket.answer(retry, result)
+    let detail = try await read.value
+    XCTAssertEqual(detail.builds.ios?.first?.phases, ["compile": 42000])
+    XCTAssertEqual(detail.recordings.first?.slot, "fold")
+    XCTAssertTrue(socket.requests.isEmpty)
+  }
+
+  func testUnavailableArchiveDetailKeepsTheSummaryForAnOlderServer() async throws {
+    let (client, socket) = try await connection()
+    defer { client.stop() }
+    let archive = try PlaygroundFixtures.make(.ready).archive
+    let read = Task { try await client.archiveDetail(ArchiveDetailRequest(archive: archive.id)) }
+    socket.refuse(try await socket.take("archive.detail"), code: "unknown-method", message: "Unknown request")
+    var detail: ArchiveDetail?
+    do {
+      detail = try await read.value
+      XCTFail("An older server must refuse archive.detail")
+    } catch {
+      XCTAssertEqual(archivedReadError(error, content: "build history"), "Unknown request")
+    }
+    let page = ArchivedPage(archive: archive, detail: detail, now: Date())
+    XCTAssertEqual(page.workspace.lastBuilds?.ios, archive.builds.last)
+    XCTAssertTrue(socket.requests.isEmpty)
+  }
+
+  func testReplayUsesEveryRetainedSlotAndNeverProbesUnlistedPlatforms() async throws {
+    let (client, socket) = try await connection()
+    defer { client.stop() }
+    let detail = try JSONDecoder().decode(
+      ArchiveDetail.self,
+      from: Data(
+        #"""
+        {"builds":{},"recordings":[
+        {"platform":"ios","slot":"default","spans":[{"start":1000,"end":2000}]},
+        {"platform":"ios","slot":"tablet","spans":[{"start":3000,"end":4000}]}]}
+        """#.utf8))
+    let model = ArchivedReplayModel(archive: "ended", recordings: detail.recordings)
+    defer { model.stop() }
+    let read = Task { await model.connect(client) }
+    for slot in ["default", "tablet"] {
+      let request = try await socket.take("replay.range")
+      XCTAssertEqual(
+        request["params"],
+        .object([
+          "archive": .string("ended"), "platform": .string("ios"), "slot": .string(slot),
+        ]))
+      socket.answer(
+        request,
+        .object([
+          "enabled": .bool(true), "recording": .bool(false), "spans": .array([]), "markers": .array([]),
+        ]))
+    }
+    await read.value
+    XCTAssertTrue(socket.requests.isEmpty)
+  }
+
+  func testRealArchivePreservesAllBuildsAndOpensItsRetainedReplay() async throws {
+    let now = Date(timeIntervalSince1970: 1791356400)
+    let fixture = try PlaygroundFixtures.realArchive(now: now)
+    let page = ArchivedPage(archive: fixture.archive, detail: fixture.archiveDetail, now: now)
+    let builds = try XCTUnwrap(page.workspace.builds?.ios)
+    XCTAssertEqual(builds.map { $0.build.durationMs }, [13140, 29746, 66197, 9406, 129383])
+    XCTAssertEqual(builds.map { $0.build.offloadedTo }, [nil, "janics-mac-mini", nil, nil, "janics-mac-mini"])
+    XCTAssertEqual(builds.map(\.result), ["failed", "succeeded", "succeeded", "failed", "succeeded"])
+    XCTAssertEqual(builds.map { $0.build.cacheSkipped }, [true, true, true, true, true])
+    XCTAssertEqual(
+      builds.filter { $0.result == "failed" }.map { $0.build.errorCode }, ["STIM_BUILD_FAILED", "STIM_BUILD_FAILED"])
+    XCTAssertEqual(builds.last?.phases["pods"], 67897)
+    XCTAssertEqual(page.offloadedBuilds, 2)
+    XCTAssertEqual(page.cacheHits, 0)
+    XCTAssertEqual(page.workspace.lastBuilds?.ios?.durationMs, 13140)
+    XCTAssertEqual(
+      fixture.archiveDetail.recordings[0].spans,
+      [
+        ReplaySpan(start: 1791346346610, end: 1791346357977),
+        ReplaySpan(start: 1791346446117, end: 1791346446586),
+        ReplaySpan(start: 1791346655074, end: 1791346655625),
+      ])
+    let (client, socket) = try await connection()
+    defer { client.stop() }
+    let model = ArchivedReplayModel(archive: fixture.archive.id, recordings: page.recordings)
+    defer { model.stop() }
+    let read = Task { await model.connect(client) }
+    let range = try await socket.take("replay.range")
+    XCTAssertEqual(
+      range["params"], .object(["archive": .string(fixture.archive.id), "platform": .string("ios"), "slot": .string("default")]))
+    socket.answer(
+      range,
+      .object([
+        "enabled": .bool(false), "recording": .bool(false), "markers": .array([]),
+        "spans": .array(page.recordings[0].spans.map { .object(["start": .number($0.start), "end": .number($0.end)]) }),
+      ]))
+    await read.value
+    let controller = try XCTUnwrap(model.controllers.first)
+    XCTAssertNotNil(controller.timeline)
+    controller.seek(at: 1791346346610, rate: 0)
+    let subscribe = try await socket.take("frames.subscribe")
+    guard case .object(let params) = subscribe["params"] else {
+      XCTFail("Missing replay params")
+      return
+    }
+    XCTAssertEqual(params["archive"], .string(fixture.archive.id))
+    XCTAssertNil(params["workspace"])
+    XCTAssertEqual(params["at"], .number(1791346346610))
+    socket.answer(subscribe, .object(["subscription": .string("real-replay"), "video": .string("h264")]))
+    await settle()
+  }
+
   func testReplayPlatformsAreProbedOneAtATimeEvenWhenOneIsRefused() async throws {
     let (client, socket) = try await connection()
     defer { client.stop() }

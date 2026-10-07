@@ -1,0 +1,214 @@
+{
+  "builds": {
+    "ios": [
+      {
+        "platform": "ios",
+        "status": "failed",
+        "configuration": "Debug",
+        "fingerprint": "8d37f98243b48e985bc92659a5b035b0e06e5445",
+        "cacheKey": "8d37f98243b48e985bc92659a5b035b0e06e5445-debug-sim-arm64",
+        "cacheHit": false,
+        "cacheSkipped": true,
+        "durationMs": 13140,
+        "startedAt": "2026-10-07T04:23:36.311Z",
+        "errorCode": "STIM_BUILD_FAILED",
+        "missReason": {
+          "kind": "cache-skipped",
+          "summary": "cache reuse turned off by --no-build-cache",
+          "changes": [],
+          "changeCount": 0,
+          "baseline": null,
+          "rekeyedBy": []
+        },
+        "buildMachine": "local",
+        "builtOn": "here",
+        "diagnostics": [
+          {
+            "file": null,
+            "line": null,
+            "column": null,
+            "message": "invalid argument '/Users/me/Library/Application' to -fdepscan-prefix-map= (in target 'ReactCodegen' from project 'Pods')"
+          },
+          {
+            "file": null,
+            "line": null,
+            "column": null,
+            "message": "invalid argument 'Support/Stim' to -fdepscan-prefix-map= (in target 'ReactCodegen' from project 'Pods')"
+          },
+          {
+            "file": null,
+            "line": null,
+            "column": null,
+            "message": "invalid argument 'Desktop/Onboarding/sample-sdk58=/^src' to -fdepscan-prefix-map= (in target 'ReactCodegen' from project 'Pods')"
+          }
+        ],
+        "result": "failed",
+        "slot": "default",
+        "phases": {
+          "prepare": 2695,
+          "cache-lookup": 1179,
+          "compile": 9273
+        },
+        "finishedAt": "2026-10-07T04:23:49.451Z"
+      },
+      {
+        "platform": "ios",
+        "status": "ok",
+        "configuration": "Debug",
+        "fingerprint": "8d37f98243b48e985bc92659a5b035b0e06e5445",
+        "cacheKey": "8d37f98243b48e985bc92659a5b035b0e06e5445-debug-sim-arm64",
+        "cacheHit": false,
+        "cacheSkipped": true,
+        "durationMs": 29746,
+        "startedAt": "2026-10-07T04:23:05.212Z",
+        "missReason": {
+          "kind": "cache-skipped",
+          "summary": "cache reuse turned off by --no-build-cache",
+          "changes": [],
+          "changeCount": 0,
+          "baseline": null,
+          "rekeyedBy": []
+        },
+        "buildMachine": "janics-mac-mini",
+        "builtOn": "janics-mac-mini",
+        "offloadedTo": "janics-mac-mini",
+        "result": "succeeded",
+        "slot": "default",
+        "phases": {
+          "prepare": 953,
+          "cache-lookup": 763,
+          "compile": 15442,
+          "device": 36,
+          "install": 5457,
+          "launch": 7111
+        },
+        "finishedAt": "2026-10-07T04:23:34.958Z"
+      },
+      {
+        "platform": "ios",
+        "status": "ok",
+        "configuration": "Debug",
+        "fingerprint": "8d37f98243b48e985bc92659a5b035b0e06e5445",
+        "cacheKey": "8d37f98243b48e985bc92659a5b035b0e06e5445-debug-sim-arm64",
+        "cacheHit": false,
+        "cacheSkipped": true,
+        "durationMs": 66197,
+        "startedAt": "2026-10-07T04:16:34.024Z",
+        "missReason": {
+          "kind": "cache-skipped",
+          "summary": "cache reuse turned off by --no-build-cache",
+          "changes": [],
+          "changeCount": 0,
+          "baseline": null,
+          "rekeyedBy": []
+        },
+        "buildMachine": "local",
+        "builtOn": "here",
+        "result": "succeeded",
+        "slot": "default",
+        "phases": {
+          "prepare": 2214,
+          "cache-lookup": 968,
+          "compile": 52881,
+          "device": 7,
+          "install": 3882,
+          "launch": 6251
+        },
+        "finishedAt": "2026-10-07T04:17:40.221Z"
+      },
+      {
+        "platform": "ios",
+        "status": "failed",
+        "configuration": "Debug",
+        "fingerprint": "8d37f98243b48e985bc92659a5b035b0e06e5445",
+        "cacheKey": "8d37f98243b48e985bc92659a5b035b0e06e5445-debug-sim-arm64",
+        "cacheHit": false,
+        "cacheSkipped": true,
+        "durationMs": 9406,
+        "startedAt": "2026-10-07T04:14:11.752Z",
+        "errorCode": "STIM_BUILD_FAILED",
+        "missReason": {
+          "kind": "cache-skipped",
+          "summary": "cache reuse turned off by --no-build-cache",
+          "changes": [],
+          "changeCount": 0,
+          "baseline": null,
+          "rekeyedBy": []
+        },
+        "buildMachine": "local",
+        "builtOn": "here",
+        "diagnostics": [
+          {
+            "file": null,
+            "line": null,
+            "column": null,
+            "message": "Driver threw invalid value '/Users/me/Library/Application' in '-scanner-prefix-map' without emitting errors. (in target 'ExpoLogBox' from project 'Pods')"
+          }
+        ],
+        "result": "failed",
+        "slot": "default",
+        "phases": {
+          "prepare": 1336,
+          "cache-lookup": 626,
+          "compile": 7449
+        },
+        "finishedAt": "2026-10-07T04:14:21.158Z"
+      },
+      {
+        "platform": "ios",
+        "status": "ok",
+        "configuration": "Debug",
+        "fingerprint": "8d37f98243b48e985bc92659a5b035b0e06e5445",
+        "cacheKey": "8d37f98243b48e985bc92659a5b035b0e06e5445-debug-sim-arm64",
+        "cacheHit": false,
+        "cacheSkipped": true,
+        "durationMs": 129383,
+        "startedAt": "2026-10-07T04:12:01.932Z",
+        "missReason": {
+          "kind": "cache-skipped",
+          "summary": "cache reuse turned off by --no-build-cache",
+          "changes": [],
+          "changeCount": 0,
+          "baseline": null,
+          "rekeyedBy": []
+        },
+        "buildMachine": "janics-mac-mini",
+        "builtOn": "janics-mac-mini",
+        "offloadedTo": "janics-mac-mini",
+        "result": "succeeded",
+        "slot": "default",
+        "phases": {
+          "prepare": 1130,
+          "cache-lookup": 547,
+          "prebuild": 2909,
+          "pods": 67897,
+          "compile": 45895,
+          "device": 6,
+          "install": 4886,
+          "launch": 6123
+        },
+        "finishedAt": "2026-10-07T04:14:11.315Z"
+      }
+    ]
+  },
+  "recordings": [
+    {
+      "platform": "ios",
+      "slot": "default",
+      "spans": [
+        {
+          "start": 1791346346610,
+          "end": 1791346357977
+        },
+        {
+          "start": 1791346446117,
+          "end": 1791346446586
+        },
+        {
+          "start": 1791346655074,
+          "end": 1791346655625
+        }
+      ]
+    }
+  ]
+}

@@ -13,9 +13,17 @@ struct BuildSheet: View {
   var cli: Task<StimCLI, Never>
   var env: Workspace
   var selection: BuildSheetSelection
+  var archive: ArchivedWorkspace?
+  var logsExpired: Bool
+  var readsServer: Bool
   var page: WorktreePage?
   var openAppLogs: ((Workspace, LogQuery) -> Void)?
   var openLogs: (LogQuery) -> Void
+  #if DEBUG
+    @Environment(\.fixtureDate) private var fixtureDate
+  #else
+    private var fixtureDate: Date? { nil }
+  #endif
   @EnvironmentObject private var checks: BuildPlanChecks
   @EnvironmentObject private var actions: ActionCenter
   @Environment(\.dismiss) private var dismiss
@@ -25,8 +33,12 @@ struct BuildSheet: View {
 
   init(
     cli: Task<StimCLI, Never>, env: Workspace, selection: BuildSheetSelection, page: WorktreePage? = nil,
-    openLogs: @escaping (LogQuery) -> Void, openAppLogs: ((Workspace, LogQuery) -> Void)? = nil
+    openLogs: @escaping (LogQuery) -> Void, openAppLogs: ((Workspace, LogQuery) -> Void)? = nil,
+    archive: ArchivedWorkspace? = nil, logsExpired: Bool = false, readsServer: Bool = true
   ) {
+    self.archive = archive
+    self.logsExpired = logsExpired
+    self.readsServer = readsServer
     self.cli = cli
     self.env = env
     self.selection = selection
@@ -69,15 +81,21 @@ struct BuildSheet: View {
           Divider()
           ScrollView {
             if let run {
-              BuildRunDetail(cli: cli, env: app, run: run, dismiss: { dismiss() })
-                .tutorialAnchor(.buildSection, workspace: app.path)
-                .id(page == nil ? run.id : "\(app.path)|\(run.id)")
-                .padding(Space.xxl)
-              if run.running == nil, run.id == runs.first?.id { nextBuild }
+              BuildRunDetail(
+                cli: cli, env: app, run: run, archive: archive, logsExpired: logsExpired, readsServer: readsServer,
+                dismiss: { dismiss() }
+              )
+              .tutorialAnchor(.buildSection, workspace: app.path)
+              .id(page == nil ? run.id : "\(app.path)|\(run.id)")
+              .padding(Space.xxl)
+              if archive == nil, run.running == nil, run.id == runs.first?.id { nextBuild }
             } else {
-              EmptyState(title: "No \(platformName(platform)) build recorded", message: "Run the app to record a build.")
-                .padding(Space.xxl)
-              nextBuild
+              EmptyState(
+                title: "No \(platformName(platform)) build recorded",
+                message: archive == nil ? "Run the app to record a build." : "No build retained for this archive."
+              )
+              .padding(Space.xxl)
+              if archive == nil { nextBuild }
             }
           }
           .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -89,7 +107,7 @@ struct BuildSheet: View {
     .background(Palette.background)
     .frame(minWidth: 980, idealWidth: 980, minHeight: 720, idealHeight: 720)
     .task(id: (page == nil ? "" : app.path + "|") + "\(platform)|\(buildKey)|\(running?.key ?? "idle")") {
-      guard !isMacos else { return }
+      guard archive == nil, !isMacos else { return }
       if running == nil {
         checks.check(workspace: app.path, builds: [platform: buildKey])
       } else {
@@ -181,15 +199,17 @@ struct BuildSheet: View {
       }
       Spacer(minLength: Space.sm)
       if !isMacos {
-        Button {
-          actions.runApp(app, platform: platform)
-        } label: {
-          Label(app.lastBuilds?.build(for: platform)?.status == "failed" ? "Rebuild" : "Run", systemImage: "play.fill")
+        if archive == nil {
+          Button {
+            actions.runApp(app, platform: platform)
+          } label: {
+            Label(app.lastBuilds?.build(for: platform)?.status == "failed" ? "Rebuild" : "Run", systemImage: "play.fill")
+          }
+          .buttonStyle(.stim(.primary, .regular))
+          .disabled(busy)
+          .help("stim \(platform) with no options: the default slot and configuration; builds if needed, installs and launches")
+          checkButton
         }
-        .buttonStyle(.stim(.primary, .regular))
-        .disabled(busy)
-        .help("stim \(platform) with no options: the default slot and configuration; builds if needed, installs and launches")
-        checkButton
         Button("Open in logs panel") {
           if let query = run.flatMap({
             LogQuery.build(platform: platform, slot: $0.slot, startedAt: $0.startedAt, finishedAt: $0.finishedAt)
@@ -199,7 +219,7 @@ struct BuildSheet: View {
           }
         }
         .buttonStyle(.stim())
-        .disabled(run == nil || run?.startedDate == nil)
+        .disabled(logsExpired || !readsServer || run == nil || run?.startedDate == nil)
       }
       Button("Done") { dismiss() }
         .buttonStyle(.stim())
@@ -246,7 +266,7 @@ struct BuildSheet: View {
                     )
                     .monospacedDigit()
                     if let date = run.last?.endedAt ?? run.startedDate {
-                      Text(Format.age(context.date.timeIntervalSince(date)))
+                      Text(Format.age((fixtureDate ?? context.date).timeIntervalSince(date)))
                     }
                   }
                   .font(.stim(.caption)).foregroundStyle(Palette.tertiary)
@@ -275,13 +295,22 @@ private struct BuildRunDetail: View {
   var cli: Task<StimCLI, Never>
   var env: Workspace
   var run: BuildRun
+  var archive: ArchivedWorkspace?
+  var logsExpired: Bool
+  var readsServer: Bool
   var dismiss: () -> Void
   @State private var query: LogQuery?
 
-  init(cli: Task<StimCLI, Never>, env: Workspace, run: BuildRun, dismiss: @escaping () -> Void) {
+  init(
+    cli: Task<StimCLI, Never>, env: Workspace, run: BuildRun, archive: ArchivedWorkspace?, logsExpired: Bool, readsServer: Bool,
+    dismiss: @escaping () -> Void
+  ) {
     self.cli = cli
     self.env = env
     self.run = run
+    self.archive = archive
+    self.logsExpired = logsExpired
+    self.readsServer = readsServer
     self.dismiss = dismiss
     _query = State(
       initialValue: .build(platform: run.platform, slot: run.slot, startedAt: run.startedAt, finishedAt: run.finishedAt))
@@ -359,10 +388,19 @@ private struct BuildRunDetail: View {
       }
       if query != nil {
         section("Output") {
-          LogsView(cli: cli, env: env, query: Binding(get: { query! }, set: { query = $0 }), moment: .constant(nil))
+          if logsExpired {
+            InlineEmpty("Logs expired")
+          } else if !readsServer {
+            InlineEmpty("Archived logs are read through stim-server.")
+          } else {
+            LogsView(
+              cli: cli, env: archive == nil ? env : nil, query: Binding(get: { query! }, set: { query = $0 }),
+              moment: .constant(nil), archive: archive
+            )
             .id(run.id)
             .frame(height: 320)
             .clipShape(RoundedRectangle(cornerRadius: Radius.control))
+          }
         }
       }
     }

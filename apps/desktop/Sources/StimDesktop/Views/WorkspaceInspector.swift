@@ -12,48 +12,59 @@ struct Inspector: View {
   var reportsBundles: Bool
   var openLogs: (LogQuery) -> Void
   var openBuild: (BuildSheetSelection) -> Void
-
-  private var agentSessions: [AgentSession] { AgentSession.associated(agents: env.agents, endedAgents: env.endedAgents) }
+  var archive: ArchivedPage? = nil
 
   var body: some View {
     ScrollView {
       VStack(alignment: .leading, spacing: Space.xxxl) {
-        if env.runPlatforms.contains(where: { $0 == "ios" || $0 == "android" }) || env.macos != nil {
-          BuildSection(cli: cli, env: env, openLogs: openLogs, openBuild: openBuild)
+        if let archive {
+          ArchiveStatusSection(page: archive)
+        }
+        if archive != nil || env.runPlatforms.contains(where: { $0 == "ios" || $0 == "android" }) || env.macos != nil {
+          BuildSection(cli: cli, env: env, openLogs: openLogs, openBuild: openBuild, readOnly: archive != nil)
             .tutorialAnchor(.buildSection, workspace: env.path)
             .id(env.path)
         }
 
-        ResourcesSection(env: env, machine: machine, history: history, sampled: usage)
+        if archive == nil {
+          ResourcesSection(env: env, machine: machine, history: history, sampled: usage)
 
-        MetroLogsSection(
-          env: env, reportsBundles: reportsBundles,
-          openLogs: {
+          MetroLogsSection(
+            env: env, reportsBundles: reportsBundles,
+            openLogs: {
+              var query = LogQuery()
+              query.sources = [.metro]
+              openLogs(query)
+            })
+
+        }
+        VStack(alignment: .leading, spacing: Space.md) {
+          HStack {
+            SectionLabel(title: archive == nil ? "App / native logs" : "Logs")
+            Spacer(minLength: Space.sm)
+            if archive?.logsExpired != true {
+              Button("Show logs") {
+                var query = LogQuery()
+                if archive == nil { query.sources = [.client, .device] }
+                openLogs(query)
+              }.buttonStyle(.stim()).fixedSize()
+            }
+          }
+          if archive?.logsExpired == true {
+            InlineEmpty("Logs expired")
+          } else if archive == nil {
+            Text("App runtime and device output").foregroundStyle(Palette.secondary)
+          }
+        }
+        WorkspaceWorkSection(
+          env: env, merged: archive?.merged, archive: archive,
+          openActions: {
             var query = LogQuery()
-            query.sources = [.metro]
+            query.sources = [.agent]
             openLogs(query)
           })
 
-        VStack(alignment: .leading, spacing: Space.md) {
-          HStack {
-            SectionLabel(title: "App / native logs")
-            Spacer(minLength: Space.sm)
-            Button("Show logs") {
-              var query = LogQuery()
-              query.sources = [.client, .device]
-              openLogs(query)
-            }
-            .buttonStyle(.stim())
-            .fixedSize()
-          }
-          Text("App runtime and device output").foregroundStyle(Palette.secondary)
-        }
-
-        if !agentSessions.isEmpty {
-          AgentSessionsSection(agents: agentSessions)
-        }
-
-        let project = stats.value?.project.flatMap { $0.ios != nil || $0.android != nil ? $0 : nil }
+        let project = archive == nil ? stats.value?.project.flatMap { $0.ios != nil || $0.android != nil ? $0 : nil } : nil
         if project != nil || stats.error != nil {
           VStack(alignment: .leading, spacing: Space.md) {
             SectionLabel(title: "Build cache \u{00B7} project")
@@ -370,7 +381,7 @@ struct WorktreeInspector: View {
           }
           Text("App runtime and device output").foregroundStyle(Palette.secondary)
         }
-        if !page.agents.isEmpty { AgentSessionsSection(agents: page.agents) }
+        WorkspaceWorkSection(env: page.apps[0], sessions: page.agents)
         if !cacheEntries.isEmpty || stats.values.contains(where: { $0.error != nil }) {
           VStack(alignment: .leading, spacing: Space.md) {
             SectionLabel(title: "Build cache \u{00B7} project")
@@ -416,6 +427,47 @@ struct WorktreeInspector: View {
       }
     } else {
       section
+    }
+  }
+}
+
+struct WorkspaceWorkSection: View {
+  var env: Workspace
+  var merged: Bool? = nil
+  var sessions: [AgentSession]? = nil
+  var archive: ArchivedPage? = nil
+  var openActions: () -> Void = {}
+
+  var body: some View {
+    let agents = sessions ?? AgentSession.associated(agents: env.agents, endedAgents: env.endedAgents)
+    if env.worktree != nil || !agents.isEmpty {
+      VStack(alignment: .leading, spacing: Space.md) {
+        SectionLabel(title: "Work")
+        if let worktree = env.worktree {
+          GitPopover(
+            worktree: worktree, reviewChanges: {}, readOnly: true,
+            branchFallback: archive?.workspace.names.title ?? "Detached HEAD")
+          if merged ?? (worktree.git?.mergedInto != nil || worktree.merged == true), worktree.pullRequest?.state != "merged" {
+            Pill("Merged", tone: .success)
+          }
+        }
+        if let archive {
+          if let head = archive.record.worktree.head {
+            Text("Head \(head.prefix(12))").font(.stim(.footnote, mono: true)).textSelection(.enabled)
+          }
+          if let subject = archive.record.worktree.subject {
+            Text(subject).foregroundStyle(Palette.secondary).textSelection(.enabled)
+          }
+        }
+        if !agents.isEmpty { AgentSessionsSection(agents: agents, showsDuration: archive != nil) }
+        if let actions = archive?.retention.first(where: { $0.title == "Agent actions" }) {
+          if actions.expired {
+            InlineEmpty("Agent actions expired")
+          } else {
+            Button("Show agent actions", action: openActions).buttonStyle(.stim())
+          }
+        }
+      }
     }
   }
 }

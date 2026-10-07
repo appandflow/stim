@@ -13,6 +13,12 @@ struct WorkspaceHeaderLine: View {
   var openBuild: (BuildSheetSelection) -> Void
   @EnvironmentObject private var actions: ActionCenter
 
+  #if DEBUG
+    @Environment(\.fixtureDate) private var fixtureDate
+  #else
+    private var fixtureDate: Date? { nil }
+  #endif
+
   var body: some View {
     let apps = page?.apps ?? [env]
     let active = page.flatMap { actions.active(for: $0.actionKey) } ?? apps.compactMap { actions.active(for: $0.path) }.first
@@ -22,9 +28,10 @@ struct WorkspaceHeaderLine: View {
       TimelineView(
         (page == nil ? env.build : running).flatMap { $0.isRunning ? .buildSeconds($0) : nil } ?? .periodic(from: .now, by: 15)
       ) { context in
-        let lead = page?.lead(now: context.date) ?? env
+        let now = fixtureDate ?? context.date
+        let lead = page?.lead(now: now) ?? env
         StageLine(
-          cli: cli, env: lead, now: context.date,
+          cli: cli, env: lead, now: now,
           inlineBuild: page == nil ? nil : (lead.build?.isRunning == true ? lead.build : running),
           inlineWorkspace: page == nil ? nil : (lead.build?.isRunning == true ? lead.path : buildingApp?.path),
           gitWorkspace: page?.apps[0].path,
@@ -223,25 +230,29 @@ struct GitChipButton: View {
 struct GitPopover: View {
   var worktree: WorktreeInfo
   var reviewChanges: () -> Void
+  var readOnly = false
+  var branchFallback = "Detached HEAD"
 
   var body: some View {
     VStack(alignment: .leading, spacing: Space.md) {
       HStack(spacing: Space.sm) {
         Image(systemName: "arrow.triangle.branch").foregroundStyle(Palette.secondary)
-        Text(worktree.branch ?? "Detached HEAD").font(.stim(.body, weight: .semibold)).textSelection(.enabled)
+        Text(worktree.branch ?? branchFallback).font(.stim(.body, weight: .semibold)).textSelection(.enabled)
       }
       if let git = worktree.git {
         Text(git.upstream.map { "Tracks \($0)" } ?? "No upstream").foregroundStyle(Palette.secondary)
         Text(git.summary == "Clean" ? "No uncommitted or unpushed changes" : git.summary).foregroundStyle(Palette.secondary)
       }
-      Button("Review changes", systemImage: "doc.text.magnifyingglass", action: reviewChanges)
-        .buttonStyle(.stim())
+      if !readOnly {
+        Button("Review changes", systemImage: "doc.text.magnifyingglass", action: reviewChanges)
+          .buttonStyle(.stim())
+      }
       if let pull = worktree.pullRequest {
         Rectangle().fill(Palette.border).frame(height: 1)
         HStack(spacing: Space.sm) {
           Text("PR #\(pull.number)").font(.stim(.callout, weight: .semibold))
             .foregroundStyle(Color(GitChip.tone(ofPullRequest: pull.state)))
-          Pill(pull.state.capitalized, size: .small)
+          if !pull.state.isEmpty { Pill(pull.state.capitalized, size: .small) }
         }
         Text(pull.title).fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
         if let checks = GitChip.checks(pull.checks) {
@@ -261,8 +272,9 @@ struct GitPopover: View {
       }
     }
     .font(.stim(.callout))
-    .padding(Space.lg)
-    .frame(width: 320, alignment: .leading)
+    .padding(readOnly ? 0 : Space.lg)
+    .frame(width: readOnly ? nil : 320, alignment: .leading)
+    .frame(maxWidth: readOnly ? .infinity : nil, alignment: .leading)
   }
 }
 

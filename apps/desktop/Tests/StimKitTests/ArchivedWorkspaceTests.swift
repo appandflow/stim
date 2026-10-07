@@ -39,7 +39,7 @@ import Testing
     let archive = try #require(decoded.archived?.first)
     #expect(archive.removedBy == "future-cleanup")
     #expect(archive.removedByLabel == "future cleanup")
-    #expect(archive.title == "Example")
+    #expect(archive.title == "app")
     #expect(archive.builds.count == 0)
     #expect(archive.builds.lastErrorCount == 0)
     #expect(archive.builds.last == nil)
@@ -84,6 +84,44 @@ import Testing
     #expect(rows.first?.id == "archive:newer")
     options.hiddenProjects = ["/work/example"]
     #expect(sidebarTrees(environments: [], unprovisioned: [], project: project, options: options, archived: archives).count == 1)
+  }
+
+  @Test func archivedMultiAppWorktreesUseRepositorySectionsAndPreserveRepeatedRuns() throws {
+    var mobile = try #require(payload().archived?.first)
+    mobile.projectRoot = "/work/stim/.worktrees/search/apps/mobile"
+    mobile.project = "mobile"
+    mobile.worktree.repository = "/work/stim"
+    var desktop = mobile
+    desktop.id = "desktop"
+    desktop.projectRoot = "/work/stim/.worktrees/search/apps/desktop"
+    desktop.project = "desktop"
+    var older = mobile
+    older.id = "older-mobile"
+    older.removedAt = "2026-10-01T12:00:00Z"
+    var unknown = mobile
+    unknown.id = "gone"
+    unknown.projectRoot = "/elsewhere/gone/apps/mobile"
+    unknown.worktree.branch = nil
+    unknown.worktree.repository = nil
+    var options = SidebarOptions()
+    options.status = .archived
+    let trees = sidebarTrees(
+      environments: [], unprovisioned: [], project: { Project(fallbackFor: $0) },
+      options: options, archived: [older, mobile, unknown, desktop])
+    #expect(trees.map { $0.summary.project.root } == ["/elsewhere/gone", "/work/stim"])
+    #expect(trees[0].entries.first?.sortName == "gone")
+    let stim = trees[1]
+    #expect(stim.entries.count == 2)
+    let group = try #require(stim.entries.first)
+    guard case .archivedGroup(let apps) = group else {
+      Issue.record("Mobile and desktop must share a worktree row")
+      return
+    }
+    #expect(Set(apps.map(\.project)) == ["mobile", "desktop"])
+    #expect(stim.entries.last?.id == "archive:older-mobile")
+    let page = WorktreePage.groups(environments: apps.map { ArchivedPage(archive: $0, now: Date()).workspace })
+    #expect(page.count == 1 && page[0].isUnified)
+    #expect(page[0].projects == ["apps/desktop", "apps/mobile"])
   }
 
   @Test func rowNamesRemovalAgeAndEarlierRunsDistinguishReusedPaths() throws {

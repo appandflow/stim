@@ -335,6 +335,7 @@ struct RootView: View {
 
   private var showsWorkspace: Bool {
     if case .environment = selection { return true }
+    if case .archived = selection { return true }
     return false
   }
 
@@ -600,8 +601,12 @@ struct RootView: View {
       }
     case .archived(let id):
       if let archive = store.payload?.archived?.first(where: { $0.id == id }) {
-        ArchivedDetail(archive: archive, environments: store.payload?.environments ?? [], selection: $selection)
-          .id(id)
+        WorkspaceDetail.archived(
+          archive, cli: cli, statsReader: statsReader, environments: store.payload?.environments ?? [],
+          inspector: inspector, inspectorWidth: $inspectorWidth, logQuery: $logQuery,
+          openReplacement: { selection = .environment($0) }
+        )
+        .id(id)
       }
     case .worktree(let path):
       if let worktree = store.payload?.unprovisionedWorktrees?.first(where: { $0.path == path }) {

@@ -20,10 +20,15 @@
 
   enum PlaygroundScreen: String, CaseIterable, Identifiable {
     case archivedSidebar = "Archived sidebar"
+    case realArchiveSidebar = "Real archive sidebar"
+    case realArchiveWorkspace = "Real archive workspace"
+    case realArchiveBuildSheet = "Real archive build sheet"
+    case workspace = "Workspace"
     case archivedWorkspace = "Archived workspace"
     case notifications = "Notifications"
     case builds = "Builds"
     case buildSheet = "Build sheet"
+    case archivedBuildSheet = "Archived build sheet"
     case simulator = "Simulator controls"
     case hostedIos = "Hosted iOS"
     case hostedAndroid = "Hosted Android"
@@ -35,7 +40,9 @@
 
     var scenarios: [PlaygroundScenario] {
       switch self {
-      case .archivedSidebar, .archivedWorkspace: return [.ready]
+      case .archivedSidebar, .archivedBuildSheet, .realArchiveSidebar, .realArchiveWorkspace, .realArchiveBuildSheet:
+        return [.ready]
+      case .workspace, .archivedWorkspace: return [.ready, .empty, .error]
       case .notifications: return [.ready, .empty, .longText, .largeData]
       case .builds: return PlaygroundScenario.allCases
       case .buildSheet: return [.ready, .loading, .error, .longText, .largeData]
@@ -64,6 +71,7 @@
           content(fixtures)
             .environmentObject(actions)
             .environmentObject(fixtures.checks)
+            .environment(\.fixtureDate, fixtureDate)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if let failure {
           EmptyState(title: "Fixture unavailable", message: failure)
@@ -78,13 +86,53 @@
       .background(Palette.background)
       .onAppear {
         do {
-          fixtures = try PlaygroundFixtures.make(scenario, now: fixtureDate)
+          fixtures =
+            try [.realArchiveSidebar, .realArchiveWorkspace, .realArchiveBuildSheet].contains(screen)
+            ? PlaygroundFixtures.realArchive(now: fixtureDate) : PlaygroundFixtures.make(scenario, now: fixtureDate)
           actions = ActionCenter(fixtureAction: { action = "Simulated: \($0). No command was run." })
           if scenario == .empty { workspace = nil }
         } catch {
           failure = error.localizedDescription
         }
       }
+    }
+
+    private func workspacePage(_ fixtures: PlaygroundFixtures) -> WorkspaceDetail {
+      let cli = Task { StimCLI(environment: [:]) }
+      let reader = StatsReader(cli: cli, server: { nil })
+      var view = WorkspaceDetail.archived(
+        fixtures.archive, cli: cli, statsReader: reader, environments: [fixtures.environment])
+      view.fixtureDate = fixtureDate
+      view.fixtureDetail = scenario == .empty ? nil : fixtures.archiveDetail
+      view.readsServer = false
+      if screen == .workspace {
+        view.archive = nil
+        view.env =
+          ArchivedPage(archive: fixtures.archive, detail: scenario == .empty ? nil : fixtures.archiveDetail, now: fixtureDate)
+          .workspace
+        view.page = WorktreePage.groups(environments: [view.env])[0]
+      }
+      return view
+    }
+
+    private func sidebarArchives(_ fixtures: PlaygroundFixtures) -> [ArchivedWorkspace] {
+      if screen == .realArchiveSidebar { return [fixtures.archive] }
+      var mobile = fixtures.archive
+      mobile.projectRoot = "/Playground/stim/.worktrees/feature-search/apps/mobile"
+      mobile.project = "mobile"
+      mobile.worktree.repository = "/Playground/stim"
+      var desktop = mobile
+      desktop.id = "playground-desktop"
+      desktop.projectRoot = "/Playground/stim/.worktrees/feature-search/apps/desktop"
+      desktop.project = "desktop"
+      var gone = mobile
+      gone.id = "playground-gc"
+      gone.projectRoot = "/Playground/.claude/worktrees/missing-facts/apps/mobile"
+      gone.worktree.repository = nil
+      gone.worktree.branch = nil
+      gone.worktree.pullRequest?.state = "draft"
+      gone.worktree.merged = nil
+      return [mobile, desktop, gone]
     }
 
     private func scopeTitle(_ scope: SettingScope) -> String {
@@ -98,16 +146,27 @@
 
     @ViewBuilder private func content(_ fixtures: PlaygroundFixtures) -> some View {
       switch screen {
-      case .archivedSidebar:
+      case .archivedSidebar, .realArchiveSidebar:
         List {
-          DisclosureGroup("Example", isExpanded: .constant(true)) {
-            ArchivedRow(archive: fixtures.archive, now: fixtureDate)
+          let archives = sidebarArchives(fixtures)
+          var options: SidebarOptions {
+            var value = SidebarOptions()
+            value.status = .archived
+            return value
+          }
+          let trees = sidebarTrees(
+            environments: [], unprovisioned: [], project: { Project(fallbackFor: $0) },
+            options: options, archived: archives)
+          ForEach(trees, id: \.summary.project) { tree in
+            DisclosureGroup(tree.summary.project.name, isExpanded: .constant(true)) {
+              ForEach(tree.entries) { entry in
+                EntryRow(entry: entry, subtitle: nil, showsFolder: true, showsGit: true, selection: nil, openLogs: { _ in })
+              }
+            }
           }
         }.scrollContentBackground(.hidden).background(Palette.sidebar)
-      case .archivedWorkspace:
-        ArchivedDetail(
-          archive: fixtures.archive, environments: [fixtures.environment], selection: .constant(nil), fixtureDate: fixtureDate,
-          readsServer: false)
+      case .workspace, .archivedWorkspace, .realArchiveWorkspace:
+        workspacePage(fixtures)
       case .notifications:
         InboxView(inbox: fixtures.inbox) { _ in action = "Selected notification logs (fixture only)." }
       case .builds:
@@ -123,7 +182,14 @@
         BuildSheet(
           cli: Task { StimCLI(environment: ProcessInfo.processInfo.environment) }, env: fixtures.environment,
           selection: BuildSheetSelection(workspace: fixtures.environment.path, platform: "ios"),
-          openLogs: { _ in action = "Selected build logs panel (fixture only)." })
+          openLogs: { _ in action = "Selected build logs panel (fixture only)." }, readsServer: false)
+      case .archivedBuildSheet, .realArchiveBuildSheet:
+        let adapted = ArchivedPage(archive: fixtures.archive, detail: fixtures.archiveDetail, now: fixtureDate)
+        BuildSheet(
+          cli: Task { StimCLI(environment: [:]) }, env: adapted.workspace,
+          selection: BuildSheetSelection(workspace: adapted.workspace.path, platform: "ios"),
+          openLogs: { _ in action = "Selected archived build logs (fixture only)." }, archive: fixtures.archive,
+          logsExpired: adapted.logsExpired, readsServer: false)
       case .hostedIos:
         HostedDeviceGallery(scenario: scenario, platform: "ios")
       case .hostedAndroid:
@@ -152,5 +218,8 @@
         EmptyView()
       }
     }
+  }
+  extension EnvironmentValues {
+    @Entry var fixtureDate: Date? = nil
   }
 #endif

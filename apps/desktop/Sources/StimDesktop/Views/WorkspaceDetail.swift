@@ -45,8 +45,46 @@ struct WorkspaceDetail: View {
   var archived: [ArchivedWorkspace] = []
   var openArchive: (String) -> Void = { _ in }
 
+  var archive: ArchivedWorkspace? = nil
+  var archiveEnvironments: [Workspace] = []
+  var openReplacement: (String) -> Void = { _ in }
+  @State private var archiveNow = Date()
+  @State private var archiveDetail: ArchiveDetail?
+  @State private var archiveError: String?
+  @State private var confirmingArchiveDelete = false
+  #if DEBUG
+    var fixtureDate: Date? = nil
+    var fixtureDetail: ArchiveDetail? = nil
+    var readsServer = true
+  #else
+    private var fixtureDate: Date? { nil }
+    private var fixtureDetail: ArchiveDetail? { nil }
+    private var readsServer: Bool { true }
+  #endif
+
+  private var archivedPage: ArchivedPage? {
+    archive.map { ArchivedPage(archive: $0, detail: fixtureDetail ?? archiveDetail, now: fixtureDate ?? archiveNow) }
+  }
+
+  private var workspace: Workspace { archivedPage?.workspace ?? env }
+
+  static func archived(
+    _ archive: ArchivedWorkspace, cli: Task<StimCLI, Never>, statsReader: StatsReader,
+    environments: [Workspace] = [], inspector: InspectorPresentation = .column,
+    inspectorWidth: Binding<CGFloat> = .constant(320),
+    logQuery: Binding<LogQuery> = .constant(LogQuery()), openReplacement: @escaping (String) -> Void = { _ in }
+  ) -> Self {
+    let adapted = ArchivedPage(archive: archive, now: Date())
+    return Self(
+      cli: cli, statsReader: statsReader, env: adapted.workspace,
+      page: WorktreePage.groups(environments: [adapted.workspace])[0], selectedPath: archive.projectRoot,
+      sampled: [:], usage: nil, machine: nil, reportsBundles: false, history: OwnerHistory(),
+      inspector: inspector, inspectorWidth: inspectorWidth, focusedID: .constant(nil), logQuery: logQuery,
+      logWorkspacePath: .constant(nil), archive: archive, archiveEnvironments: environments, openReplacement: openReplacement)
+  }
+
   var body: some View {
-    let devices = env.orderedDevices
+    let devices = workspace.orderedDevices
     let focused = devices.first { $0.id == focusedID } ?? devices.first
     HStack(spacing: 0) {
       content(devices: devices, focused: focused)
@@ -76,10 +114,10 @@ struct WorkspaceDetail: View {
           .shadow(color: .black.opacity(0.25), radius: 16)
       }
     }
-    .navigationTitle(env.names.title)
+    .navigationTitle(workspace.names.title)
     .sheet(item: $viewing) { viewed in
       DeviceViewer(
-        cli: cli, env: page.apps.first { $0.path == viewed.workspace } ?? env, deviceID: viewed.id, machine: machine,
+        cli: cli, env: page.apps.first { $0.path == viewed.workspace } ?? workspace, deviceID: viewed.id, machine: machine,
         windowSize: windowSize,
         revealInLogs: { slot, at in
           logWorkspacePath = viewed.workspace
@@ -93,19 +131,53 @@ struct WorkspaceDetail: View {
       Group {
         if page.isUnified {
           BuildSheet(
-            cli: cli, env: env, selection: selection, page: page,
+            cli: cli, env: workspace, selection: selection, page: page,
             openLogs: openBuildLogs,
             openAppLogs: { app, query in
               logWorkspacePath = app.path
               openBuildLogs(query)
             })
         } else {
-          BuildSheet(cli: cli, env: env, selection: selection, openLogs: openBuildLogs)
+          BuildSheet(
+            cli: cli, env: workspace, selection: selection, openLogs: openBuildLogs, archive: archive,
+            logsExpired: archivedPage?.logsExpired ?? false, readsServer: readsServer)
         }
       }
       .environmentObject(actions)
       .environmentObject(checks)
       .environment(\.tutorialHint, tutorialHint)
+    }
+    .confirmationDialog(
+      "Delete \(archive?.title ?? "archive") (\(archive?.removedLabel(now: fixtureDate ?? Date()) ?? ""))?",
+      isPresented: $confirmingArchiveDelete, titleVisibility: .visible
+    ) {
+      Button("Delete permanently", role: .destructive) {
+        if let archive {
+          actions.run(
+            "Delete \(archive.title)", steps: [archive.deleteCommand(cwd: NSHomeDirectory())], key: ActionCenter.machineKey)
+        }
+      }
+    } message: {
+      Text("This permanently deletes this archive's logs, recordings, agent actions and record.")
+    }
+    .task(id: archive?.id) {
+      guard archive != nil, fixtureDate == nil else { return }
+      while !Task.isCancelled {
+        archiveNow = Date()
+        do { try await Task.sleep(for: .seconds(30)) } catch { return }
+      }
+    }
+    .task(id: "\(archive?.id ?? "")|\(server.isOpen)") {
+      guard readsServer, let archive, server.isOpen, let client = server.client else { return }
+      do {
+        let detail = try await client.archiveDetail(ArchiveDetailRequest(archive: archive.id))
+        guard !Task.isCancelled else { return }
+        archiveDetail = detail
+        archiveError = nil
+      } catch {
+        guard !Task.isCancelled else { return }
+        archiveError = archivedReadError(error, content: "build history")
+      }
     }
     .onQuitRequested {
       viewing = nil
@@ -120,6 +192,7 @@ struct WorkspaceDetail: View {
       }
     }
     .task(id: page.apps.map { "\($0.path)|\($0.finishedRunsStamp)" }.joined(separator: "\n")) {
+      guard readsServer, archive == nil else { return }
       if page.isUnified {
         for app in page.apps {
           let path = app.path
@@ -131,7 +204,7 @@ struct WorkspaceDetail: View {
           groupStats[path] = fetched
         }
       } else {
-        let path = env.path
+        let path = workspace.path
         if stats?.path == path { try? await Task.sleep(for: .seconds(1)) }
         let result = await Result.awaiting { try await statsReader.project(workspace: path) }
         guard !Task.isCancelled else { return }
@@ -145,33 +218,41 @@ struct WorkspaceDetail: View {
   private func content(devices: [DeviceRef], focused: DeviceRef?) -> some View {
     VStack(spacing: 0) {
       HStack(spacing: Space.md) {
-        WorkspaceHeaderLine(
-          cli: cli, env: env, page: page.isUnified ? page : nil,
-          openAppLogs: { app in
-            logWorkspacePath = app.path
-            logQuery.errorsOnly = false
-            showsLogs = true
-          },
-          openLogs: {
-            logQuery.errorsOnly = false
-            showsLogs = true
-          },
-          openBuild: { buildSheet = $0 }
-        )
-        if !showsLogs, tutorialHint?.path == env.path,
+        if let archive, let archivedPage {
+          Text(archivedPage.statusLine).font(.stim(.callout, weight: .semibold))
+          Spacer()
+          Button("Delete", role: .destructive) { confirmingArchiveDelete = true }
+            .buttonStyle(.stim(.destructive)).disabled(actions.active(for: ActionCenter.machineKey) != nil)
+            .help("Delete \(archive.title) permanently")
+        } else {
+          WorkspaceHeaderLine(
+            cli: cli, env: workspace, page: page.isUnified ? page : nil,
+            openAppLogs: { app in
+              logWorkspacePath = app.path
+              logQuery.errorsOnly = false
+              showsLogs = true
+            },
+            openLogs: {
+              logQuery.errorsOnly = false
+              showsLogs = true
+            },
+            openBuild: { buildSheet = $0 }
+          )
+        }
+        if !showsLogs, tutorialHint?.path == workspace.path,
           ["logs", "refresh"].contains(tutorialHint?.step ?? "")
         {
-          LogsToggleButton(isShown: false, errors: env.logs?.errorsSinceMarker ?? 0) {
+          LogsToggleButton(isShown: false, errors: workspace.logs?.errorsSinceMarker ?? 0) {
             showsLogs = true
           }
-          .tutorialAnchor(.logsTab, workspace: env.path)
+          .tutorialAnchor(.logsTab, workspace: workspace.path)
         }
       }
       .padding(.horizontal, Space.xxl)
       .padding(.vertical, Space.md)
       let earlier = ArchivedWorkspace.newestFirst(
         archived.filter { archive in page.apps.contains { archive.isEarlierRun(of: $0.path) } })
-      if !earlier.isEmpty {
+      if archive == nil && !earlier.isEmpty {
         FlowLayout(spacing: Space.md) {
           Text("Earlier runs").foregroundStyle(Palette.secondary)
           ForEach(earlier) { archive in
@@ -184,17 +265,33 @@ struct WorkspaceDetail: View {
       Rectangle().fill(Palette.border).frame(height: 1)
       VStack(spacing: 0) {
         Group {
-          if page.isUnified { unifiedCanvas } else { canvas(devices: devices, focused: focused) }
+          if let archive, let archivedPage {
+            archiveCanvas(archive: archive, adapted: archivedPage)
+          } else if page.isUnified {
+            unifiedCanvas
+          } else {
+            canvas(devices: devices, focused: focused)
+          }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         if showsLogs {
           Rectangle().fill(Palette.border).frame(height: 1).overlay { logsResizeHandle }
-          LogsView(
-            cli: cli, env: page.isUnified ? logsApp : env, query: $logQuery, moment: $logMoment,
-            page: page.isUnified ? page : nil, selectedApp: $logWorkspacePath
-          )
-          .tutorialAnchor(.logsTab, workspace: env.path)
-          .frame(height: Self.clampedLogsHeight(logsHeight, contentHeight: contentHeight))
+          Group {
+            if archivedPage?.logsExpired == true {
+              InlineEmpty("Logs expired").padding(Space.xxl)
+            } else if !readsServer {
+              InlineEmpty("Archived logs are read through stim-server.").padding(Space.xxl)
+            } else {
+              LogsView(
+                cli: cli, env: archive == nil ? (page.isUnified ? logsApp : workspace) : nil, query: $logQuery,
+                moment: $logMoment,
+                page: page.isUnified ? page : nil, selectedApp: $logWorkspacePath, archive: archive
+              )
+              .tutorialAnchor(.logsTab, workspace: workspace.path)
+              .frame(height: Self.clampedLogsHeight(logsHeight, contentHeight: contentHeight))
+            }
+          }
+
         }
       }
       .onGeometryChange(for: CGFloat.self) {
@@ -255,7 +352,7 @@ struct WorkspaceDetail: View {
   }
 
   private var logsApp: Workspace {
-    page.apps.first { $0.path == logWorkspacePath } ?? page.apps.first { $0.path == selectedPath } ?? env
+    page.apps.first { $0.path == logWorkspacePath } ?? page.apps.first { $0.path == selectedPath } ?? workspace
   }
 
   @ViewBuilder private var inspectorPanel: some View {
@@ -271,11 +368,11 @@ struct WorkspaceDetail: View {
       ).frame(maxHeight: .infinity)
     } else {
       Inspector(
-        cli: cli, env: env, stats: stats.flatMap { $0.path == env.path ? $0.fetched : nil } ?? Fetched(),
+        cli: cli, env: workspace, stats: stats.flatMap { $0.path == workspace.path ? $0.fetched : nil } ?? Fetched(),
         machine: machine, usage: usage, history: history,
         reportsBundles: reportsBundles,
         openLogs: openBuildLogs,
-        openBuild: { buildSheet = $0 }
+        openBuild: { buildSheet = $0 }, archive: archivedPage
       )
       .frame(maxHeight: .infinity)
     }
@@ -287,13 +384,43 @@ struct WorkspaceDetail: View {
     showsLogs = true
   }
 
+  private func archiveCanvas(archive: ArchivedWorkspace, adapted: ArchivedPage) -> some View {
+    ScrollView {
+      VStack(alignment: .leading, spacing: Space.xxl) {
+        if let path = adapted.replacedBy {
+          Button("Replaced by \(archiveEnvironments.first(where: { $0.path == path })?.names.title ?? path)") {
+            openReplacement(path)
+          }.buttonStyle(.link)
+        }
+        SectionLabel(title: "Devices")
+        if adapted.recordingsExpired {
+          InlineEmpty("Recordings expired")
+        } else if readsServer {
+          ArchivedReplays(archive: archive.id, recordings: archiveDetail?.recordings)
+            .id("\(archive.id)|\(adapted.recordings.map(\.id).joined(separator: ","))")
+          if archiveDetail?.recordings.isEmpty == true { InlineEmpty("No recordings retained") }
+        } else {
+          ForEach(adapted.recordings) { recording in
+            Card {
+              VStack(alignment: .leading, spacing: Space.md) {
+                SectionLabel(title: "Replay \u{00B7} \(platformName(recording.platform)) \u{00B7} \(recording.slot)")
+                InlineEmpty("Recorded footage is read through stim-server.")
+              }.padding(Space.xxl)
+            }
+          }
+        }
+        if let archiveError { Text(archiveError).foregroundStyle(Palette.secondary) }
+      }.padding(Space.xxl).frame(maxWidth: .infinity, alignment: .leading)
+    }
+  }
+
   private func canvas(devices: [DeviceRef], focused: DeviceRef?) -> some View {
     GeometryReader { geo in
       ScrollView {
-        if let macos = env.macos {
-          MacosAppCard(app: macos, workspace: env.path).padding(Space.xxl)
+        if let macos = workspace.macos {
+          MacosAppCard(app: macos, workspace: workspace.path).padding(Space.xxl)
         }
-        if devices.isEmpty && env.macos == nil {
+        if devices.isEmpty && workspace.macos == nil {
           emptyCanvas.frame(maxWidth: .infinity).padding(Space.xxxl)
         } else if !devices.isEmpty {
           let availableWidth = max(0, geo.size.width - Space.xxl * 2)
@@ -360,7 +487,7 @@ struct WorkspaceDetail: View {
 
   private var emptyCanvas: some View {
     TimelineView(.periodic(from: .now, by: 30)) { context in
-      emptyCanvas(stage: env.stage(now: context.date))
+      emptyCanvas(stage: workspace.stage(now: context.date))
     }
   }
 
@@ -387,38 +514,38 @@ struct WorkspaceDetail: View {
       }
       .padding(Space.huge)
       .frame(maxWidth: .infinity, maxHeight: .infinity)
-      .id(env.path)
+      .id(workspace.path)
     }
   }
 
   private func tile(
     _ device: DeviceRef, focused: Bool, cardWidth: CGFloat, cardHeight: CGFloat, owner: Workspace? = nil, project: String? = nil
   ) -> some View {
-    let env = owner ?? env
+    let workspace = owner ?? self.workspace
     let canControl =
       device.isInteractive
       && ((!device.isPhysical && device.hostedMachine == nil)
         || PhysicalScreen(device: device, link: server.link, now: Date()).canControl)
     let viewerAction = canControl ? "Control" : "View"
     let tile = DeviceTile(
-      device: device, screenHeight: 900, workspace: env.path, project: project,
-      build: env.runningBuild(for: device),
-      usage: device.isRunning ? env.usage(of: device, machine: machine) : nil,
-      presence: env.appPresence(device),
+      device: device, screenHeight: 900, workspace: workspace.path, project: project,
+      build: workspace.runningBuild(for: device),
+      usage: device.isRunning ? workspace.usage(of: device, machine: machine) : nil,
+      presence: workspace.appPresence(device),
       showsCovers: true,
       focused: focused,
       viewerAction: viewerAction,
       maxWidth: cardWidth, maxCardHeight: cardHeight,
-      showsScreen: viewing?.id != device.id || viewing?.workspace != env.path
+      showsScreen: viewing?.id != device.id || viewing?.workspace != workspace.path
     )
     return
       tile
-      .tutorialAnchor(.deviceTile, workspace: env.path)
+      .tutorialAnchor(.deviceTile, workspace: workspace.path)
       .allowsHitTesting(tile.showsStoppedBar)
       .background {
         Button {
           focusedID = device.id
-          viewing = ViewedDevice(id: device.id, workspace: env.path)
+          viewing = ViewedDevice(id: device.id, workspace: workspace.path)
         } label: {
           Color.clear.contentShape(Rectangle())
         }
