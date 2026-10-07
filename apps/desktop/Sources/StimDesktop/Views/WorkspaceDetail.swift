@@ -219,12 +219,16 @@ struct WorkspaceDetail: View {
   private func content(devices: [DeviceRef], focused: DeviceRef?) -> some View {
     VStack(spacing: 0) {
       HStack(spacing: Space.md) {
-        if let archive, let archivedPage {
+        if archive != nil, let archivedPage {
           Text(archivedPage.statusLine).font(.stim(.callout, weight: .semibold))
+            .help(archivedPage.removedAt.map { $0.formatted(.dateTime.month(.abbreviated).day().hour().minute()) } ?? "")
+          if let used = archivedPage.lastUsedLabel {
+            Text("\u{00B7} \(used)").font(.stim(.footnote)).foregroundStyle(Palette.secondary)
+          }
           Spacer()
           Button("Delete", role: .destructive) { confirmingArchiveDelete = true }
             .buttonStyle(.stim(.destructive)).disabled(actions.active(for: ActionCenter.machineKey) != nil)
-            .help("Delete \(archive.title) permanently")
+            .help("Delete \(archivedPage.record.title) permanently")
         } else {
           WorkspaceHeaderLine(
             cli: cli, env: workspace, page: page.isUnified ? page : nil,
@@ -373,7 +377,8 @@ struct WorkspaceDetail: View {
         machine: machine, usage: usage, history: history,
         reportsBundles: reportsBundles,
         openLogs: openBuildLogs,
-        openBuild: { buildSheet = $0 }, archive: archivedPage
+        openBuild: { buildSheet = $0 }, archive: archivedPage,
+        deleteArchive: { confirmingArchiveDelete = true }
       )
       .frame(maxHeight: .infinity)
     }

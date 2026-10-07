@@ -48,23 +48,23 @@ public struct LastBuild: Decodable, Hashable, Sendable {
     }
   }
 
-  /// A short line for a run that considered offloading and built here, such as `janics-mac-mini busy -> built here`,
-  /// from the first machine `offloadFallback` names; `reason` is the whole of it.
+  /// A plain-language line for a run that considered offloading and built here, such as
+  /// `Built here: janics-mac-mini was busy`, from the first machine `offloadFallback` names; `reason` is the whole of it.
   public var fallbackLine: (text: String, reason: String)? {
     guard let reason = offloadFallback, !reason.isEmpty else { return nil }
     guard let match = try? Regex("^([A-Za-z0-9][A-Za-z0-9.-]*(?::[0-9]{1,5})?): (.+)$").wholeMatch(in: reason),
       let machine = match.output[1].substring, let rest = match.output[2].substring
-    else { return ("offload skipped \u{2192} built here", reason) }
+    else { return ("Built here: offload skipped", reason) }
     let words: [([String], String)] = [
-      (["busy"], "busy"), (["no less loaded"], "no less loaded"), (["capacity unknown"], "too old"),
-      (["Stim build "], "on another Stim build"),
-      (["CPU ", "Xcode ", "simulator SDK ", "CocoaPods ", "JDK "], "toolchain differs"),
-      (["no iPhone simulator ", "no Android SDK", "no NDK ", "no build-tools ", "no platform "], "missing SDK"),
+      (["busy"], "was busy"), (["no less loaded"], "was no less loaded"), (["capacity unknown"], "runs an older stim-server"),
+      (["Stim build "], "was on a different Stim build"),
+      (["CPU ", "Xcode ", "simulator SDK ", "CocoaPods ", "JDK "], "has a different toolchain"),
+      (["no iPhone simulator ", "no Android SDK", "no NDK ", "no build-tools ", "no platform "], "is missing the SDK"),
     ]
     let why =
       words.first { $0.0.contains { rest.hasPrefix($0) } }?.1
-      ?? (rest.contains(" GB free, needs ") ? "low on disk" : "failed")
-    return ("\(machineName(String(machine))) \(why) \u{2192} built here", reason)
+      ?? (rest.contains(" GB free, needs ") ? "is low on disk" : "failed")
+    return ("Built here: \(machineName(String(machine))) \(why)", reason)
   }
 
   public var endedAt: Date? { parseTimestamp(finishedAt ?? startedAt) }

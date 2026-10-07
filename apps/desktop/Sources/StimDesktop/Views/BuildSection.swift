@@ -11,6 +11,7 @@ struct BuildSection: View {
   var openLogs: (LogQuery) -> Void
   var openBuild: (BuildSheetSelection) -> Void
   var readOnly = false
+  var totals: String? = nil
   var onlyPlatform: String? = nil
   var projectSubtitle: String? = nil
   #if DEBUG
@@ -39,6 +40,7 @@ struct BuildSection: View {
   var body: some View {
     VStack(alignment: .leading, spacing: Space.md) {
       if onlyPlatform == nil { SectionLabel(title: "Build") }
+      if let totals { Text(totals).font(.stim(.footnote)).foregroundStyle(Palette.secondary) }
       if let macos = env.macos, onlyPlatform == nil || onlyPlatform == "macos" {
         HStack {
           Text("macOS \(macos.product)").font(.stim(.callout, weight: .semibold))
