@@ -40,7 +40,7 @@ struct DeviceTile: View {
   @State private var isOnscreen = false
   @State private var pixelSizes: [UInt32: CGSize] = [:]
   @State private var frameSizes: [UInt32: CGSize] = [:]
-  @State private var showsDeviceFrame = false
+  @State private var frameRevision = 0
   @State private var screenIDs: [UInt32] = [1]
   @State private var lit: [UInt32: Bool] = [:]
   @State private var folding = false
@@ -82,7 +82,6 @@ struct DeviceTile: View {
     .onDisappear { isOnscreen = false }
     .onChange(of: device.id) { _, _ in
       frameSizes = [:]
-      showsDeviceFrame = false
     }
   }
 
@@ -113,8 +112,8 @@ struct DeviceTile: View {
         }
         if interactive, Self.hasButtons(device) {
           buttonBar
-        } else if canShowFrame {
-          controlGroup { frameButton }
+        } else if frameOption != nil {
+          controlGroup { optionsButton }
             .onGeometryChange(for: CGFloat.self, of: { $0.size.height }, action: { controlsHeight = $0 })
         }
       }
@@ -344,14 +343,54 @@ struct DeviceTile: View {
   private var canShowFrame: Bool { viewer && !replaying && frameSizes[1] != nil }
   private var framed: Bool { canShowFrame && showsDeviceFrame }
 
-  private var frameButton: some View {
-    Button(showsDeviceFrame ? "Hide device frame" : "Show device frame", systemImage: "iphone.gen3") {
-      showsDeviceFrame.toggle()
+  private var showsDeviceFrame: Bool {
+    _ = frameRevision
+    return DeviceFramePreference.isOn(device.frameType)
+  }
+
+  private var frameOption: DeviceFrameOption? {
+    guard viewer, !replaying, device.isRunning else { return nil }
+    switch device {
+    case .ios(_, let sim) where !sim.physical && device.localSimulatorUDID != nil: break
+    case .android(_, let avd) where avd.owned && !avd.physical && avd.serial != nil: break
+    default: return nil
     }
-    .labelStyle(.iconOnly)
-    .buttonStyle(DeviceControlButtonStyle(active: showsDeviceFrame))
-    .help(showsDeviceFrame ? "Hide device frame" : "Show installed device frame")
-    .accessibilityAddTraits(showsDeviceFrame ? .isSelected : [])
+    return DeviceFrameOption(
+      isOn: Binding(
+        get: { showsDeviceFrame },
+        set: {
+          DeviceFramePreference.set($0, device.frameType)
+          frameRevision += 1
+        }),
+      unavailableReason: frameSizes[1] != nil ? nil : frameUnavailableReason)
+  }
+
+  private var frameUnavailableReason: String {
+    if device.formFactor == .dual {
+      if let reason = DuoModelAsset.unavailableReason { return reason }
+      if observedHingeAngle == nil {
+        return "The hinge angle of this simulator cannot be read, so the Duo frame cannot be posed."
+      }
+    }
+    return "No installed device frame matches this device."
+  }
+
+  private var optionsTitle: String {
+    if case .android = device { return "Emulator options" }
+    return "Simulator options"
+  }
+
+  private var optionsButton: some View {
+    Button("Simulator options", systemImage: "slider.horizontal.3") { showsSimulatorOptions = true }
+      .labelStyle(.iconOnly)
+      .buttonStyle(DeviceControlButtonStyle())
+      .help(simulatorOptionsUDID == nil ? "Display options" : "Display, appearance and accessibility settings")
+      .popover(isPresented: $showsSimulatorOptions) {
+        SimulatorOptionsView(
+          udid: simulatorOptionsUDID, title: optionsTitle, frame: frameOption
+        )
+        .id(simulatorOptionsUDID)
+      }
   }
 
   private var buttonBar: some View {
@@ -374,7 +413,6 @@ struct DeviceTile: View {
         rotateButton(clockwise: false)
         rotateButton(clockwise: true)
       }
-      if canShowFrame { controlGroup { frameButton } }
       if let target = clipboardTarget {
         controlGroup {
           Button("Paste into device", systemImage: "doc.on.clipboard") {
@@ -409,18 +447,7 @@ struct DeviceTile: View {
       if let emulatorPosture, case .android = device, let serial = device.localEmulatorSerial {
         controlGroup { postureMenu(serial: serial, current: emulatorPosture) }
       }
-      if let udid = simulatorOptionsUDID {
-        controlGroup {
-          Button("Simulator options", systemImage: "slider.horizontal.3") { showsSimulatorOptions = true }
-            .labelStyle(.iconOnly)
-            .buttonStyle(DeviceControlButtonStyle())
-            .help("Appearance and accessibility settings for this simulator")
-            .popover(isPresented: $showsSimulatorOptions) {
-              SimulatorOptionsView(udid: udid, canControl: simulatorOptionsUDID == udid)
-                .id(udid)
-            }
-        }
-      }
+      if simulatorOptionsUDID != nil || frameOption != nil { controlGroup { optionsButton } }
     }
     .frame(width: maxWidth)
     .onGeometryChange(for: CGFloat.self, of: { $0.size.height }, action: { controlsHeight = $0 })
@@ -749,7 +776,7 @@ struct DeviceTile: View {
       return height + screenPadding * 2
     }
     let availableHeight =
-      screenHeight - (viewer && (interactive && Self.hasButtons(device) || canShowFrame) ? controlsHeight + Space.lg : 0)
+      screenHeight - (viewer && (interactive && Self.hasButtons(device) || frameOption != nil) ? controlsHeight + Space.lg : 0)
     let screenHeight = min(availableHeight, maxCardHeight.map { max(0, $0 - headerHeight - 1) } ?? availableHeight)
     guard let maxWidth else { return screenHeight }
     if replaying, let size = replaySize, size.width > 0, size.height > 0 {

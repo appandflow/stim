@@ -263,19 +263,24 @@ device sits on a plain canvas, as large as it fits, with its hardware,
 rotation and posture controls grouped below it. The groups wrap when space is
 tight, and the replay bar (see [Replay](#replay)) runs across the bottom.
 
-**Show device frame** adds the matching installed hardware artwork to a live local
-simulator or emulator. The screen keeps its aspect ratio and input coordinates;
-the frame turns with the display. **Hide device frame** returns to the default
-frameless view. The button is available without taking Control.
+A live local simulator or emulator viewer draws the matching installed hardware
+artwork around the screen by default. The screen keeps its aspect ratio and input
+coordinates; the frame turns with the display. **Show device frame** in the
+sliders button's options popover (Simulator options, or Emulator options on
+Android) turns it off and on without taking Control. The choice is kept per device
+type in Desktop's preferences. When no frame can be drawn the checkbox is disabled
+and says why.
 
 Apple frames come from installed DeviceKit chrome and the simulator's actual
 device-type profile. Android frames use the AVD's configured `skin.path`, or its
 exact hardware profile's artwork in `/Applications/Android Studio.app`; the skin's
 screen dimensions must match the AVD. Missing artwork, unsupported skin layouts,
 Android foldables, physical or remote devices, web pages and replay stay frameless.
-For a local iPhone Duo, an installed Xcode containing DeviceKit's V68 model and a
-valid observed hinge angle enable genuine posed hardware around its live panels.
-Missing model data retains the frameless view. Stim ships no Apple or Android
+For a local iPhone Duo, an installed Xcode containing DeviceKit's V68 model (the
+selected Xcode first, then any other Xcode in `/Applications`; Xcode 27.0 lacks it,
+27.1 has it) and a valid observed hinge angle enable genuine posed hardware around
+its live panels. Missing model data retains the frameless view and the options
+popover names the missing model. Stim ships no Apple or Android
 artwork; mobile asset delivery is not included.
 
 While **Control** is active for an owned local simulator or emulator,
@@ -744,7 +749,7 @@ swap panels; the path is adapted from
 While its viewer is open, Desktop observes the Duo hinge through
 `devicectl device motion hinge-angle`, so preset selection follows changes
 made by another controller. Arbitrary angles leave all presets unselected.
-With **Show device frame** on and the installed V68 model available, the housing
+With the device frame on and the installed V68 model available, the housing
 follows the observed hinge angle and display rotation. Touches and drags hit the
 posed active screen and map back to its pixels; the surrounding housing has no
 input. Desktop keeps both panel surfaces ready and snapshots the departing panel
@@ -752,7 +757,7 @@ before its own posture controls change the hinge. External controllers can clear
 the departing panel before Desktop can snapshot it, so their handoff can leave
 that panel blank or retain an older snapshot.
 
-In the default frameless view, a valid observed angle below 180 degrees projects
+With the device frame off, a valid observed angle below 180 degrees projects
 the active inner display's two halves around the hinge. The cover, unknown angle
 and fully open display stay flat. Touches and drags map back to the display
 pixels.

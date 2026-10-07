@@ -43,3 +43,26 @@ struct DuoModelTests {
     #expect(abs(after.x - 0.5) < 0.00001 && abs(after.y - 0.5) < 0.00001)
   }
 }
+
+@Suite struct DuoModelAssetTests {
+  private let selected = "/Applications/Xcode.app/Contents/Developer"
+  private let beta = "/Applications/Xcode-27.1.0-Beta.app/Contents/Developer"
+  private func model(_ developerDir: String) -> String {
+    URL(fileURLWithPath: developerDir).deletingLastPathComponent().appendingPathComponent(DuoModelAsset.relativePath).path
+  }
+
+  @Test func prefersTheSelectedXcode() {
+    let found = DuoModelAsset.locate(selected: selected, installed: [beta, selected]) { _ in true }
+    #expect(found == model(selected))
+  }
+
+  @Test func usesAnotherInstalledXcodeWhenTheSelectedOneLacksTheModel() {
+    let found = DuoModelAsset.locate(selected: selected, installed: [beta, selected]) { $0 == model(beta) }
+    #expect(found == model(beta))
+  }
+
+  @Test func reportsNothingWhenNoXcodeHasTheModel() {
+    #expect(DuoModelAsset.locate(selected: selected, installed: [beta, selected]) { _ in false } == nil)
+    #expect(DuoModelAsset.reason(selected: selected).contains("Xcode.app"))
+  }
+}
