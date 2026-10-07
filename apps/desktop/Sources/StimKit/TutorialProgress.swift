@@ -185,6 +185,7 @@ public struct TutorialProgress: Sendable {
   private var viewerInput = false
   private var restartAfter: Date?
   private var details: [String: String] = [:]
+  private var phoneApp = true
 
   public init() {}
 
@@ -223,6 +224,7 @@ public struct TutorialProgress: Sendable {
   /// The first call must carry a real status snapshot; it consumes launch-time resume detection.
   public mutating func update(_ input: TutorialInput) -> TutorialSnapshot {
     let launching = record == nil
+    phoneApp = input.phoneApp
     if launching { record = input.record }
     let environment = input.environment
     if record == nil {
@@ -287,7 +289,6 @@ public struct TutorialProgress: Sendable {
       while record!.step != "done" {
         let id = record!.step
         if id == "phone", !input.phoneApp {
-          record?.skipped.append(id)
           advance(max(input.now, record!.stepSince ?? record!.startedAt))
           continue
         }
@@ -333,7 +334,8 @@ public struct TutorialProgress: Sendable {
   }
 
   private var firstUnfinished: String {
-    TutorialSteps.all.first { !record!.done.contains($0.id) && !record!.skipped.contains($0.id) }?.id ?? "done"
+    TutorialSteps.steps(phoneApp: phoneApp).first { !record!.done.contains($0.id) && !record!.skipped.contains($0.id) }?.id
+      ?? "done"
   }
 
   private mutating func complete(at date: Date) {

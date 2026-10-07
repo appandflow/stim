@@ -30,7 +30,6 @@ public enum SetupStep: String, CaseIterable, Sendable {
     let all = Self.sequence(phoneApp: phoneApp)
     return all.firstIndex(of: self).flatMap { $0 > 0 ? all[$0 - 1] : nil }
   }
-
 }
 
 /// Whether macOS lets Stim Desktop post notifications.

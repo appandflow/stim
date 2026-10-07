@@ -563,7 +563,7 @@ func tutorialArchiveDisabledRelaunchDoesNotCompleteBeforeFinish(step: String) {
       environment: try environment(), phoneApp: false, now: afterRebuild, record: saved(at: "phone", since: afterRebuild)))
   #expect(result.currentStep == "machine")
   #expect(result.steps.map(\.id) == stepIDs.filter { $0 != "phone" })
-  #expect(result.record.skipped.contains("phone"))
+  #expect(!result.record.skipped.contains("phone"))
 }
 
 @Test func tutorialShowsThePhoneStepWithThePhoneApp() throws {

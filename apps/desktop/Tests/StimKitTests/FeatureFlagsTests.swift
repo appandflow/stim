@@ -87,28 +87,6 @@ private func withDefaults(_ body: (UserDefaults) throws -> Void) throws {
   }
 }
 
-@Test func theServerPageDropsPhoneControlsWithoutThePhoneApp() {
-  let on = PhoneApp.serverPage(phoneApp: true)
-  #expect(on.title == "Phones")
-  #expect(on.serveToggleTitle == "Serve to phones")
-  #expect(on.showsPairedPhones)
-  let off = PhoneApp.serverPage(phoneApp: false)
-  #expect(off.title == "Server")
-  #expect(off.serveToggleTitle != "Serve to phones")
-  #expect(!off.showsPairedPhones)
-}
-
-@Test func theSidebarPhoneButtonNeedsTheFlagAndAServingServer() {
-  #expect(PhoneApp.showsSidebarButton(phoneApp: true, servesPhones: true))
-  #expect(!PhoneApp.showsSidebarButton(phoneApp: true, servesPhones: false))
-  #expect(!PhoneApp.showsSidebarButton(phoneApp: false, servesPhones: true))
-}
-
-@Test func pairingRequestsAreIgnoredWithoutThePhoneApp() {
-  #expect(PhoneApp.opensPairing(phoneApp: true))
-  #expect(!PhoneApp.opensPairing(phoneApp: false))
-}
-
 @Test func copyNamesPhonesOnlyWithThePhoneApp() {
   func offCopy() -> [String] {
     [
@@ -120,6 +98,7 @@ private func withDefaults(_ body: (UserDefaults) throws -> Void) throws {
       PhoneApp.Copy.serverPageName(phoneApp: false),
       PhoneApp.Copy.diffViewerOff(phoneApp: false),
       PhoneApp.Copy.archivedLogsOffline(phoneApp: false),
+      PhoneApp.Copy.serverOffForViewing("app's window", phoneApp: false),
       PhoneApp.Copy.serverPopupTitle(missing: true, phoneApp: false),
       PhoneApp.Copy.serverPopupDetail(minimum: "1.0.0", phoneApp: false),
       PhoneApp.Copy.clients(phoneApp: false),

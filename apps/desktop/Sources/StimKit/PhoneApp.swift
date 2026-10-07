@@ -107,6 +107,12 @@ public enum PhoneApp {
       return "\(subject), and Stim Desktop needs \(minimum) or later."
     }
 
+    public static func serverOffForViewing(_ what: String, phoneApp: Bool) -> String {
+      phoneApp
+        ? "Turn on Serve to phones on the Phones page to see this \(what)."
+        : "Turn on Run stim-server on the Server page to see this \(what)."
+    }
+
     public static func archivedLogsOffline(phoneApp: Bool) -> String {
       "Connect to stim-server on the \(serverPageName(phoneApp: phoneApp)) page to view archived logs."
     }
