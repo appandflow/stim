@@ -626,11 +626,8 @@ struct SidebarFooter: View {
       Spacer(minLength: 8)
       OperationsButton(log: actions.operations, actions: actions, store: store)
       if !drivenDevices.isEmpty { agentsButton }
-      if PhoneApp.showsSidebarButton(phoneApp: flags.phoneApp, servesPhones: servesPhones) {
-        phonesButton
-      } else if let problem = server.problem {
-        serverProblemButton(problem)
-      }
+      if let problem = server.problem { serverProblemButton(problem) }
+      if PhoneApp.showsSidebarButton(phoneApp: flags.phoneApp, servesPhones: servesPhones) { phonesButton }
       settingsButton
     }
     .padding(.horizontal, Space.md)

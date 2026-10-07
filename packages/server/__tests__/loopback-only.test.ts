@@ -1,10 +1,9 @@
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 const fixture = vi.hoisted(() => ({
   options: [] as Array<Record<string, unknown>>,
-  watch: vi.fn<(...args: unknown[]) => void>(),
 }));
 
 vi.mock('../src/server.ts', () => ({
@@ -22,18 +21,16 @@ vi.mock('../src/tailscale.ts', () => ({
   tailscaleStatus: () => ({ state: 'unavailable', reason: 'fixture' }),
 }));
 vi.mock('../src/tailscale-monitor.ts', () => ({
-  watchTailscale: (...args: unknown[]) => {
-    fixture.watch(...args);
-    return { stop: () => {}, onChange: () => {} };
-  },
+  watchTailscale: () => ({ stop: () => {}, onChange: () => {} }),
 }));
 
 async function serve(...flags: string[]): Promise<Record<string, unknown>> {
-  process.env.STIM_HOME = mkdtempSync(join(tmpdir(), 'stim-server-loopback-'));
+  const home = mkdtempSync(join(tmpdir(), 'stim-server-loopback-'));
+  const previousHome = process.env.STIM_HOME;
+  process.env.STIM_HOME = home;
   const argv = process.argv;
   process.argv = [process.execPath, join(import.meta.dirname, '../bin/stim-server.ts'), ...flags];
   fixture.options.length = 0;
-  fixture.watch.mockClear();
   vi.spyOn(process, 'on').mockImplementation(() => process);
   vi.spyOn(console, 'log').mockImplementation(() => {});
   vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -44,18 +41,20 @@ async function serve(...flags: string[]): Promise<Record<string, unknown>> {
     return fixture.options[0]!;
   } finally {
     process.argv = argv;
+    if (previousHome === undefined) delete process.env.STIM_HOME;
+    else process.env.STIM_HOME = previousHome;
+    rmSync(home, { recursive: true, force: true });
     vi.restoreAllMocks();
   }
 }
 
-test('--loopback-only watches no Tailscale address, so the server never listens beyond 127.0.0.1', async () => {
+test('--loopback-only tells the server to listen on 127.0.0.1 alone and to refuse forwarded peers', async () => {
   const options = await serve('--loopback-only');
   expect(options.hosts).toEqual(['127.0.0.1']);
-  expect(options.tailscaleMonitor).toBeUndefined();
-  expect(fixture.watch).not.toHaveBeenCalled();
+  expect(options.loopbackOnly).toBe(true);
 });
 
-test('without the flag the server follows Tailscale', async () => {
+test('without the flag the server is not loopback only', async () => {
   const options = await serve();
-  expect(options.tailscaleMonitor).toBeDefined();
+  expect(options.loopbackOnly).toBeUndefined();
 });

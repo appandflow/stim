@@ -130,13 +130,14 @@ async function serve(port: number, extraEnv: string[], pathPrepend: string[], lo
   const tailscaleBinary = findTailscale(env);
   const tailscale = tailscaleStatus(tailscaleBinary, env);
   const stim = bundledStim();
-  const monitor = loopbackOnly ? null : watchTailscale({ env, initial: { binary: tailscaleBinary, state: tailscale } });
+  const monitor = watchTailscale({ env, initial: { binary: tailscaleBinary, state: tailscale } });
   let server;
   try {
     server = await startServer({
       name: macName(tailscale),
       host: captureHost,
       hosts: ['127.0.0.1'],
+      ...(loopbackOnly ? { loopbackOnly: true } : {}),
       port,
       stimCli: stim.cli,
       stimVersion: stim.version,
@@ -144,7 +145,7 @@ async function serve(port: number, extraEnv: string[], pathPrepend: string[], lo
       env,
       tailscale: tailscaleBinary,
       tailscaleState: tailscale,
-      ...(monitor ? { tailscaleMonitor: monitor } : {}),
+      tailscaleMonitor: monitor,
       service: {
         label: launchdLabel && !validateLabel(launchdLabel) ? launchdLabel : null,
         node: process.execPath,
@@ -171,15 +172,16 @@ async function serve(port: number, extraEnv: string[], pathPrepend: string[], lo
     }
     if (note) console.error(note);
   };
-  monitor?.onChange((snapshot, previous) => {
-    const { state } = snapshot;
-    if (state.state === 'running') console.log('Tailscale is running.');
-    else if (previous.state.state === 'running') console.error('Tailscale stopped.');
-    if (state.state === 'running' || previous.state.state === 'running') void announce(snapshot.binary, state);
-  });
+  if (!loopbackOnly)
+    monitor.onChange((snapshot, previous) => {
+      const { state } = snapshot;
+      if (state.state === 'running') console.log('Tailscale is running.');
+      else if (previous.state.state === 'running') console.error('Tailscale stopped.');
+      if (state.state === 'running' || previous.state.state === 'running') void announce(snapshot.binary, state);
+    });
   if (!loopbackOnly) await announce(tailscaleBinary, tailscale);
   const shutdown = () => {
-    monitor?.stop();
+    monitor.stop();
     void server
       .close()
       .catch((error: unknown) => {

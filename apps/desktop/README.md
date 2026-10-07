@@ -970,10 +970,10 @@ killed server leaves its `stim status --watch` child running until that child's
 next write fails. A stim-server older than the `--loopback-only` flag exits at once,
 and the sidebar footer shows a warning icon that says to update it. A failure of any
 other kind, such as a port held by another program or a server for another Stim home,
-shows the same icon with the reason in its tooltip; click it to retry. No dialog
-interrupts. `--loopback-only` removes the server's own Tailscale listeners; a
-`tailscale serve` route that already forwards to the port keeps working, and Desktop
-never removes it. Turning the Phone app flag off, or **Serve to phones** off, restarts the
+shows the same icon with the reason in its tooltip; click it to retry now. Desktop also retries a failed start every 30 seconds or more, except for an outdated server. No dialog
+interrupts. `--loopback-only` removes the server's own Tailscale listeners and makes it refuse any
+request that a `tailscale serve` route forwards to the port, so paired phones and other
+Macs cannot reach it; Desktop never removes or edits the route. Turning the Phone app flag off, or **Serve to phones** off, restarts the
 server Desktop started in loopback-only mode, which disconnects paired phones until
 they are served again. `stim-server` is found on the login shell's `PATH`, or at the path you
 choose in **Settings > Phones** (**Server** with the Phone app off). A test copy can move the port from 7787 with
@@ -991,7 +991,7 @@ has adopted a server started with another home. Those phones stop working once S
 serves `~/.stim` again.
 
 A server answering health with HTTP 503 appears as **Starting** or
-**Degraded** with its reason in the Phones page and the sidebar tooltip. Desktop keeps
+**Degraded** with its reason in the Phones page; the footer icon shows only Degraded. Desktop keeps
 checking it without starting another server or terminating one it launched.
 For a server it launches, Desktop checks every 250 milliseconds until it is
 ready or the 15-second startup deadline passes, then uses its regular poller.

@@ -174,6 +174,11 @@ export interface ServerOptions {
   host?: { executable: string; name: string };
   name: string;
   hosts: string[];
+  /**
+   * Listens on `hosts` alone, never on a Tailscale address, and refuses every request that names a remote peer,
+   * such as one forwarded by `tailscale serve` to a loopback port, so only this Mac's own connections are served.
+   */
+  loopbackOnly?: boolean;
   port: number;
   stimCli: string;
   stimVersion: string;
@@ -2501,6 +2506,10 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       return;
     }
     const peer = peerAddress(request);
+    if (options.loopbackOnly && peer !== null) {
+      socket.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Length: 0\r\n\r\n');
+      return;
+    }
     if (limiter.blocked(peer ?? 'local')) {
       socket.end('HTTP/1.1 429 Too Many Requests\r\nConnection: close\r\nContent-Length: 0\r\n\r\n');
       return;
@@ -2585,6 +2594,10 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   };
   async function listenOn(host: string): Promise<void> {
     const server = createServer((request, response) => {
+      if (options.loopbackOnly && peerAddress(request) !== null) {
+        response.writeHead(403, { 'content-type': 'text/plain' }).end('This stim-server serves this Mac only.\n');
+        return;
+      }
       if (localHealthRequest(request)) {
         void answerHealth(response);
         return;
@@ -2649,7 +2662,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   const monitor = options.tailscaleMonitor;
   const listenFailures = new Set<string>();
   const reconcile = async (snapshot: TailscaleSnapshot) => {
-    const tailnet = snapshot.state.state === 'running' ? snapshot.state.ips : [];
+    const tailnet = snapshot.state.state === 'running' && !options.loopbackOnly ? snapshot.state.ips : [];
     const wanted = new Set([...options.hosts, ...tailnet]);
     for (const [host, listener] of servers) {
       if (wanted.has(host)) continue;

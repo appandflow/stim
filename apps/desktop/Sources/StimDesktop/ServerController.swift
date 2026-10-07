@@ -52,6 +52,7 @@ final class ServerController: ObservableObject {
 
   @Published private(set) var state = State.off {
     didSet {
+      if case .failed = state { if case .failed = oldValue {} else { failedAt = Date() } } else { failedAt = nil }
       if case .running = state {
         if case .running = oldValue {} else { reloadDevices() }
       } else {
@@ -75,6 +76,9 @@ final class ServerController: ObservableObject {
   private var devicesEpoch = 0
   private var missedProbes = 0
   private var startedLoopbackOnly = true
+  private var failedAt: Date?
+  private var retriesFailure = true
+  static let retryAfter: TimeInterval = 30
   private var serverLauncher: (executable: String?, launcher: NodeLauncher?, resolved: Date)?
 
   static let devicesInterval: Duration = .seconds(10)
@@ -85,6 +89,7 @@ final class ServerController: ObservableObject {
     tick: { [weak self] in
       guard let self else { return }
       applyServingMode()
+      retryFailure()
       guard isResponding else { return }
       refresh()
     })
@@ -120,6 +125,15 @@ final class ServerController: ObservableObject {
     case .notReady(.degraded(let reason), _): return "Degraded: \(reason)"
     case .off, .starting, .running, .notReady(.pending, _): return nil
     }
+  }
+
+  /// A failure that can clear by itself, such as a port another program held for a moment, is retried from the
+  /// poller after `retryAfter` seconds. A server too old for `--loopback-only` is not.
+  private func retryFailure() {
+    guard retriesFailure, case .failed = state, let failedAt, Date().timeIntervalSince(failedAt) >= Self.retryAfter else {
+      return
+    }
+    start()
   }
 
   func retry() {
@@ -175,6 +189,7 @@ final class ServerController: ObservableObject {
     generation += 1
     let current = generation
     state = .starting
+    retriesFailure = true
     missedProbes = 0
     Task {
       if let exiting {
@@ -269,6 +284,9 @@ final class ServerController: ObservableObject {
   }
 
   func pairPhone(control: Bool) async throws -> PairingCode {
+    guard UserDefaults.standard.bool(forKey: AppPreferences.Key.servesPhones) else {
+      throw ServerError(code: "not-connected", message: "Turn on Serve to phones to pair a phone.")
+    }
     let cli = await cli()
     guard isRunning, case .ready(let before) = await StimServerCLI.health(port: port) else {
       throw ServerError(code: "not-connected", message: "Could not verify the phone connection. Try again.")
@@ -438,7 +456,8 @@ final class ServerController: ObservableObject {
     guard generation == self.generation else { return }
     process = nil
     let detail = output.filter { !$0.isEmpty }.joined(separator: "\n")
-    if detail.contains("--loopback-only") {
+    retriesFailure = !detail.contains("--loopback-only")
+    if !retriesFailure {
       state = .failed(
         "This stim-server is too old to run on loopback only. Update it with npm install --global @stim-cli/server.")
       return

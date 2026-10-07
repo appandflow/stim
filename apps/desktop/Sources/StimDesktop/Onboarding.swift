@@ -5,7 +5,7 @@ import StimKit
 import StimStores
 @preconcurrency import UserNotifications
 
-/// Checks at launch that the `stim` and, while phones are served, `stim-server` Stim Desktop runs are
+/// Checks at launch that the `stim` and `stim-server` Stim Desktop runs are
 /// recent enough, and whether Stim already opens its devices here. It also drives the setup guide, which opens at
 /// the first launch and from the Help menu.
 @MainActor
