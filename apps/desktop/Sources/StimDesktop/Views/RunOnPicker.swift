@@ -94,6 +94,8 @@ struct DeviceRunButton: View {
     _saved = AppStorage(wrappedValue: "", AppPreferences.Key.runDestination(workspace: workspace, platform: device.platform))
   }
 
+  private var isDisabled: Bool { disabled || actions.active(for: workspace) != nil }
+
   var body: some View {
     let destination = RunDestination(saved: saved, approvedMachines: machines?.approvedHostingMachines(in: workspace))
     if let command = runCommand(for: device, cwd: workspace, destination: destination) {
@@ -102,8 +104,11 @@ struct DeviceRunButton: View {
         localDeviceBooted: device.isBootedLocalOwnedDevice)
       button()
         .fixedSize()
-        .disabled(disabled || actions.active(for: workspace) != nil)
-        .help(command.displayLine())
+        .disabled(isDisabled)
+        .help(
+          isDisabled
+            ? "Wait for the running action or build in this workspace to finish.\n\(command.displayLine())"
+            : command.displayLine())
     }
   }
 

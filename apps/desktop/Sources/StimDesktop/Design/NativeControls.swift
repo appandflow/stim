@@ -5,7 +5,8 @@ extension View {
     #if compiler(>=6.2)
       if #available(macOS 26, *) {
         if variant == .primary {
-          buttonStyle(.glass).tint(Palette.brand).foregroundStyle(Palette.onBrand).buttonBorderShape(.capsule).controlSize(.small)
+          buttonStyle(.glass).tint(Palette.brand).modifier(PrimaryGlassForeground()).buttonBorderShape(.capsule).controlSize(
+            .small)
         } else {
           buttonStyle(.glass).tint(variant == .destructive ? Palette.error : Palette.accent)
             .buttonBorderShape(.capsule).controlSize(.small)
@@ -32,5 +33,13 @@ extension View {
     #else
       buttonStyle(.icon(tint: tint, active: active))
     #endif
+  }
+}
+
+private struct PrimaryGlassForeground: ViewModifier {
+  @Environment(\.isEnabled) private var isEnabled
+
+  func body(content: Content) -> some View {
+    content.foregroundStyle(isEnabled ? Palette.onBrand : Palette.secondary)
   }
 }
