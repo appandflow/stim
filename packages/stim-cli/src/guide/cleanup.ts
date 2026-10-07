@@ -187,7 +187,17 @@ to stats.json.corrupt-<unix ms> and starts a new one.`,
     gc: {
       summary:
         'what gc and worktree remove delete, keep and refuse: orphans, stale records, locks, leases, EAS sessions',
-      body: () => `AGENT-DEVICE (REPORT ONLY)
+      body: () => `PARKED HOSTED DEVICES
+On a hosting Mac, unscoped gc lists parked hosted iOS/Android devices by session,
+client id, device label, parked time and private-home ledger ownership.
+gc --delete takes each session claim and deletes through the packaged stop worker
+in that session's home; held claims, changed sessions and unverified ownership
+keep the device. An unreadable journal keeps every hosted device. --older-than
+filters by parked time; --cache scopes omit hosted sessions. The CLI never writes
+the server journal: stim-server reconciliation clears the parked marker after
+successful deletion leaves the session ledger empty.
+
+AGENT-DEVICE (REPORT ONLY)
 Unscoped gc reports agent-device runner builds by platform and entry, last use,
 agent-device and Xcode versions, sessions, logs, other state, workspace state
 and hosted driver state. Stim never selects this state as a cache.

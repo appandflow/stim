@@ -534,8 +534,11 @@ so the first run after adoption uploads only changed files. Devices are never re
 The oldest parked devices beyond the host's platform limit are deleted through
 owned-device teardown, also after a limit decrease. Adoption-time reconciliation
 retires missing, renamed, running or unowned candidates; failed retirement keeps
-the record. Revocation retires that client's parked devices. If GC removes a
-ledger-owned device, reconciliation clears its parked marker without a worker.
+the record. Revocation retires that client's parked devices.
+On the hosting Mac, unscoped \`stim gc\` lists parked hosted devices and
+\`stim gc --delete\` deletes them through their session homes under a session
+claim. Held claims and unverified ownership keep the device. Reconciliation
+clears its parked marker after the session ledger becomes empty.
 
 stim logs and stim logs --errors pull native device records from bounded host
 queries. Concurrent followers share a collection, throttled per session, without

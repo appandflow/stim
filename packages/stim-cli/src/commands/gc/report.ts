@@ -1,3 +1,4 @@
+import type { ParkedHostedDeviceReport } from './hosted-devices.ts';
 import type { MaintenancePreview } from '../../maintenance/preview.ts';
 import { archiveLines, type ArchiveSelection } from './archives.ts';
 import type { AgentDeviceUsage, SwiftpmCacheUsage } from '@stim-cli/core/state';
@@ -52,6 +53,7 @@ export interface GcReport {
   orphanedWorkspaces: OrphanedWorkspace[];
   parkedSims: ParkedSimReport[];
   parkedAvds: ParkedAvdReport[];
+  parkedHostedDevices: ParkedHostedDeviceReport[];
   orphanedDevices: OrphanedDevice[];
   unverifiedDevices: UnverifiedDevice[];
   staleDevices: StaleProjectDevice[];
@@ -130,6 +132,19 @@ function formatParkedAvdReport(parkedAvds: readonly ParkedAvdReport[], now: numb
   return lines;
 }
 
+function formatParkedHostedDeviceReport(devices: readonly ParkedHostedDeviceReport[] = [], now: number): string[] {
+  if (!devices.length) return [];
+  const lines = [`Parked hosted devices (${devices.length}):`];
+  for (const device of devices) {
+    const ledger = device.listed === true ? '' : ' - ledger ownership unavailable; kept';
+    lines.push(
+      `  ${device.platform} ${device.name ?? 'unknown device'} client ${device.client} session ${device.session} ${parkedAge(device.parkedAt, now)}${device.bytes === null ? '' : ` ${formatBytes(device.bytes)}`}${ledger}`,
+    );
+  }
+  lines.push(PARKED_DELETE_NOTE);
+  return lines;
+}
+
 function projectEntryLines(header: string, paths: string[]): string[] {
   return paths.length ? [header, ...paths.map((path) => `  ${path}`)] : [];
 }
@@ -179,6 +194,7 @@ export function formatGcReport(
     orphanedWorkspaces = [],
     parkedSims = [],
     parkedAvds = [],
+    parkedHostedDevices,
     orphanedDevices = [],
     unverifiedDevices = [],
     staleDevices = [],
@@ -205,6 +221,7 @@ export function formatGcReport(
   { now = Date.now() }: { now?: number } = {},
 ): string[] {
   const lines: string[] = archiveLines(archives);
+  const parkedHostedLines = formatParkedHostedDeviceReport(parkedHostedDevices, now);
   const staleLocks = buildLocks?.stale ?? [];
   const liveLocks = buildLocks?.live ?? [];
   const staleSlots = buildSlots?.stale ?? [];
@@ -219,6 +236,7 @@ export function formatGcReport(
       orphanedWorkspaces,
       parkedSims,
       parkedAvds,
+      parkedHostedLines,
       orphanedDevices,
       staleDevices,
       staleDeviceRecords,
@@ -264,6 +282,7 @@ export function formatGcReport(
 
   lines.push(...formatParkedSimReport(parkedSims, now, cacheScope !== null));
   lines.push(...formatParkedAvdReport(parkedAvds, now, cacheScope !== null));
+  lines.push(...parkedHostedLines);
 
   if (orphanedDevices.length) {
     lines.push(`Orphaned devices (${orphanedDevices.length}):`);
@@ -561,6 +580,7 @@ export interface GcJsonSections {
   }[];
   parkedSimulators: ParkedSimReport[];
   parkedEmulators: ParkedAvdReport[];
+  parkedHostedDevices: ParkedHostedDeviceReport[];
   orphanedDevices: {
     kind: 'ios' | 'android';
     id: string;
@@ -660,6 +680,7 @@ export function gcReportSections({
   worktreeSweep = null,
   parkedSims = [],
   parkedAvds = [],
+  parkedHostedDevices = [],
   orphanedDevices = [],
   unverifiedDevices = [],
   staleDevices = [],
@@ -720,6 +741,7 @@ export function gcReportSections({
       bytes,
       listed,
     })),
+    parkedHostedDevices,
     orphanedDevices: orphanedDevices.map((d) => ({
       kind: d.kind,
       id: d.id,
