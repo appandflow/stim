@@ -1,3 +1,4 @@
+import Combine
 import StimKit
 import StimStores
 import SwiftUI
@@ -24,6 +25,7 @@ struct RootView: View {
   private let storage: StorageStore
   private let planChecks: BuildPlanChecks
   private let statsReader: StatsReader
+  @StateObject private var tutorial = TutorialModel()
   @State private var selection: SidebarItem? = .wall
   @State private var previousSelection: SidebarItem? = .wall
   @State private var restoredProject = false
@@ -53,6 +55,7 @@ struct RootView: View {
   @AppStorage("settingsTab") private var settingsTab = "app"
 
   private let cli: Task<StimCLI, Never>
+  private let tutorialClock = Timer.publish(every: 5, on: .main, in: .common).autoconnect()
 
   init(
     cli: Task<StimCLI, Never>, store: StatusStore, actions: ActionCenter, autopilot: AutopilotRunner,
@@ -86,53 +89,74 @@ struct RootView: View {
         sidebarWidth = $0
       }
     } detail: {
-      detail
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Palette.background)
-        .overlay(alignment: .bottom) { onboardingPopup }
-        .overlay(alignment: .topTrailing) { ToastStack(center: toasts) }
-        .overlay(alignment: .bottomLeading) { NoticeStack(center: notices) }
-        .onGeometryChange(for: CGFloat.self) {
-          $0.size.width
-        } action: {
-          detailWidth = $0
+      HStack(spacing: 0) {
+        detail.frame(maxWidth: .infinity, maxHeight: .infinity)
+        if tutorial.isOpen, let snapshot = tutorial.snapshot {
+          Divider()
+          TutorialPanel(
+            snapshot: snapshot, restarting: tutorial.restarting, message: tutorial.message, prompt: tutorial.prompt,
+            issues: tutorial.workspace?.issues ?? [], commands: tutorial.commands,
+            copied: { tutorial.copiedPrompt() }, skip: tutorial.skip, markDone: tutorial.markDone,
+            restart: { tutorial.restart() }, setManual: tutorial.setManual, close: tutorial.close,
+            openArchived: openTutorialArchive,
+            updateCLI: {
+              onboarding.openGuide()
+              onboarding.guideStep = .cli
+            }
+          )
+          .frame(width: WorkspaceDetail.inspectorWidth)
         }
-        .navigationSplitViewColumnWidth(min: 440, ideal: 900)
-        .toolbar {
-          if columnVisibility == .detailOnly, !operations.runs.isEmpty {
-            ToolbarItem(placement: .navigation) {
-              OperationsButton(log: operations, actions: actions, store: store, arrowEdge: .bottom)
-            }
+      }
+      .frame(maxWidth: .infinity, maxHeight: .infinity)
+      .background(Palette.background)
+      .overlay(alignment: .bottom) { onboardingPopup }
+      .overlay(alignment: .topTrailing) { ToastStack(center: toasts) }
+      .overlay(alignment: .bottomLeading) { NoticeStack(center: notices) }
+      .onGeometryChange(for: CGFloat.self) {
+        $0.size.width
+      } action: {
+        detailWidth = $0
+      }
+      .navigationSplitViewColumnWidth(min: tutorial.isOpen ? WorkspaceDetail.widthWithInspector : 440, ideal: 900)
+      .toolbar {
+        if columnVisibility == .detailOnly, !operations.runs.isEmpty {
+          ToolbarItem(placement: .navigation) {
+            OperationsButton(log: operations, actions: actions, store: store, arrowEdge: .bottom)
           }
-          let summary = MachineSummary(store: store, metrics: metrics, gc: gc, width: summaryWidth) {
-            selection = .machine
+        }
+        let summary = MachineSummary(store: store, metrics: metrics, gc: gc, width: summaryWidth) {
+          selection = .machine
+        }
+        if summary.hasContent {
+          ToolbarItem(id: summaryItemID, placement: .navigation) {
+            summary
+              .frame(width: showsWorkspace && inspector == .overlay ? max(0, summaryWidth) : nil, alignment: .leading)
+              .clipped()
           }
-          if summary.hasContent {
-            ToolbarItem(id: summaryItemID, placement: .navigation) {
-              summary
-                .frame(width: showsWorkspace && inspector == .overlay ? max(0, summaryWidth) : nil, alignment: .leading)
-                .clipped()
-            }
-          }
-          if showsWorkspace {
-            ToolbarItem(placement: .primaryAction) { Spacer() }
-            ToolbarItem(placement: .primaryAction) {
-              LogsToggleButton(isShown: showsLogs, errors: selectedPage?.errors ?? 0) {
-                if !showsLogs, let page = selectedPage, page.isUnified, let app = page.soleErrorApp {
-                  logsWorkspace.wrappedValue = app.path
-                }
-                showsLogs.toggle()
+        }
+        if showsWorkspace {
+          ToolbarItem(placement: .primaryAction) { Spacer() }
+          ToolbarItem(placement: .primaryAction) {
+            LogsToggleButton(isShown: showsLogs, errors: selectedPage?.errors ?? 0) {
+              if !showsLogs, let page = selectedPage, page.isUnified, let app = page.soleErrorApp {
+                logsWorkspace.wrappedValue = app.path
               }
+              showsLogs.toggle()
             }
-            ToolbarItem(placement: .primaryAction) {
-              InspectorToggleButton(isShown: inspector != .hidden, action: toggleInspector)
-            }
+            .tutorialAnchor(.logsTab, workspace: selectedPage?.apps.first?.path)
+          }
+          ToolbarItem(placement: .primaryAction) {
+            InspectorToggleButton(isShown: inspector != .hidden, action: toggleInspector)
           }
         }
+      }
     }
+    .tutorialHighlights()
+    .environment(\.tutorialHint, tutorialHint)
     .focusedSceneValue(
       \.inspectorToggle,
-      showsWorkspace ? InspectorToggle(isShown: inspector != .hidden, toggle: toggleInspector) : nil
+      showsWorkspace || tutorial.isOpen
+        ? InspectorToggle(isShown: inspector != .hidden || tutorial.isOpen, toggle: toggleInspector) : nil
     )
     .focusedSceneValue(\.sidebarNavigation, SidebarNavigation { selection = $0 })
     .onChange(of: inspectorFits) { showsInspectorOverlay = false }
@@ -160,6 +184,7 @@ struct RootView: View {
     }
     .onAppear {
       store.start()
+      tutorial.configure(cli: cli)
       openRequests.openMainWindow = { [openWindow] in openWindow(id: "main") }
     }
     .onDisappear { notices.removeAll() }
@@ -181,6 +206,7 @@ struct RootView: View {
       Task { takeWorkspaceLink() }
     }
     .onReceive(store.$payload) { payload in
+      updateTutorial(payload)
       if let payload {
         notices.dismissCards(notIn: payload)
         toasts.dismissCards(notIn: payload)
@@ -193,6 +219,15 @@ struct RootView: View {
       }
       restoreLastProject()
     }
+    .onReceive(openRequests.$tutorialRequest) { entry in
+      guard let entry else { return }
+      openRequests.tutorialRequest = nil
+      tutorial.open(beginning: entry == .begin)
+    }
+    .onReceive(tutorialClock) { _ in
+      updateTutorial(store.payload)
+    }
+    .onReceive(TutorialViewerEvents.shared.$events) { events in updateTutorial(store.payload, events: events) }
     .onReceive(store.$projects) { _ in restoreLastProject() }
     .onReceive(openRequests.$showsMachine) { shows in
       guard shows else { return }
@@ -229,6 +264,46 @@ struct RootView: View {
         openRequests.selectedWorkspace = nil
       default: break
       }
+    }
+  }
+
+  private var tutorialHint: TutorialHint? {
+    guard tutorial.isOpen else { return nil }
+    let selected: String? = if case .environment(let path) = selection { path } else { nil }
+    return TutorialHint(
+      step: tutorial.snapshot?.currentStep ?? "done", path: tutorial.tourPath, selectedPath: selected,
+      showMe: {
+        if tutorial.snapshot?.isComplete == true {
+          openTutorialArchive()
+        } else if let path = tutorial.tourPath {
+          UserDefaults.standard.set(StatusFilter.all.rawValue, forKey: AppPreferences.Key.sidebarStatus)
+          selection = .environment(path)
+          if ["logs", "refresh", "agent"].contains(tutorial.snapshot?.currentStep ?? "") { showsLogs = true }
+        }
+      })
+  }
+
+  private func updateTutorial(_ payload: StatusPayload?, events: [TutorialViewerEvent]? = nil) {
+    guard let payload else { return }
+    tutorial.update(
+      workspaces: payload.environments, archivedRoots: (payload.archived ?? []).map(\.projectRoot),
+      sheetOpen: onboarding.showsGuide || nativePermissions.showsSetup || actions.presented != nil
+        || NSApp.windows.contains { $0.attachedSheet != nil },
+      viewerEvents: events ?? TutorialViewerEvents.shared.events,
+      pairedPhoneCount: ServerController.shared.pairedPhoneCount,
+      removalRefused: operations.runs.contains { run in
+        run.needsAttention && run.startedAt >= (tutorial.snapshot?.record.stepSince ?? .distantFuture)
+          && run.steps.contains { command in
+            command.arguments.starts(with: ["worktree", "remove"])
+              && (command.cwd == tutorial.tourPath || command.arguments.contains(tutorial.tourPath ?? ""))
+          }
+      })
+  }
+
+  private func openTutorialArchive() {
+    UserDefaults.standard.set(StatusFilter.archived.rawValue, forKey: AppPreferences.Key.sidebarStatus)
+    if let archive = ArchivedWorkspace.newest(removedFrom: tutorial.tourPath ?? "", in: store.payload?.archived ?? []) {
+      selection = .archived(archive.id)
     }
   }
 
@@ -275,6 +350,7 @@ struct RootView: View {
   }
 
   private var inspector: InspectorPresentation {
+    if tutorial.isOpen { return .hidden }
     if inspectorFits { return showsInspector ? .column : .hidden }
     return showsInspectorOverlay ? .overlay : .hidden
   }
@@ -286,6 +362,11 @@ struct RootView: View {
   }
 
   private func toggleInspector() {
+    if tutorial.isOpen {
+      tutorial.close()
+      if inspectorFits { showsInspector = true } else { showsInspectorOverlay = true }
+      return
+    }
     if inspectorFits { showsInspector.toggle() } else { showsInspectorOverlay.toggle() }
   }
 
@@ -293,7 +374,9 @@ struct RootView: View {
   @ViewBuilder private var onboardingPopup: some View {
     HStack(spacing: 0) {
       OnboardingBanner(onboarding: onboarding).frame(maxWidth: .infinity)
-      if showsWorkspace, inspector == .column {
+      if tutorial.isOpen {
+        Color.clear.frame(width: WorkspaceDetail.inspectorWidth + 1)
+      } else if showsWorkspace, inspector == .column {
         Color.clear.frame(width: WorkspaceDetail.clampedInspectorWidth(inspectorWidth, detailWidth: detailWidth) + 1)
       } else if showsWorkspace, inspector == .overlay {
         Color.clear.frame(width: WorkspaceDetail.inspectorWidth)
@@ -304,6 +387,7 @@ struct RootView: View {
   /// macOS moves the traffic lights and the sidebar toggle into the detail's toolbar when the sidebar is hidden.
   private var summaryWidth: CGFloat {
     detailWidth - (columnVisibility == .detailOnly ? 200 : 80) - (showsWorkspace ? 88 : 0)
+      - (tutorial.isOpen ? WorkspaceDetail.inspectorWidth + 1 : 0)
       - (showsWorkspace && inspector == .column
         ? WorkspaceDetail.clampedInspectorWidth(inspectorWidth, detailWidth: detailWidth) + 1
         : showsWorkspace && inspector == .overlay ? WorkspaceDetail.inspectorWidth : 0)
@@ -312,7 +396,7 @@ struct RootView: View {
   /// NSToolbar measures an item when it is inserted or the window resizes, not when a SwiftUI item grows, so the
   /// summary is reinserted whenever the room it gets changes.
   private var summaryItemID: String {
-    "machine-summary-\(showsWorkspace)-\(showsWorkspace && inspector == .column)-\(showsWorkspace && inspector == .overlay)"
+    "machine-summary-\(tutorial.isOpen)-\(showsWorkspace)-\(showsWorkspace && inspector == .column)-\(showsWorkspace && inspector == .overlay)"
   }
 
   private func restoreLastProject() {

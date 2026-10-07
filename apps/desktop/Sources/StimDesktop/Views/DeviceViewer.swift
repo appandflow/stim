@@ -166,11 +166,13 @@ struct DeviceViewer: View {
               close()
             }
           )
+          .tutorialAnchor(.agentActions, workspace: env.path)
           .frame(width: Self.actionsWidth)
           .background(Palette.sidebar)
         }
       }
     }
+    .tutorialHighlights(showFallback: false)
   }
 
   private func canvas(_ device: DeviceRef, replay: ReplayController?, replaying: Bool) -> some View {

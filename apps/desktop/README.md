@@ -1433,6 +1433,42 @@ An event carries the release `stim-desktop@<CFBundleShortVersionString>+<CFBundl
 
 To check a bundle, point the DSN at a local listener, such as `http://<key>@127.0.0.1:<port>/1`, and launch it with `STIM_DESKTOP_CRASH_TEST=crash`, then again without it; the listener receives a gzipped envelope at `/api/1/envelope/`.
 
+## Tutorial panel
+
+**Help > Stim Tutorial…** and the setup guide's **Take the tutorial** button open
+an inspector-width trailing column. It replaces the inspector until closed;
+Cmd-Opt-I returns to the inspector. A new tutorial path opens it once, after open
+sheets close. UserDefaults stores progress, skipped steps and manual mode.
+Unfinished tours resume at launch when status lists the tracked path; archived
+ones show Done. Closing preserves progress. Restart shows the agent prompt and
+resets progress only when a newer tutorial workspace appears.
+
+The panel follows workspace creation, the first iOS build, a cached rebuild,
+live view and control, app logs, agent actions and replay, Fast Refresh, optional
+phone and build machine steps, then stop/removal and Archived. Optional steps
+show text and Skip; their panel actions are not wired yet. Mark done appears
+after two minutes. Manual mode copies the generated commands, including app-file
+heredocs, with the tracked paths substituted. Expand First iOS build after the
+base app is created to copy the worktree and build commands. Desktop never runs them.
+
+All tutorial Stim reads go through the CLI: status supplies live and archived
+paths, `stim logs --json --follow --grep '\[stim:tutorial\]'` supplies app signals,
+and `stim logs --json --follow --source agent` supplies the same records as the
+agent feed. Both followers run only while the panel is open on a live tutorial
+workspace. The panel reads `stim settings --json` for `archive.enabled`; when
+unavailable it assumes enabled, then permits finish after a ten-second
+disappearance grace period only when a stop was observed. Viewer events and
+paired-phone counts come from the existing Desktop controllers. No tutorial
+reader touches `$STIM_HOME` directly.
+
+To render every step, a failure and manual mode in light and dark at 2x:
+
+```sh
+STIM_TUTORIAL_SHOTS=/tmp/stim-tutorial-shots swift test --filter TutorialScreenshotTests
+```
+
+The fixture test skips without the variable and never starts the CLI or a device.
+
 ## Layout
 
 - `Sources/StimKit`: models for the CLI's JSON, the login shell environment, the CLI and `stim-server` clients, project grouping, warning remedies, the streaming runner, `stim logs` records and the follow runner, process, disk and gc usage, the status machine section, the Machine report, free plan and worktree lifecycle, the autopilot schedule, pressure plan and log, and the crash report scrubber. Unit-tested.

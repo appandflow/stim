@@ -28,6 +28,7 @@ struct WorkspaceDetail: View {
   @EnvironmentObject private var checks: BuildPlanChecks
   @ObservedObject private var server = ServerSession.shared
   @Environment(\.windowSize) private var windowSize
+  @Environment(\.tutorialHint) private var tutorialHint
   @State private var logsResizeStart: CGFloat?
   @AppStorage(AppPreferences.Key.logsDrawerHeight) private var logsHeight = Double(WorkspaceDetail.defaultLogsHeight)
   @AppStorage(AppPreferences.Key.showsLogs) private var showsLogs = false
@@ -86,6 +87,7 @@ struct WorkspaceDetail: View {
         }, close: { viewing = nil }
       )
       .environmentObject(actions)
+      .environment(\.tutorialHint, tutorialHint)
     }
     .sheet(item: $buildSheet) { selection in
       Group {
@@ -103,6 +105,7 @@ struct WorkspaceDetail: View {
       }
       .environmentObject(actions)
       .environmentObject(checks)
+      .environment(\.tutorialHint, tutorialHint)
     }
     .onQuitRequested {
       viewing = nil
@@ -180,6 +183,7 @@ struct WorkspaceDetail: View {
             cli: cli, env: page.isUnified ? logsApp : env, query: $logQuery, moment: $logMoment,
             page: page.isUnified ? page : nil, selectedApp: $logWorkspacePath
           )
+          .tutorialAnchor(.logsTab, workspace: env.path)
           .frame(height: Self.clampedLogsHeight(logsHeight, contentHeight: contentHeight))
         }
       }
@@ -399,6 +403,7 @@ struct WorkspaceDetail: View {
     )
     return
       tile
+      .tutorialAnchor(.deviceTile, workspace: env.path)
       .allowsHitTesting(tile.showsStoppedBar)
       .background {
         Button {

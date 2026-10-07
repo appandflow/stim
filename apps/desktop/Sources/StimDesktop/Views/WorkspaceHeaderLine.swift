@@ -30,6 +30,7 @@ struct WorkspaceHeaderLine: View {
           gitWorkspace: page?.apps[0].path,
           openBuild: openBuild)
       }
+      .tutorialAnchor(.buildSection, workspace: env.path)
       Spacer(minLength: Space.md)
       if apps.contains(where: \.replayOff) {
         Pill("Replay off")

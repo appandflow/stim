@@ -204,6 +204,8 @@ struct DeviceViewerToolbar: View {
           .accessibilityLabel("Release control")
       } else {
         Button("Control", systemImage: "cursorarrow.rays") { takenOver = true }
+          .tutorialAnchor(.viewerControl, workspace: env.path)
+          .accessibilityLabel("Control device")
           .nativeIconStyle()
           .fixedSize()
           .disabled(replaying)

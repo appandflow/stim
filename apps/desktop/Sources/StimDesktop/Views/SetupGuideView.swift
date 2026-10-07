@@ -419,6 +419,12 @@ struct SetupGuideView: View {
           .accessibilityLabel([item.title, stateDescription(item)].filter { !$0.isEmpty }.joined(separator: ", "))
         }
       }
+      Button("Take the tutorial") {
+        onboarding.finishGuide()
+        OpenRequests.shared.showTutorial(.begin)
+      }
+      .buttonStyle(.stim(.primary, .regular))
+      .accessibilityLabel("Take the Stim tutorial")
       if onboarding.report?.needsRelaunch == true {
         restartBanner("The app picks its stim when it starts.", action: onboarding.finishAndRestart)
       }
@@ -498,19 +504,40 @@ struct SetupGuideView: View {
   }
 }
 
-/// A command as the guide runs it, with its Run button, and the output of its last run.
-private struct CommandBlock: View {
-  var command: StimCommand
+struct CommandBlock: View {
+  var command = StimCommand([], cwd: NSHomeDirectory())
   var run: ActionRun?
-  var busy: Bool
-  var isDefault: Bool
+  var busy = false
+  var isDefault = false
   var caption: String?
+  var commandText: String?
+  var onCopy: () -> Void = {}
   var showsOutput = true
   var showsDirectory = true
-  var start: () -> Void
+  var start: (() -> Void)?
   @State private var copied = false
 
-  private var text: String { ([command.program] + command.arguments).joined(separator: " ") }
+  init(
+    command: StimCommand, run: ActionRun?, busy: Bool, isDefault: Bool, caption: String?,
+    showsOutput: Bool = true, showsDirectory: Bool = true, start: @escaping () -> Void
+  ) {
+    self.command = command
+    self.run = run
+    self.busy = busy
+    self.isDefault = isDefault
+    self.caption = caption
+    self.showsOutput = showsOutput
+    self.showsDirectory = showsDirectory
+    self.start = start
+  }
+
+  init(commandText: String, onCopy: @escaping () -> Void) {
+    self.commandText = commandText
+    self.onCopy = onCopy
+    showsDirectory = false
+  }
+
+  private var text: String { commandText ?? ([command.program] + command.arguments).joined(separator: " ") }
 
   var body: some View {
     VStack(alignment: .leading, spacing: Space.sm) {
@@ -524,6 +551,7 @@ private struct CommandBlock: View {
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(text, forType: .string)
             copied = true
+            onCopy()
           } label: {
             Image(systemName: copied ? "checkmark" : "doc.on.doc")
           }
@@ -535,7 +563,7 @@ private struct CommandBlock: View {
             try? await Task.sleep(for: .seconds(2))
             copied = false
           }
-          runButton
+          if start != nil { runButton }
         }
         .padding(.leading, Space.lg)
         .padding(.trailing, Space.sm)
@@ -553,7 +581,9 @@ private struct CommandBlock: View {
     let running = run?.isRunning == true
     let failed = run?.needsAttention == true
     let succeeded = run?.exitStatus == 0
-    Button(action: start) {
+    Button {
+      start?()
+    } label: {
       HStack(spacing: Space.xs) {
         if running {
           ProgressView().controlSize(.small)
