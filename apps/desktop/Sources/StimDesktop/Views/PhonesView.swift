@@ -56,12 +56,9 @@ struct PhonesView: View {
         if let reason = pairingUnavailable {
           Text(reason).foregroundStyle(Palette.tertiary)
         }
-        ForEach(server.phones) { device in
-          DeviceRow(
-            device: device, changing: server.pendingGrants[device.id] != nil,
-            allowControl: { server.grant(device, control: $0) }
-          ) { revoking = device }
-        }
+        PairedPhonesRows(
+          devices: server.phones, changing: { server.pendingGrants[$0.id] != nil },
+          allowControl: { server.grant($0, control: $1) }, revoke: { revoking = $0 })
       } header: {
         HStack {
           Text("Paired phones")
@@ -365,6 +362,26 @@ struct RouteSection: View {
   }
 }
 
+private struct PairedPhonesRows: View {
+  var devices: [PairedDevice]
+  var changing: (PairedDevice) -> Bool
+  var allowControl: (PairedDevice, Bool) -> Void
+  var revoke: (PairedDevice) -> Void
+
+  var body: some View {
+    Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: Space.lg, verticalSpacing: Space.md) {
+      ForEach(devices) { device in
+        if device.id != devices.first?.id {
+          Divider().gridCellUnsizedAxes(.horizontal)
+        }
+        DeviceRow(
+          device: device, changing: changing(device), allowControl: { allowControl(device, $0) },
+          revoke: { revoke(device) })
+      }
+    }
+  }
+}
+
 private struct DeviceRow: View {
   var device: PairedDevice
   var changing: Bool
@@ -372,16 +389,15 @@ private struct DeviceRow: View {
   var revoke: () -> Void
 
   var body: some View {
-    HStack(spacing: Space.lg) {
+    GridRow {
       Image(systemName: "iphone").iconFont(IconSize.large).foregroundStyle(Palette.accent)
       VStack(alignment: .leading, spacing: Space.xxs) {
-        HStack(spacing: Space.sm) {
-          Text(device.name).font(.stim(.body, weight: .semibold))
-          ScopeBadge(canControl: device.canControl)
-        }
+        Text(device.name).font(.stim(.body, weight: .semibold))
         Text("\(device.id) \u{00B7} \(device.node)").font(.stim(.caption, mono: true)).foregroundStyle(Palette.secondary)
       }
-      Spacer()
+      .frame(maxWidth: .infinity, alignment: .leading)
+      .fixedSize(horizontal: false, vertical: true)
+      ScopeBadge(canControl: device.canControl)
       VStack(alignment: .trailing, spacing: Space.xxs) {
         Text(lastSeen).foregroundStyle(Palette.secondary)
         Text("Paired \(device.pairedAt.formatted(date: .abbreviated, time: .shortened))")

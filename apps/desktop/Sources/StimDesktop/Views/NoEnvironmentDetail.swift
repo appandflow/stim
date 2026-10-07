@@ -11,6 +11,7 @@ struct NoEnvironmentDetail: View {
   @EnvironmentObject private var actions: ActionCenter
   @State private var selectedPath: String?
   @State private var removal: WorktreeRemoval?
+  let prefs = SidebarPreferences()
 
   private var app: NotSetUpApp { apps.first { $0.path == selectedPath } ?? apps[0] }
 
@@ -106,7 +107,9 @@ struct NoEnvironmentDetail: View {
           onWarmWorktree: {
             actions.run("Warm \(worktree.names.title)", StimCommand(["worktree", "warm"], cwd: worktree.path))
           },
-          onRemoveWorktree: { resolveRemovalBranch(at: worktree.path) { removal = WorktreeRemoval(branch: $0) } })
+          onRemoveWorktree: { resolveRemovalBranch(at: worktree.path) { removal = WorktreeRemoval(branch: $0) } },
+          hidden: prefs.hiddenWorkspaces.paths.contains(worktree.path), canHide: !busy,
+          onToggleHidden: { prefs.setHidden(!prefs.hiddenWorkspaces.paths.contains(worktree.path), path: worktree.path) })
       } label: {
         Image(systemName: "ellipsis")
       }

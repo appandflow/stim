@@ -685,25 +685,36 @@ test('--refresh records the installer process group it spawned, so its own death
   fallBehind({ 'pnpm-lock.yaml': 'lock v2\n' }, 'bump lockfile');
 
   const real = getExecutor();
-  let duringInstall: { pid?: number } | null | undefined;
+  const gate = join(base, 'finish-install');
   let spawnedPid: number | undefined;
   let leadsItsOwnGroup: unknown;
   setExecutor({
     ...real,
     spawn(_cmd: string, _args: string[], opts: SpawnOptions) {
       leadsItsOwnGroup = opts?.detached;
-      const child = real.spawn(process.execPath, ['-e', 'setTimeout(() => {}, 400)'], opts);
+      const child = real.spawn(
+        process.execPath,
+        [
+          '-e',
+          'const fs = require("node:fs"); const timer = setInterval(() => { if (fs.existsSync(process.argv[1])) clearInterval(timer); }, 20);',
+          gate,
+        ],
+        opts,
+      );
       spawnedPid = child.pid;
-      setTimeout(() => {
-        duringInstall = claimedInstaller();
-      }, 120);
       return child;
     },
   });
-  const result = await runWarm(target, '--refresh');
+  const warm = runWarm(target, '--refresh');
+  try {
+    const duringInstall = await waitUntil('the installer child claim', claimedInstaller);
+    expect(leadsItsOwnGroup).toBe(true);
+    expect(duringInstall).toEqual({ pid: spawnedPid, processToken: expect.any(String) });
+  } finally {
+    writeFileSync(gate, 'go');
+  }
+  const result = await warm;
   expect(result.code).toBe(0);
-  expect(leadsItsOwnGroup).toBe(true);
-  expect(duringInstall).toEqual({ pid: spawnedPid, processToken: expect.any(String) });
   expect(claimedInstaller()).toBe(undefined);
 }, 30_000);
 

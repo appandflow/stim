@@ -36,13 +36,7 @@ import {
   type ServerBuild,
 } from './service-plist.ts';
 import { pruneSetupJournals, writeSetupJournal } from './setup-journal.ts';
-import {
-  hostPermissionPanes,
-  installHostApp,
-  readHostPermissions,
-  requestHostPermissions,
-  type HostApp,
-} from './stim-host.ts';
+import { hostPermissionPanes, installHostApp, requestHostPermissions, type HostApp } from './stim-host.ts';
 import { findTailscale, readRawTailscaleStatus, serveRoute, type ServeRoute } from './tailscale.ts';
 
 const SETUP_MIN_VERSION = '1.16.0';
@@ -243,7 +237,6 @@ export interface SetupDeps {
   records(now: number): PairedDevice[];
   grant: typeof grantDevice;
   panes: typeof hostPermissionPanes;
-  permissions: typeof readHostPermissions;
   requestPermissions: typeof requestHostPermissions;
   openPane(pane: string): Promise<void>;
   toolchain(options: SetupOptions): Promise<BuildToolchain | null>;
@@ -387,7 +380,6 @@ export function defaultSetupDeps(): SetupDeps {
     records: (now) => [...readBuildClients(now), ...readDeviceHostClients(now)],
     grant: grantDevice,
     panes: hostPermissionPanes,
-    permissions: readHostPermissions,
     requestPermissions: requestHostPermissions,
     async openPane(pane) {
       const result = await run('/usr/bin/open', [`x-apple.systempreferences:com.apple.preference.security?${pane}`]);
@@ -442,12 +434,11 @@ async function checkPermissions(
     ['deviceControl', 'accessibility', panes.control, 'Privacy_Accessibility', 'controlling hosted simulators'],
   ] as const) {
     const id = `permissions.${key}`;
-    const read = async () =>
-      desktop ? ((await wait(deps.health(options.port)))?.host ?? null) : wait(deps.permissions(host.executable));
+    const read = async () => (await wait(deps.health(options.port)))?.host ?? null;
     let permissions = await read();
     if (permissions?.[field]) {
       output.permissions[key] = 'granted';
-      report(id, 'ok', title);
+      report(id, 'ok', title, 'Already granted.');
       continue;
     }
     report(

@@ -970,20 +970,33 @@ describe('pairing', () => {
     'closes revoked sessions and refuses the token with watch events dropped: %s',
     async (dropEvents) => {
       registryWatch.dropEvents = dropEvents;
-      const port = await start();
-      const { id, token } = await pair(port);
-      const live = await connect(port);
-      await live.request('hello', { protocol: 1, client: CLIENT, auth: { deviceToken: token } });
+      if (dropEvents) vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+      try {
+        const port = await start();
+        const { id, token } = await pair(port);
+        const live = await connect(port);
+        await live.request('hello', { protocol: 1, client: CLIENT, auth: { deviceToken: token } });
 
-      expect(revokeDevice(id)).toBe(true);
-      expect(await live.closed).toBe(4401);
-      const after = await connect(port);
-      expect(await after.request('hello', { protocol: 1, client: CLIENT, auth: { deviceToken: token } })).toMatchObject(
-        {
+        expect(revokeDevice(id)).toBe(true);
+        if (dropEvents) await vi.runOnlyPendingTimersAsync();
+        expect(await live.closed).toBe(4401);
+        const after = await connect(port);
+        expect(
+          await after.request('hello', { protocol: 1, client: CLIENT, auth: { deviceToken: token } }),
+        ).toMatchObject({
           error: { code: 'unauthorized', message: expect.stringContaining('does not recognize') },
-        },
-      );
-      expect(revokeDevice(id)).toBe(false);
+        });
+        expect(revokeDevice(id)).toBe(false);
+      } finally {
+        if (dropEvents) {
+          try {
+            await server?.close();
+            server = null;
+          } finally {
+            vi.useRealTimers();
+          }
+        }
+      }
     },
   );
 });
