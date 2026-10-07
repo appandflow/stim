@@ -85,7 +85,8 @@ struct DeviceViewer: View {
       switch device {
       case .ios where device?.localSimulatorUDID != nil:
         displayMetrics = SimulatorDisplayMetrics.load(udid: device!.localSimulatorUDID!)
-      case .android(_, let avd) where !avd.physical: displayMetrics = EmulatorDisplayMetrics.load(avdName: avd.name)
+      case .android(_, let avd) where !avd.physical && avd.host == nil:
+        displayMetrics = EmulatorDisplayMetrics.load(avdName: avd.name)
       default: displayMetrics = nil
       }
       scalingMode = .fit
@@ -97,7 +98,8 @@ struct DeviceViewer: View {
       takenOver =
         device.map {
           $0.isInteractive
-            && ((!$0.isPhysical && $0.hostedIos == nil) || PhysicalScreen(device: $0, link: server.link, now: Date()).canControl)
+            && ((!$0.isPhysical && $0.hostedMachine == nil)
+              || PhysicalScreen(device: $0, link: server.link, now: Date()).canControl)
         } ?? false
       actionsFocused = !takenOver
     }
@@ -212,7 +214,9 @@ struct DeviceViewer: View {
     case .ios, .android: break
     case .remote, .web: return [.fit]
     }
-    guard !replaying, device.isRunning, !device.isPhysical, device.formFactor != .dual else { return [.fit] }
+    guard !replaying, device.isRunning, !device.isPhysical, device.hostedMachine == nil, device.formFactor != .dual else {
+      return [.fit]
+    }
     return DeviceScalingMode.allCases.filter {
       $0 == .fit
         || devicePixelScale(
@@ -252,7 +256,7 @@ struct DeviceViewer: View {
   private func replayTarget(_ device: DeviceRef) -> ReplayTarget? {
     switch device {
     case .remote: return nil
-    case _ where device.isPhysical || device.hostedIos != nil: return nil
+    case _ where device.isPhysical || device.hostedMachine != nil: return nil
     default: return ReplayTarget(workspace: env.path, platform: device.platform, slot: device.slot)
     }
   }

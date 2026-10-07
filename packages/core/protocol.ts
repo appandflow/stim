@@ -33,7 +33,7 @@ export type Capability = (typeof CAPABILITIES)[number];
  * the slot's Stim-owned device instead. `notifications` is `notifications.list` and the `notification` event.
  * `macos-hosted` relays `frames.subscribe` and control for a workspace whose macOS app
  * `stim macos --remote` placed on another Mac.
- * `ios-hosted` relays iOS simulator frames and control by workspace slot through the client's server.
+ * `ios-hosted` and `android-hosted` relay hosted native frames and control by workspace slot through the client's server.
  * `hosted-ios-agent` adds session-scoped iOS agent-device grants to installed app launch/attach results.
  * `macos-windows` is the `macos-windows` event on a macOS `frames.subscribe`, naming the window capture follows
  * and the app's other windows.
@@ -57,6 +57,7 @@ export const FEATURES = [
   'device-frames',
   'macos-hosted',
   'ios-hosted',
+  'android-hosted',
   'hosted-ios-agent',
   'duo-frames',
   'workspace-diff',

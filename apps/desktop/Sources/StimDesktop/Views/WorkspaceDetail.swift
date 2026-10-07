@@ -383,7 +383,7 @@ struct WorkspaceDetail: View {
     let env = owner ?? env
     let canControl =
       device.isInteractive
-      && ((!device.isPhysical && device.hostedIos == nil)
+      && ((!device.isPhysical && device.hostedMachine == nil)
         || PhysicalScreen(device: device, link: server.link, now: Date()).canControl)
     let viewerAction = canControl ? "Control" : "View"
     let tile = DeviceTile(

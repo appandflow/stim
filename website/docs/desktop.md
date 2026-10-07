@@ -36,12 +36,14 @@ brew install --cask appandflow/tap/stim
   App**. See [Install Stim](./getting-started.md#install-stim).
 - Xcode 27 for live simulator screens.
 
-Hosted iOS simulators started with `stim ios --remote <machine>` appear as device
+Hosted iOS simulators and Android emulators started with
+`stim ios --remote <machine>` or `stim android --remote <machine>` appear as device
 tiles with an **on &lt;machine&gt;** label. Turn on **Serve to phones** to view and
 control them through this Mac's stim-server relay. Touch and text reach the
 hosting Mac; controls that need a local simulator, and replay, are hidden.
-The tile reports connecting, unavailable or stopped sessions. Android hosting
-and automatic placement are not available yet. See [iOS on an approved Mac](./owned-devices#run-ios-on-another-mac).
+The tile reports connecting, unavailable or stopped sessions. Android hardware
+buttons also use the relay; rotation and posture are unavailable. Automatic
+placement is not available yet. See [iOS on an approved Mac](./owned-devices#run-ios-on-another-mac).
 
 Desktop uses the non-empty launch `STIM_HOME`, then the login shell's value, then
 `~/.stim`; **Settings > App > Stim CLI** shows the home, and private-home copies

@@ -1,4 +1,4 @@
-import { spawn, type ChildProcess } from 'node:child_process';
+import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, realpathSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path';
@@ -51,11 +51,13 @@ import {
   type HostedDeviceSession,
   type HostedDeviceOffer,
   type HostedIosDevice,
+  type HostedAndroidDevice,
   type HostedMacosDevice,
   type MacosAppState,
 } from '@stim-cli/core/state';
 import { writeJson } from './registry.ts';
 import { takeHostedInputClaim } from './hosted-input.ts';
+import { adbPath } from './frame-helper.ts';
 import type { Methods, ProtocolError } from './protocol.ts';
 import { appDelivery, offerHostedApp, chunkHostedApp, changeHostedApp, handOverHostedApp } from './hosted-app.ts';
 import type { HostedAgentHost } from './agent-driver.ts';
@@ -108,6 +110,7 @@ export interface DeviceHostOptions {
 
 type HostedViewTarget = { home: string; claim: ClaimHandle } & (
   | { platform: 'ios'; session: HostedDeviceSession & { device: HostedIosDevice } }
+  | { platform: 'android'; session: HostedDeviceSession & { device: HostedAndroidDevice } }
   | {
       platform: 'macos';
       session: HostedDeviceSession & { device: HostedMacosDevice };
@@ -504,7 +507,7 @@ export class DeviceHost {
     if (owned.metro === metro) delete owned.metro;
   }
 
-  viewTarget(client: string, session: string): HostedViewTarget {
+  viewTarget(client: string, session: string, probeRunning = false): HostedViewTarget {
     if (this.closed || !this.options.allowed(client)) throw new Error('Current device-host approval is required.');
     const record = readHostedSessions().find((each) => each.client === client && each.id === session);
     const owned = this.owned.get(session);
@@ -512,11 +515,36 @@ export class DeviceHost {
       throw new Error(
         'Only a ready session attached to this server can be viewed. Explicit stop must reconcile a lost owner.',
       );
-    if (record.platform !== 'ios' && record.platform !== 'macos')
-      throw new Error('Hosted view and input support iOS and macOS sessions only.');
     if (owned.stopping || owned.data || owned.installing)
       throw new Error('This hosted session has a native operation in progress.');
     const home = join(deviceHostArea(record.id), 'home');
+    if (record.platform === 'android') {
+      if (!('serial' in record.device)) throw new Error('The device record no longer matches this session.');
+      assertHostedDeviceLedger(home, record.device.avdName, 'android');
+      const device = readHostedDevice(home, 'android');
+      if (
+        device.serial !== record.device.serial ||
+        device.avdName !== record.device.avdName ||
+        device.systemImage !== record.device.systemImage ||
+        device.architecture !== record.device.architecture
+      )
+        throw new Error('The hosted Android device identity changed.');
+      const adb = (args: string[]) =>
+        execFileSync(adbPath(this.options.env), ['-s', device.serial, ...args], {
+          env: this.options.env,
+          encoding: 'utf8',
+          timeout: 2000,
+          killSignal: 'SIGKILL',
+          stdio: ['ignore', 'pipe', 'pipe'],
+        }).trim();
+      if (
+        probeRunning &&
+        (adb(['emu', 'avd', 'name']).split('\n')[0]?.trim() !== device.avdName ||
+          adb(['shell', 'getprop', 'ro.product.cpu.abi']) !== device.architecture)
+      )
+        throw new Error('The hosted Android device identity or running ABI changed.');
+      return { platform: 'android', session: { ...record, device: record.device }, home, claim: owned.claim };
+    }
     if (record.platform === 'macos') {
       if (!('appSlot' in record.device) || record.device.appSlot !== record.appSlot)
         throw new Error('The device record no longer matches this session.');

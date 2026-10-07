@@ -52,7 +52,7 @@ export function deviceTileState(device: DeviceRef, env: EnvironmentState, now: n
       tone: device.running ? 'success' : 'secondary',
     };
   }
-  if (device.host && device.platform === 'ios' && device.state !== 'ready')
+  if (device.host && (device.platform === 'ios' || device.platform === 'android') && device.state !== 'ready')
     return { text: device.state === 'stopped' ? t`Not running` : t`Unknown`, tone: 'secondary' };
   const build = runningBuild(env, device);
   if (build) {

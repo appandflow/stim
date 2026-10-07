@@ -344,6 +344,18 @@ public struct HostedIos: Decodable, Hashable, Sendable {
   public var device: Device?
 }
 
+public struct HostedAndroid: Decodable, Hashable, Sendable {
+  public struct Device: Decodable, Hashable, Sendable {
+    public var name: String
+    public var systemImage: String
+    public var api: Int
+  }
+
+  public var machine: String
+  public var session: String
+  public var device: Device?
+}
+
 public struct IosDevice: Decodable, Hashable, Sendable {
   public var host: HostedIos?
   public var name: String
@@ -392,6 +404,7 @@ public struct AppProcess: Decodable, Hashable, Sendable {
 }
 
 public struct AndroidDevice: Decodable, Hashable, Sendable {
+  public var host: HostedAndroid?
   public var name: String
   public var owned: Bool
   public var physical: Bool

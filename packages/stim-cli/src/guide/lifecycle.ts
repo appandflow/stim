@@ -307,8 +307,22 @@ stop and worktree remove wait for device-host.stop, delete the host's owned
 emulator, close the gateway and clear placement. stop --json reports
 outcomes.device["android:host:<slot>"]. Forbidden or unknown-session also clears
 placement; an unreachable host keeps it and fails cleanup. A host restart stops
-sessions. Rerun the same machine to replace a stopped session. View/control and
-agent driving are not available yet. JavaScript logs arrive through local Metro.
+sessions. Rerun the same machine to replace a stopped session. Agent driving is
+not available yet. JavaScript logs arrive through local Metro.
+
+Stim Desktop and the phone app view and control the emulator through this
+Mac's local stim-server relay, with an "on <machine>" label. Turn on Serve to
+phones in Desktop and pair the phone with this Mac, not the hosting Mac.
+frames.subscribe and control.begin address workspace, platform android and
+slot, including named slots. The host verifies its exact ledger-owned serial,
+AVD identity and ABI before capture or input; clients never use that serial
+locally. Capture uses the host's stim-frames helper and scrcpy server jar over
+adb; stopping capture removes its jar and forward before emulator teardown.
+Stopped sessions show a rerun remedy; unavailable hosts report why frames
+cannot arrive. Replay (at/rate), duoFrame and physical hosted targets are
+refused. Desktop hides local emulator windows, rotation, clipboard and emulator
+options; touch, text and hardware buttons use the relay. Rotation and posture
+are unavailable through the scrcpy path.
 
 Reruns send only missing manifest and APK digests from the session-scoped blob
 store. The host verifies reused bytes; each new attempt still installs the APK.

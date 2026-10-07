@@ -70,22 +70,31 @@
     }
   }
 
-  struct HostedIosGallery: View {
+  struct HostedDeviceGallery: View {
     var scenario: PlaygroundScenario
+    var platform: String
 
     var body: some View {
       let state = scenario == .empty ? "stopped" : scenario == .error ? "unverified" : "ready"
-      let json = """
+      let iosJson = """
         {"name":"iPhone 17 Pro","udid":"","owned":false,"state":"\(state)",
          "host":{"machine":"janics-mac-mini:7443","session":"hosted-ios-gallery",
                  "device":{"name":"iPhone 17 Pro","runtime":"iOS 27.0"}}}
         """
-      if let ios = try? JSONDecoder().decode(IosDevice.self, from: Data(json.utf8)) {
-        let device = DeviceRef.ios(slot: "tablet", ios)
+      let androidJson = """
+        {"name":"pixel_6 (API 30)","serial":"","owned":false,"physical":false,"state":"\(state)",
+         "host":{"machine":"janics-mac-mini:7443","session":"hosted-android-gallery",
+                 "device":{"name":"pixel_6 (API 30)","systemImage":"system-images;android-30;google_apis;arm64-v8a","api":30}}}
+        """
+      let device: DeviceRef? =
+        platform == "android"
+        ? (try? JSONDecoder().decode(AndroidDevice.self, from: Data(androidJson.utf8))).map { .android(slot: "tablet", $0) }
+        : (try? JSONDecoder().decode(IosDevice.self, from: Data(iosJson.utf8))).map { .ios(slot: "tablet", $0) }
+      if let device {
         let link: ServerLink = scenario == .error ? .unavailable("janics-mac-mini is unavailable.") : .connecting
         DeviceTile(
           device: device, hostedPreview: PhysicalScreen(device: device, link: link, now: Date()),
-          screenHeight: 360, workspace: "/fixture/hosted-ios"
+          screenHeight: 360, workspace: "/fixture/hosted-\(platform)"
         )
         .padding(Space.xl)
       }

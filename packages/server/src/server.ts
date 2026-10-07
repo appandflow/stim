@@ -19,6 +19,7 @@ import {
   readMacosRecord,
   readWorkspaceState,
   hostedIosPlacements,
+  hostedAndroidPlacements,
   parseNdjsonLine,
   RECORDING_PLATFORMS,
   stimBuildDigest,
@@ -153,12 +154,15 @@ const INPUT_METHODS = [
 ] as const;
 
 function viewHostedPlacement(dir: string, platform: string, slot: string | undefined, physical: unknown) {
-  return platform === 'ios' && physical === true ? undefined : hostedPlacement(dir, platform, slot);
+  return (platform === 'ios' || platform === 'android') && physical === true
+    ? undefined
+    : hostedPlacement(dir, platform, slot);
 }
 
 function hostedPlacement(dir: string, platform: string, slot = 'default') {
   if (platform === 'macos') return readMacosRecord(dir)?.host;
   if (platform === 'ios') return hostedIosPlacements(readWorkspaceState(dir))[slot];
+  if (platform === 'android') return hostedAndroidPlacements(readWorkspaceState(dir))[slot];
   return undefined;
 }
 
@@ -1053,7 +1057,9 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
           action: raw.takeOver === true ? 'control.take-over' : 'control.begin',
           workspace: clip(raw.workspace),
           ...(typeof raw.platform === 'string' ? { platform: clip(raw.platform)! } : {}),
-          ...(raw.platform === 'ios' ? { slot: typeof raw.slot === 'string' ? clip(raw.slot)! : 'default' } : {}),
+          ...(raw.platform === 'ios' || raw.platform === 'android'
+            ? { slot: typeof raw.slot === 'string' ? clip(raw.slot)! : 'default' }
+            : {}),
           ok: false,
           error: { code, message: clip(message)! },
         });
@@ -1081,7 +1087,9 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
             'bad-request',
             parsed.value.platform === 'ios'
               ? 'Hosted iOS control requires a non-physical target.'
-              : 'Hosted macOS control requires the default, non-physical target.',
+              : parsed.value.platform === 'android'
+                ? 'Hosted Android control requires a non-physical target.'
+                : 'Hosted macOS control requires the default, non-physical target.',
           );
         }
         return relay.begin(
@@ -1095,7 +1103,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
           {
             workspace: resolved.dir,
             device: { id: session.id, name: session.name },
-            platform: parsed.value.platform as 'ios' | 'macos',
+            platform: parsed.value.platform as 'ios' | 'android' | 'macos',
             slot: parsed.value.slot,
           },
         );
@@ -1313,7 +1321,9 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
             'bad-request',
             platform === 'ios'
               ? 'Hosted iOS frames require a non-physical target without replay or duoFrame.'
-              : 'Hosted macOS frames require the default, non-physical target without replay.',
+              : platform === 'android'
+                ? 'Hosted Android frames require a non-physical target without replay or duoFrame.'
+                : 'Hosted macOS frames require the default, non-physical target without replay.',
           );
         }
         return void relay.subscribe(id, host, target, (subscription, stop) => subscriptions.set(subscription, stop));

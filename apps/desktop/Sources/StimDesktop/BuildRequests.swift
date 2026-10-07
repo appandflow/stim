@@ -85,7 +85,7 @@ enum BuildRequestPrompt {
     let lapses = device.pendingUntil.map { " It lapses at \($0.formatted(date: .omitted, time: .shortened))." } ?? ""
     let permission =
       device.isDeviceHostClient
-      ? "Allow approves this Mac for hosted simulator and emulator sessions. Hosted iOS simulators run on an approved Mac via stim ios --remote <machine>. Android and automatic placement are not available yet. It does not grant build access or read/control access to unrelated workspaces or devices."
+      ? "Allow approves this Mac for hosted simulator and emulator sessions. Hosted iOS simulators and Android emulators run on an approved Mac via stim ios|android --remote <machine>. Automatic placement is not available yet. It does not grant build access or read/control access to unrelated workspaces or devices."
       : "It can run its project's code on this Mac to build: config plugins, CocoaPods hooks, Xcode script phases and Gradle plugins run as your user. It cannot read your workspaces or control your devices."
     alert.informativeText = """
       Tailnet node: \(device.node)

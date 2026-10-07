@@ -38,7 +38,12 @@ public struct OversightDevice: Decodable, Sendable {
   public var name: String?
   public var state: String?
   public var physical: Bool?
-  public var host: HostedIos?
+  public struct Host: Decodable, Sendable {
+    public var machine: String
+    public var session: String
+  }
+
+  public var host: Host?
   public var activity: OversightActivity?
 }
 
@@ -426,7 +431,7 @@ public enum Oversight {
         out.append(
           SlotDevice(
             platform: "android", slot: slot, model: android.physical == true ? "Android device" : "Android Emulator",
-            running: android.state == "detected", activity: android.activity))
+            running: android.host != nil ? android.state == "ready" : android.state == "detected", activity: android.activity))
       }
     }
     add("default", env.ios, env.android)

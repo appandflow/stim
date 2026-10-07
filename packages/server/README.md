@@ -331,16 +331,15 @@ tokens.
 Device hosting has a separate `device-host` capability. An approved client can
 reserve, boot, reconnect to and stop its own iOS simulator or Android emulator
 through the protocol. It can deliver, install and launch a compatible iOS app
-bundle, Android APK or prebuilt macOS app, stream the iOS simulator or macOS app and control it. The hosted iOS
-app connects back to Metro on the client Mac. Automatic CLI placement and
-Android Metro and viewing remain in [#2266](https://github.com/appandflow/stim/issues/2266).
+bundle, Android APK or prebuilt macOS app, stream the iOS simulator, Android emulator or macOS app and control it. Hosted
+iOS and Android apps connect back to Metro on the client Mac. Automatic placement remains in [#2266](https://github.com/appandflow/stim/issues/2266).
 
 The Stim client can name expected hosts with
 `stim settings set hosting.machines '["<mac>"]'` and request access with
 `stim doctor --fix`. It stores a separate private credential in
 `$STIM_HOME/device-host-machines.json`, pins the worker's tailnet node, and
 reports approval under `deviceHosts` in doctor JSON. Plain doctor makes no
-approval request. This setup does not yet place CLI sessions remotely.
+approval request. Use `stim ios --remote <machine>` or `stim android --remote <machine>` for explicit placement.
 
 A client on the tailnet sends `hello` with
 `auth: { "request": "device-host", "deviceName": "Laptop" }`. As with a build
@@ -622,11 +621,10 @@ signature or installation conflict refuses; hosting does not uninstall an
 existing app to resolve it.
 
 Release launch reports `true` only after observing a live package process.
-Development launch remains `unverified`; this driver launches the activity but
-does not wire an Android Metro bridge. Replaying an installed app attempt does
+Development launch remains `unverified` until the client Metro bridge provides
+bundle evidence. Replaying an installed app attempt does
 not install or launch again. Owner loss, stop, revocation and uncertain outcomes
-retain the same reconciliation rules as iOS. Android viewing, Metro and client
-placement remain under [#2266](https://github.com/appandflow/stim/issues/2266).
+retain the same reconciliation rules as iOS. Android agent driving remains under [#2266](https://github.com/appandflow/stim/issues/2266).
 
 ### Hosted macOS app sessions
 
@@ -778,18 +776,17 @@ placement still needs to check that contract before selecting hosted Metro.
 Bare React Native uses the worker `RCT_jsLocation`. Bridge readiness and
 manifest requests are not launch proof; development remains `unverified` until
 the workspace observes the app's own bundle delivery.
-This is a protocol API for approved clients; automatic iOS CLI placement,
-Android Metro/viewing remains in [#2266](https://github.com/appandflow/stim/issues/2266).
+This is a protocol API for approved clients; automatic placement remains in [#2266](https://github.com/appandflow/stim/issues/2266).
 
 ### Hosted viewer relay
 
-The client's stim-server relays a hosted workspace's iOS simulator or macOS view and input to
+The client's stim-server relays a hosted workspace's iOS simulator, Android emulator or macOS view and input to
 its host using the client's approved device-host credential over the pinned
 tailnet connection. Stim Desktop and phones keep talking only to their own
-server. The `macos-hosted` and `ios-hosted` features advertise these relays.
-iOS resolves `ios.host` by the requested slot; macOS retains its default slot.
+server. The `macos-hosted`, `ios-hosted` and `android-hosted` features advertise these relays.
+iOS resolves `ios.host` and Android resolves `android.host` by the requested slot; macOS retains its default slot.
 The local platform and slot replace the host's private target fields in events
-and iOS control audit records. H.264 packets retain their flags and payload and
+and iOS/Android control audit records. H.264 packets retain their flags and payload and
 carry the local subscription ID, which identifies the platform and slot.
 The relay forwards iOS device artwork and orientation metadata. Hosted targets
 refuse replay (`at`/`rate`), `duoFrame` and `physical` with `bad-request`.
@@ -805,14 +802,14 @@ its packets until the next keyframe and, when the host advertises the
 `hosted-congestion` feature, sends `device-host.frames.congested` at most every
 250 ms, so the host lowers that app's bitrate as it does for a local subscriber
 whose socket backs up.
-Hosted macOS frames and control require the default slot; hosted iOS supports named slots.
+Hosted macOS frames and control require the default slot; hosted iOS and Android support named slots.
 `control.begin` still needs the local `control` grant. For macOS apps, Screen Recording for
 viewing and Accessibility for control are granted on the host, not the client.
 
-### Hosted iOS and macOS view and input
+### Hosted iOS, Android and macOS view and input
 
 An approved hosting client can subscribe to its ready session's exact owned
-iOS simulator or running macOS app without access to the worker's registered
+iOS simulator, Android emulator or running macOS app without access to the worker's registered
 workspaces:
 
 ```json
@@ -832,7 +829,7 @@ subscription ID as `params.subscription`. `device-host.frames.congested`
 behind on that H.264 subscription; it lowers the bitrate the same way a backed-up
 socket does.
 Hosted capture requires the compiled `stim-frames` helper and does not support
-replay, device artwork or screenshot fallback. macOS frames show only the one
+replay or screenshot fallback. iOS supports device artwork. macOS frames show only the one
 window of the hosted app. Viewing is refused before launch and after the app
 exits. On the hosting Mac, `stim-server service install` runs the server and
 `stim-frames` under Stim Host, whose Screen Recording and control grants they
@@ -842,13 +839,27 @@ System Audio Recording ends the stream; missing Device Control and Data Access
 (Accessibility on macOS 26 and earlier) leaves viewing available.
 See [Run as a service](#run-as-a-service) for the settings panes and Dev caveat.
 
+Android capture uses the same `android-device <serial> <adb> <scrcpy-server>`
+helper transport as physical Android, addressed only to the session's exact
+`emulator-<port>` serial. It bypasses workspace target resolution and device
+leases. The server rechecks the private home's created-device ledger, recorded
+serial and system image, the running AVD identity and ABI. Unknown state refuses
+capture and input. The helper uses the host SDK from `ANDROID_HOME`,
+`ANDROID_SDK_ROOT` or `$HOME/Library/Android/sdk`, including under the LaunchAgent.
+It pushes the built scrcpy jar to `/data/local/tmp` and removes both that jar
+and its adb forward when capture stops. One viewer pool serves each session;
+the lifetime claim tracks the helper as its child. Android capture requires no
+macOS screen-recording permission.
+
 Start control with `device-host.control.begin` and
 `{"session":"<hosted-session-id>"}`. Its result returns a connection-bound
 control session ID and `lease: null`: the hosted lifetime claim protects this
 private device. Only one controller can drive the device; `takeOver: true`
 replaces the previous controller. Use the returned control ID with
 `device-host.input.touch|text`, using the same parameters as ordinary input.
-iOS also supports `device-host.input.button|rotate|posture`. macOS also supports
+iOS also supports `device-host.input.button|rotate|posture`. Android supports
+`device-host.input.button` through scrcpy; rotation and posture are unavailable
+on this path, as for physical Android devices. macOS also supports
 `device-host.input.scroll|key`; these two methods are for macOS sessions only.
 Touch coordinates range from 0 to 1 on the streamed display.
 End it with `device-host.control.end` and `{"session":"<control-id>"}`.
@@ -869,8 +880,7 @@ Hosted posture commands hold a separate child-aware input claim. A surviving
 command or unresolved child identity blocks replacement ownership, install and
 stop even after the server and capture helper exit; the refusal names the claim
 and its manual cleanup command. An unknown or lost owner requires explicit stop
-before replacement. This worker
-protocol does not add CLI placement or a local viewer relay; those remain in
+before replacement. Automatic placement and Android agent driving remain in
 [#2266](https://github.com/appandflow/stim/issues/2266).
 
 ## Run as a service

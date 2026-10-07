@@ -172,6 +172,7 @@ export function DeviceView({
   const [showsFrame, setShowsFrame] = useState(false);
   const frameSupported =
     !physical &&
+    !(platform === 'android' && device?.host) &&
     (platform === 'ios' || platform === 'android') &&
     link.kind === 'open' &&
     link.features?.includes('device-frames') === true;
@@ -556,7 +557,7 @@ export function DeviceView({
               ]
             : []),
           ...windowActions,
-          ...((platform === 'ios' || platform === 'android') && !physical
+          ...((platform === 'ios' || platform === 'android') && !physical && !(platform === 'android' && device?.host)
             ? [
                 {
                   id: 'rotate-left',

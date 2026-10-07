@@ -1,3 +1,4 @@
+import hostedAndroidFixture from '../../mock-server/fixtures/hosted-android.json';
 import hostedFixture from '../../mock-server/fixtures/hosted-ios.json';
 import fixture from '../../mock-server/fixtures/status.json';
 
@@ -441,4 +442,31 @@ it('routes each hosted iOS slot through the paired Mac without using an empty lo
   expect(streamsFrames(stopped!, ['ios-hosted'])).toBe(false);
   expect(streamsFrames(unverified!, ['ios-hosted'])).toBe(true);
   expect(unverified?.running).toBe(false);
+});
+
+it('routes hosted Android slots without exposing an empty local serial and retains stopped state', () => {
+  const workspace = hostedAndroidFixture[0] as EnvironmentState;
+  const [phone, tablet] = devicesOf(workspace);
+  expect(phone).toMatchObject({
+    platform: 'android',
+    slot: 'default',
+    id: null,
+    owned: false,
+    physical: false,
+    running: true,
+    host: 'janics-mac-mini',
+    state: 'ready',
+  });
+  expect(tablet).toMatchObject({ platform: 'android', slot: 'tablet', host: 'janics-mac-mini' });
+  expect(deviceKey(phone!)).not.toBe(deviceKey(tablet!));
+  expect(streamsFrames(phone!, ['android-hosted'])).toBe(true);
+  expect(streamsFrames(phone!, ['ios-hosted'])).toBe(false);
+  expect(livePlatforms(workspace)).toEqual(['android']);
+  expect(isActive({ ...workspace, live: false })).toBe(true);
+  const [stopped] = devicesOf(hostedAndroidFixture[1] as EnvironmentState);
+  const [unverified] = devicesOf(hostedAndroidFixture[2] as EnvironmentState);
+  expect(stopped).toMatchObject({ state: 'stopped', running: false });
+  expect(streamsFrames(stopped!, ['android-hosted'])).toBe(false);
+  expect(unverified).toMatchObject({ state: 'unverified', running: false });
+  expect(streamsFrames(unverified!, ['android-hosted'])).toBe(true);
 });

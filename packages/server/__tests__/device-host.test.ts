@@ -340,28 +340,64 @@ for (const ending of ['revocation', 'server close', 'revocation with an unwritab
     },
   );
 }
+function androidViewEnvironment() {
+  const sdk = join(home, 'sdk');
+  mkdirSync(join(sdk, 'platform-tools'), { recursive: true });
+  const adb = join(sdk, 'platform-tools', 'adb');
+  const probe = join(home, 'adb-device.json');
+  writeFileSync(
+    adb,
+    `#!${process.execPath}
+const fs = require('node:fs');
+const device = JSON.parse(fs.readFileSync(${JSON.stringify(probe)}, 'utf8'));
+const args = process.argv.slice(2);
+if(args[0] !== '-s' || args[1] !== device.serial) process.exit(1);
+process.stdout.write(args[2] === 'emu' ? device.avdName+'\\nOK\\n' : device.architecture+'\\n');
+`,
+  );
+  chmodSync(adb, 0o755);
+  return { env: { ...process.env, ANDROID_HOME: undefined, ANDROID_SDK_ROOT: sdk }, probe, adb };
+}
+
 describe.skipIf(process.platform === 'win32')('hosted capture journal failures', () => {
-  test.each(['revocation', 'server close', 'unwritable revocation'])(
-    'closes actual capture and input on %s and retains unresolved native ownership',
-    async (ending) => {
-      const first = reserve();
-      await state(first.id, 'ready');
+  test.each(
+    ['ios', 'android'].flatMap((platform) =>
+      ['revocation', 'server close', 'unwritable revocation'].map((ending) => ({ platform, ending })),
+    ),
+  )(
+    'closes $platform capture and input on $ending and retains unresolved native ownership',
+    async ({ platform, ending }) => {
+      const android = platform === 'android' ? androidViewEnvironment() : null;
+      const env = android?.env ?? process.env;
+      if (android) {
+        await host.close();
+        host = new DeviceHost({
+          worker: join(home, 'worker.mjs'),
+          env,
+          agents: noAgents,
+          allowed: (client) => allowed.has(client),
+        });
+      }
+      const first = reserve({ ...request, platform });
+      const ready = await state(first.id, 'ready');
+      if (android) writeFileSync(android.probe, JSON.stringify(ready.device));
       const helper = join(home, 'capture-helper');
       writeFileSync(
         helper,
         `#!${process.execPath}
+require('node:fs').writeFileSync(${JSON.stringify(join(home, 'capture-args'))}, JSON.stringify(process.argv.slice(2)));
 const header=Buffer.alloc(9);header.writeUInt32BE(6);header[4]=1;header.writeUInt16BE(1,5);header.writeUInt16BE(1,7);
 process.stdout.write(Buffer.concat([header,Buffer.from('x')]));
 process.stdin.resume();process.on('SIGTERM',()=>{});setInterval(()=>{},1000);
 `,
       );
       chmodSync(helper, 0o755);
-      const frames = new FramePool(process.env);
-      const feeds = new FeedPool(join(home, 'unused-cli.mjs'), process.env);
+      const frames = new FramePool(env);
+      const feeds = new FeedPool(join(home, 'unused-cli.mjs'), env);
       const sent: ServerMessage[] = [];
       const control = new ControlHub({
         frameHelper: () => null,
-        env: process.env,
+        env,
         stimCli: join(home, 'unused-cli.mjs'),
         feeds,
         frames,
@@ -375,7 +411,7 @@ process.stdin.resume();process.on('SIGTERM',()=>{});setInterval(()=>{},1000);
         foldTimeoutMs: 1000,
         conflict: () => {},
       });
-      const views = new HostedViews(host, control, process.env, () => helper);
+      const views = new HostedViews(host, control, env, () => helper);
       const failed: string[] = [];
       let firstFrame!: () => void;
       const captured = new Promise<void>((resolve) => (firstFrame = resolve));
@@ -386,6 +422,12 @@ process.stdin.resume();process.on('SIGTERM',()=>{});setInterval(()=>{},1000);
         { fps: 5, maxEdge: 480 },
       );
       await captured;
+      const helperArguments = JSON.parse(readFileSync(join(home, 'capture-args'), 'utf8'));
+      const expected = android
+        ? ['android-device', (ready.device as { serial: string }).serial, android.adb]
+        : ['ios', (ready.device as { udid: string }).udid];
+      expect(helperArguments.slice(0, expected.length)).toEqual(expected);
+      expect(views.target('client', first.id)).toBe(views.target('client', first.id));
       const owner = { device: { id: 'client', name: 'Client' }, send: (message: ServerMessage) => sent.push(message) };
       const begun = await views.begin('client', first.id, owner, false, () => true);
       if ('code' in begun) throw new Error(begun.message);
@@ -1314,6 +1356,41 @@ test.each(['stop', 'revoke'])(
   },
 );
 
+test('hosted Android viewing refuses changed ledger, serial, AVD or ABI instead of selecting another emulator', async () => {
+  await host.close();
+  const { env, probe } = androidViewEnvironment();
+  host = new DeviceHost({
+    worker: join(home, 'worker.mjs'),
+    env,
+    agents: noAgents,
+    allowed: (client) => allowed.has(client),
+  });
+  const session = reserve({ platform: 'android', attempt: 'android-view' });
+  const ready = await state(session.id, 'ready');
+  const device = ready.device!;
+  writeFileSync(probe, JSON.stringify(device));
+  const target = host.viewTarget('client', session.id);
+  expect(target).toMatchObject({ platform: 'android', session: { device } });
+  expect(() => host.viewTarget('other', session.id)).toThrow('Only a ready session');
+  const privateHome = join(deviceHostArea(session.id), 'home');
+  const record = join(privateHome, 'hosted-device.json');
+  for (const change of [{ serial: 'emulator-5556', consolePort: 5556 }, { avdName: 'stim-foreign-avd' }]) {
+    writeFileSync(record, JSON.stringify({ ...device, ...change }));
+    expect(() => host.viewTarget('client', session.id)).toThrow('identity changed');
+  }
+  writeFileSync(record, JSON.stringify(device));
+  for (const change of [{ avdName: 'stim-foreign-avd' }, { architecture: 'x86_64' }]) {
+    writeFileSync(probe, JSON.stringify({ ...device, ...change }));
+    expect(() => host.viewTarget('client', session.id, true)).toThrow('identity or running ABI changed');
+  }
+  writeFileSync(probe, JSON.stringify(device));
+  writeFileSync(
+    join(privateHome, 'created-devices.json'),
+    JSON.stringify({ version: 1, ios: [], android: [], web: [] }),
+  );
+  expect(() => host.viewTarget('client', session.id)).toThrow('ledger');
+});
+
 test('Android reservations keep distinct ports and platform slots and reconnect without recreation', async () => {
   const validator = new Ajv2020({ strict: false, validateFormats: false });
   validator.addSchema(protocolJsonSchema(), 'protocol');
@@ -1353,9 +1430,7 @@ test('Android reservations keep distinct ports and platform slots and reconnect 
   );
   expect(reserve(androidRequest).id).toBe(android.id);
   const journal = readFileSync(join(deviceHostRoot(), 'sessions.json'), 'utf8');
-  expect(() => host.viewTarget('client', android.id)).toThrow(
-    'Hosted view and input support iOS and macOS sessions only.',
-  );
+  expect(() => host.viewTarget('other', android.id)).toThrow('Only a ready session');
   expect(
     await host.metroOpen('client', { session: android.id, gatewayPort: 12345, secret: 'a'.repeat(64) }, '127.0.0.1'),
   ).toHaveProperty('error.message', 'Android Metro needs the client Metro port.');

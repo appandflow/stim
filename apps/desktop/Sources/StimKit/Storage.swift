@@ -389,7 +389,7 @@ public struct StorageReport: Sendable {
           switch device {
           case .ios(_, let sim) where sim.owned && device.localSimulatorUDID != nil:
             sizes.append(disk.measure(paths.simulator(device.localSimulatorUDID!.uppercased()), in: paths.simulatorDevices))
-          case .android(_, let avd) where avd.owned && !avd.physical:
+          case .android(_, let avd) where avd.owned && !avd.physical && avd.host == nil:
             sizes.append(disk.measure(paths.avd(avd.name), in: paths.avds))
           default:
             continue

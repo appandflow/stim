@@ -67,11 +67,11 @@ public func shellQuote(_ s: String) -> String {
 public func runCommand(for device: DeviceRef, cwd: String) -> StimCommand? {
   switch device {
   case .ios(_, let sim) where sim.owned || sim.host != nil: break
-  case .android(_, let avd) where avd.owned && !avd.physical: break
+  case .android(_, let avd) where (avd.owned || avd.host != nil) && !avd.physical: break
   case .web(let browser): return webCommand(browser, cwd: cwd)
   default: return nil
   }
   let slot = device.slot == DeviceRef.defaultSlot ? [] : ["--slot", device.slot]
-  let remote = device.hostedIos.map { ["--remote", $0.machine] } ?? []
+  let remote = device.hostedMachine.map { ["--remote", $0] } ?? []
   return StimCommand([device.platform] + slot + remote, cwd: cwd)
 }

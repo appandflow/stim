@@ -932,6 +932,9 @@ test('hosted Android command and safety routing render through the guides', () =
     '--no-metro-check',
     'device-host.stop',
     'android.host',
+    'frames.subscribe',
+    'control.begin',
+    'slot',
     'outcomes.device["android:host:<slot>"]',
   ])
     expect(hosted).toContain(contract);

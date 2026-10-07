@@ -292,9 +292,11 @@ server.on('connection', (socket) => {
   const controls = new Set();
   const hostedTarget = (params) => {
     const env = fixtures.status.environments.find((candidate) => candidate.path === params.workspace);
-    const ios =
-      params.slot && params.slot !== 'default' ? env?.slots?.find((slot) => slot.slot === params.slot)?.ios : env?.ios;
-    return params.platform === 'ios' && ios?.host ? ios : null;
+    const device =
+      params.slot && params.slot !== 'default'
+        ? env?.slots?.find((slot) => slot.slot === params.slot)?.[params.platform]
+        : env?.[params.platform];
+    return ['ios', 'android'].includes(params.platform) && device?.host ? device : null;
   };
   const stop = (subscription) => {
     clearInterval(timers.get(subscription));
@@ -375,7 +377,7 @@ server.on('connection', (socket) => {
         hostedTarget(params) &&
         (params.physical || params.duoFrame || params.at !== undefined || params.rate !== undefined)
       )
-        return { error: ['bad-request', 'Hosted iOS frames do not support physical targets, duoFrame or replay.'] };
+        return { error: ['bad-request', 'Hosted frames do not support physical targets, duoFrame or replay.'] };
       if (params.archive && params.at === undefined) return { error: ['bad-request', 'An archive requires at.'] };
       if (
         params.archive &&
@@ -408,11 +410,11 @@ server.on('connection', (socket) => {
     'control.begin'(params) {
       if (values.read) return { error: ['forbidden', 'The mock pairing is read only.'] };
       if (!hostedTarget(params) || params.physical)
-        return { error: ['bad-request', 'Mock control needs a hosted iOS target.'] };
+        return { error: ['bad-request', 'Mock control needs a hosted iOS or Android target.'] };
       if (hostedTarget(params).state === 'stopped') return { error: ['action-failed', 'The hosted session stopped.'] };
       const session = `c${nextSubscription++}`;
       controls.add(session);
-      return { result: { session, platform: 'ios', lease: null, postures: [] } };
+      return { result: { session, platform: params.platform, lease: null, postures: [] } };
     },
     'control.end'(params) {
       controls.delete(params.session);
@@ -616,7 +618,7 @@ function hello(deviceToken, deviceName) {
     protocol: 1,
     server: { name: values.name, version: '0.0.0-mock', stim: fixtures.stimVersion, home: fixtures.home },
     capabilities: values.read ? ['read'] : ['read', 'control'],
-    features: ['ios-hosted', 'physical-ios', 'physical-android', 'notifications', 'workspace-diff'],
+    features: ['ios-hosted', 'android-hosted', 'physical-ios', 'physical-android', 'notifications', 'workspace-diff'],
     actions: values.read ? [] : ACTIONS,
     device: { id: hash(deviceToken).slice(0, 8), name: deviceName },
   };

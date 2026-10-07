@@ -38,7 +38,7 @@ export const RECORD_HINT: FrameHint = { fps: 10, maxEdge: 720 };
 const RECORD_BITRATE = 1_000_000;
 
 const SOURCES_DIR = fileURLToPath(new URL('./stim-frames/', import.meta.url));
-/** The scrcpy server jar (Apache-2.0) the helper pushes to a physical Android device; see `dist/scrcpy/NOTICE`. */
+/** The scrcpy server jar (Apache-2.0) the helper pushes to an Android adb target; see `dist/scrcpy/NOTICE`. */
 const SCRCPY_SERVER = fileURLToPath(new URL('./scrcpy/scrcpy-server', import.meta.url));
 const BUILD_TIMEOUT_MS = 180_000;
 const VERSION_TIMEOUT_MS = 30_000;

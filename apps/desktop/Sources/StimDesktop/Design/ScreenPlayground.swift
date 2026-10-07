@@ -26,6 +26,7 @@
     case buildSheet = "Build sheet"
     case simulator = "Simulator controls"
     case hostedIos = "Hosted iOS"
+    case hostedAndroid = "Hosted Android"
     case settings = "Settings"
     case addMachine = "Add build machine"
     case discovery = "Suggestions"
@@ -38,7 +39,7 @@
       case .notifications: return [.ready, .empty, .longText, .largeData]
       case .builds: return PlaygroundScenario.allCases
       case .buildSheet: return [.ready, .loading, .error, .longText, .largeData]
-      case .hostedIos: return [.ready, .loading, .error, .empty]
+      case .hostedIos, .hostedAndroid: return [.ready, .loading, .error, .empty]
       case .simulator: return [.ready, .loading, .empty, .error]
       case .settings: return [.ready, .loading, .empty, .error, .longText]
       case .tokens, .addMachine, .discovery: return [.ready]
@@ -124,7 +125,9 @@
           selection: BuildSheetSelection(workspace: fixtures.environment.path, platform: "ios"),
           openLogs: { _ in action = "Selected build logs panel (fixture only)." })
       case .hostedIos:
-        HostedIosGallery(scenario: scenario)
+        HostedDeviceGallery(scenario: scenario, platform: "ios")
+      case .hostedAndroid:
+        HostedDeviceGallery(scenario: scenario, platform: "android")
       case .simulator:
         ScrollView {
           SimulatorOptionsView(fixture: PlaygroundSimulator(scenario: scenario))
