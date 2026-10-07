@@ -197,7 +197,9 @@ function compilationPrefixMappings(workspaceRoot: string, derivedDataPath: strin
   if (rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)) {
     mappings.push(`${derived}=/^derived-data`);
   }
-  return mappings.join(' ');
+  return mappings
+    .map((mapping) => (/[\s"\\]/.test(mapping) ? `"${mapping.replace(/["\\]/g, '\\$&')}"` : mapping))
+    .join(' ');
 }
 
 export function ccacheEnabled(podfileProperties: unknown): boolean {
