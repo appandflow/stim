@@ -15,9 +15,8 @@ final class BuildMachinesModel {
     var problem: Problem?
   }
 
-  private(set) var macs: [TailnetMac]?
-  private(set) var stimMacs: Set<String> = []
-  private(set) var probing = false
+  /// Whether Tailscale is running, once checked.
+  private(set) var tailscaleRunning: Bool?
   private(set) var working: String?
   private(set) var writeFailure: String?
   private(set) var runs = 0
@@ -204,21 +203,17 @@ final class BuildMachinesModel {
 
   func load(checkout: String?) async {
     sampleExists = FileManager.default.fileExists(atPath: WizardSample.desktop.folder.path)
-    let cli = await cli.value
-    probing = true
-    let environment = cli.environment
     async let settingsRead: Void = settings.refresh()
-    let found = await Task.detached { Tailnet.status(environment: environment).flatMap(Tailnet.macs(statusJSON:)) }.value
-    macs = found
+    await checkTailscale()
     await settingsRead
     await refreshStatuses(checkout: checkout, ask: false)
-    var serving: Set<String> = []
-    await withTaskGroup(of: (String, Bool).self) { group in
-      for mac in found ?? [] { group.addTask { (mac.id, await Tailnet.servesStim(dnsName: mac.dnsName)) } }
-      for await (id, serves) in group where serves { serving.insert(id) }
-    }
-    stimMacs = serving
-    probing = false
+  }
+
+  func checkTailscale() async {
+    let environment = await cli.value.environment
+    let status = await Task.detached { Tailnet.status(environment: environment) }.value
+    let reachability = Tailnet.reachability(statusJSON: status, peer: nil)
+    tailscaleRunning = reachability != .tailscaleMissing && reachability != .tailscaleStopped
   }
 
   func refreshStatuses(checkout: String?, ask: Bool) async {
@@ -259,10 +254,6 @@ final class BuildMachinesModel {
     working = entry
     await refreshStatuses(checkout: checkout, ask: true)
     working = nil
-  }
-
-  func use(_ mac: TailnetMac, checkout: String?) async {
-    await write(mac.machine, value: OffloadMachines.adding(mac.machine, to: entries ?? []), ask: true, checkout: checkout)
   }
 
   func remove(_ entry: String, checkout: String?) async {

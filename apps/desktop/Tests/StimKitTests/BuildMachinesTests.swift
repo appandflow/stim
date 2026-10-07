@@ -160,6 +160,49 @@ import Testing
     #expect(BuildMachineStatus(machine: "mini", state: .pending).readiness.line == "Waiting for approval")
   }
 
+  @Test func showsOneListPillPerMachine() throws {
+    func status(_ json: String) throws -> BuildMachineStatus {
+      try JSONDecoder().decode(BuildMachineStatus.self, from: Data(json.utf8))
+    }
+    let cases: [(String, String, Tone)] = [
+      (#"{"machine":"m","state":"approved","offloadable":true}"#, "Approved", .success),
+      (#"{"machine":"m","state":"approved"}"#, "Approved", .success),
+      (#"{"machine":"m","state":"pending","deviceId":"d1"}"#, "Waiting for approval", .warning),
+      (#"{"machine":"m","state":"unreachable"}"#, "Unreachable", .warning),
+      (
+        #"{"machine":"m","state":"approved","offloadable":false,"problems":[{"code":"unreachable","reason":"r"}]}"#,
+        "Unreachable", .warning
+      ),
+      (
+        #"{"machine":"m","state":"approved","offloadable":false,"problems":[{"code":"stim-build","reason":"r"}]}"#,
+        "Build mismatch", .warning
+      ),
+      (
+        #"{"machine":"m","state":"approved","offloadable":false,"problems":[{"code":"xcode","reason":"r"}]}"#,
+        "Build mismatch", .warning
+      ),
+      (
+        #"{"machine":"m","state":"approved","offloadable":false,"problems":[{"code":"busy","reason":"r"}],"capacity":{"loadPerCore":8.2}}"#,
+        "Busy (load 8.2/core)", .warning
+      ),
+      (#"{"machine":"m","state":"revoked"}"#, "Revoked", .error),
+    ]
+    for (json, title, tone) in cases {
+      let listed = try status(json).listStatus
+      #expect(listed == MachineListStatus(title: title, tone: tone), "\(json)")
+    }
+  }
+
+  @Test func listsBuildsAndSimulatorsForAMachineWithApprovedHosting() {
+    let hosts = [
+      BuildMachineStatus(machine: "mini", state: .approved), BuildMachineStatus(machine: "studio", state: .pending),
+    ]
+    #expect(buildMachineCapabilities("mini", hosts: hosts) == ["Builds", "Simulators"])
+    #expect(buildMachineCapabilities("Mini:7443", hosts: hosts) == ["Builds", "Simulators"])
+    #expect(buildMachineCapabilities("studio", hosts: hosts) == ["Builds"])
+    #expect(buildMachineCapabilities("mini", hosts: nil) == ["Builds"])
+  }
+
   @Test func editsTheSettingAndUnsetsItWhenEmpty() {
     #expect(OffloadMachines.adding("mini", to: ["studio:7444"]) == #"["studio:7444","mini"]"#)
     #expect(OffloadMachines.adding("mini", to: ["mini"]) == #"["mini"]"#)
