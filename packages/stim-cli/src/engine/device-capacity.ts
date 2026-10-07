@@ -70,6 +70,7 @@ const ADMISSION_LOCK = 'device-admission';
 const ADMISSION_LOCK_WAIT_MS = 5 * 60_000;
 const LOCK_QUIET_MS = 5000;
 const LOCK_PROGRESS_MS = 30_000;
+const INVENTORY_REFRESH_MS = 10_000;
 const LISTING_TIMEOUT_MS = 30_000;
 const NO_ADB: AdbDevices = { emulators: [], physical: [], unhealthy: [] };
 
@@ -491,6 +492,7 @@ export async function withDeviceBootAdmission<T>(
   let lastLine = -Infinity;
   let visibleWait = false;
   let lastInventory = { count: 0, holders: [] as string[] };
+  let lastListed = -Infinity;
   try {
     try {
       for (;;) {
@@ -527,7 +529,13 @@ export async function withDeviceBootAdmission<T>(
               }
               return { count, holders, queue };
             };
-            if (ticket && !turn) return wait(lastInventory);
+            if (ticket && !turn && now() - lastListed < INVENTORY_REFRESH_MS) {
+              const booting = sources.booting ?? readBootingDevices;
+              const own = deviceKey(device.platform, device.key);
+              const claims = typeof booting === 'function' ? booting() : booting;
+              if (claims.some((entry) => deviceKey(entry.platform, entry.key) === own)) return admit();
+              return wait(lastInventory);
+            }
             const inventory = readInventory(sources);
             if ('code' in inventory) throw new DeviceAdmissionRefusal(inventory);
             const keys = inventoryKeys(inventory);
@@ -536,6 +544,7 @@ export async function withDeviceBootAdmission<T>(
             if ((device.platform === 'ios' && keys.has(own)) || ownBooting) return admit();
             keys.delete(own);
             if (keys.size < max && turn) return admit();
+            lastListed = now();
             lastInventory = { count: keys.size, holders: deviceHolders(inventory, keys) };
             return wait(lastInventory);
           },

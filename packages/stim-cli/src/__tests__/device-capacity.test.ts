@@ -342,7 +342,7 @@ test('an error reporting an admitted wait still releases the boot reservation', 
   expect(readClaimSet(join(root, 'device-boots')).live).toEqual([]);
 });
 
-test('a queued run names the stuck head and times out without listing devices on its later polls', async () => {
+test('a queued run names the stuck head and times out listing devices only every 10 seconds', async () => {
   const head = takeTicket({ sequence: 1, displayName: 'stuck-workspace' });
   let now = Date.now();
   const lines: string[] = [];
@@ -373,8 +373,30 @@ test('a queued run names the stuck head and times out without listing devices on
     expect(lines[1]).toContain('1/1 in use: stim-holder');
     expect(lines[1]).toContain('queue position 2 behind stuck-workspace');
     expect(lines[1]).toContain(join(root, 'device-waits'));
-    expect(listDevices).toHaveBeenCalledTimes(1);
+    expect(listDevices).toHaveBeenCalledTimes(2);
     expect(readClaimSet(join(root, 'device-waits')).live.map((holder) => holder.claimId)).toEqual([head.claimId]);
+  } finally {
+    releaseClaim(head);
+  }
+});
+
+test('a queued run whose own device starts booting is admitted without waiting for its turn', async () => {
+  const head = takeTicket({ sequence: 1 });
+  let clock = Date.now();
+  let ownBooting = false;
+  const boot = vi.fn<() => Promise<void>>(async () => {});
+  try {
+    await withDeviceBootAdmission({ platform: 'ios', key: 'mine' }, boot, {
+      root,
+      max: 1,
+      sources: { ...empty, sims: occupied, booting: () => (ownBooting ? [{ platform: 'ios', key: 'mine' }] : []) },
+      now: () => clock,
+      sleep: async (ms) => {
+        clock += ms;
+        ownBooting = true;
+      },
+    });
+    expect(boot).toHaveBeenCalledTimes(1);
   } finally {
     releaseClaim(head);
   }
