@@ -1235,8 +1235,8 @@ preferences.
 
 The **Stim Settings** tab holds a **Machine**, **Repository**, **Workspace** and
 **.stim.json** scope switch, with a line saying where the selected scope applies.
-Its editor is generated from `settings.schema.json`, which the `stim` package ships beside
-`dist/cli.mjs`; the app reads the one next to the resolved `stim` executable,
+Its editor is generated from `settings.schema.json`, which the `stim` package
+ships beside `dist/cli.mjs`; the app reads the one next to the resolved `stim` executable,
 or `packages/stim-cli/dist` under `swift run`. Choices are pickers, booleans
 toggles, numbers steppers, paths file pickers, string lists token fields, and
 objects JSON fields. Values come from `stim settings --json` run in the chosen
