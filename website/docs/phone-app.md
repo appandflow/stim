@@ -94,11 +94,10 @@ phone needs a new code. Desktop replaces expired codes automatically up to
 three times, then offers **Show a New Code**. Changing access also generates a
 new code; the previous code stays valid until it expires.
 
-If scanning fails or camera access is denied, expand **Can't scan? Enter it by
-hand** on Desktop. **Address** and **Code** each have a copy button; the code is
-hidden until you choose the eye button. Choose **Enter the endpoint and token
-instead** on the phone and paste Address into its endpoint field and Code into
-its token field. Manual entry uses the same single-use code. Choose **Retry** on
+If scanning fails or camera access is denied, expand **Can't scan? Enter the
+endpoint and token** on Desktop. **Endpoint** and **Token** each have a copy
+button; the token is hidden until you choose the eye button. Choose **Enter the
+endpoint and token instead** on the phone and paste them into its fields. Manual entry uses the same single-use code. Choose **Retry** on
 the phone when a failed scan needs another attempt.
 
 A standalone server can print the same pairing payload:

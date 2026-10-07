@@ -1012,8 +1012,8 @@ Codes come from `stim-server pair --json`, with `--control` for **View and
 control** (the default). Each single-use code expires after five minutes; the
 wizard replaces expired codes automatically up to three times, then offers
 **Show a New Code**. Changing access generates a new code; the previous code
-stays valid until it expires. **Can't scan? Enter it by hand** shows copyable
-**Address** and **Code** fields, with the code hidden until revealed. The wizard
+stays valid until it expires. **Can't scan? Enter the endpoint and token** shows
+copyable **Endpoint** and **Token** fields, with the token hidden until revealed. The wizard
 waits for the phone and shows its name and access on the success screen.
 
 The paired phones list comes from

@@ -17,14 +17,17 @@ struct PairPhoneSheet: View {
       VStack(alignment: .leading, spacing: Space.sm) {
         Text("Pair a phone").font(.stim(.headline)).padding(.bottom, Space.xl)
         ForEach(PhonePairing.Step.allCases, id: \.self) { step in
+          let done = step < wizard.step || wizard.step == .done
+          let current = step == wizard.step && !done
           HStack(spacing: Space.md) {
-            Image(
-              systemName: step < wizard.step ? "checkmark.circle.fill" : step == wizard.step ? "circle.inset.filled" : "circle")
+            Image(systemName: done ? "checkmark.circle.fill" : current ? "circle.inset.filled" : "circle")
             Text(step.title).font(.stim(.callout, weight: step == wizard.step ? .semibold : .regular))
           }
-          .foregroundStyle(step == wizard.step ? Palette.accent : step > wizard.step ? Palette.tertiary : Palette.secondary)
+          .foregroundStyle(
+            step == wizard.step ? (done ? Palette.success : Palette.accent) : done ? Palette.secondary : Palette.tertiary
+          )
           .frame(height: 30)
-          .accessibilityLabel(step.title + (step < wizard.step ? ", done" : step == wizard.step ? ", current step" : ", waiting"))
+          .accessibilityLabel(step.title + (done ? ", done" : current ? ", current step" : ", waiting"))
         }
         Spacer()
       }
@@ -242,10 +245,10 @@ struct PairPhoneSheet: View {
               .font(.stim(.callout, mono: true)).foregroundStyle(remaining > 30 ? Palette.secondary : Palette.warning)
           }
         }
-        DisclosureGroup("Can't scan? Enter it by hand", isExpanded: $model.manualExpanded) {
+        DisclosureGroup("Can't scan? Enter the endpoint and token", isExpanded: $model.manualExpanded) {
           VStack(spacing: Space.sm) {
-            detail("Address", code.qr.endpoint)
-            detail("Code", code.qr.pairingToken, secret: true)
+            detail("Endpoint", code.qr.endpoint)
+            detail("Token", code.qr.pairingToken, secret: true)
           }.padding(.top, Space.sm)
         }
         if code.isLocalOnly {
@@ -272,8 +275,8 @@ struct PairPhoneSheet: View {
         } label: {
           Image(systemName: showsToken ? "eye.slash" : "eye")
         }
-        .buttonStyle(.borderless).accessibilityLabel(showsToken ? "Hide code" : "Show code")
-        .help(showsToken ? "Hide code" : "Show code")
+        .buttonStyle(.borderless).accessibilityLabel(showsToken ? "Hide token" : "Show token")
+        .help(showsToken ? "Hide token" : "Show token")
       }
       CopyButton(value)
     }
