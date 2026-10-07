@@ -9,6 +9,7 @@ public enum AppPreferences {
     public static let sidebarStatus = "sidebar.status"
     public static let sidebarStatuses = "sidebar.statuses"
     public static let hiddenProjects = "sidebar.hiddenProjects"
+    public static let hiddenWorkspaces = "sidebar.hiddenWorkspaces"
     public static let sidebarGrouping = "sidebar.grouping"
     public static let sidebarSort = "sidebar.sort"
     public static let showsGitStatus = "sidebar.showsGitStatus"

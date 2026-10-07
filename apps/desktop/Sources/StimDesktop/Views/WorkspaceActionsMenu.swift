@@ -22,17 +22,29 @@ struct WorkspaceActionsMenu: View {
   var onWarmWorktree: (() -> Void)?
   var onRemoveWorktree: (() -> Void)?
   var onStopAllLiveWorkspaces: (() -> Void)?
+  var hidden = false
+  var canHide = true
+  var onToggleHidden: (() -> Void)?
   @AppStorage(AppPreferences.Key.editorBundleID) private var editorID = ""
   @AppStorage(AppPreferences.Key.terminalBundleID) private var terminalID = ""
 
   var body: some View {
-    ForEach(Array(workspaceMenuItems(for: kind).enumerated()), id: \.offset) { _, item in
+    ForEach(Array(menuItems.enumerated()), id: \.offset) { _, item in
       if let item {
         button(for: item)
       } else {
         Divider()
       }
     }
+  }
+
+  private var menuItems: [WorkspaceMenuItem?] {
+    var items = workspaceMenuItems(for: kind)
+    if onToggleHidden == nil, let index = items.firstIndex(of: .toggleHidden) {
+      items.remove(at: index)
+      if index > 0, items[index - 1] == nil, index == items.count || items[index] == nil { items.remove(at: index - 1) }
+    }
+    return items
   }
 
   @ViewBuilder
@@ -86,6 +98,12 @@ struct WorkspaceActionsMenu: View {
     case .warmWorktree:
       if let onWarmWorktree {
         Button("Warm worktree", systemImage: "flame", action: onWarmWorktree).disabled(busy)
+      }
+    case .toggleHidden:
+      if let onToggleHidden {
+        Button(hidden ? "Unhide" : "Hide", systemImage: hidden ? "eye" : "eye.slash", action: onToggleHidden)
+          .disabled(!hidden && !canHide)
+          .help(!hidden && !canHide ? "A workspace in use cannot be hidden." : "")
       }
     case .removeWorktree:
       if let onRemoveWorktree {

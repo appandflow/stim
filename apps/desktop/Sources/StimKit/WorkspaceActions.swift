@@ -27,6 +27,7 @@ public enum WorkspaceMenuItem: Hashable, Sendable {
   case stopDevServer
   case showLogs
   case warmWorktree
+  case toggleHidden
   case removeWorktree
   case stopAllLiveWorkspaces
 }
@@ -44,12 +45,14 @@ public func workspaceMenuItems(for kind: ActionRowKind) -> [WorkspaceMenuItem?] 
         ? [.stopDevServer, .showLogs]
         : [
           .reload, metroRunning ? .stopDevServer : .startDevServer, .showLogs,
-        ]) + (linkedWorktree ? [nil, .removeWorktree] : [])
+        ]) + [nil, .toggleHidden] + (linkedWorktree ? [nil, .removeWorktree] : [])
   case .worktree:
     return [
       .openInEditor, .openInTerminal, .revealInFinder, .copyPath,
       nil,
-      .warmWorktree, .removeWorktree,
+      .warmWorktree, .toggleHidden,
+      nil,
+      .removeWorktree,
     ]
   case .project:
     return [.revealInFinder, .copyPath, nil, .stopAllLiveWorkspaces]

@@ -147,7 +147,7 @@ import Testing
       sidebarStatusCounts(
         environments: environments, unprovisioned: worktrees, project: project, options: options, archived: [archive, desktop])
         == [
-          .live: 1, .idle: 1, .notSetUp: 1, .archived: 1,
+          .live: 1, .idle: 1, .notSetUp: 1, .archived: 1, .hidden: 0,
         ])
     options.hiddenProjects.insert("/r")
     #expect(
