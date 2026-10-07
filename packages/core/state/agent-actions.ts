@@ -217,6 +217,19 @@ interface SessionCursor {
   bundleId: string | null;
 }
 
+function trackMacosOpen(cursor: SessionCursor, event: AgentEvent, unknownVersion: boolean): void {
+  const flags = object(event.details?.flags);
+  if (!event.failed) cursor.macos = event.details?.platform === 'macos' || flags?.platform === 'macos';
+  cursor.bundleId =
+    cursor.macos &&
+    !event.failed &&
+    !unknownVersion &&
+    flags?.surface === 'app' &&
+    typeof event.details?.appBundleId === 'string'
+      ? event.details.appBundleId
+      : null;
+}
+
 export interface AgentActionReaderOptions {
   sessionsDirs: readonly string[] | (() => readonly string[]);
   /** Re-resolved on every read, so a follower picks up a native launch that starts or restarts later. */
@@ -357,18 +370,7 @@ export function createAgentActionReader({
           cursor.bundleId = null;
           continue;
         }
-        if (targets && event.command === 'open') {
-          const flags = object(event.details?.flags);
-          if (!event.failed) cursor.macos = event.details?.platform === 'macos' || flags?.platform === 'macos';
-          cursor.bundleId =
-            cursor.macos &&
-            !event.failed &&
-            !parsed.unknownVersion &&
-            flags?.surface === 'app' &&
-            typeof event.details?.appBundleId === 'string'
-              ? event.details.appBundleId
-              : null;
-        }
+        if (targets && event.command === 'open') trackMacosOpen(cursor, event, Boolean(parsed.unknownVersion));
         if (targets && cursor.macos) {
           // agent-device's screenshot event omits its per-command surface override.
           if (event.command === 'screenshot') continue;
