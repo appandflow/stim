@@ -361,7 +361,9 @@ stim settings set hosting.machines '["janics-mac-mini"]'
 stim doctor --fix`}
 />
 
-On the worker, inspect `stim-server devices` and approve the printed build
+Stim Desktop on the worker shows each build request and device-host request as a
+notification with **Allow** and **Deny**, including when a stim-server already
+runs there as a LaunchAgent and **Serve to phones** is off. Without Desktop, on the worker, inspect `stim-server devices` and approve the printed build
 request with `stim-server devices grant <build-id> --build`, and the separate
 hosting request with `stim-server devices grant <host-id> --device-host`.
 Use the server package's npx prefix above if it is not installed globally.

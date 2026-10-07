@@ -951,6 +951,17 @@ there. This warning appears when Desktop uses the default home and
 has adopted a server started with another home. Those phones stop working once Stim Desktop
 serves `~/.stim` again.
 
+Desktop also watches a stim-server that already answers on the port with a
+matching Stim home when **Serve to phones** is off, such as the LaunchAgent
+that `stim-server setup` or `stim-server service install` creates, through the
+same adoption path and as not started by the app. The app probes the port on
+its regular poller while the server state is off, so build and device-host
+requests from other Macs reach the Allow / Deny dialog. Turning **Serve to
+phones** off stops a server the app started and never stops watching one it did
+not. A server with another Stim home is not watched. The Phones page shows "A
+stim-server already runs on this Mac, and Desktop shows its build requests."
+while a server the app did not start runs and the toggle is off.
+
 A server answering health with HTTP 503 appears as **Starting** or
 **Degraded** with its reason in Phones and the sidebar tooltip. Desktop keeps
 checking it without starting another server or terminating one it launched.
@@ -1115,7 +1126,8 @@ reason each time Desktop launches. Either way, the machine gets this Mac's build
 whether it is newer or older than the one it runs.
 
 On the Mac that builds, the app checks `stim-server devices --json` every 10
-seconds while a server runs. Each new build request adds "<Mac> wants to build
+seconds while a server runs, including one it did not start while **Serve to
+phones** is off. Each new build request adds "<Mac> wants to build
 on this Mac" to **Notifications** (category **A Mac asks to build here**,
 Alert by default) and shows it as a card or a macOS notification. Its
 **Review** opens a dialog with the Mac's name, its tailnet node and user, the

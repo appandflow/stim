@@ -74,6 +74,7 @@ final class ServerController: ObservableObject {
   private var generation = 0
   private var devicesEpoch = 0
   private var missedProbes = 0
+  private var watching = false
   private var serverLauncher: (executable: String?, launcher: NodeLauncher?, resolved: Date)?
 
   static let devicesInterval: Duration = .seconds(10)
@@ -82,8 +83,8 @@ final class ServerController: ObservableObject {
   private lazy var devicesPoller = ActivityPoller(
     active: Self.devicesInterval, inactive: Self.inactiveDevicesInterval, isActive: { NSApplication.shared.isActive },
     tick: { [weak self] in
-      guard let self, isResponding else { return }
-      refresh()
+      guard let self else { return }
+      if isResponding { refresh() } else { watch() }
     })
 
   var port: Int {
@@ -103,9 +104,16 @@ final class ServerController: ObservableObject {
     return false
   }
 
-  private var isResponding: Bool {
+  var isResponding: Bool {
     switch state {
     case .running, .notReady: return true
+    case .off, .starting, .failed: return false
+    }
+  }
+
+  var isOwned: Bool {
+    switch state {
+    case .running(_, let owned), .notReady(_, let owned): return owned
     case .off, .starting, .failed: return false
     }
   }
@@ -119,6 +127,7 @@ final class ServerController: ObservableObject {
     self.environment = environment
     if UserDefaults.standard.bool(forKey: AppPreferences.Key.servesPhones) { start() }
     devicesPoller.start()
+    watch()
     NotificationCenter.default.addObserver(
       forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main
     ) { [weak self] _ in
@@ -202,6 +211,37 @@ final class ServerController: ObservableObject {
     generation += 1
     terminate()
     state = .off
+  }
+
+  /// Turning Serve to phones off stops a server Desktop owns and keeps watching one it does not.
+  func stopServing() {
+    switch state {
+    case .running(_, owned: false), .notReady(_, owned: false): return
+    default: break
+    }
+    stop()
+    watch()
+  }
+
+  /// Watches a stim-server already answering on the port, with this Desktop's Stim home, as not owned.
+  private func watch() {
+    guard case .off = state, !watching, !UserDefaults.standard.bool(forKey: AppPreferences.Key.servesPhones) else { return }
+    watching = true
+    let current = generation
+    Task {
+      defer { watching = false }
+      guard let probe = await StimServerCLI.health(port: port) else { return }
+      let resolved = StimHome.path(environment: await environment?.value ?? ProcessInfo.processInfo.environment)
+      guard current == generation, case .off = state else { return }
+      let serverHome: String? =
+        switch probe {
+        case .ready(let health): health.stimHome
+        case .notReady(_, let stimHome): stimHome
+        }
+      if let serverHome, !StimHome.adopts(serverHome: serverHome, resolved: resolved) { return }
+      missedProbes = 0
+      state = State(probe: probe, owned: false, resolvedHome: resolved, port: port)
+    }
   }
 
   func restart() {
