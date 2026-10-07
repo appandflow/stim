@@ -153,14 +153,15 @@ struct TutorialPanel: View {
             TutorialPromptBox(prompt: text, onCopy: copied)
           }
           if step.id == "machine", machineState.showsPrompt {
-            Text(
-              snapshot.record.manual
-                ? "Use the approved machine's name in the command."
-                : "Name the approved machine to your agent when you paste this prompt."
-            )
-            .font(.stim(.footnote)).foregroundStyle(Palette.secondary)
+            if !snapshot.record.manual {
+              Text(
+                snapshot.record.approvedMachine.map { "Tell your agent to use \($0) when you paste this prompt." }
+                  ?? "Name the approved machine to your agent when you paste this prompt."
+              )
+              .font(.stim(.footnote)).foregroundStyle(Palette.secondary)
+            }
           }
-          if step.id == "phone", phoneState == .paired {
+          if step.id == "phone", snapshot.record.phonePairedAtStart == true {
             Text(phoneState.buttonTitle).font(.stim(.footnote)).foregroundStyle(Palette.success)
           }
           let detail = current ? message ?? state.detail : state.detail

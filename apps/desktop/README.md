@@ -1453,14 +1453,15 @@ phone and build machine steps, then stop/removal and Archived. Both optional
 steps keep Skip available.
 Pair a phone opens Settings > Phones > Pair. When
 the server is off, Turn on Serve to phones opens the Phones tab, where you enable
-it yourself. An existing pairing shows Done already, followed by "Open Stim on
-your phone: the tour workspace is there".
+it yourself. A pairing that exists when the step starts shows Done already,
+followed by "Open Stim on your phone: the tour workspace is there".
 
 Add build machine opens the existing wizard using the tour workspace as its
 checkout. With no machine configured, Skip is the primary action. Once a machine
 is approved, the step shows "Continue the Stim tutorial: machine" and asks you to
-name the approved machine to your agent. Approval completes the step; an iOS
-build offloaded after the step started ticks the optional "Build ran on another
+use the approved machine's name with your agent. Manual commands include that
+name. Approval completes the step and preserves its handoff across status polls;
+an iOS build offloaded after the step started ticks the optional "Build ran on another
 Mac" check. Completed optional steps stay expanded so their handoff remains
 visible. The tutorial never starts the server, pairs or grants access, or runs a
 build. Mark done appears after two minutes.
@@ -1471,6 +1472,7 @@ base app is created to copy the worktree and build commands. Desktop never runs 
 The panel cannot see a removal refusal from an agent-run command: the finish
 step keeps showing the finish prompt. Check the agent's output and revert the
 tutorial edit before retrying.
+Removals started through Desktop's workspace actions can show a refusal in the panel.
 
 All tutorial Stim reads go through the CLI: the panel waits for the first loaded
 status snapshot, which supplies live workspaces and archive removal times.
@@ -1482,7 +1484,8 @@ unavailable it assumes enabled, then permits finish after a ten-second
 disappearance grace period only when a stop was observed. Viewer events and
 paired-phone counts come from the existing Desktop controllers. Machine approval
 comes from BuildMachinesModel checks for the tour checkout. No tutorial
-reader touches `$STIM_HOME` directly.
+reader touches `$STIM_HOME` directly. Machine checks poll only while the machine
+step is current and the tour workspace is present.
 
 To render every step, optional phone/machine variants, a waiting timeout, a restart, a failure and manual mode in light and dark at 2x:
 

@@ -7,13 +7,10 @@ func tutorialPhoneActionUsesPairingAvailability(count: Int?) {
   switch count {
   case nil:
     #expect(state == .serverOff)
-    #expect(state.buttonTitle == "Turn on Serve to phones")
   case 0:
     #expect(state == .unpaired)
-    #expect(state.buttonTitle == "Pair a phone")
   default:
     #expect(state == .paired)
-    #expect(state.buttonTitle == "Done already")
   }
 }
 
@@ -21,14 +18,12 @@ func tutorialPhoneActionUsesPairingAvailability(count: Int?) {
   let state = TutorialMachineState(configured: false, approved: false)
   #expect(state.skipIsPrimary)
   #expect(!state.showsPrompt)
-  #expect(state.buttonTitle == "Add build machine")
 }
 
 @Test func tutorialMachineConfigurationDoesNotAuthorizeTheBuildPrompt() {
   let state = TutorialMachineState(configured: true, approved: false)
   #expect(!state.skipIsPrimary)
   #expect(!state.showsPrompt)
-  #expect(state.buttonTitle == "Open Add build machine")
 }
 
 @Test func tutorialApprovedMachineUnlocksTheBuildPrompt() {

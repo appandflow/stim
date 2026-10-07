@@ -231,10 +231,14 @@ struct RootView: View {
     }
     .task(id: tutorialMachineCheckout) {
       guard let checkout = tutorialMachineCheckout else { return }
-      while !Task.isCancelled {
-        await buildMachines.settings.refresh()
-        await buildMachines.refreshStatuses(checkout: checkout, ask: false)
-        if !Task.isCancelled { updateTutorial(store.payload) }
+      while !Task.isCancelled, tutorialMachineCheckout == checkout {
+        if !buildMachines.isBusy {
+          await buildMachines.settings.refresh()
+          guard !Task.isCancelled, tutorialMachineCheckout == checkout else { return }
+          if !buildMachines.isBusy { await buildMachines.refreshStatuses(checkout: checkout, ask: false) }
+          if !Task.isCancelled { updateTutorial(store.payload) }
+        }
+        guard tutorialMachineCheckout == checkout else { return }
         try? await Task.sleep(for: .seconds(15))
       }
     }
@@ -297,22 +301,30 @@ struct RootView: View {
   }
 
   private var tutorialMachineCheckout: String? {
-    tutorial.isOpen && ["phone", "machine", "finish"].contains(tutorial.snapshot?.currentStep ?? "")
+    tutorial.isOpen && !tutorial.restarting && tutorial.workspace != nil && tutorial.snapshot?.currentStep == "machine"
       ? tutorial.tourPath : nil
   }
 
   private func updateTutorial(_ payload: StatusPayload?, events: [TutorialViewerEvents.Entry]? = nil) {
     guard let payload else { return }
     let check = buildMachines.check(in: tutorial.tourPath)
+    let approvedMachine = check?.problem == nil ? check?.statuses.first { $0.state == .approved }?.machine : nil
     let machineState = TutorialMachineState(
       configured: !(buildMachines.entries ?? []).isEmpty,
-      approved: check?.problem == nil && check?.statuses.contains { $0.state == .approved } == true)
+      approved: approvedMachine != nil)
     tutorial.update(
       workspaces: payload.environments, archived: payload.archived ?? [],
       sheetOpen: onboarding.showsGuide || nativePermissions.showsSetup || actions.presented != nil
         || NSApp.windows.contains { $0.attachedSheet != nil },
       viewerEvents: events ?? TutorialViewerEvents.shared.events,
-      pairedPhoneCount: ServerController.shared.pairedPhoneCount, machineState: machineState)
+      pairedPhoneCount: ServerController.shared.pairedPhoneCount, machineState: machineState, approvedMachine: approvedMachine,
+      removalRefused: operations.runs.contains { run in
+        run.needsAttention && run.startedAt >= (tutorial.snapshot?.record.stepSince ?? .distantFuture)
+          && run.steps.contains { command in
+            command.arguments.starts(with: ["worktree", "remove"])
+              && (command.cwd == tutorial.tourPath || command.arguments.contains(tutorial.tourPath ?? ""))
+          }
+      })
   }
 
   private func openTutorialArchive() {

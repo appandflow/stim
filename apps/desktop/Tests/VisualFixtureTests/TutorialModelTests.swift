@@ -80,12 +80,20 @@
       model.update(workspaces: [env], archived: [], sheetOpen: false, machineState: .awaitingApproval)
       XCTAssertEqual(model.snapshot?.currentStep, "machine")
       XCTAssertFalse(model.machineState.showsPrompt)
-      model.update(workspaces: [env], archived: [], sheetOpen: false, machineState: .approved)
+      model.update(workspaces: [env], archived: [], sheetOpen: false, machineState: .approved, approvedMachine: "Studio")
       XCTAssertEqual(model.snapshot?.currentStep, "finish")
       XCTAssertTrue(model.machineState.showsPrompt)
       model.setManual(true)
       XCTAssertEqual(model.machineState, .approved)
-      XCTAssertEqual(model.snapshot?.steps.first { $0.id == "machine" }?.state, .done)
+      let step = try XCTUnwrap(TutorialSteps.all.first { $0.id == "machine" })
+      XCTAssertTrue(model.commands(for: step).contains("--build-machine \"Studio\""))
+      model.update(workspaces: [env], archived: [], sheetOpen: false, machineState: .awaitingApproval)
+      XCTAssertTrue(model.machineState.showsPrompt)
+      XCTAssertTrue(model.commands(for: step).contains("--build-machine \"Studio\""))
+      let relaunched = TutorialModel(defaults: defaults)
+      relaunched.update(workspaces: [env], archived: [], sheetOpen: false)
+      XCTAssertTrue(relaunched.machineState.showsPrompt)
+      XCTAssertTrue(relaunched.commands(for: step).contains("--build-machine \"Studio\""))
     }
 
     @MainActor func testResumeArchivedTourShowsDone() throws {

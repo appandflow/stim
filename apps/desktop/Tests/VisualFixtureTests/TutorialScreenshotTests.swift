@@ -43,8 +43,8 @@
       try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
       let variants = [
         "done", "failure", "manual", "begin-timeout", "restarting", "phone-not-paired", "phone-server-off",
-        "phone-already-paired",
-        "machine-none", "machine-approved", "machine-offloaded",
+        "phone-already-paired", "phone-paired-during-step",
+        "machine-none", "machine-approved", "machine-offloaded", "machine-approved-manual",
       ]
       for name in TutorialSteps.all.map(\.id) + variants {
         for dark in [false, true] {
@@ -67,13 +67,13 @@
 
     private var phoneCount: Int? {
       if name == "phone-server-off" { return nil }
-      return name == "phone-already-paired" ? 1 : 0
+      return ["phone-already-paired", "phone-paired-during-step"].contains(name) ? 1 : 0
     }
 
     private var machineState: TutorialMachineState {
       TutorialMachineState(
-        configured: name == "machine-approved" || name == "machine-offloaded",
-        approved: name == "machine-approved" || name == "machine-offloaded")
+        configured: name.hasPrefix("machine-approved") || name == "machine-offloaded",
+        approved: name.hasPrefix("machine-approved") || name == "machine-offloaded")
     }
 
     var body: some View {
@@ -89,7 +89,7 @@
             stateDir: "/Users/example/.stim/workspaces/tutorial/agent-device", machine: "Studio")
         }
       )
-      .frame(width: 320, height: machineState.showsPrompt ? 1120 : 960)
+      .frame(width: 320, height: name == "machine-approved-manual" ? 1440 : machineState.showsPrompt ? 1120 : 960)
     }
 
     private func fixture() -> TutorialSnapshot {
@@ -103,7 +103,9 @@
       let now = Date(timeIntervalSince1970: 1_791_374_400)
       var engine = TutorialProgress()
       let done = name == "done" ? TutorialSteps.all.map(\.id) : TutorialSteps.all.prefix { $0.id != id }.map(\.id)
-      var record = TutorialRecord(version: 1, startedAt: now, step: id, done: done, manual: name == "manual")
+      var record = TutorialRecord(
+        version: 1, startedAt: now, step: id, done: done, manual: name == "manual" || name == "machine-approved-manual")
+      if name == "phone-paired-during-step" { record.phonePairedAtStart = false }
       if ["machine", "finish"].contains(id) {
         record.done.removeAll { $0 == "phone" }
         record.skipped = ["phone"]
@@ -132,7 +134,8 @@
       var snapshot = engine.update(
         TutorialInput(
           environment: id == "device" || id == "machine" ? TutorialEnvironment(workspace) : nil,
-          pairedPhoneCount: phoneCount, machineApproved: machineState.showsPrompt, now: now, record: record))
+          pairedPhoneCount: phoneCount, machineApproved: machineState.showsPrompt,
+          approvedMachine: machineState.showsPrompt ? "Studio" : nil, now: now, record: record))
       if let index = snapshot.steps.firstIndex(where: { $0.id == id }), !["phone", "machine"].contains(id) {
         snapshot.steps[index].state = name == "failure" ? .failed("compile-failed: App.js: Unexpected token") : .current
         snapshot.steps[index].detail =
