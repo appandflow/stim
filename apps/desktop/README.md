@@ -1719,7 +1719,8 @@ by its development launch arguments. Each `stim macos` copy has its own bundle i
 preferences, which would open the first-run setup guide over the window. The launch arguments in `.stim.json` include
 `-skipOnboarding YES` (also `STIM_DESKTOP_SKIP_ONBOARDING=1` in the environment of a local `stim macos`, which
 forwards it; a hosted run with `--remote` takes only the launch arguments). With it, Desktop does not open the guide
-at launch, does not record it as finished and does not offer the viewer setting, for that run only. **Help > Setup
+at launch, does not record it as finished and does not offer the viewer setting, for that run only. Tips and
+discovery prompts also stay hidden, because they wait for a finished guide. **Help > Setup
 Guide** still opens it. To test the first-run flow, remove the argument from `.stim.json` for that run.
 **Window > SwiftUI Playground** opens the
 in-memory screen fixtures. Inspect compiler
