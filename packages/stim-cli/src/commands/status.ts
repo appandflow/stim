@@ -37,7 +37,14 @@ import type { MetroResolution } from '../metro.ts';
 import { countErrorsSinceMarker } from '../diagnostics/error-index.ts';
 import { workspaceLogErrorIndex, workspaceLogsDir } from '../workspace/paths.ts';
 import { readSupervisorState } from './stop.ts';
-import { detectIsExpo, detectPlatforms, findServerWorkspace, projectShortcut } from '../workspace/project.ts';
+import {
+  detectIsExpo,
+  detectPlatforms,
+  detectTutorial,
+  findServerWorkspace,
+  projectShortcut,
+  readAppJson,
+} from '../workspace/project.ts';
 import { listAllIosSimsAsync, parseSimctlList } from '../devices/ios.ts';
 import {
   listAdbDevices,
@@ -418,6 +425,8 @@ async function readStatusFacts(
         ),
         recording: { enabled: workspaceRecordingEnabled(path, proj, cfg, process.env) },
       });
+      const tutorial = detectTutorial(readAppJson(path));
+      if (tutorial) state.tutorial = tutorial;
     }
     const physicalDevices = physicalDeviceStates(leaseFiles, parseWorkspaceLeases(saved?.deviceLeases), {
       root: path,
