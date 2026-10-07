@@ -25,14 +25,14 @@ struct Sidebar: View {
           let trees = store.sidebarTrees(options)
           ForEach(trees, id: \.summary.project) { tree in
             let folders = Set(store.environments(in: tree.summary.project).map { $0.names.inCheckout ?? "" })
-            DisclosureGroup(isExpanded: isExpanded(tree.summary)) {
+            DisclosureGroup(isExpanded: isExpanded(tree)) {
               ForEach(tree.entries) { entry in
                 EntryRow(
                   entry: entry, subtitle: nil, showsFolder: folders.count > 1, showsGit: options.showsGitStatus,
                   selection: rowSelection.wrappedValue, openLogs: openLogs)
               }
             } label: {
-              if options.status == .archived {
+              if tree.isArchiveOnly {
                 Label(store.title(of: tree.summary.project), systemImage: "archivebox")
               } else {
                 ProjectRow(store: store, summary: tree.summary, selected: selection == .project(tree.summary.project))
@@ -122,7 +122,7 @@ struct Sidebar: View {
         projects: Array(Set(store.projectList.map(\.project) + (store.payload?.archived ?? []).map(\.sidebarProject))).sorted {
           $0.name.lowercased() < $1.name.lowercased()
         },
-        title: store.title(of:))
+        counts: store.sidebarStatusCounts(prefs.options), title: store.title(of:))
     }
     .padding(.horizontal, Space.xl)
     .padding(.vertical, Space.md)
@@ -131,9 +131,14 @@ struct Sidebar: View {
   @ViewBuilder
   private func emptyText(_ options: SidebarOptions) -> some View {
     HStack(spacing: Space.xs) {
-      if options.status != .all {
-        InlineEmpty("No \(options.status.rawValue) workspaces \u{00B7}")
-        Button("Show all") { prefs.status = .all }.buttonStyle(.hoverRow(outset: Space.xs)).foregroundStyle(Palette.primary)
+      if options.statuses.isEmpty {
+        InlineEmpty("No status selected \u{00B7}")
+        Button("Show all") { prefs.statuses = StatusFilter.encode(StatusFilter.all) }
+          .buttonStyle(.hoverRow(outset: Space.xs)).foregroundStyle(Palette.primary)
+      } else if options.statuses.count == 1, let status = options.statuses.first {
+        InlineEmpty("No \(status.title.lowercased()) workspaces \u{00B7}")
+        Button("Show all") { prefs.statuses = StatusFilter.encode(StatusFilter.selectingAll(options.statuses)) }
+          .buttonStyle(.hoverRow(outset: Space.xs)).foregroundStyle(Palette.primary)
       } else if options.differsFromDefaults(projects: store.projectList.map(\.project)) {
         InlineEmpty("Nothing matches \u{00B7}")
         Button("Reset") { prefs.reset() }.buttonStyle(.hoverRow(outset: Space.xs)).foregroundStyle(Palette.primary)
@@ -144,11 +149,11 @@ struct Sidebar: View {
     .font(.stim(.callout))
   }
 
-  private func isExpanded(_ summary: ProjectSummary) -> Binding<Bool> {
-    let root = summary.project.root
+  private func isExpanded(_ tree: ProjectTree) -> Binding<Bool> {
+    let root = tree.summary.project.root
     let choices = (try? JSONDecoder().decode([String: Bool].self, from: expandedProjects)) ?? [:]
     return Binding(
-      get: { choices[root] ?? (prefs.status == .archived || summary.hasActive) },
+      get: { choices[root] ?? (tree.showsOnlyArchives || tree.summary.hasActive) },
       set: { expanded in
         var updated = choices
         updated[root] = expanded
@@ -442,14 +447,14 @@ struct NoEnvironmentRow: View {
         HStack(alignment: .firstTextBaseline, spacing: Space.sm) {
           Text(names.title).foregroundStyle(Palette.secondary).lineLimit(1).truncationMode(.middle).layoutPriority(1)
           Spacer(minLength: 0)
-          Text("No environment").font(.stim(.caption, weight: .medium)).foregroundStyle(Palette.tertiary).fixedSize()
+          Text("Not set up").font(.stim(.caption, weight: .medium)).foregroundStyle(Palette.tertiary).fixedSize()
         }
         RowDetailLine(
           context: RowDetailLine.joined(place.map { Text($0).foregroundStyle(Palette.tertiary) }), git: git)
       }
     }
     .accessibilityElement(children: .ignore)
-    .accessibilityLabel(([names.title, "No environment", git?.label].compactMap { $0 } + place).joined(separator: ", "))
+    .accessibilityLabel(([names.title, "Not set up", git?.label].compactMap { $0 } + place).joined(separator: ", "))
     .sidebarTag(.worktree(worktree.path), selection: selection)
     .contextMenu {
       WorkspaceActionsMenu(

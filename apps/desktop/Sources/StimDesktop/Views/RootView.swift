@@ -220,8 +220,11 @@ struct RootView: View {
       showDevice(openRequests.device, in: payload)
       showWorkspaceLink(in: payload)
       show(openRequests.target, in: payload)
-      if case .worktree(let path) = selection, payload?.environments.contains(where: { $0.path == path }) == true {
-        selection = .environment(path)
+      if case .worktree(let path) = selection,
+        let environment = payload?.environments.filter({ $0.path == path || $0.worktree?.path == path }).map(\.path)
+          .sorted().first
+      {
+        selection = .environment(environment)
       }
       restoreLastProject()
     }
@@ -612,7 +615,10 @@ struct RootView: View {
       }
     case .worktree(let path):
       if let worktree = store.payload?.unprovisionedWorktrees?.first(where: { $0.path == path }) {
-        NoEnvironmentDetail(worktree: worktree)
+        NoEnvironmentDetail(
+          worktree: worktree, cli: cli,
+          apps: notSetUpApps(for: worktree, environments: store.payload?.environments ?? [], project: store.project(ofPath:)),
+          projectName: store.title(of: store.project(ofPath: worktree.path)))
       } else {
         EmptyState(title: "Worktree gone", message: "stim status no longer reports this worktree.")
       }

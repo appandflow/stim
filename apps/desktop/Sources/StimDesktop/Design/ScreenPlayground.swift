@@ -156,7 +156,7 @@
           let archives = sidebarArchives(fixtures)
           var options: SidebarOptions {
             var value = SidebarOptions()
-            value.status = .archived
+            value.statuses = [.archived]
             return value
           }
           let trees = sidebarTrees(
