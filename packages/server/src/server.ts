@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, watch, type FSWatcher } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, watch, type FSWatcher } from 'node:fs';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { isIP, type AddressInfo, type Socket } from 'node:net';
 import { dirname, join } from 'node:path';
@@ -1798,6 +1798,14 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       });
     }
 
+    function isLink(path: string): boolean {
+      try {
+        return lstatSync(path).isSymbolicLink();
+      } catch {
+        return true;
+      }
+    }
+
     function archiveDetail(id: RequestId, params: unknown): void {
       const target = isJsonObject(params) ? params : {};
       if (target.archive === undefined) return error(id, 'bad-request', 'archive.detail needs params.archive.');
@@ -1808,10 +1816,13 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       if (!dir) return;
       const result: ArchiveDetailResult = {
         builds: readBuildHistory(readArchiveState(archive)),
-        recordings: listRecordedDevices(join(dir, 'recordings'), true).flatMap((recorded) => {
-          const spans = recordedSpans(recorded.segments);
-          return spans.length ? [{ platform: recorded.platform, slot: recorded.slot, spans }] : [];
-        }),
+        recordings: listRecordedDevices(join(dir, 'recordings'), true)
+          .filter((recorded) => !isLink(recorded.dir))
+          .flatMap((recorded) => {
+            const spans = recordedSpans(recorded.segments.filter((segment) => !isLink(segment.file)));
+            return spans.length ? [{ platform: recorded.platform, slot: recorded.slot, spans }] : [];
+          })
+          .toSorted((a, b) => a.platform.localeCompare(b.platform) || a.slot.localeCompare(b.slot)),
       };
       send(socket, { id, result });
     }
