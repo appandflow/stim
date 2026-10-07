@@ -44,33 +44,6 @@ test('local device counts exclude hosted simulator identities without excluding 
   expect(countLiveOwnedDevices(inventory, { exclude: [{ platform: 'ios', key: 'hosted' }] })).toBe(1);
 });
 
-test.each([{ key: 'stim-hosted' }, { consolePort: 5554 }])(
-  'local device counts exclude hosted emulators by identity or reserved port: %j',
-  (exclude) => {
-    const inventory = {
-      ...empty,
-      config: makeConfig({
-        projects: {
-          '/host': {
-            platforms: { android: { owned: true, avdName: 'stim-hosted', consolePort: 5554 } },
-          },
-          '/local': {
-            platforms: { android: { owned: true, avdName: 'stim-local', consolePort: 5556 } },
-          },
-        },
-      }),
-      adb: makeAdbDevices({
-        emulators: [
-          { serial: 'emulator-5554', consolePort: 5554 },
-          { serial: 'emulator-5556', consolePort: 5556 },
-        ],
-      }),
-      booting: [],
-    };
-    expect(countLiveOwnedDevices(inventory, { exclude: [{ platform: 'android', ...exclude }] })).toBe(1);
-  },
-);
-
 function deferred<T>() {
   let resolve!: (value: T) => void;
   const promise = new Promise<T>((done) => (resolve = done));

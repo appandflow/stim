@@ -127,13 +127,11 @@ const refused = (code: ProtocolError['code'], message: string): { error: Protoco
 });
 
 function hostedDeviceExclusions(records: HostedDeviceSession[]) {
-  return records
-    .filter((record) => record.platform !== 'macos')
-    .map((record) => ({
-      platform: record.platform,
-      key: record.device ? hostedDeviceId(record.device) : undefined,
-      consolePort: record.consolePort,
-    }));
+  return records.flatMap((record) =>
+    record.platform === 'ios' && record.state !== 'stopped' && record.device
+      ? [{ platform: 'ios' as const, key: hostedDeviceId(record.device) }]
+      : [],
+  );
 }
 
 /** Owns hosted reservations, not build jobs or viewer connections. Native work runs in the packaged CLI child. */

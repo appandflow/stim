@@ -76,6 +76,7 @@ if(input.mode === 'count') {
 
   const declined=request.deviceType==='unavailable'?'SDK unavailable':request.deviceType==='empty-reason'?'':null;
   const choice=request.platform==='macos' ? {architecture:'arm64',macosVersion:'27.0'} : request.platform==='ios' ? {deviceTypeId:'iphone',runtimeId:'ios',deviceType:'iPhone',runtime:'27.1',architecture:'arm64',udid:'not-a-device'} : {systemImage:'system-images;android-30;google_apis;arm64-v8a',deviceProfile:'pixel_6',architecture:'arm64-v8a'};
+  writeFileSync(join(process.env.STIM_HOME,'offer-exclude.json'),JSON.stringify(input.exclude ?? null));
   process.stdout.write(JSON.stringify({platform:request.platform,choice:declined?null:choice,declined,resources:{cpus:4,loadPerCore:0.5,memoryFreeBytes:1000,memoryPressure:'normal',workerDiskFreeBytes:null,...(input.exclude ? {localDevices:JSON.parse(process.env.LOCAL_COUNT ?? '0')} : {})}}));
   process.exit(0);
 }
@@ -1522,6 +1523,13 @@ test.each([
   await state(hosted.id, 'unknown');
   hostEnv.LOCAL_COUNT = JSON.stringify(local);
   const answer = await host.offer('client', { platform: 'ios' });
+  expect(JSON.parse(readFileSync(join(home, 'offer-exclude.json'), 'utf8'))).toEqual(
+    readHostedSessions().flatMap((record) =>
+      record.platform === 'ios' && record.state !== 'stopped' && record.device
+        ? [{ platform: 'ios', key: (record.device as { udid: string }).udid }]
+        : [],
+    ),
+  );
   expect(answer).toMatchObject({ result: { capacity: { running, max: 2, available, local } } });
   if ('error' in answer) throw new Error(answer.error.message);
   expect(answer.result.declined).toBe(

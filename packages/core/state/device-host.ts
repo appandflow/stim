@@ -209,8 +209,8 @@ export function parseHostedOfferRequest(value: unknown): HostedDeviceOfferReques
 
 export function parseHostedLocalDeviceCount(value: unknown): number | { unknown: string } | null {
   if (typeof value === 'number' && Number.isSafeInteger(value) && value >= 0) return value;
-  if (isJsonObject(value) && typeof value.unknown === 'string' && value.unknown && value.unknown.length <= 4000)
-    return { unknown: value.unknown };
+  if (isJsonObject(value) && typeof value.unknown === 'string' && value.unknown)
+    return { unknown: value.unknown.slice(0, 4000) };
   return null;
 }
 

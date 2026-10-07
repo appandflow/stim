@@ -71,7 +71,6 @@ export interface InventorySources {
 export interface DeviceCountExclusion {
   platform: string;
   key?: string;
-  consolePort?: number;
 }
 
 const LIVE_SIM_STATES = new Set(['Booted', 'Booting']);
@@ -182,12 +181,7 @@ function liveOwnedDeviceKeys({
         android?.owned &&
         android.avdName &&
         typeof android.consolePort === 'number' &&
-        livePorts.has(android.consolePort) &&
-        !exclude.some(
-          (device) =>
-            device.platform === 'android' &&
-            (device.key === android.avdName || device.consolePort === android.consolePort),
-        )
+        livePorts.has(android.consolePort)
       ) {
         keys.add(deviceKey('android', android.avdName));
       }

@@ -29,8 +29,7 @@ async function main(): Promise<void> {
         (device) =>
           !isJsonObject(device) ||
           (device.platform !== 'ios' && device.platform !== 'android') ||
-          (device.key !== undefined && typeof device.key !== 'string') ||
-          (device.consolePort !== undefined && !Number.isInteger(device.consolePort)),
+          (device.key !== undefined && typeof device.key !== 'string'),
       )
     )
       throw new Error('Invalid hosted device exclusions.');
