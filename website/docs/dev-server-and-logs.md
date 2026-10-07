@@ -73,7 +73,8 @@ without reloading and without console output therefore counts as idle. Raise
 
 The stop is recorded in the timeline as `supervisor_idle_stopped`, and
 `stim status` shows the port as `stopped (idle)` instead of a crash. The devices
-stay booted. The next `stim start` starts the server again, or reuses one that
+stay booted, except owned ones idle for `devices.idleShutdownMinutes` (30 by
+default; `0` never), which the stop shuts down first. The next `stim start` starts the server again, or reuses one that
 another process started, and clears that state. A Debug `stim ios` or
 `stim android` run starts it again too, and its JSON result reports
 `devServer: { "started": true, "reason": "stopped (idle)" }`. The setting is
