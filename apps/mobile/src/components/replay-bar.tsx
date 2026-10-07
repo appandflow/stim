@@ -120,7 +120,7 @@ export function ReplayBar({
     );
   }
   const liveEnd = canGoLive && recording ? timeline.end + Math.max(0, now - received.at) : undefined;
-  const track = held ?? buildTimeline(timeline.spans, liveEnd, trackLength) ?? timeline;
+  const track = held ?? buildTimeline(timeline.spans, liveEnd, trackLength, liveEnd === undefined) ?? timeline;
   if (track.length !== trackLength) setTrackLength(track.length);
   const target = dragging !== null ? timeAt(track, dragging) : seeking ? asked : null;
   const shownAt = target ?? at ?? lastAt;

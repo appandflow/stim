@@ -41,8 +41,9 @@ public struct ReplayTimeline: Equatable, Sendable {
 
   /// A device still recorded ends at its newest footage, or at `liveEnd` when that is later, the Mac's estimated time
   /// now. `previousLength` is the length of the track shown before, which the new one keeps unless footage grew past
-  /// it or shrank by two steps.
-  public init?(spans: [ReplaySpan], liveEnd: Double? = nil, previousLength: Double? = nil) {
+  /// it or shrank by two steps. With `fit`, for footage that is not growing, the track is exactly as long as the
+  /// footage and its gaps, so it fills the whole width with no spare room before the oldest footage.
+  public init?(spans: [ReplaySpan], liveEnd: Double? = nil, previousLength: Double? = nil, fit: Bool = false) {
     guard let last = spans.last else { return nil }
     var shown = spans
     if let liveEnd, liveEnd > last.end { shown[shown.count - 1] = ReplaySpan(start: last.start, end: liveEnd) }
@@ -55,7 +56,9 @@ public struct ReplayTimeline: Equatable, Sendable {
     let total = weights.reduce(0, +)
     let fitted = max(1, (total / Self.windowStepMs).rounded(.up)) * Self.windowStepMs
     let length =
-      if let previousLength, fitted < previousLength, previousLength - fitted < 2 * Self.windowStepMs {
+      if fit {
+        total
+      } else if let previousLength, fitted < previousLength, previousLength - fitted < 2 * Self.windowStepMs {
         previousLength
       } else {
         fitted
