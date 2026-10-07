@@ -124,7 +124,6 @@ public final class ActionCenter: ObservableObject {
     didSet { if let presented { operations.markSeen(presented) } }
   }
   public let operations = OperationLog()
-  public var approvedHostingMachines: (String) -> [String]? = { _ in nil }
   public var onFinish: ((ActionRun) -> Void)?
   private let cli: Task<StimCLI, Never>
 
@@ -189,10 +188,8 @@ public final class ActionCenter: ObservableObject {
   }
 
   public func runApp(_ env: Workspace, platform: String) {
-    let destination = AppPreferences.runDestination(
-      workspace: env.path, platform: platform, approvedMachines: approvedHostingMachines(env.path))
     run(
       "Run \(env.names.title) on \(platformName(platform))",
-      steps: [env.runCommand(platform: platform, destination: destination)], present: false)
+      steps: [env.runCommand(platform: platform)], present: false)
   }
 }

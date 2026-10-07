@@ -300,13 +300,7 @@ struct DeviceTile: View {
             .help("This remote session is billed while it runs.")
         }
       }
-      if let machine = device.hostedMachine {
-        Label("on \(machineName(machine))", systemImage: "desktopcomputer")
-          .font(.stim(.caption)).foregroundStyle(Palette.tertiary)
-      }
-      if let reason = device.placementReason {
-        Text(reason).font(.stim(.caption)).foregroundStyle(Palette.tertiary).help(reason)
-      }
+      DevicePlacementView(device: device)
       if let project { Text(project).font(.stim(.footnote)).foregroundStyle(Palette.secondary) }
       FlowLayout(spacing: Space.sm) {
         TimelineView(.periodic(from: .now, by: 30)) { context in

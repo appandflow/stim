@@ -44,16 +44,14 @@ control them through this Mac's stim-server relay. Touch and text reach the
 hosting Mac; controls that need a local simulator, and replay, are hidden.
 The tile reports connecting, unavailable or stopped sessions. Android hardware
 buttons also use the relay; rotation and posture are unavailable.
-**Run on** beside iOS and Android run actions chooses **This Mac**, **Auto**, or
-an approved hosting Mac. Desktop remembers the choice per workspace and platform;
-a machine that doctor reports is no longer approved falls back to This Mac.
-**This Mac** uses the project's default, passing no `--remote` flag. A project
-with `ios.remote` or `android.remote` set still runs at that destination.
-Auto uses `--remote auto`; a named Mac uses `--remote <machine>`. Named machines
-are disabled while the slot has a booted local owned device; run `stim stop`
-first to change machines. Recorded hosted sessions
-stay fixed until `stim stop`. Tiles and sidebar rows show where the device ran
-and the Auto reason, including runs that stayed or waited locally. See [iOS on an approved Mac](./owned-devices#run-ios-on-another-mac).
+Placement is set by config or agents: use
+`stim settings set ios.remote auto --scope workspace` (or `android.remote`),
+or per run `stim ios --remote auto` / `stim ios --remote <machine>`.
+Desktop passes no `--remote` flag for new iOS and Android runs, so the project's
+settings apply. Recorded hosted sessions stay fixed until `stim stop`.
+When a device is not on this Mac, its tile, workspace page, viewer toolbar and
+sidebar row show **on &lt;machine&gt;**, with the placement reason as hover text.
+Local devices show no placement label. See [iOS on an approved Mac](./owned-devices#run-ios-on-another-mac).
 
 Desktop uses the non-empty launch `STIM_HOME`, then the login shell's value, then
 `~/.stim`; **Settings > App > Stim CLI** shows the home, and private-home copies

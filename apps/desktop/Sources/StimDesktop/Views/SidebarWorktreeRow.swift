@@ -75,9 +75,9 @@ struct SidebarWorktreeRow: View {
             ArchiveRowFacts(page: adapted, showsGit: showsGit)
           } else {
             RowDetailLine(context: context(summary), git: summary.git)
-            ForEach(page.apps.flatMap(\.orderedDevices).filter { $0.hostedMachine != nil || $0.placementReason != nil }) {
+            ForEach(page.apps.flatMap(\.orderedDevices).filter { $0.placement != nil }) {
               device in
-              DevicePlacementLabel(device: device)
+              DevicePlacementView(device: device)
             }
           }
         }

@@ -178,7 +178,7 @@ public enum Discovery {
 
   /// `hosts` are the hosting Macs approved for device-host (nil when that is not known, which shows nothing). With
   /// one approved the prompt offers to use it instead of setting up; setup is offered only when none is approved.
-  /// `isRemote` says whether the workspace's Run on already leaves this Mac.
+  /// `isRemote` says whether the workspace's devices for the platform already run on another Mac.
   public static func capHit(
     source: CapHitSource, mac: TailnetMac?, hosts: [String]?, isRemote: (String, String?) -> Bool = { _, _ in false }
   ) -> DiscoveryPrompt? {

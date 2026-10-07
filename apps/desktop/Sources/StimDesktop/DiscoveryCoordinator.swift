@@ -166,9 +166,10 @@ final class DiscoveryCoordinator: ObservableObject {
     let prompt = Discovery.capHit(
       source: source, mac: macs.first, hosts: hosts,
       isRemote: { [weak self] id, platform in
-        guard let path = self?.workspacePath(id) else { return false }
-        return (platform.map { [$0] } ?? ["ios", "android"]).allSatisfy {
-          AppPreferences.runDestination(workspace: path, platform: $0, approvedMachines: hosts) != .thisMac
+        guard let env = self?.workspacePath(id).flatMap({ path in self?.latest?.environments.first { $0.path == path } })
+        else { return false }
+        return Discovery.runOnAutoPlatforms(platform).allSatisfy { platform in
+          env.devices.contains { $0.platform == platform && $0.hostedMachine != nil }
         }
       })
     if let prompt { remember(prompt, rememberedAt: source.at) } else { pending[.capHit] = nil }
