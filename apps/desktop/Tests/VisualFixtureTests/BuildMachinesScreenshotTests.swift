@@ -13,7 +13,7 @@
         from: Data(
           #"""
           [{"machine":"mini","state":"approved","offloadable":true,"dnsName":"mini.tail1234.ts.net"},
-           {"machine":"studio","state":"pending","deviceId":"a1b2c3d4","dnsName":"studio.tail1234.ts.net"}]
+           {"machine":"studio","state":"pending","deviceId":"a1b2c3d4","dnsName":"studio.tail1234.ts.net","expiresAt":"2099-01-01T21:05:00.000Z"}]
           """#.utf8))
     }
 
@@ -43,6 +43,20 @@
         ("empty", AnyView(content(entries: [], statuses: [], tailscale: true))),
         (
           "list", AnyView(content(entries: ["mini", "studio"], statuses: try statuses(), tailscale: true))
+        ),
+        (
+          "lapsed",
+          AnyView(
+            content(
+              entries: ["mini", "studio"],
+              statuses: try JSONDecoder().decode(
+                [BuildMachineStatus].self,
+                from: Data(
+                  #"""
+                  [{"machine":"mini","state":"approved","offloadable":true,"dnsName":"mini.tail1234.ts.net"},
+                   {"machine":"studio","state":"lapsed","deviceId":"a1b2c3d4","dnsName":"studio.tail1234.ts.net"}]
+                  """#.utf8)),
+              tailscale: true))
         ),
         ("tailscale-off", AnyView(content(entries: ["mini", "studio"], statuses: try statuses(), tailscale: false))),
         ("empty-tailscale-off", AnyView(content(entries: [], statuses: [], tailscale: false))),

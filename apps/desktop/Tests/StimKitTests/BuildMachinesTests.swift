@@ -128,13 +128,23 @@ import Testing
       from: Data(
         #"""
         {"project":"/p","findings":[],"buildMachines":[
-          {"machine":"mini","state":"pending","dnsName":"mini.tail1.ts.net","deviceId":"ab12","requestedAt":"2026-09-28T12:00:00.000Z"},
-          {"machine":"old:7444","state":"node-changed"},{"machine":"x","state":"from-the-future"}]}
+          {"machine":"mini","state":"pending","dnsName":"mini.tail1.ts.net","deviceId":"ab12","requestedAt":"2026-09-28T12:00:00.000Z","expiresAt":"2026-09-28T21:05:00.000Z"},
+          {"machine":"old:7444","state":"node-changed"},{"machine":"x","state":"from-the-future"},
+          {"machine":"late","state":"lapsed","deviceId":"cd34"}]}
         """#.utf8))
     let machines = try #require(report.buildMachines)
-    #expect(machines.map(\.state) == [.pending, .nodeChanged, .unknown])
+    #expect(machines.map(\.state) == [.pending, .nodeChanged, .unknown, .lapsed])
+    let utc = TimeZone(identifier: "UTC")!
+    let british = Locale(identifier: "en_GB")
+    #expect(machines[0].lapseLine(timeZone: utc, locale: british) == "Waiting for approval until 21:05.")
+    #expect(machines[0].lapseLine(timeZone: TimeZone(identifier: "Asia/Tokyo")!, locale: british).contains("06:05"))
+    #expect(BuildMachineStatus(machine: "m", state: .pending).lapseLine() == BuildMachineStatus.requestLapse)
+    #expect(machines[3].state.title == "Request lapsed")
+    #expect(machines[3].state.canAsk(requested: true))
+    #expect(machines[3].detail.contains("lapsed before anyone on late approved it"))
+    #expect(machines[3].approvalCommand == nil)
     #expect(machines[0].detail.contains("stim-server devices grant ab12 --build"))
-    #expect(machines.map(\.approvalCommand) == ["stim-server devices grant ab12 --build", nil, nil])
+    #expect(machines.map(\.approvalCommand) == ["stim-server devices grant ab12 --build", nil, nil, nil])
     #expect(
       try JSONDecoder().decode(DoctorReport.self, from: Data(#"{"project":"/p","findings":[]}"#.utf8))
         .buildMachines == nil)

@@ -1101,11 +1101,14 @@ is a list of the entries of the `offload.machines` machine setting. Each row
 shows the Mac's name, one status pill, what it does (**Builds**, plus
 **Simulators** when its device-host access is approved), and a **...** menu with
 **Details...** and **Remove**. The pill reads **Approved**, **Waiting for
-approval** (the row keeps the approval command to copy), **Unreachable**,
+approval** (the row keeps the approval command to copy and says when the
+request lapses, such as "Waiting for approval until 21:05", in local time),
+**Unreachable**,
 **Build mismatch** (doctor's `stim-build`, `arch`, `xcode`, `simulator-sdk`,
 `cocoapods`, `bundler` or `jdk` reason), or the machine's other readiness or
-pairing state, such as **Busy**, **Not asked**, **Revoked** (revoked, denied,
-or the request lapsed), **Different Mac** (the name now belongs to another
+pairing state, such as **Busy**, **Not asked**, **Revoked** (revoked or
+denied), **Request lapsed** (nobody on the build machine approved it in time;
+**Ask Again** is available), **Different Mac** (the name now belongs to another
 tailnet node than the one this Mac asked, so Stim does not connect to it),
 **Not on the tailnet**, **Tailscale is off** or **Not a tailnet name**. The
 states come from the `buildMachines` field of `stim doctor --json --platform

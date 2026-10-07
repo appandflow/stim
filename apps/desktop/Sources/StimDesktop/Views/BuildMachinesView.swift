@@ -250,7 +250,7 @@ private struct BuildMachineRow: View {
           Text(verbatim: "\(status.approvalPrompt), or runs this there:")
             .font(.stim(.footnote)).foregroundStyle(Palette.secondary).fixedSize(horizontal: false, vertical: true)
           CopyableCommand(command: command)
-          Text(BuildMachineStatus.requestLapse).font(.stim(.footnote)).foregroundStyle(Palette.secondary)
+          Text(verbatim: status.lapseLine()).font(.stim(.footnote)).foregroundStyle(Palette.secondary)
         }
         MachineUpdateLine(phase: update, needed: status.map(needsStimUpdate) ?? false, update: startUpdate)
       }
