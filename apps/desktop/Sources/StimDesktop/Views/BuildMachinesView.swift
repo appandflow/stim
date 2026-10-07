@@ -186,6 +186,7 @@ struct BuildMachinesContent: View {
           let status = statuses?.first { $0.machine == entry }
           BuildMachineRow(
             entry: entry, status: status, checking: canAsk && (statuses == nil || (status == nil && refreshing)),
+            failed: canAsk && failure != nil && status == nil,
             refreshing: canAsk && refreshing && status != nil && working != entry,
             capabilities: buildMachineCapabilities(entry, hosts: hosts), working: working == entry,
             canAsk: canAsk, update: updates[entry], ask: { ask(entry) }, startUpdate: { update(entry) },
@@ -224,6 +225,7 @@ private struct BuildMachineRow: View {
   var entry: String
   var status: BuildMachineStatus?
   var checking: Bool
+  var failed: Bool
   var refreshing: Bool
   var capabilities: [String]
   var working: Bool
@@ -246,6 +248,8 @@ private struct BuildMachineRow: View {
             if refreshing { ProgressView().controlSize(.mini).help("Checking again") }
           } else if checking {
             Pill("Checking\u{2026}", size: .small)
+          } else if failed {
+            Pill("Couldn\u{2019}t check", tone: .warning, size: .small)
           }
         }
         if let status {
