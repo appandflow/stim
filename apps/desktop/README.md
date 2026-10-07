@@ -1110,7 +1110,7 @@ pairing state, such as **Busy**, **Not asked**, **Revoked** (revoked, denied,
 or the request lapsed), **Different Mac** (the name now belongs to another
 tailnet node than the one this Mac asked, so Stim does not connect to it),
 **Not on the tailnet**, **Tailscale is off** or **Not a tailnet name**. The
-states come from the `buildMachines` field of `stim doctor --json --platform
+states come from the `remoteMachines` field of `stim doctor --json --platform
 ios`.
 
 For an approved machine the detail line gives the builds it runs and how many
