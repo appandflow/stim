@@ -9,6 +9,7 @@ import cleanup from './cleanup.ts';
 import settings from './settings.ts';
 import web from './web.ts';
 import macos from './macos.ts';
+import tutorial from './tutorial.ts';
 
 import type { GuideTopic } from './types.ts';
 
@@ -24,6 +25,7 @@ const TOPICS: Record<string, GuideTopic> = {
   settings,
   web,
   macos,
+  tutorial,
 };
 
 export default TOPICS;

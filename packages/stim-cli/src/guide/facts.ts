@@ -981,7 +981,7 @@ RULES
               files, never runs project scripts.
   tutorial    { version }: present only when app.json sets
               expo.extra.stimTutorial to a positive integer, the marker
-              of the Stim tutorial app. Status
+              of the Stim tutorial app (stim guide tutorial). Status
               reports whatever version it finds; Desktop decides which
               versions it supports. Static app.json only.
   recording   { enabled }: whether stim-server may record the workspace's

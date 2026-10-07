@@ -82,6 +82,32 @@ After a build, the agent should report only the exact device and app, launch
 state, cache result, total duration, and whether the error log is clean. Ask for
 build-performance details when you want history across runs.
 
+## Take the tutorial
+
+Try Stim on a small iOS app in its own repository and worktree. The tutorial
+covers builds, cache reuse, device control, logs, agent actions, and Fast
+Refresh. The agent pauses between steps so you can inspect the result in Stim
+Desktop, or use the simulator and CLI. The first build can take about four
+minutes on a cold cache; uncached dependencies need network access.
+
+<PromptBox
+title="Run the Stim tutorial"
+response={`The tutorial app is running. Look at Build, then the device, then Logs.
+Next prompt: Continue the Stim tutorial: rebuild`}
+
+>
+
+{`Run the Stim tutorial.`}
+</PromptBox>
+
+To type the commands yourself:
+
+<StimTabs code={`stim guide tutorial manual`} />
+
+Finishing stops the environment and removes only the tour worktree, keeping
+the base repository. With archiving enabled, the tour appears under Archived.
+Phone viewing and a build on an approved machine are optional.
+
 ## Common prompts
 
 Each prompt has a copy button and an illustrative agent response. Simulator
