@@ -67,7 +67,6 @@ export function Menu({ onClose }: { onClose: () => void }) {
   }));
   const status = drawerStatus(machines);
   const statusText = macs === null ? '' : status.text;
-  const machineCount = machines.filter((m) => !m.missing).length;
   const statusTone = status.tone === 'critical' ? 'error' : status.tone === 'warn' ? 'warning' : 'secondary';
 
   return (
@@ -192,13 +191,6 @@ export function Menu({ onClose }: { onClose: () => void }) {
         >
           <View style={styles.badge}>
             <Icon name="laptopcomputer" size={18} color={theme.colors.text} />
-            {machineCount > 0 ? (
-              <View style={[styles.count, styles.badgeCount]}>
-                <Text variant="caption" weight="semibold" style={styles.countText}>
-                  {machineCount}
-                </Text>
-              </View>
-            ) : null}
           </View>
           <View style={styles.footerStatusRow}>
             <Text variant="footnote" tone={statusTone} numberOfLines={1} style={styles.grow}>
@@ -346,7 +338,6 @@ const styles = StyleSheet.create((theme) => ({
     justifyContent: 'center',
     backgroundColor: theme.colors.raised,
   },
-  badgeCount: { position: 'absolute', top: -theme.space.xs, right: -theme.space.xs },
   footerStatusRow: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: theme.space.sm },
   scrim: { flex: 1, backgroundColor: theme.colors.scrim },
   sheet: {
