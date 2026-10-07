@@ -29,13 +29,7 @@ struct AddMachineSteps: View {
             if wizardFixIsCommand(fix) {
               CopyableCommand(command: fix)
             } else {
-              ForEach(Array(wizardFixParts(fix).enumerated()), id: \.offset) { _, part in
-                switch part {
-                case .text(let text):
-                  Text(text.trimmingCharacters(in: .whitespaces)).font(.stim(.footnote)).textSelection(.enabled)
-                case .command(let command): CopyableCommand(command: command)
-                }
-              }
+              Text(fix).font(.stim(.footnote)).textSelection(.enabled)
             }
           }
           if tool.id == "stim-build" {

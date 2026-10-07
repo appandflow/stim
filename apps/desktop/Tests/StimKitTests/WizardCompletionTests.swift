@@ -122,13 +122,6 @@ final class WizardCompletionTests: XCTestCase {
     XCTAssertFalse(wizardFixIsCommand("Install Bundler (`gem install bundler`) on mini."))
     XCTAssertFalse(wizardFixIsCommand("Use a build machine with the same CPU architecture as this Mac."))
     XCTAssertFalse(wizardFixIsCommand("stim-server service update --release <version>"))
-    XCTAssertEqual(
-      wizardFixParts(
-        "Update it: there, run `stim-server service update --release <version>` for this Mac, or `--from <dir>` with packs."),
-      [
-        .text("Update it: there, run "), .command("stim-server service update --release <version>"),
-        .text(" for this Mac, or `--from <dir>` with packs."),
-      ])
   }
 
   func testTimingsComeFromTheLastRealOffloadDoneRecord() throws {
