@@ -184,7 +184,7 @@ final class NotificationResponder: NSObject, UNUserNotificationCenterDelegate, @
         } else if action == Notifier.doItAction {
           self.runPlan?()
         } else if id.hasPrefix(Notifier.archivedPressurePrefix) {
-          UserDefaults.standard.set(StatusFilter.archived.rawValue, forKey: AppPreferences.Key.sidebarStatus)
+          AppPreferences.showArchived(.standard)
           MainWindow.show()
         } else if id.hasPrefix("pressure") {
           OpenRequests.shared.showsMachine = true

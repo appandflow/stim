@@ -71,9 +71,16 @@ worktree's branch, else the worktree's folder, else its project for a main
 checkout. The second line is where it sits inside its checkout, such as
 `apps/mobile`. The view options button next to the logo opens a menu:
 
-- **Status**: All, Live, Idle or Archived workspaces. All, Live and Idle exclude archives. Archived uses the same repository and worktree grouping and sidebar rows, newest removal first, with app labels, PR number or Merged, removal time, retained size and a media expiry indicator. Live also shows a workspace with a
-  running build, and one that `stim worktree warm` is preparing ("Warming...",
-  with an activity indicator) or has prepared before its first run ("Ready").
+- **Status**: select any combination of Live, Idle, Not set up and Archived. The
+  default is Live + Idle. All selects every state except Archived and leaves the
+  Archived choice unchanged. Each state shows its sidebar row count, counting a
+  multi-app worktree once and excluding hidden projects. When mixed with current
+  rows, archives follow those rows within each project, newest removal first.
+  Archived uses the same repository and worktree grouping, with app labels, PR
+  number or Merged, removal time, retained size and a media expiry indicator.
+  Live also shows a workspace with a running build, and one that
+  `stim worktree warm` is preparing ("Warming...", with an activity indicator)
+  or has prepared before its first run ("Ready").
 - **Projects**: which projects the sidebar lists.
 - **Group by**: Project (the tree) or None (one list, each row subtitled with
   its project too).
@@ -83,8 +90,7 @@ checkout. The second line is where it sits inside its checkout, such as
   attaching, Metro's supervisor or a remote session starting, or a build
   starting, changing phase or ending. Projects sort by their newest workspace
   or their total memory.
-- **Show no-environment worktrees**, **Show git status** and **Show empty
-  projects** (projects the other options leave with no rows).
+- **Show git status** and **Show empty projects** (projects the other options leave with no rows).
 
 The app remembers every choice. The button turns purple with a dot while any
 option differs from its default, and the menu then ends with **Reset**. When
@@ -341,12 +347,14 @@ remembers both. **Open logs** from a notification or a
 workspace menu opens the drawer too.
 
 A linked worktree Stim has not registered yet, listed in `unprovisionedWorktrees`
-of `stim status --json`, appears in the sidebar under its project and
-is marked "no environment", or with its git state when it has one. The project comes from the entry's `repository`,
-so the app does not run git in a worktree that may sit in a macOS-protected
-folder. It has no action. Selecting it shows its path and
-branch and the `stim start`, `stim ios` and `stim android` commands that create
-its environment, each with a Copy button.
+of `stim status --json`, appears under its project when Not set up is selected.
+It is marked "Not set up". The project comes from the entry's `repository`, so
+the app does not run git in a worktree that may sit in a macOS-protected folder.
+Its page has a header line with a git chip and a worktree actions menu. Run and
+Start dev server buttons run `stim worktree warm` followed by the selected
+command from the app's directory. When the repository has several apps, an App
+picker selects which one to set up. The page also shows the folder, repository
+and branch, with a Show in Finder link.
 
 Run, Reload app, Start dev server and Stop from a workspace or its sidebar menu,
 Stop (or Shut down) in the now band, and Build and run and Stop on a macOS app card run without
