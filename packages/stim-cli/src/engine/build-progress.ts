@@ -87,7 +87,7 @@ export interface BuildProgress {
   deviceSetup(setup: boolean | undefined): void;
   /** What `deviceSetup` recorded, or undefined before the run knows. */
   deviceSetupKnown(): boolean | undefined;
-  /** Records the build machine the run compiles on and its phase there; null when it compiles here again. */
+  /** Records the remote Mac the run compiles on and its phase there; null when it compiles here again. */
   place(remote: { host: string; phase: string } | null): void;
   /** Records the workspace root whose build of the same artifact the run waits on; null when it is not known. */
   waitingOn(root: string | null): void;

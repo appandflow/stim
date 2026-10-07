@@ -151,7 +151,7 @@ struct AddMachineSheet: View {
         .build, title: "Builds", detail: "iOS simulator, Android emulator and macOS Debug builds run there; failures build here.")
       capability(
         .deviceHost, title: "Hosted simulators",
-        detail: "iOS simulators run there; you view and control them from here and your phone.")
+        detail: PhoneApp.Copy.addMachineDetail(phoneApp: FeatureFlags.isEnabled(.phoneApp)))
       Text("What will happen on \(name)").font(.stim(.headline))
       TerminalCard(
         lines: previewLines(capabilities: wizard.capabilities, known: model.known, version: model.version),

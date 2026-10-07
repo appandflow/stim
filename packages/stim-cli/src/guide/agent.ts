@@ -129,12 +129,12 @@ To learn whether the next build is a cache hit and how long it should take,
 without building, run stim ios --plan (or stim android --plan); see stim guide
 lifecycle builds.
 
-Agents never set STIM_ACCESS_TICKET, run stim-server setup, edit offload.*
-or hosting.* for the user, or approve requests. Read stim guide settings for
+Agents never set STIM_ACCESS_TICKET, run stim-server setup, edit remote.*,
+server.* or hosting.* for the user, or approve requests. Read stim guide settings for
 Desktop access tickets and person-owned approval.
-Read stim guide settings to select a build machine. Keep a requested named
+Read stim guide settings to select a remote Mac. Keep a requested named
 placement when recovering STIM_OFFLOAD_REFUSED: report its reason and remedy.
-When the user mentions slow builds, a busy Mac or wanting updates away from the desk, tell them about Stim Desktop > Settings > Build machines > Add or Phones > Pair a Phone; see stim guide settings.
+When the user mentions slow builds, a busy Mac or wanting updates away from the desk, tell them about Stim Desktop > Settings > Remote Macs > Add or Phones > Pair a Phone; see stim guide settings.
 
 Read stim guide lifecycle concurrency when a build waits on another workspace
 or a build call times out. A native build can outlive a shell timeout; if the

@@ -596,6 +596,7 @@ struct SidebarFooter: View {
   @ObservedObject private var server = ServerController.shared
   @Binding var selection: SidebarItem?
   @AppStorage(AppPreferences.Key.servesPhones) private var servesPhones = false
+  @ObservedObject private var flags = FeatureFlagStore.shared
   @AppStorage("settingsTab") private var settingsTab = "app"
   @Environment(\.openSettings) private var openSettings
 
@@ -625,7 +626,7 @@ struct SidebarFooter: View {
       Spacer(minLength: 8)
       OperationsButton(log: actions.operations, actions: actions, store: store)
       if !drivenDevices.isEmpty { agentsButton }
-      if servesPhones { phonesButton }
+      if PhoneApp.showsSidebarButton(phoneApp: flags.phoneApp, servesPhones: servesPhones) { phonesButton }
       settingsButton
     }
     .padding(.horizontal, Space.md)

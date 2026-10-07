@@ -344,7 +344,7 @@ describe('Android data partition size settings', () => {
 });
 
 describe('remote device settings', () => {
-  test('distinguishes iOS hosting machines from the proxy and eas backends', () => {
+  test('distinguishes iOS remote Macs from the proxy and eas backends', () => {
     expect(remoteIosSetting({ ios: { remote: 'proxy' } })).toEqual({ kind: 'backend', backend: 'proxy' });
     expect(remoteIosSetting({ ios: { remote: 'eas' } })).toEqual({ kind: 'backend', backend: 'eas' });
     expect(remoteIosSetting({ ios: { remote: 'mini' } })).toEqual({ kind: 'machine', machine: 'mini' });
@@ -881,6 +881,15 @@ test('a machine android.deviceProfile and android.systemImage apply under every 
     deviceProfile: 'pixel_fold',
     systemImage: 'system-images;android-36;google_apis;arm64-v8a',
   });
+});
+
+test('a machine ios.remote and android.remote are the default under every project layer', () => {
+  saveConfig({ version: 2, projects: {}, repos: {}, ios: { remote: 'auto' }, android: { remote: 'mini' } });
+  expect(remoteIosSetting(resolveSettings({}))).toEqual({ kind: 'machine', machine: 'auto' });
+  writeFileSync(join(tmpHome, '.stim.json'), JSON.stringify({ ios: { remote: 'eas' } }));
+  const resolved = resolveSettings({ repoRoot: tmpHome });
+  expect(remoteIosSetting(resolved)).toEqual({ kind: 'backend', backend: 'eas' });
+  expect(remoteAndroidSetting(resolved)).toEqual({ kind: 'machine', machine: 'mini' });
 });
 
 test('machine-only settings never leak into resolveSettings or read as unknown', () => {

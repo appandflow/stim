@@ -108,7 +108,7 @@ export function diskUsageCacheDir(): string {
   return join(configDir(), 'disk-usage');
 }
 
-/** The build machines this Mac paired with, each with its pinned tailnet node and device token. */
+/** The remote Macs this Mac paired with, each with its pinned tailnet node and device token. */
 export function buildMachinesFile(): string {
   return join(configDir(), 'build-machines.json');
 }
@@ -117,7 +117,7 @@ export function buildMachinesLock(): string {
   return join(configDir(), 'build-machines.lock');
 }
 
-/** The hosting machines this Mac asked for access, separate from build credentials. */
+/** The remote Macs this Mac asked for access, separate from build credentials. */
 export function deviceHostMachinesFile(): string {
   return join(configDir(), 'device-host-machines.json');
 }

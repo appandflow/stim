@@ -24,6 +24,7 @@ final class BuildMachinesModel {
   private(set) var stats = Fetched<MachineStats>()
   private(set) var updates: [String: MachineUpdatePhase] = [:]
   private var statusRefreshes: [String: Task<Void, Never>] = [:]
+  private var refreshedEntries: [String: [String]] = [:]
   private var hostingCheckedAt: [String: Date] = [:]
   private var checks: [String: Check] = [:]
 
@@ -226,10 +227,12 @@ final class BuildMachinesModel {
   func refreshStatuses(checkout: String?, ask: Bool) async {
     guard let checkout else { return }
     if let pending = statusRefreshes[checkout] {
+      let started = refreshedEntries[checkout]
       await pending.value
-      if ask { await refreshStatuses(checkout: checkout, ask: true) }
+      if ask || started != entries { await refreshStatuses(checkout: checkout, ask: ask) }
       return
     }
+    refreshedEntries[checkout] = entries
     let task = Task {
       await fetchStatuses(checkout: checkout, ask: ask)
       hostingCheckedAt[checkout] = now()

@@ -137,7 +137,7 @@ export function registerIos(program: Command, deps: Partial<IosDeps> = {}): void
     )
     .option('--slot <name>', 'Reusable device slot within this workspace (default: default)', parseDeviceSlotOption)
     .option(
-      '--build-machine <value>',
+      '--remote-build <value>',
       'Build on auto, local, or one named machine; a name refuses without fallback',
       parseBuildMachineOption,
     )
@@ -188,10 +188,10 @@ export function registerIos(program: Command, deps: Partial<IosDeps> = {}): void
     )
     .option(
       '--remote <target>',
-      'Run on eas, proxy, or an approved Mac in hosting.machines; named Macs never fall back locally. auto places on an approved Mac when this Mac is full or busy.',
+      'Run on eas, proxy, or an approved Mac in remote.machines; named Macs never fall back locally. auto places on an approved Mac when this Mac is full or busy.',
       (value) => {
         if (parseMachine(value)) return value.trim();
-        throw new InvalidArgumentError('expected eas, proxy, auto, or a hosting Mac name');
+        throw new InvalidArgumentError('expected eas, proxy, auto, or a remote Mac name');
       },
     )
     .option(
@@ -474,7 +474,7 @@ async function runIos(
       remedy: SETTING_SHAPE_REMEDY,
     });
   }
-  const setup = resolveIosBuildSetup(opts.buildMachine, settings);
+  const setup = resolveIosBuildSetup(opts.remoteBuild, settings);
   if (!setup.ok) return fail(setup.failure);
   buildMachine = setup.buildMachine;
   const { optimizations } = setup;

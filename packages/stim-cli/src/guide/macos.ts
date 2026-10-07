@@ -4,7 +4,7 @@ export default {
 
 If Stim is not installed globally, replace stim with npx stim.
 
-ios --remote <machine> shares hosting.machines and its separate device-host
+ios --remote <machine> shares remote.machines and its separate device-host
 approval. Read guide lifecycle hosted-ios for simulator placement and Metro.
 
 Run from the directory containing Package.swift. This prototype builds one
@@ -70,16 +70,16 @@ line instead of when the app exits.
 
 BUILD OFFLOAD
 
---build-machine <auto|local|name> overrides STIM_OFFLOAD_MACHINE and the
-machine setting offload.machine (default auto). local builds here; a name
-requires the matching configured and paired build machine, ignoring offload.mode
+--remote-build <auto|local|name> overrides STIM_REMOTE_BUILD and the
+machine setting remote.build (default auto). local builds here; a name
+requires the matching configured and paired remote Mac, ignoring remote.buildMode
 and this Mac's capacity. Any failure is STIM_OFFLOAD_REFUSED without a local xcodebuild, Gradle or
 SwiftPM compile or another machine. Invalid, unlisted or unpaired selections
 refuse before stopping the app or changing its build record. See stim guide errors STIM_OFFLOAD_REFUSED.
 
-With offload.machine auto, offload.mode places these SwiftPM Debug builds:
+With remote.build auto, remote.buildMode places these SwiftPM Debug builds:
 auto builds here while this Mac has capacity, force uses an approved build
-machine when one accepts, and off always builds here. Configure offload.machines
+machine when one accepts, and off always builds here. Configure remote.machines
 and approve build access as described in stim guide settings. The worker needs
 matching Stim, CPU architecture, Xcode and macOS SDK, plus network access to
 fetch package dependencies the first time. It keeps SwiftPM dependencies in a
@@ -253,15 +253,15 @@ used.
 ON ANOTHER MAC
 
 stim macos --remote <machine> builds the Debug app on this Mac and runs it on an
-approved hosting Mac over the tailnet, without SSH. The machine must be listed
-in hosting.machines and approved: stim doctor --fix asks it, a person on that
+approved remote Mac over the tailnet, without SSH. The machine must be listed
+in remote.machines and approved: stim doctor --fix asks it, a person on that
 Mac runs stim-server devices grant <id> --device-host or stim-server setup
 with that client node, ticket and expiry (guide settings), and stim doctor then
 records the approval. Stim connects only to the machine's pinned tailnet node.
 A refusal or an unreachable host fails the command; it never launches here
 instead.
 
-The --remote value is a hosting Mac name from hosting.machines. macOS refuses
+The --remote value is a remote Mac name from remote.machines. macOS refuses
 eas and proxy because it has neither backend. It also refuses auto until
 automatic placement ships. These reserved names are case-insensitive and
 trimmed; they refuse with STIM_BAD_ARG before state access or a connection.

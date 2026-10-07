@@ -110,7 +110,7 @@ export function checkOffloadCandidate(
       'note',
       'Builds could run on another Mac',
       `Cold builds averaged ~${Math.round(average / 60_000)} min over ${cold.length} builds this week.`,
-      'In Stim Desktop, open Settings > Build machines > Add.',
+      'In Stim Desktop, open Settings > Remote Macs > Add.',
     ),
   };
 }
@@ -118,7 +118,7 @@ export function checkOffloadCandidate(
 function readOffloadCandidate(tailnetStatus: () => unknown, now: number, host: NodeJS.Platform): Finding | null {
   if (host !== 'darwin') return null;
   try {
-    const entries = loadConfig()?.offload?.machines;
+    const entries = loadConfig()?.remote?.machines;
     const machines = Array.isArray(entries)
       ? entries.filter((entry): entry is string => typeof entry === 'string')
       : [];

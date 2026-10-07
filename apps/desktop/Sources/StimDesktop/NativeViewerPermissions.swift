@@ -3,6 +3,7 @@ import ApplicationServices
 import Combine
 import CoreGraphics
 import Foundation
+import StimKit
 
 @MainActor
 final class NativeViewerPermissions: ObservableObject {
@@ -32,7 +33,7 @@ final class NativeViewerPermissions: ObservableObject {
   }
 
   var screenPermissionDetail: String {
-    let use = "Shows the app's window in Desktop and on your paired phone."
+    let use = PhoneApp.Copy.screenPermissionUse(phoneApp: FeatureFlags.isEnabled(.phoneApp))
     if #available(macOS 15, *) { return "\(use) Named Screen Recording on macOS 14." }
     return use
   }

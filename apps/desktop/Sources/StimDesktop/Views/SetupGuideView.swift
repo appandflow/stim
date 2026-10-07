@@ -9,8 +9,11 @@ struct SetupGuideView: View {
   @ObservedObject var onboarding: Onboarding
   @EnvironmentObject private var actions: ActionCenter
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
+  @ObservedObject private var flags = FeatureFlagStore.shared
 
-  private var step: SetupStep { onboarding.guideStep }
+  private var step: SetupStep {
+    onboarding.guideStep == .phone && !flags.phoneApp ? .check : onboarding.guideStep
+  }
   private var setup: SetupChecks { onboarding.setup }
   private var installedVersion: String? {
     if case .compatible(let version)? = onboarding.report?.stim { return "\(version)" }
@@ -71,7 +74,7 @@ struct SetupGuideView: View {
           .padding(.bottom, Space.xl)
           .accessibilityLabel("Stim")
       }
-      ForEach(SetupStep.allCases, id: \.self) { item in
+      ForEach(SetupStep.sequence(phoneApp: flags.phoneApp), id: \.self) { item in
         Button {
           onboarding.guideStep = item
         } label: {
@@ -440,10 +443,10 @@ struct SetupGuideView: View {
           .help("Close the guide. Reopen it from Help \u{203A} Setup Guide.")
       }
       Spacer()
-      if let previous = step.previous {
+      if let previous = step.previous(phoneApp: flags.phoneApp) {
         Button("Back") { onboarding.guideStep = previous }.buttonStyle(.stim(.secondary, .regular))
       }
-      if let next = step.next {
+      if let next = step.next(phoneApp: flags.phoneApp) {
         let finished = [.done, .notApplicable].contains(setup.state(of: step))
         Button(step == .welcome ? "Get Started" : finished ? "Continue" : "Skip") { onboarding.guideStep = next }
           .buttonStyle(.stim(finished || step == .welcome ? .primary : .secondary, .regular))

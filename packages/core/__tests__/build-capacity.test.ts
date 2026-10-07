@@ -31,16 +31,16 @@ describe('machineCapacity', () => {
     rmSync(home, { recursive: true, force: true });
   });
 
-  it('reads offload.maxLoadPerCore and concurrency.maxBuilds, with the registry default', () => {
+  it('reads server.maxLoadPerCore and concurrency.maxBuilds, with the registry default', () => {
     expect(machineCapacity()).toMatchObject({ builds: 0, maxBuilds: 0, maxLoadPerCore: 2 });
     writeFileSync(
       join(home, 'config.json'),
-      JSON.stringify({ concurrency: { maxBuilds: 3 }, offload: { maxLoadPerCore: 1.5 } }),
+      JSON.stringify({ concurrency: { maxBuilds: 3 }, server: { maxLoadPerCore: 1.5 } }),
     );
     expect(machineCapacity()).toMatchObject({ maxBuilds: 3, maxLoadPerCore: 1.5 });
   });
 
-  it('counts runs compiling here, not runs offloaded to a build machine', () => {
+  it('counts runs compiling here, not runs offloaded to a remote Mac', () => {
     const claim = tryAcquireClaim({ root: join(home, 'native-run'), mode: 'exclusive', label: 'native run' }).acquired!;
     const write = (project: string, activeBuild: Record<string, unknown>) => {
       mkdirSync(workspaceStateDir(join(home, project)), { recursive: true });

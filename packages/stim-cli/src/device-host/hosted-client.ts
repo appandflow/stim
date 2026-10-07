@@ -50,13 +50,13 @@ function hostingCredential(machine: string): DeviceHostMachineCredential {
   const configured = configuredMachines();
   if (configured === null)
     throw credentialRefusal(
-      'hosting.machines is invalid. Run stim guide settings and correct it.',
-      'Run stim guide settings and correct hosting.machines.',
+      'remote.machines is invalid. Run stim guide settings and correct it.',
+      'Run stim guide settings and correct remote.machines.',
     );
   if (!configured.includes(machine)) {
     throw Object.assign(
       new Error(
-        `${machine} is not in hosting.machines. Add it with stim settings set hosting.machines, then run stim doctor --fix to ask it for hosting access.`,
+        `${machine} is not in remote.machines. Add it with stim settings set remote.machines, then run stim doctor --fix to ask it for hosting access.`,
       ),
       { code: 'STIM_BAD_ARG' },
     );
@@ -80,7 +80,7 @@ function hostingCredential(machine: string): DeviceHostMachineCredential {
   return credential;
 }
 
-/** Connects only to the pinned node of an approved hosting machine, and only when it grants `device-host`. */
+/** Connects only to the pinned node of an approved remote Mac, and only when it grants `device-host`. */
 export async function connectHost(
   machine: string,
   timeoutMs: number = CONNECT_TIMEOUT_MS,

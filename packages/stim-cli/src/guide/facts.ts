@@ -266,8 +266,8 @@ leased until <time>" for each one.`,
                   looked up", which is a different fact from "nothing was found"
   buildMachine    selected auto, local or machine name, including cache hits
   builtOn         here or machine name when a build ran; absent otherwise
-  offloadedTo     only on an app a build machine compiled: its
-                  offload.machines entry (see \`guide settings\`). cacheHit is
+  offloadedTo     only on an app a remote Mac compiled: its
+                  remote.machines entry (see \`guide settings\`). cacheHit is
                   false for it. The Android payload carries it too
   offloadFallback only on an app compiled here after the run considered
                   offloading it: why it built here -- one reason per
@@ -416,7 +416,7 @@ leased until <time>" for each one.`,
                   sets its own CMake compiler launcher, or a Gradle run whose
                   native work was all up to date. None of the three is an
                   error, and this field is separate from cacheHit. On an
-                  offloaded APK it is the build machine's ccache
+                  offloaded APK it is the remote Mac's ccache
   logs            the workspace log directory
   agentDevice     { stateDir }: absolute workspace agent-device state path
   durationMs      wall time for the whole run
@@ -516,18 +516,18 @@ leased until <time>" for each one.`,
                   android would reclaim, in the \`reclaimed\` shape without
                   freedMb, and is empty while under budget
   deviceHosts     one { machine, state, dnsName?, deviceId?, requestedAt?, host? }
-                  per hosting.machines entry. state is "approved", "pending",
+                  per remote.machines entry. state is "approved", "pending",
                   "not-asked", "revoked", "node-changed", "not-on-tailnet",
                   "tailscale-off", "unreachable", "invalid",
                   "credentials-unavailable" or "busy". Tokens stay private.
                   Only --fix asks for access or forgets removed names.
-                  An approved hosting machine does not imply build approval
-                  or change ios/android placement; see \`guide settings\`.
+                  A remote Mac approved for device hosting does not imply
+                  build approval; see \`guide settings\`.
                   host is { name, screenRecording, accessibility }, present
                   only for approved machines whose worker reports it.
-  buildMachines   one { machine, state, dnsName?, deviceId?, requestedAt?,
+  remoteMachines  one { machine, state, dnsName?, deviceId?, requestedAt?,
                   offloadable?, reasons?, problems?, capacity?, host? } per
-                  offload.machines entry; state is "approved", "pending", "not-asked",
+                  remote.machines entry, for its build approval; state is "approved", "pending", "not-asked",
                   "revoked" (revoked, or the request lapsed), "node-changed",
                   "not-on-tailnet", "tailscale-off", "unreachable" or
                   "invalid". host has the same shape and presence rule as in
@@ -550,7 +550,7 @@ leased until <time>" for each one.`,
                   optional fields
   findings        the diagnostic findings; a lower resolved Stim is a
                   costs-time finding with a PATH or installation remedy
-                  offload-candidate is a note after 3+ successful local cold builds in 7 days average over 3 min, with no offload.machines and an online tailnet Mac; open Stim Desktop Settings > Build machines > Add
+                  offload-candidate is a note after 3+ successful local cold builds in 7 days average over 3 min, with no remote.machines and an online tailnet Mac; open Stim Desktop Settings > Remote Macs > Add
 
 ON FAILURE
   \`start\`, \`ios\`, \`android\` and \`web\` all print the error contract instead,
@@ -1361,7 +1361,7 @@ RULES
                    every 2 seconds
   placement        where the build runs: "local", or while it is offloaded
                    { host, phase, startedAt, phaseStartedAt }. host is the
-                   offload.machines entry; phase is the step there: sync,
+                   remote.machines entry; phase is the step there: sync,
                    deps, prebuild, pods, build (xcodebuild or Gradle) or fetch;
                    startedAt is when the offload started and phaseStartedAt
                    when that step did. Meanwhile phase above follows it as
@@ -1415,7 +1415,7 @@ RULES
   lookup, and create no lastBuild record or failed-run stats.
   buildMachine selected auto, local or configured machine entry; always on new build records
   builtOn      here or machine name; absent when no build ran (cache/refusal)
-  offloadedTo  only on a run a build machine compiled: its name
+  offloadedTo  only on a run a remote Mac compiled: its name
   offloadFallback
                only on a run that considered offloading and built here: one
                reason per machine when none took the build, or why the
@@ -1677,7 +1677,7 @@ RULES
   A bucket carries runs, failed, hits, misses, coldRuns, coldRunMs, hitRuns,
   hitRunMs, timeSavedMs, firstRunAt and lastRunAt, plus lastColdBuildMs and
   lastPodsMs once the project has compiled or installed pods, and
-  offloadedRuns, offloadedRunMs and lastOffloadHost once a build machine
+  offloadedRuns, offloadedRunMs and lastOffloadHost once a remote Mac
   compiled one. An offloaded run is a miss but not a cold run, so the cold
   average, time saved and build estimates stay local. Milliseconds are
   integers.
@@ -1796,10 +1796,10 @@ BUILD PLACEMENT (\`offload\`)
   decision, reason, machine?, buildMs?, slotWaitMs?, deviceSlotWaitMs?, localEstimateMs?, failed? }.
   slotWaitMs and deviceSlotWaitMs are whole milliseconds waiting for build
   and owned-device slots respectively, present only when positive.
-  decision is "here", "offloaded", or "fell-back" (it tried a build machine
+  decision is "here", "offloaded", or "fell-back" (it tried a remote Mac
   and built here). reason is why: the run's \`placement:\` reason, such as
   "load 0.6/core, 1 of 3 build slots busy here" (auto keeps the build here
-  while this Mac has room) or "offload.mode is off" (which prints no line),
+  while this Mac has room) or "remote.buildMode is off" (which prints no line),
   or for a fallback the cause, prefixed by the machine it concerns, such as
   "mini: no less loaded (load 1.2/core there, 0.6/core here)". buildMs is the compile here, or the offloaded build's
   total (offer, sync, build and fetch); localEstimateMs is this project's

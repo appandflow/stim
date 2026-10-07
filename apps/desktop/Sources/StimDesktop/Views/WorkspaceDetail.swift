@@ -421,6 +421,7 @@ struct WorkspaceDetail: View {
         if let macos = workspace.macos {
           VStack(spacing: Space.lg) {
             MacosAppCard(app: macos, workspace: workspace.path)
+              .environment(\.macosViewportHeight, geo.size.height - Space.xxl * 2)
             nativeActions(macos, workspace: workspace.path)
           }.padding(Space.xxl)
         }
@@ -451,11 +452,13 @@ struct WorkspaceDetail: View {
       ScrollViewReader { reader in
         ScrollView {
           ForEach(page.apps.filter { $0.macos != nil }) { app in
+            let hasSubtitle = page.subtitle(for: .init(path: app.path, platform: "macos"), among: entries) != nil
             VStack(alignment: .leading, spacing: Space.sm) {
               if let subtitle = page.subtitle(for: .init(path: app.path, platform: "macos"), among: entries) {
                 Text(subtitle).font(.stim(.footnote)).foregroundStyle(Palette.secondary)
               }
               MacosAppCard(app: app.macos!, workspace: app.path)
+                .environment(\.macosViewportHeight, geo.size.height - Space.xxl * 2 - (hasSubtitle ? 24 : 0))
               nativeActions(app.macos!, workspace: app.path)
             }
             .padding(Space.xxl)

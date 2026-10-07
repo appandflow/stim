@@ -779,7 +779,7 @@ function renderStatus(
       const placement =
         build.buildMachine === undefined
           ? ''
-          : `; build machine ${build.buildMachine}, built on ${build.builtOn ?? 'none'}`;
+          : `; build placement ${build.buildMachine}, built on ${build.builtOn ?? 'none'}`;
       out.push(`  macOS ${state.macos.product}: ${state.macos.state}${where}; build ${build.state}${placement}`);
       if (host?.agent.driver === 'agent-device') out.push(chalk.dim(`    agent: ${host.agent.command}`));
     }
@@ -935,7 +935,7 @@ function lastBuildText(report: LastBuildReport): string {
   const placement =
     report.buildMachine === undefined
       ? ''
-      : `; build machine ${report.buildMachine}, built on ${report.builtOn ?? (report.cacheHit ? 'none (cache)' : 'none')}`;
+      : `; build placement ${report.buildMachine}, built on ${report.builtOn ?? (report.cacheHit ? 'none (cache)' : 'none')}`;
   return `${report.platform} ${report.status === 'ok' ? source : `failed (${report.errorCode ?? 'error'}), ${source}`}${took}${placement}`;
 }
 

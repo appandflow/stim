@@ -57,7 +57,7 @@ app (checked at most every 5 seconds), or `null` when the check fails. Stim
 Desktop uses it to find a running server and show its route. A request through `tailscale serve` or on a Tailscale address
 without an `Origin` or `Sec-Fetch-Site` header, which a web page's request
 carries, gets only `{ "server": "stim-server", "version", "protocol" }`, which Stim
-Desktop's Build machines list uses to find stim-server on the other Macs of the
+Desktop's Remote Macs list uses to find stim-server on the other Macs of the
 tailnet. A request from this Mac with a `Host` other than `127.0.0.1` or
 `localhost` gets HTTP 426, like any other plain HTTP request.
 
@@ -293,7 +293,7 @@ registration check. `hello` reports
 the capabilities and actions of the connection's device when it connects; a
 connection sees a new grant after it reconnects. Under Stim Host, an approved
 `hello` also carries the same `host` grants as `/health`, which `stim doctor`
-reports for hosting machines.
+reports for remote Macs.
 
 Every method other than `hello` needs `read`. A device with only `build`
 gets `forbidden` for all of them.
@@ -344,7 +344,7 @@ bundle, Android APK or prebuilt macOS app, stream the iOS simulator, Android emu
 iOS and Android apps connect back to Metro on the client Mac. Automatic placement remains in [#2266](https://github.com/appandflow/stim/issues/2266).
 
 The Stim client can name expected hosts with
-`stim settings set hosting.machines '["<mac>"]'` and request access with
+`stim settings set remote.machines '["<mac>"]'` and request access with
 `stim doctor --fix`. It stores a separate private credential in
 `$STIM_HOME/device-host-machines.json`, pins the worker's tailnet node, and
 reports approval under `deviceHosts` in doctor JSON. Plain doctor makes no
@@ -833,8 +833,8 @@ manifest requests are not launch proof; development remains `unverified` until
 the workspace observes the app's own bundle delivery.
 Approved clients use `stim ios|android --remote auto` for automatic device placement.
 They stay local while there is a free slot, no queued device run, normal memory
-pressure, no budget refusal and load below `offload.maxLoadPerCore`. Otherwise
-they rank compatible offers from `hosting.machines` and select a host, or wait
+pressure, no budget refusal and load below `server.maxLoadPerCore`. Otherwise
+they rank compatible offers from `remote.machines` and select a host, or wait
 locally if none admits. A reserve refusal after an offer fails with
 `STIM_HOSTING_REFUSED` and asks to retry; it does not re-place the built app.
 Automatic native macOS placement remains separate work.
@@ -947,7 +947,7 @@ before replacement. Automatic placement remains in
 ## Run as a service
 
 `stim-server service install` runs stim-server as a per-user LaunchAgent on
-macOS, so a build machine or a phone-serving Mac keeps it running without a
+macOS, so a remote Mac or a phone-serving Mac keeps it running without a
 terminal:
 
 ```bash
@@ -1088,18 +1088,18 @@ and uninstall of one label run one at a time.
 installed and, when `install` created it, the serve route. Logs, pairings and the host app stay; other labels may use the app. Use `--label` and `--port` to run a
 second service beside the first, for example with another `STIM_HOME`.
 
-To set up a build machine: install Stim and stim-server on the Mac, run
+To set up a remote Mac: install Stim and stim-server on the Mac, run
 `stim-server service install --serve` (with the pins its toolchain needs), set
-`offload.workerRoot` there, and on each client run
-`stim settings set offload.machines '["<mac>"]'` and `stim doctor --fix`.
-Approve the request on the build machine with
+`server.workerRoot` there, and on each client run
+`stim settings set remote.machines '["<mac>"]'` and `stim doctor --fix`.
+Approve the request on the remote Mac with
 `stim-server devices grant <id> --build`.
 
 ## Remote update
 
 A Mac this one approved for builds (`--build`) or device hosting
 (`--device-host`) can update this Mac's `stim-server service` over its tailnet
-connection, so the build machine keeps up with the client without ssh. A
+connection, so the remote Mac keeps up with the client without ssh. A
 server that offers it lists `server-update` in its `hello` features. A paired
 phone, a `read` or `control` device and a connection from this Mac cannot. The
 methods need that approval, not `read`:
@@ -1135,8 +1135,8 @@ of an existing hosted session still answers during the drain.
 
 Stim Desktop starts these updates through its own local stim-server with two
 methods that only the local Desktop control connection may call:
-`machines.update.start` takes `{ "machine" }`, an approved `offload.machines`
-or `hosting.machines` entry. It connects to that machine's pinned node with
+`machines.update.start` takes `{ "machine" }`, an approved `remote.machines`
+entry. It connects to that machine's pinned node with
 the stored credential and asks it for this server's npm release. When this
 server runs from a Stim checkout, it instead packs the checkout's workspace
 packages as `npm pack` would and sends them. `machines.update.status` takes
@@ -1169,7 +1169,7 @@ closes its connections and cancels its builds.
   average per CPU), `builds` (this Mac's own Stim runs in prebuild, pods or
   compile that it did not offload, plus the offloaded builds it runs), `maxBuilds` (its
   `concurrency.maxBuilds`, 0 when unlimited), `maxLoadPerCore` (its
-  `offload.maxLoadPerCore`, default 2), and `declined`: why it would refuse a
+  `server.maxLoadPerCore`, default 2), and `declined`: why it would refuse a
   build now, or null. It declines while it runs its limit of offloaded builds,
   while the worker root's volume has less than 10 GiB free, while `builds`
   reaches a non-zero `maxBuilds`, or while `loadPerCore` is at or above
@@ -1206,7 +1206,7 @@ closes its connections and cancels its builds.
   `assemble<variant>` for `abi` with ccache under the area's Stim home. A
   Gradle daemon leaves the build's process group, so no claim or slot tracks
   it. An Android build keeps the client's daemon warm, with Gradle's idle
-  timeout set to `offload.gradleDaemonIdleMinutes` (default 30; 0 stops it
+  timeout set to `server.gradleDaemonIdleMinutes` (default 30; 0 stops it
   when the build ends), and stops it when the build gets SIGTERM. Gradle
   fixes a daemon's idle timeout when the daemon starts, so a new value
   applies to the next daemon. Once no build of that client runs, stim-server
@@ -1278,7 +1278,7 @@ closes its connections and cancels its builds.
   is cancelled; one left by a server that crashed stays under
   `repos/<repo>/out/` until you delete it.
 
-The worker root is `offload.workerRoot` in this Mac's Stim settings, or
+The worker root is `server.workerRoot` in this Mac's Stim settings, or
 `$STIM_HOME/build-worker`. Each client gets `<root>/<device id>/`, with its
 blobs, caches (`CP_HOME_DIR`, `CP_CACHE_DIR`, the pnpm store and
 `GRADLE_USER_HOME` and SwiftPM) and one area
@@ -1721,10 +1721,10 @@ Events are `{ "event", "subscription", ... }`.
   one result for 60 seconds, shared by every connection: a request while the
   commands run waits for them, and `measuredAt` says when they started. The
   commands fail after 150 seconds. Servers that predate it answer
-  `unknown-method`. It also carries `buildMachines`, the `buildMachines` list
+  `unknown-method`. It also carries `buildMachines`, the `remoteMachines` list
   of `stim doctor --json --platform ios` (never with `--fix`), so a phone can
-  show whether each build machine takes builds. The server runs doctor only
-  when `offload.machines` names a machine, else the list is empty; it runs it
+  show whether each remote Mac takes builds. The server runs doctor only
+  when `remote.machines` names a machine, else the list is empty; it runs it
   in the registered workspace that ran doctor for iOS most recently, because
   doctor judges a machine against an app. Like a doctor run from a terminal,
   that records the run for the workspace. `buildMachines` is null with
@@ -1736,7 +1736,7 @@ Events are `{ "event", "subscription", ... }`.
   at a time, and sets `buildMachinesPending` while that background run has not
   settled a result yet, or the settled one is 60 seconds old or older. A client
   that wants the refreshed result asks `machine.details` again. It also
-  carries `buildClients`, the builds this Mac ran as a build machine, one entry
+  carries `buildClients`, the builds this Mac ran for other Macs, one entry
   per client Mac read from the `build` records of the audit log, with `id`,
   `name`, `builds`, `failed`, `buildMs`, `lastAt` and the same three counts
   for `today`, most recent client first, with `today` on this Mac's local
