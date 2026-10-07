@@ -1309,6 +1309,16 @@ test('checkConcurrency echoes the caps and the current live count when set', () 
   expect(f.detail).toMatch(/1 /);
 });
 
+test('checkConcurrency says the live count is unknown, and why, instead of reporting zero', () => {
+  const f = checkConcurrency({
+    maxDevices: 3,
+    liveDevices: { unknown: 'Command timed out after 30000ms: xcrun simctl list devices --json' },
+  });
+  assert(f);
+  expect(f.detail).toMatch(/number of booted Stim devices is unknown \(Command timed out/);
+  expect(f.detail).not.toMatch(/0 Stim device/);
+});
+
 describe('a directory that is not an app', () => {
   let home: string;
   let project: string;

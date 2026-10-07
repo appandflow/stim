@@ -585,7 +585,7 @@ export async function finishAndroidRun({
   const runCommand = nativeRunCommand('android', slot, { physical, deviceId: booted.serial });
   if (booted.failed) {
     const diag = diagnoseBootFailure(booted, emuLog, runCommand, physical);
-    return fail(NO_DEVICE, diag.message, diag.remedy, {
+    return fail(diag.code, diag.message, diag.remedy, {
       lines: diag.lines,
       logPath: diag.logPath ? displayPath(root, diag.logPath) : null,
     });
@@ -999,7 +999,16 @@ function reportMetroRoute({
 }
 
 function diagnoseBootFailure(booted: AndroidBootLike, logFile: string, runCommand: string, physical: boolean) {
-  return noDeviceDiagnostic({
+  if (booted.code) {
+    return {
+      code: booted.code,
+      message: booted.reason ?? 'The emulator did not boot.',
+      remedy: booted.remedy ?? null,
+      lines: [],
+      logPath: null,
+    };
+  }
+  const diag = noDeviceDiagnostic({
     reason: booted.reason ?? 'The emulator did not boot.',
     logFile,
     remedy:
@@ -1007,4 +1016,5 @@ function diagnoseBootFailure(booted: AndroidBootLike, logFile: string, runComman
       `Run \`stim status\` to see what Stim thinks it owns; re-running \`${runCommand}\` creates a fresh owned AVD.`,
     localEmulator: !physical,
   });
+  return { code: NO_DEVICE, ...diag };
 }

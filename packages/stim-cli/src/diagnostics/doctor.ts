@@ -30,16 +30,15 @@ import {
 } from '../workspace/worktree.ts';
 import { dependencyState, hasInstalledDependencies, installedNpmTreeIsValid } from '../dependency-state.ts';
 import { workspaceDerivedData } from '../workspace/paths.ts';
-import { type Config, type ConcurrencyLimits, getConcurrencyLimits, loadConfig } from '../workspace/config.ts';
+import { type ConcurrencyLimits, getConcurrencyLimits, loadConfig } from '../workspace/config.ts';
 import { podInstallCommand } from '../engine/bundler.ts';
-import { liveOwnedDeviceCount } from '../engine/device-capacity.ts';
+import { countLiveOwnedDevices } from '../engine/device-capacity.ts';
 import { simslimIsOnPath } from '../engine/simslim.ts';
 import { readHostMemoryPressure, hostMemoryPressureAdvice, type HostMemoryPressure } from '../host-memory.ts';
 import { listBuildSlots } from '../engine/build-slots.ts';
-import { type IosSimRecord, listAllIosSims } from '../devices/ios.ts';
 import { parkedMaxSetting, POOL_SETTING_REMEDY } from '../devices/sim-pool.ts';
 import { ccacheEnabled, COMPILATION_CACHE_MIN_XCODE, detectXcodeMajor, parseXcodeMajor } from '../engine/xcode.ts';
-import { type AdbDevices, androidHome, hostSystemImageArch, listAdbDevices } from '../devices/android.ts';
+import { androidHome, hostSystemImageArch } from '../devices/android.ts';
 import {
   type EasAuthResult,
   checkEasAuth as probeEasAuth,
@@ -669,13 +668,22 @@ export function checkConcurrency({
   maxDevices = 0,
   liveDevices = 0,
   activeBuilds = 0,
-}: { maxBuilds?: number; maxDevices?: number; liveDevices?: number; activeBuilds?: number } = {}): Finding | null {
+}: {
+  maxBuilds?: number;
+  maxDevices?: number;
+  liveDevices?: number | { unknown: string };
+  activeBuilds?: number;
+} = {}): Finding | null {
   if (!maxBuilds && !maxDevices) return null;
   const caps = `maxBuilds ${maxBuilds || 'unlimited'}, maxDevices ${maxDevices || 'unlimited'}`;
+  const devices =
+    typeof liveDevices === 'number'
+      ? `${liveDevices} Stim device(s) are booted`
+      : `the number of booted Stim devices is unknown (${liveDevices.unknown})`;
   return finding(
     'note',
     'Concurrency limits are set',
-    `${caps}. Right now ${liveDevices} Stim device(s) are booted and ${activeBuilds} build slot(s) are in use on this machine. ` +
+    `${caps}. Right now ${devices} and ${activeBuilds} build slot(s) are in use on this machine. ` +
       'At the device cap a new `stim ios`/`android` is refused with STIM_AT_CAPACITY (stop an environment or raise it); ' +
       'at the build cap a compile waits for a free slot.',
     null,
@@ -970,7 +978,7 @@ export function runDoctor(
     concurrencyFinding = checkConcurrency({
       maxBuilds: limits.maxBuilds,
       maxDevices: limits.maxDevices,
-      liveDevices: liveDevices ? liveDevices() : countLiveDevices(),
+      liveDevices: liveDevices ? liveDevices() : countLiveOwnedDevices(),
       activeBuilds: activeBuilds ? activeBuilds() : countActiveBuilds(),
     });
   }
@@ -1179,22 +1187,6 @@ function agentDeviceIsOnPath(): boolean {
   } catch {
     return true;
   }
-}
-
-function countLiveDevices(): number {
-  let sims: IosSimRecord[] = [];
-  let adb: AdbDevices = { emulators: [], physical: [], unhealthy: [] };
-  let config: Config | null = null;
-  try {
-    sims = listAllIosSims() || [];
-  } catch {}
-  try {
-    adb = listAdbDevices() || adb;
-  } catch {}
-  try {
-    config = loadConfig();
-  } catch {}
-  return liveOwnedDeviceCount({ sims, adbEmulators: adb.emulators || [], config });
 }
 
 function countActiveBuilds(): number {
