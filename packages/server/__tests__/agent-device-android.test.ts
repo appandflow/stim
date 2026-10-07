@@ -522,12 +522,14 @@ test.each(['proxy', 'daemon', 'helper'])(
   },
 );
 
-test.each(['absent', 'replaced', 'lost-during-cleanup'])(
+test.each(['absent', 'console-refused', 'replaced', 'lost-during-cleanup'])(
   'stop releases the daemon claim when the emulator is %s without touching a replacement',
   async (status) => {
     await start();
     fixture.events = [];
     if (status === 'absent') fixture.adbError = new Error('error: device not found');
+    if (status === 'console-refused')
+      fixture.adbError = new Error('error: could not connect to TCP port 5556: Connection refused');
     if (status === 'replaced') fixture.avdName = 'another-avd';
     if (status === 'lost-during-cleanup') fixture.shellMissing = true;
     await driver.stop();

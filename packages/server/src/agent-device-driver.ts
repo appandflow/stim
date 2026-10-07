@@ -437,7 +437,9 @@ export class AgentDeviceDriver implements HostedAgentDriver {
           if (error)
             resolve(
               !error.killed &&
-                /device .*not found|device not found|no devices\/emulators found/.test(`${error.message} ${stderr}`)
+                /device .*not found|device not found|no devices\/emulators found|could not connect to TCP port \d+: Connection refused/.test(
+                  `${error.message} ${stderr}`,
+                )
                 ? 'lost'
                 : 'unverified',
             );
