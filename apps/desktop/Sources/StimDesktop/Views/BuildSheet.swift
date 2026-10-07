@@ -132,8 +132,12 @@ struct BuildSheet: View {
         VStack(alignment: .leading, spacing: Space.lg) {
           Text("macOS \(macos.product)").font(.stim(.title, weight: .semibold))
           Text("Swift Package Debug: \(macos.build.state)").foregroundStyle(Palette.secondary)
+          if let building = running, building.platform == "macos" { RunningBuildDetail(env: app, build: building) }
           if let duration = macos.build.durationMs {
             Text(Format.elapsed(ms: duration)).monospacedDigit().foregroundStyle(Palette.secondary)
+          }
+          if running == nil, let line = history("macos").first?.phaseLine {
+            Text(line).foregroundStyle(Palette.secondary)
           }
           if let error = macos.build.error {
             Text(error).foregroundStyle(Palette.error).textSelection(.enabled)
