@@ -28,9 +28,9 @@ function configCorrupt(reason: string, path: string = getConfigPath()): Error {
   return corrupt;
 }
 
-/** The build worker root: `offload.workerRoot` when it is absolute, else `$STIM_HOME/build-worker`. */
+/** The build worker root: `server.workerRoot` when it is absolute, else `$STIM_HOME/build-worker`. */
 export function buildWorkerRoot(config: Config | null = loadConfig()): string {
-  const configured = config?.offload?.workerRoot;
+  const configured = config?.server?.workerRoot;
   return typeof configured === 'string' && configured.startsWith('/') ? configured : join(configDir(), 'build-worker');
 }
 

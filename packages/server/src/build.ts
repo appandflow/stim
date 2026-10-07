@@ -153,8 +153,8 @@ function nonEmptyDir(path: string): boolean {
 }
 
 function gradleDaemonIdleMs(): number {
-  const definition = settingDefinition('offload.gradleDaemonIdleMinutes')!;
-  const value = loadConfig()?.offload?.gradleDaemonIdleMinutes;
+  const definition = settingDefinition('server.gradleDaemonIdleMinutes')!;
+  const value = loadConfig()?.server?.gradleDaemonIdleMinutes;
   const valid = typeof value === 'number' && settingValueError(definition, value) === null;
   return (valid ? value : (definition.default as number)) * 60_000;
 }

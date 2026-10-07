@@ -28,7 +28,7 @@ Branch on the code, never on the message.`,
   logs prints a note on stderr and shows copied records. Update an older stim-server
   on the host to enable handoff and native logs (hello features hosted-ios-data
   for iOS and hosted-android-data for Android).
-  A name outside hosting.machines is STIM_BAD_ARG. Missing or pending hosting
+  A name outside remote.machines is STIM_BAD_ARG. Missing or pending hosting
   approval keeps the doctor --fix and stim-server devices grant remedies.`,
     },
     STIM_EAS_BUILD_MISSING: {
@@ -328,10 +328,10 @@ Branch on the code, never on the message.`,
   works. See stim guide macos.`,
     },
     STIM_OFFLOAD_REFUSED: {
-      summary: 'the selected build machine cannot build this app',
+      summary: 'the selected remote Mac cannot build this app',
       body: () => `STIM_OFFLOAD_REFUSED
 
-A named --build-machine selection is strict. The message names the machine
+A named --remote-build selection is strict. The message names the machine
 and why it cannot take or finish the build: not configured or paired, approval
 pending or denied, unreachable or changed pinned identity, incompatible
 toolchain/runtime/CPU, low disk, busy, sync/build failure, artifact failure,
@@ -343,12 +343,12 @@ a build record or failed-run stats. A listed paired name with a cache hit needs
 no build and does not contact the selected machine.
 
 Run stim doctor --fix to ask for build access if not paired. Check
-stim settings get offload.machines. A person on the worker finds the id with
+stim settings get remote.machines. A person on the worker finds the id with
 stim-server devices and approves this Mac with stim-server devices grant <id> --build,
 or runs stim-server setup on the worker with its node, ticket and expiry
 (guide settings). Agents never run setup or approve requests.
-Rerun with --build-machine auto for normal placement and local fallback, or
---build-machine local to keep the build here.
+Rerun with --remote-build auto for normal placement and local fallback, or
+--remote-build local to keep the build here.
 `,
     },
     STIM_WORKTREE_SERVICE: {

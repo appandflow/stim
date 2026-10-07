@@ -236,19 +236,19 @@ outside it moves to its own issue and pull request.
   never enables Funnel or changes TCC. There is no pairing code for build.
   It never comes with `read` or `control`, and an honest loopback connection
   never gets it. Build clients live in `server/build-clients.json`, apart from
-  `devices.json`. The client names its build machines in `offload.machines`,
+  `devices.json`. The client names its remote Macs in `remote.machines`,
   pins each one's tailnet node in `build-machines.json`, and sends its token
-  only to that node. `offload.mode` places iOS simulator Debug builds and Android emulator
+  only to that node. `remote.buildMode` places iOS simulator Debug builds and Android emulator
   debug builds and macOS SwiftPM Debug builds;
   every offload failure falls back to a local build, and no failure path
   writes the cache. A hosted macOS session takes a build the same Mac ran for
   it, instead of an upload, only when the build client and the device-host
   client are approved on the same tailnet node, and only bytes matching the
   client's verified bundle manifest. The worker builds each client and
-  repository in its own area and Stim home under `offload.workerRoot`, guarded by an ownership
+  repository in its own area and Stim home under `server.workerRoot`, guarded by an ownership
   claim whose child is the build's process group. A Gradle daemon leaves
   that group, so it never holds a claim or build slot. The client's daemon
-  stays warm after an Android build for `offload.gradleDaemonIdleMinutes`,
+  stays warm after an Android build for `server.gradleDaemonIdleMinutes`,
   and stim-server stops it when the build is cancelled, the client loses
   `build`, or the Mac's available memory runs low. Gradle stops a daemon
   whose Gradle home is deleted. `stim-server service` installs,
@@ -272,7 +272,7 @@ outside it moves to its own issue and pull request.
   moves closed segments into `archive/` during removal under `native-run.lock`.
   stim-server never writes or prunes under `archive/` and reads archived segments
   through core's recording readers. The other exceptions are
-  the build worker root (`offload.workerRoot`, default `build-worker/`),
+  the build worker root (`server.workerRoot`, default `build-worker/`),
   which stim-server and the builds it runs own, and the build slot
   stim-server takes under `build-slots/` for each offloaded build it runs,
   through core's `tryAcquireBuildSlotClaim`.

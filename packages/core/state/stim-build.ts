@@ -4,7 +4,7 @@ import { join } from 'node:path';
 
 /**
  * A digest of Stim's built code: the first 16 hex characters of the sha256 over the sorted `*.mjs` names and
- * bytes of a `stim` `dist` directory. A client and a build machine offload only when both compute the same one.
+ * bytes of a `stim` `dist` directory. A client and a remote Mac offload only when both compute the same one.
  */
 export function stimBuildDigest(dir: string): string | null {
   try {

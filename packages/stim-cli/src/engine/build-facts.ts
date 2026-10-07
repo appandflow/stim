@@ -53,7 +53,7 @@ export interface IosFacts {
   cacheSkipped: boolean;
   buildMachine?: string;
   builtOn?: string;
-  /** The build machine that compiled the app when the build was offloaded; absent otherwise. */
+  /** The remote Mac that compiled the app when the build was offloaded; absent otherwise. */
   offloadedTo?: string;
   /** Why the app was built here after the run considered offloading it; absent otherwise. */
   offloadFallback?: string;
@@ -90,7 +90,7 @@ export interface AndroidFacts {
   cacheSkipped: boolean;
   buildMachine?: string;
   builtOn?: string;
-  /** The build machine that compiled the APK when the build was offloaded; absent otherwise. */
+  /** The remote Mac that compiled the APK when the build was offloaded; absent otherwise. */
   offloadedTo?: string;
   /** Why the APK was built here after the run considered offloading it; absent otherwise. */
   offloadFallback?: string;

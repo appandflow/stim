@@ -58,11 +58,23 @@ const approval = (machine: string, id: string) =>
   `A person on ${machine} approves it with \`stim-server devices grant ${id} --device-host\`.`;
 
 export function configuredMachines(): string[] | null {
-  const hosting = loadConfig()?.hosting;
-  if (hosting !== undefined && !isJsonObject(hosting)) return null;
-  const machines = hosting?.machines;
+  const remote = loadConfig()?.remote;
+  if (remote !== undefined && !isJsonObject(remote)) return null;
+  const machines = remote?.machines;
   if (machines === undefined) return [];
-  return acceptsShape(settingDefinition('hosting.machines')!, machines) ? (machines as string[]) : null;
+  return acceptsShape(settingDefinition('remote.machines')!, machines) ? (machines as string[]) : null;
+}
+
+/** The `remote.machines` entries this Mac asked for device-host access, in setting order; null when the setting is invalid. */
+export function hostingMachines(): string[] | null {
+  const configured = configuredMachines();
+  if (configured === null) return null;
+  try {
+    const asked = readDeviceHostMachines();
+    return configured.filter((machine) => asked.some((each) => each.machine === machine));
+  } catch {
+    return configured;
+  }
 }
 
 function store(machines: DeviceHostMachineCredential[]): void {
@@ -137,7 +149,7 @@ async function request(
   };
 }
 
-/** Reports separately approved hosting machines. Only --fix asks or forgets credentials; every token stays pinned. */
+/** Reports the device-host approval of each remote Mac, separate from its build approval. Only --fix asks or forgets credentials; every token stays pinned. */
 export async function inspectDeviceHostMachines(
   { fix }: { fix: boolean },
   io: TailnetMachineIo = realIo,
@@ -147,8 +159,8 @@ export async function inspectDeviceHostMachines(
     return {
       findings: [
         note(
-          'Invalid hosting.machines setting',
-          'Use a hosting object with machines as an array of tailnet names. Existing hosting credentials and pinned nodes are preserved.',
+          'Invalid remote.machines setting',
+          'Use a remote object with machines as an array of tailnet names. Existing hosting credentials and pinned nodes are preserved.',
           'Run `stim guide settings` and correct the setting before running doctor again.',
         ),
       ],
@@ -179,14 +191,14 @@ export async function inspectDeviceHostMachines(
   const claim = tryAcquireClaim({
     root: deviceHostMachinesClaims(),
     mode: 'exclusive',
-    label: 'hosting machine approval',
+    label: 'device-host approval',
   });
   if (!claim.acquired) {
     releaseClaim(claim.pending);
     return unavailable(
       'busy',
       note(
-        'Hosting machine approval is in use',
+        'Device-host approval is in use',
         'Another doctor run holds the hosting credential claim. Run doctor again after it finishes.',
       ),
     );
@@ -210,10 +222,7 @@ export async function inspectDeviceHostMachines(
     if (!isJsonObject(status)) {
       return unavailable(
         'tailscale-off',
-        note(
-          'Hosting machines are unreachable',
-          'hosting.machines names hosting machines, but Tailscale is not running.',
-        ),
+        note('Remote Macs are unreachable', 'remote.machines names remote Macs, but Tailscale is not running.'),
       );
     }
     const self = isJsonObject(status.Self) ? status.Self : {};
@@ -229,16 +238,14 @@ export async function inspectDeviceHostMachines(
       const parsed = parseMachine(machine);
       if (!parsed) {
         inspected.machines.push({ machine, state: 'invalid' });
-        inspected.findings.push(
-          note(`Hosting machine ${machine} is not a tailnet name`, 'Expected `name` or `name:port`.'),
-        );
+        inspected.findings.push(note(`Remote Mac ${machine} is not a tailnet name`, 'Expected `name` or `name:port`.'));
         continue;
       }
       const current = io.status();
       if (!isJsonObject(current)) {
         inspected.machines.push({ machine, state: 'tailscale-off' });
         inspected.findings.push(
-          note(`Hosting machine ${machine} is unreachable`, 'Tailscale stopped before this connection.'),
+          note(`Remote Mac ${machine} is unreachable`, 'Tailscale stopped before this connection.'),
         );
         continue;
       }
@@ -247,7 +254,7 @@ export async function inspectDeviceHostMachines(
         inspected.machines.push({ machine, state: 'not-on-tailnet' });
         inspected.findings.push(
           note(
-            `Hosting machine ${machine} is not on this tailnet`,
+            `Remote Mac ${machine} is not on this tailnet`,
             peer === 'missing' ? 'No peer has that name.' : 'Several peers match that name.',
           ),
         );
@@ -258,8 +265,8 @@ export async function inspectDeviceHostMachines(
         inspected.machines.push({ machine, dnsName: peer.dnsName, state: 'invalid' });
         inspected.findings.push(
           note(
-            `Hosting machine ${machine} repeats a named node`,
-            'Name each tailnet node and serve port only once in hosting.machines.',
+            `Remote Mac ${machine} repeats a named node`,
+            'Name each tailnet node and serve port only once in remote.machines.',
           ),
         );
         continue;
@@ -275,9 +282,9 @@ export async function inspectDeviceHostMachines(
         inspected.machines.push({ ...known, state: 'node-changed' });
         inspected.findings.push(
           note(
-            `Hosting machine ${machine} is a different tailnet node`,
+            `Remote Mac ${machine} is a different tailnet node`,
             'Stim refuses to connect or send the saved token.',
-            `If that Mac was replaced, remove ${machine} from hosting.machines, run \`stim doctor --fix\`, then add it back and run \`stim doctor --fix\` again to request approval on the new node.`,
+            `If that Mac was replaced, remove ${machine} from remote.machines, run \`stim doctor --fix\`, then add it back and run \`stim doctor --fix\` again to request approval on the new node.`,
           ),
         );
         continue;
@@ -311,7 +318,7 @@ export async function inspectDeviceHostMachines(
             ];
             inspected.findings.push(
               note(
-                `Hosting machine ${machine} needs ${panes.join(' and ')} for ${host.name}`,
+                `Remote Mac ${machine} needs ${panes.join(' and ')} for ${host.name}`,
                 detail.join(' '),
                 `On ${machine}, approve ${host.name} in System Settings > Privacy & Security, or run \`stim-server service install\` there again to show the requests.`,
               ),
@@ -328,7 +335,7 @@ export async function inspectDeviceHostMachines(
           inspected.machines.push({ ...known, state: 'pending' });
           inspected.findings.push(
             note(
-              `Hosting machine ${machine} has not approved this Mac yet`,
+              `Remote Mac ${machine} has not approved this Mac for device hosting yet`,
               `Requested at ${credential.requestedAt}.`,
               approval(machine, credential.deviceId),
             ),
@@ -339,7 +346,7 @@ export async function inspectDeviceHostMachines(
           inspected.machines.push({ ...known, state: revoked ? 'revoked' : 'unreachable' });
           inspected.findings.push(
             note(
-              `Hosting machine ${machine} ${revoked ? 'no longer accepts this Mac' : 'did not confirm hosting access'}`,
+              `Remote Mac ${machine} ${revoked ? 'no longer accepts this Mac for device hosting' : 'did not confirm hosting access'}`,
               'The saved token and pinned node are preserved.',
               revoked
                 ? 'Run `stim doctor --fix` to ask again.'
@@ -361,7 +368,7 @@ export async function inspectDeviceHostMachines(
         inspected.machines.push({ ...known, state: 'not-asked' });
         inspected.findings.push(
           note(
-            `Hosting machine ${machine} has not approved this Mac`,
+            `Remote Mac ${machine} has not approved this Mac for device hosting`,
             'This Mac has not asked for hosting access.',
             'Run `stim doctor --fix` to ask.',
           ),

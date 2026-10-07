@@ -6042,13 +6042,13 @@ describe('run statistics', () => {
       waitedForBuild: false,
       durationMs: expect.any(Number),
       coldBuildMs: 161000,
-      placement: { decision: 'here', reason: 'no build machine is paired' },
+      placement: { decision: 'here', reason: 'no remote Mac is paired' },
     });
     expect((runs[0]?.run.durationMs as number) > 0).toBe(true);
     expect(runs[0]?.now).toBe(clock);
   });
 
-  test('a compiling run without build machines records its local placement and slot wait', async () => {
+  test('a compiling run without remote Macs records its local placement and slot wait', async () => {
     const { runs, recordStats } = recorder();
     const result = await harness({
       recordStats,
@@ -6059,13 +6059,13 @@ describe('run statistics', () => {
     expect(result.ok).toBe(true);
     expect(runs[0]?.run.placement).toEqual({
       decision: 'here',
-      reason: 'no build machine is paired',
+      reason: 'no remote Mac is paired',
       slotWaitMs: 5000,
     });
   });
 
   function pairMini() {
-    writeConfigSetting({ scope: 'machine' }, 'offload.machines', ['mini']);
+    writeConfigSetting({ scope: 'machine' }, 'remote.machines', ['mini']);
     const credential = {
       machine: 'mini',
       nodeId: 'nMini',
@@ -6087,12 +6087,12 @@ describe('run statistics', () => {
     }
   }
 
-  test('a compiling run with a paired build machine records where it built and why', async () => {
+  test('a compiling run with a paired remote Mac records where it built and why', async () => {
     pairMini();
     const { runs, recordStats } = recorder();
 
     expect((await runWithMode('off', { recordStats })).ok).toBe(true);
-    expect(runs[0]?.run.placement).toEqual({ decision: 'here', reason: 'offload.mode is off' });
+    expect(runs[0]?.run.placement).toEqual({ decision: 'here', reason: 'remote.buildMode is off' });
   });
 
   test('a fallback that no machine caused counts against none', async () => {
@@ -6106,7 +6106,7 @@ describe('run statistics', () => {
     });
   });
 
-  test('a cache hit with a paired build machine compiles nothing and records no placement', async () => {
+  test('a cache hit with a paired remote Mac compiles nothing and records no placement', async () => {
     pairMini();
     const { runs, recordStats } = recorder();
 
@@ -6762,7 +6762,7 @@ test('a named Android run scopes allocation, launch verification and collector s
   expect(facts.slot).toBe('phone');
 });
 
-describe('strict build machine selection', () => {
+describe('strict remote Mac selection', () => {
   beforeEach(() => {
     setExecutor(makeExecutor());
     vi.spyOn(offloadClient, 'simulatorRuntime').mockReturnValue('iOS-27-0');
@@ -6774,7 +6774,7 @@ describe('strict build machine selection', () => {
   });
 
   function configureMini(paired = true, state: 'approved' | 'pending' = 'approved') {
-    writeConfigSetting({ scope: 'machine' }, 'offload.machines', ['mini', 'other']);
+    writeConfigSetting({ scope: 'machine' }, 'remote.machines', ['mini', 'other']);
     if (paired)
       writeFileSync(
         buildMachinesFile(),
@@ -6872,7 +6872,7 @@ describe('strict build machine selection', () => {
 
   test('a listed paired named cache hit contacts no worker and records no compilation', async () => {
     configureMini();
-    writeConfigSetting({ scope: 'machine' }, 'offload.machines', ['mini:7443']);
+    writeConfigSetting({ scope: 'machine' }, 'remote.machines', ['mini:7443']);
     const credentials = JSON.parse(readFileSync(buildMachinesFile(), 'utf8'));
     credentials.machines[0].machine = 'mini:7443';
     writeFileSync(buildMachinesFile(), JSON.stringify(credentials));
@@ -6890,7 +6890,7 @@ describe('strict build machine selection', () => {
     'local overrides force mode for %s and records the actual local compile',
     async (variant) => {
       configureMini();
-      writeConfigSetting({ scope: 'machine' }, 'offload.mode', 'force');
+      writeConfigSetting({ scope: 'machine' }, 'remote.buildMode', 'force');
       const choose = vi.spyOn(offloadClient, 'chooseBuildMachine');
       const h = harness({ buildMachine: 'local', variant });
       expect((await h.run()).ok).toBe(true);
@@ -6905,7 +6905,7 @@ describe('strict build machine selection', () => {
 
   test('auto still builds a Release cache miss here without contacting a paired worker', async () => {
     configureMini();
-    writeConfigSetting({ scope: 'machine' }, 'offload.mode', 'force');
+    writeConfigSetting({ scope: 'machine' }, 'remote.buildMode', 'force');
     const choose = vi.spyOn(offloadClient, 'chooseBuildMachine');
     const h = harness({ buildMachine: 'auto', variant: 'release' });
     expect((await h.run()).ok).toBe(true);

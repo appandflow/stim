@@ -74,11 +74,11 @@ describe('offload-candidate', () => {
     project: '/app',
     platform: 'ios',
     decision: 'here',
-    reason: 'no build machine is paired',
+    reason: 'no remote Mac is paired',
     buildMs: 240_000,
   };
 
-  test('three local cold builds averaging over three minutes suggest Desktop build machine setup', () => {
+  test('three local cold builds averaging over three minutes suggest Desktop remote Mac setup', () => {
     const result = checkOffloadCandidate(
       [cold, { ...cold, buildMs: 180_000 }, { ...cold, buildMs: 300_000 }],
       [],
@@ -90,7 +90,7 @@ describe('offload-candidate', () => {
       level: 'note',
       title: 'Builds could run on another Mac',
       detail: 'Cold builds averaged ~4 min over 3 builds this week.',
-      fix: 'In Stim Desktop, open Settings > Build machines > Add.',
+      fix: 'In Stim Desktop, open Settings > Remote Macs > Add.',
     });
   });
 
@@ -122,7 +122,7 @@ describe('offload-candidate', () => {
     ).not.toBeNull();
   });
 
-  test('configured build machines suppress the candidate', () => {
+  test('configured remote Macs suppress the candidate', () => {
     expect(checkOffloadCandidate([cold, cold, cold], ['mini'], [peer], now)).toBeNull();
   });
 
@@ -159,7 +159,7 @@ describe('offload-candidate', () => {
         level: 'note',
         title: 'Builds could run on another Mac',
         detail: 'Cold builds averaged ~4 min over 3 builds this week.',
-        fix: 'In Stim Desktop, open Settings > Build machines > Add.',
+        fix: 'In Stim Desktop, open Settings > Remote Macs > Add.',
       });
       expect(
         runDoctor(project, {
@@ -171,7 +171,7 @@ describe('offload-candidate', () => {
       ).toBe(false);
       writeFileSync(
         join(testHome, 'config.json'),
-        JSON.stringify({ version: 1, projects: {}, offload: { machines: ['mini'] } }),
+        JSON.stringify({ version: 1, projects: {}, remote: { machines: ['mini'] } }),
       );
       expect(
         runDoctor(project, {

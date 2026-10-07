@@ -55,7 +55,7 @@ export interface VerifyLaunchResultLike {
 }
 
 export interface IosCommandOptions {
-  buildMachine?: string;
+  remoteBuild?: string;
   slot?: string;
   json?: boolean;
   metroCheck?: boolean;

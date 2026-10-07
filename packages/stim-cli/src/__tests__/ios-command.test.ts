@@ -3452,7 +3452,7 @@ describe('--remote', () => {
     expect(() => parseRemoteOption(['--remote'])).toThrow(/argument missing/i);
     expect(parseRemoteOption(['--remote', 'mini'])).toBe('mini');
     expect(parseRemoteOption(['--remote', 'auto'])).toBe('auto');
-    expect(() => parseRemoteOption(['--remote', 'bad name'])).toThrow(/hosting Mac name/i);
+    expect(() => parseRemoteOption(['--remote', 'bad name'])).toThrow(/remote Mac name/i);
   });
 
   function remoteStub(createdSessionId: string | null = 'drs_42') {
@@ -6778,7 +6778,7 @@ describe('run statistics', () => {
       waitedForBuild: false,
       durationMs: expect.any(Number),
       coldBuildMs: 161000,
-      placement: { decision: 'here', reason: 'no build machine is paired' },
+      placement: { decision: 'here', reason: 'no remote Mac is paired' },
       phases: expect.any(Object),
       deviceSetup: false,
     });
@@ -6786,9 +6786,9 @@ describe('run statistics', () => {
     expect(runs[0]?.now).toBe(clock);
   });
 
-  test('a compiling run with a paired build machine records where it built and why', async () => {
+  test('a compiling run with a paired remote Mac records where it built and why', async () => {
     reserve();
-    writeConfigSetting({ scope: 'machine' }, 'offload.machines', ['mini']);
+    writeConfigSetting({ scope: 'machine' }, 'remote.machines', ['mini']);
     const credential = {
       machine: 'mini',
       nodeId: 'nMini',
@@ -6807,7 +6807,7 @@ describe('run statistics', () => {
       delete process.env.STIM_OFFLOAD_MODE;
     }
 
-    expect(runs[0]?.run.placement).toEqual({ decision: 'here', reason: 'offload.mode is off' });
+    expect(runs[0]?.run.placement).toEqual({ decision: 'here', reason: 'remote.buildMode is off' });
   });
 
   test('a failed iOS build cancels its parallel queued device and records the wait before returning', async () => {
@@ -6864,7 +6864,7 @@ describe('run statistics', () => {
     expect(runs[0]?.placement?.deviceSlotWaitMs).toBe(3000);
   });
 
-  test('a compiling run without build machines records its local placement and slot wait', async () => {
+  test('a compiling run without remote Macs records its local placement and slot wait', async () => {
     reserve();
     const { runs, recordStats } = recorder();
     await run(
@@ -6878,7 +6878,7 @@ describe('run statistics', () => {
 
     expect(runs[0]?.run.placement).toEqual({
       decision: 'here',
-      reason: 'no build machine is paired',
+      reason: 'no remote Mac is paired',
       slotWaitMs: 5000,
     });
   });
@@ -7804,7 +7804,7 @@ describe('iOS placement on a hosting Mac', () => {
     },
   );
   test.each([false, true])('missing hosting approval is a coded command refusal in JSON mode %s', async (json) => {
-    writeConfigSetting({ scope: 'machine' }, 'hosting.machines', ['mini']);
+    writeConfigSetting({ scope: 'machine' }, 'remote.machines', ['mini']);
     writeFileSync(deviceHostMachinesFile(), JSON.stringify({ version: 1, machines: [] }));
     const result = await run({ remote: 'mini', json }, { prepareHostedIos });
     expect(result.exitCode).toBe(1);
@@ -7843,7 +7843,7 @@ describe('iOS placement on a hosting Mac', () => {
   test.each(['27.0', 'iOS 27.0'])(
     'a hosted runtime mismatch labels the recorded runtime %s as iOS',
     async (runtime) => {
-      writeConfigSetting({ scope: 'machine' }, 'hosting.machines', ['mini']);
+      writeConfigSetting({ scope: 'machine' }, 'remote.machines', ['mini']);
       writeFileSync(
         deviceHostMachinesFile(),
         JSON.stringify({
@@ -8124,7 +8124,7 @@ describe('iOS placement on a hosting Mac', () => {
   });
 });
 
-describe('strict build machine selection', () => {
+describe('strict remote Mac selection', () => {
   beforeEach(() => {
     setExecutor({ runFile: () => '', runFileQuiet: () => null });
     vi.spyOn(offloadClient, 'simulatorRuntime').mockReturnValue('iOS-27-0');
@@ -8136,7 +8136,7 @@ describe('strict build machine selection', () => {
   });
 
   function configureMini(paired = true, state: 'approved' | 'pending' = 'approved') {
-    writeConfigSetting({ scope: 'machine' }, 'offload.machines', ['mini', 'other']);
+    writeConfigSetting({ scope: 'machine' }, 'remote.machines', ['mini', 'other']);
     if (paired)
       writeFileSync(
         buildMachinesFile(),
@@ -8168,7 +8168,7 @@ describe('strict build machine selection', () => {
       const slot = vi.fn<() => never>();
       const recordStats = vi.fn<typeof recordRunStats>();
       const result = await run(
-        { buildMachine: reason === 'invalid' ? '' : 'mini', json: true },
+        { remoteBuild: reason === 'invalid' ? '' : 'mini', json: true },
         { resolveBuild: cache, buildIos: build, acquireBuildSlot: slot, recordStats },
       );
       expect(parseFirst(result.logs).code).toBe(reason === 'invalid' ? 'STIM_BAD_ARG' : 'STIM_OFFLOAD_REFUSED');
@@ -8187,7 +8187,7 @@ describe('strict build machine selection', () => {
     const choose = vi.spyOn(offloadClient, 'chooseBuildMachine').mockResolvedValue('mini: approval-pending');
     const build = vi.fn<() => never>();
     const slot = vi.fn<() => never>();
-    const result = await run({ buildMachine: 'mini', json: true }, { buildIos: build, acquireBuildSlot: slot });
+    const result = await run({ remoteBuild: 'mini', json: true }, { buildIos: build, acquireBuildSlot: slot });
     expect(parseFirst(result.logs).code).toBe('STIM_OFFLOAD_REFUSED');
     expect(result.stderr).toContain('mini: approval-pending');
     expect(build).not.toHaveBeenCalled();
@@ -8213,7 +8213,7 @@ describe('strict build machine selection', () => {
     vi.spyOn(offloadClient, 'offloadBuild').mockResolvedValue({ ok: false, machine: 'mini', reason });
     const build = vi.fn<() => never>();
     const slot = vi.fn<() => never>();
-    const result = await run({ buildMachine: 'mini', json: true }, { buildIos: build, acquireBuildSlot: slot });
+    const result = await run({ remoteBuild: 'mini', json: true }, { buildIos: build, acquireBuildSlot: slot });
     expect(parseFirst(result.logs).code).toBe('STIM_OFFLOAD_REFUSED');
     expect(result.stderr).toContain(reason);
     expect(build).not.toHaveBeenCalled();
@@ -8227,7 +8227,7 @@ describe('strict build machine selection', () => {
     const build = vi.fn<() => never>();
     const slot = vi.fn<() => never>();
     const result = await run(
-      { buildMachine: 'mini', configuration: 'Release', json: true },
+      { remoteBuild: 'mini', configuration: 'Release', json: true },
       { buildIos: build, acquireBuildSlot: slot },
     );
     expect(parseFirst(result.logs).code).toBe('STIM_OFFLOAD_REFUSED');
@@ -8239,7 +8239,7 @@ describe('strict build machine selection', () => {
   test('a listed paired named cache hit contacts no worker and records no compilation', async () => {
     reserve();
     configureMini();
-    writeConfigSetting({ scope: 'machine' }, 'offload.machines', ['mini:7443']);
+    writeConfigSetting({ scope: 'machine' }, 'remote.machines', ['mini:7443']);
     const credentials = JSON.parse(readFileSync(buildMachinesFile(), 'utf8'));
     credentials.machines[0].machine = 'mini:7443';
     writeFileSync(buildMachinesFile(), JSON.stringify(credentials));
@@ -8247,7 +8247,7 @@ describe('strict build machine selection', () => {
     const path = join(root, 'cached.app');
     mkdirSync(path, { recursive: true });
     const build = vi.fn<() => never>();
-    const result = await run({ buildMachine: 'Mini' }, { resolveBuild: () => path, buildIos: build });
+    const result = await run({ remoteBuild: 'Mini' }, { resolveBuild: () => path, buildIos: build });
     expect(result.exitCode).toBeNull();
     expect(choose).not.toHaveBeenCalled();
     expect(build).not.toHaveBeenCalled();
@@ -8261,9 +8261,9 @@ describe('strict build machine selection', () => {
     async (configuration) => {
       reserve();
       configureMini();
-      writeConfigSetting({ scope: 'machine' }, 'offload.mode', 'force');
+      writeConfigSetting({ scope: 'machine' }, 'remote.buildMode', 'force');
       const choose = vi.spyOn(offloadClient, 'chooseBuildMachine');
-      const result = await run({ buildMachine: 'local', configuration });
+      const result = await run({ remoteBuild: 'local', configuration });
       expect(result.exitCode).toBeNull();
       expect(result.calls.order).toContain('buildIos');
       expect(choose).not.toHaveBeenCalled();
@@ -8274,9 +8274,9 @@ describe('strict build machine selection', () => {
   test('auto still builds a Release cache miss here without contacting a paired worker', async () => {
     reserve();
     configureMini();
-    writeConfigSetting({ scope: 'machine' }, 'offload.mode', 'force');
+    writeConfigSetting({ scope: 'machine' }, 'remote.buildMode', 'force');
     const choose = vi.spyOn(offloadClient, 'chooseBuildMachine');
-    const result = await run({ buildMachine: 'auto', configuration: 'Release' });
+    const result = await run({ remoteBuild: 'auto', configuration: 'Release' });
     expect(result.exitCode).toBeNull();
     expect(result.calls.order).toContain('buildIos');
     expect(choose).not.toHaveBeenCalled();
@@ -8290,7 +8290,7 @@ describe('strict build machine selection', () => {
     const build = vi.fn<() => never>();
     await expect(
       run(
-        { buildMachine: 'mini' },
+        { remoteBuild: 'mini' },
         {
           planPrebuild: () => {
             throw error;
@@ -8344,7 +8344,7 @@ describe('strict build machine selection', () => {
         sources: [],
       });
       const result = await run(
-        { buildMachine: 'mini', json: true },
+        { remoteBuild: 'mini', json: true },
         { fingerprintProject: fingerprint, storeBuild: store, buildIos: compile, acquireBuildSlot: slot },
       );
       expect(result.exitCode).toBe(scenario === 'stored' ? null : 1);
@@ -8409,7 +8409,7 @@ describe('strict build machine selection', () => {
     };
     let delivered = false;
     const result = await run(
-      { remote: 'mini', buildMachine: 'mini', json: true },
+      { remote: 'mini', remoteBuild: 'mini', json: true },
       {
         prepareHostedIos: async () => ({
           host: { machine: 'mini', connection: { close: () => {} } },
@@ -8448,7 +8448,7 @@ describe('strict build machine selection', () => {
     });
     const compile = vi.fn<() => never>();
     const slot = vi.fn<() => never>();
-    const result = await run({ buildMachine: 'mini', json: true }, { buildIos: compile, acquireBuildSlot: slot });
+    const result = await run({ remoteBuild: 'mini', json: true }, { buildIos: compile, acquireBuildSlot: slot });
     expect(parseFirst(result.logs).code).toBe('STIM_CANCELLED');
     expect(readLastBuilds(readWorkspaceState(root)).ios).toMatchObject({
       status: 'failed',

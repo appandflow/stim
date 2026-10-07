@@ -53,7 +53,7 @@ interface FakeMachine {
 const FAILED = { ok: false, code: 'worker-failed', message: 'xcodebuild failed' };
 
 /**
- * A build machine that offers `offer` and answers `build.start` with `start`, then reports a failed build. With
+ * A remote Mac that offers `offer` and answers `build.start` with `start`, then reports a failed build. With
  * `drop`, it drops the connection after the start instead, and answers `build.attach` with `attach`.
  */
 async function fakeMachine(

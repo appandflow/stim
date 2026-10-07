@@ -154,7 +154,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
     },
     scopes: PROJECT,
     description:
-      'Default iOS remote target: eas, proxy, or an approved Mac in hosting.machines; auto places on an approved Mac when this Mac is full or busy',
+      'Default iOS remote target: eas, proxy, or an approved Mac in remote.machines; auto places on an approved Mac when this Mac is full or busy',
   },
   {
     key: 'ios.simslimProfile',
@@ -229,7 +229,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
     },
     scopes: PROJECT,
     description:
-      'Default Android remote target: eas, proxy, or an approved Mac in hosting.machines; auto places on an approved Mac when this Mac is full or busy',
+      'Default Android remote target: eas, proxy, or an approved Mac in remote.machines; auto places on an approved Mac when this Mac is full or busy',
   },
   {
     key: 'metro.tunnel',
@@ -652,13 +652,6 @@ export const SETTINGS: readonly SettingDefinition[] = [
     description: 'Parked emulators kept for adoption; 0 turns parking off',
   },
   {
-    key: 'hosting.machines',
-    type: { kind: 'strings' },
-    scopes: MACHINE,
-    description:
-      'Tailscale names of the Macs that may host owned simulator sessions for this one, each optionally with :<port> of its tailscale serve route (default 7443); doctor --fix asks for separate device-host approval',
-  },
-  {
     key: 'hosting.agentDriver',
     type: { kind: 'choice', choices: HOSTED_AGENT_DRIVERS },
     scopes: MACHINE,
@@ -675,14 +668,14 @@ export const SETTINGS: readonly SettingDefinition[] = [
       "Whether a Mac approved for builds or device hosting here may update this Mac's stim-server service to that Mac's own stim-server build; releases from npm need no setting",
   },
   {
-    key: 'offload.machines',
+    key: 'remote.machines',
     type: { kind: 'strings' },
     scopes: MACHINE,
     description:
-      'Tailscale names of the Macs that may build for this one, each optionally with :<port> of its tailscale serve route (default 7443)',
+      'Tailscale names of the remote Macs this Mac may build on and host owned simulators on, each optionally with :<port> of its tailscale serve route (default 7443); what each is used for follows the build and device-host approvals it grants, which doctor --fix asks for separately',
   },
   {
-    key: 'offload.machine',
+    key: 'remote.build',
     type: {
       kind: 'string',
       pattern: TAILNET_MACHINE_PATTERN,
@@ -690,41 +683,41 @@ export const SETTINGS: readonly SettingDefinition[] = [
     },
     scopes: MACHINE,
     default: 'auto',
-    env: 'STIM_OFFLOAD_MACHINE',
+    env: 'STIM_REMOTE_BUILD',
     description:
-      'Build placement: auto follows offload.mode with local fallback; local always builds here; a name in offload.machines requires that machine without fallback. The ios, android and macos --build-machine flag overrides this setting and its environment override',
+      'Build placement: auto follows remote.buildMode with local fallback; local always builds here; a name in remote.machines requires that remote Mac without fallback. The ios, android and macos --remote-build flag overrides this setting and its environment override',
   },
   {
-    key: 'offload.mode',
+    key: 'remote.buildMode',
     type: { kind: 'choice', choices: OFFLOAD_MODES },
     scopes: MACHINE,
     default: 'auto',
     env: 'STIM_OFFLOAD_MODE',
     description:
-      'When offload.machine is auto, where iOS simulator Debug, Android emulator debug and macOS SwiftPM Debug builds run: auto builds here while this Mac has a free concurrency.maxBuilds slot and its load is under offload.maxLoadPerCore, and otherwise offloads to a less loaded machine in offload.machines; force offloads whenever a machine can take the build; off always builds here',
+      'When remote.build is auto, where iOS simulator Debug, Android emulator debug and macOS SwiftPM Debug builds run: auto builds here while this Mac has a free concurrency.maxBuilds slot and its load is under server.maxLoadPerCore, and otherwise builds on a less loaded Mac in remote.machines; force builds on a remote Mac whenever one can take the build; off always builds here',
   },
   {
-    key: 'offload.maxLoadPerCore',
+    key: 'server.maxLoadPerCore',
     type: { kind: 'number', minimum: 0.1 },
     scopes: MACHINE,
     default: 2,
     description:
-      'Load per core (5-minute load average divided by the CPU count) at which a Mac counts as saturated: a build machine declines offloaded builds, and auto offload stops preferring this Mac; also the busy threshold for automatic iOS and Android device placement',
+      'Load per core (5-minute load average divided by the CPU count) at which this Mac counts as saturated: it declines builds other Macs send it, automatic build placement stops preferring it, and automatic iOS and Android device placement treats it as busy',
   },
   {
-    key: 'offload.workerRoot',
+    key: 'server.workerRoot',
     type: ABSOLUTE_PATH,
     scopes: MACHINE,
     description:
-      'Directory where stim-server keeps the checkouts, dependencies and build state of Macs that build here; default $STIM_HOME/build-worker',
+      'Directory where stim-server keeps the checkouts, dependencies and build state of the Macs that build here; default $STIM_HOME/build-worker',
   },
   {
-    key: 'offload.gradleDaemonIdleMinutes',
+    key: 'server.gradleDaemonIdleMinutes',
     type: { kind: 'number', integer: true, minimum: 0, maximum: 35_791 },
     scopes: MACHINE,
     default: 30,
     description:
-      'Minutes the Gradle daemon of an offloaded Android build stays warm on this build machine after the build; 0 stops it when the build ends',
+      'Minutes the Gradle daemon of an Android build another Mac sent here stays warm after the build; 0 stops it when the build ends',
   },
   {
     key: 'caches.buildCache',

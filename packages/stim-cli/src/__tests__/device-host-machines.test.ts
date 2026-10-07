@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { deviceHostMachinesFile, readBuildMachines, readDeviceHostMachines } from '@stim-cli/core/state';
-import { inspectDeviceHostMachines } from '../device-host/machines.ts';
+import { hostingMachines, inspectDeviceHostMachines } from '../device-host/machines.ts';
 import type { Endpoint, HelloReply, TailnetMachineIo } from '../offload/tailnet.ts';
 import { getConfigPath } from '../workspace/config.ts';
 
@@ -77,16 +77,16 @@ test('the changed node receives neither a token nor a replacement access request
 });
 
 test.each([{ machines: 'mini' }, { machines: ['mini', 42] }, { machines: null }, 'mini'])(
-  'invalid hosting settings preserve saved credentials without approval traffic: %j',
-  async (hosting) => {
+  'invalid remote settings preserve saved credentials without approval traffic: %j',
+  async (remote) => {
     await inspectDeviceHostMachines({ fix: true }, fakeIo([pending]).io, ['mini']);
     const saved = readFileSync(deviceHostMachinesFile(), 'utf8');
-    writeFileSync(getConfigPath(), JSON.stringify({ hosting }));
+    writeFileSync(getConfigPath(), JSON.stringify({ remote }));
     const { io, calls } = fakeIo([]);
     const readStatus = vi.spyOn(io, 'status');
     for (const fix of [false, true]) {
       const result = await inspectDeviceHostMachines({ fix }, io);
-      expect(result.findings).toEqual([expect.objectContaining({ title: 'Invalid hosting.machines setting' })]);
+      expect(result.findings).toEqual([expect.objectContaining({ title: 'Invalid remote.machines setting' })]);
       expect(readFileSync(deviceHostMachinesFile(), 'utf8')).toBe(saved);
       expect(JSON.stringify(result)).not.toContain('hosting-secret');
     }
@@ -377,3 +377,12 @@ test.each([undefined, null, { name: 'Stim Host', screenRecording: false, accessi
     expect(Object.hasOwn(entry, 'host')).toBe(!!host);
   },
 );
+
+test('automatic hosting considers only the remote Macs this Mac asked for device-host access', async () => {
+  writeFileSync(getConfigPath(), JSON.stringify({ remote: { machines: ['mini', 'other'] } }));
+  expect(hostingMachines()).toEqual([]);
+  await inspectDeviceHostMachines({ fix: true }, fakeIo([pending]).io, ['mini']);
+  expect(hostingMachines()).toEqual(['mini']);
+  writeFileSync(getConfigPath(), JSON.stringify({ remote: { machines: 'mini' } }));
+  expect(hostingMachines()).toBeNull();
+});

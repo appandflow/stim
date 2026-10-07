@@ -344,7 +344,7 @@ describe('Android data partition size settings', () => {
 });
 
 describe('remote device settings', () => {
-  test('distinguishes iOS hosting machines from the proxy and eas backends', () => {
+  test('distinguishes iOS remote Macs from the proxy and eas backends', () => {
     expect(remoteIosSetting({ ios: { remote: 'proxy' } })).toEqual({ kind: 'backend', backend: 'proxy' });
     expect(remoteIosSetting({ ios: { remote: 'eas' } })).toEqual({ kind: 'backend', backend: 'eas' });
     expect(remoteIosSetting({ ios: { remote: 'mini' } })).toEqual({ kind: 'machine', machine: 'mini' });

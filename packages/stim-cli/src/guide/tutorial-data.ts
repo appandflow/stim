@@ -270,7 +270,7 @@ export const TUTORIAL_STEPS: {
     optional: true,
     prompt: TUTORIAL_PROMPTS.machine,
     section: 'machine',
-    manual: ['cd "{tour}"', 'stim ios --build-machine "{machine}" --no-build-cache'],
+    manual: ['cd "{tour}"', 'stim ios --remote-build "{machine}" --no-build-cache'],
   },
   {
     id: 'finish',
