@@ -168,8 +168,11 @@ Stim; manually duplicated bundles sharing its isolated identifier are unsupporte
 Native app replay remains unavailable.
 
 The feed requires agent-device to record the explicit surface in its open event.
-Version 0.21.12 omits it, so native actions remain unavailable with that version.
-Stim does not infer the surface from the bundle ID.
+agent-device 0.21.23 is the minimum; older versions such as 0.21.12 omit it, so
+native actions remain unavailable with them. Stim does not infer the surface from
+the bundle ID. Actions are attributed only while the launch is recorded as
+running: after the app exits or is relaunched, earlier launches' actions are no
+longer returned, and a failed open is not shown.
 
 ## Monitor from your phone
 

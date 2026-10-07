@@ -114,8 +114,11 @@ recorded. Generic computer-use tools and phone Control are not agent-device
 actions. Manually duplicated bundles sharing the isolated identifier are
 unsupported; leave app launch and stop to Stim. No native replay is added.
 The feed requires agent-device to record the explicit surface in its open
-event. agent-device 0.21.12 omits it, so native actions remain unavailable
-with that version; Stim does not infer the surface from the bundle ID.
+event. agent-device 0.21.23 is the minimum; older versions such as 0.21.12 omit
+it, so native actions remain unavailable with them. Stim does not infer the
+surface from the bundle ID. Actions are attributed only while the launch is
+recorded as running: after the app exits or is relaunched, earlier launches'
+actions are no longer returned, and a failed open is not shown.
 
 OWNERSHIP AND LOCAL VIEWING
 

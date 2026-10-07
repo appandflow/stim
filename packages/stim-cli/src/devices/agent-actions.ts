@@ -73,7 +73,9 @@ export function createAgentActionReader({
     sinceTs,
     now,
     claimedDevice: (session, sessionsDir) => {
-      const byId = new Map((typeof targets === 'function' ? targets() : targets).map((target) => [target.id, target]));
+      const byId = claimed
+        ? new Map<string, AgentTarget>()
+        : new Map((typeof targets === 'function' ? targets() : targets).map((target) => [target.id, target]));
       claimed ??= new Map(
         readAgentDeviceRecords(home)
           .filter((record) => record.kind === 'claim' && record.session && record.deviceId)

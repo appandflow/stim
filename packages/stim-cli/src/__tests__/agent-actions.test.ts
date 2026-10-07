@@ -148,10 +148,18 @@ describe('native macOS actions', () => {
     expect(reader().map((r) => r.command)).toEqual(['open', 'press']);
     append(open(2, 'dev.other'), event(3, 'type'));
     expect(reader()).toEqual([]);
-    append(open(4), event(5, 'close'), event(6, 'press'));
+    append(open(4), event(5, 'close', {}, { kind: 'request.started' }), event(5, 'close'), event(6, 'press'));
     expect(reader().map((r) => r.command)).toEqual(['open', 'close']);
-    append(open(7), event(8, 'open', {}, { kind: 'request.finished', status: 'error' }), event(9, 'press'));
-    expect(reader().map((r) => r.command)).toEqual(['open']);
+    append(
+      open(7),
+      event(8, 'close', {}, { kind: 'request.started' }),
+      event(8, 'close', {}, { kind: 'request.finished', status: 'error' }),
+      event(9, 'press'),
+    );
+    expect(reader().map((r) => [r.command, r.level])).toEqual([
+      ['open', 'info'],
+      ['close', 'error'],
+    ]);
   });
 
   test('a follower started before the launch acquires the target, and a relaunch changes the launch ID', () => {

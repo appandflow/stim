@@ -215,6 +215,7 @@ interface SessionCursor {
   started: Map<string, number>;
   macos: boolean;
   bundleId: string | null;
+  closing: string | null;
 }
 
 function trackMacosOpen(cursor: SessionCursor, event: AgentEvent, unknownVersion: boolean): void {
@@ -288,6 +289,7 @@ export function createAgentActionReader({
           started: new Map(),
           macos: false,
           bundleId: null,
+          closing: null,
         };
         cursors.set(dir, cursor);
         try {
@@ -367,6 +369,7 @@ export function createAgentActionReader({
       if (parsed.unknownVersion) cursor.bundleId = null;
       for (const event of parsed.events) {
         if (event.kind === 'request.started') {
+          cursor.closing = event.command === 'close' ? cursor.bundleId : null;
           cursor.bundleId = null;
           continue;
         }
@@ -374,7 +377,9 @@ export function createAgentActionReader({
         if (targets && cursor.macos) {
           // agent-device's screenshot event omits its per-command surface override.
           if (event.command === 'screenshot') continue;
-          const target = cursor.bundleId ? macosByBundle.get(cursor.bundleId) : undefined;
+          const bundleId = cursor.bundleId ?? (event.command === 'close' ? cursor.closing : null);
+          cursor.closing = null;
+          const target = bundleId ? macosByBundle.get(bundleId) : undefined;
           const startedAt = event.requestId ? matched.get(event.requestId) : undefined;
           if (
             target?.platform === 'macos' &&
@@ -382,7 +387,7 @@ export function createAgentActionReader({
             (startedAt ?? event.ts) >= target.launchedAt
           )
             out.push(agentRecord(event, target.id, target, startedAt));
-          if (event.command === 'close' && !event.failed) cursor.bundleId = null;
+          if (event.command === 'close') cursor.bundleId = null;
           continue;
         }
         if (event.ts < sinceTs) continue;
