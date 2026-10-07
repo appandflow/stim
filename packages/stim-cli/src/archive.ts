@@ -256,10 +256,6 @@ function archivedPullRequest(pr: WorktreePullRequest | null | undefined): Archiv
   return pr ? { number: pr.number, state: pr.state, title: pr.title, url: pr.url } : null;
 }
 
-/**
- * The facts the pull request cache kept for the gone worktree that held `root`. Only missing ancestors are asked, so a
- * folder removed from a checkout that still exists never takes that checkout's branch.
- */
 function cachedFacts(root: string): ArchivedWorkspace['worktree'] | null {
   for (let path = root; !existsSync(path); path = dirname(path)) {
     const cached = readPullRequestCache(path);
