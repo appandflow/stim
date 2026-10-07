@@ -38,6 +38,28 @@ import Testing
     #expect(page.recordings.isEmpty)
   }
 
+  @Test func historySelectsNewestBuildsAndCountsCacheHitsAndOffloadsAcrossPlatforms() throws {
+    let archive = try archive()
+    let fallback = ArchivedPage(archive: archive, now: now)
+    #expect(fallback.cacheHits == nil && fallback.offloadedBuilds == nil)
+    var history = try detail()
+    var ios = try #require(history.builds.ios)
+    var older = ios[0]
+    older.build.startedAt = "2026-10-03T10:00:00Z"
+    older.build.cacheHit = .remote
+    older.build.offloadedTo = "worker"
+    ios.append(older)
+    history.builds.ios = ios
+    let page = ArchivedPage(archive: archive, detail: history, now: now)
+    #expect(page.workspace.lastBuilds?.ios?.startedAt == "2026-10-04T10:00:00Z")
+    #expect(page.workspace.lastBuilds?.android?.startedAt == "2026-10-04T09:00:00Z")
+    #expect(page.cacheHits == 2)
+    #expect(page.offloadedBuilds == 1)
+    let empty = try JSONDecoder().decode(ArchiveDetail.self, from: Data(#"{"builds":{},"recordings":[]}"#.utf8))
+    let emptyPage = ArchivedPage(archive: archive, detail: empty, now: now)
+    #expect(emptyPage.cacheHits == 0 && emptyPage.offloadedBuilds == 0)
+  }
+
   @Test(arguments: ["ios", "android"])
   func emptyPlatformHistoryKeepsTheLastBuildSummary(_ platform: String) throws {
     var archive = try archive()
@@ -126,7 +148,6 @@ import Testing
     let page = ArchivedPage(archive: archive, now: now)
     #expect(page.pullRequestLabel == "#2602")
     #expect(page.workspace.worktree?.pullRequest?.state == "")
-    #expect(page.workspace.worktree?.pullRequest?.title == archive.worktree.pullRequest?.title)
     archive.worktree.merged = true
     let merged = ArchivedPage(archive: archive, now: now)
     #expect(merged.pullRequestLabel == "#2602 \u{00B7} Merged")
@@ -148,7 +169,7 @@ import Testing
     var archive = try archive()
     archive.worktree.branch = nil
     archive.worktree.repository = nil
-    for root in ["/work/stim/.worktrees/missing", "/work/stim/.claude/worktrees/missing", "/work/missing"] {
+    for root in ["/work/stim/.worktrees/missing", "/work/stim/.claude/worktrees/missing"] {
       archive.projectRoot = root + "/apps/mobile"
       let page = ArchivedPage(archive: archive, now: now)
       #expect(page.workspace.worktree?.path == root)

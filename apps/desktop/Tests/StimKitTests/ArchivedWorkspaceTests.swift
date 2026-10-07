@@ -108,8 +108,8 @@ import Testing
     let trees = sidebarTrees(
       environments: [], unprovisioned: [], project: { Project(fallbackFor: $0) },
       options: options, archived: [older, mobile, unknown, desktop])
-    #expect(trees.map { $0.summary.project.root } == ["/elsewhere/gone", "/work/stim"])
-    #expect(trees[0].entries.first?.sortName == "gone")
+    #expect(trees.map { $0.summary.project.root } == ["/elsewhere/gone/apps/mobile", "/work/stim"])
+    #expect(trees[0].entries.first?.sortName == "mobile")
     let stim = trees[1]
     #expect(stim.entries.count == 2)
     let group = try #require(stim.entries.first)
@@ -122,6 +122,29 @@ import Testing
     let page = WorktreePage.groups(environments: apps.map { ArchivedPage(archive: $0, now: Date()).workspace })
     #expect(page.count == 1 && page[0].isUnified)
     #expect(page[0].projects == ["apps/desktop", "apps/mobile"])
+  }
+
+  @Test(arguments: ["/work/apps", "/work/stim/.claude/worktrees/search/apps"])
+  func missingRepositoryFactsDoNotGroupUnrelatedArchivesOrRevealHiddenProjects(_ parent: String) throws {
+    var mobile = try #require(payload().archived?.first)
+    mobile.projectRoot = parent + "/mobile"
+    mobile.worktree.repository = nil
+    mobile.worktree.branch = nil
+    var desktop = mobile
+    desktop.id = "desktop"
+    desktop.projectRoot = parent + "/desktop"
+    var options = SidebarOptions()
+    options.status = .archived
+    let trees = sidebarTrees(
+      environments: [], unprovisioned: [], project: { Project(fallbackFor: $0) },
+      options: options, archived: [mobile, desktop])
+    #expect(trees.map { $0.summary.project.root } == [parent + "/desktop", parent + "/mobile"])
+    #expect(trees.flatMap(\.entries).map(\.id) == ["archive:desktop", "archive:archive-older"])
+    options.hiddenProjects = [parent + "/mobile"]
+    let visible = sidebarList(
+      environments: [], unprovisioned: [], project: { Project(fallbackFor: $0) },
+      options: options, archived: [mobile, desktop])
+    #expect(visible.map(\.id) == ["archive:desktop"])
   }
 
   @Test func rowNamesRemovalAgeAndEarlierRunsDistinguishReusedPaths() throws {

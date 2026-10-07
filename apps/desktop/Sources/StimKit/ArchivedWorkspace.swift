@@ -59,10 +59,6 @@ public struct ArchivedWorkspace: Decodable, Hashable, Identifiable, Sendable {
     if let relative = PathNames(path: projectRoot).inCheckout {
       return String(projectRoot.dropLast(relative.count + 1))
     }
-    let parent = (projectRoot as NSString).deletingLastPathComponent
-    if (parent as NSString).lastPathComponent == "apps" {
-      return (parent as NSString).deletingLastPathComponent
-    }
     return projectRoot
   }
   public var names: PathNames {
@@ -70,7 +66,7 @@ public struct ArchivedWorkspace: Decodable, Hashable, Identifiable, Sendable {
   }
   public var title: String { names.title }
   public var sidebarProject: Project {
-    worktree.repository.map { Project(root: $0) } ?? Project(fallbackFor: worktreeRoot)
+    worktree.repository.map { Project(root: $0) } ?? Project(fallbackFor: projectRoot)
   }
   public var sizeLabel: String { Format.fileSize(bytes.total) }
   public var removedByLabel: String {

@@ -176,7 +176,8 @@ struct WorkspaceDetail: View {
         archiveError = nil
       } catch {
         guard !Task.isCancelled else { return }
-        archiveError = archivedReadError(error, content: "build history")
+        archiveError =
+          (error as? ServerError)?.code == "unknown-method" ? nil : archivedReadError(error, content: "build history")
       }
     }
     .onQuitRequested {
@@ -400,9 +401,9 @@ struct WorkspaceDetail: View {
         if readsServer {
           ArchivedReplays(archive: archive.id, recordings: recordings)
             .id("\(archive.id)|\(recordings != nil)|\(adapted.recordings.map(\.id).joined(separator: ","))")
-          if recordings?.isEmpty == true { InlineEmpty("No recordings retained") }
+          if recordings?.isEmpty == true && !adapted.recordingsExpired { InlineEmpty("No recordings retained") }
         } else if adapted.recordings.isEmpty {
-          InlineEmpty("No recordings retained")
+          if !adapted.recordingsExpired { InlineEmpty("No recordings retained") }
         } else {
           ForEach(adapted.recordings) { recording in
             Card {
