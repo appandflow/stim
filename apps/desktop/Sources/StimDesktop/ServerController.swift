@@ -159,10 +159,7 @@ final class ServerController: ObservableObject {
     state = .starting
     missedProbes = 0
     Task {
-      if let exiting {
-        await Task.detached { Self.waitForExit(exiting) }.value
-        self.exiting = nil
-      }
+      await waitForExiting()
       guard current == generation else { return }
       if let probe = await StimServerCLI.health(port: port) {
         let resolved = StimHome.path(environment: await environment?.value ?? ProcessInfo.processInfo.environment)
@@ -222,16 +219,19 @@ final class ServerController: ObservableObject {
     watch()
   }
 
+  private func waitForExiting() async {
+    guard let process = exiting else { return }
+    await Task.detached { Self.waitForExit(process) }.value
+    if exiting === process { exiting = nil }
+  }
+
   private func watch() {
     guard case .off = state, !watching, !UserDefaults.standard.bool(forKey: AppPreferences.Key.servesPhones) else { return }
     watching = true
     let current = generation
     Task {
       defer { watching = false }
-      if let exiting {
-        await Task.detached { Self.waitForExit(exiting) }.value
-        self.exiting = nil
-      }
+      await waitForExiting()
       guard let probe = await StimServerCLI.health(port: port) else { return }
       let resolved = StimHome.path(environment: await environment?.value ?? ProcessInfo.processInfo.environment)
       guard current == generation, case .off = state else { return }
