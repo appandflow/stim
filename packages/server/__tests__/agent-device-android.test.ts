@@ -222,7 +222,7 @@ test.each(['policy', 'backend'] as const)('grants nothing without the required %
   expect(readClaimSet(join(home, 'claims')).live).toHaveLength(0);
 });
 
-// The fixture's fake adb is a POSIX shell script, which Windows cannot execute.
+// The kept child is a detached process whose group the test signals, which Node does not support on Windows (nodejs.org/api/process.html#processkillpid-signal).
 test.skipIf(process.platform === 'win32')(
   'a kept live daemon claim blocks restart and stop, then a gone child can be reconciled',
   async () => {

@@ -1422,7 +1422,7 @@ test.each(['stop', 'revoke'])(
   },
 );
 
-// The fixture's fake adb is a POSIX shell script, which Windows cannot execute.
+// The fixture's fake adb is a Node-shebang file, which Windows cannot execute.
 test.skipIf(process.platform === 'win32')(
   'hosted Android viewing refuses changed ledger, serial, AVD or ABI instead of selecting another emulator',
   async () => {
