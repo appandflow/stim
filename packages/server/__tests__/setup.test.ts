@@ -264,7 +264,7 @@ test('build and device-host use distinct grants and a rerun never grants either 
   ]);
   expect(await runSetup([...args, '--device-host'], '1.16.0', f.deps)).toBe(0);
   expect(f.grants).toHaveLength(2);
-  expect(f.stdout.some((line) => line.includes('Already approved'))).toBe(true);
+  expect(f.stdout.some((line) => line.includes('already approved'))).toBe(true);
 });
 
 test.each([false, true])(
@@ -775,4 +775,55 @@ test('an interrupt during route recording rolls back the unrecorded route and jo
   expect(f.grants).toEqual([]);
   const release = setupClaim();
   release();
+});
+
+test('default output is one line per step with a ready headline and one undo line; --verbose keeps the full detail', async () => {
+  const quiet = fixture();
+  expect(await runSetup([...args, '--yes'], '1.16.0', quiet.deps)).toBe(0);
+  const text = quiet.stdout.join('\n');
+  expect(text).not.toContain('[running]');
+  expect(text).not.toContain('Summary:');
+  expect(text).toContain('[ok] approved Client Mac for builds');
+  expect(text).toContain('[ok] worker is ready to build for Client Mac');
+  expect(text).toContain(
+    'To undo: stim-server devices revoke build-id; stim-server service uninstall --label dev.stim.server',
+  );
+
+  const loud = fixture();
+  expect(await runSetup([...args, '--yes', '--verbose'], '1.16.0', loud.deps)).toBe(0);
+  const detail = loud.stdout.join('\n');
+  expect(detail).toContain('[running] stim-server');
+  expect(detail).toContain('Undo: stim-server devices revoke build-id');
+});
+
+test('a skipped permission names its feature and its fix in the closing summary', async () => {
+  const f = fixture({
+    tty: true,
+    health: health({ screenRecording: false, accessibility: true }),
+    permissionWait: async () => true,
+  });
+  f.records.push(record({ id: 'host-id', requestedCapability: 'device-host' }));
+  expect(await runSetup([...args, '--device-host', '--yes'], '1.16.0', f.deps)).toBe(3);
+  const text = f.stdout.join('\n');
+  expect(text).toContain('Screen recording permission skipped: viewing hosted simulators will not work');
+  expect(text).toContain(
+    'Fix (Screen & System Audio Recording): System Settings > Privacy & Security > Screen & System Audio Recording',
+  );
+  expect(text).toContain('set up, with gaps');
+});
+
+test('a color terminal shows a refusal once, on stdout, and clears its running line before the question', async () => {
+  const raw: string[] = [];
+  const f = fixture({
+    tty: true,
+    display: { tty: true, color: true, raw: (t) => void raw.push(t) },
+    confirm: async () => {
+      expect(raw.at(-1)).toBe('\r\u001b[2K');
+      return false;
+    },
+  });
+  f.records[0] = record({ pendingUntil: new Date(now + 60_000).toISOString() });
+  expect(await runSetup(args.slice(), '1.16.0', f.deps)).toBe(1);
+  expect(f.stderr.join('\n')).not.toContain('approval refused');
+  expect(f.stdout.join('\n')).toContain('build refused');
 });

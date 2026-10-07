@@ -17,6 +17,7 @@ final class BuildMachinesModel {
 
   /// Whether Tailscale is running, once checked.
   private(set) var tailscaleRunning: Bool?
+  private(set) var macs: [TailnetMac]?
   private(set) var working: String?
   private(set) var writeFailure: String?
   private(set) var runs = 0
@@ -201,6 +202,12 @@ final class BuildMachinesModel {
     stats.record(result)
   }
 
+  func refreshTailnet() async {
+    let environment = await cli.value.environment
+    let found = await Task.detached { Tailnet.status(environment: environment).flatMap(Tailnet.macs(statusJSON:)) }.value
+    macs = found ?? []
+  }
+
   func load(checkout: String?) async {
     sampleExists = FileManager.default.fileExists(atPath: WizardSample.desktop.folder.path)
     async let settingsRead: Void = settings.refresh()
@@ -268,7 +275,6 @@ final class BuildMachinesModel {
     case .success(.written):
       writeFailure = nil
       let others = checks.keys.filter { $0 != checkout }
-      checks = checks.filter { others.contains($0.key) }
       await refreshStatuses(checkout: checkout, ask: ask)
       for other in others { await refreshStatuses(checkout: other, ask: false) }
     case .success(.refused(let refusal)):

@@ -1796,6 +1796,8 @@ every requested capability already has a matching approval. A typed N, Ctrl-C
 or SIGTERM exits 1; an interrupt completes the journal and releases the setup
 claim. Setup never enables Funnel,
 and never changes macOS permission settings. An SSH-driven run is not offered.
+Setup prints one line per step; `--verbose` adds install, service and route
+details and the long summary. `--json` is unchanged.
 
 <Tabs groupId="stim-invocation" defaultValue="global">
 <TabItem value="global" label="Global">

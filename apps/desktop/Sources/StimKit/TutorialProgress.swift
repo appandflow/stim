@@ -102,6 +102,8 @@ public final class TutorialRecordStore {
 
   public init(_ defaults: UserDefaults = .standard) { self.defaults = defaults }
 
+  public var completed: Bool { record?.step == "done" }
+
   public var record: TutorialRecord? {
     get {
       defaults.data(forKey: Self.key).flatMap { try? JSONDecoder().decode(TutorialRecord.self, from: $0) }

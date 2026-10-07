@@ -175,11 +175,11 @@ import Testing
       ),
       (
         #"{"machine":"m","state":"approved","offloadable":false,"problems":[{"code":"stim-build","reason":"r"}]}"#,
-        "Build mismatch", .warning
+        "Not offloading", .warning
       ),
       (
-        #"{"machine":"m","state":"approved","offloadable":false,"problems":[{"code":"xcode","reason":"r"}]}"#,
-        "Build mismatch", .warning
+        #"{"machine":"m","state":"approved","offloadable":false,"problems":[{"code":"disk","reason":"r"}]}"#,
+        "Not offloading", .warning
       ),
       (
         #"{"machine":"m","state":"approved","offloadable":false,"problems":[{"code":"busy","reason":"r"}],"capacity":{"loadPerCore":8.2}}"#,
@@ -191,6 +191,42 @@ import Testing
       let listed = try status(json).listStatus
       #expect(listed == MachineListStatus(title: title, tone: tone), "\(json)")
     }
+  }
+
+  @Test func describesAMachineRowFromDoctorsReport() throws {
+    func status(_ json: String) throws -> BuildMachineStatus {
+      try JSONDecoder().decode(BuildMachineStatus.self, from: Data(json.utf8))
+    }
+    let mini = try status(
+      #"""
+      {"machine":"mini","state":"approved","offloadable":false,"reasons":["CocoaPods 1.17.0 there, 1.16.2 here"],
+       "problems":[{"code":"cocoapods","reason":"CocoaPods 1.17.0 there, 1.16.2 here"}],
+       "capacity":{"running":0,"max":1,"diskFreeBytes":825196154880,"cpus":10,"loadPerCore":0.6,"builds":0,"maxBuilds":2}}
+      """#)
+    #expect(mini.rowDetail == "0/2 builds \u{00B7} 825 GB free")
+    #expect(
+      mini.problemLines == [
+        .init(reason: "CocoaPods 1.17.0 there, 1.16.2 here", fix: .command("gem install cocoapods -v 1.16.2"))
+      ])
+
+    let missingPods = try status(
+      #"{"machine":"m","state":"approved","offloadable":false,"problems":[{"code":"cocoapods","reason":"CocoaPods null there, 1.16.2 here"}]}"#
+    )
+    #expect(missingPods.problemLines.first?.fix == .command("brew install cocoapods"))
+    let build = try status(
+      #"{"machine":"m","state":"approved","offloadable":false,"problems":[{"code":"stim-build","reason":"Stim build a there, b here"},{"code":"other","reason":"odd"}]}"#
+    )
+    #expect(build.problemLines.map(\.fix) == [.advice("Update the build machine."), nil])
+    #expect(build.rowDetail.isEmpty)
+
+    let ready = try status(
+      #"{"machine":"m","state":"approved","offloadable":true,"capacity":{"running":1,"max":2,"builds":3,"maxBuilds":0}}"#)
+    #expect(ready.rowDetail == "3 builds")
+    #expect(ready.problemLines.isEmpty)
+    let older = try status(#"{"machine":"m","state":"approved","offloadable":true,"capacity":{"running":1,"max":2}}"#)
+    #expect(older.rowDetail == "1/2 offloaded builds")
+    #expect(try status(#"{"machine":"m","state":"approved"}"#).rowDetail == "Builds can run on this Mac.")
+    #expect(try status(#"{"machine":"m","state":"pending","deviceId":"d"}"#).rowDetail.isEmpty)
   }
 
   @Test func listsBuildsAndSimulatorsForAMachineWithApprovedHosting() {

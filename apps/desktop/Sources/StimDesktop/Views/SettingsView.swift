@@ -11,6 +11,7 @@ struct SettingsView: View {
   @State private var workspace: String?
   @AppStorage("settingsTab") private var tab = "app"
   @AppStorage("settingsWorkspace") private var lastWorkspace = ""
+  @AppStorage("settingsScope") private var scope = SettingScope.machine.rawValue
   private let machine: MachineSettingsStore
   private let buildMachines: BuildMachinesModel
 
@@ -32,10 +33,9 @@ struct SettingsView: View {
       BuildMachinesView(model: buildMachines, store: store, workspace: workspace)
         .tabItem { Label("Build Machines", systemImage: "hammer") }
         .tag("build-machines")
-      scopeTab(.machine, title: "Machine", icon: "desktopcomputer")
-      scopeTab(.repo, title: "Repository", icon: "folder")
-      scopeTab(.workspace, title: "Workspace", icon: "square.stack.3d.up")
-      scopeTab(.committed, title: ".stim.json", icon: "doc.text")
+      stimSettings
+        .tabItem { Label("Stim Settings", systemImage: "slider.horizontal.3") }
+        .tag("stim-settings")
       AdvancedSettingsView()
         .tabItem { Label("Advanced", systemImage: "gearshape.2") }
         .tag("advanced")
@@ -45,6 +45,10 @@ struct SettingsView: View {
     .foregroundStyle(Palette.text)
     .tint(Palette.brand)
     .onAppear {
+      if SettingScope(rawValue: tab) != nil {
+        scope = tab
+        tab = "stim-settings"
+      }
       workspace = openRequests.selectedWorkspace ?? workspace ?? (lastWorkspace.isEmpty ? nil : lastWorkspace)
       model.load(directory: workspace)
     }
@@ -62,13 +66,29 @@ struct SettingsView: View {
 
   private var serverPage: PhoneApp.ServerPage { PhoneApp.serverPage(phoneApp: flags.phoneApp) }
 
-  private func scopeTab(_ scope: SettingScope, title: String, icon: String) -> some View {
-    ScopeSettingsView(
-      scope: scope, model: model, workspace: $workspace, workspaces: workspacePaths,
-      title: { store.names(ofPath: $0).title }
-    )
-    .tabItem { Label(title, systemImage: icon) }
-    .tag(scope.rawValue)
+  private var stimSettings: some View {
+    let selected = SettingScope(rawValue: scope) ?? .machine
+    return VStack(alignment: .leading, spacing: 0) {
+      VStack(alignment: .leading, spacing: Space.sm) {
+        Picker("Scope", selection: $scope) {
+          Text("Machine").tag(SettingScope.machine.rawValue)
+          Text("Repository").tag(SettingScope.repo.rawValue)
+          Text("Workspace").tag(SettingScope.workspace.rawValue)
+          Text(".stim.json").tag(SettingScope.committed.rawValue)
+        }
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .frame(maxWidth: .infinity)
+        Text(ScopeSettingsView.caption(for: selected)).font(.stim(.footnote)).foregroundStyle(Palette.tertiary)
+      }
+      .padding(.horizontal, Space.xl)
+      .padding(.top, Space.xl)
+      .background(Palette.background)
+      ScopeSettingsView(
+        scope: selected, model: model, workspace: $workspace, workspaces: workspacePaths,
+        title: { store.names(ofPath: $0).title }
+      )
+    }
   }
 
   private var workspacePaths: [String] {
@@ -117,18 +137,16 @@ struct ScopeSettingsView: View {
           .foregroundStyle(Palette.secondary)
           .textSelection(.enabled)
       }
-      Text(caption).font(.stim(.footnote)).foregroundStyle(Palette.tertiary)
     }
     .padding(Space.xl)
   }
 
-  private var caption: String {
+  static func caption(for scope: SettingScope) -> String {
     switch scope {
-    case .machine: return "Machine settings in the Stim config, and machine defaults for the optimizations."
-    case .repo: return "Settings for every worktree of this repository, kept in the Stim config."
-    case .workspace: return "Settings for this workspace only, kept in the Stim config. They win over every other layer."
-    case .committed:
-      return "The app's committed .stim.json. worktree.* settings are read from the repository root's .stim.json."
+    case .machine: return "Applies to every project on this Mac. Kept in the Stim config."
+    case .repo: return "Applies to every worktree of this repository. Kept in the Stim config."
+    case .workspace: return "Applies to this workspace only and wins over every other layer. Kept in the Stim config."
+    case .committed: return "Committed to the repo in .stim.json. worktree.* settings come from the repository root."
     }
   }
 

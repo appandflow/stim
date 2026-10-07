@@ -1100,18 +1100,30 @@ this Mac (see [Build access](../../packages/server/README.md#build-access)).
 
 On the Mac that wants to build elsewhere, **Stim > Settings > Build Machines**
 is a list of the entries of the `offload.machines` machine setting. Each row
-shows the Mac's name, one status pill, what it does (**Builds**, plus
+shows the Mac's name, one status pill, a detail line, what it does (**Builds**, plus
 **Simulators** when its device-host access is approved), and a **...** menu with
 **Details...** and **Remove**. The pill reads **Approved**, **Waiting for
 approval** (the row keeps the approval command to copy), **Unreachable**,
-**Build mismatch** (doctor's `stim-build`, `arch`, `xcode`, `simulator-sdk`,
-`cocoapods`, `bundler` or `jdk` reason), or the machine's other readiness or
+**Not offloading** (doctor reports the approved machine as not offloadable, for
+any reason but load or an unanswered server), or the machine's other readiness or
 pairing state, such as **Busy**, **Not asked**, **Revoked** (revoked, denied,
 or the request lapsed), **Different Mac** (the name now belongs to another
 tailnet node than the one this Mac asked, so Stim does not connect to it),
 **Not on the tailnet**, **Tailscale is off** or **Not a tailnet name**. The
 states come from the `buildMachines` field of `stim doctor --json --platform
 ios`.
+
+For an approved machine the detail line gives the builds it runs and how many
+it takes (`builds` and `maxBuilds`, such as "0/2 builds"; the offloaded
+`running` and `max` for a stim-server that reports no `builds`) and its free
+disk. Doctor reports no Xcode or Stim version per machine, so the line has
+neither. When the machine is not offloadable, each of doctor's `problems`
+appears under the line in amber, in doctor's order, with its fix: a command to
+copy for CocoaPods (`gem install cocoapods -v <this Mac's version>`, or `brew
+install cocoapods` when there is none), the remedy sentence for the other known
+reasons. While a check runs, the row keeps the last state and shows a small
+spinner next to the pill; **Checking...** appears only for a row with no state
+yet.
 
 **Add Build Machine...** opens the wizard, which owns tailnet discovery and the
 setup; the tab has no separate list of tailnet Macs. With no machines, the tab
@@ -1147,8 +1159,9 @@ follows `machines.update.status` every 2 seconds:
 - the outcome, or the refusal (for example, the setting the machine needs).
 
 If the machine stops answering for 5 minutes, or answers for 4 minutes without an update running or an outcome, the update shows as failed with the reason.
-Then the row checks the machine again. **Install this Mac's build on build
-machines automatically** (off by default) does the same the next time Desktop
+Then the row checks the machine again. **Keep build machines on this Mac's Stim
+version** (off by default; "When this Mac's Stim changes, update stim-server on
+approved build machines so builds can keep offloading.") does the same the next time Desktop
 checks a machine that reports another Stim build. It runs once per machine and
 reason each time Desktop launches. Either way, the machine gets this Mac's build,
 whether it is newer or older than the one it runs.
@@ -1246,9 +1259,10 @@ what it missed.
 **Stim > Settings** (Command-comma) edits Stim settings and the app's own
 preferences.
 
-The **Machine**, **Repository**, **Workspace** and **.stim.json** tabs are
-generated from `settings.schema.json`, which the `stim` package ships beside
-`dist/cli.mjs`; the app reads the one next to the resolved `stim` executable,
+The **Stim Settings** tab holds a **Machine**, **Repository**, **Workspace** and
+**.stim.json** scope switch, with a line saying where the selected scope applies.
+Its editor is generated from `settings.schema.json`, which the `stim` package
+ships beside `dist/cli.mjs`; the app reads the one next to the resolved `stim` executable,
 or `packages/stim-cli/dist` under `swift run`. Choices are pickers, booleans
 toggles, numbers steppers, paths file pickers, string lists token fields, and
 objects JSON fields. Values come from `stim settings --json` run in the chosen
@@ -1376,6 +1390,43 @@ served, `stim-server --version` gets the same check, installing
 to set `iosSimulatorApp` and `androidEmulatorApp` to `stim-desktop` with
 `stim settings set … --scope machine`. It skips a key that is already set or
 that the installed `stim` does not list. **Not now** hides the offer for good.
+
+### Suggestions and tips
+
+Desktop suggestions offer build machines, hosted simulators, cache review, or phone
+pairing when recent activity makes them useful. The X snoozes a suggestion for
+7 days; **Don't suggest again** dismisses that kind permanently. Suggestions
+wait for completed setup and the second launch, never appear during a running
+build, and appear at most once per day.
+
+The **Tip** card at the bottom of the sidebar appears after setup is complete and
+Desktop has been used on at least **3 calendar days**, with either **3 distinct
+workspaces seen running** or **5 builds observed**. It stays hidden while a build
+runs, the setup guide or tutorial is open, the main window is closed, or any
+notice is showing. Only builds that start after Desktop first sees status count.
+Usage is stored locally in Desktop preferences: the latest 30 active days and,
+until the thresholds are met, the workspace paths and build IDs counted.
+
+Tips cover build machines, phone pairing, the tutorial, hiding workspaces when
+there are more than 10 workspace rows and none are hidden, status filters, replay, and hosted
+simulators. Only applicable tips appear. One tip stays for the calendar day;
+the next day picks the least recently shown applicable tip, with unseen tips
+first. **Next tip** cycles through the remaining choices. The X hides the card
+until tomorrow. Turn off **Settings > App > Show tips** to disable tips; the Machine page card stays.
+
+Tips and suggestions share state for build machines, phone pairing, and
+hosted simulators. A shown, permanently dismissed, or currently snoozed
+suggestion suppresses the matching tip. Once that tip has been shown, the
+matching suggestions (new Mac, slow cold builds, build slot waits, away
+builds, device limit) no longer appear. Disk-pressure suggestions are
+unaffected. Suggestions keep their own once-per-day limit.
+
+**File > Add Build Machine…** (**Cmd+Shift+B**) always opens the existing build
+machine wizard. After the same usage threshold, **Machines > This Mac** shows a
+card when no build machine is configured. With another Mac on the tailnet it
+offers **Add Build Machine…**; otherwise it explains how to connect both Macs
+with Tailscale. The existing **Link machine** button is also available. Build
+machines are not a step in the first-run setup guide.
 
 ### Setup guide
 

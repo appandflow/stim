@@ -56,7 +56,7 @@ const USAGE = `Usage:
                                     --env and --path-prepend apply after the login shell's environment
   stim-server setup --client <node-id> --ticket <t> --expires <iso>
                     [--build] [--device-host] [--port <n>] [--label <name>]
-                    [--env KEY=VALUE]... [--path-prepend <dir>]... [--yes] [--json]
+                    [--env KEY=VALUE]... [--path-prepend <dir>]... [--yes] [--json] [--verbose]
                                     worker-side approval for this node and ticket until expiry
   stim-server service install [--port <n>] [--label <name>] [--serve]
                               [--env KEY=VALUE]... [--path-prepend <dir>]...
