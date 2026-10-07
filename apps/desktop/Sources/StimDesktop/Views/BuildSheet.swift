@@ -200,6 +200,9 @@ struct BuildSheet: View {
       Spacer(minLength: Space.sm)
       if !isMacos {
         if archive == nil {
+          RunOnPicker(
+            workspace: app.path, platform: platform, fixedMachine: app.hostedMachine(platform: platform),
+            localDeviceBooted: app.hasBootedLocalDevice(platform: platform))
           Button {
             actions.runApp(app, platform: platform)
           } label: {
@@ -207,7 +210,9 @@ struct BuildSheet: View {
           }
           .buttonStyle(.stim(.primary, .regular))
           .disabled(busy)
-          .help("stim \(platform) with no options: the default slot and configuration; builds if needed, installs and launches")
+          .help(
+            "stim \(platform) with the selected Run on destination: the default slot and configuration; builds if needed, installs and launches"
+          )
           checkButton
         }
         Button("Open in logs panel") {

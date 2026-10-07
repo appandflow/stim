@@ -313,6 +313,7 @@ struct WorkspaceRow: View {
         building: env.build?.isRunning == true,
         reloadAllowed: env.canReload,
         onShowLastOutput: actions.latest(for: env.path).map { last in { actions.presented = last } },
+        workspace: env,
         onRun: { platform in actions.runApp(env, platform: platform) },
         onReload: { actions.run("Reload \(env.names.title)", steps: [StimCommand(["reload"], cwd: env.path)], present: false) },
         onStartDevServer: {
@@ -385,6 +386,11 @@ struct WorkspaceRowContent: View {
             SessionLine(session: session, others: sessions.count - 1)
           }
           RowDetailLine(context: context(env.rowDevices(now: now)), git: showsGit ? GitChip(env.worktree) : nil)
+        }
+        if archive == nil {
+          ForEach(env.orderedDevices.filter { $0.hostedMachine != nil || $0.placementReason != nil }) { device in
+            DevicePlacementLabel(device: device)
+          }
         }
       }
     }

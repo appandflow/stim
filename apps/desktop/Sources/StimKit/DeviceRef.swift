@@ -35,6 +35,27 @@ public enum DeviceRef: Hashable, Identifiable, Sendable {
     }
   }
 
+  public var isBootedLocalOwnedDevice: Bool {
+    guard isRunning, hostedMachine == nil, !isPhysical else { return false }
+    switch self {
+    case .ios(_, let device): return device.owned
+    case .android(_, let device): return device.owned
+    case .remote, .web: return false
+    }
+  }
+
+  public var placementReason: String? {
+    switch self {
+    case .ios(_, let d):
+      if let host = d.host { return host.selected == "auto" ? host.reason.map { "auto: " + $0 } : nil }
+      return d.devicePlacement.map { "auto: " + $0.reason }
+    case .android(_, let d):
+      if let host = d.host { return host.selected == "auto" ? host.reason.map { "auto: " + $0 } : nil }
+      return d.devicePlacement.map { "auto: " + $0.reason }
+    case .remote, .web: return nil
+    }
+  }
+
   public var localEmulatorSerial: String? {
     guard case .android(_, let d) = self, d.host == nil, let serial = d.serial, !serial.isEmpty else { return nil }
     return serial

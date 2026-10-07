@@ -26,6 +26,12 @@ import Testing
     #expect(phone.label == "iPhone 17 Pro")
     #expect(phone.detail == "iOS 27.0")
     #expect(runCommand(for: tablet, cwd: "/w")?.arguments == ["ios", "--slot", "tablet", "--remote", "mini:7443"])
+    for destination in [RunDestination.thisMac, .auto, .machine("other")] {
+      #expect(
+        runCommand(for: tablet, cwd: "/w", destination: destination)?.arguments == [
+          "ios", "--slot", "tablet", "--remote", "mini:7443",
+        ])
+    }
     #expect(stopCommand(for: tablet, cwd: "/w").arguments == ["stop", "--slot", "tablet"])
     let local = DeviceRef.ios(slot: "default", IosDevice(name: "iPhone", udid: "local", owned: true, state: "Booted"))
     #expect(local.localSimulatorUDID == "local")

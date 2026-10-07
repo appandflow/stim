@@ -1,0 +1,68 @@
+{
+  "environments": [
+    {
+      "path": "/hosted",
+      "live": true,
+      "warnings": [],
+      "ios": {
+        "name": "iPhone",
+        "udid": "",
+        "owned": false,
+        "state": "ready",
+        "host": {
+          "machine": "janics-mac-mini",
+          "session": "ios-session",
+          "selected": "auto",
+          "reason": "load 3.1/core here"
+        },
+        "devicePlacement": {
+          "decision": "hosted",
+          "reason": "load 3.1/core here",
+          "machine": "janics-mac-mini"
+        }
+      },
+      "android": {
+        "name": "pixel",
+        "owned": false,
+        "physical": false,
+        "state": "ready",
+        "host": {
+          "machine": "janics-mac-mini",
+          "session": "android-session",
+          "selected": "janics-mac-mini",
+          "reason": "selected janics-mac-mini"
+        },
+        "devicePlacement": {
+          "decision": "hosted",
+          "reason": "selected janics-mac-mini",
+          "machine": "janics-mac-mini"
+        }
+      }
+    },
+    {
+      "path": "/local",
+      "live": true,
+      "warnings": [],
+      "ios": {
+        "name": "iPhone",
+        "udid": "LOCAL",
+        "owned": true,
+        "state": "Booted",
+        "devicePlacement": {
+          "decision": "local",
+          "reason": "room here"
+        }
+      },
+      "android": {
+        "name": "pixel",
+        "owned": true,
+        "physical": false,
+        "state": "detected",
+        "devicePlacement": {
+          "decision": "waited-locally",
+          "reason": "waited for room here"
+        }
+      }
+    }
+  ]
+}

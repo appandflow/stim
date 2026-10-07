@@ -31,8 +31,13 @@ in the workspace directory:
 - Run: **Run on iOS** and **Run on Android** in a workspace's context menu and
   "..." menu, and **Run** on each platform of the inspector's **Build**
   section (**Rebuild** when that platform's last build failed), run
-  `stim ios` or `stim android` in the workspace with no other arguments, so the
-  default slot and configuration. The
+  `stim ios` or `stim android` in the workspace with the default slot and configuration.
+  **Run on** chooses **This Mac** (no remote flag), **Auto** (`--remote auto`), or
+  an approved hosting Mac (`--remote <machine>`). Desktop remembers the choice
+  per workspace and platform in its own preferences; a removed approval falls
+  back to This Mac. Recorded hosted sessions stay fixed to their machine until
+  `stim stop`. Device tiles and sidebar rows show the machine and Auto reason,
+  including local runs that stayed or waited here. The
   menus offer the platforms `stim status` reports in `platforms`, plus any
   with a device or a last build; an older `stim` that does not report them
   offers the used ones, or iOS and Android when none is recorded. Run is disabled while a build runs in the workspace.
@@ -951,7 +956,8 @@ approved one shows **Can build** and **Revoke**. See
 host simulator or emulator sessions here. **Review...** opens the request;
 **Allow** runs `stim-server devices grant <id> --device-host`, and **Deny** or
 **Revoke** removes it. It grants no read, control or build access. Hosted
-sessions are not available yet; an approval does not start a device.
+sessions run with `stim ios|android --remote <machine>` or `--remote auto`;
+an approval does not start a device.
 
 When Tailscale is not running, start it on this Mac. Pairing then works only on
 this Mac, such as in an iOS Simulator, until the private connection is ready.

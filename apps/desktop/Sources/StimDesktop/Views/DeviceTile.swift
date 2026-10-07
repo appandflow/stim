@@ -293,6 +293,9 @@ struct DeviceTile: View {
         Label("on \(machineName(machine))", systemImage: "desktopcomputer")
           .font(.stim(.caption)).foregroundStyle(Palette.tertiary)
       }
+      if let reason = device.placementReason {
+        Text(reason).font(.stim(.caption)).foregroundStyle(Palette.tertiary).help(reason)
+      }
       if let project { Text(project).font(.stim(.footnote)).foregroundStyle(Palette.secondary) }
       FlowLayout(spacing: Space.sm) {
         TimelineView(.periodic(from: .now, by: 30)) { context in
@@ -481,7 +484,7 @@ struct DeviceTile: View {
         viewer
           ? (device.platform == "web"
             ? "Closed. Run stim web to open the page again."
-            : run.map { "Not running. Run stim \($0.arguments.joined(separator: " ")) to boot it and install the app." }
+            : run.map { _ in "Not running. Run to boot the device and install the app." }
               ?? (isPhysical ? "Not connected." : "Shut down. Stim does not boot a device it does not own."))
           : (device.platform == "web" ? "Closed." : run == nil ? "Shut down. Not owned by Stim." : "Shut down.")
       )
@@ -490,15 +493,9 @@ struct DeviceTile: View {
       .fixedSize(horizontal: false, vertical: true)
       Spacer(minLength: 0)
       if let run {
-        Button(viewer ? "Run" : device.platform == "web" ? "Open" : "Boot") {
-          actions.run(
-            device.platform == "web" ? "Open web" : "Run \(device.slot)", steps: [run],
-            present: !viewer && device.platform == "web")
-        }
-        .buttonStyle(.stim())
-        .fixedSize()
-        .disabled(actions.active(for: run.cwd) != nil)
-        .help(run.displayLine())
+        DeviceRunButton(
+          device: device, workspace: run.cwd,
+          title: viewer ? "Run" : device.platform == "web" ? "Open" : "Boot", present: !viewer && device.platform == "web")
       }
     }
     .frame(minHeight: viewer ? nil : 24)

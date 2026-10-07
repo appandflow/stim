@@ -11,6 +11,7 @@ final class BuildMachinesModel {
     }
 
     var statuses: [BuildMachineStatus]
+    var hosts: [BuildMachineStatus]?
     var problem: Problem?
   }
 
@@ -22,21 +23,26 @@ final class BuildMachinesModel {
   private(set) var runs = 0
   private(set) var stats = Fetched<MachineStats>()
   private(set) var updates: [String: MachineUpdatePhase] = [:]
+  private var statusRefreshes: [String: Task<Void, Never>] = [:]
+  private var hostingCheckedAt: [String: Date] = [:]
   private var checks: [String: Check] = [:]
 
   let settings: MachineSettingsStore
   private let cli: Task<StimCLI, Never>
   private let statsReader: StatsReader
-  @ObservationIgnored private var latestRun: [String: Int] = [:]
   @ObservationIgnored private var latestStatsRun = 0
   @ObservationIgnored private var autoUpdated: Set<String> = []
   private let request: @MainActor (String, [String: JSONValue]) async throws -> JSONValue
+  private let now: () -> Date
+  private let machineAccess: @MainActor (String, Bool) async throws -> DoctorReport
   private let pollInterval: Duration
   private let unreachableLimit: Duration
 
   init(
     cli: Task<StimCLI, Never>, settings: MachineSettingsStore, statsReader: StatsReader,
     pollInterval: Duration = .seconds(2), unreachableLimit: Duration = .seconds(300),
+    now: @escaping () -> Date = Date.init,
+    machineAccess: (@MainActor (String, Bool) async throws -> DoctorReport)? = nil,
     request: @escaping @MainActor (String, [String: JSONValue]) async throws -> JSONValue = BuildMachinesModel.localRequest
   ) {
     self.cli = cli
@@ -45,6 +51,8 @@ final class BuildMachinesModel {
     self.pollInterval = pollInterval
     self.unreachableLimit = unreachableLimit
     self.request = request
+    self.now = now
+    self.machineAccess = machineAccess ?? { try await cli.value.machineAccess(cwd: $0, ask: $1) }
   }
 
   static func localRequest(_ method: String, _ params: [String: JSONValue]) async throws -> JSONValue {
@@ -157,6 +165,16 @@ final class BuildMachinesModel {
 
   func check(in checkout: String?) -> Check? { checkout.flatMap { checks[$0] } }
 
+  func approvedHostingMachines(in checkout: String) -> [String]? {
+    checks[checkout]?.hosts?.filter { $0.state == .approved }.map(\.machine)
+  }
+
+  func refreshHostingMachines(checkout: String) async {
+    guard statusRefreshes[checkout] == nil else { return }
+    if let checkedAt = hostingCheckedAt[checkout], now().timeIntervalSince(checkedAt) <= 300 { return }
+    await refreshStatuses(checkout: checkout, ask: false)
+  }
+
   var settingsFailure: String? {
     if let error = settings.error { return error }
     guard let payload = settings.payload, payload.entry("offload.machines") == nil else { return nil }
@@ -200,24 +218,35 @@ final class BuildMachinesModel {
 
   func refreshStatuses(checkout: String?, ask: Bool) async {
     guard let checkout else { return }
-    let run = (latestRun[checkout] ?? 0) + 1
-    latestRun[checkout] = run
-    guard ask || !(entries ?? []).isEmpty else {
-      checks[checkout] = Check(statuses: [], problem: nil)
+    if let pending = statusRefreshes[checkout] {
+      await pending.value
+      if ask { await refreshStatuses(checkout: checkout, ask: true) }
       return
     }
+    let task = Task {
+      await fetchStatuses(checkout: checkout, ask: ask)
+      hostingCheckedAt[checkout] = now()
+      statusRefreshes[checkout] = nil
+    }
+    statusRefreshes[checkout] = task
+    await task.value
+  }
+
+  private func fetchStatuses(checkout: String, ask: Bool) async {
     runs += 1
     defer { runs -= 1 }
-    let cli = await cli.value
-    let result = await Result.awaiting { try await cli.buildMachines(cwd: checkout, ask: ask) }
-    guard run == latestRun[checkout], !Task.isCancelled else { return }
+    let result = await Result.awaiting { try await machineAccess(checkout, ask) }
+    guard !Task.isCancelled else { return }
     switch result {
-    case .success(let reported?):
-      checks[checkout] = Check(statuses: reported, problem: nil)
-      updateAutomatically(reported, checkout: checkout)
-    case .success(nil): checks[checkout] = Check(statuses: [], problem: .unsupported)
+    case .success(let report):
+      checks[checkout] = Check(
+        statuses: report.buildMachines ?? [], hosts: report.deviceHosts,
+        problem: report.buildMachines == nil ? .unsupported : nil)
+      updateAutomatically(report.buildMachines ?? [], checkout: checkout)
     case .failure(let error):
-      checks[checkout] = Check(statuses: check(in: checkout)?.statuses ?? [], problem: .failed(error.localizedDescription))
+      checks[checkout] = Check(
+        statuses: check(in: checkout)?.statuses ?? [], hosts: check(in: checkout)?.hosts,
+        problem: .failed(error.localizedDescription))
     }
   }
 

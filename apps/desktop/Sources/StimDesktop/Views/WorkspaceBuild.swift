@@ -135,6 +135,7 @@ struct WorkspaceActionsButton: View {
         building: env.build?.isRunning == true,
         reloadAllowed: env.canReload,
         onShowLastOutput: actions.latest(for: env.path).map { last in { actions.presented = last } },
+        workspace: env,
         onRun: { platform in actions.runApp(env, platform: platform) },
         onReload: { actions.run("Reload \(env.names.title)", steps: [StimCommand(["reload"], cwd: env.path)], present: false) },
         onStartDevServer: {
@@ -298,6 +299,7 @@ struct WorktreeActionsMenuContent: View {
       removalAllowed: worktreeRemovalAllowed(git: app.worktree?.git), building: app.build?.isRunning == true,
       reloadAllowed: app.canReload,
       onShowLastOutput: actions.latest(for: app.path).map { last in { actions.presented = last } },
+      workspace: app,
       onRun: { actions.runApp(app, platform: $0) },
       onReload: { actions.run("Reload \(app.names.title)", steps: [StimCommand(["reload"], cwd: app.path)], present: false) },
       onStartDevServer: {

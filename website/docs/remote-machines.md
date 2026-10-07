@@ -113,6 +113,12 @@ Copy this prompt to try it: "Run this app with `stim android --remote <machine>`
 Read `android.host.agent` from `stim status --json`, open the installed package
 with its remote config, and verify the first screen with agent-device."
 
+Desktop's **Run on** menu offers **This Mac**, **Auto**, and approved hosting
+Macs for iOS and Android. It remembers the choice per workspace and platform,
+falls back to This Mac if approval is removed, and keeps a recorded hosted
+session fixed until `stim stop`. Device tiles show the machine and Auto's reason,
+including when the run stays or waits locally.
+
 Stim Desktop and the phone app show an **on &lt;machine&gt;** label and view/control
 hosted Android through the client Mac's local stim-server relay. Turn on
 **Serve to phones** in Desktop and pair the phone with the client Mac. Named
