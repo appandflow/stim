@@ -499,7 +499,8 @@ export async function runReload({
 
   const request = { role: target.platform, appId: target.record.appId };
   const expectedPeers = reverseChecked.filter((c) => c.record.appId === target.record.appId).length;
-  for (let poll = 0; (reverseRestored.length || hostedReopened) && poll < RECONNECT_POLLS; poll++) {
+  const awaitReconnect = reverseRestored.length > 0 || hostedReopened;
+  for (let poll = 0; awaitReconnect && poll < RECONNECT_POLLS; poll++) {
     const peers = await d.reloadMetro(port, { ...request, peersOnly: true });
     if (peers.broadcast) await d.sleep(RECONNECT_UNOBSERVED_MS);
     if (peers.unreachable || peers.broadcast || (peers.ok && peers.targets >= expectedPeers)) break;
