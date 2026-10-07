@@ -210,7 +210,6 @@ struct CommandText: View {
   }
 }
 
-/// A command to run elsewhere, selectable, with a button that copies it and shows a checkmark for two seconds.
 struct CopyableCommand: View {
   var command: String
   @State private var copied = false
