@@ -154,6 +154,26 @@ describe('native macOS actions', () => {
     expect(reader().map((r) => r.command)).toEqual(['open']);
   });
 
+  test('a follower started before the launch acquires the target, and a relaunch changes the launch ID', () => {
+    let current: AgentTarget[] = [];
+    const reader = createAgentActionReader({ targets: () => current, home });
+    append(open(0), event(1, 'press'));
+    expect(reader()).toEqual([]);
+    current = [target];
+    expect(reader().map((r) => [r.command, r.deviceId])).toEqual([
+      ['open', 'owned-launch'],
+      ['press', 'owned-launch'],
+    ]);
+    const relaunch = { ...target, id: 'second-launch', launchedAt: target.launchedAt + 10_000 };
+    current = [relaunch];
+    append(event(11, 'press'), open(12), event(13, 'type'));
+    expect(reader().map((r) => [r.command, r.deviceId])).toEqual([
+      ['press', 'second-launch'],
+      ['open', 'second-launch'],
+      ['type', 'second-launch'],
+    ]);
+  });
+
   test('an unrecorded open or close clears attribution before later actions', () => {
     append(open(0), event(1, 'press'));
     const reader = createAgentActionReader({ targets: [target], home });
