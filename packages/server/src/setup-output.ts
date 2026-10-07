@@ -34,6 +34,9 @@ const BANNER = [
   ' |___/\\__|_|_| |_| |_|     |___/\\___|_|    \\_/ \\___|_|',
 ];
 
+const CHECK = String.fromCharCode(0x2713);
+const CROSS = String.fromCharCode(0x2717);
+const ARROW = String.fromCharCode(0x2192);
 const CODES = { green: 32, yellow: 33, red: 31, dim: 2, bold: 1 } as const;
 const WAITING = new Set(['approve', 'permissions.screenRecording', 'permissions.deviceControl']);
 
@@ -56,9 +59,9 @@ export class SetupPrinter {
 
   private mark(state: StepState): string {
     const { color } = this.display;
-    if (state === 'ok') return color ? this.paint('green', '✓') : '[ok]';
-    if (state === 'failed') return color ? this.paint('red', '✗') : '[failed]';
-    if (state === 'running') return color ? this.paint('yellow', '→') : '[..]';
+    if (state === 'ok') return color ? this.paint('green', CHECK) : '[ok]';
+    if (state === 'failed') return color ? this.paint('red', CROSS) : '[failed]';
+    if (state === 'running') return color ? this.paint('yellow', ARROW) : '[..]';
     return color ? this.paint('yellow', '!') : `[${state}]`;
   }
 

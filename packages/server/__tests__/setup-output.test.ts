@@ -1,6 +1,9 @@
 import { expect, test } from 'vitest';
 import { SetupPrinter, setupDisplayFor, type SetupDisplay } from '../src/setup-output.ts';
 
+const CHECK = String.fromCharCode(0x2713);
+const ARROW = String.fromCharCode(0x2192);
+
 function printer(display: Partial<SetupDisplay>, verbose = false) {
   const out: string[] = [];
   const raw: string[] = [];
@@ -39,10 +42,10 @@ test('a color terminal draws the running step in place, then replaces it with a 
   expect(out.join('\n')).toContain('|___/');
   out.length = 0;
   p.step({ id: 'host', state: 'running', title: 'Stim Host', running: 'Installing Stim Host' });
-  expect(raw).toEqual(['\u001b[33m→\u001b[0m Installing Stim Host']);
+  expect(raw).toEqual([`\u001b[33m${ARROW}\u001b[0m Installing Stim Host`]);
   p.step({ id: 'host', state: 'ok', title: 'Stim Host', text: 'Stim Host installed' });
   expect(raw[1]).toBe('\r\u001b[2K');
-  expect(out).toEqual(['\u001b[32m✓\u001b[0m Stim Host installed']);
+  expect(out).toEqual([`\u001b[32m${CHECK}\u001b[0m Stim Host installed`]);
 });
 
 test('a terminal without color prints no escape codes and no in-place line', () => {

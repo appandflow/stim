@@ -508,6 +508,65 @@ async function checkPermissions(
   }
 }
 
+function toolChecks(tools: BuildToolchain, stimBuild: string | null): [string, boolean, string, string][] {
+  return [
+    [
+      'Xcode',
+      !!tools.xcode && !!tools.simulatorSdk,
+      tools.xcode ?? 'Missing Xcode or iOS SDK',
+      'Install Xcode from the App Store; sudo xcodebuild -runFirstLaunch',
+    ],
+    [
+      'iOS runtime',
+      tools.runtimes.length > 0,
+      tools.runtimes.join(', ') || 'No iOS simulator runtime',
+      'xcodebuild -downloadPlatform iOS',
+    ],
+    [
+      'CocoaPods',
+      !!tools.cocoapods,
+      tools.cocoapods ?? 'Missing CocoaPods',
+      'brew install cocoapods; or gem install bundler',
+    ],
+    ['JDK', !!tools.jdk, tools.jdk ?? 'Missing JDK', 'brew install --cask zulu@17'],
+    [
+      'Android SDK',
+      !!tools.androidSdk?.platforms.length && !!tools.androidSdk.buildTools.length && !!tools.androidSdk.ndk.length,
+      tools.androidSdk ? JSON.stringify(tools.androidSdk) : 'Missing Android SDK',
+      'Install Android Studio or set ANDROID_HOME',
+    ],
+    [
+      'Stim build',
+      !!stimBuild && stimBuild === tools.stimBuild,
+      `${stimBuild ?? 'unknown'} (setup: ${tools.stimBuild ?? 'unknown'})`,
+      "Install This Mac's Build from Stim Desktop > Settings > Build machines",
+    ],
+  ];
+}
+
+const capabilityNoun = (capability: SetupCapability) => (capability === 'build' ? 'builds' : 'hosted simulators');
+
+function approvalQuestion(concise: boolean, name: string, capability: SetupCapability, nodeId: string): string {
+  if (!concise) {
+    const verb = capability === 'build' ? 'build on this Mac' : 'host simulators on this Mac';
+    return `${name} (node ${nodeId.slice(0, 4)}...) asks to ${verb}. Approve? [y/N] `;
+  }
+  const action =
+    capability === 'build' ? 'build here (runs its project code' : 'host simulators here (runs its app code';
+  return `Approve ${name} to ${action} on this Mac)? [y/N] `;
+}
+
+function serverText(desktop: boolean, decision: string, version: string): string {
+  if (desktop) return `using the app's stim-server ${version}`;
+  return `stim-server ${version} ${decision === 'reuse' ? 'already installed' : 'installed'}`;
+}
+
+function approvalView(complete: boolean): StepView {
+  return complete
+    ? { hidden: true }
+    : { text: 'no approval before the ticket expired: builds or hosted simulators will not work' };
+}
+
 function printSuccess(
   output: SetupOutput,
   options: SetupOptions,
@@ -525,7 +584,7 @@ function printSuccess(
   printer.result(
     output.granted.map((g) => ({
       state: 'ok' as const,
-      text: `${g.capability === 'build' ? 'builds' : 'hosted simulators'}: approved for ${g.client.name} (request ${g.id})`,
+      text: `${capabilityNoun(g.capability)}: approved for ${g.client.name} (request ${g.id})`,
     })),
   );
   for (const gap of gaps) printer.line(`  Fix (${gap.subject}): ${gap.fix}`);
@@ -720,9 +779,7 @@ export async function runSetup(args: string[], version: string, deps: SetupDeps)
             : 'Installed exact release.',
         undefined,
         {
-          text: desktop
-            ? `using the app's stim-server ${output.server.version}`
-            : `stim-server ${output.server.version} ${decision === 'reuse' ? 'already installed' : 'installed'}`,
+          text: serverText(desktop, decision, output.server.version),
         },
       );
       step('host', 'running', 'Stim Host', undefined, undefined, { running: 'Installing Stim Host' });
@@ -815,7 +872,6 @@ export async function runSetup(args: string[], version: string, deps: SetupDeps)
       if (!remaining.length) break;
       const grants = selectGrants(deps.records(deps.now()), { ...opts, capabilities: remaining, now: deps.now() });
       for (const { capability, record, approved } of grants) {
-        const verb = capability === 'build' ? 'build on this Mac' : 'host simulators on this Mac';
         if (!approved && !opts.yes && !deps.tty)
           throw new SetupRefusal('To approve requests, rerun with --yes or in a terminal.');
         if (!approved && !opts.yes) {
@@ -826,9 +882,7 @@ export async function runSetup(args: string[], version: string, deps: SetupDeps)
                 ? 'This runs its project code on this Mac to build.'
                 : 'This runs its native app code in session-owned simulators on this Mac.',
             );
-          const question = concise
-            ? `Approve ${record.name} to ${capability === 'build' ? 'build' : 'host simulators'} here (runs its ${capability === 'build' ? 'project' : 'app'} code on this Mac)? [y/N] `
-            : `${record.name} (node ${opts.nodeId.slice(0, 4)}...) asks to ${verb}. Approve? [y/N] `;
+          const question = approvalQuestion(concise, record.name, capability, opts.nodeId);
           const yes = await wait(deps.confirm(question, Math.max(1, Date.parse(opts.expiresAt) - deps.now())));
           if (deps.now() >= Date.parse(opts.expiresAt)) break;
           if (!yes) {
@@ -851,7 +905,7 @@ export async function runSetup(args: string[], version: string, deps: SetupDeps)
           `request ${record.id}`,
           undefined,
           {
-            text: `${approved ? 'already approved' : 'approved'} ${record.name} for ${capability === 'build' ? 'builds' : 'hosted simulators'}`,
+            text: `${approved ? 'already approved' : 'approved'} ${record.name} for ${capabilityNoun(capability)}`,
           },
         );
       }
@@ -866,48 +920,14 @@ export async function runSetup(args: string[], version: string, deps: SetupDeps)
         ? 'Chosen capabilities approved.'
         : 'Missing approval: builds or hosted simulators will not work. Generate a new command after expiry.',
       undefined,
-      journal.granted.length === opts.capabilities.length
-        ? { hidden: true }
-        : { text: 'no approval before the ticket expired: builds or hosted simulators will not work' },
+      approvalView(journal.granted.length === opts.capabilities.length),
     );
     if (journal.granted.length) {
       if (opts.capabilities.includes('device-host')) await checkPermissions(deps, opts, host!, desktop, output, step);
       step('tools', 'running', 'Tools', undefined, undefined, { running: 'Checking build tools' });
       const tools = await wait(deps.toolchain(opts));
       if (!tools) throw new SetupRefusal('Could not read the local build toolchain.');
-      const checks: [string, boolean, string, string][] = [
-        [
-          'Xcode',
-          !!tools.xcode && !!tools.simulatorSdk,
-          tools.xcode ?? 'Missing Xcode or iOS SDK',
-          'Install Xcode from the App Store; sudo xcodebuild -runFirstLaunch',
-        ],
-        [
-          'iOS runtime',
-          tools.runtimes.length > 0,
-          tools.runtimes.join(', ') || 'No iOS simulator runtime',
-          'xcodebuild -downloadPlatform iOS',
-        ],
-        [
-          'CocoaPods',
-          !!tools.cocoapods,
-          tools.cocoapods ?? 'Missing CocoaPods',
-          'brew install cocoapods; or gem install bundler',
-        ],
-        ['JDK', !!tools.jdk, tools.jdk ?? 'Missing JDK', 'brew install --cask zulu@17'],
-        [
-          'Android SDK',
-          !!tools.androidSdk?.platforms.length && !!tools.androidSdk.buildTools.length && !!tools.androidSdk.ndk.length,
-          tools.androidSdk ? JSON.stringify(tools.androidSdk) : 'Missing Android SDK',
-          'Install Android Studio or set ANDROID_HOME',
-        ],
-        [
-          'Stim build',
-          !!output.server.stimBuild && output.server.stimBuild === tools.stimBuild,
-          `${output.server.stimBuild ?? 'unknown'} (setup: ${tools.stimBuild ?? 'unknown'})`,
-          "Install This Mac's Build from Stim Desktop > Settings > Build machines",
-        ],
-      ];
+      const checks = toolChecks(tools, output.server.stimBuild);
       for (const [tool, present, detail, fix] of checks) {
         const needed =
           opts.capabilities.includes('build') || tool === 'Xcode' || tool === 'iOS runtime' || tool === 'Stim build';

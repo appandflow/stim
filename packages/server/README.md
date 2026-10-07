@@ -91,7 +91,7 @@ A person on the worker runs the command generated for their client Mac:
 ```bash
 stim-server setup --client <node-id> --ticket <43-base64url-characters> --expires <ISO-time> \
   --build --device-host [--port <n>] [--label <name>] \
-  [--env KEY=VALUE]... [--path-prepend <dir>]... [--yes] [--json]
+  [--env KEY=VALUE]... [--path-prepend <dir>]... [--yes] [--json] [--verbose]
 ```
 
 If the server is not installed globally, use `npx --yes --package @stim-cli/server@<version> stim-server`
@@ -144,8 +144,17 @@ unreadable routes refuse with a remedy. Tool checks print fixes for Xcode,
 simulator runtimes, CocoaPods, JDK, Android SDK and the Stim build; they install
 nothing. Android and CocoaPods checks are not needed for hosting alone.
 
-Plain progress goes to stdout; errors use `stim-server: <message>` on stderr.
-`--json` sends progress to stderr and prints one final payload with `ok`,
+In a terminal, setup prints a banner, then one line per step with a green check,
+a yellow arrow while a step runs, or a red cross; `NO_COLOR`, `TERM=dumb` and a
+non-terminal give plain `[ok]`, `[failed]` and `[pending]` marks, no colors and no
+in-place line. The y/N questions stay, one line each. The run ends with a
+headline such as "janics-mac-mini is ready to build for Janic's MacBook Pro", one
+line per approved capability, a `Fix` line for each skipped permission or missing
+tool, and one `To undo` line. `--verbose` prints every step with its detail, the
+install, service and route notes, and the long summary with the undo commands, as
+earlier releases did. Plain progress goes to stdout; errors use
+`stim-server: <message>` on stderr (terminal runs show the refusal on stdout only).
+`--json` sends the long (verbose) progress to stderr, without the banner, and prints one final payload with `ok`,
 `label`, `port`, `route` (state, DNS name, HTTPS port), `server` (version and
 Stim build), `managed`, separate `granted` request ids and client identities,
 `permissions`, `tools` and `warnings`. Final permission values are `granted`,
@@ -172,7 +181,7 @@ with detail `interrupted`, completes the journal, releases the setup claim,
 and exits 1. A typed N also exits 1; a question timeout follows ticket expiry
 and exits 2.
 
-The summary lists what is ready and the undo commands:
+The `To undo` line (or the `--verbose` summary) lists the undo commands:
 
 ```bash
 stim-server devices revoke <build-request-id>
