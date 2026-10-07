@@ -238,8 +238,7 @@ struct CopyableCommand: View {
       .help("Copy the command")
       .accessibilityLabel("Copy \(command)")
       .task(id: copyCount) {
-        guard copied else { return }
-        try? await Task.sleep(for: .seconds(2))
+        guard copied, (try? await Task.sleep(for: .seconds(2))) != nil else { return }
         setCopied(false)
       }
     }
