@@ -203,7 +203,13 @@ export async function buildMacosBundle({
     }
     let slot: Awaited<ReturnType<typeof acquireBuildSlot>> | undefined;
     try {
-      slot = await acquireBuildSlot({ max: getConcurrencyLimits().maxBuilds, root, logFile: writer.file, out: note });
+      slot = await acquireBuildSlot({
+        max: getConcurrencyLimits().maxBuilds,
+        root,
+        logFile: writer.file,
+        out: note,
+        waitingFor: (info) => progress.waitingFor(info, 'build-slot'),
+      });
       if (record) record.builtOn = 'here';
       progress.step('compile');
       await tool(

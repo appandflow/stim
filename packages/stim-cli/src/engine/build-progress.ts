@@ -409,7 +409,7 @@ export function recordFinishedBuild(
     const slots = isJsonObject(state.deviceSlots) ? state.deviceSlots : {};
     const savedSlot = isJsonObject(slots[slot]) ? slots[slot] : {};
     const savedDevice = slot === 'default' ? state[platform] : savedSlot[platform];
-    if (record.devicePlacement || isJsonObject(savedDevice)) {
+    if (platform !== 'macos' && (record.devicePlacement || isJsonObject(savedDevice))) {
       const device = isJsonObject(savedDevice) ? { ...savedDevice } : {};
       if (record.devicePlacement) device.devicePlacement = record.devicePlacement;
       else delete device.devicePlacement;

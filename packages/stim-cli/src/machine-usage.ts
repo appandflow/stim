@@ -159,7 +159,7 @@ export function attributeMachineUsage({
       }
     }
     if (root.build && present.has(root.build.pid)) {
-      const label = root.build.platform === 'ios' ? 'iOS build' : 'Android build';
+      const label = { ios: 'iOS build', android: 'Android build', macos: 'macOS build' }[root.build.platform];
       claim(root.build.pid, `build:${env.path}`, workspaceOwner('build', env, label, root.build.platform));
     }
     for (const pid of root.macosPids ?? []) {
