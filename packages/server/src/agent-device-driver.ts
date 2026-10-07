@@ -380,7 +380,7 @@ export class AgentDeviceDriver implements HostedAgentDriver {
         proxy.stdout?.off('data', onData);
         proxy.stderr?.off('data', onError);
         proxy.stderr?.resume();
-        proxy.off('exit', onExit);
+        proxy.off('close', onExit);
         proxy.off('error', finish);
         if (result instanceof Error) reject(result);
         else resolve(result);
@@ -401,7 +401,7 @@ export class AgentDeviceDriver implements HostedAgentDriver {
       };
       proxy.stdout?.on('data', onData);
       proxy.stderr?.on('data', onError);
-      proxy.once('exit', onExit);
+      proxy.once('close', onExit);
       proxy.once('error', finish);
     });
   }
