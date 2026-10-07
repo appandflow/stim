@@ -485,7 +485,7 @@ public final class SimulatorDisplayNSView: NSView {
     guard acceptsInput, let udid, let hid = inputClient(), hid.isConnected,
       (SimulatorKit.usageForKeyCode?(0x37) ?? 0) != 0, (SimulatorKit.usageForKeyCode?(0x09) ?? 0) != 0
     else { return false }
-    guard await setClipboard(text), acceptsInput, self.udid == udid, self.hid === hid, hid.isConnected else { return false }
+    guard await setClipboard(text), !Task.isCancelled, acceptsInput, self.udid == udid, self.hid === hid, hid.isConnected else { return false }
     let command: UInt16 = 0x37
     let v: UInt16 = 0x09
     hid.hardwareKey(code: command, down: true)

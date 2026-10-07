@@ -292,8 +292,9 @@ manager types), files or images, and empty or over-256 KB text are not sent to t
 is written to the Mac marked transient, since its sensitivity is unknown. The popover also has
 **Paste Mac clipboard**, which presses Command-V on an iOS simulator (iOS asks
 "Allow Paste" for text from another source) and **Copy device clipboard**.
-Physical devices, hosted and remote sessions and replay never sync: clipboard text
-would otherwise be sent to another Mac.
+Apps on the device, and agents driving it, can read the text sent to it. Physical
+devices, hosted and remote sessions and replay never sync; a hosted device would
+receive the text over the tailnet on another Mac.
 
 On the right, 360 points wide, the **agent actions** list what agents did on
 the device (`stim logs --source agent`), oldest first, with filter chips (All,
