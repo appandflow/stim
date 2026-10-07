@@ -163,7 +163,7 @@ const failed = (code: ProtocolError['code'], message: string): { error: Protocol
 });
 
 /**
- * Asks an approved build machine or device host to update its stim-server to what this Mac runs: the same npm
+ * Asks an approved remote Mac or device host to update its stim-server to what this Mac runs: the same npm
  * release, or this checkout's own packed build. It connects with the credential `stim doctor --fix` stored for that
  * machine and sends the token only to the node it pinned.
  */

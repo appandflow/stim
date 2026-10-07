@@ -27,13 +27,15 @@ struct TutorialPanel: View {
   @State private var expanded: String?
   @State private var collapsedOptional: Set<String> = []
   @ObservedObject private var updater = AppUpdater.shared
+  @ObservedObject private var flags = FeatureFlagStore.shared
+  private var steps: [TutorialStep] { TutorialSteps.steps(phoneApp: flags.phoneApp) }
 
   var body: some View {
     VStack(spacing: 0) {
       HStack {
         SectionLabel(title: "Stim tutorial")
         Spacer()
-        Text("\(position) of \(TutorialSteps.all.count)")
+        Text("\(position) of \(steps.count)")
           .font(.stim(.caption)).foregroundStyle(Palette.secondary).monospacedDigit()
       }
       .padding(Space.xl)
@@ -88,7 +90,7 @@ struct TutorialPanel: View {
         Button("Open Archived", action: openArchived)
           .buttonStyle(.stim(.primary)).accessibilityLabel("Open Archived workspaces")
       }
-      ForEach(TutorialSteps.all, id: \.id) { step in
+      ForEach(steps, id: \.id) { step in
         if let state = snapshot.steps.first(where: { $0.id == step.id }) {
           stepRow(step, state: state).id(step.id)
         }
@@ -98,8 +100,8 @@ struct TutorialPanel: View {
   }
 
   private var position: Int {
-    snapshot.currentStep.flatMap { id in TutorialSteps.all.firstIndex { $0.id == id }.map { $0 + 1 } }
-      ?? TutorialSteps.all.count
+    snapshot.currentStep.flatMap { id in steps.firstIndex { $0.id == id }.map { $0 + 1 } }
+      ?? steps.count
   }
 
   private func stepRow(_ step: TutorialStep, state: TutorialStepProgress) -> some View {
@@ -291,7 +293,7 @@ struct TutorialPanel: View {
     case "phone":
       return "Optional. Pair a phone from Settings > Phones, then open Stim on it to see this workspace. You can skip this step."
     case "machine":
-      return "Optional. An approved Mac can build the same app. Choose one in Settings > Build Machines, or skip this step."
+      return "Optional. An approved Mac can build the same app. Choose one in Settings > Remote Macs, or skip this step."
     case "finish":
       return
         "Your agent reverts the tutorial edit, stops the workspace and removes only its worktree. Open Archived to revisit its history."
@@ -311,7 +313,7 @@ struct TutorialPanel: View {
     case "screen-recording": return "Screen recording replay"
     case "stopped": return "Workspace stopped"
     case "archived": return "Worktree removed and archived"
-    case "approved": return "Build machine approved"
+    case "approved": return "Remote Mac approved"
     case "offloaded": return "Build ran on another Mac"
     default: return PhaseStep.name(id)
     }

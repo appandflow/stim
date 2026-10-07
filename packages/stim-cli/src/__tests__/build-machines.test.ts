@@ -10,6 +10,7 @@ import {
   type Endpoint,
   type HelloReply,
 } from '../offload/build-machines.ts';
+import { getConfigPath } from '../workspace/config.ts';
 
 let home: string;
 
@@ -98,7 +99,7 @@ describe('inspectBuildMachines', () => {
     const { io, calls } = fakeIo('nImpostor', []);
     const { findings, machines } = await inspectBuildMachines({ fix: true }, io, ['mini']);
     expect(calls).toEqual([]);
-    expect(findings).toEqual([expect.objectContaining({ title: 'Build machine mini is a different tailnet node' })]);
+    expect(findings).toEqual([expect.objectContaining({ title: 'Remote Mac mini is a different tailnet node' })]);
     expect(machines).toEqual([expect.objectContaining({ machine: 'mini', state: 'node-changed' })]);
     expect(readBuildMachines()[0]!.nodeId).toBe('nMini');
   });
@@ -108,7 +109,7 @@ describe('inspectBuildMachines', () => {
     const approved: HelloReply = { result: { capabilities: ['build'], device: { id: 'ab12', name: 'laptop' } } };
     const { io, calls } = fakeIo('nMini', [{ error: { code: 'approval-pending', message: 'wait' } }, approved]);
     expect(await inspectBuildMachines({ fix: false }, io, ['mini'])).toEqual({
-      findings: [expect.objectContaining({ title: 'Build machine mini has not approved this Mac yet' })],
+      findings: [expect.objectContaining({ title: 'Remote Mac mini has not approved this Mac for builds yet' })],
       machines: [expect.objectContaining({ state: 'pending', deviceId: 'ab12' })],
     });
     expect(await inspectBuildMachines({ fix: false }, io, ['mini'])).toEqual({
@@ -348,5 +349,19 @@ test.each([undefined, null, { name: 'Stim Host', screenRecording: false, accessi
     expect(entry.state).toBe('approved');
     expect(entry.host).toEqual(host ?? undefined);
     expect(Object.hasOwn(entry, 'host')).toBe(!!host);
+  },
+);
+
+it.each([{ machines: 'mini' }, { machines: ['mini', 42] }, 'mini'])(
+  'doctor --fix keeps saved credentials when remote is invalid: %j',
+  async (remote) => {
+    await inspectBuildMachines({ fix: true }, fakeIo('nMini', [pending]).io, ['mini']);
+    const saved = readFileSync(buildMachinesFile(), 'utf8');
+    writeFileSync(getConfigPath(), JSON.stringify({ remote }));
+    const { io, calls } = fakeIo('nMini', []);
+    const result = await inspectBuildMachines({ fix: true }, io);
+    expect(result.findings).toEqual([expect.objectContaining({ title: 'Invalid remote.machines setting' })]);
+    expect(readFileSync(buildMachinesFile(), 'utf8')).toBe(saved);
+    expect(calls).toEqual([]);
   },
 );

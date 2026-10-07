@@ -73,7 +73,7 @@ public enum MachineUpdatePhase: Equatable, Sendable {
   }
 }
 
-/// Whether `status` says the build machine runs another Stim build than this Mac, the case an update fixes.
+/// Whether `status` says the remote Mac runs another Stim build than this Mac, the case an update fixes.
 public func needsStimUpdate(_ status: BuildMachineStatus) -> Bool {
   status.state == .approved && status.problems?.contains { $0.code == "stim-build" } == true
 }

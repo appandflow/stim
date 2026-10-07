@@ -6,7 +6,7 @@ import { pairedMachines } from './build-machines.ts';
 export class OffloadRefusal extends Error {
   readonly code = 'STIM_OFFLOAD_REFUSED';
   readonly remedy =
-    'Run stim doctor --fix to ask for build access if not paired. On the worker, a person finds the id with stim-server devices and approves it with stim-server devices grant <id> --build. Check stim settings get offload.machines, or rerun with --build-machine auto or --build-machine local.';
+    'Run stim doctor --fix to ask for build access if not paired. On the worker, a person finds the id with stim-server devices and approves it with stim-server devices grant <id> --build. Check stim settings get remote.machines, or rerun with --remote-build auto or --remote-build local.';
 
   constructor(machine: string, reason: string) {
     super(reason.startsWith(`${machine}: `) ? reason : `${machine}: ${reason}`);
@@ -16,10 +16,9 @@ export class OffloadRefusal extends Error {
 export function resolveBuildMachine(flag?: string, env?: string, setting?: unknown): string {
   const selected = flag ?? (env?.trim() || undefined) ?? setting ?? 'auto';
   if (typeof selected !== 'string' || !selected.trim() || !parseMachine(selected)) {
-    throw Object.assign(
-      new Error('--build-machine / offload.machine must be auto, local, or a tailnet machine name.'),
-      { code: 'STIM_BAD_ARG' },
-    );
+    throw Object.assign(new Error('--remote-build / remote.build must be auto, local, or a tailnet machine name.'), {
+      code: 'STIM_BAD_ARG',
+    });
   }
   const trimmed = selected.trim();
   const reserved = trimmed.toLowerCase();
@@ -47,7 +46,7 @@ export function requireConfiguredMachine(selected: string, machines: unknown): s
     return candidate?.name === parsed.name && candidate.port === parsed.port;
   });
   if (!match)
-    throw new OffloadRefusal(selected, `not listed in offload.machines (configured: ${entries.join(', ') || 'none'})`);
+    throw new OffloadRefusal(selected, `not listed in remote.machines (configured: ${entries.join(', ') || 'none'})`);
   return match;
 }
 
@@ -55,13 +54,13 @@ export function resolveBuildPlacement(flag?: string): {
   selected: string;
   failure?: { code: string; message: string; remedy: string };
 } {
-  const offload = loadConfig()?.offload;
+  const remote = loadConfig()?.remote;
   let selected = 'auto';
   try {
-    selected = resolveBuildMachine(flag, process.env.STIM_OFFLOAD_MACHINE, offload?.machine);
-    selected = requireConfiguredMachine(selected, offload?.machines);
+    selected = resolveBuildMachine(flag, process.env.STIM_REMOTE_BUILD, remote?.build);
+    selected = requireConfiguredMachine(selected, remote?.machines);
     if (namedBuildMachine(selected) && pairedMachines([selected]).length === 0)
-      throw new OffloadRefusal(selected, 'no build machine is paired');
+      throw new OffloadRefusal(selected, 'no remote Mac is paired');
     return { selected };
   } catch (error) {
     return {
@@ -72,7 +71,7 @@ export function resolveBuildPlacement(flag?: string): {
         remedy:
           error instanceof OffloadRefusal
             ? error.remedy
-            : 'Pass --build-machine auto, local, or an entry from stim settings get offload.machines.',
+            : 'Pass --remote-build auto, local, or an entry from stim settings get remote.machines.',
       },
     };
   }

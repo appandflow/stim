@@ -143,7 +143,7 @@ export async function selectIosPlacement(
       slot,
       platform: 'ios',
       selectors: hostedIosSelectors(deviceType, runtime),
-      buildMachine: opts.buildMachine,
+      buildMachine: opts.remoteBuild,
       noWait,
     });
     phase('placement:', devicePlacementLine(placed.placement, placed.skipped));

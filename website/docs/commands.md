@@ -85,7 +85,7 @@ registers the project for `stim status`, and a run without `--platform` counts
 for both, so `stim guide` can tell when doctor is due again. A run in a
 directory that is not an app records nothing.
 
-The `offload-candidate` note appears after at least 3 successful local cold builds in 7 days average over 3 minutes, with no `offload.machines` and an online tailnet Mac; it points to Stim Desktop **Settings > Build machines > Add**.
+The `offload-candidate` note appears after at least 3 successful local cold builds in 7 days average over 3 minutes, with no `remote.machines` and an online tailnet Mac; it points to Stim Desktop **Settings > Remote Macs > Add**.
 
 Doctor also prints the running CLI version and the `stim` installation resolved
 from `PATH`, and flags a resolved installation that is older than another
@@ -115,7 +115,7 @@ repair: its cache-lock check cannot detect uncached, release-swap fallback, or
 direct Gradle builds. The next build recreates these files; source, custom launcher settings,
 and shared ccache entries are preserved. See `stim guide lifecycle options`.
 
-When [`hosting.machines`](./settings.md#machine-settings) names hosting Macs,
+When [`remote.machines`](./settings.md#machine-settings) names remote Macs,
 doctor reports their separate device-host approval in `deviceHosts`. Only
 `--fix` requests approval, retries a definite revoked or lapsed request, and
 forgets names removed from the setting. A person on the hosting Mac runs the
@@ -128,19 +128,21 @@ are `approved`, `pending`, `not-asked`, `revoked`, `node-changed`,
 `credentials-unavailable` and `busy`. Hosting approval does not yet change
 `ios` or `android` placement.
 
-When the [`offload.machines`](./settings.md#machine-settings) setting names
-build machines, doctor reports each one this Mac is not approved on: not on the
+When the [`remote.machines`](./settings.md#machine-settings) setting names
+remote Macs, doctor reports each one this Mac is not approved on: not on the
 tailnet, not asked yet, waiting for approval (with the
-`stim-server devices grant <id> --build` command to run there), revoked, or
-now a different tailnet node than the one this Mac paired with. `--fix` asks
-each named machine without a pairing for build access, asks again one that
-revoked or let the request lapse, and forgets the pairing of a machine no
-longer named. It never re-pairs with a different node. `--json` lists each named machine
-under `buildMachines` with its `state`: `approved`, `pending`, `not-asked`,
+`stim-server devices grant <id> --build` or `--device-host` command to run
+there), revoked, or now a different tailnet node than the one this Mac paired
+with. A listed Mac that never granted an approval is not used for it. `--fix`
+asks each named Mac without a pairing for build and device-host access, asks
+again one that revoked or let the request lapse, and forgets the pairing of a
+Mac no longer named. It never re-pairs with a different node. `--json` lists
+each named Mac's build approval under `remoteMachines`, and its device-host
+approval under `deviceHosts`, with a `state`: `approved`, `pending`, `not-asked`,
 `revoked`, `node-changed`, `not-on-tailnet`, `tailscale-off`, `unreachable` or
 `invalid`.
 
-Approved entries in `buildMachines` and `deviceHosts` also include
+Approved entries in `remoteMachines` and `deviceHosts` also include
 `host: { name, screenRecording, accessibility }` when the worker reports its
 Stim Host permissions; otherwise `host` is omitted.
 
@@ -256,12 +258,12 @@ stim ios [--slot <name>] [--scheme <name>] [--configuration <name>] [--device-ty
 Builds or restores the iOS app. Stim then boots an owned simulator, installs the
 app, opens it, and checks launch logs. Native builds run locally by default;
 `--eas-profile` downloads an existing EAS development build. A simulator Debug
-build can compile on a paired build machine instead: see `offload.mode` in
+build can compile on a paired remote Mac instead: see `remote.buildMode` in
 [machine settings](./settings.md#machine-settings).
 
 - `--configuration <name>` selects an Xcode configuration. The default is Debug.
-- `--build-machine <auto|local|name>` overrides `STIM_OFFLOAD_MACHINE` and
-  `offload.machine`. A name requires that configured, paired worker and fails
+- `--remote-build <auto|local|name>` overrides `STIM_REMOTE_BUILD` and
+  `remote.build`. A name requires that configured, paired worker and fails
   with `STIM_OFFLOAD_REFUSED` without local fallback. Unlisted or unpaired names refuse at setup before checking the cache, without
   a build record or failed-run stats. A listed paired name with a cache hit
   contacts no worker. Prebuild and pod install still run on this Mac before
@@ -312,7 +314,7 @@ build can compile on a paired build machine instead: see `offload.mode` in
   device. Installing the same app terminates that workspace's running app.
   Without `--device`, it refuses a full device cap or existing slot queue
   immediately. It cannot be combined with `--wait`.
-- `--remote <machine>` runs on a named approved Mac in `hosting.machines`, with no local fallback.
+- `--remote <machine>` runs on a named approved Mac in `remote.machines`, with no local fallback.
   `auto` places on an approved Mac when this Mac is full or busy, falling back
   to the local device queue when no host admits. See [hosted iOS](./owned-devices.md#run-ios-on-another-mac).
   With `hosting.agentDriver=agent-device` on the host and agent-device 0.21.20 or later on both Macs,
@@ -396,11 +398,11 @@ stim android [--slot <name>] [--variant <name>] [--system-image <id>] [--device-
 
 Builds or restores the Android app. Stim then boots an owned emulator, installs
 the app, opens it, and checks launch logs. An emulator debug build can compile
-on a paired build machine instead: see `offload.mode` in
+on a paired remote Mac instead: see `remote.buildMode` in
 [machine settings](./settings.md#machine-settings).
 
-- `--build-machine <auto|local|name>` overrides `STIM_OFFLOAD_MACHINE` and
-  `offload.machine`. A name requires that configured, paired worker and fails
+- `--remote-build <auto|local|name>` overrides `STIM_REMOTE_BUILD` and
+  `remote.build`. A name requires that configured, paired worker and fails
   with `STIM_OFFLOAD_REFUSED` without local fallback. Unlisted or unpaired names refuse at setup before checking the cache, without
   a build record or failed-run stats. A listed paired name with a cache hit
   contacts no worker. Prebuild and pod install still run on this Mac before
@@ -456,7 +458,7 @@ on a paired build machine instead: see `offload.mode` in
   the same app terminates that workspace's running app. Without `--device`, it
   refuses a full device cap or existing slot queue immediately. It cannot be
   combined with `--wait`.
-- `--remote <machine>` runs on a named approved Mac in `hosting.machines`, with no fallback. `--remote auto` places on an approved host when this Mac is full or busy, or joins the local device queue when no host admits. `--system-image` and `--device-profile` select the host's installed choices. See [remote machines](./remote-machines.md#run-android-on-a-hosting-mac).
+- `--remote <machine>` runs on a named approved Mac in `remote.machines`, with no fallback. `--remote auto` places on an approved host when this Mac is full or busy, or joins the local device queue when no host admits. `--system-image` and `--device-profile` select the host's installed choices. See [remote Macs](./remote-machines.md#run-android-on-a-hosting-mac).
 - `--remote proxy` uses a configured Agent Device daemon.
 - `--remote eas` uses an EAS remote emulator. It needs eas-cli 21.6.0 or later.
 - `--eas-profile <name>` selects a compatible [EAS development build](./eas-builds.md),
@@ -544,7 +546,7 @@ miss, which native change causes it.
 ## `macos`
 
 ```text
-stim macos [--build-machine <auto|local|name>] [--remote <machine>] [--json]
+stim macos [--remote-build <auto|local|name>] [--remote <machine>] [--json]
 ```
 
 Builds the explicitly configured Swift Package executable in Debug and launches
@@ -554,12 +556,12 @@ with no Metro or custom build scripts. Workspace logs include compiler output
 and runtime stdout/stderr. `status` reports the app and build, and `stop` signals
 only their verified owners. Stim Desktop can preview one owned window and open
 the verified app for native input on the same Mac using existing permissions.
-`--build-machine <auto|local|name>` selects build placement as described in
+`--remote-build <auto|local|name>` selects build placement as described in
 [machine settings](./settings.md#machine-settings). A name refuses with
 `STIM_OFFLOAD_REFUSED` without fallback; `local` compiles here.
 
-`--remote <machine>` takes a hosting Mac name from
-[`hosting.machines`](./settings.md#machine-settings) and runs the built app on
+`--remote <machine>` takes a remote Mac name from
+[`remote.machines`](./settings.md#machine-settings) and runs the built app on
 that approved Mac over the tailnet. It never falls back to a local launch, and
 `stop` or `worktree remove` stop it there. macOS refuses `eas` and `proxy` because
 it has neither backend, and refuses `auto` until automatic placement ships.
@@ -1083,12 +1085,14 @@ finished and `total` the targets in its dependency graph. A target counts once
 xcodebuild touches or signs its product, so an incremental build can end below
 `total`. For Gradle,
 `unit` is `tasks`, `done` counts the tasks it reported and `total` is `null`.
+For SwiftPM (`stim macos`), `unit` is `steps`, and `done` and `total` are the
+`[done / total]` of its latest progress line; `total` can grow while SwiftPM plans the build.
 `line` is the latest compile, link or task line with paths shortened to file
 names. These are counts, not a completion percentage: one target can take ten
 minutes and a cached one no time at all.
 
 `build.placement` says where the build runs: `"local"`, or, while it is
-offloaded to a [build machine](./settings.md#machine-settings), an object with
+offloaded to a [remote Mac](./settings.md#machine-settings), an object with
 the machine and its step there. `phase` is `sync`, `deps`, `prebuild`,
 `pods`, `build` (xcodebuild or Gradle) or `fetch`; `startedAt` is when the offload
 started and `phaseStartedAt` when that step did. Meanwhile `build.phase`
@@ -1141,7 +1145,7 @@ selected `auto`, `local`, or machine name. `builtOn` records `here` or the worke
 name when a build ran; it is absent on a cache hit or a refusal before building.
 Invalid, unlisted or unpaired selections refuse at setup without a build record.
 `offloadedTo` names the
-build machine that compiled the app; `offloadFallback` is why a run that
+remote Mac that compiled the app; `offloadFallback` is why a run that
 considered offloading built here instead, such as
 `janics-mac-mini: busy (load at or above 2/core; load 8.2/core, 2 builds)`. A failed run whose
 compiler reported errors carries `diagnostics`: up to five
@@ -1286,9 +1290,10 @@ moment, minus its own duration, floored at zero.
 Every run that compiles also records its placement: where it built (`here`,
 `offloaded`, or `fell-back` when it tried a machine and built here), the
 reason the run printed on its `placement:` line, the build time and this
-project's last cold build here to compare it with. `offload.placements` lists
-the last 100 from the last 7 days, newest first. `offload.machines` gives each
-build machine's offloaded builds, offloaded time, estimated time saved and
+project's last cold build here to compare it with. The `placements` list under
+`offload` in the stats payload holds the last 100 from the last 7 days, newest
+first, and its `machines` map gives each
+remote Mac's offloaded builds, offloaded time, estimated time saved and
 fallbacks, for today (this Mac's calendar day) and in total. The plain output
 adds a `build placement` section with the same counts and the last 5
 placements. Placements include `slotWaitMs` and `deviceSlotWaitMs` as whole milliseconds waiting for build and owned-device slots, omitted when zero. `stim guide facts stats` has every field.
@@ -1818,4 +1823,4 @@ npx --yes --package @stim-cli/server@<version> stim-server setup --client <node-
 
 See the [server command reference](https://github.com/appandflow/stim/blob/main/packages/server/README.md#set-up-a-worker-mac)
 for flags, permissions, journals, exit codes and undo commands.
-The [remote machines guide](./remote-machines.md) walks through Desktop and manual setup.
+The [remote Macs guide](./remote-machines.md) walks through Desktop and manual setup.

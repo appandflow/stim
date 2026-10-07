@@ -96,7 +96,7 @@ beforeEach(async () => {
   root = realpathSync(mkdtempSync(join(tmpdir(), 'stim-host-app-')));
   mkdirSync(join(root, 'Fixture.app'));
   writeFileSync(join(root, 'Fixture.app', 'Info.plist'), 'app metadata');
-  writeFileSync(getConfigPath(), JSON.stringify({ hosting: { machines: ['mini'] } }));
+  writeFileSync(getConfigPath(), JSON.stringify({ remote: { machines: ['mini'] } }));
   writeFileSync(deviceHostMachinesFile(), JSON.stringify({ version: 1, machines: [credential] }));
   methods = [];
   blobs = new Map();
@@ -243,7 +243,7 @@ test('offers before reservation, uploads digest-matching bytes, and development 
 test.each(['declined', 'capacity', 'pressure', 'changed-node'])(
   'strict %s refusal reserves nothing',
   async (reason) => {
-    writeFileSync(getConfigPath(), JSON.stringify({ hosting: { machines: ['mini', 'other'] } }));
+    writeFileSync(getConfigPath(), JSON.stringify({ remote: { machines: ['mini', 'other'] } }));
     if (reason === 'declined') declined = 'Installed runtimes: iOS 26.5; iOS 27.0 is unavailable';
     if (reason === 'capacity') capacity = 0;
     if (reason === 'pressure') pressure = 'warning';
@@ -538,7 +538,7 @@ test.each(['missing', 'pending', 'unreadable', 'invalid-config', 'unlisted'])(
         JSON.stringify({ version: 1, machines: [{ ...credential, state: 'pending' }] }),
       );
     if (reason === 'unreadable') writeFileSync(deviceHostMachinesFile(), '{');
-    if (reason === 'invalid-config') writeFileSync(getConfigPath(), JSON.stringify({ hosting: { machines: true } }));
+    if (reason === 'invalid-config') writeFileSync(getConfigPath(), JSON.stringify({ remote: { machines: true } }));
     const result = await connectIosTarget(
       { machine: reason === 'unlisted' ? 'other' : 'mini', backend: null },
       {},
@@ -556,7 +556,7 @@ test.each(['missing', 'pending', 'unreadable', 'invalid-config', 'unlisted'])(
           reason === 'pending'
             ? 'stim-server devices grant client --device-host'
             : reason === 'invalid-config'
-              ? 'hosting.machines'
+              ? 'remote.machines'
               : 'stim doctor',
         ),
       },
@@ -1133,13 +1133,10 @@ test('auto stores its selection and reason after delivery, and a reserve race fa
 });
 
 test.each([undefined, 'mini', 'local'])(
-  'auto ranks build preferences with STIM_OFFLOAD_MACHINE=%s',
+  'auto ranks build preferences with STIM_REMOTE_BUILD=%s',
   async (preference) => {
-    vi.stubEnv('STIM_OFFLOAD_MACHINE', preference);
-    writeFileSync(
-      getConfigPath(),
-      JSON.stringify({ hosting: { machines: ['mini', 'other'] }, offload: { machine: 'other' } }),
-    );
+    vi.stubEnv('STIM_REMOTE_BUILD', preference);
+    writeFileSync(getConfigPath(), JSON.stringify({ remote: { machines: ['mini', 'other'], build: 'other' } }));
     writeFileSync(
       deviceHostMachinesFile(),
       JSON.stringify({

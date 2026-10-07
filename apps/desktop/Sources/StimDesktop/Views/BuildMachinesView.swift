@@ -2,7 +2,7 @@ import StimKit
 import StimStores
 import SwiftUI
 
-/// This Mac's build machines: the `offload.machines` it builds on, each with its state from `stim doctor`. Adding
+/// This Mac's remote Macs: the `remote.machines` it builds on, each with its state from `stim doctor`. Adding
 /// one opens the wizard, which does the tailnet discovery and the setup. Stim Desktop changes the setting with
 /// `stim settings` and asks for access with `stim doctor --fix`; approving happens on the other Mac.
 struct BuildMachinesView: View {
@@ -115,7 +115,7 @@ struct BuildMachinesView: View {
     if let failure = model.writeFailure ?? model.settingsFailure { return failure }
     guard checkout != nil, let problem = model.check(in: checkout)?.problem else { return nil }
     switch problem {
-    case .unsupported: return "This stim does not report build machines; update it."
+    case .unsupported: return "This stim does not report remote Macs; update it."
     case .failed(let message): return "stim doctor failed: \(message)"
     }
   }
@@ -128,7 +128,7 @@ private struct PollKey: Hashable {
   var checkout: String?
 }
 
-/// The Build Machines tab for the state it is given: a progress view, the empty state, or the list.
+/// The Remote Macs tab for the state it is given: a progress view, the empty state, or the list.
 struct BuildMachinesContent: View {
   var entries: [String]?
   var statuses: [BuildMachineStatus]?
@@ -186,6 +186,7 @@ struct BuildMachinesContent: View {
           let status = statuses?.first { $0.machine == entry }
           BuildMachineRow(
             entry: entry, status: status, checking: canAsk && (statuses == nil || (status == nil && refreshing)),
+            failed: canAsk && failure != nil && status == nil,
             refreshing: canAsk && refreshing && status != nil && working != entry,
             capabilities: buildMachineCapabilities(entry, hosts: hosts), working: working == entry,
             canAsk: canAsk, update: updates[entry], ask: { ask(entry) }, startUpdate: { update(entry) },
@@ -193,9 +194,9 @@ struct BuildMachinesContent: View {
         }
       } header: {
         HStack {
-          Text("Build machines")
+          Text("Remote Macs")
           Spacer()
-          Button("Add Build Machine\u{2026}", action: add).buttonStyle(.stim(.primary)).disabled(addDisabled)
+          Button("Add Remote Mac\u{2026}", action: add).buttonStyle(.stim(.primary)).disabled(addDisabled)
         }
       } footer: {
         if !canAsk {
@@ -204,8 +205,8 @@ struct BuildMachinesContent: View {
       }
       Section {
         VStack(alignment: .leading, spacing: Space.xxs) {
-          Toggle("Keep build machines on this Mac's Stim version", isOn: $updatesAutomatically)
-          Text("When this Mac's Stim changes, update stim-server on approved build machines so builds can keep offloading.")
+          Toggle("Keep remote Macs on this Mac's Stim version", isOn: $updatesAutomatically)
+          Text("When this Mac's Stim changes, update stim-server on approved remote Macs so builds can keep offloading.")
             .font(.stim(.footnote)).foregroundStyle(Palette.secondary)
         }
       }
@@ -224,6 +225,7 @@ private struct BuildMachineRow: View {
   var entry: String
   var status: BuildMachineStatus?
   var checking: Bool
+  var failed: Bool
   var refreshing: Bool
   var capabilities: [String]
   var working: Bool
@@ -246,6 +248,8 @@ private struct BuildMachineRow: View {
             if refreshing { ProgressView().controlSize(.mini).help("Checking again") }
           } else if checking {
             Pill("Checking\u{2026}", size: .small)
+          } else if failed {
+            Pill("Couldn\u{2019}t check", tone: .warning, size: .small)
           }
         }
         if let status {

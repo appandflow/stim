@@ -178,7 +178,7 @@ the app. The intentional button errors may still be in the error log; check
 whether the edit introduced a new error.
 
 PAUSE: end the turn. Point at the purple title in the device view or simulator
-and the title color log line. Phone viewing and an approved build machine are
+and the title color log line. Phone viewing and an approved remote Mac are
 optional user steps; skip them if unwanted. Never pair, approve, or grant
 anything. If the user names an approved machine, the next prompt is
 "${TUTORIAL_PROMPTS.machine}". Otherwise give
@@ -186,11 +186,11 @@ anything. If the user names an approved machine, the next prompt is
     },
     machine: {
       summary: 'Optionally build using a machine the user names and has approved',
-      body: () => `BUILD MACHINE (OPTIONAL)
+      body: () => `REMOTE MAC (OPTIONAL)
 
 ${paths}
 
-Proceed only when the user names an approved build machine. Substitute that
+Proceed only when the user names an approved remote Mac. Substitute that
 name for {machine}. Never approve, pair, or grant anything. If none is named,
 ask for the name or let the user skip this step.
 
@@ -198,7 +198,7 @@ ${commands('machine')}
 
 This step bypasses the artifact cache so the build can use the named machine.
 A named machine refuses without a local fallback. If it refuses, report the
-refusal and offer --build-machine auto or local; do not retry silently.
+refusal and offer --remote-build auto or local; do not retry silently.
 
 PAUSE: end the turn. Point at the build's machine in Desktop or its report in
 stim status --json. Give the next prompt: "${TUTORIAL_PROMPTS.finish}".`,

@@ -28,7 +28,7 @@ public struct LastBuild: Decodable, Hashable, Sendable {
   public var finishedAt: String?
   public var errorCode: String?
   public var missReason: BuildMissReason?
-  /// The build machine that compiled the app when the build was offloaded.
+  /// The remote Mac that compiled the app when the build was offloaded.
   public var offloadedTo: String?
   /// Why the run built here after it considered offloading.
   public var offloadFallback: String?
@@ -179,8 +179,15 @@ public struct BuildHistoryEntry: Decodable, Hashable, Sendable {
 public struct BuildHistory: Decodable, Hashable, Sendable {
   public var ios: [BuildHistoryEntry]?
   public var android: [BuildHistoryEntry]?
+  public var macos: [BuildHistoryEntry]?
 
-  public func builds(for platform: String) -> [BuildHistoryEntry] { (platform == "ios" ? ios : android) ?? [] }
+  public func builds(for platform: String) -> [BuildHistoryEntry] {
+    switch platform {
+    case "ios": return ios ?? []
+    case "macos": return macos ?? []
+    default: return android ?? []
+    }
+  }
 }
 
 /// The payload of `stim ios --plan --json` or `stim android --plan --json`.

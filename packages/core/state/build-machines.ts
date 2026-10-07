@@ -2,7 +2,7 @@ import { buildMachinesFile } from './paths.ts';
 import { isJsonObject, readJsonFile } from './json-file.ts';
 
 /**
- * A build machine this Mac asked to build on. `machine` is the `offload.machines` entry; `nodeId` is the
+ * A remote Mac this Mac asked to build on. `machine` is the `remote.machines` entry; `nodeId` is the
  * worker's tailnet StableID pinned when the request was sent, which every later connection must match.
  */
 export interface BuildMachineCredential {

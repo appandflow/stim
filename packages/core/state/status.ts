@@ -7,6 +7,9 @@ import type { TunnelMode, WebViewport } from './settings-registry.ts';
 import type { DeviceIdleShutdownRecord, IdleStopRecord, MetroLastStop } from './workspace-state.ts';
 export type StatsPlatform = 'ios' | 'android';
 
+/** A platform whose build reports phases: the stats platforms and `macos`. */
+export type BuildPlatform = StatsPlatform | 'macos';
+
 export type RunOutcomeKind = 'hit' | 'cold';
 
 export const BUILD_PHASES = [
@@ -26,7 +29,7 @@ export type BuildPhase = (typeof BUILD_PHASES)[number];
 export type ActiveBuildState = 'running' | 'stale' | 'unknown';
 
 /**
- * Where a running build compiles: `local`, or the build machine it was offloaded to, with the phase it is in there
+ * Where a running build compiles: `local`, or the remote Mac it was offloaded to, with the phase it is in there
  * (`sync`, `deps`, `prebuild`, `pods`, `build` or `fetch`) and when the offload and that phase started.
  */
 export type BuildPlacement = 'local' | { host: string; phase: string; startedAt: string; phaseStartedAt: string };
@@ -39,7 +42,7 @@ export interface BuildWaitingFor {
 }
 
 export interface BuildReport {
-  platform: StatsPlatform;
+  platform: BuildPlatform;
   slot: string;
   state: ActiveBuildState;
   phase: BuildPhase;
@@ -96,15 +99,16 @@ export const NATIVE_BUILD_STEPS = [
 export type NativeBuildStep = (typeof NATIVE_BUILD_STEPS)[number];
 
 /**
- * A running build's progress as its tool reports it. `unit` is `targets` for xcodebuild and `tasks` for Gradle.
- * xcodebuild's `done` counts targets it finished and `total` the targets in its dependency graph, which includes
- * targets with nothing to do; Gradle's `done` counts the tasks it reported, with a null `total`. They are counts, not
- * a completion fraction. `status` reports the detail only during the `compile` phase. `line` is
+ * A running build's progress as its tool reports it. `unit` is `targets` for xcodebuild, `tasks` for Gradle and
+ * `steps` for SwiftPM. xcodebuild's `done` counts targets it finished and `total` the targets in its dependency graph,
+ * which includes targets with nothing to do; Gradle's `done` counts the tasks it reported, with a null `total`;
+ * SwiftPM's `done` and `total` are the `[done/total]` of its latest progress line, and its total can grow while it
+ * builds. They are counts, not a completion fraction. `status` reports the detail only during the `compile` phase. `line` is
  * the latest compile, link or task line with paths shortened to file names.
  */
 export interface BuildDetail {
   step: NativeBuildStep | null;
-  unit: 'targets' | 'tasks' | null;
+  unit: 'targets' | 'tasks' | 'steps' | null;
   done: number | null;
   total: number | null;
   line: string | null;
@@ -123,7 +127,7 @@ export interface DevicePlacement {
 
 export interface LastBuildReport {
   devicePlacement?: DevicePlacement;
-  platform: StatsPlatform;
+  platform: BuildPlatform;
   status: 'ok' | 'failed';
   cacheHit: BuildCacheHit;
   cacheSkipped: boolean;
@@ -137,7 +141,7 @@ export interface LastBuildReport {
   buildMachine?: string;
   /** Where compilation ran: here or a machine name; absent when no build ran. */
   builtOn?: string;
-  /** The build machine that compiled the app when the build was offloaded. */
+  /** The remote Mac that compiled the app when the build was offloaded. */
   offloadedTo?: string;
   /** Why the run built here after it considered offloading; absent when it offloaded or never considered it. */
   offloadFallback?: string;
@@ -651,7 +655,7 @@ export interface EnvironmentState {
   build?: BuildReport | null;
   lastBuilds?: Partial<Record<StatsPlatform, LastBuildReport>>;
   /** Each platform's recent runs, newest first, at most `BUILD_HISTORY_LIMIT` each. */
-  builds?: Partial<Record<StatsPlatform, BuildHistoryEntry[]>>;
+  builds?: Partial<Record<BuildPlatform, BuildHistoryEntry[]>>;
   disk?: EnvironmentDisk;
   /** The coding-agent sessions working in the environment, most recently active first; absent when none. */
   agents?: AgentSession[];

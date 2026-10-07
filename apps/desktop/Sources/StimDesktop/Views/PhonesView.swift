@@ -9,6 +9,7 @@ struct PhonesView: View {
   var settings: MachineSettingsStore
   let stimHome: String
   @AppStorage(AppPreferences.Key.servesPhones) private var servesPhones = false
+  @ObservedObject private var flags = FeatureFlagStore.shared
   @AppStorage(AppPreferences.Key.stimServerExecutable) private var executable = ""
   @State private var pairing = false
   @State private var revoking: PairedDevice?
@@ -18,16 +19,14 @@ struct PhonesView: View {
   var body: some View {
     Form {
       Section {
-        Toggle("Serve to phones", isOn: $servesPhones)
+        Toggle(page.serveToggleTitle, isOn: $servesPhones)
           .onChange(of: servesPhones) { _, on in on ? server.start() : server.stop() }
         serverState
       } footer: {
-        Text(
-          "Runs stim-server on port \(String(server.port)) while Stim Desktop is open, or uses one that is already running. Phones connect through Tailscale. A read-only phone sees workspaces, devices and logs, and with workspace diff support the changed and untracked text files of registered workspaces, including unignored .env files; a phone allowed to control can also drive simulators and emulators and run reload and stop."
-        )
-        .foregroundStyle(Palette.tertiary)
-        .multilineTextAlignment(.leading)
-        .frame(maxWidth: .infinity, alignment: .leading)
+        Text(PhoneApp.Copy.serveFooter(port: server.port, phoneApp: flags.phoneApp))
+          .foregroundStyle(Palette.tertiary)
+          .multilineTextAlignment(.leading)
+          .frame(maxWidth: .infinity, alignment: .leading)
       }
 
       RecordingSection(settings: settings)
@@ -42,26 +41,34 @@ struct PhonesView: View {
         RouteSection(server: server, route: route, dnsName: dnsName)
       }
 
-      Section {
-        ForEach([server.devicesError, server.changeError].compactMap { $0 }, id: \.self) { error in
-          Text(abbreviatingHome(error)).foregroundStyle(Palette.error)
+      if page.showsPairedPhones {
+        Section {
+          ForEach(serverErrors, id: \.self) { error in
+            Text(abbreviatingHome(error)).foregroundStyle(Palette.error)
+          }
+          if server.phones.isEmpty {
+            InlineEmpty("No paired phones.")
+          }
+          if let reason = pairingUnavailable {
+            Text(reason).foregroundStyle(Palette.tertiary)
+          }
+          PairedPhonesRows(
+            devices: server.phones, changing: { server.pendingGrants[$0.id] != nil },
+            allowControl: { server.grant($0, control: $1) }, revoke: { revoking = $0 })
+        } header: {
+          HStack {
+            Text("Paired phones")
+            Spacer()
+            Button("Pair a Phone\u{2026}") { pairing = true }
+              .disabled(pairingUnavailable != nil)
+              .help(pairingUnavailable ?? "Show a code to pair a phone")
+          }
         }
-        if server.phones.isEmpty {
-          InlineEmpty("No paired phones.")
-        }
-        if let reason = pairingUnavailable {
-          Text(reason).foregroundStyle(Palette.tertiary)
-        }
-        PairedPhonesRows(
-          devices: server.phones, changing: { server.pendingGrants[$0.id] != nil },
-          allowControl: { server.grant($0, control: $1) }, revoke: { revoking = $0 })
-      } header: {
-        HStack {
-          Text("Paired phones")
-          Spacer()
-          Button("Pair a Phone\u{2026}") { pairing = true }
-            .disabled(pairingUnavailable != nil)
-            .help(pairingUnavailable ?? "Show a code to pair a phone")
+      } else if !serverErrors.isEmpty {
+        Section {
+          ForEach(serverErrors, id: \.self) { error in
+            Text(abbreviatingHome(error)).foregroundStyle(Palette.error)
+          }
         }
       }
 
@@ -76,7 +83,7 @@ struct PhonesView: View {
         Text("Macs that build here")
       } footer: {
         Text(
-          "Another Mac asks from its Build machines tab. Stim Desktop notifies you, and only Allow lets it run its project's code here to build, as your user. A build client never reads workspaces or controls devices. Requests lapse after 15 minutes."
+          "Another Mac asks from its Remote Macs tab. Stim Desktop notifies you, and only Allow lets it run its project's code here to build, as your user. A build client never reads workspaces or controls devices. Requests lapse after 15 minutes."
         )
         .foregroundStyle(Palette.tertiary)
         .multilineTextAlignment(.leading)
@@ -145,7 +152,7 @@ struct PhonesView: View {
     .onReceive(OpenRequests.shared.$pairsPhone) { pairs in
       guard pairs else { return }
       OpenRequests.shared.pairsPhone = false
-      pairing = server.isRunning
+      pairing = flags.phoneApp && server.isRunning
     }
     .confirmationDialog(
       revokeTitle, isPresented: .init(get: { revoking != nil }, set: { if !$0 { revoking = nil } }),
@@ -172,6 +179,10 @@ struct PhonesView: View {
       Text("This ends the session and deletes or parks its device on this Mac.")
     }
   }
+
+  private var serverErrors: [String] { [server.devicesError, server.changeError].compactMap { $0 } }
+
+  private var page: PhoneApp.ServerPage { PhoneApp.serverPage(phoneApp: flags.phoneApp) }
 
   private var pairingUnavailable: String? {
     switch server.state {
@@ -256,7 +267,7 @@ private struct TailscaleSetup: View {
       VStack(alignment: .leading, spacing: Space.md) {
         Label(tailscale.summary, systemImage: "exclamationmark.triangle.fill")
           .foregroundStyle(Palette.warning)
-        Text("Phones cannot connect until Tailscale runs. Only a client on this Mac, such as an iOS Simulator, can pair now.")
+        Text(PhoneApp.Copy.tailscaleDown(phoneApp: FeatureFlags.isEnabled(.phoneApp)))
           .foregroundStyle(Palette.secondary)
         step("1. Start Tailscale.", command: "tailscale up")
         Text(
@@ -295,8 +306,11 @@ struct RouteSection: View {
       VStack(alignment: .leading, spacing: Space.md) {
         switch route.state {
         case "routed":
-          Label("Phones connect to \(route.endpoint(dnsName: dnsName)), tailnet only.", systemImage: "checkmark.circle.fill")
-            .foregroundStyle(Palette.success)
+          Label(
+            "\(PhoneApp.Copy.clients(phoneApp: FeatureFlags.isEnabled(.phoneApp))) connect to \(route.endpoint(dnsName: dnsName)), tailnet only.",
+            systemImage: "checkmark.circle.fill"
+          )
+          .foregroundStyle(Palette.success)
           Text("tailscale serve forwards HTTPS port \(String(route.port)) to 127.0.0.1:\(String(port)).")
             .foregroundStyle(Palette.secondary)
         case "funneled":
@@ -311,7 +325,7 @@ struct RouteSection: View {
           command
         case "missing":
           Label(
-            "No tailscale serve route reaches port \(String(port)), so phones cannot connect yet.",
+            "No tailscale serve route reaches port \(String(port)), so \(PhoneApp.Copy.clients(phoneApp: FeatureFlags.isEnabled(.phoneApp)).lowercased()) cannot connect yet.",
             systemImage: "exclamationmark.triangle.fill"
           )
           .foregroundStyle(Palette.warning)
@@ -717,12 +731,10 @@ private struct RecordingSection: View {
         Text(failure).foregroundStyle(Palette.error)
       }
     } footer: {
-      Text(
-        "recording.enabled on this Mac. While stim-server runs it keeps the last 15 minutes of each simulator, emulator and Chrome page, which Stim Desktop and the phone app replay. A workspace or repository setting still wins. Turning it off deletes the recordings."
-      )
-      .foregroundStyle(Palette.tertiary)
-      .multilineTextAlignment(.leading)
-      .frame(maxWidth: .infinity, alignment: .leading)
+      Text(PhoneApp.Copy.recordingFooter(phoneApp: FeatureFlags.isEnabled(.phoneApp)))
+        .foregroundStyle(Palette.tertiary)
+        .multilineTextAlignment(.leading)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
     .task { await settings.refresh() }
     .confirmationDialog("Stop recording device screens?", isPresented: $confirmingOff, titleVisibility: .visible) {

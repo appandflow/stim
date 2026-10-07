@@ -66,12 +66,12 @@ import Testing
       DoctorReport.self,
       from: Data(
         #"""
-        {"project":"/p","findings":[],"buildMachines":[
+        {"project":"/p","findings":[],"remoteMachines":[
           {"machine":"mini","state":"approved","offloadable":false,"reasons":["Stim build a there, b here"],
            "problems":[{"code":"stim-build","reason":"Stim build a there, b here"}]},
           {"machine":"studio","state":"approved","offloadable":false,"problems":[{"code":"xcode","reason":"Xcode differs"}]},
           {"machine":"old","state":"revoked","problems":[{"code":"stim-build","reason":"x"}]}]}
         """#.utf8))
-    #expect(try #require(report.buildMachines).map(needsStimUpdate) == [true, false, false])
+    #expect(try #require(report.remoteMachines).map(needsStimUpdate) == [true, false, false])
   }
 }

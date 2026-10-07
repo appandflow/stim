@@ -35,7 +35,7 @@
     case hostedIos = "Hosted iOS"
     case hostedAndroid = "Hosted Android"
     case settings = "Settings"
-    case addMachine = "Add build machine"
+    case addMachine = "Add remote Mac"
     case discovery = "Suggestions"
     case tokens = "Design tokens"
     var id: Self { self }

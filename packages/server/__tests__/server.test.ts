@@ -135,7 +135,7 @@ if (command === 'status') {
   print([]);
   exit(0);
 } else if (command === 'doctor') {
-  print({ project: process.cwd(), buildMachines: [{ machine: 'mini', state: 'approved', args: args.join(' ') }] });
+  print({ project: process.cwd(), remoteMachines: [{ machine: 'mini', state: 'approved', args: args.join(' ') }] });
   exit(0);
 } else if (env.FAKE_STIM_REFUSE) {
   print({ code: 'STIM_NO_DEVICE', message: 'No system image is installed.', remedy: 'Install one.' });
@@ -1387,7 +1387,7 @@ describe('offloaded builds', () => {
       JSON.stringify({ projects: { [workspace]: {} }, ...config }),
     );
 
-  beforeEach(() => configure({ offload: { maxLoadPerCore: 100_000 } }));
+  beforeEach(() => configure({ server: { maxLoadPerCore: 100_000 } }));
 
   async function buildClient(
     port: number,
@@ -1865,7 +1865,7 @@ describe('offloaded builds', () => {
   test.skipIf(!fakeTailscale)(
     'declines an offer and a start while its own native builds fill concurrency.maxBuilds',
     async () => {
-      configure({ concurrency: { maxBuilds: 1 }, offload: { maxLoadPerCore: 100_000 } });
+      configure({ concurrency: { maxBuilds: 1 }, server: { maxLoadPerCore: 100_000 } });
       const building = join(root, 'building');
       mkdirSync(building);
       const attempt = tryAcquireClaim({ root: join(root, 'native-run'), mode: 'exclusive', label: 'native run' });
@@ -1903,7 +1903,7 @@ describe('offloaded builds', () => {
   test.skipIf(!fakeTailscale)(
     'holds one of its build slots for the whole offloaded build, and refuses a start while local runs hold them all',
     async () => {
-      configure({ concurrency: { maxBuilds: 1 }, offload: { maxLoadPerCore: 100_000 } });
+      configure({ concurrency: { maxBuilds: 1 }, server: { maxLoadPerCore: 100_000 } });
       const local = tryAcquireBuildSlotClaim({ max: 1, details: { projectRoot: root } })!;
       const port = await start({ env: { FAKE_WORKER_HANG: '1' }, buildLimits: { killGraceMs: 100 } });
       const { client, id } = await buildClient(port);
@@ -2120,7 +2120,7 @@ describe('offloaded builds', () => {
     test.skipIf(!fakeTailscale)(
       'tells the worker how long to keep the daemon, and stops an idle one once its client is revoked',
       async () => {
-        configure({ offload: { maxLoadPerCore: 100_000, gradleDaemonIdleMinutes: 45 } });
+        configure({ server: { maxLoadPerCore: 100_000, gradleDaemonIdleMinutes: 45 } });
         const port = await start({ buildLimits: { daemonSweepMs: 50, minFreeMemoryBytes: 0 } });
         const { client, id } = await buildClient(port);
         await launch(client);
@@ -3406,14 +3406,14 @@ describe('machine.details', () => {
     ).toEqual(['gc --json']);
   });
 
-  it('answers immediately with pending build machines, then reads them from doctor in the background', async () => {
+  it('answers immediately with pending remote Macs, then reads them from doctor in the background', async () => {
     const other = join(root, 'other');
     mkdirSync(other);
     const ran = (at: string) => ({ doctorRuns: { ios: { at, version: '1.0.0' } } });
     writeFileSync(
       join(process.env.STIM_HOME!, 'config.json'),
       JSON.stringify({
-        offload: { machines: ['mini'] },
+        remote: { machines: ['mini'] },
         projects: {
           [workspace]: ran('2026-09-28T10:00:00.000Z'),
           [other]: ran('2026-09-28T11:00:00.000Z'),

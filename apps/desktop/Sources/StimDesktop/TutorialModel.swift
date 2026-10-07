@@ -139,7 +139,7 @@ final class TutorialModel: ObservableObject {
       TutorialInput(
         environment: workspace.flatMap(TutorialEnvironment.init), archivedProjectRoots: archivedRoots,
         logRecords: logs, viewerEvents: viewerEvents.filter { $0.sequence > viewerEventSequence }.map(\.event),
-        pairedPhoneCount: pairedPhoneCount,
+        pairedPhoneCount: pairedPhoneCount, phoneApp: FeatureFlags.isEnabled(.phoneApp, defaults: defaults),
         machineApproved: machineState == .approved, approvedMachine: approvedMachine, replayOff: workspace?.replayOff ?? false,
         archiveEnabled: fallback ? false : archiveEnabled ?? true,
         now: now, record: records.record))

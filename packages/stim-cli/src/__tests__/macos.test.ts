@@ -200,7 +200,7 @@ describe('macOS build placement and promotion', () => {
     previousDuringBuild = [];
     plist = { CFBundleIdentifier: 'dev.sample', CFBundleExecutable: 'Sample' };
     buildRecord = { state: 'running', startedAt: new Date().toISOString() };
-    writeConfigSetting({ scope: 'machine' }, 'offload.mode', 'force');
+    writeConfigSetting({ scope: 'machine' }, 'remote.buildMode', 'force');
     vi.spyOn(machines, 'pairedMachines').mockReturnValue([
       { machine: 'mini' } as ReturnType<typeof machines.pairedMachines>[number],
     ]);
@@ -328,9 +328,9 @@ describe('macOS build placement and promotion', () => {
   it.each(['unreachable', 'approval-pending', 'forbidden', 'incompatible', 'busy', 'disk too low'])(
     'a named worker refusal %s starts no Swift compiler or local slot',
     async (reason) => {
-      writeConfigSetting({ scope: 'machine' }, 'offload.machines', ['mini', 'other']);
+      writeConfigSetting({ scope: 'machine' }, 'remote.machines', ['mini', 'other']);
       vi.mocked(offload.chooseBuildMachine).mockResolvedValue(`mini: ${reason}`);
-      writeConfigSetting({ scope: 'machine' }, 'offload.mode', 'off');
+      writeConfigSetting({ scope: 'machine' }, 'remote.buildMode', 'off');
       await expect(build({ buildMachine: 'mini' })).rejects.toMatchObject({
         code: 'STIM_OFFLOAD_REFUSED',
         message: expect.stringContaining(reason),
@@ -348,7 +348,7 @@ describe('macOS build placement and promotion', () => {
   it.each(['swift-failed', 'sync failed', 'start: busy', 'fetch: digest mismatch'])(
     'a failed strict remote build %s never starts swift locally',
     async (reason) => {
-      writeConfigSetting({ scope: 'machine' }, 'offload.machines', ['mini']);
+      writeConfigSetting({ scope: 'machine' }, 'remote.machines', ['mini']);
       vi.spyOn(offload, 'offloadBuild').mockResolvedValue({ ok: false, machine: 'mini', reason });
       await expect(build({ buildMachine: 'mini' })).rejects.toMatchObject({
         code: 'STIM_OFFLOAD_REFUSED',
@@ -361,7 +361,7 @@ describe('macOS build placement and promotion', () => {
   );
 
   it('a strict unpaired worker refuses before asking for an offer or running Swift', async () => {
-    writeConfigSetting({ scope: 'machine' }, 'offload.machines', ['mini']);
+    writeConfigSetting({ scope: 'machine' }, 'remote.machines', ['mini']);
     vi.mocked(machines.pairedMachines).mockReturnValue([]);
     await expect(build({ buildMachine: 'mini' })).rejects.toMatchObject({ code: 'STIM_OFFLOAD_REFUSED' });
     expect(offload.chooseBuildMachine).not.toHaveBeenCalled();
@@ -389,7 +389,7 @@ describe('macOS build placement and promotion', () => {
       writeWorkspaceState(root, { macos: previous });
       const before = readMacosRecord(root);
       if (reason === 'not paired') {
-        writeConfigSetting({ scope: 'machine' }, 'offload.machines', ['mini']);
+        writeConfigSetting({ scope: 'machine' }, 'remote.machines', ['mini']);
         vi.mocked(machines.pairedMachines).mockReturnValue([]);
       }
       const stop = vi.spyOn(stopping, 'stopMacosAppHeld');
@@ -499,7 +499,7 @@ describe('macOS build placement and promotion', () => {
   });
 
   it('builds locally without asking a machine when offload is off', async () => {
-    writeConfigSetting({ scope: 'machine' }, 'offload.mode', 'off');
+    writeConfigSetting({ scope: 'machine' }, 'remote.buildMode', 'off');
     expect(await build()).toEqual({ bundleId, offloadedTo: null, offloadFallback: null, handoff: null });
     expect(offload.chooseBuildMachine).not.toHaveBeenCalled();
     expect(localBuilds).toBe(1);
@@ -522,7 +522,7 @@ describe('macOS build placement and promotion', () => {
   });
 
   it('refuses a plist changed by the local build before replacing the previous bundle', async () => {
-    writeConfigSetting({ scope: 'machine' }, 'offload.mode', 'off');
+    writeConfigSetting({ scope: 'machine' }, 'remote.buildMode', 'off');
     const spawn = getExecutor().spawn;
     setExecutor({
       ...getExecutor(),

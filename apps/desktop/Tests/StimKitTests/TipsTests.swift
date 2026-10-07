@@ -230,7 +230,7 @@ struct TipsTests {
     }
   }
 
-  @Test func aShownTipSuppressesOnlyDiscoveryTypesOfItsOwnTopic() {
+  @Test func aShownTipSuppressesOnlyInformationalDiscoveryTypesOfItsOwnTopic() {
     let shown: [TipTopic: Date] = [.buildMachine: now]
     for type in [DiscoveryType.slowCold, .newMac, .slotWait] {
       #expect(Tips.suppressesDiscovery(type, lastShown: shown))
@@ -239,7 +239,7 @@ struct TipsTests {
       #expect(!Tips.suppressesDiscovery(type, lastShown: shown))
     }
     #expect(Tips.suppressesDiscovery(.away, lastShown: [.phone: now]))
-    #expect(Tips.suppressesDiscovery(.capHit, lastShown: [.hostedSimulators: now]))
+    #expect(!Tips.suppressesDiscovery(.capHit, lastShown: [.hostedSimulators: now]))
     #expect(!Tips.suppressesDiscovery(.away, lastShown: [.tutorial: now]))
     #expect(!Tips.suppressesDiscovery(.away, lastShown: [:]))
   }

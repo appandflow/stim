@@ -8,6 +8,15 @@ import Tabs from '@theme/Tabs';
 import TabItem from '@theme/TabItem';
 import PromptBox, { PromptGrid } from '@site/src/components/PromptBox';
 
+:::note[Phone app feature flag]
+Stim Desktop hides everything about the phone app unless the **Phone app**
+feature flag is on: the Phones page, **Serve to phones**, pairing, the phone
+steps of the setup guide and tutorial, and phone suggestions. Turn it on in
+**Settings > Advanced > Feature flags**. A Mac that already serves phones or has
+a paired phone starts with it on. Turning the flag off does not stop a running
+`stim-server` or revoke pairings.
+:::
+
 Stim Mobile connects to a Mac running Stim Desktop or `stim-server`. It shows
 workspaces, builds, devices and logs. Pairings are read-only by default;
 you can allow a phone to control devices and run Reload and Stop from the Mac.
@@ -165,10 +174,10 @@ wait can overlap compilation. Older CLIs omit this information.
 A leased iPhone connected over USB is view-only and must be unlocked and trust
 the Mac; over Wi-Fi it has no screen stream. Hosted iOS simulators can be viewed
 and controlled through the main Mac's relay, with **Serve to phones** enabled.
-See [remote machines](./remote-machines.md) for host setup.
+See [remote Macs](./remote-machines.md) for host setup.
 
 The phone cannot start a build, create a worktree, edit or stage source files,
-set up a build machine, or approve access requests. Have your coding agent run
+set up a remote Mac, or approve access requests. Have your coding agent run
 the app on the Mac, then watch it from the phone. It does not run your project's
 native app on the phone itself.
 
@@ -182,7 +191,7 @@ number and title; only a merged outcome shows a state label.
 An archive uses the workspace page with read-only Status, Build, Logs and Work
 cards. Status shows removal, last activity, retention dates, size by content and
 activity totals. Build opens the shared history sheet, including durations,
-cache results, failures and build machines. Logs reads saved archive logs. Work
+cache results, failures and remote Macs. Logs reads saved archive logs. Work
 shows ended sessions, their durations and the branch's final commit. Recordings
 replace devices and open replay at the recorded time, including notification
 links. Expired logs and recordings are marked.

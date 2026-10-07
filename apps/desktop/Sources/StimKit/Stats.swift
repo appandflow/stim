@@ -76,7 +76,7 @@ public struct BuildPlacements: Decodable, Sendable {
       let name = machine.map(machineName)
       switch decision {
       case .here: return "Built here"
-      case .offloaded: return "Built on \(name ?? "a build machine")"
+      case .offloaded: return "Built on \(name ?? "a remote Mac")"
       case .fellBack: return name.map { "Built here after \($0)" } ?? "Built here after offloading"
       case .unknown: return "Built"
       }
@@ -93,7 +93,7 @@ public struct BuildPlacements: Decodable, Sendable {
     placements.filter { $0.machine == machine && $0.decision != .here }
   }
 
-  /// The placements that built here without trying a build machine, newest first.
+  /// The placements that built here without trying a remote Mac, newest first.
   public var here: [Placement] { placements.filter { $0.decision == .here } }
 }
 

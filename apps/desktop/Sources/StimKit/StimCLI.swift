@@ -10,6 +10,8 @@ public struct StimCLI: Sendable {
     case toolNotFound(String)
     /// The exit status and the last lines the process wrote to stderr, empty when it wrote none.
     case exited(Int32, stderr: String = "")
+    /// The command ran past the seconds it was given and was stopped.
+    case timedOut(seconds: Int)
 
     public var errorDescription: String? {
       switch self {
@@ -19,6 +21,8 @@ public struct StimCLI: Sendable {
         return "Could not find \(name) on the login shell's PATH. Install Node.js 22.12 or later from nodejs.org, then try again."
       case .exited(let code, let stderr):
         return stderr.isEmpty ? "stim exited with status \(code)." : "stim exited with status \(code): \(stderr)"
+      case .timedOut(let seconds):
+        return "stim did not answer within \(seconds) seconds."
       }
     }
   }
@@ -105,17 +109,21 @@ public struct StimCLI: Sendable {
     try JSONDecoder().decode(DoctorReport.self, from: await run(["doctor", "--json"], cwd: cwd))
   }
 
-  /// The `offload.machines` states from `stim doctor --json --platform ios` in `cwd`. With `ask`, `--fix` also asks
+  /// The `remote.machines` states from `stim doctor --json --platform ios` in `cwd`. With `ask`, `--fix` also asks
   /// each named machine this Mac has no pairing with for build access, and again one that revoked it; the iOS
   /// platform keeps `--fix` from cleaning Android build state in that checkout.
   public func buildMachines(cwd: String, ask: Bool) async throws -> [BuildMachineStatus]? {
-    try await machineAccess(cwd: cwd, ask: ask).buildMachines
+    try await machineAccess(cwd: cwd, ask: ask).remoteMachines
   }
 
   /// Both build and device-host access states. Extra environment applies only to this doctor process.
-  public func machineAccess(cwd: String, ask: Bool, extraEnvironment: [String: String] = [:]) async throws -> DoctorReport {
+  public func machineAccess(
+    cwd: String, ask: Bool, extraEnvironment: [String: String] = [:], timeout: TimeInterval? = nil
+  ) async throws -> DoctorReport {
     let args = ["doctor", "--json", "--platform", "ios"] + (ask ? ["--fix"] : [])
-    return try JSONDecoder().decode(DoctorReport.self, from: await run(args, cwd: cwd, extraEnvironment: extraEnvironment))
+    return try JSONDecoder().decode(
+      DoctorReport.self, from: await run(args, cwd: cwd, extraEnvironment: extraEnvironment, timeout: timeout ?? (ask ? 120 : 30))
+    )
   }
 
   /// `stim settings --json` in `cwd`: every setting with its origin and layers.
@@ -138,20 +146,27 @@ public struct StimCLI: Sendable {
     return .refused(refusal)
   }
 
-  func run(_ args: [String], cwd: String? = nil, extraEnvironment: [String: String] = [:]) async throws -> Data {
-    let (status, data, stderr) = try await execute(args, cwd: cwd, extraEnvironment: extraEnvironment)
+  func run(
+    _ args: [String], cwd: String? = nil, extraEnvironment: [String: String] = [:], timeout: TimeInterval? = nil
+  ) async throws -> Data {
+    let (status, data, stderr) = try await execute(
+      args, cwd: cwd, extraEnvironment: extraEnvironment, timeout: timeout)
     guard status == 0 else { throw Failure.exited(status, stderr: stderr) }
     return data
   }
 
-  private func execute(_ args: [String], cwd: String?, extraEnvironment: [String: String] = [:]) async throws -> (
+  private func execute(
+    _ args: [String], cwd: String?, extraEnvironment: [String: String] = [:], timeout: TimeInterval? = nil
+  ) async throws -> (
     Int32, Data, String
   ) {
     let command = try command(args)
     var request = ProcessRequest(
-      command.program, command.arguments, cwd: cwd, environment: environment.merging(extraEnvironment) { _, extra in extra })
+      command.program, command.arguments, cwd: cwd, environment: environment.merging(extraEnvironment) { _, extra in extra },
+      timeout: timeout)
     request.captureStderr = true
     let result = try await request.run()
+    if result.timedOut, let timeout { throw Failure.timedOut(seconds: Int(timeout)) }
     return (result.status, result.stdout, stderrTail(result.stderrText))
   }
 

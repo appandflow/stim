@@ -124,6 +124,8 @@ public struct TutorialInput: Sendable {
   public var logRecords: [LogRecord]
   public var viewerEvents: [TutorialViewerEvent]
   public var pairedPhoneCount: Int?
+  /// Without the phone app the phone step is skipped.
+  public var phoneApp: Bool
   public var machineApproved: Bool
   public var approvedMachine: String?
   public var replayOff: Bool
@@ -133,14 +135,16 @@ public struct TutorialInput: Sendable {
 
   public init(
     environment: TutorialEnvironment?, archivedProjectRoots: [String] = [], logRecords: [LogRecord] = [],
-    viewerEvents: [TutorialViewerEvent] = [], pairedPhoneCount: Int? = nil, machineApproved: Bool = false,
-    approvedMachine: String? = nil, replayOff: Bool = false, archiveEnabled: Bool = true, now: Date, record: TutorialRecord? = nil
+    viewerEvents: [TutorialViewerEvent] = [], pairedPhoneCount: Int? = nil, phoneApp: Bool = true,
+    machineApproved: Bool = false, approvedMachine: String? = nil, replayOff: Bool = false, archiveEnabled: Bool = true,
+    now: Date, record: TutorialRecord? = nil
   ) {
     self.environment = environment
     self.archivedProjectRoots = archivedProjectRoots
     self.logRecords = logRecords
     self.viewerEvents = viewerEvents
     self.pairedPhoneCount = pairedPhoneCount
+    self.phoneApp = phoneApp
     self.machineApproved = machineApproved
     self.approvedMachine = approvedMachine
     self.replayOff = replayOff
@@ -183,6 +187,7 @@ public struct TutorialProgress: Sendable {
   private var viewerInput = false
   private var restartAfter: Date?
   private var details: [String: String] = [:]
+  private var phoneApp = true
 
   public init() {}
 
@@ -221,6 +226,7 @@ public struct TutorialProgress: Sendable {
   /// The first call must carry a real status snapshot; it consumes launch-time resume detection.
   public mutating func update(_ input: TutorialInput) -> TutorialSnapshot {
     let launching = record == nil
+    phoneApp = input.phoneApp
     if launching { record = input.record }
     let environment = input.environment
     if record == nil {
@@ -284,6 +290,10 @@ public struct TutorialProgress: Sendable {
     } else {
       while record!.step != "done" {
         let id = record!.step
+        if id == "phone", !input.phoneApp {
+          advance(max(input.now, record!.stepSince ?? record!.startedAt))
+          continue
+        }
         if id == "phone", record?.phonePairedAtStart == nil {
           record?.phonePairedAtStart = (input.pairedPhoneCount ?? 0) > 0
         }
@@ -305,7 +315,7 @@ public struct TutorialProgress: Sendable {
       record?.approvedMachine = machine
     }
     let current = record!.step == "done" ? nil : record!.step
-    let steps = TutorialSteps.all.map { step in
+    let steps = TutorialSteps.steps(phoneApp: input.phoneApp).map { step in
       let state: TutorialStepState =
         record!.skipped.contains(step.id)
         ? .skipped
@@ -326,7 +336,8 @@ public struct TutorialProgress: Sendable {
   }
 
   private var firstUnfinished: String {
-    TutorialSteps.all.first { !record!.done.contains($0.id) && !record!.skipped.contains($0.id) }?.id ?? "done"
+    TutorialSteps.steps(phoneApp: phoneApp).first { !record!.done.contains($0.id) && !record!.skipped.contains($0.id) }?.id
+      ?? "done"
   }
 
   private mutating func complete(at date: Date) {
@@ -454,7 +465,7 @@ public struct TutorialProgress: Sendable {
     case "machine":
       let offloaded = last?.offloadedTo != nil && last.flatMap { parseTimestamp($0.startedAt) }.map { $0 >= since } == true
       return Checkpoint(
-        completed: input.machineApproved ? now : nil, detail: "Choose an approved build machine",
+        completed: input.machineApproved ? now : nil, detail: "Choose an approved remote Mac",
         ticks: [
           tick("approved", input.machineApproved || record?.done.contains("machine") == true),
           tick("offloaded", offloaded, optional: true),

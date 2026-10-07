@@ -3,7 +3,7 @@ import { dirname } from 'node:path';
 import { formatElapsed, plural } from '../command-output.ts';
 import { readClaimSet, type ClaimHandle, type ClaimSurvey } from '../ownership-claim.ts';
 import { clearWorkspaceStateKey, updateWorkspaceState } from '../workspace/workspace-state.ts';
-import { readStats, type RunHistory, type RunOutcomeKind, type RunSample, type StatsPlatform } from './stats.ts';
+import { readStats, type RunHistory, type RunOutcomeKind, type RunSample } from './stats.ts';
 import type { NdjsonWriter } from '../ndjson.ts';
 import { createBuildDetailParser } from './build-detail.ts';
 import {
@@ -19,6 +19,7 @@ import {
   type BuildMissReason,
   type BuildPhase,
   type BuildPlacement,
+  type BuildPlatform,
   type BuildReport,
   type BuildWaitingFor,
   type BuildResult,
@@ -38,7 +39,7 @@ export interface ActiveBuildClaim {
 }
 
 export interface ActiveBuildRecord {
-  platform: StatsPlatform;
+  platform: BuildPlatform;
   slot: string;
   startedAt: string;
   phase: BuildPhase;
@@ -86,7 +87,7 @@ export interface BuildProgress {
   deviceSetup(setup: boolean | undefined): void;
   /** What `deviceSetup` recorded, or undefined before the run knows. */
   deviceSetupKnown(): boolean | undefined;
-  /** Records the build machine the run compiles on and its phase there; null when it compiles here again. */
+  /** Records the remote Mac the run compiles on and its phase there; null when it compiles here again. */
   place(remote: { host: string; phase: string } | null): void;
   /** Records the workspace root whose build of the same artifact the run waits on; null when it is not known. */
   waitingOn(root: string | null): void;
@@ -178,7 +179,7 @@ export function startBuildProgress({
   note = () => {},
 }: {
   root: string;
-  platform: StatsPlatform;
+  platform: BuildPlatform;
   slot: string;
   claim: ClaimHandle;
   now?: () => number;
@@ -219,7 +220,8 @@ export function startBuildProgress({
   };
   const settle = (outcome: RunOutcomeKind): void => {
     record.outcome = outcome;
-    if (projectKey) record.estimate = estimateBuild(projectHistory(projectKey), platform, outcome, record.deviceSetup);
+    if (projectKey && platform !== 'macos')
+      record.estimate = estimateBuild(projectHistory(projectKey), platform, outcome, record.deviceSetup);
   };
   const waits = new Map<BuildWaitingFor['kind'], BuildWaitingFor>();
   return {
@@ -230,11 +232,12 @@ export function startBuildProgress({
       record.phaseStartedAt = at;
       record.phases.push({ phase, startedAt: at });
       if (phase !== 'wait') delete record.waitingOn;
-      const outcome = record.outcome ? null : settledOutcome(phase, record.phases);
+      const outcome = record.outcome || platform === 'macos' ? null : settledOutcome(phase, record.phases);
       if (outcome) settle(outcome);
       write();
     },
     estimate(key) {
+      if (platform === 'macos') return;
       projectKey = key;
       record.estimate = estimateBuild(
         projectHistory(key),
@@ -370,7 +373,7 @@ const HISTORY_FIELDS = [
 
 function withHistoryEntry(
   state: WorkspaceState,
-  platform: StatsPlatform,
+  platform: BuildPlatform,
   entry: Record<string, unknown>,
 ): WorkspaceState {
   const saved = state[BUILD_HISTORY_KEY];
@@ -392,7 +395,7 @@ export function recordFinishedBuild(
   record: Record<string, unknown>,
   { update = updateWorkspaceState, now = Date.now }: { update?: typeof updateWorkspaceState; now?: () => number } = {},
 ): void {
-  const platform = record.platform as StatsPlatform;
+  const platform = record.platform as BuildPlatform;
   update(root, (state) => {
     const active = parseActiveBuild(state[ACTIVE_BUILD_KEY]);
     const own = active?.platform === platform ? active : null;
@@ -406,7 +409,7 @@ export function recordFinishedBuild(
     const slots = isJsonObject(state.deviceSlots) ? state.deviceSlots : {};
     const savedSlot = isJsonObject(slots[slot]) ? slots[slot] : {};
     const savedDevice = slot === 'default' ? state[platform] : savedSlot[platform];
-    if (record.devicePlacement || isJsonObject(savedDevice)) {
+    if (platform !== 'macos' && (record.devicePlacement || isJsonObject(savedDevice))) {
       const device = isJsonObject(savedDevice) ? { ...savedDevice } : {};
       if (record.devicePlacement) device.devicePlacement = record.devicePlacement;
       else delete device.devicePlacement;
@@ -415,6 +418,7 @@ export function recordFinishedBuild(
           ? { ...state, [platform]: device }
           : { ...state, deviceSlots: { ...slots, [slot]: { ...savedSlot, [platform]: device } } };
     }
+    if (platform === 'macos') return withHistoryEntry(state, platform, entry);
     return withHistoryEntry({ ...state, lastBuild: record, [LAST_BUILD_KEYS[platform]]: record }, platform, entry);
   });
 }
@@ -422,7 +426,12 @@ export function recordFinishedBuild(
 function withInterruptedBuild(state: WorkspaceState): WorkspaceState {
   const left = parseActiveBuild(state[ACTIVE_BUILD_KEY]);
   if (!left) return state;
-  const last = state[LAST_BUILD_KEYS[left.platform]] as { startedAt?: unknown } | undefined;
+  const last =
+    left.platform === 'macos'
+      ? ((state[BUILD_HISTORY_KEY] as Record<string, unknown[]> | undefined)?.macos?.[0] as
+          | { startedAt?: unknown }
+          | undefined)
+      : (state[LAST_BUILD_KEYS[left.platform]] as { startedAt?: unknown } | undefined);
   if (Date.parse(String(last?.startedAt)) >= Date.parse(left.startedAt)) return state;
   return withHistoryEntry(state, left.platform, {
     platform: left.platform,
@@ -444,7 +453,7 @@ export function parseActiveBuild(value: unknown): ActiveBuildRecord | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const record = value as Partial<ActiveBuildRecord>;
   const claim = record.claim as Partial<ActiveBuildClaim> | undefined;
-  if (record.platform !== 'ios' && record.platform !== 'android') return null;
+  if (record.platform !== 'ios' && record.platform !== 'android' && record.platform !== 'macos') return null;
   if (!isPhase(record.phase)) return null;
   if (typeof record.startedAt !== 'string' || typeof record.phaseStartedAt !== 'string') return null;
   if (!claim || typeof claim.root !== 'string' || typeof claim.claimId !== 'string') return null;
@@ -546,11 +555,11 @@ function median(values: readonly number[]): number | null {
 
 export function estimateBuild(
   history: RunHistory | undefined,
-  platform: StatsPlatform,
+  platform: BuildPlatform,
   known: RunOutcomeKind | null,
   deviceSetup?: boolean,
 ): BuildEstimate {
-  const lists = history?.[platform];
+  const lists = platform === 'macos' ? undefined : history?.[platform];
   const outcome = known ?? latestOutcome(lists);
   const samples = matchDeviceSetup((outcome && lists?.[outcome]) || [], deviceSetup);
   const phaseMs: Partial<Record<BuildPhase, number>> = {};

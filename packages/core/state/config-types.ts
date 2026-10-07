@@ -89,16 +89,14 @@ export interface StimConfig {
   pool?: { iosParkedMax?: unknown; androidParkedMax?: unknown };
   parked?: { ios?: unknown; android?: unknown };
   caches?: { buildCache?: unknown; metroCache?: unknown };
-  hosting?: { machines?: unknown; agentDriver?: unknown };
-  server?: { acceptClientBuilds?: unknown };
-  offload?: {
-    machine?: unknown;
-    machines?: unknown;
-    mode?: unknown;
-    workerRoot?: unknown;
+  hosting?: { agentDriver?: unknown };
+  server?: {
+    acceptClientBuilds?: unknown;
     maxLoadPerCore?: unknown;
+    workerRoot?: unknown;
     gradleDaemonIdleMinutes?: unknown;
   };
+  remote?: { machines?: unknown; build?: unknown; buildMode?: unknown };
   [key: string]: unknown;
 }
 export type Config = StimConfig;

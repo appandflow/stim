@@ -4,11 +4,11 @@ import Testing
 
 @Test func tutorialCommandsResolveWorkspaceAndShellQuotedPaths() {
   let result = tutorialCommands(
-    [#"cd "{base}""#, #"cd "{tour}""#, #"export AGENT_DEVICE_STATE_DIR="{stateDir}""#, #"stim ios --build-machine "{machine}""#],
+    [#"cd "{base}""#, #"cd "{tour}""#, #"export AGENT_DEVICE_STATE_DIR="{stateDir}""#, #"stim ios --remote-build "{machine}""#],
     tourPath: "/tmp/tour with spaces", repository: "/tmp/base", stateDir: "/tmp/state\"$`\\", machine: "Mac Studio")
   #expect(
     result
-      == "cd \"/tmp/base\"\ncd \"/tmp/tour with spaces\"\nexport AGENT_DEVICE_STATE_DIR=\"/tmp/state\\\"\\$\\`\\\\\"\nstim ios --build-machine \"Mac Studio\""
+      == "cd \"/tmp/base\"\ncd \"/tmp/tour with spaces\"\nexport AGENT_DEVICE_STATE_DIR=\"/tmp/state\\\"\\$\\`\\\\\"\nstim ios --remote-build \"Mac Studio\""
   )
 }
 

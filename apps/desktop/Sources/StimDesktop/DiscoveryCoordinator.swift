@@ -133,7 +133,7 @@ final class DiscoveryCoordinator: ObservableObject {
   }
 
   private var hostingEntries: [String] {
-    machines.settings.payload?.entry("hosting.machines")?.value.strings ?? []
+    machines.settings.payload?.entry("remote.machines")?.value.strings ?? []
   }
 
   private func rememberCapacityEvents(_ report: MachineStats?) async {
@@ -202,6 +202,9 @@ final class DiscoveryCoordinator: ObservableObject {
       if case .runOnAuto(let id, _) = prompt.action { return workspacePath(id) != nil }
       if prompt.type == .away { return ServerController.shared.pairedPhoneCount == 0 }
       return true
+    }
+    .filter { prompt in
+      PhoneApp.allows(prompt.type, phoneApp: FeatureFlags.isEnabled(.phoneApp))
     }
     if let placements {
       if let entries = machines.entries, machines.settings.error == nil,

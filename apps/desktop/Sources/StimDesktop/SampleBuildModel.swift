@@ -109,7 +109,7 @@ final class SampleBuildModel {
       do {
         try await checked(["start"])
         let output = try await dependencies.run(
-          StimCommand(["ios", "--build-machine", entry, "--no-build-cache", "--json"], cwd: folder), receive)
+          StimCommand(["ios", "--remote-build", entry, "--no-build-cache", "--json"], cwd: folder), receive)
         try Task.checkCancellation()
         let result = try OffloadResult.parse(output.stdout, machine: entry, exit: output.exit, stderr: output.stderr)
         test.apply(.offload(result))
@@ -120,7 +120,7 @@ final class SampleBuildModel {
           test.apply(.localStart)
           let began = dependencies.now()
           let local = try await dependencies.run(
-            StimCommand(["ios", "--build-machine", "local", "--no-build-cache", "--json"], cwd: folder), receive)
+            StimCommand(["ios", "--remote-build", "local", "--no-build-cache", "--json"], cwd: folder), receive)
           try Task.checkCancellation()
           if let refusal = try? JSONDecoder().decode(CommandRefusal.self, from: local.stdout) {
             test.apply(.fail(code: refusal.code, message: refusal.message, remedy: refusal.remedy))

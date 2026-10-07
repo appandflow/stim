@@ -146,7 +146,7 @@ export function readBuildDetail(root: string, claimId: string): BuildDetail | nu
   if (typeof raw.updatedAt !== 'string') return null;
   return {
     step: (NATIVE_BUILD_STEPS as readonly unknown[]).includes(raw.step) ? (raw.step as BuildDetail['step']) : null,
-    unit: raw.unit === 'targets' || raw.unit === 'tasks' ? raw.unit : null,
+    unit: raw.unit === 'targets' || raw.unit === 'tasks' || raw.unit === 'steps' ? raw.unit : null,
     done: countOrNull(raw.done),
     total: countOrNull(raw.total),
     line: typeof raw.line === 'string' ? raw.line : null,
