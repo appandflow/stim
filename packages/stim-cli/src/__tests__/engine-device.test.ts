@@ -30,6 +30,7 @@ import { resetExecutor, setExecutor } from '../exec.ts';
 import { recordCreatedDevice } from '../devices/created-devices.ts';
 import { parkSim, readParked } from '../devices/sim-pool.ts';
 import { workspaceId } from '../workspace/paths.ts';
+import { decodeStats, statsFile } from '@stim-cli/core/state';
 import { ownedSimName } from '../devices/ios.ts';
 import { makeAdbDevices, makeChildProcess, makeConfig, makeExitingChild, makeIosSim } from './_factories.ts';
 import { androidBuildOptions } from '../commands/android/support.ts';
@@ -2745,6 +2746,10 @@ describe('withDeviceBootAdmission', () => {
     await inFlight;
     const second = withDeviceBootAdmission({ platform: 'ios', key: 'u2' }, async () => 'booted', { max: 1, sources });
     await expect(second).rejects.toMatchObject({ code: 'STIM_AT_CAPACITY' });
+    const { record } = decodeStats(readFileSync(statsFile(), 'utf-8'));
+    expect(record?.capacityRefusals).toEqual([
+      expect.objectContaining({ kind: 'device', platform: 'ios', max: 1, workspace: workspaceId(process.cwd()) }),
+    ]);
     finishBoot();
     await expect(first).resolves.toBe('booted');
     await expect(

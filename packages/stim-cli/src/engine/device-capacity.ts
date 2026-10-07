@@ -15,7 +15,10 @@ import {
   type IosRuntime,
 } from '../devices/ios.ts';
 import { listAdbDevices, type SystemImage } from '../devices/android.ts';
+import { workspaceId } from '@stim-cli/core';
 import { formatElapsed, phaseLine } from '../command-output.ts';
+import { recordCapacityRefusal } from './stats.ts';
+import { findProjectRoot } from '../workspace/project.ts';
 import { readClaimSet, releaseClaim, tryAcquireClaim, type ClaimHandle } from '../ownership-claim.ts';
 import { withWorkspaceProcessLock, workspaceProcessLockError } from './workspace-process-lock.ts';
 import type { SettingScope } from '@stim-cli/core/state';
@@ -354,7 +357,19 @@ export async function withDeviceBootAdmission<T>(
   }: { max?: number; sources?: InventorySources; lockWaitMs?: number; out?: (line: string) => void } = {},
 ): Promise<T> {
   if (!max || max <= 0) return boot();
-  const marker = await admit(device, max, sources, lockWaitMs, out);
+  let marker: ClaimHandle;
+  try {
+    marker = await admit(device, max, sources, lockWaitMs, out);
+  } catch (error) {
+    if (error instanceof DeviceAdmissionRefusal && error.code === 'STIM_AT_CAPACITY') {
+      const root = findProjectRoot(process.cwd()) ?? process.cwd();
+      recordCapacityRefusal(
+        { platform: device.platform as 'ios' | 'android', max, workspace: workspaceId(root) },
+        Date.now(),
+      );
+    }
+    throw error;
+  }
   try {
     return await boot();
   } finally {
