@@ -72,6 +72,7 @@ export interface IosFacts {
 }
 
 export interface AndroidFacts {
+  host?: import('@stim-cli/core/state').HostedAndroidStatus;
   slot?: string;
   platform: string;
   serial: string | null;

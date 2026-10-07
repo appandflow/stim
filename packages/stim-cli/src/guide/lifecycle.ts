@@ -255,6 +255,62 @@ WAITING FOR A CHANGE
   still running, which it notices at the next change.
   Without --json it reprints the human view on change.`,
   sections: {
+    'hosted-android': {
+      summary: 'Android on a named approved Mac: strict placement, private Metro, status and stop',
+      body: () => `ANDROID ON A HOSTING MAC
+
+If Stim is not installed globally, replace stim with npx stim.
+
+  stim settings set hosting.machines '["janics-mac-mini"]'
+  stim doctor --fix
+  stim doctor
+  stim android --remote janics-mac-mini --device-profile pixel_7
+  stim status --json
+  stim reload android
+  stim stop
+
+A person on the host approves device-host access, separately from build, read
+and control. The setup in hosted-ios also serves Android. android.remote sets
+a workspace default. eas and proxy remain backends; auto refuses STIM_BAD_ARG
+until automatic placement ships. No flag or setting runs on this Mac.
+
+A named Mac is strict: refusal, unreachable, declined or failed preparation
+returns STIM_HOSTING_REFUSED without fallback. --device, a different recorded
+machine, a running local owned emulator in the slot, and --no-metro-check for
+hosted Debug refuse STIM_BAD_ARG. Run stim stop before switching placement.
+Unreadable android.host blocks only its slot; restore its recorded machine and
+session from the host before stopping that slot.
+
+--system-image and --device-profile select installed choices on the host.
+The build targets the offered ABI and --build-machine independently selects a
+compatible build worker. Stim builds before reserving, records the session as
+soon as it exists, then delivers one App.apk. The emulator boots headless;
+androidEmulatorApp is ignored with a note.
+
+Debug requires the local Metro supervisor. metro.publicUrl and metro.tunnel
+are ignored with a note. A private tailnet gateway reaches the host loopback
+bridge; the host reverses the client's Metro port into that bridge on its exact
+ledger-owned serial and sets debug_http_host to localhost:<clientMetroPort>.
+Each run and stim reload android restores the reverse, including after a host
+adb server restart. Reload broadcasts through the local Metro and never runs
+adb against the host serial on this Mac. Release variants skip Metro. Launch
+is true only with client bundle evidence or a live host release process;
+bundling requires a bundle request and unverified has no launch evidence.
+
+Status adds android.host { machine, session, selected, agent, device: { name,
+systemImage, api }, state } per slot. The public name is the profile and API
+level, never the host serial or AVD name. ready, stopped and unverified are
+session probe states; a conflicting local emulator remains visible with a
+warning. A recorded placement keeps the workspace in use and blocks idle stop.
+
+stop and worktree remove wait for device-host.stop, delete the host's owned
+emulator, close the gateway and clear placement. stop --json reports
+outcomes.device["android:host:<slot>"]. Forbidden or unknown-session also clears
+placement; an unreachable host keeps it and fails cleanup. A host restart stops
+sessions. Rerun the same machine to replace a stopped session. Host logcat,
+view/control and agent driving are not available yet; use local Metro logs
+for bundle errors.`,
+    },
     'hosted-ios': {
       summary: 'iOS on a named approved Mac: strict placement, private Metro, status and stop',
       body: () => `IOS ON A HOSTING MAC
@@ -275,8 +331,7 @@ The same setup serves macos --remote. Approval is separate from build, read
 and phone control. Set ios.remote to the machine name for a workspace default;
 no flag or setting runs here. eas and proxy keep their remote backend meanings.
 auto is accepted but refuses with STIM_BAD_ARG until automatic placement ships.
-Android --remote <machine> refuses with STIM_BAD_ARG: Android on a paired Mac
-is not available yet.
+Android --remote <machine> uses an owned emulator on that Mac; see hosted-android.
 
 A named Mac is strict: STIM_HOSTING_REFUSED names its reason; nothing boots
 here or elsewhere. --device cannot use a hosting Mac, and --simulator-app
@@ -1072,7 +1127,7 @@ with machine or project optimization settings; see \`guide settings\`:
            no org.gradle.caching=true in gradle.properties. Debug builds also
            carry -PreactNativeArchitectures=<target ABI>, using the owned
            emulator system-image ABI or the physical device's primary ABI.
-           Unknown targets and Release builds stay universal.
+           Unknown targets and local Release builds stay universal.
   ccache   the same gradlew run carries an absolute
            CMAKE_C_COMPILER_LAUNCHER / CMAKE_CXX_COMPILER_LAUNCHER plus
            CCACHE_DIR, CCACHE_BASEDIR, CCACHE_NOHASHDIR, CCACHE_SLOPPINESS
@@ -1761,9 +1816,9 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
   A named hosting Mac uses both selectors and its installed choices instead;
   an unavailable choice is STIM_HOSTING_REFUSED. See hosted-ios.
   \`android --system-image\` and \`--device-profile\` refuse with
-  STIM_BAD_ARG on every remote run (\`--remote\` or the android.remote
-  setting), and a remote run ignores android.systemImage and
-  android.deviceProfile.
+  STIM_BAD_ARG on eas/proxy runs (\`--remote\` or the android.remote
+  setting), which ignore android.systemImage and android.deviceProfile.
+  A named hosting Mac honors both selectors; see hosted-android.
 
   These flags describe a device that does not exist yet. When this workspace
   ALREADY owns a simulator and \`--device-type\` names a different model, or

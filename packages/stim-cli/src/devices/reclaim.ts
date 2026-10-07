@@ -1,3 +1,4 @@
+import { stopHostedAndroid } from '../device-host/hosted-android.ts';
 import { stopHostedIos } from '../device-host/hosted-ios.ts';
 import { archiveWorkspace } from '../archive.ts';
 import { clearNamedPorts } from '../named-ports.ts';
@@ -504,12 +505,14 @@ async function reclaimIdleProject(
         };
   skippedDevices.push(...skippedCollectors);
   failedDevices.push(...failedCollectors);
-  try {
-    await stopHostedIos(path);
-  } catch (error) {
-    const failed: SkippedDevice = { platform: 'ios', name: 'hosted iOS simulator', reason: (error as Error).message };
-    failedDevices.push(failed);
-    skippedDevices.push(failed);
+  for (const platform of ['ios', 'android'] as const) {
+    try {
+      await (platform === 'ios' ? stopHostedIos : stopHostedAndroid)(path);
+    } catch (error) {
+      const failed: SkippedDevice = { platform, name: `hosted ${platform} device`, reason: (error as Error).message };
+      failedDevices.push(failed);
+      skippedDevices.push(failed);
+    }
   }
 
   const remote = reclaimRemoteSession(path, { stopSession });

@@ -33,7 +33,7 @@ import { teardownOwnedAvd } from '../devices/teardown.ts';
 import { ensureConfig, loadConfig, withConfigLock } from '../workspace/config.ts';
 import type { HostedWorkerResult } from './worker.ts';
 import { removeHostedAppData } from './app.ts';
-import { installHostedAndroidApp } from './android-app.ts';
+import { installHostedAndroidApp, restoreHostedAndroidMetro } from './android-app.ts';
 
 function portIsOccupied(port: number): boolean {
   const devices = listAdbDevices({ timeoutMs: 5000 });
@@ -56,19 +56,30 @@ export function selectHostedAndroidDevice(request: HostedDeviceSelectors): Hoste
 
 /** Runs only in the private worker home; a caller cannot select or tear down an existing AVD. */
 export async function runHostedAndroidDevice(
-  mode: 'prepare' | 'stop' | 'install',
+  mode: 'prepare' | 'stop' | 'install' | 'reverse',
   request: { session: string; consolePort?: unknown; systemImage?: string; deviceProfile?: string },
-  app?: { attempt: string },
+  app?: { attempt: string; metroPort?: number; clientMetroPort?: number },
 ): Promise<HostedWorkerResult> {
   const home = process.env.STIM_HOME;
   if (!home) throw new Error('Hosted workers require their isolated STIM_HOME.');
   let device: HostedAndroidDevice | null = null;
   let creationStarted = false;
   try {
-    if (mode === 'install') {
-      if (!app) throw new Error('Hosted Android installation needs its admitted app attempt.');
+    if (mode === 'install' || mode === 'reverse') {
+      if (!app) throw new Error('Hosted Android native work needs its admitted app attempt.');
       device = readHostedDevice(home, 'android');
-      const launched = await installHostedAndroidApp(home, request.session, app.attempt, device);
+      if (!hostedConsolePort(request.consolePort) || device.consolePort !== request.consolePort)
+        throw new Error('The hosted Android device identity differs from its session console port.');
+      const metro =
+        app.metroPort && app.clientMetroPort
+          ? { bridgePort: app.metroPort, devicePort: app.clientMetroPort }
+          : undefined;
+      if (mode === 'reverse') {
+        if (!metro) throw new Error('Hosted Android Metro restore needs its bridge and device ports.');
+        restoreHostedAndroidMetro(home, request.session, app.attempt, device, metro);
+        return { state: 'ready', device };
+      }
+      const launched = await installHostedAndroidApp(home, request.session, app.attempt, device, metro);
       return { state: 'installed', device, launched };
     }
     if (mode === 'prepare') {

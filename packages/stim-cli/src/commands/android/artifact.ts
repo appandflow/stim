@@ -92,6 +92,7 @@ interface AndroidArtifactRequest {
   isExpo: boolean;
   device: OwnedDeviceRecord;
   physical: boolean;
+  hostedAbi?: string;
   /** Whether the app runs on a remote device backend rather than a local emulator. */
   remote: boolean;
   buildPlan: AndroidRunPlan['build'];
@@ -142,7 +143,7 @@ interface AndroidArtifactDeps {
 }
 
 /** The installable APK plus the cache work this run still owes the caller. */
-interface PreparedAndroidArtifact {
+export interface PreparedAndroidArtifact {
   apkPath: string | null;
   androidPackage: string | null;
   swapDir: string | null;
@@ -184,6 +185,7 @@ export async function acquireAndroidArtifact(
     isExpo,
     device,
     physical,
+    hostedAbi,
     remote: remoteTarget,
     buildPlan,
     cacheProviderConfig,
@@ -281,6 +283,7 @@ export async function acquireAndroidArtifact(
     compiler: cas?.id,
     buildProfile,
     targetAbiOnly: buildPlan.targetAbiOnly,
+    hostedAbi,
   });
 
   let hash = '';

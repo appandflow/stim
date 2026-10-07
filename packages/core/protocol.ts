@@ -1210,7 +1210,7 @@ export interface Methods {
   'device-host.app.attach': { params: { session: string; attempt: string }; result: HostedAppLaunch };
   'device-host.logs.query': { params: { session: string; cursor?: HostedLogsCursor }; result: HostedLogsPage };
   'device-host.metro.open': {
-    params: { session: string; gatewayPort: number; secret: string };
+    params: { session: string; gatewayPort: number; secret: string; clientMetroPort?: number };
     result: { port: number };
   };
   'device-host.metro.close': { params: { session: string }; result: { port: null } };

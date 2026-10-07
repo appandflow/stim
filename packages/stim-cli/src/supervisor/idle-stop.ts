@@ -1,4 +1,4 @@
-import { hostedIosPlacements } from '@stim-cli/core/state';
+import { hostedNativeRecords, parseHostedNativePlacement } from '@stim-cli/core/state';
 import { readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { createActivityReader, type ActivityTarget } from '../devices/activity.ts';
@@ -91,8 +91,15 @@ export function workspaceIdleProbe(
     },
     blocker() {
       if (workspaceBuildInProgress(root)) return 'a build is in progress';
-      const hosted = Object.values(hostedIosPlacements(readWorkspaceState(root)))[0];
-      if (hosted) return `its iOS simulator runs on ${hosted.machine}`;
+      for (const native of ['ios', 'android'] as const) {
+        const records = Object.values(hostedNativeRecords(readWorkspaceState(root), native));
+        if (records.length) {
+          const placement = parseHostedNativePlacement(records[0], native);
+          return placement
+            ? `its ${native === 'ios' ? 'iOS simulator' : 'Android emulator'} runs on ${placement.machine}`
+            : `its hosted ${native} placement is unreadable`;
+        }
+      }
       const lease = heldDeviceLease(root, Date.now());
       if (lease) return lease;
       const readActivity = createActivityReader();

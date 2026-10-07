@@ -54,7 +54,7 @@ import { FeedPool } from '../src/feed.ts';
 
 const WORKER = `
 import { spawn, spawnSync } from 'node:child_process';
-import { writeFileSync, readFileSync, appendFileSync, mkdirSync, realpathSync, existsSync } from 'node:fs';
+import { writeFileSync, readFileSync, appendFileSync, mkdirSync, realpathSync, existsSync, rmSync } from 'node:fs';
 import { workspaceName } from ${JSON.stringify(pathToFileURL(join(import.meta.dirname, '../../core/index.ts')).href)};
 import { captureProcessToken, processStartMicros } from ${JSON.stringify(pathToFileURL(join(import.meta.dirname, '../../core/process-identity.ts')).href)};
 import { join } from 'node:path';
@@ -106,6 +106,11 @@ if(input.mode === 'prepare') {
     appendFileSync(join(logs,'device.ndjson'),JSON.stringify({ts:1,src:'device',platform:'ios',level:'error',msg:existsSync(join(logs,'device.ndjson'))?'final native tail':'native failure'})+'\\n');
     out({more:input.deviceType === 'logs-backlog' && !input.final});
   }
+} else if(input.mode === 'reverse') {
+  appendFileSync(join(home,'reversed'),JSON.stringify({port:input.metroPort,clientPort:input.clientMetroPort,attempt:input.attempt})+'\\n');
+  if(input.deviceProfile === 'delayed-reverse') await new Promise(resolve=>setTimeout(resolve,300));
+  if(input.deviceProfile === 'failing-reverse' && existsSync(join(home,'fail-reverse'))) { out({state:'unknown',device:null,notice:'adb is restarting'}); process.exit(0); }
+  out({state:'ready',device:JSON.parse(readFileSync(join(home,'hosted-device.json'),'utf8'))});
 } else if(input.mode === 'install') {
   appendFileSync(join(home,'installed'),input.attempt+'\\n');
   writeFileSync(join(home,'install-metro-port'),String(input.metroPort ?? ''));
@@ -1353,7 +1358,7 @@ test('Android reservations keep distinct ports and platform slots and reconnect 
   );
   expect(
     await host.metroOpen('client', { session: android.id, gatewayPort: 12345, secret: 'a'.repeat(64) }, '127.0.0.1'),
-  ).toHaveProperty('error.message', 'Hosted Metro currently supports iOS sessions only.');
+  ).toHaveProperty('error.message', 'Android Metro needs the client Metro port.');
   expect(readFileSync(join(deviceHostRoot(), 'sessions.json'), 'utf8')).toBe(journal);
   expect(host.stop('other', { session: android.id })).toHaveProperty('error.code', 'unknown-session');
   host.stop('client', { session: android.id });
@@ -1572,7 +1577,7 @@ test('macOS reservations isolate concurrent clients, validate on the wire and re
   expect(() => host.viewTarget('client', first.id)).toThrow('not running');
   expect(
     await host.metroOpen('client', { session: first.id, gatewayPort: 12345, secret: 'a'.repeat(64) }, '127.0.0.1'),
-  ).toHaveProperty('error.message', 'Hosted Metro currently supports iOS sessions only.');
+  ).toHaveProperty('error.message', 'Hosted Metro supports iOS and Android sessions only.');
   host.stop('client', { session: first.id });
   await state(first.id, 'stopped');
   expect(reserve({ ...params, attempt: 'replacement' }).appSlot).toBe(1);
@@ -2480,4 +2485,133 @@ test('close waits for an in-flight retirement and prevents further reconciliatio
   expectRetired(record.id);
   await host.reconcileStopped();
   expect(existsSync(join(deviceHostArea(next.id), 'home', 'stopped'))).toBe(false);
+});
+
+test('Android Metro validates the client port and restores the installed mapping on each attach', async () => {
+  const first = reserve({ platform: 'android', attempt: 'android-metro' });
+  await state(first.id, 'ready');
+  const params = { session: first.id, gatewayPort: 12345, secret: 'a'.repeat(64), clientMetroPort: 8082 };
+  for (const port of [0, 65536, 1.5, '8082'])
+    expect(await host.metroOpen('client', { ...params, clientMetroPort: port }, '127.0.0.1')).toHaveProperty(
+      'error.code',
+      'bad-request',
+    );
+  expect(await host.metroOpen('other', params, '127.0.0.1')).toHaveProperty('error');
+  const opened = await host.metroOpen('client', params, '127.0.0.1');
+  if ('error' in opened) throw new Error(opened.error.message);
+  expect(readHostedSessions().find((entry) => entry.id === first.id)?.clientMetroPort).toBe(8082);
+  const app = appOffer(first.id, 'android-dev', 'android');
+  app.params.mode = 'development';
+  host.appOffer('client', app.params);
+  await uploadManifest(app);
+  await host.appChunk('client', {
+    session: first.id,
+    attempt: app.params.attempt,
+    sha256: app.sha256,
+    offset: 0,
+    data: app.content.toString('base64'),
+  });
+  host.appLaunch('client', app.params);
+  await vi.waitFor(() => expect(host.appAttach('client', app.params)).toHaveProperty('result.state', 'installed'));
+  const workerHome = join(deviceHostArea(first.id), 'home');
+  expect(readFileSync(join(workerHome, 'install-metro-port'), 'utf8')).toBe(String(opened.result.port));
+  for (let i = 0; i < 2; i++) {
+    expect(host.attach('client', { session: first.id })).toHaveProperty('result.state', 'ready');
+    expect(await host.metroOpen('client', params, '127.0.0.1')).toHaveProperty('result.port', opened.result.port);
+  }
+  expect(
+    readFileSync(join(workerHome, 'reversed'), 'utf8')
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line)),
+  ).toEqual(Array.from({ length: 2 }, () => ({ port: opened.result.port, clientPort: 8082, attempt: 'android-dev' })));
+  host.stop('client', { session: first.id });
+  await state(first.id, 'stopped');
+  expect(await host.metroOpen('client', params, '127.0.0.1')).toHaveProperty('error');
+});
+
+test('Android Metro restore is serialized with install and stop under its session claim', async () => {
+  const first = reserve({ platform: 'android', attempt: 'android-serialized', deviceProfile: 'delayed-reverse' });
+  await state(first.id, 'ready');
+  const params = { session: first.id, gatewayPort: 12345, secret: 'a'.repeat(64), clientMetroPort: 8082 };
+  expect(await host.metroOpen('client', params, '127.0.0.1')).toHaveProperty('result.port');
+  const app = appOffer(first.id, 'android-dev', 'android');
+  app.params.mode = 'development';
+  host.appOffer('client', app.params);
+  await uploadManifest(app);
+  await host.appChunk('client', {
+    session: first.id,
+    attempt: app.params.attempt,
+    sha256: app.sha256,
+    offset: 0,
+    data: app.content.toString('base64'),
+  });
+  host.appLaunch('client', app.params);
+  await vi.waitFor(() => expect(host.appAttach('client', app.params)).toHaveProperty('result.state', 'installed'));
+  const restoring = host.metroOpen('client', params, '127.0.0.1');
+  await vi.waitFor(() => expect(existsSync(join(deviceHostArea(first.id), 'home', 'reversed'))).toBe(true));
+  expect(host.appOffer('client', appOffer(first.id, 'next', 'android').params)).toHaveProperty('error');
+  expect(await host.metroOpen('client', params, '127.0.0.1')).toHaveProperty('error');
+  expect(readClaimSet(join(deviceHostRoot(), `${first.id}.claims`)).live[0]?.child).toBeDefined();
+  host.stop('client', { session: first.id });
+  expect(await restoring).toHaveProperty('error');
+  await state(first.id, 'stopped');
+});
+
+test('Android Metro refuses missing or invalid ports, unapproved clients and non-ready owners before native work', async () => {
+  const first = reserve({ platform: 'android', attempt: 'android-metro-validation' });
+  const params = { session: first.id, gatewayPort: 12345, secret: 'a'.repeat(64) };
+  expect(await host.metroOpen('client', { ...params, clientMetroPort: 8082 }, '127.0.0.1')).toHaveProperty('error');
+  await state(first.id, 'ready');
+  expect(await host.metroOpen('client', params, '127.0.0.1')).toHaveProperty('error.code', 'bad-request');
+  for (const clientMetroPort of [0, 65536, 1.5, '8082']) {
+    expect(await host.metroOpen('client', { ...params, clientMetroPort }, '127.0.0.1')).toHaveProperty(
+      'error.code',
+      'bad-request',
+    );
+  }
+  allowed.delete('client');
+  expect(await host.metroOpen('client', { ...params, clientMetroPort: 8082 }, '127.0.0.1')).toHaveProperty(
+    'error.code',
+    'forbidden',
+  );
+  allowed.add('client');
+  expect(await host.metroOpen('other', { ...params, clientMetroPort: 8082 }, '127.0.0.1')).toHaveProperty('error');
+  expect(existsSync(join(deviceHostArea(first.id), 'home', 'reversed'))).toBe(false);
+  const validator = new Ajv2020({ strict: false, validateFormats: false });
+  validator.addSchema(protocolJsonSchema(), 'protocol');
+  const validate = validator.compile({ $ref: 'protocol#/$defs/ClientRequest' });
+  expect(validate({ id: 1, method: 'device-host.metro.open', params: { ...params, clientMetroPort: 8082 } })).toBe(
+    true,
+  );
+  expect(validate({ id: 1, method: 'device-host.metro.open', params: { ...params, clientMetroPort: 65536 } })).toBe(
+    false,
+  );
+});
+
+test('a failed Android Metro restore is refused and leaves the session ready for a retry', async () => {
+  const first = reserve({ platform: 'android', attempt: 'android-restore-fail', deviceProfile: 'failing-reverse' });
+  await state(first.id, 'ready');
+  const params = { session: first.id, gatewayPort: 12345, secret: 'b'.repeat(64), clientMetroPort: 8082 };
+  const opened = await host.metroOpen('client', params, '127.0.0.1');
+  if ('error' in opened) throw new Error(opened.error.message);
+  const app = appOffer(first.id, 'android-dev', 'android');
+  app.params.mode = 'development';
+  host.appOffer('client', app.params);
+  await uploadManifest(app);
+  await host.appChunk('client', {
+    session: first.id,
+    attempt: app.params.attempt,
+    sha256: app.sha256,
+    offset: 0,
+    data: app.content.toString('base64'),
+  });
+  host.appLaunch('client', app.params);
+  await vi.waitFor(() => expect(host.appAttach('client', app.params)).toHaveProperty('result.state', 'installed'));
+  const workerHome = join(deviceHostArea(first.id), 'home');
+  writeFileSync(join(workerHome, 'fail-reverse'), '1');
+  expect(await host.metroOpen('client', params, '127.0.0.1')).toHaveProperty('error.code', 'action-failed');
+  expect(readHostedSessions().find((entry) => entry.id === first.id)?.state).toBe('ready');
+  rmSync(join(workerHome, 'fail-reverse'));
+  expect(await host.metroOpen('client', params, '127.0.0.1')).toHaveProperty('result.port', opened.result.port);
 });

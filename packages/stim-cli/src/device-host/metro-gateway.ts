@@ -9,6 +9,7 @@ import {
   hostedMetroGateways,
   type DeviceHostMachineCredential,
   type HostedMetroRequest,
+  type SettingsObject,
 } from '@stim-cli/core/state';
 import { inspectProcessIdentity } from '../process-identity.ts';
 import { realIo } from '../offload/tailnet.ts';
@@ -95,4 +96,20 @@ export async function closeHostedMetro(root: string, session: string): Promise<v
       throw new Error('The Metro supervisor did not close its private gateway. Restart Metro, then retry stim stop.');
     await new Promise((done) => setTimeout(done, 100));
   }
+}
+
+export function hostedMetroSettings(settings: SettingsObject, hosted: boolean): SettingsObject {
+  return hosted
+    ? {
+        ...settings,
+        ios: { ...(isJsonObject(settings.ios) ? settings.ios : {}), remote: undefined },
+        android: { ...(isJsonObject(settings.android) ? settings.android : {}), remote: undefined },
+        metro: {
+          ...(isJsonObject(settings.metro) ? settings.metro : {}),
+          tunnel: undefined,
+          publicUrl: undefined,
+          ngrokUrl: undefined,
+        },
+      }
+    : settings;
 }

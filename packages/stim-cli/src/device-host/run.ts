@@ -14,7 +14,7 @@ async function main(): Promise<void> {
     chunks.push(chunk as Buffer);
   }
   const input: unknown = JSON.parse(Buffer.concat(chunks).toString('utf8'));
-  if (!isJsonObject(input) || !['prepare', 'stop', 'install', 'offer', 'logs'].includes(String(input.mode)))
+  if (!isJsonObject(input) || !['prepare', 'stop', 'install', 'offer', 'logs', 'reverse'].includes(String(input.mode)))
     throw new Error('Invalid hosted worker request.');
   if (input.mode === 'offer') {
     const request = parseHostedOfferRequest(input);
@@ -29,18 +29,15 @@ async function main(): Promise<void> {
     return;
   }
   if (
-    (input.mode === 'install' || input.mode === 'logs') &&
+    (input.mode === 'install' || input.mode === 'logs' || input.mode === 'reverse') &&
     (typeof input.session !== 'string' || !/^[a-f0-9-]{36}$/.test(input.session) || !hostedAppAttempt(input.attempt))
   )
     throw new Error('Invalid hosted app request.');
-  if (
-    input.metroPort !== undefined &&
-    (typeof input.metroPort !== 'number' ||
-      !Number.isInteger(input.metroPort) ||
-      input.metroPort < 1 ||
-      input.metroPort > 65535)
-  )
-    throw new Error('Invalid hosted Metro port.');
+  for (const port of [input.metroPort, input.clientMetroPort]) {
+    if (port !== undefined && (typeof port !== 'number' || !Number.isInteger(port) || port < 1 || port > 65535))
+      throw new Error('Invalid hosted Metro port.');
+  }
+  if (input.mode === 'reverse' && input.platform !== 'android') throw new Error('Metro reverse requires Android.');
   if (input.platform === 'macos' && !hostedMacosAppSlot(input.appSlot))
     throw new Error('Invalid hosted macOS app slot.');
   if (input.mode === 'logs') {
@@ -70,14 +67,20 @@ async function main(): Promise<void> {
         )
       : input.platform === 'android'
         ? await runHostedAndroidDevice(
-            input.mode as 'prepare' | 'stop' | 'install',
+            input.mode as 'prepare' | 'stop' | 'install' | 'reverse',
             {
               session: typeof input.session === 'string' ? input.session : '',
               consolePort: input.consolePort,
               ...(typeof input.systemImage === 'string' ? { systemImage: input.systemImage } : {}),
               ...(typeof input.deviceProfile === 'string' ? { deviceProfile: input.deviceProfile } : {}),
             },
-            input.mode === 'install' ? { attempt: input.attempt as string } : undefined,
+            input.mode === 'install' || input.mode === 'reverse'
+              ? {
+                  attempt: input.attempt as string,
+                  metroPort: input.metroPort as number | undefined,
+                  clientMetroPort: input.clientMetroPort as number | undefined,
+                }
+              : undefined,
           )
         : await runHostedDevice(
             input.mode as 'prepare' | 'stop' | 'install',

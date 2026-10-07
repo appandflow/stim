@@ -1,5 +1,5 @@
 import { isRpcEvent } from '@stim-cli/core/receive-protocol';
-import { writeHostedIos } from '../device-host/ios-state.ts';
+import { writeHostedIos, writeHostedAndroid } from '../device-host/ios-state.ts';
 import * as hostedClient from '../device-host/hosted-client.ts';
 import { writeWorkspaceState } from '../workspace/workspace-state.ts';
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'fs';
@@ -1223,6 +1223,50 @@ test.each(['default', 'tablet'].flatMap((slot) => ['Shutdown', 'Booted', 'unknow
     expect(plain).toContain('iOS 27.0');
     expect(plain).toContain('agent: agent-device <command> --remote-config /tmp/hosted-ios.json');
     expect(plain.includes(state === 'unknown' ? 'UDID-ABC' : 'stim-projA')).toBe(state !== 'Shutdown');
+  },
+);
+
+test.each(['default', 'tablet'])(
+  'status renders a hosted Android emulator in slot %s without host identities',
+  async (slot) => {
+    const root = join(tmpHome, 'app');
+    mkdirSync(root);
+    writeFileSync(join(root, 'package.json'), '{}');
+    saveConfig(makeConfig({ projects: { [root]: { platforms: {} } } }));
+    vi.spyOn(hostedClient, 'probeHostedSession').mockResolvedValue({ state: 'ready' });
+    writeHostedAndroid(root, slot, {
+      machine: 'mini',
+      selected: 'mini',
+      session: '12345678-1234-1234-1234-123456789abc',
+      appAttempt: 'app',
+      device: {
+        avdName: 'stim-private-host',
+        serial: 'emulator-5554',
+        consolePort: 5554,
+        systemImage: 'system-images;android-30;google_apis;x86_64',
+        deviceProfile: 'pixel_7',
+        architecture: 'x86_64',
+      },
+      agent: { driver: 'none', setting: 'hosting.agentDriver' },
+    });
+    const payload = await runStatusJson();
+    const environment = payload.environments[0];
+    const android =
+      slot === 'default'
+        ? environment.android
+        : environment.slots.find((entry: { slot: string }) => entry.slot === slot).android;
+    expect(android).toMatchObject({
+      serial: null,
+      state: 'ready',
+      host: { machine: 'mini', state: 'ready', device: { name: 'pixel_7 (API 30)', api: 30 } },
+    });
+    expect(environment.slots ?? []).not.toEqual(expect.arrayContaining([expect.objectContaining({ slot: 'default' })]));
+    const plain = (await runStatus()).join('\n');
+    expect(plain).toContain('pixel_7 (API 30) on mini');
+    for (const output of [JSON.stringify(payload), plain]) {
+      expect(output).not.toContain('stim-private-host');
+      expect(output).not.toContain('emulator-5554');
+    }
   },
 );
 

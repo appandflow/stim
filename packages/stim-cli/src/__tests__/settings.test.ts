@@ -348,14 +348,19 @@ describe('remote device settings', () => {
     expect(remoteIosSetting({ ios: { remote: 'eas' } })).toEqual({ kind: 'backend', backend: 'eas' });
     expect(remoteIosSetting({ ios: { remote: 'mini' } })).toEqual({ kind: 'machine', machine: 'mini' });
     expect(remoteIosSetting({ ios: { remote: 'auto' } })).toEqual({ kind: 'machine', machine: 'auto' });
-    expect(remoteAndroidSetting({ android: { remote: 'proxy' } })).toBe('proxy');
-    expect(remoteAndroidSetting({ android: { remote: 'eas' } })).toBe('eas');
+    expect(remoteAndroidSetting({ android: { remote: 'proxy' } })).toEqual({ kind: 'backend', backend: 'proxy' });
+    expect(remoteAndroidSetting({ android: { remote: 'eas' } })).toEqual({ kind: 'backend', backend: 'eas' });
+    expect(remoteAndroidSetting({ android: { remote: 'mini:7443' } })).toEqual({
+      kind: 'machine',
+      machine: 'mini:7443',
+    });
+    expect(remoteAndroidSetting({ android: { remote: 'AUTO' } })).toEqual({ kind: 'machine', machine: 'auto' });
   });
 
   test('reports invalid platform values instead of silently disabling remote mode', () => {
-    expect(settingShapeErrors({ ios: { remote: true }, android: { remote: 'cloud' } })).toEqual([
+    expect(settingShapeErrors({ ios: { remote: true }, android: { remote: 'bad name' } })).toEqual([
       'Invalid ios.remote setting true. Expected a string.',
-      'Invalid android.remote setting "cloud". Expected one of: proxy, eas.',
+      'Invalid android.remote setting "bad name". Expected eas, proxy, auto, or a tailnet machine name.',
     ]);
   });
 
@@ -421,7 +426,11 @@ const SHAPE_CASES: Record<string, { valid: unknown; invalid: unknown; expected: 
   'android.variant': { valid: 'productionDebug', invalid: {}, expected: 'a string' },
   'android.keystore': { valid: 'android/app/release.keystore', invalid: {}, expected: 'a string path' },
   'android.keystorePassword': { valid: 'env:MY_KS_PASS', invalid: 1234, expected: 'a string' },
-  'android.remote': { valid: 'eas', invalid: 'cloud', expected: 'one of: proxy, eas' },
+  'android.remote': {
+    valid: 'mini:7443',
+    invalid: 'bad name',
+    expected: 'eas, proxy, auto, or a tailnet machine name',
+  },
   'metro.tunnel': {
     valid: 'tailscale',
     invalid: 'bogus',

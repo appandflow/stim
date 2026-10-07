@@ -166,9 +166,9 @@ const REFUSALS: Array<{
     events: ['pool', 'compiler', 'warning:cache', 'provider', 'avd'],
   },
   {
-    name: 'a remote backend outside its list refuses at shape validation',
-    inputs: { settings: { unused: true, android: { remote: 'invalid' } } },
-    message: /^Invalid android\.remote setting "invalid"\. Expected one of: proxy, eas\.$/,
+    name: 'a malformed remote target refuses at shape validation',
+    inputs: { settings: { unused: true, android: { remote: 'bad name' } } },
+    message: /^Invalid android\.remote setting "bad name"\. Expected eas, proxy, auto, or a tailnet machine name\.$/,
     events: ['pool'],
   },
   {

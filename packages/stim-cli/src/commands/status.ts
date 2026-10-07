@@ -1,3 +1,4 @@
+import { readHostedAndroidStatus } from '../device-host/hosted-android-status.ts';
 import { readHostedIosStatus } from '../device-host/hosted-ios-status.ts';
 import { maintenanceStatus, maintenanceLines } from '../maintenance/status.ts';
 import { triggerMaintenance } from '../maintenance/trigger.ts';
@@ -77,6 +78,10 @@ import { readEasSessionLedger } from '../engine/eas-session-ledger.ts';
 import { readMetroTunnel, readRemoteSession, readWorkspaceLaunches } from '../supervisor/state.ts';
 import {
   hostedIosPlacements,
+  hostedAndroidRecords,
+  hostedAndroidPlacements,
+  parseHostedAndroidPlacement,
+  unreadableHostedAndroid,
   hostedIosRecords,
   parseHostedIosPlacement,
   unreadableHostedIos,
@@ -195,6 +200,57 @@ function iosStatusLines(record: EnvironmentState['ios'], slotLabel: string): str
   return out;
 }
 
+function applyHostedAndroidStates(
+  state: EnvironmentState,
+  saved: ReturnType<typeof readWorkspaceState>,
+  factsBySlot: Awaited<ReturnType<typeof readHostedAndroidStatus>>,
+): void {
+  for (const [slot, record] of Object.entries(hostedAndroidRecords(saved))) {
+    if (!parseHostedAndroidPlacement(record)) state.warnings.push(unreadableHostedAndroid(slot));
+  }
+  for (const [slot, facts] of Object.entries(factsBySlot)) {
+    const local = slot === 'default' ? state.android : state.slots?.find((entry) => entry.slot === slot)?.android;
+    const conflict = local && (local.state === 'detected' || local.state === 'unknown');
+    const android = conflict ? { ...local, host: facts.android.host } : facts.android;
+    if (conflict)
+      state.warnings.push(
+        `Slot ${slot} records both a local and hosted Android emulator (${facts.android.name} on ${facts.android.host?.machine}); run stim stop to reconcile them.`,
+      );
+    if (slot === 'default') state.android = android;
+    else {
+      state.slots ??= [];
+      const savedSlot = state.slots.find((entry) => entry.slot === slot);
+      if (savedSlot) savedSlot.android = android;
+      else state.slots.push({ slot, ios: null, android });
+    }
+    if (facts.warning) state.warnings.push(facts.warning);
+    state.live ||= facts.android.state === 'ready';
+  }
+}
+
+function androidStatusLines(record: EnvironmentState['android'], slotLabel: string): string[] {
+  const out: string[] = [];
+  if (record?.host && !record.serial) {
+    const host = record.host;
+    out.push(
+      `  android${slotLabel}: ${chalk.cyan(`${host.device?.name ?? 'Android emulator'} on ${host.machine}`)} ${host.state ?? 'unverified'}`,
+    );
+  } else if (record) {
+    const kind = record.physical ? chalk.dim('(physical)') : chalk.dim('(emulator)');
+    const observed = record.state ? ` ${record.state}${record.serial ? ` (${record.serial})` : ''}` : '';
+    out.push(
+      `  android${slotLabel}: ${chalk.cyan(record.name)} ${kind}${observed}${record.owned ? chalk.dim(' (owned)') : ''}${activitySuffix(record.activity)}${appSuffix(record.app)}${idleShutdownSuffix(record.idleShutdown)}`,
+    );
+    if (record.host) {
+      const host = record.host;
+      out.push(
+        `  android${slotLabel}: ${chalk.cyan(`${host.device?.name ?? 'Android emulator'} on ${host.machine}`)} ${host.state ?? 'unverified'}`,
+      );
+    }
+  }
+  return out;
+}
+
 function formatGb(mb: number): string {
   return `${(mb / 1024).toFixed(1)} GB`;
 }
@@ -249,6 +305,9 @@ async function readStatusFacts(
   const cfg = loadConfig();
   const projects = Object.entries(cfg?.projects || {});
   const iosReads = projects.map(([path]) => readHostedIosStatus(hostedIosPlacements(readWorkspaceState(path))));
+  const androidReads = projects.map(([path]) =>
+    readHostedAndroidStatus(hostedAndroidPlacements(readWorkspaceState(path))),
+  );
   const macosReads = projects.map(([path]) => readHostedMacosStatus(readMacosRecord(path)));
   const cwdRoot = findServerWorkspace(process.cwd())?.root ?? null;
   const worktrees = linkedWorktrees([process.cwd(), ...projects.map(([path]) => path)]);
@@ -405,6 +464,7 @@ async function readStatusFacts(
         if (facts.warning) state.warnings.push(facts.warning);
         state.live ||= facts.ios.state === 'ready';
       }
+      applyHostedAndroidStates(state, saved, await androidReads[i]!);
       const tunnel = readMetroTunnel(path);
       if (state.metro && tunnel?.kind === 'managed' && tunnel.port === state.metro.port && pidExists(tunnel.pid)) {
         state.metro.tunnel = { provider: tunnel.provider, url: tunnel.url };
@@ -696,15 +756,7 @@ function renderStatus(
     for (const deviceState of [{ slot: 'default', ios: state.ios, android: state.android }, ...(state.slots ?? [])]) {
       const slotLabel = deviceState.slot === 'default' ? '' : ` [${deviceState.slot}]`;
       out.push(...iosStatusLines(deviceState.ios, slotLabel));
-      if (deviceState.android) {
-        const kind = deviceState.android.physical ? chalk.dim('(physical)') : chalk.dim('(emulator)');
-        const observed = deviceState.android.state
-          ? ` ${deviceState.android.state}${deviceState.android.serial ? ` (${deviceState.android.serial})` : ''}`
-          : '';
-        out.push(
-          `  android${slotLabel}: ${chalk.cyan(deviceState.android.name)} ${kind}${observed}${deviceState.android.owned ? chalk.dim(' (owned)') : ''}${activitySuffix(deviceState.android.activity)}${appSuffix(deviceState.android.app)}${idleShutdownSuffix(deviceState.android.idleShutdown)}`,
-        );
-      }
+      out.push(...androidStatusLines(deviceState.android, slotLabel));
     }
     if (state.macos) {
       const host = state.macos.host;

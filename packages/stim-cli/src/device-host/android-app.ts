@@ -12,7 +12,14 @@ import {
 import { getExecutor } from '../exec.ts';
 import { findAapt } from '../commands/android/support.ts';
 import { getAvdNameForSerial, androidDeviceAbi, androidToolPath } from '../devices/android.ts';
-import { androidAppProcess, installAndroidApp, launchAndroidReleaseApp } from '../engine/app-install.ts';
+import {
+  androidAppProcess,
+  installAndroidApp,
+  launchAndroidApp,
+  launchAndroidReleaseApp,
+  reverseMetroPorts,
+  writeDebugHttpHost,
+} from '../engine/app-install.ts';
 
 async function digest(path: string): Promise<string> {
   const hash = createHash('sha256');
@@ -26,6 +33,7 @@ export async function installHostedAndroidApp(
   session: string,
   attempt: string,
   device: HostedAndroidDevice,
+  metro?: { bridgePort: number; devicePort: number },
 ): Promise<true | 'unverified'> {
   const record = readHostedApp(session, attempt, home);
   const area = hostedAppArea(session, attempt, home);
@@ -58,35 +66,30 @@ export async function installHostedAndroidApp(
   const nativeCode = /^native-code:\s*(.*)$/m.exec(badging)?.[1];
   if (nativeCode !== undefined && !nativeCode.split(/\s+/).includes(`'${device.architecture}'`))
     throw new Error('The APK has no native library slice for the hosted emulator architecture.');
-  const assertTarget = () => {
-    assertHostedDeviceLedger(home, device.avdName, 'android');
-    const current = readHostedDevice(home, 'android');
-    if (
-      current.avdName !== device.avdName ||
-      current.serial !== device.serial ||
-      current.systemImage !== device.systemImage ||
-      getAvdNameForSerial(device.serial) !== device.avdName ||
-      androidDeviceAbi(device.serial) !== device.architecture
-    )
-      throw new Error('The hosted Android device identity or running ABI changed.');
-  };
-  assertTarget();
-  const executor = getExecutor();
-  const adb = androidToolPath('adb');
-  const sdkExecutor: typeof executor = {
-    ...executor,
-    runFile: (file, args, options) => executor.runFile(file === 'adb' ? adb : file, args, options),
-  };
+  assertHostedAndroidTarget(home, device);
+  const sdkExecutor = hostedAndroidExecutor();
   const installed = installAndroidApp(
     { serial: device.serial, apkPath: apk, packageName: record.bundleId },
     { exec: sdkExecutor },
   );
   if (!installed.ok) throw new Error(installed.reason ?? 'Hosted APK installation was not established.');
-  assertTarget();
-  const launched = launchAndroidReleaseApp(
-    { serial: device.serial, packageName: record.bundleId },
-    { exec: sdkExecutor },
-  );
+  assertHostedAndroidTarget(home, device);
+  if (record.mode === 'development' && !metro)
+    throw new Error('Hosted Android development launch requires its Metro bridge.');
+  const launched =
+    record.mode === 'development' && metro
+      ? launchAndroidApp(
+          {
+            serial: device.serial,
+            packageName: record.bundleId,
+            metroPort: metro.devicePort,
+            bridgePort: metro.bridgePort,
+            physical: true,
+            devClientScheme: record.devClientScheme,
+          },
+          { exec: sdkExecutor },
+        )
+      : launchAndroidReleaseApp({ serial: device.serial, packageName: record.bundleId }, { exec: sdkExecutor });
   if (!launched.ok) throw new Error(launched.reason ?? 'Hosted APK launch was not established.');
   if (record.mode === 'development') return 'unverified';
   for (let tries = 0; tries < 10; tries++) {
@@ -94,4 +97,50 @@ export async function installHostedAndroidApp(
     if (androidAppProcess(device.serial, record.bundleId, { exec: sdkExecutor })) return true;
   }
   return 'unverified';
+}
+
+function assertHostedAndroidTarget(home: string, device: HostedAndroidDevice): void {
+  assertHostedDeviceLedger(home, device.avdName, 'android');
+  const current = readHostedDevice(home, 'android');
+  if (
+    current.avdName !== device.avdName ||
+    current.serial !== device.serial ||
+    current.systemImage !== device.systemImage ||
+    getAvdNameForSerial(device.serial) !== device.avdName ||
+    androidDeviceAbi(device.serial) !== device.architecture
+  )
+    throw new Error('The hosted Android device identity or running ABI changed.');
+}
+
+function hostedAndroidExecutor(): ReturnType<typeof getExecutor> {
+  const executor = getExecutor();
+  const adb = androidToolPath('adb');
+  return {
+    ...executor,
+    runFile: (file, args, options) => executor.runFile(file === 'adb' ? adb : file, args, options),
+  };
+}
+
+export function restoreHostedAndroidMetro(
+  home: string,
+  session: string,
+  attempt: string,
+  device: HostedAndroidDevice,
+  metro: { bridgePort: number; devicePort: number },
+): void {
+  const record = readHostedApp(session, attempt, home);
+  if (record.state !== 'installed' || record.mode !== 'development')
+    throw new Error('Metro restore requires an installed development app.');
+  assertHostedAndroidTarget(home, device);
+  const exec = hostedAndroidExecutor();
+  const reversed = reverseMetroPorts(
+    { serial: device.serial, metroPort: metro.bridgePort, devicePorts: [metro.devicePort] },
+    { exec },
+  );
+  if (reversed.failed) throw new Error(reversed.reason);
+  assertHostedAndroidTarget(home, device);
+  writeDebugHttpHost(
+    { serial: device.serial, packageName: record.bundleId, metroPort: metro.devicePort, physical: true },
+    { exec },
+  );
 }

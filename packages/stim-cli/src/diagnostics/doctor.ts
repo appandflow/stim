@@ -881,10 +881,11 @@ function configuredRemoteBackends(
   platform: string | undefined,
 ): RemoteDeviceBackend[] {
   const iosTarget = remoteIosSetting(projectSettings);
+  const androidTarget = remoteAndroidSetting(projectSettings);
   return [
     ...new Set([
       ...(platform !== 'android' ? [iosTarget?.kind === 'backend' ? iosTarget.backend : null] : []),
-      ...(platform !== 'ios' ? [remoteAndroidSetting(projectSettings)] : []),
+      ...(platform !== 'ios' ? [androidTarget?.kind === 'backend' ? androidTarget.backend : null] : []),
     ]),
   ].filter((backend): backend is RemoteDeviceBackend => backend !== null);
 }

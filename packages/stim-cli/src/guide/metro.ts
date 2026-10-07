@@ -85,6 +85,13 @@ BUNDLE WARMUP
   waits for the app's own bundle response. With a bundler started outside Stim,
   device logs may prove a request, but bundle completion may stay unverified.
 
+HOSTED ANDROID
+  android --remote <machine> keeps Metro here through the private tailnet
+  gateway. The host reverses the client Metro port into its loopback bridge
+  on the exact owned emulator. Each run and reload restores that reverse;
+  no adb command for the host serial runs here. metro.tunnel and metro.publicUrl
+  are ignored. See guide lifecycle hosted-android.
+
 REMOTE DEVICE BACKENDS
   Metro exposure and device selection are separate:
 

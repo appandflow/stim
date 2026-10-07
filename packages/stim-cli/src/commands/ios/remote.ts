@@ -1,7 +1,7 @@
 import { deviceSlotPlatforms } from '../../devices/device-slots.ts';
 import chalk from 'chalk';
 import { phaseLine } from '../../command-output.ts';
-import { isJsonObject, type HostedIosPlacement } from '@stim-cli/core/state';
+import { type HostedIosPlacement } from '@stim-cli/core/state';
 import {
   parseIosRemote,
   remoteIosSetting,
@@ -204,20 +204,4 @@ export async function connectIosBackend(
       failure: { code: resolved.code ?? REMOTE_SESSION_ERROR, message: resolved.failed, remedy: resolved.remedy },
     };
   return { remote: d.remoteIosDeps(resolved.ctx), arch: await d.readRemoteSimulatorArch(resolved.ctx.existingDaemon) };
-}
-
-export function iosMetroSettings(settings: SettingsObject, hosted: boolean): SettingsObject {
-  return hosted
-    ? {
-        ...settings,
-        ios: { ...(isJsonObject(settings.ios) ? settings.ios : {}), remote: undefined },
-        android: { ...(isJsonObject(settings.android) ? settings.android : {}), remote: undefined },
-        metro: {
-          ...(isJsonObject(settings.metro) ? settings.metro : {}),
-          tunnel: undefined,
-          publicUrl: undefined,
-          ngrokUrl: undefined,
-        },
-      }
-    : settings;
 }

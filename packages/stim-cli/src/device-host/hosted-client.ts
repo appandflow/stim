@@ -147,7 +147,7 @@ export async function call(
 export function hostedSession(
   host: HostConnection,
   value: Record<string, unknown>,
-  platform: 'ios' | 'macos' = 'macos',
+  platform: 'ios' | 'android' | 'macos' = 'macos',
 ): HostedSession {
   if (typeof value.id !== 'string' || typeof value.state !== 'string' || value.platform !== platform) {
     throw new Error(`${host.machine} answered with a session that is not a hosted ${platform} session.`);
@@ -168,7 +168,7 @@ export async function attach(
   host: HostConnection,
   session: string,
   timeoutMs?: number,
-  platform: 'ios' | 'macos' = 'macos',
+  platform: 'ios' | 'android' | 'macos' = 'macos',
 ): Promise<HostedSession> {
   return hostedSession(host, await call(host, 'device-host.attach', { session }, timeoutMs), platform);
 }
@@ -187,7 +187,7 @@ interface ProbeOptions {
 const probeCache = new Map<string, { expiresAt: number; promise: Promise<HostedSessionProbe> }>();
 
 export function probeHostedSession(
-  placement: { machine: string; session: string; device?: unknown },
+  placement: { machine: string; session: string; device?: unknown; platform?: 'ios' | 'android' },
   { timeoutMs = 3000, ttlMs = 10_000 }: ProbeOptions = {},
 ): Promise<HostedSessionProbe> {
   const key = JSON.stringify([placement.machine, placement.session]);
@@ -208,13 +208,23 @@ export function probeHostedSession(
 }
 
 async function probeSession(
-  placement: { machine: string; session: string; device?: unknown },
+  placement: { machine: string; session: string; device?: unknown; platform?: 'ios' | 'android' },
   timeoutMs: number,
 ): Promise<HostedSessionProbe> {
   let host: HostConnection | undefined;
   try {
     host = await connectHost(placement.machine, timeoutMs);
-    const session = await attach(host, placement.session, timeoutMs, placement.device === undefined ? 'macos' : 'ios');
+    const session = await attach(
+      host,
+      placement.session,
+      timeoutMs,
+      placement.platform ??
+        (placement.device === undefined
+          ? 'macos'
+          : isJsonObject(placement.device) && 'avdName' in placement.device
+            ? 'android'
+            : 'ios'),
+    );
     if (session.state === 'ready' || session.state === 'stopped') return { state: session.state };
     return {
       state: 'unknown',
@@ -236,7 +246,7 @@ export async function settle(
   session: HostedSession,
   passing: string[],
   timeoutMs: number,
-  platform: 'ios' | 'macos' = 'macos',
+  platform: 'ios' | 'android' | 'macos' = 'macos',
 ): Promise<HostedSession> {
   const deadline = Date.now() + timeoutMs;
   while (passing.includes(session.state)) {

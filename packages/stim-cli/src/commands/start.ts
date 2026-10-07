@@ -487,7 +487,9 @@ export async function startDevServer(
       });
     }
     const remote =
-      remoteFlag || remoteIosSetting(settings)?.kind === 'backend' || remoteAndroidSetting(settings) !== null;
+      remoteFlag ||
+      remoteIosSetting(settings)?.kind === 'backend' ||
+      remoteAndroidSetting(settings)?.kind === 'backend';
     const tunnelMode = tunnelModeSetting(settings) ?? 'auto';
     const publicUrl = publicUrlSetting(settings);
     const tunnel = wantsExpoOwnTunnel({

@@ -87,6 +87,7 @@ interface OwnedSession {
     ready: Promise<number>;
     peer: string;
     gatewayPort: number;
+    clientMetroPort?: number;
     secret: string;
     port?: number;
     closing?: boolean;
@@ -359,7 +360,12 @@ export class DeviceHost {
       params.gatewayPort < 1 ||
       params.gatewayPort > 65535 ||
       typeof params.secret !== 'string' ||
-      !/^[a-f0-9]{64}$/.test(params.secret)
+      !/^[a-f0-9]{64}$/.test(params.secret) ||
+      (params.clientMetroPort !== undefined &&
+        (typeof params.clientMetroPort !== 'number' ||
+          !Number.isInteger(params.clientMetroPort) ||
+          params.clientMetroPort < 1 ||
+          params.clientMetroPort > 65535))
     )
       return refused(
         'bad-request',
@@ -369,18 +375,25 @@ export class DeviceHost {
       const record = readHostedSessions().find((each) => each.client === client && each.id === params.session);
       if (!record || record.state !== 'ready' || this.closed || !this.owned.has(record.id))
         throw new Error('Only a ready session attached to this owner can open Metro.');
-      if (record.platform !== 'ios') throw new Error('Hosted Metro currently supports iOS sessions only.');
+      if (record.platform !== 'ios' && record.platform !== 'android')
+        throw new Error('Hosted Metro supports iOS and Android sessions only.');
+      if (record.platform === 'android' && typeof params.clientMetroPort !== 'number')
+        return refused('bad-request', 'Android Metro needs the client Metro port.');
       const owned = this.owned.get(record.id)!;
-      if (owned.stopping) throw new Error('This hosted session is stopping.');
+      if (owned.stopping || (record.platform === 'android' && (owned.installing || owned.data)))
+        throw new Error('This hosted session has a native operation in progress.');
       if (owned.metro) {
         if (owned.metro.closing) throw new Error('This session Metro bridge is closing.');
         if (
           owned.metro.peer !== peer ||
           owned.metro.gatewayPort !== params.gatewayPort ||
-          owned.metro.secret !== params.secret
+          owned.metro.secret !== params.secret ||
+          owned.metro.clientMetroPort !== params.clientMetroPort
         )
           throw new Error('Close this session Metro bridge before replacing its gateway.');
-        return { result: { port: await owned.metro.ready } };
+        const port = await owned.metro.ready;
+        await this.restoreAndroidMetro(record, owned);
+        return { result: { port } };
       }
       const bridge = createMetroBridge({ peer, gatewayPort: params.gatewayPort, secret: params.secret });
       const ready = new Promise<number>((resolve, reject) => {
@@ -395,6 +408,7 @@ export class DeviceHost {
         peer,
         gatewayPort: params.gatewayPort,
         secret: params.secret,
+        clientMetroPort: params.clientMetroPort as number | undefined,
       };
       owned.metro = metro;
       try {
@@ -403,8 +417,10 @@ export class DeviceHost {
           throw new Error('The session lost its Metro approval while opening.');
         this.change(record.id, (current) => {
           current.metroPort = port;
+          if (record.platform === 'android') current.clientMetroPort = params.clientMetroPort as number;
         });
         metro.port = port;
+        await this.restoreAndroidMetro(record, owned);
         return { result: { port } };
       } catch (error) {
         await bridge.close();
@@ -416,6 +432,52 @@ export class DeviceHost {
     }
   }
 
+  private async restoreAndroidMetro(record: HostedDeviceSession, owned: OwnedSession): Promise<void> {
+    const attempt = owned.installedAttempt ?? record.appAttempt;
+    if (record.platform !== 'android' || !attempt) return;
+    if (owned.stopping || owned.installing || owned.data)
+      throw new Error('This hosted session has a native operation in progress.');
+    const app = readHostedAppMetadata(record.id, attempt);
+    if (app.state !== 'installed' || app.mode !== 'development') return;
+    const run = this.run(record, owned, 'reverse', attempt);
+    owned.run = run;
+    const done = (async () => {
+      const outcome = await run.done;
+      const device = isJsonObject(outcome.value) ? parseHostedPlatformDevice(outcome.value.device, 'android') : null;
+      if (
+        !outcome.settled ||
+        outcome.notice ||
+        !isJsonObject(outcome.value) ||
+        outcome.value.state !== 'ready' ||
+        !device ||
+        !record.device ||
+        hostedDeviceId(device) !== hostedDeviceId(record.device) ||
+        !('avdName' in device) ||
+        !('avdName' in record.device) ||
+        device.serial !== record.device.serial ||
+        device.consolePort !== record.consolePort
+      ) {
+        const error = new Error(
+          outcome.notice ??
+            (isJsonObject(outcome.value) && typeof outcome.value.notice === 'string'
+              ? outcome.value.notice
+              : 'Hosted Android Metro restore was not established.'),
+        );
+        if (!outcome.settled && !owned.stopping) this.failed(record.id, error);
+        throw error;
+      }
+    })();
+    const settled = done.catch(() => {});
+    owned.data = settled;
+    try {
+      await done;
+      if (owned.stopping || this.closed || !this.options.allowed(record.client))
+        throw new Error('The session lost its Metro approval while restoring.');
+    } finally {
+      if (owned.data === settled) delete owned.data;
+    }
+  }
+
   async metroClose(client: string, params: unknown): Promise<AppAnswer<{ port: null }>> {
     if (!this.options.allowed(client)) return refused('forbidden', 'Current device-host approval is required.');
     if (!isJsonObject(params) || typeof params.session !== 'string')
@@ -424,7 +486,8 @@ export class DeviceHost {
       const record = readHostedSessions().find((each) => each.client === client && each.id === params.session);
       if (!record) return refused('unknown-session', 'This client has no such hosted session.');
       const owned = this.owned.get(record.id);
-      if (owned?.installing) throw new Error('Wait for this session native launch before closing its Metro bridge.');
+      if (owned?.installing || owned?.data)
+        throw new Error('Wait for this session native launch before closing its Metro bridge.');
       if (owned) await this.closeMetro(owned);
       return { result: { port: null } };
     } catch (error) {
@@ -1155,7 +1218,7 @@ export class DeviceHost {
   private run(
     record: HostedDeviceSession,
     owned: OwnedSession,
-    mode: 'prepare' | 'stop' | 'install' | 'logs',
+    mode: 'prepare' | 'stop' | 'install' | 'logs' | 'reverse',
     attempt?: string,
     claim: ClaimHandle = owned.claim,
     finalLogs = false,
@@ -1178,7 +1241,8 @@ export class DeviceHost {
         since: mode === 'logs' ? Date.parse(record.createdAt) : undefined,
         final: mode === 'logs' && finalLogs,
         attempt,
-        metroPort: mode === 'install' ? owned.metro?.port : undefined,
+        metroPort: mode === 'install' || mode === 'reverse' ? owned.metro?.port : undefined,
+        clientMetroPort: mode === 'install' || mode === 'reverse' ? owned.metro?.clientMetroPort : undefined,
       },
       claim,
       timeoutMs: mode === 'stop' ? this.limits.stopMs : mode === 'logs' ? this.limits.logsMs : this.limits.prepareMs,

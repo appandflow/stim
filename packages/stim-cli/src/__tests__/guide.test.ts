@@ -919,19 +919,20 @@ test('hosted iOS safety routes and hosting refusal remedy render through the gui
   expect(renderTopic('agent')).toContain('--remote-config');
 });
 
-test('Android machine placement refuses through the argument parser with its documented command error', () => {
-  const program = new Command().exitOverride().configureOutput({ writeErr: () => {} });
-  registerAndroid(program);
-  expect(() => program.commands[0]!.parseOptions(['--remote', 'mini'])).toThrow(
-    expect.objectContaining({
-      code: 'commander.invalidArgument',
-      message: expect.stringContaining('STIM_BAD_ARG'),
-    }),
-  );
-  const commands = readFileSync(new URL('../../../../website/docs/commands.md', import.meta.url), 'utf8');
-  const android = commands.split('## `android`')[1]!.split('\n## ')[0]!;
-  expect(android.match(/`--remote <machine>`[^\n]+/g)).toEqual([expect.stringContaining('`STIM_BAD_ARG`')]);
-  expect(renderSection('lifecycle', 'hosted-ios')).toContain('Android on a paired Mac');
+test('hosted Android command and safety routing render through the guides', () => {
+  expect(sectionNames('lifecycle')).toContain('hosted-android');
+  expect(renderTopic('agent')).toContain('guide lifecycle hosted-android');
+  const hosted = renderSection('lifecycle', 'hosted-android');
+  for (const contract of [
+    'stim android --remote',
+    'STIM_HOSTING_REFUSED',
+    'STIM_BAD_ARG',
+    '--no-metro-check',
+    'device-host.stop',
+    'android.host',
+    'outcomes.device["android:host:<slot>"]',
+  ])
+    expect(hosted).toContain(contract);
 });
 
 test('the guide names the workspace agent-device state contract without setting a runner-cache override', () => {

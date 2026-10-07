@@ -702,24 +702,32 @@ export function launchAndroidApp(
     metroPort,
     devClientScheme = null,
     physical = false,
+    bridgePort,
   }: {
     serial: string;
     packageName: string;
     metroPort: number | string;
     devClientScheme?: string | null;
     physical?: boolean;
+    bridgePort?: number;
   },
   { exec = null }: ExecOpt = {},
 ): AndroidLaunchResult {
   const e = exec || getExecutor();
   const restart = stopRunningAndroidApp(serial, packageName, e);
   if (restart.failed) return restart;
-  const reversed = reverseMetroPorts({ serial, metroPort }, { exec: e });
+  const reversed = reverseMetroPorts(
+    { serial, metroPort: bridgePort ?? metroPort, devicePorts: [metroPort] },
+    { exec: e },
+  );
   if (reversed.failed) return reversed;
   const prefs = writeDebugHttpHost({ serial, packageName, metroPort, physical }, { exec: e });
   let reversedPairs = reversed.reversed ?? [];
   if (!prefs.ok && Number(metroPort) !== DEFAULT_METRO_PORT) {
-    const fallback = reverseMetroPorts({ serial, metroPort, devicePorts: [DEFAULT_METRO_PORT] }, { exec: e });
+    const fallback = reverseMetroPorts(
+      { serial, metroPort: bridgePort ?? metroPort, devicePorts: [DEFAULT_METRO_PORT] },
+      { exec: e },
+    );
     if (fallback.failed) return fallback;
     reversedPairs = [...reversedPairs, ...(fallback.reversed ?? [])];
   }

@@ -11,7 +11,6 @@ import {
   pickDefaultSystemImage,
 } from '../../devices/android.ts';
 import { deviceSlotPlatforms, validateDeviceSlot } from '../../devices/device-slots.ts';
-import type { RemoteDeviceBackend } from '../../engine/device-remote.ts';
 import { planEasDevelopmentBuild } from '../../engine/eas-build.ts';
 import { planPrebuild } from '../../engine/prebuild.ts';
 import { checkEasAuth, loadProjectProvider, resolveRemote } from '../../engine/remote-cache.ts';
@@ -33,7 +32,7 @@ export interface AndroidPlanOptions {
   variant?: string;
   systemImage?: string;
   device?: string | boolean;
-  remote?: RemoteDeviceBackend;
+  remote?: string;
   wait?: string | boolean;
   metroCheck?: boolean;
 }
@@ -195,7 +194,7 @@ export async function planAndroid(opts: AndroidPlanOptions, overrides: Partial<A
     if (target.kind === 'physical') return refuse(planFlagRefusal('--device'));
     return refuse({
       code: 'STIM_BAD_ARG',
-      message: `android.remote routes this workspace's runs to a ${target.backend} device, whose ABI --plan cannot read without a session.`,
+      message: `android.remote routes this workspace's runs to a ${target.kind === 'hosted' ? target.machine : target.backend} device, whose ABI --plan cannot read without a session.`,
       remedy: 'Run `stim android` to build for the remote device, or unset android.remote to plan the owned emulator.',
     });
   }

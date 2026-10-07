@@ -4,14 +4,19 @@ import { getProject } from '../workspace/config.ts';
 import { parseDeviceSlotKey, projectDeviceSlots } from '../devices/device-slots.ts';
 import { getAvdNameForSerial, listAdbDevices } from '../devices/android.ts';
 import { listAllIosSims } from '../devices/ios.ts';
-import { hostedIosRecords, type DeviceRecord } from '@stim-cli/core/state';
+import { hostedNativeRecords, type DeviceRecord } from '@stim-cli/core/state';
 import { readWorkspaceState } from '../workspace/workspace-state.ts';
 
 export function launchSlotScope(root: string, slot = 'default'): string | undefined {
   if (slot !== 'default') return slot;
   if (Object.keys(getProject(root)?.deviceSlots ?? {}).length) return slot;
   const state = readWorkspaceState(root);
-  if (Object.keys(hostedIosRecords(state)).some((other) => other !== 'default')) return slot;
+  if (
+    ['ios', 'android'].some((platform) =>
+      Object.keys(hostedNativeRecords(state, platform as 'ios' | 'android')).some((other) => other !== 'default'),
+    )
+  )
+    return slot;
   if (Object.keys({ ...state?.collectors, ...fileLeaseIo.readHolder(root) }).some((key) => key.includes(':')))
     return slot;
   return undefined;
@@ -58,7 +63,7 @@ export function siblingPlatformSlots(
 ): string[] {
   const slots = new Set<string>();
   const state = readWorkspaceState(root);
-  if (platform === 'ios') for (const hosted of Object.keys(hostedIosRecords(state))) slots.add(hosted);
+  for (const hosted of Object.keys(hostedNativeRecords(state, platform))) slots.add(hosted);
   for (const key of Object.keys({ ...state?.collectors, ...fileLeaseIo.readHolder(root) })) {
     const parsed = parseDeviceSlotKey(key);
     if (parsed?.platform === platform) slots.add(parsed.slot);
