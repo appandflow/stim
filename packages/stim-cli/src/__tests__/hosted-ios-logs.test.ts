@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { hostedIosLogsDir, readHostedIosLogsCheckpoint, readLogsSince } from '@stim-cli/core/state';
+import { hostedNativeLogsDir, readHostedNativeLogsCheckpoint, readLogsSince } from '@stim-cli/core/state';
 import { collectHostedIosLogs } from '../device-host/ios-logs.ts';
 
 const native = vi.hoisted(() => ({ runFile: vi.fn<(file: string, args?: string[], options?: unknown) => string>() }));
@@ -67,7 +67,7 @@ test('queries only the exact owned simulator, persists native errors and dedupli
   let output = event(100, 'native failure');
   native.runFile.mockImplementation((file: string) => (file === '/usr/libexec/PlistBuddy' ? 'Fixture' : output));
   expect(collectHostedIosLogs(home, session, 'app', start)).toBe(false);
-  const first = readLogsSince(hostedIosLogsDir(home), {});
+  const first = readLogsSince(hostedNativeLogsDir(home, 'ios'), {});
   expect(first.records).toMatchObject([{ src: 'device', platform: 'ios', level: 'error', msg: 'native failure' }]);
   expect(native.runFile).toHaveBeenCalledWith(
     'xcrun',
@@ -91,14 +91,14 @@ test('queries only the exact owned simulator, persists native errors and dedupli
   );
   output += `\n${event(300, 'another failure')}`;
   collectHostedIosLogs(home, session, 'app', start);
-  expect(readLogsSince(hostedIosLogsDir(home), first.cursor).records.map((record) => record.msg)).toEqual([
+  expect(readLogsSince(hostedNativeLogsDir(home, 'ios'), first.cursor).records.map((record) => record.msg)).toEqual([
     'another failure',
   ]);
   vi.setSystemTime(start + 2000);
   collectHostedIosLogs(home, session, 'app', start);
-  expect(readLogsSince(hostedIosLogsDir(home), {}).records).toHaveLength(2);
+  expect(readLogsSince(hostedNativeLogsDir(home, 'ios'), {}).records).toHaveLength(2);
   rmSync(join(home, 'hosted-device.json'));
-  expect(readLogsSince(hostedIosLogsDir(home), {}).records.map((record) => record.msg)).toEqual([
+  expect(readLogsSince(hostedNativeLogsDir(home, 'ios'), {}).records.map((record) => record.msg)).toEqual([
     'native failure',
     'another failure',
   ]);
@@ -107,13 +107,13 @@ test('queries only the exact owned simulator, persists native errors and dedupli
 test('catches up a sparse eight-hour backlog in one window and preserves progress when queries fail', () => {
   vi.setSystemTime(start + 8 * 60 * 60_000);
   expect(collectHostedIosLogs(home, session, 'app', start)).toBe(false);
-  expect(readHostedIosLogsCheckpoint(home)?.until).toBe(start + 8 * 60 * 60_000);
+  expect(readHostedNativeLogsCheckpoint(home)?.until).toBe(start + 8 * 60 * 60_000);
   native.runFile.mockImplementation((file: string) => {
     if (file === '/usr/libexec/PlistBuddy') return 'Fixture';
     throw new Error('simctl failed');
   });
   expect(() => collectHostedIosLogs(home, session, 'app', start)).toThrow('simctl failed');
-  expect(readHostedIosLogsCheckpoint(home)?.until).toBe(start + 8 * 60 * 60_000);
+  expect(readHostedNativeLogsCheckpoint(home)?.until).toBe(start + 8 * 60 * 60_000);
 });
 
 test('sixty steady-state collections keep a readable checkpoint and every collected record', () => {
@@ -124,19 +124,19 @@ test('sixty steady-state collections keep a readable checkpoint and every collec
       file === '/usr/libexec/PlistBuddy' ? 'Fixture' : event(offset, `record ${index}`),
     );
     expect(collectHostedIosLogs(home, session, 'app', start)).toBe(false);
-    expect(readHostedIosLogsCheckpoint(home)).toMatchObject({ until: start + offset });
+    expect(readHostedNativeLogsCheckpoint(home)).toMatchObject({ until: start + offset });
   }
-  expect(readLogsSince(hostedIosLogsDir(home), {}).records.map((record) => record.msg)).toEqual(
+  expect(readLogsSince(hostedNativeLogsDir(home, 'ios'), {}).records.map((record) => record.msg)).toEqual(
     Array.from({ length: 60 }, (_, index) => `record ${index}`),
   );
   expect(collectHostedIosLogs(home, session, 'app', start, true)).toBe(false);
-  expect(readLogsSince(hostedIosLogsDir(home), {}).records).toHaveLength(60);
-  expect(readHostedIosLogsCheckpoint(home)?.windowMs).toBeUndefined();
+  expect(readLogsSince(hostedNativeLogsDir(home, 'ios'), {}).records).toHaveLength(60);
+  expect(readHostedNativeLogsCheckpoint(home)?.windowMs).toBeUndefined();
   vi.setSystemTime(start + 8 * 60 * 60_000);
   native.runFile.mockClear();
   expect(collectHostedIosLogs(home, session, 'app', start)).toBe(false);
   expect(native.runFile.mock.calls.filter(([file]) => file === 'xcrun')).toHaveLength(1);
-  expect(readHostedIosLogsCheckpoint(home)?.until).toBe(start + 8 * 60 * 60_000);
+  expect(readHostedNativeLogsCheckpoint(home)?.until).toBe(start + 8 * 60 * 60_000);
 });
 
 test.each(['{broken', null, JSON.stringify({ until: start, boundary: [], windowMs: 10995116277760000 })])(
@@ -162,18 +162,18 @@ test.each(['{broken', null, JSON.stringify({ until: start, boundary: [], windowM
     });
     vi.setSystemTime(start + 10_000);
     collectHostedIosLogs(home, session, 'app', start);
-    const path = join(hostedIosLogsDir(home), 'checkpoint.json');
+    const path = join(hostedNativeLogsDir(home, 'ios'), 'checkpoint.json');
     if (checkpoint === null) rmSync(path);
     else writeFileSync(path, checkpoint);
     fail = true;
     expect(() => collectHostedIosLogs(home, session, 'app', start)).toThrow('query failed during rebuild');
-    expect(readHostedIosLogsCheckpoint(home)).toBeNull();
+    expect(readHostedNativeLogsCheckpoint(home)).toBeNull();
     fail = false;
     events.push(event(9000, 'new failure'));
     expect(collectHostedIosLogs(home, session, 'app', start)).toBe(false);
-    expect(readHostedIosLogsCheckpoint(home)?.until).toBe(start + 10_000);
+    expect(readHostedNativeLogsCheckpoint(home)?.until).toBe(start + 10_000);
     expect(collectHostedIosLogs(home, session, 'app', start)).toBe(false);
-    expect(readLogsSince(hostedIosLogsDir(home), {}).records.map((record) => record.msg)).toEqual([
+    expect(readLogsSince(hostedNativeLogsDir(home, 'ios'), {}).records.map((record) => record.msg)).toEqual([
       'older saved failure',
       'saved failure',
       'another saved failure',
@@ -200,10 +200,12 @@ test('shrinks a dense historical window after native failure and grows the next 
     return event(30_000, 'historical failure');
   });
   expect(collectHostedIosLogs(home, session, 'app', start)).toBe(true);
-  expect(readHostedIosLogsCheckpoint(home)).toMatchObject({ until: start + 60_000, windowMs: 60_000 });
+  expect(readHostedNativeLogsCheckpoint(home)).toMatchObject({ until: start + 60_000, windowMs: 60_000 });
   expect(collectHostedIosLogs(home, session, 'app', start)).toBe(true);
-  expect(readHostedIosLogsCheckpoint(home)?.until).toBe(start + 180_000);
-  expect(readLogsSince(hostedIosLogsDir(home), {}).records.map((record) => record.msg)).toEqual(['historical failure']);
+  expect(readHostedNativeLogsCheckpoint(home)?.until).toBe(start + 180_000);
+  expect(readLogsSince(hostedNativeLogsDir(home, 'ios'), {}).records.map((record) => record.msg)).toEqual([
+    'historical failure',
+  ]);
 });
 
 test('overlapping windows capture late persistence and deduplicate stable events despite JSON key order', () => {
@@ -217,7 +219,7 @@ test('overlapping windows capture late persistence and deduplicate stable events
     file === '/usr/libexec/PlistBuddy' ? 'Fixture' : `${reordered}\n${event(9000, 'persisted later')}`,
   );
   collectHostedIosLogs(home, session, 'app', start);
-  expect(readLogsSince(hostedIosLogsDir(home), {}).records.map((record) => record.msg)).toEqual([
+  expect(readLogsSince(hostedNativeLogsDir(home, 'ios'), {}).records.map((record) => record.msg)).toEqual([
     'already persisted',
     'persisted later',
   ]);
@@ -237,8 +239,8 @@ test('final collection shrinks toward the recent tail instead of spending its bo
     return event(230_000, 'stop tail');
   });
   expect(collectHostedIosLogs(home, session, 'app', start, true)).toBe(false);
-  expect(readHostedIosLogsCheckpoint(home)?.until).toBe(start + 240_000);
-  expect(readLogsSince(hostedIosLogsDir(home), {}).records).toMatchObject([
+  expect(readHostedNativeLogsCheckpoint(home)?.until).toBe(start + 240_000);
+  expect(readLogsSince(hostedNativeLogsDir(home, 'ios'), {}).records).toMatchObject([
     {
       src: 'device',
       platform: 'ios',

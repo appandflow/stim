@@ -177,7 +177,9 @@ node. Any handoff failure falls back to upload.
 `stim logs --errors` and `stim logs --json` pull app-filtered native logcat records
 as `src: device`; JavaScript logs still arrive through local Metro. The host verifies
 the exact ledger-owned serial, resolves the app's PID on each query and drains its
-last observed PID after a crash or restart. A crash before any PID was observed,
+last observed PID after a crash or restart. A successful drain retires the exited
+PID. A failed PID lookup preserves the checkpoint without querying logcat, so the
+next collection can retry. A crash before any PID was observed,
 evicted logcat entries and entries persisted beyond the five-second overlap may
 be unavailable. Collection has a bounded output and time budget; an oversized
 query retries the recent tail and records any dropped interval. Stop copies logs
