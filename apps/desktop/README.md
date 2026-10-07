@@ -1715,7 +1715,13 @@ This package includes explicit development settings for `stim macos`. From
 `apps/desktop`, run `stim macos` to build the `StimDesktop` Debug executable and
 launch the full app as **Stim Development** in an isolated bundle. It monitors
 the regular Stim home with separate preferences; automatic cleanup and notification alerts are disabled
-by its development launch arguments. **Window > SwiftUI Playground** opens the
+by its development launch arguments. Each `stim macos` copy has its own bundle id and so starts with empty
+preferences, which would open the first-run setup guide over the window. The launch arguments in `.stim.json` include
+`-skipOnboarding YES` (also `STIM_DESKTOP_SKIP_ONBOARDING=1` in the environment of a local `stim macos`, which
+forwards it; a hosted run with `--remote` takes only the launch arguments). With it, Desktop does not open the guide
+at launch, does not record it as finished and does not offer the viewer setting, for that run only. **Help > Setup
+Guide** still opens it. To test the first-run flow, remove the argument from `.stim.json` for that run.
+**Window > SwiftUI Playground** opens the
 in-memory screen fixtures. Inspect compiler
 output with `stim logs --source build`, and use `stim stop` to stop only that
 workspace's recorded app. The normal Desktop viewer shows its app/build state,

@@ -16,7 +16,9 @@
       "-notify.worktreeRemoval",
       "NO",
       "-notify.level.build-request",
-      "silent"
+      "silent",
+      "-skipOnboarding",
+      "YES"
     ],
     "assetCatalog": "Support/Assets.xcassets",
     "resources": {
