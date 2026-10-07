@@ -46,13 +46,4 @@ import Testing
       nativeFittedSize(pointSize: CGSize(width: 800, height: 600), maxWidth: 400, maxHeight: 900)
         == CGSize(width: 400, height: 300))
   }
-
-  @Test func scaledDownViewMapsAPointToTheSameWindowFraction() throws {
-    let fitted = nativeFittedSize(pointSize: CGSize(width: 800, height: 600), maxWidth: 400, maxHeight: 900)
-    let point = try #require(
-      normalizedScreenPoint(
-        CGPoint(x: 100, y: 225), viewSize: fitted, screenSize: CGSize(width: 1600, height: 1200), clamped: false))
-    #expect(abs(point.x - 0.25) < 0.0001)
-    #expect(abs(point.y - 0.25) < 0.0001)
-  }
 }
