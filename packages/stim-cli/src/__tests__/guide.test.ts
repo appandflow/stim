@@ -280,6 +280,7 @@ test('the errors topic documents every code the engine can emit under a command'
     'engine/device-remote.ts',
     'engine/warm-claim.ts',
     'workspace/worktree-refresh.ts',
+    'workspace/service-guard.ts',
   ]
     .map((f) => readFileSync(new URL(`../${f}`, import.meta.url), 'utf-8'))
     .join('\n');

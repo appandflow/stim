@@ -18,6 +18,7 @@ import { recordWorkspaceUse } from '../workspace/workspace-state.ts';
 import { forgetStatusMeasures } from '../status-measures.ts';
 import { reclaimProject, type ReclaimResult } from '../devices/reclaim.ts';
 import { claimFailure } from '../ownership-claim.ts';
+import { SERVICE_IN_USE, serviceRunningFrom } from '../workspace/service-guard.ts';
 import { parkedMaxSetting, POOL_SETTING_REMEDY } from '../devices/sim-pool.ts';
 import { workspaceLinkLine, workspaceLinks } from '../devices/stim-desktop.ts';
 import type { ParkedDevice } from '../devices/teardown.ts';
@@ -908,6 +909,24 @@ async function runRemove(target: string | undefined, opts: RemoveOptions, onRemo
   if (entry.locked) {
     console.error(chalk.red(`Refusing to remove ${path}: git has it locked.`));
     console.error(chalk.dim(`Unlock it, then retry: git -C ${source.path} worktree unlock ${path}`));
+    process.exitCode = 1;
+    return;
+  }
+
+  const service = serviceRunningFrom(path, nativeCanonicalPath);
+  if (service) {
+    console.error(
+      chalk.red(
+        service.argument
+          ? `Refusing to remove ${path}: it runs the stim-server service ${service.label} (${service.argument}). ${SERVICE_IN_USE.code}`
+          : `Refusing to remove ${path}: could not read ${service.plist} to check whether the stim-server service ${service.label} runs from it. ${SERVICE_IN_USE.code}`,
+      ),
+    );
+    console.error(
+      chalk.dim(
+        `Reinstall the service from another build with \`stim-server service install --label ${service.label}\`, or remove it with \`stim-server service uninstall --label ${service.label}\`, then retry.`,
+      ),
+    );
     process.exitCode = 1;
     return;
   }

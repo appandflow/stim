@@ -351,6 +351,22 @@ Rerun with --build-machine auto for normal placement and local fallback, or
 --build-machine local to keep the build here.
 `,
     },
+    STIM_WORKTREE_SERVICE: {
+      summary: 'worktree remove refuses a folder a stim-server service runs from',
+      body: () => `STIM_WORKTREE_SERVICE
+  A LaunchAgent that \`stim-server service install\` wrote (it carries a
+  StimService marker in ~/Library/LaunchAgents/<label>.plist, default label
+  dev.stim.server) runs a program from inside this worktree. Removing the
+  folder would delete the running server's code. The refusal also covers a
+  service that is installed but stopped, because launchd loads it again at the
+  next login, and a marked plist Stim could not read. \`--force\` does not
+  override it, and gc leaves the worktree in place.
+  Reinstall the service from another build (stim-server service install --label
+  <label> from a checkout that stays), or remove it with stim-server service
+  uninstall --label <label>, then run stim worktree remove again. Nothing was
+  reclaimed or removed. Other processes with their working directory in the
+  folder are not detected.`,
+    },
     STIM_CLAIM_UNAVAILABLE: {
       summary: 'a process identity or warm claim store is unavailable, so the protected operation refuses',
       body: () => `STIM_CLAIM_UNAVAILABLE
