@@ -103,10 +103,38 @@ public func toolsReport(
   return rows
 }
 
+private let wizardFixCommands = [
+  "sudo", "brew", "gem", "bundle", "xcodebuild", "xcode-select", "sdkmanager", "stim", "stim-server", "npx", "npm",
+]
+
 public func wizardFixIsCommand(_ fix: String) -> Bool {
-  let commands = [
-    "sudo", "brew", "gem", "bundle", "xcodebuild", "xcode-select", "sdkmanager", "stim", "stim-server", "npx", "npm",
-  ]
-  return !fix.contains("\n") && !fix.contains("`") && !fix.contains("<")
-    && commands.contains(String(fix.split(separator: " ").first ?? ""))
+  !fix.contains("\n") && !fix.contains("`") && !fix.contains("<")
+    && wizardFixCommands.contains(String(fix.split(separator: " ").first ?? ""))
+}
+
+public enum WizardFixPart: Equatable, Sendable {
+  case text(String)
+  case command(String)
+}
+
+public func wizardFixParts(_ fix: String) -> [WizardFixPart] {
+  var parts: [WizardFixPart] = []
+  func add(text: String) {
+    if case .text(let last)? = parts.last {
+      parts[parts.count - 1] = .text(last + text)
+    } else if !text.isEmpty {
+      parts.append(.text(text))
+    }
+  }
+  for (index, span) in fix.split(separator: "`", omittingEmptySubsequences: false).enumerated() {
+    let span = String(span)
+    if index % 2 == 1, wizardFixCommands.contains(String(span.split(separator: " ").first ?? "")) {
+      parts.append(.command(span))
+    } else if index % 2 == 1 {
+      add(text: "`\(span)`")
+    } else {
+      add(text: span)
+    }
+  }
+  return parts
 }
