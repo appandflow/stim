@@ -118,3 +118,10 @@ public enum PhoneApp {
     }
   }
 }
+
+extension TutorialSteps {
+  /// The steps a tutorial shows: without the phone app there is no phone step.
+  public static func steps(phoneApp: Bool) -> [TutorialStep] {
+    all.filter { $0.id != "phone" || phoneApp }
+  }
+}
