@@ -821,8 +821,8 @@ msgid "All machines"
 msgstr "All machines"
 
 #: src/screens/filters.tsx
-msgid "All shows live and idle workspaces. Archived shows only removed worktrees."
-msgstr "All shows live and idle workspaces. Archived shows only removed worktrees."
+msgid "All shows live, idle and archived workspaces. Archived shows only removed worktrees."
+msgstr "All shows live, idle and archived workspaces. Archived shows only removed worktrees."
 
 #: src/screens/logs.tsx
 msgid "All slots"

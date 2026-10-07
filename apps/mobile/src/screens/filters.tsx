@@ -110,7 +110,10 @@ export function Filters() {
 
   return (
     <SheetScreen title={t`Filters`} gap="xxl" accessory={<Button title={t`Reset`} variant="plain" onPress={reset} />}>
-      <Group title={t`Show`} footnote={t`All shows live and idle workspaces. Archived shows only removed worktrees.`}>
+      <Group
+        title={t`Show`}
+        footnote={t`All shows live, idle and archived workspaces. Archived shows only removed worktrees.`}
+      >
         {activity.map(({ value, label }) => (
           <Toggle
             key={value}

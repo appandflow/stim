@@ -959,11 +959,11 @@ it('round-trips Archived with the persisted machine and project filters', () => 
   expect(filtersActive(selected, ['a'], ['stim'])).toBe(true);
 });
 
-it('keeps archives out of Live, Idle and All and their hidden-idle counts', () => {
+it('keeps archives out of Live and Idle and shows them after current rows in All', () => {
   const archives = mergeArchives([{ id: 'a', name: 'Mac', status: payload }]);
   const live = mergeWorkspaces(macs);
   const entries = [...live, ...mergeWorktrees(macs), ...archives];
-  for (const activity of ['live', 'idle', 'all'] as const) {
+  for (const activity of ['live', 'idle'] as const) {
     const filtered = filterWorkspaces(entries, { ...DEFAULT_FILTERS, activity }, ['a', 'b']);
     expect(filtered.shown.some((entry) => 'archive' in entry)).toBe(false);
     expect(filtered.hiddenByActivity).toBe(
@@ -974,6 +974,9 @@ it('keeps archives out of Live, Idle and All and their hidden-idle counts', () =
       ).hiddenByActivity,
     );
   }
+  const everything = filterWorkspaces(entries, { ...DEFAULT_FILTERS, activity: 'all' }, ['a', 'b']);
+  expect(everything.shown.filter((entry) => 'archive' in entry)).toEqual(archives);
+  expect(everything.hiddenByActivity).toBe(0);
   expect(filterWorkspaces(entries, { ...DEFAULT_FILTERS, activity: 'archived' }, ['a', 'b']).shown).toEqual(archives);
   expect(
     filterWorkspaces(entries, { ...DEFAULT_FILTERS, activity: 'archived', projects: ['tlon-apps'] }, [

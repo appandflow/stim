@@ -135,7 +135,8 @@ Duo fold detection requires a build made with the iOS 27.1 SDK and an iOS
   worktree share a heading and keep their app labels. Rows show removal time,
   size, the PR number (or Merged), and an indicator for expired content or
   content expiring within 24 hours. Missing branch or repository facts fall back
-  to the worktree folder. Live, Idle and All show only current workspaces.
+  to the worktree folder. Live and Idle show only current workspaces; All
+  shows them followed by the archived ones.
   An archive opens the same workspace page as a read-only variant: Status shows
   removal, last activity, retention dates, size by content and activity totals;
   Build opens the same build history sheet with cache results, durations,
