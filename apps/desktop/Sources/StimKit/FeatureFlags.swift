@@ -18,7 +18,7 @@ public enum FeatureFlag: String, CaseIterable, Identifiable, Sendable {
     switch self {
     case .phoneApp:
       return
-        "Shows everything about the Stim phone app: the Phones page with Serve to phones and pairing, the setup guide and tutorial steps, tips and suggestions that mention phones. Turning it off hides them; a running stim-server keeps serving paired phones."
+        "Shows everything about the Stim phone app: the Phones page with Serve to phones and pairing, the setup guide and tutorial steps, tips and suggestions that mention phones. Turning it off hides them; Desktop's stim-server then listens on loopback only."
     }
   }
 

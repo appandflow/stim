@@ -19,8 +19,9 @@ struct PhonesView: View {
   var body: some View {
     Form {
       Section {
-        Toggle(page.serveToggleTitle, isOn: $servesPhones)
-          .onChange(of: servesPhones) { _, on in on ? server.start() : server.stop() }
+        if flags.phoneApp {
+          Toggle(page.serveToggleTitle, isOn: $servesPhones)
+        }
         serverState
       } footer: {
         Text(PhoneApp.Copy.serveFooter(port: server.port, phoneApp: flags.phoneApp))

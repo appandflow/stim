@@ -96,9 +96,6 @@ private func withDefaults(_ body: (UserDefaults) throws -> Void) throws {
       PhoneApp.Copy.viewerAppError(phoneApp: false),
       PhoneApp.Copy.notificationRulesPrefix(phoneApp: false),
       PhoneApp.Copy.serverPageName(phoneApp: false),
-      PhoneApp.Copy.diffViewerOff(phoneApp: false),
-      PhoneApp.Copy.archivedLogsOffline(phoneApp: false),
-      PhoneApp.Copy.serverOffForViewing("app's window", phoneApp: false),
       PhoneApp.Copy.serverPopupTitle(missing: true, phoneApp: false),
       PhoneApp.Copy.serverPopupDetail(minimum: "1.0.0", phoneApp: false),
       PhoneApp.Copy.clients(phoneApp: false),
@@ -110,4 +107,11 @@ private func withDefaults(_ body: (UserDefaults) throws -> Void) throws {
   for text in offCopy() { #expect(!text.lowercased().contains("phone"), "\(text)") }
   #expect(PhoneApp.Copy.addMachineDetail(phoneApp: true).contains("phone"))
   #expect(PhoneApp.Copy.serverPageName(phoneApp: true) == "Phones")
+}
+
+@Test func theServerListensBeyondLoopbackOnlyWhenThePhoneAppServesPhones() {
+  #expect(PhoneApp.listensOnTailnet(phoneApp: true, servesPhones: true))
+  #expect(!PhoneApp.listensOnTailnet(phoneApp: true, servesPhones: false))
+  #expect(!PhoneApp.listensOnTailnet(phoneApp: false, servesPhones: true))
+  #expect(!PhoneApp.listensOnTailnet(phoneApp: false, servesPhones: false))
 }

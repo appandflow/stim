@@ -26,6 +26,10 @@ public enum PhoneApp {
   /// The sidebar footer button that shows the phone server's state and opens the Phones page.
   public static func showsSidebarButton(phoneApp: Bool, servesPhones: Bool) -> Bool { phoneApp && servesPhones }
 
+  /// Whether the server Desktop starts also listens on this Mac's Tailscale addresses. Only the phone app serving
+  /// phones asks for it; every other run listens on loopback alone.
+  public static func listensOnTailnet(phoneApp: Bool, servesPhones: Bool) -> Bool { phoneApp && servesPhones }
+
   /// Whether a request to open the pairing sheet is honored.
   public static func opensPairing(phoneApp: Bool) -> Bool { phoneApp }
 
@@ -62,12 +66,6 @@ public enum PhoneApp {
     }
 
     public static func serverPageName(phoneApp: Bool) -> String { phoneApp ? "Phones" : "Server" }
-
-    public static func diffViewerOff(phoneApp: Bool) -> String {
-      phoneApp
-        ? "Turn on Serve to phones on the Phones page to use the built-in diff viewer."
-        : "Turn on Run stim-server on the Server page to use the built-in diff viewer."
-    }
 
     /// Who connects to stim-server over Tailscale.
     public static func clients(phoneApp: Bool) -> String { phoneApp ? "Phones" : "Other Macs" }
@@ -107,15 +105,6 @@ public enum PhoneApp {
       return "\(subject), and Stim Desktop needs \(minimum) or later."
     }
 
-    public static func serverOffForViewing(_ what: String, phoneApp: Bool) -> String {
-      phoneApp
-        ? "Turn on Serve to phones on the Phones page to see this \(what)."
-        : "Turn on Run stim-server on the Server page to see this \(what)."
-    }
-
-    public static func archivedLogsOffline(phoneApp: Bool) -> String {
-      "Connect to stim-server on the \(serverPageName(phoneApp: phoneApp)) page to view archived logs."
-    }
   }
 }
 

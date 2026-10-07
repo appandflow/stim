@@ -253,10 +253,11 @@ public struct StimServerCLI: Sendable {
   /// Starts the server on `port`; it runs until terminated.
   public func serve(
     port: Int = defaultPort,
+    loopbackOnly: Bool = false,
     onLine: @escaping @Sendable (OutputLine) -> Void,
     onExit: @escaping @Sendable (Int32) -> Void
   ) throws -> Process {
-    let command = try command(["--port", String(port)])
+    let command = try command(["--port", String(port)] + (loopbackOnly ? ["--loopback-only"] : []))
     return try ProcessStream.start(
       executable: command.program, arguments: command.arguments, cwd: NSHomeDirectory(),
       environment: environment, onLine: onLine, onExit: onExit)

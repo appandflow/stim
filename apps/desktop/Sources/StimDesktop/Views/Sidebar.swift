@@ -626,7 +626,11 @@ struct SidebarFooter: View {
       Spacer(minLength: 8)
       OperationsButton(log: actions.operations, actions: actions, store: store)
       if !drivenDevices.isEmpty { agentsButton }
-      if PhoneApp.showsSidebarButton(phoneApp: flags.phoneApp, servesPhones: servesPhones) { phonesButton }
+      if PhoneApp.showsSidebarButton(phoneApp: flags.phoneApp, servesPhones: servesPhones) {
+        phonesButton
+      } else if let problem = server.problem {
+        serverProblemButton(problem)
+      }
       settingsButton
     }
     .padding(.horizontal, Space.md)
@@ -721,6 +725,14 @@ struct SidebarFooter: View {
       settingsTab = "phones"
       openSettings()
     }
+  }
+
+  private func serverProblemButton(_ problem: String) -> some View {
+    IconButton(
+      systemImage: "exclamationmark.triangle", tint: Palette.warning,
+      help:
+        "stim-server is unavailable, so replay, the diff viewer and archived logs are too: \(abbreviatingHome(problem)) \u{2014} click to retry",
+      label: "stim-server unavailable", action: server.retry)
   }
 
   private var phonesTooltip: String {

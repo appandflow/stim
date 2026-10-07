@@ -74,6 +74,7 @@ final class ServerController: ObservableObject {
   private var generation = 0
   private var devicesEpoch = 0
   private var missedProbes = 0
+  private var startedLoopbackOnly = true
   private var serverLauncher: (executable: String?, launcher: NodeLauncher?, resolved: Date)?
 
   static let devicesInterval: Duration = .seconds(10)
@@ -82,7 +83,9 @@ final class ServerController: ObservableObject {
   private lazy var devicesPoller = ActivityPoller(
     active: Self.devicesInterval, inactive: Self.inactiveDevicesInterval, isActive: { NSApplication.shared.isActive },
     tick: { [weak self] in
-      guard let self, isResponding else { return }
+      guard let self else { return }
+      applyServingMode()
+      guard isResponding else { return }
       refresh()
     })
 
@@ -110,15 +113,39 @@ final class ServerController: ObservableObject {
     }
   }
 
+  /// Why the server is unusable, or nil while it starts, runs or waits for its Stim home.
+  var problem: String? {
+    switch state {
+    case .failed(let message): return message
+    case .notReady(.degraded(let reason), _): return "Degraded: \(reason)"
+    case .off, .starting, .running, .notReady(.pending, _): return nil
+    }
+  }
+
+  func retry() {
+    if case .failed = state { start() } else { refresh() }
+  }
+
   var canRestart: Bool {
     if case .running(_, owned: true) = state { return true }
     return false
   }
 
+  private var wantsLoopbackOnly: Bool {
+    !PhoneApp.listensOnTailnet(
+      phoneApp: FeatureFlags.isEnabled(.phoneApp),
+      servesPhones: UserDefaults.standard.bool(forKey: AppPreferences.Key.servesPhones))
+  }
+
   func configure(environment: Task<[String: String], Never>) {
     self.environment = environment
-    if UserDefaults.standard.bool(forKey: AppPreferences.Key.servesPhones) { start() }
+    start()
     devicesPoller.start()
+    NotificationCenter.default.addObserver(
+      forName: UserDefaults.didChangeNotification, object: nil, queue: .main
+    ) { [weak self] _ in
+      MainActor.assumeIsolated { self?.applyServingMode() }
+    }
     NotificationCenter.default.addObserver(
       forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main
     ) { [weak self] _ in
@@ -164,9 +191,11 @@ final class ServerController: ObservableObject {
       let cli = await cli()
       guard current == generation else { return }
       output = []
+      startedLoopbackOnly = wantsLoopbackOnly
       do {
         process = try cli.serve(
           port: port,
+          loopbackOnly: startedLoopbackOnly,
           onLine: { line in
             DispatchQueue.main.async { MainActor.assumeIsolated { self.record(line.text, generation: current) } }
           },
@@ -202,6 +231,14 @@ final class ServerController: ObservableObject {
     generation += 1
     terminate()
     state = .off
+  }
+
+  /// Restarts the server Desktop started when the phone setting changes which addresses it should listen on. A
+  /// server Desktop did not start is never touched.
+  private func applyServingMode() {
+    guard process != nil, startedLoopbackOnly != wantsLoopbackOnly else { return }
+    stop()
+    start()
   }
 
   func restart() {
@@ -280,7 +317,7 @@ final class ServerController: ObservableObject {
           guard missedProbes >= 2 else { return }
           missedProbes = 0
           state = .off
-          if UserDefaults.standard.bool(forKey: AppPreferences.Key.servesPhones) { start() }
+          start()
         }
       }
     }
@@ -401,6 +438,11 @@ final class ServerController: ObservableObject {
     guard generation == self.generation else { return }
     process = nil
     let detail = output.filter { !$0.isEmpty }.joined(separator: "\n")
+    if detail.contains("--loopback-only") {
+      state = .failed(
+        "This stim-server is too old to run on loopback only. Update it with npm install --global @stim-cli/server.")
+      return
+    }
     state = .failed("stim-server exited with status \(status).\(detail.isEmpty ? "" : "\n\(detail)")")
   }
 }

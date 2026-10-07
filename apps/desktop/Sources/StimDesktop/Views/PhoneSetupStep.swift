@@ -21,7 +21,6 @@ struct PhoneSetupStep: View {
       )
       .foregroundStyle(Palette.secondary)
       Toggle("Serve to phones", isOn: $servesPhones)
-        .onChange(of: servesPhones) { _, on in on ? server.start() : server.stop() }
       if state == .blocked {
         Label("Tailscale is not running on this Mac", systemImage: "xmark.circle.fill")
           .foregroundStyle(Palette.warning)

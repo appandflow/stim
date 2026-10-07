@@ -71,7 +71,10 @@ struct LogsView: View {
     }
     .task(id: RunKey(connected: archive != nil && server.isOpen, path: archive?.id ?? env?.path ?? "", query: effectiveQuery)) {
       if let archive {
-        await model.loadArchive(archive, query: effectiveQuery, server: server.isOpen ? server.client : nil)
+        var unavailable = "Connecting to stim-server"
+        if case .unavailable(let reason) = server.link { unavailable = reason }
+        await model.loadArchive(
+          archive, query: effectiveQuery, server: server.isOpen ? server.client : nil, unavailable: unavailable)
         return
       }
       guard let cliTask = cli else { return }
