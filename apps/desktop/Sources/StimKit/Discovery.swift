@@ -192,7 +192,7 @@ public enum Discovery {
     return DiscoveryPrompt(
       type: .capHit,
       title: "Device limit reached. Run on \(hosts.count == 1 ? machineName(hosts[0]) : "a hosting Mac")?",
-      detail: "Auto uses it when this Mac is full.", actionTitle: "Use Auto",
+      detail: "Sets Run on to Auto in Desktop.", actionTitle: "Use Auto",
       action: .runOnAuto(workspaceID: workspaceID, platform: source.platform), surface: .banner)
   }
 

@@ -23,6 +23,7 @@ final class DiscoveryCoordinator: ObservableObject {
   private var previous: StatusPayload?
   private var macs: [TailnetMac] = []
   private var pending: [DiscoveryType: (prompt: DiscoveryPrompt, rememberedAt: Date)] = [:]
+  private var capHit: (source: Discovery.CapHitSource, hosts: [String]?)?
   private var polling = false
   private var delivering = false
 
@@ -142,19 +143,29 @@ final class DiscoveryCoordinator: ObservableObject {
     await rememberCapHit(source)
   }
 
+  private var settingsLoaded: Bool { machines.settings.payload != nil && machines.settings.error == nil }
+
   private func rememberCapHit(_ source: Discovery.CapHitSource) async {
-    let path = source.workspaceID.flatMap(workspacePath)
     var hosts: [String]?
-    if let path {
-      await machines.refreshHostingMachines(checkout: path)
+    if settingsLoaded && hostingEntries.isEmpty {
+      hosts = []
+    } else if let path = source.workspaceID.flatMap(workspacePath) {
+      await machines.refreshStatuses(checkout: path, ask: false)
       hosts = machines.approvedHostingMachines(in: path)
     }
+    capHit = (source, hosts)
+    refreshCapHitPrompt()
+  }
+
+  private func refreshCapHitPrompt() {
+    guard let (source, fetched) = capHit else { return }
+    let hosts = settingsLoaded && hostingEntries.isEmpty ? [] : fetched
     let prompt = Discovery.capHit(
       source: source, mac: macs.first, hosts: hosts,
       isRemote: { [weak self] id, platform in
         guard let path = self?.workspacePath(id) else { return false }
         return (platform.map { [$0] } ?? ["ios", "android"]).allSatisfy {
-          AppPreferences.runDestination(workspace: path, platform: $0, approvedMachines: nil) != .thisMac
+          AppPreferences.runDestination(workspace: path, platform: $0, approvedMachines: hosts) != .thisMac
         }
       })
     if let prompt { remember(prompt, rememberedAt: source.at) } else { pending[.capHit] = nil }
@@ -177,6 +188,7 @@ final class DiscoveryCoordinator: ObservableObject {
 
   private func evaluate() {
     let now = Date()
+    refreshCapHitPrompt()
     pending = pending.filter { Discovery.fresh($0.key, rememberedAt: $0.value.rememberedAt, now: now) }
     var candidates = pending.values.map(\.prompt).filter { prompt in
       if prompt.type == .newMac, case .addMachine(let mac?, _) = prompt.action {
