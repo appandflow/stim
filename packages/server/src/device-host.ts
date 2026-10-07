@@ -500,7 +500,7 @@ export class DeviceHost {
       return {
         result: {
           sessions: readHostedSessionRows(
-            readHostedSessions().map((record) => ({ ...record, state: this.observed(record).state })),
+            readHostedSessions().map((record) => Object.assign(record, { state: this.observed(record).state })),
             readDeviceHostClients(),
           ),
         },

@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 import { readFileSync, realpathSync, statSync } from 'node:fs';
-import { readHostedSessions } from '@stim-cli/core/state';
-import { formatHostedSessions, readHostedSessionRows } from '../src/hosted-sessions.ts';
 import { hostname } from 'node:os';
 import { resolve } from 'node:path';
 import { parseArgs } from 'node:util';
+import { readHostedSessions } from '@stim-cli/core/state';
 import { bundledStim, loginShellEnvironment } from '../src/environment.ts';
+import { formatHostedSessions, readHostedSessionRows } from '../src/hosted-sessions.ts';
 import { readAudit } from '../src/actions.ts';
 import {
   installService,
@@ -435,7 +435,12 @@ async function main(): Promise<void> {
   if (command === 'devices' && (sub === undefined || sub === 'list') && arg === undefined) {
     const clients = readDeviceHostClients();
     const devices = [...readDevices(), ...readBuildClients(), ...clients];
-    const hostedSessions = readHostedSessionRows(readHostedSessions(), clients);
+    let hostedSessions: ReturnType<typeof readHostedSessionRows> = [];
+    try {
+      hostedSessions = readHostedSessionRows(readHostedSessions(), clients);
+    } catch (error) {
+      console.error(`Could not read hosted sessions: ${(error as Error).message}`);
+    }
     if (values.json) {
       const listed = devices.map(
         ({ id, name, identity, pairedAt, lastSeenAt, capabilities, pendingUntil, requestedCapability }) => ({

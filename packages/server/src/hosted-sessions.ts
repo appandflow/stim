@@ -45,8 +45,12 @@ export function readHostedSessionRows(
   const apps = new Map<string, string>();
   for (const record of records) {
     if (!record.appAttempt || (record.state === 'stopped' && !record.parked)) continue;
-    const app = readHostedAppMetadata(record.id, record.appAttempt);
-    if (app.state === 'installed') apps.set(record.id, app.bundleId);
+    try {
+      const app = readHostedAppMetadata(record.id, record.appAttempt);
+      if (app.state === 'installed') apps.set(record.id, app.bundleId);
+    } catch {
+      continue;
+    }
   }
   return buildHostedSessionRows(records, clients, apps);
 }
