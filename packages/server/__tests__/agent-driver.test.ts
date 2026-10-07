@@ -348,7 +348,9 @@ test.each(['ios', 'android'])(
     const ios = (session: string, client: string, udid: string): HostedAgentApp => ({
       session,
       client,
-      ...(platform === 'ios' ? { udid } : { serial: session === A ? 'emulator-5554' : 'emulator-5556' }),
+      ...(platform === 'ios'
+        ? { udid }
+        : { serial: session === A ? 'emulator-5554' : 'emulator-5556', avdName: `stim-hosted-${session}` }),
       bundleId: 'dev.app',
     });
     const first = await agents.appRunning(ios(A, 'client-1', A));
@@ -390,7 +392,7 @@ test.each(['ios', 'android'])(
     const target: HostedAgentApp = {
       session: A,
       client: 'client',
-      ...(platform === 'ios' ? { udid: A } : { serial: 'emulator-5554' }),
+      ...(platform === 'ios' ? { udid: A } : { serial: 'emulator-5554', avdName: `stim-hosted-${A}` }),
       bundleId: 'dev.app',
     };
     expect((await agents.appRunning(target)).grant.driver).toBe('none');
@@ -419,13 +421,13 @@ test.each(['ios', 'android'])(
     await agents.appRunning({
       session: A,
       client: 'c',
-      ...(platform === 'ios' ? { udid: A } : { serial: 'emulator-5554' }),
+      ...(platform === 'ios' ? { udid: A } : { serial: 'emulator-5554', avdName: `stim-hosted-${A}` }),
       bundleId: 'dev.app',
     });
     await agents.appRunning({
       session: B,
       client: 'c',
-      ...(platform === 'ios' ? { udid: B } : { serial: 'emulator-5556' }),
+      ...(platform === 'ios' ? { udid: B } : { serial: 'emulator-5556', avdName: `stim-hosted-${B}` }),
       bundleId: 'dev.app',
     });
     const mac = '33333333-3333-4333-8333-333333333333';

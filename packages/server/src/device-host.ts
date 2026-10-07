@@ -316,19 +316,6 @@ export class DeviceHost {
         notice:
           'The previous session owner is not attached to this server. Explicit stop must reconcile the retained device before another reservation.',
       };
-    if (
-      record.platform === 'android' &&
-      record.state === 'ready' &&
-      record.appAttempt &&
-      readHostedAppMetadata(record.id, record.appAttempt).state === 'installed'
-    ) {
-      const access = this.options.agents.access(record.id);
-      return {
-        ...record,
-        agent: access?.grant ?? { driver: 'none' },
-        ...(access?.notice ? { notice: access.notice } : {}),
-      };
-    }
     return { ...record };
   }
 
@@ -914,7 +901,10 @@ export class DeviceHost {
           record.platform === 'ios'
             ? (record.device as HostedIosDevice | null)?.udid
             : record.platform === 'android' && record.device
-              ? { serial: (record.device as HostedAndroidDevice).serial }
+              ? {
+                  serial: (record.device as HostedAndroidDevice).serial,
+                  avdName: (record.device as HostedAndroidDevice).avdName,
+                }
               : undefined,
         );
       await this.closeView(owned);
@@ -983,6 +973,7 @@ export class DeviceHost {
             ? {
                 bundleId: readHostedAppMetadata(record.id, attempt).bundleId,
                 serial: (record.device as HostedAndroidDevice).serial,
+                avdName: (record.device as HostedAndroidDevice).avdName,
               }
             : {
                 bundleId: hostedMacosBundleId(readHostedAppMetadata(record.id, attempt).bundleId, record.appSlot!),
@@ -994,7 +985,11 @@ export class DeviceHost {
     }
   }
 
-  private stopAgent(session: string, strict = false, device?: string | { serial: string }): Promise<void> {
+  private stopAgent(
+    session: string,
+    strict = false,
+    device?: string | { serial: string; avdName: string },
+  ): Promise<void> {
     return this.options.agents.appStopped(session, device).catch((error: unknown) => {
       if (strict) throw error;
       process.stderr.write(`Hosted agent control did not stop: ${(error as Error).message}\n`);
@@ -1051,7 +1046,10 @@ export class DeviceHost {
       record.platform === 'ios'
         ? (record.device as HostedIosDevice | null)?.udid
         : record.platform === 'android' && record.device
-          ? { serial: (record.device as HostedAndroidDevice).serial }
+          ? {
+              serial: (record.device as HostedAndroidDevice).serial,
+              avdName: (record.device as HostedAndroidDevice).avdName,
+            }
           : undefined,
     );
     void this.closeMetro(owned).catch((error: unknown) => this.failed(record.id, error));

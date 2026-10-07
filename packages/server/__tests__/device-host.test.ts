@@ -166,7 +166,7 @@ const agents = {
     agentIssued.set(app.session, access);
     return Promise.resolve(access);
   },
-  appStopped: (session: string, _device?: string | { serial: string }) => {
+  appStopped: (session: string, _device?: string | { serial: string; avdName: string }) => {
     agentCalls.push(['stopped', session]);
     return Promise.resolve();
   },
@@ -1145,7 +1145,9 @@ describe('hosted agent control', () => {
         'running',
         expect.objectContaining({
           session: id,
-          ...(platform === 'ios' ? { udid: '12345678-1234-1234-1234-123456789abc' } : { serial: 'emulator-5554' }),
+          ...(platform === 'ios'
+            ? { udid: '12345678-1234-1234-1234-123456789abc' }
+            : { serial: 'emulator-5554', avdName: `stim-hosted-${id}` }),
           bundleId: 'dev.stim.fixture',
         }),
         'installing',
@@ -1155,10 +1157,17 @@ describe('hosted agent control', () => {
         iosGrant.token,
       );
       const attached = host.attach('client', { session: id });
-      expect('result' in attached ? attached.result.agent : undefined).toEqual(
-        platform === 'android' ? iosGrant : undefined,
-      );
-      const stopping = vi.spyOn(agents, 'appStopped').mockImplementation(async (session) => {
+      expect(attached).not.toHaveProperty('result.agent');
+      expect(attached).toHaveProperty('result.id', id);
+      const retry = reserve({ platform });
+      expect(retry.id).toBe(id);
+      expect(retry).not.toHaveProperty('agent');
+      const stopping = vi.spyOn(agents, 'appStopped').mockImplementation(async (session, device) => {
+        expect(device).toEqual(
+          platform === 'ios'
+            ? '12345678-1234-1234-1234-123456789abc'
+            : { serial: 'emulator-5554', avdName: `stim-hosted-${id}` },
+        );
         expect(existsSync(join(deviceHostArea(session), 'home', 'stopped'))).toBe(false);
         agentCalls.push(['stopped', session]);
         agentIssued.delete(session);

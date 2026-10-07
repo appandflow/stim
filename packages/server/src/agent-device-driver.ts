@@ -177,6 +177,8 @@ export interface AgentDeviceDriverOptions {
   leaseRenewMs?: number;
 }
 
+type AndroidIdentity = 'verified' | 'lost' | 'unverified';
+
 interface Running {
   reported: boolean;
   proxy: ChildProcess;
@@ -227,6 +229,8 @@ export class AgentDeviceDriver implements HostedAgentDriver {
   private daemonRecord: ProcessRecord | null = null;
   private deviceProxy: { child: ChildProcess; record: ProcessRecord | null } | null = null;
   private listener: (() => void) | null = null;
+  private androidProbe: Promise<AndroidIdentity> | null = null;
+  private androidVerifiedAt = 0;
   private readonly leases = new Map<string, Lease>();
   private readonly released = new Set<string>();
 
@@ -290,6 +294,7 @@ export class AgentDeviceDriver implements HostedAgentDriver {
     const claim = attempt.acquired;
     this.claim = claim;
     this.stopping = false;
+    this.androidVerifiedAt = 0;
     rmSync(join(this.options.stateDir, 'daemon.json'), { force: true });
     const policy = join(this.options.stateDir, 'policy.json');
     writeFileSync(policy, `${JSON.stringify(this.options.device ? devicePolicy(this.options.device) : POLICY)}\n`, {
@@ -334,7 +339,7 @@ export class AgentDeviceDriver implements HostedAgentDriver {
               : 'Agent control requires agent-device 0.21.22 or later with the android-instance backend and serial daemon policy on the hosting Mac.'
             : UNSCOPED,
         );
-      const watch = setInterval(() => this.watchDaemon(), this.options.watchMs);
+      const watch = setInterval(() => void this.watchDaemon(), this.options.watchMs);
       watch.unref();
       const running: Running = {
         reported: false,
@@ -418,9 +423,42 @@ export class AgentDeviceDriver implements HostedAgentDriver {
     return { record, admin: { port: value.httpPort, token: value.token } };
   }
 
-  private watchDaemon(): void {
+  private async androidIdentity(cached = false): Promise<AndroidIdentity> {
+    const device = this.options.device;
+    if (!device?.serial) return 'verified';
+    if (this.androidProbe) return this.androidProbe;
+    if (cached && Date.now() - this.androidVerifiedAt < 2000) return 'verified';
+    this.androidProbe = new Promise<AndroidIdentity>((resolve) => {
+      execFile(
+        adbPath(this.options.env),
+        ['-s', device.serial, 'emu', 'avd', 'name'],
+        { env: this.options.env, timeout: 2000, killSignal: 'SIGKILL' },
+        (error, stdout, stderr) => {
+          if (error)
+            resolve(
+              !error.killed &&
+                /device .*not found|device not found|no devices\/emulators found/.test(`${error.message} ${stderr}`)
+                ? 'lost'
+                : 'unverified',
+            );
+          else resolve(stdout.split('\n')[0]?.trim() === device.avdName ? 'verified' : 'lost');
+        },
+      );
+    });
+    try {
+      const identity = await this.androidProbe;
+      this.androidVerifiedAt = identity === 'verified' ? Date.now() : 0;
+      return identity;
+    } finally {
+      this.androidProbe = null;
+    }
+  }
+
+  private async watchDaemon(): Promise<void> {
     const running = this.running;
-    if (running && !this.stopping && inspectProcessIdentity(running.daemon) === 'gone') this.exited();
+    if (!running || this.stopping || running.reported) return;
+    if (inspectProcessIdentity(running.daemon) === 'gone') this.exited();
+    else if ((await this.androidIdentity()) === 'lost' && this.running === running && !this.stopping) this.exited();
   }
 
   private exited(): void {
@@ -537,6 +575,10 @@ export class AgentDeviceDriver implements HostedAgentDriver {
   private async stopAndroidHelpers(): Promise<void> {
     const serial = this.options.device?.serial;
     if (!serial || !this.daemonRecord) return;
+    const identity = await this.androidIdentity();
+    if (identity === 'lost') return;
+    if (identity === 'unverified')
+      throw new Error('The hosted Android emulator identity could not be verified; its daemon claim was kept.');
     const adb = (args: string[]): Promise<string> =>
       new Promise((resolve, reject) => {
         execFile(
@@ -550,12 +592,16 @@ export class AgentDeviceDriver implements HostedAgentDriver {
         );
       });
     // agent-device 0.21.22 uses one-shot snapshots when SESSION=0, so it creates no helper adb forwards.
-    for (const helper of ['com.callstack.agentdevice.snapshothelper', 'com.callstack.agentdevice.imehelper']) {
-      await adb(['am', 'force-stop', helper]);
-      if ((await adb(['pidof', helper])).trim())
-        throw new Error(
-          `The agent-device Android helper ${helper} did not stop; its daemon claim ${this.claim?.path} was kept.`,
-        );
+    try {
+      for (const helper of ['com.callstack.agentdevice.snapshothelper', 'com.callstack.agentdevice.imehelper']) {
+        await adb(['am', 'force-stop', helper]);
+        if ((await adb(['pidof', helper])).trim())
+          throw new Error(
+            `The agent-device Android helper ${helper} did not stop; its daemon claim ${this.claim?.path} was kept.`,
+          );
+      }
+    } catch (error) {
+      if ((await this.androidIdentity()) !== 'lost') throw error;
     }
   }
 
@@ -605,9 +651,16 @@ export class AgentDeviceDriver implements HostedAgentDriver {
       if (
         app.session !== this.options.device.session ||
         app.udid !== this.options.device.udid ||
-        app.serial !== this.options.device.serial
+        app.serial !== this.options.device.serial ||
+        app.avdName !== this.options.device.avdName
       )
-        throw new Error('The agent-device daemon belongs to another hosted simulator.');
+        throw new Error(
+          `The agent-device daemon belongs to another hosted ${this.options.device.serial ? 'emulator' : 'simulator'}.`,
+        );
+      if ((await this.androidIdentity()) !== 'verified')
+        throw new AgentDriverUnavailable(
+          'Agent control is refused: the hosted Android emulator identity could not be verified.',
+        );
       const scope: HostedAgentLease = {
         tenant: `stim.${app.session}`,
         runId: app.session,
@@ -695,7 +748,7 @@ export class AgentDeviceDriver implements HostedAgentDriver {
       return;
     }
     if (!target.startsWith('/rpc')) {
-      this.relay(running, lease, request, response, target);
+      void this.relay(running, lease, request, response, target);
       return;
     }
     void this.relayPinned(running, lease, request, response, target);
@@ -734,17 +787,29 @@ export class AgentDeviceDriver implements HostedAgentDriver {
           },
         }),
       );
-    else this.relay(running, lease, request, response, target, pinned);
+    else await this.relay(running, lease, request, response, target, pinned);
   }
 
-  private relay(
+  private async relay(
     running: Running,
     lease: Lease,
     request: IncomingMessage,
     response: ServerResponse,
     target: string,
     body?: Buffer,
-  ): void {
+  ): Promise<void> {
+    const identity = await this.androidIdentity(true);
+    if (identity !== 'verified' || this.running !== running || this.stopping || running.reported) {
+      response
+        .writeHead(503, { 'content-type': 'text/plain' })
+        .end(
+          this.options.device?.serial
+            ? 'Agent control is refused: the hosted emulator is absent, replaced, or its identity could not be verified.\n'
+            : 'Agent control is not running.\n',
+        );
+      if (identity === 'lost' && this.running === running) this.exited();
+      return;
+    }
     const headers: Record<string, string> = {
       authorization: `Bearer ${running.token}`,
       'x-agent-device-tenant': lease.scope.tenant,
@@ -970,6 +1035,7 @@ function inspectDeviceCommand(
     return refuse('command', 'Refused command: this connection allows only hosted device inspection and interaction.');
   if (device.platform === 'android' && params.serial !== undefined && params.serial !== device.id)
     return refuse('device', 'Another emulator is refused; this connection targets one hosted emulator.');
+  const noun = device.platform === 'android' ? 'emulator' : 'simulator';
   const screenshot = params.command === 'screenshot';
   for (const fields of [params.flags, params.input]) {
     if (!isJsonObject(fields)) continue;
@@ -978,7 +1044,7 @@ function inspectDeviceCommand(
         ? fields.serial !== undefined && fields.serial !== device.id
         : typeof fields.udid === 'string' && fields.udid.trim() !== device.id
     )
-      return refuse('device', 'Another simulator is refused; this connection targets one hosted simulator.');
+      return refuse('device', `Another ${noun} is refused; this connection targets one hosted ${noun}.`);
     if (
       HOST_INPUTS.some(
         (key) =>

@@ -3,8 +3,8 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { HostedAgentGrant } from '@stim-cli/core/state';
 
 export type HostedAgentDevice = { session: string } & (
-  | { udid: string; serial?: never }
-  | { serial: string; udid?: never }
+  | { udid: string; serial?: never; avdName?: never }
+  | { serial: string; avdName: string; udid?: never }
 );
 
 /** One installed hosted app and its process or owned device. */
@@ -12,7 +12,7 @@ export type HostedAgentApp = {
   client: string;
   session: string;
   bundleId: string;
-} & ({ pid: number; udid?: never; serial?: never } | (HostedAgentDevice & { pid?: never }));
+} & ({ pid: number; udid?: never; serial?: never; avdName?: never } | (HostedAgentDevice & { pid?: never }));
 
 /**
  * The host side of one driving tool. `HostedAgentHost` calls it; a driver never decides which client or
@@ -132,7 +132,8 @@ export class HostedAgentHost {
         existing.app.pid === app.pid &&
         existing.app.bundleId === app.bundleId &&
         existing.app.udid === app.udid &&
-        existing.app.serial === app.serial
+        existing.app.serial === app.serial &&
+        existing.app.avdName === app.avdName
       )
         return this.access(app.session)!;
       if (existing) await this.drop(app.session, false);
@@ -178,7 +179,7 @@ export class HostedAgentHost {
     return 'Agent control failed to start on the hosting Mac. Check its stim-server log.';
   }
 
-  appStopped(session: string, device?: string | { serial: string }): Promise<void> {
+  appStopped(session: string, device?: string | { serial: string; avdName: string }): Promise<void> {
     return this.serialize(async () => {
       let child = this.devices.get(session);
       if (!child && device && this.options.resolveDevice) {

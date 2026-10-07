@@ -8,6 +8,7 @@ import { createHash } from 'node:crypto';
 import { claimRemoveCommand, readClaimSet } from '@stim-cli/core/ownership-claim';
 import { keepAgentClaim, killKeptChild } from './fixtures/kept-agent-claim.ts';
 import { parseHostedAgentGrant } from '@stim-cli/core/state';
+import { HostedAgentHost } from '../src/agent-driver.ts';
 import { AgentDeviceDriver } from '../src/agent-device-driver.ts';
 
 const fixture = vi.hoisted(() => ({
@@ -17,6 +18,9 @@ const fixture = vi.hoisted(() => ({
   proxyStopped: true,
   daemonStopped: true,
   helperBusy: false,
+  avdName: '',
+  adbError: null as (Error & { code?: number; killed?: boolean }) | null,
+  shellMissing: false,
   helperSession: '',
   events: [] as string[],
   calls: [] as { path: string; body: string; headers: Record<string, string> }[],
@@ -32,7 +36,9 @@ vi.mock('@stim-cli/core/process-identity', async (original) => {
       record && typeof record.pid === 'number' && [777777, 777778].includes(record.pid)
         ? (record.pid === 777778 && !fixture.proxyStopped) || (record.pid === 777777 && !fixture.daemonStopped)
           ? 'unknown'
-          : 'gone'
+          : record.pid === 777777
+            ? 'same'
+            : 'gone'
         : actual.inspectProcessIdentity(record),
     waitForProcessExit: async (record: { pid: number }) =>
       record.pid === 777778 ? fixture.proxyStopped : fixture.daemonStopped,
@@ -69,13 +75,27 @@ vi.mock('node:child_process', async (original) => ({
   },
   execFile: (command: string, ...args: unknown[]) => {
     if (!(args[0] as string[]).includes('--version')) fixture.events.push(`${command}:${JSON.stringify(args[0])}`);
-    (args.at(-1) as (error: null, stdout: string) => void)(
+    const argv = args[0] as string[];
+    const callback = args.at(-1) as (error: Error | null, stdout: string, stderr: string) => void;
+    if (argv.includes('emu') && fixture.adbError) {
+      callback(fixture.adbError, '', fixture.adbError.message);
+      return;
+    }
+    if (argv.includes('shell') && fixture.shellMissing) {
+      fixture.adbError = new Error('error: device not found');
+      callback(fixture.adbError, '', fixture.adbError.message);
+      return;
+    }
+    callback(
       null,
-      (args[0] as string[]).includes('--version')
+      argv.includes('--version')
         ? fixture.version
-        : (args[0] as string[]).includes('pidof') && fixture.helperBusy
-          ? '4444'
-          : '',
+        : argv.includes('emu')
+          ? `${fixture.avdName}\nOK\n`
+          : argv.includes('pidof') && fixture.helperBusy
+            ? '4444'
+            : '',
+      '',
     );
   },
 }));
@@ -107,6 +127,7 @@ vi.mock('node:http', async (original) => ({
 
 const SESSION = '11111111-1111-4111-8111-111111111111';
 const SERIAL = 'emulator-5554';
+const AVD = `stim-hosted-${SESSION}`;
 let home: string;
 let driver: AgentDeviceDriver;
 
@@ -121,17 +142,23 @@ beforeEach(() => {
   fixture.proxyStopped = true;
   fixture.daemonStopped = true;
   fixture.helperBusy = false;
+  fixture.avdName = AVD;
+  fixture.adbError = null;
+  fixture.shellMissing = false;
   fixture.calls = [];
   fixture.events = [];
   driver = new AgentDeviceDriver({
     env: { STIM_AGENT_DEVICE_BIN: bin },
     stateDir: join(home, 'agent'),
     claimRoot: join(home, 'claims'),
-    device: { session: SESSION, serial: SERIAL },
+    device: { session: SESSION, serial: SERIAL, avdName: AVD },
   });
 });
 
 afterEach(async () => {
+  fixture.adbError = null;
+  fixture.shellMissing = false;
+  fixture.avdName = AVD;
   await driver.stop();
   vi.restoreAllMocks();
   delete process.env.STIM_HOME;
@@ -167,7 +194,7 @@ async function rpcBody(body: object, path = '/rpc') {
 
 async function start() {
   await driver.start();
-  return driver.issue({ client: 'c', session: SESSION, serial: SERIAL, bundleId: 'dev.app' });
+  return driver.issue({ client: 'c', session: SESSION, serial: SERIAL, avdName: AVD, bundleId: 'dev.app' });
 }
 
 test('pins the serial policy and verifies its digest before granting Android control', async () => {
@@ -181,8 +208,8 @@ test('pins the serial policy and verifies its digest before granting Android con
   expect(statSync(join(home, 'agent', 'policy.json')).mode & 0o777).toBe(process.platform === 'win32' ? 0o666 : 0o600);
   expect(fixture.calls.map((call) => call.path)).toEqual(['/health']);
   await expect(
-    driver.issue({ client: 'c', session: SESSION, serial: 'emulator-5556', bundleId: 'dev.app' }),
-  ).rejects.toThrow('another hosted simulator');
+    driver.issue({ client: 'c', session: SESSION, serial: 'emulator-5556', avdName: AVD, bundleId: 'dev.app' }),
+  ).rejects.toThrow('another hosted emulator');
 });
 
 test.each(['policy', 'backend'] as const)('grants nothing without the required %s', async (missing) => {
@@ -494,3 +521,114 @@ test.each(['proxy', 'daemon', 'helper'])(
     expect(readClaimSet(join(home, 'claims')).live).toEqual([]);
   },
 );
+
+test.each(['absent', 'replaced', 'lost-during-cleanup'])(
+  'stop releases the daemon claim when the emulator is %s without touching a replacement',
+  async (status) => {
+    await start();
+    fixture.events = [];
+    if (status === 'absent') fixture.adbError = new Error('error: device not found');
+    if (status === 'replaced') fixture.avdName = 'another-avd';
+    if (status === 'lost-during-cleanup') fixture.shellMissing = true;
+    await driver.stop();
+    expect(readClaimSet(join(home, 'claims')).live).toEqual([]);
+    const shell = fixture.events.filter((event) => event.includes('"shell"'));
+    expect(shell).toHaveLength(status === 'lost-during-cleanup' ? 1 : 0);
+  },
+);
+
+test.each(['absent', 'replaced'])(
+  'refuses forwarding and drops the grant through strict daemon stop when the emulator is %s',
+  async (status) => {
+    const agents = new HostedAgentHost({
+      resolve: () => null,
+      resolveDevice: () => driver,
+      nodeOf: () => 'node',
+      restartDelayMs: 0,
+      maxRestarts: 1,
+    });
+    try {
+      const access = await agents.appRunning({
+        client: 'c',
+        session: SESSION,
+        serial: SERIAL,
+        avdName: AVD,
+        bundleId: 'dev.app',
+      });
+      expect(access.grant.driver).toBe('agent-device');
+      fixture.calls = [];
+      const now = Date.now();
+      const date = vi.spyOn(Date, 'now').mockReturnValue(now + 3000);
+      if (status === 'absent') fixture.adbError = new Error('error: device not found');
+      else fixture.avdName = 'another-avd';
+      const answer = await rpc({ command: 'snapshot' });
+      date.mockRestore();
+      expect(answer.status).toBe(503);
+      expect(answer.text).toContain('hosted emulator');
+      expect(fixture.calls).toEqual([]);
+      await vi.waitFor(() => expect(agents.access(SESSION)?.notice).toContain('identity could not be verified'));
+      await vi.waitFor(() => expect(readClaimSet(join(home, 'claims')).live).toEqual([]));
+      expect(agents.access(SESSION)?.grant).toEqual({ driver: 'none' });
+      expect(fixture.events.some((event) => event.includes('"daemon","stop"'))).toBe(true);
+      expect(fixture.events.some((event) => event.includes('"force-stop"'))).toBe(false);
+    } finally {
+      await agents.close();
+    }
+  },
+);
+
+test('watch detects serial reuse even while request verification is cached', async () => {
+  driver = new AgentDeviceDriver({
+    env: { STIM_AGENT_DEVICE_BIN: join(home, 'agent-device.mjs') },
+    stateDir: join(home, 'agent'),
+    claimRoot: join(home, 'claims'),
+    device: { session: SESSION, serial: SERIAL, avdName: AVD },
+    watchMs: 20,
+  });
+  const agents = new HostedAgentHost({
+    resolve: () => null,
+    resolveDevice: () => driver,
+    nodeOf: () => 'node',
+    maxRestarts: 0,
+  });
+  try {
+    await agents.appRunning({ client: 'c', session: SESSION, serial: SERIAL, avdName: AVD, bundleId: 'dev.app' });
+    fixture.avdName = 'another-avd';
+    await vi.waitFor(() => expect(agents.access(SESSION)?.grant.driver).toBe('none'));
+    await vi.waitFor(() => expect(readClaimSet(join(home, 'claims')).live).toEqual([]));
+    expect((await rpc({ command: 'snapshot' })).status).toBe(503);
+  } finally {
+    await agents.close();
+  }
+});
+
+test('an adb timeout refuses a request without reporting daemon loss, then healthy requests recover', async () => {
+  await start();
+  const exit = vi.fn<() => void>();
+  driver.onExit(exit);
+  fixture.calls = [];
+  const date = vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 3000);
+  fixture.adbError = Object.assign(new Error('adb timed out'), { killed: true });
+  expect((await rpc({ command: 'snapshot' })).status).toBe(503);
+  expect(fixture.calls).toEqual([]);
+  expect(exit).not.toHaveBeenCalled();
+  expect(readClaimSet(join(home, 'claims')).live).toHaveLength(1);
+  fixture.adbError = null;
+  expect((await rpc({ command: 'snapshot' })).status).toBe(200);
+  const probes = fixture.events.filter((event) => event.includes('"emu"')).length;
+  expect((await rpc({ command: 'snapshot' })).status).toBe(200);
+  expect(fixture.events.filter((event) => event.includes('"emu"'))).toHaveLength(probes);
+  date.mockRestore();
+});
+
+test('Android nested selectors refuse another emulator by its platform noun', async () => {
+  await start();
+  const answer = await rpc({
+    command: 'batch',
+    flags: { batchSteps: [{ command: 'snapshot', input: { serial: 'emulator-5556' } }] },
+  });
+  expect(answer.status).toBe(400);
+  expect(JSON.parse(answer.text).error.message).toBe(
+    'Another emulator is refused; this connection targets one hosted emulator.',
+  );
+});

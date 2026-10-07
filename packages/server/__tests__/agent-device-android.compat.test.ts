@@ -1,8 +1,11 @@
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { inject } from 'vitest';
 import { AgentDeviceDriver } from '../src/agent-device-driver.ts';
+import { adbPath } from '../src/frame-helper.ts';
 
 declare module 'vitest' {
   export interface ProvidedContext {
@@ -16,6 +19,11 @@ test('the real Android daemon enforces serial inventory, commands and shutdown p
     throw new Error(
       'Compatibility requires STIM_AGENT_DEVICE_ANDROID_SERIAL naming an exclusively owned test emulator.',
     );
+  const { stdout } = await promisify(execFile)(adbPath(process.env), ['-s', serial, 'emu', 'avd', 'name'], {
+    timeout: 2000,
+    killSignal: 'SIGKILL',
+  });
+  const avdName = stdout.split('\n')[0]!.trim();
   const home = mkdtempSync(join(tmpdir(), 'stim-android-agent-compat-'));
   process.env.STIM_HOME = home;
   const session = '11111111-1111-4111-8111-111111111111';
@@ -24,11 +32,13 @@ test('the real Android daemon enforces serial inventory, commands and shutdown p
     env: process.env,
     stateDir,
     claimRoot: join(home, 'claims'),
-    device: { session, serial },
+    device: { session, serial, avdName },
   });
   try {
     await driver.start();
-    await expect(driver.issue({ client: 'c', session, serial, bundleId: 'dev.fixture' })).resolves.toMatchObject({
+    await expect(
+      driver.issue({ client: 'c', session, serial, avdName, bundleId: 'dev.fixture' }),
+    ).resolves.toMatchObject({
       lease: { backend: 'android-instance', deviceKey: `android:mobile:${serial}` },
     });
     const daemon = JSON.parse(readFileSync(join(stateDir, 'daemon.json'), 'utf8'));
