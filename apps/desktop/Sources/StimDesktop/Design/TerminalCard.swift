@@ -131,6 +131,7 @@ struct TerminalCard: View {
     let indexes = changed.filter { visible.indices.contains($0) }
     liveLines = Array(lines.prefix(indexes.first ?? lines.count))
     for index in indexes {
+      guard !Task.isCancelled else { return }
       liveLines.append(contentsOf: lines[liveLines.count..<index])
       liveLines.append(TerminalLine(text: "", kind: lines[index].kind))
       let text = lines[index].text
@@ -142,6 +143,7 @@ struct TerminalCard: View {
       }
       previousLines = Array(lines.prefix(index + 1)) + previousLines.dropFirst(index + 1)
     }
+    guard !Task.isCancelled else { return }
     liveLines = lines
     previousLines = lines
     while !Task.isCancelled {
