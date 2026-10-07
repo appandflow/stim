@@ -112,11 +112,11 @@ export async function runHostedDevice(
         throw new Error('The parked hosted simulator does not match the requested selectors.');
       }
       if (mode === 'inspect') return { state: 'compatible', device };
-      resetIosPrivacy(device.udid);
-      resetIosKeychain(device.udid);
       await bootIosSim(device.udid, { openViewer: false });
       if (inventory().find((sim) => sim.udid === device!.udid)?.state !== 'Booted')
         throw new Error('Hosted simulator boot could not be verified.');
+      resetIosPrivacy(device.udid);
+      resetIosKeychain(device.udid);
       for (const bundleId of listUserApps(device.udid)) uninstallIosApp(device.udid, bundleId);
       withDirLock(join(home, 'hosted-device.lock'), () => {
         const temporary = join(home, 'hosted-device.json.tmp');

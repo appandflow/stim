@@ -401,7 +401,7 @@ export class DeviceHost {
   ): Promise<HostedDeviceSession | null> {
     if (
       request.platform === 'macos' ||
-      getParkedMax(request.platform, { env: this.options.env }).max === 0 ||
+      this.parkedMax(request.platform) === 0 ||
       records.some((record) => record.client === client && record.attempt === request.attempt)
     )
       return null;
@@ -419,6 +419,7 @@ export class DeviceHost {
       .slice(0, 3);
     for (const record of candidates) {
       if (this.closed || !this.options.allowed(client)) break;
+      if (this.owned.has(record.id)) continue;
       let owned: OwnedSession;
       try {
         owned = this.acquire(record);
@@ -452,6 +453,14 @@ export class DeviceHost {
       if (unusable) await this.retire(record);
     }
     return null;
+  }
+
+  private parkedMax(platform: 'ios' | 'android'): number {
+    try {
+      return getParkedMax(platform, { env: this.options.env }).max;
+    } catch {
+      return 0;
+    }
   }
 
   private observed(record: HostedDeviceSession): HostedDeviceSession {
@@ -1278,7 +1287,7 @@ export class DeviceHost {
       (record.platform === 'ios' || record.platform === 'android') &&
       healthy &&
       record.device &&
-      getParkedMax(record.platform, { env: this.options.env }).max > 0 &&
+      this.parkedMax(record.platform) > 0 &&
       this.options.allowed(record.client) &&
       !this.revoked.has(record.id)
     ) {
@@ -1403,7 +1412,7 @@ export class DeviceHost {
 
   private async evictParked(): Promise<void> {
     for (const platform of ['ios', 'android'] as const) {
-      const max = getParkedMax(platform, { env: this.options.env }).max;
+      const max = this.parkedMax(platform);
       const records = readHostedSessions()
         .filter((record) => record.platform === platform && record.state === 'stopped' && record.parked)
         .toSorted((a, b) => a.parked!.at.localeCompare(b.parked!.at));
@@ -1442,7 +1451,13 @@ export class DeviceHost {
       if (this.owned.has(record.id)) return;
       const home = join(deviceHostArea(record.id), 'home');
       const ledger = readHostedDeviceLedger(home);
-      if (!ledger || (!ledger.ios.length && !ledger.android.length && !ledger.web.length)) return;
+      if (!ledger || (!ledger.ios.length && !ledger.android.length && !ledger.web.length)) {
+        if (record.parked)
+          this.change(record.id, (each) => {
+            if (each.state === 'stopped' && each.parked?.at === record.parked?.at) delete each.parked;
+          });
+        return;
+      }
       try {
         owned = this.acquire(record);
       } catch {
