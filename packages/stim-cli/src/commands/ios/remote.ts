@@ -160,7 +160,7 @@ export async function selectIosPlacement(
       machine: placed.target?.host.machine ?? null,
       recorded: undefined,
       auto: { target: placed.target as HostedIosTarget | null },
-      budget: placed.target || placed.sticky ? { reclaimed: [], refusal: null } : undefined,
+      budget: placed.target ? { reclaimed: [], refusal: null } : undefined,
       devicePlacement: placed.placement,
     };
   } catch (error) {

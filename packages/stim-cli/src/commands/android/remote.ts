@@ -166,10 +166,7 @@ export async function selectAndroidPlacement({
         : { kind: 'emulator', systemImage: selected.systemImage, deviceProfile: selected.deviceProfile },
       hostedTarget: placed.target as HostedAndroidTarget | null,
       selectors,
-      budget:
-        placed.target || placed.sticky
-          ? { reclaimed: [], refusal: null }
-          : await checkBudget({ root: args.root, note }),
+      budget: placed.target ? { reclaimed: [], refusal: null } : await checkBudget({ root: args.root, note }),
       devicePlacement: placed.placement,
     };
   } catch (error) {

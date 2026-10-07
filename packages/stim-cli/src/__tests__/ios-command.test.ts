@@ -7769,6 +7769,7 @@ describe('iOS placement on a hosting Mac', () => {
     'auto local decisions survive run facts and status state with setting: %s',
     async (setting) => {
       reserve();
+      let budgetChecks = 0;
       if (setting) writeConfigSetting({ scope: 'workspace', projectPath: root }, 'ios.remote', 'auto');
       const { logs, exitCode } = await run(
         { ...(setting ? {} : { remote: 'auto' }), json: true },
@@ -7779,11 +7780,13 @@ describe('iOS placement on a hosting Mac', () => {
               peek: () => ({ count: 1, max: 3, queued: 0, localLive: true }),
             }),
           budgetGate: async () => {
-            throw new Error('sticky local must not reclaim');
+            budgetChecks += 1;
+            return { reclaimed: [], refusal: null };
           },
         },
       );
       expect(exitCode).toBe(null);
+      expect(budgetChecks).toBe(1);
       expect(parseFirst(logs)).toMatchObject({
         devicePlacement: { decision: 'local', reason: "this workspace's device runs here" },
       });

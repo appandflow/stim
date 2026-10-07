@@ -7219,6 +7219,7 @@ describe('named Android hosting placement', () => {
   });
 
   test('android.remote auto keeps a live local slot and records the local decision', async () => {
+    let budgetChecks = 0;
     setProjectSetting(root, 'android', { remote: 'auto' });
     const h = harness({
       json: true,
@@ -7228,11 +7229,13 @@ describe('named Android hosting placement', () => {
           peek: () => ({ count: 1, max: 3, queued: 0, localLive: true }),
         }),
       checkBudget: async () => {
-        throw new Error('sticky local must not reclaim');
+        budgetChecks += 1;
+        return { reclaimed: [], refusal: null };
       },
     });
     const result = await h.run();
     expect(result.ok).toBe(true);
+    expect(budgetChecks).toBe(1);
     expect(result.facts?.devicePlacement).toEqual({ decision: 'local', reason: "this workspace's device runs here" });
     expect(readLastBuilds(readWorkspaceState(root)).android?.devicePlacement).toMatchObject({ decision: 'local' });
     expect(readWorkspaceState(root)?.android).toMatchObject({ devicePlacement: { decision: 'local' } });
