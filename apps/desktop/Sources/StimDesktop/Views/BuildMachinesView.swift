@@ -232,7 +232,8 @@ private struct BuildMachineRow: View {
           Text(verbatim: entry).font(.stim(.body, weight: .semibold)).lineLimit(1)
           if let status {
             let listed = status.listStatus
-            Pill(listed.title, tone: listed.tone, size: .small).help(status.readiness.reasons ?? status.detail)
+            Pill(listed.title, tone: listed.tone, size: .small).help(
+              status.blockers.isEmpty ? status.detail : status.blockers.map(\.line).joined(separator: "\n"))
           } else if checking {
             Pill("Checking\u{2026}", size: .small)
           }
@@ -273,7 +274,7 @@ private struct BuildMachineRow: View {
   }
 }
 
-private struct BuildMachineDetails: View {
+struct BuildMachineDetails: View {
   var entry: String
   var status: BuildMachineStatus?
   var capabilities: [String]
@@ -288,9 +289,26 @@ private struct BuildMachineDetails: View {
         }
       }
       if let status {
-        Text(verbatim: status.detail).foregroundStyle(Palette.secondary).textSelection(.enabled)
-        if let reasons = status.readiness.reasons {
-          Text(verbatim: reasons).font(.stim(.footnote)).foregroundStyle(Palette.secondary).textSelection(.enabled)
+        if status.blockers.isEmpty {
+          Text(verbatim: status.detail).foregroundStyle(Palette.secondary).textSelection(.enabled)
+          if let reasons = status.readiness.reasons {
+            Text(verbatim: reasons).font(.stim(.footnote)).foregroundStyle(Palette.secondary).textSelection(.enabled)
+          }
+        } else {
+          Text("It cannot take builds yet:").foregroundStyle(Palette.secondary)
+          ForEach(Array(status.blockers.enumerated()), id: \.offset) { _, blocker in
+            VStack(alignment: .leading, spacing: Space.xxs) {
+              Text(verbatim: blocker.title).font(.stim(.body, weight: .semibold))
+              if let reason = blocker.reason {
+                Text(verbatim: reason).font(.stim(.footnote)).foregroundStyle(Palette.secondary).textSelection(.enabled)
+              }
+              if let remedy = blocker.remedy {
+                Text(verbatim: remedy.prefix(1).uppercased() + remedy.dropFirst() + (blocker.command == nil ? "." : ":"))
+                  .font(.stim(.footnote)).foregroundStyle(Palette.secondary).textSelection(.enabled)
+              }
+              if let command = blocker.command { CopyableCommand(command: command) }
+            }
+          }
         }
         if let capacity = status.capacity?.line, !capacity.isEmpty {
           Text(verbatim: capacity).font(.stim(.footnote)).foregroundStyle(Palette.tertiary)

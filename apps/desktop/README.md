@@ -1110,7 +1110,9 @@ pairing state, such as **Busy**, **Not asked**, **Revoked** (revoked or
 denied), **Request lapsed** (nobody on the build machine approved it in time;
 **Ask Again** is available), **Different Mac** (the name now belongs to another
 tailnet node than the one this Mac asked, so Stim does not connect to it),
-**Not on the tailnet**, **Tailscale is off** or **Not a tailnet name**. The
+**Not on the tailnet**, **Tailscale is off** or **Not a tailnet name**. The pill shows
+the first reason; **Details...** and the **Machines** page list every reason doctor gave with its remedy, such
+as **No CocoaPods** with a copyable `brew install cocoapods`. The
 states come from the `buildMachines` field of `stim doctor --json --platform
 ios`.
 

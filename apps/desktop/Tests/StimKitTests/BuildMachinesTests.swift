@@ -150,24 +150,42 @@ import Testing
         .buildMachines == nil)
   }
 
-  @Test func readsReadinessAsReadyOrTheFirstReasonWithItsRemedy() throws {
+  @Test func readsReadinessAsReadyOrEveryReasonWithItsRemedy() throws {
     let url = try #require(Bundle.module.url(forResource: "doctor", withExtension: "json", subdirectory: "Fixtures"))
     let machines = try #require(try JSONDecoder().decode(DoctorReport.self, from: Data(contentsOf: url)).buildMachines)
-    #expect(
-      machines.map(\.readiness.line) == [
-        "Ready", "Busy (load 8.2/core)", "Stim build differs \u{2014} update the build machine",
-      ])
+    #expect(machines.map(\.readiness.title) == ["Ready", "Busy (load 8.2/core)", "Stim build differs"])
     #expect(machines.map(\.readiness.tone) == [.success, .warning, .error])
+    #expect(
+      machines.map { $0.blockers.map(\.line) } == [
+        [], ["Busy (load 8.2/core)"], ["Stim build differs \u{2014} update the build machine"],
+      ])
     #expect(machines[2].readiness.reasons == "Stim build 6bbe9103995f7eb6 there, e7749c9011f4d423 here")
     #expect(
       machines.map(\.detail) == [
         "Builds can run on this Mac.", "Builds stay on this Mac for now.", "Update the build machine.",
       ])
+    let several = try JSONDecoder().decode(
+      BuildMachineStatus.self,
+      from: Data(
+        #"""
+        {"machine":"mini","state":"approved","offloadable":false,
+         "problems":[{"code":"stim-build","reason":"Stim build a there, b here"},
+                     {"code":"cocoapods","reason":"no CocoaPods there"},
+                     {"code":"cocoapods","reason":"CocoaPods 1.15.2 there, 1.16.2 here"}]}
+        """#.utf8))
+    #expect(
+      several.blockers.map(\.line) == [
+        "Stim build differs \u{2014} update the build machine",
+        "No CocoaPods \u{2014} install CocoaPods there",
+        "CocoaPods differs \u{2014} install the same CocoaPods there",
+      ])
+    #expect(several.blockers.map(\.command) == [nil, "brew install cocoapods", nil])
     let older = try JSONDecoder().decode(
       BuildMachineStatus.self,
       from: Data(#"{"machine":"mini","state":"approved","offloadable":false,"reasons":["CPU x86_64 there, arm64 here"]}"#.utf8))
-    #expect(older.readiness.line == "CPU x86_64 there, arm64 here")
-    #expect(BuildMachineStatus(machine: "mini", state: .pending).readiness.line == "Waiting for approval")
+    #expect(older.readiness.title == "CPU x86_64 there, arm64 here")
+    #expect(older.blockers.map(\.line) == ["CPU x86_64 there, arm64 here"])
+    #expect(BuildMachineStatus(machine: "mini", state: .pending).readiness.title == "Waiting for approval")
   }
 
   @Test func showsOneListPillPerMachine() throws {

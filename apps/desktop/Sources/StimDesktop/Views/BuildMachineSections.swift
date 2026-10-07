@@ -71,7 +71,13 @@ struct MachineBuildMachines: View {
       ) {
         Pill(ready.title, tone: ready.tone, size: .small).help(ready.reasons ?? machine.detail)
       }
-      if ready.remedy != nil || machine.state != .approved {
+      if machine.blockers.count > 1 {
+        VStack(alignment: .leading, spacing: Space.xxs) {
+          ForEach(Array(machine.blockers.enumerated()), id: \.offset) { _, blocker in
+            Text(verbatim: blocker.line + ".").foregroundStyle(Palette.secondary).textSelection(.enabled)
+          }
+        }
+      } else if ready.remedy != nil || machine.state != .approved {
         Text(machine.detail).foregroundStyle(Palette.secondary).textSelection(.enabled)
       }
       MachineUpdateLine(phase: model.updates[machine.machine], needed: needsStimUpdate(machine)) {

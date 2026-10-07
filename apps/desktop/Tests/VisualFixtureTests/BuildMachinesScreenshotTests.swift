@@ -75,6 +75,14 @@
           "update-toggle",
           AnyView(content(entries: ["mini", "studio"], statuses: try blocked(), tailscale: true))
         ),
+        (
+          "details-reasons",
+          AnyView(
+            BuildMachineDetails(
+              entry: "studio", status: try blocked()[1], capabilities: ["Builds"], done: {}
+            )
+            .font(.stim(.body)).foregroundStyle(Palette.text).background(Palette.background))
+        ),
         ("tailscale-off", AnyView(content(entries: ["mini", "studio"], statuses: try statuses(), tailscale: false))),
         ("empty-tailscale-off", AnyView(content(entries: [], statuses: [], tailscale: false))),
       ]
