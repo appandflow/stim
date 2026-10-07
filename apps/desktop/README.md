@@ -1233,8 +1233,9 @@ what it missed.
 **Stim > Settings** (Command-comma) edits Stim settings and the app's own
 preferences.
 
-The **Machine**, **Repository**, **Workspace** and **.stim.json** tabs are
-generated from `settings.schema.json`, which the `stim` package ships beside
+The **Stim Settings** tab holds a **Machine**, **Repository**, **Workspace** and
+**.stim.json** scope switch, with a line saying where the selected scope applies.
+Its editor is generated from `settings.schema.json`, which the `stim` package ships beside
 `dist/cli.mjs`; the app reads the one next to the resolved `stim` executable,
 or `packages/stim-cli/dist` under `swift run`. Choices are pickers, booleans
 toggles, numbers steppers, paths file pickers, string lists token fields, and
