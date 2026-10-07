@@ -493,6 +493,11 @@ struct RootView: View {
   private func showWorkspaceLink(in payload: StatusPayload?) {
     guard let pending = pendingLink, let payload else { return }
     guard let target = payload.target(of: pending.request) else {
+      if let archive = payload.archive(for: pending.request) {
+        pendingLink = nil
+        selection = .archived(archive.id)
+        return
+      }
       guard !pending.expiring else { return }
       pendingLink?.expiring = true
       Task {

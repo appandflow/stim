@@ -75,11 +75,13 @@ public struct WorkspaceOpenRequest: Equatable, Sendable {
   public var path: String
   public var platform: String?
   public var slot: String?
+  public var archive: String?
 
-  public init(path: String, platform: String? = nil, slot: String? = nil) {
+  public init(path: String, platform: String? = nil, slot: String? = nil, archive: String? = nil) {
     self.path = path
     self.platform = platform
     self.slot = slot
+    self.archive = archive
   }
 }
 
@@ -99,10 +101,18 @@ public func workspaceLink(fromOpenURL url: URL) -> WorkspaceLink? {
   guard let path = value("path"), path.hasPrefix("/") else { return .malformed }
   let platform = value("platform")
   if let platform, !["ios", "android", "web"].contains(platform) { return .malformed }
-  return .workspace(WorkspaceOpenRequest(path: path, platform: platform, slot: value("slot")))
+  return .workspace(WorkspaceOpenRequest(path: path, platform: platform, slot: value("slot"), archive: value("archive")))
 }
 
 extension StatusPayload {
+  public func archive(for request: WorkspaceOpenRequest) -> ArchivedWorkspace? {
+    guard !environments.contains(where: { $0.path == request.path }) else { return nil }
+    if let id = request.archive {
+      return archived?.first { $0.id == id && $0.projectRoot == request.path }
+    }
+    return ArchivedWorkspace.newest(removedFrom: request.path, in: archived ?? [])
+  }
+
   /// The workspace a link names, and the device of its platform and slot when it has one, a running one first.
   public func target(of request: WorkspaceOpenRequest) -> (workspace: Workspace, device: DeviceRef?)? {
     guard let env = environments.first(where: { $0.path == request.path }) else { return nil }

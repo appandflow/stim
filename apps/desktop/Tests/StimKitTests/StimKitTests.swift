@@ -953,6 +953,11 @@ import Testing
       link("stim-desktop://workspace?path=/w&platform=android&slot=tablet%20b")
         == .workspace(WorkspaceOpenRequest(path: "/w", platform: "android", slot: "tablet b")))
     #expect(link("stim-desktop://workspace?path=/w&slot=") == .workspace(WorkspaceOpenRequest(path: "/w")))
+    #expect(
+      link("stim-desktop://workspace?path=/w&archive=older%20run")
+        == .workspace(WorkspaceOpenRequest(path: "/w", archive: "older run")))
+    #expect(link("stim-desktop://workspace?path=/w&archive=") == .workspace(WorkspaceOpenRequest(path: "/w")))
+    #expect(link("stim-desktop://workspace?path=/w&archive") == .workspace(WorkspaceOpenRequest(path: "/w")))
     #expect(link("stim-desktop://workspace") == .malformed)
     #expect(link("stim-desktop://workspace?path=") == .malformed)
     #expect(link("stim-desktop://workspace?path=w/app") == .malformed)
@@ -974,6 +979,46 @@ import Testing
     #expect(android.device?.id == "android:default:stim-wide-insets-mobile")
     #expect(payload.target(of: WorkspaceOpenRequest(path: path, platform: "ios", slot: "phone"))?.device == nil)
     #expect(payload.target(of: WorkspaceOpenRequest(path: "/Users/dev/app/.worktrees")) == nil)
+  }
+
+  @Test func opensTheNewestArchiveOrTheExplicitRunOnlyForTheExactPath() throws {
+    let url = Bundle.module.url(forResource: "archived-status", withExtension: "json", subdirectory: "Fixtures")!
+    var payload = try JSONDecoder().decode(StatusPayload.self, from: Data(contentsOf: url))
+    let older = try #require(payload.archived?.first)
+    var newer = older
+    newer.id = "newer"
+    newer.removedAt = "2026-10-05T12:00:00Z"
+    var other = newer
+    other.id = "other"
+    other.projectRoot = "/work/other/app"
+    other.removedAt = "2026-10-06T12:00:00Z"
+    let path = older.projectRoot
+    for archives in [[older, other, newer], [newer, other, older]] {
+      payload.archived = archives
+      #expect(payload.target(of: WorkspaceOpenRequest(path: path)) == nil)
+      #expect(payload.archive(for: WorkspaceOpenRequest(path: path))?.id == "newer")
+      #expect(payload.archive(for: WorkspaceOpenRequest(path: path, archive: older.id))?.id == older.id)
+      #expect(payload.archive(for: WorkspaceOpenRequest(path: path, archive: "missing")) == nil)
+      #expect(payload.archive(for: WorkspaceOpenRequest(path: path, archive: "other")) == nil)
+      for missing in ["/unknown", "/work/feature", path + "/", "/work/feature/./app"] {
+        #expect(payload.archive(for: WorkspaceOpenRequest(path: missing)) == nil)
+        #expect(payload.archive(for: WorkspaceOpenRequest(path: missing, archive: older.id)) == nil)
+      }
+    }
+    payload.archived = nil
+    #expect(payload.archive(for: WorkspaceOpenRequest(path: path)) == nil)
+  }
+
+  @Test func aLiveWorkspaceWinsEvenWhenTheLinkNamesAnArchive() throws {
+    let url = Bundle.module.url(forResource: "archived-status", withExtension: "json", subdirectory: "Fixtures")!
+    var payload = try JSONDecoder().decode(StatusPayload.self, from: Data(contentsOf: url))
+    let archive = try #require(payload.archived?.first)
+    payload.environments[0].path = archive.projectRoot
+    for id in [nil, archive.id, "missing"] {
+      let request = WorkspaceOpenRequest(path: archive.projectRoot, archive: id)
+      #expect(payload.target(of: request)?.workspace.path == archive.projectRoot)
+      #expect(payload.archive(for: request) == nil)
+    }
   }
 }
 

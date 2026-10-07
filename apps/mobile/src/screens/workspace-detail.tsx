@@ -1,6 +1,6 @@
 import { t } from '@lingui/core/macro';
 import * as Clipboard from 'expo-clipboard';
-import { Stack, useNavigation, useRouter } from 'expo-router';
+import { Redirect, Stack, useNavigation, useRouter } from 'expo-router';
 import { type RefObject, useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
@@ -52,6 +52,7 @@ import {
   worktreeUsage,
 } from '@/lib/worktree-page';
 import { workspaceAgentSessions } from '@/lib/agents';
+import { newestArchive } from '@/lib/archived';
 import type { ConnectionState } from '@/lib/connection';
 import { tildeHome } from '@/lib/paths';
 import { planKey } from '@/lib/plan-checks';
@@ -419,6 +420,10 @@ export function WorkspaceDetail({ path, scrollsToApp = true }: { path: string; s
     );
   }
   if (!env) {
+    const archive = newestArchive(path, status?.archived ?? []);
+    if (archive) {
+      return <Redirect href={{ pathname: '/mac/[id]/archived', params: { id: macId, archive: archive.id } }} />;
+    }
     const displayPath = tildeHome(path, home);
     return (
       <>
