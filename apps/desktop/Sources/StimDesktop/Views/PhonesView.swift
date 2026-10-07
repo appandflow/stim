@@ -19,8 +19,12 @@ struct PhonesView: View {
     Form {
       Section {
         Toggle("Serve to phones", isOn: $servesPhones)
-          .onChange(of: servesPhones) { _, on in on ? server.start() : server.stop() }
+          .onChange(of: servesPhones) { _, on in on ? server.start() : server.stopServing() }
         serverState
+        if !servesPhones, !server.isOwned, server.isResponding {
+          Text("A stim-server already runs on this Mac, and Desktop shows its build requests.")
+            .foregroundStyle(Palette.tertiary)
+        }
       } footer: {
         Text(
           "Runs stim-server on port \(String(server.port)) while Stim Desktop is open, or uses one that is already running. Phones connect through Tailscale. A read-only phone sees workspaces, devices and logs, and with workspace diff support the changed and untracked text files of registered workspaces, including unignored .env files; a phone allowed to control can also drive simulators and emulators and run reload and stop."
