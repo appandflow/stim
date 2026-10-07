@@ -39,6 +39,7 @@ import {
   recordingEnabled,
   type ArchivedWorkspace,
   type WorkspaceState,
+  type WorktreePullRequest,
   type NdjsonRecord,
   countErrorEntries,
   queryLogs,
@@ -218,7 +219,7 @@ function gitFacts(root: string): ArchivedWorkspace['worktree'] {
     merged: null,
     pullRequest: null,
   };
-  if (!existsSync(root)) return empty;
+  if (!existsSync(root)) return cachedFacts(root) ?? empty;
   const exec = getExecutor();
   const run = (args: string[]) => exec.runFileQuiet('git', ['-C', root, ...args], { timeoutMs: 1000 });
   const common = gitCommonDirOnDisk(root);
@@ -247,8 +248,28 @@ function gitFacts(root: string): ArchivedWorkspace['worktree'] {
     head: summary?.[0] ?? null,
     subject: summary?.[1] ?? null,
     merged,
-    pullRequest: pr ? { number: pr.number, state: pr.state, title: pr.title, url: pr.url } : null,
+    pullRequest: archivedPullRequest(pr),
   };
+}
+
+function archivedPullRequest(pr: WorktreePullRequest | null | undefined): ArchivedWorkspace['worktree']['pullRequest'] {
+  return pr ? { number: pr.number, state: pr.state, title: pr.title, url: pr.url } : null;
+}
+
+function cachedFacts(root: string): ArchivedWorkspace['worktree'] | null {
+  for (let path = root; !existsSync(path); path = dirname(path)) {
+    const cached = readPullRequestCache(path);
+    if (!cached) continue;
+    return {
+      repository: null,
+      branch: cached.branch,
+      head: cached.head,
+      subject: null,
+      merged: cached.pullRequest?.state === 'merged' ? true : null,
+      pullRequest: archivedPullRequest(cached.pullRequest),
+    };
+  }
+  return null;
 }
 
 export function archiveWorkspace(

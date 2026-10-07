@@ -22,6 +22,11 @@ status adds archived (newest first, bounded by archive.maxCount) and
 archivedUsage { count, bytes, byKind: { logs, recordings, agentActions, record } }.
 Each archive carries id, projectRoot, project, workspace, worktree facts,
 removedAt, removedBy, lastUsedAt, builds, agents, bytes, expires and version.
+When the worktree folder was already gone, as when gc prunes a dead project,
+the worktree facts come from the pull request cache of that gone worktree
+when Stim cached one: branch, head and pullRequest, with merged true only when
+that pull request merged and null otherwise; repository and subject are null.
+Without a cached entry every worktree fact is null.
 Archive builds is a summary { count, last, lastErrorCount }. With read access,
 server archive.detail { archive: id } returns live-shaped builds and recordings
 { platform, slot, spans } for each retained recording slot with footage.
