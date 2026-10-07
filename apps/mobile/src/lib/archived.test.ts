@@ -1,10 +1,4 @@
-import {
-  archivedDeviceRoute,
-  archiveError,
-  newestArchive,
-  removedByWords,
-  workspaceArchiveDecision,
-} from './archived';
+import { archivedDeviceRoute, archiveError, newestArchive, removedByWords, workspaceArchiveDecision } from './archived';
 import { RequestError } from './connection';
 import { receiveStatus } from '../../mock-server/receive-fixtures';
 import captured from '../../mock-server/fixtures/status.json';
