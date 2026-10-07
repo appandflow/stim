@@ -52,6 +52,31 @@ export function newestArchive(path: string, archives: readonly ArchivedWorkspace
     );
 }
 
+export const ARCHIVE_GRACE_MS = 5000;
+
+/**
+ * What a workspace screen does when its path is not listed. A screen opened by a link can run ahead of status, so
+ * the newest archive of a re-created path opens only once status refreshed since the screen opened or the grace
+ * period passed. A workspace that was live on this screen and is now gone is confirmed gone and opens at once.
+ */
+export function workspaceArchiveDecision({
+  path,
+  archives,
+  wasListed,
+  refreshed,
+  graceElapsed,
+}: {
+  path: string;
+  archives: readonly ArchivedWorkspace[];
+  wasListed: boolean;
+  refreshed: boolean;
+  graceElapsed: boolean;
+}): { kind: 'open'; archive: ArchivedWorkspace } | { kind: 'wait' } | { kind: 'none' } {
+  const archive = newestArchive(path, archives);
+  if (!archive) return { kind: 'none' };
+  return wasListed || refreshed || graceElapsed ? { kind: 'open', archive } : { kind: 'wait' };
+}
+
 export function archivedDeviceRoute({
   macId,
   path,

@@ -1,4 +1,11 @@
-import { archivedDeviceRoute, archivedView, archiveError, newestArchive, removedByWords } from './archived';
+import {
+  archivedDeviceRoute,
+  archivedView,
+  archiveError,
+  newestArchive,
+  removedByWords,
+  workspaceArchiveDecision,
+} from './archived';
 import { RequestError } from './connection';
 import { receiveStatus } from '../../mock-server/receive-fixtures';
 import captured from '../../mock-server/fixtures/status.json';
@@ -106,3 +113,20 @@ test.each([{ workspaceListed: true }, { hasStatus: false }, { path: '/missing' }
     expect(archivedDeviceRoute({ ...deviceTarget, ...overrides })).toBeNull();
   },
 );
+
+const waiting = { path: '/app', archives: [archive], wasListed: false, refreshed: false, graceElapsed: false };
+
+test('a workspace screen waits for the live workspace before opening an archive of the same path', () => {
+  expect(workspaceArchiveDecision(waiting)).toEqual({ kind: 'wait' });
+});
+
+test.each([{ refreshed: true }, { graceElapsed: true }, { wasListed: true }])(
+  'opens the newest archive once status refreshed, the grace passed or the live workspace is gone: %s',
+  (overrides) => {
+    expect(workspaceArchiveDecision({ ...waiting, ...overrides })).toEqual({ kind: 'open', archive });
+  },
+);
+
+test('has nothing to wait for without an archive of the path', () => {
+  expect(workspaceArchiveDecision({ ...waiting, path: '/missing' })).toEqual({ kind: 'none' });
+});
