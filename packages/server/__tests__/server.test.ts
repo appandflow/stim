@@ -874,6 +874,7 @@ describe('pairing', () => {
           'device-frames',
           'macos-hosted',
           'ios-hosted',
+          'android-hosted',
           'hosted-ios-agent',
           'duo-frames',
           'workspace-diff',

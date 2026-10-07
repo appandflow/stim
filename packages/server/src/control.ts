@@ -546,7 +546,9 @@ export class ControlHub {
           platform: found.target.platform,
           postures: found.postures,
           ...(found.simulator ? { simulator: found.simulator } : {}),
-          ...(found.target.physical ? { physical: true } : {}),
+          ...(found.target.physical || (found.device.platform === 'android' && found.device.physical)
+            ? { physical: true }
+            : {}),
         }
       : null;
   }

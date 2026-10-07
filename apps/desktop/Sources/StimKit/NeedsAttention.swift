@@ -131,7 +131,8 @@ private func overseenDevices(_ env: Workspace) -> [OverseenDevice] {
     if let android {
       out.append(
         OverseenDevice(
-          model: android.physical ? "Android device" : "Android Emulator", running: android.state == "detected",
+          model: android.physical ? "Android device" : "Android Emulator",
+          running: DeviceRef.android(slot: "default", android).isRunning,
           activity: android.activity, web: false))
     }
   }

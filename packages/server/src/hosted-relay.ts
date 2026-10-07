@@ -11,7 +11,7 @@ const TIMEOUT_MS = 10_000;
 const KEYFRAME_RETRY_MS = 1000;
 const CONGESTION_NOTICE_MS = 250;
 type Placement = { machine: string; session: string };
-type RelayTarget = { platform: 'ios' | 'macos'; slot: string };
+type RelayTarget = { platform: 'ios' | 'android' | 'macos'; slot: string };
 type Reply = { result: unknown } | { error: ProtocolError };
 type Event = Record<string, unknown> | Buffer;
 
@@ -346,9 +346,9 @@ export class HostedRelay {
     register: (id: string, stop: () => void) => void,
   ): Promise<void> {
     let lease: Lease | undefined;
-    const platform = params.platform === 'ios' ? 'ios' : 'macos';
+    const platform = params.platform === 'ios' || params.platform === 'android' ? params.platform : 'macos';
     const slot = typeof params.slot === 'string' ? params.slot : 'default';
-    const eventTarget: Partial<RelayTarget> = platform === 'ios' ? { platform, slot } : {};
+    const eventTarget: Partial<RelayTarget> = platform !== 'macos' ? { platform, slot } : {};
     let upstream: string | undefined;
     let local: string | null = null;
     try {
@@ -491,11 +491,16 @@ export class HostedRelay {
     host: Placement,
     takeOver: boolean,
     allowed: () => boolean,
-    context: { workspace: string; device: { id: string; name: string }; platform?: 'ios' | 'macos'; slot?: string },
+    context: {
+      workspace: string;
+      device: { id: string; name: string };
+      platform?: 'ios' | 'android' | 'macos';
+      slot?: string;
+    },
   ): Promise<void> {
     let lease: Lease | undefined;
     const target: RelayTarget = { platform: context.platform ?? 'macos', slot: context.slot ?? 'default' };
-    const eventTarget = target.platform === 'ios' ? target : {};
+    const eventTarget = target.platform !== 'macos' ? target : {};
     const { workspace, device } = context;
     let hostSession: string | undefined;
     let opened: string | undefined;
@@ -505,7 +510,7 @@ export class HostedRelay {
         workspace,
         device,
         platform: target.platform,
-        ...(target.platform === 'ios' ? { slot: target.slot } : {}),
+        ...(target.platform !== 'macos' ? { slot: target.slot } : {}),
         action: takeOver ? 'control.take-over' : 'control.begin',
         ...outcome,
       });
@@ -570,7 +575,7 @@ export class HostedRelay {
   targetOf(session: string): SessionTarget | null {
     const entry = this.controls.get(session);
     if (!entry) return null;
-    return entry.target.platform === 'ios'
+    return entry.target.platform !== 'macos'
       ? { ...entry.target, postures: entry.postures }
       : { platform: 'macos', postures: [] };
   }
@@ -602,7 +607,7 @@ export class HostedRelay {
       device: entry.device,
       workspace: entry.workspace,
       platform: entry.target.platform,
-      ...(entry.target.platform === 'ios' ? { slot: entry.target.slot } : {}),
+      ...(entry.target.platform !== 'macos' ? { slot: entry.target.slot } : {}),
       action: 'control.end',
       ok: true,
       durationMs: Date.now() - entry.startedAt,
@@ -623,7 +628,7 @@ export class HostedRelay {
 
   endControls(): void {
     for (const [session, entry] of this.controls) {
-      const eventTarget = entry.target.platform === 'ios' ? entry.target : {};
+      const eventTarget = entry.target.platform !== 'macos' ? entry.target : {};
       const message = 'Local control access ended.';
       this.send({ event: 'control-ended', session, ...eventTarget, reason: 'forbidden', message });
       this.endControl(session, 'forbidden', message, 'end');

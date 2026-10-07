@@ -77,6 +77,26 @@ jest.mock('@/hooks/machines', () => ({
           ? { host: { machine: 'mini', session: 'host-session', device: { name: 'iPhone Duo', runtime: 'iOS 27.1' } } }
           : {}),
       },
+      android: {
+        serial: mockHosted ? '' : 'emulator-5554',
+        owned: !mockHosted,
+        physical: false,
+        state: mockStopped ? 'stopped' : mockHosted ? 'ready' : 'detected',
+        name: 'pixel_6 (API 30)',
+        ...(mockHosted
+          ? {
+              host: {
+                machine: 'mini',
+                session: 'android-session',
+                device: {
+                  name: 'pixel_6 (API 30)',
+                  systemImage: 'system-images;android-30;google_apis;arm64-v8a',
+                  api: 30,
+                },
+              },
+            }
+          : {}),
+      },
       activity: { ios: mockDriver },
       deviceLeases: mockPhysical ? [] : undefined,
     },
@@ -423,21 +443,26 @@ it.each([
   },
 );
 
-it('shows a hosted iOS machine label and subscribes through the paired Mac without requesting duo frames', async () => {
-  mockHosted = true;
-  mockFeatures = ['ios-hosted', 'device-frames', 'duo-frames'];
-  const screen = await render(
-    <I18nProvider i18n={i18n}>
-      <DeviceView workspace="/fixture" platform="ios" slot="default" />
-    </I18nProvider>,
-  );
-  expect(screen.getAllByText('on mini').length).toBeGreaterThan(0);
-  expect(mockStream.mock.calls.at(-1)?.[0]).toEqual({
-    workspace: '/fixture',
-    platform: 'ios',
-    slot: 'default',
-    physical: false,
-  });
-  expect(mockStream.mock.calls.at(-1)?.[1]).toMatchObject({ enabled: true, startAt: null, duoFrame: false });
-  await screen.unmount();
-});
+it.each(['ios', 'android'] as const)(
+  'shows a hosted %s machine label and subscribes through the paired Mac without replay or duo frames',
+  async (platform) => {
+    mockHosted = true;
+    mockFeatures = [`${platform}-hosted`, 'device-frames', 'duo-frames'];
+    const screen = await render(
+      <I18nProvider i18n={i18n}>
+        <DeviceView workspace="/fixture" platform={platform} slot="default" />
+      </I18nProvider>,
+    );
+    expect(screen.getAllByText('on mini').length).toBeGreaterThan(0);
+    expect(mockStream.mock.calls.at(-1)?.[0]).toEqual({
+      workspace: '/fixture',
+      platform,
+      slot: 'default',
+      physical: false,
+    });
+    expect(mockStream.mock.calls.at(-1)?.[1]).toMatchObject({ enabled: true, startAt: null, duoFrame: false });
+    expect(screen.queryByLabelText('Rotate left') !== null).toBe(platform === 'ios');
+    expect(mockStream.mock.calls.at(-1)?.[1].deviceFrame).toBe(platform === 'ios');
+    await screen.unmount();
+  },
+);

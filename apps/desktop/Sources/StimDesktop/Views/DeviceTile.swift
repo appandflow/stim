@@ -204,7 +204,7 @@ struct DeviceTile: View {
   static func hasButtons(_ device: DeviceRef) -> Bool {
     switch device {
     case .ios: return device.isRunning && device.localSimulatorUDID != nil
-    case .android: return device.isRunning && !device.isPhysical
+    case .android: return device.isRunning && !device.isPhysical && device.hostedMachine == nil
     case .web, .remote: return false
     }
   }
@@ -289,8 +289,8 @@ struct DeviceTile: View {
             .help("This remote session is billed while it runs.")
         }
       }
-      if let host = device.hostedIos {
-        Label("on \(machineName(host.machine))", systemImage: "desktopcomputer")
+      if let machine = device.hostedMachine {
+        Label("on \(machineName(machine))", systemImage: "desktopcomputer")
           .font(.stim(.caption)).foregroundStyle(Palette.tertiary)
       }
       if let project { Text(project).font(.stim(.footnote)).foregroundStyle(Palette.secondary) }
@@ -403,7 +403,7 @@ struct DeviceTile: View {
           controlGroup { foldButton(udid: sim.udid) }
         }
       }
-      if let emulatorPosture, case .android(_, let avd) = device, let serial = avd.serial {
+      if let emulatorPosture, case .android = device, let serial = device.localEmulatorSerial {
         controlGroup { postureMenu(serial: serial, current: emulatorPosture) }
       }
       if let udid = simulatorOptionsUDID {
@@ -471,7 +471,7 @@ struct DeviceTile: View {
 
   var showsStoppedBar: Bool {
     if case .remote = device { return false }
-    if isPhysical || device.hostedIos != nil, workspace != nil { return false }
+    if isPhysical || device.hostedMachine != nil, workspace != nil { return false }
     return !device.isRunning && build == nil && !["Booting", "unknown"].contains(device.state)
   }
 
@@ -523,8 +523,8 @@ struct DeviceTile: View {
         switch device {
         case .ios(_, let sim):
           rotateFailed = !(await SimulatorRotation.rotateBounded(udid: sim.udid, clockwise: clockwise))
-        case .android(_, let avd):
-          guard let serial = avd.serial else { return }
+        case .android:
+          guard let serial = device.localEmulatorSerial else { return }
           rotateFailed = !(await EmulatorRotation.rotate(serial: serial, clockwise: clockwise))
         case .remote, .web: break
         }
@@ -636,7 +636,7 @@ struct DeviceTile: View {
     guard viewer, interactive, !replaying, device.isRunning else { return nil }
     switch device {
     case .ios(_, let sim) where sim.owned: return device.localSimulatorUDID
-    case .android(_, let avd) where avd.owned && !avd.physical: return avd.serial
+    case .android(_, let avd) where avd.owned && !avd.physical && avd.host == nil: return device.localEmulatorSerial
     default: return nil
     }
   }
@@ -803,7 +803,7 @@ struct DeviceTile: View {
 
   @ViewBuilder private var screen: some View {
     switch device {
-    case .ios where device.hostedIos != nil:
+    case _ where device.hostedMachine != nil:
       if let hostedPreview {
         switch hostedPreview {
         case .message(let text, let remedy): PhysicalMessage(text: text, remedy: remedy)
@@ -852,8 +852,8 @@ struct DeviceTile: View {
           try? await Task.sleep(for: .seconds(2))
         }
       }
-    case .android(_, let avd) where device.isRunning && avd.owned && !avd.physical:
-      if let serial = avd.serial {
+    case .android(_, let avd) where device.isRunning && avd.owned && !avd.physical && avd.host == nil:
+      if let serial = device.localEmulatorSerial {
         EmulatorScreen(
           serial: serial, interactive: interactive, buttons: emulatorButtons, avdName: avd.name,
           fullResolution: pixelScale != nil,
@@ -929,7 +929,8 @@ extension DeviceRef {
     switch self {
     case .ios(_, let sim):
       return !sim.physical && (hostedIos != nil ? state != "stopped" : isRunning && localSimulatorUDID != nil)
-    case .android(_, let avd): return isRunning && (avd.owned || avd.physical) && avd.serial != nil
+    case .android(_, let avd):
+      return hostedMachine != nil ? state != "stopped" : isRunning && (avd.owned || avd.physical) && localEmulatorSerial != nil
     case .web(let browser): return browser.running && browser.cdpEndpoint != nil && browser.targetId != nil
     case .remote: return false
     }

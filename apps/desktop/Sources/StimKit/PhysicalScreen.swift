@@ -19,11 +19,12 @@ public enum PhysicalScreen: Equatable, Sendable {
 
   /// `now` decides an expired lease before `stim status` drops the device.
   public init(device: DeviceRef, link: ServerLink, now: Date) {
-    if let host = device.hostedIos {
+    if let machine = device.hostedMachine {
       let slot = device.slot == DeviceRef.defaultSlot ? "" : " --slot \(device.slot)"
       if device.state == "stopped" {
         self = .message(
-          "The iOS session on \(machineName(host.machine)) stopped.", remedy: "stim ios --remote \(host.machine)\(slot)")
+          "The \(platformName(device.platform)) session on \(machineName(machine)) stopped.",
+          remedy: "stim \(device.platform) --remote \(machine)\(slot)")
         return
       }
       switch link {
@@ -31,7 +32,7 @@ public enum PhysicalScreen: Equatable, Sendable {
       case .connecting: self = .message("Connecting to stim-server")
       case .unavailable(let reason): self = .message(reason)
       case .open(let features, let capabilities):
-        guard features?.contains("ios-hosted") == true else {
+        guard features?.contains("\(device.platform)-hosted") == true else {
           self = .message(
             "Update stim-server to see this simulator's screen.", remedy: "npm install --global @stim-cli/server@latest")
           return

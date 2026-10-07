@@ -77,8 +77,8 @@ type ServedDevice = Pick<DeviceRef, 'platform' | 'owned' | 'physical' | 'running
  * connected, when nothing streams and the tile waits for it like any other.
  */
 export function streamsFrames(device: ServedDevice, features: readonly string[] | null): boolean {
-  if (device.host && device.platform === 'ios')
-    return device.state !== 'stopped' && (features === null || features.includes('ios-hosted'));
+  if (device.host && (device.platform === 'ios' || device.platform === 'android'))
+    return device.state !== 'stopped' && (features === null || features.includes(`${device.platform}-hosted`));
   if (device.platform === 'macos') return device.running && (features === null || features.includes('macos-window'));
   if (!device.physical) return device.owned;
   return device.running && (features === null || features.includes(`physical-${device.platform}`));
@@ -86,7 +86,7 @@ export function streamsFrames(device: ServedDevice, features: readonly string[] 
 
 /** Why a device {@link streamsFrames} does not serve shows no screen. */
 export function unservedReason(device: ServedDevice): string {
-  if (device.host && device.platform === 'ios')
+  if (device.host && (device.platform === 'ios' || device.platform === 'android'))
     return device.state === 'stopped' ? t`Not running` : t`Update stim-server on the Mac to see this device's screen.`;
   if (device.platform === 'macos') return t`Update stim-server on the Mac to view this app window.`;
   if (!device.physical) return t`Frames are only served for devices Stim owns.`;
@@ -115,14 +115,17 @@ function iosDevice(slot: string, sim: SimState): DeviceRef {
 }
 
 function androidDevice(slot: string, avd: AndroidState): DeviceRef {
+  const state =
+    avd.state && ['detected', 'not-detected', 'missing', 'unknown'].includes(avd.state) ? avd.state : t`unknown`;
   return {
     platform: 'android',
     slot,
-    id: avd.serial ?? null,
+    id: avd.host ? null : (avd.serial ?? null),
     name: avd.name ?? avd.serial ?? t`Android device`,
-    model: avd.physical ? t`Android device` : t`Android Emulator`,
-    state: avd.state && ['detected', 'not-detected', 'missing', 'unknown'].includes(avd.state) ? avd.state : t`unknown`,
-    running: avd.state === 'detected',
+    model: avd.host?.device?.name ?? (avd.physical ? t`Android device` : t`Android Emulator`),
+    host: avd.host ? machineName(avd.host.machine) : undefined,
+    state: avd.host ? (avd.state ?? state) : state,
+    running: avd.host ? avd.state === 'ready' : avd.state === 'detected',
     owned: avd.owned,
     physical: avd.physical,
     activity: avd.activity,

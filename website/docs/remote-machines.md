@@ -85,7 +85,17 @@ here through a private tailnet bridge; `metro.publicUrl`, `metro.tunnel` and
 reverse, including after an adb server restart. Release variants skip Metro.
 Status reports `android.host` per slot with a profile and API name, keeping the
 host serial and AVD name private. Unreachable cleanup retains the placement;
-retry stop when the host answers. View/control and agent driving are not available yet.
+retry stop when the host answers. Agent driving is not available yet.
+
+Stim Desktop and the phone app show an **on &lt;machine&gt;** label and view/control
+hosted Android through the client Mac's local stim-server relay. Turn on
+**Serve to phones** in Desktop and pair the phone with the client Mac. Named
+slots stream independently. Touch, text and hardware buttons reach the exact
+hosted emulator through the host's compiled `stim-frames` helper and scrcpy jar;
+its temporary jar and adb forward are removed when capture stops. Desktop
+hides local emulator actions. Rotation, posture, replay (`at`/`rate`), Duo
+frames and physical hosted targets are unavailable. Tiles report connecting,
+unavailable and stopped sessions; stopped sessions offer the rerun command.
 
 Reruns upload only missing manifest and APK content from a session-scoped store,
 verified by digest; each new attempt still installs the APK. If the build ran on

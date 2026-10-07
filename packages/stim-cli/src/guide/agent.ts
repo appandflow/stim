@@ -39,7 +39,8 @@ HOSTED IOS AND ANDROID
 For ios --remote <machine>, read guide lifecycle hosted-ios.
 For android --remote <machine>, read guide lifecycle hosted-android. Native
 logcat records arrive through stim logs, including --errors and --json;
-view/control and agent driving are not available in this phase. Stop before switching
+Desktop and the phone view/control it through the local stim-server relay.
+Android agent driving is not available in this phase. Stop before switching
 between a local simulator and a hosting Mac. Hosted Debug requires the local
 Metro supervisor; restart a missing or older one with stim stop; stim start.
 It never falls back here; stop reconciles the recorded host before changing placement.

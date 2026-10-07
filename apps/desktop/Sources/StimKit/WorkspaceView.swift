@@ -205,7 +205,7 @@ extension Workspace {
   /// The owner that holds a device's processes. An emulator owner's id is its AVD name, not the serial, so devices
   /// match on workspace, slot and kind. A physical device runs no process on the Mac.
   public func owner(of device: DeviceRef, machine: MachineUsage?) -> MachineOwner? {
-    guard !device.isPhysical, device.hostedIos == nil else { return nil }
+    guard !device.isPhysical, device.hostedMachine == nil else { return nil }
     let kind: MachineOwner.Kind
     switch device {
     case .ios: kind = .simulator

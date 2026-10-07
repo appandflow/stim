@@ -16,7 +16,7 @@ import { connectOwnedPage, type OwnedPage } from './web-page.ts';
 /**
  * `foldable` marks an iPhone Duo, whose posture lights one of two panels, and `physical` a leased iPhone, which
  * streams over USB and takes no input; `name` is its device name, which tells it apart when several are cabled. A
- * `physical` Android device is a leased phone, streamed and driven over adb instead of the emulator's gRPC API. A web
+ * `physical` Android target uses scrcpy over adb for a leased phone or an exact hosted emulator serial. A web
  * device is the owned page `targetId` of the Chrome `pid` serving DevTools at `endpoint`.
  */
 export type Device =

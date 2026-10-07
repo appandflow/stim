@@ -15,7 +15,8 @@ public enum DeviceRef: Hashable, Identifiable, Sendable {
     case .ios(let slot, let d):
       return d.host.map { "ios:\(slot):hosted:\($0.session)" } ?? (d.udid.isEmpty ? "ios:host:\(slot)" : "ios:\(d.udid)")
     case .android(let slot, let d) where d.physical: return "android:\(slot):physical:\(d.serial ?? d.name)"
-    case .android(let slot, let d): return "android:\(slot):\(d.name)"
+    case .android(let slot, let d):
+      return d.host.map { "android:\(slot):hosted:\($0.session)" } ?? "android:\(slot):\(d.name)"
     case .remote(let d): return "remote:\(d.sessionId)"
     case .web(let d): return "web:\(d.profile)"
     }
@@ -24,6 +25,19 @@ public enum DeviceRef: Hashable, Identifiable, Sendable {
   public var hostedIos: HostedIos? {
     if case .ios(_, let d) = self { return d.host }
     return nil
+  }
+
+  public var hostedMachine: String? {
+    switch self {
+    case .ios(_, let d): return d.host?.machine
+    case .android(_, let d): return d.host?.machine
+    case .remote, .web: return nil
+    }
+  }
+
+  public var localEmulatorSerial: String? {
+    guard case .android(_, let d) = self, d.host == nil, let serial = d.serial, !serial.isEmpty else { return nil }
+    return serial
   }
 
   public var localSimulatorUDID: String? {
@@ -108,7 +122,7 @@ public enum DeviceRef: Hashable, Identifiable, Sendable {
   public var activityKey: String? {
     switch self {
     case .ios(_, let d): return d.host == nil && !d.udid.isEmpty ? d.udid : nil
-    case .android(_, let d): return d.serial
+    case .android: return localEmulatorSerial
     case .web(let d): return d.targetId
     case .remote: return nil
     }
@@ -119,7 +133,8 @@ public enum DeviceRef: Hashable, Identifiable, Sendable {
   public var isRunning: Bool {
     switch self {
     case .ios(_, let d): return d.host != nil ? d.state == "ready" : d.physical ? d.state == "connected" : d.state == "Booted"
-    case .android(_, let d): return d.state == "detected" || (d.physical && d.state == "connected")
+    case .android(_, let d):
+      return d.host != nil ? d.state == "ready" : d.state == "detected" || (d.physical && d.state == "connected")
     case .remote: return true
     case .web(let d): return d.running
     }
@@ -135,7 +150,7 @@ public enum DeviceRef: Hashable, Identifiable, Sendable {
       if let device = d.host?.device { return "\(device.name) \(device.runtime)" }
       return d.owned ? (DeviceRef.parenthesizedModel(in: d.name) ?? d.name) : d.name
     case .android(_, let d):
-      return d.name
+      return d.host?.device?.name ?? d.name
     case .remote(let d):
       return d.platform == "android" ? "Android" : "iOS"
     case .web:
@@ -172,6 +187,7 @@ public enum DeviceRef: Hashable, Identifiable, Sendable {
     switch self {
     case .ios: return iosModel.name
     case .android(_, let d):
+      if let name = d.host?.device?.name { return name }
       guard d.owned else { return d.name }
       return d.deviceProfile.map(DeviceRef.readableDeviceProfile) ?? "Android emulator"
     case .remote(let d): return "\(d.backend.uppercased()) \(model)"
@@ -207,7 +223,9 @@ public enum DeviceRef: Hashable, Identifiable, Sendable {
     case .ios(_, let d) where d.physical: return d.model == d.name ? nil : d.model
     case .android(_, let d) where d.physical: return d.model == d.name ? nil : d.model
     case .ios: return iosModel.runtime.map { "iOS \($0)" }
-    case .android(_, let d): return d.owned ? d.name : nil
+    case .android(_, let d):
+      if let api = d.host?.device?.api { return "API \(api)" }
+      return d.owned ? d.name : nil
     case .web(let d): return DeviceRef.shortURL(d.currentURL)
     case .remote: return nil
     }

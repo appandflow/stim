@@ -68,7 +68,7 @@ public func workspaceRoots(_ env: Workspace, in processes: [ProcessEntry]) -> Se
       for p in processes where p.args.hasPrefix("launchd_sim ") && p.args.uppercased().contains(marker) {
         roots.insert(p.pid)
       }
-    case .android(_, let avd) where !avd.physical:
+    case .android(_, let avd) where !avd.physical && avd.host == nil:
       let port = avd.serial.flatMap { $0.hasPrefix("emulator-") ? String($0.dropFirst("emulator-".count)) : nil }
       for p in processes where isEmulator(p.args, avd: avd.name, port: port) {
         roots.insert(p.pid)

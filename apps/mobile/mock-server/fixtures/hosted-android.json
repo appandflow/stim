@@ -1,0 +1,109 @@
+[
+  {
+    "path": "/Users/dev/Developer/hosted-android",
+    "live": true,
+    "memoryMb": 0,
+    "warnings": [],
+    "slots": [
+      {
+        "slot": "tablet",
+        "android": {
+          "name": "pixel_6 (API 30)",
+          "serial": "",
+          "owned": false,
+          "physical": false,
+          "state": "ready",
+          "host": {
+            "machine": "janics-mac-mini:7443",
+            "session": "12345678-1234-1234-1234-123456789abd",
+            "selected": "janics-mac-mini:7443",
+            "device": {
+              "name": "pixel_6 (API 30)",
+              "systemImage": "system-images;android-30;google_apis;arm64-v8a",
+              "api": 30
+            },
+            "agent": {
+              "driver": "none",
+              "setting": "hosting.agentDriver"
+            }
+          }
+        }
+      }
+    ],
+    "android": {
+      "name": "pixel_6 (API 30)",
+      "serial": "",
+      "owned": false,
+      "physical": false,
+      "state": "ready",
+      "host": {
+        "machine": "janics-mac-mini:7443",
+        "session": "12345678-1234-1234-1234-123456789abc",
+        "selected": "janics-mac-mini:7443",
+        "device": {
+          "name": "pixel_6 (API 30)",
+          "systemImage": "system-images;android-30;google_apis;arm64-v8a",
+          "api": 30
+        },
+        "agent": {
+          "driver": "none",
+          "setting": "hosting.agentDriver"
+        }
+      }
+    }
+  },
+  {
+    "path": "/Users/dev/Developer/hosted-android-stopped",
+    "live": false,
+    "memoryMb": 0,
+    "warnings": [],
+    "android": {
+      "name": "pixel_6 (API 30)",
+      "serial": "",
+      "owned": false,
+      "physical": false,
+      "state": "stopped",
+      "host": {
+        "machine": "janics-mac-mini:7443",
+        "session": "12345678-1234-1234-1234-123456789abc",
+        "selected": "janics-mac-mini:7443",
+        "device": {
+          "name": "pixel_6 (API 30)",
+          "systemImage": "system-images;android-30;google_apis;arm64-v8a",
+          "api": 30
+        },
+        "agent": {
+          "driver": "none",
+          "setting": "hosting.agentDriver"
+        }
+      }
+    }
+  },
+  {
+    "path": "/Users/dev/Developer/hosted-android-unavailable",
+    "live": true,
+    "memoryMb": 0,
+    "warnings": ["janics-mac-mini is unavailable."],
+    "android": {
+      "name": "pixel_6 (API 30)",
+      "serial": "",
+      "owned": false,
+      "physical": false,
+      "state": "unverified",
+      "host": {
+        "machine": "janics-mac-mini:7443",
+        "session": "12345678-1234-1234-1234-123456789abc",
+        "selected": "janics-mac-mini:7443",
+        "device": {
+          "name": "pixel_6 (API 30)",
+          "systemImage": "system-images;android-30;google_apis;arm64-v8a",
+          "api": 30
+        },
+        "agent": {
+          "driver": "none",
+          "setting": "hosting.agentDriver"
+        }
+      }
+    }
+  }
+]

@@ -6,7 +6,7 @@ import type { FrameHint } from './frame-helper.ts';
 import type { ControlBeginResult, ProtocolError } from './protocol.ts';
 
 interface HostedView {
-  device: Extract<Device, { platform: 'ios' | 'macos' }>;
+  device: Extract<Device, { platform: 'ios' | 'android' | 'macos' }>;
   frames: FramePool;
   home: string;
   claim: ClaimHandle;
@@ -20,6 +20,8 @@ interface HostedView {
 
 function sameTarget(device: HostedView['device'], target: ReturnType<DeviceHost['viewTarget']>): boolean {
   if (device.platform === 'ios') return target.platform === 'ios' && device.udid === target.session.device.udid;
+  if (device.platform === 'android')
+    return target.platform === 'android' && device.serial === target.session.device.serial;
   return (
     target.platform === 'macos' &&
     device.app.launchId === target.app.launchId &&
@@ -56,11 +58,13 @@ export class HostedViews {
     const device: HostedView['device'] =
       target.platform === 'macos'
         ? { platform: 'macos', app: target.app }
-        : {
-            platform: 'ios',
-            udid: target.session.device.udid,
-            foldable: /\bDuo\b/.test(target.session.device.name),
-          };
+        : target.platform === 'android'
+          ? { platform: 'android', serial: target.session.device.serial, physical: true }
+          : {
+              platform: 'ios',
+              udid: target.session.device.udid,
+              foldable: /\bDuo\b/.test(target.session.device.name),
+            };
     const view: HostedView = {
       device,
       frames: new FramePool(
