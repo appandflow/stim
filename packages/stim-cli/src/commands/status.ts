@@ -107,6 +107,7 @@ import {
   readArchives,
   type ArchivedWorkspace,
   type ArchivedUsage,
+  DEVICE_RECLAIM_REASON,
 } from '@stim-cli/core/state';
 import {
   createActivityReader,
@@ -928,7 +929,7 @@ function lastBuildText(report: LastBuildReport): string {
 function idleShutdownSuffix(record: DeviceIdleShutdownRecord | undefined): string {
   return record
     ? chalk.dim(
-        ` -- shut down after ${record.idleMinutes}m idle at ${record.at} (${record.reason === 'reclaimed for a waiting run' ? 'reclaimed for a waiting run; devices.reclaimIdleMinutes' : 'devices.idleShutdownMinutes'})`,
+        ` -- shut down after ${record.idleMinutes}m idle at ${record.at} (${record.reason === DEVICE_RECLAIM_REASON ? 'reclaimed for a waiting run; devices.reclaimIdleMinutes' : 'devices.idleShutdownMinutes'})`,
       )
     : '';
 }

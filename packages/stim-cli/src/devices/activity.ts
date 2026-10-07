@@ -494,7 +494,8 @@ export function createActivityReader({
       if (deviceAt !== null) evidence.recency.push({ basis: 'device-log', at: deviceAt });
       const bundleAt = latestBundleRequestAt(log(join(dir, 'metro.ndjson')) ?? [], target.platform);
       if (bundleAt !== null) evidence.recency.push({ basis: 'metro-bundle', at: bundleAt });
-      evidence.recency.push(...workspaceDeviceRecency(target.workspace));
+      const usedAt = Date.parse(String(readWorkspaceState(target.workspace)?.lastUsedAt ?? ''));
+      if (Number.isFinite(usedAt)) evidence.recency.push({ basis: 'workspace-use', at: usedAt });
     }
 
     return classifyActivity(evidence, now);
