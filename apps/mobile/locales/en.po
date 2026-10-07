@@ -2639,6 +2639,7 @@ msgid "No live workspaces"
 msgstr "No live workspaces"
 
 #: src/components/workspace-cards.tsx
+#: src/components/workspace-cards.tsx
 msgid "No logs yet"
 msgstr "No logs yet"
 
