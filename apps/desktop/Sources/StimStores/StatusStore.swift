@@ -225,6 +225,12 @@ public final class StatusStore: ObservableObject {
       project: project(ofPath:), options: options, archived: payload?.archived ?? [])
   }
 
+  public func sidebarStatusCounts(_ options: SidebarOptions) -> [StatusFilter: Int] {
+    StimKit.sidebarStatusCounts(
+      environments: payload?.environments ?? [], unprovisioned: payload?.unprovisionedWorktrees ?? [],
+      project: project(ofPath:), options: options, archived: payload?.archived ?? [])
+  }
+
   private func checkDoctor() {
     let now = Date()
     guard doctorStartedAt.map({ now.timeIntervalSince($0) > Self.doctorTimeout }) ?? true,
