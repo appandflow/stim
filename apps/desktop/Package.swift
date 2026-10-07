@@ -52,6 +52,7 @@ let package = Package(
       name: "VisualFixtureTests",
       dependencies: ["StimDesktop", .product(name: "SnapshotTesting", package: "swift-snapshot-testing")],
       exclude: ["__Snapshots__"],
+      resources: [.copy("Fixtures")],
       swiftSettings: [.swiftLanguageMode(.v5)]
     ),
     .testTarget(name: "StimStoresTests", dependencies: ["StimStores", "StimKit"]),

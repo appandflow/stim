@@ -55,6 +55,7 @@ public struct SidebarOptions: Equatable, Sendable {
 /// A sidebar row: an archive, one app, a multi-app worktree, or a worktree with no environment.
 public enum SidebarEntry: Hashable, Identifiable, Sendable {
   case archived(ArchivedWorkspace)
+  case archivedGroup([ArchivedWorkspace])
   case workspace(Workspace)
   case worktreeGroup(WorktreePage)
   case worktree(UnprovisionedWorktree)
@@ -62,6 +63,7 @@ public enum SidebarEntry: Hashable, Identifiable, Sendable {
   public var path: String {
     switch self {
     case .archived(let archive): return archive.projectRoot
+    case .archivedGroup(let archives): return archives[0].projectRoot
     case .workspace(let env): return env.path
     case .worktreeGroup(let page): return page.id
     case .worktree(let worktree): return worktree.path
@@ -70,14 +72,23 @@ public enum SidebarEntry: Hashable, Identifiable, Sendable {
 
   public var id: String {
     if case .archived(let archive) = self { return "archive:\(archive.id)" }
+    if case .archivedGroup(let archives) = self { return "archive-group:\(archives[0].id)" }
     return path
+  }
+
+  public var archiveProject: Project? {
+    switch self {
+    case .archived(let archive): archive.sidebarProject
+    case .archivedGroup(let archives): archives[0].sidebarProject
+    default: nil
+    }
   }
 
   var active: Bool {
     switch self {
     case .workspace(let env): return env.isActive
     case .worktreeGroup(let page): return page.apps.contains(where: \.isActive)
-    case .worktree, .archived: return false
+    case .worktree, .archived, .archivedGroup: return false
     }
   }
 
@@ -85,7 +96,7 @@ public enum SidebarEntry: Hashable, Identifiable, Sendable {
     switch self {
     case .workspace(let env): return env.memoryMb ?? 0
     case .worktreeGroup(let page): return page.apps.reduce(0) { $0 + ($1.memoryMb ?? 0) }
-    case .worktree, .archived: return 0
+    case .worktree, .archived, .archivedGroup: return 0
     }
   }
 
@@ -94,6 +105,7 @@ public enum SidebarEntry: Hashable, Identifiable, Sendable {
     case .workspace(let env): return env.lastActivityAt
     case .worktreeGroup(let page): return page.apps.compactMap(\.lastActivityAt).max()
     case .archived(let archive): return parseTimestamp(archive.removedAt)
+    case .archivedGroup(let archives): return parseTimestamp(archives[0].removedAt)
     case .worktree: return nil
     }
   }
@@ -101,6 +113,7 @@ public enum SidebarEntry: Hashable, Identifiable, Sendable {
   var sortName: String {
     switch self {
     case .archived(let archive): return archive.title.lowercased()
+    case .archivedGroup(let archives): return archives[0].title.lowercased()
     case .workspace(let env): return env.names.title.lowercased()
     case .worktreeGroup(let page): return page.apps[0].names.title.lowercased()
     case .worktree(let worktree): return worktree.names.title.lowercased()
@@ -133,7 +146,7 @@ public func sidebarTrees(
   options: SidebarOptions, archived: [ArchivedWorkspace] = []
 ) -> [ProjectTree] {
   let grouped = Dictionary(grouping: visibleEntries(environments, unprovisioned, project, options, archived)) {
-    if case .archived(let archive) = $0 { return archive.sidebarProject }
+    if let archiveProject = $0.archiveProject { return archiveProject }
     return project($0.path)
   }
   if options.status == .archived {
@@ -176,8 +189,20 @@ private func visibleEntries(
   _ options: SidebarOptions, _ archived: [ArchivedWorkspace]
 ) -> [SidebarEntry] {
   if options.status == .archived {
-    return ArchivedWorkspace.newestFirst(archived)
-      .filter { !options.hiddenProjects.contains($0.sidebarProject.root) }.map(SidebarEntry.archived)
+    let archives = ArchivedWorkspace.newestFirst(archived)
+      .filter { !options.hiddenProjects.contains($0.sidebarProject.root) }
+    var groups: [[ArchivedWorkspace]] = []
+    for archive in archives {
+      if let index = groups.firstIndex(where: {
+        $0[0].sidebarProject == archive.sidebarProject && $0[0].worktreeRoot == archive.worktreeRoot
+          && !$0.contains(where: { $0.projectRoot == archive.projectRoot })
+      }) {
+        groups[index].append(archive)
+      } else {
+        groups.append([archive])
+      }
+    }
+    return groups.map { $0.count > 1 ? .archivedGroup($0) : .archived($0[0]) }
   }
   let worktrees = options.showsNoEnvironment ? unprovisioned.map(SidebarEntry.worktree) : []
   let apps = WorktreePage.groups(environments: environments).map { page in

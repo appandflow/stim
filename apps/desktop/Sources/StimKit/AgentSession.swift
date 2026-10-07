@@ -15,6 +15,11 @@ public struct AgentSession: Decodable, Hashable, Sendable, Identifiable {
   public var webUrl: String?
   public var endedAt: String?
 
+  public var duration: TimeInterval? {
+    guard let start = startedAt.flatMap(Self.date), let end = endedAt.flatMap(Self.date) else { return nil }
+    return max(0, end.timeIntervalSince(start))
+  }
+
   public var id: String { "\(tool):\(sessionId)" }
 
   public var toolName: String {
@@ -36,7 +41,7 @@ public struct AgentSession: Decodable, Hashable, Sendable, Identifiable {
   /// `Tests/StimKitTests/Fixtures/agent-sessions-vectors.json`.
   public static func associated(agents: [AgentSession]?, endedAgents: [AgentSession]?) -> [AgentSession] {
     ((agents ?? []) + (endedAgents ?? [])).sorted { a, b in
-      let (aStart, bStart) = (a.startedAt.flatMap(date), b.startedAt.flatMap(date))
+      let (aStart, bStart) = (a.startedAt.flatMap(Self.date), b.startedAt.flatMap(Self.date))
       if aStart != bStart {
         guard let aStart else { return false }
         guard let bStart else { return true }

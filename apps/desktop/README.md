@@ -65,7 +65,7 @@ worktree's branch, else the worktree's folder, else its project for a main
 checkout. The second line is where it sits inside its checkout, such as
 `apps/mobile`. The view options button next to the logo opens a menu:
 
-- **Status**: All, Live, Idle or Archived workspaces. All, Live and Idle exclude archives. Archived lists removed workspaces by project, newest first, with removal time and retained size. Live also shows a workspace with a
+- **Status**: All, Live, Idle or Archived workspaces. All, Live and Idle exclude archives. Archived uses the same repository and worktree grouping and sidebar rows, newest removal first, with app labels, PR number or Merged, removal time, retained size and a media expiry indicator. Live also shows a workspace with a
   running build, and one that `stim worktree warm` is preparing ("Warming...",
   with an activity indicator) or has prepared before its first run ("Ready").
 - **Projects**: which projects the sidebar lists.
@@ -101,16 +101,22 @@ spells it out.
 
 ## Archived workspaces
 
-The Archived sidebar filter opens a read-only page with branch and pull request details,
-removal reason, last use, build count and the last build, and ended agent sessions.
+The Archived sidebar filter opens the same workspace page as live workspaces in a read-only variant.
+Status shows removal time and reason, last use, per-kind retained bytes and expiry dates,
+build totals, known cache hits and builds on a build machine, and errors at removal.
+Work keeps the branch, PR number and title, final head and subject, and ended agent sessions
+with their duration and a link to retained actions. Only Merged is shown as a PR state:
+other states in the removal snapshot can be stale. Build cards and the build history sheet show retained runs and phase timings.
 Earlier runs on a live workspace link to archives for the same canonical project path,
 including records whose `replacedBy` points to that workspace. The archive page links
 back to its replacement when there is one.
 
 Logs use the existing source, slot, level, error and search filters, querying the connected
-loopback stim-server without following. Busy-server refusals retry briefly. Replay probes
-iOS, Android and Web recordings sequentially in the default slot, reading each archive
-range once. Replay appears only when a recorded span exists. Archived pages offer
+loopback stim-server without following. Busy-server refusals retry briefly. `archive.detail` supplies build history and the retained
+iOS, Android and Web recordings by slot; replay reads their ranges sequentially, once per recording.
+Logs and recordings show expired only when a reported expiry is past. Zero bytes with no
+expiry means nothing was kept. Recording expiry is a label: retained replay spans remain
+available regardless of the client clock. Archived pages offer
 no live device or workspace actions. An older server shows an update hint for archive
 requests that require a workspace instead of an archive; other refusals show the server's
 message. Connect through the Phones page to read logs and replay.
@@ -119,8 +125,9 @@ Delete names the archive and removal age in a confirmation and permanently remov
 logs, recordings, agent actions and record through `stim gc --delete --cache archived:<id>`. The page
 returns to the previous selection once status stops reporting the archive. Machines
 shows archive count, total size, per-kind sizes and retention setting names separately;
-archives are never selected as safe space to free. The retained build list is available
-only as count plus last build.
+archives are never selected as safe space to free. The Build card falls back to the archive's
+last build summary when `archive.detail` has no history for that platform or is unavailable. Without detail, replay probes the default slots.
+Archives never fetch resource stats or build plans, and offer no run, reload, stop or live device controls.
 
 ## Workspace page
 
@@ -1372,7 +1379,7 @@ In a normal debug session, **Window > SwiftUI Playground** opens the same fixtur
 that session's main window keeps its normal live services. The standalone entry is the
 backend-free option. Release builds exclude the playground and its fixture seams, and refuse `--playground`.
 
-Choose Notifications, Builds, Simulator controls, Settings or Design tokens. Each screen offers
+Choose live or archived Workspaces, Notifications, Builds, Simulator controls, Settings or Design tokens. Each screen offers
 its applicable named scenarios: ready, loading, empty, error, long text and large data.
 Notifications includes 200 entries; Builds includes the retained maximum of 10 runs per platform. Local inboxes and fixed
 simulator forms omit loading/error or large-list scenarios that their production views do not have.
@@ -1384,7 +1391,7 @@ mark-read/clear, build disclosures, simulator appearance controls and Settings e
 on fixture data. Run and log buttons report a simulated action. **Reset** restores the scenario.
 
 To add a scenario, extend `Design/PlaygroundFixtures.swift` and select the existing production
-view in `Design/ScreenPlayground.swift`. Keep fixtures synthetic and all effects in memory;
+view in `Design/ScreenPlayground.swift`. Keep fixture effects in memory; the real archive screens read sanitized fixture files from this checkout,
 add a narrow DEBUG seam only when that view would otherwise invoke a real backend. These
 fixtures can also seed the separate visual regression pilot tracked in #2342; the playground
 does not add a snapshot framework or a golden-image approval workflow.
@@ -1519,6 +1526,22 @@ in dark appearance, and the simulator error message in light appearance. It also
 compares a failed build history row collapsed and expanded, including its wrapped
 diagnostic, at the inspector's 320-point default width.
 Archived sidebar and workspace pages have light and dark fixtures with native 1x references; their comparisons skip on 2x until matching references are captured.
+To render the complete live and archived workspace pages, including all inspector cards,
+empty/expired archives and the build history sheet in light and dark, run:
+
+```sh
+STIM_WORKSPACE_SHOTS=/tmp/stim-workspace-shots swift test --filter VisualFixtureTests.testWorkspaceCardScreenshots
+```
+
+On a native 1x window, add `STIM_ARCHIVE_REFERENCE_SHOTS=1` to also export the four
+archive comparison captures at their reference dimensions. Inspect them before replacing references.
+
+These fixtures use failed iOS and successful Android build history with phase timings,
+a merged PR, ended agents, expired logs and two recording slots. The real archive sidebar,
+workspace and build-sheet screens load the sanitized `Fixtures/real-archive` case, including
+all five iOS builds, local/remote placement, diagnostics and phase timings, and the
+`ios-default` recording spans. These DEBUG screens require the source checkout. They run no backend reads.
+
 The DEBUG fixtures use a fixed date. Captures pin en_US, UTC, InterVariable,
 320/380/440 by 640 points and arm64 on macOS 27.0 build 26A428. Native 1x and
 2x windows use separate references; Retina reference names end in `.2x.png`.

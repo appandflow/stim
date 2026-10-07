@@ -10,8 +10,14 @@ struct BuildSection: View {
   var env: Workspace
   var openLogs: (LogQuery) -> Void
   var openBuild: (BuildSheetSelection) -> Void
+  var readOnly = false
   var onlyPlatform: String? = nil
   var projectSubtitle: String? = nil
+  #if DEBUG
+    @Environment(\.fixtureDate) private var fixtureDate
+  #else
+    private var fixtureDate: Date? { nil }
+  #endif
   @EnvironmentObject private var checks: BuildPlanChecks
   @EnvironmentObject private var actions: ActionCenter
 
@@ -58,16 +64,18 @@ struct BuildSection: View {
           Text(error).font(.stim(.footnote)).foregroundStyle(Palette.error).textSelection(.enabled)
         }
       }
+      if readOnly && platforms.isEmpty { InlineEmpty("No build recorded") }
       ForEach(platforms, id: \.self) { platform in
         card(platform)
       }
     }
     .onAppear(perform: checkUsed)
     .onChange(of: trigger) { checkUsed() }
-    .onDisappear { checks.cancel(workspace: env.path, platforms: cancellationPlatforms) }
+    .onDisappear { if !readOnly { checks.cancel(workspace: env.path, platforms: cancellationPlatforms) } }
   }
 
   private func checkUsed() {
+    guard !readOnly else { return }
     if running != nil { return checks.cancel(workspace: env.path, platforms: cancellationPlatforms) }
     checks.check(workspace: env.path, builds: Dictionary(uniqueKeysWithValues: platforms.map { ($0, buildKey($0)) }))
   }
@@ -90,7 +98,7 @@ struct BuildSection: View {
             .buttonStyle(.stim())
             .fixedSize()
             .help("Open build details")
-          if building == nil { runButton(platform) }
+          if building == nil && !readOnly { runButton(platform) }
         }
         if let projectSubtitle { Text(projectSubtitle).font(.stim(.footnote)).foregroundStyle(Palette.secondary) }
         if let host = building?.remote(at: Date())?.host {
@@ -103,17 +111,19 @@ struct BuildSection: View {
             Text("Last build").font(.stim(.footnote, weight: .semibold)).foregroundStyle(Palette.secondary)
             lastBuild(platform)
           }
-          Divider().overlay(Palette.border)
-          VStack(alignment: .leading, spacing: Space.sm) {
-            HStack {
-              Text("Next build").font(.stim(.footnote, weight: .semibold)).foregroundStyle(Palette.secondary)
-              Spacer(minLength: Space.sm)
-              checkButton(platform, entry: entry)
-            }
-            if running != nil {
-              Text("Checked after the running build").foregroundStyle(Palette.tertiary)
-            } else {
-              NextBuildView(entry: entry)
+          if !readOnly {
+            Divider().overlay(Palette.border)
+            VStack(alignment: .leading, spacing: Space.sm) {
+              HStack {
+                Text("Next build").font(.stim(.footnote, weight: .semibold)).foregroundStyle(Palette.secondary)
+                Spacer(minLength: Space.sm)
+                checkButton(platform, entry: entry)
+              }
+              if running != nil {
+                Text("Checked after the running build").foregroundStyle(Palette.tertiary)
+              } else {
+                NextBuildView(entry: entry)
+              }
             }
           }
         }
@@ -167,7 +177,7 @@ struct BuildSection: View {
             .fixedSize(horizontal: false, vertical: true)
             .help(last.fingerprint.map { "Fingerprint \($0)" } ?? "")
           if let endedAt = last.endedAt {
-            Text(Format.age(context.date.timeIntervalSince(endedAt)))
+            Text(Format.age((fixtureDate ?? context.date).timeIntervalSince(endedAt)))
               .font(.stim(.footnote))
               .foregroundStyle(Palette.tertiary)
           }
@@ -249,6 +259,11 @@ private struct RunningBuildDetail: View {
 private struct BuildHistoryList: View {
   var entries: [BuildHistoryEntry]
   var open: (BuildHistoryEntry) -> Void
+  #if DEBUG
+    @Environment(\.fixtureDate) private var fixtureDate
+  #else
+    private var fixtureDate: Date? { nil }
+  #endif
   @State private var expanded = false
 
   var body: some View {
@@ -274,12 +289,13 @@ private struct BuildHistoryList: View {
       TimelineView(.periodic(from: .now, by: 30)) { context in
         VStack(alignment: .leading, spacing: Space.xxs) {
           ForEach(entries, id: \.self) { entry in
-            BuildHistoryRow(entry: entry, now: context.date) { open(entry) }
+            BuildHistoryRow(entry: entry, now: fixtureDate ?? context.date) { open(entry) }
           }
         }
         .padding(.top, Space.xs)
       }
     }
+    .onAppear { if fixtureDate != nil { expanded = true } }
   }
 }
 

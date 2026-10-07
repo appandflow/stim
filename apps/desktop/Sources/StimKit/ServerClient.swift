@@ -138,6 +138,11 @@ public typealias ServerScheduler = @MainActor (TimeInterval, @escaping @MainActo
     state = .idle
   }
 
+  public func archiveDetail(_ request: ArchiveDetailRequest) async throws -> ArchiveDetail {
+    let result = try await retryArchiveRead { try await self.request("archive.detail", request.params) }
+    return try JSONDecoder().decode(ArchiveDetail.self, from: JSONEncoder().encode(result))
+  }
+
   public func archivedLogs(_ request: ArchivedLogsRequest) async throws -> [LogRecord] {
     struct Result: Decodable { var records: [LogRecord] }
     let result = try await retryArchiveRead { try await self.request("logs.query", request.params) }
