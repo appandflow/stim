@@ -408,4 +408,10 @@ to act. `archived:<id>` selects one archive; `archived-logs`,
 
 <StimTabs code="stim gc --delete --cache archived --older-than 14" />
 
-Archived logs and replay are not available through the apps yet.
+Choose **Archived** in Stim Desktop's sidebar or the phone app's Filters to
+open a removed workspace. Its read-only page shows retained build history,
+saved logs, ended agent sessions and replay for each retained recording slot.
+Logs and replay require a connection to the Mac's stim-server; an older server
+shows an update hint, with the last-build summary still available. Archives have
+no run, reload, stop or live device controls. Stim Desktop also offers **Delete**,
+with confirmation, to permanently remove the archive and its retained content.
