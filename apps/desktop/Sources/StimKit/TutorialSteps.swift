@@ -220,7 +220,7 @@ public enum TutorialSteps {
       prompt: "Continue the Stim tutorial: machine", section: "machine",
       manual: [
         "cd \"{tour}\"",
-        "stim ios --build-machine \"{machine}\" --no-build-cache",
+        "stim ios --remote-build \"{machine}\" --no-build-cache",
       ]),
     TutorialStep(
       id: "finish", title: "Finish and archive", who: "agent", optional: false,
