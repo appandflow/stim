@@ -996,17 +996,45 @@ import Testing
     for archives in [[older, other, newer], [newer, other, older]] {
       payload.archived = archives
       #expect(payload.target(of: WorkspaceOpenRequest(path: path)) == nil)
-      #expect(payload.archive(for: WorkspaceOpenRequest(path: path))?.id == "newer")
-      #expect(payload.archive(for: WorkspaceOpenRequest(path: path, archive: older.id))?.id == older.id)
-      #expect(payload.archive(for: WorkspaceOpenRequest(path: path, archive: "missing")) == nil)
-      #expect(payload.archive(for: WorkspaceOpenRequest(path: path, archive: "other")) == nil)
+      #expect(payload.archive(for: WorkspaceOpenRequest(path: path), waited: true)?.id == "newer")
+      #expect(payload.archive(for: WorkspaceOpenRequest(path: path, archive: older.id), waited: true)?.id == older.id)
+      #expect(payload.archive(for: WorkspaceOpenRequest(path: path, archive: "missing"), waited: true) == nil)
+      #expect(payload.archive(for: WorkspaceOpenRequest(path: path, archive: "other"), waited: true) == nil)
       for missing in ["/unknown", "/work/feature", path + "/", "/work/feature/./app"] {
-        #expect(payload.archive(for: WorkspaceOpenRequest(path: missing)) == nil)
-        #expect(payload.archive(for: WorkspaceOpenRequest(path: missing, archive: older.id)) == nil)
+        #expect(payload.archive(for: WorkspaceOpenRequest(path: missing), waited: true) == nil)
+        #expect(payload.archive(for: WorkspaceOpenRequest(path: missing, archive: older.id), waited: true) == nil)
       }
     }
     payload.archived = nil
-    #expect(payload.archive(for: WorkspaceOpenRequest(path: path)) == nil)
+    #expect(payload.archive(for: WorkspaceOpenRequest(path: path), waited: true) == nil)
+  }
+
+  @Test func aLinkWithoutAnArchiveIdWaitsForTheLiveWorkspaceBeforeOpeningTheNewestArchive() throws {
+    let url = Bundle.module.url(forResource: "archived-status", withExtension: "json", subdirectory: "Fixtures")!
+    var payload = try JSONDecoder().decode(StatusPayload.self, from: Data(contentsOf: url))
+    let archive = try #require(payload.archived?.first)
+    let path = archive.projectRoot
+    let bare = WorkspaceOpenRequest(path: path)
+    let live = payload.environments[0]
+    var relisted = live
+    relisted.path = path
+    payload.environments = []
+
+    #expect(payload.archive(for: bare, waited: false) == nil)
+    #expect(payload.archive(for: bare, waited: true)?.id == archive.id)
+
+    payload.environments = [relisted]
+    #expect(payload.target(of: bare)?.workspace.path == path)
+    #expect(payload.archive(for: bare, waited: true) == nil)
+  }
+
+  @Test func aLinkWithAnArchiveIdOpensItAtOnce() throws {
+    let url = Bundle.module.url(forResource: "archived-status", withExtension: "json", subdirectory: "Fixtures")!
+    var payload = try JSONDecoder().decode(StatusPayload.self, from: Data(contentsOf: url))
+    let archive = try #require(payload.archived?.first)
+    payload.environments = []
+    let request = WorkspaceOpenRequest(path: archive.projectRoot, archive: archive.id)
+    #expect(payload.archive(for: request, waited: false)?.id == archive.id)
   }
 
   @Test func aLiveWorkspaceWinsEvenWhenTheLinkNamesAnArchive() throws {
@@ -1017,7 +1045,7 @@ import Testing
     for id in [nil, archive.id, "missing"] {
       let request = WorkspaceOpenRequest(path: archive.projectRoot, archive: id)
       #expect(payload.target(of: request)?.workspace.path == archive.projectRoot)
-      #expect(payload.archive(for: request) == nil)
+      #expect(payload.archive(for: request, waited: true) == nil)
     }
   }
 }

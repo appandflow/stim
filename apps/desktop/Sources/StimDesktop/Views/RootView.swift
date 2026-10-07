@@ -489,11 +489,12 @@ struct RootView: View {
 
   /// A link waits for a status payload that lists its workspace. Once one exists, "Workspace not found" shows after
   /// 10 seconds without a match, and a match within the next minute still replaces it with the workspace's card,
-  /// since `stim status --watch` can lag the command that printed the link.
+  /// since `stim status --watch` can lag the command that printed the link. A link without `archive=` opens the
+  /// path's newest archive only after that wait, so a re-created worktree is not shadowed by its old archive.
   private func showWorkspaceLink(in payload: StatusPayload?) {
     guard let pending = pendingLink, let payload else { return }
     guard let target = payload.target(of: pending.request) else {
-      if let archive = payload.archive(for: pending.request) {
+      if let archive = payload.archive(for: pending.request, waited: false) {
         pendingLink = nil
         selection = .archived(archive.id)
         return
@@ -503,6 +504,11 @@ struct RootView: View {
       Task {
         try? await Task.sleep(for: .seconds(10))
         guard pendingLink?.id == pending.id else { return }
+        if let archive = store.payload?.archive(for: pending.request, waited: true) {
+          pendingLink = nil
+          selection = .archived(archive.id)
+          return
+        }
         showWorkspaceNotFound(
           "Stim does not list \(abbreviatingHome(pending.request.path)) as a workspace.",
           key: "workspace-link:\(pending.request.path)")

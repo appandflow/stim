@@ -106,11 +106,14 @@ public func workspaceLink(fromOpenURL url: URL) -> WorkspaceLink? {
 }
 
 extension StatusPayload {
-  public func archive(for request: WorkspaceOpenRequest) -> ArchivedWorkspace? {
+  /// The archive a link opens. An explicit `archive=` id opens at once; without one the newest archive of the path
+  /// is used only once `waited` says the live workspace had its chance to appear in status.
+  public func archive(for request: WorkspaceOpenRequest, waited: Bool) -> ArchivedWorkspace? {
     guard !environments.contains(where: { $0.path == request.path }) else { return nil }
     if let id = request.archive {
       return archived?.first { $0.id == id && $0.projectRoot == request.path }
     }
+    guard waited else { return nil }
     return ArchivedWorkspace.newest(removedFrom: request.path, in: archived ?? [])
   }
 
