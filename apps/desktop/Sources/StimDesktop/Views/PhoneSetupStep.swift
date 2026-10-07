@@ -28,11 +28,7 @@ struct PhoneSetupStep: View {
         HStack(spacing: Space.md) {
           Text("Run:")
           CommandText(command: "tailscale up")
-          Button("Copy") {
-            NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString("tailscale up", forType: .string)
-          }
-          .buttonStyle(.stim())
+          CopyButton("tailscale up")
         }
         Button("Check again") { server.refresh() }.buttonStyle(.stim())
       } else {

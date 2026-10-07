@@ -167,7 +167,8 @@ struct DeviceTile: View {
     .task(id: clipboardRequest) {
       guard let request = clipboardRequest, request.target == clipboardTarget else { return }
       defer { if clipboardRequest == request { clipboardRequest = nil } }
-      if let text = request.text {
+      do {
+        let text = request.text
         let pasted: Bool
         switch device {
         case .ios: pasted = await simulatorButtons.paste(text)
@@ -176,20 +177,6 @@ struct DeviceTile: View {
         }
         guard !Task.isCancelled, request.target == clipboardTarget else { return }
         if !pasted { clipboardError = "Could not paste into the device. Check that it is connected and a text field is focused." }
-      } else {
-        let text: String?
-        switch device {
-        case .ios: text = await simulatorButtons.clipboard()
-        case .android: text = await emulatorButtons.clipboard()
-        default: return
-        }
-        guard !Task.isCancelled, request.target == clipboardTarget else { return }
-        guard let text else {
-          clipboardError = "Could not read the device clipboard. Check that the device is connected."
-          return
-        }
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(text, forType: .string)
       }
     }
     .alert("Clipboard transfer", isPresented: Binding(get: { clipboardError != nil }, set: { if !$0 { clipboardError = nil } })) {
@@ -651,9 +638,27 @@ struct DeviceTile: View {
         clipboardRequest = ClipboardRequest(target: target, text: text)
       },
       copy: {
-        dismiss.wrappedValue = false
-        clipboardRequest = ClipboardRequest(target: target, text: nil)
+        let copied = await copyDeviceClipboard(target: target)
+        if !copied { dismiss.wrappedValue = false }
+        return copied
       })
+  }
+
+  private func copyDeviceClipboard(target: String) async -> Bool {
+    let text: String?
+    switch device {
+    case .ios: text = await simulatorButtons.clipboard()
+    case .android: text = await emulatorButtons.clipboard()
+    default: return false
+    }
+    guard target == clipboardTarget else { return false }
+    guard let text else {
+      clipboardError = "Could not read the device clipboard. Check that the device is connected."
+      return false
+    }
+    NSPasteboard.general.clearContents()
+    NSPasteboard.general.setString(text, forType: .string)
+    return true
   }
 
   private var clipboardSyncID: ClipboardSyncID? {
@@ -1210,5 +1215,5 @@ private struct ClipboardSyncID: Hashable {
 
 private struct ClipboardRequest: Equatable {
   var target: String
-  var text: String?
+  var text: String
 }

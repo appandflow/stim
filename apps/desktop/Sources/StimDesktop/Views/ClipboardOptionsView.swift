@@ -5,7 +5,7 @@ import SwiftUI
 struct ClipboardOptionsView: View {
   @AppStorage(AppPreferences.Key.syncsClipboard) private var syncs = true
   var paste: () -> Void
-  var copy: () -> Void
+  var copy: () async -> Bool
 
   var body: some View {
     VStack(alignment: .leading, spacing: Space.sm) {
@@ -13,9 +13,11 @@ struct ClipboardOptionsView: View {
         .help("Copy text between this Mac and the device while this window is focused")
       HStack(spacing: Space.sm) {
         Button("Paste Mac clipboard", action: paste)
+          .buttonStyle(.stim(.secondary))
           .help("Paste the Mac clipboard's text into the focused device field")
-        Button("Copy device clipboard", action: copy)
-          .help("Replace the Mac clipboard with the device clipboard's text")
+        CopyButton(
+          variant: .secondary, title: "Copy device clipboard", help: "Replace the Mac clipboard with the device clipboard's text",
+          copy: copy)
       }
       .controlSize(.small)
     }

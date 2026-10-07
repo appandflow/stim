@@ -1,16 +1,14 @@
 import { t } from '@lingui/core/macro';
 import { Trans } from '@lingui/react/macro';
-import * as Clipboard from 'expo-clipboard';
 import Constants from 'expo-constants';
 import { Image } from 'expo-image';
 import * as Linking from 'expo-linking';
 import { useRouter } from 'expo-router';
 import * as Updates from 'expo-updates';
-import { useState } from 'react';
 import { Platform, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
-import { Button } from '@/components/button';
+import { CopyButton } from '@/components/copy-button';
 import { ListRow, ListSection } from '@/components/list';
 import { describeState } from '@/components/mac-chip';
 import { SheetScreen } from '@/components/sheet-screen';
@@ -28,7 +26,6 @@ import {
   type AboutDevice,
   type AboutMachine,
 } from '@/lib/about';
-import { hapticFeedback } from '@/lib/haptics';
 import { LICENSES } from '@/lib/licenses';
 import { PROTOCOL_VERSION } from '@/protocol/types';
 
@@ -79,18 +76,11 @@ function machineInfo({ mac, state, missing }: PairedConnection): AboutMachine {
 export function About({ onClose }: { onClose?: () => void }) {
   const router = useRouter();
   const { connections } = useMacs();
-  const [copied, setCopied] = useState(false);
   const app = appInfo();
 
   const version = versionWithBuild(app);
   const published = app.updatedAt ? formatDateTime(app.updatedAt, { dateStyle: 'medium', timeStyle: 'short' }) : null;
   const builtIn = app.embedded || !app.updateId;
-  const copy = () =>
-    void Clipboard.setStringAsync(diagnosticText(app, connections.map(machineInfo), deviceInfo())).then(() => {
-      hapticFeedback('success');
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    });
   const open = (url: string) => void Linking.openURL(url);
   return (
     <SheetScreen>
@@ -106,12 +96,10 @@ export function About({ onClose }: { onClose?: () => void }) {
       <ListSection
         title={t`This phone`}
         action={
-          <Button
-            variant="plain"
-            size="small"
-            title={copied ? t`Copied` : t`Copy`}
-            accessibilityLabel={copied ? t`Copied` : t`Copy versions`}
-            onPress={copy}
+          <CopyButton
+            text={() => diagnosticText(app, connections.map(machineInfo), deviceInfo())}
+            accessibilityLabel={t`Copy versions`}
+            filled={false}
           />
         }
       >

@@ -321,7 +321,6 @@ struct TutorialPanel: View {
 private struct TutorialPromptBox: View {
   var prompt: String
   var onCopy: () -> Void
-  @State private var copied = false
 
   var body: some View {
     VStack(alignment: .leading, spacing: Space.sm) {
@@ -331,20 +330,7 @@ private struct TutorialPromptBox: View {
           Text(prompt).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
           HStack {
             Spacer()
-            Button {
-              NSPasteboard.general.clearContents()
-              NSPasteboard.general.setString(prompt, forType: .string)
-              copied = true
-              onCopy()
-            } label: {
-              Label(copied ? "Copied" : "Copy", systemImage: copied ? "checkmark" : "doc.on.doc")
-            }
-            .buttonStyle(.stim(.secondary)).accessibilityLabel("Copy prompt: \(prompt)")
-            .task(id: copied) {
-              guard copied else { return }
-              try? await Task.sleep(for: .seconds(2))
-              copied = false
-            }
+            CopyButton(prompt, accessibilityLabel: "Copy prompt: \(prompt)", onCopy: onCopy)
           }
         }
         .padding(Space.lg)

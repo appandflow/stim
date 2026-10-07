@@ -46,7 +46,7 @@ struct SimulatorOptionsView: View {
     init(fixture: PlaygroundSimulator) {
       udid = "playground"
       canControl = true
-      clipboard = ClipboardOptionsView(paste: {}, copy: {})
+      clipboard = ClipboardOptionsView(paste: {}, copy: { true })
       frame = fixture.frame
       _fixture = State(initialValue: fixture)
       _appearance = State(initialValue: fixture.appearance)

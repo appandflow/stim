@@ -109,15 +109,9 @@ struct SetupDoctorFindings: View {
             .help(repair.displayLine())
         }
         if let text = copied ?? finding.fix, !text.isEmpty {
-          Button {
-            NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString(text, forType: .string)
-          } label: {
-            Label("Copy", systemImage: "doc.on.doc")
-          }
-          .buttonStyle(.stim(.plain))
-          .help(copied == nil ? "Copy the fix" : "Copy the command")
-          .accessibilityLabel(copied == nil ? "Copy the fix, \(finding.title)" : "Copy the command, \(finding.title)")
+          CopyButton(
+            text, variant: .plain, help: copied == nil ? "Copy the fix" : "Copy the command",
+            accessibilityLabel: copied == nil ? "Copy the fix, \(finding.title)" : "Copy the command, \(finding.title)")
         }
       }
     }

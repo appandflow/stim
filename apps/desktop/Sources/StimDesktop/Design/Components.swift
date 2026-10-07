@@ -165,7 +165,6 @@ struct EmptyState: View {
 
 struct AgentPromptList: View {
   @State private var prompts = Array(AgentPrompts.all.shuffled().prefix(3))
-  @State private var copied: String?
 
   var body: some View {
     VStack(spacing: Space.md) {
@@ -176,16 +175,7 @@ struct AgentPromptList: View {
             Text(prompt)
               .textSelection(.enabled)
               .frame(maxWidth: .infinity, alignment: .leading)
-            Button {
-              NSPasteboard.general.clearContents()
-              NSPasteboard.general.setString(prompt, forType: .string)
-              copied = prompt
-            } label: {
-              Label(copied == prompt ? "Copied" : "Copy", systemImage: copied == prompt ? "checkmark" : "doc.on.doc")
-            }
-            .buttonStyle(.stim(.secondary))
-            .help("Copy this prompt to the clipboard")
-            .accessibilityLabel(copied == prompt ? "Copied prompt: \(prompt)" : "Copy prompt: \(prompt)")
+            CopyButton(prompt, help: "Copy this prompt to the clipboard", accessibilityLabel: "Copy prompt: \(prompt)")
           }
           .padding(.horizontal, Space.xl)
           .padding(.vertical, Space.lg)
@@ -212,9 +202,6 @@ struct CommandText: View {
 
 struct CopyableCommand: View {
   var command: String
-  @State private var copied = false
-  @State private var copyCount = 0
-  @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
   var body: some View {
     HStack(alignment: .firstTextBaseline, spacing: Space.xs) {
@@ -223,34 +210,14 @@ struct CopyableCommand: View {
         .foregroundStyle(Palette.secondary)
         .textSelection(.enabled)
         .fixedSize(horizontal: false, vertical: true)
-      Button {
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(command, forType: .string)
-        copyCount += 1
-        setCopied(true)
-        AccessibilityNotification.Announcement("Copied").post()
-      } label: {
-        Image(systemName: copied ? "checkmark" : "doc.on.doc")
-          .iconFont(IconSize.small, weight: .medium)
-          .contentTransition(reduceMotion ? .identity : .symbolEffect(.replace))
-      }
-      .buttonStyle(.icon(tint: copied ? Palette.success : Palette.secondary))
-      .help("Copy the command")
-      .accessibilityLabel("Copy \(command)")
-      .task(id: copyCount) {
-        guard copied, (try? await Task.sleep(for: .seconds(2))) != nil else { return }
-        setCopied(false)
-      }
+      CopyButton(
+        command, variant: .plain, showsTitle: false, help: "Copy the command", accessibilityLabel: "Copy \(command)")
     }
     .padding(.leading, Space.md)
     .padding(.trailing, Space.xxs)
     .padding(.vertical, Space.xxs)
     .background(RoundedRectangle(cornerRadius: Radius.chip).fill(Palette.background))
     .overlay(RoundedRectangle(cornerRadius: Radius.chip).strokeBorder(Palette.border))
-  }
-
-  private func setCopied(_ value: Bool) {
-    withAnimation(reduceMotion ? nil : .easeOut(duration: 0.15)) { copied = value }
   }
 }
 

@@ -1483,19 +1483,17 @@ msgstr "Control"
 msgid "Control ended. {ended}"
 msgstr "Control ended. {ended}"
 
-#: src/screens/about.tsx
-#: src/screens/about.tsx
-#: src/screens/device-view.tsx
+#: src/components/copy-button.tsx
+#: src/components/copy-button.tsx
+#: src/components/copy-button.tsx
 #: src/screens/home.tsx
 #: src/screens/logs.tsx
 msgid "Copied"
 msgstr "Copied"
 
+#: src/components/copy-button.tsx
+#: src/components/copy-button.tsx
 #: src/components/viewer-keyboard.tsx
-#: src/screens/about.tsx
-#: src/screens/home.tsx
-#: src/screens/logs.tsx
-#: src/screens/mac-status.tsx
 msgid "Copy"
 msgstr "Copy"
 
