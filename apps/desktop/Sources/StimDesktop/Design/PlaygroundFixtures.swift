@@ -25,7 +25,7 @@
       frame = DeviceFrameOption(
         isOn: .constant(true),
         unavailableReason: scenario == .error ? "The iPhone Duo hardware model is not in the selected Xcode." : nil)
-      error = scenario == .error ? "Xcode did not report the simulator's appearance settings. Refresh to try again." : nil
+      error = scenario == .error ? "Xcode did not report the simulator's appearance settings." : nil
       values =
         scenario == .empty || loading || error != nil
         ? [:]

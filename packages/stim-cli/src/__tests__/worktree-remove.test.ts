@@ -12,7 +12,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { basename, join, resolve } from 'node:path';
 import {
   excludePodChurn,
   excludeWatchmanCookies,
@@ -333,6 +333,7 @@ function writeRemoteSession(root: string, sessionId: string): void {
 beforeEach(() => {
   tmpHome = mkdtempSync(join(tmpdir(), 'stim-test-home-'));
   process.env.STIM_HOME = tmpHome;
+  vi.stubEnv('HOME', tmpHome);
   for (const udid of ['U1', 'U3', 'U4', 'U5', 'U6', 'U7', 'U8', 'U9', 'UDID-1']) recordCreatedDevice('ios', udid);
   for (const name of [
     'stim-a',
@@ -359,6 +360,7 @@ afterEach(() => {
   rmSync(mainDir, { recursive: true, force: true });
   rmSync(wtDir, { recursive: true, force: true });
   delete process.env.STIM_HOME;
+  vi.unstubAllEnvs();
   delete process.env.STIM_ARCHIVE_ENABLED;
 });
 
@@ -546,6 +548,68 @@ test('action: source-checkout artifact deletion blocks a concurrent replacement 
   expect(competingStart).not.toBeNull();
   await expect(competingStart).resolves.toBe('refused');
   expect(existsSync(workspaceStateFile(mainDir))).toBe(false);
+});
+
+describe('on the source checkout, from a subfolder', () => {
+  const sourceCheckout = () => {
+    const mobile = join(mainDir, 'apps', 'mobile');
+    const web = join(mainDir, 'apps', 'web');
+    mkdirSync(join(mobile, 'src'), { recursive: true });
+    mkdirSync(web, { recursive: true });
+    upsertProject(mobile, { metroPort: 8085 });
+    upsertProject(web, { metroPort: 8086 });
+    setExecutor(makeExecutor({ worktrees: porcelain([{ path: mainDir, branch: 'main' }]) }));
+    return { mobile, web };
+  };
+
+  test.each(['project folder', 'folder below the project'])(
+    'reclaims only the project at or above the %s',
+    async (where) => {
+      const { mobile, web } = sourceCheckout();
+      const run = captureAction(registerRemove);
+      await run(where === 'project folder' ? mobile : join(mobile, 'src'), {});
+
+      expect(process.exitCode).not.toBe(1);
+      expect(getProject(mobile)).toBe(null);
+      expect(getProject(web)?.metroPort).toBe(8086);
+    },
+  );
+
+  test('reclaims projects nested under that project, and treats a root spelled differently as the root', async () => {
+    const { mobile, web } = sourceCheckout();
+    const example = join(mobile, 'example');
+    mkdirSync(example);
+    upsertProject(example, { metroPort: 8087 });
+    await captureAction(registerRemove)(mobile, {});
+    expect(getProject(example)).toBe(null);
+    expect(getProject(web)?.metroPort).toBe(8086);
+
+    await captureAction(registerRemove)(join(mainDir, '..', basename(mainDir)), {});
+    expect(process.exitCode).not.toBe(1);
+    expect(getProject(web)).toBe(null);
+  });
+
+  test('from the checkout root still reclaims every project under it', async () => {
+    const { mobile, web } = sourceCheckout();
+    const run = captureAction(registerRemove);
+    await run(mainDir, {});
+
+    expect(process.exitCode).not.toBe(1);
+    expect(getProject(mobile)).toBe(null);
+    expect(getProject(web)).toBe(null);
+  });
+
+  test('refuses from a folder with no registered project at or above it, leaving every project', async () => {
+    const { mobile, web } = sourceCheckout();
+    const docs = join(mainDir, 'docs');
+    mkdirSync(docs);
+    const run = captureAction(registerRemove);
+    await run(docs, {});
+
+    expect(process.exitCode).toBe(1);
+    expect(getProject(mobile)?.metroPort).toBe(8085);
+    expect(getProject(web)?.metroPort).toBe(8086);
+  });
 });
 
 test('action: a registered project directory that is not a git repo gets the same environment reclaim', async () => {
@@ -1542,6 +1606,59 @@ test('against a real repo: a locked worktree is refused before its owned sim is 
     rmSync(base, { recursive: true, force: true });
   }
 }, 30_000);
+
+const launchAgentPlist = (label: string, script: string, marked: boolean) => `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>${label}</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/usr/bin/node</string>
+		<string>${script}</string>
+	</array>${marked ? '\n\t<key>StimService</key>\n\t<dict>\n\t\t<key>Managed</key>\n\t\t<true/>\n\t</dict>' : ''}
+</dict>
+</plist>
+`;
+
+describe.skipIf(process.platform !== 'darwin')('stim-server service guard', () => {
+  test.each([
+    { name: 'a stim-server service script inside the worktree refuses removal, even with --force', marked: true },
+    { name: 'a LaunchAgent that stim-server did not install does not block removal', marked: false },
+  ])(
+    'against a real repo: $name',
+    async ({ marked }) => {
+      const base = canon(mkdtempSync(join(tmpdir(), 'stim-test-remove-service-')));
+      const errs: string[] = [];
+      const originalError = console.error;
+      vi.stubEnv('HOME', base);
+      try {
+        const { wt } = realRepoWithWorktree(base);
+        const agents = join(base, 'Library', 'LaunchAgents');
+        mkdirSync(agents, { recursive: true });
+        writeFileSync(
+          join(agents, 'dev.stim.server.plist'),
+          launchAgentPlist('dev.stim.server', join(wt, 'server.mjs'), marked),
+        );
+
+        console.error = (m) => errs.push(String(m));
+        const run = captureAction(registerRemove);
+        await run(wt, { force: true });
+        console.error = originalError;
+
+        expect(existsSync(wt)).toBe(marked);
+        expect(process.exitCode === 1).toBe(marked);
+        expect(errs.join('\n').includes('STIM_WORKTREE_SERVICE')).toBe(marked);
+      } finally {
+        console.error = originalError;
+        vi.unstubAllEnvs();
+        rmSync(base, { recursive: true, force: true });
+      }
+    },
+    30_000,
+  );
+});
 
 test.each(['submodule add', 'embedded repository'] as const)(
   'against a real repo: a worktree with an initialized submodule (%s) is refused before its owned sim is torn down',

@@ -66,7 +66,10 @@ const input = JSON.parse(Buffer.concat(chunks));
 if(input.mode === 'count') {
   writeFileSync(join(process.env.STIM_HOME,'count-entered'),String(process.pid));
   if(process.env.LOCAL_COUNT === 'hang') { process.on('SIGTERM',()=>{}); await new Promise(()=>setInterval(()=>{},1000)); }
-  else process.stdout.write(process.env.LOCAL_COUNT ?? '0');
+  else {
+    if(process.env.COUNT_GATE) while(!existsSync(process.env.COUNT_GATE)) await new Promise(resolve=>setTimeout(resolve,20));
+    process.stdout.write(process.env.LOCAL_COUNT ?? '0');
+  }
   if(process.env.LOCAL_COUNT !== 'hang') process.exit(0);
 } else if(input.mode === 'offer') {
   const request=input;
@@ -2985,6 +2988,50 @@ test.each(['ios', 'android'] as const)(
   },
 );
 
+test.each(['removed', 'claimed'] as const)(
+  'reserve creates a fresh device when GC has %s the inspected adoption candidate',
+  async (race) => {
+    parkingLimits();
+    const parked = seedHosted({ parked: { at: '2026-10-01T00:00:00.000Z' } });
+    hostEnv.COUNT_GATE = join(home, 'release-count');
+    const pending = host.reserve('client', { ...request, attempt: 'new' });
+    let claim;
+    try {
+      await vi.waitFor(() => expect(existsSync(join(home, 'count-entered'))).toBe(true), { timeout: 5000 });
+      if (race === 'removed')
+        writeFileSync(
+          join(deviceHostArea(parked.id), 'home', 'created-devices.json'),
+          JSON.stringify({ version: 1, ios: [], android: [], web: [] }),
+        );
+      else {
+        claim = tryAcquireClaim({
+          root: join(deviceHostRoot(), `${parked.id}.claims`),
+          mode: 'exclusive',
+          label: 'hosted device session',
+        }).acquired;
+        if (!claim) throw new Error('Could not take the GC claim.');
+      }
+      writeFileSync(hostEnv.COUNT_GATE, 'continue');
+      const answer = await pending;
+      expect(answer).toHaveProperty('result.state', 'preparing');
+      if ('error' in answer) throw new Error(answer.error.message);
+      const created = answer.result;
+      expect(created.id).not.toBe(parked.id);
+      await state(created.id, 'ready');
+      expect(hostedModes(parked.id)).toEqual(['inspect']);
+      expect(hostedModes(created.id)).toEqual(['prepare']);
+      expect(readClaimSet(join(deviceHostRoot(), `${parked.id}.claims`)).live.map((each) => each.claimId)).toEqual(
+        race === 'removed' ? [] : [claim!.claimId],
+      );
+    } finally {
+      writeFileSync(hostEnv.COUNT_GATE, 'continue');
+      await pending;
+      if (claim) releaseClaim(claim);
+    }
+  },
+  10_000,
+);
+
 test('Android adoption reserves a new free console port and keeps the AVD session identity', async () => {
   parkingLimits();
   hostEnv.STIM_MAX_DEVICES = '0';
@@ -3051,14 +3098,24 @@ test('parking evicts only the oldest excess devices across clients and keeps pla
   const oldest = seedHosted({ client: 'other', parked: { at: '2026-10-01T00:00:00.000Z' } });
   const recent = seedHosted({ parked: { at: '2026-10-02T00:00:00.000Z' } });
   const android = seedHosted({ platform: 'android', parked: { at: '2026-10-01T00:00:00.000Z' } });
+  const ghost = seedHosted({ client: 'other', parked: { at: '2026-10-03T00:00:00.000Z' } }, 'empty');
+  const androidGhost = seedHosted(
+    { client: 'other', platform: 'android', parked: { at: '2026-10-03T00:00:00.000Z' } },
+    'empty',
+  );
   const first = await reserve({ attempt: 'new', deviceType: 'iPad' });
   await state(first.id, 'ready');
   host.stop('client', { session: first.id });
   await state(first.id, 'stopped');
-  await vi.waitFor(() =>
-    expect(readHostedSessions().find((record) => record.id === oldest.id)?.parked).toBeUndefined(),
+  await vi.waitFor(
+    () => expect(readHostedSessions().find((record) => record.id === oldest.id)?.parked).toBeUndefined(),
+    { timeout: 5000 },
   );
   expectRetired(oldest.id);
+  for (const record of [ghost, androidGhost]) {
+    expect(readHostedSessions().find((each) => each.id === record.id)?.parked).toBeUndefined();
+    expect(hostedModes(record.id)).toEqual([]);
+  }
   expect(hostedModes(recent.id)).not.toContain('stop');
   expect(hostedModes(android.id)).toEqual([]);
   expect(
@@ -3066,7 +3123,7 @@ test('parking evicts only the oldest excess devices across clients and keeps pla
       .filter((record) => record.platform === 'ios' && record.parked)
       .map((record) => record.id),
   ).toEqual([recent.id, first.id]);
-});
+}, 10_000);
 
 test('reconciliation preserves parked records, clears markers for GC-deleted devices and evicts after a limit decrease', async () => {
   parkingLimits();

@@ -178,7 +178,7 @@ public enum Discovery {
 
   /// `hosts` are the hosting Macs approved for device-host (nil when that is not known, which shows nothing). With
   /// one approved the prompt offers to use it instead of setting up; setup is offered only when none is approved.
-  /// `isRemote` says whether the workspace's Run on already leaves this Mac.
+  /// `isRemote` says whether the workspace's devices for the platform already run on another Mac.
   public static func capHit(
     source: CapHitSource, mac: TailnetMac?, hosts: [String]?, isRemote: (String, String?) -> Bool = { _, _ in false }
   ) -> DiscoveryPrompt? {
@@ -192,8 +192,16 @@ public enum Discovery {
     return DiscoveryPrompt(
       type: .capHit,
       title: "Device limit reached. Run on \(hosts.count == 1 ? machineName(hosts[0]) : "a hosting Mac")?",
-      detail: "Sets Run on to Auto in Desktop.", actionTitle: "Use Auto",
+      detail: runOnAutoPlatforms(source.platform).count == 1
+        ? "Project setting: \(runOnAutoPlatforms(source.platform)[0]).remote = auto"
+        : "Project: ios/android.remote = auto",
+      actionTitle: "Use Auto",
       action: .runOnAuto(workspaceID: workspaceID, platform: source.platform), surface: .banner)
+  }
+
+  public static func runOnAutoPlatforms(_ platform: String?) -> [String] {
+    let supported = ["ios", "android"]
+    return platform.flatMap { supported.contains($0) ? [$0] : nil } ?? supported
   }
 
   public static func workspaceID(path: String) -> String {
@@ -260,6 +268,13 @@ public struct DiscoveryStore {
   }
 
   public var setupCompleted: Bool { defaults.bool(forKey: SetupGuideProgress.completedKey) }
+
+  public func migrate() {
+    let version = defaults.integer(forKey: AppPreferences.Key.discoveryMigrations)
+    guard version < 1 else { return }
+    if state(.capHit) == .shown { defaults.removeObject(forKey: AppPreferences.Key.discovery(.capHit)) }
+    defaults.set(1, forKey: AppPreferences.Key.discoveryMigrations)
+  }
 
   public func shown(_ prompt: DiscoveryPrompt, now: Date) {
     set(.shown, for: prompt.type)

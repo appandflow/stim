@@ -101,12 +101,14 @@ final class AutopilotRunner: ObservableObject {
 
   func runPressurePlan(trigger: AutopilotLogEntry.Trigger, present: Bool) {
     lastPressureRun = Date()
-    run(trigger, "Reclaim disk space", PressurePlan.arguments, present: present) { run in
+    run(trigger, "Reclaim disk space", PressurePlan.arguments, present: present) { run, summary in
       guard trigger == .pressure else { return }
+      let archived = run.gcOutcome.flatMap { try? $0.get().archivedWorktrees.isEmpty } == false
       Notifier.postPressure(
-        id: "pressure-ran-\(run.id)", title: "Free disk is under the Stim budget",
-        body:
-          "Stim Desktop ran stim gc --delete. \(run.exitStatus == 0 ? "It finished" : "It exited with an error"); see the autopilot log.",
+        id: "\(archived ? Notifier.archivedPressurePrefix : Notifier.ranPressurePrefix)\(run.id)",
+        title: "Free disk is under the Stim budget",
+        body: summary
+          ?? "Stim Desktop ran stim gc --delete. \(run.exitStatus == 0 ? "It finished" : "It exited with an error"); see the autopilot log.",
         offersPlan: false)
     }
   }
@@ -222,17 +224,24 @@ final class AutopilotRunner: ObservableObject {
 
   private func run(
     _ trigger: AutopilotLogEntry.Trigger, _ title: String, _ arguments: [String], present: Bool,
-    completion: ((ActionRun) -> Void)? = nil
+    completion: ((ActionRun, String?) -> Void)? = nil
   ) {
     let command = StimCommand(arguments, cwd: NSHomeDirectory())
+    let titles = Dictionary(
+      (status.payload?.environments.map { ($0.path, $0.names.title) } ?? [])
+        + (status.payload?.unprovisionedWorktrees?.map { ($0.path, $0.names.title) } ?? []),
+      uniquingKeysWith: { first, _ in first })
     actions.run(title, steps: [command], key: ActionCenter.machineKey, present: present) { [weak self] run in
       guard let self else { return }
       self.checkPressure(maxAge: 0)
+      let summary = run.gcOutcome.flatMap { try? $0.get() }.map {
+        $0.summary(name: { titles[$0] ?? PathNames(path: $0).title })
+      }
       self.record(
         AutopilotLogEntry(
           date: Date(), trigger: trigger, command: "stim \(arguments.joined(separator: " "))",
-          exitStatus: run.launchError == nil ? run.exitStatus : nil, note: run.summary))
-      completion?(run)
+          exitStatus: run.launchError == nil ? run.exitStatus : nil, note: summary ?? run.summary))
+      completion?(run, summary)
     }
   }
 

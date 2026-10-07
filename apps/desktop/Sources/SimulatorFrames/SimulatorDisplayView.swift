@@ -125,7 +125,10 @@ public final class SimulatorButtons {
   /// Copies text to the controlled guest pasteboard and presses Command-V.
   public func paste(_ text: String) async -> Bool { await view?.paste(text) ?? false }
 
-  /// Reads the controlled guest clipboard only when explicitly requested.
+  /// Replaces the controlled guest pasteboard's text without pasting it.
+  public func setClipboard(_ text: String) async -> Bool { await view?.setClipboard(text) ?? false }
+
+  /// Reads the controlled guest pasteboard's text.
   public func clipboard() async -> String? { await view?.clipboard() }
 
   public func press(_ button: SimulatorButton) {
@@ -482,14 +485,9 @@ public final class SimulatorDisplayNSView: NSView {
     guard acceptsInput, let udid, let hid = inputClient(), hid.isConnected,
       (SimulatorKit.usageForKeyCode?(0x37) ?? 0) != 0, (SimulatorKit.usageForKeyCode?(0x09) ?? 0) != 0
     else { return false }
-    var environment = ProcessInfo.processInfo.environment
-    environment["DEVELOPER_DIR"] = CoreSimulator.developerDir
-    environment["LC_ALL"] = "en_US.UTF-8"
-    var request = ProcessRequest("/usr/bin/xcrun", ["simctl", "pbcopy", udid], environment: environment, timeout: 10)
-    request.input = Data(text.utf8)
-    guard let result = try? await request.run(), result.succeeded, !Task.isCancelled,
-      acceptsInput, self.udid == udid, self.hid === hid, hid.isConnected
-    else { return false }
+    guard await setClipboard(text), !Task.isCancelled, acceptsInput, self.udid == udid, self.hid === hid, hid.isConnected else {
+      return false
+    }
     let command: UInt16 = 0x37
     let v: UInt16 = 0x09
     hid.hardwareKey(code: command, down: true)
@@ -499,10 +497,22 @@ public final class SimulatorDisplayNSView: NSView {
     return true
   }
 
+  func setClipboard(_ text: String) async -> Bool {
+    guard interactive, let udid, display != nil else { return false }
+    var environment = ProcessInfo.processInfo.environment
+    environment["DEVELOPER_DIR"] = CoreSimulator.developerDir
+    environment["LC_ALL"] = "en_US.UTF-8"
+    var request = ProcessRequest("/usr/bin/xcrun", ["simctl", "pbcopy", udid], environment: environment, timeout: 10)
+    request.input = Data(text.utf8)
+    guard let result = try? await request.run(), result.succeeded, interactive, self.udid == udid else { return false }
+    return true
+  }
+
   func clipboard() async -> String? {
     guard interactive, let udid, display != nil else { return nil }
     var environment = ProcessInfo.processInfo.environment
     environment["DEVELOPER_DIR"] = CoreSimulator.developerDir
+    environment["LC_ALL"] = "en_US.UTF-8"
     let request = ProcessRequest("/usr/bin/xcrun", ["simctl", "pbpaste", udid], environment: environment, timeout: 10)
     guard let result = try? await request.run(), result.succeeded, !Task.isCancelled,
       interactive, self.udid == udid

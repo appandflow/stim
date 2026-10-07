@@ -44,16 +44,14 @@ control them through this Mac's stim-server relay. Touch and text reach the
 hosting Mac; controls that need a local simulator, and replay, are hidden.
 The tile reports connecting, unavailable or stopped sessions. Android hardware
 buttons also use the relay; rotation and posture are unavailable.
-**Run on** beside iOS and Android run actions chooses **This Mac**, **Auto**, or
-an approved hosting Mac. Desktop remembers the choice per workspace and platform;
-a machine that doctor reports is no longer approved falls back to This Mac.
-**This Mac** uses the project's default, passing no `--remote` flag. A project
-with `ios.remote` or `android.remote` set still runs at that destination.
-Auto uses `--remote auto`; a named Mac uses `--remote <machine>`. Named machines
-are disabled while the slot has a booted local owned device; run `stim stop`
-first to change machines. Recorded hosted sessions
-stay fixed until `stim stop`. Tiles and sidebar rows show where the device ran
-and the Auto reason, including runs that stayed or waited locally. See [iOS on an approved Mac](./owned-devices#run-ios-on-another-mac).
+Placement is set by config or agents: use
+`stim settings set ios.remote auto --scope workspace` (or `android.remote`),
+or per run `stim ios --remote auto` / `stim ios --remote <machine>`.
+Desktop passes no `--remote` flag for new iOS and Android runs, so the project's
+settings apply. Recorded hosted sessions stay fixed until `stim stop`.
+When a device is not on this Mac, its tile, workspace page, viewer toolbar and
+sidebar row show **on &lt;machine&gt;**, with the placement reason as hover text.
+Local devices show no placement label. See [iOS on an approved Mac](./owned-devices#run-ios-on-another-mac).
 
 Desktop uses the non-empty launch `STIM_HOME`, then the login shell's value, then
 `~/.stim`; **Settings > App > Stim CLI** shows the home, and private-home copies
@@ -341,16 +339,23 @@ Releasing Option, ending the gesture, changing orientation or releasing Control
 lifts both contacts. Option and the gesture's Shift modifier stay on the Mac.
 These gestures are not available for physical devices, remote previews or web pages.
 
-With **Control** on an owned local simulator or emulator, **Paste into device**
-copies Mac clipboard text and pastes it into the focused guest field. An iOS
-simulator shows its own "Allow Paste" prompt for the text (seen on iOS 27.1, and
-again for each new text); click **Allow Paste** in the viewer to insert it. Owned local iOS simulators and Android emulators also offer
-**Copy device clipboard**, which copies guest text back to this Mac, including empty text.
-Unicode and line breaks are preserved. Transfers happen only when pressed; there
-is no automatic clipboard synchronization. An empty or non-text Mac clipboard
-leaves the guest unchanged. Disconnects and unavailable native clipboard APIs
-report a failure. Physical devices, remote sessions and replay do not offer
-clipboard actions.
+With **Control** on an owned local simulator or emulator, the Mac and the device
+share their clipboard text automatically. Switching to the viewer window, or
+a new Mac clipboard item while the window is focused, sets the device clipboard; text copied on
+the device reaches the Mac within about two seconds while the window is focused,
+and once more as the window loses focus while it stays visible. Nothing syncs while
+the window is hidden, minimized or covered. Mac items marked concealed or transient
+(as password managers do), items carrying files or images, empty text and text over
+256 KB are never sent to the device; text read from the device cannot be classified,
+so it reaches the Mac marked transient, which clipboard-history apps skip. The
+device's apps, and agents driving it, can read text sent to it. Opening a viewer never replaces the Mac clipboard with the device's.
+Turn it off with **Sync clipboard** in the options popover (the sliders button),
+which also has **Paste Mac clipboard** and **Copy device clipboard** for one-off
+transfers. Syncing only sets the device clipboard; to insert text, paste in the
+guest. An iOS simulator shows its own "Allow Paste" prompt for text that came from
+another source; click **Allow Paste** in the viewer. Unicode and line breaks are
+preserved. Physical devices, hosted and remote sessions and replay never sync, so
+no clipboard text crosses the network or reaches another Mac.
 
 The All devices and project wall creates rows and device tiles as you scroll.
 Offscreen previews pause and reconnect when you return to them.
@@ -500,4 +505,4 @@ changing system preferences. Release builds exclude it. See the [desktop develop
 
 ## Suggestions
 
-Desktop suggests build machines, hosted simulators, cache review, or phone pairing when recent builds, tailnet peers, disk pressure, or device limits make them useful. Each kind shows once unless you dismiss it with the X to snooze it for 7 days, after which it may show again. Choose **Don't suggest again** to dismiss that kind permanently. Device-limit suggestions use refusals from Desktop commands and recent `stats --json` capacity events, including agent terminal runs, within 6 hours of the refusal. Three device waits of at least one minute each within the same 6-hour window also trigger a suggestion. When a Mac is already approved for hosted simulators, the device-limit suggestion offers **Use Auto**, which sets the workspace's Run on choice in Desktop (agents in a terminal pass `--remote auto`), instead of the setup wizard, and a tailnet Mac already in `hosting.machines` is not announced as new. Suggestions never appear during a build or install, before setup is complete, or on the first launch, and appear at most once per day. Nothing is set up until you open and follow the wizard.
+Desktop suggests build machines, hosted simulators, cache review, or phone pairing when recent builds, tailnet peers, disk pressure, or device limits make them useful. Each kind shows once unless you dismiss it with the X to snooze it for 7 days, after which it may show again. Choose **Don't suggest again** to dismiss that kind permanently. Device-limit suggestions use refusals from Desktop commands and recent `stats --json` capacity events, including agent terminal runs, within 6 hours of the refusal. Three device waits of at least one minute each within the same 6-hour window also trigger a suggestion. When a Mac is already approved for hosted simulators, the device-limit suggestion offers **Use Auto** instead of the setup wizard. It runs `stim settings set ios.remote auto --scope workspace` (and `android.remote`, for the refused platform, or both when it is not known), so runs place on the hosting Mac when this Mac is full, from Desktop and from agents in a terminal. While it is set, `--plan` and `--device` runs in that workspace refuse; undo it with `stim settings unset ios.remote --scope workspace` (and `android.remote`). A tailnet Mac already in `hosting.machines` is not announced as new. Suggestions never appear during a build or install, before setup is complete, or on the first launch, and appear at most once per day. Nothing is set up until you open and follow the wizard.

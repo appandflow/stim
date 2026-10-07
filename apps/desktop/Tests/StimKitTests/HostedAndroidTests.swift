@@ -26,17 +26,12 @@ import Testing
     #expect(phone.label == "pixel_6 (API 30)")
     #expect(phone.detail == "API 30")
     #expect(runCommand(for: tablet, cwd: "/w")?.arguments == ["android", "--slot", "tablet", "--remote", "mini:7443"])
-    for destination in [RunDestination.thisMac, .auto, .machine("other")] {
-      #expect(
-        runCommand(for: tablet, cwd: "/w", destination: destination)?.arguments == [
-          "android", "--slot", "tablet", "--remote", "mini:7443",
-        ])
-    }
     #expect(stopCommand(for: tablet, cwd: "/w").arguments == ["stop", "--slot", "tablet"])
     let local = DeviceRef.android(
       slot: "default", AndroidDevice(name: "stim-local", owned: true, physical: false, serial: "emulator-5554", state: "detected")
     )
     #expect(local.localEmulatorSerial == "emulator-5554")
+    #expect(runCommand(for: local, cwd: "/w") == StimCommand(["android"], cwd: "/w"))
   }
 
   @Test func distinguishesStoppedConnectingUnavailableAndReadOnlyHostedScreens() throws {

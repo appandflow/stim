@@ -32,12 +32,13 @@ in the workspace directory:
   "..." menu, and **Run** on each platform of the inspector's **Build**
   section (**Rebuild** when that platform's last build failed), run
   `stim ios` or `stim android` in the workspace with the default slot and configuration.
-  **Run on** chooses **This Mac** (no remote flag), **Auto** (`--remote auto`), or
-  an approved hosting Mac (`--remote <machine>`). Desktop remembers the choice
-  per workspace and platform in its own preferences; a removed approval falls
-  back to This Mac. Recorded hosted sessions stay fixed to their machine until
-  `stim stop`. Device tiles and sidebar rows show the machine and Auto reason,
-  including local runs that stayed or waited here. The
+  Placement is set by config or agents, for example
+  `stim settings set ios.remote auto --scope workspace` (or `android.remote`),
+  or per run with `stim ios --remote auto` / `stim ios --remote <machine>`.
+  Desktop passes no remote flag for a new run. Recorded hosted sessions stay
+  fixed to their machine until `stim stop`. When a device is not on this Mac,
+  its tile, workspace page, viewer toolbar and sidebar row show **on &lt;machine&gt;**,
+  with the placement reason as hover text. Local devices show no placement label. The
   menus offer the platforms `stim status` reports in `platforms`, plus any
   with a device or a last build; an older `stim` that does not report them
   offers the used ones, or iOS and Android when none is recorded. Run is disabled while a build runs in the workspace.
@@ -283,17 +284,23 @@ its live panels. Missing model data retains the frameless view and the options
 popover names the missing model. Stim ships no Apple or Android
 artwork; mobile asset delivery is not included.
 
-While **Control** is active for an owned local simulator or emulator,
-**Paste into device** copies the Mac's text clipboard and pastes it into the
-focused guest field. On an iOS simulator it runs `simctl pbcopy` and presses
-Command-V, and iOS asks "Allow Paste" for text that came from another source;
-the field stays empty until that prompt is accepted in the viewer. Owned local iOS
-simulators and Android emulators also offer **Copy device clipboard**, which replaces
-the Mac's text clipboard with the guest's current text, including an empty clipboard.
-Transfers preserve Unicode and line breaks and happen only when pressed; there is no
-background clipboard synchronization. Empty or non-text Mac clipboards are reported without
-changing the guest. Disconnects and unavailable native clipboard APIs report a
-failure. Physical devices, remote sessions and replay do not offer these actions.
+While **Control** is active for an owned local simulator or emulator, the Mac
+and the device share their text clipboard unless **Sync clipboard** (on by
+default, in the options popover) is off. When the viewer window becomes key, or the
+Mac pasteboard changes while it is key, the Mac text is set on the device with
+`simctl pbcopy` or the emulator's `setClipboard`; it is not pasted. While the window is key
+the device is read every two seconds (`simctl pbpaste`, or `getClipboard`) and its
+text replaces the Mac's when it changed; one more read follows when the window stops
+being key while it stays visible. Nothing syncs while the window is hidden, minimized or covered. The first
+read of a session only records the device's text. Mac items with concealed or transient
+marks (`org.nspasteboard.ConcealedType`, `org.nspasteboard.TransientType` and older password
+manager types), files or images, and empty or over-256 KB text are not sent to the device. Device text
+is written to the Mac marked transient, since its sensitivity is unknown. The popover also has
+**Paste Mac clipboard**, which presses Command-V on an iOS simulator (iOS asks
+"Allow Paste" for text from another source) and **Copy device clipboard**.
+Apps on the device, and agents driving it, can read the text sent to it. Physical
+devices, hosted and remote sessions and replay never sync; a hosted device would
+receive the text over the tailnet on another Mac.
 
 On the right, 360 points wide, the **agent actions** list what agents did on
 the device (`stim logs --source agent`), oldest first, with filter chips (All,
@@ -600,7 +607,12 @@ the sidebar marks Machine. **Do it** in a notification runs only while disk
 is still under the budget, and otherwise opens Machine; the app removes its
 delivered pressure notifications once free disk is back above the budget. With
 autopilot reclaiming, the app posts a
-notification after each run. Without it, the app posts the plan once per
+notification after each run that says what the run did, built from the `gc`
+JSON result, such as "Freed 3.8 GB. Archived 2 removed worktrees: fix-login,
+add-dark-mode. Deleted 1 device." It names worktrees by branch or folder, lists
+at most three and ends with "+N more". The autopilot log entry has the same
+text, and a notification that archived worktrees opens the Archived filter
+when clicked. Without it, the app posts the plan once per
 episode with a **Do it** button. The **Free disk falls under the Stim budget**
 notification is on by default and needs the bundled app.
 
@@ -638,6 +650,15 @@ row shows a record's first line; select one to read its whole message and
 stack. Command-C or **Copy** copies the selected records, or every loaded
 record when none is selected. **Reveal log folder** opens the workspace's log
 directory from `stim status`.
+
+Native workspace details show the same agent actions panel below the app preview.
+Use `agent-device open <isolated-bundleId> --platform macos --surface app --foreground`
+with the bundle ID from Stim status. The feed matches the current launch and
+recorded app-surface opens; unrecorded lifecycle attempts, app switches and event
+log rotation clear attribution. Native screenshots, phone Control and generic
+computer-use tools are outside this feed. Native apps have no replay.
+agent-device must record the explicit surface in its open event; version
+0.21.12 omits it, so its native actions remain unavailable.
 
 The viewer's agent actions are the agent-device actions on that simulator or
 emulator: taps, typing, app opens, screenshots, and failed commands in red. On

@@ -267,7 +267,8 @@ struct LogsView: View {
     case .device: return "device: simulator, emulator or device logs of the app process"
     case .build: return "build: native builds, installs and launches"
     case .agent:
-      return "agent: what agent-device did on this workspace's simulators and emulators, and agent input on its Chrome page"
+      return
+        "agent: app-scoped agent-device actions on this workspace's simulators, emulators and native Mac app, and agent input on its Chrome page"
     }
   }
 }

@@ -35,7 +35,8 @@ final class AgentFeedModel: ObservableObject {
 struct AgentFeed<Content: View>: View {
   var cli: Task<StimCLI, Never>
   var workspace: String
-  var device: DeviceRef
+  var slot: String
+  var deviceID: String?
   @ViewBuilder var content: ([AgentAction]) -> Content
   @StateObject private var model = AgentFeedModel()
 
@@ -47,11 +48,11 @@ struct AgentFeed<Content: View>: View {
 
   var body: some View {
     content(model.actions)
-      .task(id: device.activityKey.map { RunKey(workspace: workspace, slot: device.slot, deviceID: $0) }) {
-        guard let deviceID = device.activityKey else { return }
+      .task(id: deviceID.map { RunKey(workspace: workspace, slot: slot, deviceID: $0) }) {
+        guard let deviceID else { return }
         let cli = await cli.value
         guard !Task.isCancelled else { return }
-        model.start(cli: cli, workspace: workspace, slot: device.slot, deviceID: deviceID)
+        model.start(cli: cli, workspace: workspace, slot: slot, deviceID: deviceID)
         while !Task.isCancelled { try? await Task.sleep(for: .seconds(3600)) }
         model.stop()
       }

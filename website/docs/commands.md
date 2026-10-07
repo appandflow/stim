@@ -1388,7 +1388,9 @@ Reclaims the target environment, build output, port, and owned device. It then
 removes any linked worktree when safe, warmed or not, without requiring a
 Stim registry entry. Git-created branches stay. An existing Stim ownership
 record permits deleting a branch only when it has no unique commits. On the
-source checkout it only reclaims the environment; a bare repository directory
+source checkout it only reclaims the environment: from the checkout root, every
+registered project under it; from a subfolder, only the project at or above that
+folder (with the projects nested under it), and it refuses when none is registered there. A bare repository directory
 is refused because it is not a worktree. `--force` permits removal
 with uncommitted, untracked, or unpushed work or initialized submodules. A
 worktree locked with `git worktree lock` is refused until you unlock it.
@@ -1526,6 +1528,21 @@ there.
 - `--json` prints the report as one object on stdout and every other line on
   stderr. Agents use it to show you what `gc --delete` would remove before they
   ask to run it.
+
+On a hosting Mac, unscoped `stim gc` also lists parked hosted iOS and Android
+devices; `stim gc --delete` deletes each through its session home's stop worker
+under a session claim. Held claims and unverified ownership keep the device,
+and an unreadable journal keeps all hosted devices. Android deletion also
+requires the AVD to be visible from this shell's Android environment; otherwise
+run gc with the server's `ANDROID_AVD_HOME`/`HOME`. Records no longer listed in
+their session ledger are already removed, skipped and excluded from `actionable`.
+`--older-than` filters by
+parked time; cache scopes omit hosted sessions. JSON adds
+`sections.parkedHostedDevices` entries with `session`, `client` (id), `platform`,
+`id` (UDID or AVD name), `name`, `parkedAt`, and
+`listed` (session-home ledger ownership, null when unreadable). Deletion results
+use `kind: "parkedHostedDevice"`. The server clears the parked marker when it
+reconciles the emptied ledger.
 
 `--json` prints one line. Each key under `sections` is one section of the text
 report, in the same order, and is always present. `stim gc --worktrees --json`

@@ -24,10 +24,6 @@ public enum AppPreferences {
     public static let diffViewer = "diffViewer"
     public static let showsMenuBarExtra = "showsMenuBarExtra"
     public static let stimExecutable = "stimExecutable"
-    public static func runDestination(workspace: String, platform: String) -> String {
-      "runDestination.\(workspace).\(platform)"
-    }
-
     public static let remoteSessionMinutes = "remoteSessionMinutes"
     public static let autopilotIdleShutdown = "autopilot.idleShutdown"
     public static let autopilotIdleMinutes = "autopilot.idleMinutes"
@@ -49,11 +45,13 @@ public enum AppPreferences {
     public static let showsLogs = "workspace.showsLogs"
     public static let logsDrawerHeight = "workspace.logsDrawerHeight"
     public static let viewerShowsActions = "viewer.showsActions"
+    public static let syncsClipboard = "viewer.syncsClipboard"
     public static let viewerOfferDismissed = "onboarding.viewerOfferDismissed"
 
     public static let discoveryLaunches = "discovery.launches"
     public static let discoveryLastShown = "discovery.lastShown"
     public static let discoverySeenPeers = "discovery.seenPeers"
+    public static let discoveryMigrations = "discovery.migrations"
     public static func discovery(_ type: DiscoveryType) -> String { "discovery.\(type.rawValue)" }
 
     public static func notifies(_ kind: StatusEvent.Kind) -> String { "notify.\(kind.rawValue)" }
@@ -61,12 +59,10 @@ public enum AppPreferences {
     public static func sectionShowsAll(_ id: String) -> String { "section.\(id).showsAll" }
   }
 
-  public static func runDestination(
-    workspace: String, platform: String, approvedMachines: [String]?, defaults: UserDefaults = .standard
-  ) -> RunDestination {
-    RunDestination(
-      saved: defaults.string(forKey: Key.runDestination(workspace: workspace, platform: platform)) ?? "",
-      approvedMachines: approvedMachines)
+  public static func removeLegacyRunDestinations(_ defaults: UserDefaults) {
+    for key in defaults.dictionaryRepresentation().keys where key.hasPrefix("runDestination.") {
+      defaults.removeObject(forKey: key)
+    }
   }
 
   public static let frameRates: [Double] = [60, 30, 15, 5]
@@ -87,11 +83,13 @@ public enum AppPreferences {
       Key.notifiesWorktreeRemoval: true,
       Key.showsInspector: true,
       Key.viewerShowsActions: true,
+      Key.syncsClipboard: true,
     ].merging(NotificationSettings.defaults) { current, _ in current }
   }
 
   /// Carries the retired "Show idle workspaces" switch over to the sidebar's Status option.
   public static func migrate(_ defaults: UserDefaults) {
+    removeLegacyRunDestinations(defaults)
     guard let showsIdle = defaults.object(forKey: Key.showsIdleWorkspaces) as? Bool else { return }
     if !showsIdle, defaults.string(forKey: Key.sidebarStatus) == nil {
       defaults.set(StatusFilter.live.rawValue, forKey: Key.sidebarStatus)

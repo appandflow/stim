@@ -687,6 +687,13 @@ retain it.
 A clean host server restart stops its sessions and preserves eligible parked
 devices for adoption by the same client. A running session left by a crash stays
 `unknown` until explicit stop; booted devices are never re-attached after restart.
+On the hosting Mac, `stim gc` lists parked hosted devices and `stim gc --delete`
+deletes them through their owning session homes under a session claim. A held
+claim or unverified ledger ownership keeps the device. Android deletion requires
+the AVD to be visible from this shell; otherwise run gc with the server's
+`ANDROID_AVD_HOME`/`HOME`. Records no longer listed in their session ledger are
+already removed and skipped. The server reconciles
+its parked marker after deletion empties the ledger.
 See [hosted parking](./remote-machines.md#hosted-parking-and-restart) for cleanup,
 compatibility and eviction.
 

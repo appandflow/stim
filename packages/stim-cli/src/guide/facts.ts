@@ -763,7 +763,8 @@ RULES
                   id, bytes, detail } per entry it acted on; empty on a dry
                   run. status is "done", "kept" (left alone, detail says
                   why) or "failed" (detail says why and what to retry).
-                  kind: device, parkedDevice, idleDevice, deviceRecord,
+                  kind: device, parkedDevice, parkedHostedDevice, idleDevice,
+                  deviceRecord,
                   workspaceOutputs, recording, workspaceDirectory, project,
                   buildLock, buildSlot, deviceLease, easSession, worktree,
                   cache.
@@ -835,6 +836,14 @@ RULES
     parkedEmulators         { name, systemImage, deviceProfile, parkedAt, app,
                               bytes, listed }  app is the package name;
                               likewise
+    parkedHostedDevices     { session, client, platform, id, name, parkedAt,
+                              listed }  parked iOS/Android sessions
+                              on this host; client is its registry id, id is
+                              the UDID or AVD name, name is the device label.
+                              listed means its private home ledger lists the
+                              device; false means already removed and is not
+                              actionable; null means unreadable. --older-than
+                              filters by parkedAt; --cache scopes leave this empty
     orphanedDevices         { kind, id, name, bytes, directory }
     unverifiedDevices       { kind, id, name, command }  stim-* devices this
                               Stim home has no record of creating; never

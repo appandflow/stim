@@ -2,6 +2,7 @@ export type GcResultKind =
   | 'archive'
   | 'device'
   | 'parkedDevice'
+  | 'parkedHostedDevice'
   | 'idleDevice'
   | 'deviceRecord'
   | 'workspaceOutputs'

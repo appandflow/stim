@@ -207,7 +207,6 @@ struct StimDesktopApp: App {
     self.machineSettings = machineSettings
     let buildMachines = BuildMachinesModel(cli: cli, settings: machineSettings, statsReader: statsReader)
     self.buildMachines = buildMachines
-    actions.approvedHostingMachines = { buildMachines.approvedHostingMachines(in: $0) }
     let autopilot = AutopilotRunner(
       status: store, actions: actions, gc: gc, disks: disks, settings: machineSettings, cli: cli)
     self.autopilot = autopilot

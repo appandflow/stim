@@ -1,0 +1,69 @@
+{
+  "mode": "delete",
+  "idle": null,
+  "cacheScope": null,
+  "olderThan": null,
+  "worktreeSweep": null,
+  "actionable": true,
+  "failures": 0,
+  "sections": {
+    "deadProjects": [
+      {
+        "path": "/Users/me/dead/alpha"
+      },
+      {
+        "path": "/Users/me/dead/beta"
+      }
+    ],
+    "invalidProjects": [],
+    "orphanedPorts": [],
+    "orphanedWorkspaces": [],
+    "linkedWorktrees": [],
+    "parkedSimulators": [],
+    "parkedEmulators": [],
+    "orphanedDevices": [],
+    "unverifiedDevices": [],
+    "staleDevices": [],
+    "staleDeviceRecords": [],
+    "staleLedgerEntries": [],
+    "staleStatusCaches": [],
+    "idleDevices": [],
+    "orphanedEasSessions": [],
+    "staleBuildLocks": [],
+    "staleBuildSlots": [],
+    "unresolvedBuildClaims": [],
+    "buildsInProgress": [],
+    "expiredDeviceLeases": [],
+    "keptDeviceLeases": [],
+    "deviceSweepNotices": [],
+    "easSessionSweepNotices": [],
+    "skipped": [],
+    "workspaceLogs": [],
+    "recordings": [],
+    "workspaceBuildOutputs": [],
+    "caches": [],
+    "agentDevice": [],
+    "swiftpmCache": [],
+    "memory": [],
+    "watchmanRoots": [],
+    "memoryNotices": []
+  },
+  "results": [
+    {
+      "kind": "project",
+      "status": "done",
+      "label": "/Users/me/dead/alpha",
+      "id": null,
+      "bytes": null,
+      "detail": null
+    },
+    {
+      "kind": "project",
+      "status": "done",
+      "label": "/Users/me/dead/beta",
+      "id": null,
+      "bytes": null,
+      "detail": null
+    }
+  ]
+}

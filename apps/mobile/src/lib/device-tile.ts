@@ -43,7 +43,12 @@ export function deviceTileName(device: DeviceRef): DeviceTileName {
  * What the tile says about the device, the most urgent first: a build running on it, a tool driving it, an app or
  * page that needs attention, idleness, use in the last 10 minutes, and otherwise that it runs.
  */
-export function deviceTileState(device: DeviceRef, env: EnvironmentState, now: number): DeviceTileState {
+export function deviceTileState(
+  device: DeviceRef,
+  env: EnvironmentState,
+  now: number,
+  showsFrame = false,
+): DeviceTileState {
   if (device.platform === 'macos' && env.macos) {
     if (env.macos.build.state === 'running') return { text: t`Building`, tone: 'brand' };
     if (env.macos.build.state === 'failed') return { text: t`Build failed`, tone: 'error' };
@@ -63,7 +68,7 @@ export function deviceTileState(device: DeviceRef, env: EnvironmentState, now: n
   if (badge?.kind === 'driven') return { text: badge.text, tone: 'brand' };
   if (device.app && !['running', 'stopped', 'unknown'].includes(device.app.state))
     return { text: t`Unknown`, tone: 'secondary' };
-  if (device.app?.state === 'stopped') return { text: t`App not running`, tone: 'warning' };
+  if (device.app?.state === 'stopped' && !showsFrame) return { text: t`App not running`, tone: 'warning' };
   if (device.page?.error) return { text: t`Page failed to load`, tone: 'warning' };
   if (badge) return { text: badge.text, tone: 'tertiary' };
   if (device.activity?.state === 'active') return { text: t`In use`, tone: 'success' };

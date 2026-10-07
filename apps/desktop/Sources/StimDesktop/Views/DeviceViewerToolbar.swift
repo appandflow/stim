@@ -22,13 +22,7 @@ struct DeviceViewerToolbar: View {
     HStack(spacing: Space.md) {
       identity
         .layoutPriority(1)
-      if let machine = device.hostedMachine {
-        Label("on \(machineName(machine))", systemImage: "desktopcomputer")
-          .font(.stim(.caption)).foregroundStyle(Palette.tertiary)
-      }
-      if let reason = device.placementReason {
-        Text(reason).font(.stim(.caption)).foregroundStyle(Palette.tertiary).lineLimit(1).help(reason)
-      }
+      DevicePlacementView(device: device)
       ViewThatFits(in: .horizontal) {
         status(usage: true)
         status(usage: false)
@@ -103,10 +97,6 @@ struct DeviceViewerToolbar: View {
         {
           activityPill(badge)
         }
-      }
-      if device.appStopped, env.appPresence(device) != AppPresence.none {
-        Pill(tone: .warning) { Text("App not running") }
-          .help("stim status sees no \(device.app?.id ?? "app") process on this device.")
       }
       if case .web(let browser) = device, browser.pageFailed {
         Pill(tone: .warning) { Text("Page failed to load") }
