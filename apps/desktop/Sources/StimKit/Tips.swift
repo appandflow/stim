@@ -144,7 +144,6 @@ public enum Tips {
   }
 
   /// A discovery prompt is skipped once the tip for its topic has been shown, so one nudge never comes from both.
-  /// `capHit` is exempt: its action is Use Auto, an actionable prompt rather than a tip.
   public static func suppressesDiscovery(_ type: DiscoveryType, lastShown: [TipTopic: Date]) -> Bool {
     type != .capHit && lastShown.contains { topic, _ in topic.nudgeTopic?.discoveryTypes.contains(type) == true }
   }
