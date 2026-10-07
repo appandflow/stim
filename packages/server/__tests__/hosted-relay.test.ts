@@ -883,7 +883,7 @@ it.each([
       ['input.rotate', { direction: 'right' }],
       ['input.posture', { posture: 'folded' }],
     ] as const
-  ).filter(([method]) => platform === 'ios' || (method !== 'input.rotate' && method !== 'input.posture'))) {
+  ).filter(([name]) => platform === 'ios' || (name !== 'input.rotate' && name !== 'input.posture'))) {
     expect(await local.request(method, { session, ...params })).toMatchObject({ result: {} });
     expect(requests.at(-1)).toMatchObject({
       method: `device-host.${method}`,
