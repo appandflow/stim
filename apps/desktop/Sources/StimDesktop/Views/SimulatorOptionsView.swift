@@ -3,7 +3,13 @@ import SwiftUI
 
 struct DeviceFrameOption {
   let isOn: Binding<Bool>
-  let unavailableReason: String?
+  private let reason: () -> String?
+  var unavailableReason: String? { reason() }
+
+  init(isOn: Binding<Bool>, unavailableReason: @autoclosure @escaping () -> String?) {
+    self.isOn = isOn
+    reason = unavailableReason
+  }
 }
 
 struct DeviceFrameToggle: View {
