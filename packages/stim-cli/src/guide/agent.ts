@@ -330,6 +330,7 @@ Read the matching guide before acting in these situations:
 | Swift Package macOS development                        | stim guide macos                 |
 | macOS app on another Mac (stim macos --remote)        | stim guide macos                 |
 | Unfamiliar state or JSON field                        | stim guide facts payloads        |
+| User asks for the Stim tutorial                       | stim guide tutorial              |
 | Refusal without a code                                | stim guide errors                |
 
 Use the CODE exactly as printed; codes sharing a header resolve to the same
@@ -365,5 +366,7 @@ FULL TOPIC LIST
   stim guide cleanup              # what reclaims a device, and what deletes
   stim guide cleanup collector    # an unproven collector pid; why the app on a phone closed
   stim guide cleanup memory       # watchman and Gradle daemon memory; gc --cache watchman
+  stim guide tutorial             # tutorial sections and manual commands
+  stim guide tutorial run         # create the app and build in a tour worktree
   stim guide settings             # configuration files and supported keys`,
 };

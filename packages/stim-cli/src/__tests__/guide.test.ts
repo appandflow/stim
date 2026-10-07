@@ -17,6 +17,7 @@ import {
   MACHINE_OWNER_KINDS,
   MEMORY_SOURCES,
   NATIVE_BUILD_STEPS,
+  TUTORIAL_VERSION,
 } from '@stim-cli/core/state';
 import assert from 'node:assert';
 import { readdirSync, readFileSync } from 'fs';
@@ -27,6 +28,8 @@ import { CLAIM_REFUSED, CLAIM_UNAVAILABLE } from '../ownership-claim.ts';
 import { AUTOMATION_TOOLS } from '../devices/automation-tools.ts';
 import { STIM_DESKTOP_INSTALLED, workspaceLinkLine } from '../devices/stim-desktop.ts';
 import TOPICS from '../guide/index.ts';
+import { TUTORIAL_STEPS } from '../guide/tutorial-data.ts';
+import { detectTutorial } from '../workspace/project.ts';
 import webCommand from '../commands/web.ts';
 import macosCommand from '../commands/macos.ts';
 import { buildReport } from '../engine/build-progress.ts';
@@ -538,6 +541,40 @@ test('the agent guide routes situations to valid sections before listing every t
   ]) {
     expect(agent).toContain(route);
   }
+});
+
+test('tutorial prompts route to rendered sections', () => {
+  for (const step of TUTORIAL_STEPS) {
+    if (!step.prompt) continue;
+    assert(step.section, step.id);
+    expect(renderSection('tutorial', step.section)).toBeTruthy();
+  }
+});
+
+test('the printed tutorial app is detected as the supported tutorial version', () => {
+  const app = renderSection('tutorial', 'app');
+  assert(app);
+  const json = app.match(/```json\n([\s\S]*?)\n```/)?.[1];
+  assert(json);
+  expect(detectTutorial(JSON.parse(json))).toEqual({ version: TUTORIAL_VERSION });
+});
+
+test('tutorial setup protects existing folders and the user repository', () => {
+  const run = renderSection('tutorial', 'run');
+  assert(run);
+  expect(run).toMatch(/existing non-tutorial[\s\S]*?stop and ask the user for another folder/i);
+  expect(run).toMatch(/Never overwrite or delete it/i);
+  expect(run).toMatch(/inside another repository[\s\S]*?stop and ask the user for another folder/i);
+  expect(run).toMatch(/Never git add in the user's repo/i);
+});
+
+test('tutorial finish removes the tour worktree without forcing removal', () => {
+  const finish = renderSection('tutorial', 'finish');
+  assert(finish);
+  expect(finish).toMatch(/stim worktree remove "\{tour\}"/);
+  expect(finish).toMatch(/authorizes removing this tour worktree only/i);
+  expect(finish).toMatch(/Never use --force/i);
+  expect(finish).not.toMatch(/stim worktree remove[^\n]*--force/);
 });
 
 test('the agent guide shares the Stim Desktop link the commands print, once', () => {
