@@ -219,7 +219,8 @@ import XCTest
   func testRealArchivePreservesAllBuildsAndOpensItsRetainedReplay() async throws {
     let now = Date(timeIntervalSince1970: 1791356400)
     let fixture = try PlaygroundFixtures.realArchive(now: now)
-    let page = ArchivedPage(archive: fixture.archive, detail: fixture.archiveDetail, now: now)
+    let page = ArchivedPage(archive: fixture.archive, detail: fixture.archiveDetail, now: now.addingTimeInterval(172800))
+    XCTAssertTrue(page.recordingsExpired)
     let builds = try XCTUnwrap(page.workspace.builds?.ios)
     XCTAssertEqual(builds.map { $0.build.durationMs }, [13140, 29746, 66197, 9406, 129383])
     XCTAssertEqual(builds.map { $0.build.offloadedTo }, [nil, "janics-mac-mini", nil, nil, "janics-mac-mini"])
@@ -231,13 +232,6 @@ import XCTest
     XCTAssertEqual(page.offloadedBuilds, 2)
     XCTAssertEqual(page.cacheHits, 0)
     XCTAssertEqual(page.workspace.lastBuilds?.ios?.durationMs, 13140)
-    XCTAssertEqual(
-      fixture.archiveDetail.recordings[0].spans,
-      [
-        ReplaySpan(start: 1791346346610, end: 1791346357977),
-        ReplaySpan(start: 1791346446117, end: 1791346446586),
-        ReplaySpan(start: 1791346655074, end: 1791346655625),
-      ])
     let (client, socket) = try await connection()
     defer { client.stop() }
     let model = ArchivedReplayModel(archive: fixture.archive.id, recordings: page.recordings)

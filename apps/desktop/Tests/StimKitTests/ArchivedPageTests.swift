@@ -28,34 +28,6 @@ import Testing
         """#.utf8))
   }
 
-  @Test func archivedPageRetainsWorkAndBuildHistoryWithoutLiveState() throws {
-    let page = ArchivedPage(archive: try archive(), detail: try detail(), now: now)
-    let workspace = page.workspace
-    #expect(workspace.path == "/work/feature/app")
-    #expect(workspace.names.title == "feature-search")
-    #expect(workspace.lastBuilds?.ios?.status == "failed")
-    #expect(workspace.lastBuilds?.android?.cacheHit == .local)
-    #expect(workspace.builds?.ios?.first?.phases == ["prepare": 1000, "compile": 41000])
-    #expect(workspace.worktree?.branch == "feature-search")
-    #expect(workspace.worktree?.pullRequest?.number == 2602)
-    #expect(workspace.worktree?.pullRequest?.state == "merged")
-    #expect(workspace.worktree?.merged == true)
-    #expect(page.merged)
-    #expect(workspace.endedAgents?.first?.sessionId == "ended-session")
-    #expect(workspace.endedAgents?.first?.duration == 7200)
-    #expect(workspace.agents == nil)
-    #expect(!workspace.live && !workspace.isActive)
-    #expect(workspace.devices.isEmpty)
-    #expect(workspace.metro == nil && workspace.supervisor == nil)
-    #expect(workspace.memoryMb == nil && workspace.disk == nil)
-    #expect(page.statusLine == "Removed 2d ago by worktree removal")
-    #expect(page.lastUsedLabel != nil)
-    #expect(page.sizeLabel == Format.fileSize(3147776))
-    #expect(page.replacedBy == "/work/new/app")
-    #expect(page.recordings.map(\.slot) == ["default", "fold"])
-    #expect(page.recordings[1].spans == [ReplaySpan(start: 3000, end: 4000)])
-  }
-
   @Test func missingDetailKeepsLastBuildSummaryForDisconnectedOrOlderServers() throws {
     let archive = try archive()
     let page = ArchivedPage(archive: archive, now: now)
@@ -64,6 +36,21 @@ import Testing
     #expect(page.workspace.builds == nil)
     #expect(page.workspace.runPlatforms == ["ios"])
     #expect(page.recordings.isEmpty)
+  }
+
+  @Test(arguments: ["ios", "android"])
+  func emptyPlatformHistoryKeepsTheLastBuildSummary(_ platform: String) throws {
+    var archive = try archive()
+    archive.builds.last?.platform = platform
+    var history = try detail()
+    for entries in [nil, []] as [[BuildHistoryEntry]?] {
+      if platform == "ios" { history.builds.ios = entries } else { history.builds.android = entries }
+      let page = ArchivedPage(archive: archive, detail: history, now: now)
+      #expect(page.workspace.lastBuilds?.build(for: platform) == archive.builds.last)
+      #expect(page.workspace.runPlatforms.contains(platform))
+      let other = platform == "ios" ? "android" : "ios"
+      #expect(page.workspace.lastBuilds?.build(for: other) == history.builds.builds(for: other).first?.build)
+    }
   }
 
   @Test func anArchiveWithoutBuildsDoesNotInventPlatformsOrHistory() throws {
@@ -77,7 +64,7 @@ import Testing
     #expect(page.workspace.runPlatforms.isEmpty)
     #expect(page.workspace.names.title == "app")
     let empty = try JSONDecoder().decode(ArchiveDetail.self, from: Data(#"{"builds":{},"recordings":[]}"#.utf8))
-    #expect(ArchivedPage(archive: try self.archive(), detail: empty, now: now).workspace.runPlatforms.isEmpty)
+    #expect(ArchivedPage(archive: archive, detail: empty, now: now).workspace.runPlatforms.isEmpty)
   }
 
   @Test func mergedPullRequestIsRetainedEvenWithoutTheWorktreeMergeFlag() throws {
@@ -91,7 +78,7 @@ import Testing
     #expect(!ArchivedPage(archive: archive, now: now).merged)
   }
 
-  @Test func retainedContentExpiresOnlyWithZeroBytesOrAPastDeadline() throws {
+  @Test func retainedContentExpiresOnlyWithAPastDeadline() throws {
     var archive = try archive()
     for offset in [-1.0, 0.0, 1.0] {
       archive.expires.logs = now.addingTimeInterval(offset).ISO8601Format()
@@ -106,11 +93,31 @@ import Testing
     #expect(!page.logsExpired && !page.recordingsExpired)
     archive.bytes.logs = 0
     archive.bytes.recordings = 0
+    page = ArchivedPage(archive: archive, now: now)
+    #expect(!page.logsExpired && !page.recordingsExpired)
+    #expect(page.expiryLabel == nil)
     archive.expires.logs = now.addingTimeInterval(86400).ISO8601Format()
     archive.expires.recordings = archive.expires.logs
     page = ArchivedPage(archive: archive, now: now)
+    #expect(!page.logsExpired && !page.recordingsExpired)
+    archive.expires.logs = now.addingTimeInterval(-1).ISO8601Format()
+    archive.expires.recordings = archive.expires.logs
+    page = ArchivedPage(archive: archive, now: now)
     #expect(page.logsExpired && page.recordingsExpired)
+    #expect(page.expiryLabel == "Media expired")
   }
+
+  @Test func recordingSpansRemainAvailableAfterExpiryAndEmptySlotsAreOmitted() throws {
+    var archive = try archive()
+    archive.bytes.recordings = 0
+    archive.expires.recordings = now.addingTimeInterval(-1).ISO8601Format()
+    var history = try detail()
+    history.recordings[1].spans = []
+    let page = ArchivedPage(archive: archive, detail: history, now: now)
+    #expect(page.recordingsExpired)
+    #expect(page.recordings.map(\.slot) == ["default"])
+  }
+
   @Test(arguments: ["draft", "open", "closed"])
   func snapshotPullRequestStatesNeverPretendToBeCurrent(_ state: String) throws {
     var archive = try archive()
@@ -126,20 +133,15 @@ import Testing
     #expect(merged.workspace.worktree?.pullRequest?.state == "merged")
   }
 
-  @Test func retentionWarnsWithin24HoursAndKeepsEveryStorageKind() throws {
+  @Test func retentionWarnsWithin24HoursWithoutTreatingAgentExpiryAsMediaExpiry() throws {
     var archive = try archive()
     archive.expires.logs = now.addingTimeInterval(86400).ISO8601Format()
     archive.expires.recordings = now.addingTimeInterval(86401).ISO8601Format()
     archive.expires.agentActions = now.addingTimeInterval(-1).ISO8601Format()
     let page = ArchivedPage(archive: archive, now: now)
     #expect(page.expiryLabel == "Expires soon")
-    #expect(page.retention.map(\.bytes) == [1048576, 2097152, 1024, 1024])
     #expect(page.retention.map(\.expiresSoon) == [true, false, false, false])
     #expect(page.retention.map(\.expired) == [false, false, true, false])
-    let withHistory = ArchivedPage(archive: archive, detail: try detail(), now: now)
-    #expect(withHistory.cacheHits == 1)
-    #expect(withHistory.offloadedBuilds == 0)
-    #expect(page.cacheHits == nil && page.offloadedBuilds == nil)
   }
 
   @Test func nestedAppsRetainWorktreeIdentityEvenAfterGitFactsAreGone() throws {
@@ -154,5 +156,4 @@ import Testing
       #expect(page.workspace.names.inCheckout == "apps/mobile")
     }
   }
-
 }

@@ -38,7 +38,7 @@ public struct ArchivedPage: Sendable {
       ("Record", archive.bytes.record, archive.expires.record),
     ].map { title, bytes, stamp in
       let until = stamp.flatMap(parseTimestamp)
-      let expired = bytes == 0 || until.map { $0 < now } == true
+      let expired = until.map { $0 < now } == true
       return Retention(
         title: title, bytes: bytes, until: until, expired: expired,
         expiresSoon: !expired && until.map { $0 <= now.addingTimeInterval(86400) } == true)
@@ -59,8 +59,8 @@ public struct ArchivedPage: Sendable {
     cacheHits = detail.map { _ in entries.filter { $0.build.cacheHit != .none }.count }
     offloadedBuilds = detail.map { _ in entries.filter { $0.build.offloadedTo != nil }.count }
     let last = archive.builds.last
-    let ios = detail == nil ? (last?.platform == "ios" ? last : nil) : builds?.ios?.first?.build
-    let android = detail == nil ? (last?.platform == "android" ? last : nil) : builds?.android?.first?.build
+    let ios = builds?.ios?.first?.build ?? (last?.platform == "ios" ? last : nil)
+    let android = builds?.android?.first?.build ?? (last?.platform == "android" ? last : nil)
     workspace = Workspace(
       path: archive.projectRoot,
       platforms: ["ios", "android"].filter { $0 == "ios" ? ios != nil : android != nil },
@@ -75,7 +75,7 @@ public struct ArchivedPage: Sendable {
     sizeLabel = archive.sizeLabel
     logsExpired = retention[0].expired
     recordingsExpired = retention[1].expired
-    recordings = detail?.recordings ?? []
+    recordings = detail?.recordings.filter { !$0.spans.isEmpty } ?? []
     replacedBy = archive.replacedBy
   }
 }

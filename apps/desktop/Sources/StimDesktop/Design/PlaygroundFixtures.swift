@@ -188,6 +188,14 @@
         "platform": "ios", "fingerprint": "fixture-fingerprint", "cacheHit": "local", "cacheSkipped": false,
         "basis": 3, "outcome": "hit", "expectedMs": 8400,
       ])
+      var archive = try archived(now: now, expired: scenario == .error, last: env["lastBuilds"] as? [String: Any], miss: miss)
+      if scenario == .empty {
+        archive.bytes.logs = 0
+        archive.bytes.recordings = 0
+        archive.bytes.total = archive.bytes.record
+        archive.expires.logs = nil
+        archive.expires.recordings = nil
+      }
       return Self(
         inbox: NotificationInbox(fixtures: Inbox(entries: entries)),
         settings: SettingsModel(
@@ -195,7 +203,7 @@
           error: scenario == .error ? "The settings response could not be read. Check the selected workspace and retry." : nil
         ),
         environment: try decode(env),
-        archive: try archived(now: now, expired: scenario == .error, last: env["lastBuilds"] as? [String: Any], miss: miss),
+        archive: archive,
         archiveDetail: try archivedDetail(now: now, phases: phases),
         checks: BuildPlanChecks { _, _ in
           if scenario == .error { throw PlaygroundFailure.plan }
@@ -243,11 +251,11 @@
             "endedAt": stamp.string(from: now.addingTimeInterval(-173000)),
           ]
         ],
-        "bytes": ["logs": 1048576, "recordings": 2097152, "agentActions": 1024, "record": 1024, "total": 3147776],
+        "bytes": ["logs": 1048576, "recordings": 2097152, "agentActions": 0, "record": 1024, "total": 3146752],
         "expires": [
           "logs": now.addingTimeInterval(-1).ISO8601Format(),
           "recordings": now.addingTimeInterval(expired ? -1 : 86400).ISO8601Format(),
-          "agentActions": now.addingTimeInterval(172800).ISO8601Format(),
+          "agentActions": NSNull(),
           "record": now.addingTimeInterval(432000).ISO8601Format(),
         ],
         "version": 1, "replacedBy": workspace,

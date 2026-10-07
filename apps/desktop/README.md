@@ -114,8 +114,9 @@ back to its replacement when there is one.
 Logs use the existing source, slot, level, error and search filters, querying the connected
 loopback stim-server without following. Busy-server refusals retry briefly. `archive.detail` supplies build history and the retained
 iOS, Android and Web recordings by slot; replay reads their ranges sequentially, once per recording.
-Logs and recordings show expired when their retained bytes are zero or their expiry is past.
-A missing expiry with retained bytes remains readable. Archived pages offer
+Logs and recordings show expired only when a reported expiry is past. Zero bytes with no
+expiry means nothing was kept. Recording expiry is a label: retained replay spans remain
+available regardless of the client clock. Archived pages offer
 no live device or workspace actions. An older server shows an update hint for archive
 requests that require a workspace instead of an archive; other refusals show the server's
 message. Connect through the Phones page to read logs and replay.
@@ -124,8 +125,8 @@ Delete names the archive and removal age in a confirmation and permanently remov
 logs, recordings, agent actions and record through `stim gc --delete --cache archived:<id>`. The page
 returns to the previous selection once status stops reporting the archive. Machines
 shows archive count, total size, per-kind sizes and retention setting names separately;
-archives are never selected as safe space to free. If `archive.detail` is unavailable,
-the Build card falls back to the archive's last build summary and replay probes the default slots.
+archives are never selected as safe space to free. The Build card falls back to the archive's
+last build summary when `archive.detail` has no history for that platform or is unavailable. Without detail, replay probes the default slots.
 Archives never fetch resource stats or build plans, and offer no run, reload, stop or live device controls.
 
 ## Workspace page

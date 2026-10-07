@@ -385,7 +385,8 @@ struct WorkspaceDetail: View {
   }
 
   private func archiveCanvas(archive: ArchivedWorkspace, adapted: ArchivedPage) -> some View {
-    ScrollView {
+    let recordings = (fixtureDetail ?? archiveDetail).map { _ in adapted.recordings }
+    return ScrollView {
       VStack(alignment: .leading, spacing: Space.xxl) {
         if let path = adapted.replacedBy {
           Button("Replaced by \(archiveEnvironments.first(where: { $0.path == path })?.names.title ?? path)") {
@@ -395,10 +396,13 @@ struct WorkspaceDetail: View {
         SectionLabel(title: "Devices")
         if adapted.recordingsExpired {
           InlineEmpty("Recordings expired")
-        } else if readsServer {
-          ArchivedReplays(archive: archive.id, recordings: archiveDetail?.recordings)
-            .id("\(archive.id)|\(adapted.recordings.map(\.id).joined(separator: ","))")
-          if archiveDetail?.recordings.isEmpty == true { InlineEmpty("No recordings retained") }
+        }
+        if readsServer {
+          ArchivedReplays(archive: archive.id, recordings: recordings)
+            .id("\(archive.id)|\(recordings != nil)|\(adapted.recordings.map(\.id).joined(separator: ","))")
+          if recordings?.isEmpty == true { InlineEmpty("No recordings retained") }
+        } else if adapted.recordings.isEmpty {
+          InlineEmpty("No recordings retained")
         } else {
           ForEach(adapted.recordings) { recording in
             Card {

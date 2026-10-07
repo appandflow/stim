@@ -30,7 +30,7 @@ struct ArchiveStatusSection: View {
                 Text("Until \(until, format: .dateTime.month(.abbreviated).day().hour().minute())")
                   .foregroundStyle(part.expiresSoon ? Palette.warning : Palette.secondary)
               } else {
-                Text("No expiry reported").foregroundStyle(Palette.tertiary)
+                Text(part.bytes == 0 ? "None" : "No expiry reported").foregroundStyle(Palette.tertiary)
               }
             }
           }

@@ -132,6 +132,11 @@
       gone.worktree.branch = nil
       gone.worktree.pullRequest?.state = "draft"
       gone.worktree.merged = nil
+      gone.bytes.logs = 0
+      gone.bytes.recordings = 0
+      gone.bytes.total = gone.bytes.record
+      gone.expires.logs = nil
+      gone.expires.recordings = nil
       return [mobile, desktop, gone]
     }
 
