@@ -1,4 +1,3 @@
-import AppKit
 import StimKit
 import SwiftUI
 
@@ -133,7 +132,7 @@ struct AddMachineSheet: View {
       case .tailscaleMissing:
         Text("Install Tailscale from tailscale.com/download, sign in, then Check again.")
       case .tailscaleStopped:
-        CommandText(command: "tailscale up")
+        CopyableCommand(command: "tailscale up")
       case .peerOffline:
         if let peer = model.selected {
           Text("Open Tailscale on \(peer.mac.hostName) and sign in to the same tailnet.")
@@ -204,7 +203,7 @@ struct AddMachineSheet: View {
       if wizard.phase == .cancelled {
         if !wizard.revokeIds.isEmpty {
           Text("On \(name), revoke these requests:").font(.stim(.headline))
-          ForEach(wizard.revokeIds.sorted(), id: \.self) { CommandText(command: "stim-server devices revoke \($0)") }
+          ForEach(wizard.revokeIds.sorted(), id: \.self) { CopyableCommand(command: "stim-server devices revoke \($0)") }
         }
       } else {
         if wizard.journal == nil || wizard.failure(now: model.now) == .noAnswer || wizard.failure(now: model.now) == .expired {
@@ -282,18 +281,18 @@ struct AddMachineSheet: View {
     case .expired: Text("The ticket expired before approval. Generate a New command.")
     case .stepFailed(let step, let detail, let fix):
       Text([step, detail].compactMap { $0 }.joined(separator: ": ")).foregroundStyle(Palette.error)
-      if let fix { CommandText(command: fix) }
+      if let fix { CopyableCommand(command: fix) }
     case .serverTooOld(let fix):
       Text("This stim-server predates setup support. Run the update command on \(name).")
-      if let fix { CommandText(command: fix) }
+      if let fix { CopyableCommand(command: fix) }
     case .requestLapsed:
       Text("The request lapsed. Stim asks again with the same ticket, at most once every 30 seconds while it is valid.")
     case .grantedOther(_, let journalId, _):
       Text("Another request from this Mac was approved. Revoke it on \(name), then generate a New command.")
-      CommandText(command: "stim-server devices revoke \(journalId)")
+      CopyableCommand(command: "stim-server devices revoke \(journalId)")
     case .funneled(let fix):
       Text("Setup refused because the route is public. On \(name), run:")
-      CommandText(command: fix)
+      CopyableCommand(command: fix)
     case .permissionSkipped(let feature):
       Text(feature + ". Enable Stim Host in System Settings > Privacy & Security on " + name + ", then Check again.")
       if let fix = wizard.journal?.steps.first(where: { $0.id.hasPrefix("permissions.") && $0.state != .ok })?.fix {
@@ -317,15 +316,13 @@ struct AddMachineSheet: View {
         if let ticket = wizard.ticket ?? model.draftTicket {
           Text("expires \(expiryTime(ticket.expiresAt))").font(.stim(.caption))
         }
-        Button("Copy") {
-          if let command = model.command {
-            NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString(command, forType: .string)
-          }
-        }.disabled(model.command == nil)
       }
-      Text(model.command ?? "Resolving this Mac's stim-server version and tailnet node. Check again.")
-        .font(.stim(.caption, mono: true)).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+      if let command = model.command {
+        CopyableCommand(command: command)
+      } else {
+        Text("Resolving this Mac's stim-server version and tailnet node. Check again.")
+          .font(.stim(.caption, mono: true)).fixedSize(horizontal: false, vertical: true)
+      }
     }
     .padding(Space.md).background(Palette.surface, in: RoundedRectangle(cornerRadius: Radius.control))
   }

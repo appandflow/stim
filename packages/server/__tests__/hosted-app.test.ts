@@ -188,11 +188,13 @@ test.each(['extra-file', 'link', 'wrong-path'])(
       ...entry(scenario === 'wrong-path' ? 'Other.apk' : 'App.apk', 'client APK'),
       kind: scenario === 'link' ? ('link' as const) : ('file' as const),
     };
-    await manifest('android', [file, entry('Info.plist', 'plist')]);
+    await manifest('android', [entry('App.apk', 'client APK')]);
+    const record = {
+      ...readHostedApp(session, 'android'),
+      files: scenario === 'extra-file' ? [file, entry('Info.plist', 'plist')] : [file],
+    };
     const apk = join(home, 'worker.apk');
     writeFileSync(apk, 'client APK');
-    await expect(handOverHostedApp(readHostedApp(session, 'android'), apk, 'android')).rejects.toThrow(
-      'single file entry named App.apk',
-    );
+    await expect(handOverHostedApp(record, apk, 'android')).rejects.toThrow('single file entry named App.apk');
   },
 );

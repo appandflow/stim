@@ -380,7 +380,10 @@ retrying a busy host for at most one minute.
 stim logs, including --errors and --json, pulls native logcat records as src: device.
 The host rechecks the exact ledger-owned serial and AVD name, resolves the app's
 pid on each collection and also drains its last observed pid after a crash or
-restart. If no pid was ever observed, native logs cannot be attributed to the app.
+restart. A successful drain retires the exited pid. A failed pid lookup preserves
+the checkpoint without querying logcat, so the next collection can retry.
+If no pid was ever observed,
+native logs cannot be attributed to the app.
 PID-based logcat cannot distinguish historical reuse of an exited pid.
 Queries use bounded logcat -d -v epoch -T <epoch> --pid <pid> output, a ten-second
 budget, a persisted checkpoint and five-second overlap to deduplicate records.

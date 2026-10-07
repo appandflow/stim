@@ -8,6 +8,7 @@ import { pruneCache, type CacheDescriptor } from '../../cache/caches.ts';
 import { canonicalPath } from './paths.ts';
 import { recordGcResult } from './results.ts';
 import { memoryCacheKind } from './memory.ts';
+import { parseArchiveSelector } from './archive-selector.ts';
 
 export interface GcCache extends CacheDescriptor {
   machineGlobal?: string | null;
@@ -42,13 +43,7 @@ const RECORDINGS = 'recordings';
 const PARKED_DEVICES = 'parked';
 
 export function includesArchives(name: string | null | undefined): boolean {
-  const wanted = name?.trim().toLowerCase();
-  return Boolean(
-    wanted &&
-    (wanted === 'archived' ||
-      wanted.startsWith('archived:') ||
-      ['archived-logs', 'archived-recordings', 'archived-agent'].includes(wanted)),
-  );
+  return name ? parseArchiveSelector(name) !== null : false;
 }
 
 export function includesParkedDevices(name: string | null | undefined): boolean {

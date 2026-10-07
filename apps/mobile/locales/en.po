@@ -287,36 +287,36 @@ msgid "{live} live"
 msgstr "{live} live"
 
 #: src/lib/workspace-view.ts
-msgid "{machine} busy"
-msgstr "{machine} busy"
-
-#: src/lib/workspace-view.ts
 msgid "{machine} failed"
 msgstr "{machine} failed"
 
 #: src/lib/workspace-view.ts
-msgid "{machine} low on disk"
-msgstr "{machine} low on disk"
+msgid "{machine} has a different toolchain"
+msgstr "{machine} has a different toolchain"
 
 #: src/lib/workspace-view.ts
-msgid "{machine} missing SDK"
-msgstr "{machine} missing SDK"
+msgid "{machine} is low on disk"
+msgstr "{machine} is low on disk"
 
 #: src/lib/workspace-view.ts
-msgid "{machine} no less loaded"
-msgstr "{machine} no less loaded"
+msgid "{machine} is missing the SDK"
+msgstr "{machine} is missing the SDK"
 
 #: src/lib/workspace-view.ts
-msgid "{machine} on another Stim build"
-msgstr "{machine} on another Stim build"
+msgid "{machine} runs an older stim-server"
+msgstr "{machine} runs an older stim-server"
 
 #: src/lib/workspace-view.ts
-msgid "{machine} too old"
-msgstr "{machine} too old"
+msgid "{machine} was busy"
+msgstr "{machine} was busy"
 
 #: src/lib/workspace-view.ts
-msgid "{machine} toolchain differs"
-msgstr "{machine} toolchain differs"
+msgid "{machine} was no less loaded"
+msgstr "{machine} was no less loaded"
+
+#: src/lib/workspace-view.ts
+msgid "{machine} was on a different Stim build"
+msgstr "{machine} was on a different Stim build"
 
 #: src/intl/format.ts
 msgid "{mb} MB"
@@ -659,10 +659,6 @@ msgstr "{warnings, plural, one {# issue} other {# issues}}"
 msgid "{warnings, plural, one {# warning} other {# warnings}}"
 msgstr "{warnings, plural, one {# warning} other {# warnings}}"
 
-#: src/lib/workspace-view.ts
-msgid "{what} → built here"
-msgstr "{what} → built here"
-
 #: src/screens/mac-status.tsx
 msgid "{whole} h"
 msgstr "{whole} h"
@@ -825,8 +821,8 @@ msgid "All machines"
 msgstr "All machines"
 
 #: src/screens/filters.tsx
-msgid "All shows live and idle workspaces. Archived shows only removed worktrees."
-msgstr "All shows live and idle workspaces. Archived shows only removed worktrees."
+msgid "All shows live, idle and archived workspaces. Archived shows only removed worktrees."
+msgstr "All shows live, idle and archived workspaces. Archived shows only removed worktrees."
 
 #: src/screens/logs.tsx
 msgid "All slots"
@@ -1105,6 +1101,10 @@ msgstr "Built here after {name}"
 #: src/lib/build-machines.ts
 msgid "Built here after offloading"
 msgstr "Built here after offloading"
+
+#: src/lib/workspace-view.ts
+msgid "Built here: {what}"
+msgstr "Built here: {what}"
 
 #: src/lib/format.ts
 #: src/lib/format.ts
@@ -1483,19 +1483,17 @@ msgstr "Control"
 msgid "Control ended. {ended}"
 msgstr "Control ended. {ended}"
 
-#: src/screens/about.tsx
-#: src/screens/about.tsx
-#: src/screens/device-view.tsx
+#: src/components/copy-button.tsx
+#: src/components/copy-button.tsx
+#: src/components/copy-button.tsx
 #: src/screens/home.tsx
 #: src/screens/logs.tsx
 msgid "Copied"
 msgstr "Copied"
 
+#: src/components/copy-button.tsx
+#: src/components/copy-button.tsx
 #: src/components/viewer-keyboard.tsx
-#: src/screens/about.tsx
-#: src/screens/home.tsx
-#: src/screens/logs.tsx
-#: src/screens/mac-status.tsx
 msgid "Copy"
 msgstr "Copy"
 

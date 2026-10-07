@@ -223,7 +223,8 @@ export function filterWorkspaces<T extends HomeEntry>(
   const hidden = new Set<string>();
   for (const item of items) {
     const archived = 'archive' in item;
-    if (archived !== (filters.activity === 'archived')) continue;
+    if (archived ? filters.activity !== 'archived' && filters.activity !== 'all' : filters.activity === 'archived')
+      continue;
     if (macs.length && !macs.includes(item.macId)) continue;
     if (projects.length && !projects.includes(item.project)) continue;
     if (

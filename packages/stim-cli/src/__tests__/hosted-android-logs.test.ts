@@ -21,6 +21,11 @@ const serial = 'emulator-5554';
 const fixture = readFileSync(join(import.meta.dirname, 'fixtures/hosted-android-logcat-epoch.txt'), 'utf8');
 const records = () => readLogsSince(hostedNativeLogsDir(home, 'android'), {}).records;
 const checkpoint = () => readHostedNativeLogsCheckpoint(home, 'android');
+const pidofOutput = () => {
+  if (!pid)
+    throw Object.assign(new Error('pidof found no process'), { status: 1, signal: null, stdout: '', stderr: '' });
+  return pid;
+};
 
 beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), 'stim-android-log-worker-'));
@@ -62,7 +67,7 @@ beforeEach(() => {
   output = fixture;
   native.runQuiet.mockReset().mockReturnValue(`${avdName}\nOK`);
   native.runFile.mockReset().mockImplementation((_file, args = []) => {
-    if (args.includes('pidof')) return pid;
+    if (args.includes('pidof')) return pidofOutput();
     if (args.includes('date')) return String(Date.now());
     const selected = args[args.indexOf('--pid') + 1];
     return output
@@ -105,8 +110,11 @@ test('collects native errors for the exact serial and app pid, overlaps without 
   vi.setSystemTime(start + 3000);
   collectHostedAndroidLogs(home, session, 'app', start, true);
   expect(records().at(-1)).toMatchObject({ src: 'device', level: 'fatal', msg: 'Fatal signal 11' });
+  output += '\n1700000003.100   456   456 E OtherApp: reused pid failure';
+  vi.setSystemTime(start + 4000);
   collectHostedAndroidLogs(home, session, 'app', start, true);
   expect(records()).toHaveLength(5);
+  expect(checkpoint()?.pid).toBeUndefined();
   expect(checkpoint()?.until).toBe(start + 3000);
 });
 
@@ -123,6 +131,37 @@ test.each(['foreign-ledger', 'wrong-avd', 'wrong-recorded-serial'])(
     }
     expect(() => collectHostedAndroidLogs(home, session, 'app', start)).toThrow(/ledger|owned|identity/);
     expect(native.runFile).not.toHaveBeenCalled();
+  },
+);
+
+test.each(['timeout', 'transport'])(
+  'a %s during pid lookup preserves the checkpoint for a later crash-tail drain',
+  (failure) => {
+    collectHostedAndroidLogs(home, session, 'app', start);
+    const previous = checkpoint();
+    const runFile = native.runFile.getMockImplementation()!;
+    const error = Object.assign(
+      new Error('pid lookup failed'),
+      failure === 'timeout'
+        ? { code: 'ETIMEDOUT', status: null, signal: 'SIGKILL', stdout: '', stderr: '' }
+        : { status: 1, signal: null, stdout: '', stderr: 'error: device offline' },
+    );
+    native.runFile.mockClear().mockImplementation((file, args = [], options) => {
+      if (args.includes('pidof')) throw error;
+      return runFile(file, args, options);
+    });
+    vi.setSystemTime(start + 2000);
+    expect(() => collectHostedAndroidLogs(home, session, 'app', start)).toThrow(error);
+    expect(checkpoint()).toEqual(previous);
+    expect(native.runFile.mock.calls.some(([, args]) => args?.includes('logcat'))).toBe(false);
+
+    native.runFile.mockImplementation(runFile);
+    pid = '';
+    output += '\n1700000003.100   321   321 F libc: retained crash tail';
+    vi.setSystemTime(start + 4000);
+    collectHostedAndroidLogs(home, session, 'app', start, true);
+    expect(records().at(-1)).toMatchObject({ level: 'fatal', msg: 'retained crash tail' });
+    expect(checkpoint()?.pid).toBeUndefined();
   },
 );
 
@@ -149,7 +188,7 @@ test('a prior attempt pid cannot select logs for a replacement app', () => {
 
 test('clock alignment queries device epoch while persisting host timestamps', () => {
   native.runFile.mockImplementation((_file, args = []) => {
-    if (args.includes('pidof')) return pid;
+    if (args.includes('pidof')) return pidofOutput();
     if (args.includes('date')) return String(Date.now() - 5000);
     return fixture.replaceAll('1700000000.', '1699999995.');
   });
@@ -163,7 +202,7 @@ test.each([false, true])(
   (final) => {
     vi.setSystemTime(start + 240_000);
     native.runFile.mockImplementation((_file, args = []) => {
-      if (args.includes('pidof')) return pid;
+      if (args.includes('pidof')) return pidofOutput();
       if (args.includes('date')) return String(Date.now());
       if (args.includes('1700000000.000')) throw new Error('maxBuffer exceeded');
       return '1700000230.100   321   321 E AndroidRuntime: stop tail';
@@ -180,8 +219,9 @@ test.each([false, true])(
 test('a failed query exhausts ten seconds without advancing its checkpoint', () => {
   collectHostedAndroidLogs(home, session, 'app', start);
   vi.setSystemTime(start + 240_000);
+  pid = '';
   native.runFile.mockImplementation((_file, args = [], options) => {
-    if (args.includes('pidof')) return pid;
+    if (args.includes('pidof')) return pidofOutput();
     if (args.includes('date')) return String(Date.now());
     expect(options?.timeoutMs).toBeLessThanOrEqual(4000);
     vi.setSystemTime(Date.now() + options!.timeoutMs!);
@@ -189,6 +229,14 @@ test('a failed query exhausts ten seconds without advancing its checkpoint', () 
   });
   expect(() => collectHostedAndroidLogs(home, session, 'app', start)).toThrow('collection budget');
   expect(Date.now()).toBe(start + 250_000);
-  expect(checkpoint()?.until).toBe(start);
+  expect(checkpoint()).toMatchObject({ until: start, pid: 321 });
   expect(records()).toHaveLength(3);
+  native.runFile.mockImplementation((_file, args = []) => {
+    if (args.includes('pidof')) return pidofOutput();
+    if (args.includes('date')) return String(Date.now());
+    return '1700000249.100   321   321 F libc: final crash tail';
+  });
+  collectHostedAndroidLogs(home, session, 'app', start, true);
+  expect(records().at(-1)).toMatchObject({ level: 'fatal', msg: 'final crash tail' });
+  expect(checkpoint()?.pid).toBeUndefined();
 });

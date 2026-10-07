@@ -1,4 +1,3 @@
-import AppKit
 import StimKit
 import SwiftUI
 
@@ -28,7 +27,7 @@ struct AddMachineSteps: View {
             Text(tool.onThisMac ? "Problem on this Mac:" : "Fix for \(name):")
               .font(.stim(.footnote, weight: .semibold))
             if wizardFixIsCommand(fix) {
-              copyCommand(fix)
+              CopyableCommand(command: fix)
             } else {
               Text(fix).font(.stim(.footnote)).textSelection(.enabled)
             }
@@ -156,22 +155,10 @@ struct AddMachineSteps: View {
       Text("Undo").font(.stim(.headline))
       Text("On this Mac: Settings > Build machines > Remove")
       Text("On \(name):").font(.stim(.footnote, weight: .semibold))
-      ForEach(model.wizard.revokeIds.sorted(), id: \.self) { copyCommand("stim-server devices revoke \($0)") }
-      copyCommand("stim-server service uninstall")
+      ForEach(model.wizard.revokeIds.sorted(), id: \.self) { CopyableCommand(command: "stim-server devices revoke \($0)") }
+      CopyableCommand(command: "stim-server service uninstall")
       Text("Service uninstall is optional. Stim Host permissions stay in System Settings until you remove them.")
         .font(.stim(.footnote)).foregroundStyle(Palette.secondary)
-    }
-  }
-
-  private func copyCommand(_ command: String) -> some View {
-    HStack(alignment: .top, spacing: Space.sm) {
-      CommandText(command: command).fixedSize(horizontal: false, vertical: true)
-        .frame(maxWidth: .infinity, alignment: .leading)
-      Button("Copy") {
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(command, forType: .string)
-      }
-      .accessibilityLabel("Copy " + command)
     }
   }
 

@@ -401,11 +401,18 @@ stderr and removal continues. Removal stdout stays empty.
 Normal gc, `--cache all` and unscoped `--older-than` leave archives alone.
 Explicit archive selection lists ids, kinds, bytes, and expiry. Add `--delete`
 to act. `archived:<id>` selects one archive; `archived-logs`,
-`archived-recordings`, and `archived-agent` delete that kind while keeping records.
+`archived-recordings`, and `archived-agent` delete that kind while keeping records;
+add `:<id>` (`archived-logs:<id>`) to clear that kind from one archive.
 `--older-than` filters by removal age except with an explicit id, where it is ignored.
 
 <StimTabs code="stim gc --cache archived" />
 
 <StimTabs code="stim gc --delete --cache archived --older-than 14" />
 
-Archived logs and replay are not available through the apps yet.
+Choose **Archived** in Stim Desktop's sidebar or the phone app's Filters to
+open a removed workspace. Its read-only page shows retained build history,
+saved logs, ended agent sessions and replay for each retained recording slot.
+Logs and replay require a connection to the Mac's stim-server; an older server
+shows an update hint, with the last-build summary still available. Archives have
+no run, reload, stop or live device controls. Stim Desktop also offers **Delete**,
+with confirmation, to permanently remove the archive and its retained content.

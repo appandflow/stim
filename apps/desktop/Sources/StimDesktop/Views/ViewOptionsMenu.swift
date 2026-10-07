@@ -3,21 +3,19 @@ import SwiftUI
 
 /// The sidebar's view options, stored in `UserDefaults`.
 struct SidebarPreferences: DynamicProperty {
-  @AppStorage(AppPreferences.Key.sidebarStatus) var status = StatusFilter.all
+  @AppStorage(AppPreferences.Key.sidebarStatuses) var statuses = StatusFilter.encode(StatusFilter.defaultSelection)
   @AppStorage(AppPreferences.Key.hiddenProjects) var hiddenProjects = ""
   @AppStorage(AppPreferences.Key.sidebarGrouping) var grouping = SidebarGrouping.project
   @AppStorage(AppPreferences.Key.sidebarSort) var sort = SidebarSort.name
-  @AppStorage(AppPreferences.Key.hidesUnprovisionedWorktrees) var hidesNoEnvironment = false
   @AppStorage(AppPreferences.Key.showsGitStatus) var showsGitStatus = true
   @AppStorage(AppPreferences.Key.showsEmptyProjects) var showsEmptyProjects = false
 
   var options: SidebarOptions {
     var options = SidebarOptions()
-    options.status = status
+    options.statuses = StatusFilter.decode(statuses)
     options.hiddenProjects = SidebarOptions.decode(hiddenProjects: hiddenProjects)
     options.grouping = grouping
     options.sort = sort
-    options.showsNoEnvironment = !hidesNoEnvironment
     options.showsGitStatus = showsGitStatus
     options.showsEmptyProjects = showsEmptyProjects
     return options
@@ -25,11 +23,10 @@ struct SidebarPreferences: DynamicProperty {
 
   func reset() {
     let defaults = SidebarOptions()
-    status = defaults.status
+    statuses = StatusFilter.encode(defaults.statuses)
     hiddenProjects = ""
     grouping = defaults.grouping
     sort = defaults.sort
-    hidesNoEnvironment = !defaults.showsNoEnvironment
     showsGitStatus = defaults.showsGitStatus
     showsEmptyProjects = defaults.showsEmptyProjects
   }
@@ -37,6 +34,7 @@ struct SidebarPreferences: DynamicProperty {
 
 struct ViewOptionsButton: View {
   var projects: [Project]
+  var counts: [StatusFilter: Int]
   var title: (Project) -> String
   @State private var isPresented = false
   let prefs = SidebarPreferences()
@@ -60,13 +58,14 @@ struct ViewOptionsButton: View {
     .accessibilityLabel("View options")
     .help(differs ? "View options (filtered)" : "View options")
     .popover(isPresented: $isPresented, arrowEdge: .bottom) {
-      ViewOptionsMenu(projects: projects, title: title)
+      ViewOptionsMenu(projects: projects, counts: counts, title: title)
     }
   }
 }
 
 private struct ViewOptionsMenu: View {
   var projects: [Project]
+  var counts: [StatusFilter: Int]
   var title: (Project) -> String
   let prefs = SidebarPreferences()
 
@@ -80,12 +79,8 @@ private struct ViewOptionsMenu: View {
     let shown = projects.filter { !hidden.contains($0.root) }.count
     var items = [
       MenuItem(
-        id: "status", title: "Status", accessory: .value(options.status.title),
-        submenu: StatusFilter.allCases.map { status in
-          MenuItem(id: status.rawValue, title: status.title, accessory: .check(options.status == status)) {
-            prefs.status = status
-          }
-        }),
+        id: "status", title: "Status", accessory: .value(StatusFilter.summary(options.statuses)),
+        submenu: statusItems(options.statuses)),
       MenuItem(
         id: "projects", title: "Projects",
         accessory: .value(shown == projects.count ? "All" : "\(shown) selected"),
@@ -105,10 +100,8 @@ private struct ViewOptionsMenu: View {
           }
         }),
       MenuItem(
-        id: "noEnvironment", title: "Show no-environment worktrees", accessory: .check(options.showsNoEnvironment),
-        dividerBefore: true, keepsOpen: true
-      ) { prefs.hidesNoEnvironment.toggle() },
-      MenuItem(id: "git", title: "Show git status", accessory: .check(options.showsGitStatus), keepsOpen: true) {
+        id: "git", title: "Show git status", accessory: .check(options.showsGitStatus), dividerBefore: true, keepsOpen: true
+      ) {
         prefs.showsGitStatus.toggle()
       },
       MenuItem(
@@ -117,6 +110,26 @@ private struct ViewOptionsMenu: View {
     ]
     if options.differsFromDefaults(projects: projects) {
       items.append(MenuItem(id: "reset", title: "Reset", dividerBefore: true, keepsOpen: true) { prefs.reset() })
+    }
+    return items
+  }
+
+  private func statusItems(_ statuses: Set<StatusFilter>) -> [MenuItem] {
+    var items = [
+      MenuItem(id: "all", title: "All", accessory: .check(statuses == StatusFilter.all), keepsOpen: true) {
+        prefs.statuses = StatusFilter.encode(StatusFilter.all)
+      }
+    ]
+    for (index, status) in StatusFilter.allCases.enumerated() {
+      items.append(
+        MenuItem(
+          id: status.rawValue, title: status.title, detail: "\(counts[status] ?? 0)",
+          accessory: .check(statuses.contains(status)), dividerBefore: index == 0, keepsOpen: true
+        ) {
+          var updated = statuses
+          if updated.contains(status) { updated.remove(status) } else { updated.insert(status) }
+          prefs.statuses = StatusFilter.encode(updated)
+        })
     }
     return items
   }
@@ -152,6 +165,7 @@ struct MenuItem: Identifiable {
 
   var id: String
   var title: String
+  var detail: String? = nil
   var accessory = Accessory.none
   var submenu: [MenuItem]?
   var dividerBefore = false
@@ -276,6 +290,9 @@ private struct MenuRow: View {
     HStack(spacing: Space.md) {
       Text(item.title).foregroundStyle(Palette.text).lineLimit(1)
       Spacer(minLength: 16)
+      if let detail = item.detail {
+        Text(detail).foregroundStyle(Palette.tertiary).monospacedDigit()
+      }
       switch item.accessory {
       case .none:
         EmptyView()

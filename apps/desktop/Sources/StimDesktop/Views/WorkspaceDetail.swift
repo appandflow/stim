@@ -219,12 +219,8 @@ struct WorkspaceDetail: View {
   private func content(devices: [DeviceRef], focused: DeviceRef?) -> some View {
     VStack(spacing: 0) {
       HStack(spacing: Space.md) {
-        if let archive, let archivedPage {
-          Text(archivedPage.statusLine).font(.stim(.callout, weight: .semibold))
-          Spacer()
-          Button("Delete", role: .destructive) { confirmingArchiveDelete = true }
-            .buttonStyle(.stim(.destructive)).disabled(actions.active(for: ActionCenter.machineKey) != nil)
-            .help("Delete \(archive.title) permanently")
+        if archive != nil, let archivedPage {
+          ArchivedHeaderLine(cli: cli, page: archivedPage) { confirmingArchiveDelete = true }
         } else {
           WorkspaceHeaderLine(
             cli: cli, env: workspace, page: page.isUnified ? page : nil,

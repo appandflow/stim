@@ -781,6 +781,120 @@
           "labels": []
         }
       ]
+    },
+    {
+      "name": "fits a short recording to the whole track when it is not growing",
+      "input": {
+        "spans": [
+          {
+            "start": 0,
+            "end": 245000
+          }
+        ],
+        "fit": true
+      },
+      "timeline": {
+        "start": 0,
+        "end": 245000,
+        "length": 245000,
+        "pieces": [
+          {
+            "kind": "span",
+            "start": 0,
+            "end": 245000,
+            "from": 0,
+            "to": 1
+          }
+        ]
+      },
+      "positions": [
+        [-1000, 0],
+        [0, 0],
+        [122500, 0.5],
+        [245000, 1],
+        [246000, 1]
+      ],
+      "times": [
+        [-1, 0],
+        [0, 0],
+        [0.5, 122500],
+        [1, 245000],
+        [2, 245000]
+      ],
+      "labels": []
+    },
+    {
+      "name": "fits footage that starts late around a stop collapsed to a minute",
+      "input": {
+        "spans": [
+          {
+            "start": 1000,
+            "end": 21000
+          },
+          {
+            "start": 321000,
+            "end": 361000
+          }
+        ],
+        "fit": true
+      },
+      "timeline": {
+        "start": 1000,
+        "end": 361000,
+        "length": 120000,
+        "pieces": [
+          {
+            "kind": "span",
+            "start": 1000,
+            "end": 21000,
+            "from": 0,
+            "to": 0.16666666666666666
+          },
+          {
+            "kind": "gap",
+            "start": 21000,
+            "end": 321000,
+            "from": 0.16666666666666666,
+            "to": 0.6666666666666666,
+            "collapsed": true
+          },
+          {
+            "kind": "span",
+            "start": 321000,
+            "end": 361000,
+            "from": 0.6666666666666666,
+            "to": 1
+          }
+        ]
+      },
+      "positions": [
+        [0, 0],
+        [11000, 0.08333333333333333],
+        [21000, 0.16666666666666666],
+        [100000, 0.29833333333333334],
+        [341000, 0.8333333333333333],
+        [361000, 1]
+      ],
+      "times": [
+        [0, 1000],
+        [0.08333333333333333, 11000],
+        [0.3, 321000],
+        [0.75, 331000],
+        [1, 361000]
+      ],
+      "labels": [
+        {
+          "width": 600,
+          "labels": [
+            {
+              "start": 21000,
+              "text": "stopped 5m",
+              "left": 217.5,
+              "width": 65
+            }
+          ]
+        }
+      ]
     }
   ]
 }

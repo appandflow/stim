@@ -224,8 +224,7 @@ struct LogsView: View {
       )
       .foregroundStyle(Palette.tertiary)
       Spacer()
-      Button("Copy") { copy() }
-        .help(selection.isEmpty ? "Copy every loaded record" : "Copy the selected records")
+      CopyButton(copyText(), help: selection.isEmpty ? "Copy every loaded record" : "Copy the selected records")
       if archive == nil {
         Button("Reveal log folder") {
           if let dir = env?.logs?.dir { NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: dir) }
@@ -240,14 +239,12 @@ struct LogsView: View {
     .padding(.vertical, Space.md)
   }
 
-  private func copy() {
+  private func copyText() -> String {
     let entries =
       selection.isEmpty
       ? model.rawRows.map(\.entry)
       : selection.filter { $0 < model.rows.count }.map { model.rows[$0].entry }
-    let text = entries.map(\.plainText).joined(separator: "\n")
-    NSPasteboard.general.clearContents()
-    NSPasteboard.general.setString(text, forType: .string)
+    return entries.map(\.plainText).joined(separator: "\n")
   }
 
   static func title(_ source: LogSource) -> String {

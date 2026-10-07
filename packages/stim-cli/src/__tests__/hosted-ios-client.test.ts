@@ -23,7 +23,7 @@ import { gatewayAddresses, clearHostedMetro } from '../device-host/metro-gateway
 import { reconcileHostedMetro, watchHostedMetro } from '../supervisor/hosted-metro.ts';
 import { getConfigPath, getProject, upsertProject } from '../workspace/config.ts';
 import { readWorkspaceState, writeWorkspaceState } from '../workspace/workspace-state.ts';
-import { pullHostedIosLogs } from '../device-host/hosted-logs.ts';
+import { pullHostedNativeLogs } from '../device-host/hosted-logs.ts';
 import { followHostedMacosLogs, followHostedLogs, syncHostedLogs } from '../device-host/hosted-logs-sync.ts';
 import { workspaceLogsDir, workspaceStateFile } from '../workspace/paths.ts';
 import { launchSlotScope, siblingPlatformSlots } from '../engine/slot-launch.ts';
@@ -867,8 +867,8 @@ test('hosted iOS native errors are paged into the workspace once per slot and pu
   logRecords = [1, 2, 3].map((ts) => ({ ts, src: 'device', level: ts === 3 ? 'error' : 'info', msg: `native ${ts}` }));
   const target = await prepareHostedIos('mini', {}, placement());
   await Promise.all([
-    pullHostedIosLogs(root, 'tablet', placement(), target.host),
-    pullHostedIosLogs(root, 'tablet', placement(), target.host),
+    pullHostedNativeLogs(root, 'tablet', placement(), target.host),
+    pullHostedNativeLogs(root, 'tablet', placement(), target.host),
   ]);
   const stored = readFileSync(join(workspaceLogsDir(root), 'ios.tablet-host.ndjson'), 'utf8')
     .trim()
@@ -924,11 +924,11 @@ test('an older host gets no iOS log queries and follow warns once while retainin
 test('plain log pull commits 64 pages and reports a bound while final drain finishes the backlog', async () => {
   logRecords = Array.from({ length: 130 }, (_, ts) => ({ ts, src: 'device', level: 'error', msg: `backlog ${ts}` }));
   const target = await prepareHostedIos('mini', {}, placement());
-  await expect(pullHostedIosLogs(root, 'default', placement(), target.host)).rejects.toThrow('unread pages');
+  await expect(pullHostedNativeLogs(root, 'default', placement(), target.host)).rejects.toThrow('unread pages');
   expect(methods.filter((entry) => entry.method === 'device-host.logs.query')).toHaveLength(64);
   const progress = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
   try {
-    await pullHostedIosLogs(root, 'default', placement(), target.host, true);
+    await pullHostedNativeLogs(root, 'default', placement(), target.host, true);
     expect(progress).toHaveBeenCalledWith(expect.stringContaining('Copying final native logs'));
     expect(readFileSync(join(workspaceLogsDir(root), 'ios-host.ndjson'), 'utf8')).toContain('backlog 129');
   } finally {
@@ -943,7 +943,7 @@ test.each([false, true])('an iOS page with no cursor or checkpoint progress cann
     .mockResolvedValue({ result: { records: [], cursor: {}, more: true, checkpoint: 1000 } });
   const progress = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
   try {
-    await expect(pullHostedIosLogs(root, 'default', placement(), target.host, final)).rejects.toThrow('no progress');
+    await expect(pullHostedNativeLogs(root, 'default', placement(), target.host, final)).rejects.toThrow('no progress');
     expect(request).toHaveBeenCalledTimes(2);
   } finally {
     request.mockRestore();
@@ -963,7 +963,7 @@ test('final log drain has a time bound even while pages advance', async () => {
   });
   const progress = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
   try {
-    await expect(pullHostedIosLogs(root, 'default', placement(), target.host, true)).rejects.toThrow(
+    await expect(pullHostedNativeLogs(root, 'default', placement(), target.host, true)).rejects.toThrow(
       'time or page bound',
     );
     expect(request).toHaveBeenCalledTimes(2);

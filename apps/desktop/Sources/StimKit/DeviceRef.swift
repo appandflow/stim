@@ -285,6 +285,14 @@ public enum DeviceRef: Hashable, Identifiable, Sendable {
   /// The simulator model without its runtime, such as "iPhone 18 Pro"; `model` for any other device.
   public var modelName: String { iosModel.name }
 
+  public var frameType: String {
+    switch self {
+    case .ios: return "ios.\(iosModel.name)"
+    case .android(_, let d): return "android.\(d.deviceProfile ?? d.name)"
+    case .web, .remote: return "other"
+    }
+  }
+
   public var formFactor: FormFactor {
     switch self {
     case .ios(_, let d):

@@ -71,9 +71,16 @@ worktree's branch, else the worktree's folder, else its project for a main
 checkout. The second line is where it sits inside its checkout, such as
 `apps/mobile`. The view options button next to the logo opens a menu:
 
-- **Status**: All, Live, Idle or Archived workspaces. All, Live and Idle exclude archives. Archived uses the same repository and worktree grouping and sidebar rows, newest removal first, with app labels, PR number or Merged, removal time, retained size and a media expiry indicator. Live also shows a workspace with a
-  running build, and one that `stim worktree warm` is preparing ("Warming...",
-  with an activity indicator) or has prepared before its first run ("Ready").
+- **Status**: select any combination of Live, Idle, Not set up and Archived. The
+  default is Live + Idle. All selects all four states, Archived included, and
+  shows as checked only when all four are on. Each state shows its sidebar row count, counting a
+  multi-app worktree once and excluding hidden projects. When mixed with current
+  rows, archives follow those rows within each project, newest removal first.
+  Archived uses the same repository and worktree grouping, with app labels, PR
+  number or Merged, removal time, retained size and a media expiry indicator.
+  Live also shows a workspace with a running build, and one that
+  `stim worktree warm` is preparing ("Warming...", with an activity indicator)
+  or has prepared before its first run ("Ready").
 - **Projects**: which projects the sidebar lists.
 - **Group by**: Project (the tree) or None (one list, each row subtitled with
   its project too).
@@ -83,8 +90,7 @@ checkout. The second line is where it sits inside its checkout, such as
   attaching, Metro's supervisor or a remote session starting, or a build
   starting, changing phase or ending. Projects sort by their newest workspace
   or their total memory.
-- **Show no-environment worktrees**, **Show git status** and **Show empty
-  projects** (projects the other options leave with no rows).
+- **Show git status** and **Show empty projects** (projects the other options leave with no rows).
 
 The app remembers every choice. The button turns purple with a dot while any
 option differs from its default, and the menu then ends with **Reset**. When
@@ -108,8 +114,8 @@ spells it out.
 ## Archived workspaces
 
 The Archived sidebar filter opens the same workspace page as live workspaces in a read-only variant.
-Status shows removal time and reason, last use, per-kind retained bytes and expiry dates,
-build totals, known cache hits and builds on a build machine, and errors at removal.
+The header line matches the live page's: an Archived state with the removal age (hover for the exact time), the git chip with branch, PR and Merged, and a menu with **Reveal folder** (while the folder exists) and **Delete archive**.
+The Status card holds the removal reason, last use, and Retained with a proportion bar and per-kind bytes and expiry dates; the Build card ends with build totals, known cache hits, builds on a build machine and errors at removal.
 Work keeps the branch, PR number and title, final head and subject, and ended agent sessions
 with their duration and a link to retained actions. Only Merged is shown as a PR state:
 other states in the removal snapshot can be stale. Build cards and the build history sheet show retained runs and phase timings.
@@ -127,7 +133,9 @@ no live device or workspace actions. An older server shows an update hint for ar
 requests that require a workspace instead of an archive; other refusals show the server's
 message. Connect through the Phones page to read logs and replay.
 
-Delete names the archive and removal age in a confirmation and permanently removes its
+Each of Logs, Recordings and Agent actions has a **Clear** button that, after a confirmation, deletes that kind of that archive through
+`stim gc --delete --cache archived-logs:<id>` (`archived-recordings:<id>`, `archived-agent:<id>`) and keeps the record; the row then reads Cleared until the page is left, and None kept after.
+The header menu's **Delete archive** names the archive in a confirmation and permanently removes its
 logs, recordings, agent actions and record through `stim gc --delete --cache archived:<id>`. The page
 returns to the previous selection once status stops reporting the archive. Machines
 shows archive count, total size, per-kind sizes and retention setting names separately;
@@ -264,19 +272,24 @@ device sits on a plain canvas, as large as it fits, with its hardware,
 rotation and posture controls grouped below it. The groups wrap when space is
 tight, and the replay bar (see [Replay](#replay)) runs across the bottom.
 
-**Show device frame** adds the matching installed hardware artwork to a live local
-simulator or emulator. The screen keeps its aspect ratio and input coordinates;
-the frame turns with the display. **Hide device frame** returns to the default
-frameless view. The button is available without taking Control.
+A live local simulator or emulator viewer draws the matching installed hardware
+artwork around the screen by default. The screen keeps its aspect ratio and input
+coordinates; the frame turns with the display. **Show device frame** in the
+sliders button's options popover (Simulator options, or Emulator options on
+Android) turns it off and on without taking Control. The choice is kept per device
+type in Desktop's preferences. When no frame can be drawn the checkbox is disabled
+and says why.
 
 Apple frames come from installed DeviceKit chrome and the simulator's actual
 device-type profile. Android frames use the AVD's configured `skin.path`, or its
 exact hardware profile's artwork in `/Applications/Android Studio.app`; the skin's
 screen dimensions must match the AVD. Missing artwork, unsupported skin layouts,
 Android foldables, physical or remote devices, web pages and replay stay frameless.
-For a local iPhone Duo, an installed Xcode containing DeviceKit's V68 model and a
-valid observed hinge angle enable genuine posed hardware around its live panels.
-Missing model data retains the frameless view. Stim ships no Apple or Android
+For a local iPhone Duo, an installed Xcode containing DeviceKit's V68 model (the
+selected Xcode first, then any other Xcode in `/Applications`; Xcode 27.0 lacks it,
+27.1 has it) and a valid observed hinge angle enable genuine posed hardware around
+its live panels. Missing model data retains the frameless view and the options
+popover names the missing model. Stim ships no Apple or Android
 artwork; mobile asset delivery is not included.
 
 While **Control** is active for an owned local simulator or emulator, the Mac
@@ -334,12 +347,14 @@ remembers both. **Open logs** from a notification or a
 workspace menu opens the drawer too.
 
 A linked worktree Stim has not registered yet, listed in `unprovisionedWorktrees`
-of `stim status --json`, appears in the sidebar under its project and
-is marked "no environment", or with its git state when it has one. The project comes from the entry's `repository`,
-so the app does not run git in a worktree that may sit in a macOS-protected
-folder. It has no action. Selecting it shows its path and
-branch and the `stim start`, `stim ios` and `stim android` commands that create
-its environment, each with a Copy button.
+of `stim status --json`, appears under its project when Not set up is selected.
+It is marked "Not set up". The project comes from the entry's `repository`, so
+the app does not run git in a worktree that may sit in a macOS-protected folder.
+Its page has a header line with a git chip and a worktree actions menu. Run and
+Start dev server buttons run `stim worktree warm` followed by the selected
+command from the app's directory. When the repository has several apps, an App
+picker selects which one to set up. The page also shows the folder, repository
+and branch, with a Show in Finder link.
 
 Run, Reload app, Start dev server and Stop from a workspace or its sidebar menu,
 Stop (or Shut down) in the now band, and Build and run and Stop on a macOS app card run without
@@ -739,7 +754,7 @@ text size, Larger accessibility sizes, Increase contrast, Reduce motion,
 Reduce transparency or Show button borders. Each change reads the device back;
 **Refresh** picks up changes made elsewhere. Unsupported fields read
 **Unavailable**. The panel is available only on a running local simulator while
-**Control** is on, outside replay; it closes when control is released. These are
+**Control** is on, outside replay; it closes when control is released. Without Control the popover shows only **Show device frame**. These are
 the simulator's settings, not Desktop preferences. This requires an Xcode whose
 `devicectl device info|settings appearance` supports that simulator. Audio,
 location, VoiceOver, color filters and Liquid Glass controls are not included.
@@ -765,7 +780,7 @@ swap panels; the path is adapted from
 While its viewer is open, Desktop observes the Duo hinge through
 `devicectl device motion hinge-angle`, so preset selection follows changes
 made by another controller. Arbitrary angles leave all presets unselected.
-With **Show device frame** on and the installed V68 model available, the housing
+With the device frame on and the installed V68 model available, the housing
 follows the observed hinge angle and display rotation. Touches and drags hit the
 posed active screen and map back to its pixels; the surrounding housing has no
 input. Desktop keeps both panel surfaces ready and snapshots the departing panel
@@ -773,7 +788,7 @@ before its own posture controls change the hinge. External controllers can clear
 the departing panel before Desktop can snapshot it, so their handoff can leave
 that panel blank or retain an older snapshot.
 
-In the default frameless view, a valid observed angle below 180 degrees projects
+With the device frame off, a valid observed angle below 180 degrees projects
 the active inner display's two halves around the hinge. The cover, unknown angle
 and fully open display stay flat. Touches and drags map back to the display
 pixels.
@@ -1057,10 +1072,11 @@ this Mac (see [Build access](../../packages/server/README.md#build-access)).
 On the Mac that wants to build elsewhere, **Stim > Settings > Build Machines**
 lists the entries of the `offload.machines` machine setting, each with its
 state from the `buildMachines` field of `stim doctor --json --platform ios`:
-**Approved**, **Waiting for approval** (with the request id), **Not asked**,
-**Revoked** (revoked, denied, or the request lapsed), **Different Mac** (the
-name now belongs to another tailnet node than the one this Mac asked, so Stim
-does not connect to it), **Not on the tailnet**, **Tailscale is off**,
+**Approved**, **Waiting for approval** (with the approval command to copy),
+**Not asked**, **Revoked** (revoked, denied, or the request lapsed),
+**Different Mac** (the name now belongs to another tailnet node than the one
+this Mac asked, so Stim does not connect to it), **Not on the tailnet**,
+**Tailscale is off**,
 **Unreachable** or **Not a tailnet name**. Doctor runs in the first workspace
 `stim status` lists, like the doctor checks that notify as **Needs you**; with no
 workspace listed, the tab says so. While a machine waits for approval the tab

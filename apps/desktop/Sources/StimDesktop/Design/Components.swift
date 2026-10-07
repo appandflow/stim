@@ -165,7 +165,6 @@ struct EmptyState: View {
 
 struct AgentPromptList: View {
   @State private var prompts = Array(AgentPrompts.all.shuffled().prefix(3))
-  @State private var copied: String?
 
   var body: some View {
     VStack(spacing: Space.md) {
@@ -176,16 +175,7 @@ struct AgentPromptList: View {
             Text(prompt)
               .textSelection(.enabled)
               .frame(maxWidth: .infinity, alignment: .leading)
-            Button {
-              NSPasteboard.general.clearContents()
-              NSPasteboard.general.setString(prompt, forType: .string)
-              copied = prompt
-            } label: {
-              Label(copied == prompt ? "Copied" : "Copy", systemImage: copied == prompt ? "checkmark" : "doc.on.doc")
-            }
-            .buttonStyle(.stim(.secondary))
-            .help("Copy this prompt to the clipboard")
-            .accessibilityLabel(copied == prompt ? "Copied prompt: \(prompt)" : "Copy prompt: \(prompt)")
+            CopyButton(prompt, help: "Copy this prompt to the clipboard", accessibilityLabel: "Copy prompt: \(prompt)")
           }
           .padding(.horizontal, Space.xl)
           .padding(.vertical, Space.lg)
@@ -207,6 +197,27 @@ struct CommandText: View {
       .padding(.vertical, Space.xs)
       .background(RoundedRectangle(cornerRadius: Radius.chip).fill(Palette.background))
       .textSelection(.enabled)
+  }
+}
+
+struct CopyableCommand: View {
+  var command: String
+
+  var body: some View {
+    HStack(alignment: .firstTextBaseline, spacing: Space.xs) {
+      Text(verbatim: command)
+        .font(.stim(.caption, mono: true))
+        .foregroundStyle(Palette.secondary)
+        .textSelection(.enabled)
+        .fixedSize(horizontal: false, vertical: true)
+      CopyButton(
+        command, variant: .plain, showsTitle: false, help: "Copy the command", accessibilityLabel: "Copy \(command)")
+    }
+    .padding(.leading, Space.md)
+    .padding(.trailing, Space.xxs)
+    .padding(.vertical, Space.xxs)
+    .background(RoundedRectangle(cornerRadius: Radius.chip).fill(Palette.background))
+    .overlay(RoundedRectangle(cornerRadius: Radius.chip).strokeBorder(Palette.border))
   }
 }
 

@@ -8,11 +8,11 @@ import {
   realpathSync,
   renameSync,
   statSync,
-  symlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { quotedPath } from '@stim-cli/core';
 import { register } from '../cache/cache-manifest.ts';
 import { getConfigDir } from '../workspace/config.ts';
 import { withDirLock } from '../dir-lock.ts';
@@ -159,7 +159,11 @@ export function resolveAndroidCas(root: string, env: NodeJS.ProcessEnv = process
     for (const name of ['clang', 'clang++']) {
       const path = join(state, name);
       const temporary = `${path}.${randomUUID()}.tmp`;
-      symlinkSync(scripts[3]!, temporary);
+      writeFileSync(
+        temporary,
+        `#!/bin/sh\nexec ${quotedPath(process.execPath)} --input-type=module --eval ${quotedPath(`import ${JSON.stringify(pathToFileURL(scripts[3]!).href)}`)} "$0" "$@"\n`,
+        { mode: 0o755 },
+      );
       renameSync(temporary, path);
     }
     const temporary = `${context}.${process.pid}.tmp`;

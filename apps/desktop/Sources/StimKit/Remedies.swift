@@ -39,11 +39,6 @@ public func countLabel(_ count: Int, _ noun: String, plural: String? = nil) -> S
   "\(count.formatted()) \(count == 1 ? noun : plural ?? noun + "s")"
 }
 
-/// The commands that create an environment for a worktree Stim has not registered.
-public func environmentCommands(worktree: String) -> [StimCommand] {
-  [["start"], ["ios"], ["android"]].map { StimCommand($0, cwd: worktree) }
-}
-
 /// The `stim stop` command that stops one device. A remote session has no per-slot
 /// teardown, so it runs plain `stop`, which ends the whole workspace including the session.
 public func stopCommand(for device: DeviceRef, cwd: String) -> StimCommand {

@@ -1,10 +1,38 @@
 import SimulatorFrames
 import SwiftUI
 
+struct DeviceFrameOption {
+  let isOn: Binding<Bool>
+  private let reason: () -> String?
+  var unavailableReason: String? { reason() }
+
+  init(isOn: Binding<Bool>, unavailableReason: @autoclosure @escaping () -> String?) {
+    self.isOn = isOn
+    reason = unavailableReason
+  }
+}
+
+struct DeviceFrameToggle: View {
+  let frame: DeviceFrameOption
+
+  var body: some View {
+    Toggle("Show device frame", isOn: frame.unavailableReason == nil ? frame.isOn : .constant(false))
+      .disabled(frame.unavailableReason != nil)
+      .help(frame.unavailableReason ?? "Draw the installed hardware frame around the screen")
+    if let reason = frame.unavailableReason {
+      Text(reason)
+        .font(.stim(.caption))
+        .foregroundStyle(Palette.secondary)
+        .fixedSize(horizontal: false, vertical: true)
+    }
+  }
+}
+
 struct SimulatorOptionsView: View {
   let udid: String
   let canControl: Bool
   var clipboard: ClipboardOptionsView? = nil
+  var frame: DeviceFrameOption?
   @State private var appearance: SimulatorAppearance?
   @State private var busy = false
   @State private var error: String?
@@ -18,7 +46,8 @@ struct SimulatorOptionsView: View {
     init(fixture: PlaygroundSimulator) {
       udid = "playground"
       canControl = true
-      clipboard = ClipboardOptionsView(paste: {}, copy: {})
+      clipboard = ClipboardOptionsView(paste: {}, copy: { true })
+      frame = fixture.frame
       _fixture = State(initialValue: fixture)
       _appearance = State(initialValue: fixture.appearance)
       _busy = State(initialValue: fixture.loading)
@@ -27,10 +56,11 @@ struct SimulatorOptionsView: View {
     }
   #endif
 
-  init(udid: String, canControl: Bool, clipboard: ClipboardOptionsView? = nil) {
+  init(udid: String, canControl: Bool, clipboard: ClipboardOptionsView? = nil, frame: DeviceFrameOption? = nil) {
     self.udid = udid
     self.canControl = canControl
     self.clipboard = clipboard
+    self.frame = frame
   }
 
   var body: some View {
@@ -39,6 +69,10 @@ struct SimulatorOptionsView: View {
         Text("Simulator options").font(.stim(.headline))
         Spacer()
         if busy || (!loaded && canControl) { ProgressView().controlSize(.small) }
+      }
+      if let frame {
+        DeviceFrameToggle(frame: frame)
+        Divider()
       }
       if let appearance {
         mode(appearance)

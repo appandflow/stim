@@ -166,7 +166,7 @@ struct BuildMachinesView: View {
 
   private var footer: String {
     let base =
-      "offload.machines on this Mac. Use for builds adds a Mac and asks it for access with stim doctor --fix, which also asks again any listed Mac that has not approved this one. A person on that Mac allows it."
+      "offload.machines on this Mac. Use for builds adds a Mac and asks it for access with stim doctor --fix, which also asks again any listed Mac that has not approved this one. A person on that Mac approves it."
     guard let checkout else {
       return base + " Stim runs doctor in a workspace, and none is listed yet: start one with Stim first."
     }
@@ -241,8 +241,13 @@ private struct MachineRow: View {
           }
         }
         if let status {
-          Text(verbatim: status.detail).font(.stim(.footnote)).foregroundStyle(Palette.secondary)
-            .fixedSize(horizontal: false, vertical: true)
+          if let command = status.approvalCommand {
+            detailText("\(status.approvalPrompt), or runs this there:")
+            CopyableCommand(command: command).padding(.vertical, Space.xxs)
+            detailText(BuildMachineStatus.requestLapse)
+          } else {
+            detailText(status.detail)
+          }
           if let dnsName = status.dnsName {
             Text(verbatim: dnsName).font(.stim(.caption, mono: true)).foregroundStyle(Palette.tertiary)
               .lineLimit(1).truncationMode(.middle)
@@ -259,6 +264,11 @@ private struct MachineRow: View {
         .disabled(working || (status?.state == .nodeChanged && !canAsk))
     }
     .padding(.vertical, Space.xxs)
+  }
+
+  private func detailText(_ text: String) -> some View {
+    Text(verbatim: text).font(.stim(.footnote)).foregroundStyle(Palette.secondary)
+      .fixedSize(horizontal: false, vertical: true)
   }
 
   private func tone(_ state: BuildMachineStatus.State) -> Tone {

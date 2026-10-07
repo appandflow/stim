@@ -34,7 +34,13 @@ export function collectHostedAndroidLogs(
         killSignal: 'SIGKILL',
       }),
     );
-  } catch {}
+  } catch (error) {
+    const failure = error as { status?: number | null; signal?: string | null; stdout?: string; stderr?: string };
+    // Android Toybox pidof reports no match with exit 1 and empty output: https://android.googlesource.com/platform/external/toybox/+/59a869a838cfadbf6bc41cb400471ca9d2cae9b5/toys/lsb/pidof.c
+    if (failure.status !== 1 || failure.signal != null || failure.stdout !== '' || failure.stderr !== '') {
+      throw error;
+    }
+  }
   // Android logcat identifies historical records by PID and cannot distinguish reuse after a process exits.
   const prior = previous?.appAttempt === attempt ? previous.pid : undefined;
   const pids = new Set([current, prior].filter((pid): pid is number => typeof pid === 'number'));
@@ -46,7 +52,7 @@ export function collectHostedAndroidLogs(
     final,
     deadline,
     tailOnly: true,
-    identity: { appAttempt: attempt, pid: current ?? prior },
+    identity: { appAttempt: attempt, pid: current ?? undefined },
     query: (from, _end, timeoutMs) =>
       [...pids]
         .map((pid) => {

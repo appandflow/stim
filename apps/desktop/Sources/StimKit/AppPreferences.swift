@@ -7,6 +7,7 @@ public enum AppPreferences {
     public static let showsIdleWorkspaces = "showsIdleWorkspaces"
     public static let hidesUnprovisionedWorktrees = "hidesUnprovisionedWorktrees"
     public static let sidebarStatus = "sidebar.status"
+    public static let sidebarStatuses = "sidebar.statuses"
     public static let hiddenProjects = "sidebar.hiddenProjects"
     public static let sidebarGrouping = "sidebar.grouping"
     public static let sidebarSort = "sidebar.sort"
@@ -87,14 +88,36 @@ public enum AppPreferences {
     ].merging(NotificationSettings.defaults) { current, _ in current }
   }
 
-  /// Carries the retired "Show idle workspaces" switch over to the sidebar's Status option.
+  /// Carries the retired "Show idle workspaces" and "Show no-environment worktrees" switches and the single sidebar status
+  /// over to the sidebar status selection.
   public static func migrate(_ defaults: UserDefaults) {
     removeLegacyRunDestinations(defaults)
-    guard let showsIdle = defaults.object(forKey: Key.showsIdleWorkspaces) as? Bool else { return }
-    if !showsIdle, defaults.string(forKey: Key.sidebarStatus) == nil {
-      defaults.set(StatusFilter.live.rawValue, forKey: Key.sidebarStatus)
+    if let showsIdle = defaults.object(forKey: Key.showsIdleWorkspaces) as? Bool {
+      if !showsIdle, defaults.string(forKey: Key.sidebarStatus) == nil {
+        defaults.set(StatusFilter.live.rawValue, forKey: Key.sidebarStatus)
+      }
+      defaults.removeObject(forKey: Key.showsIdleWorkspaces)
     }
-    defaults.removeObject(forKey: Key.showsIdleWorkspaces)
+    let oldStatus = defaults.object(forKey: Key.sidebarStatus)
+    let hides = defaults.object(forKey: Key.hidesUnprovisionedWorktrees)
+    if defaults.object(forKey: Key.sidebarStatuses) == nil, oldStatus != nil || hides != nil {
+      var statuses: Set<StatusFilter>
+      var showedNotSetUp = true
+      switch defaults.string(forKey: Key.sidebarStatus) {
+      case "live": (statuses, showedNotSetUp) = ([.live], false)
+      case "idle": statuses = [.idle]
+      case "archived": (statuses, showedNotSetUp) = ([.archived], false)
+      default: statuses = StatusFilter.defaultSelection
+      }
+      if showedNotSetUp, let hides = hides as? Bool, !hides { statuses.insert(.notSetUp) }
+      defaults.set(StatusFilter.encode(statuses), forKey: Key.sidebarStatuses)
+    }
+    if oldStatus != nil { defaults.removeObject(forKey: Key.sidebarStatus) }
+    if hides != nil { defaults.removeObject(forKey: Key.hidesUnprovisionedWorktrees) }
+  }
+
+  public static func showArchived(_ defaults: UserDefaults) {
+    defaults.set(StatusFilter.encode([.archived]), forKey: Key.sidebarStatuses)
   }
 
   public static let idleMinuteChoices = [30, 60, 120, 240]

@@ -26,7 +26,7 @@ function writeToolchain(): { manifest: string; compiler: string; ndk: string; re
   const compiler = join(root, 'compiler');
   writeFileSync(
     compiler,
-    `#!/usr/bin/env node
+    `#!${process.execPath}
 const { existsSync } = require('node:fs');
 const argv = process.argv.slice(2);
 const at = argv.indexOf('-resource-dir');
@@ -72,7 +72,6 @@ test('workspaces share CAS while compiler replacements invalidate APK and genera
   expect(first.id).toBe(second.id);
   expect(first.env.STIM_ANDROID_CAS_STATE).not.toBe(second.env.STIM_ANDROID_CAS_STATE);
   expect(JSON.parse(readFileSync(second.env.STIM_ANDROID_CAS_CONTEXT!, 'utf8')).source).toBe(b);
-  expect(realpathSync(join(second.env.STIM_ANDROID_CAS_STATE!, 'clang++'))).toMatch(/android-cas-compiler.mjs$/);
   const key = buildCacheKey('android', 'same-source', { compiler: first.id });
   expect(key).not.toBe(buildCacheKey('android', 'same-source'));
   writeFileSync(compiler, 'compiler v2');
@@ -91,17 +90,44 @@ test('a manifest that parses but names no compiler says which fields it lacks', 
 });
 
 test.skipIf(process.platform === 'win32')(
-  'the compiler the setup produces compiles through the resource directory the manifest names (spawns a POSIX shebang compiler; skipped on win32)',
+  'generated C and C++ compilers use Stim Node when the project shadows node on PATH',
   () => {
-    const { manifest, resourceDir } = writeToolchain();
+    const { manifest, compiler, ndk, resourceDir } = writeToolchain();
+    const clangxx = join(root, 'compiler++');
+    writeFileSync(clangxx, readFileSync(compiler), { mode: 0o755 });
+    const fields = JSON.parse(readFileSync(manifest, 'utf8'));
+    writeFileSync(manifest, JSON.stringify({ ...fields, clangxx }));
+    const bin = join(root, 'project-bin');
+    mkdirSync(bin);
+    writeFileSync(join(bin, 'node'), '#!/bin/sh\nexit 97\n', { mode: 0o755 });
     const setup = resolveAndroidCas(root, { STIM_ANDROID_CAS_TOOLCHAIN: manifest })!;
     const state = setup.env.STIM_ANDROID_CAS_STATE!;
-    getExecutor().runFile(process.execPath, [join(state, 'clang'), '-c', 'source.c'], {
-      env: { STIM_ANDROID_CAS_CONTEXT: setup.env.STIM_ANDROID_CAS_CONTEXT! },
-    });
-    const record = JSON.parse(readFileSync(join(state, 'compiler.jsonl'), 'utf8'));
-    expect(record.code).toBe(0);
-    expect(record.argv).toEqual(expect.arrayContaining(['-resource-dir', resourceDir]));
+    const args = ['-c', "source file's.c", '-DVALUE=a b'];
+    for (const name of ['clang', 'clang++']) {
+      getExecutor().runFile(join(state, name), args, {
+        cwd: root,
+        env: { STIM_ANDROID_CAS_CONTEXT: setup.env.STIM_ANDROID_CAS_CONTEXT!, PATH: bin },
+      });
+    }
+    const records = readFileSync(join(state, 'compiler.jsonl'), 'utf8')
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line));
+    expect(records.map((record) => record.argv[0])).toEqual([compiler, clangxx]);
+    for (const record of records) {
+      expect(record.code).toBe(0);
+      expect(record.cwd).toBe(root);
+      expect(record.argv.slice(-args.length)).toEqual(args);
+      expect(record.argv).toEqual(expect.arrayContaining(['-resource-dir', resourceDir]));
+    }
+    expect(records[0].argv).not.toContain('-nostdinc++');
+    expect(records[1].argv).toEqual(
+      expect.arrayContaining([
+        '-nostdinc++',
+        '-isystem',
+        join(ndk, 'toolchains/llvm/prebuilt/darwin-x86_64/sysroot/usr/include/c++/v1'),
+      ]),
+    );
   },
 );
 

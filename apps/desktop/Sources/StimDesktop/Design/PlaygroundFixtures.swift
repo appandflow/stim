@@ -17,10 +17,14 @@
   struct PlaygroundSimulator {
     let loading: Bool
     let error: String?
+    let frame: DeviceFrameOption
     private var values: [String: Any]
 
     init(scenario: PlaygroundScenario) {
       loading = scenario == .loading
+      frame = DeviceFrameOption(
+        isOn: .constant(true),
+        unavailableReason: scenario == .error ? "The iPhone Duo hardware model is not in the selected Xcode." : nil)
       error = scenario == .error ? "Xcode did not report the simulator's appearance settings." : nil
       values =
         scenario == .empty || loading || error != nil

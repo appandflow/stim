@@ -119,6 +119,7 @@ private let target = ReplayTarget(workspace: "/work/app", platform: "ios", slot:
         var spans: [ReplaySpan]
         var liveEnd: Double?
         var previousLength: Double?
+        var fit: Bool?
       }
       struct Piece: Decodable {
         var kind: String
@@ -161,7 +162,8 @@ private let target = ReplayTarget(workspace: "/work/app", platform: "ios", slot:
     let vector = try #require(Self.vectors.timelines.first { $0.name == name })
     let timeline = try #require(
       ReplayTimeline(
-        spans: vector.input.spans, liveEnd: vector.input.liveEnd, previousLength: vector.input.previousLength))
+        spans: vector.input.spans, liveEnd: vector.input.liveEnd, previousLength: vector.input.previousLength,
+        fit: vector.input.fit ?? false))
     #expect(timeline.start == vector.timeline.start && timeline.end == vector.timeline.end)
     #expect(timeline.length == vector.timeline.length)
     #expect(timeline.pieces.count == vector.timeline.pieces.count)

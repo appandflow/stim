@@ -1048,7 +1048,9 @@ artifact is ready to reuse, including a shared-build hit or a recheck after
 prebuild or pods. A later recheck can replace the first lookup's outcome.
 Before resolution it follows the project's most recent run and `outcomeKnown`
 is `false`. `cacheLookupOutcome` is `hit` or `miss` after an actual lookup resolves;
-it is absent before resolution and on runs that skip lookup, such as `--eas-profile`.
+it is absent before resolution and on runs that skip lookup, such as `--eas-profile`
+or `--no-build-cache`. Fingerprinting for a fresh build remains in `prepare` when
+cache reads are disabled.
 `completedPhaseMs` holds milliseconds spent in each phase the run already left,
 summing repeated visits. It excludes the current visit; the current phase appears
 only if visited earlier. It is absent before any phase completes and on older Stim versions.
@@ -1398,7 +1400,7 @@ worktree locked with `git worktree lock` is refused until you unlock it.
 ## `gc`
 
 ```text
-stim gc [--delete] [--older-than <days>] [--cache <name|all|workspaces|recordings|parked|archived|archived:<id>|archived-logs|archived-recordings|archived-agent|watchman|gradle-daemons>] [--worktrees] [--idle <duration>] [--json]
+stim gc [--delete] [--older-than <days>] [--cache <name|all|workspaces|recordings|parked|archived|archived:<id>|archived-logs|archived-recordings|archived-agent|archived-logs:<id>|archived-recordings:<id>|archived-agent:<id>|watchman|gradle-daemons>] [--worktrees] [--idle <duration>] [--json]
 ```
 
 Reports stale workspace entries, orphaned workspace directories, clean linked
@@ -1769,8 +1771,9 @@ Archives are excluded from normal gc, `--cache all`, and unscoped `--older-than`
 `--delete` to remove them. `--cache archived:<id>` selects one archive; an
 unknown id refuses with `STIM_BAD_ARG` and lists known ids. `archived-logs`,
 `archived-recordings`, and `archived-agent` select only that kind and preserve
-the record. `--older-than` filters by removal age for whole and per-kind
-selection; an explicit id ignores it. Archive selection reports abandoned
+the record. Add `:<id>` (for example `archived-logs:<id>`) to clear one kind of
+one archive; an unknown id refuses the same way. `--older-than` filters by
+removal age for whole and per-kind selection; an explicit id ignores it. Archive selection reports abandoned
 staging and keeps live or unresolved claims, naming the claim removal command.
 
 <StimTabs code="stim gc --cache archived" />

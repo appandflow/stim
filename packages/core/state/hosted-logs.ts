@@ -43,7 +43,6 @@ export function hostedMacosLogsDir(home: string): string | null {
 
 export const hostedNativeLogsDir = (home: string, platform: 'ios' | 'android'): string =>
   join(home, `${platform}-logs`);
-export const hostedIosLogsDir = (home: string): string => hostedNativeLogsDir(home, 'ios');
 
 /** The completed query window and overlap digests, or null for a missing, malformed or unreadable checkpoint. */
 export function readHostedNativeLogsCheckpoint(
@@ -75,8 +74,6 @@ export function readHostedNativeLogsCheckpoint(
     return null;
   }
 }
-
-export { readHostedNativeLogsCheckpoint as readHostedIosLogsCheckpoint };
 
 function readSpan(path: string, from: number, to: number): Buffer {
   const fd = openSync(path, 'r');

@@ -175,7 +175,10 @@ to stats.json.corrupt-<unix ms> and starts a new one.`,
   stim gc --delete --cache archived-logs        delete logs, keep records
   stim gc --delete --cache archived-recordings  delete recordings, keep records
   stim gc --delete --cache archived-agent       delete agent actions, keep records
-  Per-kind selectors also accept --older-than, measured from removedAt.
+  stim gc --delete --cache archived-logs:<id>   one kind of one archive, keep its record
+  (archived-recordings:<id> and archived-agent:<id> likewise; they ignore --older-than;
+  an unknown id refuses with STIM_BAD_ARG)
+  Per-kind selectors without an id also accept --older-than, measured from removedAt.
   Normal gc, --cache all, --worktrees and unscoped --older-than exclude archives.
   Archive scopes report abandoned staging directories and delete only those
   with no live or unresolved claim. An unresolved claim names its removal command.

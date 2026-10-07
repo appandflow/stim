@@ -6,7 +6,7 @@ import SwiftUI
 struct AppPreferencesView: View {
   let stimHome: String
   @AppStorage(AppPreferences.Key.appearance) private var appearance = Appearance.auto
-  @AppStorage(AppPreferences.Key.sidebarStatus) private var status = StatusFilter.all
+  @AppStorage(AppPreferences.Key.sidebarStatuses) private var statuses = StatusFilter.encode(StatusFilter.defaultSelection)
   @AppStorage(AppPreferences.Key.defaultView) private var defaultView = DefaultView.allDevices
   @AppStorage(AppPreferences.Key.tileSize) private var tileSize = TileSize.medium
   @AppStorage(AppPreferences.Key.maxFramesPerSecond) private var framesPerSecond = 60.0
@@ -60,8 +60,22 @@ struct AppPreferencesView: View {
       .id("top")
 
       Section("Workspace list") {
-        Picker("Status", selection: $status) {
-          ForEach(StatusFilter.allCases, id: \.self) { Text($0.title).tag($0) }
+        LabeledContent("Status") {
+          Menu(StatusFilter.summary(StatusFilter.decode(statuses))) {
+            Button("All") { statuses = StatusFilter.encode(StatusFilter.all) }
+            Divider()
+            ForEach(StatusFilter.allCases, id: \.self) { status in
+              Toggle(
+                status.title,
+                isOn: Binding(
+                  get: { StatusFilter.decode(statuses).contains(status) },
+                  set: { selected in
+                    var updated = StatusFilter.decode(statuses)
+                    if selected { updated.insert(status) } else { updated.remove(status) }
+                    statuses = StatusFilter.encode(updated)
+                  }))
+            }
+          }
         }
         Picker("Open to", selection: $defaultView) {
           ForEach(DefaultView.allCases, id: \.self) { Text($0.title).tag($0) }

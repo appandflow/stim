@@ -1301,7 +1301,7 @@ RULES
                    the project's most recent one
   cacheLookupOutcome  "hit" or "miss" once an actual cache lookup resolves;
                    absent before resolution and on runs that skip lookup,
-                   such as --eas-profile
+                   such as --eas-profile or --no-build-cache
   expectedMs       the median duration of this project's last successful
                    runs with that outcome on that platform, or null with
                    no history. The run estimates twice: when it starts,

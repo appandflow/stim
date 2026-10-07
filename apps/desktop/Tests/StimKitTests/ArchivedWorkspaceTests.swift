@@ -52,7 +52,7 @@ import Testing
     #expect(old.archivedUsage == nil)
   }
 
-  @Test func liveFiltersExcludeArchivesAndArchivedGroupsOnlyHistoryNewestFirst() throws {
+  @Test func statusFiltersShowArchivesOnlyWhenArchivedIsOnAndGroupOnlyHistoryNewestFirst() throws {
     let payload = try payload()
     var older = try #require(payload.archived?.first)
     var newer = older
@@ -65,15 +65,19 @@ import Testing
     let archives = [older, other, newer]
     let project: (String) -> Project = { _ in Project(root: "/work/live") }
     var options = SidebarOptions()
-    for filter in [StatusFilter.all, .live, .idle] {
-      options.status = filter
+    let expected: [(Set<StatusFilter>, [String])] = [
+      (StatusFilter.all, ["/work/idle/app", "/work/new/app", "archive:newer", "archive:other-project", "archive:older"]),
+      ([.live, .idle, .notSetUp], ["/work/idle/app", "/work/new/app"]),
+      ([.live], ["/work/new/app"]),
+      ([.idle], ["/work/idle/app"]),
+    ]
+    for (filter, ids) in expected {
+      options.statuses = filter
       let rows = sidebarList(
         environments: payload.environments, unprovisioned: [], project: project, options: options, archived: archives)
-      #expect(
-        rows.map(\.id)
-          == (filter == .all ? ["/work/idle/app", "/work/new/app"] : filter == .live ? ["/work/new/app"] : ["/work/idle/app"]))
+      #expect(rows.map(\.id) == ids)
     }
-    options.status = .archived
+    options.statuses = [.archived]
     let trees = sidebarTrees(
       environments: payload.environments, unprovisioned: [], project: project, options: options, archived: archives)
     #expect(trees.map { $0.summary.project.root } == ["/work/another", "/work/example"])
@@ -84,6 +88,72 @@ import Testing
     #expect(rows.first?.id == "archive:newer")
     options.hiddenProjects = ["/work/example"]
     #expect(sidebarTrees(environments: [], unprovisioned: [], project: project, options: options, archived: archives).count == 1)
+  }
+
+  @Test func mixedStatusesAppendArchivesAndKeepArchiveOnlyProjects() throws {
+    let payload = try payload()
+    var archive = try #require(payload.archived?.first)
+    archive.worktree.repository = "/work/live"
+    var deleted = archive
+    deleted.id = "deleted"
+    deleted.worktree.repository = "/work/deleted"
+    let project: (String) -> Project = { _ in Project(root: "/work/live") }
+    var options = SidebarOptions()
+    options.statuses = [.live, .archived]
+    let trees = sidebarTrees(
+      environments: payload.environments, unprovisioned: [], project: project, options: options, archived: [archive, deleted])
+    #expect(trees.map { $0.summary.project.root } == ["/work/deleted", "/work/live"])
+    #expect(trees[0].isArchiveOnly)
+    #expect(trees[0].summary.total == 1)
+    #expect(!trees[1].isArchiveOnly)
+    #expect(trees[1].entries.map(\.id) == ["/work/new/app", "archive:archive-older"])
+    let rows = sidebarList(
+      environments: payload.environments, unprovisioned: [], project: project, options: options, archived: [archive, deleted])
+    #expect(rows.first?.id == "/work/new/app")
+    #expect(rows.dropFirst().allSatisfy { $0.status == .archived })
+    options.hiddenProjects = ["/work/deleted"]
+    #expect(
+      sidebarTrees(
+        environments: payload.environments, unprovisioned: [], project: project, options: options, archived: [archive, deleted]
+      ).count == 1)
+  }
+
+  @Test func statusCountsIgnoreSelectionAndCountGroupedRowsWithHiddenProjectsApplied() throws {
+    var archive = try #require(payload().archived?.first)
+    archive.projectRoot = "/r/.worktrees/old/apps/mobile"
+    archive.worktree.repository = "/r"
+    var desktop = archive
+    desktop.id = "desktop"
+    desktop.projectRoot = "/r/.worktrees/old/apps/desktop"
+    let environments = try JSONDecoder().decode(
+      [Workspace].self,
+      from: Data(
+        #"""
+        [
+          {"path":"/r/.worktrees/x/apps/mobile","live":true,"warnings":[],"worktree":{"path":"/r/.worktrees/x"}},
+          {"path":"/r/.worktrees/x/apps/desktop","live":false,"warnings":[],"worktree":{"path":"/r/.worktrees/x"}},
+          {"path":"/r/.worktrees/idle","live":false,"warnings":[]},
+          {"path":"/hidden/live","live":true,"warnings":[]}
+        ]
+        """#.utf8))
+    let worktrees = [
+      UnprovisionedWorktree(path: "/r/.worktrees/new", branch: nil), UnprovisionedWorktree(path: "/hidden/new", branch: nil),
+    ]
+    let project: (String) -> Project = { Project(root: $0.hasPrefix("/hidden/") ? "/hidden" : "/r") }
+    var options = SidebarOptions()
+    options.statuses = []
+    options.hiddenProjects = ["/hidden"]
+    #expect(
+      sidebarStatusCounts(
+        environments: environments, unprovisioned: worktrees, project: project, options: options, archived: [archive, desktop])
+        == [
+          .live: 1, .idle: 1, .notSetUp: 1, .archived: 1,
+        ])
+    options.hiddenProjects.insert("/r")
+    #expect(
+      sidebarStatusCounts(
+        environments: environments, unprovisioned: worktrees, project: project, options: options, archived: [archive, desktop]
+      ).values.allSatisfy { $0 == 0 })
   }
 
   @Test func archivedMultiAppWorktreesUseRepositorySectionsAndPreserveRepeatedRuns() throws {
@@ -104,7 +174,7 @@ import Testing
     unknown.worktree.branch = nil
     unknown.worktree.repository = nil
     var options = SidebarOptions()
-    options.status = .archived
+    options.statuses = [.archived]
     let trees = sidebarTrees(
       environments: [], unprovisioned: [], project: { Project(fallbackFor: $0) },
       options: options, archived: [older, mobile, unknown, desktop])
@@ -134,7 +204,7 @@ import Testing
     desktop.id = "desktop"
     desktop.projectRoot = parent + "/desktop"
     var options = SidebarOptions()
-    options.status = .archived
+    options.statuses = [.archived]
     let trees = sidebarTrees(
       environments: [], unprovisioned: [], project: { Project(fallbackFor: $0) },
       options: options, archived: [mobile, desktop])
@@ -190,6 +260,32 @@ import Testing
     let command = archive.deleteCommand(cwd: "/home")
     #expect(command.arguments == ["gc", "--delete", "--cache", "archived:archive-older"])
     #expect(command.cwd == "/home")
+  }
+
+  @Test func clearingOneKindNamesTheCliSelectorForThatKindAndArchive() throws {
+    let archive = try #require(payload().archived?.first)
+    let selectors = RetainedKind.allCases.map { archive.clearCommand($0, cwd: "/home").arguments.last }
+    #expect(
+      selectors == ["archived-logs:archive-older", "archived-recordings:archive-older", "archived-agent:archive-older"])
+    #expect(archive.clearCommand(.logs, cwd: "/home").arguments.dropLast() == ["gc", "--delete", "--cache"])
+  }
+
+  @Test func onlyNonEmptyKindsCanBeClearedAndTheRecordNever() throws {
+    var archive = try #require(payload().archived?.first)
+    archive.bytes.logs = 10
+    archive.bytes.recordings = 0
+    archive.bytes.agentActions = 3
+    archive.bytes.record = 7
+    let page = ArchivedPage(archive: archive, now: Date())
+    #expect(page.retention.map(\.clearable) == [true, false, true, false])
+  }
+
+  @Test func buildTotalsJoinOnOneLine() throws {
+    var archive = try #require(payload().archived?.first)
+    archive.builds.count = 1
+    archive.builds.lastErrorCount = 2
+    let page = ArchivedPage(archive: archive, now: Date())
+    #expect(page.buildTotalsLine == "1 build \u{00B7} 2 errors at removal")
   }
 
   @Test func archiveLogsPreserveFiltersWithoutWorkspaceOrFollow() throws {
@@ -252,7 +348,7 @@ import Testing
     archive.projectRoot = "/work/example/.worktrees/feature/app"
     #expect(archive.sidebarProject == Project(fallbackFor: archive.projectRoot))
     var options = SidebarOptions()
-    options.status = .archived
+    options.statuses = [.archived]
     let trees = sidebarTrees(
       environments: [], unprovisioned: [], project: { Project(fallbackFor: $0) }, options: options, archived: [archive])
     #expect(trees.first?.summary.project.root == "/work/example")
