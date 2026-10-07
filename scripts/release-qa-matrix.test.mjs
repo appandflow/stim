@@ -41,9 +41,11 @@ describe('release QA matrix', () => {
     expect(requiredIds(fallback)).toEqual(qaRows.map((candidate) => candidate.id));
   });
 
-  it('drops a documentation change and the candidate version bump without requiring a row', () => {
+  it('drops documentation, repository tooling and the candidate version bump without requiring a row', () => {
     const result = computeQaMatrix([
       { path: 'docs/releases/1.7.0.md', added: 20, removed: 0 },
+      { path: '.worktreeexclude', added: 1, removed: 0 },
+      { path: 'packaging/store/assemble.mjs', added: 1, removed: 1 },
       {
         path: 'packages/core/package.json',
         added: 1,
@@ -55,6 +57,8 @@ describe('release QA matrix', () => {
     expect(result.rows.some((candidate) => candidate.required)).toBe(false);
     expect(result.exempt).toEqual([
       { path: 'docs/releases/1.7.0.md', reason: 'documentation' },
+      { path: '.worktreeexclude', reason: 'repository tooling, not published behavior' },
+      { path: 'packaging/store/assemble.mjs', reason: 'repository tooling, not published behavior' },
       { path: 'packages/core/package.json', reason: 'version field only, the release candidate bump' },
     ]);
     expect(row(result, 'caches').reason).toBe(
