@@ -90,7 +90,9 @@ final class DiscoveryCoordinator: ObservableObject {
     if finished {
       Task {
         await machines.settings.refresh()
-        placements = try? await stats.machine().offload?.placements
+        let report = try? await stats.machine()
+        placements = report?.offload?.placements
+        rememberCapacityRefusal(report?.capacityRefusals)
         evaluate()
       }
     } else {
@@ -105,8 +107,11 @@ final class DiscoveryCoordinator: ObservableObject {
       let environment = await environment.value
       let peers = await Task.detached { Tailnet.status(environment: environment).flatMap(Tailnet.macs(statusJSON:)) }.value
       await machines.settings.refresh()
-      polling = false
       macs = peers ?? []
+      let report = try? await stats.machine()
+      polling = false
+      placements = report?.offload?.placements
+      rememberCapacityRefusal(report?.capacityRefusals)
       if let peers {
         let result = Discovery.newMac(macs: peers, seen: persistence.seenPeers, machines: machines.entries ?? [], now: Date())
         persistence.seenPeers = result.seen
@@ -116,8 +121,14 @@ final class DiscoveryCoordinator: ObservableObject {
     }
   }
 
-  private func remember(_ prompt: DiscoveryPrompt?) {
-    if let prompt { pending[prompt.type] = (prompt, Date()) }
+  private func rememberCapacityRefusal(_ events: [CapacityRefusal]?) {
+    if let event = Discovery.capHit(events: events ?? [], now: Date(), mac: macs.first) {
+      remember(event.prompt, rememberedAt: event.rememberedAt)
+    }
+  }
+
+  private func remember(_ prompt: DiscoveryPrompt?, rememberedAt: Date = Date()) {
+    if let prompt { pending[prompt.type] = (prompt, rememberedAt) }
   }
 
   private func allowed(now: Date) -> Bool {

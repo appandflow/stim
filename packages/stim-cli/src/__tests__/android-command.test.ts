@@ -1,3 +1,4 @@
+import { workspaceId } from '@stim-cli/core';
 import * as offloadClient from '../offload/client.ts';
 import { SETTING_SHAPE_REMEDY } from '../workspace/settings.ts';
 import { hashFile } from '../engine/installed-artifact.ts';
@@ -78,7 +79,7 @@ import {
 import { LAUNCH_UNVERIFIED, verifyLaunch } from '../engine/launch-verify.ts';
 import type { AssetManifest } from '../engine/asset-manifest.ts';
 import { PREBUILD_ERROR } from '../engine/prebuild.ts';
-import type { RecordStatsResult, StatsRun } from '../engine/stats.ts';
+import type { recordCapacityRefusal as recordRefusal, RecordStatsResult, StatsRun } from '../engine/stats.ts';
 import { asProcessExit, makeChildProcess, makeError, makeExecutor, writeCasToolchain } from './_factories.ts';
 import { listLeaseFiles, takeLease } from '../engine/device-lease.ts';
 
@@ -3980,28 +3981,70 @@ describe('concurrency limits', () => {
     expect(slotAcquired).toBe(0);
   });
 
-  test('maxDevices at capacity refuses with STIM_AT_CAPACITY, before ensuring a device', async () => {
-    const capacityCalls: Record<string, unknown>[] = [];
+  test.each([
+    [false, false],
+    [false, true],
+    [true, false],
+    [true, true],
+  ])(
+    'maxDevices at capacity preserves STIM_AT_CAPACITY with a recorder that throws=%s and json=%s',
+    async (throws, json) => {
+      const capacityCalls: Record<string, unknown>[] = [];
+      const recordCapacityRefusal = vi.fn<typeof recordRefusal>(() => {
+        if (throws) throw new Error('stats unavailable');
+      });
+      const h = harness({
+        json,
+        recordCapacityRefusal,
+        getLimits: () => ({ maxBuilds: 0, maxDevices: 3 }),
+        checkCapacity: (args: Record<string, unknown>) => {
+          capacityCalls.push(args);
+          return {
+            code: 'STIM_AT_CAPACITY',
+            message: 'at capacity',
+            remedy: 'stop an environment (stim stop) or raise concurrency.maxDevices',
+          };
+        },
+      });
+      const result = await h.run();
+      expect(result.ok).toBe(false);
+      expect(h.stdout.map((line) => JSON.parse(line))).toEqual(
+        json
+          ? [
+              {
+                code: 'STIM_AT_CAPACITY',
+                message: 'at capacity',
+                remedy: 'stop an environment (stim stop) or raise concurrency.maxDevices',
+              },
+            ]
+          : [],
+      );
+      assert(result.error);
+      expect(result.error).toMatchObject({ code: 'STIM_AT_CAPACITY', message: 'at capacity' });
+      expect(recordCapacityRefusal).toHaveBeenCalledTimes(1);
+      expect(recordCapacityRefusal).toHaveBeenCalledWith(
+        { platform: 'android', max: 3, workspace: workspaceId(root) },
+        expect.any(Number),
+      );
+      expect(h.stderr.join('\n')).not.toContain('stats unavailable');
+      const capacityArgs = capacityCalls[0];
+      assert(capacityArgs);
+      expect(capacityArgs.max).toBe(3);
+      expect(h.calls.ensureDevice.length).toBe(0);
+      expect(h.stderr.join('\n')).toMatch(/stim stop/);
+    },
+  );
+
+  test('a non-capacity device refusal is not recorded', async () => {
+    const recordCapacityRefusal = vi.fn<typeof recordRefusal>();
     const h = harness({
-      getLimits: () => ({ maxBuilds: 0, maxDevices: 3 }),
-      checkCapacity: (args: Record<string, unknown>) => {
-        capacityCalls.push(args);
-        return {
-          code: 'STIM_AT_CAPACITY',
-          message: 'at capacity',
-          remedy: 'stop an environment (stim stop) or raise concurrency.maxDevices',
-        };
-      },
+      recordCapacityRefusal,
+      checkCapacity: () => ({ code: 'STIM_CLAIM_UNAVAILABLE', message: 'owner unknown', remedy: 'inspect claim' }),
     });
     const result = await h.run();
     expect(result.ok).toBe(false);
-    assert(result.error);
-    expect(result.error.code).toBe('STIM_AT_CAPACITY');
-    const capacityArgs = capacityCalls[0];
-    assert(capacityArgs);
-    expect(capacityArgs.max).toBe(3);
-    expect(h.calls.ensureDevice.length).toBe(0);
-    expect(h.stderr.join('\n')).toMatch(/stim stop/);
+    expect(result.error).toMatchObject({ code: 'STIM_CLAIM_UNAVAILABLE', message: 'owner unknown' });
+    expect(recordCapacityRefusal).not.toHaveBeenCalled();
   });
 
   test('a budget refusal stops before any device or build and reports what was reclaimed', async () => {

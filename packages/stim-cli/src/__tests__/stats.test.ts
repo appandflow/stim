@@ -1,3 +1,4 @@
+import { decodeStats, readStatsReport, type StatsCapacityRefusal } from '@stim-cli/core/state';
 import { getSwiftpmCacheUsage } from '../devices/swiftpm-cache-usage.ts';
 import { getAgentDeviceUsage } from '../devices/agent-device-usage.ts';
 import assert from 'node:assert';
@@ -20,6 +21,9 @@ import { Command } from 'commander';
 import { resetExecutor, setExecutor } from '../exec.ts';
 import statsCommand from '../commands/stats.ts';
 import {
+  CAPACITY_REFUSAL_LIMIT,
+  CAPACITY_REFUSAL_MAX_AGE_MS,
+  recordCapacityRefusal,
   createRunRecorder,
   emptyStats,
   offloadSummary,
@@ -976,4 +980,113 @@ test('stats includes measured SwiftPM usage in one JSON payload and after agent-
   expect(text.indexOf('SwiftPM cache (')).toBeGreaterThan(text.indexOf('agent-device ('));
   expect(text).toContain(dir);
   expect(plain.at(-1)).toContain('shared by every SwiftPM build on this machine');
+});
+
+describe('capacity refusals', () => {
+  function event(at = T0, workspace = 'fixture'): StatsCapacityRefusal {
+    return { at: new Date(at).toISOString(), kind: 'device', platform: 'ios', max: 2, workspace };
+  }
+
+  test('normalization drops malformed capacity refusals without losing valid events', () => {
+    const valid = event();
+    const malformed = [
+      null,
+      [],
+      {},
+      { ...valid, kind: 'build' },
+      { ...valid, platform: 'web' },
+      { ...valid, at: 'bad-date' },
+      { ...valid, at: 0 },
+      { ...valid, max: 0 },
+      { ...valid, max: 1.5 },
+      { ...valid, max: '2' },
+      { ...valid, workspace: '' },
+      { ...valid, workspace: 123 },
+    ];
+    const decode = (capacityRefusals: unknown) =>
+      decodeStats(JSON.stringify({ ...emptyStats(), capacityRefusals })).record;
+    expect(decode([...malformed, valid])?.capacityRefusals).toEqual([valid]);
+    expect(decode(malformed)).not.toHaveProperty('capacityRefusals');
+    expect(decode({})).not.toHaveProperty('capacityRefusals');
+  });
+
+  test('the report sorts capacity refusals newest first and omits an empty or expired list', () => {
+    writeFileSync(statsFile(), JSON.stringify({ ...emptyStats(), capacityRefusals: [event(T0), event(T1)] }));
+    expect(readStatsReport(null, T1).report.capacityRefusals).toEqual([event(T1), event(T0)]);
+    expect(readStatsReport(null, T1 + CAPACITY_REFUSAL_MAX_AGE_MS + 1).report).not.toHaveProperty('capacityRefusals');
+    writeFileSync(statsFile(), JSON.stringify(emptyStats()));
+    expect(readStatsReport(null, T1).report).not.toHaveProperty('capacityRefusals');
+  });
+
+  test('the report bounds capacity refusals to fifty within seven days including the boundary', () => {
+    const capacityRefusals = [
+      event(T0 - CAPACITY_REFUSAL_MAX_AGE_MS),
+      event(T0 - CAPACITY_REFUSAL_MAX_AGE_MS - 1),
+      event(T0 + 1),
+    ];
+    writeFileSync(statsFile(), JSON.stringify({ ...emptyStats(), capacityRefusals }));
+    expect(readStatsReport(null, T0).report.capacityRefusals).toEqual([capacityRefusals[0]]);
+    const events = Array.from({ length: 55 }, (_, i) => event(T0 - i, `w${i}`)).toReversed();
+    writeFileSync(statsFile(), JSON.stringify({ ...emptyStats(), capacityRefusals: events }));
+    const kept = readStatsReport(null, T0).report.capacityRefusals;
+    expect(kept).toHaveLength(50);
+    expect(kept?.map((each) => each.workspace)).toEqual(Array.from({ length: 50 }, (_, i) => `w${i}`));
+  });
+
+  test('recording a capacity refusal appends without a run and trims old and excess events', () => {
+    const capacityRefusals = [
+      event(T0 - CAPACITY_REFUSAL_MAX_AGE_MS - 1),
+      ...Array.from({ length: 55 }, (_, i) => event(T0 + i, `w${i}`)),
+    ];
+    writeFileSync(statsFile(), JSON.stringify({ ...emptyStats(), capacityRefusals }));
+    recordCapacityRefusal({ platform: 'android', max: 3, workspace: 'new' }, T0 + 55);
+    const record = readStats().record;
+    expect(record?.machine).toEqual({});
+    expect(record?.projects).toEqual({});
+    expect(record?.capacityRefusals).toHaveLength(CAPACITY_REFUSAL_LIMIT);
+    expect(record?.capacityRefusals?.[0]?.workspace).toBe('w6');
+    expect(record?.capacityRefusals?.at(-1)).toEqual({ ...event(T0 + 55, 'new'), platform: 'android', max: 3 });
+  });
+
+  test('a normal run preserves capacity refusals and trims only expired entries', () => {
+    const before = { ...emptyStats(), capacityRefusals: [event(T0 - CAPACITY_REFUSAL_MAX_AGE_MS - 1), event(T0)] };
+    const after = updateStats(before, run(), T0);
+    expect(after.capacityRefusals).toEqual([event(T0)]);
+    expect(after.machine.ios?.runs).toBe(1);
+    expect(updateStats(after, run(), T0 + CAPACITY_REFUSAL_MAX_AGE_MS + 1)).not.toHaveProperty('capacityRefusals');
+  });
+
+  test.each(['{ broken', JSON.stringify({ version: 2, machine: {}, projects: {} })])(
+    'an unreadable or newer stats file records no capacity refusal and stays untouched: %s',
+    (text) => {
+      writeFileSync(statsFile(), text);
+      const out = vi.spyOn(console, 'log');
+      const err = vi.spyOn(console, 'error');
+      try {
+        expect(() => recordCapacityRefusal({ platform: 'ios', max: 2, workspace: 'fixture' }, T0)).not.toThrow();
+        expect(readFileSync(statsFile(), 'utf-8')).toBe(text);
+        expect(readdirSync(tmpHome).filter((name) => name.includes('corrupt-') || name.endsWith('.tmp'))).toEqual([]);
+        expect(out).not.toHaveBeenCalled();
+        expect(err).not.toHaveBeenCalled();
+      } finally {
+        out.mockRestore();
+        err.mockRestore();
+      }
+    },
+  );
+
+  test('a capacity refusal recording I/O failure stays silent and never throws', () => {
+    mkdirSync(statsFile());
+    const out = vi.spyOn(console, 'log');
+    const err = vi.spyOn(console, 'error');
+    try {
+      expect(() => recordCapacityRefusal({ platform: 'ios', max: 2, workspace: 'fixture' }, T0)).not.toThrow();
+      expect(out).not.toHaveBeenCalled();
+      expect(err).not.toHaveBeenCalled();
+      expect(readdirSync(tmpHome).filter((name) => name.endsWith('.tmp'))).toEqual([]);
+    } finally {
+      out.mockRestore();
+      err.mockRestore();
+    }
+  });
 });

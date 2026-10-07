@@ -1272,6 +1272,15 @@ fallbacks, for today (this Mac's calendar day) and in total. The plain output
 adds a `build placement` section with the same counts and the last 5
 placements. Placements include `slotWaitMs` as whole milliseconds waiting for a build slot only when positive. `stim guide facts stats` has every field.
 
+The optional top-level JSON `capacityRefusals` lists the last 50 device
+refusals from the last 7 days, newest first, and is omitted when empty. Each
+entry carries `at` (ISO timestamp), `kind: "device"`, `platform` (`ios` or
+`android`), `max` (`concurrency.maxDevices`), and `workspace` (the workspace
+id used by status and Desktop). Only `STIM_AT_CAPACITY` device refusals are
+recorded; build caps wait. Recording is best effort and does not change the
+refusal or the plain stats output. Desktop uses events within 6 hours for
+its device-limit suggestion, including runs from an agent's terminal.
+
 The top-level JSON `agentDevice` reports agent-device disk usage: `version: 1`,
 `measuredAt`, total known `bytes`, `complete`, `stateDir`, `runnerBuilds`,
 `workspaces`, and `hosted`. Unknown byte fields are `null`. Runner entries

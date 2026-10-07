@@ -43,7 +43,7 @@ import {
   resolveRemote,
   uploadRemote,
 } from '../../engine/remote-cache.ts';
-import { readRunEstimates, recordRunStats } from '../../engine/stats.ts';
+import { readRunEstimates, recordRunStats, recordCapacityRefusal } from '../../engine/stats.ts';
 import { swapJsBundle } from '../../engine/js-swap.ts';
 import {
   buildIos,
@@ -163,6 +163,7 @@ export interface IosDeps {
   writeWorkspaceState: typeof writeWorkspaceState;
   createWriter: typeof createNdjsonWriter;
   recordStats: typeof recordRunStats;
+  recordCapacityRefusal: typeof recordCapacityRefusal;
   readEstimates: typeof readRunEstimates;
   now: () => number;
 }
@@ -259,6 +260,7 @@ export const DEFAULT_DEPS: IosDeps = {
   writeWorkspaceState,
   createWriter: createNdjsonWriter,
   recordStats: recordRunStats,
+  recordCapacityRefusal,
   readEstimates: readRunEstimates,
   now: () => Date.now(),
 };

@@ -30,7 +30,13 @@ import TOPICS from '../guide/index.ts';
 import webCommand from '../commands/web.ts';
 import macosCommand from '../commands/macos.ts';
 import { buildReport } from '../engine/build-progress.ts';
-import { PLACEMENT_DECISIONS, PLACEMENT_LIMIT, PLACEMENT_MAX_AGE_MS } from '../engine/stats.ts';
+import {
+  CAPACITY_REFUSAL_LIMIT,
+  CAPACITY_REFUSAL_MAX_AGE_MS,
+  PLACEMENT_DECISIONS,
+  PLACEMENT_LIMIT,
+  PLACEMENT_MAX_AGE_MS,
+} from '../engine/stats.ts';
 import {
   topicNames,
   renderTopic,
@@ -724,6 +730,10 @@ test('the stats facts document every placement decision and the placement retent
   assert(body);
   for (const decision of PLACEMENT_DECISIONS) expect(body).toContain(`"${decision}"`);
   expect(body).toContain(`the last ${PLACEMENT_LIMIT} from the last ${PLACEMENT_MAX_AGE_MS / 86_400_000} days`);
+  expect(body).toContain('capacityRefusals?:');
+  expect(body).toContain(
+    `the last ${CAPACITY_REFUSAL_LIMIT} from the last ${CAPACITY_REFUSAL_MAX_AGE_MS / 86_400_000} days`,
+  );
 });
 
 test('the facts topic documents every native build step a running build can report', () => {
