@@ -452,11 +452,12 @@ stim ios`}
    shows in the app instead of a separate Simulator window.
 2. Click a device to open its viewer. **Take over** lets you use it; Escape
    gives it back.
-3. To use the phone app, open **Stim > Settings > Phones**, turn on **Serve to
-   phones**, choose **Set up connection** if needed, then **Pair a Phone…**.
-   Setup keeps existing Tailscale routes and never enables Funnel. If Tailscale
-   asks to enable HTTPS, approve its browser setup and retry. Pairing waits for a
-   verified private route; a timeout changes nothing.
+3. To use the phone app, open **Stim > Settings > Phones** and choose **Pair a
+   Phone…**. The wizard checks Tailscale, turns on serving, sets up a private
+   tailnet route, shows a code and waits for the phone. Setup keeps existing
+   Tailscale routes and never enables Funnel. If Tailscale asks to enable HTTPS,
+   approve its browser setup and retry. Pairing waits for a verified private
+   route; a timeout changes nothing.
 
 Revoking a paired phone closes its active connections on the next pairing
 check. The server checks pairings on changes and once a second. If QR pairing
@@ -465,8 +466,8 @@ chosen.
 
 See [Phone app](./phone-app.md) for installation, pairing, notifications and access.
 
-On the hosting Mac, **Stim > Settings > Phones > Hosted here**, below **Device
-hosting approvals**, lists the simulators, emulators and apps approved Macs run
+On the hosting Mac, **Stim > Settings > Remote Macs > Running here**, below
+**Macs using this Mac**, lists the simulators, emulators and apps approved Macs run
 here, with their client, device, app, state and session age. **Stop** asks for
 confirmation, then ends the session and deletes or parks its device on this Mac.
 Parked sessions remain listed without a Stop button. The list refreshes every

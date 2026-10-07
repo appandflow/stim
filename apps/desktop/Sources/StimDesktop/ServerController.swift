@@ -91,11 +91,6 @@ final class ServerController: ObservableObject {
     return (1...65535).contains(port) ? port : StimServerCLI.defaultPort
   }
 
-  /// Build clients, and Macs waiting for approval to build here, newest first.
-  var buildClients: [PairedDevice] { devices.filter(\.isBuildClient) }
-
-  var deviceHostClients: [PairedDevice] { devices.filter(\.isDeviceHostClient) }
-
   var phones: [PairedDevice] { devices.filter(\.isPhone) }
 
   var isRunning: Bool {
@@ -243,7 +238,7 @@ final class ServerController: ObservableObject {
     if before.tailscale.isRunning && before.route?.state != "routed" {
       throw ServerError(
         code: "not-connected",
-        message: "Set up the phone connection in the Phones tab before pairing. A verified tailnet-only route is required.")
+        message: "Pairing needs a verified tailnet-only route. Turn on serving first.")
     }
     let code = try await cli.pair(port: port, control: control)
     if before.tailscale.isRunning || !code.isLocalOnly {
@@ -251,7 +246,7 @@ final class ServerController: ObservableObject {
         let dnsName = after.tailscale.dnsName, code.qr.endpoint == after.route?.endpoint(dnsName: dnsName)
       else {
         throw ServerError(
-          code: "not-connected", message: "The phone connection changed or could not be verified. Try again in the Phones tab.")
+          code: "not-connected", message: "The phone connection changed or could not be verified. Try again.")
       }
     }
     return code

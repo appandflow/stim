@@ -111,7 +111,9 @@ public struct PhonePairing: Sendable {
   private let openedAt: Date
   private let knownPhones: Set<String>
 
-  public init(servesPhones: Bool, server: PhoneServer, phones: [PairedDevice], now: Date) {
+  /// `fixing` opens on the Tailscale step, for a phone app that is already installed and a connection to repair.
+  public init(servesPhones: Bool, server: PhoneServer, phones: [PairedDevice], now: Date, fixing: Bool = false) {
+    step = fixing ? .tailscale : .app
     serving = servesPhones
     wasServing = servesPhones
     self.server = server

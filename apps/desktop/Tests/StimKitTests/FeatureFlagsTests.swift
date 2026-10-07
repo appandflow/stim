@@ -103,7 +103,6 @@ private func withDefaults(_ body: (UserDefaults) throws -> Void) throws {
       PhoneApp.Copy.clients(phoneApp: false),
       PhoneApp.Copy.tailscaleDown(phoneApp: false),
       PhoneApp.Copy.recordingFooter(phoneApp: false),
-      PhoneApp.Copy.serveFooter(port: 7787, phoneApp: false),
     ]
   }
   for text in offCopy() { #expect(!text.lowercased().contains("phone"), "\(text)") }

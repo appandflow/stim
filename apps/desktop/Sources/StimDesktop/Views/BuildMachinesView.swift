@@ -15,6 +15,12 @@ struct BuildMachinesView: View {
   @State private var detailed: String?
   @State private var adding: AddMachineModel?
   @AppStorage(AppPreferences.Key.updatesBuildMachines) private var updatesAutomatically = false
+  @ObservedObject private var server = ServerController.shared
+  @State private var hosted = HostedSessionsModel()
+  @State private var revokingClient: PairedDevice?
+  @State private var stoppingSession: HostedSession?
+
+  private var hostClients: [PairedDevice] { server.devices.filter { $0.isBuildClient || $0.isDeviceHostClient } }
 
   private var checkout: String? {
     doctorCheckout(for: workspace, in: store.payload?.environments ?? [], project: store.project(ofPath:))?.path
@@ -31,7 +37,12 @@ struct BuildMachinesView: View {
       ask: { entry in Task { await model.ask(entry, checkout: checkout) } },
       update: { entry in Task { await model.update(entry, checkout: checkout) } },
       showDetails: { entry in detailed = entry }, remove: { entry in removing = entry },
-      deleteSample: { confirmsDeleteSample = true }
+      deleteSample: { confirmsDeleteSample = true },
+      showsThisMac: ThisMacAccessSections.shows(clients: hostClients, sessions: hosted.sessions ?? []),
+      thisMac: ThisMacAccessSections(
+        clients: hostClients, sessions: hosted.sessions ?? [], stopping: hosted.stopping,
+        review: { BuildRequestPrompt.present(id: $0.id) }, revoke: { revokingClient = $0 },
+        stop: { stoppingSession = $0 })
     )
     .background(Palette.background)
     .onReceive(OpenRequests.shared.$addMachine) { request in
@@ -45,6 +56,35 @@ struct BuildMachinesView: View {
       }
     }
     .task { await model.load(checkout: checkout) }
+    .task {
+      while !Task.isCancelled {
+        server.reloadDevices()
+        await hosted.refresh()
+        try? await Task.sleep(for: .seconds(5))
+      }
+    }
+    .confirmationDialog(
+      revokingClient.map { "\($0.pendingUntil == nil ? "Revoke" : "Deny") \($0.name)?" } ?? "",
+      isPresented: .init(get: { revokingClient != nil }, set: { if !$0 { revokingClient = nil } }),
+      presenting: revokingClient
+    ) { device in
+      Button(device.pendingUntil == nil ? "Revoke" : "Deny", role: .destructive) { server.revoke(device) }
+    } message: { device in
+      Text(
+        device.isDeviceHostClient
+          ? "That Mac's device hosting approval is removed. It must ask again."
+          : device.pendingUntil != nil
+            ? "That Mac cannot build here unless it asks again." : "That Mac can no longer build here and must ask again.")
+    }
+    .confirmationDialog(
+      stoppingSession.map { "Stop \($0.client.name)'s \($0.device ?? $0.app ?? "session")?" } ?? "",
+      isPresented: .init(get: { stoppingSession != nil }, set: { if !$0 { stoppingSession = nil } }),
+      presenting: stoppingSession
+    ) { session in
+      Button("Stop", role: .destructive) { Task { await hosted.stop(session) } }
+    } message: { _ in
+      Text("This ends the session and deletes or parks its device on this Mac.")
+    }
     .task(id: PollKey(waiting: waiting, checkout: checkout)) {
       while !Task.isCancelled {
         try? await Task.sleep(for: .seconds(waiting ? 15 : 60))
@@ -137,7 +177,7 @@ private struct PollKey: Hashable {
 }
 
 /// The Remote Macs tab for the state it is given: a progress view, the empty state, or the list.
-struct BuildMachinesContent: View {
+struct BuildMachinesContent<ThisMac: View>: View {
   var entries: [String]?
   var statuses: [BuildMachineStatus]?
   var hosts: [BuildMachineStatus]?
@@ -156,10 +196,23 @@ struct BuildMachinesContent: View {
   var showDetails: (String) -> Void
   var remove: (String) -> Void
   var deleteSample: () -> Void
+  var showsThisMac = false
+  var thisMac: ThisMac
 
   var body: some View {
     if let entries {
-      if entries.isEmpty {
+      if entries.isEmpty, showsThisMac {
+        Form {
+          Section {
+            notices
+            BuildMachinesEmptyState(add: add, addDisabled: addDisabled)
+            if sampleExists { deleteSampleButton }
+          }
+          thisMac
+        }
+        .formStyle(.grouped)
+        .scrollContentBackground(.hidden)
+      } else if entries.isEmpty {
         VStack(spacing: 0) {
           notices.padding([.horizontal, .top], Space.xl)
           BuildMachinesEmptyState(add: add, addDisabled: addDisabled)
@@ -168,6 +221,13 @@ struct BuildMachinesContent: View {
       } else {
         list(entries)
       }
+    } else if showsThisMac {
+      Form {
+        Section { ProgressView().frame(maxWidth: .infinity) }
+        thisMac
+      }
+      .formStyle(.grouped)
+      .scrollContentBackground(.hidden)
     } else {
       ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -219,6 +279,7 @@ struct BuildMachinesContent: View {
         }
       }
       if sampleExists { Section { deleteSampleButton } }
+      thisMac
     }
     .formStyle(.grouped)
     .scrollContentBackground(.hidden)

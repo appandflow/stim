@@ -1016,44 +1016,34 @@ stays valid until it expires. **Can't scan? Enter the endpoint and token** shows
 copyable **Endpoint** and **Token** fields, with the token hidden until revealed. The wizard
 waits for the phone and shows its name and access on the success screen.
 
-The paired phones list comes from
-`stim-server devices --json`: each phone's name, a **Read-only** or **Can
-control** badge, its short id, the tailnet node it paired from, when it was last
-seen, an **Allow control** checkbox, which runs `stim-server devices grant <id>
---control` or `--read`, and **Revoke**, which runs `stim-server devices revoke
-<id>` after a confirmation. Macs that build here are listed apart, under
-**Macs that build here**, without the checkbox: a Mac waiting for approval shows
-**Waiting for you** with the time its request lapses, **Review...** and **Deny**; an
-approved one shows **Can build** and **Revoke**. See
-[Remote Macs](#remote-macs).
+The Phones tab lists paired phones from `stim-server devices --json`: each
+phone's name, when it was last seen and a **View only** or **Can control**
+badge. Its menu has **Allow Control** or **View Only**, which runs
+`stim-server devices grant <id> --control` or `--read`, and **Revoke...**,
+which runs `stim-server devices revoke <id>` after a confirmation. With no
+phone paired, the tab shows an empty state with **Pair a Phone...**. A
+problem that stops phones from connecting shows as one line above the list:
+serving off (**Turn On**), or Tailscale off, a missing route or a Funneled
+route (**Fix...**, which opens the wizard at its Tailscale step). Below the
+list, the **Server** section holds **Serve to phones**, the server's version
+and port, and the `stim-server` executable override; **Record device screens
+for replay** follows it. With the Phone app flag off, the tab is **Server**: the
+same sections under **Run stim-server**, plus the Tailscale and route sections
+with **Set up connection**, and no phone list.
 
-**Device hosting approvals** lists a separate permission for a tailnet Mac to
-host simulator or emulator sessions here. **Review...** opens the request;
-**Allow** runs `stim-server devices grant <id> --device-host`, and **Deny** or
-**Revoke** removes it. It grants no read, control or build access. Hosted
-sessions run with `stim ios|android --remote <machine>` or `--remote auto`;
-an approval does not start a device.
+Macs that build or host devices here are listed on the Remote Macs tab, see
+[Macs using this Mac](#macs-using-this-mac).
 
-**Hosted here**, directly below those approvals, lists the simulators, emulators
-and apps approved Macs run on this Mac, with the client, device, app, state and
-session age. **Stop** asks for confirmation, then ends that session and deletes
-or parks its device. Parked sessions remain listed without a Stop button. The
-list refreshes every five seconds and stays hidden when the local server does
-not support it.
-
-When Tailscale is not running, start it on this Mac. The wizard waits for
-Tailscale and a verified private route before showing a pairing code.
-
-While Tailscale runs, **Set up connection** in the Phones tab configures and
-verifies a dedicated tailnet-only HTTPS proxy to the server's loopback port.
-It uses port 7443 or the next free port, keeps an existing route unchanged and
-never enables Funnel. This action uses Desktop's authenticated local control
-connection; a phone or forwarded connection cannot configure the Mac.
-Tailscale may ask you to enable HTTPS in your browser. Setup errors remain
-visible with **Try Again**. An unreadable or timed-out route probe changes
-nothing. A route exposing this server through Funnel refuses setup and pairing.
-**Pair a Phone** verifies the connection before showing its QR code; it no longer
-shows an assumed endpoint when the route is missing or unknown.
+When Tailscale runs, the wizard's **Turn on serving** step (or **Set up
+connection** on the Server page) configures and verifies a dedicated
+tailnet-only HTTPS proxy to the server's loopback port. It uses port 7443 or the
+next free port, keeps an existing route unchanged and never enables Funnel. This
+action uses Desktop's authenticated local control connection; a phone or
+forwarded connection cannot configure the Mac. Tailscale may ask you to enable
+HTTPS in your browser; the error links to it and offers **Try Again**. An
+unreadable or timed-out route probe changes nothing. A route exposing this server
+through Funnel refuses setup and pairing. The wizard verifies the connection
+before showing its QR code.
 
 ## Remote Macs
 
@@ -1246,6 +1236,25 @@ minute regardless of the selection. Pending, unreachable and failed checks stay
 visible. **Link machine** opens **Settings > Remote Macs** for pairing and
 removal; the selector itself changes no settings. Remote selections have no
 local disk cleanup actions.
+
+### Macs using this Mac
+
+Below this Mac's own remote Macs, the Remote Macs tab lists the host side of this
+Mac while there is something to show, including while the tab is still loading.
+**Macs using this Mac** lists other tailnet Macs approved, or asking, to build
+here or to host simulator and emulator sessions here, with their tailnet node. A
+Mac waiting for approval shows **Waiting for you** with the time its request
+lapses, **Review...** and **Deny**; an approved one shows **Can build** or
+**Approved for devices** and **Revoke**. **Allow** runs `stim-server devices
+grant <id> --build` or `--device-host`; **Deny** and **Revoke** run `stim-server
+devices revoke <id>`. A device-host approval grants no read, control or build
+access, and does not start a device.
+
+**Running here** lists the simulators, emulators and apps approved Macs run on
+this Mac, with the client, device, app, state and session age. **Stop** asks for
+confirmation, then ends that session and deletes or parks its device. Parked
+sessions remain listed without a Stop button. The tab refreshes both lists every
+five seconds; sessions stay hidden when the local server does not support them.
 
 ## Notifications
 
