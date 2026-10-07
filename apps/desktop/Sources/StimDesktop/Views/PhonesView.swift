@@ -12,6 +12,8 @@ struct PhonesView: View {
   @AppStorage(AppPreferences.Key.stimServerExecutable) private var executable = ""
   @State private var pairing = false
   @State private var revoking: PairedDevice?
+  @State private var hosted = HostedSessionsModel()
+  @State private var stoppingSession: HostedSession?
 
   var body: some View {
     Form {
@@ -102,6 +104,24 @@ struct PhonesView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
       }
 
+      if let sessions = hosted.sessions {
+        Section {
+          if sessions.isEmpty { InlineEmpty("No hosted sessions.") }
+          ForEach(sessions) { session in
+            HostedSessionRow(session: session, stopping: hosted.stopping.contains(session.id)) {
+              stoppingSession = session
+            }
+          }
+        } header: {
+          Text("Hosted here")
+        } footer: {
+          Text("A session is a simulator, emulator or app another Mac runs here; Stop ends it and deletes or parks its device.")
+            .foregroundStyle(Palette.tertiary)
+            .multilineTextAlignment(.leading)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+      }
+
       Section("stim-server executable") {
         HStack {
           TextField("stim-server on the login shell's PATH", text: $executable)
@@ -117,6 +137,7 @@ struct PhonesView: View {
     .task {
       while !Task.isCancelled {
         server.refresh()
+        await hosted.refresh()
         try? await Task.sleep(for: .seconds(5))
       }
     }
@@ -143,6 +164,15 @@ struct PhonesView: View {
             : device.isBuildClient
               ? "That Mac can no longer build here and must ask again."
               : "The phone disconnects and must pair again to reconnect.")
+    }
+    .confirmationDialog(
+      stoppingSession.map { "Stop \($0.client.name)'s \($0.device ?? $0.app ?? "session")?" } ?? "",
+      isPresented: .init(get: { stoppingSession != nil }, set: { if !$0 { stoppingSession = nil } }),
+      presenting: stoppingSession
+    ) { session in
+      Button("Stop", role: .destructive) { Task { await hosted.stop(session) } }
+    } message: { _ in
+      Text("This ends the session and deletes or parks its device on this Mac.")
     }
   }
 
@@ -407,6 +437,42 @@ private struct BuildClientRow: View {
     if let until = device.pendingUntil { return "Lapses \(until.formatted(.relative(presentation: .named)))" }
     guard let at = device.lastSeenAt else { return device.isDeviceHostClient ? "Never connected" : "Never built" }
     return "Seen \(at.formatted(.relative(presentation: .named)))"
+  }
+}
+
+private struct HostedSessionRow: View {
+  var session: HostedSession
+  var stopping: Bool
+  var stop: () -> Void
+
+  var body: some View {
+    HStack(spacing: Space.lg) {
+      VStack(alignment: .leading, spacing: Space.xxs) {
+        HStack(spacing: Space.sm) {
+          Text(verbatim: session.client.name).font(.stim(.body, weight: .semibold))
+          Pill(stopping ? "Stopping" : session.stateLabel, tone: tone, size: .small)
+        }
+        Text(verbatim: [session.device, session.app].compactMap { $0 }.joined(separator: " \u{00B7} "))
+          .font(.stim(.caption))
+          .foregroundStyle(Palette.secondary)
+        Text(session.sinceText()).font(.stim(.footnote)).foregroundStyle(Palette.tertiary)
+      }
+      Spacer()
+      if !session.parked, session.state != .stopped {
+        Button("Stop", role: .destructive, action: stop)
+          .disabled(stopping || session.state == .stopping)
+      }
+    }
+    .padding(.vertical, Space.xxs)
+  }
+
+  private var tone: Tone {
+    if stopping || session.parked { return .neutral }
+    switch session.state {
+    case .ready: return .success
+    case .unknown: return .warning
+    default: return .neutral
+    }
   }
 }
 
