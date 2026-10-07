@@ -83,6 +83,17 @@
             )
             .font(.stim(.body)).foregroundStyle(Palette.text).background(Palette.background))
         ),
+        (
+          "update-failed",
+          AnyView(
+            content(
+              entries: ["mini", "studio"], statuses: try blocked(), tailscale: true,
+              updates: [
+                "studio": .failed(
+                  "npm error code E404\nnpm error 404 Not Found - GET https://registry.npmjs.org/stim-server - Not found\nnpm error 404 'stim-server@0.0.0-dev' is not in this registry. Not switching to it."
+                )
+              ]))
+        ),
         ("tailscale-off", AnyView(content(entries: ["mini", "studio"], statuses: try statuses(), tailscale: false))),
         ("empty-tailscale-off", AnyView(content(entries: [], statuses: [], tailscale: false))),
       ]

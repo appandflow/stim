@@ -1153,6 +1153,8 @@ follows `machines.update.status` every 2 seconds:
 - the restart;
 - the outcome, or the refusal (for example, the setting the machine needs).
 
+A failure shows its full text, selectable, with a **Copy** button.
+
 If the machine stops answering for 5 minutes, or answers for 4 minutes without an update running or an outcome, the update shows as failed with the reason.
 Then the row checks the machine again. **Do this automatically next time**
 (off by default), shown only beside **Install This Mac's Build**, does the same
