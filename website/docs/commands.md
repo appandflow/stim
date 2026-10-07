@@ -1048,7 +1048,9 @@ artifact is ready to reuse, including a shared-build hit or a recheck after
 prebuild or pods. A later recheck can replace the first lookup's outcome.
 Before resolution it follows the project's most recent run and `outcomeKnown`
 is `false`. `cacheLookupOutcome` is `hit` or `miss` after an actual lookup resolves;
-it is absent before resolution and on runs that skip lookup, such as `--eas-profile`.
+it is absent before resolution and on runs that skip lookup, such as `--eas-profile`
+or `--no-build-cache`. Fingerprinting for a fresh build remains in `prepare` when
+cache reads are disabled.
 `completedPhaseMs` holds milliseconds spent in each phase the run already left,
 summing repeated visits. It excludes the current visit; the current phase appears
 only if visited earlier. It is absent before any phase completes and on older Stim versions.

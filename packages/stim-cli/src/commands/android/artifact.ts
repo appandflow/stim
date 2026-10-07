@@ -320,7 +320,7 @@ export async function acquireAndroidArtifact(
       stats.setCacheKey(cacheKey);
       return true;
     }
-    step('cache-lookup');
+    if (useBuildCache) step('cache-lookup');
     const fingerprintTimer = stepTimer(now);
     try {
       const computed = await fingerprint(root, { platform: PLATFORM });
