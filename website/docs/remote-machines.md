@@ -291,7 +291,7 @@ so there is no Check again button:
 Desktop adds entries when it finds the setup journal and sends approval
 requests with that command's ticket. When adding the first remote Mac
 with the default mode, it temporarily sets `remote.buildMode` to `off` during
-setup. An expired ticket needs **New command**.
+setup. Closing the wizard before Done puts the previous value back. An expired ticket needs **New command**.
 
 Agents never run `stim-server setup`, edit `remote.*`, `server.*` or `hosting.*` for you,
 or approve requests; use Desktop or perform the setup yourself.

@@ -215,6 +215,14 @@ final class AddMachineModel {
     polling?.cancel()
     polling = nil
     Task { await sample?.end() }
+    if modeWritten, !finished {
+      modeWritten = false
+      Task { await restoreMode() }
+    }
+  }
+
+  private func restoreMode() async {
+    do { try await dependencies.writeSetting("remote.buildMode", nil) } catch { modeWritten = true }
   }
 
   func preselect(machineID: String?, hostedSimulators: Bool) {

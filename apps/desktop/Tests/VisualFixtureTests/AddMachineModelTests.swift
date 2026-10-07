@@ -190,6 +190,41 @@ final class AddMachineModelTests: XCTestCase {
     XCTAssertEqual(harness.remotes, ["ios.remote": "eas", "android.remote": "eas"])
   }
 
+  @MainActor func testLeavingAfterSetupWithoutDoneRestoresTheBuildMode() async {
+    let harness = Harness()
+    let model = harness.make()
+    await model.start()
+    model.selectedId = "nMini"
+    await model.pick()
+    await model.next()
+    await model.refresh()
+    harness.grantReady = true
+    await checkUntilApproved(model)
+    await model.openTools()
+    XCTAssertEqual(harness.mode, "off")
+    model.stop()
+    await waitUntil { harness.mode == nil }
+    XCTAssertNil(harness.mode)
+  }
+
+  @MainActor func testLeavingAfterDoneKeepsTheChosenBuildMode() async {
+    let harness = Harness()
+    let model = harness.make()
+    await model.start()
+    model.selectedId = "nMini"
+    await model.pick()
+    await model.next()
+    await model.refresh()
+    harness.grantReady = true
+    await checkUntilApproved(model)
+    await model.openSummary()
+    model.mode = .off
+    await model.finish()
+    model.stop()
+    try? await Task.sleep(for: .milliseconds(100))
+    XCTAssertEqual(harness.mode, "off")
+  }
+
   @MainActor func testSetupDefaultsToAutoWithoutATestAndOnlyDoneWritesTheChoices() async {
     let harness = Harness()
     let model = harness.make()
