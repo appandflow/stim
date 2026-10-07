@@ -14,6 +14,7 @@ struct BuildMachinesView: View {
   @State private var removing: String?
   @State private var detailed: String?
   @State private var adding: AddMachineModel?
+  @AppStorage(AppPreferences.Key.updatesBuildMachines) private var updatesAutomatically = false
 
   private var checkout: String? {
     doctorCheckout(for: workspace, in: store.payload?.environments ?? [], project: store.project(ofPath:))?.path
@@ -22,9 +23,11 @@ struct BuildMachinesView: View {
   var body: some View {
     BuildMachinesContent(
       entries: model.entries, statuses: statuses, hosts: model.check(in: checkout)?.hosts, updates: model.updates,
-      working: model.working, progress: model.progress, failure: failure, tailscaleRunning: model.tailscaleRunning,
+      working: model.working, progress: model.progress, refreshing: model.isBusy, failure: failure,
+      tailscaleRunning: model.tailscaleRunning,
       canAsk: checkout != nil,
       addDisabled: model.isBusy || model.updates.values.contains { !$0.isDone }, sampleExists: model.sampleExists,
+      updatesAutomatically: $updatesAutomatically,
       add: { adding = model.addMachine(checkout: checkout) },
       ask: { entry in Task { await model.ask(entry, checkout: checkout) } },
       update: { entry in Task { await model.update(entry, checkout: checkout) } },
@@ -134,11 +137,13 @@ struct BuildMachinesContent: View {
   var updates: [String: MachineUpdatePhase]
   var working: String?
   var progress: String?
+  var refreshing: Bool
   var failure: String?
   var tailscaleRunning: Bool?
   var canAsk: Bool
   var addDisabled: Bool
   var sampleExists: Bool
+  @Binding var updatesAutomatically: Bool
   var add: () -> Void
   var ask: (String) -> Void
   var update: (String) -> Void
@@ -182,7 +187,8 @@ struct BuildMachinesContent: View {
         ForEach(entries, id: \.self) { entry in
           let status = statuses?.first { $0.machine == entry }
           BuildMachineRow(
-            entry: entry, status: status, checking: statuses == nil && canAsk,
+            entry: entry, status: status, checking: canAsk && (statuses == nil || (status == nil && refreshing)),
+            refreshing: canAsk && refreshing && status != nil && working != entry,
             capabilities: buildMachineCapabilities(entry, hosts: hosts), working: working == entry,
             progress: working == entry ? progress : nil,
             canAsk: canAsk, update: updates[entry], ask: { ask(entry) }, startUpdate: { update(entry) },
@@ -197,6 +203,13 @@ struct BuildMachinesContent: View {
       } footer: {
         if !canAsk {
           Text("Start a workspace with Stim to check these machines.").foregroundStyle(Palette.tertiary)
+        }
+      }
+      Section {
+        VStack(alignment: .leading, spacing: Space.xxs) {
+          Toggle("Keep build machines on this Mac's Stim version", isOn: $updatesAutomatically)
+          Text("When this Mac's Stim changes, update stim-server on approved build machines so builds can keep offloading.")
+            .font(.stim(.footnote)).foregroundStyle(Palette.secondary)
         }
       }
       if sampleExists { Section { deleteSampleButton } }
@@ -214,6 +227,7 @@ private struct BuildMachineRow: View {
   var entry: String
   var status: BuildMachineStatus?
   var checking: Bool
+  var refreshing: Bool
   var capabilities: [String]
   var working: Bool
   var progress: String?
@@ -232,10 +246,27 @@ private struct BuildMachineRow: View {
           Text(verbatim: entry).font(.stim(.body, weight: .semibold)).lineLimit(1)
           if let status {
             let listed = status.listStatus
-            Pill(listed.title, tone: listed.tone, size: .small).help(
-              status.blockers.isEmpty ? status.detail : status.blockers.map(\.line).joined(separator: "\n"))
+            Pill(listed.title, tone: listed.tone, size: .small).help(status.readiness.reasons ?? status.detail)
+            if refreshing { ProgressView().controlSize(.mini).help("Checking again") }
           } else if checking {
             Pill("Checking\u{2026}", size: .small)
+          }
+        }
+        if let status {
+          if !status.rowDetail.isEmpty {
+            Text(verbatim: status.rowDetail).font(.stim(.footnote)).foregroundStyle(Palette.secondary)
+              .fixedSize(horizontal: false, vertical: true)
+          }
+          ForEach(Array(status.problemLines.enumerated()), id: \.offset) { _, line in
+            VStack(alignment: .leading, spacing: Space.xxs) {
+              Text(verbatim: line.reason).font(.stim(.footnote)).foregroundStyle(Palette.warning).textSelection(.enabled)
+              switch line.fix {
+              case .command(let command)?: CopyableCommand(command: command)
+              case .advice(let advice)?:
+                Text(verbatim: advice).font(.stim(.footnote)).foregroundStyle(Palette.secondary)
+              case nil: EmptyView()
+              }
+            }
           }
         }
         HStack(spacing: Space.xs) {
@@ -289,26 +320,9 @@ struct BuildMachineDetails: View {
         }
       }
       if let status {
-        if status.blockers.isEmpty {
-          Text(verbatim: status.detail).foregroundStyle(Palette.secondary).textSelection(.enabled)
-          if let reasons = status.readiness.reasons {
-            Text(verbatim: reasons).font(.stim(.footnote)).foregroundStyle(Palette.secondary).textSelection(.enabled)
-          }
-        } else {
-          Text("It cannot take builds yet:").foregroundStyle(Palette.secondary)
-          ForEach(Array(status.blockers.enumerated()), id: \.offset) { _, blocker in
-            VStack(alignment: .leading, spacing: Space.xxs) {
-              Text(verbatim: blocker.title).font(.stim(.body, weight: .semibold))
-              if let reason = blocker.reason {
-                Text(verbatim: reason).font(.stim(.footnote)).foregroundStyle(Palette.secondary).textSelection(.enabled)
-              }
-              if let remedy = blocker.remedy {
-                Text(verbatim: remedy.prefix(1).uppercased() + remedy.dropFirst() + (blocker.command == nil ? "." : ":"))
-                  .font(.stim(.footnote)).foregroundStyle(Palette.secondary).textSelection(.enabled)
-              }
-              if let command = blocker.command { CopyableCommand(command: command) }
-            }
-          }
+        Text(verbatim: status.detail).foregroundStyle(Palette.secondary).textSelection(.enabled)
+        if let reasons = status.readiness.reasons {
+          Text(verbatim: reasons).font(.stim(.footnote)).foregroundStyle(Palette.secondary).textSelection(.enabled)
         }
         if let capacity = status.capacity?.line, !capacity.isEmpty {
           Text(verbatim: capacity).font(.stim(.footnote)).foregroundStyle(Palette.tertiary)

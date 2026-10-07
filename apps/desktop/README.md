@@ -1098,23 +1098,33 @@ this Mac (see [Build access](../../packages/server/README.md#build-access)).
 
 On the Mac that wants to build elsewhere, **Stim > Settings > Build Machines**
 is a list of the entries of the `offload.machines` machine setting. Each row
-shows the Mac's name, one status pill, what it does (**Builds**, plus
+shows the Mac's name, one status pill, a detail line, what it does (**Builds**, plus
 **Simulators** when its device-host access is approved), and a **...** menu with
 **Details...** and **Remove**. The pill reads **Approved**, **Waiting for
 approval** (the row keeps the approval command to copy and says when the
 request lapses, such as "Waiting for approval until 21:05", in local time),
 **Unreachable**,
-**Build mismatch** (doctor's `stim-build`, `arch`, `xcode`, `simulator-sdk`,
-`cocoapods`, `bundler` or `jdk` reason), or the machine's other readiness or
+**Not offloading** (doctor reports the approved machine as not offloadable, for
+any reason but load or an unanswered server), or the machine's other readiness or
 pairing state, such as **Busy**, **Not asked**, **Revoked** (revoked or
 denied), **Request lapsed** (nobody on the build machine approved it in time;
 **Ask Again** is available), **Different Mac** (the name now belongs to another
 tailnet node than the one this Mac asked, so Stim does not connect to it),
-**Not on the tailnet**, **Tailscale is off** or **Not a tailnet name**. The pill shows
-the first reason; **Details...** and the **Machines** page list every reason doctor gave with its remedy, such
-as **No CocoaPods** with a copyable `brew install cocoapods`. The
+**Not on the tailnet**, **Tailscale is off** or **Not a tailnet name**. The
 states come from the `buildMachines` field of `stim doctor --json --platform
 ios`.
+
+For an approved machine the detail line gives the builds it runs and how many
+it takes (`builds` and `maxBuilds`, such as "0/2 builds"; the offloaded
+`running` and `max` for a stim-server that reports no `builds`) and its free
+disk. Doctor reports no Xcode or Stim version per machine, so the line has
+neither. When the machine is not offloadable, each of doctor's `problems`
+appears under the line in amber, in doctor's order, with its fix: a command to
+copy for CocoaPods (`gem install cocoapods -v <this Mac's version>`, or `brew
+install cocoapods` when there is none), the remedy sentence for the other known
+reasons. While a check runs, the row keeps the last state and shows a small
+spinner next to the pill; **Checking...** appears only for a row with no state
+yet.
 
 **Add Build Machine...** opens the wizard, which owns tailnet discovery and the
 setup; the tab has no separate list of tailnet Macs. With no machines, the tab
@@ -1156,9 +1166,10 @@ follows `machines.update.status` every 2 seconds:
 A failure shows its full text, selectable, with a **Copy** button.
 
 If the machine stops answering for 5 minutes, or answers for 4 minutes without an update running or an outcome, the update shows as failed with the reason.
-Then the row checks the machine again. **Do this automatically next time**
-(off by default), shown only beside **Install This Mac's Build**, does the same
-the next time Desktop checks a machine that reports another Stim build. It runs once per machine and
+Then the row checks the machine again. **Keep build machines on this Mac's Stim
+version** (off by default; "When this Mac's Stim changes, update stim-server on
+approved build machines so builds can keep offloading.") does the same the next time Desktop
+checks a machine that reports another Stim build. It runs once per machine and
 reason each time Desktop launches. Either way, the machine gets this Mac's build,
 whether it is newer or older than the one it runs.
 
@@ -1256,9 +1267,10 @@ what it missed.
 **Stim > Settings** (Command-comma) edits Stim settings and the app's own
 preferences.
 
-The **Machine**, **Repository**, **Workspace** and **.stim.json** tabs are
-generated from `settings.schema.json`, which the `stim` package ships beside
-`dist/cli.mjs`; the app reads the one next to the resolved `stim` executable,
+The **Stim Settings** tab holds a **Machine**, **Repository**, **Workspace** and
+**.stim.json** scope switch, with a line saying where the selected scope applies.
+Its editor is generated from `settings.schema.json`, which the `stim` package
+ships beside `dist/cli.mjs`; the app reads the one next to the resolved `stim` executable,
 or `packages/stim-cli/dist` under `swift run`. Choices are pickers, booleans
 toggles, numbers steppers, paths file pickers, string lists token fields, and
 objects JSON fields. Values come from `stim settings --json` run in the chosen

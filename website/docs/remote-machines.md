@@ -235,7 +235,7 @@ full toolchain and placement rules.
 
 Open **Stim > Settings > Build Machines** on your main Mac. It lists your
 build machines, each with a status (**Approved**, **Waiting for approval**,
-**Unreachable** or **Build mismatch**), what it does and a **...** menu with
+**Unreachable** or **Not offloading**, with the reason and a fix under it), what it does and a **...** menu with
 **Details** and **Remove**. Choose **Add Build Machine...** to start the wizard,
 which finds the Macs on your tailnet itself. The wizard has six steps:
 
