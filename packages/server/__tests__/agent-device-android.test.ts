@@ -40,8 +40,12 @@ vi.mock('@stim-cli/core/process-identity', async (original) => {
             ? 'same'
             : 'gone'
         : actual.inspectProcessIdentity(record),
-    waitForProcessExit: async (record: { pid: number }) =>
-      record.pid === 777778 ? fixture.proxyStopped : fixture.daemonStopped,
+    waitForProcessExit: (record: Parameters<typeof actual.waitForProcessExit>[0], timeoutMs: number) =>
+      record.pid === 777778
+        ? Promise.resolve(fixture.proxyStopped)
+        : record.pid === 777777
+          ? Promise.resolve(fixture.daemonStopped)
+          : actual.waitForProcessExit(record, timeoutMs),
   };
 });
 
