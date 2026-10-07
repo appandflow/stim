@@ -1,3 +1,4 @@
+import type { HostedAndroidStatus } from './hosted-android.ts';
 import type { HostedIosStatus } from './hosted-ios.ts';
 import type { MaintenanceStatus } from './maintenance.ts';
 import type { ArchivedWorkspace, ArchivedUsage } from './archive.ts';
@@ -561,11 +562,12 @@ export interface SimulatorState {
 }
 
 export interface AndroidDeviceState {
+  host?: HostedAndroidStatus;
   name: string | undefined;
   owned: boolean;
   physical: boolean;
   serial?: string | null;
-  state?: AndroidRuntimeFacts['state'];
+  state?: AndroidRuntimeFacts['state'] | 'ready' | 'stopped' | 'unverified';
   deviceProfile?: string | null;
   activity?: DeviceActivity;
   app?: DeviceAppProcess;

@@ -731,10 +731,18 @@ gateway accepts only that worker address and authenticates each connection
 before forwarding to the fixed local Metro port. It never targets a client
 supplied URL. Close the gateway when its session ends.
 
-Call `device-host.metro.open` with `{session, gatewayPort, secret}` on the
+Call `device-host.metro.open` with `{session, gatewayPort, secret, clientMetroPort?}` on the
 approved hosted connection. The server connects only to that connection's
 authenticated tailnet peer and returns `{port}` for the worker's loopback
-endpoint. Development installation uses that port for `RCT_jsLocation` and,
+endpoint. `clientMetroPort` is required for Android and validated as an integer
+from 1 through 65535. The session records it alongside the bridge port. Android
+development installation reverses `tcp:<clientMetroPort>` to `tcp:<port>` on
+the exact ledger-owned serial and sets `debug_http_host` to
+`localhost:<clientMetroPort>`. Reopening an installed development session runs
+a fixed reverse worker under its child-aware claim, serialized with install
+and stop, so a client reload restores the mapping after a host adb server
+restart. The worker never restarts the shared adb server. iOS development
+installation uses the bridge port for `RCT_jsLocation` and,
 when offered, the Expo development-client deep link. HTTP and WebSocket bytes
 stream over WireGuard with socket backpressure; no public tunnel, Funnel or
 Tailscale serve configuration change is needed. The 64 KiB server message

@@ -155,20 +155,13 @@ function parseRemoteOption(args: string[]): unknown {
 }
 
 describe('--remote', () => {
-  test('a machine placement prints STIM_BAD_ARG in the parser refusal', async () => {
-    const errors: string[] = [];
-    const program = new Command().exitOverride().configureOutput({ writeErr: (line) => errors.push(line) });
-    registerAndroid(program);
-    await expect(program.parseAsync(['node', 'stim', 'android', '--remote', 'mini'])).rejects.toThrow(/STIM_BAD_ARG/);
-    expect(errors.join('')).toContain('STIM_BAD_ARG');
-  });
-
-  test('the CLI parser accepts only an explicit proxy or eas backend', () => {
+  test('the CLI parser accepts backend and hosting names but rejects malformed targets', () => {
     expect(parseRemoteOption(['--remote', 'proxy'])).toBe('proxy');
     expect(parseRemoteOption(['--remote', 'eas'])).toBe('eas');
     expect(() => parseRemoteOption(['--remote'])).toThrow(/argument missing/i);
-    expect(() => parseRemoteOption(['--remote', 'mini'])).toThrow(/Android on a paired Mac is not available yet/);
-    expect(() => parseRemoteOption(['--remote', 'bad name'])).toThrow(/proxy.*eas/i);
+    expect(parseRemoteOption(['--remote', 'mini'])).toBe('mini');
+    expect(parseRemoteOption(['--remote', 'auto'])).toBe('auto');
+    expect(() => parseRemoteOption(['--remote', 'bad name'])).toThrow(/tailnet machine name/i);
   });
 });
 
@@ -6971,4 +6964,135 @@ describe('strict build machine selection', () => {
       expect(store).toHaveBeenCalledTimes(scenario === 'checkout changed' ? 0 : 1);
     },
   );
+});
+
+describe('named Android hosting placement', () => {
+  const session = '12345678-1234-1234-1234-123456789abc';
+  const hostDevice = {
+    avdName: 'stim-host-private',
+    serial: 'emulator-5554',
+    consolePort: 5554,
+    deviceProfile: 'pixel_7',
+    systemImage: 'system-images;android-30;google_apis;x86_64',
+    architecture: 'x86_64' as const,
+  };
+  const placement = {
+    machine: 'mini',
+    selected: 'mini',
+    session,
+    appAttempt: 'app',
+    device: hostDevice,
+    agent: { driver: 'none' as const, setting: 'hosting.agentDriver' as const },
+  };
+
+  test.each(['auto', 'physical', 'no Metro', 'different host', 'local running', 'unreadable slot'])(
+    'refuses %s before preparing or building a device',
+    async (kind) => {
+      if (kind === 'different host')
+        writeWorkspaceState(root, { android: { host: { ...placement, machine: 'other' } } });
+      if (kind === 'local running')
+        upsertProject(root, { platforms: { android: { owned: true, avdName: 'stim-local' } } });
+      if (kind === 'unreadable slot')
+        writeWorkspaceState(root, { android: { host: { machine: 'mini', session: '' } } });
+      const h = harness({
+        json: true,
+        remoteDevice: kind === 'auto' ? 'auto' : 'mini',
+        ...(kind === 'physical' ? { device: true } : {}),
+        ...(kind === 'no Metro' ? { metroCheck: false } : {}),
+        prepareHostedAndroid: never('hosting prepare'),
+      });
+      const result = await h.run();
+      expect(result.error?.code).toBe(kind === 'unreadable slot' ? 'STIM_HOSTING_REFUSED' : 'STIM_BAD_ARG');
+      expect(h.calls.build).toEqual([]);
+      expect(h.calls.ensureDevice).toEqual([]);
+      expect(h.calls.booted).toEqual([]);
+    },
+  );
+
+  test.each(['verified', 'requested', 'no evidence', 'release'])(
+    'builds for the offered ABI and records %s launch evidence without local adb',
+    async (evidence) => {
+      const order: string[] = [];
+      const h = harness({
+        json: true,
+        remoteDevice: 'mini',
+        variant: evidence === 'release' ? 'release' : 'debug',
+        systemImage: hostDevice.systemImage,
+        deviceProfile: 'pixel_7',
+        prepareHostedAndroid: async (_machine: string, selectors: unknown) => {
+          expect(selectors).toEqual({ systemImage: hostDevice.systemImage, deviceProfile: 'pixel_7' });
+          order.push('offer');
+          return { host: { machine: 'mini' }, choice: hostDevice, session: null };
+        },
+        placeHostedAndroid: async (
+          _target: unknown,
+          args: { reserved: (value: typeof placement) => void; bundle: string; metroPort: number | null },
+        ) => {
+          order.push('reserve');
+          expect(args.bundle).toBe(fakeApk());
+          args.reserved(placement);
+          return { placement, launched: evidence === 'release' ? true : 'unverified' };
+        },
+        build: async (args) => {
+          order.push('build');
+          expect(args.abi).toBe('x86_64');
+          return makeAndroidBuildSuccess({ apkPath: fakeApk() });
+        },
+        verifyLaunched: async () => ({ verified: evidence === 'verified', requested: evidence === 'requested' }),
+        install: never('local install'),
+        launch: never('local launch'),
+        launchRelease: never('local release launch'),
+      });
+      const result = await h.run();
+      expect(result.ok).toBe(true);
+      expect(order).toEqual(['offer', 'build', 'reserve']);
+      expect(result.facts?.launched).toBe(
+        evidence === 'release' || evidence === 'verified' ? true : evidence === 'requested' ? 'bundling' : 'unverified',
+      );
+      expect(result.facts?.host?.device?.name).toBe('pixel_7 (API 30)');
+      expect(result.facts?.cacheKey).toContain('x86-64');
+      expect(result.facts?.serial).not.toBe(hostDevice.serial);
+      expect(result.facts?.avdName).not.toBe(hostDevice.avdName);
+      expect(getProject(root)?.platforms?.android).toBeUndefined();
+      expect(readWorkspaceState(root)?.android).toMatchObject({ host: placement });
+      expect(h.calls.ensureDevice).toEqual([]);
+      expect(h.calls.booted).toEqual([]);
+      expect(h.calls.spawn).toEqual([]);
+    },
+  );
+
+  test('a host refusal keeps placement and never falls back to a local build', async () => {
+    writeWorkspaceState(root, { android: { host: placement } });
+    const h = harness({
+      json: true,
+      remoteDevice: 'mini',
+      prepareHostedAndroid: async () => {
+        throw Object.assign(new Error('mini declined'), { code: 'STIM_HOSTING_REFUSED' });
+      },
+    });
+    expect((await h.run()).error?.code).toBe('STIM_HOSTING_REFUSED');
+    expect(h.calls.build).toEqual([]);
+    expect(h.calls.ensureDevice).toEqual([]);
+    expect(readWorkspaceState(root)?.android).toMatchObject({ host: placement });
+  });
+
+  test('a host offer selects arm64-v8a without a local device or selector', async () => {
+    const offered = {
+      ...hostDevice,
+      architecture: 'arm64-v8a' as const,
+      systemImage: 'system-images;android-30;google_apis;arm64-v8a',
+    };
+    const h = harness({
+      remoteDevice: 'mini',
+      prepareHostedAndroid: async () => ({ host: { machine: 'mini' }, choice: offered, session: null }),
+      placeHostedAndroid: async () => ({ placement: { ...placement, device: offered }, launched: 'unverified' }),
+      verifyLaunched: async () => ({ verified: true }),
+      install: never('local install'),
+      launch: never('local launch'),
+    });
+    const result = await h.run();
+    expect(result.ok).toBe(true);
+    expect(h.calls.build[0]?.abi).toBe('arm64-v8a');
+    expect(result.facts?.cacheKey).toContain('arm64-v8a');
+  });
 });

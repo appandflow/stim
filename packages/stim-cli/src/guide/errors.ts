@@ -9,15 +9,16 @@ Every refusal listed here carries a stable CODE, whichever command prints it.
 Branch on the code, never on the message.`,
   sections: {
     STIM_HOSTING_REFUSED: {
-      summary: 'a named hosting Mac refused or could not confirm its iOS session; no local fallback',
+      summary: 'a named hosting Mac refused or could not confirm its native session; no local fallback',
       body: () => `STIM_HOSTING_REFUSED
   The message names the hosting Mac and its reason: unreachable or changed
-  tailnet node, no installed simulator choice, no capacity, elevated or unknown
+  tailnet node, no installed simulator or emulator choice, no capacity, elevated or unknown
   memory pressure, or an unresolved reservation or delivery. Stim boots nothing
   locally and never tries another Mac. Check stim-server and Tailscale there,
-  then run stim doctor. Correct --device-type / --runtime when the offer names
+  then run stim doctor. Correct --device-type / --runtime for iOS or
+  --system-image / --device-profile for Android when the offer names
   an unavailable choice. A session that exists stays recorded even if delivery
-  fails: retry stim ios --remote <machine>, or run stim stop to reconcile it.
+  fails: retry stim ios|android --remote <machine>, or run stim stop to reconcile it.
   An unreachable stop keeps the placement; rerun stim stop when the host answers.
   A failed build handoff uses upload instead. If native log queries are unavailable,
   logs prints a note on stderr and shows copied records. Update an older stim-server
@@ -1077,8 +1078,9 @@ captured"  (in metro.ndjson, bare RN)
   on an eas/proxy run (\`--remote\` or ios.remote; that backend picks the
   iOS version), \`ios --device-type\` on the proxy backend or with an
   eas-cli older than 22.2.0 on the eas backend, \`android --system-image\` or
-  \`--device-profile\` on a remote run (\`--remote\` or android.remote), a
-  working directory
+  \`--device-profile\` on an eas/proxy run (\`--remote\` or android.remote), a
+  \`android --remote auto\`, a changed hosted placement, or hosted Debug
+  with \`--no-metro-check\` (see lifecycle hosted-android), a working directory
   with no package.json above it, or one whose nearest package.json does not
   parse or depends on neither react-native nor expo, so the directory is not
   an app (the refusal names that package.json and says which of the two it

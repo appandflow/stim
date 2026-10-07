@@ -425,11 +425,10 @@ on a paired build machine instead: see `offload.mode` in
     --system-image "system-images;android-36;google_apis;arm64-v8a"
   ```
 
-- `--system-image` and `--device-profile` apply only to the local owned
-  emulator. With `--remote` or the `android.remote` setting they refuse with
-  `STIM_BAD_ARG`: the remote backend chooses its own device. The
-  `android.systemImage` and `android.deviceProfile` settings are ignored on a
-  remote run.
+- `--system-image` and `--device-profile` select the local or named host's
+  owned emulator. On eas/proxy runs they refuse with `STIM_BAD_ARG`: those
+  backends choose their own device and ignore `android.systemImage` and
+  `android.deviceProfile`.
 - `--device [serial]` installs and launches on a connected physical device.
   With no serial it selects a connected device this workspace can lease. It
   cannot be combined with `--remote`.
@@ -438,7 +437,7 @@ on a paired build machine instead: see `offload.mode` in
 - `--no-wait` bypasses leasing, including another workspace's lease. Installing
   the same app terminates that workspace's running app. Only with `--device`;
   cannot be combined with `--wait`.
-- `--remote <machine>` refuses with `STIM_BAD_ARG`: Android on a paired Mac is not available yet. Use `eas` or `proxy`, or run Android locally.
+- `--remote <machine>` runs on a named approved Mac in `hosting.machines`, with no fallback. `--system-image` and `--device-profile` select the host's installed choices. See [remote machines](./remote-machines.md#run-android-on-a-hosting-mac).
 - `--remote proxy` uses a configured Agent Device daemon.
 - `--remote eas` uses an EAS remote emulator. It needs eas-cli 21.6.0 or later.
 - `--eas-profile <name>` selects a compatible [EAS development build](./eas-builds.md),

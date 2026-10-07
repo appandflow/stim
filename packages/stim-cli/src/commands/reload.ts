@@ -1,5 +1,6 @@
-import { hostedIosRecords } from '@stim-cli/core/state';
-import { readHostedIos } from '../device-host/ios-state.ts';
+import { reopenHostedAndroidMetro } from '../device-host/hosted-android.ts';
+import { hostedNativeRecords, hostedAndroidDeviceName, type HostedAndroidPlacement } from '@stim-cli/core/state';
+import { readHostedNative } from '../device-host/ios-state.ts';
 import { probeHostedSession } from '../device-host/hosted-client.ts';
 import { nativeRunCommand } from '../engine/slot-launch.ts';
 import { deviceSlotPlatforms, parseDeviceSlotKey } from '../devices/device-slots.ts';
@@ -49,6 +50,7 @@ interface LiveTarget {
   record: WorkspaceLaunchRecord;
   deviceName: string;
   hosted?: boolean;
+  hostedAndroid?: HostedAndroidPlacement;
 }
 
 interface TargetFailure {
@@ -68,6 +70,7 @@ export interface ReloadDeps {
   reloadMetro: typeof reloadThroughMetro;
   readBrowser: (root: string) => (WebRecord & { targetId: string }) | 'unverified' | null;
   reloadPage: (record: WebRecord & { targetId: string }) => Promise<string>;
+  reopenHostedMetro: typeof reopenHostedAndroidMetro;
   ensureReverse: (serial: string, metroPort: number) => ReturnType<typeof ensureMetroReverse>;
   sleep: (ms: number) => Promise<void>;
 }
@@ -87,6 +90,7 @@ const DEFAULT_DEPS: ReloadDeps = {
     return facts?.status === 'unverified' ? 'unverified' : liveWebRecord(facts?.record ?? null);
   },
   reloadPage: (record) => sendToOwnedPage(record, 'Page.reload'),
+  reopenHostedMetro: reopenHostedAndroidMetro,
   ensureReverse: (serial, metroPort) => ensureMetroReverse({ serial, metroPort }),
   sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
 };
@@ -298,16 +302,20 @@ export async function runReload({
           ),
         };
   }
-  const hosted = platform === 'android' ? {} : readHostedIos(root);
+  const hosted = {
+    ios: platform === 'android' ? {} : readHostedNative(root, 'ios'),
+    android: platform === 'ios' ? {} : readHostedNative(root, 'android'),
+  };
   const hostedFailures: Record<string, TargetFailure> = {};
-  if (platform !== 'android') {
-    for (const slot of Object.keys(hostedIosRecords(readWorkspaceState(root)))) {
-      if (hosted[slot]) continue;
+  for (const native of ['ios', 'android'] as const) {
+    if (platform && platform !== native) continue;
+    for (const slot of Object.keys(hostedNativeRecords(readWorkspaceState(root), native))) {
+      if (hosted[native][slot]) continue;
       try {
-        readHostedIos(root, slot);
+        readHostedNative(root, native, slot);
       } catch (error) {
-        hostedFailures[slot] = {
-          platform: 'ios',
+        hostedFailures[`${native}:${slot}`] = {
+          platform: native,
           error: failure(
             'STIM_HOSTING_REFUSED',
             describe(error),
@@ -319,32 +327,38 @@ export async function runReload({
   }
   const hostedProbes = Object.fromEntries(
     await Promise.all(
-      Object.entries(hosted).map(async ([slot, placement]) => [slot, await probeHostedSession(placement)]),
+      (['ios', 'android'] as const).flatMap((native) =>
+        Object.entries(hosted[native]).map(async ([slot, placement]) => [
+          `${native}:${slot}`,
+          await probeHostedSession({ ...placement, platform: native }),
+        ]),
+      ),
     ),
   );
   const launches = d.readLaunches(root);
   const inspected = Object.entries(launches).flatMap(([key, record]) => {
     const parsed = parseDeviceSlotKey(key);
     if (!parsed || (platform && parsed.platform !== platform)) return [];
-    if (parsed.platform === 'ios' && hostedFailures[parsed.slot]) return [];
-    const placement = parsed.platform === 'ios' ? hosted[parsed.slot] : undefined;
-    if (placement && record.deviceId === placement.session) {
-      const probe = hostedProbes[parsed.slot]!;
+    if (hostedFailures[`${parsed.platform}:${parsed.slot}`]) return [];
+    const placement = hosted[parsed.platform][parsed.slot];
+    if (placement) {
+      const probe = hostedProbes[`${parsed.platform}:${parsed.slot}`]!;
       return [
-        probe.state === 'ready'
+        probe.state === 'ready' && record.deviceId === placement.session
           ? {
-              platform: 'ios' as const,
+              platform: parsed.platform,
               slot: parsed.slot,
               record,
               hosted: true,
-              deviceName: `${placement.device?.name ?? 'iOS simulator'} on ${placement.machine}`,
+              ...(parsed.platform === 'android' ? { hostedAndroid: placement as HostedAndroidPlacement } : {}),
+              deviceName: `${placement.device ? ('udid' in placement.device ? placement.device.name : hostedAndroidDeviceName(placement.device)) : `${parsed.platform} device`} on ${placement.machine}`,
             }
           : {
-              platform: 'ios' as const,
+              platform: parsed.platform,
               error: failure(
                 'STIM_RELOAD_PROBE_FAILED',
-                `The iOS session on ${placement.machine} is ${probe.state}.`,
-                `Run stim ios --remote ${placement.machine} or stim stop to reconcile it.`,
+                `The ${parsed.platform} session on ${placement.machine} is ${probe.state}.`,
+                `Run stim ${parsed.platform} --remote ${placement.machine} or stim stop to reconcile it.`,
               ),
             },
       ];
@@ -451,6 +465,22 @@ export async function runReload({
       ? live.filter((c) => c.platform === 'android' && !c.record.release && c.record.metroPort === port)
       : [];
   for (const candidate of reverseChecked) {
+    if (candidate.hostedAndroid) {
+      try {
+        await d.reopenHostedMetro(root, candidate.hostedAndroid, port);
+        reverseRestored.push(candidate.hostedAndroid.session);
+      } catch (error) {
+        return {
+          ok: false,
+          error: failure(
+            'STIM_HOSTING_REFUSED',
+            describe(error),
+            `Retry stim reload android when ${candidate.hostedAndroid.machine} answers, or run stim stop to reconcile the session.`,
+          ),
+        };
+      }
+      continue;
+    }
     const serial = candidate.record.deviceId;
     const ensured = d.ensureReverse(serial, port);
     if (ensured.failed) {
@@ -484,7 +514,7 @@ export async function runReload({
         error: failure(
           'STIM_RELOAD_FAILED',
           reloaded.reason,
-          `Metro could not confirm a peer for the hosted iOS app. Check the app on its hosting Mac and run stim reload ios again.`,
+          `Metro could not confirm a peer for the hosted ${target.platform} app. Check the app on its hosting Mac and run stim reload ${target.platform} again.`,
         ),
       };
     const snapshot = `agent-device snapshot -i --platform ${target.platform} --${target.platform === 'ios' ? 'udid' : 'serial'} ${target.record.deviceId}`;

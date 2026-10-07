@@ -50,7 +50,9 @@ export function androidFacts({
   builtOn,
   offloadedTo = null,
   offloadFallback = null,
+  host,
 }: {
+  host?: import('@stim-cli/core/state').HostedAndroidStatus;
   buildMachine?: string;
   builtOn?: string;
   offloadedTo?: string | null;
@@ -84,6 +86,7 @@ export function androidFacts({
 }): AndroidFacts {
   return {
     platform: PLATFORM,
+    ...(host ? { host } : {}),
     ...(slot && slot !== 'default' ? { slot } : {}),
     serial: serial ?? null,
     avdName: avdName ?? null,
@@ -110,7 +113,7 @@ export function androidFacts({
     debugHttpHostNote: debugHttpHostNote ?? null,
     devClientUrl: devClientUrl ?? null,
     logs: logs ?? null,
-    ...(root ? { agentDevice: { stateDir: workspaceAgentDeviceDir(root) } } : {}),
+    ...(root && !host ? { agentDevice: { stateDir: workspaceAgentDeviceDir(root) } } : {}),
     durationMs: typeof durationMs === 'number' && Number.isFinite(durationMs) ? durationMs : null,
     ...(lease === undefined ? {} : { lease }),
     ...(devServer ? { devServer } : {}),
@@ -210,6 +213,7 @@ export async function finishAndroidUpload(
 }
 
 export interface ReportAndroidResultArgs {
+  host?: import('@stim-cli/core/state').HostedAndroidStatus;
   root: string;
   slot?: string;
   lease?: { kind: string; expiresAt: string } | null;
@@ -242,6 +246,7 @@ export interface ReportAndroidResultArgs {
 }
 
 export function reportAndroidResult({
+  host,
   root,
   slot,
   json,
@@ -275,6 +280,7 @@ export function reportAndroidResult({
   const offloadedTo = record.offloadedTo ?? null;
   recordRun({ failed: false, cacheHit: cacheLevel(record.cacheHit), waited: waitedForBuild, durationMs, offloadedTo });
   const facts = androidFacts({
+    host,
     root,
     slot,
     serial,
@@ -312,7 +318,7 @@ export function reportAndroidResult({
     emit(JSON.stringify({ ...facts, ...(links ? { links } : {}), ...(reclaimed.length ? { reclaimed } : {}) }));
   } else {
     const summary =
-      `${launchWarning ? 'WARNING' : 'OK'}: ${androidPackage} launched on ${serial}, ` +
+      `${launchWarning ? 'WARNING' : 'OK'}: ${androidPackage} launched on ${host ? `${host.device?.name ?? 'Android emulator'} on ${host.machine}` : serial}, ` +
       `${release ? `${variant} (embedded JS, no Metro)` : `Metro port ${metroPort}`} ` +
       `(${cacheOutcome(record.cacheHit, remote?.name ?? providerName, offloadedTo)})`;
     const outcome = launchWarning
@@ -336,13 +342,13 @@ export function reportAndroidResult({
     emit(
       [
         outcome,
-        phaseLine('device', `${deviceName} (${serial})`),
+        phaseLine('device', host ? `${deviceName} on ${host.machine}` : `${deviceName} (${serial})`),
         phaseLine('app', androidPackage),
         phaseLine('metro', metroResult),
         phaseLine('cache', cacheResult),
         ...(ccache.status === 'not-run' ? [phaseLine('compilation cache', ccacheActivityLine(ccache))] : []),
         phaseLine('logs', logsDir || 'unavailable (remote device)'),
-        phaseLine('agent-device', `AGENT_DEVICE_STATE_DIR=${workspaceAgentDeviceDir(root)}`),
+        ...(!host ? [phaseLine('agent-device', `AGENT_DEVICE_STATE_DIR=${workspaceAgentDeviceDir(root)}`)] : []),
       ].join('\n'),
     );
     if (links) console.error(chalk.dim(workspaceLinkLine(links)));

@@ -89,6 +89,7 @@ export interface HostedDeviceSession extends HostedDeviceRequest {
   notice?: string;
   appAttempt?: string;
   metroPort?: number;
+  clientMetroPort?: number;
 }
 
 export function deviceHostRoot(): string {
@@ -318,6 +319,12 @@ export function readHostedSessions(): HostedDeviceSession[] {
       (entry.notice !== undefined && typeof entry.notice !== 'string') ||
       (entry.appAttempt !== undefined &&
         (typeof entry.appAttempt !== 'string' || !/^[a-zA-Z0-9_-]{1,128}$/.test(entry.appAttempt))) ||
+      (entry.clientMetroPort !== undefined &&
+        (typeof entry.clientMetroPort !== 'number' ||
+          !Number.isInteger(entry.clientMetroPort) ||
+          entry.clientMetroPort < 1 ||
+          entry.clientMetroPort > 65535 ||
+          entry.platform !== 'android')) ||
       (entry.metroPort !== undefined &&
         (typeof entry.metroPort !== 'number' ||
           !Number.isInteger(entry.metroPort) ||

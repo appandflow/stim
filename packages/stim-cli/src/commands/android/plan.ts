@@ -30,6 +30,7 @@ import {
   androidDataPartitionSizeGbSettingError,
   cacheProviderSettingError,
   remoteAndroidSetting,
+  parseAndroidRemote,
   resolveCacheProviderConfig,
   SETTING_SHAPE_REMEDY,
   settingFile,
@@ -67,11 +68,17 @@ export interface AndroidPlanInputs {
   readonly device: string | boolean | null;
   readonly wait: string | boolean | undefined;
   readonly waitConflict: boolean;
-  readonly remote: RemoteDeviceBackend | null;
+  readonly remote: string | null;
   readonly buildCache: boolean;
 }
 
 type AndroidTargetPlan =
+  | {
+      readonly kind: 'hosted';
+      readonly machine: string;
+      readonly systemImage: string | null;
+      readonly deviceProfile: string | null;
+    }
   | { readonly kind: 'emulator'; readonly systemImage: string | null; readonly deviceProfile: string | null }
   | {
       readonly kind: 'remote';
@@ -293,57 +300,78 @@ export function resolveAndroidRunPlan(
   }
   const waitSeconds = waitParsed.seconds;
 
-  const remoteBackend = physical ? null : (commandRemoteBackend ?? remoteAndroidSetting(settings));
-  const settingsLayersForOrigin = settingsLayers(settingsContext);
-  const imageRefusal = systemImageRefusal({
-    slot,
-    flag: systemImageFlag,
-    resolved: systemImage,
-    origin: settingOriginScope(settingsLayersForOrigin, 'android.systemImage'),
-    physical,
-    remoteBackend,
-    listImages: listSystemImages,
-  });
-  if (imageRefusal) return fail(imageRefusal.code, imageRefusal.message, imageRefusal.remedy);
-  const profileRefusal = deviceProfileRefusal({
-    flag: deviceProfileFlag,
-    resolved: deviceProfile,
-    origin: settingOriginScope(settingsLayersForOrigin, 'android.deviceProfile'),
-    physical,
-    remoteBackend,
-    listProfiles: listDeviceProfiles,
-  });
-  if (profileRefusal) return fail(profileRefusal.code, profileRefusal.message, profileRefusal.remedy);
-  const avdFlagRefusal = remoteAvdFlagRefusal({
-    systemImageFlag,
-    deviceProfileFlag,
-    remoteBackend,
-  });
-  if (avdFlagRefusal) return fail(avdFlagRefusal.code, avdFlagRefusal.message, avdFlagRefusal.remedy);
-  if (!physical && !remoteBackend) {
-    const flagImage = typeof systemImageFlag === 'string' && systemImageFlag.trim() ? systemImageFlag.trim() : null;
-    const existing = ownedAvd(root, slot);
-    const profile = deviceProfile ?? existing?.deviceProfile ?? DEFAULT_AVD_DEVICE_PROFILE;
-    const image = () =>
-      flagImage ?? existing?.systemImage ?? systemImage ?? pickDefaultSystemImage(listSystemImages())?.pkg ?? null;
-    const checked = profileNeedsFoldFeature(profile) ? image() : null;
-    const foldRefusal =
-      checked !== null &&
-      foldableImageRefusal({
-        profile,
-        image: checked,
-        avdName:
-          existing && existing.systemImage === checked && existing.deviceProfile === profile ? existing.avdName : null,
-        images: listSystemImages,
-        supportsFold,
-      });
-    if (foldRefusal) return fail(foldRefusal.code, foldRefusal.message, foldRefusal.remedy);
+  const remoteTarget =
+    commandRemoteBackend !== null ? parseAndroidRemote(commandRemoteBackend) : remoteAndroidSetting(settings);
+  if (remoteTarget?.kind === 'machine' && remoteTarget.machine === 'auto')
+    return fail(
+      'STIM_BAD_ARG',
+      'stim android --remote auto is not available yet: automatic placement has not shipped.',
+      'Name a hosting Mac from hosting.machines.',
+    );
+  if (physical && remoteTarget?.kind === 'machine')
+    return fail(
+      'STIM_BAD_ARG',
+      '--device installs on a phone connected to this machine, and --remote installs on a remote one.',
+      'Pass only one of --device and --remote; unset android.remote for a local phone.',
+    );
+  const machine = remoteTarget?.kind === 'machine' ? remoteTarget.machine : null;
+  const remoteBackend = !physical && remoteTarget?.kind === 'backend' ? remoteTarget.backend : null;
+  if (!machine) {
+    const settingsLayersForOrigin = settingsLayers(settingsContext);
+    const imageRefusal = systemImageRefusal({
+      slot,
+      flag: systemImageFlag,
+      resolved: systemImage,
+      origin: settingOriginScope(settingsLayersForOrigin, 'android.systemImage'),
+      physical,
+      remoteBackend,
+      listImages: listSystemImages,
+    });
+    if (imageRefusal) return fail(imageRefusal.code, imageRefusal.message, imageRefusal.remedy);
+    const profileRefusal = deviceProfileRefusal({
+      flag: deviceProfileFlag,
+      resolved: deviceProfile,
+      origin: settingOriginScope(settingsLayersForOrigin, 'android.deviceProfile'),
+      physical,
+      remoteBackend,
+      listProfiles: listDeviceProfiles,
+    });
+    if (profileRefusal) return fail(profileRefusal.code, profileRefusal.message, profileRefusal.remedy);
+    const avdFlagRefusal = remoteAvdFlagRefusal({
+      systemImageFlag,
+      deviceProfileFlag,
+      remoteBackend,
+    });
+    if (avdFlagRefusal) return fail(avdFlagRefusal.code, avdFlagRefusal.message, avdFlagRefusal.remedy);
+    if (!physical && !remoteBackend) {
+      const flagImage = typeof systemImageFlag === 'string' && systemImageFlag.trim() ? systemImageFlag.trim() : null;
+      const existing = ownedAvd(root, slot);
+      const profile = deviceProfile ?? existing?.deviceProfile ?? DEFAULT_AVD_DEVICE_PROFILE;
+      const image = () =>
+        flagImage ?? existing?.systemImage ?? systemImage ?? pickDefaultSystemImage(listSystemImages())?.pkg ?? null;
+      const checked = profileNeedsFoldFeature(profile) ? image() : null;
+      const foldRefusal =
+        checked !== null &&
+        foldableImageRefusal({
+          profile,
+          image: checked,
+          avdName:
+            existing && existing.systemImage === checked && existing.deviceProfile === profile
+              ? existing.avdName
+              : null,
+          images: listSystemImages,
+          supportsFold,
+        });
+      if (foldRefusal) return fail(foldRefusal.code, foldRefusal.message, foldRefusal.remedy);
+    }
   }
   const target: AndroidTargetPlan = physical
     ? { kind: 'physical', serial: typeof deviceFlag === 'string' ? deviceFlag : null, lease: { waitSeconds, noWait } }
-    : remoteBackend
-      ? { kind: 'remote', backend: remoteBackend, systemImage, deviceProfile }
-      : { kind: 'emulator', systemImage, deviceProfile };
+    : machine
+      ? { kind: 'hosted', machine, systemImage, deviceProfile }
+      : remoteBackend
+        ? { kind: 'remote', backend: remoteBackend, systemImage, deviceProfile }
+        : { kind: 'emulator', systemImage, deviceProfile };
   return {
     ok: true,
     plan: {

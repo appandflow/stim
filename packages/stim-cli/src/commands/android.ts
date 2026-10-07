@@ -1,3 +1,8 @@
+import { connectAndroidHosting } from './android/remote.ts';
+import { prepareHostedAndroid, placeHostedAndroid } from '../device-host/hosted-android.ts';
+import { readHostedAndroid, writeHostedAndroid } from '../device-host/ios-state.ts';
+import { hostedMetroSettings } from '../device-host/metro-gateway.ts';
+import { finishHostedAndroidRun } from './android/hosted.ts';
 import { workspaceId } from '@stim-cli/core';
 import { parseMachine } from '@stim-cli/core/state';
 import { isEasBuildFailure, resolveEasDevelopmentBuild } from '../engine/eas-build.ts';
@@ -18,11 +23,9 @@ import chalk from 'chalk';
 import { loadCacheProvider } from '@stim-cli/cache';
 import { formatDuration, phaseLine, refuseNoProject, SLOW_STEP_MS, stepClock, stepTimer } from '../command-output.ts';
 import type { CcacheActivity, DevServerStart } from '../engine/build-facts.ts';
-import type { RemoteDeviceBackend } from '../engine/device-remote.ts';
 import { appProjectProblem, findProjectRoot, projectShortcut } from '../workspace/project.ts';
 import { detectAppIds } from '../workspace/app-id.ts';
 import {
-  REMOTE_DEVICE_BACKENDS,
   resolveCacheProviderConfig,
   resolveSettings,
   metroWarmupUrlSetting,
@@ -170,7 +173,7 @@ interface AndroidCommandOptions {
   variant?: string;
   systemImage?: string;
   deviceProfile?: string;
-  remote?: RemoteDeviceBackend;
+  remote?: string;
   device?: string | boolean;
   wait?: string | boolean;
   plan?: boolean;
@@ -233,15 +236,12 @@ export function registerAndroid(program: Command): void {
         'With no serial, the first connected device this workspace can lease is used. Stim never creates, boots, or deletes a physical device.',
     )
     .option(
-      '--remote <backend>',
-      'Install and launch on a remote device with proxy or EAS. Builds are local unless --eas-profile selects an existing EAS build.',
+      '--remote <target>',
+      'Run on eas, proxy, or a named approved Mac from hosting.machines; auto is not available yet',
       (value) => {
-        if ((REMOTE_DEVICE_BACKENDS as readonly string[]).includes(value)) return value as RemoteDeviceBackend;
         if (!parseMachine(value))
-          throw new InvalidArgumentError(`expected one of: ${REMOTE_DEVICE_BACKENDS.join(', ')}`);
-        throw new InvalidArgumentError(
-          'STIM_BAD_ARG: Android on a paired Mac is not available yet. Use eas or proxy, or run Android locally.',
-        );
+          throw new InvalidArgumentError('expected eas, proxy, auto, or a tailnet machine name');
+        return value;
       },
     )
     .option(
@@ -300,6 +300,10 @@ export function registerAndroid(program: Command): void {
 }
 
 interface RunAndroidOptions {
+  prepareHostedAndroid?: typeof prepareHostedAndroid;
+  placeHostedAndroid?: typeof placeHostedAndroid;
+  readHostedAndroid?: typeof readHostedAndroid;
+  writeHostedAndroid?: typeof writeHostedAndroid;
   buildMachine?: string;
   progress?: BuildProgress;
   easProfile?: string;
@@ -326,7 +330,7 @@ interface RunAndroidOptions {
   deviceAbi?: typeof androidDeviceAbi;
   isEmulatorDevice?: typeof probeEmulatorSerial;
   readApkPackage?: (apkPath: string | null) => string | null;
-  remoteDevice?: RemoteDeviceBackend | null;
+  remoteDevice?: string | null;
   resolveSettingsFor?: typeof resolveSettings;
   resolveRemoteDeviceContext?: typeof resolveRemoteContext;
   remoteDeviceDeps?: typeof remoteAndroidDeps;
@@ -866,7 +870,38 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
   const useBuildCache = cachePolicy.read;
   const physical = target.kind === 'physical';
   const remoteBackend = target.kind === 'remote' ? target.backend : null;
-  const budget = await (options.checkBudget ?? budgetGate)({ root, note: out });
+  const selectors =
+    target.kind === 'hosted'
+      ? {
+          ...(target.systemImage ? { systemImage: target.systemImage } : {}),
+          ...(target.deviceProfile ? { deviceProfile: target.deviceProfile } : {}),
+        }
+      : {};
+  const hosting = await connectAndroidHosting({
+    root,
+    slot,
+    machine: target.kind === 'hosted' ? target.machine : null,
+    release,
+    metroCheck,
+    selectors,
+    read: options.readHostedAndroid,
+    resolveSerial: resolveAvdSerial,
+    prepare: options.prepareHostedAndroid,
+  });
+  if ('failure' in hosting) return fail(hosting.failure.code, hosting.failure.message, hosting.failure.remedy);
+  const hostedTarget = hosting.target;
+  if (hostedTarget) {
+    if (settings.androidEmulatorApp !== undefined)
+      phase('device', 'androidEmulatorApp is ignored on a hosting Mac; the emulator boots headless.');
+    if (publicUrlSetting(settings) || tunnelModeSetting(settings))
+      phase(
+        'metro',
+        'metro.publicUrl and metro.tunnel are ignored on a hosting Mac; Metro uses the private tailnet bridge.',
+      );
+  }
+  const budget = hostedTarget
+    ? { reclaimed: [], refusal: null }
+    : await (options.checkBudget ?? budgetGate)({ root, note: out });
   reclaimed = budget.reclaimed;
   if (budget.refusal) return fail(budget.refusal.code, budget.refusal.message, budget.refusal.remedy);
   const remoteContext = remoteBackend
@@ -918,7 +953,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
       const gate = await ensureDevServer({
         root,
         port: reservedPort,
-        settings,
+        settings: hostedMetroSettings(settings, Boolean(hostedTarget)),
         remote: remoteContext !== null,
         note: out,
         resolve: resolveMetro,
@@ -988,7 +1023,14 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
   let bootPromise: Promise<AndroidBootLike>;
   let startRemoteBoot: (() => Promise<AndroidBootLike>) | null = null;
 
-  if (target.kind === 'physical' && !target.serial) {
+  if (hostedTarget) {
+    device = {
+      owned: false,
+      systemImage: hostedTarget.choice.systemImage,
+      deviceProfile: hostedTarget.choice.deviceProfile,
+    };
+    bootPromise = Promise.resolve({ ok: true });
+  } else if (target.kind === 'physical' && !target.serial) {
     const pooled = await pooledAndroidDevice({
       root,
       selectPool,
@@ -1127,6 +1169,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
         isExpo,
         device,
         physical,
+        hostedAbi: hostedTarget?.choice.architecture,
         remote: Boolean(remoteDevice),
         buildPlan,
         cacheProviderConfig,
@@ -1185,6 +1228,42 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     androidPackage = artifact.androidPackage;
     record.appPath = apkPath;
     if (runCancellation()) return fail('STIM_CANCELLED', 'before install');
+
+    if (hostedTarget)
+      return finishHostedAndroidRun({
+        target: hostedTarget,
+        artifact,
+        root,
+        slot,
+        release,
+        isExpo,
+        metroPort,
+        logsDir,
+        selectors,
+        place: options.placeHostedAndroid ?? placeHostedAndroid,
+        writePlacement: options.writeHostedAndroid ?? writeHostedAndroid,
+        verifyLaunch: verifyLaunched,
+        writeLaunch,
+        readApkPackage,
+        resolveDevClientScheme,
+        now,
+        started,
+        startedAt,
+        record,
+        fail,
+        phase,
+        out,
+        json,
+        useBuildCache,
+        variant,
+        metroCheck,
+        writer,
+        emit,
+        recordRun,
+        reclaimed,
+        devServer,
+        recordBuild,
+      });
 
     if (startRemoteBoot) {
       progress.step('device');

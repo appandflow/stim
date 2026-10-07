@@ -34,9 +34,11 @@ reach multiple devices. A launch counts a bundle delivery only when it can
 attribute it to its own device; read guide lifecycle options for the rule.
 Use stop --slot <name> for one slot, or plain stop for the whole workspace.
 
-HOSTED IOS
+HOSTED IOS AND ANDROID
 
-For ios --remote <machine>, read guide lifecycle hosted-ios. Stop before switching
+For ios --remote <machine>, read guide lifecycle hosted-ios.
+For android --remote <machine>, read guide lifecycle hosted-android; host
+logcat, view/control and agent driving are not available in this phase. Stop before switching
 between a local simulator and a hosting Mac. Hosted Debug requires the local
 Metro supervisor; restart a missing or older one with stim stop; stim start.
 It never falls back here; stop reconciles the recorded host before changing placement.

@@ -6,6 +6,7 @@ import {
   hostedMetroRequests,
   hostedMetroGateways,
   hostedIosPlacements,
+  hostedAndroidPlacements,
   HOSTED_METRO_REQUESTS_KEY,
   type HostedMetroRequest,
   type HostedMetroGateway,
@@ -60,7 +61,12 @@ export function watchHostedMetro(root: string, metroPort: number, processToken: 
     if (closed) return;
     const state = readState();
     if (state?.supervisor?.processToken !== processToken) return;
-    const placements = Object.values(hostedIosPlacements(state));
+    const placements = [
+      ...Object.values(hostedIosPlacements(state)),
+      ...Object.values(hostedAndroidPlacements(state)).map((placement) =>
+        Object.assign({ platform: 'android' as const }, placement),
+      ),
+    ];
     const sessions = new Set(placements.map((placement) => placement.session));
     const requests = Object.fromEntries(
       Object.entries(hostedMetroRequests(state)).filter(([session]) => sessions.has(session)),
@@ -68,7 +74,11 @@ export function watchHostedMetro(root: string, metroPort: number, processToken: 
     if (Object.keys(requests).length !== Object.keys(hostedMetroRequests(state)).length) {
       updateWorkspaceState(root, (current) => {
         if (current.supervisor?.processToken !== processToken) return current;
-        const recorded = new Set(Object.values(hostedIosPlacements(current)).map((placement) => placement.session));
+        const recorded = new Set(
+          [...Object.values(hostedIosPlacements(current)), ...Object.values(hostedAndroidPlacements(current))].map(
+            (placement) => placement.session,
+          ),
+        );
         return {
           ...current,
           [HOSTED_METRO_REQUESTS_KEY]: Object.fromEntries(

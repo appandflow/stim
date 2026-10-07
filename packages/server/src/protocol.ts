@@ -1089,6 +1089,7 @@ export function protocolJsonSchema(): JsonSchema {
             session(
               {
                 gatewayPort: { type: 'integer', minimum: 1, maximum: 65535 },
+                clientMetroPort: { type: 'integer', minimum: 1, maximum: 65535 },
                 secret: { type: 'string', pattern: '^[a-f0-9]{64}$' },
               },
               ['gatewayPort', 'secret'],

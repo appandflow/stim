@@ -1,3 +1,4 @@
+import { runHostedAndroidDevice } from '../device-host/android.ts';
 import { createHash } from 'node:crypto';
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -118,7 +119,17 @@ test.each(['aapt', 'aapt2'])(
 
 test('development launch remains unverified despite a live native process', async () => {
   receipt('development');
-  expect(await installHostedAndroidApp(home, session, 'app', device)).toBe('unverified');
+  expect(await installHostedAndroidApp(home, session, 'app', device, { bridgePort: 9000, devicePort: 8082 })).toBe(
+    'unverified',
+  );
+  expect(
+    native.runFile.mock.calls.some(
+      ([, args]) => JSON.stringify(args) === JSON.stringify(['-s', 'emulator-5554', 'reverse', 'tcp:8082', 'tcp:9000']),
+    ),
+  ).toBe(true);
+  expect(native.runFile.mock.calls.find(([, args]) => args?.includes('run-as'))?.[1]?.at(-1)).toContain(
+    'localhost:8082',
+  );
 });
 
 test.each(['package', 'SDK', 'ABI'])('incompatible %s metadata refuses before installation', async (kind) => {
@@ -152,3 +163,58 @@ test('a reused serial refuses effects before install and rechecks before launch'
   await expect(installHostedAndroidApp(home, session, 'app', device)).rejects.toThrow(/identity/);
   expect(effects()).toHaveLength(1);
 });
+
+test('the reverse worker restores Metro repeatedly without reinstalling or relaunching the app', async () => {
+  receipt('development');
+  const receiptFile = join(area, 'receipt.json');
+  const record = JSON.parse(readFileSync(receiptFile, 'utf8'));
+  writeFileSync(receiptFile, JSON.stringify({ ...record, state: 'installed', launched: 'unverified' }));
+  expect(
+    await runHostedAndroidDevice(
+      'reverse',
+      { session, consolePort: 5554 },
+      { attempt: 'app', metroPort: 9000, clientMetroPort: 8082 },
+    ),
+  ).toMatchObject({ state: 'ready', device });
+  expect(
+    await runHostedAndroidDevice(
+      'reverse',
+      { session, consolePort: 5554 },
+      { attempt: 'app', metroPort: 9000, clientMetroPort: 8082 },
+    ),
+  ).toMatchObject({ state: 'ready', device });
+  expect(effects()).toEqual([]);
+  const reversed = native.runFile.mock.calls.filter(([, args]) => args?.includes('reverse'));
+  expect(reversed.map(([, args]) => args)).toEqual(
+    Array.from({ length: 2 }, () => ['-s', 'emulator-5554', 'reverse', 'tcp:8082', 'tcp:9000']),
+  );
+  expect(reversed.map(([file]) => file)).toEqual(Array(2).fill(join(root, 'sdk', 'platform-tools', sdkAdbName)));
+});
+
+test.each(['reused serial', 'lost ledger', 'changed record'])(
+  'Metro restore refuses changed ownership before adb effects: %s',
+  async (kind) => {
+    receipt('development');
+    const receiptFile = join(area, 'receipt.json');
+    const record = JSON.parse(readFileSync(receiptFile, 'utf8'));
+    writeFileSync(receiptFile, JSON.stringify({ ...record, state: 'installed', launched: 'unverified' }));
+    if (kind === 'reused serial') running = 'foreign';
+    if (kind === 'lost ledger')
+      writeFileSync(join(home, 'created-devices.json'), JSON.stringify({ version: 1, ios: [], android: [], web: [] }));
+    if (kind === 'changed record')
+      writeFileSync(
+        join(home, 'hosted-device.json'),
+        JSON.stringify({ ...device, consolePort: 5556, serial: 'emulator-5556' }),
+      );
+    expect(
+      await runHostedAndroidDevice(
+        'reverse',
+        { session, consolePort: 5554 },
+        { attempt: 'app', metroPort: 9000, clientMetroPort: 8082 },
+      ),
+    ).toMatchObject({ state: 'unknown', notice: expect.stringMatching(/identity|ownership/) });
+    expect(
+      native.runFile.mock.calls.filter(([, args]) => args?.includes('reverse') || args?.includes('run-as')),
+    ).toEqual([]);
+  },
+);

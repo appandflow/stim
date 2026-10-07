@@ -1,6 +1,6 @@
 ---
 title: 'Remote machines'
-description: 'Set up a Mac for build offload or hosted iOS simulators'
+description: 'Set up a Mac for build offload or hosted iOS and Android devices'
 ---
 
 import StimTabs, { StimInstallTabs } from '@site/src/components/StimTabs';
@@ -62,8 +62,31 @@ creating a session. Those targets prepare remote Metro exposure, as
 `stim start --remote` does, and compile locally. They do not select a Mac in
 `hosting.machines`. See [remote devices and Metro](./owned-devices.md#remote-devices).
 `--remote auto` refuses until automatic hosting placement is available.
-Android accepts the EAS/proxy backends but cannot run on a named hosting Mac
-in this release. The [macOS prototype](./macos.md) also supports named hosts.
+Android also accepts these backends. The [macOS prototype](./macos.md) also supports named hosts.
+
+## Run Android on a hosting Mac
+
+Use the same device-host approval and name from `hosting.machines`:
+
+<StimTabs code={`stim android --remote janics-mac-mini --device-profile pixel_7
+stim reload android
+stim stop`} />
+
+`android.remote` sets the workspace default. `--system-image` and
+`--device-profile` select choices installed on the host; the build targets
+its offered ABI. `--build-machine` remains independent. Hosting is strict:
+refusal or an unreachable host fails with `STIM_HOSTING_REFUSED`. Stop before
+changing hosts or moving between local and hosted devices. `--device`, a running
+local emulator in that slot, and `--no-metro-check` for hosted Debug refuse.
+
+The owned emulator boots headless and is deleted on stop. Debug keeps Metro
+here through a private tailnet bridge; `metro.publicUrl`, `metro.tunnel` and
+`androidEmulatorApp` are ignored. Each run and reload restores the host's adb
+reverse, including after an adb server restart. Release variants skip Metro.
+Status reports `android.host` per slot with a profile and API name, keeping the
+host serial and AVD name private. Unreachable cleanup retains the placement;
+retry stop when the host answers. Host logs, view/control and agent driving
+come in following PRs. Local Metro logs remain available for bundle errors.
 
 ## Requirements
 

@@ -1,7 +1,7 @@
 import {
-  hostedIosRecords,
-  parseHostedIosPlacement,
-  unreadableHostedIos,
+  hostedNativeRecords,
+  parseHostedNativePlacement,
+  unreadableHostedNative,
   macosAppState,
   readMacosRecord,
 } from '@stim-cli/core/state';
@@ -75,9 +75,17 @@ export function workspaceInUse(
     else if (claims.unresolved[0])
       reasons.push(`its native-run.lock cannot be resolved: ${claims.unresolved[0].reason}`);
   }
-  for (const [slot, record] of Object.entries(hosted ? hostedIosRecords(readWorkspaceState(root)) : {})) {
-    const placement = parseHostedIosPlacement(record);
-    reasons.push(placement ? `its iOS simulator runs on ${placement.machine}` : unreadableHostedIos(slot));
+  for (const platform of ['ios', 'android'] as const) {
+    for (const [slot, record] of Object.entries(
+      hosted ? hostedNativeRecords(readWorkspaceState(root), platform) : {},
+    )) {
+      const placement = parseHostedNativePlacement(record, platform);
+      reasons.push(
+        placement
+          ? `its ${platform === 'ios' ? 'iOS simulator' : 'Android emulator'} runs on ${placement.machine}`
+          : unreadableHostedNative(slot, platform),
+      );
+    }
   }
   const self = canonicalPath(root);
   for (const [kind, entries] of [

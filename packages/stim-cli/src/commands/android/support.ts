@@ -474,6 +474,7 @@ export function androidBuildOptions({
   compiler,
   buildProfile,
   targetAbiOnly = true,
+  hostedAbi = null,
 }: {
   release: boolean;
   physical: boolean;
@@ -483,12 +484,13 @@ export function androidBuildOptions({
   compiler?: string;
   buildProfile?: string;
   targetAbiOnly?: boolean;
+  hostedAbi?: string | null;
 }): {
   abi: string | null;
   runOptions: { variant?: string; abi?: string; compiler?: string; buildProfile?: string };
   remoteRunOptions: { variant?: string; abi?: string; compiler?: string; buildProfile?: string } | null;
 } {
-  let abi: string | null = null;
+  let abi: string | null = targetAbiOnly ? hostedAbi : null;
   if (targetAbiOnly && !release && physical && device.serial) abi = deviceAbi(device.serial);
   if (targetAbiOnly && !release && !physical) abi = androidSystemImageAbi(device.systemImage);
 

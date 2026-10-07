@@ -77,7 +77,9 @@ export function settingShapeErrors(settings: unknown): string[] {
     const value = settingValueAt(settings, setting.key);
     if (value === undefined) continue;
     const expected =
-      setting.key === 'ios.remote' || (setting.type.kind === 'number' && !BOUNDS_CHECKED_WHEN_USED.has(setting.key))
+      setting.key === 'ios.remote' ||
+      setting.key === 'android.remote' ||
+      (setting.type.kind === 'number' && !BOUNDS_CHECKED_WHEN_USED.has(setting.key))
         ? settingValueError(setting, value)
         : acceptsShape(setting, value)
           ? null
@@ -646,17 +648,11 @@ export function remoteIosSetting(settings: SettingsObject): IosRemoteTarget | nu
   return isPlainObject(ios) && typeof ios.remote === 'string' ? parseIosRemote(ios.remote) : null;
 }
 
-export function remoteAndroidSetting(settings: SettingsObject): RemoteDeviceBackend | null {
-  return remoteSetting(settings, 'android');
-}
+export { parseIosRemote as parseAndroidRemote };
 
-function remoteSetting(settings: SettingsObject, platform: 'ios' | 'android'): RemoteDeviceBackend | null {
-  const block = settings[platform];
-  if (!isPlainObject(block)) return null;
-  const remote = block.remote;
-  return typeof remote === 'string' && (REMOTE_DEVICE_BACKENDS as readonly string[]).includes(remote)
-    ? (remote as RemoteDeviceBackend)
-    : null;
+export function remoteAndroidSetting(settings: SettingsObject): IosRemoteTarget | null {
+  const android = settings.android;
+  return isPlainObject(android) && typeof android.remote === 'string' ? parseIosRemote(android.remote) : null;
 }
 
 function minutesSetting(settings: SettingsObject, block: string, name: string): number {

@@ -1,3 +1,4 @@
+import { hostedMetroSettings } from '../device-host/metro-gateway.ts';
 import { workspaceId } from '@stim-cli/core';
 import { acquireIosArtifact, type PreparedIosArtifact } from './ios/artifact.ts';
 import { isEasBuildFailure } from '../engine/eas-build.ts';
@@ -20,7 +21,6 @@ import {
   connectIosBackend,
   iosPlacementBudget,
   hostedIosMetroNote,
-  iosMetroSettings,
   connectIosTarget,
   hostedIosBuildTarget,
   hostedIosSelectors,
@@ -699,7 +699,7 @@ async function runIos(
         const gate = await ensureDevServer({
           root,
           port: metroPort,
-          settings: iosMetroSettings(settings, Boolean(hostedTarget)),
+          settings: hostedMetroSettings(settings, Boolean(hostedTarget)),
           remote: Boolean(remoteDevice),
           note,
           resolve: d.resolveProjectMetro,

@@ -91,7 +91,6 @@ const ABSOLUTE_PATH = { kind: 'path', absolute: true } as const;
 const RELATIVE_PATH = { kind: 'path', relative: true } as const;
 const BOOLEAN = { kind: 'boolean' } as const;
 const OBJECT = { kind: 'object' } as const;
-const REMOTE = { kind: 'choice', choices: REMOTE_DEVICE_BACKENDS } as const;
 const PARKED_MAX = { kind: 'number', integer: true, minimum: 0 } as const;
 const CAPACITY = { kind: 'number', integer: true, minimum: 0 } as const;
 const GIGABYTES = { kind: 'number', minimum: 0 } as const;
@@ -136,7 +135,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
     default: 'auto',
   },
   optimization('android.gradleBuildCache', 'Gradle build cache'),
-  optimization('android.targetAbiOnly', 'Narrow Debug builds to the device ABI'),
+  optimization('android.targetAbiOnly', 'Narrow Debug and hosted Android builds to the device ABI'),
   { key: 'ios.deviceType', type: STRING, scopes: EVERY, description: 'Simulator model for owned simulators' },
   { key: 'ios.runtime', type: STRING, scopes: EVERY, description: 'iOS runtime owned simulators are created on' },
   {
@@ -221,7 +220,17 @@ export const SETTINGS: readonly SettingDefinition[] = [
     sensitive: true,
     description: 'Keystore password, or an apksigner env: or file: reference',
   },
-  { key: 'android.remote', type: REMOTE, scopes: PROJECT, description: 'Default remote backend for Android' },
+  {
+    key: 'android.remote',
+    type: {
+      kind: 'string',
+      pattern: TAILNET_MACHINE_PATTERN,
+      patternHelp: 'eas, proxy, auto, or a tailnet machine name',
+    },
+    scopes: PROJECT,
+    description:
+      'Default Android remote target: eas, proxy, or an approved Mac in hosting.machines; auto is not available yet',
+  },
   {
     key: 'metro.tunnel',
     type: { kind: 'choice', choices: TUNNEL_MODES },

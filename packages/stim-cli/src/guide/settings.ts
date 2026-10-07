@@ -253,7 +253,9 @@ ${ANDROID_AVD_CONFIG_HELP.map((line) => `                          ${line}`).joi
                         committed .stim.json avoids carrying a secret; a
                         bare string is used as the literal password. Unset
                         means the debug keystore's fixed "android".
-  android.remote        "proxy" or "eas"; the Android half of ios.remote
+  android.remote        "proxy", "eas", or a named approved Mac in
+                        hosting.machines; "auto" is reserved and refuses.
+                        See lifecycle hosted-android.
   metro.tunnel          selects how a remote device reaches this workspace's
                         Metro after remote intent exists. Plain \`start\` stays
                         local. For Expo and bare React Native, "auto" (default)
@@ -394,7 +396,8 @@ ${ANDROID_AVD_CONFIG_HELP.map((line) => `                          ${line}`).joi
                         them from the environment or the machine layers.
 
 Each setting takes its documented type: string, array of strings, number,
-boolean, or object. android.remote, metro.tunnel, web.viewport,
+boolean, or object. ios.remote and android.remote accept backend names or
+tailnet machine names. metro.tunnel, web.viewport,
 optimizations.android.compilerCache and optimizations.android.pch take only
 their listed choices. A value of the wrong
 type or outside those choices is refused by name on every command that resolves
@@ -857,7 +860,7 @@ be setup steps are supplied by Stim on the command lines it composes itself:
                gradle.properties. Debug builds add
                -PreactNativeArchitectures=<target ABI> when the owned
                emulator system image or physical device proves the ABI;
-               unknown targets and Release builds stay universal. The same run
+               unknown targets and local Release builds stay universal. The same run
                carries the ccache launcher and CCACHE_BASEDIR /
                CCACHE_NOHASHDIR when ccache is on PATH -- so no
                externalNativeBuild cmake arguments in a committed
@@ -971,8 +974,8 @@ The example shows the defaults. Full setting names and behavior:
   optimizations.android.gradleBuildCache
     false passes --no-build-cache to Gradle, overriding org.gradle.caching=true.
   optimizations.android.targetAbiOnly
-    false stops narrowing Debug builds to the device ABI. Release is always
-    universal; project ABI filters still apply.
+    false stops narrowing Debug and hosted Android builds to the device ABI.
+    Local Release builds are universal; project ABI filters still apply.
 
 Android CAS, explicit PCH modes, and changed iOS compiler options use separate
 native artifact keys. Android ccache and none share an artifact key when their
