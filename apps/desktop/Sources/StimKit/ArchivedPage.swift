@@ -3,11 +3,13 @@ import Foundation
 public struct ArchivedPage: Sendable {
   public struct Retention: Sendable, Identifiable {
     public var title: String
+    public var kind: RetainedKind?
     public var bytes: Int64
     public var until: Date?
     public var expired: Bool
     public var expiresSoon: Bool
     public var id: String { title }
+    public var clearable: Bool { kind != nil && bytes > 0 }
   }
 
   public var record: ArchivedWorkspace
@@ -16,6 +18,13 @@ public struct ArchivedPage: Sendable {
   public var offloadedBuilds: Int?
   public var expiryLabel: String?
   public var pullRequestLabel: String?
+  public var buildTotalsLine: String {
+    var parts = [countLabel(record.builds.count, "build")]
+    if let cacheHits { parts.append(countLabel(cacheHits, "cache hit")) }
+    if let offloadedBuilds { parts.append("\(offloadedBuilds) on a build machine") }
+    parts.append("\(countLabel(record.builds.lastErrorCount, "error")) at removal")
+    return parts.joined(separator: " \u{00B7} ")
+  }
   public var rowStatus: RowStatus { RowStatus(kind: .idle, text: "Removed", label: "Removed", tone: .tertiary) }
   public var workspace: Workspace
   public var removedAt: Date?
@@ -32,15 +41,15 @@ public struct ArchivedPage: Sendable {
     record = archive
     removedAt = parseTimestamp(archive.removedAt)
     retention = [
-      ("Logs", archive.bytes.logs, archive.expires.logs),
-      ("Recordings", archive.bytes.recordings, archive.expires.recordings),
-      ("Agent actions", archive.bytes.agentActions, archive.expires.agentActions),
-      ("Record", archive.bytes.record, archive.expires.record),
-    ].map { title, bytes, stamp in
+      ("Logs", RetainedKind.logs, archive.bytes.logs, archive.expires.logs),
+      ("Recordings", RetainedKind.recordings, archive.bytes.recordings, archive.expires.recordings),
+      ("Agent actions", RetainedKind.agentActions, archive.bytes.agentActions, archive.expires.agentActions),
+      ("Record", nil, archive.bytes.record, archive.expires.record),
+    ].map { title, kind, bytes, stamp in
       let until = stamp.flatMap(parseTimestamp)
       let expired = until.map { $0 < now } == true
       return Retention(
-        title: title, bytes: bytes, until: until, expired: expired,
+        title: title, kind: kind, bytes: bytes, until: until, expired: expired,
         expiresSoon: !expired && until.map { $0 <= now.addingTimeInterval(86400) } == true)
     }
     let media = retention.prefix(2)

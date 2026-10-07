@@ -51,7 +51,6 @@ struct WorkspaceDetail: View {
   @State private var archiveNow = Date()
   @State private var archiveDetail: ArchiveDetail?
   @State private var archiveError: String?
-  @State private var confirmingArchiveDelete = false
   #if DEBUG
     var fixtureDate: Date? = nil
     var fixtureDetail: ArchiveDetail? = nil
@@ -147,19 +146,6 @@ struct WorkspaceDetail: View {
       .environmentObject(checks)
       .environment(\.tutorialHint, tutorialHint)
     }
-    .confirmationDialog(
-      "Delete \(archive?.title ?? "archive") (\(archive?.removedLabel(now: fixtureDate ?? Date()) ?? ""))?",
-      isPresented: $confirmingArchiveDelete, titleVisibility: .visible
-    ) {
-      Button("Delete permanently", role: .destructive) {
-        if let archive {
-          actions.run(
-            "Delete \(archive.title)", steps: [archive.deleteCommand(cwd: NSHomeDirectory())], key: ActionCenter.machineKey)
-        }
-      }
-    } message: {
-      Text("This permanently deletes this archive's logs, recordings, agent actions and record.")
-    }
     .task(id: archive?.id) {
       guard archive != nil, fixtureDate == nil else { return }
       while !Task.isCancelled {
@@ -219,12 +205,13 @@ struct WorkspaceDetail: View {
   private func content(devices: [DeviceRef], focused: DeviceRef?) -> some View {
     VStack(spacing: 0) {
       HStack(spacing: Space.md) {
-        if let archive, let archivedPage {
+        if archive != nil, let archivedPage {
           Text(archivedPage.statusLine).font(.stim(.callout, weight: .semibold))
+            .help(archivedPage.removedAt.map { $0.formatted(.dateTime.month(.abbreviated).day().hour().minute()) } ?? "")
+          if let used = archivedPage.lastUsedLabel {
+            Text("\u{00B7} \(used)").font(.stim(.footnote)).foregroundStyle(Palette.secondary)
+          }
           Spacer()
-          Button("Delete", role: .destructive) { confirmingArchiveDelete = true }
-            .buttonStyle(.stim(.destructive)).disabled(actions.active(for: ActionCenter.machineKey) != nil)
-            .help("Delete \(archive.title) permanently")
         } else {
           WorkspaceHeaderLine(
             cli: cli, env: workspace, page: page.isUnified ? page : nil,

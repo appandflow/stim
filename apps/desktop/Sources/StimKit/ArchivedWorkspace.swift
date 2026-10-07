@@ -1,5 +1,27 @@
 import Foundation
 
+/// A kind of retained file a single archive can drop while keeping its record.
+public enum RetainedKind: String, CaseIterable, Sendable {
+  case logs, recordings, agentActions
+
+  /// The `stim gc --cache` selector name for the kind, which takes `:<id>` for one archive.
+  public var selector: String {
+    switch self {
+    case .logs: return "archived-logs"
+    case .recordings: return "archived-recordings"
+    case .agentActions: return "archived-agent"
+    }
+  }
+
+  public var noun: String {
+    switch self {
+    case .logs: return "logs"
+    case .recordings: return "recordings"
+    case .agentActions: return "agent actions"
+    }
+  }
+}
+
 public struct ArchivedWorkspace: Decodable, Hashable, Identifiable, Sendable {
   public struct Worktree: Decodable, Hashable, Sendable {
     public var repository: String?
@@ -105,6 +127,10 @@ public struct ArchivedWorkspace: Decodable, Hashable, Identifiable, Sendable {
       let b = parseTimestamp($1.removedAt) ?? .distantPast
       return a == b ? $0.id > $1.id : a > b
     }
+  }
+
+  public func clearCommand(_ kind: RetainedKind, cwd: String) -> StimCommand {
+    StimCommand(["gc", "--delete", "--cache", "\(kind.selector):\(id)"], cwd: cwd)
   }
 
   public func deleteCommand(cwd: String) -> StimCommand {

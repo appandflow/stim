@@ -250,7 +250,7 @@ struct GitPopover: View {
       if let pull = worktree.pullRequest {
         Rectangle().fill(Palette.border).frame(height: 1)
         HStack(spacing: Space.sm) {
-          Text("PR #\(pull.number)").font(.stim(.callout, weight: .semibold))
+          Text("PR #" + String(pull.number)).font(.stim(.callout, weight: .semibold))
             .foregroundStyle(Color(GitChip.tone(ofPullRequest: pull.state)))
           if !pull.state.isEmpty { Pill(pull.state.capitalized, size: .small) }
         }

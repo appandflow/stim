@@ -315,25 +315,28 @@ describe('offloaded builds', () => {
     const cases: [string, string][] = [
       [
         'janics-mac-mini: busy (load at or above 2/core; load 8.2/core, 2 builds)',
-        'janics-mac-mini busy \u2192 built here',
+        'Built here: janics-mac-mini was busy',
       ],
       [
         'mini:7869: Stim build 6bbe there, e774 here; busy (already running 1 offloaded build(s), its limit)',
-        'mini on another Stim build \u2192 built here',
+        'Built here: mini was on a different Stim build',
       ],
       [
         'mini: no less loaded (load 1.2/core there, 0.4/core here); box: no offer',
-        'mini no less loaded \u2192 built here',
+        'Built here: mini was no less loaded',
       ],
-      ['mini: capacity unknown (older stim-server) while this Mac has a free slot', 'mini too old \u2192 built here'],
-      ['mini: no iPhone simulator on 27.0 there', 'mini missing SDK \u2192 built here'],
-      ['mini: 4.1 GB free, needs 10.0 GB', 'mini low on disk \u2192 built here'],
+      [
+        'mini: capacity unknown (older stim-server) while this Mac has a free slot',
+        'Built here: mini runs an older stim-server',
+      ],
+      ['mini: no iPhone simulator on 27.0 there', 'Built here: mini is missing the SDK'],
+      ['mini: 4.1 GB free, needs 10.0 GB', 'Built here: mini is low on disk'],
       [
         'mini: Stim build 6bbe there, e774 here; 4.1 GB free, needs 10.0 GB',
-        'mini on another Stim build \u2192 built here',
+        'Built here: mini was on a different Stim build',
       ],
-      ['mini: the connection closed (1006)', 'mini failed \u2192 built here'],
-      ['this app is not in a git checkout (fatal: not a git repository)', 'offload skipped \u2192 built here'],
+      ['mini: the connection closed (1006)', 'Built here: mini failed'],
+      ['this app is not in a git checkout (fatal: not a git repository)', 'Built here: offload skipped'],
     ];
     for (const [reason, text] of cases) expect(fallbackLine({ offloadFallback: reason })).toEqual({ text, reason });
     expect(fallbackLine({})).toBeNull();

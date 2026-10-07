@@ -192,6 +192,25 @@ import Testing
     #expect(command.cwd == "/home")
   }
 
+  @Test func clearingOneKindNamesTheCliSelectorForThatKindAndArchive() throws {
+    let archive = try #require(payload().archived?.first)
+    let selectors = RetainedKind.allCases.map { archive.clearCommand($0, cwd: "/home").arguments.last }
+    #expect(
+      selectors == ["archived-logs:archive-older", "archived-recordings:archive-older", "archived-agent:archive-older"])
+    #expect(archive.clearCommand(.logs, cwd: "/home").arguments.dropLast() == ["gc", "--delete", "--cache"])
+  }
+
+  @Test func onlyRetainedNonEmptyKindsCanBeClearedAndTotalsJoinOnOneLine() throws {
+    var archive = try #require(payload().archived?.first)
+    archive.bytes.logs = 10
+    archive.bytes.recordings = 0
+    archive.builds.count = 1
+    archive.builds.lastErrorCount = 2
+    let page = ArchivedPage(archive: archive, now: Date())
+    #expect(page.retention.map(\.clearable) == [true, false, page.retention[2].bytes > 0, false])
+    #expect(page.buildTotalsLine == "1 build \u{00B7} 2 errors at removal")
+  }
+
   @Test func archiveLogsPreserveFiltersWithoutWorkspaceOrFollow() throws {
     var query = LogQuery()
     query.sources = [.build, .agent]
