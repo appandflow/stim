@@ -278,6 +278,10 @@ export type PhoneReplaySpan = Wire.ReplaySpan;
 export type PhoneReplayMarker = Omit<Wire.ReplayMarker, 'kind'> & { kind: string };
 export type PhoneReplayKeyframe = Omit<Wire.ReplayKeyframe, 'posture'> & { posture?: string };
 export type PhoneReplayRange = Omit<Wire.ReplayRange, 'markers'> & { markers: PhoneReplayMarker[] };
+export type PhoneArchiveDetailResult = {
+  builds: Partial<Record<string, PhoneBuildHistoryEntry[]>>;
+  recordings: { platform: string; slot: string; spans: PhoneReplaySpan[] }[];
+};
 export type PhoneReplayEndedEvent = Wire.ReplayEndedEvent;
 export type PhoneControlBeginParams = Wire.ControlBeginParams;
 export type PhoneControlBeginResult = Omit<Wire.ControlBeginResult, 'platform' | 'postures'> & {
@@ -403,6 +407,7 @@ export type PhoneMethods = Omit<
   | 'workspace.diff'
   | 'frames.subscribe'
   | 'replay.range'
+  | 'archive.detail'
   | 'replay.keyframe'
   | 'build.plan'
   | 'action'
@@ -417,6 +422,7 @@ export type PhoneMethods = Omit<
     result: Omit<Wire.FramesSubscribeResult, 'video'> & { video?: string };
   };
   'replay.range': { params: Wire.ReplayTarget; result: PhoneReplayRange };
+  'archive.detail': { params: Wire.ArchiveDetailParams; result: PhoneArchiveDetailResult };
   'replay.keyframe': { params: Wire.ReplayKeyframeParams; result: PhoneReplayKeyframe };
   'build.plan': { params: Wire.BuildPlanParams; result: PhoneBuildPlan };
   action: { params: Wire.ActionParams; result: PhoneActionResult };
@@ -493,6 +499,7 @@ export type {
   PhoneReplayMarker as ReplayMarker,
   PhoneReplayKeyframe as ReplayKeyframe,
   PhoneReplayRange as ReplayRange,
+  PhoneArchiveDetailResult as ArchiveDetailResult,
   PhoneReplayEndedEvent as ReplayEndedEvent,
   PhoneControlBeginParams as ControlBeginParams,
   PhoneControlBeginResult as ControlBeginResult,

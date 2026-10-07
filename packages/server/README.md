@@ -1525,6 +1525,16 @@ Events are `{ "event", "subscription", ... }`.
   `at` and `frames.seek` on it fail with `no-recording`, and it counts
   toward no idle check.
 
+- **Archive detail.** `archive.detail` takes `{ archive: archived[].id }` and needs
+  `read`. It returns `{ builds, recordings }`: the archive's own iOS and Android
+  build history in the live environment's `builds` shape, and every retained
+  recording slot as `{ platform, slot, spans }`. Spans use the same ranges as
+  `replay.range`; devices without spans are omitted. Missing or unreadable state
+  yields `builds: {}`, and no recordings yields `recordings: []`. Reads share the
+  archive request queue, refuse unknown archives with `unknown-workspace`, and
+  skip symlinks. Older servers refuse it with `unknown-method`.
+  `status` keeps only the archive's build summary.
+
 - **Replay.** `replay.range` takes exactly one of `workspace` or `archive`, plus `platform` and `slot`
   (`default` when absent), like `frames.subscribe`, and returns what can be
   replayed of that device slot's [recording](#recording):

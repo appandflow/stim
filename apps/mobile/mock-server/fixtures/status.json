@@ -4421,7 +4421,7 @@
             "cacheSkipped": false,
             "durationMs": 42000,
             "fingerprint": "mock-native",
-            "startedAt": "2026-09-25T02:23:09.012Z",
+            "startedAt": "2026-09-25T02:22:27.012Z",
             "finishedAt": "2026-09-25T02:23:09.012Z"
           },
           "lastErrorCount": 0
@@ -4473,15 +4473,15 @@
         "removedBy": "gc",
         "lastUsedAt": "2026-09-24T14:23:09.012Z",
         "builds": {
-          "count": 4,
+          "count": 1,
           "last": {
             "platform": "ios",
             "status": "ok",
-            "cacheHit": "local",
+            "cacheHit": false,
             "cacheSkipped": false,
-            "durationMs": 42000,
+            "durationMs": 35000,
             "fingerprint": "mock-native",
-            "startedAt": "2026-09-24T14:23:09.012Z",
+            "startedAt": "2026-09-24T14:22:34.012Z",
             "finishedAt": "2026-09-24T14:23:09.012Z"
           },
           "lastErrorCount": 0
@@ -4497,14 +4497,14 @@
           }
         ],
         "bytes": {
-          "logs": 128000,
+          "logs": 0,
           "recordings": 0,
           "agentActions": 4000,
           "record": 2048,
-          "total": 134048
+          "total": 6048
         },
         "expires": {
-          "logs": null,
+          "logs": "2026-09-23T14:23:09.012Z",
           "recordings": null,
           "agentActions": null,
           "record": null
@@ -4533,17 +4533,8 @@
         "removedBy": "maintenance",
         "lastUsedAt": "2026-09-24T02:23:09.012Z",
         "builds": {
-          "count": 5,
-          "last": {
-            "platform": "ios",
-            "status": "ok",
-            "cacheHit": "local",
-            "cacheSkipped": false,
-            "durationMs": 42000,
-            "fingerprint": "mock-native",
-            "startedAt": "2026-09-24T02:23:09.012Z",
-            "finishedAt": "2026-09-24T02:23:09.012Z"
-          },
+          "count": 0,
+          "last": null,
           "lastErrorCount": 0
         },
         "agents": [
@@ -4574,9 +4565,9 @@
     ],
     "archivedUsage": {
       "count": 3,
-      "bytes": 12402144,
+      "bytes": 12274144,
       "byKind": {
-        "logs": 384000,
+        "logs": 256000,
         "recordings": 12000000,
         "agentActions": 12000,
         "record": 6144

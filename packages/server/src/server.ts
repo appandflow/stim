@@ -10,11 +10,14 @@ import {
   archiveDir,
   deviceHostArea,
   readArchive,
+  readArchiveState,
+  readBuildHistory,
   readSetupJournal,
   isJournalExpired,
   queryJsonLogs,
   isJsonObject,
   listSegments,
+  listRecordedDevices,
   loadConfig,
   readMacosRecord,
   readWorkspaceState,
@@ -87,6 +90,7 @@ import {
   REPLAY_RATES,
   SERVER_UPDATE_METHODS,
   type BuildPlanResult,
+  type ArchiveDetailResult,
   type DeviceFrameArtwork,
   type MacosWindow,
   type FramesSeekParams,
@@ -1794,6 +1798,24 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       });
     }
 
+    function archiveDetail(id: RequestId, params: unknown): void {
+      const target = isJsonObject(params) ? params : {};
+      if (target.archive === undefined) return error(id, 'bad-request', 'archive.detail needs params.archive.');
+      const targetError = readTargetError(target);
+      if (targetError) return error(id, 'bad-request', targetError);
+      const archive = target.archive as string;
+      const dir = readDir(id, { archive });
+      if (!dir) return;
+      const result: ArchiveDetailResult = {
+        builds: readBuildHistory(readArchiveState(archive)),
+        recordings: listRecordedDevices(join(dir, 'recordings'), true).flatMap((recorded) => {
+          const spans = recordedSpans(recorded.segments);
+          return spans.length ? [{ platform: recorded.platform, slot: recorded.slot, spans }] : [];
+        }),
+      };
+      send(socket, { id, result });
+    }
+
     function replayRange(id: RequestId, params: unknown): void {
       const target = isJsonObject(params) ? params : {};
       const { platform, slot } = target;
@@ -2277,19 +2299,16 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       if (desktop) return desktop;
       if (isJsonObject(message.params) && typeof message.params.archive === 'string') {
         const params = message.params;
-        const read =
-          message.method === 'logs.subscribe'
-            ? () => subscribeLogs(id, params)
-            : message.method === 'logs.query'
-              ? () => queryLogs(id, params)
-              : message.method === 'frames.subscribe'
-                ? () => subscribeFrames(id, params)
-                : message.method === 'replay.range'
-                  ? () => replayRange(id, params)
-                  : message.method === 'replay.keyframe'
-                    ? () => replayKeyframe(id, params)
-                    : null;
-        if (read) return archiveRead(id, read);
+        const reads: Partial<Record<string, (id: RequestId, params: unknown) => void | Promise<void>>> = {
+          'logs.subscribe': subscribeLogs,
+          'logs.query': queryLogs,
+          'frames.subscribe': subscribeFrames,
+          'replay.range': replayRange,
+          'archive.detail': archiveDetail,
+          'replay.keyframe': replayKeyframe,
+        };
+        const read = reads[message.method];
+        if (read) return archiveRead(id, () => read(id, params));
       }
       if (message.method === 'status.subscribe') return subscribeStatus(id);
       if (message.method === 'logs.subscribe') return subscribeLogs(id, message.params);
@@ -2327,6 +2346,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         return send(socket, { id, result: { at: shown } });
       }
       if (message.method === 'replay.range') return replayRange(id, message.params);
+      if (message.method === 'archive.detail') return archiveDetail(id, message.params);
       if (message.method === 'replay.keyframe') {
         void replayKeyframe(id, message.params);
         return;

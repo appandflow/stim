@@ -42,6 +42,7 @@ import { FeedPool } from '../src/feed.ts';
 import { FramePool, ownedDevice } from '../src/frames.ts';
 import {
   protocolJsonSchema,
+  type ArchiveDetailResult,
   type HelloResult,
   type MachineUsage,
   type ServerMessage,
@@ -2631,6 +2632,159 @@ function archivedFootage(dir: string, first: number, count: number, platform: 'i
   writeFileSync(join(device, closedSegmentName(first, first + (count - 1) * 100)), Buffer.concat(units));
 }
 
+describe('archive.detail', () => {
+  it('returns the archive build history in live shape and closed spans for every recording slot', async () => {
+    const { id, dir } = archiveFixture();
+    const startedAt = '2026-10-01T11:00:00Z';
+    const common = {
+      startedAt,
+      cacheSkipped: false,
+      fingerprint: 'native-key',
+      slot: 'default',
+      configuration: 'Debug',
+      cacheKey: 'native-key',
+    };
+    const failed = {
+      ...common,
+      platform: 'ios',
+      status: 'failed',
+      result: 'failed',
+      cacheHit: false,
+      durationMs: 5000,
+      phases: { prepare: 1000, compile: 4000 },
+      errorCode: 'STIM_BUILD_FAILED',
+      diagnostics: [{ file: 'App.swift', line: 12, column: 3, message: 'Missing symbol' }],
+    };
+    const succeeded = {
+      ...common,
+      platform: 'android',
+      status: 'ok',
+      result: 'succeeded',
+      cacheHit: 'remote',
+      slot: 'fold',
+      configuration: 'debug',
+      durationMs: 3000,
+      phases: { 'cache-lookup': 1000, install: 2000 },
+    };
+    writeFileSync(join(dir, 'state.json'), JSON.stringify({ buildHistory: { ios: [failed], android: [succeeded] } }));
+    mkdirSync(workspaceStateDir(workspace), { recursive: true });
+    writeFileSync(join(workspaceStateDir(workspace), 'state.json'), JSON.stringify({ buildHistory: {} }));
+    const recordings = join(dir, 'recordings');
+    for (const [device, segments] of Object.entries({
+      'ios-default': ['1000-2000.seg', '2200-3000.seg', '6000-7000.seg', '8000.part'],
+      'ios-tablet': ['4000-5000.seg'],
+      'android-fold': ['10000-11000.seg'],
+      'web-desktop': ['12000-13000.seg'],
+      'android-empty': ['14000.part'],
+    })) {
+      mkdirSync(join(recordings, device), { recursive: true });
+      for (const segment of segments) writeFileSync(join(recordings, device, segment), 'listing only');
+    }
+    symlinkSync(join(recordings, 'ios-default'), join(recordings, 'ios-link'), 'dir');
+    symlinkSync(join(recordings, 'ios-default', '1000-2000.seg'), join(recordings, 'ios-default', '15000-16000.seg'));
+    rmSync(workspace, { recursive: true });
+    const client = await authed(await start());
+    const expected = {
+      builds: {
+        ios: [{ ...failed, finishedAt: '2026-10-01T11:00:05.000Z' }],
+        android: [{ ...succeeded, finishedAt: '2026-10-01T11:00:03.000Z' }],
+      },
+      recordings: [
+        { platform: 'android', slot: 'fold', spans: [{ start: 10000, end: 11000 }] },
+        {
+          platform: 'ios',
+          slot: 'default',
+          spans: [
+            { start: 1000, end: 3000 },
+            { start: 6000, end: 7000 },
+          ],
+        },
+        { platform: 'ios', slot: 'tablet', spans: [{ start: 4000, end: 5000 }] },
+        { platform: 'web', slot: 'desktop', spans: [{ start: 12000, end: 13000 }] },
+      ],
+    };
+    const reply = await client.request('archive.detail', { archive: id });
+    if (!('result' in reply)) throw new Error(JSON.stringify(reply));
+    const detail = reply.result as ArchiveDetailResult;
+    expect({
+      ...detail,
+      recordings: detail.recordings.toSorted((a, b) =>
+        `${a.platform}-${a.slot}`.localeCompare(`${b.platform}-${b.slot}`),
+      ),
+    }).toEqual(expected);
+    expect(stimCalls()).toEqual([]);
+    rmSync(recordings, { recursive: true });
+    symlinkSync(root, recordings, 'dir');
+    expect(await client.request('archive.detail', { archive: id })).toMatchObject({ result: { recordings: [] } });
+  });
+
+  it('refuses unknown archives and symlinked archive paths with unknown-workspace', async () => {
+    const { id, dir } = archiveFixture();
+    symlinkSync(dir, archiveDir('linked'), 'dir');
+    const client = await authed(await start());
+    for (const archive of ['missing', 'linked']) {
+      expect(await client.request('archive.detail', { archive })).toMatchObject({
+        error: { code: 'unknown-workspace' },
+      });
+    }
+    const record = join(dir, 'archive.json');
+    cpSync(record, join(root, 'archive.json'));
+    rmSync(record);
+    symlinkSync(join(root, 'archive.json'), record);
+    expect(await client.request('archive.detail', { archive: id })).toMatchObject({
+      error: { code: 'unknown-workspace' },
+    });
+    for (const params of [
+      {},
+      { workspace },
+      { workspace, archive: id },
+      { archive: '../outside' },
+      { archive: '' },
+      { archive: 1 },
+    ]) {
+      expect(await client.request('archive.detail', params)).toMatchObject({ error: { code: 'bad-request' } });
+    }
+  });
+
+  it('refuses a connection without read access', async () => {
+    const { id } = archiveFixture();
+    const client = await connect(await start());
+    await client.request('hello', {
+      protocol: 1,
+      client: CLIENT,
+      auth: { pairingToken: createPairingToken(Date.now(), ['control']).token, deviceName: 'Test phone' },
+    });
+    expect(await client.request('archive.detail', { archive: id })).toMatchObject({ error: { code: 'forbidden' } });
+  });
+
+  it('returns empty builds when archived state is missing or unreadable', async () => {
+    const { id, dir } = archiveFixture();
+    const client = await authed(await start());
+    expect(await client.request('archive.detail', { archive: id })).toMatchObject({
+      result: { builds: {}, recordings: [] },
+    });
+    for (const state of [
+      'not json',
+      JSON.stringify({ lastBuild: { platform: 'ios' } }),
+      JSON.stringify({ buildHistory: {} }),
+    ]) {
+      writeFileSync(join(dir, 'state.json'), state);
+      expect(await client.request('archive.detail', { archive: id })).toMatchObject({
+        result: { builds: {}, recordings: [] },
+      });
+    }
+    rmSync(join(dir, 'state.json'));
+    writeFileSync(
+      join(root, 'state.json'),
+      JSON.stringify({ buildHistory: { ios: [{ platform: 'ios', status: 'ok', startedAt: '2026-10-01T11:00:00Z' }] } }),
+    );
+    symlinkSync(join(root, 'state.json'), join(dir, 'state.json'));
+    expect(await client.request('archive.detail', { archive: id })).toMatchObject({
+      result: { builds: {}, recordings: [] },
+    });
+  });
+});
+
 describe('archived reads', () => {
   it('merges archived agent-device sessions into queries, subscriptions and replay markers', async () => {
     const { id, dir } = archiveFixture();
@@ -2712,7 +2866,14 @@ describe('archived reads', () => {
     archivedFootage(dir, 1000, 10);
     const client = await authed(await start());
     const params = { archive: id, platform: 'ios', at: 1000, video: ['h264'] };
-    const methods = ['logs.query', 'logs.subscribe', 'replay.range', 'replay.keyframe', 'frames.subscribe'];
+    const methods = [
+      'logs.query',
+      'logs.subscribe',
+      'replay.range',
+      'archive.detail',
+      'replay.keyframe',
+      'frames.subscribe',
+    ];
     const replies = await Promise.all(
       Array.from({ length: 40 }, (_, index) => client.request(methods[index % methods.length]!, params)),
     );

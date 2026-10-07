@@ -1,4 +1,4 @@
-import { readdirSync, statSync } from 'node:fs';
+import { lstatSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { isJsonObject } from './json-file.ts';
 import { coerceSettingText, settingDefinition } from './settings-registry.ts';
@@ -53,6 +53,7 @@ export function openSegmentName(start: number): string {
 
 function listDir(dir: string): string[] {
   try {
+    if (!lstatSync(dir).isDirectory()) return [];
     return readdirSync(dir);
   } catch {
     return [];
@@ -68,7 +69,8 @@ export function listSegments(dir: string, closedOnly = false): RecordedSegment[]
     if (!closed && (closedOnly || !part)) continue;
     let stat;
     try {
-      stat = statSync(join(dir, name));
+      stat = lstatSync(join(dir, name));
+      if (!stat.isFile()) continue;
     } catch {
       continue;
     }
@@ -85,12 +87,12 @@ export function listSegments(dir: string, closedOnly = false): RecordedSegment[]
 }
 
 /** Every device slot recorded under a workspace's recordings directory. */
-export function listRecordedDevices(recordingsDir: string): RecordedDevice[] {
+export function listRecordedDevices(recordingsDir: string, closedOnly = false): RecordedDevice[] {
   return listDir(recordingsDir).flatMap((name) => {
     const match = DEVICE.exec(name);
     if (!match) return [];
     const dir = join(recordingsDir, name);
-    return [{ platform: match[1] as RecordingPlatform, slot: match[2]!, dir, segments: listSegments(dir) }];
+    return [{ platform: match[1] as RecordingPlatform, slot: match[2]!, dir, segments: listSegments(dir, closedOnly) }];
   });
 }
 

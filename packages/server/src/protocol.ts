@@ -1229,6 +1229,14 @@ export function protocolJsonSchema(): JsonSchema {
               slot: { type: 'string', minLength: 1 },
             },
           }),
+          request('archive.detail', {
+            type: 'object',
+            required: ['archive'],
+            additionalProperties: false,
+            properties: {
+              archive: { type: 'string', minLength: 1, pattern: '^(?!.*\\.\\.)[^/\\\\\\u0000]+$' },
+            },
+          }),
           request('replay.keyframe', {
             type: 'object',
             required: ['platform', 'at'],
